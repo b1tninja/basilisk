@@ -5,6 +5,7 @@ import pytest
 from dotenv import load_dotenv
 from pysequoia import Cert
 
+load_dotenv(".env.test.example", override=False)
 load_dotenv(".env.test", override=True)
 load_dotenv(".env.example", override=False)
 

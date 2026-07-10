@@ -1,6 +1,10 @@
+# Local environment / secrets (never commit)
 .env
+.env.local
 .env.test
 local.settings.json
+!.env.example
+!.env.test.example
 .venv/
 __pycache__/
 *.py[cod]

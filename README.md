@@ -59,3 +59,7 @@ Basilisk rejects invalid uploads **before** any blob or Table write:
 - Optional proof-of-work on HKP v2 upload paths (`BASILISK_REQUIRE_PROOF=1`); **`gpg --send-keys` is exempt**
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for tunables and Azure WAF parameters.
+
+## CI secrets
+
+GitHub Actions needs repository secrets for deploy and optional test hardening. See [docs/CI.md](docs/CI.md).
