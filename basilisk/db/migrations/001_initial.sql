@@ -1,0 +1,1 @@
+-- migration 001: initial schema (applied via schema.sql for fresh installs)

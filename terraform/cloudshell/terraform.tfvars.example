@@ -1,0 +1,4 @@
+# Optional overrides. Tenant ID is read automatically from the Azure CLI session.
+# name_prefix  = "basilisk-dev"
+# location     = ""
+# mail_provider = "office365"

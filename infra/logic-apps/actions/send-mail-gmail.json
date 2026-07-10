@@ -1,0 +1,17 @@
+{
+  "type": "ApiConnection",
+  "inputs": {
+    "host": {
+      "connection": {
+        "name": "@parameters('$connections')['gmail']['connectionId']"
+      }
+    },
+    "method": "post",
+    "path": "/v2/Mail",
+    "body": {
+      "To": "@{triggerBody()?['To']}",
+      "Subject": "@{triggerBody()?['Subject']}",
+      "Body": "@{triggerBody()?['Body']}"
+    }
+  }
+}

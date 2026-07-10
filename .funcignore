@@ -1,0 +1,14 @@
+.env
+.env.test
+.venv/
+tests/
+docker/
+docs/
+scripts/
+infra/
+marketplace/
+data/
+*.md
+pytest.ini
+Makefile
+docker-compose*.yml

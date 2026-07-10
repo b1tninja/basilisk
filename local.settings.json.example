@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "BASILISK_BASE_URL": "http://localhost:7071",
+    "BASILISK_TOKEN_SECRET": "dev-secret",
+    "BASILISK_DB_PATH": "./data/basilisk.db",
+    "BASILISK_BLOB_PATH": "./data/blobs",
+    "BASILISK_DEV_APPROVE": "1",
+    "BASILISK_MAIL_PROVIDER": "office365",
+    "BASILISK_CACHE_MODE": "inline",
+    "ServiceBusConnection": "Endpoint=sb://localhost/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=dev"
+  }
+}

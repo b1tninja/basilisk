@@ -1,0 +1,6 @@
+{
+  "displayName": "Office365",
+  "api": {
+    "id": "/subscriptions/{subscription-id}/providers/Microsoft.Web/locations/{location}/managedApis/office365"
+  }
+}

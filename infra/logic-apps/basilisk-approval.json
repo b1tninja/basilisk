@@ -1,0 +1,109 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "mailProvider": {
+      "type": "String",
+      "defaultValue": "office365",
+      "allowedValues": ["office365", "gmail"]
+    }
+  },
+  "triggers": {
+    "When_message_in_queue": {
+      "type": "ServiceBus",
+      "inputs": {
+        "queueName": "key-events",
+        "connection": {
+          "name": "@parameters('$connections')['servicebus']['connectionId']"
+        }
+      }
+    }
+  },
+  "actions": {
+    "Parse_message": {
+      "type": "ParseJson",
+      "inputs": {
+        "content": "@triggerBody()",
+        "schema": { "type": "object" }
+      },
+      "runAfter": {}
+    },
+    "Switch_event": {
+      "type": "Switch",
+      "expression": "@body('Parse_message')?['event']",
+      "cases": {
+        "key_pending": {
+          "case": "key.pending",
+          "actions": {
+            "Send_mail": {
+              "type": "Switch",
+              "expression": "@parameters('mailProvider')",
+              "cases": {
+                "office365": {
+                  "case": "office365",
+                  "actions": {
+                    "Send_O365": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['office365']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/v2/Mail",
+                        "body": {
+                          "To": "@body('Parse_message')?['uids']",
+                          "Subject": "Verify your OpenPGP key on Basilisk",
+                          "Body": "@body('Parse_message')?['claim_url']"
+                        }
+                      }
+                    }
+                  }
+                },
+                "gmail": {
+                  "case": "gmail",
+                  "actions": {
+                    "Send_Gmail": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['gmail']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/v2/Mail",
+                        "body": {
+                          "To": "@body('Parse_message')?['uids']",
+                          "Subject": "Verify your OpenPGP key on Basilisk",
+                          "Body": "@body('Parse_message')?['claim_url']"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "claim_submitted": {
+          "case": "claim.submitted",
+          "actions": {
+            "Enqueue_approved": {
+              "type": "Compose",
+              "inputs": {
+                "event": "key.approved",
+                "fingerprint": "@body('Parse_message')?['fingerprint']",
+                "approved_uids": "@body('Parse_message')?['matched_uids']"
+              },
+              "runAfter": {}
+            }
+          }
+        }
+      },
+      "default": { "actions": {} },
+      "runAfter": { "Parse_message": ["Succeeded"] }
+    }
+  }
+}

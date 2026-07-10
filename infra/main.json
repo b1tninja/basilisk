@@ -1,0 +1,1109 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.44.1.10279",
+      "templateHash": "9259458798342067486"
+    }
+  },
+  "parameters": {
+    "namePrefix": {
+      "type": "string",
+      "defaultValue": "basilisk",
+      "metadata": {
+        "description": "Resource name prefix"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "eastus",
+      "metadata": {
+        "description": "Azure region"
+      }
+    },
+    "entraTenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "Entra tenant ID for Easy Auth"
+      }
+    },
+    "mailProvider": {
+      "type": "string",
+      "defaultValue": "office365",
+      "allowedValues": [
+        "office365",
+        "gmail"
+      ],
+      "metadata": {
+        "description": "Mail provider for Logic Apps: office365 or gmail"
+      }
+    },
+    "requireManagerApproval": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Require manager approval (O365 only)"
+      }
+    }
+  },
+  "variables": {
+    "rgName": "[format('{0}-rg', parameters('namePrefix'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('rgName')]",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "storage",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "5250668699211885545"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource name prefix"
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region"
+              }
+            },
+            "enableWormImmutability": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Enable immutability policy on certs container"
+              }
+            },
+            "wormRetentionDays": {
+              "type": "int",
+              "defaultValue": 365,
+              "metadata": {
+                "description": "Immutability retention days for cert blobs"
+              }
+            }
+          },
+          "variables": {
+            "storageName": "[toLower(replace(format('{0}store', parameters('namePrefix')), '-', ''))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-05-01",
+              "name": "[take(variables('storageName'), 24)]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "supportsHttpsTrafficOnly": true,
+                "minimumTlsVersion": "TLS1_2",
+                "allowBlobPublicAccess": false
+              }
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', take(variables('storageName'), 24), 'default')]",
+              "properties": {
+                "deleteRetentionPolicy": {
+                  "enabled": true,
+                  "days": 7
+                },
+                "containerDeleteRetentionPolicy": {
+                  "enabled": true,
+                  "days": 7
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', take(variables('storageName'), 24))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', take(variables('storageName'), 24), 'default', 'certs')]",
+              "properties": {
+                "publicAccess": "None",
+                "immutableStorageWithVersioning": {
+                  "enabled": "[parameters('enableWormImmutability')]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', take(variables('storageName'), 24), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/tableServices",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', take(variables('storageName'), 24), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', take(variables('storageName'), 24))]"
+              ]
+            },
+            {
+              "condition": "[parameters('enableWormImmutability')]",
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}/{3}', take(variables('storageName'), 24), 'default', 'certs', 'default')]",
+              "properties": {
+                "immutabilityPeriodSinceCreationInDays": "[parameters('wormRetentionDays')]",
+                "allowProtectedAppendWrites": true,
+                "allowProtectedAppendWritesAll": true
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', take(variables('storageName'), 24), 'default', 'certs')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "storageAccountName": {
+              "type": "string",
+              "value": "[take(variables('storageName'), 24)]"
+            },
+            "connectionString": {
+              "type": "string",
+              "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};EndpointSuffix={1};AccountKey={2}', take(variables('storageName'), 24), environment().suffixes.storage, listKeys(resourceId('Microsoft.Storage/storageAccounts', take(variables('storageName'), 24)), '2023-05-01').keys[0].value)]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "servicebus",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "708073114207481004"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource name prefix"
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region"
+              }
+            }
+          },
+          "variables": {
+            "sbName": "[format('{0}-sb', parameters('namePrefix'))]",
+            "ruleId": "RootManageSharedAccessKey"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ServiceBus/namespaces",
+              "apiVersion": "2022-10-01-preview",
+              "name": "[variables('sbName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard"
+              }
+            },
+            {
+              "type": "Microsoft.ServiceBus/namespaces/queues",
+              "apiVersion": "2022-10-01-preview",
+              "name": "[format('{0}/{1}', variables('sbName'), 'key-events')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.ServiceBus/namespaces', variables('sbName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ServiceBus/namespaces/queues",
+              "apiVersion": "2022-10-01-preview",
+              "name": "[format('{0}/{1}', variables('sbName'), 'sendtoken-events')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.ServiceBus/namespaces', variables('sbName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "connectionString": {
+              "type": "string",
+              "value": "[format('Endpoint=sb://{0}.servicebus.windows.net/;SharedAccessKeyName={1};SharedAccessKey={2}', variables('sbName'), variables('ruleId'), listKeys(format('{0}/AuthorizationRules/{1}', resourceId('Microsoft.ServiceBus/namespaces', variables('sbName')), variables('ruleId')), '2022-10-01-preview').primaryKey)]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "functions",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "entraTenantId": {
+            "value": "[parameters('entraTenantId')]"
+          },
+          "storageAccountName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.storageAccountName.value]"
+          },
+          "storageConnectionString": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.connectionString.value]"
+          },
+          "serviceBusConnectionString": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'servicebus'), '2025-04-01').outputs.connectionString.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "11691483854744357081"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource name prefix"
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region"
+              }
+            },
+            "entraTenantId": {
+              "type": "string",
+              "metadata": {
+                "description": "Entra tenant ID"
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage account name"
+              }
+            },
+            "storageConnectionString": {
+              "type": "securestring"
+            },
+            "serviceBusConnectionString": {
+              "type": "securestring"
+            }
+          },
+          "variables": {
+            "planName": "[format('{0}-plan', parameters('namePrefix'))]",
+            "appName": "[format('{0}-fn', parameters('namePrefix'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2023-12-01",
+              "name": "[variables('planName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "FC1",
+                "tier": "FlexConsumption"
+              },
+              "kind": "functionapp",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2023-12-01",
+              "name": "[variables('appName')]",
+              "location": "[parameters('location')]",
+              "kind": "functionapp,linux",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+                "siteConfig": {
+                  "linuxFxVersion": "Python|3.13",
+                  "appSettings": [
+                    {
+                      "name": "AzureWebJobsStorage",
+                      "value": "[parameters('storageConnectionString')]"
+                    },
+                    {
+                      "name": "FUNCTIONS_EXTENSION_VERSION",
+                      "value": "~4"
+                    },
+                    {
+                      "name": "ServiceBusConnection",
+                      "value": "[parameters('serviceBusConnectionString')]"
+                    },
+                    {
+                      "name": "AZURE_STORAGE_CONNECTION_STRING",
+                      "value": "[parameters('storageConnectionString')]"
+                    },
+                    {
+                      "name": "BASILISK_CACHE_MODE",
+                      "value": "redirect"
+                    }
+                  ]
+                },
+                "functionAppConfig": {
+                  "deployment": {
+                    "storage": {
+                      "type": "blobContainer",
+                      "value": "[format('{0}/deployments', parameters('storageAccountName'))]",
+                      "authentication": {
+                        "type": "SystemAssignedIdentity"
+                      }
+                    }
+                  },
+                  "scaleAndConcurrency": {
+                    "alwaysReady": [
+                      {
+                        "name": "http",
+                        "instanceCount": 1
+                      }
+                    ]
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites/config",
+              "apiVersion": "2023-12-01",
+              "name": "[format('{0}/{1}', variables('appName'), 'authsettingsV2')]",
+              "properties": {
+                "platform": {
+                  "enabled": true
+                },
+                "globalValidation": {
+                  "requireAuthentication": true,
+                  "unauthenticatedClientAction": "AllowAnonymous"
+                },
+                "identityProviders": {
+                  "azureActiveDirectory": {
+                    "enabled": true,
+                    "registration": {
+                      "openIdIssuer": "[format('https://login.microsoftonline.com/{0}/v2.0', parameters('entraTenantId'))]",
+                      "clientId": "00000000-0000-0000-0000-000000000000"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "functionAppName": {
+              "type": "string",
+              "value": "[variables('appName')]"
+            },
+            "defaultHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', variables('appName')), '2023-12-01').defaultHostName]"
+            },
+            "principalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', variables('appName')), '2023-12-01', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'servicebus')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "logicapps",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "mailProvider": {
+            "value": "[parameters('mailProvider')]"
+          },
+          "requireManagerApproval": {
+            "value": "[parameters('requireManagerApproval')]"
+          },
+          "serviceBusConnectionString": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'servicebus'), '2025-04-01').outputs.connectionString.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "6455515635266562536"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource name prefix"
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region"
+              }
+            },
+            "mailProvider": {
+              "type": "string",
+              "metadata": {
+                "description": "Mail provider"
+              }
+            },
+            "requireManagerApproval": {
+              "type": "bool",
+              "metadata": {
+                "description": "Require manager approval"
+              }
+            },
+            "serviceBusConnectionString": {
+              "type": "securestring"
+            }
+          },
+          "variables": {
+            "laName": "[format('{0}-approval-la', parameters('namePrefix'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Logic/workflows",
+              "apiVersion": "2019-05-01",
+              "name": "[variables('laName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "definition": {
+                  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                  "contentVersion": "1.0.0.0",
+                  "parameters": {
+                    "mailProvider": {
+                      "type": "String",
+                      "defaultValue": "[parameters('mailProvider')]"
+                    }
+                  },
+                  "triggers": {
+                    "When_message_in_queue": {
+                      "type": "ServiceBus",
+                      "inputs": {
+                        "queueName": "key-events",
+                        "connection": {
+                          "name": "@parameters('$connections')['servicebus']['connectionId']"
+                        }
+                      }
+                    }
+                  },
+                  "actions": {
+                    "Parse_message": {
+                      "type": "ParseJson",
+                      "inputs": {
+                        "content": "@triggerBody()",
+                        "schema": {
+                          "type": "object"
+                        }
+                      },
+                      "runAfter": {}
+                    },
+                    "Switch_event": {
+                      "type": "Switch",
+                      "expression": "@body('Parse_message')?['event']",
+                      "cases": {
+                        "key_pending": {
+                          "case": "key.pending",
+                          "actions": {
+                            "Send_notification": {
+                              "type": "Switch",
+                              "expression": "@parameters('mailProvider')",
+                              "cases": {
+                                "office365": {
+                                  "case": "office365",
+                                  "actions": {
+                                    "Send_O365": {
+                                      "type": "ApiConnection",
+                                      "inputs": {
+                                        "host": {
+                                          "connection": {
+                                            "name": "@parameters('$connections')['office365']['connectionId']"
+                                          }
+                                        },
+                                        "method": "post",
+                                        "path": "/v2/Mail",
+                                        "body": {
+                                          "To": "@body('Parse_message')?['uids']",
+                                          "Subject": "Verify your OpenPGP key",
+                                          "Body": "@body('Parse_message')?['claim_url']"
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "gmail": {
+                                  "case": "gmail",
+                                  "actions": {
+                                    "Send_Gmail": {
+                                      "type": "ApiConnection",
+                                      "inputs": {
+                                        "host": {
+                                          "connection": {
+                                            "name": "@parameters('$connections')['gmail']['connectionId']"
+                                          }
+                                        },
+                                        "method": "post",
+                                        "path": "/v2/Mail",
+                                        "body": {
+                                          "To": "@body('Parse_message')?['uids']",
+                                          "Subject": "Verify your OpenPGP key",
+                                          "Body": "@body('Parse_message')?['claim_url']"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "key_approved": {
+                          "case": "key.approved",
+                          "actions": {}
+                        }
+                      },
+                      "default": {
+                        "actions": {}
+                      },
+                      "runAfter": {
+                        "Parse_message": [
+                          "Succeeded"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "parameters": {
+                  "$connections": {
+                    "value": {}
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "logicAppName": {
+              "type": "string",
+              "value": "[variables('laName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'servicebus')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "frontdoor",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "storageAccountName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.storageAccountName.value]"
+          },
+          "functionHostName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'functions'), '2025-04-01').outputs.defaultHostName.value]"
+          },
+          "uploadRateLimitPerMinute": {
+            "value": 10
+          },
+          "v2UploadRateLimitPerMinute": {
+            "value": 5
+          },
+          "sendtokenRateLimitPerMinute": {
+            "value": 3
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "2078843020534199774"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource name prefix"
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage account name"
+              }
+            },
+            "functionHostName": {
+              "type": "string",
+              "metadata": {
+                "description": "Function app default hostname"
+              }
+            },
+            "uploadRateLimitPerMinute": {
+              "type": "int",
+              "defaultValue": 10,
+              "metadata": {
+                "description": "Max POST /pks/add requests per IP per minute"
+              }
+            },
+            "v2UploadRateLimitPerMinute": {
+              "type": "int",
+              "defaultValue": 5,
+              "metadata": {
+                "description": "Max POST /pks/v2 requests per IP per minute"
+              }
+            },
+            "sendtokenRateLimitPerMinute": {
+              "type": "int",
+              "defaultValue": 3,
+              "metadata": {
+                "description": "Max sendtoken requests per IP per minute"
+              }
+            },
+            "blockedCountryCodes": {
+              "type": "array",
+              "defaultValue": [],
+              "metadata": {
+                "description": "Optional ISO country codes to block (e.g. CN, RU)"
+              }
+            }
+          },
+          "variables": {
+            "fdProfile": "[format('{0}-fd', parameters('namePrefix'))]",
+            "wafPolicyName": "[format('{0}waf', parameters('namePrefix'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Cdn/profiles",
+              "apiVersion": "2023-05-01",
+              "name": "[variables('fdProfile')]",
+              "location": "global",
+              "sku": {
+                "name": "Standard_AzureFrontDoor"
+              }
+            },
+            {
+              "type": "Microsoft.Network/FrontDoorWebApplicationFirewallPolicies",
+              "apiVersion": "2022-05-01",
+              "name": "[variables('wafPolicyName')]",
+              "location": "global",
+              "sku": {
+                "name": "Standard_AzureFrontDoor"
+              },
+              "properties": {
+                "policySettings": {
+                  "enabledState": "Enabled",
+                  "mode": "Prevention"
+                },
+                "customRules": {
+                  "rules": [
+                    {
+                      "name": "UploadRateLimit",
+                      "enabledState": "Enabled",
+                      "priority": 100,
+                      "ruleType": "RateLimitRule",
+                      "rateLimitDurationInMinutes": 1,
+                      "rateLimitThreshold": "[parameters('uploadRateLimitPerMinute')]",
+                      "matchConditions": [
+                        {
+                          "matchVariable": "RequestUri",
+                          "operator": "Contains",
+                          "negateCondition": false,
+                          "matchValue": [
+                            "/pks/add"
+                          ]
+                        },
+                        {
+                          "matchVariable": "RequestMethod",
+                          "operator": "Equal",
+                          "negateCondition": false,
+                          "matchValue": [
+                            "POST"
+                          ]
+                        }
+                      ],
+                      "action": "Block"
+                    },
+                    {
+                      "name": "V2UploadRateLimit",
+                      "enabledState": "Enabled",
+                      "priority": 110,
+                      "ruleType": "RateLimitRule",
+                      "rateLimitDurationInMinutes": 1,
+                      "rateLimitThreshold": "[parameters('v2UploadRateLimitPerMinute')]",
+                      "matchConditions": [
+                        {
+                          "matchVariable": "RequestUri",
+                          "operator": "Contains",
+                          "negateCondition": false,
+                          "matchValue": [
+                            "/pks/v2/"
+                          ]
+                        },
+                        {
+                          "matchVariable": "RequestMethod",
+                          "operator": "Equal",
+                          "negateCondition": false,
+                          "matchValue": [
+                            "POST",
+                            "PUT"
+                          ]
+                        }
+                      ],
+                      "action": "Block"
+                    },
+                    {
+                      "name": "SendtokenRateLimit",
+                      "enabledState": "Enabled",
+                      "priority": 120,
+                      "ruleType": "RateLimitRule",
+                      "rateLimitDurationInMinutes": 1,
+                      "rateLimitThreshold": "[parameters('sendtokenRateLimitPerMinute')]",
+                      "matchConditions": [
+                        {
+                          "matchVariable": "RequestUri",
+                          "operator": "Contains",
+                          "negateCondition": false,
+                          "matchValue": [
+                            "/pks/v2/sendtoken"
+                          ]
+                        }
+                      ],
+                      "action": "Block"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/securityPolicies",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', variables('fdProfile'), 'basilisk-waf')]",
+              "properties": {
+                "parameters": {
+                  "type": "WebApplicationFirewall",
+                  "wafPolicy": {
+                    "id": "[resourceId('Microsoft.Network/FrontDoorWebApplicationFirewallPolicies', variables('wafPolicyName'))]"
+                  },
+                  "associations": [
+                    {
+                      "domains": [
+                        {
+                          "id": "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')))]"
+                        }
+                      ],
+                      "patternsToMatch": [
+                        "/*"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')))]",
+                "[resourceId('Microsoft.Cdn/profiles', variables('fdProfile'))]",
+                "[resourceId('Microsoft.Network/FrontDoorWebApplicationFirewallPolicies', variables('wafPolicyName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/afdEndpoints",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')))]",
+              "location": "global",
+              "properties": {
+                "enabledState": "Enabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles', variables('fdProfile'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/originGroups",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', variables('fdProfile'), 'basilisk-origins')]",
+              "properties": {
+                "loadBalancingSettings": {
+                  "sampleSize": 4,
+                  "successfulSamplesRequired": 3
+                },
+                "healthProbeSettings": {
+                  "probePath": "/health",
+                  "probeRequestType": "GET",
+                  "probeProtocol": "Https",
+                  "probeIntervalInSeconds": 120
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles', variables('fdProfile'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/originGroups/origins",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', variables('fdProfile'), 'basilisk-origins', 'function-origin')]",
+              "properties": {
+                "hostName": "[parameters('functionHostName')]",
+                "httpPort": 80,
+                "httpsPort": 443,
+                "originHostHeader": "[parameters('functionHostName')]",
+                "priority": 1,
+                "weight": 1000,
+                "enabledState": "Enabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-origins')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/afdEndpoints/routes",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')), 'default-route')]",
+              "properties": {
+                "originGroup": {
+                  "id": "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-origins')]"
+                },
+                "supportedProtocols": [
+                  "Http",
+                  "Https"
+                ],
+                "patternsToMatch": [
+                  "/*"
+                ],
+                "forwardingProtocol": "HttpsOnly",
+                "linkToDefaultDomain": "Enabled",
+                "httpsRedirect": "Enabled",
+                "cacheConfiguration": {
+                  "queryStringCachingBehavior": "IgnoreQueryString",
+                  "compressionSettings": {
+                    "isCompressionEnabled": true,
+                    "contentTypesToCompress": [
+                      "application/pgp-keys"
+                    ]
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')))]",
+                "[resourceId('Microsoft.Cdn/profiles/originGroups/origins', variables('fdProfile'), 'basilisk-origins', 'function-origin')]",
+                "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-origins')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "hostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Cdn/profiles/afdEndpoints', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix'))), '2023-05-01').hostName]"
+            },
+            "wafPolicyId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/FrontDoorWebApplicationFirewallPolicies', variables('wafPolicyName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'functions')]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "rbac",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "storageAccountName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.storageAccountName.value]"
+          },
+          "functionPrincipalId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'functions'), '2025-04-01').outputs.principalId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "15130736517245140673"
+            }
+          },
+          "parameters": {
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage account name"
+              }
+            },
+            "functionPrincipalId": {
+              "type": "string",
+              "metadata": {
+                "description": "Function app managed identity principal ID"
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('functionPrincipalId'), 'blob-contributor')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5ec-2d40-4b64-8706-7c349285e4dd')]",
+                "principalId": "[parameters('functionPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('functionPrincipalId'), 'table-contributor')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')]",
+                "principalId": "[parameters('functionPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'functions')]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage')]"
+      ]
+    }
+  ],
+  "outputs": {
+    "resourceGroupName": {
+      "type": "string",
+      "value": "[variables('rgName')]"
+    },
+    "functionAppName": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'functions'), '2025-04-01').outputs.functionAppName.value]"
+    },
+    "frontDoorHostName": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'frontdoor'), '2025-04-01').outputs.hostName.value]"
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Compute.MultiVm",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "basics": [
+      {
+        "name": "namePrefix",
+        "type": "Microsoft.Common.TextBox",
+        "label": "Name prefix",
+        "defaultValue": "basilisk",
+        "constraints": {
+          "required": true,
+          "regex": "^[a-z][a-z0-9-]{2,20}$"
+        }
+      },
+      {
+        "name": "location",
+        "type": "Microsoft.Common.TextBox",
+        "label": "Azure region",
+        "defaultValue": "eastus"
+      },
+      {
+        "name": "entraTenantId",
+        "type": "Microsoft.Common.TextBox",
+        "label": "Entra tenant ID",
+        "constraints": { "required": true }
+      },
+      {
+        "name": "mailProvider",
+        "type": "Microsoft.Common.OptionsGroup",
+        "label": "Mail provider",
+        "defaultValue": "office365",
+        "constraints": {
+          "allowedValues": [
+            { "label": "Microsoft 365", "value": "office365" },
+            { "label": "Gmail / Google Workspace", "value": "gmail" }
+          ]
+        }
+      },
+      {
+        "name": "requireManagerApproval",
+        "type": "Microsoft.Common.CheckBox",
+        "label": "Require manager approval (Office 365 only)",
+        "defaultValue": false,
+        "visible": "[equals(steps('basics').mailProvider, 'office365')]"
+      }
+    ],
+    "steps": [],
+    "outputs": {
+      "namePrefix": "[basics('namePrefix')]",
+      "location": "[basics('location')]",
+      "entraTenantId": "[basics('entraTenantId')]",
+      "mailProvider": "[basics('mailProvider')]",
+      "requireManagerApproval": "[basics('requireManagerApproval')]"
+    }
+  }
+}
