@@ -296,7 +296,7 @@ resource fnOriginGroup 'Microsoft.Cdn/profiles/originGroups@2023-05-01' = {
 
   parent: frontDoor
 
-  name: 'basilisk-function-origins'
+  name: 'basilisk-origins'
 
   properties: {
 
@@ -470,7 +470,7 @@ resource staticRoute 'Microsoft.Cdn/profiles/afdEndpoints/routes@2023-05-01' = {
 
     supportedProtocols: ['Http', 'Https']
 
-    patternsToMatch: ['/*']
+    patternsToMatch: ['/', '/*']
 
     forwardingProtocol: 'HttpsOnly'
 

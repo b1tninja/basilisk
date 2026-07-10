@@ -236,7 +236,10 @@ resource "azurerm_cdn_frontdoor_route" "static" {
     content_types_to_compress     = ["text/html", "text/css", "application/javascript"]
   }
 
-  depends_on = [azurerm_cdn_frontdoor_origin.static]
+  depends_on = [
+    azurerm_cdn_frontdoor_origin.static,
+    azurerm_storage_account_static_website.portal,
+  ]
 }
 
 resource "azurerm_cdn_frontdoor_security_policy" "basilisk" {

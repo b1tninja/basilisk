@@ -19,11 +19,12 @@ resource "azurerm_storage_account" "basilisk" {
   }
 
   tags = var.tags
+}
 
-  static_website {
-    index_document     = "index.html"
-    error_404_document = "index.html"
-  }
+resource "azurerm_storage_account_static_website" "portal" {
+  storage_account_id = azurerm_storage_account.basilisk.id
+  index_document     = "index.html"
+  error_404_document = "index.html"
 }
 
 resource "azurerm_storage_container" "certs" {
@@ -31,7 +32,10 @@ resource "azurerm_storage_container" "certs" {
   storage_account_id    = azurerm_storage_account.basilisk.id
   container_access_type = "private"
 
-  depends_on = [azurerm_storage_account.basilisk]
+  depends_on = [
+    azurerm_storage_account.basilisk,
+    azurerm_storage_account_static_website.portal,
+  ]
 }
 
 resource "azurerm_storage_container" "deployments" {
@@ -39,7 +43,10 @@ resource "azurerm_storage_container" "deployments" {
   storage_account_id    = azurerm_storage_account.basilisk.id
   container_access_type = "private"
 
-  depends_on = [azurerm_storage_account.basilisk]
+  depends_on = [
+    azurerm_storage_account.basilisk,
+    azurerm_storage_account_static_website.portal,
+  ]
 }
 
 resource "azurerm_storage_container_immutability_policy" "certs" {
