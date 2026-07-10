@@ -4,7 +4,7 @@ targetScope = 'subscription'
 param namePrefix string = 'basilisk'
 
 @description('Azure region')
-param location string = resourceGroup().location
+param location string = 'eastus'
 
 @description('Entra tenant ID')
 param entraTenantId string

@@ -54,7 +54,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
 
 
 
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2025-08-01' = {
 
   parent: storageAccount
 
@@ -84,7 +84,7 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01'
 
       indexDocument: 'index.html'
 
-      error404Document: 'index.html'
+      errorDocument404Path: 'index.html'
 
     }
 
@@ -94,7 +94,7 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01'
 
 
 
-resource certsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+resource certsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2025-08-01' = {
 
   parent: blobService
 
@@ -126,7 +126,7 @@ resource tableService 'Microsoft.Storage/storageAccounts/tableServices@2023-05-0
 
 
 
-resource wormPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-05-01' = if (enableWormImmutability) {
+resource wormPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2025-08-01' = if (enableWormImmutability) {
 
   parent: certsContainer
 
