@@ -1,4 +1,14 @@
-# GitHub Actions secrets
+# GitHub Actions
+
+Workflows run on `ubuntu-latest` (GitHub-hosted runners) using Node 24–compatible actions:
+
+| Action | Version |
+|--------|---------|
+| `actions/checkout` | v5 |
+| `actions/setup-python` | v6 (pip cache enabled) |
+| `azure/login` | v2 |
+
+## Secrets
 
 Configure these under **Settings → Secrets and variables → Actions** for the repository.
 
