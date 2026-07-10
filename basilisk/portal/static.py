@@ -8,7 +8,6 @@ STATIC_ROOT = Path(__file__).resolve().parents[2] / "web" / "static"
 
 # Clean URL -> static HTML file (served locally; deploy uploads blobs without .html suffix)
 _STATIC_PAGES = {
-    "search": "search.html",
     "my-keys": "my-keys.html",
     "key": "key.html",
 }
@@ -17,6 +16,10 @@ _STATIC_PAGES = {
 def register_static_portal(app: Flask) -> None:
     @app.get("/")
     def index() -> Response:
+        return send_from_directory(STATIC_ROOT, "index.html")
+
+    @app.get("/search")
+    def search_alias() -> Response:
         return send_from_directory(STATIC_ROOT, "index.html")
 
     @app.get("/<page>")

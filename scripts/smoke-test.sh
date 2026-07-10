@@ -3,5 +3,5 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 curl -fsS "$BASE_URL/health" >/dev/null
 curl -fsS "$BASE_URL/pks/lookup?op=stats" >/dev/null
-curl -fsS "$BASE_URL/search" | grep -q '/api/v1/search'
+curl -fsS "$BASE_URL/" | grep -q '/api/v1/search'
 echo "Smoke test OK: $BASE_URL"

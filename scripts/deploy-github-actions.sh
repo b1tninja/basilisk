@@ -54,11 +54,13 @@ resolve_deploy_targets
 
 echo "Publishing function package to $FN ..."
 ZIP="$(bash "${REPO_ROOT}/scripts/package-function.sh")"
-az functionapp deploy \
+# Flex Consumption uses One Deploy; config-zip with remote build is the supported CLI path.
+az functionapp deployment source config-zip \
   --resource-group "$RG" \
   --name "$FN" \
-  --src-path "$ZIP" \
-  --type zip \
+  --src "$ZIP" \
+  --build-remote true \
+  --timeout 600 \
   --output none
 
 if [[ -n "${STORAGE_ACCOUNT:-}" ]]; then

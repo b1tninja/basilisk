@@ -9,7 +9,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT/css" "$OUT/js" "$OUT/assets"
 
 cp "${REPO_ROOT}/web/static/index.html" "$OUT/index.html"
-cp "${REPO_ROOT}/web/static/search.html" "$OUT/search"
+cp "${REPO_ROOT}/web/static/index.html" "$OUT/search"
 cp "${REPO_ROOT}/web/static/my-keys.html" "$OUT/my-keys"
 cp "${REPO_ROOT}/web/static/key.html" "$OUT/key"
 cp "${REPO_ROOT}/web/static/css/site.css" "$OUT/css/site.css"

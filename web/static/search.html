@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Search — Basilisk</title>
+  <title>Basilisk — Search keys</title>
   <link rel="stylesheet" href="/css/site.css">
 </head>
 <body>
   <nav>
-    <a href="/search">Search</a>
+    <a href="/">Search</a>
     <a href="/my-keys">My keys</a>
     <a href="/pks/lookup?op=stats">Stats</a>
   </nav>
@@ -46,7 +46,7 @@
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const q = input.value.trim();
-      history.replaceState(null, "", q ? `/search?q=${encodeURIComponent(q)}` : "/search");
+      history.replaceState(null, "", q ? `/?q=${encodeURIComponent(q)}` : "/");
       runSearch(q);
     });
 

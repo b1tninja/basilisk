@@ -2,10 +2,59 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=/search">
-  <title>Basilisk Keyserver</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Basilisk — Search keys</title>
+  <link rel="stylesheet" href="/css/site.css">
 </head>
 <body>
-  <p><a href="/search">Continue to search</a></p>
+  <nav>
+    <a href="/">Search</a>
+    <a href="/my-keys">My keys</a>
+    <a href="/pks/lookup?op=stats">Stats</a>
+  </nav>
+  <h1>Search keys</h1>
+  <p class="muted">Look up approved OpenPGP keys by email, fingerprint, or key ID.</p>
+  <form id="search-form">
+    <input type="search" id="q" name="q" placeholder="user@example.com or 0x…" autofocus>
+    <button type="submit">Search</button>
+  </form>
+  <p id="error" class="error hidden"></p>
+  <div id="results"></div>
+  <script src="/js/portal.js"></script>
+  <script>
+    const form = document.getElementById("search-form");
+    const input = document.getElementById("q");
+    const results = document.getElementById("results");
+    const error = document.getElementById("error");
+
+    async function runSearch(query) {
+      error.classList.add("hidden");
+      results.innerHTML = "";
+      if (!query.trim()) return;
+      try {
+        const payload = await fetchJson(`/api/v1/search?q=${encodeURIComponent(query.trim())}`);
+        if (!payload.results.length) {
+          results.innerHTML = "<p class='muted'>No matching approved keys found.</p>";
+          return;
+        }
+        results.innerHTML = renderKeysTable(payload.results);
+      } catch (err) {
+        showError(error, err.message);
+      }
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const q = input.value.trim();
+      history.replaceState(null, "", q ? `/?q=${encodeURIComponent(q)}` : "/");
+      runSearch(q);
+    });
+
+    const initial = queryParam("q");
+    if (initial) {
+      input.value = initial;
+      runSearch(initial);
+    }
+  </script>
 </body>
 </html>

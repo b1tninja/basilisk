@@ -96,14 +96,14 @@ def test_static_search_page():
     from basilisk.serve import create_app
 
     client = create_app().test_client()
-    r = client.get("/search")
-    assert r.status_code == 200
-    body = r.get_data(as_text=True)
-    assert "/api/v1/search" in body
+    for path in ("/", "/search"):
+        r = client.get(path)
+        assert r.status_code == 200
+        assert "/api/v1/search" in r.get_data(as_text=True)
 
     static_root = Path(__file__).resolve().parents[2] / "web" / "static"
-    assert (static_root / "search.html").is_file()
-    assert "/api/v1/search" in (static_root / "search.html").read_text(encoding="utf-8")
+    assert (static_root / "index.html").is_file()
+    assert "/api/v1/search" in (static_root / "index.html").read_text(encoding="utf-8")
 
 
 @pytest.mark.integration
