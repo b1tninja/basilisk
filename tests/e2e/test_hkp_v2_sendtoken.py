@@ -4,7 +4,7 @@ import pytest
 
 @pytest.mark.e2e
 def test_hkp_v2_sendtoken_bearer(basilisk_url, sample_armored):
-    email = "sendtoken@basilisk.e2e"
+    email = "test@basilisk.local"
     with httpx.Client(base_url=basilisk_url, timeout=30) as client:
         r = client.post("/pks/v2/sendtoken", json={"email": email})
         assert r.status_code == 200

@@ -38,6 +38,7 @@ class Settings:
     blocked_email_domains: str
     upload_rate_limit_sec: float
     upload_fingerprint_rate_limit_sec: float
+    lookup_rate_limit_sec: float
     sendtoken_rate_limit_sec: float
     require_proof: bool
     proof_difficulty: int
@@ -68,6 +69,7 @@ class Settings:
             upload_fingerprint_rate_limit_sec=float(
                 os.environ.get("BASILISK_UPLOAD_FPR_RATE_LIMIT_SEC", "60")
             ),
+            lookup_rate_limit_sec=float(os.environ.get("BASILISK_LOOKUP_RATE_LIMIT_SEC", "0")),
             sendtoken_rate_limit_sec=float(os.environ.get("BASILISK_SENDTOKEN_RATE_LIMIT_SEC", "3600")),
             require_proof=_env_bool("BASILISK_REQUIRE_PROOF"),
             proof_difficulty=int(os.environ.get("BASILISK_PROOF_DIFFICULTY", "0")),

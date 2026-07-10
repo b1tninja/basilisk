@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import defaultdict
 
 
 class RateLimitError(Exception):
@@ -51,18 +50,43 @@ def client_ip(headers: dict[str, str], remote_addr: str | None = None) -> str:
     return remote_addr or "unknown"
 
 
+def _check_interval(limiter: RateLimiter, key: str, interval_sec: float, message: str) -> None:
+    if interval_sec <= 0:
+        return
+    if not limiter.allow(key, interval_sec):
+        raise RateLimitError(message)
+
+
+def check_lookup_rate(ip: str) -> None:
+    from basilisk.config import get_settings
+
+    settings = get_settings()
+    _check_interval(
+        get_limiter(),
+        f"lookup:ip:{ip}",
+        settings.lookup_rate_limit_sec,
+        "Lookup rate limit exceeded for this IP",
+    )
+
+
 def check_upload_rate(ip: str, fingerprint: str | None = None) -> None:
     from basilisk.config import get_settings
 
     settings = get_settings()
     limiter = get_limiter()
-    if not limiter.allow(f"upload:ip:{ip}", settings.upload_rate_limit_sec):
-        raise RateLimitError("Upload rate limit exceeded for this IP")
-    if fingerprint and not limiter.allow(
-        f"upload:fpr:{fingerprint.upper()}",
-        settings.upload_fingerprint_rate_limit_sec,
-    ):
-        raise RateLimitError("Upload rate limit exceeded for this key")
+    _check_interval(
+        limiter,
+        f"upload:ip:{ip}",
+        settings.upload_rate_limit_sec,
+        "Upload rate limit exceeded for this IP",
+    )
+    if fingerprint:
+        _check_interval(
+            limiter,
+            f"upload:fpr:{fingerprint.upper()}",
+            settings.upload_fingerprint_rate_limit_sec,
+            "Upload rate limit exceeded for this key",
+        )
 
 
 def check_sendtoken_rate(ip: str, email: str) -> None:
@@ -70,7 +94,10 @@ def check_sendtoken_rate(ip: str, email: str) -> None:
 
     settings = get_settings()
     limiter = get_limiter()
-    if not limiter.allow(f"sendtoken:ip:{ip}", settings.upload_rate_limit_sec):
-        raise RateLimitError("Rate limit exceeded")
-    if not limiter.allow(f"sendtoken:email:{email.lower()}", settings.sendtoken_rate_limit_sec):
-        raise RateLimitError("Sendtoken rate limit exceeded for this email")
+    _check_interval(limiter, f"sendtoken:ip:{ip}", settings.upload_rate_limit_sec, "Rate limit exceeded")
+    _check_interval(
+        limiter,
+        f"sendtoken:email:{email.lower()}",
+        settings.sendtoken_rate_limit_sec,
+        "Sendtoken rate limit exceeded for this email",
+    )

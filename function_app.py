@@ -19,7 +19,7 @@ from basilisk.hkp.handlers import (
 from basilisk.observability.metrics import inc
 from basilisk.openpgp.approve import approve_cert
 from basilisk.openpgp.errors import IngestError
-from basilisk.security.rate_limit import RateLimitError, check_upload_rate, client_ip
+from basilisk.security.rate_limit import RateLimitError, check_lookup_rate, check_upload_rate, client_ip
 from basilisk.serve import create_app
 
 logger = logging.getLogger(__name__)
@@ -51,12 +51,19 @@ def hkp_lookup(req: func.HttpRequest) -> func.HttpResponse:
     search = req.params.get("search", "")
     if op == "stats":
         r = lookup_stats()
-    elif op == "index":
-        r = lookup_index(search)
-    elif op == "get":
-        r = lookup_get(search, if_none_match=req.headers.get("If-None-Match"))
     else:
-        return func.HttpResponse("Unsupported operation", status_code=501)
+        ip = client_ip(dict(req.headers))
+        try:
+            check_lookup_rate(ip)
+        except RateLimitError as exc:
+            inc("rate_limited")
+            return func.HttpResponse(str(exc), status_code=exc.status)
+        if op == "index":
+            r = lookup_index(search)
+        elif op == "get":
+            r = lookup_get(search, if_none_match=req.headers.get("If-None-Match"))
+        else:
+            return func.HttpResponse("Unsupported operation", status_code=501)
     body = r.body if isinstance(r.body, bytes) else str(r.body).encode()
     return func.HttpResponse(body=body, status_code=r.status, headers=r.headers, mimetype=r.mimetype)
 

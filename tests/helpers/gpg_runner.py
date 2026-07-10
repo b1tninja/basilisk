@@ -25,12 +25,26 @@ class GpgRunner:
         return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
     def _exec(self, homedir: str, *args: str) -> subprocess.CompletedProcess:
-        return self._compose_exec("gpg", "--homedir", homedir, *args)
+        return self._compose_exec(
+            "gpg",
+            "--batch",
+            "--yes",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase",
+            "",
+            "--homedir",
+            homedir,
+            *args,
+        )
 
     def _ensure_homedir(self, homedir: str) -> None:
         result = self._compose_exec("mkdir", "-p", homedir)
         if result.returncode != 0:
             raise RuntimeError(f"failed to create gpg homedir {homedir}: {result.stderr}")
+        chmod = self._compose_exec("chmod", "700", homedir)
+        if chmod.returncode != 0:
+            raise RuntimeError(f"failed to chmod gpg homedir {homedir}: {chmod.stderr}")
 
     @staticmethod
     def _parse_fingerprint(colon_output: str) -> str:
@@ -48,8 +62,6 @@ class GpgRunner:
         self._ensure_homedir(homedir)
         result = self._exec(
             homedir,
-            "--batch",
-            "--yes",
             "--quick-generate-key",
             email,
             "rsa2048",

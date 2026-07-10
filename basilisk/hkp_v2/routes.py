@@ -10,8 +10,24 @@ from basilisk.observability.metrics import inc
 from basilisk.openpgp.errors import IngestError
 from basilisk.openpgp.ingest import normalize_fingerprint
 from basilisk.security.proof import ProofError, issue_challenge, verify_proof
-from basilisk.security.rate_limit import RateLimitError, check_sendtoken_rate, check_upload_rate, client_ip
+from basilisk.security.rate_limit import (
+    RateLimitError,
+    check_lookup_rate,
+    check_sendtoken_rate,
+    check_upload_rate,
+    client_ip,
+)
 from basilisk.serve import _to_flask
+
+
+def _lookup_with_rate_limit(search: str) -> Response:
+    ip = client_ip(dict(request.headers), request.remote_addr)
+    try:
+        check_lookup_rate(ip)
+        return _to_flask(lookup_get(search))
+    except RateLimitError as exc:
+        inc("rate_limited")
+        return Response(str(exc), status=exc.status)
 
 
 def register_v2(app: Flask) -> None:
@@ -67,19 +83,19 @@ def register_v2(app: Flask) -> None:
 
     @app.get("/pks/v2/canonical/<path:identity>")
     def v2_canonical_get(identity: str) -> Response:
-        return _to_flask(lookup_get(identity))
+        return _lookup_with_rate_limit(identity)
 
     @app.get("/pks/v2/certs/by-fingerprint/<fingerprint>")
     def v2_by_fpr(fingerprint: str) -> Response:
-        return _to_flask(lookup_get(f"0x{normalize_fingerprint(fingerprint)}"))
+        return _lookup_with_rate_limit(f"0x{normalize_fingerprint(fingerprint)}")
 
     @app.get("/pks/v2/certs/by-keyid/<keyid>")
     def v2_by_kid(keyid: str) -> Response:
-        return _to_flask(lookup_get(f"0x{keyid.lower().removeprefix('0x')}"))
+        return _lookup_with_rate_limit(f"0x{keyid.lower().removeprefix('0x')}")
 
     @app.get("/pks/v2/certs/by-identity/<path:email>")
     def v2_by_email(email: str) -> Response:
-        return _to_flask(lookup_get(email))
+        return _lookup_with_rate_limit(email)
 
     @app.post("/pks/v2/certs")
     def v2_certs_post() -> Response:

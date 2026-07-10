@@ -197,7 +197,11 @@ Wait for the resource group delete to finish (`az group show -n basilisk-dev-rg`
 
 | `BASILISK_BLOCKED_EMAIL_DOMAINS` | (empty) | Comma-separated domain blocklist |
 
-| `BASILISK_UPLOAD_RATE_LIMIT_SEC` | 60 | Min seconds between uploads per IP |
+| `BASILISK_UPLOAD_RATE_LIMIT_SEC` | 60 | Min seconds between key uploads (`POST /pks/add`, v2 POST/PUT) per IP |
+
+| `BASILISK_UPLOAD_FPR_RATE_LIMIT_SEC` | 60 | Min seconds between uploads of the same fingerprint |
+
+| `BASILISK_LOOKUP_RATE_LIMIT_SEC` | 0 | Min seconds between lookups (`GET /pks/lookup`, v2 cert GET) per IP; `0` disables |
 
 | `BASILISK_SENDTOKEN_RATE_LIMIT_SEC` | 3600 | Min seconds between sendtoken per email |
 

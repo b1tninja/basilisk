@@ -17,6 +17,9 @@ services:
       BASILISK_BASE_URL: http://localhost:8080
       BASILISK_DEV_APPROVE: "1"
       BASILISK_TOKEN_SECRET: ${BASILISK_TOKEN_SECRET:-ci-test-secret}
+      BASILISK_UPLOAD_RATE_LIMIT_SEC: "0"
+      BASILISK_UPLOAD_FPR_RATE_LIMIT_SEC: "0"
+      BASILISK_SENDTOKEN_RATE_LIMIT_SEC: "0"
     ports:
       - "8080:8080"
     depends_on:
