@@ -23,60 +23,70 @@ fi
 
 STAGE="$(bash "${REPO_ROOT}/scripts/package-static.sh")"
 
+storage_args=(--account-name "$STORAGE_ACCOUNT")
+if [[ -n "${RESOURCE_GROUP:-}" ]]; then
+  key="$(az storage account keys list -g "$RESOURCE_GROUP" -n "$STORAGE_ACCOUNT" --query "[0].value" -o tsv)"
+  storage_args+=(--account-key "$key")
+  az storage blob service-properties update \
+    "${storage_args[@]}" \
+    --static-website \
+    --index-document index.html \
+    --404-document index.html \
+    --only-show-errors
+else
+  storage_args+=(--auth-mode login)
+fi
+
 echo "Uploading static site to ${STORAGE_ACCOUNT}/\$web ..."
 
 # HTML pages without extension
 for blob in search my-keys key; do
   az storage blob upload \
-    --account-name "$STORAGE_ACCOUNT" \
+    "${storage_args[@]}" \
     --container-name '$web' \
     --name "$blob" \
     --file "${STAGE}/${blob}" \
     --content-type "text/html; charset=utf-8" \
     --overwrite \
-    --auth-mode login \
     --only-show-errors
 done
 
-az storage blob upload-batch \
-  --account-name "$STORAGE_ACCOUNT" \
-  --destination '$web' \
-  --source "$STAGE" \
-  --pattern "index.html" \
+az storage blob upload \
+  "${storage_args[@]}" \
+  --container-name '$web' \
+  --name index.html \
+  --file "${STAGE}/index.html" \
   --content-type "text/html; charset=utf-8" \
   --overwrite \
-  --auth-mode login \
   --only-show-errors
 
-az storage blob upload-batch \
-  --account-name "$STORAGE_ACCOUNT" \
-  --destination '$web' \
-  --source "$STAGE" \
-  --pattern "css/*" \
+az storage blob upload \
+  "${storage_args[@]}" \
+  --container-name '$web' \
+  --name css/site.css \
+  --file "${STAGE}/css/site.css" \
   --content-type "text/css" \
   --overwrite \
-  --auth-mode login \
   --only-show-errors
 
-az storage blob upload-batch \
-  --account-name "$STORAGE_ACCOUNT" \
-  --destination '$web' \
-  --source "$STAGE" \
-  --pattern "js/*" \
+az storage blob upload \
+  "${storage_args[@]}" \
+  --container-name '$web' \
+  --name js/portal.js \
+  --file "${STAGE}/js/portal.js" \
   --content-type "application/javascript" \
   --overwrite \
-  --auth-mode login \
   --only-show-errors
 
 if [[ -d "${STAGE}/assets" ]] && [[ -n "$(ls -A "${STAGE}/assets" 2>/dev/null || true)" ]]; then
   az storage blob upload-batch \
-    --account-name "$STORAGE_ACCOUNT" \
+    "${storage_args[@]}" \
     --destination '$web' \
     --source "$STAGE/assets" \
     --destination-path "assets" \
     --overwrite \
-    --auth-mode login \
     --only-show-errors
 fi
 
-echo "Static site deployed to https://${STORAGE_ACCOUNT}.z.web.core.windows.net/"
+static_host="$(az storage account show -n "$STORAGE_ACCOUNT" ${RESOURCE_GROUP:+-g "$RESOURCE_GROUP"} --query primaryEndpoints.web -o tsv | sed 's#https://##;s#/$##')"
+echo "Static site deployed to https://${static_host}/"

@@ -91,6 +91,7 @@ fi
 RG="$(terraform output -raw resource_group_name)"
 FN="$(terraform output -raw function_app_name)"
 FD_URL="$(terraform output -raw front_door_url)"
+STORAGE="$(terraform output -raw storage_account_name 2>/dev/null || true)"
 
 az functionapp config appsettings set \
   --resource-group "$RG" \
@@ -98,14 +99,23 @@ az functionapp config appsettings set \
   --settings "BASILISK_BASE_URL=$FD_URL" \
   --output none
 
+if [[ -n "$STORAGE" ]] && [[ -f "${REPO_ROOT}/scripts/deploy-static.sh" ]]; then
+  echo "Uploading static portal to $STORAGE ..."
+  STORAGE_ACCOUNT="$STORAGE" RESOURCE_GROUP="$RG" bash "${REPO_ROOT}/scripts/deploy-static.sh"
+fi
+
 echo ""
 echo "Terraform deployment complete."
-echo "  Resource group:  $RG"
-echo "  Function app:    $FN"
-echo "  Front Door URL:  $FD_URL"
+echo "  Resource group:     $RG"
+echo "  Function app:       $FN"
+echo "  Front Door URL:     $FD_URL"
+if [[ -n "$STORAGE" ]]; then
+  STATIC_URL="$(terraform output -raw static_website_url 2>/dev/null || true)"
+  echo "  Static website URL: ${STATIC_URL:-https://${STORAGE}.z.web.core.windows.net}"
+fi
 echo ""
 echo "Next steps:"
 echo "  1. Authorize Logic App mail connector ($MAIL_PROVIDER) in Azure Portal"
-echo "  2. Publish function code: az functionapp deploy -g $RG -n $FN --src-path <zip> --type zip"
-echo "  3. Smoke test: curl $FD_URL/health"
+echo "  2. Publish function code (if not already): bash scripts/deploy-github-actions.sh with SKIP_TERRAFORM=true"
+echo "  3. Smoke test: curl $FD_URL/health && curl $FD_URL/"
 echo "  4. Export GitHub secrets: bash scripts/export-github-secrets.sh"

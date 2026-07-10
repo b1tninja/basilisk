@@ -37,7 +37,9 @@ NAME_PREFIX="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_NAME_PREFIX')"
 RG="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_RESOURCE_GROUP')"
 FN="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_FUNCTION_APP_NAME')"
 FD_URL="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_FRONT_DOOR_URL')"
+STORAGE="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_STORAGE_ACCOUNT // empty')"
 SP_CMD="$(echo "$SETUP_JSON" | jq -r '.azure_credentials_command')"
+STATIC_URL="$(echo "$SETUP_JSON" | jq -r '.static_website_url // empty')"
 
 cat <<EOF
 # GitHub Actions secrets for Basilisk
@@ -54,6 +56,7 @@ Optional (workflow can read from Terraform state instead):
   BASILISK_RESOURCE_GROUP  $RG
   BASILISK_FUNCTION_APP_NAME  $FN
   BASILISK_FRONT_DOOR_URL  $FD_URL
+  BASILISK_STORAGE_ACCOUNT $STORAGE
 
 --- BASILISK_TOKEN_SECRET ---
 $TOKEN
@@ -67,6 +70,8 @@ gh secret set BASILISK_TOKEN_SECRET --body "$TOKEN"
 After AZURE_CREDENTIALS is set, trigger deploy from Actions → deploy workflow.
 
 Deployed endpoints:
-  Front Door:  $FD_URL
-  Function:    $FN (resource group: $RG)
+  Front Door:       $FD_URL
+  Static website:   ${STATIC_URL:-(run terraform output static_website_url)}
+  Function:         $FN (resource group: $RG)
+  Storage account:  $STORAGE
 EOF

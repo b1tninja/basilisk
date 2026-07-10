@@ -48,6 +48,10 @@ output "static_website_host" {
   value = azurerm_storage_account.basilisk.primary_web_host
 }
 
+output "static_website_url" {
+  value = "https://${azurerm_storage_account.basilisk.primary_web_host}"
+}
+
 output "waf_policy_id" {
   value = azurerm_cdn_frontdoor_firewall_policy.basilisk.id
 }

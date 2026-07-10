@@ -82,7 +82,7 @@ resource "azurerm_cdn_frontdoor_endpoint" "basilisk" {
 }
 
 resource "azurerm_cdn_frontdoor_origin_group" "function" {
-  name                     = "basilisk-function-origins"
+  name                     = "basilisk-origins"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
 
   load_balancing {
@@ -225,7 +225,7 @@ resource "azurerm_cdn_frontdoor_route" "static" {
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
   cdn_frontdoor_rule_set_ids    = [azurerm_cdn_frontdoor_rule_set.static_cache.id]
   supported_protocols           = ["Http", "Https"]
-  patterns_to_match             = ["/*"]
+  patterns_to_match             = ["/", "/*"]
   forwarding_protocol           = "HttpsOnly"
   link_to_default_domain        = true
   https_redirect_enabled        = true

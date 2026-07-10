@@ -26,6 +26,14 @@ output "storage_account_name" {
   value = module.basilisk.storage_account_name
 }
 
+output "static_website_host" {
+  value = module.basilisk.static_website_host
+}
+
+output "static_website_url" {
+  value = module.basilisk.static_website_url
+}
+
 output "service_bus_namespace" {
   value = module.basilisk.service_bus_namespace
 }
@@ -49,6 +57,7 @@ output "github_actions_secrets" {
     BASILISK_RESOURCE_GROUP    = module.basilisk.resource_group_name
     BASILISK_FUNCTION_APP_NAME = module.basilisk.function_app_name
     BASILISK_FRONT_DOOR_URL    = module.basilisk.front_door_url
+    BASILISK_STORAGE_ACCOUNT   = module.basilisk.storage_account_name
   }
 }
 
@@ -66,6 +75,7 @@ output "github_actions_setup" {
       "BASILISK_RESOURCE_GROUP",
       "BASILISK_FUNCTION_APP_NAME",
       "BASILISK_FRONT_DOOR_URL",
+      "BASILISK_STORAGE_ACCOUNT",
     ]
     azure_credentials_command = "az ad sp create-for-rbac --name basilisk-github-deploy --role contributor --scopes /subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${module.basilisk.resource_group_name} --sdk-auth"
     export_script             = "bash scripts/export-github-secrets.sh"
@@ -74,5 +84,7 @@ output "github_actions_setup" {
     resource_group            = module.basilisk.resource_group_name
     function_app_name         = module.basilisk.function_app_name
     front_door_url            = module.basilisk.front_door_url
+    storage_account_name      = module.basilisk.storage_account_name
+    static_website_url        = module.basilisk.static_website_url
   }
 }
