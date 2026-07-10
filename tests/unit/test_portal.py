@@ -1,0 +1,121 @@
+import pytest
+
+from basilisk.auth.azure import require_principal
+from basilisk.auth.errors import AuthError
+from basilisk.hkp.handlers import get_blob_store, get_store, ingest_keytext
+from basilisk.openpgp.approve import approve_cert
+from basilisk.portal.me import my_keys
+from basilisk.portal.search import search_keys
+from basilisk.portal.view import can_view_key
+from tests.unit.test_claim import _principal_header
+
+
+@pytest.mark.unit
+def test_search_approved_by_email(sample_armored, sample_fingerprint):
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    approve_cert(store, sample_fingerprint, ["test@basilisk.local"])
+    result = search_keys("test@basilisk.local", store)
+    assert len(result["results"]) == 1
+    assert result["results"][0]["fingerprint"] == sample_fingerprint
+
+
+@pytest.mark.unit
+def test_search_pending_email_hidden(sample_armored):
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    result = search_keys("test@basilisk.local", store)
+    assert result["results"] == []
+
+
+@pytest.mark.unit
+def test_search_pending_by_fingerprint(sample_armored, sample_fingerprint):
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    result = search_keys(f"0x{sample_fingerprint}", store)
+    assert len(result["results"]) == 1
+    assert result["results"][0]["approval_state"] == "pending"
+    assert result["results"][0]["uids"] == []
+
+
+@pytest.mark.unit
+def test_my_keys_lists_pending_by_email(sample_armored, sample_fingerprint):
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    keys = my_keys({"email": "test@basilisk.local", "oid": "oid-1"}, store)
+    assert len(keys) == 1
+    assert keys[0]["fingerprint"] == sample_fingerprint
+    assert keys[0]["can_claim"] is True
+
+
+@pytest.mark.unit
+def test_my_keys_includes_claimed(sample_armored, sample_fingerprint):
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    store.record_claim(sample_fingerprint, "other@example.com", "oid-2")
+    keys = my_keys({"email": "other@example.com", "oid": "oid-2"}, store)
+    assert any(k["fingerprint"] == sample_fingerprint for k in keys)
+
+
+@pytest.mark.unit
+def test_can_view_pending_for_owner(sample_armored, sample_fingerprint):
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    record = store.get_by_fingerprint(sample_fingerprint)
+    assert record is not None
+    assert can_view_key(record, "test@basilisk.local", None) is True
+    assert can_view_key(record, "stranger@example.com", None) is False
+
+
+@pytest.mark.unit
+def test_require_principal_missing():
+    with pytest.raises(AuthError):
+        require_principal({})
+
+
+@pytest.mark.integration
+def test_api_me_keys(sample_armored, sample_fingerprint):
+    from basilisk.serve import create_app
+
+    client = create_app().test_client()
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    r = client.get("/api/v1/me/keys")
+    assert r.status_code == 401
+    r2 = client.get("/api/v1/me/keys", headers=_principal_header("test@basilisk.local"))
+    assert r2.status_code == 200
+    payload = r2.get_json()
+    assert payload["email"] == "test@basilisk.local"
+    assert len(payload["keys"]) == 1
+
+
+@pytest.mark.integration
+def test_static_search_page():
+    from pathlib import Path
+
+    from basilisk.serve import create_app
+
+    client = create_app().test_client()
+    r = client.get("/search")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "/api/v1/search" in body
+
+    static_root = Path(__file__).resolve().parents[2] / "web" / "static"
+    assert (static_root / "search.html").is_file()
+    assert "/api/v1/search" in (static_root / "search.html").read_text(encoding="utf-8")
+
+
+@pytest.mark.integration
+def test_api_search(sample_armored, sample_fingerprint):
+    from basilisk.serve import create_app
+
+    client = create_app().test_client()
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    approve_cert(store, sample_fingerprint, ["test@basilisk.local"])
+    r = client.get("/api/v1/search", query_string={"q": "test@basilisk.local"})
+    assert r.status_code == 200
+    payload = r.get_json()
+    assert len(payload["results"]) == 1
+    assert payload["results"][0]["fingerprint"] == sample_fingerprint

@@ -113,7 +113,7 @@ def dev_approve(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.service_bus_queue_trigger(
     arg_name="msg",
-    queue_name="key-events",
+    queue_name="key-approved",
     connection="ServiceBusConnection",
 )
 def approve_fn(msg: func.ServiceBusMessage) -> None:
@@ -128,6 +128,17 @@ def approve_fn(msg: func.ServiceBusMessage) -> None:
 
 @app.route(route="pks/v2/{*path}", methods=["GET", "POST", "PUT", "OPTIONS"])
 def hkp_v2(req: func.HttpRequest) -> func.HttpResponse:
+    resp = _flask_response(req)
+    return func.HttpResponse(
+        body=resp.get_data(),
+        status_code=resp.status_code,
+        headers=dict(resp.headers),
+        mimetype=resp.mimetype,
+    )
+
+
+@app.route(route="api/v1/{*path}", methods=["GET"])
+def portal_api(req: func.HttpRequest) -> func.HttpResponse:
     resp = _flask_response(req)
     return func.HttpResponse(
         body=resp.get_data(),

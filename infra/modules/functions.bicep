@@ -16,6 +16,9 @@ param storageConnectionString string
 @secure()
 param serviceBusConnectionString string
 
+@description('Require manager approval before publishing keys')
+param requireManagerApproval bool = false
+
 var planName = '${namePrefix}-plan'
 var appName = '${namePrefix}-fn'
 
@@ -47,6 +50,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'ServiceBusConnection', value: serviceBusConnectionString }
         { name: 'AZURE_STORAGE_CONNECTION_STRING', value: storageConnectionString }
         { name: 'BASILISK_CACHE_MODE', value: 'redirect' }
+        { name: 'BASILISK_REQUIRE_MANAGER_APPROVAL', value: string(requireManagerApproval) }
       ]
     }
     functionAppConfig: {

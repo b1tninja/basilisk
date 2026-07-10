@@ -1,0 +1,16 @@
+# Optional remote state for team/CI deploys. Copy to backend.tf and fill in values,
+# or pass via: terraform init -backend-config=backend.hcl
+#
+# Create the storage account once (outside this stack), then:
+#
+#   terraform init -migrate-state -backend-config=backend.hcl
+
+terraform {
+  backend "azurerm" {}
+}
+
+# backend.hcl (gitignored):
+# resource_group_name  = "basilisk-tfstate-rg"
+# storage_account_name = "basilisktfstate"
+# container_name       = "tfstate"
+# key                  = "basilisk-dev.tfstate"

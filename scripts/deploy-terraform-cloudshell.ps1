@@ -110,6 +110,7 @@ try {
     Write-Host "  1. Authorize Logic App mail connector ($MailProvider) in Azure Portal"
     Write-Host "  2. Publish function code (az functionapp deploy)"
     Write-Host "  3. Smoke test: curl $fdUrl/health"
+    Write-Host "  4. Export GitHub secrets: .\scripts\export-github-secrets.ps1"
 }
 finally {
     Pop-Location

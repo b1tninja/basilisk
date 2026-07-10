@@ -2,6 +2,26 @@ name: deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      name_prefix:
+        description: Resource name prefix (must match initial Terraform deploy)
+        type: string
+        default: basilisk-dev
+      location:
+        description: Azure region (empty = auto-detect from existing RG or eastus)
+        type: string
+        default: ""
+      mail_provider:
+        description: Logic App mail connector
+        type: choice
+        options:
+          - office365
+          - gmail
+        default: office365
+      skip_terraform:
+        description: Skip infrastructure; publish function code only
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -11,7 +31,54 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
       - uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-      - run: bash scripts/deploy-azure.sh
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Restore Terraform state
+        uses: actions/cache@v4
+        with:
+          path: |
+            terraform/cloudshell/terraform.tfstate
+            terraform/cloudshell/terraform.tfstate.backup
+            terraform/cloudshell/.terraform
+          key: tf-${{ inputs.name_prefix }}-${{ hashFiles('terraform/**/*.tf', 'terraform/**/*.tpl') }}
+          restore-keys: |
+            tf-${{ inputs.name_prefix }}-
+
+      - name: Deploy infrastructure and function
+        env:
+          NAME_PREFIX: ${{ inputs.name_prefix }}
+          LOCATION: ${{ inputs.location }}
+          MAIL_PROVIDER: ${{ inputs.mail_provider }}
+          AUTO_APPROVE: "true"
+          SKIP_TERRAFORM: ${{ inputs.skip_terraform }}
+        run: bash scripts/deploy-github-actions.sh
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          if [[ -f terraform/cloudshell/terraform.tfstate ]]; then
+            FD_URL="$(cd terraform/cloudshell && terraform output -raw front_door_url 2>/dev/null || true)"
+            RG="$(cd terraform/cloudshell && terraform output -raw resource_group_name 2>/dev/null || true)"
+            FN="$(cd terraform/cloudshell && terraform output -raw function_app_name 2>/dev/null || true)"
+            {
+              echo "## Basilisk deploy"
+              echo ""
+              echo "| Item | Value |"
+              echo "|------|-------|"
+              echo "| Resource group | \`$RG\` |"
+              echo "| Function app | \`$FN\` |"
+              echo "| Front Door | $FD_URL |"
+              echo ""
+              echo "Deploy includes function zip + static portal upload to Storage \`\$web\`."
+              echo ""
+              echo "First-time setup: run \`bash scripts/export-github-secrets.sh\` locally after apply to copy Terraform-generated secrets into GitHub."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

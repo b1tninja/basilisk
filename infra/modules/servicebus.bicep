@@ -19,6 +19,11 @@ resource keyEvents 'Microsoft.ServiceBus/namespaces/queues@2022-10-01-preview' =
   name: 'key-events'
 }
 
+resource keyApproved 'Microsoft.ServiceBus/namespaces/queues@2022-10-01-preview' = {
+  parent: namespace
+  name: 'key-approved'
+}
+
 resource sendtokenEvents 'Microsoft.ServiceBus/namespaces/queues@2022-10-01-preview' = {
   parent: namespace
   name: 'sendtoken-events'

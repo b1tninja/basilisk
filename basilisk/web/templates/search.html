@@ -1,0 +1,7 @@
+<h1>Search keys</h1>
+<p class="muted">Look up approved OpenPGP keys by email, fingerprint, or key ID.</p>
+<form method="get" action="/search">
+  <input type="search" name="q" value="{{ query }}" placeholder="user@example.com or 0x…" autofocus>
+  <button type="submit">Search</button>
+</form>
+{{ results }}

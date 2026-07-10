@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My keys — Basilisk</title>
+  <link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+  <nav>
+    <a href="/search">Search</a>
+    <a href="/my-keys">My keys</a>
+    <a href="/pks/lookup?op=stats">Stats</a>
+  </nav>
+  <h1>My keys</h1>
+  <div id="content"><p class="muted">Loading…</p></div>
+  <p id="error" class="error hidden"></p>
+  <script src="/js/portal.js"></script>
+  <script>
+    const content = document.getElementById("content");
+    const error = document.getElementById("error");
+    const loginUrl = "/.auth/login/aad?post_login_redirect_uri=/my-keys";
+
+    async function loadMyKeys() {
+      try {
+        const payload = await fetchJson("/api/v1/me/keys");
+        if (!payload.keys.length) {
+          content.innerHTML =
+            `<p>Signed in as <strong>${escapeHtml(payload.email)}</strong></p>` +
+            "<p class='muted'>No keys found for your account yet. Upload via gpg and claim pending keys.</p>";
+          return;
+        }
+        content.innerHTML =
+          `<p>Signed in as <strong>${escapeHtml(payload.email)}</strong></p>` +
+          renderKeysTable(payload.keys, { showClaim: true });
+      } catch (err) {
+        if (err.message.includes("401") || err.message.includes("Authentication")) {
+          content.innerHTML =
+            "<p>Sign in with your organization account to see keys associated with your identity.</p>" +
+            `<p><a class="button" href="${loginUrl}">Sign in with Microsoft</a></p>`;
+          return;
+        }
+        showError(error, err.message);
+        content.innerHTML = "";
+      }
+    }
+
+    loadMyKeys();
+  </script>
+</body>
+</html>

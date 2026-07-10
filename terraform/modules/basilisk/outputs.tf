@@ -38,6 +38,16 @@ output "service_bus_namespace" {
   value = azurerm_servicebus_namespace.basilisk.name
 }
 
+output "token_secret" {
+  description = "HMAC secret for HKP v2 bearer tokens (also in Function App settings)."
+  value       = random_password.token_secret.result
+  sensitive   = true
+}
+
+output "static_website_host" {
+  value = azurerm_storage_account.basilisk.primary_web_host
+}
+
 output "waf_policy_id" {
   value = azurerm_cdn_frontdoor_firewall_policy.basilisk.id
 }

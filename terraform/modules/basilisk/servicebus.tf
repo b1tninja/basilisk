@@ -16,6 +16,11 @@ resource "azurerm_servicebus_queue" "key_events" {
   namespace_id = azurerm_servicebus_namespace.basilisk.id
 }
 
+resource "azurerm_servicebus_queue" "key_approved" {
+  name         = "key-approved"
+  namespace_id = azurerm_servicebus_namespace.basilisk.id
+}
+
 resource "azurerm_servicebus_queue" "sendtoken_events" {
   name         = "sendtoken-events"
   namespace_id = azurerm_servicebus_namespace.basilisk.id

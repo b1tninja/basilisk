@@ -19,6 +19,11 @@ resource "azurerm_storage_account" "basilisk" {
   }
 
   tags = var.tags
+
+  static_website {
+    index_document     = "index.html"
+    error_404_document = "index.html"
+  }
 }
 
 resource "azurerm_storage_container" "certs" {

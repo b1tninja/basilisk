@@ -107,9 +107,33 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 }
               }
             }
-            key_approved: {
-              case: 'key.approved'
-              actions: {}
+            claim_submitted: {
+              case: 'claim.submitted'
+              actions: {
+                Build_approved: {
+                  type: 'Compose'
+                  inputs: {
+                    event: 'key.approved'
+                    fingerprint: '@body(\'Parse_message\')?[\'fingerprint\']'
+                    approved_uids: '@body(\'Parse_message\')?[\'matched_uids\']'
+                  }
+                  runAfter: {}
+                }
+                Send_approved: {
+                  type: 'ApiConnection'
+                  inputs: {
+                    host: { connection: { name: '@parameters(\'$connections\')[\'servicebus\'][\'connectionId\']' } }
+                    method: 'post'
+                    path: '/@{encodeURIComponent(encodeURIComponent(\'key-approved\'))}/messages'
+                    body: {
+                      ContentData: '@{base64(string(outputs(\'Build_approved\')))}'
+                    }
+                  }
+                  runAfter: {
+                    Build_approved: ['Succeeded']
+                  }
+                }
+              }
             }
           }
           default: { actions: {} }

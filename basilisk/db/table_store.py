@@ -14,6 +14,10 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _escape_odata(value: str) -> str:
+    return value.replace("'", "''")
+
+
 class AzureTableCertStore(CertStore):
     """Azure Table Storage index with approval gate."""
 
@@ -36,9 +40,23 @@ class AzureTableCertStore(CertStore):
             sha256=entity["sha256"],
             key_id=entity["key_id"],
             approved_uids=json.loads(entity.get("approved_uids", "[]")),
+            pending_uids=json.loads(entity.get("pending_uids", "[]")),
+            claimer_email=entity.get("claimer_email"),
+            claimer_oid=entity.get("claimer_oid"),
             canonical_blob_uri=entity.get("canonical_blob_uri"),
             revoked=bool(entity.get("revoked", False)),
         )
+
+    def _index_emails(self, fingerprint: str, uids: list[str]) -> None:
+        fpr = fingerprint.upper()
+        for uid in uids:
+            addr = uid.split("<")[-1].rstrip(">").strip() if "<" in uid else uid.strip()
+            if "@" not in addr:
+                continue
+            email = addr.lower()
+            self._emails.upsert_entity(
+                {"PartitionKey": email, "RowKey": fpr, "fingerprint": fpr}
+            )
 
     def upsert_pending(
         self,
@@ -59,6 +77,7 @@ class AzureTableCertStore(CertStore):
                 "sha256": sha256,
                 "key_id": key_id,
                 "approved_uids": "[]",
+                "pending_uids": json.dumps(uids),
                 "created_at": now,
                 "updated_at": now,
             }
@@ -68,6 +87,7 @@ class AzureTableCertStore(CertStore):
             self._ids.upsert_entity(
                 {"PartitionKey": ident, "RowKey": id_type, "fingerprint": fpr, "id_type": id_type}
             )
+        self._index_emails(fpr, uids)
 
     def get_by_fingerprint(self, fingerprint: str) -> CertRecord | None:
         fpr = fingerprint.upper().removeprefix("0X")
@@ -97,11 +117,51 @@ class AzureTableCertStore(CertStore):
         return self.get_by_fingerprint(row["fingerprint"])
 
     def get_by_email(self, email: str) -> CertRecord | None:
-        try:
-            row = self._emails.get_entity(partition_key=email.lower(), row_key="primary")
-        except ResourceNotFoundError:
-            return None
-        return self.get_by_fingerprint(row["fingerprint"])
+        for entity in self._emails.query_entities(
+            query_filter=f"PartitionKey eq '{_escape_odata(email.lower())}'"
+        ):
+            record = self.get_by_fingerprint(entity["fingerprint"])
+            if record and record.approval_state == "approved":
+                return record
+        return None
+
+    def list_by_email(self, email: str) -> list[CertRecord]:
+        target = email.lower()
+        seen: set[str] = set()
+        out: list[CertRecord] = []
+        for entity in self._emails.query_entities(
+            query_filter=f"PartitionKey eq '{_escape_odata(target)}'"
+        ):
+            record = self.get_by_fingerprint(entity["fingerprint"])
+            if record and record.fingerprint not in seen:
+                seen.add(record.fingerprint)
+                out.append(record)
+        for entity in self._certs.query_entities(
+            query_filter=f"claimer_email eq '{_escape_odata(target)}'"
+        ):
+            record = self._record(entity)
+            if record.fingerprint not in seen:
+                seen.add(record.fingerprint)
+                out.append(record)
+        return out
+
+    def list_by_claimer_oid(self, oid: str) -> list[CertRecord]:
+        if not oid:
+            return []
+        return [
+            self._record(entity)
+            for entity in self._certs.query_entities(
+                query_filter=f"claimer_oid eq '{_escape_odata(oid)}'"
+            )
+        ]
+
+    def record_claim(self, fingerprint: str, claimer_email: str, claimer_oid: str) -> None:
+        fpr = fingerprint.upper()
+        entity = self._certs.get_entity(partition_key=fpr, row_key=fpr)
+        entity["claimer_email"] = claimer_email.lower()
+        entity["claimer_oid"] = claimer_oid
+        entity["updated_at"] = _utcnow()
+        self._certs.update_entity(entity, mode="replace")
 
     def approve(self, fingerprint: str, approved_uids: list[str]) -> None:
         fpr = fingerprint.upper()
@@ -110,12 +170,7 @@ class AzureTableCertStore(CertStore):
         entity["approved_uids"] = json.dumps(approved_uids)
         entity["updated_at"] = _utcnow()
         self._certs.update_entity(entity, mode="replace")
-        for uid in approved_uids:
-            email = uid.split("<")[-1].rstrip(">").strip() if "<" in uid else uid.strip()
-            if "@" in email:
-                self._emails.upsert_entity(
-                    {"PartitionKey": email.lower(), "RowKey": "primary", "fingerprint": fpr}
-                )
+        self._index_emails(fpr, approved_uids)
 
     def reject(self, fingerprint: str) -> None:
         fpr = fingerprint.upper()

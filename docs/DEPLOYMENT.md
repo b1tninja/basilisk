@@ -137,15 +137,125 @@ Wait for the resource group delete to finish (`az group show -n basilisk-dev-rg`
 
 
 
+## GitHub Actions deploy
+
+
+
+After the first Terraform apply, export secrets for CI/CD:
+
+
+
+```bash
+bash scripts/export-github-secrets.sh
+```
+
+
+
+Set **`BASILISK_TOKEN_SECRET`** and **`AZURE_CREDENTIALS`** in GitHub (see [docs/CI.md](CI.md)). Then run the **deploy** workflow from the Actions tab.
+
+
+
+The workflow applies Terraform, publishes function code, uploads the static portal to Storage `$web`, and smoke-tests Front Door. Use workflow input **skip_terraform** for code-only redeploys.
+
+
+
+### Static portal hosting
+
+
+
+Portal pages (`/`, `/search`, `/my-keys`, `/key`) are **static HTML/JS/CSS** in [`web/static/`](../web/static/). Front Door routes them to the storage account static website (`$web`); only API, HKP, claim, Easy Auth, and `/health` hit the Function App.
+
+
+
+| Path pattern | Origin |
+|--------------|--------|
+| `/pks/*`, `/api/*`, `/claim/*`, `/.auth/*`, `/health` | Function App |
+| `/*` (default) | Storage static website |
+
+
+
+Deploy static assets after infrastructure apply:
+
+
+
+```bash
+bash scripts/deploy-static.sh
+```
+
+
+
+Or use the GitHub **deploy** workflow (runs `deploy-static.sh` automatically when Terraform outputs include the storage account name).
+
+
+
+Local dev serves the same files from Flask (`basilisk/portal/static.py`) so URLs match production without Front Door.
+
+
+
+For durable Terraform state across runners, configure an Azure Storage backend (`terraform/cloudshell/backend.tf.example`).
+
+
+
 ## Post-deploy
 
 
 
-1. Authorize Logic App connectors (O365 or Gmail) in Azure Portal
+1. Authorize Logic App connectors in Azure Portal (see **Logic App approval** below)
 
-2. Set `BASILISK_BASE_URL` to your Front Door or Function hostname
+2. Confirm `BASILISK_BASE_URL` on the Function App points at Front Door (Terraform deploy scripts set this)
 
-3. Run `python -m basilisk.cli doctor` against production settings
+3. Publish function code and smoke-test `/health`
+
+4. Upload static portal: `bash scripts/deploy-static.sh`
+
+5. Run `python -m basilisk.cli doctor` against production settings
+
+
+
+## Logic App approval
+
+
+
+Resource: `{namePrefix}-approval-la` in `{namePrefix}-rg`.
+
+
+
+### Queues
+
+
+
+| Queue | Producer | Consumer |
+|-------|----------|----------|
+| `key-events` | Function App on upload / manager claim | Logic App (email + manager flow) |
+| `key-approved` | Function App or Logic App after claim | `approve_fn` Function trigger |
+| `sendtoken-events` | Function App on HKP v2 sendtoken | (sendtoken Logic App — optional) |
+
+
+
+### Portal setup
+
+
+
+1. Open **Logic App** → **Workflows** → edit the approval workflow
+2. Authorize **Azure Service Bus** (namespace `{namePrefix}-bus`, queues `key-events` and `key-approved`)
+3. Authorize **Office 365 Outlook** or **Gmail** (must match `mail_provider` at deploy time)
+4. Save and ensure the workflow is **Enabled**
+
+
+
+### End-to-end flow (default: no manager approval)
+
+
+
+1. User uploads key → Function App writes blob + pending Table row → `key.pending` on `key-events`
+2. Logic App sends verification email with `{BASILISK_BASE_URL}/claim/{fingerprint}`
+3. User signs in (Entra Easy Auth) and submits claim
+4. Function App enqueues `key.approved` on **`key-approved`** (or approves inline when Service Bus is not configured)
+5. `approve_fn` updates Table → key is visible via HKP lookup
+
+
+
+Set **`BASILISK_REQUIRE_MANAGER_APPROVAL=1`** (Terraform: `require_manager_approval = true`) to enqueue `claim.submitted` instead; Logic App must then post `key.approved` to `key-approved` after manager review.
 
 
 

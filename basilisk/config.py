@@ -40,6 +40,7 @@ class Settings:
     upload_fingerprint_rate_limit_sec: float
     lookup_rate_limit_sec: float
     sendtoken_rate_limit_sec: float
+    require_manager_approval: bool
     require_proof: bool
     proof_difficulty: int
     proof_max_age_sec: int
@@ -71,6 +72,7 @@ class Settings:
             ),
             lookup_rate_limit_sec=float(os.environ.get("BASILISK_LOOKUP_RATE_LIMIT_SEC", "0")),
             sendtoken_rate_limit_sec=float(os.environ.get("BASILISK_SENDTOKEN_RATE_LIMIT_SEC", "3600")),
+            require_manager_approval=_env_bool("BASILISK_REQUIRE_MANAGER_APPROVAL"),
             require_proof=_env_bool("BASILISK_REQUIRE_PROOF"),
             proof_difficulty=int(os.environ.get("BASILISK_PROOF_DIFFICULTY", "0")),
             proof_max_age_sec=int(os.environ.get("BASILISK_PROOF_MAX_AGE_SEC", "300")),

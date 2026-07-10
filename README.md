@@ -44,8 +44,8 @@ gpg --keyserver http://localhost:8080 --recv-keys YOURKEYID
 
 ## Architecture
 
-- **Upload:** Policy validation first; WORM blob write only after pass; Table `approval_state=pending`
-- **Approve:** Logic Apps email only → `key.approved` → `approve_fn` updates Table
+- **Upload:** Policy validation first; WORM blob write only after pass; Table `approval_state=pending`; `key.pending` → Service Bus
+- **Approve:** Claim (Entra) → `key.approved` on `key-approved` queue → `approve_fn` updates Table; Logic App sends verification email on `key.pending`
 - **Lookup:** Table gate → blob read → SHA-256 verify → filter-at-read for email
 
 ## Ingest security

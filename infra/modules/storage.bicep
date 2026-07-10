@@ -78,6 +78,16 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01'
 
     }
 
+    staticWebsite: {
+
+      enabled: true
+
+      indexDocument: 'index.html'
+
+      error404Document: 'index.html'
+
+    }
+
   }
 
 }
@@ -137,6 +147,8 @@ resource wormPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/i
 
 
 output storageAccountName string = storageAccount.name
+
+output staticWebsiteHost string = '${storageAccount.name}.z.web.${environment().suffixes.storage}'
 
 output connectionString string = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
 

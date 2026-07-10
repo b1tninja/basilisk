@@ -5,6 +5,9 @@ CREATE TABLE IF NOT EXISTS certs (
     sha256 TEXT NOT NULL,
     canonical_blob_uri TEXT,
     approved_uids TEXT NOT NULL DEFAULT '[]',
+    pending_uids TEXT NOT NULL DEFAULT '[]',
+    claimer_email TEXT,
+    claimer_oid TEXT,
     key_id TEXT NOT NULL,
     revoked INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -19,8 +22,9 @@ CREATE TABLE IF NOT EXISTS identifiers (
 );
 
 CREATE TABLE IF NOT EXISTS emails (
-    email TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
+    PRIMARY KEY (email, fingerprint),
     FOREIGN KEY (fingerprint) REFERENCES certs(fingerprint)
 );
 

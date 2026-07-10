@@ -22,6 +22,12 @@ deploy:
 deploy-terraform:
 	powershell -ExecutionPolicy Bypass -File scripts/deploy-terraform-cloudshell.ps1
 
+export-github-secrets:
+	powershell -ExecutionPolicy Bypass -File scripts/export-github-secrets.ps1
+
+deploy-github:
+	bash scripts/deploy-github-actions.sh
+
 smoke:
 	powershell -ExecutionPolicy Bypass -File scripts/smoke-test.ps1
 

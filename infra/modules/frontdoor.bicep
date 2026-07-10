@@ -288,11 +288,15 @@ resource endpoint 'Microsoft.Cdn/profiles/afdEndpoints@2023-05-01' = {
 
 
 
-resource originGroup 'Microsoft.Cdn/profiles/originGroups@2023-05-01' = {
+var staticWebsiteHost = '${storageAccountName}.z.web.${environment().suffixes.storage}'
+
+
+
+resource fnOriginGroup 'Microsoft.Cdn/profiles/originGroups@2023-05-01' = {
 
   parent: frontDoor
 
-  name: 'basilisk-origins'
+  name: 'basilisk-function-origins'
 
   properties: {
 
@@ -324,7 +328,7 @@ resource originGroup 'Microsoft.Cdn/profiles/originGroups@2023-05-01' = {
 
 resource fnOrigin 'Microsoft.Cdn/profiles/originGroups/origins@2023-05-01' = {
 
-  parent: originGroup
+  parent: fnOriginGroup
 
   name: 'function-origin'
 
@@ -350,19 +354,81 @@ resource fnOrigin 'Microsoft.Cdn/profiles/originGroups/origins@2023-05-01' = {
 
 
 
-resource route 'Microsoft.Cdn/profiles/afdEndpoints/routes@2023-05-01' = {
+resource staticOriginGroup 'Microsoft.Cdn/profiles/originGroups@2023-05-01' = {
 
-  parent: endpoint
+  parent: frontDoor
 
-  name: 'default-route'
+  name: 'basilisk-static-origins'
 
   properties: {
 
-    originGroup: { id: originGroup.id }
+    loadBalancingSettings: {
+
+      sampleSize: 4
+
+      successfulSamplesRequired: 3
+
+    }
+
+    healthProbeSettings: {
+
+      probePath: '/index.html'
+
+      probeRequestType: 'GET'
+
+      probeProtocol: 'Https'
+
+      probeIntervalInSeconds: 240
+
+    }
+
+  }
+
+}
+
+
+
+resource staticOrigin 'Microsoft.Cdn/profiles/originGroups/origins@2023-05-01' = {
+
+  parent: staticOriginGroup
+
+  name: 'static-origin'
+
+  properties: {
+
+    hostName: staticWebsiteHost
+
+    httpPort: 80
+
+    httpsPort: 443
+
+    originHostHeader: staticWebsiteHost
+
+    priority: 1
+
+    weight: 1000
+
+    enabledState: 'Enabled'
+
+  }
+
+}
+
+
+
+resource apiRoute 'Microsoft.Cdn/profiles/afdEndpoints/routes@2023-05-01' = {
+
+  parent: endpoint
+
+  name: 'api-route'
+
+  properties: {
+
+    originGroup: { id: fnOriginGroup.id }
 
     supportedProtocols: ['Http', 'Https']
 
-    patternsToMatch: ['/*']
+    patternsToMatch: ['/pks/*', '/api/*', '/claim/*', '/.auth/*', '/health']
 
     forwardingProtocol: 'HttpsOnly'
 
@@ -378,7 +444,7 @@ resource route 'Microsoft.Cdn/profiles/afdEndpoints/routes@2023-05-01' = {
 
         isCompressionEnabled: true
 
-        contentTypesToCompress: ['application/pgp-keys']
+        contentTypesToCompress: ['text/plain']
 
       }
 
@@ -387,6 +453,48 @@ resource route 'Microsoft.Cdn/profiles/afdEndpoints/routes@2023-05-01' = {
   }
 
   dependsOn: [fnOrigin]
+
+}
+
+
+
+resource staticRoute 'Microsoft.Cdn/profiles/afdEndpoints/routes@2023-05-01' = {
+
+  parent: endpoint
+
+  name: 'static-route'
+
+  properties: {
+
+    originGroup: { id: staticOriginGroup.id }
+
+    supportedProtocols: ['Http', 'Https']
+
+    patternsToMatch: ['/*']
+
+    forwardingProtocol: 'HttpsOnly'
+
+    linkToDefaultDomain: 'Enabled'
+
+    httpsRedirect: 'Enabled'
+
+    cacheConfiguration: {
+
+      queryStringCachingBehavior: 'UseQueryString'
+
+      compressionSettings: {
+
+        isCompressionEnabled: true
+
+        contentTypesToCompress: ['text/html', 'text/css', 'application/javascript']
+
+      }
+
+    }
+
+  }
+
+  dependsOn: [staticOrigin]
 
 }
 

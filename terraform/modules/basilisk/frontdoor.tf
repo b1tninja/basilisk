@@ -81,8 +81,8 @@ resource "azurerm_cdn_frontdoor_endpoint" "basilisk" {
   tags                     = var.tags
 }
 
-resource "azurerm_cdn_frontdoor_origin_group" "basilisk" {
-  name                     = "basilisk-origins"
+resource "azurerm_cdn_frontdoor_origin_group" "function" {
+  name                     = "basilisk-function-origins"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
 
   load_balancing {
@@ -100,7 +100,7 @@ resource "azurerm_cdn_frontdoor_origin_group" "basilisk" {
 
 resource "azurerm_cdn_frontdoor_origin" "function" {
   name                           = "function-origin"
-  cdn_frontdoor_origin_group_id  = azurerm_cdn_frontdoor_origin_group.basilisk.id
+  cdn_frontdoor_origin_group_id  = azurerm_cdn_frontdoor_origin_group.function.id
   enabled                        = true
   host_name                      = azurerm_function_app_flex_consumption.basilisk.default_hostname
   http_port                      = 80
@@ -111,12 +111,101 @@ resource "azurerm_cdn_frontdoor_origin" "function" {
   certificate_name_check_enabled = true
 }
 
-resource "azurerm_cdn_frontdoor_route" "basilisk" {
-  name                          = "default-route"
+resource "azurerm_cdn_frontdoor_origin_group" "static" {
+  name                     = "basilisk-static-origins"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
+
+  load_balancing {
+    sample_size                 = 4
+    successful_samples_required = 3
+  }
+
+  health_probe {
+    path                = "/index.html"
+    request_type        = "GET"
+    protocol            = "Https"
+    interval_in_seconds = 240
+  }
+}
+
+resource "azurerm_cdn_frontdoor_origin" "static" {
+  name                           = "static-origin"
+  cdn_frontdoor_origin_group_id  = azurerm_cdn_frontdoor_origin_group.static.id
+  enabled                        = true
+  host_name                      = azurerm_storage_account.basilisk.primary_web_host
+  http_port                      = 80
+  https_port                     = 443
+  origin_host_header             = azurerm_storage_account.basilisk.primary_web_host
+  priority                       = 1
+  weight                         = 1000
+  certificate_name_check_enabled = true
+}
+
+resource "azurerm_cdn_frontdoor_rule_set" "static_cache" {
+  name                     = "StaticCache"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
+}
+
+resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
+  name                      = "CacheStaticAssets"
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
+  order                     = 1
+  behavior_on_match         = "Continue"
+
+  conditions {
+    url_path_condition {
+      operator     = "Contains"
+      match_values = ["/css/", "/js/", "/assets/"]
+    }
+  }
+
+  actions {
+    route_configuration_override_action {
+      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
+      forwarding_protocol           = "HttpsOnly"
+      cache_behavior                = "OverrideAlways"
+      cache_duration                = "P7D"
+      compression_enabled             = true
+    }
+  }
+}
+
+resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
+  name                      = "CacheStaticHtml"
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
+  order                     = 2
+  behavior_on_match         = "Continue"
+
+  conditions {
+    url_file_extension_condition {
+      operator         = "Equal"
+      match_values     = ["html"]
+      negate_condition = true
+    }
+    url_path_condition {
+      operator         = "Contains"
+      match_values     = ["/pks/", "/api/", "/claim/", "/.auth/", "/health"]
+      negate_condition = true
+    }
+  }
+
+  actions {
+    route_configuration_override_action {
+      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
+      forwarding_protocol           = "HttpsOnly"
+      cache_behavior                = "OverrideAlways"
+      cache_duration                = "P1D"
+      compression_enabled             = true
+    }
+  }
+}
+
+resource "azurerm_cdn_frontdoor_route" "api" {
+  name                          = "api-route"
   cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.basilisk.id
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.basilisk.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.function.id
   supported_protocols           = ["Http", "Https"]
-  patterns_to_match             = ["/*"]
+  patterns_to_match             = ["/pks/*", "/api/*", "/claim/*", "/.auth/*", "/health"]
   forwarding_protocol           = "HttpsOnly"
   link_to_default_domain        = true
   https_redirect_enabled        = true
@@ -124,11 +213,30 @@ resource "azurerm_cdn_frontdoor_route" "basilisk" {
   cache {
     query_string_caching_behavior = "IgnoreQueryString"
     compression_enabled           = true
-    # Armored OpenPGP keys are text; application/pgp-keys is not in the FD provider enum.
-    content_types_to_compress = ["text/plain"]
+    content_types_to_compress     = ["text/plain"]
   }
 
   depends_on = [azurerm_cdn_frontdoor_origin.function]
+}
+
+resource "azurerm_cdn_frontdoor_route" "static" {
+  name                          = "static-route"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.basilisk.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
+  cdn_frontdoor_rule_set_ids    = [azurerm_cdn_frontdoor_rule_set.static_cache.id]
+  supported_protocols           = ["Http", "Https"]
+  patterns_to_match             = ["/*"]
+  forwarding_protocol           = "HttpsOnly"
+  link_to_default_domain        = true
+  https_redirect_enabled        = true
+
+  cache {
+    query_string_caching_behavior = "UseQueryString"
+    compression_enabled           = true
+    content_types_to_compress     = ["text/html", "text/css", "application/javascript"]
+  }
+
+  depends_on = [azurerm_cdn_frontdoor_origin.static]
 }
 
 resource "azurerm_cdn_frontdoor_security_policy" "basilisk" {

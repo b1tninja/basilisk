@@ -132,6 +132,12 @@ def create_app() -> Flask:
     from basilisk.hkp_v2.routes import register_v2
 
     register_v2(app)
+
+    from basilisk.portal.routes import register_portal_api
+    from basilisk.portal.static import register_static_portal
+
+    register_portal_api(app)
+    register_static_portal(app)
     return app
 
 

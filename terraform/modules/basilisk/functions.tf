@@ -57,6 +57,7 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
     AZURE_STORAGE_CONNECTION_STRING = azurerm_storage_account.basilisk.primary_connection_string
     BASILISK_CACHE_MODE             = "redirect"
     BASILISK_DEV_APPROVE            = "0"
+    BASILISK_REQUIRE_MANAGER_APPROVAL = var.require_manager_approval ? "1" : "0"
     BASILISK_TOKEN_SECRET           = random_password.token_secret.result
   }
 

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Key — Basilisk</title>
+  <link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+  <nav>
+    <a href="/search">Search</a>
+    <a href="/my-keys">My keys</a>
+    <a href="/pks/lookup?op=stats">Stats</a>
+  </nav>
+  <h1 id="title">Key</h1>
+  <p>Status: <span id="status" class="badge">…</span></p>
+  <p id="error" class="error hidden"></p>
+  <pre id="armored" class="hidden"></pre>
+  <p><a href="/search">← Back to search</a></p>
+  <script src="/js/portal.js"></script>
+  <script>
+    const fpr = queryParam("fpr");
+    const error = document.getElementById("error");
+    const armored = document.getElementById("armored");
+    const title = document.getElementById("title");
+    const status = document.getElementById("status");
+
+    if (!fpr) {
+      showError(error, "Missing fingerprint (use ?fpr=…)");
+    } else {
+      title.textContent = `Key ${fpr.toUpperCase()}`;
+      (async () => {
+        try {
+          const search = fpr.startsWith("0x") ? fpr : `0x${fpr}`;
+          const text = await fetchText(`/pks/lookup?op=get&search=${encodeURIComponent(search)}`);
+          armored.textContent = text;
+          armored.classList.remove("hidden");
+          status.textContent = text.includes("BEGIN PGP") ? "available" : "unknown";
+        } catch (err) {
+          showError(error, err.message || "Key not found");
+        }
+      })();
+    }
+  </script>
+</body>
+</html>

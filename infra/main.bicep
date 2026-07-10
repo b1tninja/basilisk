@@ -51,6 +51,7 @@ module functions 'modules/functions.bicep' = {
     storageAccountName: storage.outputs.storageAccountName
     storageConnectionString: storage.outputs.connectionString
     serviceBusConnectionString: servicebus.outputs.connectionString
+    requireManagerApproval: requireManagerApproval
   }
 }
 
