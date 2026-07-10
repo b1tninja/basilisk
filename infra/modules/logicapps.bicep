@@ -24,6 +24,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
       contentVersion: '1.0.0.0'
       parameters: {
         mailProvider: { type: 'String', defaultValue: mailProvider }
+        '$connections': { type: 'Object', defaultValue: {} }
       }
       triggers: {
         When_message_in_queue: {

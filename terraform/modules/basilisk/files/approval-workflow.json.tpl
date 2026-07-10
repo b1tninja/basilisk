@@ -6,6 +6,10 @@
       "type": "String",
       "defaultValue": "${mail_provider}",
       "allowedValues": ["office365", "gmail"]
+    },
+    "$connections": {
+      "type": "Object",
+      "defaultValue": {}
     }
   },
   "triggers": {
