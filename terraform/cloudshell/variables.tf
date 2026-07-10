@@ -30,3 +30,10 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "existing_token_secret" {
+  type        = string
+  description = "Existing BASILISK_TOKEN_SECRET when importing pre-created infrastructure."
+  default     = ""
+  sensitive   = true
+}

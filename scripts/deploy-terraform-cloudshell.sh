@@ -75,6 +75,25 @@ export TF_VAR_mail_provider="$MAIL_PROVIDER"
 cd "$TF_DIR"
 terraform init -input=false
 
+RG_NAME="${NAME_PREFIX}-rg"
+HAS_RG_STATE=false
+if terraform state show -no-color "module.basilisk.azurerm_resource_group.basilisk" >/dev/null 2>&1; then
+  HAS_RG_STATE=true
+fi
+
+if [[ "$HAS_RG_STATE" != "true" ]] && az group show --name "$RG_NAME" >/dev/null 2>&1; then
+  echo "Existing Azure resource group $RG_NAME found without Terraform state — importing ..."
+  IMPORT_TERRAFORM="${IMPORT_TERRAFORM:-true}"
+  if [[ "$IMPORT_TERRAFORM" == "true" ]]; then
+    NAME_PREFIX="$NAME_PREFIX" LOCATION="$LOCATION" MAIL_PROVIDER="$MAIL_PROVIDER" \
+      SUBSCRIPTION_ID="${SUBSCRIPTION_ID:-}" \
+      bash "${REPO_ROOT}/scripts/import-terraform-existing.sh"
+  else
+    echo "Set IMPORT_TERRAFORM=true to adopt existing resources, or SKIP_TERRAFORM=true to deploy code only." >&2
+    exit 1
+  fi
+fi
+
 PLAN_ARGS=(-input=false -out=tfplan)
 if [[ -f terraform.tfvars ]]; then
   PLAN_ARGS+=(-var-file=terraform.tfvars)

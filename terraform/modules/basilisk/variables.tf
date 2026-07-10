@@ -62,3 +62,10 @@ variable "tags" {
   description = "Tags applied to supported resources."
   default     = {}
 }
+
+variable "existing_token_secret" {
+  type        = string
+  description = "Use an existing HMAC secret when importing infrastructure (skips random_password)."
+  default     = ""
+  sensitive   = true
+}

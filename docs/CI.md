@@ -37,6 +37,13 @@ az login
 AUTO_APPROVE=true ./scripts/deploy-terraform-cloudshell.sh
 ```
 
+If the resource group already exists (e.g. from an earlier Bicep deploy) but Terraform state is empty, the deploy script **auto-imports** existing resources. To import manually:
+
+```bash
+bash scripts/import-terraform-existing.sh
+terraform apply -auto-approve
+```
+
 ### 2. Export Terraform-generated secrets
 
 ```bash
@@ -88,10 +95,11 @@ Paste the full JSON output into the `AZURE_CREDENTIALS` secret.
 | `location` | (empty) | Auto-detect from existing RG |
 | `mail_provider` | `office365` | Logic App connector |
 | `skip_terraform` | `false` | Set `true` for code-only redeploys |
+| `import_terraform` | auto | When RG exists without state, imports existing Azure resources (set `IMPORT_TERRAFORM=false` to fail instead) |
 
 The workflow:
 
-1. Applies Terraform (infra + app settings including `BASILISK_TOKEN_SECRET`)
+1. Applies Terraform (imports existing stack on first run if needed, then plans/applies drift)
 2. Zips and publishes the Function App (`az functionapp deploy`)
 3. Smoke-tests Front Door `/health`
 

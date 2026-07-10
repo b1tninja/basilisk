@@ -12,4 +12,5 @@ module "basilisk" {
   mail_provider              = var.mail_provider
   require_manager_approval   = var.require_manager_approval
   tags                       = var.tags
+  existing_token_secret      = var.existing_token_secret
 }

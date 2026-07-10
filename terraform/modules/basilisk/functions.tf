@@ -1,6 +1,11 @@
 resource "random_password" "token_secret" {
+  count   = var.existing_token_secret == "" ? 1 : 0
   length  = 48
   special = false
+}
+
+locals {
+  token_secret = var.existing_token_secret != "" ? var.existing_token_secret : random_password.token_secret[0].result
 }
 
 resource "azurerm_service_plan" "basilisk" {
@@ -58,7 +63,7 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
     BASILISK_CACHE_MODE             = "redirect"
     BASILISK_DEV_APPROVE            = "0"
     BASILISK_REQUIRE_MANAGER_APPROVAL = var.require_manager_approval ? "1" : "0"
-    BASILISK_TOKEN_SECRET           = random_password.token_secret.result
+    BASILISK_TOKEN_SECRET           = local.token_secret
   }
 
   tags = var.tags

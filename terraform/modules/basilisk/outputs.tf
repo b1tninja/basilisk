@@ -40,7 +40,7 @@ output "service_bus_namespace" {
 
 output "token_secret" {
   description = "HMAC secret for HKP v2 bearer tokens (also in Function App settings)."
-  value       = random_password.token_secret.result
+  value       = local.token_secret
   sensitive   = true
 }
 
