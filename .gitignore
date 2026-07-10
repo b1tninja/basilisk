@@ -15,6 +15,7 @@ build/
 .mypy_cache/
 data/
 *.asc
+!tests/fixtures/**/*.asc
 testkey.asc
 marketplace/package/
 *.zip

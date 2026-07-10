@@ -21,6 +21,7 @@ Configure these under **Settings → Secrets and variables → Actions** for the
 
 - **Never commit** `.env`, `.env.test`, or `local.settings.json` (see `.gitignore`).
 - **Committed templates:** `.env.example`, `.env.test.example`
+- **Test fixtures:** `tests/fixtures/keys/sample.asc` (public test key, safe to commit)
 - **CI:** `scripts/prepare-ci-env.sh` copies examples and injects `BASILISK_TOKEN_SECRET` from GitHub Secrets when set.
 
 ## Generate values

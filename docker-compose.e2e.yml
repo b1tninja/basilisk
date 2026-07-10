@@ -31,3 +31,6 @@ services:
     build:
       context: .
       dockerfile: docker/gpg-tester/Dockerfile
+    depends_on:
+      basilisk:
+        condition: service_healthy
