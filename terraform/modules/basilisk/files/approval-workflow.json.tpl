@@ -10,11 +10,21 @@
   },
   "triggers": {
     "When_message_in_queue": {
-      "type": "ServiceBus",
+      "recurrence": {
+        "frequency": "Second",
+        "interval": 30
+      },
+      "type": "ApiConnection",
       "inputs": {
-        "queueName": "key-events",
-        "connection": {
-          "name": "@parameters('$connections')['servicebus']['connectionId']"
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['servicebus']['connectionId']"
+          }
+        },
+        "method": "get",
+        "path": "/@{encodeURIComponent(encodeURIComponent('key-events'))}/messages/head",
+        "queries": {
+          "queueType": "Main"
         }
       }
     }
@@ -23,7 +33,7 @@
     "Parse_message": {
       "type": "ParseJson",
       "inputs": {
-        "content": "@triggerBody()",
+        "content": "@json(base64ToString(triggerBody()?['ContentData']))",
         "schema": { "type": "object" }
       },
       "runAfter": {}
