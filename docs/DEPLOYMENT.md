@@ -113,6 +113,30 @@ NAME_PREFIX=basilisk-prod LOCATION=westus2 MAIL_PROVIDER=gmail AUTO_APPROVE=true
 
 
 
+### Clean up a failed or partial deploy
+
+
+
+If a previous Bicep/Terraform attempt left resources behind (e.g. `basilisk-dev-rg` already exists), delete them first:
+
+
+
+```powershell
+.\scripts\destroy-basilisk-azure.ps1 -Force
+```
+
+
+
+```bash
+FORCE=true ./scripts/destroy-basilisk-azure.sh
+```
+
+
+
+Wait for the resource group delete to finish (`az group show -n basilisk-dev-rg` should 404), then re-run `terraform apply`.
+
+
+
 ## Post-deploy
 
 
