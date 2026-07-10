@@ -4,7 +4,7 @@ param namePrefix string
 @description('Azure region')
 param location string
 
-var sbName = '${namePrefix}-sb'
+var sbName = '${namePrefix}-bus'
 
 resource namespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = {
   name: sbName

@@ -40,7 +40,7 @@ resource "azurerm_storage_container" "deployments" {
 resource "azurerm_storage_container_immutability_policy" "certs" {
   count = var.enable_worm_immutability ? 1 : 0
 
-  storage_container_resource_manager_id = azurerm_storage_container.certs.resource_manager_id
+  storage_container_resource_manager_id = azurerm_storage_container.certs.id
   immutability_period_in_days           = var.worm_retention_days
   protected_append_writes_all_enabled   = true
 }

@@ -1,5 +1,10 @@
+locals {
+  # Azure forbids namespace names ending in -sb, -mgmt, or a hyphen.
+  servicebus_namespace_name = "${var.name_prefix}-bus"
+}
+
 resource "azurerm_servicebus_namespace" "basilisk" {
-  name                = "${var.name_prefix}-sb"
+  name                = local.servicebus_namespace_name
   location            = azurerm_resource_group.basilisk.location
   resource_group_name = azurerm_resource_group.basilisk.name
   sku                 = "Standard"
