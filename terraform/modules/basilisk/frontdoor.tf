@@ -124,7 +124,8 @@ resource "azurerm_cdn_frontdoor_route" "basilisk" {
   cache {
     query_string_caching_behavior = "IgnoreQueryString"
     compression_enabled           = true
-    content_types_to_compress     = ["application/pgp-keys"]
+    # Armored OpenPGP keys are text; application/pgp-keys is not in the FD provider enum.
+    content_types_to_compress = ["text/plain"]
   }
 
   depends_on = [azurerm_cdn_frontdoor_origin.function]

@@ -42,6 +42,5 @@ resource "azurerm_storage_container_immutability_policy" "certs" {
 
   storage_container_resource_manager_id = azurerm_storage_container.certs.resource_manager_id
   immutability_period_in_days           = var.worm_retention_days
-  allow_protected_append_writes         = true
-  allow_protected_append_writes_all     = true
+  protected_append_writes_all_enabled   = true
 }

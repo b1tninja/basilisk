@@ -34,6 +34,22 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
 
   site_config {}
 
+  auth_settings_v2 {
+    auth_enabled           = true
+    runtime_version        = "~2"
+    require_authentication = true
+    unauthenticated_action = "AllowAnonymous"
+
+    active_directory_v2 {
+      client_id            = "00000000-0000-0000-0000-000000000000"
+      tenant_auth_endpoint = "https://login.microsoftonline.com/${var.entra_tenant_id}/v2.0/"
+    }
+
+    login {
+      token_store_enabled = false
+    }
+  }
+
   app_settings = {
     AzureWebJobsStorage             = azurerm_storage_account.basilisk.primary_connection_string
     FUNCTIONS_EXTENSION_VERSION     = "~4"
@@ -45,23 +61,4 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
   }
 
   tags = var.tags
-}
-
-resource "azurerm_app_service_auth_settings_v2" "basilisk" {
-  resource_id = azurerm_function_app_flex_consumption.basilisk.id
-
-  auth_enabled           = true
-  require_authentication = true
-  unauthenticated_action = "AllowAnonymous"
-
-  login {
-    token_store_enabled = false
-  }
-
-  active_directory_v2 {
-    client_id            = "00000000-0000-0000-0000-000000000000"
-    tenant_id            = var.entra_tenant_id
-    allowed_applications = []
-    allowed_audiences    = []
-  }
 }
