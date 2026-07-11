@@ -6,7 +6,7 @@ Workflows run on `ubuntu-latest` using Node 24–compatible actions:
 |--------|---------|
 | `actions/checkout` | v5 |
 | `actions/setup-python` | v6 (pip cache enabled) |
-| `azure/login` | v2 |
+| `azure/login` | v3 (Node 24) |
 | `hashicorp/setup-terraform` | v3 |
 | `actions/cache` | v4 |
 
@@ -25,6 +25,9 @@ Optional repository secrets (workflow reads Terraform state when these are omitt
 |--------|---------|
 | `AZURE_SUBSCRIPTION_ID` | Pin subscription for deploy |
 | `BASILISK_NAME_PREFIX` | Default name prefix when not passed as workflow input |
+| `GOOGLE_CLIENT_ID` | Enable Google sign-in (see [docs/AUTH.md](AUTH.md)) |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
+| `ENTRA_CLIENT_ID` | Custom AAD App Registration client ID (optional; Azure auto-creates one if omitted) |
 
 ## Bootstrap: first deploy + GitHub secrets
 

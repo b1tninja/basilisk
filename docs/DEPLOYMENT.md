@@ -210,6 +210,8 @@ For durable Terraform state across runners, configure an Azure Storage backend (
 
 5. Run `python -m basilisk.cli doctor` against production settings
 
+6. (Optional) Enable Google sign-in — see [docs/AUTH.md](AUTH.md)
+
 
 
 ## Logic App approval
