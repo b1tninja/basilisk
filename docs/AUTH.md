@@ -234,25 +234,40 @@ Then expose them in `.github/workflows/deploy.yml` under the deploy step's `env`
 ```yaml
 - name: Deploy infrastructure and function
   env:
-    NAME_PREFIX: ${{ inputs.name_prefix }}
-    LOCATION: ${{ inputs.location }}
-    MAIL_PROVIDER: ${{ inputs.mail_provider }}
-    AUTO_APPROVE: "true"
-    SKIP_TERRAFORM: ${{ inputs.skip_terraform }}
-    TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
-    TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+    TF_VAR_enable_google_auth: ${{ inputs.enable_google_signin }}
+    TF_VAR_google_client_id: ${{ inputs.enable_google_signin && secrets.GOOGLE_CLIENT_ID || '' }}
+    TF_VAR_google_client_secret: ${{ inputs.enable_google_signin && secrets.GOOGLE_CLIENT_SECRET || '' }}
   run: bash scripts/deploy-github-actions.sh
 ```
 
 #### Manual / Cloud Shell
 
 ```bash
+export TF_VAR_enable_google_auth=true
 export TF_VAR_google_client_id="<client-id>"
 export TF_VAR_google_client_secret="<client-secret>"
 ./scripts/deploy-terraform-cloudshell.sh
 ```
 
 When `TF_VAR_google_client_id` is non-empty, Terraform adds a `google_v2` block to Easy Auth and injects `GOOGLE_PROVIDER_AUTHENTICATION_SECRET` into the Function App settings. When it is empty (the default), Google sign-in is simply not configured — no other change is needed.
+
+### GitHub Actions deploy workflow
+
+The **deploy** workflow has checkboxes for sign-in providers:
+
+| Input | Default | Effect |
+|-------|---------|--------|
+| `enable_microsoft_signin` | on | Keeps Entra ID (`active_directory_v2`) |
+| `enable_google_signin` | off | Passes `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` to Terraform |
+
+**Important:** setting the GitHub secrets alone is not enough — check **Enable Google sign-in** and leave **Skip terraform** unchecked so Easy Auth is updated. The portal reads `/api/v1/auth/config` and only shows buttons for providers Terraform configured.
+
+After deploy, verify:
+
+```bash
+curl -s https://keys.b1tninja.com/api/v1/auth/config
+# {"providers": ["microsoft", "google"]}
+```
 
 ---
 
@@ -286,7 +301,8 @@ The `email` field is normalized to lowercase. It is used to:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/.auth/login/google` returns 404 | Google provider not configured in Terraform | Set `TF_VAR_google_client_id` and re-deploy |
+| `/.auth/login/google` returns 404 | Google provider not configured in Terraform | Check **enable_google_signin** in deploy workflow; set secrets; re-run with `skip_terraform: false` |
+| Google button missing on portal | Provider not in `BASILISK_AUTH_PROVIDERS` | Same as above — `curl /api/v1/auth/config` should list `"google"` |
 | Sign-in succeeds but `/api/v1/me` returns 401 | Email claim missing from token | Check OAuth consent screen has `email` scope; check App Registration optional claims |
 | AAD sign-in shows "AADSTS…" error | Redirect URI mismatch | Add `https://<fn-name>.azurewebsites.net/.auth/login/aad/callback` to App Registration |
 | Google sign-in shows "redirect_uri_mismatch" | Redirect URI not in Google credentials | Add the Function App callback URL to Authorized redirect URIs |

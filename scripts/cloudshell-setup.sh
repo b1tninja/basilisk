@@ -22,15 +22,16 @@ Usage: cloudshell-setup.sh [options]
 Prepare Azure Cloud Shell to deploy Basilisk with the same remote Terraform state as GitHub Actions.
 
 Options (environment variables):
-  REPO_URL=https://github.com/you/basilisk.git   Clone if \$WORK_DIR missing
+  REPO_URL=https://github.com/b1tninja/basilisk.git   Clone if \$WORK_DIR missing
   WORK_DIR=\$HOME/basilisk                         Project directory
   NAME_PREFIX=basilisk-dev
   MOUNT_CLOUDDRIVE=true                            Mount \$HOME to app storage (one-time)
 
 Typical first-time flow in https://shell.azure.com :
 
-  git clone https://github.com/you/basilisk.git ~/basilisk && cd ~/basilisk
-  GITHUB_SP_CLIENT_ID=<clientId> bash scripts/bootstrap-tfstate.sh --use-app-storage --mount-clouddrive
+  git clone https://github.com/b1tninja/basilisk.git ~/basilisk && cd ~/basilisk
+  clientId=$(az ad sp list --display-name basilisk-github-deploy --query "[0].appId" -o tsv)
+  GITHUB_SP_CLIENT_ID="$clientId" bash scripts/bootstrap-tfstate.sh --use-app-storage --mount-clouddrive
   AUTO_APPROVE=true ./scripts/deploy-terraform-cloudshell.sh
 
 Subsequent Cloud Shell sessions (same shared state as CI):
@@ -79,7 +80,8 @@ if az storage account show -g "$APP_RG" -n "$APP_SA" >/dev/null 2>&1; then
   bash "${REPO_ROOT}/scripts/bootstrap-tfstate.sh" "${BOOT_ARGS[@]}"
 else
   echo "Storage $APP_SA not found yet — first deploy will create it (local state), then re-run:"
-  echo "  GITHUB_SP_CLIENT_ID=<clientId> bash scripts/bootstrap-tfstate.sh --use-app-storage --mount-clouddrive"
+  echo "  clientId=\$(az ad sp list --display-name basilisk-github-deploy --query \"[0].appId\" -o tsv)"
+  echo "  GITHUB_SP_CLIENT_ID=\$clientId bash scripts/bootstrap-tfstate.sh --use-app-storage --mount-clouddrive"
 fi
 
 cat <<EOF

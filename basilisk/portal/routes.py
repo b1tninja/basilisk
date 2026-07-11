@@ -21,6 +21,13 @@ def register_portal_api(app: Flask) -> None:
     # Public endpoints
     # ------------------------------------------------------------------
 
+    @app.get("/api/v1/auth/config")
+    def api_auth_config() -> Response:
+        return Response(
+            json.dumps({"providers": list(settings.auth_providers)}),
+            mimetype="application/json",
+        )
+
     @app.get("/api/v1/search")
     def api_search() -> Response:
         query = request.args.get("q", "").strip()

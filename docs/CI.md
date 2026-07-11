@@ -100,6 +100,8 @@ Paste the full JSON output into the `AZURE_CREDENTIALS` secret.
 | `location` | (empty) | Auto-detect from existing RG |
 | `mail_provider` | `office365` | Logic App connector |
 | `skip_terraform` | `false` | Set `true` for code-only redeploys |
+| `enable_microsoft_signin` | `true` | Microsoft Entra ID (Easy Auth) |
+| `enable_google_signin` | `false` | Google OAuth — requires `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` secrets and `skip_terraform: false` |
 | `import_terraform` | auto | When RG exists without state, imports existing Azure resources (set `IMPORT_TERRAFORM=false` to fail instead) |
 
 The workflow:
@@ -112,11 +114,11 @@ Terraform state is stored in **Azure Blob Storage** (remote backend), not the Gi
 
 ```bash
 az login
-# Grant deploy SP blob access (clientId from AZURE_CREDENTIALS JSON):
-GITHUB_SP_CLIENT_ID=<clientId> bash scripts/bootstrap-tfstate.sh --use-app-storage
+clientId=$(az ad sp list --display-name basilisk-github-deploy --query "[0].appId" -o tsv)
+GITHUB_SP_CLIENT_ID="$clientId" bash scripts/bootstrap-tfstate.sh --use-app-storage
 ```
 
-This creates a `tfstate` container on `basiliskdevstore` and migrates local state if present.
+This creates a `tfstate` container on `basiliskdevstore` and migrates local state if present. Omit `GITHUB_SP_CLIENT_ID` if the script should look up `basilisk-github-deploy` automatically.
 
 Optional repository **variables** (auto-detected when unset in CI if app storage exists):
 

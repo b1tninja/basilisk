@@ -11,7 +11,24 @@ RG_DEDICATED="${TFSTATE_RESOURCE_GROUP:-basilisk-tfstate-rg}"
 CONTAINER="${TFSTATE_CONTAINER:-tfstate}"
 CLOUDSHELL_SHARE="${CLOUDSHELL_SHARE:-cloudshell}"
 GITHUB_SP_CLIENT_ID="${GITHUB_SP_CLIENT_ID:-}"
+GITHUB_SP_NAME="${GITHUB_SP_NAME:-basilisk-github-deploy}"
 MOUNT_CLOUDDRIVE=false
+
+resolve_github_sp_client_id() {
+  if [[ -n "${GITHUB_SP_CLIENT_ID:-}" ]]; then
+    printf '%s' "$GITHUB_SP_CLIENT_ID"
+    return 0
+  fi
+  local app_id
+  app_id="$(az ad sp list --display-name "$GITHUB_SP_NAME" --query "[0].appId" -o tsv 2>/dev/null || true)"
+  if [[ -z "$app_id" || "$app_id" == "null" ]]; then
+    app_id="$(az ad app list --display-name "$GITHUB_SP_NAME" --query "[0].appId" -o tsv 2>/dev/null || true)"
+  fi
+  if [[ -z "$app_id" || "$app_id" == "null" ]]; then
+    return 1
+  fi
+  printf '%s' "$app_id"
+}
 
 usage() {
   cat <<EOF
@@ -132,12 +149,15 @@ grant_blob_contributor() {
 CALLER_OID="$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)"
 grant_blob_contributor "$CALLER_OID" "signed-in user"
 
-if [[ -n "$GITHUB_SP_CLIENT_ID" ]]; then
+if GITHUB_SP_CLIENT_ID="$(resolve_github_sp_client_id)"; then
+  echo "GitHub deploy SP: $GITHUB_SP_NAME ($GITHUB_SP_CLIENT_ID)"
   SP_OID="$(az ad sp show --id "$GITHUB_SP_CLIENT_ID" --query id -o tsv 2>/dev/null || true)"
   grant_blob_contributor "$SP_OID" "GitHub SP ($GITHUB_SP_CLIENT_ID)"
 else
   echo ""
-  echo "Tip: re-run with GITHUB_SP_CLIENT_ID=<clientId from AZURE_CREDENTIALS> to grant the deploy SP."
+  echo "Tip: create the deploy SP (see docs/CI.md), or set GITHUB_SP_CLIENT_ID explicitly:"
+  echo "  clientId=\$(az ad sp list --display-name $GITHUB_SP_NAME --query \"[0].appId\" -o tsv)"
+  echo "  GITHUB_SP_CLIENT_ID=\$clientId bash scripts/bootstrap-tfstate.sh --use-app-storage"
 fi
 
 export TFSTATE_RESOURCE_GROUP TFSTATE_STORAGE_ACCOUNT
@@ -146,6 +166,9 @@ export TFSTATE_KEY="${NAME_PREFIX}.tfstate"
 export NAME_PREFIX
 
 echo ""
+echo "Waiting 30s for RBAC role assignments to propagate ..."
+sleep 30
+
 echo "Initializing Terraform with remote backend ..."
 bash "${REPO_ROOT}/scripts/terraform-init.sh"
 
@@ -188,7 +211,7 @@ To mount Cloud Shell \$HOME (if not done above):
   clouddrive mount -s $SUB -g $TFSTATE_RESOURCE_GROUP -n $TFSTATE_STORAGE_ACCOUNT -f $CLOUDSHELL_SHARE
 
 After mounting, re-open Cloud Shell, clone the repo into \$HOME, and deploy:
-  git clone <repo> ~/basilisk && cd ~/basilisk
+  git clone https://github.com/b1tninja/basilisk.git ~/basilisk && cd ~/basilisk
   AUTO_APPROVE=true bash scripts/deploy-terraform-cloudshell.sh
 
 GitHub Actions (optional repository variables to override auto-detect):

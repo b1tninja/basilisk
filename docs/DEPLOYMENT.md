@@ -63,39 +63,93 @@ One storage account (`basiliskdevstore`) serves everything: static portal, Terra
 | `tfstate/` blob | Terraform state — shared by CI and Cloud Shell |
 | `cloudshell` file share | Cloud Shell persistent `$HOME` |
 
-### First time (Bash Cloud Shell)
+### Cloud Shell bootstrap (one-time)
+
+> **Prerequisites:** the Azure infra must already exist (`basiliskdevstore` storage account). If this is a greenfield deploy, run `./scripts/deploy-terraform-cloudshell.sh` once first (local state is fine for that first run), then come back to this section.
+
+**Step 1 — open [shell.azure.com](https://shell.azure.com) and clone the repo**
 
 ```bash
-az login
-git clone <your-repo-url> ~/basilisk && cd ~/basilisk
+git clone https://github.com/b1tninja/basilisk.git ~/basilisk && cd ~/basilisk
 chmod +x scripts/*.sh
+```
 
-# Run once after Terraform has created basiliskdevstore:
-GITHUB_SP_CLIENT_ID=<clientId-from-AZURE_CREDENTIALS> \
+**Step 2 — bootstrap shared state + mount persistent `$HOME`**
+
+```bash
+# Look up the GitHub deploy service principal (same name as docs/CI.md)
+clientId=$(az ad sp list --display-name basilisk-github-deploy --query "[0].appId" -o tsv)
+
+GITHUB_SP_CLIENT_ID="$clientId" \
   bash scripts/bootstrap-tfstate.sh --use-app-storage --mount-clouddrive
 ```
 
-This creates the `tfstate` blob container and `cloudshell` file share, grants the deploy SP access, and mounts `$HOME` to the same account:
+If `basilisk-github-deploy` does not exist yet, create it first (see [docs/CI.md](CI.md#3-create-azure_credentials)), then re-run the commands above. The bootstrap script also auto-detects this SP when `GITHUB_SP_CLIENT_ID` is omitted.
 
-```
-clouddrive mount -s <sub-id> -g basilisk-dev-rg -n basiliskdevstore -f cloudshell
-```
+This:
+1. Creates `tfstate` blob container on `basiliskdevstore`
+2. Creates `cloudshell` file share on `basiliskdevstore`
+3. Grants `Storage Blob Data Contributor` to you and the deploy SP
+4. Writes `terraform/cloudshell/backend.hcl` pointing at the blob
+5. Runs `terraform init` against the remote backend
+6. Runs `clouddrive mount` — **this opens a new terminal session**
 
-Then re-open Cloud Shell (new session picks up the mounted `$HOME`), clone the repo into `~`, and deploy:
+**Step 3 — re-clone into the new persistent `$HOME`**
+
+> `clouddrive mount` replaces `$HOME` with the new file share, so your previous clone is gone. The new `$HOME` persists across all future Cloud Shell sessions.
 
 ```bash
-git clone <your-repo-url> ~/basilisk && cd ~/basilisk
+# In the new terminal:
+git clone https://github.com/b1tninja/basilisk.git ~/basilisk && cd ~/basilisk
+chmod +x scripts/*.sh
+```
+
+**Step 4 — init Terraform against the shared backend**
+
+```bash
+# RBAC can take 1–5 min to propagate after the role assignment in Step 2.
+# If you get a 403, wait a minute and retry.
+NAME_PREFIX=basilisk-dev bash scripts/terraform-init.sh
+```
+
+**Step 5 — deploy**
+
+```bash
 AUTO_APPROVE=true ./scripts/deploy-terraform-cloudshell.sh
 ```
 
-### Subsequent sessions
+### Subsequent Cloud Shell sessions
+
+`$HOME` is now persistent — your clone survives. Just pull and deploy:
 
 ```bash
 cd ~/basilisk && git pull
 AUTO_APPROVE=true ./scripts/deploy-terraform-cloudshell.sh
 ```
 
-Cloud Shell and GitHub Actions now read and write the **same** `basilisk-dev.tfstate` blob — no more lost state between runs.
+Cloud Shell and GitHub Actions read and write the **same** `basilisk-dev.tfstate` blob.
+
+### If `terraform init` gives 403
+
+Azure RBAC propagation takes 1–5 minutes after `bootstrap-tfstate.sh` grants the role. Retry:
+
+```bash
+cd ~/basilisk/terraform/cloudshell
+terraform init -backend-config=backend.hcl -reconfigure
+```
+
+Or use storage key auth as a fallback:
+
+```bash
+KEY=$(az storage account keys list -g basilisk-dev-rg -n basiliskdevstore --query "[0].value" -o tsv)
+terraform init \
+  -backend-config="storage_account_name=basiliskdevstore" \
+  -backend-config="resource_group_name=basilisk-dev-rg" \
+  -backend-config="container_name=tfstate" \
+  -backend-config="key=basilisk-dev.tfstate" \
+  -backend-config="access_key=$KEY" \
+  -reconfigure
+```
 
 
 
@@ -226,7 +280,8 @@ Local dev serves the same files from Flask (`basilisk/portal/static.py`) so URLs
 For durable Terraform state across runners, bootstrap Azure Blob remote state:
 
 ```bash
-GITHUB_SP_CLIENT_ID=<deploy-sp-client-id> bash scripts/bootstrap-tfstate.sh --use-app-storage
+clientId=$(az ad sp list --display-name basilisk-github-deploy --query "[0].appId" -o tsv)
+GITHUB_SP_CLIENT_ID="$clientId" bash scripts/bootstrap-tfstate.sh --use-app-storage
 ```
 
 See `docs/CI.md` and `scripts/bootstrap-tfstate.sh`.

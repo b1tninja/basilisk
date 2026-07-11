@@ -44,6 +44,7 @@ class Settings:
     require_proof: bool
     proof_difficulty: int
     proof_max_age_sec: int
+    auth_providers: tuple[str, ...]
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -76,6 +77,11 @@ class Settings:
             require_proof=_env_bool("BASILISK_REQUIRE_PROOF"),
             proof_difficulty=int(os.environ.get("BASILISK_PROOF_DIFFICULTY", "0")),
             proof_max_age_sec=int(os.environ.get("BASILISK_PROOF_MAX_AGE_SEC", "300")),
+            auth_providers=tuple(
+                p.strip()
+                for p in os.environ.get("BASILISK_AUTH_PROVIDERS", "microsoft").split(",")
+                if p.strip()
+            ),
         )
 
 

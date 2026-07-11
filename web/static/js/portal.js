@@ -36,6 +36,18 @@ async function fetchText(url) {
 
 const Auth = (() => {
   let _user = undefined; // undefined = not fetched yet, null = not signed in
+  let _providers = undefined;
+
+  async function getProviders() {
+    if (_providers !== undefined) return _providers;
+    try {
+      const cfg = await fetchJson("/api/v1/auth/config");
+      _providers = Array.isArray(cfg.providers) ? cfg.providers : ["microsoft"];
+    } catch (_) {
+      _providers = ["microsoft"];
+    }
+    return _providers;
+  }
 
   async function getUser() {
     if (_user !== undefined) return _user;
@@ -47,28 +59,60 @@ const Auth = (() => {
     return _user;
   }
 
-  function signInMenu(redirectUrl) {
+  function signInMenu(redirectUrl, providers) {
     const enc = encodeURIComponent(redirectUrl || window.location.pathname);
-    return `
-      <div class="sign-in-menu" id="sign-in-menu">
-        <a href="/.auth/login/aad?post_login_redirect_uri=${enc}">
+    const links = [];
+    if (providers.includes("microsoft")) {
+      links.push(`<a href="/.auth/login/aad?post_login_redirect_uri=${enc}">
           ${ICON_MICROSOFT} Sign in with Microsoft
-        </a>
-        <a href="/.auth/login/google?post_login_redirect_uri=${enc}">
+        </a>`);
+    }
+    if (providers.includes("google")) {
+      links.push(`<a href="/.auth/login/google?post_login_redirect_uri=${enc}">
           ${ICON_GOOGLE} Sign in with Google
-        </a>
+        </a>`);
+    }
+    if (!links.length) {
+      return `<p class="muted" style="font-size:.85rem">Sign-in is not configured.</p>`;
+    }
+    return `
+      <div class="sign-in-menu" id="sign-in-menu" hidden>
+        ${links.join("")}
       </div>`;
+  }
+
+  function providerButtons(redirectUrl, providers) {
+    const enc = encodeURIComponent(redirectUrl || window.location.pathname);
+    const buttons = [];
+    if (providers.includes("microsoft")) {
+      buttons.push(`<a class="provider-btn" href="/.auth/login/aad?post_login_redirect_uri=${enc}">
+            ${ICON_MICROSOFT}
+            Sign in with Microsoft
+          </a>`);
+    }
+    if (providers.includes("google")) {
+      buttons.push(`<a class="provider-btn" href="/.auth/login/google?post_login_redirect_uri=${enc}">
+            ${ICON_GOOGLE}
+            Sign in with Google
+          </a>`);
+    }
+    return buttons.join("");
   }
 
   async function initWidget(container, redirectUrl) {
     if (!container) return;
-    const user = await getUser();
+    const [user, providers] = await Promise.all([getUser(), getProviders()]);
     if (!user || !user.authenticated) {
-      container.innerHTML = `
+      const menu = signInMenu(redirectUrl || window.location.pathname, providers);
+      if (menu.includes("sign-in-menu")) {
+        container.innerHTML = `
         <div class="sign-in-trigger">
           <button class="btn-sign-in" onclick="Auth.toggleMenu(event)">Sign in ▾</button>
-          ${signInMenu(redirectUrl || window.location.pathname)}
+          ${menu}
         </div>`;
+      } else {
+        container.innerHTML = menu;
+      }
     } else {
       container.innerHTML = `
         <span class="auth-email" title="${escapeHtml(user.email)}">${escapeHtml(user.email)}</span>
@@ -80,14 +124,14 @@ const Auth = (() => {
     e.stopPropagation();
     const menu = document.getElementById("sign-in-menu");
     if (!menu) return;
-    const open = !menu.hidden;
-    menu.hidden = open;
-    if (!open) {
+    const show = menu.hidden;
+    menu.hidden = !show;
+    if (show) {
       document.addEventListener("click", () => { menu.hidden = true; }, { once: true });
     }
   }
 
-  return { getUser, initWidget, toggleMenu };
+  return { getUser, getProviders, initWidget, toggleMenu, providerButtons };
 })();
 
 /* ===== SVG Icons ===== */

@@ -3,8 +3,8 @@
 #
 # One-time bootstrap (existing stack — uses basiliskdevstore):
 #   az login
-#   GITHUB_SP_CLIENT_ID=<clientId from AZURE_CREDENTIALS> \
-#     bash scripts/bootstrap-tfstate.sh --use-app-storage
+#   clientId=$(az ad sp list --display-name basilisk-github-deploy --query "[0].appId" -o tsv)
+#   GITHUB_SP_CLIENT_ID="$clientId" bash scripts/bootstrap-tfstate.sh --use-app-storage
 #
 # Greenfield dedicated tfstate account:
 #   bash scripts/bootstrap-tfstate.sh

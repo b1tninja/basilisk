@@ -51,6 +51,16 @@ variable "google_client_secret" {
   sensitive   = true
 }
 
+variable "enable_microsoft_auth" {
+  type    = bool
+  default = true
+}
+
+variable "enable_google_auth" {
+  type    = bool
+  default = false
+}
+
 variable "oauth_authorized_domain" {
   type        = string
   description = "Root domain you own for Google OAuth consent screen (e.g. example.com). Optional."

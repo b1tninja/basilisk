@@ -6,6 +6,10 @@ resource "random_password" "token_secret" {
 
 locals {
   token_secret = var.existing_token_secret != "" ? var.existing_token_secret : random_password.token_secret[0].result
+  auth_providers = join(",", compact([
+    var.enable_microsoft_auth ? "microsoft" : "",
+    var.enable_google_auth && var.google_client_id != "" ? "google" : "",
+  ]))
 }
 
 resource "azurerm_service_plan" "basilisk" {
@@ -45,13 +49,16 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
     require_authentication = true
     unauthenticated_action = "AllowAnonymous"
 
-    active_directory_v2 {
-      client_id            = "00000000-0000-0000-0000-000000000000"
-      tenant_auth_endpoint = "https://login.microsoftonline.com/${var.entra_tenant_id}/v2.0/"
+    dynamic "active_directory_v2" {
+      for_each = var.enable_microsoft_auth ? [1] : []
+      content {
+        client_id            = "00000000-0000-0000-0000-000000000000"
+        tenant_auth_endpoint = "https://login.microsoftonline.com/${var.entra_tenant_id}/v2.0/"
+      }
     }
 
     dynamic "google_v2" {
-      for_each = var.google_client_id != "" ? [1] : []
+      for_each = var.enable_google_auth && var.google_client_id != "" ? [1] : []
       content {
         client_id                  = var.google_client_id
         client_secret_setting_name = "GOOGLE_PROVIDER_AUTHENTICATION_SECRET"
@@ -74,8 +81,9 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
       BASILISK_DEV_APPROVE              = "0"
       BASILISK_REQUIRE_MANAGER_APPROVAL = var.require_manager_approval ? "1" : "0"
       BASILISK_TOKEN_SECRET             = local.token_secret
+      BASILISK_AUTH_PROVIDERS           = local.auth_providers
     },
-    var.google_client_secret != "" ? {
+    var.enable_google_auth && var.google_client_secret != "" ? {
       GOOGLE_PROVIDER_AUTHENTICATION_SECRET = var.google_client_secret
     } : {}
   )

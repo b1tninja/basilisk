@@ -30,22 +30,19 @@
     const content = document.getElementById("content");
     const error   = document.getElementById("error");
 
-    function renderSignedOut() {
+    async function renderSignedOut() {
+      const providers = await Auth.getProviders();
+      const buttons = Auth.providerButtons("/my-keys", providers);
+      const hint = providers.includes("google") && providers.includes("microsoft")
+        ? "Sign in with your Microsoft or Google account to view, submit, and claim keys associated with your email address."
+        : providers.includes("google")
+          ? "Sign in with your Google account to view, submit, and claim keys associated with your email address."
+          : "Sign in with your Microsoft account to view, submit, and claim keys associated with your email address.";
       content.innerHTML = `
         <div class="card" style="max-width:440px">
           <p class="card-title">Sign in to manage your keys</p>
-          <p class="muted" style="margin-bottom:1.25rem">
-            Sign in with your Microsoft or Google account to view, submit,
-            and claim keys associated with your email address.
-          </p>
-          <a class="provider-btn" href="/.auth/login/aad?post_login_redirect_uri=/my-keys">
-            ${ICON_MICROSOFT}
-            Sign in with Microsoft
-          </a>
-          <a class="provider-btn" href="/.auth/login/google?post_login_redirect_uri=/my-keys">
-            ${ICON_GOOGLE}
-            Sign in with Google
-          </a>
+          <p class="muted" style="margin-bottom:1.25rem">${hint}</p>
+          ${buttons || "<p class='muted'>Sign-in is not configured.</p>"}
         </div>`;
     }
 

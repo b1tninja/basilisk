@@ -83,6 +83,18 @@ variable "google_client_secret" {
   sensitive   = true
 }
 
+variable "enable_microsoft_auth" {
+  type        = bool
+  description = "Enable Microsoft Entra ID (Easy Auth active_directory_v2)."
+  default     = true
+}
+
+variable "enable_google_auth" {
+  type        = bool
+  description = "Enable Google sign-in (requires google_client_id and google_client_secret)."
+  default     = false
+}
+
 variable "oauth_authorized_domain" {
   type        = string
   description = "Root domain you own for Google OAuth consent screen Authorized domains (e.g. example.com). Leave empty if using only *.azurewebsites.net."
