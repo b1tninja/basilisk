@@ -211,6 +211,7 @@ resource "azurerm_cdn_frontdoor_route" "api" {
   forwarding_protocol           = "HttpsOnly"
   link_to_default_domain        = true
   https_redirect_enabled        = true
+  cdn_frontdoor_custom_domain_ids = local.custom_domain_enabled ? [azurerm_cdn_frontdoor_custom_domain.public[0].id] : []
 
   cache {
     query_string_caching_behavior = "IgnoreQueryString"
@@ -231,6 +232,7 @@ resource "azurerm_cdn_frontdoor_route" "static" {
   forwarding_protocol           = "HttpsOnly"
   link_to_default_domain        = true
   https_redirect_enabled        = true
+  cdn_frontdoor_custom_domain_ids = local.custom_domain_enabled ? [azurerm_cdn_frontdoor_custom_domain.public[0].id] : []
 
   cache {
     query_string_caching_behavior = "UseQueryString"
