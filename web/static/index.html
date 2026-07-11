@@ -8,24 +8,39 @@
 </head>
 <body>
   <nav>
-    <a href="/">Search</a>
-    <a href="/my-keys">My keys</a>
-    <a href="/pks/lookup?op=stats">Stats</a>
+    <a class="nav-logo" href="/">Basilisk</a>
+    <div class="nav-links">
+      <a class="nav-link active" href="/">Search</a>
+      <a class="nav-link" href="/my-keys">My Keys</a>
+      <a class="nav-link" href="/pks/lookup?op=stats">Stats</a>
+    </div>
+    <div class="auth-widget" id="auth-widget"></div>
   </nav>
-  <h1>Search keys</h1>
-  <p class="muted">Look up approved OpenPGP keys by email, fingerprint, or key ID.</p>
+
+  <div class="page-header">
+    <h1>Search public keys</h1>
+    <p class="muted">Look up approved OpenPGP keys by email address, fingerprint, or key ID.</p>
+  </div>
+
   <form id="search-form">
-    <input type="search" id="q" name="q" placeholder="user@example.com or 0x…" autofocus>
-    <button type="submit">Search</button>
+    <div class="search-row">
+      <input type="search" id="q" name="q"
+             placeholder="user@example.com or 0x…" autocomplete="off" autofocus>
+      <button class="btn" type="submit">Search</button>
+    </div>
   </form>
-  <p id="error" class="error hidden"></p>
+
+  <p id="error" class="text-error hidden"></p>
   <div id="results"></div>
+
   <script src="/js/portal.js"></script>
   <script>
-    const form = document.getElementById("search-form");
-    const input = document.getElementById("q");
+    Auth.initWidget(document.getElementById("auth-widget"));
+
+    const form    = document.getElementById("search-form");
+    const input   = document.getElementById("q");
     const results = document.getElementById("results");
-    const error = document.getElementById("error");
+    const error   = document.getElementById("error");
 
     async function runSearch(query) {
       error.classList.add("hidden");
@@ -33,7 +48,7 @@
       if (!query.trim()) return;
       try {
         const payload = await fetchJson(`/api/v1/search?q=${encodeURIComponent(query.trim())}`);
-        if (!payload.results.length) {
+        if (!payload.results || !payload.results.length) {
           results.innerHTML = "<p class='muted'>No matching approved keys found.</p>";
           return;
         }
@@ -51,10 +66,7 @@
     });
 
     const initial = queryParam("q");
-    if (initial) {
-      input.value = initial;
-      runSearch(initial);
-    }
+    if (initial) { input.value = initial; runSearch(initial); }
   </script>
 </body>
 </html>

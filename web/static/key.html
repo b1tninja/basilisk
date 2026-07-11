@@ -8,25 +8,36 @@
 </head>
 <body>
   <nav>
-    <a href="/">Search</a>
-    <a href="/my-keys">My keys</a>
-    <a href="/pks/lookup?op=stats">Stats</a>
+    <a class="nav-logo" href="/">Basilisk</a>
+    <div class="nav-links">
+      <a class="nav-link" href="/">Search</a>
+      <a class="nav-link" href="/my-keys">My Keys</a>
+      <a class="nav-link" href="/pks/lookup?op=stats">Stats</a>
+    </div>
+    <div class="auth-widget" id="auth-widget"></div>
   </nav>
-  <h1 id="title">Key</h1>
-  <p>Status: <span id="status" class="badge">…</span></p>
-  <p id="error" class="error hidden"></p>
+
+  <div class="page-header">
+    <h1 id="title">Key</h1>
+    <p>Status: <span id="status" class="badge">…</span></p>
+  </div>
+
+  <p id="error" class="text-error hidden"></p>
   <pre id="armored" class="hidden"></pre>
-  <p><a href="/">← Back to search</a></p>
+  <p><a class="text-link" href="/">← Back to search</a></p>
+
   <script src="/js/portal.js"></script>
   <script>
-    const fpr = queryParam("fpr");
-    const error = document.getElementById("error");
+    Auth.initWidget(document.getElementById("auth-widget"));
+
+    const fpr     = queryParam("fpr");
+    const error   = document.getElementById("error");
     const armored = document.getElementById("armored");
-    const title = document.getElementById("title");
-    const status = document.getElementById("status");
+    const title   = document.getElementById("title");
+    const status  = document.getElementById("status");
 
     if (!fpr) {
-      showError(error, "Missing fingerprint (use ?fpr=…)");
+      showError(error, "Missing fingerprint — use ?fpr=…");
     } else {
       title.textContent = `Key ${fpr.toUpperCase()}`;
       (async () => {
@@ -35,9 +46,13 @@
           const text = await fetchText(`/pks/lookup?op=get&search=${encodeURIComponent(search)}`);
           armored.textContent = text;
           armored.classList.remove("hidden");
+          const cls = text.includes("BEGIN PGP") ? "badge approved" : "badge";
+          status.className = cls;
           status.textContent = text.includes("BEGIN PGP") ? "available" : "unknown";
         } catch (err) {
           showError(error, err.message || "Key not found");
+          status.className = "badge";
+          status.textContent = "not found";
         }
       })();
     }

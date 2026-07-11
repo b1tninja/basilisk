@@ -137,7 +137,7 @@ def hkp_v2(req: func.HttpRequest) -> func.HttpResponse:
     )
 
 
-@app.route(route="api/v1/{*path}", methods=["GET"])
+@app.route(route="api/v1/{*path}", methods=["GET", "POST"])
 def portal_api(req: func.HttpRequest) -> func.HttpResponse:
     resp = _flask_response(req)
     return func.HttpResponse(

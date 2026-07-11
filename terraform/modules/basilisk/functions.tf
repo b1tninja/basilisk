@@ -50,21 +50,35 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
       tenant_auth_endpoint = "https://login.microsoftonline.com/${var.entra_tenant_id}/v2.0/"
     }
 
+    dynamic "google_v2" {
+      for_each = var.google_client_id != "" ? [1] : []
+      content {
+        client_id                  = var.google_client_id
+        client_secret_setting_name = "GOOGLE_PROVIDER_AUTHENTICATION_SECRET"
+        allowed_audiences          = []
+      }
+    }
+
     login {
       token_store_enabled = false
     }
   }
 
-  app_settings = {
-    AzureWebJobsStorage             = azurerm_storage_account.basilisk.primary_connection_string
-    FUNCTIONS_EXTENSION_VERSION     = "~4"
-    ServiceBusConnection            = data.azurerm_servicebus_namespace_authorization_rule.root.primary_connection_string
-    AZURE_STORAGE_CONNECTION_STRING = azurerm_storage_account.basilisk.primary_connection_string
-    BASILISK_CACHE_MODE             = "redirect"
-    BASILISK_DEV_APPROVE            = "0"
-    BASILISK_REQUIRE_MANAGER_APPROVAL = var.require_manager_approval ? "1" : "0"
-    BASILISK_TOKEN_SECRET           = local.token_secret
-  }
+  app_settings = merge(
+    {
+      AzureWebJobsStorage               = azurerm_storage_account.basilisk.primary_connection_string
+      FUNCTIONS_EXTENSION_VERSION       = "~4"
+      ServiceBusConnection              = data.azurerm_servicebus_namespace_authorization_rule.root.primary_connection_string
+      AZURE_STORAGE_CONNECTION_STRING   = azurerm_storage_account.basilisk.primary_connection_string
+      BASILISK_CACHE_MODE               = "redirect"
+      BASILISK_DEV_APPROVE              = "0"
+      BASILISK_REQUIRE_MANAGER_APPROVAL = var.require_manager_approval ? "1" : "0"
+      BASILISK_TOKEN_SECRET             = local.token_secret
+    },
+    var.google_client_secret != "" ? {
+      GOOGLE_PROVIDER_AUTHENTICATION_SECRET = var.google_client_secret
+    } : {}
+  )
 
   tags = var.tags
 }

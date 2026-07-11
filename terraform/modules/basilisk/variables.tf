@@ -69,3 +69,16 @@ variable "existing_token_secret" {
   default     = ""
   sensitive   = true
 }
+
+variable "google_client_id" {
+  type        = string
+  description = "Google OAuth2 client ID for Easy Auth (optional; omit to disable Google sign-in)."
+  default     = ""
+}
+
+variable "google_client_secret" {
+  type        = string
+  description = "Google OAuth2 client secret for Easy Auth (optional)."
+  default     = ""
+  sensitive   = true
+}

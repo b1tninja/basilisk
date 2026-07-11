@@ -13,4 +13,6 @@ module "basilisk" {
   require_manager_approval   = var.require_manager_approval
   tags                       = var.tags
   existing_token_secret      = var.existing_token_secret
+  google_client_id           = var.google_client_id
+  google_client_secret       = var.google_client_secret
 }

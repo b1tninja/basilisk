@@ -3,48 +3,93 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>My keys — Basilisk</title>
+  <title>My Keys — Basilisk</title>
   <link rel="stylesheet" href="/css/site.css">
 </head>
 <body>
   <nav>
-    <a href="/">Search</a>
-    <a href="/my-keys">My keys</a>
-    <a href="/pks/lookup?op=stats">Stats</a>
+    <a class="nav-logo" href="/">Basilisk</a>
+    <div class="nav-links">
+      <a class="nav-link" href="/">Search</a>
+      <a class="nav-link active" href="/my-keys">My Keys</a>
+      <a class="nav-link" href="/pks/lookup?op=stats">Stats</a>
+    </div>
+    <div class="auth-widget" id="auth-widget"></div>
   </nav>
-  <h1>My keys</h1>
-  <div id="content"><p class="muted">Loading…</p></div>
-  <p id="error" class="error hidden"></p>
+
+  <div class="page-header">
+    <h1>My Keys</h1>
+    <p class="muted">Manage the OpenPGP keys associated with your identity.</p>
+  </div>
+
+  <div id="content"></div>
+  <p id="error" class="text-error hidden"></p>
+
   <script src="/js/portal.js"></script>
   <script>
     const content = document.getElementById("content");
-    const error = document.getElementById("error");
-    const loginUrl = "/.auth/login/aad?post_login_redirect_uri=/my-keys";
+    const error   = document.getElementById("error");
+
+    function renderSignedOut() {
+      content.innerHTML = `
+        <div class="card" style="max-width:440px">
+          <p class="card-title">Sign in to manage your keys</p>
+          <p class="muted" style="margin-bottom:1.25rem">
+            Sign in with your Microsoft or Google account to view, submit,
+            and claim keys associated with your email address.
+          </p>
+          <a class="provider-btn" href="/.auth/login/aad?post_login_redirect_uri=/my-keys">
+            ${ICON_MICROSOFT}
+            Sign in with Microsoft
+          </a>
+          <a class="provider-btn" href="/.auth/login/google?post_login_redirect_uri=/my-keys">
+            ${ICON_GOOGLE}
+            Sign in with Google
+          </a>
+        </div>`;
+    }
+
+    function renderSignedIn(user, keys) {
+      const userInfo =
+        `<p style="margin-bottom:1.25rem">Signed in as
+          <strong>${escapeHtml(user.email)}</strong></p>`;
+
+      const uploadCard = `
+        <div class="card">
+          <p class="card-title">Submit a public key</p>
+          <p class="muted" style="margin-bottom:1rem">
+            Paste your armored public key or upload a <code>.asc</code> file.
+            It will be associated with your account if a UID matches your email.
+          </p>
+          ${renderUploadForm()}
+        </div>`;
+
+      const keysSection = keys && keys.length
+        ? `<h2>Your keys</h2>${renderKeysTable(keys, { showClaim: true })}`
+        : `<p class="muted">No keys on file yet. Submit one above.</p>`;
+
+      content.innerHTML = userInfo + uploadCard + keysSection;
+    }
 
     async function loadMyKeys() {
       try {
+        const user = await Auth.getUser();
+        if (!user || !user.authenticated) {
+          renderSignedOut();
+          return;
+        }
         const payload = await fetchJson("/api/v1/me/keys");
-        if (!payload.keys.length) {
-          content.innerHTML =
-            `<p>Signed in as <strong>${escapeHtml(payload.email)}</strong></p>` +
-            "<p class='muted'>No keys found for your account yet. Upload via gpg and claim pending keys.</p>";
-          return;
-        }
-        content.innerHTML =
-          `<p>Signed in as <strong>${escapeHtml(payload.email)}</strong></p>` +
-          renderKeysTable(payload.keys, { showClaim: true });
+        renderSignedIn(user, payload.keys);
       } catch (err) {
-        if (err.message.includes("401") || err.message.includes("Authentication")) {
-          content.innerHTML =
-            "<p>Sign in with your organization account to see keys associated with your identity.</p>" +
-            `<p><a class="button" href="${loginUrl}">Sign in with Microsoft</a></p>`;
-          return;
+        if (err.status === 401) {
+          renderSignedOut();
+        } else {
+          showError(error, err.message);
         }
-        showError(error, err.message);
-        content.innerHTML = "";
       }
     }
 
+    Auth.initWidget(document.getElementById("auth-widget"), "/my-keys");
     loadMyKeys();
   </script>
 </body>
