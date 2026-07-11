@@ -161,10 +161,11 @@ resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
 
   actions {
     route_configuration_override_action {
-      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
-      forwarding_protocol           = "HttpsOnly"
-      cache_behavior                = "OverrideAlways"
-      cache_duration                = "7.00:00:00"
+      cdn_frontdoor_origin_group_id   = azurerm_cdn_frontdoor_origin_group.static.id
+      forwarding_protocol             = "HttpsOnly"
+      cache_behavior                  = "OverrideAlways"
+      cache_duration                  = "7.00:00:00"
+      query_string_caching_behavior   = "IgnoreQueryString"
       compression_enabled             = true
     }
   }
@@ -191,10 +192,11 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
 
   actions {
     route_configuration_override_action {
-      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
-      forwarding_protocol           = "HttpsOnly"
-      cache_behavior                = "OverrideAlways"
-      cache_duration                = "1.00:00:00"
+      cdn_frontdoor_origin_group_id   = azurerm_cdn_frontdoor_origin_group.static.id
+      forwarding_protocol             = "HttpsOnly"
+      cache_behavior                  = "OverrideAlways"
+      cache_duration                  = "1.00:00:00"
+      query_string_caching_behavior   = "UseQueryString"
       compression_enabled             = true
     }
   }

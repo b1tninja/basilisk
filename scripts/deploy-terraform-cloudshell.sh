@@ -104,6 +104,29 @@ if [[ -z "${TF_VAR_existing_token_secret:-}" ]] && az functionapp show -g "$RG_N
   fi
 fi
 
+adopt_missing_terraform_resources() {
+  local mod="module.basilisk"
+  local sub storage_name sa_id storage_key
+
+  sub="$(az account show --query id -o tsv)"
+  storage_name="$(echo "${NAME_PREFIX}store" | tr '[:upper:]' '[:lower:]' | tr -d '-' | cut -c1-24)"
+  sa_id="/subscriptions/${sub}/resourceGroups/${RG_NAME}/providers/Microsoft.Storage/storageAccounts/${storage_name}"
+
+  if ! terraform state show -no-color "${mod}.azurerm_storage_container_immutability_policy.certs[0]" >/dev/null 2>&1; then
+    storage_key="$(az storage account keys list -g "$RG_NAME" -n "$storage_name" --query "[0].value" -o tsv 2>/dev/null || true)"
+    if [[ -n "$storage_key" ]] && az storage container immutability-policy show \
+      --account-name "$storage_name" \
+      --account-key "$storage_key" \
+      --container-name certs >/dev/null 2>&1; then
+      echo "Adopting existing certs immutability policy into Terraform state ..."
+      terraform import -input=false "${mod}.azurerm_storage_container_immutability_policy.certs[0]" \
+        "${sa_id}/blobServices/default/containers/certs/immutabilityPolicies/default"
+    fi
+  fi
+}
+
+adopt_missing_terraform_resources
+
 PLAN_ARGS=(-input=false -out=tfplan)
 if [[ -f terraform.tfvars ]]; then
   PLAN_ARGS+=(-var-file=terraform.tfvars)
