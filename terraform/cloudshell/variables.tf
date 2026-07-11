@@ -65,8 +65,14 @@ variable "custom_domain" {
 
 variable "route53_zone_name" {
   type        = string
-  description = "Route53 hosted zone for custom_domain (e.g. b1tninja.com). Requires AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY."
+  description = "Route53 hosted zone for custom_domain (e.g. b1tninja.com). Ignored when route53_zone_id is set."
   default     = "b1tninja.com"
+}
+
+variable "route53_zone_id" {
+  type        = string
+  description = "Route53 hosted zone ID. Set this to avoid ListHostedZones/ListTagsForResource IAM permissions."
+  default     = "Z026512234X4JPOD7PZH1"
 }
 
 variable "aws_region" {

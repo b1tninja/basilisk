@@ -97,6 +97,12 @@ variable "custom_domain" {
 
 variable "route53_zone_name" {
   type        = string
-  description = "Route53 hosted zone name for custom_domain DNS (e.g. b1tninja.com). Requires AWS credentials in the Terraform environment."
+  description = "Route53 hosted zone name for custom_domain DNS (e.g. b1tninja.com). Used only when route53_zone_id is empty."
+  default     = ""
+}
+
+variable "route53_zone_id" {
+  type        = string
+  description = "Route53 hosted zone ID (e.g. Z0123456789ABC). Preferred — avoids zone lookup IAM permissions."
   default     = ""
 }

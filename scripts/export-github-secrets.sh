@@ -69,8 +69,8 @@ Optional (workflow can read from Terraform state instead):
 Set repository secrets for deploy workflow:
   AWS_ACCESS_KEY_ID
   AWS_SECRET_ACCESS_KEY
-IAM policy (minimum): route53:ChangeResourceRecordSets on hosted zone b1tninja.com
-Default Terraform: custom_domain=keys.b1tninja.com, route53_zone_name=b1tninja.com
+IAM policy (minimum): route53:ChangeResourceRecordSets on hosted zone Z026512234X4JPOD7PZH1
+Default Terraform: custom_domain=keys.b1tninja.com, route53_zone_id=Z026512234X4JPOD7PZH1
 
 --- BASILISK_TOKEN_SECRET ---
 $TOKEN

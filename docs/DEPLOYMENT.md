@@ -201,22 +201,34 @@ Terraform registers `keys.b1tninja.com` (defaults in `terraform/cloudshell/varia
 ### Prerequisites
 
 1. **Route53 hosted zone** for `b1tninja.com`
-2. **IAM user** with programmatic access scoped to that zone:
+2. **IAM user** with programmatic access scoped to that zone.
+
+**Recommended:** set `route53_zone_id` (default in `terraform/cloudshell/variables.tf`) so Terraform never calls zone lookup APIs. Minimal policy:
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [{
     "Effect": "Allow",
-    "Action": ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets", "route53:GetChange"],
-    "Resource": ["arn:aws:route53:::hostedzone/ZONE_ID", "arn:aws:route53:::change/*"]
-  }, {
-    "Effect": "Allow",
-    "Action": "route53:ListHostedZonesByName",
-    "Resource": "*"
+    "Action": [
+      "route53:ChangeResourceRecordSets",
+      "route53:ListResourceRecordSets",
+      "route53:GetChange"
+    ],
+    "Resource": [
+      "arn:aws:route53:::hostedzone/Z026512234X4JPOD7PZH1",
+      "arn:aws:route53:::change/*"
+    ]
   }]
 }
 ```
+
+If `route53_zone_id` is empty and Terraform looks up the zone by name, also allow on `"Resource": "*"`:
+
+- `route53:ListHostedZones`
+- `route53:ListHostedZonesByName`
+- `route53:GetHostedZone`
+- `route53:ListTagsForResource`
 
 3. **GitHub secrets**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
 

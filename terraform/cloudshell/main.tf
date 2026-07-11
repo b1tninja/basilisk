@@ -18,4 +18,5 @@ module "basilisk" {
   oauth_authorized_domain    = var.oauth_authorized_domain
   custom_domain              = var.custom_domain
   route53_zone_name          = var.route53_zone_name
+  route53_zone_id            = var.route53_zone_id
 }

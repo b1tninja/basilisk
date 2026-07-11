@@ -1,6 +1,9 @@
 locals {
   custom_domain_enabled  = var.custom_domain != ""
-  route53_enabled        = local.custom_domain_enabled && var.route53_zone_name != ""
+  route53_zone_id        = trimspace(var.route53_zone_id)
+  route53_lookup_by_name = local.route53_zone_id == "" && var.route53_zone_name != ""
+  route53_enabled        = local.custom_domain_enabled && (local.route53_zone_id != "" || var.route53_zone_name != "")
+  route53_zone_id_final  = local.route53_zone_id != "" ? local.route53_zone_id : data.aws_route53_zone.public[0].zone_id
   custom_domain_rname    = replace(var.custom_domain, ".", "-")
   custom_domain_hostname = split(".", var.custom_domain)[0]
   public_url             = local.custom_domain_enabled ? "https://${var.custom_domain}" : "https://${azurerm_cdn_frontdoor_endpoint.basilisk.host_name}"
@@ -28,7 +31,7 @@ resource "azurerm_cdn_frontdoor_custom_domain_association" "public" {
 }
 
 data "aws_route53_zone" "public" {
-  count        = local.route53_enabled ? 1 : 0
+  count        = local.custom_domain_enabled && local.route53_lookup_by_name ? 1 : 0
   name         = var.route53_zone_name
   private_zone = false
 }
@@ -36,7 +39,7 @@ data "aws_route53_zone" "public" {
 # Prove domain ownership to Azure Front Door (managed TLS).
 resource "aws_route53_record" "afd_validation" {
   count   = local.route53_enabled ? 1 : 0
-  zone_id = data.aws_route53_zone.public[0].zone_id
+  zone_id = local.route53_zone_id_final
   name    = "_dnsauth.${local.custom_domain_hostname}"
   type    = "TXT"
   ttl     = 60
@@ -46,7 +49,7 @@ resource "aws_route53_record" "afd_validation" {
 # Route user traffic to the Front Door endpoint.
 resource "aws_route53_record" "afd_cname" {
   count   = local.route53_enabled ? 1 : 0
-  zone_id = data.aws_route53_zone.public[0].zone_id
+  zone_id = local.route53_zone_id_final
   name    = local.custom_domain_hostname
   type    = "CNAME"
   ttl     = 300

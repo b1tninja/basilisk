@@ -6,6 +6,7 @@
 # Custom domain on Front Door + Route53 (requires AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).
 # custom_domain         = "keys.b1tninja.com"
 # route53_zone_name     = "b1tninja.com"
+# route53_zone_id       = "Z026512234X4JPOD7PZH1"   # preferred — minimal IAM
 # oauth_authorized_domain = "b1tninja.com"
 
 # Disable custom domain (use only *.azurefd.net):
