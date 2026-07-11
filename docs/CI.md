@@ -7,8 +7,8 @@ Workflows run on `ubuntu-latest` using Node 24–compatible actions:
 | `actions/checkout` | v5 |
 | `actions/setup-python` | v6 (pip cache enabled) |
 | `azure/login` | v3 (Node 24) |
-| `hashicorp/setup-terraform` | v3 |
-| `actions/cache` | v4 |
+| `hashicorp/setup-terraform` | v4 (Node 24) |
+| `actions/cache` | v5 (Node 24) |
 
 ## Secrets
 

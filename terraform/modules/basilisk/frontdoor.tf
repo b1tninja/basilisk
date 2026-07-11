@@ -253,19 +253,17 @@ resource "azurerm_cdn_frontdoor_security_policy" "basilisk" {
       cdn_frontdoor_firewall_policy_id = azurerm_cdn_frontdoor_firewall_policy.basilisk.id
 
       association {
+        patterns_to_match = ["/*"]
+
         domain {
           cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_endpoint.basilisk.id
         }
-        patterns_to_match = ["/*"]
-      }
 
-      dynamic "association" {
-        for_each = local.custom_domain_enabled ? [1] : []
-        content {
-          domain {
+        dynamic "domain" {
+          for_each = local.custom_domain_enabled ? [1] : []
+          content {
             cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_custom_domain.public[0].id
           }
-          patterns_to_match = ["/*"]
         }
       }
     }
