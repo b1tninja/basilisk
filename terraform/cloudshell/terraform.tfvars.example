@@ -1,7 +1,12 @@
-# Optional overrides. Tenant ID is read automatically from the Azure CLI session.
+# Optional remote state overrides. Tenant ID is read automatically from the Azure CLI session.
 # name_prefix  = "basilisk-dev"
 # location     = ""
 # mail_provider = "office365"
+
+# Remote state (recommended for GitHub Actions):
+#   bash scripts/bootstrap-tfstate.sh --use-app-storage
+# Or dedicated storage: bash scripts/bootstrap-tfstate.sh
+# Optional GitHub repository variables: TFSTATE_STORAGE_ACCOUNT, TFSTATE_RESOURCE_GROUP
 
 # Custom domain on Front Door + Route53 (requires AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).
 # custom_domain         = "keys.b1tninja.com"

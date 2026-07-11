@@ -53,17 +53,37 @@ Optional: copy `infra/main.bicepparam.example` to `infra/main.bicepparam` and pa
 
 ## Deploy with Terraform (Cloud Shell)
 
-
-
 Terraform is pre-installed in [Azure Cloud Shell](https://shell.azure.com). The module mirrors the Bicep stack and reads **tenant ID** from your Azure CLI session (`azurerm_client_config`).
 
+**Shared state:** Cloud Shell uses the same Azure Blob backend as GitHub Actions (`basiliskdevstore` / `tfstate` / `basilisk-dev.tfstate`) once bootstrapped.
 
+### First time (Bash Cloud Shell)
 
 ```bash
 az login
-git clone <your-repo-url> basilisk && cd basilisk
-chmod +x scripts/deploy-terraform-cloudshell.sh
-./scripts/deploy-terraform-cloudshell.sh
+git clone <your-repo-url> ~/basilisk && cd ~/basilisk
+chmod +x scripts/*.sh
+
+# After first infra deploy exists, or after initial apply creates storage:
+GITHUB_SP_CLIENT_ID=<clientId-from-AZURE_CREDENTIALS> \
+  bash scripts/bootstrap-tfstate.sh --use-app-storage --mount-clouddrive
+
+AUTO_APPROVE=true ./scripts/deploy-terraform-cloudshell.sh
+```
+
+`--mount-clouddrive` points Cloud Shell's persistent `$HOME` at the same storage account (file share `cloudshell`), so clones and local files survive sessions.
+
+### Subsequent sessions
+
+```bash
+cd ~/basilisk && git pull
+AUTO_APPROVE=true ./scripts/deploy-terraform-cloudshell.sh
+```
+
+Or use the helper:
+
+```bash
+bash scripts/cloudshell-setup.sh
 ```
 
 
@@ -192,7 +212,13 @@ Local dev serves the same files from Flask (`basilisk/portal/static.py`) so URLs
 
 
 
-For durable Terraform state across runners, configure an Azure Storage backend (`terraform/cloudshell/backend.tf.example`).
+For durable Terraform state across runners, bootstrap Azure Blob remote state:
+
+```bash
+GITHUB_SP_CLIENT_ID=<deploy-sp-client-id> bash scripts/bootstrap-tfstate.sh --use-app-storage
+```
+
+See `docs/CI.md` and `scripts/bootstrap-tfstate.sh`.
 
 ## Custom domain (Route53 + Front Door)
 

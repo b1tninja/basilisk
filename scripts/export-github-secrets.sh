@@ -17,8 +17,8 @@ fi
 
 cd "$TF_DIR"
 
-if [[ ! -f terraform.tfstate ]] && [[ ! -d .terraform ]]; then
-  echo "No Terraform state in $TF_DIR — run deploy-terraform-cloudshell.sh first."
+if ! terraform output -json github_actions_secrets >/dev/null 2>&1; then
+  echo "No Terraform state / outputs in $TF_DIR — run deploy-terraform-cloudshell.sh or bootstrap-tfstate.sh first."
   exit 1
 fi
 

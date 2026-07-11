@@ -104,7 +104,7 @@ LOGIC_ID="${RG_ID}/providers/Microsoft.Logic/workflows/${LOGIC_APP}"
 
 echo "Importing $RG into Terraform state ..."
 cd "$TF_DIR"
-terraform init -input=false
+bash "${REPO_ROOT}/scripts/terraform-init.sh"
 
 # Remove duplicate manual route if present (terraform static-route covers / and /*).
 if az afd route show -g "$RG" --profile-name "$FD_PROFILE" --endpoint-name "$FD_ENDPOINT" --route-name static-index >/dev/null 2>&1; then
@@ -186,6 +186,22 @@ import_if_exists \
   "az afd rule-set show --profile-name '$FD_PROFILE' --rule-set-name StaticCache --resource-group '$RG'" \
   "${MOD}.azurerm_cdn_frontdoor_rule_set.static_cache" \
   "${FD_ID}/ruleSets/StaticCache"
+
+CUSTOM_DOMAIN="${TF_VAR_custom_domain:-keys.b1tninja.com}"
+if [[ -n "$CUSTOM_DOMAIN" ]]; then
+  CUSTOM_DOMAIN_RNAME="${CUSTOM_DOMAIN//./-}"
+  FD_CD_ID="${FD_ID}/customDomains/${CUSTOM_DOMAIN_RNAME}"
+  FD_CD_ASSOC_ID="${FD_ID}/associations/${CUSTOM_DOMAIN_RNAME}"
+  import_if_exists \
+    "az afd custom-domain show --profile-name '$FD_PROFILE' --custom-domain-name '$CUSTOM_DOMAIN_RNAME' --resource-group '$RG'" \
+    "${MOD}.azurerm_cdn_frontdoor_custom_domain.public[0]" \
+    "$FD_CD_ID"
+  import_if_exists \
+    "az resource show --ids '$FD_CD_ASSOC_ID'" \
+    "${MOD}.azurerm_cdn_frontdoor_custom_domain_association.public[0]" \
+    "$FD_CD_ASSOC_ID"
+fi
+
 import_if_exists \
   "az logic workflow show --resource-group '$RG' --name '$LOGIC_APP'" \
   "${MOD}.azapi_resource.approval_logic_app" \
@@ -205,4 +221,4 @@ echo "Import complete. Review drift:"
 terraform plan -input=false -no-color || true
 echo ""
 echo "When satisfied, run: terraform apply -auto-approve"
-echo "Or re-run the GitHub deploy workflow (terraform state is cached per name_prefix)."
+echo "Or re-run the GitHub deploy workflow (state is in Azure Blob after bootstrap-tfstate.sh)."

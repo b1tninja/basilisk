@@ -108,7 +108,30 @@ The workflow:
 2. Zips and publishes the Function App (`az functionapp deploy`)
 3. Smoke-tests Front Door `/health`
 
-Terraform state is cached per `name_prefix` in GitHub Actions. For team/production use, configure remote state — see `terraform/cloudshell/backend.tf.example`.
+Terraform state is stored in **Azure Blob Storage** (remote backend), not the GitHub Actions cache. One-time bootstrap:
+
+```bash
+az login
+# Grant deploy SP blob access (clientId from AZURE_CREDENTIALS JSON):
+GITHUB_SP_CLIENT_ID=<clientId> bash scripts/bootstrap-tfstate.sh --use-app-storage
+```
+
+This creates a `tfstate` container on `basiliskdevstore` and migrates local state if present.
+
+Optional repository **variables** (auto-detected when unset in CI if app storage exists):
+
+| Variable | Default |
+|----------|---------|
+| `TFSTATE_STORAGE_ACCOUNT` | `{name_prefix}store` (e.g. `basiliskdevstore`) |
+| `TFSTATE_RESOURCE_GROUP` | `{name_prefix}-rg` |
+| `TFSTATE_CONTAINER` | `tfstate` |
+| `TFSTATE_KEY` | `{name_prefix}.tfstate` |
+
+The deploy SP needs **Storage Blob Data Contributor** on the storage account (bootstrap script grants this).
+
+Cloud Shell auto-detects the same storage account and uses the shared blob state (see `scripts/cloudshell-setup.sh`).
+
+Without remote state bootstrap, CI falls back to ephemeral local state and may try to recreate existing resources.
 
 ## Local vs CI
 

@@ -27,7 +27,6 @@ marketplace/package/
 *.tfplan
 crash.log
 crash.*.log
-terraform/cloudshell/backend.tf
 terraform/cloudshell/backend.hcl
 basilisk-fn.zip
 override.tf

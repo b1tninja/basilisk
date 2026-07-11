@@ -8,11 +8,11 @@ TF_DIR="${REPO_ROOT}/terraform/cloudshell"
 STORAGE_ACCOUNT="${STORAGE_ACCOUNT:-}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-}"
 
-if [[ -z "$STORAGE_ACCOUNT" ]] && [[ -f "${TF_DIR}/terraform.tfstate" ]]; then
+if [[ -z "$STORAGE_ACCOUNT" ]]; then
   STORAGE_ACCOUNT="$(cd "$TF_DIR" && terraform output -raw storage_account_name 2>/dev/null || true)"
 fi
 
-if [[ -z "$RESOURCE_GROUP" ]] && [[ -f "${TF_DIR}/terraform.tfstate" ]]; then
+if [[ -z "$RESOURCE_GROUP" ]]; then
   RESOURCE_GROUP="$(cd "$TF_DIR" && terraform output -raw resource_group_name 2>/dev/null || true)"
 fi
 

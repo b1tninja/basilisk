@@ -76,7 +76,8 @@ $env:TF_VAR_mail_provider = $MailProvider
 
 Push-Location $TfDir
 try {
-    terraform init -input=false
+    $env:NAME_PREFIX = $NamePrefix
+    bash (Join-Path $RepoRoot "scripts/terraform-init.sh")
 
     $planArgs = @("plan", "-input=false", "-out=tfplan")
     if (Test-Path "terraform.tfvars") {

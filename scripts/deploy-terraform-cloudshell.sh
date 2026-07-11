@@ -73,7 +73,7 @@ export TF_VAR_location="$LOCATION"
 export TF_VAR_mail_provider="$MAIL_PROVIDER"
 
 cd "$TF_DIR"
-terraform init -input=false
+bash "${REPO_ROOT}/scripts/terraform-init.sh"
 
 RG_NAME="${NAME_PREFIX}-rg"
 HAS_RG_STATE=false
@@ -132,6 +132,19 @@ adopt_missing_terraform_resources() {
   adopt_if_azure_exists \
     "${mod}.azurerm_cdn_frontdoor_rule_set.static_cache" \
     "${fd_id}/ruleSets/StaticCache"
+
+  local custom_domain="${TF_VAR_custom_domain:-keys.b1tninja.com}"
+  if [[ -n "$custom_domain" ]]; then
+    local custom_domain_rname="${custom_domain//./-}"
+    local fd_cd_id="${fd_id}/customDomains/${custom_domain_rname}"
+    local fd_cd_assoc_id="${fd_id}/associations/${custom_domain_rname}"
+    adopt_if_azure_exists \
+      "${mod}.azurerm_cdn_frontdoor_custom_domain.public[0]" \
+      "$fd_cd_id"
+    adopt_if_azure_exists \
+      "${mod}.azurerm_cdn_frontdoor_custom_domain_association.public[0]" \
+      "$fd_cd_assoc_id"
+  fi
 }
 
 adopt_missing_terraform_resources
