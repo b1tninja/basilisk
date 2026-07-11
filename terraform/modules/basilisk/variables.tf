@@ -82,3 +82,21 @@ variable "google_client_secret" {
   default     = ""
   sensitive   = true
 }
+
+variable "oauth_authorized_domain" {
+  type        = string
+  description = "Root domain you own for Google OAuth consent screen Authorized domains (e.g. example.com). Leave empty if using only *.azurewebsites.net."
+  default     = ""
+}
+
+variable "custom_domain" {
+  type        = string
+  description = "Public hostname on Front Door (e.g. keys.b1tninja.com). Leave empty to use only the default *.azurefd.net hostname."
+  default     = ""
+}
+
+variable "route53_zone_name" {
+  type        = string
+  description = "Route53 hosted zone name for custom_domain DNS (e.g. b1tninja.com). Requires AWS credentials in the Terraform environment."
+  default     = ""
+}

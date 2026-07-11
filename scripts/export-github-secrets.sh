@@ -37,9 +37,16 @@ NAME_PREFIX="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_NAME_PREFIX')"
 RG="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_RESOURCE_GROUP')"
 FN="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_FUNCTION_APP_NAME')"
 FD_URL="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_FRONT_DOOR_URL')"
+PUBLIC_URL="$(terraform output -raw public_url 2>/dev/null || echo "$FD_URL")"
+CUSTOM_DOMAIN="$(terraform output -raw custom_domain 2>/dev/null || true)"
 STORAGE="$(echo "$SECRETS_JSON" | jq -r '.BASILISK_STORAGE_ACCOUNT // empty')"
 SP_CMD="$(echo "$SETUP_JSON" | jq -r '.azure_credentials_command')"
 STATIC_URL="$(echo "$SETUP_JSON" | jq -r '.static_website_url // empty')"
+OAUTH_JSON="$(terraform output -json oauth_setup 2>/dev/null || echo '{}')"
+GOOGLE_REDIRECT="$(echo "$OAUTH_JSON" | jq -r '.google_redirect_uri // empty')"
+AAD_REDIRECT="$(echo "$OAUTH_JSON" | jq -r '.aad_redirect_uri // empty')"
+FN_HOST="$(echo "$OAUTH_JSON" | jq -r '.function_app_hostname // empty')"
+AUTH_DOMAIN="$(echo "$OAUTH_JSON" | jq -r '.google_authorized_domain // empty')"
 
 cat <<EOF
 # GitHub Actions secrets for Basilisk
@@ -55,8 +62,15 @@ Optional (workflow can read from Terraform state instead):
   BASILISK_NAME_PREFIX     $NAME_PREFIX
   BASILISK_RESOURCE_GROUP  $RG
   BASILISK_FUNCTION_APP_NAME  $FN
-  BASILISK_FRONT_DOOR_URL  $FD_URL
+  BASILISK_FRONT_DOOR_URL  $PUBLIC_URL
   BASILISK_STORAGE_ACCOUNT $STORAGE
+
+--- AWS (Route53 custom domain DNS) ---
+Set repository secrets for deploy workflow:
+  AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY
+IAM policy (minimum): route53:ChangeResourceRecordSets on hosted zone b1tninja.com
+Default Terraform: custom_domain=keys.b1tninja.com, route53_zone_name=b1tninja.com
 
 --- BASILISK_TOKEN_SECRET ---
 $TOKEN
@@ -70,8 +84,24 @@ gh secret set BASILISK_TOKEN_SECRET --body "$TOKEN"
 After AZURE_CREDENTIALS is set, trigger deploy from Actions → deploy workflow.
 
 Deployed endpoints:
-  Front Door:       $FD_URL
+  Public URL:       $PUBLIC_URL
+  Front Door:       $(terraform output -raw front_door_url 2>/dev/null || echo "$FD_URL")
+  Custom domain:    ${CUSTOM_DOMAIN:-(none)}
   Static website:   ${STATIC_URL:-(run terraform output static_website_url)}
   Function:         $FN (resource group: $RG)
   Storage account:  $STORAGE
+
+--- OAuth / IdP setup (from terraform output oauth_setup) ---
+Function hostname:     ${FN_HOST:-$FN.azurewebsites.net}
+Google redirect URI:   ${GOOGLE_REDIRECT:-https://${FN}.azurewebsites.net/.auth/login/google/callback}
+  → Google Cloud → Credentials → OAuth client → Authorized redirect URIs
+Entra redirect URI:    ${AAD_REDIRECT:-https://${FN}.azurewebsites.net/.auth/login/aad/callback}
+  → Entra → App registrations → Authentication → Redirect URI (Web)
+
+Google consent screen Authorized domains:
+  Do NOT add azurewebsites.net (Microsoft owns it).
+  Leave empty when using the default Function App hostname.
+$(if [[ -n "$AUTH_DOMAIN" && "$AUTH_DOMAIN" != "null" ]]; then echo "  Add domain you configured: $AUTH_DOMAIN (must verify in Search Console)"; else echo "  Optional: set TF_VAR_oauth_authorized_domain=example.com if you use a custom domain you own."; fi)
+
+Full JSON: cd terraform/cloudshell && terraform output -json oauth_setup
 EOF

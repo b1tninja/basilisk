@@ -59,13 +59,19 @@ jobs:
           MAIL_PROVIDER: ${{ inputs.mail_provider }}
           AUTO_APPROVE: "true"
           SKIP_TERRAFORM: ${{ inputs.skip_terraform }}
+          TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
+          TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
         run: bash scripts/deploy-github-actions.sh
 
       - name: Deployment summary
         if: always()
         run: |
           if [[ -f terraform/cloudshell/terraform.tfstate ]]; then
-            FD_URL="$(cd terraform/cloudshell && terraform output -raw front_door_url 2>/dev/null || true)"
+            FD_URL="$(cd terraform/cloudshell && terraform output -raw public_url 2>/dev/null || terraform output -raw front_door_url 2>/dev/null || true)"
+            CUSTOM="$(cd terraform/cloudshell && terraform output -raw custom_domain 2>/dev/null || true)"
             RG="$(cd terraform/cloudshell && terraform output -raw resource_group_name 2>/dev/null || true)"
             FN="$(cd terraform/cloudshell && terraform output -raw function_app_name 2>/dev/null || true)"
             {
@@ -76,6 +82,9 @@ jobs:
               echo "| Resource group | \`$RG\` |"
               echo "| Function app | \`$FN\` |"
               echo "| Front Door | $FD_URL |"
+              if [[ -n "$CUSTOM" && "$CUSTOM" != "null" ]]; then
+                echo "| Custom domain | \`$CUSTOM\` |"
+              fi
               echo ""
               echo "Deploy includes function zip + static portal upload to Storage \`\$web\`."
               echo ""

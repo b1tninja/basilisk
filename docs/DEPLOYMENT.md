@@ -194,7 +194,57 @@ Local dev serves the same files from Flask (`basilisk/portal/static.py`) so URLs
 
 For durable Terraform state across runners, configure an Azure Storage backend (`terraform/cloudshell/backend.tf.example`).
 
+## Custom domain (Route53 + Front Door)
 
+Terraform registers `keys.b1tninja.com` (defaults in `terraform/cloudshell/variables.tf`) on Azure Front Door and maintains DNS in Route53.
+
+### Prerequisites
+
+1. **Route53 hosted zone** for `b1tninja.com`
+2. **IAM user** with programmatic access scoped to that zone:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets", "route53:GetChange"],
+    "Resource": ["arn:aws:route53:::hostedzone/ZONE_ID", "arn:aws:route53:::change/*"]
+  }, {
+    "Effect": "Allow",
+    "Action": "route53:ListHostedZonesByName",
+    "Resource": "*"
+  }]
+}
+```
+
+3. **GitHub secrets**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+
+### What Terraform creates
+
+| Record | Purpose |
+|--------|---------|
+| `_dnsauth.keys` TXT | Azure Front Door domain validation (managed TLS) |
+| `keys` CNAME → `*.azurefd.net` | User/gpg traffic to Front Door |
+
+Also: Front Door custom domain, route association, WAF binding, and `BASILISK_BASE_URL=https://keys.b1tninja.com`.
+
+### Local deploy
+
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_DEFAULT_REGION=us-east-1
+./scripts/deploy-terraform-cloudshell.sh
+```
+
+To disable custom domain: `TF_VAR_custom_domain="" TF_VAR_route53_zone_name="" terraform apply`
+
+### gpg
+
+```bash
+gpg --keyserver https://keys.b1tninja.com --recv-keys KEYID
+```
 
 ## Post-deploy
 

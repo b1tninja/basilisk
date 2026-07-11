@@ -135,8 +135,47 @@ Go to [console.cloud.google.com](https://console.cloud.google.com) → select an
 | User type | **Internal** (Google Workspace users only) or **External** (any Google account) |
 | App name | `Basilisk` |
 | User support email | your address |
-| Authorized domains | your Function App domain, e.g. `azurewebsites.net` |
+| Authorized domains | See below — usually **leave empty** for default Azure hosting |
 | Developer contact | your address |
+
+**Authorized domains vs redirect URIs**
+
+These are different settings in Google Cloud:
+
+| Setting | Where | What to use |
+|---|---|---|
+| **Authorized redirect URIs** | OAuth client (Credentials) | Full callback URL from Terraform — **required** |
+| **Authorized domains** | OAuth consent screen | Root domain **you own** only — optional for Basilisk on `*.azurewebsites.net` |
+
+After `terraform apply`, copy redirect URIs from the `oauth_setup` output:
+
+```bash
+cd terraform/cloudshell
+terraform output -json oauth_setup
+```
+
+Example:
+
+```json
+{
+  "function_app_hostname": "basilisk-dev-fn.azurewebsites.net",
+  "google_redirect_uri": "https://basilisk-dev-fn.azurewebsites.net/.auth/login/google/callback",
+  "aad_redirect_uri": "https://basilisk-dev-fn.azurewebsites.net/.auth/login/aad/callback",
+  "google_authorized_domain": null
+}
+```
+
+Or run `bash scripts/export-github-secrets.sh` — it prints the same URIs after deploy.
+
+**Do not** add `azurewebsites.net` to Authorized domains. Google only allows domains you can verify in Search Console; Microsoft owns `azurewebsites.net`.
+
+If you map a **custom domain** you own on Front Door (e.g. `keys.example.com`), set at deploy time:
+
+```bash
+TF_VAR_oauth_authorized_domain=example.com ./scripts/deploy-terraform-cloudshell.sh
+```
+
+Then add `example.com` to the consent screen Authorized domains and verify it in Google Search Console. The OAuth **redirect URI** still uses the Function App hostname (`*.azurewebsites.net`), not Front Door.
 
 Under **Scopes**, add:
 
@@ -161,22 +200,23 @@ These are all **non-sensitive** scopes — no Google verification or review is r
 |---|---|
 | Application type | **Web application** |
 | Name | `basilisk-easy-auth` |
-| Authorized redirect URIs | See below |
+| Authorized redirect URIs | Paste `google_redirect_uri` from `terraform output oauth_setup` |
 
-**Authorized redirect URIs** — add all of these:
+**Authorized redirect URIs** — use Terraform output (do not guess the hostname):
+
+```bash
+terraform output -json oauth_setup | jq -r '.google_redirect_uri'
+```
+
+Typical value:
 
 ```
 https://<function-app-name>.azurewebsites.net/.auth/login/google/callback
 ```
 
-If you have a custom domain on Front Door:
+> Easy Auth handles the OAuth callback on the **Function App** hostname. Front Door routes `/.auth/*` to the Function App, but the redirect URI registered in Google must match the Function App URL from Terraform (`function_app_hostname`).
 
-```
-https://<your-front-door-endpoint>.azurefd.net/.auth/login/google/callback
-https://<your-custom-domain>/.auth/login/google/callback
-```
-
-> The redirect always goes to the Function App's direct hostname, not through Front Door, because Easy Auth handles the OAuth callback on the app itself. Front Door then routes `/.auth/*` to the Function App.
+Do **not** add Front Door URLs (`*.azurefd.net`) unless you have configured Easy Auth to use them as the callback host (not the default Basilisk setup).
 
 Click **Create**. Download or note the **Client ID** and **Client secret**.
 

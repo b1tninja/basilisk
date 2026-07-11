@@ -16,7 +16,7 @@ resolve_deploy_targets() {
   if terraform output -raw resource_group_name >/dev/null 2>&1; then
     RG="$(terraform output -raw resource_group_name)"
     FN="$(terraform output -raw function_app_name)"
-    FD_URL="$(terraform output -raw front_door_url)"
+    FD_URL="$(terraform output -raw public_url 2>/dev/null || terraform output -raw front_door_url)"
     STORAGE_ACCOUNT="$(terraform output -raw storage_account_name 2>/dev/null || true)"
     return
   fi

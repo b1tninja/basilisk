@@ -28,6 +28,8 @@ Optional repository secrets (workflow reads Terraform state when these are omitt
 | `GOOGLE_CLIENT_ID` | Enable Google sign-in (see [docs/AUTH.md](AUTH.md)) |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
 | `ENTRA_CLIENT_ID` | Custom AAD App Registration client ID (optional; Azure auto-creates one if omitted) |
+| `AWS_ACCESS_KEY_ID` | Route53 DNS updates for `custom_domain` (e.g. `keys.b1tninja.com` CNAME) |
+| `AWS_SECRET_ACCESS_KEY` | Route53 API secret (scoped to `route53:ChangeResourceRecordSets` on your zone) |
 
 ## Bootstrap: first deploy + GitHub secrets
 

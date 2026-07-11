@@ -92,7 +92,8 @@ try {
 
     $rg = terraform output -raw resource_group_name
     $fn = terraform output -raw function_app_name
-    $fdUrl = terraform output -raw front_door_url
+    $fdUrl = terraform output -raw public_url 2>$null
+    if (-not $fdUrl) { $fdUrl = terraform output -raw front_door_url }
 
     az functionapp config appsettings set `
         --resource-group $rg `
@@ -104,7 +105,7 @@ try {
     Write-Host "Terraform deployment complete." -ForegroundColor Green
     Write-Host "  Resource group:  $rg"
     Write-Host "  Function app:    $fn"
-    Write-Host "  Front Door URL:  $fdUrl"
+    Write-Host "  Public URL:      $fdUrl"
     Write-Host ""
     Write-Host "Next steps:"
     Write-Host "  1. Authorize Logic App mail connector ($MailProvider) in Azure Portal"

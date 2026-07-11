@@ -15,4 +15,7 @@ module "basilisk" {
   existing_token_secret      = var.existing_token_secret
   google_client_id           = var.google_client_id
   google_client_secret       = var.google_client_secret
+  oauth_authorized_domain    = var.oauth_authorized_domain
+  custom_domain              = var.custom_domain
+  route53_zone_name          = var.route53_zone_name
 }

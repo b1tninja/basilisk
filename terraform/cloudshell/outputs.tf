@@ -18,6 +18,15 @@ output "front_door_url" {
   value = module.basilisk.front_door_url
 }
 
+output "public_url" {
+  description = "Primary URL (custom domain when set, else Front Door default)."
+  value       = module.basilisk.public_url
+}
+
+output "custom_domain" {
+  value = module.basilisk.custom_domain
+}
+
 output "logic_app_name" {
   value = module.basilisk.logic_app_name
 }
@@ -32,6 +41,11 @@ output "static_website_host" {
 
 output "static_website_url" {
   value = module.basilisk.static_website_url
+}
+
+output "oauth_setup" {
+  description = "OAuth redirect URIs and domain hints for IdP configuration."
+  value       = module.basilisk.oauth_setup
 }
 
 output "service_bus_namespace" {
@@ -56,7 +70,7 @@ output "github_actions_secrets" {
     BASILISK_NAME_PREFIX       = var.name_prefix
     BASILISK_RESOURCE_GROUP    = module.basilisk.resource_group_name
     BASILISK_FUNCTION_APP_NAME = module.basilisk.function_app_name
-    BASILISK_FRONT_DOOR_URL    = module.basilisk.front_door_url
+    BASILISK_FRONT_DOOR_URL    = module.basilisk.public_url
     BASILISK_STORAGE_ACCOUNT   = module.basilisk.storage_account_name
   }
 }
@@ -76,6 +90,8 @@ output "github_actions_setup" {
       "BASILISK_FUNCTION_APP_NAME",
       "BASILISK_FRONT_DOOR_URL",
       "BASILISK_STORAGE_ACCOUNT",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
     ]
     azure_credentials_command = "az ad sp create-for-rbac --name basilisk-github-deploy --role contributor --scopes /subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${module.basilisk.resource_group_name} --sdk-auth"
     export_script             = "bash scripts/export-github-secrets.sh"
@@ -84,7 +100,10 @@ output "github_actions_setup" {
     resource_group            = module.basilisk.resource_group_name
     function_app_name         = module.basilisk.function_app_name
     front_door_url            = module.basilisk.front_door_url
+    public_url                = module.basilisk.public_url
+    custom_domain             = module.basilisk.custom_domain
     storage_account_name      = module.basilisk.storage_account_name
     static_website_url        = module.basilisk.static_website_url
+    oauth_setup               = module.basilisk.oauth_setup
   }
 }

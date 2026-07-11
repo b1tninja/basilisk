@@ -50,3 +50,27 @@ variable "google_client_secret" {
   default     = ""
   sensitive   = true
 }
+
+variable "oauth_authorized_domain" {
+  type        = string
+  description = "Root domain you own for Google OAuth consent screen (e.g. example.com). Optional."
+  default     = "b1tninja.com"
+}
+
+variable "custom_domain" {
+  type        = string
+  description = "Public hostname on Front Door (e.g. keys.b1tninja.com). Leave empty to skip custom domain."
+  default     = "keys.b1tninja.com"
+}
+
+variable "route53_zone_name" {
+  type        = string
+  description = "Route53 hosted zone for custom_domain (e.g. b1tninja.com). Requires AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY."
+  default     = "b1tninja.com"
+}
+
+variable "aws_region" {
+  type        = string
+  description = "AWS region for the Route53 provider (Route53 is global; us-east-1 is typical)."
+  default     = "us-east-1"
+}

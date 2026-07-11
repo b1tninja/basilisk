@@ -258,6 +258,16 @@ resource "azurerm_cdn_frontdoor_security_policy" "basilisk" {
         }
         patterns_to_match = ["/*"]
       }
+
+      dynamic "association" {
+        for_each = local.custom_domain_enabled ? [1] : []
+        content {
+          domain {
+            cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_custom_domain.public[0].id
+          }
+          patterns_to_match = ["/*"]
+        }
+      }
     }
   }
 }
