@@ -186,6 +186,39 @@ import_if_exists \
   "az afd rule-set show --profile-name '$FD_PROFILE' --rule-set-name StaticCache --resource-group '$RG'" \
   "${MOD}.azurerm_cdn_frontdoor_rule_set.static_cache" \
   "${FD_ID}/ruleSets/StaticCache"
+import_if_exists \
+  "az resource show --ids '${FD_ID}/ruleSets/StaticCache/rules/CacheStaticAssets'" \
+  "${MOD}.azurerm_cdn_frontdoor_rule.static_assets_cache" \
+  "${FD_ID}/ruleSets/StaticCache/rules/CacheStaticAssets"
+import_if_exists \
+  "az resource show --ids '${FD_ID}/ruleSets/StaticCache/rules/CacheStaticHtml'" \
+  "${MOD}.azurerm_cdn_frontdoor_rule.static_html_cache" \
+  "${FD_ID}/ruleSets/StaticCache/rules/CacheStaticHtml"
+
+import_route53_if_exists() {
+  local zone_id="$1"
+  local record_name="$2"
+  local record_type="$3"
+  local addr="$4"
+  if ! command -v aws >/dev/null 2>&1; then
+    echo "  skip (no aws cli): $addr"
+    return 0
+  fi
+  if [[ -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
+    echo "  skip (no AWS credentials): $addr"
+    return 0
+  fi
+  local zone_name="${TF_VAR_route53_zone_name:-b1tninja.com}"
+  local fqdn="${record_name}.${zone_name}."
+  if ! aws route53 list-resource-record-sets \
+    --hosted-zone-id "$zone_id" \
+    --query "ResourceRecordSets[?Name=='${fqdn}' && Type=='${record_type}'] | length(@)" \
+    --output text 2>/dev/null | grep -qE '^[1-9]'; then
+    echo "  skip (not in Route53): $addr"
+    return 0
+  fi
+  import_if_missing "$addr" "${zone_id}_${record_name}_${record_type}"
+}
 
 CUSTOM_DOMAIN="${TF_VAR_custom_domain:-keys.b1tninja.com}"
 if [[ -n "$CUSTOM_DOMAIN" ]]; then
@@ -200,6 +233,19 @@ if [[ -n "$CUSTOM_DOMAIN" ]]; then
     "az resource show --ids '$FD_CD_ASSOC_ID'" \
     "${MOD}.azurerm_cdn_frontdoor_custom_domain_association.public[0]" \
     "$FD_CD_ASSOC_ID"
+
+  ROUTE53_ZONE_ID="${TF_VAR_route53_zone_id:-Z026512234X4JPOD7PZH1}"
+  CUSTOM_HOSTNAME="${CUSTOM_DOMAIN%%.*}"
+  import_route53_if_exists \
+    "$ROUTE53_ZONE_ID" \
+    "_dnsauth.${CUSTOM_HOSTNAME}" \
+    "TXT" \
+    "${MOD}.aws_route53_record.afd_validation[0]"
+  import_route53_if_exists \
+    "$ROUTE53_ZONE_ID" \
+    "$CUSTOM_HOSTNAME" \
+    "CNAME" \
+    "${MOD}.aws_route53_record.afd_cname[0]"
 fi
 
 import_if_exists \

@@ -100,8 +100,8 @@ Paste the full JSON output into the `AZURE_CREDENTIALS` secret.
 | `location` | (empty) | Auto-detect from existing RG |
 | `mail_provider` | `office365` | Logic App connector |
 | `skip_terraform` | `false` | Set `true` for code-only redeploys |
-| `enable_microsoft_signin` | `true` | Microsoft Entra ID (Easy Auth) |
-| `enable_google_signin` | `false` | Google OAuth — requires `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` secrets and `skip_terraform: false` |
+| `enable_microsoft_signin` | `auto` | `auto` = on when `AZURE_CREDENTIALS` exists; `on` / `off` to force |
+| `enable_google_signin` | `auto` | `auto` = on when `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` exist; `on` / `off` to force |
 | `import_terraform` | auto | When RG exists without state, imports existing Azure resources (set `IMPORT_TERRAFORM=false` to fail instead) |
 
 The workflow:

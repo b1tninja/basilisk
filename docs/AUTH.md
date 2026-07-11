@@ -229,15 +229,11 @@ gh secret set GOOGLE_CLIENT_ID     --body "<client-id>"     --repo <owner>/<repo
 gh secret set GOOGLE_CLIENT_SECRET --body "<client-secret>" --repo <owner>/<repo>
 ```
 
-Then expose them in `.github/workflows/deploy.yml` under the deploy step's `env`:
+Then add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` as repository secrets. The deploy workflow picks them up automatically when **Google sign-in** is set to `auto` (the default).
 
 ```yaml
-- name: Deploy infrastructure and function
-  env:
-    TF_VAR_enable_google_auth: ${{ inputs.enable_google_signin }}
-    TF_VAR_google_client_id: ${{ inputs.enable_google_signin && secrets.GOOGLE_CLIENT_ID || '' }}
-    TF_VAR_google_client_secret: ${{ inputs.enable_google_signin && secrets.GOOGLE_CLIENT_SECRET || '' }}
-  run: bash scripts/deploy-github-actions.sh
+- name: Resolve sign-in settings
+  run: bash scripts/resolve-deploy-auth.sh
 ```
 
 #### Manual / Cloud Shell
@@ -253,14 +249,16 @@ When `TF_VAR_google_client_id` is non-empty, Terraform adds a `google_v2` block 
 
 ### GitHub Actions deploy workflow
 
-The **deploy** workflow has checkboxes for sign-in providers:
+Sign-in providers use **auto / on / off** (default `auto`):
 
-| Input | Default | Effect |
-|-------|---------|--------|
-| `enable_microsoft_signin` | on | Keeps Entra ID (`active_directory_v2`) |
-| `enable_google_signin` | off | Passes `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` to Terraform |
+| Input | Default | Behavior |
+|-------|---------|----------|
+| `enable_microsoft_signin` | `auto` | Enable when `AZURE_CREDENTIALS` secret exists |
+| `enable_google_signin` | `auto` | Enable when both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` exist |
 
-**Important:** setting the GitHub secrets alone is not enough — check **Enable Google sign-in** and leave **Skip terraform** unchecked so Easy Auth is updated. The portal reads `/api/v1/auth/config` and only shows buttons for providers Terraform configured.
+`scripts/resolve-deploy-auth.sh` runs before deploy and sets `TF_VAR_*` from secret presence. Use **off** to disable Google even when secrets exist; **on** fails if secrets are missing.
+
+Leave **Skip terraform** unchecked so Easy Auth is updated. The portal reads `/api/v1/auth/config` and only shows configured providers.
 
 After deploy, verify:
 
@@ -301,7 +299,7 @@ The `email` field is normalized to lowercase. It is used to:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/.auth/login/google` returns 404 | Google provider not configured in Terraform | Check **enable_google_signin** in deploy workflow; set secrets; re-run with `skip_terraform: false` |
+| `/.auth/login/google` returns 404 | Google provider not configured in Terraform | Add `GOOGLE_*` secrets; leave sign-in on `auto` or `on`; re-run with `skip_terraform: false` |
 | Google button missing on portal | Provider not in `BASILISK_AUTH_PROVIDERS` | Same as above — `curl /api/v1/auth/config` should list `"google"` |
 | Sign-in succeeds but `/api/v1/me` returns 401 | Email claim missing from token | Check OAuth consent screen has `email` scope; check App Registration optional claims |
 | AAD sign-in shows "AADSTS…" error | Redirect URI mismatch | Add `https://<fn-name>.azurewebsites.net/.auth/login/aad/callback` to App Registration |

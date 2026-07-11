@@ -132,8 +132,52 @@ adopt_missing_terraform_resources() {
   adopt_if_azure_exists \
     "${mod}.azurerm_cdn_frontdoor_rule_set.static_cache" \
     "${fd_id}/ruleSets/StaticCache"
+  adopt_if_azure_exists \
+    "${mod}.azurerm_cdn_frontdoor_rule.static_assets_cache" \
+    "${fd_id}/ruleSets/StaticCache/rules/CacheStaticAssets"
+  adopt_if_azure_exists \
+    "${mod}.azurerm_cdn_frontdoor_rule.static_html_cache" \
+    "${fd_id}/ruleSets/StaticCache/rules/CacheStaticHtml"
 
+  adopt_route53_record() {
+    local addr="$1"
+    local zone_id="$2"
+    local record_name="$3"
+    local record_type="$4"
+    if terraform state show -no-color "$addr" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! command -v aws >/dev/null 2>&1; then
+      return 0
+    fi
+    local zone_name="${TF_VAR_route53_zone_name:-b1tninja.com}"
+    local fqdn="${record_name}.${zone_name}."
+    if aws route53 list-resource-record-sets \
+      --hosted-zone-id "$zone_id" \
+      --query "ResourceRecordSets[?Name=='${fqdn}' && Type=='${record_type}'] | length(@)" \
+      --output text 2>/dev/null | grep -qE '^[1-9]'; then
+      echo "Adopting $addr into Terraform state ..."
+      terraform import -input=false "$addr" "${zone_id}_${record_name}_${record_type}"
+    fi
+  }
+
+  local route53_zone_id="${TF_VAR_route53_zone_id:-Z026512234X4JPOD7PZH1}"
   local custom_domain="${TF_VAR_custom_domain:-keys.b1tninja.com}"
+  local custom_hostname="${custom_domain%%.*}"
+
+  if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${route53_zone_id}" ]]; then
+    adopt_route53_record \
+      "${mod}.aws_route53_record.afd_validation[0]" \
+      "$route53_zone_id" \
+      "_dnsauth.${custom_hostname}" \
+      "TXT"
+    adopt_route53_record \
+      "${mod}.aws_route53_record.afd_cname[0]" \
+      "$route53_zone_id" \
+      "$custom_hostname" \
+      "CNAME"
+  fi
+
   if [[ -n "$custom_domain" ]]; then
     local custom_domain_rname="${custom_domain//./-}"
     local fd_cd_id="${fd_id}/customDomains/${custom_domain_rname}"
