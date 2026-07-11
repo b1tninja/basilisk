@@ -32,6 +32,18 @@ import_if_missing() {
   terraform import -input=false "$addr" "$id"
 }
 
+# Import only when the Azure resource exists; Terraform apply creates missing ones.
+import_if_exists() {
+  local check_cmd="$1"
+  local addr="$2"
+  local id="$3"
+  if ! eval "$check_cmd" >/dev/null 2>&1; then
+    echo "  skip (not in Azure): $addr"
+    return 0
+  fi
+  import_if_missing "$addr" "$id"
+}
+
 resolve_deploy_location() {
   local requested="$1"
   if [[ -n "$requested" ]]; then
@@ -120,20 +132,63 @@ fi
 import_if_missing "${MOD}.azurerm_service_plan.basilisk" "${RG_ID}/providers/Microsoft.Web/serverFarms/${PLAN}"
 import_if_missing "${MOD}.azurerm_function_app_flex_consumption.basilisk" "${RG_ID}/providers/Microsoft.Web/sites/${FN}"
 import_if_missing "${MOD}.azurerm_servicebus_namespace.basilisk" "$BUS_ID"
-import_if_missing "${MOD}.azurerm_servicebus_queue.key_events" "${BUS_ID}/queues/key-events"
-import_if_missing "${MOD}.azurerm_servicebus_queue.key_approved" "${BUS_ID}/queues/key-approved"
-import_if_missing "${MOD}.azurerm_servicebus_queue.sendtoken_events" "${BUS_ID}/queues/sendtoken-events"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_profile.basilisk" "$FD_ID"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_firewall_policy.basilisk" "$WAF_ID"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_endpoint.basilisk" "$FD_EP_ID"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_origin_group.function" "$FN_OG_ID"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_origin.function" "${FN_OG_ID}/origins/function-origin"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_origin_group.static" "$STATIC_OG_ID"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_origin.static" "${STATIC_OG_ID}/origins/static-origin"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_route.api" "${FD_EP_ID}/routes/api-route"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_route.static" "${FD_EP_ID}/routes/static-route"
-import_if_missing "${MOD}.azurerm_cdn_frontdoor_security_policy.basilisk" "${FD_ID}/securityPolicies/basilisk-waf"
-import_if_missing "${MOD}.azapi_resource.approval_logic_app" "$LOGIC_ID"
+
+for queue in key-events key-approved sendtoken-events; do
+  case "$queue" in
+    key-events) addr="${MOD}.azurerm_servicebus_queue.key_events" ;;
+    key-approved) addr="${MOD}.azurerm_servicebus_queue.key_approved" ;;
+    sendtoken-events) addr="${MOD}.azurerm_servicebus_queue.sendtoken_events" ;;
+  esac
+  import_if_exists \
+    "az servicebus queue show --namespace-name '$BUS' --resource-group '$RG' --name '$queue'" \
+    "$addr" \
+    "${BUS_ID}/queues/${queue}"
+done
+
+import_if_exists \
+  "az cdn profile show --name '$FD_PROFILE' --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_profile.basilisk" \
+  "$FD_ID"
+import_if_exists \
+  "az network front-door waf-policy show --name '$WAF_NAME' --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_firewall_policy.basilisk" \
+  "$WAF_ID"
+import_if_exists \
+  "az afd endpoint show --profile-name '$FD_PROFILE' --endpoint-name '$FD_ENDPOINT' --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_endpoint.basilisk" \
+  "$FD_EP_ID"
+import_if_exists \
+  "az afd origin-group show --profile-name '$FD_PROFILE' --origin-group-name basilisk-origins --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_origin_group.function" \
+  "$FN_OG_ID"
+import_if_exists \
+  "az afd origin show --profile-name '$FD_PROFILE' --origin-group-name basilisk-origins --origin-name function-origin --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_origin.function" \
+  "${FN_OG_ID}/origins/function-origin"
+import_if_exists \
+  "az afd origin-group show --profile-name '$FD_PROFILE' --origin-group-name basilisk-static-origins --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_origin_group.static" \
+  "$STATIC_OG_ID"
+import_if_exists \
+  "az afd origin show --profile-name '$FD_PROFILE' --origin-group-name basilisk-static-origins --origin-name static-origin --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_origin.static" \
+  "${STATIC_OG_ID}/origins/static-origin"
+import_if_exists \
+  "az afd route show --profile-name '$FD_PROFILE' --endpoint-name '$FD_ENDPOINT' --route-name api-route --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_route.api" \
+  "${FD_EP_ID}/routes/api-route"
+import_if_exists \
+  "az afd route show --profile-name '$FD_PROFILE' --endpoint-name '$FD_ENDPOINT' --route-name static-route --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_route.static" \
+  "${FD_EP_ID}/routes/static-route"
+import_if_exists \
+  "az afd security-policy show --profile-name '$FD_PROFILE' --security-policy-name basilisk-waf --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_security_policy.basilisk" \
+  "${FD_ID}/securityPolicies/basilisk-waf"
+import_if_exists \
+  "az logic workflow show --resource-group '$RG' --name '$LOGIC_APP'" \
+  "${MOD}.azapi_resource.approval_logic_app" \
+  "$LOGIC_ID"
 
 BLOB_RA="$(az role assignment list --scope "$SA_ID" --query "[?roleDefinitionName=='Storage Blob Data Contributor'].id | [0]" -o tsv 2>/dev/null || true)"
 TABLE_RA="$(az role assignment list --scope "$SA_ID" --query "[?roleDefinitionName=='Storage Table Data Contributor'].id | [0]" -o tsv 2>/dev/null || true)"
