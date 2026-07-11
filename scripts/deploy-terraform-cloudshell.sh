@@ -106,23 +106,32 @@ fi
 
 adopt_missing_terraform_resources() {
   local mod="module.basilisk"
-  local sub storage_name sa_id storage_key
+  local sub storage_name sa_id fd_profile fd_id
 
   sub="$(az account show --query id -o tsv)"
   storage_name="$(echo "${NAME_PREFIX}store" | tr '[:upper:]' '[:lower:]' | tr -d '-' | cut -c1-24)"
+  fd_profile="${NAME_PREFIX}-fd"
+  fd_id="/subscriptions/${sub}/resourceGroups/${RG_NAME}/providers/Microsoft.Cdn/profiles/${fd_profile}"
   sa_id="/subscriptions/${sub}/resourceGroups/${RG_NAME}/providers/Microsoft.Storage/storageAccounts/${storage_name}"
 
-  if ! terraform state show -no-color "${mod}.azurerm_storage_container_immutability_policy.certs[0]" >/dev/null 2>&1; then
-    storage_key="$(az storage account keys list -g "$RG_NAME" -n "$storage_name" --query "[0].value" -o tsv 2>/dev/null || true)"
-    if [[ -n "$storage_key" ]] && az storage container immutability-policy show \
-      --account-name "$storage_name" \
-      --account-key "$storage_key" \
-      --container-name certs >/dev/null 2>&1; then
-      echo "Adopting existing certs immutability policy into Terraform state ..."
-      terraform import -input=false "${mod}.azurerm_storage_container_immutability_policy.certs[0]" \
-        "${sa_id}/blobServices/default/containers/certs/immutabilityPolicies/default"
+  adopt_if_azure_exists() {
+    local addr="$1"
+    local id="$2"
+    if terraform state show -no-color "$addr" >/dev/null 2>&1; then
+      return 0
     fi
-  fi
+    if az resource show --ids "$id" >/dev/null 2>&1; then
+      echo "Adopting $addr into Terraform state ..."
+      terraform import -input=false "$addr" "$id"
+    fi
+  }
+
+  adopt_if_azure_exists \
+    "${mod}.azurerm_storage_container_immutability_policy.certs[0]" \
+    "${sa_id}/blobServices/default/containers/certs/immutabilityPolicies/default"
+  adopt_if_azure_exists \
+    "${mod}.azurerm_cdn_frontdoor_rule_set.static_cache" \
+    "${fd_id}/ruleSets/StaticCache"
 }
 
 adopt_missing_terraform_resources

@@ -119,14 +119,11 @@ import_if_missing "${MOD}.azurerm_storage_container.certs" "${SA_ID}/blobService
 import_if_missing "${MOD}.azurerm_storage_container.deployments" "${SA_ID}/blobServices/default/containers/deployments"
 
 if az storage account keys list -g "$RG" -n "$STORAGE_NAME" --query "[0].value" -o tsv >/dev/null 2>&1; then
-  STORAGE_KEY="$(az storage account keys list -g "$RG" -n "$STORAGE_NAME" --query "[0].value" -o tsv)"
-  if az storage container immutability-policy show \
-    --account-name "$STORAGE_NAME" \
-    --account-key "$STORAGE_KEY" \
-    --container-name certs >/dev/null 2>&1; then
-    import_if_missing "${MOD}.azurerm_storage_container_immutability_policy.certs[0]" \
-      "${SA_ID}/blobServices/default/containers/certs/immutabilityPolicies/default"
-  fi
+  IMMUT_ID="${SA_ID}/blobServices/default/containers/certs/immutabilityPolicies/default"
+  import_if_exists \
+    "az resource show --ids '$IMMUT_ID'" \
+    "${MOD}.azurerm_storage_container_immutability_policy.certs[0]" \
+    "$IMMUT_ID"
 fi
 
 import_if_missing "${MOD}.azurerm_service_plan.basilisk" "${RG_ID}/providers/Microsoft.Web/serverFarms/${PLAN}"
@@ -185,6 +182,10 @@ import_if_exists \
   "az afd security-policy show --profile-name '$FD_PROFILE' --security-policy-name basilisk-waf --resource-group '$RG'" \
   "${MOD}.azurerm_cdn_frontdoor_security_policy.basilisk" \
   "${FD_ID}/securityPolicies/basilisk-waf"
+import_if_exists \
+  "az afd rule-set show --profile-name '$FD_PROFILE' --rule-set-name StaticCache --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_rule_set.static_cache" \
+  "${FD_ID}/ruleSets/StaticCache"
 import_if_exists \
   "az logic workflow show --resource-group '$RG' --name '$LOGIC_APP'" \
   "${MOD}.azapi_resource.approval_logic_app" \
