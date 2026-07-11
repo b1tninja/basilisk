@@ -149,36 +149,49 @@ echo ""
 echo "Initializing Terraform with remote backend ..."
 bash "${REPO_ROOT}/scripts/terraform-init.sh"
 
-if [[ "$MOUNT_CLOUDDRIVE" == "true" ]] && command -v clouddrive >/dev/null 2>&1; then
+if [[ "$MOUNT_CLOUDDRIVE" == "true" ]]; then
   echo ""
-  echo "Mounting Azure Cloud Shell home to $TFSTATE_STORAGE_ACCOUNT ..."
-  if clouddrive mount -s "$TFSTATE_STORAGE_ACCOUNT" -g "$TFSTATE_RESOURCE_GROUP"; then
-    echo "Cloud Shell drive mounted. Re-open Cloud Shell or cd ~ to use persistent \$HOME on basilisk storage."
+  if command -v clouddrive >/dev/null 2>&1; then
+    echo "Mounting Cloud Shell \$HOME to $TFSTATE_STORAGE_ACCOUNT (share: $CLOUDSHELL_SHARE) ..."
+    # clouddrive mount: -s=subscription -g=resource-group -n=storage-account -f=file-share
+    if clouddrive mount \
+        -s "$SUB" \
+        -g "$TFSTATE_RESOURCE_GROUP" \
+        -n "$TFSTATE_STORAGE_ACCOUNT" \
+        -f "$CLOUDSHELL_SHARE"; then
+      echo "Mounted. Re-open Cloud Shell to start using \$HOME on $TFSTATE_STORAGE_ACCOUNT."
+    else
+      echo "clouddrive mount failed — run manually:" >&2
+      echo "  clouddrive mount -s $SUB -g $TFSTATE_RESOURCE_GROUP -n $TFSTATE_STORAGE_ACCOUNT -f $CLOUDSHELL_SHARE" >&2
+    fi
   else
-    echo "clouddrive mount failed — run manually (see below)." >&2
+    echo "Not in Azure Cloud Shell — skipping clouddrive mount."
+    echo "To mount from Cloud Shell, run:"
+    echo "  clouddrive mount -s $SUB -g $TFSTATE_RESOURCE_GROUP -n $TFSTATE_STORAGE_ACCOUNT -f $CLOUDSHELL_SHARE"
   fi
 fi
 
 cat <<EOF
 
-Remote state ready (shared by GitHub Actions + Cloud Shell).
+Done. One storage account now serves everything:
 
-  Resource group:     $TFSTATE_RESOURCE_GROUP
-  Storage account:    $TFSTATE_STORAGE_ACCOUNT
-  Terraform state:    blob://$CONTAINER/${NAME_PREFIX}.tfstate
-  Cloud Shell files:  file share $CLOUDSHELL_SHARE (optional \$HOME mount)
+  Storage account:  $TFSTATE_STORAGE_ACCOUNT  ($TFSTATE_RESOURCE_GROUP)
+  ├── \$web          static portal (managed by Terraform)
+  ├── tfstate/      Terraform state blob — shared by GitHub Actions + Cloud Shell
+  │   └── ${NAME_PREFIX}.tfstate
+  └── $CLOUDSHELL_SHARE/      Cloud Shell \$HOME file share
 
-GitHub Actions (optional repository variables):
+GitHub Actions:  state auto-detected from $TFSTATE_STORAGE_ACCOUNT (no extra secrets needed)
+Cloud Shell:     persistent \$HOME via clouddrive mount (one-time per user)
+
+To mount Cloud Shell \$HOME (if not done above):
+  clouddrive mount -s $SUB -g $TFSTATE_RESOURCE_GROUP -n $TFSTATE_STORAGE_ACCOUNT -f $CLOUDSHELL_SHARE
+
+After mounting, re-open Cloud Shell, clone the repo into \$HOME, and deploy:
+  git clone <repo> ~/basilisk && cd ~/basilisk
+  AUTO_APPROVE=true bash scripts/deploy-terraform-cloudshell.sh
+
+GitHub Actions (optional repository variables to override auto-detect):
   TFSTATE_STORAGE_ACCOUNT = $TFSTATE_STORAGE_ACCOUNT
   TFSTATE_RESOURCE_GROUP  = $TFSTATE_RESOURCE_GROUP
-
-Azure Cloud Shell — mount persistent \$HOME to the same account (one-time per user):
-  clouddrive mount -s $TFSTATE_STORAGE_ACCOUNT -g $TFSTATE_RESOURCE_GROUP
-
-Or re-run: bash scripts/bootstrap-tfstate.sh --use-app-storage --mount-clouddrive
-
-If local terraform.tfstate exists, migrate once:
-  cd terraform/cloudshell && terraform init -migrate-state -backend-config=backend.hcl -reconfigure
-
-Then commit only code — state lives in Azure Blob, not the runner cache.
 EOF

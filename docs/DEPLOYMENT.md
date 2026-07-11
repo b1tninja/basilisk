@@ -55,7 +55,13 @@ Optional: copy `infra/main.bicepparam.example` to `infra/main.bicepparam` and pa
 
 Terraform is pre-installed in [Azure Cloud Shell](https://shell.azure.com). The module mirrors the Bicep stack and reads **tenant ID** from your Azure CLI session (`azurerm_client_config`).
 
-**Shared state:** Cloud Shell uses the same Azure Blob backend as GitHub Actions (`basiliskdevstore` / `tfstate` / `basilisk-dev.tfstate`) once bootstrapped.
+One storage account (`basiliskdevstore`) serves everything: static portal, Terraform state, and Cloud Shell `$HOME`.
+
+| Location | Contents |
+|----------|----------|
+| `$web` container | Static portal (Terraform-managed) |
+| `tfstate/` blob | Terraform state — shared by CI and Cloud Shell |
+| `cloudshell` file share | Cloud Shell persistent `$HOME` |
 
 ### First time (Bash Cloud Shell)
 
@@ -64,14 +70,23 @@ az login
 git clone <your-repo-url> ~/basilisk && cd ~/basilisk
 chmod +x scripts/*.sh
 
-# After first infra deploy exists, or after initial apply creates storage:
+# Run once after Terraform has created basiliskdevstore:
 GITHUB_SP_CLIENT_ID=<clientId-from-AZURE_CREDENTIALS> \
   bash scripts/bootstrap-tfstate.sh --use-app-storage --mount-clouddrive
-
-AUTO_APPROVE=true ./scripts/deploy-terraform-cloudshell.sh
 ```
 
-`--mount-clouddrive` points Cloud Shell's persistent `$HOME` at the same storage account (file share `cloudshell`), so clones and local files survive sessions.
+This creates the `tfstate` blob container and `cloudshell` file share, grants the deploy SP access, and mounts `$HOME` to the same account:
+
+```
+clouddrive mount -s <sub-id> -g basilisk-dev-rg -n basiliskdevstore -f cloudshell
+```
+
+Then re-open Cloud Shell (new session picks up the mounted `$HOME`), clone the repo into `~`, and deploy:
+
+```bash
+git clone <your-repo-url> ~/basilisk && cd ~/basilisk
+AUTO_APPROVE=true ./scripts/deploy-terraform-cloudshell.sh
+```
 
 ### Subsequent sessions
 
@@ -80,11 +95,7 @@ cd ~/basilisk && git pull
 AUTO_APPROVE=true ./scripts/deploy-terraform-cloudshell.sh
 ```
 
-Or use the helper:
-
-```bash
-bash scripts/cloudshell-setup.sh
-```
+Cloud Shell and GitHub Actions now read and write the **same** `basilisk-dev.tfstate` blob — no more lost state between runs.
 
 
 
