@@ -80,7 +80,7 @@ fi
 
 SUB="$(az account show --query id -o tsv)"
 LOCATION="$(resolve_deploy_location "$LOCATION")"
-TOKEN_SECRET="$(az webapp config appsettings list -g "$RG" -n "$FN" --query "[?name=='BASILISK_TOKEN_SECRET'].value | [0]" -o tsv 2>/dev/null || true)"
+TOKEN_SECRET="$(az functionapp config appsettings list -g "$RG" -n "$FN" --query "[?name=='BASILISK_TOKEN_SECRET'].value | [0]" -o tsv 2>/dev/null || true)"
 
 export TF_VAR_name_prefix="$NAME_PREFIX"
 export TF_VAR_location="$LOCATION"

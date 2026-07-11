@@ -94,6 +94,16 @@ if [[ "$HAS_RG_STATE" != "true" ]] && az group show --name "$RG_NAME" >/dev/null
   fi
 fi
 
+FN_NAME="${NAME_PREFIX}-fn"
+if [[ -z "${TF_VAR_existing_token_secret:-}" ]] && az functionapp show -g "$RG_NAME" -n "$FN_NAME" >/dev/null 2>&1; then
+  TOKEN_SECRET="$(az functionapp config appsettings list -g "$RG_NAME" -n "$FN_NAME" \
+    --query "[?name=='BASILISK_TOKEN_SECRET'].value | [0]" -o tsv 2>/dev/null || true)"
+  if [[ -n "$TOKEN_SECRET" && "$TOKEN_SECRET" != "null" ]]; then
+    export TF_VAR_existing_token_secret="$TOKEN_SECRET"
+    echo "Using existing BASILISK_TOKEN_SECRET from $FN_NAME"
+  fi
+fi
+
 PLAN_ARGS=(-input=false -out=tfplan)
 if [[ -f terraform.tfvars ]]; then
   PLAN_ARGS+=(-var-file=terraform.tfvars)
