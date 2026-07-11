@@ -129,6 +129,8 @@ Optional repository **variables** (auto-detected when unset in CI if app storage
 | `TFSTATE_CONTAINER` | `tfstate` |
 | `TFSTATE_KEY` | `{name_prefix}.tfstate` |
 
+The deploy workflow exports `ARM_CLIENT_ID`, `ARM_CLIENT_SECRET`, `ARM_TENANT_ID`, and `ARM_SUBSCRIPTION_ID` from `AZURE_CREDENTIALS` so Terraform's remote state backend works under the GitHub Actions service principal (`use_azuread_auth`).
+
 The deploy SP needs **Storage Blob Data Contributor** on the storage account (bootstrap script grants this).
 
 Cloud Shell auto-detects the same storage account and uses the shared blob state (see `scripts/cloudshell-setup.sh`).

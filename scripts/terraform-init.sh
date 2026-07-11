@@ -71,6 +71,24 @@ ensure_tfstate_container() {
 
 write_backend_hcl() {
   local path="${TF_DIR}/backend.hcl"
+  if [[ -n "${GITHUB_ACTIONS:-}" ]] && [[ -z "${ARM_CLIENT_ID:-}" ]]; then
+    # Service principal via azure/login cannot use CLI auth for the backend; use account key.
+    local access_key
+    access_key="$(az storage account keys list \
+      --resource-group "$TFSTATE_RESOURCE_GROUP" \
+      --account-name "$TFSTATE_STORAGE_ACCOUNT" \
+      --query "[0].value" -o tsv)"
+    cat >"$path" <<EOF
+resource_group_name  = "${TFSTATE_RESOURCE_GROUP}"
+storage_account_name = "${TFSTATE_STORAGE_ACCOUNT}"
+container_name       = "${TFSTATE_CONTAINER}"
+key                  = "${TFSTATE_KEY}"
+access_key           = "${access_key}"
+EOF
+    echo "Wrote $path (key=${TFSTATE_KEY}, auth=access_key)"
+    return
+  fi
+
   cat >"$path" <<EOF
 resource_group_name  = "${TFSTATE_RESOURCE_GROUP}"
 storage_account_name = "${TFSTATE_STORAGE_ACCOUNT}"
@@ -78,7 +96,7 @@ container_name       = "${TFSTATE_CONTAINER}"
 key                  = "${TFSTATE_KEY}"
 use_azuread_auth     = ${TFSTATE_USE_AZUREAD_AUTH}
 EOF
-  echo "Wrote $path (key=${TFSTATE_KEY})"
+  echo "Wrote $path (key=${TFSTATE_KEY}, auth=azuread)"
 }
 
 cd "$TF_DIR"
