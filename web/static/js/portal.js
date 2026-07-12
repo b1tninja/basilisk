@@ -187,6 +187,19 @@ function renderKeysTable(items, options = {}) {
 
 /* ===== Key Upload Form ===== */
 
+function renderUploadCard(options = {}) {
+  const signedIn = options.signedIn === true;
+  const intro = signedIn
+    ? "Paste your armored public key or upload a <code>.asc</code> file. It will be associated with your account if a UID matches your email."
+    : "Paste your armored public key or upload a <code>.asc</code> file. Sign in above to auto-claim keys that match your email; otherwise you can submit anonymously and claim later.";
+  return `
+    <div class="card" id="submit-key-card">
+      <p class="card-title">Submit a public key</p>
+      <p class="muted" style="margin-bottom:1rem">${intro}</p>
+      ${renderUploadForm()}
+    </div>`;
+}
+
 function renderUploadForm() {
   return `
     <div class="form-group">
@@ -245,28 +258,50 @@ async function submitKey() {
   btn.textContent = "Submitting…";
 
   try {
-    const result = await fetchJson("/api/v1/me/keys", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: keytext }),
-    });
+    const user = await Auth.getUser();
+    const authenticated = !!(user && user.authenticated);
+    if (authenticated) {
+      const result = await fetchJson("/api/v1/me/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: keytext }),
+      });
 
-    const fp = escapeHtml(result.fingerprint || "");
-    const state = escapeHtml(result.approval_state || "pending");
-    const dup = result.duplicate ? " (key already on file)" : "";
+      const fp = escapeHtml(result.fingerprint || "");
+      const state = escapeHtml(result.approval_state || "pending");
+      const dup = result.duplicate ? " (key already on file)" : "";
 
-    status.innerHTML =
-      `Key submitted — fingerprint <code>${fp}</code>, ` +
-      `status <span class="${badgeClass(result.approval_state)}">${state}</span>${dup}.` +
-      (result.claimed ? " Ownership claimed." : "");
-    status.className = "status-row ok";
+      status.innerHTML =
+        `Key submitted — fingerprint <code>${fp}</code>, ` +
+        `status <span class="${badgeClass(result.approval_state)}">${state}</span>${dup}.` +
+        (result.claimed ? " Ownership claimed." : "");
+      status.className = "status-row ok";
+    } else {
+      const r = await fetch("/pks/add", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `keytext=${encodeURIComponent(keytext)}`,
+      });
+      const body = await r.text();
+      if (!r.ok) {
+        throw Object.assign(new Error(body.trim() || `Request failed (${r.status})`), { status: r.status });
+      }
+
+      const claimMatch = body.match(/^Claim:\s*(.+)$/m);
+      const claimUrl = claimMatch ? claimMatch[1].trim() : "";
+      status.innerHTML = claimUrl
+        ? `Key submitted. <a class="text-link" href="${escapeHtml(claimUrl)}">Claim this key</a> to verify ownership.`
+        : "Key submitted.";
+      status.className = "status-row ok";
+    }
 
     if (paste) paste.value = "";
     if (fileInput) { fileInput.value = ""; }
     const fn = document.getElementById("file-name-display");
     if (fn) fn.textContent = "";
 
-    if (typeof loadMyKeys === "function") setTimeout(loadMyKeys, 800);
+    if (typeof loadMyKeys === "function" && authenticated) setTimeout(loadMyKeys, 800);
   } catch (err) {
     status.textContent = err.message || "Submission failed.";
     status.className = "status-row err";

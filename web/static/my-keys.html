@@ -19,7 +19,7 @@
 
   <div class="page-header">
     <h1>My Keys</h1>
-    <p class="muted">Manage the OpenPGP keys associated with your identity.</p>
+    <p class="muted">Submit OpenPGP public keys and manage keys associated with your identity.</p>
   </div>
 
   <div id="content"></div>
@@ -34,11 +34,12 @@
       const providers = await Auth.getProviders();
       const buttons = Auth.providerButtons("/my-keys", providers);
       const hint = providers.includes("google") && providers.includes("microsoft")
-        ? "Sign in with your Microsoft or Google account to view, submit, and claim keys associated with your email address."
+        ? "Sign in with your Microsoft or Google account to view and claim keys associated with your email address."
         : providers.includes("google")
-          ? "Sign in with your Google account to view, submit, and claim keys associated with your email address."
-          : "Sign in with your Microsoft account to view, submit, and claim keys associated with your email address.";
+          ? "Sign in with your Google account to view and claim keys associated with your email address."
+          : "Sign in with your Microsoft account to view and claim keys associated with your email address.";
       content.innerHTML = `
+        ${renderUploadCard({ signedIn: false })}
         <div class="card" style="max-width:440px">
           <p class="card-title">Sign in to manage your keys</p>
           <p class="muted" style="margin-bottom:1.25rem">${hint}</p>
@@ -51,21 +52,11 @@
         `<p style="margin-bottom:1.25rem">Signed in as
           <strong>${escapeHtml(user.email)}</strong></p>`;
 
-      const uploadCard = `
-        <div class="card">
-          <p class="card-title">Submit a public key</p>
-          <p class="muted" style="margin-bottom:1rem">
-            Paste your armored public key or upload a <code>.asc</code> file.
-            It will be associated with your account if a UID matches your email.
-          </p>
-          ${renderUploadForm()}
-        </div>`;
-
       const keysSection = keys && keys.length
         ? `<h2>Your keys</h2>${renderKeysTable(keys, { showClaim: true })}`
-        : `<p class="muted">No keys on file yet. Submit one above.</p>`;
+        : `<p class="muted">No keys on file yet for your account. Submit one above.</p>`;
 
-      content.innerHTML = userInfo + uploadCard + keysSection;
+      content.innerHTML = userInfo + renderUploadCard({ signedIn: true }) + keysSection;
     }
 
     async function loadMyKeys() {
