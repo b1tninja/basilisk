@@ -17,6 +17,19 @@ emit() {
   fi
 }
 
+normalize_signin_mode() {
+  local mode="${1:-auto}"
+  case "${mode,,}" in
+    auto|on|off) printf '%s' "$mode" ;;
+    true) printf '%s' 'on' ;;
+    false) printf '%s' 'off' ;;
+    *)
+      echo "Error: unknown sign-in mode: $mode (use auto, on, or off)" >&2
+      exit 1
+      ;;
+  esac
+}
+
 resolve_tri_state() {
   local label="$1"
   local mode="$2"
@@ -58,23 +71,26 @@ if [[ -n "${GOOGLE_CLIENT_ID:-}" && -n "${GOOGLE_CLIENT_SECRET:-}" ]]; then
 fi
 
 # Microsoft is on unless explicitly off (deploy always has AZURE_CREDENTIALS via azure/login).
-if [[ "${MICROSOFT_SIGNIN_MODE:-auto}" == "off" ]]; then
+MICROSOFT_SIGNIN_MODE="$(normalize_signin_mode "${MICROSOFT_SIGNIN_MODE:-auto}")"
+GOOGLE_SIGNIN_MODE="$(normalize_signin_mode "${GOOGLE_SIGNIN_MODE:-auto}")"
+
+if [[ "$MICROSOFT_SIGNIN_MODE" == "off" ]]; then
   enable_microsoft=false
-elif [[ "${MICROSOFT_SIGNIN_MODE:-auto}" == "on" && "$microsoft_ok" != true ]]; then
+elif [[ "$MICROSOFT_SIGNIN_MODE" == "on" && "$microsoft_ok" != true ]]; then
   echo "Error: Microsoft sign-in is 'on' but AZURE_CREDENTIALS is missing." >&2
   exit 1
 else
   enable_microsoft=true
 fi
 
-enable_google="$(resolve_tri_state "Google" "${GOOGLE_SIGNIN_MODE:-auto}" "$google_ok")"
+enable_google="$(resolve_tri_state "Google" "$GOOGLE_SIGNIN_MODE" "$google_ok")"
 
 if [[ "$enable_microsoft" != true && "$enable_google" != true ]]; then
   echo "Error: at least one sign-in provider must be enabled." >&2
   exit 1
 fi
 
-echo "Sign-in: microsoft=${enable_microsoft} (mode=${MICROSOFT_SIGNIN_MODE:-auto}), google=${enable_google} (mode=${GOOGLE_SIGNIN_MODE:-auto})" >&2
+echo "Sign-in: microsoft=${enable_microsoft} (mode=${MICROSOFT_SIGNIN_MODE}), google=${enable_google} (mode=${GOOGLE_SIGNIN_MODE})" >&2
 
 emit "TF_VAR_enable_microsoft_auth" "$enable_microsoft"
 emit "TF_VAR_enable_google_auth" "$enable_google"
