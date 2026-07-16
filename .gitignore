@@ -19,6 +19,8 @@ data/
 testkey.asc
 marketplace/package/
 *.zip
+web/node_modules/
+web/dist/
 
 # Terraform
 .terraform/

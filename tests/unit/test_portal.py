@@ -99,11 +99,37 @@ def test_static_search_page():
     for path in ("/", "/search"):
         r = client.get(path)
         assert r.status_code == 200
-        assert "/api/v1/search" in r.get_data(as_text=True)
+        body = r.get_data(as_text=True)
+        assert 'id="search-form"' in body
+        assert 'id="auth-widget"' in body
 
-    static_root = Path(__file__).resolve().parents[2] / "web" / "static"
-    assert (static_root / "index.html").is_file()
-    assert "/api/v1/search" in (static_root / "index.html").read_text(encoding="utf-8")
+    web_root = Path(__file__).resolve().parents[2] / "web"
+    dist_index = web_root / "dist" / "index.html"
+    src_index = web_root / "index.html"
+    assert dist_index.is_file() or src_index.is_file()
+    if dist_index.is_file():
+        html = dist_index.read_text(encoding="utf-8")
+        assert "/assets/" in html
+        assert "integrity=" in html
+    else:
+        html = src_index.read_text(encoding="utf-8")
+        assert "/src/pages/index.js" in html
+
+
+@pytest.mark.integration
+def test_api_key_detail(sample_armored, sample_fingerprint):
+    from basilisk.serve import create_app
+
+    client = create_app().test_client()
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    r = client.get(f"/api/v1/key/{sample_fingerprint}")
+    assert r.status_code == 200
+    payload = r.get_json()
+    assert payload["fingerprint"] == sample_fingerprint.upper()
+    assert "key_expiration" in payload
+    assert payload["approval_state"] == "pending"
+    assert payload["revoked"] is False
 
 
 @pytest.mark.integration

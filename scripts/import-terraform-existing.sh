@@ -194,6 +194,18 @@ import_if_exists \
   "az resource show --ids '${FD_ID}/ruleSets/StaticCache/rules/CacheStaticHtml'" \
   "${MOD}.azurerm_cdn_frontdoor_rule.static_html_cache" \
   "${FD_ID}/ruleSets/StaticCache/rules/CacheStaticHtml"
+import_if_exists \
+  "az afd rule-set show --profile-name '$FD_PROFILE' --rule-set-name SecurityHeaders --resource-group '$RG'" \
+  "${MOD}.azurerm_cdn_frontdoor_rule_set.security" \
+  "${FD_ID}/ruleSets/SecurityHeaders"
+import_if_exists \
+  "az resource show --ids '${FD_ID}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders1'" \
+  "${MOD}.azurerm_cdn_frontdoor_rule.security_headers" \
+  "${FD_ID}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders1"
+import_if_exists \
+  "az resource show --ids '${FD_ID}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders2'" \
+  "${MOD}.azurerm_cdn_frontdoor_rule.security_headers_extra" \
+  "${FD_ID}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders2"
 
 import_route53_if_exists() {
   local zone_id="$1"

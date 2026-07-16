@@ -46,6 +46,8 @@ def ingest_keytext(
         digest,
         parsed.key_id,
         parsed.uids,
+        expiration=parsed.expiration.isoformat() if parsed.expiration else None,
+        revoked=parsed.is_revoked,
     )
     if enqueue_events:
         claim_url = f"{settings.base_url}/claim/{parsed.fingerprint}"

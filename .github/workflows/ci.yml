@@ -24,3 +24,14 @@ jobs:
       - name: Prepare environment files
         run: bash scripts/prepare-ci-env.sh
       - run: python -m pytest tests/unit tests/integration -q --cov=basilisk --cov-report=term-missing
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build portal
+        working-directory: web
+        run: |
+          npm ci
+          npm run build

@@ -17,6 +17,7 @@ class CertRecord:
     claimer_oid: str | None = None
     canonical_blob_uri: str | None = None
     revoked: bool = False
+    key_expiration: str | None = None
 
 
 class CertStore(Protocol):
@@ -27,6 +28,9 @@ class CertStore(Protocol):
         sha256: str,
         key_id: str,
         uids: list[str],
+        *,
+        expiration: str | None = None,
+        revoked: bool = False,
     ) -> None: ...
 
     def get_by_fingerprint(self, fingerprint: str) -> CertRecord | None: ...

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS certs (
     claimer_oid TEXT,
     key_id TEXT NOT NULL,
     revoked INTEGER NOT NULL DEFAULT 0,
+    key_expiration TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

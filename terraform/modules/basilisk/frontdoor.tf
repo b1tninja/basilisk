@@ -146,6 +146,61 @@ resource "azurerm_cdn_frontdoor_rule_set" "static_cache" {
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
 }
 
+resource "azurerm_cdn_frontdoor_rule_set" "security" {
+  name                     = "SecurityHeaders"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
+}
+
+resource "azurerm_cdn_frontdoor_rule" "security_headers" {
+  name                      = "AddSecurityHeaders1"
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.security.id
+  order                     = 1
+  behavior_on_match         = "Continue"
+
+  actions {
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Content-Security-Policy"
+      value         = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "X-Content-Type-Options"
+      value         = "nosniff"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "X-Frame-Options"
+      value         = "DENY"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Referrer-Policy"
+      value         = "strict-origin-when-cross-origin"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Strict-Transport-Security"
+      value         = "max-age=31536000; includeSubDomains"
+    }
+  }
+}
+
+resource "azurerm_cdn_frontdoor_rule" "security_headers_extra" {
+  name                      = "AddSecurityHeaders2"
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.security.id
+  order                     = 2
+  behavior_on_match         = "Continue"
+
+  actions {
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Permissions-Policy"
+      value         = "camera=(), geolocation=(), microphone=()"
+    }
+  }
+}
+
 resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
   name                      = "CacheStaticAssets"
   cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
@@ -199,6 +254,27 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
       query_string_caching_behavior   = "UseQueryString"
       compression_enabled             = true
     }
+    # AFD allows max 5 actions/rule; headers here ensure CSP applies to cached HTML.
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Content-Security-Policy"
+      value         = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "X-Content-Type-Options"
+      value         = "nosniff"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "X-Frame-Options"
+      value         = "DENY"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Referrer-Policy"
+      value         = "strict-origin-when-cross-origin"
+    }
   }
 }
 
@@ -206,6 +282,7 @@ resource "azurerm_cdn_frontdoor_route" "api" {
   name                          = "api-route"
   cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.basilisk.id
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.function.id
+  cdn_frontdoor_rule_set_ids    = [azurerm_cdn_frontdoor_rule_set.security.id]
   supported_protocols           = ["Http", "Https"]
   patterns_to_match             = ["/pks/*", "/api/*", "/claim/*", "/.auth/*", "/health"]
   forwarding_protocol           = "HttpsOnly"
@@ -225,7 +302,10 @@ resource "azurerm_cdn_frontdoor_route" "static" {
   name                          = "static-route"
   cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.basilisk.id
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
-  cdn_frontdoor_rule_set_ids    = [azurerm_cdn_frontdoor_rule_set.static_cache.id]
+  cdn_frontdoor_rule_set_ids = [
+    azurerm_cdn_frontdoor_rule_set.security.id,
+    azurerm_cdn_frontdoor_rule_set.static_cache.id,
+  ]
   supported_protocols           = ["Http", "Https"]
   patterns_to_match             = ["/", "/*"]
   forwarding_protocol           = "HttpsOnly"

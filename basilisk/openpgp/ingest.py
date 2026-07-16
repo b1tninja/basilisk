@@ -76,6 +76,8 @@ def parse_armored_keytext(
         uids=uids,
         armored=data,
         raw_cert=cert,
+        expiration=cert.expiration,
+        is_revoked=bool(cert.is_revoked),
     )
     validate_cert_policy(parsed, path, config=config)
     return parsed

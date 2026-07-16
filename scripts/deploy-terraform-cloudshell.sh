@@ -138,6 +138,15 @@ adopt_missing_terraform_resources() {
   adopt_if_azure_exists \
     "${mod}.azurerm_cdn_frontdoor_rule.static_html_cache" \
     "${fd_id}/ruleSets/StaticCache/rules/CacheStaticHtml"
+  adopt_if_azure_exists \
+    "${mod}.azurerm_cdn_frontdoor_rule_set.security" \
+    "${fd_id}/ruleSets/SecurityHeaders"
+  adopt_if_azure_exists \
+    "${mod}.azurerm_cdn_frontdoor_rule.security_headers" \
+    "${fd_id}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders1"
+  adopt_if_azure_exists \
+    "${mod}.azurerm_cdn_frontdoor_rule.security_headers_extra" \
+    "${fd_id}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders2"
 
   adopt_route53_record() {
     local addr="$1"

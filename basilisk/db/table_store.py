@@ -48,6 +48,7 @@ class AzureTableCertStore(CertStore):
             claimer_oid=entity.get("claimer_oid"),
             canonical_blob_uri=entity.get("canonical_blob_uri"),
             revoked=bool(entity.get("revoked", False)),
+            key_expiration=entity.get("key_expiration"),
         )
 
     def _index_emails(self, fingerprint: str, uids: list[str]) -> None:
@@ -68,6 +69,9 @@ class AzureTableCertStore(CertStore):
         sha256: str,
         key_id: str,
         uids: list[str],
+        *,
+        expiration: str | None = None,
+        revoked: bool = False,
     ) -> None:
         fpr = fingerprint.upper()
         now = _utcnow()
@@ -81,6 +85,8 @@ class AzureTableCertStore(CertStore):
                 "key_id": key_id,
                 "approved_uids": "[]",
                 "pending_uids": json.dumps(uids),
+                "revoked": revoked,
+                "key_expiration": expiration,
                 "created_at": now,
                 "updated_at": now,
             }

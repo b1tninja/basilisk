@@ -23,6 +23,8 @@ zip -r "$OUT" . \
   -x './terraform/*' \
   -x './marketplace/*' \
   -x './web/static/*' \
+  -x './web/node_modules/*' \
+  -x './web/dist/*' \
   -x './dist/*' \
   -x './data/*' \
   -x './*.md' \

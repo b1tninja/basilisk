@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from pysequoia import Cert
 
@@ -12,6 +13,8 @@ class ParsedCert:
     uids: list[str]
     armored: bytes
     raw_cert: Cert
+    expiration: datetime | None = None
+    is_revoked: bool = False
 
 
 def uid_string(uid) -> str:

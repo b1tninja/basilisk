@@ -45,6 +45,29 @@ def create_app() -> Flask:
     app = Flask(__name__)
     settings = get_settings()
 
+    _CSP = (
+        "default-src 'none'; "
+        "script-src 'self'; "
+        "style-src 'self'; "
+        "connect-src 'self'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "frame-ancestors 'none'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self';"
+    )
+
+    @app.after_request
+    def security_headers(response: Response) -> Response:
+        response.headers.setdefault("Content-Security-Policy", _CSP)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=()"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
     @app.get("/health")
     def health() -> Response:
         return Response("ok", status=200, mimetype="text/plain")

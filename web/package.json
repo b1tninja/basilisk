@@ -1,0 +1,17 @@
+{
+  "name": "basilisk-portal",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "openpgp": "^6.1.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "vite-plugin-sri-gen": "^1.0.0"
+  }
+}

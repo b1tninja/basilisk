@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Upload staged static portal to Azure Storage static website ($web container).
+# Upload Vite-built static portal to Azure Storage static website ($web container).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -39,54 +39,28 @@ fi
 
 echo "Uploading static site to ${STORAGE_ACCOUNT}/\$web ..."
 
-# HTML pages without extension
-for blob in search my-keys key stats; do
-  az storage blob upload \
-    "${storage_args[@]}" \
-    --container-name '$web' \
-    --name "$blob" \
-    --file "${STAGE}/${blob}" \
-    --content-type "text/html; charset=utf-8" \
-    --overwrite \
-    --only-show-errors
+az storage blob upload-batch \
+  "${storage_args[@]}" \
+  --destination '$web' \
+  --source "$STAGE" \
+  --overwrite \
+  --only-show-errors
+
+# Ensure HTML content-types for clean URL blobs and root pages.
+for blob in index.html search my-keys key stats; do
+  if [[ -f "${STAGE}/${blob}" ]] || [[ -f "${STAGE}/${blob}.html" ]]; then
+    src="${STAGE}/${blob}"
+    [[ -f "$src" ]] || src="${STAGE}/${blob}.html"
+    az storage blob upload \
+      "${storage_args[@]}" \
+      --container-name '$web' \
+      --name "$blob" \
+      --file "$src" \
+      --content-type "text/html; charset=utf-8" \
+      --overwrite \
+      --only-show-errors
+  fi
 done
-
-az storage blob upload \
-  "${storage_args[@]}" \
-  --container-name '$web' \
-  --name index.html \
-  --file "${STAGE}/index.html" \
-  --content-type "text/html; charset=utf-8" \
-  --overwrite \
-  --only-show-errors
-
-az storage blob upload \
-  "${storage_args[@]}" \
-  --container-name '$web' \
-  --name css/site.css \
-  --file "${STAGE}/css/site.css" \
-  --content-type "text/css" \
-  --overwrite \
-  --only-show-errors
-
-az storage blob upload \
-  "${storage_args[@]}" \
-  --container-name '$web' \
-  --name js/portal.js \
-  --file "${STAGE}/js/portal.js" \
-  --content-type "application/javascript" \
-  --overwrite \
-  --only-show-errors
-
-if [[ -d "${STAGE}/assets" ]] && [[ -n "$(ls -A "${STAGE}/assets" 2>/dev/null || true)" ]]; then
-  az storage blob upload-batch \
-    "${storage_args[@]}" \
-    --destination '$web' \
-    --source "$STAGE/assets" \
-    --destination-path "assets" \
-    --overwrite \
-    --only-show-errors
-fi
 
 static_host="$(az storage account show -n "$STORAGE_ACCOUNT" ${RESOURCE_GROUP:+-g "$RESOURCE_GROUP"} --query primaryEndpoints.web -o tsv | sed 's#https://##;s#/$##')"
 echo "Static site deployed to https://${static_host}/"

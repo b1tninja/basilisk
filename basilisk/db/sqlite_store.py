@@ -22,7 +22,7 @@ class SqliteCertStore(CertStore):
         schema = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
         self._conn.executescript(schema)
         self._conn.commit()
-        self._migrate_portal()
+        self._run_migrations()
         self._ensure_portal_indexes()
 
     def _ensure_portal_indexes(self) -> None:
@@ -34,18 +34,22 @@ class SqliteCertStore(CertStore):
         )
         self._conn.commit()
 
-    def _migrate_portal(self) -> None:
+    def _run_migrations(self) -> None:
         cols = {row[1] for row in self._conn.execute("PRAGMA table_info(certs)")}
-        if "pending_uids" in cols:
-            return
-        migration = (
-            Path(__file__).resolve().parent / "migrations" / "002_portal.sql"
-        ).read_text(encoding="utf-8")
-        self._conn.executescript(migration)
-        self._conn.commit()
+        migrations_dir = Path(__file__).resolve().parent / "migrations"
+        if "pending_uids" not in cols:
+            migration = (migrations_dir / "002_portal.sql").read_text(encoding="utf-8")
+            self._conn.executescript(migration)
+            self._conn.commit()
+            cols = {row[1] for row in self._conn.execute("PRAGMA table_info(certs)")}
+        if "key_expiration" not in cols:
+            migration = (migrations_dir / "003_key_metadata.sql").read_text(encoding="utf-8")
+            self._conn.executescript(migration)
+            self._conn.commit()
 
     def _row_to_record(self, row: sqlite3.Row) -> CertRecord:
-        pending_raw = row["pending_uids"] if "pending_uids" in row.keys() else "[]"
+        keys = row.keys()
+        pending_raw = row["pending_uids"] if "pending_uids" in keys else "[]"
         return CertRecord(
             fingerprint=row["fingerprint"],
             approval_state=row["approval_state"],
@@ -54,10 +58,11 @@ class SqliteCertStore(CertStore):
             key_id=row["key_id"],
             approved_uids=json.loads(row["approved_uids"]),
             pending_uids=json.loads(pending_raw or "[]"),
-            claimer_email=row["claimer_email"] if "claimer_email" in row.keys() else None,
-            claimer_oid=row["claimer_oid"] if "claimer_oid" in row.keys() else None,
+            claimer_email=row["claimer_email"] if "claimer_email" in keys else None,
+            claimer_oid=row["claimer_oid"] if "claimer_oid" in keys else None,
             canonical_blob_uri=row["canonical_blob_uri"],
             revoked=bool(row["revoked"]),
+            key_expiration=row["key_expiration"] if "key_expiration" in keys else None,
         )
 
     def _index_emails(self, fingerprint: str, uids: list[str]) -> None:
@@ -78,14 +83,18 @@ class SqliteCertStore(CertStore):
         sha256: str,
         key_id: str,
         uids: list[str],
+        *,
+        expiration: str | None = None,
+        revoked: bool = False,
     ) -> None:
         now = _utcnow()
         fpr = fingerprint.upper()
         self._conn.execute(
             """
             INSERT INTO certs (fingerprint, approval_state, blob_uri, sha256, key_id,
-                               approved_uids, pending_uids, created_at, updated_at)
-            VALUES (?, 'pending', ?, ?, ?, '[]', ?, ?, ?)
+                               approved_uids, pending_uids, revoked, key_expiration,
+                               created_at, updated_at)
+            VALUES (?, 'pending', ?, ?, ?, '[]', ?, ?, ?, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
                 approval_state='pending',
                 blob_uri=excluded.blob_uri,
@@ -93,9 +102,21 @@ class SqliteCertStore(CertStore):
                 key_id=excluded.key_id,
                 approved_uids='[]',
                 pending_uids=excluded.pending_uids,
+                revoked=excluded.revoked,
+                key_expiration=excluded.key_expiration,
                 updated_at=excluded.updated_at
             """,
-            (fpr, blob_uri, sha256, key_id, json.dumps(uids), now, now),
+            (
+                fpr,
+                blob_uri,
+                sha256,
+                key_id,
+                json.dumps(uids),
+                1 if revoked else 0,
+                expiration,
+                now,
+                now,
+            ),
         )
         kid = key_id.lower().removeprefix("0x")
         self._conn.execute("DELETE FROM identifiers WHERE fingerprint=?", (fpr,))

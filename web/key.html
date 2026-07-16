@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';">
+  <title>Key — Basilisk</title>
+</head>
+<body>
+  <nav>
+    <a class="nav-logo" href="/">Basilisk</a>
+    <div class="nav-links">
+      <a class="nav-link" href="/">Search</a>
+      <a class="nav-link" href="/my-keys">My Keys</a>
+      <a class="nav-link" href="/stats">Stats</a>
+    </div>
+    <div class="auth-widget" id="auth-widget"></div>
+  </nav>
+
+  <p id="error" class="text-error hidden"></p>
+  <p id="loading" class="muted">Loading key details…</p>
+  <div id="content" class="hidden"></div>
+
+  <script type="module" src="/src/pages/key.js"></script>
+</body>
+</html>
