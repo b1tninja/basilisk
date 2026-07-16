@@ -67,16 +67,21 @@ output "waf_policy_id" {
 }
 
 locals {
-  function_app_url          = "https://${azurerm_function_app_flex_consumption.basilisk.default_hostname}"
-  google_oauth_redirect_uri = "${local.function_app_url}/.auth/login/google/callback"
-  aad_oauth_redirect_uri    = "${local.function_app_url}/.auth/login/aad/callback"
+  function_app_url = "https://${azurerm_function_app_flex_consumption.basilisk.default_hostname}"
+  # With forward_proxy_convention=Standard, Easy Auth uses X-Forwarded-Host, so the
+  # public hostname (custom domain or Front Door) is the OAuth callback host users hit.
+  # Keep the Function App callback registered too for direct/debug access.
+  google_oauth_redirect_uri         = "${local.public_url}/.auth/login/google/callback"
+  google_oauth_redirect_uri_fn      = "${local.function_app_url}/.auth/login/google/callback"
+  aad_oauth_redirect_uri            = "${local.public_url}/.auth/login/aad/callback"
+  aad_oauth_redirect_uri_fn         = "${local.function_app_url}/.auth/login/aad/callback"
 }
 
 output "oauth_setup" {
   description = <<-EOT
     OAuth redirect URIs for Google Cloud / Entra App Registration.
-    Google OAuth client: google_redirect_uri → Authorized redirect URIs.
-    Entra App Registration: aad_redirect_uri → Redirect URI (Web).
+    Register ALL google_redirect_uris / aad_redirect_uris in the IdP.
+    Prefer the public URL (custom domain) — that is what browsers use via Front Door.
     Google consent screen Authorized domains: only google_authorized_domain if you own it.
   EOT
   value = {
@@ -84,8 +89,11 @@ output "oauth_setup" {
     function_app_url         = local.function_app_url
     front_door_hostname      = azurerm_cdn_frontdoor_endpoint.basilisk.host_name
     front_door_url           = "https://${azurerm_cdn_frontdoor_endpoint.basilisk.host_name}"
+    public_url               = local.public_url
     google_redirect_uri      = local.google_oauth_redirect_uri
+    google_redirect_uris     = distinct([local.google_oauth_redirect_uri, local.google_oauth_redirect_uri_fn])
     aad_redirect_uri         = local.aad_oauth_redirect_uri
+    aad_redirect_uris        = distinct([local.aad_oauth_redirect_uri, local.aad_oauth_redirect_uri_fn])
     google_authorized_domain = var.oauth_authorized_domain != "" ? var.oauth_authorized_domain : null
     gpg_keyserver_url        = local.public_url
   }

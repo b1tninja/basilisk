@@ -144,8 +144,8 @@ These are different settings in Google Cloud:
 
 | Setting | Where | What to use |
 |---|---|---|
-| **Authorized redirect URIs** | OAuth client (Credentials) | Full callback URL from Terraform — **required** |
-| **Authorized domains** | OAuth consent screen | Root domain **you own** only — optional for Basilisk on `*.azurewebsites.net` |
+| **Authorized redirect URIs** | OAuth client (Credentials) | Full callback URL(s) from Terraform — **required** |
+| **Authorized domains** | OAuth consent screen | Root domain **you own** (e.g. `b1tninja.com`) — recommended when using a custom domain |
 
 After `terraform apply`, copy redirect URIs from the `oauth_setup` output:
 
@@ -154,14 +154,17 @@ cd terraform/cloudshell
 terraform output -json oauth_setup
 ```
 
-Example:
+Example with custom domain `keys.b1tninja.com`:
 
 ```json
 {
-  "function_app_hostname": "basilisk-dev-fn.azurewebsites.net",
-  "google_redirect_uri": "https://basilisk-dev-fn.azurewebsites.net/.auth/login/google/callback",
-  "aad_redirect_uri": "https://basilisk-dev-fn.azurewebsites.net/.auth/login/aad/callback",
-  "google_authorized_domain": null
+  "public_url": "https://keys.b1tninja.com",
+  "google_redirect_uri": "https://keys.b1tninja.com/.auth/login/google/callback",
+  "google_redirect_uris": [
+    "https://keys.b1tninja.com/.auth/login/google/callback",
+    "https://basilisk-dev-fn.azurewebsites.net/.auth/login/google/callback"
+  ],
+  "google_authorized_domain": "b1tninja.com"
 }
 ```
 
@@ -169,13 +172,22 @@ Or run `bash scripts/export-github-secrets.sh` — it prints the same URIs after
 
 **Do not** add `azurewebsites.net` to Authorized domains. Google only allows domains you can verify in Search Console; Microsoft owns `azurewebsites.net`.
 
-If you map a **custom domain** you own on Front Door (e.g. `keys.example.com`), set at deploy time:
+If you map a **custom domain** you own on Front Door (e.g. `keys.b1tninja.com`), set at deploy time:
 
 ```bash
-TF_VAR_oauth_authorized_domain=example.com ./scripts/deploy-terraform-cloudshell.sh
+TF_VAR_oauth_authorized_domain=b1tninja.com ./scripts/deploy-terraform-cloudshell.sh
 ```
 
-Then add `example.com` to the consent screen Authorized domains and verify it in Google Search Console. The OAuth **redirect URI** still uses the Function App hostname (`*.azurewebsites.net`), not Front Door.
+Then add `b1tninja.com` to the consent screen Authorized domains and verify it in Google Search Console.
+
+### Front Door + Easy Auth (important)
+
+Basilisk sits behind Azure Front Door. Without the right Easy Auth proxy settings, Google OAuth completes on `*.azurewebsites.net`, the session cookie is set on that host, and you get:
+
+1. Landing on `https://basilisk-dev-fn.azurewebsites.net/` after sign-in
+2. Repeated Google consent prompts (cookie never sticks on `keys.b1tninja.com`)
+
+Terraform sets `forward_proxy_convention = "Standard"` so Easy Auth trusts Front Door’s `X-Forwarded-Host` and builds callbacks for the **public** hostname. You must register **both** redirect URIs in Google (public + Function App) — see `google_redirect_uris` above.
 
 Under **Scopes**, add:
 
@@ -200,23 +212,26 @@ These are all **non-sensitive** scopes — no Google verification or review is r
 |---|---|
 | Application type | **Web application** |
 | Name | `basilisk-easy-auth` |
-| Authorized redirect URIs | Paste `google_redirect_uri` from `terraform output oauth_setup` |
+| Authorized redirect URIs | Paste **every** URI from `google_redirect_uris` in `terraform output oauth_setup` |
 
-**Authorized redirect URIs** — use Terraform output (do not guess the hostname):
+**Authorized redirect URIs** — use Terraform output (do not guess):
 
 ```bash
-terraform output -json oauth_setup | jq -r '.google_redirect_uri'
+terraform output -json oauth_setup | jq -r '.google_redirect_uris[]'
 ```
 
-Typical value:
+You should register **both**:
 
 ```
-https://<function-app-name>.azurewebsites.net/.auth/login/google/callback
+https://keys.b1tninja.com/.auth/login/google/callback
+https://basilisk-dev-fn.azurewebsites.net/.auth/login/google/callback
 ```
 
-> Easy Auth handles the OAuth callback on the **Function App** hostname. Front Door routes `/.auth/*` to the Function App, but the redirect URI registered in Google must match the Function App URL from Terraform (`function_app_hostname`).
+The public/custom-domain callback is what browsers use via Front Door. Keep the Function App callback as a fallback for direct access and debugging.
 
-Do **not** add Front Door URLs (`*.azurefd.net`) unless you have configured Easy Auth to use them as the callback host (not the default Basilisk setup).
+Also add `b1tninja.com` under **OAuth consent screen → Authorized domains** (not `azurewebsites.net`).
+
+> Easy Auth builds the Google `redirect_uri` from the hostname the browser used (via Front Door `X-Forwarded-Host`). If only the `*.azurewebsites.net` URI is registered, sign-in from `keys.b1tninja.com` fails with `redirect_uri_mismatch` or lands on the Function App host.
 
 Click **Create**. Download or note the **Client ID** and **Client secret**.
 
@@ -289,7 +304,7 @@ The `email` field is normalized to lowercase. It is used to:
 ## Security notes
 
 - **No secrets in the browser** — the OAuth flow is entirely server-side via Easy Auth. The static portal pages never see a token; they only use the session cookie.
-- **Session cookies** — `AppServiceAuthSession` is `HttpOnly`, `Secure`, and scoped to the Function App domain. Front Door forwards them transparently.
+- **Session cookies** — `AppServiceAuthSession` is `HttpOnly`, `Secure`, and scoped to the **public** hostname (custom domain / Front Door) when `forward_proxy_convention = Standard`. If you still land on `*.azurewebsites.net` after sign-in, the cookie is on the wrong host and consent will repeat.
 - **Token store disabled** — `token_store_enabled = false` keeps the Function App stateless. Access tokens are not cached server-side; refresh tokens are not stored. Re-authentication is required when the session expires (typically 8 hours).
 - **AllowAnonymous** — unauthenticated requests are not blocked at the Easy Auth layer. The `/api/v1/search`, HKP lookup, and `/health` endpoints are intentionally public. Auth is enforced in Python code for `/api/v1/me` and `/api/v1/me/keys`.
 
@@ -302,6 +317,8 @@ The `email` field is normalized to lowercase. It is used to:
 | `/.auth/login/google` returns 404 | Google provider not configured in Terraform | Add `GOOGLE_*` secrets; leave sign-in on `auto` or `on`; re-run with `skip_terraform: false` |
 | Google button missing on portal | Provider not in `BASILISK_AUTH_PROVIDERS` | Same as above — `curl /api/v1/auth/config` should list `"google"` |
 | Sign-in succeeds but `/api/v1/me` returns 401 | Email claim missing from token | Check OAuth consent screen has `email` scope; check App Registration optional claims |
-| AAD sign-in shows "AADSTS…" error | Redirect URI mismatch | Add `https://<fn-name>.azurewebsites.net/.auth/login/aad/callback` to App Registration |
-| Google sign-in shows "redirect_uri_mismatch" | Redirect URI not in Google credentials | Add the Function App callback URL to Authorized redirect URIs |
+| After Google sign-in, lands on `*.azurewebsites.net` | Easy Auth ignoring Front Door host | Ensure Terraform applied `forward_proxy_convention=Standard`; clear cookies; retry from custom domain |
+| Repeated Google consent prompts | Session cookie set on Function App host, not custom domain | Same as above — cookie must be on `keys.b1tninja.com` |
+| AAD sign-in shows "AADSTS…" error | Redirect URI mismatch | Add **both** public and Function App `/.auth/login/aad/callback` URIs to App Registration |
+| Google sign-in shows "redirect_uri_mismatch" | Redirect URI not in Google credentials | Add **both** URIs from `google_redirect_uris` to Authorized redirect URIs |
 | Signed-in user sees someone else's keys | `email` claim returns different address per provider | Ensure both AAD and Google accounts share the same email address |

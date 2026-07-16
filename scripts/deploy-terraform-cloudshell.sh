@@ -243,14 +243,14 @@ if command -v jq >/dev/null 2>&1; then
   OAUTH="$(terraform output -json oauth_setup 2>/dev/null || true)"
   if [[ -n "$OAUTH" && "$OAUTH" != "null" ]]; then
     echo ""
-    echo "OAuth redirect URIs (paste into Google / Entra):"
-    echo "  Google: $(echo "$OAUTH" | jq -r '.google_redirect_uri')"
-    echo "  Entra:  $(echo "$OAUTH" | jq -r '.aad_redirect_uri')"
+    echo "OAuth redirect URIs (add ALL to Google / Entra):"
+    echo "$OAUTH" | jq -r '.google_redirect_uris[]?' | sed 's/^/  Google: /'
+    echo "$OAUTH" | jq -r '.aad_redirect_uris[]?' | sed 's/^/  Entra:  /'
     AUTH_DOM="$(echo "$OAUTH" | jq -r '.google_authorized_domain // empty')"
-    if [[ -n "$AUTH_DOM" ]]; then
+    if [[ -n "$AUTH_DOM" && "$AUTH_DOM" != "null" ]]; then
       echo "  Google consent Authorized domain: $AUTH_DOM"
     else
-      echo "  Google consent Authorized domains: leave empty (do not add azurewebsites.net)"
+      echo "  Google consent Authorized domains: set TF_VAR_oauth_authorized_domain=b1tninja.com (do not add azurewebsites.net)"
     fi
   fi
 fi

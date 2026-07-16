@@ -44,7 +44,9 @@ SP_CMD="$(echo "$SETUP_JSON" | jq -r '.azure_credentials_command')"
 STATIC_URL="$(echo "$SETUP_JSON" | jq -r '.static_website_url // empty')"
 OAUTH_JSON="$(terraform output -json oauth_setup 2>/dev/null || echo '{}')"
 GOOGLE_REDIRECT="$(echo "$OAUTH_JSON" | jq -r '.google_redirect_uri // empty')"
+GOOGLE_REDIRECTS="$(echo "$OAUTH_JSON" | jq -r '.google_redirect_uris[]? // empty' 2>/dev/null || true)"
 AAD_REDIRECT="$(echo "$OAUTH_JSON" | jq -r '.aad_redirect_uri // empty')"
+AAD_REDIRECTS="$(echo "$OAUTH_JSON" | jq -r '.aad_redirect_uris[]? // empty' 2>/dev/null || true)"
 FN_HOST="$(echo "$OAUTH_JSON" | jq -r '.function_app_hostname // empty')"
 AUTH_DOMAIN="$(echo "$OAUTH_JSON" | jq -r '.google_authorized_domain // empty')"
 
@@ -92,16 +94,19 @@ Deployed endpoints:
   Storage account:  $STORAGE
 
 --- OAuth / IdP setup (from terraform output oauth_setup) ---
+Public URL:            ${PUBLIC_URL:-https://keys.b1tninja.com}
 Function hostname:     ${FN_HOST:-$FN.azurewebsites.net}
-Google redirect URI:   ${GOOGLE_REDIRECT:-https://${FN}.azurewebsites.net/.auth/login/google/callback}
+Google redirect URIs (add ALL to Google Cloud OAuth client):
+$(if [[ -n "$GOOGLE_REDIRECTS" ]]; then echo "$GOOGLE_REDIRECTS" | sed 's/^/  /'; else echo "  ${GOOGLE_REDIRECT:-https://${FN}.azurewebsites.net/.auth/login/google/callback}"; echo "  https://keys.b1tninja.com/.auth/login/google/callback"; fi)
   → Google Cloud → Credentials → OAuth client → Authorized redirect URIs
-Entra redirect URI:    ${AAD_REDIRECT:-https://${FN}.azurewebsites.net/.auth/login/aad/callback}
+Entra redirect URIs (add ALL to App Registration):
+$(if [[ -n "$AAD_REDIRECTS" ]]; then echo "$AAD_REDIRECTS" | sed 's/^/  /'; else echo "  ${AAD_REDIRECT:-https://${FN}.azurewebsites.net/.auth/login/aad/callback}"; fi)
   → Entra → App registrations → Authentication → Redirect URI (Web)
 
 Google consent screen Authorized domains:
   Do NOT add azurewebsites.net (Microsoft owns it).
-  Leave empty when using the default Function App hostname.
-$(if [[ -n "$AUTH_DOMAIN" && "$AUTH_DOMAIN" != "null" ]]; then echo "  Add domain you configured: $AUTH_DOMAIN (must verify in Search Console)"; else echo "  Optional: set TF_VAR_oauth_authorized_domain=example.com if you use a custom domain you own."; fi)
+  Add the root domain you own (e.g. b1tninja.com) when using a custom domain.
+$(if [[ -n "$AUTH_DOMAIN" && "$AUTH_DOMAIN" != "null" ]]; then echo "  Configured: $AUTH_DOMAIN (must verify in Search Console)"; else echo "  Optional: set TF_VAR_oauth_authorized_domain=b1tninja.com"; fi)
 
 Full JSON: cd terraform/cloudshell && terraform output -json oauth_setup
 EOF

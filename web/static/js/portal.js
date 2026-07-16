@@ -59,8 +59,16 @@ const Auth = (() => {
     return _user;
   }
 
+  // Absolute URL on the public host (custom domain / Front Door). Relative paths make
+  // Easy Auth resolve against *.azurewebsites.net when the origin Host is rewritten.
+  function postLoginRedirect(redirectUrl) {
+    if (redirectUrl && /^https?:\/\//i.test(redirectUrl)) return redirectUrl;
+    const path = redirectUrl || (window.location.pathname + window.location.search) || "/";
+    return new URL(path, window.location.origin).href;
+  }
+
   function signInMenu(redirectUrl, providers) {
-    const enc = encodeURIComponent(redirectUrl || window.location.pathname);
+    const enc = encodeURIComponent(postLoginRedirect(redirectUrl));
     const links = [];
     if (providers.includes("microsoft")) {
       links.push(`<a href="/.auth/login/aad?post_login_redirect_uri=${enc}">
@@ -82,7 +90,7 @@ const Auth = (() => {
   }
 
   function providerButtons(redirectUrl, providers) {
-    const enc = encodeURIComponent(redirectUrl || window.location.pathname);
+    const enc = encodeURIComponent(postLoginRedirect(redirectUrl));
     const buttons = [];
     if (providers.includes("microsoft")) {
       buttons.push(`<a class="provider-btn" href="/.auth/login/aad?post_login_redirect_uri=${enc}">
@@ -114,9 +122,10 @@ const Auth = (() => {
         container.innerHTML = menu;
       }
     } else {
+      const home = encodeURIComponent(window.location.origin + "/");
       container.innerHTML = `
         <span class="auth-email" title="${escapeHtml(user.email)}">${escapeHtml(user.email)}</span>
-        <a class="auth-signout" href="/.auth/logout?post_logout_redirect_uri=/">Sign out</a>`;
+        <a class="auth-signout" href="/.auth/logout?post_logout_redirect_uri=${home}">Sign out</a>`;
     }
   }
 

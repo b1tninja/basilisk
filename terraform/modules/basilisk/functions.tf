@@ -44,10 +44,15 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
   site_config {}
 
   auth_settings_v2 {
-    auth_enabled           = true
-    runtime_version        = "~2"
-    require_authentication = true
-    unauthenticated_action = "AllowAnonymous"
+    auth_enabled             = true
+    runtime_version          = "~2"
+    require_authentication   = true
+    unauthenticated_action   = "AllowAnonymous"
+    # Front Door sets X-Forwarded-Host to the public hostname (custom domain / *.azurefd.net).
+    # Without Standard, Easy Auth builds OAuth callbacks from the origin Host
+    # (*.azurewebsites.net), so users land on the Function App URL and the session
+    # cookie never sticks on the public domain (repeated Google consent prompts).
+    forward_proxy_convention = "Standard"
 
     dynamic "active_directory_v2" {
       for_each = var.enable_microsoft_auth ? [1] : []
@@ -68,6 +73,11 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
 
     login {
       token_store_enabled = false
+      allowed_external_redirect_urls = distinct(compact([
+        local.public_url,
+        "https://${azurerm_cdn_frontdoor_endpoint.basilisk.host_name}",
+        "https://${var.name_prefix}-fn.azurewebsites.net",
+      ]))
     }
   }
 
