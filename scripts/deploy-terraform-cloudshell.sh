@@ -203,8 +203,12 @@ adopt_missing_terraform_resources() {
 adopt_missing_terraform_resources
 
 PLAN_ARGS=(-input=false -out=tfplan)
+# domains.auto.tfvars is auto-loaded; also accept explicit tfvars overlays.
 if [[ -f terraform.tfvars ]]; then
   PLAN_ARGS+=(-var-file=terraform.tfvars)
+fi
+if [[ -f production.tfvars ]]; then
+  PLAN_ARGS+=(-var-file=production.tfvars)
 fi
 
 terraform plan "${PLAN_ARGS[@]}"

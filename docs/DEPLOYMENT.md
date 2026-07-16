@@ -356,7 +356,7 @@ Front Door is deployed on **Standard_AzureFrontDoor**, which supports custom rat
 
 ### Production domain tfvars
 
-Custom domain variables default to empty. Use `terraform/cloudshell/production.tfvars.example` (copy to an untracked `production.tfvars`) so apply does not accidentally mutate production DNS.
+`terraform/cloudshell/domains.auto.tfvars` sets `keys.b1tninja.com` (auto-loaded). Without it, empty defaults would drop the custom domain on apply. Override with `TF_VAR_custom_domain=""` or an untracked `production.tfvars` (see `production.tfvars.example`).
 
 ## Post-deploy
 

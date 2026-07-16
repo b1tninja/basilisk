@@ -943,6 +943,15 @@ pre {
   overflow: hidden;
   mask-image: linear-gradient(to bottom, #000 70%, transparent);
 }
+
+.inspect-list {
+  margin: 0.35rem 0 0;
+  padding-left: 1.25rem;
+  line-height: 1.7;
+}
+.inspect-signer {
+  margin-bottom: 0.15rem;
+}
 .output-expand {
   display: inline-block;
   margin-top: 0.4rem;

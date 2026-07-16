@@ -83,6 +83,9 @@ try {
     if (Test-Path "terraform.tfvars") {
         $planArgs += @("-var-file=terraform.tfvars")
     }
+    if (Test-Path "production.tfvars") {
+        $planArgs += @("-var-file=production.tfvars")
+    }
     terraform @planArgs
 
     if ($AutoApprove) {
