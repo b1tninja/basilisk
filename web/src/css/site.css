@@ -944,6 +944,70 @@ pre {
   font-weight: 600;
 }
 
+.compose-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+.expert-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.expert-toggle input {
+  margin: 0;
+}
+
+.pill-cap {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.pill-cap.modern {
+  color: var(--brand);
+  border-color: color-mix(in srgb, var(--brand) 40%, var(--border));
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+}
+.pill-cap.legacy {
+  color: var(--text-muted);
+}
+
+.pw-strength-meter {
+  margin-top: 0.4rem;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.pw-strength-fill {
+  height: 100%;
+  width: 0;
+  background: var(--error);
+  transition: width 0.15s ease, background 0.15s ease;
+}
+.pw-strength-meter[data-strength="fair"] .pw-strength-fill {
+  background: #d4a017;
+}
+.pw-strength-meter[data-strength="strong"] .pw-strength-fill {
+  background: var(--ok, #2f9e44);
+}
+.pw-strength-label {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+}
+.pw-strength-label.pw-weak {
+  color: var(--error);
+}
+
 .output-pre {
   margin: 0;
   padding: 0.75rem;

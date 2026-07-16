@@ -3,11 +3,18 @@ import { Auth } from "../lib/auth.js";
 import { runCryptoSelfTests } from "../lib/crypto-self-test.js";
 import { badgeClass } from "../lib/keys.js";
 import {
+  summarizeRecipientCapabilities,
+  supportsSeipdV2,
+} from "../lib/pgp/capabilities.js";
+import {
+  PROFILE_AUTO,
   PROFILE_COMPATIBLE,
   PROFILE_MODERN,
   encryptArtifacts,
   summarizeEncryption,
 } from "../lib/pgp/encrypt.js";
+import { estimatePassphraseStrength } from "../lib/pgp/passphrase.js";
+import { getExpertMode, setExpertMode } from "../lib/prefs.js";
 import {
   copyText,
   escapeHtml,
@@ -63,8 +70,9 @@ let outputs = [];
 let lastEncryptSummary = "";
 let searchTimer = null;
 let encrypting = false;
-/** @type {"compatible"|"modern"|"custom"} */
-let encryptPreset = "compatible";
+/** @type {"auto"|"compatible"|"modern"|"custom"} */
+let encryptPreset = "auto";
+let expertMode = getExpertMode();
 
 /**
  * @typedef {{
@@ -77,6 +85,8 @@ let encryptPreset = "compatible";
  *   valid: boolean,
  *   error: string,
  *   pgpKey: import("openpgp").Key | null,
+ *   modernCapable: boolean,
+ *   armoredKey: string,
  * }} Recipient
  */
 
@@ -163,6 +173,7 @@ async function loadRecipientKey(fingerprint) {
       err = "No encryption-capable subkey";
     }
   }
+  const modernCapable = valid ? await supportsSeipdV2(pgpKey) : false;
   /** @type {Recipient} */
   const recipient = {
     fingerprint: clean,
@@ -174,6 +185,8 @@ async function loadRecipientKey(fingerprint) {
     valid,
     error: err,
     pgpKey: valid ? pgpKey : null,
+    modernCapable,
+    armoredKey: valid ? pgpKey.armor() : "",
   };
   return recipient;
 }
@@ -225,23 +238,51 @@ function renderPills() {
   if (!el) return;
   if (!recipients.size) {
     el.innerHTML = `<p class="muted" style="margin:0">No recipients yet. Search by email, fingerprint, or key ID.</p>`;
+    updateCapabilityHint();
     return;
   }
   el.innerHTML = [...recipients.values()]
     .map((r) => {
       const initial = (r.email || r.label || "?").charAt(0).toUpperCase();
       const title = r.error || formatFingerprint(r.fingerprint);
+      const modernBadge =
+        r.valid && r.modernCapable
+          ? `<span class="pill-cap modern" title="Key advertises RFC 9580 SEIPDv2">modern</span>`
+          : r.valid
+            ? `<span class="pill-cap legacy" title="Compatible format (SEIPD v1)">compat</span>`
+            : "";
       return `<span class="recipient-pill${r.valid ? "" : " invalid"}" title="${escapeHtml(title)}" data-fpr="${escapeHtml(r.fingerprint)}">
         <span class="pill-avatar">${escapeHtml(initial)}</span>
         <span class="pill-body">
           <span class="pill-label">${escapeHtml(r.label)}</span>
           <span class="pill-fpr muted">${escapeHtml(shortFpr(r.fingerprint))}</span>
         </span>
+        ${modernBadge}
         ${r.valid ? "" : `<span class="pill-warn" title="${escapeHtml(r.error)}">!</span>`}
         <button type="button" class="pill-remove" data-remove-fpr="${escapeHtml(r.fingerprint)}" aria-label="Remove recipient">×</button>
       </span>`;
     })
     .join("");
+  updateCapabilityHint();
+}
+
+async function updateCapabilityHint() {
+  const hint = document.getElementById("recipient-cap-hint");
+  if (!hint) return;
+  const caps = await summarizeRecipientCapabilities([...recipients.values()]);
+  if (!caps.total) {
+    hint.textContent = "";
+    hint.classList.add("hidden");
+    return;
+  }
+  hint.classList.remove("hidden");
+  if (caps.legacy === 0) {
+    hint.textContent = `All ${caps.total} recipient${caps.total === 1 ? "" : "s"} support modern (SEIPDv2) encryption.`;
+  } else if (caps.modern === 0) {
+    hint.textContent = `Recipients use the compatible format (SEIPD v1). Auto will still encrypt safely.`;
+  } else {
+    hint.textContent = `${caps.legacy} of ${caps.total} recipients lack SEIPDv2 — Auto/Modern will use the compatible format for this message.`;
+  }
 }
 
 function renderFiles() {
@@ -375,11 +416,16 @@ function readEncryptProfile() {
 
 /**
  * Apply a named preset to the advanced controls.
- * @param {"compatible"|"modern"} name
+ * @param {"auto"|"compatible"|"modern"} name
  */
 function applyPreset(name) {
   encryptPreset = name;
-  const profile = name === "modern" ? PROFILE_MODERN : PROFILE_COMPATIBLE;
+  const profile =
+    name === "compatible"
+      ? PROFILE_COMPATIBLE
+      : name === "modern"
+        ? PROFILE_MODERN
+        : PROFILE_AUTO;
   const cipher = document.getElementById("enc-cipher");
   const aead = document.getElementById("enc-aead");
   const compression = document.getElementById("enc-compression");
@@ -396,8 +442,15 @@ function updateEncryptOptionsUI() {
   const warn = document.getElementById("aead-interop-warn");
   if (warn) warn.classList.toggle("hidden", aead === "off");
 
+  const compression = document.getElementById("enc-compression")?.value || "uncompressed";
+  const compWarn = document.getElementById("compression-warn");
+  if (compWarn) compWarn.classList.toggle("hidden", compression === "uncompressed");
+
   const s2kRow = document.getElementById("s2k-row");
   if (s2kRow) s2kRow.classList.toggle("hidden", !passphraseEnabled());
+
+  const hideRow = document.getElementById("hide-recipients-row");
+  if (hideRow) hideRow.classList.toggle("hidden", !expertMode);
 
   const presetRadios = document.querySelectorAll('input[name="enc-preset"]');
   presetRadios.forEach((el) => {
@@ -408,11 +461,15 @@ function updateEncryptOptionsUI() {
 
   const hint = document.getElementById("enc-preset-hint");
   if (hint) {
-    if (encryptPreset === "modern") {
+    if (encryptPreset === "auto") {
+      hint.textContent =
+        "Requests modern encryption; OpenPGP.js uses SEIPD v1 automatically when any recipient key lacks RFC 9580 support.";
+    } else if (encryptPreset === "modern") {
       hint.textContent =
         "Requires GnuPG 2.4+ / modern clients. AEAD applies when encrypting with a passphrase, or to keys that advertise RFC 9580 SEIPDv2.";
     } else if (encryptPreset === "custom") {
-      hint.textContent = "Custom options — verify recipients can decrypt. Output summary reflects what was actually written.";
+      hint.textContent =
+        "Custom options — verify recipients can decrypt. Output summary reflects what was actually written.";
     } else {
       hint.textContent = "Works with all GnuPG versions (SEIPD v1 / iterated S2K).";
     }
@@ -431,10 +488,37 @@ function markCustomIfAdvancedChanged() {
     profile.aead === PROFILE_MODERN.aead &&
     profile.compression === PROFILE_MODERN.compression &&
     profile.s2k === PROFILE_MODERN.s2k;
+  // Auto uses the same controls as Modern; prefer Auto if that radio was last selected
+  // only when user hasn't diverged — if controls match Modern and preset was auto, keep auto.
   if (matchCompatible) encryptPreset = "compatible";
-  else if (matchModern) encryptPreset = "modern";
-  else encryptPreset = "custom";
+  else if (matchModern) {
+    if (encryptPreset !== "auto") encryptPreset = "modern";
+  } else encryptPreset = "custom";
   updateEncryptOptionsUI();
+}
+
+function applyExpertModeUI() {
+  const toggle = document.getElementById("expert-mode-toggle");
+  if (toggle instanceof HTMLInputElement) toggle.checked = expertMode;
+  const options = document.getElementById("encrypt-options");
+  if (options) options.classList.toggle("hidden", !expertMode);
+  updateEncryptOptionsUI();
+}
+
+function updatePassphraseMeter() {
+  const meter = document.getElementById("pw-strength-meter");
+  const label = document.getElementById("pw-strength-label");
+  if (!meter || !label) return;
+  const { pw } = passphraseValues();
+  const est = estimatePassphraseStrength(pw);
+  meter.dataset.strength = est.label;
+  meter.style.setProperty("--pw-bits", String(Math.min(100, Math.round((est.bits / 80) * 100))));
+  const fill = meter.querySelector(".pw-strength-fill");
+  if (fill instanceof HTMLElement) {
+    fill.style.width = `${Math.min(100, Math.round((est.bits / 80) * 100))}%`;
+  }
+  label.textContent = est.label === "empty" ? "" : `${est.label} (~${est.bits} bits). ${est.hint}`;
+  label.className = `pw-strength-label muted${est.label === "weak" ? " pw-weak" : ""}`;
 }
 
 function setTab(name) {
@@ -464,6 +548,8 @@ async function addRecipient(fingerprint) {
     valid: false,
     error: "Loading",
     pgpKey: null,
+    modernCapable: false,
+    armoredKey: "",
   });
   renderPills();
   updateEncryptButton();
@@ -481,6 +567,8 @@ async function addRecipient(fingerprint) {
       valid: false,
       error: err.message || "Failed to load key",
       pgpKey: null,
+      modernCapable: false,
+      armoredKey: "",
     });
   }
   renderPills();
@@ -526,7 +614,6 @@ function downloadBlob(filename, text) {
 async function runEncrypt() {
   errorEl.classList.add("hidden");
   if (!canEncrypt()) return;
-  const keys = validRecipients().map((r) => r.pgpKey);
   const usePw = passphraseEnabled();
   const { pw, confirm } = passphraseValues();
   if (usePw && pw !== confirm) {
@@ -542,6 +629,13 @@ async function runEncrypt() {
     status.textContent = "Encrypting…";
   }
   try {
+    // Re-validate recipient keys against the keyserver before encrypting.
+    await revalidateRecipients();
+    const keys = validRecipients().map((r) => r.pgpKey);
+    if (!keys.length && !usePw) {
+      throw new Error("No valid recipients remain after key re-check.");
+    }
+
     /** @type {import("../lib/pgp/types.js").EncryptPayload[]} */
     const payloads = [];
     if (messageText) {
@@ -549,15 +643,35 @@ async function runEncrypt() {
     }
     for (const file of files) {
       const buf = new Uint8Array(await file.arrayBuffer());
-      payloads.push({ kind: "file", bytes: buf, filename: file.name });
+      payloads.push({
+        kind: "file",
+        bytes: buf,
+        filename: file.name,
+      });
     }
     const profile = readEncryptProfile();
-    const next = await encryptArtifacts({
-      recipients: keys,
-      passwords: usePw ? [pw] : [],
-      payloads,
-      profile,
-    });
+    const hideRecipients =
+      expertMode && !!document.getElementById("hide-recipients")?.checked;
+
+    let next;
+    try {
+      next = await encryptWithWorker({
+        recipients: validRecipients(),
+        passwords: usePw ? [pw] : [],
+        payloads,
+        profile,
+        hideRecipients,
+      });
+    } catch (_) {
+      // Fallback: main-thread encrypt (e.g. worker / CSP failure).
+      next = await encryptArtifacts({
+        recipients: keys,
+        passwords: usePw ? [pw] : [],
+        payloads,
+        profile,
+        hideRecipients,
+      });
+    }
     lastEncryptSummary = next.length
       ? await summarizeEncryption(next[0].armored)
       : "";
@@ -574,6 +688,7 @@ async function runEncrypt() {
     const pwConfirm = document.getElementById("msg-passphrase-confirm");
     if (pwEl) pwEl.value = "";
     if (pwConfirm) pwConfirm.value = "";
+    updatePassphraseMeter();
     renderFiles();
     updateEncryptButton();
 
@@ -597,12 +712,139 @@ async function runEncrypt() {
   }
 }
 
+/**
+ * Re-fetch key metadata; mark revoked/expired recipients invalid.
+ */
+async function revalidateRecipients() {
+  const list = [...recipients.values()].filter((r) => r.valid);
+  await Promise.all(
+    list.map(async (r) => {
+      try {
+        const meta = await fetchJson(`/api/v1/key/${encodeURIComponent(r.fingerprint)}`);
+        if (meta.revoked) {
+          r.valid = false;
+          r.revoked = true;
+          r.error = "Key is revoked";
+          r.pgpKey = null;
+        } else if (meta.approval_state && meta.approval_state !== "approved") {
+          r.valid = false;
+          r.error = `Key is ${meta.approval_state}`;
+          r.pgpKey = null;
+        } else if (meta.key_expiration) {
+          const exp = new Date(meta.key_expiration);
+          if (!Number.isNaN(exp.getTime()) && exp.getTime() < Date.now()) {
+            r.valid = false;
+            r.error = "Key is expired";
+            r.pgpKey = null;
+          }
+        }
+        recipients.set(r.fingerprint, r);
+      } catch (err) {
+        // Network failure: keep prior state but surface a soft warning via throw if all fail.
+        throw new Error(
+          `Could not re-check key ${formatFingerprint(r.fingerprint)}: ${err.message || "network error"}`
+        );
+      }
+    })
+  );
+  renderPills();
+  updateEncryptButton();
+  const stillValid = validRecipients();
+  if (list.length && !stillValid.length && !passphraseEnabled()) {
+    throw new Error("All recipients became invalid (revoked, expired, or unapproved).");
+  }
+}
+
+/**
+ * Encrypt via Web Worker when available.
+ * Structured-clones payload bytes (no transfer list) so main-thread fallback
+ * still works if the worker fails.
+ * @param {{
+ *   recipients: Recipient[],
+ *   passwords: string[],
+ *   payloads: import("../lib/pgp/types.js").EncryptPayload[],
+ *   profile: import("../lib/pgp/types.js").EncryptProfile,
+ *   hideRecipients: boolean,
+ * }} opts
+ */
+function encryptWithWorker(opts) {
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = new Worker(new URL("../lib/crypto-worker.js", import.meta.url), {
+        type: "module",
+      });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const id = `enc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const timer = setTimeout(() => {
+      try {
+        worker.terminate();
+      } catch (_) {
+        /* ignore */
+      }
+      reject(new Error("Encrypt worker timed out"));
+    }, 120000);
+    worker.onmessage = (ev) => {
+      const data = ev.data || {};
+      if (data.id !== id) return;
+      clearTimeout(timer);
+      worker.terminate();
+      if (data.ok) resolve(data.artifacts || []);
+      else reject(new Error(data.error || "Encrypt worker failed"));
+    };
+    worker.onerror = (err) => {
+      clearTimeout(timer);
+      try {
+        worker.terminate();
+      } catch (_) {
+        /* ignore */
+      }
+      reject(err?.message ? new Error(err.message) : new Error("Encrypt worker error"));
+    };
+
+    const serialPayloads = opts.payloads.map((p) => {
+      if (p.kind === "file" && p.bytes instanceof Uint8Array) {
+        // Copy into a fresh ArrayBuffer so the worker gets its own bytes
+        // without detaching the main-thread view (needed for fallback).
+        const copy = p.bytes.slice().buffer;
+        return {
+          kind: "file",
+          filename: p.filename,
+          bytes: copy,
+        };
+      }
+      return { kind: "text", text: p.text || "" };
+    });
+
+    worker.postMessage({
+      id,
+      type: "encrypt",
+      recipientKeysArmored: opts.recipients.map((r) => r.armoredKey).filter(Boolean),
+      passwords: opts.passwords,
+      payloads: serialPayloads,
+      profile: opts.profile,
+      hideRecipients: opts.hideRecipients,
+    });
+  });
+}
+
 
 function renderApp() {
   app.innerHTML = `
+    <div class="compose-toolbar">
+      <label class="expert-toggle" title="Show advanced encryption options and technical details">
+        <input type="checkbox" id="expert-mode-toggle" ${expertMode ? "checked" : ""}>
+        <span>Expert mode</span>
+      </label>
+    </div>
+
     <div class="card">
       <p class="card-title">Recipients</p>
       <div id="recipient-pills" class="recipient-pills"></div>
+      <p id="recipient-cap-hint" class="muted hidden" style="margin:0.5rem 0 0;font-size:0.85rem"></p>
       <div class="recipient-input-row">
         <input type="search" id="recipient-search" placeholder="Add recipient by email, fingerprint, or key ID…" autocomplete="off">
         <div id="recipient-dropdown" class="recipient-dropdown" hidden></div>
@@ -640,27 +882,40 @@ function renderApp() {
       <div id="passphrase-fields" class="hidden" style="margin-top:0.75rem">
         <label class="field-label" for="msg-passphrase">Passphrase</label>
         <input type="password" id="msg-passphrase" class="text-input" autocomplete="new-password" placeholder="Shared secret">
+        <div id="pw-strength-meter" class="pw-strength-meter" data-strength="empty" aria-hidden="true">
+          <div class="pw-strength-fill"></div>
+        </div>
+        <p id="pw-strength-label" class="pw-strength-label muted"></p>
         <label class="field-label" for="msg-passphrase-confirm" style="margin-top:0.65rem">Confirm</label>
         <input type="password" id="msg-passphrase-confirm" class="text-input" autocomplete="new-password" placeholder="Repeat passphrase">
         <p class="muted" style="margin-top:0.5rem">Works alone or together with recipient keys — either can open the message. Cleared after encrypt.</p>
       </div>
     </div>
 
-    <details class="card encrypt-options" id="encrypt-options">
+    <details class="card encrypt-options${expertMode ? "" : " hidden"}" id="encrypt-options">
       <summary class="card-title" style="cursor:pointer;list-style-position:outside">Encryption options</summary>
       <div class="encrypt-options-body" style="margin-top:0.85rem">
         <fieldset class="enc-preset-fieldset" style="border:none;margin:0;padding:0">
           <legend class="field-label">Preset</legend>
           <label class="enc-preset-option">
-            <input type="radio" name="enc-preset" value="compatible" checked>
+            <input type="radio" name="enc-preset" value="auto" checked>
+            <span><strong>Auto</strong> — modern when recipients support it, otherwise compatible</span>
+          </label>
+          <label class="enc-preset-option">
+            <input type="radio" name="enc-preset" value="compatible">
             <span><strong>Compatible</strong> — AES-256, SEIPD v1, iterated S2K</span>
           </label>
           <label class="enc-preset-option">
             <input type="radio" name="enc-preset" value="modern">
             <span><strong>Modern (RFC 9580)</strong> — AES-256-OCB, Argon2</span>
           </label>
-          <p id="enc-preset-hint" class="muted" style="margin:0.4rem 0 0">Works with all GnuPG versions (SEIPD v1 / iterated S2K).</p>
+          <p id="enc-preset-hint" class="muted" style="margin:0.4rem 0 0">Requests modern encryption; OpenPGP.js uses SEIPD v1 automatically when any recipient key lacks RFC 9580 support.</p>
         </fieldset>
+
+        <label id="hide-recipients-row" class="enc-preset-option${expertMode ? "" : " hidden"}" style="margin-top:0.85rem">
+          <input type="checkbox" id="hide-recipients">
+          <span><strong>Hide recipient key IDs</strong> — PKESK uses anonymous (all-zero) key IDs. Recipients must try all their keys; metadata of who can read the message is not leaked.</span>
+        </label>
 
         <details class="enc-advanced" style="margin-top:1rem">
           <summary class="field-label" style="cursor:pointer">Advanced</summary>
@@ -676,9 +931,9 @@ function renderApp() {
             <div>
               <label class="field-label" for="enc-aead">AEAD</label>
               <select id="enc-aead" class="text-input">
-                <option value="off" selected>Off (SEIPD v1)</option>
+                <option value="off">Off (SEIPD v1)</option>
                 <option value="gcm">GCM</option>
-                <option value="ocb">OCB</option>
+                <option value="ocb" selected>OCB</option>
                 <option value="eax">EAX</option>
               </select>
             </div>
@@ -693,13 +948,16 @@ function renderApp() {
             <div id="s2k-row" class="hidden">
               <label class="field-label" for="enc-s2k">S2K (passphrase)</label>
               <select id="enc-s2k" class="text-input">
-                <option value="iterated" selected>Iterated</option>
-                <option value="argon2">Argon2</option>
+                <option value="iterated">Iterated</option>
+                <option value="argon2" selected>Argon2</option>
               </select>
             </div>
           </div>
           <p id="aead-interop-warn" class="status-row err hidden" style="margin-top:0.75rem" role="status">
             AEAD (SEIPD v2) requires GnuPG 2.4+ or other modern OpenPGP clients. Older clients cannot decrypt.
+          </p>
+          <p id="compression-warn" class="status-row err hidden" style="margin-top:0.75rem" role="status">
+            Compression before encryption can leak plaintext length (CRIME-style) when attacker-influenced data is mixed with secrets. Prefer Off unless you need smaller ciphertext.
           </p>
         </details>
       </div>
@@ -720,7 +978,8 @@ function renderApp() {
 
   renderPills();
   renderFiles();
-  applyPreset("compatible");
+  applyPreset("auto");
+  applyExpertModeUI();
   updateEncryptButton();
 }
 
@@ -729,6 +988,7 @@ function wireEvents() {
     if (e.target && e.target.id === "compose-message") updateEncryptButton();
     if (e.target && (e.target.id === "msg-passphrase" || e.target.id === "msg-passphrase-confirm")) {
       updateEncryptButton();
+      if (e.target.id === "msg-passphrase") updatePassphraseMeter();
     }
     if (e.target && e.target.id === "recipient-search") {
       const q = e.target.value.trim();
@@ -749,15 +1009,22 @@ function wireEvents() {
   });
 
   app.addEventListener("change", (e) => {
+    if (e.target && e.target.id === "expert-mode-toggle") {
+      expertMode = !!e.target.checked;
+      setExpertMode(expertMode);
+      applyExpertModeUI();
+      return;
+    }
     if (e.target && e.target.id === "use-passphrase") {
       const fields = document.getElementById("passphrase-fields");
       if (fields) fields.classList.toggle("hidden", !e.target.checked);
       updateEncryptButton();
       updateEncryptOptionsUI();
+      updatePassphraseMeter();
     }
     if (e.target && e.target.name === "enc-preset") {
       const val = e.target.value;
-      if (val === "compatible" || val === "modern") applyPreset(val);
+      if (val === "compatible" || val === "modern" || val === "auto") applyPreset(val);
     }
     if (
       e.target &&

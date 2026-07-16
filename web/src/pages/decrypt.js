@@ -29,8 +29,10 @@ import {
   fetchText,
   formatDate,
   formatFingerprint,
+  copyTextTransient,
   showError,
 } from "../lib/utils.js";
+import { getExpertMode, setExpertMode } from "../lib/prefs.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"), "/decrypt");
@@ -46,6 +48,9 @@ let cryptoReady = false;
 let hexExpanded = false;
 /** @type {ReturnType<typeof enrichSpansWithPackets> | null} */
 let currentPacketMap = null;
+let expertMode = getExpertMode();
+/** @type {string} */
+let lastPlaintext = "";
 
 const IDLE_CLEAR_MS = 5 * 60 * 1000;
 const HIDDEN_CLEAR_MS = 60 * 1000;
@@ -54,6 +59,13 @@ let hiddenTimer = null;
 let lastActivity = Date.now();
 
 app.innerHTML = `
+  <div class="compose-toolbar">
+    <label class="expert-toggle" title="Show packet hex inspector and technical details">
+      <input type="checkbox" id="expert-mode-toggle" ${expertMode ? "checked" : ""}>
+      <span>Expert mode</span>
+    </label>
+  </div>
+
   <div id="crypto-status" class="status-row" role="status" aria-live="polite">
     Verifying crypto module…
   </div>
@@ -149,6 +161,7 @@ function clearSensitiveFields() {
     out.classList.add("hidden");
     out.innerHTML = "";
   }
+  lastPlaintext = "";
   if (status) status.className = "hidden";
   touchActivity();
 }
@@ -427,6 +440,12 @@ const HEX_INITIAL = 4096;
 function renderPacketMap(analysis) {
   const card = document.getElementById("packet-map-card");
   if (!card) return;
+  if (!expertMode) {
+    card.classList.add("hidden");
+    card.innerHTML = "";
+    currentPacketMap = null;
+    return;
+  }
   if (!analysis || analysis.type === "empty" || !analysis.armored) {
     card.classList.add("hidden");
     card.innerHTML = "";
@@ -912,12 +931,16 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
         : "";
 
     out.innerHTML = `
-      <p class="card-title">Plaintext</p>
+      <div class="card-title-row">
+        <p class="card-title" style="margin:0">Plaintext</p>
+        <button type="button" class="btn btn-ghost btn-compact" id="copy-plaintext-btn" title="Clipboard clears after 60 seconds">Copy (clears in 60s)</button>
+      </div>
       ${cipherNote}
       ${sigHtml}
-      <pre class="output-pre">${escapeHtml(plaintext)}</pre>
+      <pre class="output-pre" id="decrypt-plaintext">${escapeHtml(plaintext)}</pre>
     `;
     out.classList.remove("hidden");
+    lastPlaintext = plaintext;
     status.textContent = usePassword
       ? "Decrypted with passphrase. Passphrase cleared."
       : "Decrypted (worker when available). Key material zeroed.";
@@ -942,6 +965,24 @@ document.addEventListener("click", (e) => {
     clearSensitiveFields();
     return;
   }
+  if (t.id === "copy-plaintext-btn") {
+    const text = lastPlaintext;
+    const original = t.textContent;
+    copyTextTransient(text, 60000)
+      .then(() => {
+        t.textContent = "Copied — clears in 60s";
+        setTimeout(() => {
+          t.textContent = original;
+        }, 2000);
+      })
+      .catch(() => {
+        t.textContent = "Copy failed";
+        setTimeout(() => {
+          t.textContent = original;
+        }, 1500);
+      });
+    return;
+  }
   if (t.id === "hex-expand-btn") {
     hexExpanded = !hexExpanded;
     if (currentAnalysis) renderPacketMap(currentAnalysis);
@@ -957,6 +998,14 @@ document.addEventListener("click", (e) => {
     const off = Number(byte.getAttribute("data-off"));
     const idx = currentPacketMap.findIndex((s) => off >= s.headerStart && off < s.end);
     if (idx >= 0) highlightPacket(idx);
+  }
+});
+
+document.addEventListener("change", (e) => {
+  if (e.target?.id === "expert-mode-toggle") {
+    expertMode = !!e.target.checked;
+    setExpertMode(expertMode);
+    if (currentAnalysis) renderPacketMap(currentAnalysis);
   }
 });
 

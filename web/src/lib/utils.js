@@ -158,3 +158,32 @@ export function uidWithSearchLinks(uid) {
 export async function copyText(text) {
   await navigator.clipboard.writeText(String(text || ""));
 }
+
+/**
+ * Copy text, then best-effort clear the clipboard after `ms` if the document
+ * is still focused (cloud clipboard sync / long-lived pastes are a risk for
+ * decrypted plaintext).
+ * @param {string} text
+ * @param {number} [ms=60000]
+ * @returns {Promise<{ clear: () => void }>}
+ */
+export async function copyTextTransient(text, ms = 60000) {
+  const value = String(text || "");
+  await navigator.clipboard.writeText(value);
+  let cleared = false;
+  const clear = () => {
+    if (cleared) return;
+    cleared = true;
+    if (typeof document !== "undefined" && document.hasFocus?.() === false) {
+      return;
+    }
+    navigator.clipboard.writeText("").catch(() => {});
+  };
+  const timer = setTimeout(clear, ms);
+  return {
+    clear: () => {
+      clearTimeout(timer);
+      clear();
+    },
+  };
+}

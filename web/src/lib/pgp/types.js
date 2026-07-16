@@ -29,6 +29,7 @@
  * @property {string[]} passwords
  * @property {EncryptPayload[]} payloads
  * @property {EncryptProfile} profile
+ * @property {boolean} [hideRecipients]  wildcard PKESK key IDs (anonymous recipients)
  */
 
 /**
@@ -80,6 +81,27 @@
  * @property {string} [plaintext]
  * @property {Array<{ keyID?: string, fingerprint?: string, verified?: boolean, valid?: boolean }>} [signatures]
  * @property {Array<{ algorithm?: string, aeadAlgorithm?: string, data?: Uint8Array }>} [sessionKeys]
+ * @property {string} [error]
+ */
+
+/**
+ * Serializable encrypt request for the crypto worker (armored keys, transferable buffers).
+ * @typedef {object} WorkerEncryptRequest
+ * @property {string|number} id
+ * @property {"encrypt"} type
+ * @property {string[]} recipientKeysArmored
+ * @property {string[]} passwords
+ * @property {Array<{ kind: "text"|"file", text?: string, bytes?: ArrayBuffer, filename?: string }>} payloads
+ * @property {EncryptProfile} profile
+ * @property {boolean} [hideRecipients]
+ */
+
+/**
+ * Crypto worker → main-thread encrypt response.
+ * @typedef {object} WorkerEncryptResponse
+ * @property {string|number} id
+ * @property {boolean} ok
+ * @property {EncryptArtifact[]} [artifacts]
  * @property {string} [error]
  */
 

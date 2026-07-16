@@ -19,6 +19,7 @@ import {
   mapPacketSpans,
 } from "../lib/packet-map.js";
 import {
+  PROFILE_AUTO,
   PROFILE_COMPATIBLE,
   PROFILE_MODERN,
   encryptArtifacts,
@@ -26,6 +27,7 @@ import {
   summarizeEncryption,
 } from "../lib/pgp/encrypt.js";
 import { AEAD, SYMMETRIC, algoName, s2kTypeName } from "../lib/pgp/algos.js";
+import { keyIdHex, isAnonymousKeyId } from "../lib/pgp/identity.js";
 
 /** Keys that advertise SEIPDv2 so Modern AEAD can apply to PKESK encrypt. */
 async function modernRecipientPair() {
@@ -217,5 +219,48 @@ describe("encrypt-profiles", () => {
       format: "binary",
     });
     expect(new TextDecoder().decode(data)).toBe("file-bytes");
+  });
+
+  it("Auto profile degrades to SEIPD v1 for legacy recipients", async () => {
+    const { privateKey, publicKey } = await legacyRecipientPair();
+    const [artifact] = await encryptArtifacts({
+      recipients: [publicKey],
+      passwords: [],
+      payloads: [{ kind: "text", text: "auto-legacy" }],
+      profile: PROFILE_AUTO,
+    });
+    const seipd = findPacket(await enrichedSpans(artifact.armored), 18);
+    expect(seipd.version ?? 1).toBe(1);
+
+    const message = await readMessage({ armoredMessage: artifact.armored });
+    const { data } = await decrypt({
+      message,
+      decryptionKeys: privateKey,
+      format: "utf8",
+    });
+    expect(data).toBe("auto-legacy");
+  });
+
+  it("hideRecipients writes anonymous (wildcard) PKESK key IDs", async () => {
+    const { privateKey, publicKey } = await modernRecipientPair();
+    const [artifact] = await encryptArtifacts({
+      recipients: [publicKey],
+      passwords: [],
+      payloads: [{ kind: "text", text: "anon" }],
+      profile: PROFILE_COMPATIBLE,
+      hideRecipients: true,
+    });
+    const pkesk = findPacket(await enrichedSpans(artifact.armored), 1);
+    expect(pkesk).toBeTruthy();
+    const kid = keyIdHex(pkesk.publicKeyID);
+    expect(isAnonymousKeyId(kid)).toBe(true);
+
+    const message = await readMessage({ armoredMessage: artifact.armored });
+    const { data } = await decrypt({
+      message,
+      decryptionKeys: privateKey,
+      format: "utf8",
+    });
+    expect(data).toBe("anon");
   });
 });

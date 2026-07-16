@@ -27,6 +27,13 @@ export const PROFILE_MODERN = {
   s2k: "argon2",
 };
 
+/**
+ * Auto preset: request Modern; OpenPGP.js degrades to SEIPD v1 when any
+ * recipient key lacks the seipdv2 feature flag. Safe default for novices.
+ * @type {import("./types.js").EncryptProfile}
+ */
+export const PROFILE_AUTO = { ...PROFILE_MODERN };
+
 const CIPHER_ENUM = {
   aes128: enums.symmetric.aes128,
   aes192: enums.symmetric.aes192,
@@ -84,7 +91,13 @@ export function profileToConfig(profile) {
  * @returns {Promise<import("./types.js").EncryptArtifact[]>}
  */
 export async function encryptArtifacts(request) {
-  const { recipients = [], passwords = [], payloads = [], profile } = request;
+  const {
+    recipients = [],
+    passwords = [],
+    payloads = [],
+    profile,
+    hideRecipients = false,
+  } = request;
   if (!payloads.length) return [];
   if (!recipients.length && !passwords.length) {
     throw new Error("At least one recipient or passphrase is required.");
@@ -94,6 +107,7 @@ export async function encryptArtifacts(request) {
   const encryptOpts = {
     format: /** @type {const} */ ("armored"),
     config,
+    wildcard: !!hideRecipients,
     ...(recipients.length ? { encryptionKeys: recipients } : {}),
     ...(passwords.length ? { passwords } : {}),
   };
@@ -118,6 +132,12 @@ export async function encryptArtifacts(request) {
       const filename = payload.filename || "file";
       const msg = await createMessage({ binary: bytes, filename });
       const armored = await encrypt({ message: msg, ...encryptOpts });
+      // Best-effort wipe of plaintext buffer after encrypt.
+      try {
+        bytes.fill(0);
+      } catch (_) {
+        /* ignore */
+      }
       out.push({
         label: filename,
         filename: `${filename}.asc`,
@@ -129,6 +149,13 @@ export async function encryptArtifacts(request) {
   }
   return out;
 }
+
+/**
+ * Padding packets (RFC 9580 tag 21): OpenPGP.js 6.x defines `PaddingPacket` for
+ * parse/write, but the high-level `encrypt()` path does not expose a config flag
+ * to emit padding. Enabling would require forking message construction.
+ * Investigation result (2026-07): skip — no trivial opt-in.
+ */
 
 /**
  * Honest summary of what was actually written into an armored ciphertext,
