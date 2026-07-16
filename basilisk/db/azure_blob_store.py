@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
-from basilisk.db.blob_store import LocalBlobStore
+logger = logging.getLogger(__name__)
 
 
 class AzureBlobStore:
@@ -16,7 +17,7 @@ class AzureBlobStore:
         try:
             self._container.create_container()
         except Exception:
-            pass
+            logger.warning("Could not create blob container %s (may already exist)", container, exc_info=True)
 
     def write_cert(self, fingerprint: str, sha256: str, data: bytes) -> str:
         fpr = fingerprint.upper()

@@ -93,7 +93,12 @@ def dev_approve(req: func.HttpRequest) -> func.HttpResponse:
     settings = get_settings()
     if not settings.dev_approve:
         return func.HttpResponse("Forbidden", status_code=403)
-    payload: dict[str, Any] = json.loads(req.get_body().decode() or "{}")
+    try:
+        payload: dict[str, Any] = json.loads(req.get_body().decode() or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return func.HttpResponse(f"Invalid JSON body: {exc}", status_code=400)
+    if not isinstance(payload, dict):
+        return func.HttpResponse("JSON body must be an object", status_code=400)
     fpr = payload.get("fingerprint", "")
     uids = payload.get("approved_uids")
     store = get_store()
@@ -103,9 +108,13 @@ def dev_approve(req: func.HttpRequest) -> func.HttpResponse:
     if not uids:
         from pysequoia import Cert
 
-        cert = Cert.from_bytes(get_blob_store().read(record.blob_uri))
         from basilisk.openpgp.ingest import uid_string
 
+        try:
+            cert = Cert.from_bytes(get_blob_store().read(record.blob_uri))
+        except Exception as exc:
+            logger.exception("Failed to read cert blob for %s", fpr)
+            return func.HttpResponse(f"Failed to read certificate: {exc}", status_code=500)
         uids = [uid_string(u) for u in cert.user_ids]
     approve_cert(store, fpr, uids)
     return func.HttpResponse(json.dumps({"status": "approved"}), mimetype="application/json")
@@ -150,20 +159,10 @@ def portal_api(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="claim/{fingerprint}", methods=["GET", "POST"])
 def claim(req: func.HttpRequest) -> func.HttpResponse:
-    from pysequoia import Cert
-
-    from basilisk.auth.claim import submit_claim
-    from basilisk.openpgp.ingest import uid_string
-
-    fpr = req.route_params.get("fingerprint", "")
-    store = get_store()
-    record = store.get_by_fingerprint(fpr)
-    if not record:
-        return func.HttpResponse("Not found", status_code=404)
-    if req.method == "POST":
-        cert = Cert.from_bytes(get_blob_store().read(record.blob_uri))
-        pending_uids = [uid_string(u) for u in cert.user_ids]
-        ok, msg = submit_claim(fpr, dict(req.headers), pending_uids)
-        return func.HttpResponse(msg, status_code=200 if ok else 403)
-    html = f"<html><body><h1>Claim {fpr}</h1><form method='post'><button>Submit</button></form></body></html>"
-    return func.HttpResponse(html, mimetype="text/html")
+    resp = _flask_response(req)
+    return func.HttpResponse(
+        body=resp.get_data(),
+        status_code=resp.status_code,
+        headers=dict(resp.headers),
+        mimetype=resp.mimetype,
+    )

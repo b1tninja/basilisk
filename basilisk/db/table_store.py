@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 
 from azure.core.exceptions import ResourceNotFoundError
 from azure.data.tables import TableServiceClient
 
 from basilisk.db.store import CertRecord, CertStore
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> str:
@@ -27,7 +30,7 @@ class AzureTableCertStore(CertStore):
             try:
                 self._client.create_table_if_not_exists(name)
             except Exception:
-                pass
+                logger.warning("Could not ensure table %s exists", name, exc_info=True)
         self._certs = self._client.get_table_client("Certs")
         self._ids = self._client.get_table_client("Identifiers")
         self._emails = self._client.get_table_client("Emails")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from flask import Flask, Response, request
 
@@ -12,6 +13,8 @@ from basilisk.portal.me import my_keys
 from basilisk.portal.search import search_keys
 from basilisk.portal.serializers import key_summary
 from basilisk.security.rate_limit import RateLimitError, check_lookup_rate, client_ip
+
+logger = logging.getLogger(__name__)
 
 
 def register_portal_api(app: Flask) -> None:
@@ -107,7 +110,7 @@ def register_portal_api(app: Flask) -> None:
         try:
             store = get_store(settings)
             blob_store = get_blob_store(settings)
-            fpr, _, dup = ingest_keytext(store, blob_store, keytext, path="web")
+            fpr, _, dup = ingest_keytext(store, blob_store, keytext, path="v1")
         except IngestError as exc:
             return Response(
                 json.dumps({"error": str(exc)}),
@@ -128,7 +131,7 @@ def register_portal_api(app: Flask) -> None:
             pending_uids = [uid_string(u) for u in cert.user_ids]
             claimed, claim_message = submit_claim(fpr, dict(request.headers), pending_uids)
         except Exception:
-            pass  # Claim failure is non-fatal; user can claim manually.
+            logger.warning("Auto-claim failed for %s; user can claim manually", fpr, exc_info=True)
 
         record = store.get_by_fingerprint(fpr)
         result = key_summary(record, settings, include_uids=True)

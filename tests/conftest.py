@@ -11,9 +11,6 @@ load_dotenv(".env.example", override=False)
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "keys" / "sample.asc"
 
-
-import pytest
-
 from basilisk.observability.metrics import reset
 from basilisk.security.rate_limit import reset_limiter
 

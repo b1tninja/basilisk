@@ -23,4 +23,4 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Prepare environment files
         run: bash scripts/prepare-ci-env.sh
-      - run: python -m pytest tests/unit tests/integration -q
+      - run: python -m pytest tests/unit tests/integration -q --cov=basilisk --cov-report=term-missing
