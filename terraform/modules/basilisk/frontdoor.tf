@@ -220,12 +220,12 @@ resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
 
   actions {
     route_configuration_override_action {
-      cdn_frontdoor_origin_group_id   = azurerm_cdn_frontdoor_origin_group.static.id
-      forwarding_protocol             = "HttpsOnly"
-      cache_behavior                  = "OverrideAlways"
-      cache_duration                  = "7.00:00:00"
-      query_string_caching_behavior   = "IgnoreQueryString"
-      compression_enabled             = true
+      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
+      forwarding_protocol           = "HttpsOnly"
+      cache_behavior                = "OverrideAlways"
+      cache_duration                = "7.00:00:00"
+      query_string_caching_behavior = "IgnoreQueryString"
+      compression_enabled           = true
     }
   }
 }
@@ -251,12 +251,12 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
 
   actions {
     route_configuration_override_action {
-      cdn_frontdoor_origin_group_id   = azurerm_cdn_frontdoor_origin_group.static.id
-      forwarding_protocol             = "HttpsOnly"
-      cache_behavior                  = "OverrideAlways"
-      cache_duration                  = "1.00:00:00"
-      query_string_caching_behavior   = "UseQueryString"
-      compression_enabled             = true
+      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
+      forwarding_protocol           = "HttpsOnly"
+      cache_behavior                = "OverrideAlways"
+      cache_duration                = "1.00:00:00"
+      query_string_caching_behavior = "UseQueryString"
+      compression_enabled           = true
     }
     # AFD allows max 5 actions/rule; headers here ensure CSP applies to cached HTML.
     response_header_action {
@@ -283,15 +283,15 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
 }
 
 resource "azurerm_cdn_frontdoor_route" "api" {
-  name                          = "api-route"
-  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.basilisk.id
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.function.id
-  cdn_frontdoor_rule_set_ids    = [azurerm_cdn_frontdoor_rule_set.security.id]
-  supported_protocols           = ["Http", "Https"]
-  patterns_to_match             = ["/pks/*", "/api/*", "/claim/*", "/.auth/*", "/health"]
-  forwarding_protocol           = "HttpsOnly"
-  link_to_default_domain        = true
-  https_redirect_enabled        = true
+  name                            = "api-route"
+  cdn_frontdoor_endpoint_id       = azurerm_cdn_frontdoor_endpoint.basilisk.id
+  cdn_frontdoor_origin_group_id   = azurerm_cdn_frontdoor_origin_group.function.id
+  cdn_frontdoor_rule_set_ids      = [azurerm_cdn_frontdoor_rule_set.security.id]
+  supported_protocols             = ["Http", "Https"]
+  patterns_to_match               = ["/pks/*", "/api/*", "/claim/*", "/.auth/*", "/health"]
+  forwarding_protocol             = "HttpsOnly"
+  link_to_default_domain          = true
+  https_redirect_enabled          = true
   cdn_frontdoor_custom_domain_ids = local.custom_domain_enabled ? [azurerm_cdn_frontdoor_custom_domain.public[0].id] : []
 
   # No cache block — API, auth, and HKP responses must never be cached.
@@ -310,11 +310,11 @@ resource "azurerm_cdn_frontdoor_route" "static" {
     azurerm_cdn_frontdoor_rule_set.security.id,
     azurerm_cdn_frontdoor_rule_set.static_cache.id,
   ]
-  supported_protocols           = ["Http", "Https"]
-  patterns_to_match             = ["/", "/*"]
-  forwarding_protocol           = "HttpsOnly"
-  link_to_default_domain        = true
-  https_redirect_enabled        = true
+  supported_protocols             = ["Http", "Https"]
+  patterns_to_match               = ["/", "/*"]
+  forwarding_protocol             = "HttpsOnly"
+  link_to_default_domain          = true
+  https_redirect_enabled          = true
   cdn_frontdoor_custom_domain_ids = local.custom_domain_enabled ? [azurerm_cdn_frontdoor_custom_domain.public[0].id] : []
 
   cache {

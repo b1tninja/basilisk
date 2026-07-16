@@ -76,10 +76,10 @@ locals {
   # With forward_proxy_convention=Standard, Easy Auth uses X-Forwarded-Host, so the
   # public hostname (custom domain or Front Door) is the OAuth callback host users hit.
   # Keep the Function App callback registered too for direct/debug access.
-  google_oauth_redirect_uri         = "${local.public_url}/.auth/login/google/callback"
-  google_oauth_redirect_uri_fn      = "${local.function_app_url}/.auth/login/google/callback"
-  aad_oauth_redirect_uri            = "${local.public_url}/.auth/login/aad/callback"
-  aad_oauth_redirect_uri_fn         = "${local.function_app_url}/.auth/login/aad/callback"
+  google_oauth_redirect_uri    = "${local.public_url}/.auth/login/google/callback"
+  google_oauth_redirect_uri_fn = "${local.function_app_url}/.auth/login/google/callback"
+  aad_oauth_redirect_uri       = "${local.public_url}/.auth/login/aad/callback"
+  aad_oauth_redirect_uri_fn    = "${local.function_app_url}/.auth/login/aad/callback"
 }
 
 output "oauth_setup" {

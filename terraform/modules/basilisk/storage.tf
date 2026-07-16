@@ -1,11 +1,11 @@
 resource "azurerm_storage_account" "basilisk" {
-  name                     = local.storage_account_name
-  resource_group_name      = azurerm_resource_group.basilisk.name
-  location                 = azurerm_resource_group.basilisk.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
-  account_kind             = "StorageV2"
-  min_tls_version          = "TLS1_2"
+  name                            = local.storage_account_name
+  resource_group_name             = azurerm_resource_group.basilisk.name
+  location                        = azurerm_resource_group.basilisk.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  account_kind                    = "StorageV2"
+  min_tls_version                 = "TLS1_2"
   allow_nested_items_to_be_public = false
 
   blob_properties {

@@ -44,10 +44,10 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
   site_config {}
 
   auth_settings_v2 {
-    auth_enabled             = true
-    runtime_version          = "~2"
-    require_authentication   = true
-    unauthenticated_action   = "AllowAnonymous"
+    auth_enabled           = true
+    runtime_version        = "~2"
+    require_authentication = true
+    unauthenticated_action = "AllowAnonymous"
     # Front Door sets X-Forwarded-Host to the public hostname (custom domain / *.azurefd.net).
     # Without Standard, Easy Auth builds OAuth callbacks from the origin Host
     # (*.azurewebsites.net), so users land on the Function App URL and the session
@@ -91,11 +91,11 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
       BASILISK_DEV_APPROVE              = "0"
       BASILISK_REQUIRE_MANAGER_APPROVAL = var.require_manager_approval ? "1" : "0"
       # Key Vault reference — secret value is not stored in app settings plaintext.
-      BASILISK_TOKEN_SECRET             = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.token_secret.versionless_id})"
-      BASILISK_AUTH_PROVIDERS           = local.auth_providers
+      BASILISK_TOKEN_SECRET   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.token_secret.versionless_id})"
+      BASILISK_AUTH_PROVIDERS = local.auth_providers
       # Reject requests that bypass Front Door (must match profile GUID).
-      BASILISK_AFD_ID                   = azurerm_cdn_frontdoor_profile.basilisk.resource_guid
-      BASILISK_PENDING_TTL_DAYS         = "30"
+      BASILISK_AFD_ID           = azurerm_cdn_frontdoor_profile.basilisk.resource_guid
+      BASILISK_PENDING_TTL_DAYS = "30"
     },
     var.enable_google_auth && var.google_client_secret != "" ? {
       GOOGLE_PROVIDER_AUTHENTICATION_SECRET = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.google_client_secret[0].versionless_id})"

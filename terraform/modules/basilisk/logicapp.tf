@@ -14,7 +14,7 @@ resource "azapi_resource" "approval_logic_app" {
 
   body = {
     properties = {
-      state = "Enabled"
+      state      = "Enabled"
       definition = local.approval_workflow_definition
       parameters = {
         "$connections" = {
