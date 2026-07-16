@@ -213,11 +213,10 @@ resource "azurerm_cdn_frontdoor_route" "api" {
   https_redirect_enabled        = true
   cdn_frontdoor_custom_domain_ids = local.custom_domain_enabled ? [azurerm_cdn_frontdoor_custom_domain.public[0].id] : []
 
-  cache {
-    query_string_caching_behavior = "IgnoreQueryString"
-    compression_enabled           = true
-    content_types_to_compress     = ["text/plain"]
-  }
+  # No cache block — API, auth, and HKP responses must never be cached.
+  # Caching /.auth/* causes a redirect loop: Easy Auth's nonce cookie is never
+  # set when the callback GET is served from cache (TCP_HIT), so the POST
+  # has no valid state and Easy Auth restarts the OAuth flow indefinitely.
 
   depends_on = [azurerm_cdn_frontdoor_origin.function]
 }
