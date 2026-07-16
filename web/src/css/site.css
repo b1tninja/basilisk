@@ -925,6 +925,25 @@ pre {
   margin-top: 0.5rem;
 }
 
+.encrypt-options summary.card-title {
+  margin-bottom: 0;
+}
+.enc-preset-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.enc-preset-option input {
+  margin-top: 0.2rem;
+}
+.encrypt-summary strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .output-pre {
   margin: 0;
   padding: 0.75rem;
@@ -998,6 +1017,75 @@ pre {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* ===== Packet map / hex inspector ===== */
+.pkt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+.pkt-legend-chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.hex-view {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  overflow-x: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.hex-row {
+  display: flex;
+  gap: 0.75rem;
+  white-space: nowrap;
+}
+.hex-off {
+  color: var(--text-muted);
+  min-width: 2.5rem;
+}
+.hex-bytes { flex: 1; }
+.hex-byte, .hex-ascii {
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.hex-byte.pkt-hdr, .hex-ascii.pkt-hdr { opacity: 0.75; font-weight: 700; }
+.hex-byte.hex-hl, .hex-ascii.hex-hl {
+  outline: 1px solid var(--brand);
+  background: color-mix(in srgb, var(--brand) 18%, transparent);
+}
+.pkt-detail-list { display: flex; flex-direction: column; gap: 0.45rem; }
+.pkt-detail-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  background: var(--surface);
+}
+.pkt-detail-row.pkt-active {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+.pkt-detail-title { font-weight: 600; font-size: 0.85rem; margin-bottom: 0.25rem; }
+.pkt-detail-body { font-size: 0.8rem; color: var(--text-muted); }
+
+.pkt-color-0 { background: color-mix(in srgb, #58a6ff 22%, transparent); }
+.pkt-color-1 { background: color-mix(in srgb, #3fb950 22%, transparent); }
+.pkt-color-2 { background: color-mix(in srgb, #d29922 22%, transparent); }
+.pkt-color-3 { background: color-mix(in srgb, #f778ba 22%, transparent); }
+.pkt-color-4 { background: color-mix(in srgb, #a371f7 22%, transparent); }
+.pkt-color-5 { background: color-mix(in srgb, #79c0ff 22%, transparent); }
+.pkt-color-6 { background: color-mix(in srgb, #ffa198 22%, transparent); }
+.pkt-color-7 { background: color-mix(in srgb, #7ee787 22%, transparent); }
 
 /* ===== Project info section (home page) ===== */
 .project-info {

@@ -1,22 +1,34 @@
 import {
   decrypt,
   decryptKey,
+  decryptSessionKeys,
   enums,
-  readCleartextMessage,
   readKey,
   readMessage,
   readPrivateKey,
-  readSignature,
   verify,
 } from "openpgp";
 import { Auth } from "../lib/auth.js";
 import { SELF_TEST_LABELS, runCryptoSelfTests } from "../lib/crypto-self-test.js";
 import {
+  applySessionKeyDetails,
+  dearmorToBytes,
+  enrichSpansWithPackets,
+  mapPacketSpans,
+  tagColorClass,
+} from "../lib/packet-map.js";
+import { analyzeArmored } from "../lib/pgp/inspect.js";
+import {
+  isAnonymousKeyId,
+  keyIdHex,
+  keySearchLink,
+} from "../lib/pgp/identity.js";
+import { zeroKeyMaterial } from "../lib/pgp/memory.js";
+import {
   escapeHtml,
   fetchText,
   formatDate,
   formatFingerprint,
-  searchUrl,
   showError,
 } from "../lib/utils.js";
 import "../css/site.css";
@@ -31,6 +43,15 @@ let currentAnalysis = null;
 let analyzeTimer = null;
 let verifyGen = 0;
 let cryptoReady = false;
+let hexExpanded = false;
+/** @type {ReturnType<typeof enrichSpansWithPackets> | null} */
+let currentPacketMap = null;
+
+const IDLE_CLEAR_MS = 5 * 60 * 1000;
+const HIDDEN_CLEAR_MS = 60 * 1000;
+let idleTimer = null;
+let hiddenTimer = null;
+let lastActivity = Date.now();
 
 app.innerHTML = `
   <div id="crypto-status" class="status-row" role="status" aria-live="polite">
@@ -50,9 +71,16 @@ app.innerHTML = `
   </div>
 
   <div id="inspect-card" class="card hidden"></div>
+  <div id="packet-map-card" class="card hidden"></div>
 
   <div id="decrypt-section" class="hidden">
-    <div class="card">
+    <div class="card hidden" id="skesk-card">
+      <p class="card-title">Message passphrase</p>
+      <label class="field-label" for="msg-passphrase">Shared passphrase (SKESK)</label>
+      <input type="password" id="msg-passphrase" class="text-input" autocomplete="off" placeholder="Passphrase used to encrypt this message">
+      <p class="muted" style="margin-top:0.5rem">Detected password-protected session key. Private key not required if you have the passphrase.</p>
+    </div>
+    <div class="card" id="private-key-card">
       <div class="card-title-row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
         <p class="card-title" style="margin:0">Private key (local only)</p>
         <button type="button" class="btn btn-ghost btn-compact" id="clear-sensitive-btn"
@@ -61,9 +89,10 @@ app.innerHTML = `
       <label class="field-label" for="private-key">Armored private key</label>
       <textarea id="private-key" class="compose-message" rows="8"
         placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;…"></textarea>
-      <label class="field-label" for="passphrase" style="margin-top:0.75rem">Passphrase</label>
+      <label class="field-label" for="passphrase" style="margin-top:0.75rem">Key passphrase</label>
       <input type="password" id="passphrase" class="text-input" autocomplete="off" placeholder="Key passphrase (if any)">
-      <p class="muted" style="margin-top:0.65rem">Key material is zeroed from memory after use. Clear this page when finished.</p>
+      <p class="muted" style="margin-top:0.65rem">Decrypt runs in a Web Worker when available. Sensitive fields auto-clear after 5 minutes idle.</p>
+      <p id="idle-clear-note" class="muted" style="margin-top:0.35rem"></p>
     </div>
     <div class="btn-row">
       <button type="button" class="btn" id="decrypt-btn" disabled>Decrypt</button>
@@ -106,188 +135,22 @@ runCryptoSelfTests().then((result) => {
 
 // ── Memory protection helpers ────────────────────────────────────────────────
 
-/**
- * Best-effort wipe of secret-key material from an OpenPGP.js private key object.
- *
- * Zeroes every Uint8Array found in `keyPacket.privateParams` for the primary
- * key and all subkeys.  This mitigates devtools / extension inspection of the
- * live JS heap, but cannot guarantee that the engine has not already copied
- * the material to JIT-compiled code, GC survivor spaces, or CPU registers.
- * @param {import("openpgp").PrivateKey | null | undefined} key
- */
-function zeroKeyMaterial(key) {
-  if (!key) return;
-  const wipePacket = (pkt) => {
-    const params = pkt?.privateParams;
-    if (!params || typeof params !== "object") return;
-    for (const v of Object.values(params)) {
-      if (v instanceof Uint8Array) {
-        v.fill(0);
-      } else if (v && v.data instanceof Uint8Array) {
-        // MPI wrapper (used by RSA / legacy keys)
-        v.data.fill(0);
-      }
-    }
-  };
-  try {
-    wipePacket(key.keyPacket);
-    for (const sk of key.subkeys || []) {
-      wipePacket(sk?.keyPacket);
-    }
-  } catch (_) {
-    // Best-effort only — never throw from a cleanup path
-  }
-}
-
 /** Clear all sensitive DOM fields and the decrypt output. */
 function clearSensitiveFields() {
   const keyEl = document.getElementById("private-key");
   const passEl = document.getElementById("passphrase");
+  const msgPass = document.getElementById("msg-passphrase");
   const out = document.getElementById("decrypt-output");
   const status = document.getElementById("decrypt-status");
   if (keyEl) keyEl.value = "";
   if (passEl) passEl.value = "";
+  if (msgPass) msgPass.value = "";
   if (out) {
     out.classList.add("hidden");
     out.innerHTML = "";
   }
   if (status) status.className = "hidden";
-}
-
-/**
- * @param {import("openpgp").KeyID | { toHex?: () => string, bytes?: Uint8Array } | null | undefined} keyID
- * @returns {string}
- */
-function keyIdHex(keyID) {
-  if (!keyID) return "";
-  try {
-    if (typeof keyID.toHex === "function") return String(keyID.toHex()).toUpperCase();
-  } catch (_) {
-    /* fall through */
-  }
-  if (keyID.bytes instanceof Uint8Array) {
-    return Array.from(keyID.bytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("")
-      .toUpperCase();
-  }
-  return String(keyID).toUpperCase().replace(/[^0-9A-F]/g, "");
-}
-
-/**
- * @param {Uint8Array | null | undefined} fp
- * @returns {string}
- */
-function fingerprintHex(fp) {
-  if (!(fp instanceof Uint8Array) || !fp.length) return "";
-  return Array.from(fp)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
-}
-
-function isAnonymousKeyId(hex) {
-  return !hex || /^0+$/.test(hex);
-}
-
-/**
- * @param {Iterable} packets
- * @returns {Array<{ keyId: string, fingerprint: string, created: Date | null }>}
- */
-function sigDetailsFromPackets(packets) {
-  const list = Array.isArray(packets) ? packets : [...(packets || [])];
-  return list.map((pkt) => {
-    const keyId = keyIdHex(pkt.issuerKeyID);
-    const fingerprint = fingerprintHex(pkt.issuerFingerprint);
-    const created =
-      pkt.created instanceof Date && !Number.isNaN(pkt.created.getTime())
-        ? pkt.created
-        : null;
-    return { keyId, fingerprint, created };
-  });
-}
-
-/**
- * @param {string} armored
- */
-async function analyzeArmored(armored) {
-  const text = String(armored || "").trim();
-  if (!text) {
-    return { type: "empty", recipientKeyIDs: [], sigDetails: [], cleartext: "", message: null };
-  }
-
-  // Encrypted or binary signed message
-  try {
-    const message = await readMessage({ armoredMessage: text });
-    const recipientKeyIDs = (message.getEncryptionKeyIDs?.() || []).map(keyIdHex);
-    let sigDetails = [];
-    try {
-      const sigPkts = message.packets?.filterByTag?.(enums.packet.signature) || [];
-      sigDetails = sigDetailsFromPackets(sigPkts);
-    } catch (_) {
-      /* ignore */
-    }
-    if (!sigDetails.length && typeof message.getSigningKeyIDs === "function") {
-      sigDetails = (message.getSigningKeyIDs() || []).map((id) => ({
-        keyId: keyIdHex(id),
-        fingerprint: "",
-        created: null,
-      }));
-    }
-    const encrypted = recipientKeyIDs.length > 0;
-    return {
-      type: encrypted ? "encrypted" : "message",
-      recipientKeyIDs,
-      sigDetails,
-      cleartext: "",
-      message,
-    };
-  } catch (_) {
-    /* try cleartext / signature */
-  }
-
-  // Clearsigned message
-  try {
-    const clearMsg = await readCleartextMessage({ cleartextMessage: text });
-    let sigDetails = [];
-    try {
-      const sigPkts = clearMsg.signature?.packets || [];
-      sigDetails = sigDetailsFromPackets(sigPkts);
-    } catch (_) {
-      /* ignore */
-    }
-    if (!sigDetails.length && typeof clearMsg.getSigningKeyIDs === "function") {
-      sigDetails = (clearMsg.getSigningKeyIDs() || []).map((id) => ({
-        keyId: keyIdHex(id),
-        fingerprint: "",
-        created: null,
-      }));
-    }
-    return {
-      type: "cleartext",
-      recipientKeyIDs: [],
-      sigDetails,
-      cleartext: clearMsg.getText?.() ?? String(clearMsg.text || ""),
-      message: clearMsg,
-    };
-  } catch (_) {
-    /* try detached signature */
-  }
-
-  // Detached signature
-  try {
-    const signature = await readSignature({ armoredSignature: text });
-    const sigDetails = sigDetailsFromPackets(signature.packets || []);
-    return {
-      type: "detached",
-      recipientKeyIDs: [],
-      sigDetails,
-      cleartext: "",
-      message: signature,
-    };
-  } catch (err) {
-    throw new Error(err?.message || "Could not parse as a PGP message or signature.");
-  }
+  touchActivity();
 }
 
 function typeLabel(type) {
@@ -303,15 +166,6 @@ function typeLabel(type) {
     default:
       return type || "Unknown";
   }
-}
-
-function keySearchLink(hex, label) {
-  if (isAnonymousKeyId(hex)) {
-    return `<span class="muted">${escapeHtml(label || "anonymous")}</span>`;
-  }
-  const q = `0x${hex}`;
-  const display = label || formatFingerprint(hex);
-  return `<a class="text-link fpr" href="${escapeHtml(searchUrl(q))}" title="Search keyserver">${escapeHtml(display)}</a>`;
 }
 
 /**
@@ -549,6 +403,14 @@ function updateDecryptSection(analysis) {
   if (!section) return;
   const show = analysis && analysis.type === "encrypted";
   section.classList.toggle("hidden", !show);
+  const skesk = document.getElementById("skesk-card");
+  const privCard = document.getElementById("private-key-card");
+  if (skesk) skesk.classList.toggle("hidden", !(show && analysis.hasSkesk));
+  if (privCard) {
+    // Hide private-key card only when SKESK-only (no PKESK recipients).
+    const skeskOnly = show && analysis.hasSkesk && !analysis.hasPkesk && !(analysis.recipientKeyIDs || []).length;
+    privCard.classList.toggle("hidden", !!skeskOnly);
+  }
   if (!show) {
     const out = document.getElementById("decrypt-output");
     const status = document.getElementById("decrypt-status");
@@ -560,12 +422,121 @@ function updateDecryptSection(analysis) {
   }
 }
 
+const HEX_INITIAL = 4096;
+
+function renderPacketMap(analysis) {
+  const card = document.getElementById("packet-map-card");
+  if (!card) return;
+  if (!analysis || analysis.type === "empty" || !analysis.armored) {
+    card.classList.add("hidden");
+    card.innerHTML = "";
+    currentPacketMap = null;
+    return;
+  }
+  let binary;
+  try {
+    binary = dearmorToBytes(analysis.armored);
+  } catch (_) {
+    card.classList.add("hidden");
+    return;
+  }
+  const spans = mapPacketSpans(binary);
+  const packets =
+    analysis.message && analysis.type !== "cleartext" && analysis.type !== "detached"
+      ? analysis.message.packets
+      : analysis.message?.packets || analysis.message?.signature?.packets || null;
+  currentPacketMap = enrichSpansWithPackets(spans, packets);
+
+  const legend = [...new Set(spans.map((s) => s.name))]
+    .map((name, i) => {
+      const span = spans.find((s) => s.name === name);
+      return `<span class="pkt-legend-chip ${tagColorClass(span?.colorIndex ?? i)}">${escapeHtml(name)}</span>`;
+    })
+    .join("");
+
+  const detailRows = currentPacketMap
+    .map((s, i) => {
+      const lines = (s.detail?.lines || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("");
+      const warns = (s.detail?.warnings || [])
+        .map((w) => `<div class="text-error">${escapeHtml(w)}</div>`)
+        .join("");
+      return `<div class="pkt-detail-row ${tagColorClass(s.colorIndex)}" data-pkt-idx="${i}" tabindex="0">
+        <div class="pkt-detail-title">${escapeHtml(s.name)} <span class="muted">@ ${s.headerStart}–${s.end}</span></div>
+        <div class="pkt-detail-body">${lines}${warns}</div>
+      </div>`;
+    })
+    .join("");
+
+  const limit = hexExpanded ? binary.length : Math.min(binary.length, HEX_INITIAL);
+  card.innerHTML = `
+    <p class="card-title">Packet map</p>
+    <div class="pkt-legend">${legend}</div>
+    <div class="hex-view" id="hex-view" aria-label="Colorized packet bytes">${renderHexGrid(binary, currentPacketMap, limit)}</div>
+    ${
+      binary.length > HEX_INITIAL
+        ? `<button type="button" class="text-link" id="hex-expand-btn">${
+            hexExpanded ? "Show less" : `Show full (${binary.length} bytes)`
+          }</button>`
+        : ""
+    }
+    <p class="card-title" style="margin-top:1rem">Packet details</p>
+    <div class="pkt-detail-list">${detailRows}</div>
+  `;
+  card.classList.remove("hidden");
+}
+
+function renderHexGrid(binary, spans, limit) {
+  const rows = [];
+  for (let off = 0; off < limit; off += 16) {
+    const slice = binary.subarray(off, Math.min(off + 16, limit));
+    const hexParts = [];
+    const asciiParts = [];
+    for (let i = 0; i < slice.length; i++) {
+      const abs = off + i;
+      const span = spans.find((s) => abs >= s.headerStart && abs < s.end);
+      const isHdr = span && abs < span.bodyStart;
+      const cls = span
+        ? `${tagColorClass(span.colorIndex)}${isHdr ? " pkt-hdr" : ""}`
+        : "";
+      const b = slice[i];
+      hexParts.push(
+        `<span class="hex-byte ${cls}" data-off="${abs}" title="${
+          span ? escapeHtml(span.name) : ""
+        }">${b.toString(16).padStart(2, "0")}</span>`
+      );
+      const ch = b >= 32 && b < 127 ? String.fromCharCode(b) : ".";
+      asciiParts.push(`<span class="hex-ascii ${cls}" data-off="${abs}">${escapeHtml(ch)}</span>`);
+    }
+    rows.push(
+      `<div class="hex-row"><span class="hex-off">${off
+        .toString(16)
+        .padStart(4, "0")}</span><span class="hex-bytes">${hexParts.join(
+        " "
+      )}</span><span class="hex-gutter">${asciiParts.join("")}</span></div>`
+    );
+  }
+  return rows.join("");
+}
+
+function highlightPacket(idx) {
+  document.querySelectorAll(".pkt-detail-row").forEach((el) => {
+    el.classList.toggle("pkt-active", Number(el.getAttribute("data-pkt-idx")) === idx);
+  });
+  const span = currentPacketMap?.[idx];
+  document.querySelectorAll(".hex-byte, .hex-ascii").forEach((el) => {
+    const off = Number(el.getAttribute("data-off"));
+    const on = span && off >= span.headerStart && off < span.end;
+    el.classList.toggle("hex-hl", !!on);
+  });
+}
+
 async function runAnalyze() {
   errorEl.classList.add("hidden");
   const armored = document.getElementById("ciphertext").value.trim();
   if (!armored) {
     currentAnalysis = null;
     renderInspect(null);
+    renderPacketMap(null);
     updateDecryptSection(null);
     return;
   }
@@ -573,11 +544,13 @@ async function runAnalyze() {
     const analysis = await analyzeArmored(armored);
     currentAnalysis = analysis;
     renderInspect(analysis);
+    renderPacketMap(analysis);
     updateDecryptSection(analysis);
     await verifySigners(analysis);
   } catch (err) {
     currentAnalysis = null;
     renderInspect(null);
+    renderPacketMap(null);
     updateDecryptSection(null);
     showError(errorEl, err.message || "Could not parse message");
   }
@@ -590,9 +563,221 @@ function scheduleAnalyze() {
   }, 300);
 }
 
-document.getElementById("ciphertext").addEventListener("input", scheduleAnalyze);
+function touchActivity() {
+  lastActivity = Date.now();
+  scheduleIdleClear();
+  const note = document.getElementById("idle-clear-note");
+  if (note) {
+    note.textContent = "Sensitive fields clear after 5 minutes of inactivity.";
+  }
+}
+
+function scheduleIdleClear() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    const keyEl = document.getElementById("private-key");
+    const msgPass = document.getElementById("msg-passphrase");
+    const passEl = document.getElementById("passphrase");
+    if (
+      (keyEl && keyEl.value.trim()) ||
+      (msgPass && msgPass.value) ||
+      (passEl && passEl.value)
+    ) {
+      clearSensitiveFields();
+      const status = document.getElementById("decrypt-status");
+      if (status) {
+        status.className = "status-row";
+        status.textContent = "Sensitive fields cleared after idle timeout.";
+        status.classList.remove("hidden");
+      }
+    }
+  }, IDLE_CLEAR_MS);
+}
+
+/**
+ * Decrypt with private key via Web Worker when possible; falls back in-page.
+ */
+async function decryptWithPrivateKeyWorker(armored, privArmored, keyPassphrase, verificationKeysArmored) {
+  if (typeof Worker === "undefined") {
+    return decryptWithPrivateKeyInline(armored, privArmored, keyPassphrase, verificationKeysArmored);
+  }
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = new Worker(new URL("../lib/crypto-worker.js", import.meta.url), {
+        type: "module",
+      });
+    } catch (_) {
+      decryptWithPrivateKeyInline(armored, privArmored, keyPassphrase, verificationKeysArmored)
+        .then(resolve)
+        .catch(reject);
+      return;
+    }
+    const id = `d-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const timer = setTimeout(() => {
+      try {
+        worker.terminate();
+      } catch (_) {
+        /* ignore */
+      }
+      reject(new Error("Decrypt worker timed out"));
+    }, 120000);
+    worker.onmessage = (ev) => {
+      if (ev.data?.id !== id) return;
+      clearTimeout(timer);
+      try {
+        worker.terminate();
+      } catch (_) {
+        /* ignore */
+      }
+      if (ev.data.ok) resolve(ev.data);
+      else reject(new Error(ev.data.error || "Decrypt failed"));
+    };
+    worker.onerror = (err) => {
+      clearTimeout(timer);
+      try {
+        worker.terminate();
+      } catch (_) {
+        /* ignore */
+      }
+      // Fallback to inline on worker failure (e.g. bundler / CSP).
+      decryptWithPrivateKeyInline(armored, privArmored, keyPassphrase, verificationKeysArmored)
+        .then(resolve)
+        .catch(reject);
+    };
+    worker.postMessage({
+      type: "decrypt",
+      id,
+      armoredMessage: armored,
+      privateKeyArmored: privArmored,
+      passphrase: keyPassphrase || "",
+      verificationKeysArmored: verificationKeysArmored || [],
+    });
+  });
+}
+
+async function decryptWithPrivateKeyInline(armored, privArmored, keyPassphrase, verificationKeysArmored) {
+  let privateKey = await readPrivateKey({ armoredKey: privArmored });
+  try {
+    if (!privateKey.isDecrypted()) {
+      privateKey = await decryptKey({ privateKey, passphrase: keyPassphrase || "" });
+    }
+    const message = await readMessage({ armoredMessage: armored });
+    const verificationKeys = [];
+    for (const a of verificationKeysArmored || []) {
+      try {
+        verificationKeys.push(await readKey({ armoredKey: a }));
+      } catch (_) {
+        /* skip */
+      }
+    }
+    let sessionKeys = [];
+    try {
+      sessionKeys = await decryptSessionKeys({
+        message,
+        decryptionKeys: privateKey,
+      });
+    } catch (_) {
+      sessionKeys = [];
+    }
+    const result = await decrypt({
+      message,
+      decryptionKeys: privateKey,
+      ...(verificationKeys.length ? { verificationKeys } : {}),
+      config: { allowInsecureDecryptionWithSigningKeys: true },
+    });
+    const plaintext =
+      typeof result.data === "string"
+        ? result.data
+        : new TextDecoder().decode(result.data);
+    const signatures = [];
+    for (const s of result.signatures || []) {
+      let verified = false;
+      try {
+        await s.verified;
+        verified = true;
+      } catch (_) {
+        verified = false;
+      }
+      signatures.push({ keyID: keyIdHex(s.keyID), verified });
+    }
+    return {
+      ok: true,
+      plaintext,
+      signatures,
+      sessionKeys: (sessionKeys || []).map((sk) => ({
+        algorithm: sk.algorithm,
+        aeadAlgorithm: sk.aeadAlgorithm,
+        length: sk.data?.length || 0,
+        data: sk.data,
+      })),
+    };
+  } finally {
+    zeroKeyMaterial(privateKey);
+  }
+}
+
+async function fetchVerificationArmored(signerIds) {
+  const out = [];
+  await Promise.all(
+    signerIds.map(async (id) => {
+      try {
+        const armoredKey = await fetchText(
+          `/pks/lookup?op=get&search=${encodeURIComponent(`0x${id}`)}`
+        );
+        if (String(armoredKey).includes("BEGIN PGP")) out.push(armoredKey);
+      } catch (_) {
+        /* skip */
+      }
+    })
+  );
+  return out;
+}
+
+function applySessionKeysToMap(sessionKeys) {
+  if (!currentPacketMap || !sessionKeys?.length) return;
+  const normalized = sessionKeys.map((sk) => ({
+    algorithm: sk.algorithm,
+    aeadAlgorithm: sk.aeadAlgorithm,
+    data:
+      sk.data ||
+      (sk.length ? { length: sk.length } : undefined),
+  }));
+  // Length-only from worker: synthesize a stand-in so applySessionKeyDetails can show bit length.
+  const forApply = normalized.map((sk) => ({
+    algorithm: sk.algorithm,
+    aeadAlgorithm: sk.aeadAlgorithm,
+    data:
+      sk.data instanceof Uint8Array
+        ? sk.data
+        : sk.data?.length
+          ? new Uint8Array(sk.data.length)
+          : undefined,
+  }));
+  currentPacketMap = applySessionKeyDetails(currentPacketMap, forApply);
+  const list = document.querySelector("#packet-map-card .pkt-detail-list");
+  if (!list) return;
+  list.innerHTML = currentPacketMap
+    .map((s, i) => {
+      const lines = (s.detail?.lines || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("");
+      const warns = (s.detail?.warnings || [])
+        .map((w) => `<div class="text-error">${escapeHtml(w)}</div>`)
+        .join("");
+      return `<div class="pkt-detail-row ${tagColorClass(s.colorIndex)}" data-pkt-idx="${i}" tabindex="0">
+        <div class="pkt-detail-title">${escapeHtml(s.name)} <span class="muted">@ ${s.headerStart}–${s.end}</span></div>
+        <div class="pkt-detail-body">${lines}${warns}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+document.getElementById("ciphertext").addEventListener("input", () => {
+  touchActivity();
+  scheduleAnalyze();
+});
 
 document.getElementById("cipher-file").addEventListener("change", async (e) => {
+  touchActivity();
   const f = e.target.files?.[0];
   document.getElementById("cipher-file-name").textContent = f ? f.name : "";
   if (f) {
@@ -606,6 +791,7 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
     showError(errorEl, "Crypto self-test has not passed. Refusing to decrypt.");
     return;
   }
+  touchActivity();
 
   errorEl.classList.add("hidden");
   const status = document.getElementById("decrypt-status");
@@ -616,124 +802,194 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
   status.classList.remove("hidden");
 
   const armored = document.getElementById("ciphertext").value.trim();
-  const privArmored = document.getElementById("private-key").value.trim();
-  const passphrase = document.getElementById("passphrase").value;
+  const privArmored = document.getElementById("private-key")?.value.trim() || "";
+  const keyPassphrase = document.getElementById("passphrase")?.value || "";
+  const msgPassphrase = document.getElementById("msg-passphrase")?.value || "";
 
   if (!armored) {
     showError(errorEl, "Paste a PGP message or choose a file.");
     status.className = "hidden";
     return;
   }
-  if (!privArmored) {
-    showError(errorEl, "Paste your private key to decrypt (stays in the browser).");
+
+  const usePassword = !!msgPassphrase;
+  if (!usePassword && !privArmored) {
+    showError(
+      errorEl,
+      currentAnalysis?.hasSkesk
+        ? "Enter the message passphrase, or paste a private key."
+        : "Paste your private key to decrypt (stays in the browser)."
+    );
     status.className = "hidden";
     return;
   }
 
-  let privateKey = null;
   try {
-    privateKey = await readPrivateKey({ armoredKey: privArmored });
-    if (!privateKey.isDecrypted()) {
-      privateKey = await decryptKey({ privateKey, passphrase });
-    }
-    const message =
-      currentAnalysis?.type === "encrypted" && currentAnalysis.message
-        ? currentAnalysis.message
-        : await readMessage({ armoredMessage: armored });
+    let plaintext = "";
+    let sigStatuses = [];
+    let sessionKeys = [];
 
-    let result = await decrypt({
-      message,
-      decryptionKeys: privateKey,
-      config: { allowInsecureDecryptionWithSigningKeys: true },
-    });
-
-    // Look up signing keys on this keyserver and re-decrypt with verificationKeys.
-    const signerIds = [
-      ...new Set(
-        (result.signatures || [])
-          .map((s) => keyIdHex(s.keyID))
-          .filter((id) => id && !isAnonymousKeyId(id))
-      ),
-    ];
-    if (signerIds.length) {
-      const verificationKeys = [];
-      await Promise.all(
-        signerIds.map(async (id) => {
-          try {
-            const armoredKey = await fetchText(
-              `/pks/lookup?op=get&search=${encodeURIComponent(`0x${id}`)}`
-            );
-            if (String(armoredKey).includes("BEGIN PGP")) {
-              verificationKeys.push(await readKey({ armoredKey }));
-            }
-          } catch (_) {
-            /* skip */
-          }
-        })
-      );
-      if (verificationKeys.length) {
-        result = await decrypt({
+    if (usePassword) {
+      // OpenPGP.js: passwords XOR decryptionKeys — not both.
+      const message = await readMessage({ armoredMessage: armored });
+      try {
+        sessionKeys = await decryptSessionKeys({
           message,
-          decryptionKeys: privateKey,
-          verificationKeys,
-          config: { allowInsecureDecryptionWithSigningKeys: true },
+          passwords: [msgPassphrase],
         });
+      } catch (_) {
+        sessionKeys = [];
       }
-    }
-
-    const plaintext =
-      typeof result.data === "string"
-        ? result.data
-        : new TextDecoder().decode(result.data);
-    const sigs = result.signatures || [];
-    let sigHtml = "";
-    if (sigs.length) {
-      const parts = [];
-      for (const s of sigs) {
-        const kid = keyIdHex(s.keyID);
-        const link = kid ? keySearchLink(kid, formatFingerprint(kid)) : "";
+      const result = await decrypt({
+        message,
+        passwords: [msgPassphrase],
+        config: { allowInsecureDecryptionWithSigningKeys: true },
+      });
+      plaintext =
+        typeof result.data === "string"
+          ? result.data
+          : new TextDecoder().decode(result.data);
+      for (const s of result.signatures || []) {
+        let verified = false;
         try {
           await s.verified;
-          parts.push(`<span>${link} <span class="badge approved">verified</span></span>`);
+          verified = true;
         } catch (_) {
-          parts.push(`<span>${link} <span class="badge">signature unverified</span></span>`);
+          verified = false;
         }
+        sigStatuses.push({ keyID: keyIdHex(s.keyID), verified });
+      }
+    } else {
+      // Prefetch signer keys if we already know IDs from inspect.
+      const knownSigners = (currentAnalysis?.sigDetails || [])
+        .map((s) => s.fingerprint || s.keyId)
+        .filter((id) => id && !isAnonymousKeyId(id));
+      const verificationKeysArmored = await fetchVerificationArmored(knownSigners);
+      const workerResult = await decryptWithPrivateKeyWorker(
+        armored,
+        privArmored,
+        keyPassphrase,
+        verificationKeysArmored
+      );
+      plaintext = workerResult.plaintext;
+      sigStatuses = workerResult.signatures || [];
+      sessionKeys = (workerResult.sessionKeys || []).map((sk) => ({
+        algorithm: sk.algorithm,
+        aeadAlgorithm: sk.aeadAlgorithm,
+        data: sk.length ? new Uint8Array(sk.length) : undefined,
+        length: sk.length,
+      }));
+    }
+
+    applySessionKeysToMap(sessionKeys);
+
+    let sigHtml = "";
+    if (sigStatuses.length) {
+      const parts = [];
+      for (const s of sigStatuses) {
+        const kid = (s.keyID || "").toUpperCase();
+        const link = kid ? keySearchLink(kid, formatFingerprint(kid)) : "";
+        parts.push(
+          s.verified
+            ? `<span>${link} <span class="badge approved">verified</span></span>`
+            : `<span>${link} <span class="badge">signature unverified</span></span>`
+        );
       }
       sigHtml = `<p style="margin-bottom:0.75rem">${parts.join(" · ")}</p>`;
     }
+
+    const cipherNote =
+      sessionKeys[0]?.algorithm
+        ? `<p class="muted">Session cipher: <code>${escapeHtml(
+            String(sessionKeys[0].algorithm).toUpperCase()
+          )}${
+            sessionKeys[0].aeadAlgorithm
+              ? "-" + String(sessionKeys[0].aeadAlgorithm).toUpperCase()
+              : ""
+          }</code>${
+            sessionKeys[0].length ? ` (${sessionKeys[0].length} bytes)` : ""
+          }</p>`
+        : "";
+
     out.innerHTML = `
       <p class="card-title">Plaintext</p>
+      ${cipherNote}
       ${sigHtml}
       <pre class="output-pre">${escapeHtml(plaintext)}</pre>
     `;
     out.classList.remove("hidden");
-    status.textContent = "Decrypted locally. Key material zeroed.";
+    status.textContent = usePassword
+      ? "Decrypted with passphrase. Passphrase cleared."
+      : "Decrypted (worker when available). Key material zeroed.";
     status.className = "status-row ok";
   } catch (err) {
     status.className = "status-row err";
     status.textContent = err.message || "Decrypt failed";
     showError(errorEl, err.message || "Decrypt failed");
   } finally {
-    // Zero secret-key Uint8Array buffers regardless of success/failure.
-    zeroKeyMaterial(privateKey);
-    privateKey = null;
-    // Always clear the passphrase field — the armored key stays for retry.
     const passEl = document.getElementById("passphrase");
     if (passEl) passEl.value = "";
+    const msgPass = document.getElementById("msg-passphrase");
+    if (msgPass) msgPass.value = "";
   }
 });
 
-// ── Clear sensitive data button ───────────────────────────────────────────────
+// ── Clear / hex / packet interactions ─────────────────────────────────────────
 document.addEventListener("click", (e) => {
-  if (e.target?.id === "clear-sensitive-btn") {
+  const t = e.target;
+  if (!(t instanceof Element)) return;
+  if (t.id === "clear-sensitive-btn") {
     clearSensitiveFields();
+    return;
+  }
+  if (t.id === "hex-expand-btn") {
+    hexExpanded = !hexExpanded;
+    if (currentAnalysis) renderPacketMap(currentAnalysis);
+    return;
+  }
+  const row = t.closest("[data-pkt-idx]");
+  if (row) {
+    highlightPacket(Number(row.getAttribute("data-pkt-idx")));
+    return;
+  }
+  const byte = t.closest("[data-off]");
+  if (byte && currentPacketMap) {
+    const off = Number(byte.getAttribute("data-off"));
+    const idx = currentPacketMap.findIndex((s) => off >= s.headerStart && off < s.end);
+    if (idx >= 0) highlightPacket(idx);
   }
 });
 
-// ── beforeunload warning when private key is present ─────────────────────────
+document.addEventListener("input", (e) => {
+  const id = e.target?.id;
+  if (
+    id === "private-key" ||
+    id === "passphrase" ||
+    id === "msg-passphrase" ||
+    id === "ciphertext"
+  ) {
+    touchActivity();
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    clearTimeout(hiddenTimer);
+    hiddenTimer = setTimeout(() => {
+      if (document.hidden) clearSensitiveFields();
+    }, HIDDEN_CLEAR_MS);
+  } else {
+    clearTimeout(hiddenTimer);
+    touchActivity();
+  }
+});
+
 window.addEventListener("beforeunload", (e) => {
   const keyEl = document.getElementById("private-key");
-  if (keyEl && keyEl.value.trim()) {
+  const msgPass = document.getElementById("msg-passphrase");
+  if ((keyEl && keyEl.value.trim()) || (msgPass && msgPass.value)) {
     e.preventDefault();
   }
 });
+
+touchActivity();

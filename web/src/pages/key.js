@@ -1,5 +1,6 @@
 import { readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
+import { formatAlgo } from "../lib/pgp/algos.js";
 import {
   copyText,
   describeExpiry,
@@ -35,14 +36,6 @@ function metaRow(label, valueHtml) {
 
 function copyButton(label, value, id) {
   return `<button type="button" class="btn btn-ghost btn-compact" data-copy="${escapeHtml(value)}" id="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
-}
-
-function formatAlgo(info) {
-  if (!info) return "—";
-  const parts = [info.algorithm || info.algo || ""];
-  if (info.curve) parts.push(info.curve);
-  if (info.bits) parts.push(`${info.bits}-bit`);
-  return parts.filter(Boolean).join(" / ") || "—";
 }
 
 function usageTags(keyPacket) {

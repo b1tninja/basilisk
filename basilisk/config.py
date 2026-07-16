@@ -42,6 +42,7 @@ class Settings:
     max_upload_bytes: int
     max_uids: int
     max_subkey_blocks: int
+    max_packets: int
     require_email_uid: bool
     reject_revoked_keys: bool
     blocked_email_domains: str
@@ -85,6 +86,7 @@ class Settings:
             max_upload_bytes=int(os.environ.get("BASILISK_MAX_UPLOAD_BYTES", str(64 * 1024))),
             max_uids=int(os.environ.get("BASILISK_MAX_UIDS", "20")),
             max_subkey_blocks=int(os.environ.get("BASILISK_MAX_SUBKEYS", "32")),
+            max_packets=int(os.environ.get("BASILISK_MAX_PACKETS", "1000")),
             require_email_uid=_env_bool("BASILISK_REQUIRE_EMAIL_UID", True),
             reject_revoked_keys=_env_bool("BASILISK_REJECT_REVOKED", True),
             blocked_email_domains=os.environ.get("BASILISK_BLOCKED_EMAIL_DOMAINS", ""),

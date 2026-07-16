@@ -1,7 +1,13 @@
-import { createMessage, encrypt, readKey } from "openpgp";
+import { readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
 import { runCryptoSelfTests } from "../lib/crypto-self-test.js";
 import { badgeClass } from "../lib/keys.js";
+import {
+  PROFILE_COMPATIBLE,
+  PROFILE_MODERN,
+  encryptArtifacts,
+  summarizeEncryption,
+} from "../lib/pgp/encrypt.js";
 import {
   copyText,
   escapeHtml,
@@ -51,10 +57,14 @@ const recipients = new Map();
 /** @type {File[]} */
 let files = [];
 let activeTab = "message";
-/** @type {Array<{ label: string, filename: string, armored: string }>} */
+/** @type {Array<{ label: string, filename: string, armored: string, summary?: string }>} */
 let outputs = [];
+/** Last honest encryption summary from packet re-parse */
+let lastEncryptSummary = "";
 let searchTimer = null;
 let encrypting = false;
+/** @type {"compatible"|"modern"|"custom"} */
+let encryptPreset = "compatible";
 
 /**
  * @typedef {{
@@ -172,9 +182,25 @@ function validRecipients() {
   return [...recipients.values()].filter((r) => r.valid && r.pgpKey);
 }
 
+function passphraseEnabled() {
+  return !!document.getElementById("use-passphrase")?.checked;
+}
+
+function passphraseValues() {
+  const pw = document.getElementById("msg-passphrase")?.value || "";
+  const confirm = document.getElementById("msg-passphrase-confirm")?.value || "";
+  return { pw, confirm };
+}
+
 function canEncrypt() {
   if (encrypting) return false;
-  if (!validRecipients().length) return false;
+  const keys = validRecipients();
+  const usePw = passphraseEnabled();
+  const { pw, confirm } = passphraseValues();
+  if (!keys.length && !usePw) return false;
+  if (usePw) {
+    if (!pw || pw !== confirm) return false;
+  }
   const hasMsg = !!(document.getElementById("compose-message")?.value || "").trim();
   const hasFiles = files.length > 0;
   if (!hasMsg && !hasFiles) return false;
@@ -288,9 +314,15 @@ function renderOutput() {
     return;
   }
   el.classList.remove("hidden");
+  const summaryHtml = lastEncryptSummary
+    ? `<p class="encrypt-summary muted" style="margin:0.35rem 0 0">Used: <strong>${escapeHtml(lastEncryptSummary)}</strong></p>`
+    : "";
   el.innerHTML = `
     <div class="card-title-row">
-      <p class="card-title" style="margin:0">Encrypted output</p>
+      <div>
+        <p class="card-title" style="margin:0">Encrypted output</p>
+        ${summaryHtml}
+      </div>
       <div class="btn-row">
         <button type="button" class="btn btn-ghost" id="clear-output-btn">Encrypt another</button>
       </div>
@@ -315,6 +347,94 @@ function renderOutput() {
         </div>`;
       })
       .join("")}`;
+}
+
+/**
+ * @returns {import("../lib/pgp/types.js").EncryptProfile}
+ */
+function readEncryptProfile() {
+  const cipher =
+    /** @type {"aes128"|"aes192"|"aes256"} */ (
+      document.getElementById("enc-cipher")?.value || "aes256"
+    );
+  const aeadRaw = document.getElementById("enc-aead")?.value || "off";
+  const aead =
+    aeadRaw === "off"
+      ? null
+      : /** @type {"gcm"|"ocb"|"eax"} */ (aeadRaw);
+  const compression =
+    /** @type {"uncompressed"|"zlib"|"zip"} */ (
+      document.getElementById("enc-compression")?.value || "uncompressed"
+    );
+  const s2k =
+    /** @type {"argon2"|"iterated"} */ (
+      document.getElementById("enc-s2k")?.value || "iterated"
+    );
+  return { cipher, aead, compression, s2k };
+}
+
+/**
+ * Apply a named preset to the advanced controls.
+ * @param {"compatible"|"modern"} name
+ */
+function applyPreset(name) {
+  encryptPreset = name;
+  const profile = name === "modern" ? PROFILE_MODERN : PROFILE_COMPATIBLE;
+  const cipher = document.getElementById("enc-cipher");
+  const aead = document.getElementById("enc-aead");
+  const compression = document.getElementById("enc-compression");
+  const s2k = document.getElementById("enc-s2k");
+  if (cipher) cipher.value = profile.cipher;
+  if (aead) aead.value = profile.aead || "off";
+  if (compression) compression.value = profile.compression;
+  if (s2k) s2k.value = profile.s2k;
+  updateEncryptOptionsUI();
+}
+
+function updateEncryptOptionsUI() {
+  const aead = document.getElementById("enc-aead")?.value || "off";
+  const warn = document.getElementById("aead-interop-warn");
+  if (warn) warn.classList.toggle("hidden", aead === "off");
+
+  const s2kRow = document.getElementById("s2k-row");
+  if (s2kRow) s2kRow.classList.toggle("hidden", !passphraseEnabled());
+
+  const presetRadios = document.querySelectorAll('input[name="enc-preset"]');
+  presetRadios.forEach((el) => {
+    if (el instanceof HTMLInputElement) {
+      el.checked = el.value === encryptPreset;
+    }
+  });
+
+  const hint = document.getElementById("enc-preset-hint");
+  if (hint) {
+    if (encryptPreset === "modern") {
+      hint.textContent =
+        "Requires GnuPG 2.4+ / modern clients. AEAD applies when encrypting with a passphrase, or to keys that advertise RFC 9580 SEIPDv2.";
+    } else if (encryptPreset === "custom") {
+      hint.textContent = "Custom options — verify recipients can decrypt. Output summary reflects what was actually written.";
+    } else {
+      hint.textContent = "Works with all GnuPG versions (SEIPD v1 / iterated S2K).";
+    }
+  }
+}
+
+function markCustomIfAdvancedChanged() {
+  const profile = readEncryptProfile();
+  const matchCompatible =
+    profile.cipher === PROFILE_COMPATIBLE.cipher &&
+    profile.aead === PROFILE_COMPATIBLE.aead &&
+    profile.compression === PROFILE_COMPATIBLE.compression &&
+    profile.s2k === PROFILE_COMPATIBLE.s2k;
+  const matchModern =
+    profile.cipher === PROFILE_MODERN.cipher &&
+    profile.aead === PROFILE_MODERN.aead &&
+    profile.compression === PROFILE_MODERN.compression &&
+    profile.s2k === PROFILE_MODERN.s2k;
+  if (matchCompatible) encryptPreset = "compatible";
+  else if (matchModern) encryptPreset = "modern";
+  else encryptPreset = "custom";
+  updateEncryptOptionsUI();
 }
 
 function setTab(name) {
@@ -407,6 +527,12 @@ async function runEncrypt() {
   errorEl.classList.add("hidden");
   if (!canEncrypt()) return;
   const keys = validRecipients().map((r) => r.pgpKey);
+  const usePw = passphraseEnabled();
+  const { pw, confirm } = passphraseValues();
+  if (usePw && pw !== confirm) {
+    showError(errorEl, "Passphrases do not match.");
+    return;
+  }
   const messageText = (document.getElementById("compose-message")?.value || "").trim();
   encrypting = true;
   updateEncryptButton();
@@ -416,49 +542,47 @@ async function runEncrypt() {
     status.textContent = "Encrypting…";
   }
   try {
-    /** @type {Array<{ label: string, filename: string, armored: string }>} */
-    const next = [];
+    /** @type {import("../lib/pgp/types.js").EncryptPayload[]} */
+    const payloads = [];
     if (messageText) {
-      const msg = await createMessage({ text: messageText });
-      const armored = await encrypt({
-        message: msg,
-        encryptionKeys: keys,
-        format: "armored",
-      });
-      next.push({
-        label: "Message",
-        filename: "encrypted-message.asc",
-        armored: String(armored),
-      });
+      payloads.push({ kind: "text", text: messageText });
     }
     for (const file of files) {
       const buf = new Uint8Array(await file.arrayBuffer());
-      const msg = await createMessage({ binary: buf, filename: file.name });
-      const armored = await encrypt({
-        message: msg,
-        encryptionKeys: keys,
-        format: "armored",
-      });
-      next.push({
-        label: file.name,
-        filename: `${file.name}.asc`,
-        armored: String(armored),
-      });
+      payloads.push({ kind: "file", bytes: buf, filename: file.name });
     }
+    const profile = readEncryptProfile();
+    const next = await encryptArtifacts({
+      recipients: keys,
+      passwords: usePw ? [pw] : [],
+      payloads,
+      profile,
+    });
+    lastEncryptSummary = next.length
+      ? await summarizeEncryption(next[0].armored)
+      : "";
     outputs = next;
     renderOutput();
 
-    // Clear sensitive plaintext now that it is encrypted.
+    // Clear sensitive plaintext / passphrase now that it is encrypted.
     const msgEl = document.getElementById("compose-message");
     if (msgEl) msgEl.value = "";
     files = [];
     const fileInput = document.getElementById("compose-files");
     if (fileInput) fileInput.value = "";
+    const pwEl = document.getElementById("msg-passphrase");
+    const pwConfirm = document.getElementById("msg-passphrase-confirm");
+    if (pwEl) pwEl.value = "";
+    if (pwConfirm) pwConfirm.value = "";
     renderFiles();
     updateEncryptButton();
 
+    const parts = [];
+    if (keys.length) parts.push(`${keys.length} recipient${keys.length === 1 ? "" : "s"}`);
+    if (usePw) parts.push("passphrase");
     if (status) {
-      status.textContent = `Encrypted ${next.length} artifact${next.length === 1 ? "" : "s"} for ${keys.length} recipient${keys.length === 1 ? "" : "s"}. Plaintext cleared.`;
+      const used = lastEncryptSummary ? ` · ${lastEncryptSummary}` : "";
+      status.textContent = `Encrypted ${next.length} artifact${next.length === 1 ? "" : "s"} for ${parts.join(" + ")}. Plaintext cleared.${used}`;
       status.className = "status-row ok";
     }
   } catch (err) {
@@ -472,6 +596,7 @@ async function runEncrypt() {
     updateEncryptButton();
   }
 }
+
 
 function renderApp() {
   app.innerHTML = `
@@ -506,6 +631,80 @@ function renderApp() {
       </div>
     </div>
 
+    <div class="card">
+      <p class="card-title">Passphrase (optional)</p>
+      <label class="field-label" style="display:flex;align-items:center;gap:0.5rem;font-weight:500">
+        <input type="checkbox" id="use-passphrase">
+        Protect with a shared passphrase (SKESK)
+      </label>
+      <div id="passphrase-fields" class="hidden" style="margin-top:0.75rem">
+        <label class="field-label" for="msg-passphrase">Passphrase</label>
+        <input type="password" id="msg-passphrase" class="text-input" autocomplete="new-password" placeholder="Shared secret">
+        <label class="field-label" for="msg-passphrase-confirm" style="margin-top:0.65rem">Confirm</label>
+        <input type="password" id="msg-passphrase-confirm" class="text-input" autocomplete="new-password" placeholder="Repeat passphrase">
+        <p class="muted" style="margin-top:0.5rem">Works alone or together with recipient keys — either can open the message. Cleared after encrypt.</p>
+      </div>
+    </div>
+
+    <details class="card encrypt-options" id="encrypt-options">
+      <summary class="card-title" style="cursor:pointer;list-style-position:outside">Encryption options</summary>
+      <div class="encrypt-options-body" style="margin-top:0.85rem">
+        <fieldset class="enc-preset-fieldset" style="border:none;margin:0;padding:0">
+          <legend class="field-label">Preset</legend>
+          <label class="enc-preset-option">
+            <input type="radio" name="enc-preset" value="compatible" checked>
+            <span><strong>Compatible</strong> — AES-256, SEIPD v1, iterated S2K</span>
+          </label>
+          <label class="enc-preset-option">
+            <input type="radio" name="enc-preset" value="modern">
+            <span><strong>Modern (RFC 9580)</strong> — AES-256-OCB, Argon2</span>
+          </label>
+          <p id="enc-preset-hint" class="muted" style="margin:0.4rem 0 0">Works with all GnuPG versions (SEIPD v1 / iterated S2K).</p>
+        </fieldset>
+
+        <details class="enc-advanced" style="margin-top:1rem">
+          <summary class="field-label" style="cursor:pointer">Advanced</summary>
+          <div class="enc-advanced-grid" style="margin-top:0.75rem;display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+            <div>
+              <label class="field-label" for="enc-cipher">Cipher</label>
+              <select id="enc-cipher" class="text-input">
+                <option value="aes256" selected>AES-256</option>
+                <option value="aes192">AES-192</option>
+                <option value="aes128">AES-128</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label" for="enc-aead">AEAD</label>
+              <select id="enc-aead" class="text-input">
+                <option value="off" selected>Off (SEIPD v1)</option>
+                <option value="gcm">GCM</option>
+                <option value="ocb">OCB</option>
+                <option value="eax">EAX</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label" for="enc-compression">Compression</label>
+              <select id="enc-compression" class="text-input">
+                <option value="uncompressed" selected>Off</option>
+                <option value="zlib">ZLIB</option>
+                <option value="zip">ZIP</option>
+              </select>
+            </div>
+            <div id="s2k-row" class="hidden">
+              <label class="field-label" for="enc-s2k">S2K (passphrase)</label>
+              <select id="enc-s2k" class="text-input">
+                <option value="iterated" selected>Iterated</option>
+                <option value="argon2">Argon2</option>
+              </select>
+            </div>
+          </div>
+          <p id="aead-interop-warn" class="status-row err hidden" style="margin-top:0.75rem" role="status">
+            AEAD (SEIPD v2) requires GnuPG 2.4+ or other modern OpenPGP clients. Older clients cannot decrypt.
+          </p>
+        </details>
+      </div>
+    </details>
+
     <div class="btn-row" style="margin:1rem 0">
       <button type="button" class="btn" id="encrypt-btn" disabled>Encrypt</button>
       <span id="encrypt-status" class="hidden"></span>
@@ -514,19 +713,23 @@ function renderApp() {
     <div id="compose-output" class="card compose-output hidden"></div>
 
     <p class="muted" style="margin-top:1.5rem">
-      Encrypt-only — no signing. Recipients decrypt with their private keys
+      Encrypt-only — no signing. Recipients decrypt with their private keys or the shared passphrase
       (<code>gpg --decrypt file.asc</code>).
     </p>
   `;
 
   renderPills();
   renderFiles();
+  applyPreset("compatible");
   updateEncryptButton();
 }
 
 function wireEvents() {
   app.addEventListener("input", (e) => {
     if (e.target && e.target.id === "compose-message") updateEncryptButton();
+    if (e.target && (e.target.id === "msg-passphrase" || e.target.id === "msg-passphrase-confirm")) {
+      updateEncryptButton();
+    }
     if (e.target && e.target.id === "recipient-search") {
       const q = e.target.value.trim();
       clearTimeout(searchTimer);
@@ -542,6 +745,28 @@ function wireEvents() {
           renderDropdown([]);
         }
       }, 250);
+    }
+  });
+
+  app.addEventListener("change", (e) => {
+    if (e.target && e.target.id === "use-passphrase") {
+      const fields = document.getElementById("passphrase-fields");
+      if (fields) fields.classList.toggle("hidden", !e.target.checked);
+      updateEncryptButton();
+      updateEncryptOptionsUI();
+    }
+    if (e.target && e.target.name === "enc-preset") {
+      const val = e.target.value;
+      if (val === "compatible" || val === "modern") applyPreset(val);
+    }
+    if (
+      e.target &&
+      (e.target.id === "enc-cipher" ||
+        e.target.id === "enc-aead" ||
+        e.target.id === "enc-compression" ||
+        e.target.id === "enc-s2k")
+    ) {
+      markCustomIfAdvancedChanged();
     }
   });
 
@@ -582,6 +807,7 @@ function wireEvents() {
 
     if (t.id === "clear-output-btn") {
       outputs = [];
+      lastEncryptSummary = "";
       renderOutput();
       const status = document.getElementById("encrypt-status");
       if (status) {

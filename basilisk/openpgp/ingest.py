@@ -69,6 +69,19 @@ def parse_armored_keytext(
         raise IngestError(f"Invalid OpenPGP data: {exc}", 422) from exc
 
     fpr = normalize_fingerprint(cert.fingerprint)
+
+    # Hagrid-style: drop third-party certifications before storage (flooding defense).
+    from basilisk.openpgp.packets import strip_third_party_from_armored
+
+    cleaned = strip_third_party_from_armored(data, fpr)
+    if cleaned != data:
+        data = cleaned
+        try:
+            cert = Cert.from_bytes(data)
+        except Exception as exc:
+            raise IngestError(f"Invalid OpenPGP data after signature strip: {exc}", 422) from exc
+        fpr = normalize_fingerprint(cert.fingerprint)
+
     uids = [uid_string(u) for u in cert.user_ids]
     parsed = ParsedCert(
         fingerprint=fpr,

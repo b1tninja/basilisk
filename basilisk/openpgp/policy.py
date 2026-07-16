@@ -34,6 +34,7 @@ class PolicyConfig:
     max_armored_bytes: int
     max_uids: int
     max_subkey_blocks: int
+    max_packets: int
     require_email_uid: bool
     reject_revoked: bool
     blocked_domains: frozenset[str]
@@ -50,6 +51,7 @@ class PolicyConfig:
             max_armored_bytes=settings.max_upload_bytes,
             max_uids=settings.max_uids,
             max_subkey_blocks=settings.max_subkey_blocks,
+            max_packets=settings.max_packets,
             require_email_uid=settings.require_email_uid,
             reject_revoked=settings.reject_revoked_keys,
             blocked_domains=DEFAULT_BLOCKED_DOMAINS | extra,
@@ -138,6 +140,15 @@ def validate_cert_policy(parsed: ParsedCert, path: IngestPath, *, config: Policy
     uids = parsed.uids
     if len(uids) > config.max_uids:
         raise IngestError(f"Too many user IDs (max {config.max_uids})", 422)
+
+    from basilisk.openpgp.packets import count_packets, dearmor
+
+    try:
+        n_packets = count_packets(dearmor(parsed.armored))
+    except Exception as exc:
+        raise IngestError(f"Malformed OpenPGP packet stream: {exc}", 422) from exc
+    if n_packets > config.max_packets:
+        raise IngestError(f"Too many packets in certificate (max {config.max_packets})", 422)
 
     subkey_blocks = keytext.count("-----BEGIN PGP PUBLIC SUBKEY BLOCK-----")
     if subkey_blocks > config.max_subkey_blocks:

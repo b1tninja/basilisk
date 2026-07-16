@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import re
 
 
 def dearmor(data: bytes) -> bytes:
@@ -89,6 +88,135 @@ def _read_packet(data: bytes, offset: int) -> tuple[int, int, bytes, int] | None
     return tag, hdr - offset, body, hdr + length
 
 
+def iter_packets(binary: bytes) -> list[tuple[int, int, bytes, int, int]]:
+    """Return list of (tag, header_len, body, start, end) for each packet."""
+    out: list[tuple[int, int, bytes, int, int]] = []
+    offset = 0
+    while True:
+        pkt = _read_packet(binary, offset)
+        if pkt is None:
+            break
+        tag, hdr_len, body, nxt = pkt
+        out.append((tag, hdr_len, body, offset, nxt))
+        offset = nxt
+    return out
+
+
+def count_packets(binary: bytes) -> int:
+    return len(iter_packets(binary))
+
+
+def _iter_subpackets(data: bytes) -> list[tuple[int, bytes]]:
+    """Parse OpenPGP signature subpacket area → [(type, body), ...]."""
+    packets: list[tuple[int, bytes]] = []
+    i = 0
+    while i < len(data):
+        if data[i] < 192:
+            length = data[i]
+            i += 1
+        elif data[i] < 255:
+            if i + 1 >= len(data):
+                break
+            length = ((data[i] - 192) << 8) + data[i + 1] + 192
+            i += 2
+        else:
+            if i + 4 >= len(data):
+                break
+            length = int.from_bytes(data[i + 1 : i + 5], "big")
+            i += 5
+        if length < 1 or i + length > len(data):
+            break
+        chunk = data[i : i + length]
+        i += length
+        # Critical bit is high bit of type; mask it off.
+        stype = chunk[0] & 0x7F
+        packets.append((stype, chunk[1:]))
+    return packets
+
+
+def _signature_issuer(body: bytes) -> str | None:
+    """Return issuer fingerprint or key ID (hex uppercase), or None."""
+    if not body:
+        return None
+    version = body[0]
+    if version == 3:
+        # v3: version, type, created(4), keyid(8), ...
+        if len(body) < 14:
+            return None
+        return body[6:14].hex().upper()
+    if version not in (4, 5, 6):
+        return None
+    if len(body) < 6:
+        return None
+    # v4/v6: version, type, pk_algo, hash_algo, hashed_len, hashed, unhashed_len, unhashed
+    pos = 4
+    if version == 6:
+        if len(body) < 8:
+            return None
+        hashed_len = int.from_bytes(body[pos : pos + 4], "big")
+        pos += 4
+    else:
+        hashed_len = int.from_bytes(body[pos : pos + 2], "big")
+        pos += 2
+    if pos + hashed_len > len(body):
+        return None
+    hashed = body[pos : pos + hashed_len]
+    pos += hashed_len
+    if version == 6:
+        if pos + 4 > len(body):
+            return None
+        unhashed_len = int.from_bytes(body[pos : pos + 4], "big")
+        pos += 4
+    else:
+        if pos + 2 > len(body):
+            return None
+        unhashed_len = int.from_bytes(body[pos : pos + 2], "big")
+        pos += 2
+    unhashed = body[pos : pos + unhashed_len] if pos + unhashed_len <= len(body) else b""
+
+    fingerprint: str | None = None
+    key_id: str | None = None
+    for stype, sbody in _iter_subpackets(hashed) + _iter_subpackets(unhashed):
+        if stype == 33 and len(sbody) >= 21:
+            # Issuer Fingerprint: 1 byte key version + fingerprint
+            fingerprint = sbody[1:].hex().upper()
+        elif stype == 16 and len(sbody) >= 8:
+            key_id = sbody[:8].hex().upper()
+    return fingerprint or key_id
+
+
+def _issuer_is_self(issuer: str | None, primary_fingerprint: str) -> bool:
+    if not issuer:
+        return False
+    fpr = primary_fingerprint.upper().replace(" ", "").removeprefix("0X")
+    iss = issuer.upper().replace(" ", "")
+    if iss == fpr:
+        return True
+    # Key ID is trailing 16 hex chars (8 bytes) of v4 fingerprint.
+    if len(iss) == 16 and fpr.endswith(iss):
+        return True
+    if len(iss) == 8 and fpr.endswith(iss):
+        return True
+    return False
+
+
+def strip_third_party_sigs(binary: bytes, primary_fingerprint: str) -> bytes:
+    """Keep only signatures whose issuer matches the primary key (Hagrid-style).
+
+    Drops third-party certifications used for certificate-flooding attacks.
+    Signatures with no identifiable issuer are also dropped (fail closed).
+    """
+    out = bytearray()
+    for tag, _hdr_len, body, start, end in iter_packets(binary):
+        raw = binary[start:end]
+        if tag == 2:
+            issuer = _signature_issuer(body)
+            if not _issuer_is_self(issuer, primary_fingerprint):
+                continue
+        out.extend(raw)
+    return bytes(out)
+
+
 # Tags: 2=Signature, 6=Public-Key, 13=User ID, 14=Public-Subkey, 17=User Attribute
 _SKIP_WITH_SIGS = {13, 17}
 _STOP_SKIP = {6, 14, 13, 17}
@@ -129,5 +257,17 @@ def strip_uids_from_armored(armored: bytes) -> bytes:
         if not stripped:
             return armored
         return armor_public_key(stripped)
+    except Exception:
+        return armored
+
+
+def strip_third_party_from_armored(armored: bytes, primary_fingerprint: str) -> bytes:
+    """Strip third-party signatures from armored public key; return armored bytes."""
+    try:
+        binary = dearmor(armored)
+        cleaned = strip_third_party_sigs(binary, primary_fingerprint)
+        if not cleaned:
+            return armored
+        return armor_public_key(cleaned)
     except Exception:
         return armored
