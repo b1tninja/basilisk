@@ -38,5 +38,6 @@ cp "${OUT}/index.html" "${OUT}/search"
 cp "${OUT}/my-keys.html" "${OUT}/my-keys"
 cp "${OUT}/key.html" "${OUT}/key"
 cp "${OUT}/stats.html" "${OUT}/stats"
+cp "${OUT}/compose.html" "${OUT}/compose"
 
 echo "$OUT"

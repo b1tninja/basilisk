@@ -17,6 +17,7 @@ export default defineConfig({
         myKeys: resolve(__dirname, "my-keys.html"),
         key: resolve(__dirname, "key.html"),
         stats: resolve(__dirname, "stats.html"),
+        compose: resolve(__dirname, "compose.html"),
       },
     },
   },

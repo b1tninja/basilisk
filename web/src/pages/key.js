@@ -287,6 +287,11 @@ async function loadKey() {
             <p style="margin-top:0.5rem">${statusBadge}</p>
           </div>
           <div class="btn-row">
+            ${
+              record.revoked
+                ? ""
+                : `<a class="btn btn-compose" href="/compose?fpr=${encodeURIComponent(fpRaw)}" title="Encrypt a message or file to this key">Encrypt</a>`
+            }
             ${copyButton("Copy link", pageUrl, "copy-page-link")}
             ${copyButton("Copy fingerprint", fpRaw, "copy-fingerprint")}
           </div>

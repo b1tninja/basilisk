@@ -14,6 +14,7 @@ _STATIC_PAGES = {
     "key": "key.html",
     "stats": "stats.html",
     "search": "index.html",
+    "compose": "compose.html",
 }
 
 
