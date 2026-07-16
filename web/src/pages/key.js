@@ -201,6 +201,7 @@ async function loadKey() {
 
     let algo = "—";
     let created = "—";
+    let pgpExpiry = null;
     if (pgpKey) {
       try {
         algo = formatAlgo(await pgpKey.getAlgorithmInfo());
@@ -212,11 +213,17 @@ async function loadKey() {
       } catch (_) {
         /* ignore */
       }
+      try {
+        const exp = await pgpKey.getExpirationTime();
+        if (exp && exp !== Infinity) pgpExpiry = exp;
+      } catch (_) {
+        /* ignore */
+      }
     }
 
-    const expiry = record.key_expiration
-      ? formatDate(record.key_expiration)
-      : "Does not expire";
+    // Prefer DB value (set at ingest); fall back to OpenPGP.js for legacy rows.
+    const expirySource = record.key_expiration || pgpExpiry;
+    const expiry = expirySource ? formatDate(expirySource) : "Does not expire";
     const statusBadge = record.revoked
       ? `<span class="badge">revoked</span>`
       : `<span class="${badgeClass(record.approval_state)}">${escapeHtml(record.approval_state)}</span>`;
@@ -238,7 +245,7 @@ async function loadKey() {
           ${metaRow("Key ID", `<code>${escapeHtml(record.key_id)}</code>`)}
           ${metaRow("Algorithm", escapeHtml(algo))}
           ${metaRow("Created", escapeHtml(created))}
-          ${metaRow("Expires", escapeHtml(expiry))}
+          ${metaRow("Primary expires", escapeHtml(expiry))}
           ${metaRow("Revoked", escapeHtml(record.revoked ? "Yes" : "No"))}
           ${record.claimer_email ? metaRow("Claimed by", escapeHtml(record.claimer_email)) : ""}
         </dl>

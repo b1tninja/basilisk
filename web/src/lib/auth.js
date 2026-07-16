@@ -17,9 +17,13 @@ const ICON_GOOGLE = `<svg class="provider-icon" xmlns="http://www.w3.org/2000/sv
 let _user = undefined;
 let _providers = undefined;
 
+function currentPathWithQuery() {
+  return window.location.pathname + window.location.search || "/";
+}
+
 function postLoginRedirect(redirectUrl) {
   if (redirectUrl && /^https?:\/\//i.test(redirectUrl)) return redirectUrl;
-  const path = redirectUrl || window.location.pathname + window.location.search || "/";
+  const path = redirectUrl || currentPathWithQuery();
   return new URL(path, window.location.origin).href;
 }
 
@@ -105,7 +109,7 @@ async function initWidget(container, redirectUrl) {
   if (!container) return;
   const [user, providers] = await Promise.all([getUser(), getProviders()]);
   if (!user || !user.authenticated) {
-    const menu = signInMenu(redirectUrl || window.location.pathname, providers);
+    const menu = signInMenu(redirectUrl || currentPathWithQuery(), providers);
     if (menu.includes("sign-in-menu")) {
       container.innerHTML = `
       <div class="sign-in-trigger">
