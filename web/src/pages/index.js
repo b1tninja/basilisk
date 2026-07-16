@@ -1,6 +1,10 @@
 import { Auth } from "../lib/auth.js";
 import { fetchJson, queryParam, showError } from "../lib/utils.js";
 import { renderKeysTable } from "../lib/keys.js";
+import {
+  renderSearchHelpSnippets,
+  wireSnippetCopy,
+} from "../lib/snippets.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"));
@@ -9,6 +13,12 @@ const form = document.getElementById("search-form");
 const input = document.getElementById("q");
 const results = document.getElementById("results");
 const error = document.getElementById("error");
+const help = document.getElementById("cli-help");
+
+if (help) {
+  help.innerHTML = renderSearchHelpSnippets();
+  wireSnippetCopy(help);
+}
 
 async function runSearch(query) {
   error.classList.add("hidden");

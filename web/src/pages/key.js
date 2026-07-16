@@ -1,6 +1,8 @@
 import { readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
 import {
+  copyText,
+  describeExpiry,
   escapeHtml,
   extractEmail,
   fetchJson,
@@ -8,9 +10,15 @@ import {
   formatDate,
   formatFingerprint,
   queryParam,
+  searchUrl,
   showError,
+  uidWithSearchLinks,
 } from "../lib/utils.js";
 import { badgeClass } from "../lib/keys.js";
+import {
+  renderKeyClientSnippets,
+  wireSnippetCopy,
+} from "../lib/snippets.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"));
@@ -22,6 +30,10 @@ const loading = document.getElementById("loading");
 
 function metaRow(label, valueHtml) {
   return `<div class="key-meta-row"><dt>${escapeHtml(label)}</dt><dd>${valueHtml}</dd></div>`;
+}
+
+function copyButton(label, value, id) {
+  return `<button type="button" class="btn btn-ghost btn-compact" data-copy="${escapeHtml(value)}" id="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
 }
 
 function formatAlgo(info) {
@@ -62,13 +74,11 @@ function renderUids(record) {
   if (!items.length) return `<p class="muted">No user IDs available.</p>`;
   return `<ul class="uid-list">${items
     .map(({ uid, state }) => {
-      const email = extractEmail(uid);
       return `<li>
         <div class="uid-main">
           <span class="${badgeClass(state)}">${escapeHtml(state)}</span>
-          <span>${escapeHtml(uid)}</span>
+          <span class="uid-text">${uidWithSearchLinks(uid)}</span>
         </div>
-        ${email ? `<div class="uid-email muted">${escapeHtml(email)}</div>` : ""}
       </li>`;
     })
     .join("")}</ul>`;
@@ -97,7 +107,14 @@ async function renderSubkeys(pgpKey) {
     }
     try {
       const exp = await sub.getExpirationTime();
-      expires = exp === Infinity || exp == null ? "Does not expire" : formatDate(exp);
+      if (exp === Infinity || exp == null) {
+        expires = "Does not expire";
+      } else {
+        const info = describeExpiry(exp);
+        expires = info.relative
+          ? `${escapeHtml(info.absolute)} <span class="expiry-badge ${info.tone}">${escapeHtml(info.relative)}</span>`
+          : escapeHtml(info.absolute);
+      }
     } catch (_) {
       /* ignore */
     }
@@ -112,7 +129,7 @@ async function renderSubkeys(pgpKey) {
       <td>${escapeHtml(algo)}</td>
       <td>${usageTags(keyPacket)}</td>
       <td>${escapeHtml(created)}</td>
-      <td>${escapeHtml(expires)}</td>
+      <td>${expires}</td>
     </tr>`);
   }
   return `<table class="key-table"><thead><tr>
@@ -141,9 +158,15 @@ async function maybeClaimNotice(record) {
   if (record.approval_state !== "pending") return "";
   const user = await Auth.getUser();
   if (!user || !user.authenticated) {
+    const providers = await Auth.getProviders();
+    const buttons = Auth.providerButtons(
+      window.location.pathname + window.location.search,
+      providers
+    );
     return `<div class="card claim-notice">
       <p class="card-title">Claim this key</p>
-      <p class="muted">Sign in with an email that matches a UID on this key to claim ownership.</p>
+      <p class="muted" style="margin-bottom:1rem">Sign in with an email that matches a UID on this key to claim ownership.</p>
+      ${buttons || ""}
     </div>`;
   }
   const email = (user.email || "").toLowerCase();
@@ -223,36 +246,79 @@ async function loadKey() {
 
     // Prefer DB value (set at ingest); fall back to OpenPGP.js for legacy rows.
     const expirySource = record.key_expiration || pgpExpiry;
-    const expiry = expirySource ? formatDate(expirySource) : "Does not expire";
+    const expiryInfo = describeExpiry(expirySource);
+    const expiryHtml = expiryInfo.relative
+      ? `${escapeHtml(expiryInfo.absolute)} <span class="expiry-badge ${expiryInfo.tone}">${escapeHtml(expiryInfo.relative)}</span>`
+      : escapeHtml(expiryInfo.absolute);
+
     const statusBadge = record.revoked
-      ? `<span class="badge">revoked</span>`
+      ? `<span class="badge revoked">revoked</span>`
       : `<span class="${badgeClass(record.approval_state)}">${escapeHtml(record.approval_state)}</span>`;
+
+    const revokedBanner = record.revoked
+      ? `<div class="card revoked-notice">
+          <p class="card-title">This key is revoked</p>
+          <p class="muted" style="margin:0">Do not use it for encryption or trust decisions. Fetch the revocation with GnuPG if you need the certificate update.</p>
+        </div>`
+      : "";
 
     const claimHtml = await maybeClaimNotice(record);
     const subkeysHtml = await renderSubkeys(pgpKey);
+    const clientSnippets = renderKeyClientSnippets({
+      fingerprint: record.fingerprint,
+      keyId: record.key_id,
+      approved: record.approval_state === "approved" && !record.revoked,
+    });
+
+    const fpDisplay = formatFingerprint(record.fingerprint);
+    const fpRaw = String(record.fingerprint || "").toUpperCase();
+    const keyId = String(record.key_id || "");
+    const pageUrl = `${window.location.origin}/key?fpr=${encodeURIComponent(fpRaw)}`;
+    const claimerHtml = record.claimer_email
+      ? `<a class="text-link" href="${escapeHtml(searchUrl(record.claimer_email))}" title="Search for this email">${escapeHtml(record.claimer_email)}</a>`
+      : "";
 
     content.innerHTML = `
       <div class="page-header">
-        <h1>OpenPGP key</h1>
-        <p class="muted fpr">${escapeHtml(formatFingerprint(record.fingerprint))}</p>
-        <p style="margin-top:0.5rem">${statusBadge}</p>
+        <div class="page-header-row">
+          <div>
+            <h1>OpenPGP key</h1>
+            <p class="muted fpr">${escapeHtml(fpDisplay)}</p>
+            <p style="margin-top:0.5rem">${statusBadge}</p>
+          </div>
+          <div class="btn-row">
+            ${copyButton("Copy link", pageUrl, "copy-page-link")}
+            ${copyButton("Copy fingerprint", fpRaw, "copy-fingerprint")}
+          </div>
+        </div>
       </div>
+
+      ${revokedBanner}
 
       <div class="card">
         <p class="card-title">Key information</p>
         <dl class="key-meta-grid">
-          ${metaRow("Fingerprint", `<code class="fpr">${escapeHtml(formatFingerprint(record.fingerprint))}</code>`)}
-          ${metaRow("Key ID", `<code>${escapeHtml(record.key_id)}</code>`)}
+          ${metaRow(
+            "Fingerprint",
+            `<span class="meta-with-action"><code class="fpr">${escapeHtml(fpDisplay)}</code>${copyButton("Copy", fpRaw, "copy-fpr-meta")}</span>`
+          )}
+          ${metaRow(
+            "Key ID",
+            `<span class="meta-with-action"><a class="text-link" href="${escapeHtml(searchUrl(`0x${keyId}`))}" title="Search by key ID"><code>${escapeHtml(keyId)}</code></a>${copyButton("Copy", keyId, "copy-keyid")}</span>`
+          )}
           ${metaRow("Algorithm", escapeHtml(algo))}
           ${metaRow("Created", escapeHtml(created))}
-          ${metaRow("Primary expires", escapeHtml(expiry))}
+          ${metaRow("Primary expires", expiryHtml)}
           ${metaRow("Revoked", escapeHtml(record.revoked ? "Yes" : "No"))}
-          ${record.claimer_email ? metaRow("Claimed by", escapeHtml(record.claimer_email)) : ""}
+          ${claimerHtml ? metaRow("Claimed by", claimerHtml) : ""}
         </dl>
       </div>
 
       <div class="card">
-        <p class="card-title">User IDs</p>
+        <div class="card-title-row">
+          <p class="card-title" style="margin:0">User IDs</p>
+          <p class="muted" style="margin:0;font-size:0.8rem">Click a name or email to search</p>
+        </div>
         ${renderUids(record)}
       </div>
 
@@ -262,6 +328,7 @@ async function loadKey() {
       </div>
 
       ${claimHtml}
+      ${clientSnippets}
       ${renderArmored(armored, record.fingerprint)}
       <p><a class="text-link" href="/">← Back to search</a></p>
     `;
@@ -269,20 +336,26 @@ async function loadKey() {
     loading.classList.add("hidden");
     content.classList.remove("hidden");
 
-    const copyBtn = document.getElementById("copy-armored");
-    if (copyBtn && armored) {
-      copyBtn.addEventListener("click", async () => {
+    wireSnippetCopy(content);
+
+    const copyArmored = document.getElementById("copy-armored");
+    if (copyArmored && armored) {
+      copyArmored.addEventListener("click", async () => {
         try {
-          await navigator.clipboard.writeText(armored);
-          copyBtn.textContent = "Copied";
+          await copyText(armored);
+          copyArmored.textContent = "Copied";
           setTimeout(() => {
-            copyBtn.textContent = "Copy";
+            copyArmored.textContent = "Copy";
           }, 1500);
         } catch (_) {
-          copyBtn.textContent = "Failed";
+          copyArmored.textContent = "Failed";
+          setTimeout(() => {
+            copyArmored.textContent = "Copy";
+          }, 1500);
         }
       });
     }
+
     const dl = document.getElementById("download-armored");
     if (dl && armored) {
       const blob = new Blob([armored], { type: "application/pgp-keys" });

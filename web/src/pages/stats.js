@@ -44,6 +44,16 @@ async function loadStats() {
         <p class="card-title">Runtime counters</p>
         <p class="muted" style="margin:-0.5rem 0 1rem">Per-instance counters since last process start.</p>
         ${renderStatGrid(RUNTIME_STATS, stats)}
+      </div>
+      <div class="card">
+        <p class="card-title">HKP endpoints</p>
+        <ul class="help-list">
+          <li><code>GET /pks/lookup?op=get&amp;search=…</code> — fetch key</li>
+          <li><code>GET /pks/lookup?op=index&amp;search=…</code> — index (approved)</li>
+          <li><code>GET /pks/lookup?op=stats</code> — this page’s data</li>
+          <li><code>POST /pks/add</code> — <code>gpg --send-keys</code></li>
+        </ul>
+        <p class="muted" style="margin-top:0.75rem">Point GnuPG at <code>${escapeHtml(window.location.origin)}</code>.</p>
       </div>`;
     loading.classList.add("hidden");
     content.classList.remove("hidden");

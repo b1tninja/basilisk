@@ -393,6 +393,10 @@ code {
 }
 .badge.approved { background: var(--badge-approved-bg); color: var(--badge-approved-fg); }
 .badge.pending  { background: var(--badge-pending-bg);  color: var(--badge-pending-fg); }
+.badge.revoked  { background: #fff0f0; color: var(--error); }
+@media (prefers-color-scheme: dark) {
+  .badge.revoked { background: rgba(255,123,114,.12); }
+}
 
 /* ===== Code block (key display) ===== */
 pre {
@@ -518,6 +522,45 @@ pre {
   font-size: 0.8rem;
 }
 
+.uid-text {
+  word-break: break-word;
+}
+
+.uid-cell {
+  max-width: 340px;
+}
+
+.uid-cell-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0.15rem 0;
+}
+
+.uid-cell-line + .uid-cell-line {
+  margin-top: 0.35rem;
+}
+
+.page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.meta-with-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.btn-compact {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+}
+
 .usage-tag {
   display: inline-block;
   font-size: 0.68rem;
@@ -548,4 +591,70 @@ pre {
 
 .claim-notice {
   border-color: var(--brand);
+}
+
+.revoked-notice {
+  border-color: var(--error);
+}
+
+.expiry-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  padding: 0.12rem 0.45rem;
+  border-radius: 2rem;
+  vertical-align: middle;
+}
+.expiry-badge.ok { background: var(--badge-approved-bg); color: var(--badge-approved-fg); }
+.expiry-badge.warn { background: var(--badge-pending-bg); color: var(--badge-pending-fg); }
+.expiry-badge.expired { background: #fff0f0; color: var(--error); }
+@media (prefers-color-scheme: dark) {
+  .expiry-badge.expired { background: rgba(255,123,114,.12); }
+}
+
+.snippet-card .snippet-note {
+  margin: 0.85rem 0 0.35rem;
+  font-size: 0.8rem;
+}
+.snippet-card .snippet-note:first-of-type {
+  margin-top: 0;
+}
+
+.snippet-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.snippet-code {
+  flex: 1;
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.snippet-code code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  white-space: pre;
+}
+
+.help-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+.help-list li { margin: 0.35rem 0; }
+.help-list code {
+  font-size: 0.82rem;
+  color: var(--text);
 }

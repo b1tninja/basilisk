@@ -1,5 +1,11 @@
 import { Auth } from "./auth.js";
-import { escapeHtml, fetchJson } from "./utils.js";
+import {
+  escapeHtml,
+  fetchJson,
+  formatFingerprint,
+  uidWithSearchLinks,
+} from "./utils.js";
+import { renderSubmitSnippets, wireSnippetCopy } from "./snippets.js";
 
 export function badgeClass(state) {
   if (state === "approved") return "badge approved";
@@ -7,22 +13,30 @@ export function badgeClass(state) {
   return "badge";
 }
 
+function renderUidCell(item) {
+  const list = item.approved_uids || item.pending_uids || item.uids || [];
+  if (!list.length) return "—";
+  return list
+    .map((u) => `<div class="uid-cell-line">${uidWithSearchLinks(u)}</div>`)
+    .join("");
+}
+
 export function renderKeysTable(items, options = {}) {
   if (!items || !items.length) {
     return "<p class='muted'>No keys found.</p>";
   }
   const rows = items.map((item) => {
-    const uids = (item.approved_uids || item.pending_uids || item.uids || []).join(", ") || "—";
     const fp = item.fingerprint || "";
-    let actions = `<a class="text-link" href="/key?fpr=${encodeURIComponent(fp)}">View</a>`;
+    const fpHref = `/key?fpr=${encodeURIComponent(fp)}`;
+    let actions = `<a class="text-link" href="${fpHref}">View</a>`;
     if (options.showClaim && item.can_claim && item.claim_url) {
       actions += ` · <a class="text-link" href="${escapeHtml(item.claim_url)}">Claim</a>`;
     }
     return (
       `<tr>` +
-      `<td><code>${escapeHtml(fp)}</code></td>` +
+      `<td><a class="text-link fpr" href="${fpHref}">${escapeHtml(formatFingerprint(fp))}</a></td>` +
       `<td><span class="${badgeClass(item.approval_state)}">${escapeHtml(item.approval_state || "")}</span></td>` +
-      `<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(uids)}</td>` +
+      `<td class="uid-cell">${renderUidCell(item)}</td>` +
       `<td>${actions}</td>` +
       `</tr>`
     );
@@ -70,7 +84,8 @@ export function renderUploadCard(options = {}) {
       <p class="card-title">Submit a public key</p>
       <p class="muted" style="margin-bottom:1rem">${intro}</p>
       ${renderUploadForm()}
-    </div>`;
+    </div>
+    ${renderSubmitSnippets()}`;
 }
 
 export async function submitKey() {
@@ -182,4 +197,7 @@ export function wireUploadForm() {
       submitKey();
     }
   });
+
+  // Snippet copy buttons may be injected with the upload card.
+  wireSnippetCopy(document);
 }
