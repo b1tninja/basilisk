@@ -154,6 +154,36 @@ class AzureTableCertStore(CertStore):
                 out.append(record)
         return out
 
+    def list_by_name(self, name_query: str, *, limit: int = 50) -> list[CertRecord]:
+        needle = (name_query or "").casefold().strip()
+        if len(needle) < 2:
+            return []
+        out: list[CertRecord] = []
+        for entity in self._certs.list_entities():
+            if entity.get("approval_state") != "approved":
+                continue
+            record = self._record(entity)
+            for uid in record.approved_uids or []:
+                parts = parse_uid_parts(uid)
+                name = (parts.get("name") or "").casefold()
+                raw = (parts.get("raw") or "").casefold()
+                if needle in name or (not name and needle in raw):
+                    out.append(record)
+                    break
+            if len(out) >= limit:
+                break
+        return out
+
+    def list_approved(self, *, limit: int = 10_000) -> list[CertRecord]:
+        out: list[CertRecord] = []
+        for entity in self._certs.list_entities():
+            if entity.get("approval_state") != "approved":
+                continue
+            out.append(self._record(entity))
+            if len(out) >= limit:
+                break
+        return out
+
     def list_by_claimer_oid(self, oid: str) -> list[CertRecord]:
         if not oid:
             return []

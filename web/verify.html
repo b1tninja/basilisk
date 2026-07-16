@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';">
+  <title>Verify fingerprint — Basilisk</title>
+</head>
+<body>
+  <nav>
+    <a class="nav-logo" href="/">Basilisk</a>
+    <div class="nav-links">
+      <a class="nav-link" href="/">Search</a>
+      <a class="nav-link" href="/compose">Encrypt</a>
+      <a class="nav-link" href="/decrypt">Decrypt</a>
+      <a class="nav-link active" href="/verify">Verify</a>
+      <a class="nav-link" href="/my-keys">My Keys</a>
+      <a class="nav-link" href="/stats">Stats</a>
+    </div>
+    <div class="auth-widget" id="auth-widget"></div>
+  </nav>
+
+  <div class="page-header">
+    <h1>Verify fingerprint</h1>
+    <p class="muted">Scan an <code>openpgp4fpr:</code> QR or enter a fingerprint, then confirm against this keyserver. Always verify email and fingerprint — names are unverified.</p>
+  </div>
+
+  <p id="error" class="text-error hidden"></p>
+  <div id="verify-app"></div>
+
+  <script type="module" src="/src/pages/verify.js"></script>
+</body>
+</html>

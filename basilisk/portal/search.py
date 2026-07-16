@@ -33,6 +33,14 @@ def search_keys(query: str, store: CertStore, settings: Settings | None = None) 
             return {"query": query, "results": [], "reason": "pending"}
         return {"query": query, "results": [], "reason": "not_found"}
 
+    if kind == "name":
+        records = store.list_by_name(ident)
+        return {
+            "query": query,
+            "results": [key_summary(r, settings, include_uids=True) for r in records],
+            "reason": "name" if records else "not_found",
+        }
+
     record = (
         store.get_by_fingerprint(ident)
         if kind == "fingerprint"

@@ -78,6 +78,36 @@ def test_third_party_sig_packet_dropped(sample_armored):
 
 
 @pytest.mark.unit
+def test_allowlisted_third_party_sig_retained(sample_armored):
+    """A third-party signature whose issuer is in the allowlist must survive strip."""
+    parsed = parse_armored_keytext(sample_armored, path="v1")
+    binary = dearmor(parsed.armored)
+
+    allow_fpr = "AABBCCDDEEFF00112233445566778899AABBCCDD"
+    # Issuer Fingerprint subpacket (type 33): version byte + 20-byte fpr
+    fpr_bytes = bytes.fromhex(allow_fpr)
+    assert len(fpr_bytes) == 20
+    # subpacket: length=22 (1 type + 1 version + 20 fpr), type=33
+    hashed = bytes([22, 33, 4]) + fpr_bytes
+    body = bytes([4, 0x10, 1, 8])
+    body += len(hashed).to_bytes(2, "big") + hashed
+    body += (0).to_bytes(2, "big")
+    body += b"\x00" * 34
+    assert len(body) < 192
+    fake_sig = bytes([0xC2, len(body)]) + body
+    flooded = binary + fake_sig
+
+    cleaned = strip_third_party_sigs(
+        flooded, parsed.fingerprint, allowlist={allow_fpr}
+    )
+    assert fake_sig in cleaned
+
+    # Without allowlist it is stripped
+    stripped = strip_third_party_sigs(flooded, parsed.fingerprint)
+    assert fake_sig not in stripped
+
+
+@pytest.mark.unit
 def test_packet_cap_rejects_huge_cert(sample_armored, monkeypatch):
     parsed = parse_armored_keytext(sample_armored, path="v1")
     n = count_packets(dearmor(parsed.armored))

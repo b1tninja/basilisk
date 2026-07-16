@@ -28,7 +28,7 @@ def key_id_from_fingerprint(fpr: str) -> str:
 
 
 def parse_search(search: str) -> tuple[str, str]:
-    """Return (kind, normalized) where kind is email|fingerprint|keyid."""
+    """Return (kind, normalized) where kind is email|fingerprint|keyid|name."""
     s = search.strip()
     if s.lower().startswith("0x"):
         s = s[2:]
@@ -40,6 +40,9 @@ def parse_search(search: str) -> tuple[str, str]:
         raise IngestError("Short key IDs are not supported", 400)
     if "@" in s:
         return "email", s.lower()
+    # Free-text / conventional UID name (min 2 chars, must include a letter).
+    if len(s) >= 2 and re.search(r"[A-Za-z]", s):
+        return "name", s.casefold()
     raise IngestError("Unsupported search format", 404)
 
 

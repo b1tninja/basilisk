@@ -191,6 +191,34 @@ class SqliteCertStore(CertStore):
                 out.append(rec)
         return out
 
+    def list_by_name(self, name_query: str, *, limit: int = 50) -> list[CertRecord]:
+        needle = (name_query or "").casefold().strip()
+        if len(needle) < 2:
+            return []
+        out: list[CertRecord] = []
+        rows = self._conn.execute(
+            "SELECT * FROM certs WHERE approval_state='approved'"
+        ).fetchall()
+        for row in rows:
+            rec = self._row_to_record(row)
+            for uid in rec.approved_uids or []:
+                parts = parse_uid_parts(uid)
+                name = (parts.get("name") or "").casefold()
+                raw = (parts.get("raw") or "").casefold()
+                if needle in name or (not name and needle in raw):
+                    out.append(rec)
+                    break
+            if len(out) >= limit:
+                break
+        return out
+
+    def list_approved(self, *, limit: int = 10_000) -> list[CertRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM certs WHERE approval_state='approved' LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def list_by_claimer_oid(self, oid: str) -> list[CertRecord]:
         if not oid:
             return []

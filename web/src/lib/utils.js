@@ -127,28 +127,31 @@ export function searchUrl(query) {
 }
 
 /**
- * Render a UID. Only the server-provided email is linked — never the name.
- * Opaque string UIDs are escaped with no search link.
+ * Render a UID. Verified emails get a normal search link; names get an
+ * "unverified" link (searchable but clearly cautioned). Opaque string UIDs
+ * are escaped with no links (no client-side UID parsing).
  */
 export function uidWithSearchLinks(uid) {
   if (uid && typeof uid === "object") {
     const email = uid.email ? String(uid.email) : "";
     const name = uid.name ? String(uid.name).trim() : "";
     const comment = uid.comment ? String(uid.comment).trim() : "";
+    const nameHtml = name
+      ? `<a class="text-link unverified" href="${escapeHtml(searchUrl(name))}" title="Name is NOT verified — always confirm the email and fingerprint">${escapeHtml(name)}</a>`
+      : "";
+    const commentHtml = comment ? `(${escapeHtml(comment)})` : "";
     if (email) {
-      const emailLink = `<a class="text-link" href="${escapeHtml(searchUrl(email))}" title="Search for this email">${escapeHtml(email)}</a>`;
-      const prefix = [
-        name ? escapeHtml(name) : null,
-        comment ? `(${escapeHtml(comment)})` : null,
-      ]
-        .filter(Boolean)
-        .join(" ");
+      const emailLink = `<a class="text-link" href="${escapeHtml(searchUrl(email))}" title="Search for this verified email">${escapeHtml(email)}</a>`;
+      const prefix = [nameHtml || null, commentHtml || null].filter(Boolean).join(" ");
       if (prefix) return `${prefix} &lt;${emailLink}&gt;`;
-      // Prefer angle-bracket form when raw used it; otherwise bare linked email.
       if (uid.raw && String(uid.raw).includes("<")) {
         return `&lt;${emailLink}&gt;`;
       }
       return emailLink;
+    }
+    // Name-only UID: still searchable with caution styling.
+    if (nameHtml) {
+      return commentHtml ? `${nameHtml} ${commentHtml}` : nameHtml;
     }
     return escapeHtml(uid.raw || "");
   }

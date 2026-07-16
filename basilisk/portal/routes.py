@@ -50,7 +50,8 @@ def register_portal_api(app: Flask) -> None:
 
     @app.get("/api/v1/key/<fingerprint>")
     def api_key_detail(fingerprint: str) -> Response:
-        record = get_store(settings).get_by_fingerprint(fingerprint)
+        store = get_store(settings)
+        record = store.get_by_fingerprint(fingerprint)
         if not record:
             return Response(
                 json.dumps({"error": "Not found"}),
@@ -68,7 +69,25 @@ def register_portal_api(app: Flask) -> None:
             if record.approval_state == "approved"
             else [],
             "sha256": record.sha256,
+            "certifications": [],
         }
+
+        if record.approval_state == "approved" and record.blob_uri:
+            try:
+                from basilisk.hkp.handlers import get_blob_store
+                from basilisk.openpgp.certifications import (
+                    certifications_for_armored,
+                    resolve_certification_display,
+                )
+
+                armored = get_blob_store(settings).read(record.blob_uri)
+                raw_certs = certifications_for_armored(armored, record.fingerprint)
+                payload["certifications"] = resolve_certification_display(
+                    store, raw_certs
+                )
+            except Exception:
+                logger.exception("Failed to list certifications for %s", fingerprint)
+                payload["certifications"] = []
 
         # Pending UIDs / claimer email only for the authenticated claimant.
         try:
@@ -92,6 +111,55 @@ def register_portal_api(app: Flask) -> None:
             payload["pending_uids"] = []
 
         return Response(json.dumps(payload), mimetype="application/json")
+
+    @app.post("/api/v1/key/<fingerprint>/certifications")
+    def api_key_certifications(fingerprint: str) -> Response:
+        """Merge attested third-party certifications from approved issuer keys."""
+        ip = client_ip(dict(request.headers), request.remote_addr)
+        try:
+            check_upload_rate(ip)
+        except RateLimitError as exc:
+            return Response(str(exc), status=exc.status, mimetype="text/plain")
+
+        body = request.get_json(silent=True) or {}
+        armored = body.get("armored") or body.get("keytext") or ""
+        if not armored and request.data:
+            # Allow raw armored body
+            text = request.get_data(as_text=True) or ""
+            if "BEGIN PGP" in text:
+                armored = text
+        if not armored or "BEGIN PGP" not in armored:
+            return Response(
+                json.dumps({"error": "Armored public key with certifications required"}),
+                status=422,
+                mimetype="application/json",
+            )
+
+        from basilisk.hkp.handlers import get_blob_store
+        from basilisk.openpgp.certifications import merge_attested_certifications
+        from basilisk.openpgp.errors import IngestError
+
+        try:
+            result = merge_attested_certifications(
+                get_store(settings),
+                get_blob_store(settings),
+                fingerprint,
+                armored,
+            )
+        except IngestError as exc:
+            return Response(
+                json.dumps({"error": str(exc)}),
+                status=exc.status,
+                mimetype="application/json",
+            )
+        except Exception:
+            logger.exception("Certification merge failed for %s", fingerprint)
+            return Response(
+                json.dumps({"error": "Certification merge failed"}),
+                status=500,
+                mimetype="application/json",
+            )
+        return Response(json.dumps(result), mimetype="application/json")
 
     # ------------------------------------------------------------------
     # Auth status (lightweight — no DB)

@@ -19,6 +19,7 @@ export default defineConfig({
         stats: resolve(__dirname, "stats.html"),
         compose: resolve(__dirname, "compose.html"),
         decrypt: resolve(__dirname, "decrypt.html"),
+        verify: resolve(__dirname, "verify.html"),
       },
     },
   },

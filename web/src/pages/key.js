@@ -1,6 +1,7 @@
 import { readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
 import { formatAlgo } from "../lib/pgp/algos.js";
+import { openpgp4fprUri, qrSvg } from "../lib/qr.js";
 import {
   copyText,
   describeExpiry,
@@ -271,6 +272,49 @@ async function loadKey() {
       ? `<a class="text-link" href="${escapeHtml(searchUrl(record.claimer_email))}" title="Search for this email">${escapeHtml(record.claimer_email)}</a>`
       : "";
 
+    let verifyQrHtml = "";
+    try {
+      const uri = openpgp4fprUri(fpRaw);
+      const svg = qrSvg(uri, { moduleSize: 3, margin: 2 });
+      verifyQrHtml = `
+      <div class="card verify-card">
+        <div class="card-title-row">
+          <p class="card-title" style="margin:0">Out-of-band verify</p>
+          <a class="text-link" href="/verify?fpr=${encodeURIComponent(fpRaw)}">Open verifier</a>
+        </div>
+        <div class="verify-qr-row">
+          <div class="verify-qr" aria-hidden="true">${svg}</div>
+          <div>
+            <p style="margin:0 0 0.5rem">Compare this fingerprint in person or over a trusted channel.</p>
+            <p class="muted fpr" style="margin:0 0 0.65rem">${escapeHtml(fpDisplay)}</p>
+            <p class="muted" style="margin:0;font-size:0.85rem">QR encodes <code>${escapeHtml(uri)}</code> (OpenKeychain-compatible). Always confirm the email and full fingerprint — never trust a name alone.</p>
+          </div>
+        </div>
+      </div>`;
+    } catch (_) {
+      verifyQrHtml = "";
+    }
+
+    const certifications = Array.isArray(record.certifications) ? record.certifications : [];
+    const signedByHtml = certifications.length
+      ? `<div class="card">
+          <p class="card-title">Signed by</p>
+          <ul class="uid-list">${certifications
+            .map((c) => {
+              const sf = String(c.signer_fingerprint || "").toUpperCase();
+              const label = formatFingerprint(sf);
+              return `<li>
+                <div class="uid-main">
+                  <a class="text-link fpr" href="/key?fpr=${encodeURIComponent(sf)}">${escapeHtml(label)}</a>
+                  ${c.uid ? `<span class="muted">${escapeHtml(c.uid)}</span>` : ""}
+                </div>
+              </li>`;
+            })
+            .join("")}</ul>
+          <p class="muted" style="margin:0.75rem 0 0;font-size:0.85rem">Attested certifications from keys approved on this server. Still verify fingerprints out of band.</p>
+        </div>`
+      : "";
+
     content.innerHTML = `
       <div class="page-header">
         <div class="page-header-row">
@@ -312,13 +356,17 @@ async function loadKey() {
         </dl>
       </div>
 
+      ${verifyQrHtml}
+
       <div class="card">
         <div class="card-title-row">
           <p class="card-title" style="margin:0">User IDs</p>
-          <p class="muted" style="margin:0;font-size:0.8rem">Click a name or email to search</p>
+          <p class="muted" style="margin:0;font-size:0.8rem">Verified emails are solid links; names are dashed (unverified) — always confirm email and fingerprint</p>
         </div>
         ${renderUids(record)}
       </div>
+
+      ${signedByHtml}
 
       <div class="card">
         <p class="card-title">Subkeys</p>

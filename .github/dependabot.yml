@@ -1,0 +1,54 @@
+version: 2
+updates:
+  # GitHub Actions — opens PRs when pinned SHAs fall behind new releases
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions-core:
+        patterns:
+          - "actions/*"
+      actions-third-party:
+        patterns:
+          - "hashicorp/*"
+          - "azure/*"
+          - "anchore/*"
+          - "pypa/*"
+
+  # npm (frontend)
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      npm-all:
+        patterns:
+          - "*"
+
+  # Python (pip-tools lockfile)
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+
+  # Docker base images
+  - package-ecosystem: docker
+    directory: /docker/basilisk
+    schedule:
+      interval: weekly
+      day: monday
+  - package-ecosystem: docker
+    directory: /docker/gpg-tester
+    schedule:
+      interval: weekly
+      day: monday
+
+  # Terraform providers
+  - package-ecosystem: terraform
+    directory: /terraform/cloudshell
+    schedule:
+      interval: monthly

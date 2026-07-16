@@ -200,19 +200,50 @@ def _issuer_is_self(issuer: str | None, primary_fingerprint: str) -> bool:
     return False
 
 
-def strip_third_party_sigs(binary: bytes, primary_fingerprint: str) -> bytes:
-    """Keep only signatures whose issuer matches the primary key (Hagrid-style).
+def _issuer_matches_allowlist(issuer: str | None, allowlist: set[str]) -> bool:
+    """True if issuer fingerprint or key ID matches an allowlisted fingerprint/key ID."""
+    if not issuer or not allowlist:
+        return False
+    iss = issuer.upper().replace(" ", "")
+    if iss in allowlist:
+        return True
+    for item in allowlist:
+        fpr = item.upper().replace(" ", "")
+        if len(iss) == 16 and fpr.endswith(iss):
+            return True
+        if len(iss) == 8 and fpr.endswith(iss):
+            return True
+        if len(fpr) == 16 and iss.endswith(fpr):
+            return True
+    return False
 
-    Drops third-party certifications used for certificate-flooding attacks.
-    Signatures with no identifiable issuer are also dropped (fail closed).
+
+def strip_third_party_sigs(
+    binary: bytes,
+    primary_fingerprint: str,
+    *,
+    allowlist: set[str] | frozenset[str] | None = None,
+) -> bytes:
+    """Keep self-signatures and optionally allowlisted third-party certifications.
+
+    Drops third-party certifications used for certificate-flooding attacks unless
+    the issuer is in ``allowlist`` (approved keys on this server). Signatures with
+    no identifiable issuer are dropped (fail closed).
     """
+    allowed = {a.upper().replace(" ", "") for a in (allowlist or set()) if a}
     out = bytearray()
     for tag, _hdr_len, body, start, end in iter_packets(binary):
         raw = binary[start:end]
         if tag == 2:
             issuer = _signature_issuer(body)
-            if not _issuer_is_self(issuer, primary_fingerprint):
+            if _issuer_is_self(issuer, primary_fingerprint):
+                out.extend(raw)
                 continue
+            if _issuer_matches_allowlist(issuer, allowed):
+                # Prefer issuer fingerprint subpackets for allowlisted retention.
+                out.extend(raw)
+                continue
+            continue
         out.extend(raw)
     return bytes(out)
 
@@ -261,13 +292,67 @@ def strip_uids_from_armored(armored: bytes) -> bytes:
         return armored
 
 
-def strip_third_party_from_armored(armored: bytes, primary_fingerprint: str) -> bytes:
+def strip_third_party_from_armored(
+    armored: bytes,
+    primary_fingerprint: str,
+    *,
+    allowlist: set[str] | frozenset[str] | None = None,
+) -> bytes:
     """Strip third-party signatures from armored public key; return armored bytes."""
     try:
         binary = dearmor(armored)
-        cleaned = strip_third_party_sigs(binary, primary_fingerprint)
+        cleaned = strip_third_party_sigs(
+            binary, primary_fingerprint, allowlist=allowlist
+        )
         if not cleaned:
             return armored
         return armor_public_key(cleaned)
     except Exception:
         return armored
+
+
+def list_third_party_certifications(
+    binary: bytes, primary_fingerprint: str
+) -> list[dict[str, str | None]]:
+    """Return third-party certification packets (issuer + optional UID context).
+
+    Walks packets; associates signature packets with the most recent User ID.
+    """
+    out: list[dict[str, str | None]] = []
+    current_uid: str | None = None
+    for tag, _hdr_len, body, _start, _end in iter_packets(binary):
+        if tag == 13:
+            try:
+                current_uid = body.decode("utf-8", errors="replace")
+            except Exception:
+                current_uid = None
+            continue
+        if tag == 14:
+            current_uid = None
+            continue
+        if tag != 2 or not body:
+            continue
+        version = body[0]
+        if version not in (3, 4, 5, 6):
+            continue
+        # Certification signature types: 0x10–0x13
+        sig_type = body[1] if version >= 4 else (body[2] if len(body) > 2 else None)
+        if version == 3:
+            if len(body) < 3:
+                continue
+            sig_type = body[1]
+        if sig_type not in (0x10, 0x11, 0x12, 0x13):
+            continue
+        issuer = _signature_issuer(body)
+        if _issuer_is_self(issuer, primary_fingerprint):
+            continue
+        if not issuer:
+            continue
+        out.append(
+            {
+                "signer_fingerprint": issuer if len(issuer) >= 40 else None,
+                "signer_key_id": issuer if len(issuer) < 40 else issuer[-16:],
+                "uid": current_uid,
+            }
+        )
+    return out

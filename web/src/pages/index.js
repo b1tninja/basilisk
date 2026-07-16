@@ -21,9 +21,21 @@ if (help) {
   wireSnippetCopy(help);
 }
 
+function isNameQuery(q) {
+  const s = q.trim();
+  if (!s || s.includes("@")) return false;
+  if (s.toLowerCase().startsWith("0x")) return false;
+  const hex = s.replace(/\s+/g, "");
+  if (/^[0-9a-fA-F]{8}$/.test(hex) || /^[0-9a-fA-F]{16}$/.test(hex) || /^[0-9a-fA-F]{40}$/.test(hex)) {
+    return false;
+  }
+  // At least one letter — treat as a name / free-text UID search.
+  return /[a-zA-Z]/.test(s);
+}
+
 function validateQuery(q) {
   const s = q.trim();
-  if (!s) return { ok: false, message: "Enter an email, fingerprint, or 16-character key ID." };
+  if (!s) return { ok: false, message: "Enter an email, name, fingerprint, or 16-character key ID." };
   if (s.toLowerCase().startsWith("0x")) {
     const hex = s.slice(2).replace(/\s+/g, "");
     if (/^[0-9a-fA-F]{8}$/.test(hex)) {
@@ -40,9 +52,15 @@ function validateQuery(q) {
   if (/^[0-9a-fA-F]{8}$/.test(hex)) {
     return { ok: false, message: "Short (8-character) key IDs are not supported." };
   }
+  if (isNameQuery(s)) {
+    if (s.length < 2) {
+      return { ok: false, message: "Name search requires at least 2 characters." };
+    }
+    return { ok: true, nameSearch: true };
+  }
   return {
     ok: false,
-    message: "Search by email address, 40-character fingerprint, or 16-character key ID. Name search is not supported.",
+    message: "Search by email, name, 40-character fingerprint, or 16-character key ID.",
   };
 }
 
@@ -84,7 +102,11 @@ async function runSearch(query) {
       results.innerHTML = `<p class="muted">${reasonMessage(payload, query.trim())}</p>`;
       return;
     }
-    results.innerHTML = renderKeysTable(payload.results);
+    const caution =
+      v.nameSearch || payload.reason === "name"
+        ? `<p class="name-search-caution" role="status"><strong>Names are unverified.</strong> Match keys by verified email and confirm the full fingerprint out of band before trusting a key.</p>`
+        : "";
+    results.innerHTML = caution + renderKeysTable(payload.results);
   } catch (err) {
     results.innerHTML = "";
     showError(error, err.message);

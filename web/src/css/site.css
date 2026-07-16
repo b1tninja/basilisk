@@ -447,6 +447,71 @@ pre {
 .page-header { margin-bottom: 1.5rem; }
 .text-link { color: var(--brand); text-decoration: none; }
 .text-link:hover { text-decoration: underline; }
+.text-link.unverified {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-underline-offset: 2px;
+}
+.text-link.unverified:hover {
+  color: var(--text);
+  text-decoration-style: dashed;
+}
+
+.name-search-caution {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid color-mix(in srgb, #d4a017 45%, var(--border));
+  background: color-mix(in srgb, #d4a017 10%, var(--surface));
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.verify-qr-row {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+.verify-qr {
+  flex: 0 0 auto;
+  padding: 0.5rem;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  line-height: 0;
+}
+.verify-qr svg {
+  display: block;
+  max-width: 180px;
+  height: auto;
+}
+
+.verify-result {
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.verify-result.pass {
+  border-color: color-mix(in srgb, var(--ok, #2f9e44) 50%, var(--border));
+  background: color-mix(in srgb, var(--ok, #2f9e44) 12%, var(--surface));
+}
+.verify-result.fail {
+  border-color: color-mix(in srgb, var(--error) 50%, var(--border));
+  background: color-mix(in srgb, var(--error) 10%, var(--surface));
+}
+.verify-camera {
+  width: 100%;
+  max-width: 420px;
+  background: #000;
+  border-radius: var(--radius-sm);
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
 
 .status-row {
   display: flex;

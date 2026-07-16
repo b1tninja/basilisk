@@ -16,6 +16,7 @@ _STATIC_PAGES = {
     "search": "index.html",
     "compose": "compose.html",
     "decrypt": "decrypt.html",
+    "verify": "verify.html",
 }
 
 
