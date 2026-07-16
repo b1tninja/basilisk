@@ -10,18 +10,28 @@ def search_keys(query: str, store: CertStore, settings: Settings | None = None) 
     settings = settings or get_settings()
     query = query.strip()
     if not query:
-        return {"query": query, "results": []}
+        return {"query": query, "results": [], "reason": "empty"}
 
     try:
         kind, ident = parse_search(query)
-    except IngestError:
-        return {"query": query, "results": []}
+    except IngestError as exc:
+        reason = "invalid_query"
+        if "Short key" in str(exc):
+            reason = "short_keyid"
+        return {"query": query, "results": [], "reason": reason, "error": str(exc)}
 
     if kind == "email":
-        record = store.get_by_email(ident)
-        if not record:
-            return {"query": query, "results": []}
-        return {"query": query, "results": [key_summary(record, settings)]}
+        records = store.list_by_email(ident)
+        approved = [r for r in records if r.approval_state == "approved"]
+        if approved:
+            return {
+                "query": query,
+                "results": [key_summary(r, settings, include_uids=True) for r in approved],
+                "reason": "ok",
+            }
+        if records:
+            return {"query": query, "results": [], "reason": "pending"}
+        return {"query": query, "results": [], "reason": "not_found"}
 
     record = (
         store.get_by_fingerprint(ident)
@@ -29,10 +39,19 @@ def search_keys(query: str, store: CertStore, settings: Settings | None = None) 
         else store.get_by_identifier(ident)
     )
     if not record:
-        return {"query": query, "results": []}
+        return {"query": query, "results": [], "reason": "not_found"}
 
-    if record.approval_state != "approved" and kind == "email":
-        return {"query": query, "results": []}
+    if record.approval_state != "approved":
+        return {
+            "query": query,
+            "results": [],
+            "reason": "pending",
+            # Fingerprint hits can still deep-link to the key page.
+            "fingerprint": record.fingerprint,
+        }
 
-    include_uids = record.approval_state == "approved"
-    return {"query": query, "results": [key_summary(record, settings, include_uids=include_uids)]}
+    return {
+        "query": query,
+        "results": [key_summary(record, settings, include_uids=True)],
+        "reason": "ok",
+    }

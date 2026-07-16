@@ -84,21 +84,11 @@ def parse_armored_keytext(
 
 
 def strip_uids_for_pending(armored: bytes) -> bytes:
-    """Return armored key with uid packets removed (Hagrid-style 0 UID pre-approve)."""
-    text = armored.decode("utf-8", errors="replace")
-    lines = text.splitlines()
-    filtered = []
-    in_uid = False
-    for line in lines:
-        if line.startswith("-----BEGIN PGP USER ID BLOCK-----"):
-            in_uid = True
-            continue
-        if line.startswith("-----END PGP USER ID BLOCK-----"):
-            in_uid = False
-            continue
-        if not in_uid:
-            filtered.append(line)
-    result = "\n".join(filtered).encode("utf-8")
-    if b"BEGIN PGP PUBLIC KEY BLOCK" in result:
-        return result
-    return armored
+    """Return armored key with User ID packets removed (Hagrid-style pre-approve)."""
+    from basilisk.openpgp.packets import strip_uids_from_armored
+
+    stripped = strip_uids_from_armored(armored)
+    # Sanity: still a public key block, and no email-looking UID leftovers in armor body.
+    if b"BEGIN PGP PUBLIC KEY BLOCK" not in stripped:
+        return armored
+    return stripped

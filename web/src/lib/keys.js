@@ -30,7 +30,10 @@ export function renderKeysTable(items, options = {}) {
     const fpHref = `/key?fpr=${encodeURIComponent(fp)}`;
     let actions = `<a class="text-link" href="${fpHref}">View</a>`;
     if (options.showClaim && item.can_claim && item.claim_url) {
-      actions += ` · <a class="text-link" href="${escapeHtml(item.claim_url)}">Claim</a>`;
+      actions += ` · <a class="text-link" href="/key?fpr=${encodeURIComponent(fp)}&claim=1">Claim</a>`;
+    }
+    if (options.showDelete) {
+      actions += ` · <button type="button" class="text-link link-btn" data-delete-fpr="${escapeHtml(fp)}">Delete</button>`;
     }
     return (
       `<tr>` +
@@ -42,9 +45,9 @@ export function renderKeysTable(items, options = {}) {
     );
   });
   return (
-    `<table class="key-table"><thead><tr>` +
+    `<div class="table-scroll"><table class="key-table"><thead><tr>` +
     `<th>Fingerprint</th><th>Status</th><th>UIDs</th><th></th>` +
-    `</tr></thead><tbody>${rows.join("")}</tbody></table>`
+    `</tr></thead><tbody>${rows.join("")}</tbody></table></div>`
   );
 }
 

@@ -48,10 +48,15 @@ output "service_bus_namespace" {
   value = azurerm_servicebus_namespace.basilisk.name
 }
 
-output "token_secret" {
-  description = "HMAC secret for HKP v2 bearer tokens (also in Function App settings)."
-  value       = local.token_secret
-  sensitive   = true
+# token_secret is intentionally not exported — read from Key Vault.
+
+output "key_vault_name" {
+  value = azurerm_key_vault.basilisk.name
+}
+
+output "front_door_id" {
+  description = "Front Door profile resource GUID (X-Azure-FDID)."
+  value       = azurerm_cdn_frontdoor_profile.basilisk.resource_guid
 }
 
 output "static_website_host" {

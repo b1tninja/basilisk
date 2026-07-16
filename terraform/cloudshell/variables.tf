@@ -64,25 +64,25 @@ variable "enable_google_auth" {
 variable "oauth_authorized_domain" {
   type        = string
   description = "Root domain you own for Google OAuth consent screen (e.g. example.com). Optional."
-  default     = "b1tninja.com"
+  default     = ""
 }
 
 variable "custom_domain" {
   type        = string
-  description = "Public hostname on Front Door (e.g. keys.b1tninja.com). Leave empty to skip custom domain."
-  default     = "keys.b1tninja.com"
+  description = "Public hostname on Front Door (e.g. keys.b1tninja.com). Leave empty to skip custom domain. Set explicitly in tfvars for production."
+  default     = ""
 }
 
 variable "route53_zone_name" {
   type        = string
   description = "Route53 hosted zone for custom_domain (e.g. b1tninja.com). Ignored when route53_zone_id is set."
-  default     = "b1tninja.com"
+  default     = ""
 }
 
 variable "route53_zone_id" {
   type        = string
   description = "Route53 hosted zone ID. Set this to avoid ListHostedZones/ListTagsForResource IAM permissions."
-  default     = "Z026512234X4JPOD7PZH1"
+  default     = ""
 }
 
 variable "aws_region" {

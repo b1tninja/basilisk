@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, request
+from flask import Flask, Response, redirect, request
 
 from basilisk.auth.claim import submit_claim
 from basilisk.config import get_settings
@@ -58,6 +57,17 @@ def create_app() -> Flask:
         "form-action 'self';"
     )
 
+    @app.before_request
+    def require_front_door() -> Response | None:
+        from basilisk.security.edge import request_has_trusted_afd
+
+        # Health probes and local/dev without AFD_ID stay open.
+        if request.path == "/health":
+            return None
+        if not request_has_trusted_afd(dict(request.headers)):
+            return Response("Direct origin access is not allowed", status=403)
+        return None
+
     @app.after_request
     def security_headers(response: Response) -> Response:
         response.headers.setdefault("Content-Security-Policy", _CSP)
@@ -97,8 +107,12 @@ def create_app() -> Flask:
         blobs = get_blob_store()
         ip = client_ip(dict(request.headers), request.remote_addr)
         try:
-            check_upload_rate(ip)
             keytext = parse_add_form(request.get_data(), request.content_type)
+            # Parse first so we can rate-limit by fingerprint as well as IP.
+            from basilisk.openpgp.ingest import parse_armored_keytext
+
+            parsed = parse_armored_keytext(keytext, path="v1")
+            check_upload_rate(ip, parsed.fingerprint)
             fpr, _kid, dup = ingest_keytext(store, blobs, keytext, path="v1")
             if dup:
                 inc("duplicate_uploads")
@@ -115,7 +129,11 @@ def create_app() -> Flask:
     def dev_approve() -> Response:
         if not settings.dev_approve:
             return Response("Forbidden", status=403)
-        payload: dict[str, Any] = request.get_json(force=True, silent=True) or {}
+        payload: dict[str, Any] = request.get_json(silent=True)
+        if payload is None:
+            return Response(json.dumps({"error": "Invalid JSON body"}), status=400, mimetype="application/json")
+        if not isinstance(payload, dict):
+            return Response(json.dumps({"error": "JSON body must be an object"}), status=400, mimetype="application/json")
         fpr = payload.get("fingerprint", "")
         uids = payload.get("approved_uids")
         store = get_store()
@@ -125,9 +143,16 @@ def create_app() -> Flask:
         if not uids:
             from pysequoia import Cert
 
-            cert = Cert.from_bytes(get_blob_store().read(record.blob_uri))
             from basilisk.openpgp.ingest import uid_string
 
+            try:
+                cert = Cert.from_bytes(get_blob_store().read(record.blob_uri))
+            except Exception:
+                return Response(
+                    json.dumps({"error": "Failed to read certificate"}),
+                    status=500,
+                    mimetype="application/json",
+                )
             uids = [uid_string(u) for u in cert.user_ids]
         approve_cert(store, fpr, uids)
         return Response(json.dumps({"status": "approved", "fingerprint": fpr.upper()}), mimetype="application/json")
@@ -142,15 +167,27 @@ def create_app() -> Flask:
         if request.method == "POST":
             from pysequoia import Cert
 
-            cert = Cert.from_bytes(get_blob_store().read(record.blob_uri))
             from basilisk.openpgp.ingest import uid_string
 
+            try:
+                cert = Cert.from_bytes(get_blob_store().read(record.blob_uri))
+            except Exception:
+                return Response(
+                    json.dumps({"error": "Failed to read certificate", "ok": False}),
+                    status=500,
+                    mimetype="application/json",
+                )
             pending_uids = [uid_string(u) for u in cert.user_ids]
             ok, msg = submit_claim(fingerprint, dict(request.headers), pending_uids)
+            wants_json = "application/json" in (request.headers.get("Accept") or "")
+            if wants_json or request.is_json:
+                return Response(
+                    json.dumps({"ok": ok, "message": msg, "fingerprint": fingerprint.upper()}),
+                    status=200 if ok else 403,
+                    mimetype="application/json",
+                )
             return Response(msg, status=200 if ok else 403)
-        html_path = Path(__file__).resolve().parent / "web" / "templates" / "claim.html"
-        html = html_path.read_text(encoding="utf-8").replace("{{ fingerprint }}", fingerprint.upper())
-        return Response(html, mimetype="text/html")
+        return redirect(f"/key?fpr={fingerprint.upper()}&claim=1", code=302)
 
     from basilisk.hkp_v2.routes import register_v2
 
@@ -158,8 +195,10 @@ def create_app() -> Flask:
 
     from basilisk.portal.routes import register_portal_api
     from basilisk.portal.static import register_static_portal
+    from basilisk.portal.wkd_routes import register_wkd
 
     register_portal_api(app)
+    register_wkd(app)
     register_static_portal(app)
     return app
 

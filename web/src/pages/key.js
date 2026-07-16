@@ -180,9 +180,7 @@ async function maybeClaimNotice(record) {
   return `<div class="card claim-notice">
     <p class="card-title">Claim this key</p>
     <p class="muted" style="margin-bottom:1rem">Your email matches a UID on this key. Submit a claim to verify ownership.</p>
-    <form id="claim-form" method="post" action="/claim/${escapeHtml(record.fingerprint)}">
-      <button class="btn" type="submit">Claim key</button>
-    </form>
+    <button type="button" class="btn" id="claim-btn" data-fpr="${escapeHtml(record.fingerprint)}">Claim key</button>
     <p id="claim-status" class="hidden"></p>
   </div>`;
 }
@@ -342,6 +340,38 @@ async function loadKey() {
     content.classList.remove("hidden");
 
     wireSnippetCopy(content);
+
+    const claimBtn = document.getElementById("claim-btn");
+    if (claimBtn) {
+      claimBtn.addEventListener("click", async () => {
+        const status = document.getElementById("claim-status");
+        claimBtn.disabled = true;
+        claimBtn.textContent = "Claiming…";
+        try {
+          const r = await fetch(`/claim/${encodeURIComponent(claimBtn.dataset.fpr)}`, {
+            method: "POST",
+            credentials: "include",
+            headers: { Accept: "application/json" },
+          });
+          const data = await r.json().catch(() => ({}));
+          if (status) {
+            status.textContent = data.message || (r.ok ? "Claim submitted." : "Claim failed.");
+            status.className = r.ok ? "status-row ok" : "status-row err";
+            status.classList.remove("hidden");
+          }
+          if (r.ok) setTimeout(() => loadKey(), 800);
+        } catch (err) {
+          if (status) {
+            status.textContent = err.message || "Claim failed.";
+            status.className = "status-row err";
+            status.classList.remove("hidden");
+          }
+        } finally {
+          claimBtn.disabled = false;
+          claimBtn.textContent = "Claim key";
+        }
+      });
+    }
 
     const copyArmored = document.getElementById("copy-armored");
     if (copyArmored && armored) {

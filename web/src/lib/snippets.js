@@ -93,7 +93,7 @@ export function renderSearchHelpSnippets() {
   const origin = keyserverOrigin();
   return renderSnippetCard({
     title: "Command-line usage",
-    hint: "Basilisk speaks classic HKP. Point GnuPG at this host — no WKD endpoint yet.",
+    hint: "Basilisk speaks classic HKP and serves WKD for approved emails when your domain points here.",
     items: [
       {
         id: "snip-help-recv",
@@ -109,6 +109,11 @@ export function renderSearchHelpSnippets() {
         id: "snip-help-search",
         cmd: `gpg --keyserver ${origin} --search-keys user@example.com`,
         note: "Search by email (approved keys only)",
+      },
+      {
+        id: "snip-help-wkd",
+        cmd: `gpg --locate-keys user@example.com`,
+        note: "WKD: /.well-known/openpgpkey/… (domain DNS must point at this host)",
       },
     ],
   });

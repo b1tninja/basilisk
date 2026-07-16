@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';">
-  <title>Key — Basilisk</title>
+  <title>Decrypt — Basilisk</title>
 </head>
 <body>
   <nav>
@@ -12,17 +12,21 @@
     <div class="nav-links">
       <a class="nav-link" href="/">Search</a>
       <a class="nav-link" href="/compose">Encrypt</a>
-      <a class="nav-link" href="/decrypt">Decrypt</a>
+      <a class="nav-link active" href="/decrypt">Decrypt</a>
       <a class="nav-link" href="/my-keys">My Keys</a>
       <a class="nav-link" href="/stats">Stats</a>
     </div>
     <div class="auth-widget" id="auth-widget"></div>
   </nav>
 
-  <p id="error" class="text-error hidden"></p>
-  <p id="loading" class="muted">Loading key details…</p>
-  <div id="content" class="hidden"></div>
+  <div class="page-header">
+    <h1>Decrypt / verify</h1>
+    <p class="muted">Decrypt messages or verify signatures locally. Your private key and passphrase never leave this browser.</p>
+  </div>
 
-  <script type="module" src="/src/pages/key.js"></script>
+  <p id="error" class="text-error hidden"></p>
+  <div id="decrypt-app"></div>
+
+  <script type="module" src="/src/pages/decrypt.js"></script>
 </body>
 </html>

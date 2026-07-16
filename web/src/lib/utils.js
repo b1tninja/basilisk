@@ -98,8 +98,8 @@ export function searchUrl(query) {
 }
 
 /**
- * Render a UID with the email (or whole string) linked to search.
- * e.g. "Alice <a@b.com>" → Alice &lt;<a href="/?q=a@b.com">a@b.com</a>&gt;
+ * Render a UID with the email linked to search.
+ * Names are not linked — the search API only supports email / fingerprint / key ID.
  */
 export function uidWithSearchLinks(uid) {
   const raw = String(uid || "");
@@ -107,17 +107,12 @@ export function uidWithSearchLinks(uid) {
   if (m && m[2].includes("@")) {
     const name = m[1].trim();
     const email = m[2].trim();
-    const nameHtml = name
-      ? `<a class="text-link" href="${escapeHtml(searchUrl(name))}" title="Search for this name">${escapeHtml(name)}</a> `
-      : "";
+    const nameHtml = name ? `${escapeHtml(name)} ` : "";
     return `${nameHtml}&lt;<a class="text-link" href="${escapeHtml(searchUrl(email))}" title="Search for this email">${escapeHtml(email)}</a>&gt;`;
   }
   const email = extractEmail(raw);
   if (email) {
     return `<a class="text-link" href="${escapeHtml(searchUrl(email))}" title="Search for this email">${escapeHtml(raw)}</a>`;
-  }
-  if (raw.trim()) {
-    return `<a class="text-link" href="${escapeHtml(searchUrl(raw.trim()))}" title="Search for this user ID">${escapeHtml(raw)}</a>`;
   }
   return escapeHtml(raw);
 }

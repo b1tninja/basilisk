@@ -11,6 +11,8 @@
     <a class="nav-logo" href="/">Basilisk</a>
     <div class="nav-links">
       <a class="nav-link active" href="/">Search</a>
+      <a class="nav-link" href="/compose">Encrypt</a>
+      <a class="nav-link" href="/decrypt">Decrypt</a>
       <a class="nav-link" href="/my-keys">My Keys</a>
       <a class="nav-link" href="/stats">Stats</a>
     </div>
@@ -27,10 +29,13 @@
 
   <form id="search-form">
     <div class="search-row">
+      <label class="sr-only" for="q">Search by email, fingerprint, or key ID</label>
       <input type="search" id="q" name="q"
-             placeholder="user@example.com or 0x…" autocomplete="off" autofocus>
+             placeholder="user@example.com or 0x…" autocomplete="off" autofocus
+             aria-describedby="search-hint">
       <button class="btn" type="submit">Search</button>
     </div>
+    <p id="search-hint" class="muted" style="margin-top:0.5rem">Exact email, 40-char fingerprint, or 16-char key ID. Names are not searchable.</p>
   </form>
 
   <p id="error" class="text-error hidden"></p>

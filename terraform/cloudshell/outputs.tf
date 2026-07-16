@@ -61,10 +61,8 @@ output "tenant_id" {
 }
 
 output "github_actions_secrets" {
-  description = "Sensitive values to copy into GitHub Actions repository secrets after the first apply."
-  sensitive   = true
+  description = "Non-secret deploy identifiers. Fetch BASILISK_TOKEN_SECRET from Key Vault (never printed here)."
   value = {
-    BASILISK_TOKEN_SECRET      = module.basilisk.token_secret
     AZURE_SUBSCRIPTION_ID      = data.azurerm_client_config.current.subscription_id
     AZURE_TENANT_ID            = data.azurerm_client_config.current.tenant_id
     BASILISK_NAME_PREFIX       = var.name_prefix
@@ -73,6 +71,11 @@ output "github_actions_secrets" {
     BASILISK_FRONT_DOOR_URL    = module.basilisk.public_url
     BASILISK_STORAGE_ACCOUNT   = module.basilisk.storage_account_name
   }
+}
+
+output "key_vault_name" {
+  description = "Key Vault holding basilisk-token-secret."
+  value       = module.basilisk.key_vault_name
 }
 
 output "github_actions_setup" {

@@ -85,18 +85,27 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
     {
       AzureWebJobsStorage               = azurerm_storage_account.basilisk.primary_connection_string
       FUNCTIONS_EXTENSION_VERSION       = "~4"
-      ServiceBusConnection              = data.azurerm_servicebus_namespace_authorization_rule.root.primary_connection_string
+      ServiceBusConnection              = azurerm_servicebus_namespace_authorization_rule.function.primary_connection_string
       AZURE_STORAGE_CONNECTION_STRING   = azurerm_storage_account.basilisk.primary_connection_string
       BASILISK_CACHE_MODE               = "redirect"
       BASILISK_DEV_APPROVE              = "0"
       BASILISK_REQUIRE_MANAGER_APPROVAL = var.require_manager_approval ? "1" : "0"
-      BASILISK_TOKEN_SECRET             = local.token_secret
+      # Key Vault reference — secret value is not stored in app settings plaintext.
+      BASILISK_TOKEN_SECRET             = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.token_secret.versionless_id})"
       BASILISK_AUTH_PROVIDERS           = local.auth_providers
+      # Reject requests that bypass Front Door (must match profile GUID).
+      BASILISK_AFD_ID                   = azurerm_cdn_frontdoor_profile.basilisk.resource_guid
+      BASILISK_PENDING_TTL_DAYS         = "30"
     },
     var.enable_google_auth && var.google_client_secret != "" ? {
-      GOOGLE_PROVIDER_AUTHENTICATION_SECRET = var.google_client_secret
+      GOOGLE_PROVIDER_AUTHENTICATION_SECRET = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.google_client_secret[0].versionless_id})"
     } : {}
   )
 
   tags = var.tags
+
+  depends_on = [
+    azurerm_role_assignment.kv_function_secrets,
+    azurerm_key_vault_secret.token_secret,
+  ]
 }

@@ -10,14 +10,22 @@ Workflows run on `ubuntu-latest` using Node 24–compatible actions:
 | `hashicorp/setup-terraform` | v4 (Node 24) |
 | `actions/cache` | v5 (Node 24) |
 
+## Deploy auth
+
+1. Create a GitHub Environment named **`production`** with required reviewers.
+2. Prefer Azure OIDC: set variable `USE_AZURE_OIDC=true` and secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`.
+3. Legacy fallback: `AZURE_CREDENTIALS` (SP JSON). Set `TF_AUTO_APPROVE=true` on the environment only if you want unattended Terraform apply.
+4. Fetch `BASILISK_TOKEN_SECRET` from Key Vault with `bash scripts/export-github-secrets.sh` (value is never printed).
+
 ## Secrets
 
 Configure under **Settings → Secrets and variables → Actions**.
 
 | Secret | Required by | Purpose |
 |--------|-------------|---------|
-| `AZURE_CREDENTIALS` | `deploy.yml` | JSON service principal for `azure/login` (`clientId`, `clientSecret`, `subscriptionId`, `tenantId`). Create manually — see below. |
-| `BASILISK_TOKEN_SECRET` | `ci.yml`, `e2e.yml` | HMAC secret for HKP v2 bearer tokens in tests. **Terraform generates the production value** — copy from `export-github-secrets` after first deploy. Workflows fall back to `ci-test-secret` if unset. |
+| `AZURE_CREDENTIALS` | `deploy.yml` | JSON service principal for `azure/login` when OIDC is not enabled. |
+| `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` | `deploy.yml` | Federated OIDC login when `USE_AZURE_OIDC=true`. |
+| `BASILISK_TOKEN_SECRET` | `ci.yml`, `e2e.yml` | HMAC secret for HKP v2 tokens in tests. Production value lives in Key Vault — use `export-github-secrets.sh`. |
 
 Optional repository secrets (workflow reads Terraform state when these are omitted):
 

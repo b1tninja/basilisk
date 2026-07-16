@@ -26,6 +26,7 @@ def test_search_pending_email_hidden(sample_armored):
     ingest_keytext(store, get_blob_store(), sample_armored)
     result = search_keys("test@basilisk.local", store)
     assert result["results"] == []
+    assert result["reason"] == "pending"
 
 
 @pytest.mark.unit
@@ -33,9 +34,9 @@ def test_search_pending_by_fingerprint(sample_armored, sample_fingerprint):
     store = get_store()
     ingest_keytext(store, get_blob_store(), sample_armored)
     result = search_keys(f"0x{sample_fingerprint}", store)
-    assert len(result["results"]) == 1
-    assert result["results"][0]["approval_state"] == "pending"
-    assert result["results"][0]["uids"] == []
+    assert result["results"] == []
+    assert result["reason"] == "pending"
+    assert result.get("fingerprint") == sample_fingerprint.upper()
 
 
 @pytest.mark.unit
@@ -130,6 +131,8 @@ def test_api_key_detail(sample_armored, sample_fingerprint):
     assert "key_expiration" in payload
     assert payload["approval_state"] == "pending"
     assert payload["revoked"] is False
+    assert "claimer_email" not in payload
+    assert "pending_uids" not in payload
 
 
 @pytest.mark.integration

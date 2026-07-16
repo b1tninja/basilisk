@@ -44,9 +44,23 @@ def get_limiter() -> RateLimiter:
 
 
 def client_ip(headers: dict[str, str], remote_addr: str | None = None) -> str:
+    """
+    Resolve client IP for rate limiting.
+
+    Prefer platform-provided addresses. When X-Forwarded-For is present (Front Door),
+    use the *last* hop — the one appended by the trusted reverse proxy — rather than
+    the first (client-controlled) entry.
+    """
+    # Azure App Service / Functions often set this to the true client when behind AFD.
+    for name in ("X-Azure-ClientIP", "X-Client-IP", "x-azure-clientip", "x-client-ip"):
+        val = headers.get(name)
+        if val:
+            return val.split(",")[0].strip()
     xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
     if xff:
-        return xff.split(",")[0].strip()
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
     return remote_addr or "unknown"
 
 

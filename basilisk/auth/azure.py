@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 
 from basilisk.auth.errors import AuthError
 
@@ -12,6 +13,24 @@ def _header_value(headers: dict[str, str], name: str) -> str | None:
     return None
 
 
+def _dev_auth_bypass_enabled() -> bool:
+    """Local/dev only: allow forged Easy Auth headers when explicitly enabled."""
+    return os.environ.get("BASILISK_DEV_AUTH", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _has_trusted_edge_marker(headers: dict[str, str]) -> bool:
+    """
+    Easy Auth sets additional headers alongside X-MS-CLIENT-PRINCIPAL.
+    Require at least one so clients cannot forge a principal alone.
+    Production must also strip client-supplied copies at the edge (Front Door / Functions).
+    """
+    return bool(
+        _header_value(headers, "X-MS-CLIENT-PRINCIPAL-ID")
+        or _header_value(headers, "X-MS-CLIENT-PRINCIPAL-IDP")
+        or _header_value(headers, "X-MS-CLIENT-PRINCIPAL-NAME")
+    )
+
+
 def parse_easy_auth_headers(headers: dict[str, str]) -> dict[str, str] | None:
     """Parse Azure Easy Auth client principal header (supports AAD and Google providers)."""
     import base64
@@ -20,6 +39,10 @@ def parse_easy_auth_headers(headers: dict[str, str]) -> dict[str, str] | None:
     raw = _header_value(headers, "X-MS-CLIENT-PRINCIPAL")
     if not raw:
         return None
+
+    if not _has_trusted_edge_marker(headers) and not _dev_auth_bypass_enabled():
+        return None
+
     data = json.loads(base64.b64decode(raw))
     claims = {c["typ"]: c["val"] for c in data.get("claims", [])}
 

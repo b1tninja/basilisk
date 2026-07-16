@@ -49,4 +49,21 @@ class CertStore(Protocol):
 
     def reject(self, fingerprint: str) -> None: ...
 
+    def refresh_approved(
+        self,
+        fingerprint: str,
+        blob_uri: str,
+        sha256: str,
+        key_id: str,
+        *,
+        expiration: str | None = None,
+        revoked: bool = False,
+    ) -> None:
+        """Update blob metadata for an already-approved cert without demoting approval."""
+        ...
+
+    def list_pending_older_than(self, cutoff_iso: str) -> list[CertRecord]:
+        """Return pending certs with updated_at (or created_at) before cutoff."""
+        ...
+
     def stats(self) -> dict[str, int]: ...

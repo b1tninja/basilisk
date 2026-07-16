@@ -13,7 +13,12 @@ from basilisk.openpgp.canonical import emails_from_uids
 from basilisk.portal.me import my_keys
 from basilisk.portal.search import search_keys
 from basilisk.portal.serializers import key_summary
-from basilisk.security.rate_limit import RateLimitError, check_lookup_rate, client_ip
+from basilisk.security.rate_limit import (
+    RateLimitError,
+    check_lookup_rate,
+    check_upload_rate,
+    client_ip,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,22 +57,39 @@ def register_portal_api(app: Flask) -> None:
                 status=404,
                 mimetype="application/json",
             )
-        return Response(
-            json.dumps(
-                {
-                    "fingerprint": record.fingerprint,
-                    "key_id": record.key_id,
-                    "approval_state": record.approval_state,
-                    "revoked": record.revoked,
-                    "key_expiration": record.key_expiration,
-                    "approved_uids": record.approved_uids,
-                    "pending_uids": record.pending_uids or [],
-                    "claimer_email": record.claimer_email,
-                    "sha256": record.sha256,
-                }
-            ),
-            mimetype="application/json",
+
+        payload = {
+            "fingerprint": record.fingerprint,
+            "key_id": record.key_id,
+            "approval_state": record.approval_state,
+            "revoked": record.revoked,
+            "key_expiration": record.key_expiration,
+            "approved_uids": record.approved_uids if record.approval_state == "approved" else [],
+            "sha256": record.sha256,
+        }
+
+        # Pending UIDs / claimer email only for the authenticated claimant.
+        try:
+            principal = require_principal(dict(request.headers))
+        except AuthError:
+            principal = None
+
+        is_claimer = bool(
+            principal
+            and record.claimer_email
+            and principal["email"].lower() == record.claimer_email.lower()
         )
+        if is_claimer or (principal and record.approval_state == "pending"):
+            # Claimants (or signed-in users inspecting a pending key they may claim)
+            # can see pending UIDs; claimer_email only if they are the claimer.
+            if record.approval_state == "pending":
+                payload["pending_uids"] = record.pending_uids or []
+            if is_claimer:
+                payload["claimer_email"] = record.claimer_email
+        elif record.approval_state == "approved":
+            payload["pending_uids"] = []
+
+        return Response(json.dumps(payload), mimetype="application/json")
 
     # ------------------------------------------------------------------
     # Auth status (lightweight — no DB)
@@ -135,8 +157,14 @@ def register_portal_api(app: Flask) -> None:
         from basilisk.openpgp.errors import IngestError
         from basilisk.openpgp.ingest import parse_armored_keytext
 
+        ip = client_ip(dict(request.headers), request.remote_addr)
         try:
             parsed_pre = parse_armored_keytext(keytext, path="v1")
+            check_upload_rate(ip, parsed_pre.fingerprint)
+        except RateLimitError as exc:
+            return Response(
+                json.dumps({"error": str(exc)}), status=exc.status, mimetype="application/json"
+            )
         except IngestError as exc:
             return Response(
                 json.dumps({"error": str(exc)}),
@@ -170,7 +198,6 @@ def register_portal_api(app: Flask) -> None:
                 mimetype="application/json",
             )
 
-        # Auto-claim — identity already verified above.
         claimed = False
         claim_message = ""
         try:
@@ -189,3 +216,32 @@ def register_portal_api(app: Flask) -> None:
         result["claim_message"] = claim_message
 
         return Response(json.dumps(result), status=200, mimetype="application/json")
+
+    # ------------------------------------------------------------------
+    # Authenticated: delete / unpublish own key
+    # ------------------------------------------------------------------
+
+    @app.delete("/api/v1/me/keys/<fingerprint>")
+    def api_delete_key(fingerprint: str) -> Response:
+        try:
+            principal = require_principal(dict(request.headers))
+        except AuthError as exc:
+            return Response(
+                json.dumps({"error": str(exc)}), status=exc.status, mimetype="application/json"
+            )
+        store = get_store(settings)
+        record = store.get_by_fingerprint(fingerprint)
+        if not record:
+            return Response(json.dumps({"error": "Not found"}), status=404, mimetype="application/json")
+        claimer = (record.claimer_email or "").lower()
+        if claimer != principal["email"].lower():
+            return Response(
+                json.dumps({"error": "Only the claimer can delete this key"}),
+                status=403,
+                mimetype="application/json",
+            )
+        store.reject(fingerprint)
+        return Response(
+            json.dumps({"status": "deleted", "fingerprint": record.fingerprint}),
+            mimetype="application/json",
+        )

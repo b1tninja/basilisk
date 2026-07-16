@@ -225,6 +225,45 @@ class SqliteCertStore(CertStore):
         )
         self._conn.commit()
 
+    def refresh_approved(
+        self,
+        fingerprint: str,
+        blob_uri: str,
+        sha256: str,
+        key_id: str,
+        *,
+        expiration: str | None = None,
+        revoked: bool = False,
+    ) -> None:
+        fpr = fingerprint.upper()
+        now = _utcnow()
+        self._conn.execute(
+            """
+            UPDATE certs SET blob_uri=?, sha256=?, key_id=?, revoked=?, key_expiration=?,
+                             updated_at=?
+            WHERE fingerprint=? AND approval_state='approved'
+            """,
+            (blob_uri, sha256, key_id, 1 if revoked else 0, expiration, now, fpr),
+        )
+        kid = key_id.lower().removeprefix("0x")
+        self._conn.execute("DELETE FROM identifiers WHERE fingerprint=?", (fpr,))
+        self._conn.execute(
+            "INSERT OR REPLACE INTO identifiers (identifier, fingerprint, id_type) VALUES (?, ?, 'fingerprint')",
+            (fpr, fpr),
+        )
+        self._conn.execute(
+            "INSERT OR REPLACE INTO identifiers (identifier, fingerprint, id_type) VALUES (?, ?, 'keyid')",
+            (kid, fpr),
+        )
+        self._conn.commit()
+
+    def list_pending_older_than(self, cutoff_iso: str) -> list[CertRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM certs WHERE approval_state='pending' AND updated_at < ?",
+            (cutoff_iso,),
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def stats(self) -> dict[str, int]:
         rows = self._conn.execute(
             "SELECT approval_state, COUNT(*) as n FROM certs GROUP BY approval_state"

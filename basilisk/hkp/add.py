@@ -40,13 +40,27 @@ def ingest_keytext(
         return parsed.fingerprint, parsed.key_id, True
 
     blob_uri = blobs.write_cert(parsed.fingerprint, digest, parsed.armored)
+    expiration = parsed.expiration.isoformat() if parsed.expiration else None
+
+    # Non-destructive refresh: keep approved UIDs when the primary fingerprint matches.
+    if existing and existing.approval_state == "approved":
+        store.refresh_approved(
+            parsed.fingerprint,
+            blob_uri,
+            digest,
+            parsed.key_id,
+            expiration=expiration,
+            revoked=parsed.is_revoked,
+        )
+        return parsed.fingerprint, parsed.key_id, False
+
     store.upsert_pending(
         parsed.fingerprint,
         blob_uri,
         digest,
         parsed.key_id,
         parsed.uids,
-        expiration=parsed.expiration.isoformat() if parsed.expiration else None,
+        expiration=expiration,
         revoked=parsed.is_revoked,
     )
     if enqueue_events:

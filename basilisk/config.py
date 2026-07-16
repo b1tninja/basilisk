@@ -21,6 +21,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return val in ("1", "true", "yes", "on")
 
 
+def _allow_insecure_default_secret() -> bool:
+    """Permit the built-in token secret only for explicit local/dev use."""
+    return _env_bool("BASILISK_ALLOW_DEV_SECRET") or _env_bool("BASILISK_DEV_APPROVE")
+
+
 @dataclass(frozen=True)
 class Settings:
     base_url: str
@@ -49,13 +54,20 @@ class Settings:
     proof_difficulty: int
     proof_max_age_sec: int
     auth_providers: tuple[str, ...]
+    pending_ttl_days: int
 
     @classmethod
     def from_env(cls) -> Settings:
         token_secret = os.environ.get("BASILISK_TOKEN_SECRET", _DEFAULT_TOKEN_SECRET)
         if token_secret == _DEFAULT_TOKEN_SECRET:
+            if not _allow_insecure_default_secret():
+                raise RuntimeError(
+                    "BASILISK_TOKEN_SECRET is unset or still the insecure default. "
+                    "Set a strong secret, or set BASILISK_ALLOW_DEV_SECRET=1 / "
+                    "BASILISK_DEV_APPROVE=1 for local development only."
+                )
             logger.warning(
-                "BASILISK_TOKEN_SECRET is using the insecure default %r; set a strong secret in production",
+                "BASILISK_TOKEN_SECRET is using the insecure default %r (dev mode)",
                 _DEFAULT_TOKEN_SECRET,
             )
         return cls(
@@ -91,6 +103,7 @@ class Settings:
                 for p in os.environ.get("BASILISK_AUTH_PROVIDERS", "microsoft").split(",")
                 if p.strip()
             ),
+            pending_ttl_days=int(os.environ.get("BASILISK_PENDING_TTL_DAYS", "30")),
         )
 
 

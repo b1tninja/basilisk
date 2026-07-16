@@ -350,6 +350,14 @@ To disable custom domain: `TF_VAR_custom_domain="" TF_VAR_route53_zone_name="" t
 gpg --keyserver https://keys.b1tninja.com --recv-keys KEYID
 ```
 
+### WAF residual risk (Standard SKU)
+
+Front Door is deployed on **Standard_AzureFrontDoor**, which supports custom rate-limit WAF rules only. Microsoft Default Rule Set / Bot Manager require **Premium**. Direct origin access is blocked when `BASILISK_AFD_ID` is set on the Function App (must match `X-Azure-FDID`). Upgrade path is documented in `terraform/modules/basilisk/frontdoor.tf`.
+
+### Production domain tfvars
+
+Custom domain variables default to empty. Use `terraform/cloudshell/production.tfvars.example` (copy to an untracked `production.tfvars`) so apply does not accidentally mutate production DNS.
+
 ## Post-deploy
 
 

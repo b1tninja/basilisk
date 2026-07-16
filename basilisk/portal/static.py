@@ -15,11 +15,28 @@ _STATIC_PAGES = {
     "stats": "stats.html",
     "search": "index.html",
     "compose": "compose.html",
+    "decrypt": "decrypt.html",
 }
 
 
 def _static_root() -> Path:
-    return _DIST if (_DIST / "index.html").exists() else _LEGACY
+    if (_DIST / "index.html").exists():
+        return _DIST
+    import os
+
+    # Local/dev convenience only — production and CI must serve Vite dist/.
+    allow_legacy = os.environ.get("BASILISK_DEV_APPROVE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if allow_legacy and (_LEGACY / "index.html").exists():
+        return _LEGACY
+    raise RuntimeError(
+        "Vite build missing: run `npm ci && npm run build` in web/ "
+        "(legacy web/static/ is deprecated)."
+    )
 
 
 def register_static_portal(app: Flask) -> None:
@@ -40,18 +57,4 @@ def register_static_portal(app: Flask) -> None:
 
     @app.get("/assets/<path:filename>")
     def static_assets(filename: str) -> Response:
-        root = _static_root()
-        return send_from_directory(root / "assets", filename)
-
-    # Legacy paths kept for older caches / local static fallback
-    @app.get("/css/<path:filename>")
-    def static_css(filename: str) -> Response:
-        root = _static_root()
-        css_root = root / "css" if (root / "css").exists() else _LEGACY / "css"
-        return send_from_directory(css_root, filename)
-
-    @app.get("/js/<path:filename>")
-    def static_js(filename: str) -> Response:
-        root = _static_root()
-        js_root = root / "js" if (root / "js").exists() else _LEGACY / "js"
-        return send_from_directory(js_root, filename)
+        return send_from_directory(_static_root() / "assets", filename)

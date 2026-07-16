@@ -26,7 +26,11 @@ resource "azurerm_servicebus_queue" "sendtoken_events" {
   namespace_id = azurerm_servicebus_namespace.basilisk.id
 }
 
-data "azurerm_servicebus_namespace_authorization_rule" "root" {
-  name         = "RootManageSharedAccessKey"
+# Least-privilege rule for the Function App (send + listen). Avoid RootManageSharedAccessKey.
+resource "azurerm_servicebus_namespace_authorization_rule" "function" {
+  name         = "basilisk-function"
   namespace_id = azurerm_servicebus_namespace.basilisk.id
+  listen       = true
+  send         = true
+  manage       = false
 }

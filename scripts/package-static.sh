@@ -39,5 +39,6 @@ cp "${OUT}/my-keys.html" "${OUT}/my-keys"
 cp "${OUT}/key.html" "${OUT}/key"
 cp "${OUT}/stats.html" "${OUT}/stats"
 cp "${OUT}/compose.html" "${OUT}/compose"
+cp "${OUT}/decrypt.html" "${OUT}/decrypt"
 
 echo "$OUT"

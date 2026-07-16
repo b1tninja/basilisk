@@ -1,3 +1,7 @@
+# RESIDUAL RISK: Standard SKU supports custom rate-limit rules only.
+# Microsoft Default Rule Set / Bot Manager require Premium_AzureFrontDoor.
+# Upgrade path: change both sku_name values below to Premium_AzureFrontDoor and
+# attach managed_rule { type = "Microsoft_DefaultRuleSet" version = "2.1" }.
 resource "azurerm_cdn_frontdoor_profile" "basilisk" {
   name                = "${var.name_prefix}-fd"
   resource_group_name = azurerm_resource_group.basilisk.name

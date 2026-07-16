@@ -634,6 +634,34 @@ function wireEvents() {
     const row = document.querySelector(".recipient-input-row");
     if (row && !row.contains(e.target)) renderDropdown([]);
   });
+
+  // Keyboard navigation for recipient dropdown
+  app.addEventListener("keydown", async (e) => {
+    const dropdown = document.getElementById("recipient-dropdown");
+    if (!dropdown || dropdown.hidden) return;
+    const hits = [...dropdown.querySelectorAll(".recipient-hit:not(:disabled)")];
+    if (!hits.length) return;
+    const active = dropdown.querySelector(".recipient-hit.active");
+    let idx = hits.indexOf(active);
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      idx = Math.min(hits.length - 1, idx + 1);
+      hits.forEach((h) => h.classList.remove("active"));
+      hits[idx].classList.add("active");
+      hits[idx].focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      idx = Math.max(0, idx < 0 ? 0 : idx - 1);
+      hits.forEach((h) => h.classList.remove("active"));
+      hits[idx].classList.add("active");
+      hits[idx].focus();
+    } else if (e.key === "Enter" && active) {
+      e.preventDefault();
+      await addRecipient(active.getAttribute("data-add-fpr"));
+    } else if (e.key === "Escape") {
+      renderDropdown([]);
+    }
+  });
 }
 
 async function init() {

@@ -30,7 +30,9 @@ function renderSignedIn(user, keys) {
 
   const keysSection =
     keys && keys.length
-      ? `<h2>Your keys</h2>${renderKeysTable(keys, { showClaim: true })}`
+      ? `<h2>Your keys</h2>
+         <p class="muted" style="margin-bottom:0.75rem">Unclaimed pending keys expire after 30 days. Claimed keys can be deleted below.</p>
+         ${renderKeysTable(keys, { showClaim: true, showDelete: true })}`
       : `<p class="muted">No keys on file yet for your account. Submit one above.</p>`;
 
   content.innerHTML = userInfo + renderUploadCard({ signedIn: true }) + keysSection;
@@ -57,6 +59,22 @@ async function loadMyKeys() {
 wireUploadForm();
 document.addEventListener("basilisk:key-submitted", () => {
   setTimeout(loadMyKeys, 800);
+});
+
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest?.("[data-delete-fpr]");
+  if (!btn) return;
+  const fpr = btn.getAttribute("data-delete-fpr");
+  if (!fpr) return;
+  if (!confirm(`Delete / unpublish key ${fpr}? This cannot be undone.`)) return;
+  btn.disabled = true;
+  try {
+    await fetchJson(`/api/v1/me/keys/${encodeURIComponent(fpr)}`, { method: "DELETE" });
+    await loadMyKeys();
+  } catch (err) {
+    showError(error, err.message || "Delete failed");
+    btn.disabled = false;
+  }
 });
 
 Auth.initWidget(document.getElementById("auth-widget"), "/my-keys");

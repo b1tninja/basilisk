@@ -1,0 +1,7 @@
+# Copy to production.tfvars (do not commit secrets) and pass:
+#   terraform apply -var-file=production.tfvars
+name_prefix             = "basilisk-dev"
+custom_domain           = "keys.b1tninja.com"
+route53_zone_name       = "b1tninja.com"
+route53_zone_id         = "Z026512234X4JPOD7PZH1"
+oauth_authorized_domain = "b1tninja.com"

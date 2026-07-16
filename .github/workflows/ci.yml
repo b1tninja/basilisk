@@ -23,7 +23,6 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Prepare environment files
         run: bash scripts/prepare-ci-env.sh
-      - run: python -m pytest tests/unit tests/integration -q --cov=basilisk --cov-report=term-missing
 
       - uses: actions/setup-node@v4
         with:
@@ -35,3 +34,23 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      - run: python -m pytest tests/unit tests/integration -q --cov=basilisk --cov-report=term-missing
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/cloudshell
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive ..
+      - name: Terraform init (no backend)
+        run: terraform init -backend=false
+      - name: Terraform validate
+        run: terraform validate

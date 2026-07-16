@@ -41,10 +41,13 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Require reviewers on the GitHub Environment named "production".
+    environment: production
     concurrency:
       group: deploy-${{ inputs.name_prefix }}
       cancel-in-progress: false
@@ -63,7 +66,20 @@ jobs:
           npm ci
           npm run build
 
-      - uses: azure/login@v3
+      # Set repository variable USE_AZURE_OIDC=true and secrets AZURE_CLIENT_ID,
+      # AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID for federated login; otherwise
+      # AZURE_CREDENTIALS (SP JSON) is used.
+      - name: Azure login (OIDC)
+        if: ${{ vars.USE_AZURE_OIDC == 'true' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure login (service principal JSON)
+        if: ${{ vars.USE_AZURE_OIDC != 'true' }}
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -87,19 +103,21 @@ jobs:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-          ARM_CLIENT_ID: ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientId }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: bash scripts/resolve-deploy-auth.sh
 
       - name: Deploy infrastructure and function
         env:
-          ARM_CLIENT_ID: ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientId }}
-          ARM_CLIENT_SECRET: ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientSecret }}
-          ARM_TENANT_ID: ${{ fromJSON(secrets.AZURE_CREDENTIALS).tenantId }}
-          ARM_SUBSCRIPTION_ID: ${{ fromJSON(secrets.AZURE_CREDENTIALS).subscriptionId }}
+          ARM_USE_OIDC: ${{ vars.USE_AZURE_OIDC == 'true' && 'true' || 'false' }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || fromJSON(secrets.AZURE_CREDENTIALS).clientId }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || fromJSON(secrets.AZURE_CREDENTIALS).tenantId }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID || fromJSON(secrets.AZURE_CREDENTIALS).subscriptionId }}
+          ARM_CLIENT_SECRET: ${{ vars.USE_AZURE_OIDC == 'true' && '' || fromJSON(secrets.AZURE_CREDENTIALS).clientSecret }}
           NAME_PREFIX: ${{ inputs.name_prefix }}
           LOCATION: ${{ inputs.location }}
           MAIL_PROVIDER: ${{ inputs.mail_provider }}
-          AUTO_APPROVE: "true"
+          # Default false — set repository/environment variable TF_AUTO_APPROVE=true to skip plan prompt.
+          AUTO_APPROVE: ${{ vars.TF_AUTO_APPROVE || 'false' }}
           SKIP_TERRAFORM: ${{ inputs.skip_terraform }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -131,7 +149,5 @@ jobs:
               fi
               echo ""
               echo "Deploy includes function zip + static portal upload to Storage \`\$web\`."
-              echo ""
-              echo "First-time setup: run \`bash scripts/export-github-secrets.sh\` locally after apply to copy Terraform-generated secrets into GitHub."
             } >> "$GITHUB_STEP_SUMMARY"
           fi

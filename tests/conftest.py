@@ -20,6 +20,8 @@ def clean_db(tmp_path, monkeypatch):
     monkeypatch.setenv("BASILISK_DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setenv("BASILISK_BLOB_PATH", str(tmp_path / "blobs"))
     monkeypatch.setenv("BASILISK_DEV_APPROVE", "1")
+    monkeypatch.setenv("BASILISK_DEV_AUTH", "1")
+    monkeypatch.setenv("BASILISK_ALLOW_DEV_SECRET", "1")
     get_settings.cache_clear()
     reset()
     reset_limiter()

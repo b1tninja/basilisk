@@ -188,6 +188,43 @@ class AzureTableCertStore(CertStore):
         entity["updated_at"] = _utcnow()
         self._certs.update_entity(entity, mode="replace")
 
+    def refresh_approved(
+        self,
+        fingerprint: str,
+        blob_uri: str,
+        sha256: str,
+        key_id: str,
+        *,
+        expiration: str | None = None,
+        revoked: bool = False,
+    ) -> None:
+        fpr = fingerprint.upper()
+        entity = self._certs.get_entity(partition_key=fpr, row_key=fpr)
+        if entity.get("approval_state") != "approved":
+            return
+        entity["blob_uri"] = blob_uri
+        entity["sha256"] = sha256
+        entity["key_id"] = key_id
+        entity["revoked"] = revoked
+        entity["key_expiration"] = expiration
+        entity["updated_at"] = _utcnow()
+        self._certs.update_entity(entity, mode="replace")
+        kid = key_id.lower().removeprefix("0x")
+        for ident, id_type in ((fpr, "fingerprint"), (kid, "keyid")):
+            self._ids.upsert_entity(
+                {"PartitionKey": ident, "RowKey": id_type, "fingerprint": fpr, "id_type": id_type}
+            )
+
+    def list_pending_older_than(self, cutoff_iso: str) -> list[CertRecord]:
+        out: list[CertRecord] = []
+        for entity in self._certs.query_entities(
+            query_filter="approval_state eq 'pending'"
+        ):
+            updated = str(entity.get("updated_at") or entity.get("created_at") or "")
+            if updated and updated < cutoff_iso:
+                out.append(self._record(entity))
+        return out
+
     def stats(self) -> dict[str, int]:
         out = {"total": 0, "pending": 0, "approved": 0, "rejected": 0}
         for entity in self._certs.list_entities():
