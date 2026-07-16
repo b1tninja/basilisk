@@ -272,6 +272,31 @@ async function loadKey() {
       ? `<a class="text-link" href="${escapeHtml(searchUrl(record.claimer_email))}" title="Search for this email">${escapeHtml(record.claimer_email)}</a>`
       : "";
 
+    const user = await Auth.getUser().catch(() => null);
+    const isClaimer = Boolean(
+      user?.authenticated &&
+        record.claimer_email &&
+        user.email?.toLowerCase() === record.claimer_email?.toLowerCase()
+    );
+    const currentLabel = record.label || "";
+    const labelDisplayHtml = currentLabel
+      ? `<p class="key-label" id="key-label-display" title="Owner-supplied label">🏷 ${escapeHtml(currentLabel)}</p>`
+      : isClaimer
+        ? `<p class="key-label muted" id="key-label-display">No label set</p>`
+        : "";
+    const labelEditHtml = isClaimer
+      ? `<button type="button" class="btn btn-ghost btn-compact" id="label-edit-btn">${currentLabel ? "Edit label" : "Add label"}</button>
+         <form id="label-form" class="label-form hidden" autocomplete="off">
+           <input type="text" id="label-input" class="label-input" maxlength="200"
+                  placeholder="e.g. Work signing key"
+                  value="${escapeHtml(currentLabel)}" />
+           <button type="submit" class="btn btn-compact">Save</button>
+           <button type="button" class="btn btn-ghost btn-compact" id="label-cancel-btn">Cancel</button>
+           ${currentLabel ? `<button type="button" class="btn btn-ghost btn-compact text-error" id="label-clear-btn">Remove</button>` : ""}
+         </form>
+         <span id="label-status" class="label-status hidden"></span>`
+      : "";
+
     let verifyQrHtml = "";
     try {
       const uri = openpgp4fprUri(fpRaw);
@@ -321,6 +346,8 @@ async function loadKey() {
           <div>
             <h1>OpenPGP key</h1>
             <p class="muted fpr">${escapeHtml(fpDisplay)}</p>
+            ${labelDisplayHtml}
+            ${labelEditHtml}
             <p style="margin-top:0.5rem">${statusBadge}</p>
           </div>
           <div class="btn-row">
@@ -383,6 +410,62 @@ async function loadKey() {
     content.classList.remove("hidden");
 
     wireSnippetCopy(content);
+
+    // Label edit (claimer only)
+    const labelEditBtn = document.getElementById("label-edit-btn");
+    const labelForm = document.getElementById("label-form");
+    const labelCancelBtn = document.getElementById("label-cancel-btn");
+    const labelClearBtn = document.getElementById("label-clear-btn");
+    const labelStatus = document.getElementById("label-status");
+    const labelDisplay = document.getElementById("key-label-display");
+
+    if (labelEditBtn && labelForm) {
+      labelEditBtn.addEventListener("click", () => {
+        labelForm.classList.toggle("hidden");
+        if (!labelForm.classList.contains("hidden")) {
+          document.getElementById("label-input")?.focus();
+        }
+      });
+      labelCancelBtn?.addEventListener("click", () => labelForm.classList.add("hidden"));
+
+      const saveLabel = async (newLabel) => {
+        if (labelStatus) {
+          labelStatus.textContent = "Saving…";
+          labelStatus.className = "label-status";
+        }
+        try {
+          const result = await fetchJson(
+            `/api/v1/me/keys/${encodeURIComponent(fpRaw)}/label`,
+            { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: newLabel }) }
+          );
+          const saved = result.label || "";
+          if (labelDisplay) {
+            labelDisplay.textContent = saved ? `🏷 ${saved}` : (isClaimer ? "No label set" : "");
+            labelDisplay.className = saved ? "key-label" : "key-label muted";
+            labelDisplay.title = saved ? "Owner-supplied label" : "";
+          }
+          if (labelEditBtn) labelEditBtn.textContent = saved ? "Edit label" : "Add label";
+          labelForm.classList.add("hidden");
+          if (labelStatus) {
+            labelStatus.textContent = "Saved";
+            labelStatus.className = "label-status ok";
+            setTimeout(() => { if (labelStatus) labelStatus.className = "label-status hidden"; }, 2000);
+          }
+        } catch (err) {
+          if (labelStatus) {
+            labelStatus.textContent = err.message || "Save failed";
+            labelStatus.className = "label-status err";
+          }
+        }
+      };
+
+      labelForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const val = (document.getElementById("label-input")?.value || "").trim();
+        await saveLabel(val);
+      });
+      labelClearBtn?.addEventListener("click", () => saveLabel(""));
+    }
 
     const claimBtn = document.getElementById("claim-btn");
     if (claimBtn) {

@@ -70,6 +70,7 @@ def register_portal_api(app: Flask) -> None:
             else [],
             "sha256": record.sha256,
             "certifications": [],
+            "label": record.label,
         }
 
         if record.approval_state == "approved" and record.blob_uri:
@@ -286,6 +287,37 @@ def register_portal_api(app: Flask) -> None:
         result["claim_message"] = claim_message
 
         return Response(json.dumps(result), status=200, mimetype="application/json")
+
+    # ------------------------------------------------------------------
+    # Authenticated: set / clear friendly label on an owned key
+    # ------------------------------------------------------------------
+
+    @app.put("/api/v1/me/keys/<fingerprint>/label")
+    def api_set_key_label(fingerprint: str) -> Response:
+        try:
+            principal = require_principal(dict(request.headers))
+        except AuthError as exc:
+            return Response(
+                json.dumps({"error": str(exc)}), status=exc.status, mimetype="application/json"
+            )
+        store = get_store(settings)
+        record = store.get_by_fingerprint(fingerprint)
+        if not record:
+            return Response(json.dumps({"error": "Not found"}), status=404, mimetype="application/json")
+        claimer = (record.claimer_email or "").lower()
+        if claimer != principal["email"].lower():
+            return Response(
+                json.dumps({"error": "Only the claimer can label this key"}),
+                status=403,
+                mimetype="application/json",
+            )
+        body = request.get_json(silent=True) or {}
+        raw = body.get("label", "")
+        label: str | None = str(raw).strip()[:200] if raw else None
+        if not label:
+            label = None
+        store.set_label(fingerprint, label)
+        return Response(json.dumps({"label": label}), mimetype="application/json")
 
     # ------------------------------------------------------------------
     # Authenticated: delete / unpublish own key

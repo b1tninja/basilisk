@@ -18,6 +18,7 @@ class CertRecord:
     canonical_blob_uri: str | None = None
     revoked: bool = False
     key_expiration: str | None = None
+    label: str | None = None
 
 
 class CertStore(Protocol):
@@ -72,6 +73,10 @@ class CertStore(Protocol):
 
     def list_pending_older_than(self, cutoff_iso: str) -> list[CertRecord]:
         """Return pending certs with updated_at (or created_at) before cutoff."""
+        ...
+
+    def set_label(self, fingerprint: str, label: str | None) -> None:
+        """Set (or clear) the owner-supplied friendly label for a key."""
         ...
 
     def stats(self) -> dict[str, int]: ...

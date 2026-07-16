@@ -1325,6 +1325,139 @@ pre {
   line-height: 1.55;
 }
 
+/* ===== Key / Device Labels ===== */
+
+.key-label {
+  display: inline-block;
+  font-size: 0.85rem;
+  color: var(--text);
+  margin: 0.15rem 0;
+}
+
+/* Inline edit form on the key detail page */
+.label-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.label-input {
+  flex: 1 1 180px;
+  min-width: 140px;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input, var(--bg-card));
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.label-input:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.label-status {
+  font-size: 0.82rem;
+  margin-top: 0.25rem;
+}
+.label-status.ok { color: var(--success, #4ade80); }
+.label-status.err { color: var(--error); }
+.label-status.hidden { display: none; }
+
+/* My-keys label section */
+.key-labels-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.key-label-details {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+.key-label-details[open] {
+  border-color: var(--brand);
+}
+
+.key-label-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.key-label-summary::-webkit-details-marker { display: none; }
+.key-label-summary::before {
+  content: "▶";
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.key-label-details[open] .key-label-summary::before {
+  transform: rotate(90deg);
+}
+
+.key-label-body {
+  padding: 1rem 1rem 1.1rem;
+  border-top: 1px solid var(--border);
+}
+
+.key-label-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.key-label-row > div:first-child {
+  flex: 1 1 220px;
+}
+
+.label-section-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  margin: 0 0 0.2rem;
+}
+
+.label-description {
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.label-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1rem 0;
+}
+
+/* Label editor widget */
+.label-editor {
+  flex: 1 1 240px;
+}
+
+.label-current {
+  display: inline-block;
+  margin-bottom: 0.3rem;
+}
+
+.label-edit-trigger {
+  margin-left: 0.35rem;
+  vertical-align: middle;
+}
+
+.label-note {
+  font-size: 0.77rem;
+  margin-top: 0.35rem;
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 640px) {
   body { padding: 0 1rem 3rem; }

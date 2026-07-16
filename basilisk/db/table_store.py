@@ -50,6 +50,7 @@ class AzureTableCertStore(CertStore):
             canonical_blob_uri=entity.get("canonical_blob_uri"),
             revoked=bool(entity.get("revoked", False)),
             key_expiration=entity.get("key_expiration"),
+            label=entity.get("label") or None,
         )
 
     def _index_emails(self, fingerprint: str, uids: list[str]) -> None:
@@ -254,6 +255,13 @@ class AzureTableCertStore(CertStore):
             if updated and updated < cutoff_iso:
                 out.append(self._record(entity))
         return out
+
+    def set_label(self, fingerprint: str, label: str | None) -> None:
+        fpr = fingerprint.upper()
+        entity = self._certs.get_entity(partition_key=fpr, row_key=fpr)
+        entity["label"] = label
+        entity["updated_at"] = _utcnow()
+        self._certs.update_entity(entity, mode="replace")
 
     def stats(self) -> dict[str, int]:
         out = {"total": 0, "pending": 0, "approved": 0, "rejected": 0}

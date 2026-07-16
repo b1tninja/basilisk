@@ -47,6 +47,11 @@ class SqliteCertStore(CertStore):
             migration = (migrations_dir / "003_key_metadata.sql").read_text(encoding="utf-8")
             self._conn.executescript(migration)
             self._conn.commit()
+            cols = {row[1] for row in self._conn.execute("PRAGMA table_info(certs)")}
+        if "label" not in cols:
+            migration = (migrations_dir / "004_key_label.sql").read_text(encoding="utf-8")
+            self._conn.executescript(migration)
+            self._conn.commit()
 
     def _row_to_record(self, row: sqlite3.Row) -> CertRecord:
         keys = row.keys()
@@ -64,6 +69,7 @@ class SqliteCertStore(CertStore):
             canonical_blob_uri=row["canonical_blob_uri"],
             revoked=bool(row["revoked"]),
             key_expiration=row["key_expiration"] if "key_expiration" in keys else None,
+            label=row["label"] if "label" in keys else None,
         )
 
     def _index_emails(self, fingerprint: str, uids: list[str]) -> None:
@@ -302,6 +308,15 @@ class SqliteCertStore(CertStore):
             out[row["approval_state"]] = row["n"]
             out["total"] += row["n"]
         return out
+
+
+    def set_label(self, fingerprint: str, label: str | None) -> None:
+        fpr = fingerprint.upper()
+        self._conn.execute(
+            "UPDATE certs SET label=?, updated_at=? WHERE fingerprint=?",
+            (label, _utcnow(), fpr),
+        )
+        self._conn.commit()
 
 
 def sha256_hex(data: bytes) -> str:
