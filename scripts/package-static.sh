@@ -12,6 +12,7 @@ cp "${REPO_ROOT}/web/static/index.html" "$OUT/index.html"
 cp "${REPO_ROOT}/web/static/index.html" "$OUT/search"
 cp "${REPO_ROOT}/web/static/my-keys.html" "$OUT/my-keys"
 cp "${REPO_ROOT}/web/static/key.html" "$OUT/key"
+cp "${REPO_ROOT}/web/static/stats.html" "$OUT/stats"
 cp "${REPO_ROOT}/web/static/css/site.css" "$OUT/css/site.css"
 cp "${REPO_ROOT}/web/static/js/portal.js" "$OUT/js/portal.js"
 

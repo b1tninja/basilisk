@@ -40,7 +40,7 @@ fi
 echo "Uploading static site to ${STORAGE_ACCOUNT}/\$web ..."
 
 # HTML pages without extension
-for blob in search my-keys key; do
+for blob in search my-keys key stats; do
   az storage blob upload \
     "${storage_args[@]}" \
     --container-name '$web' \

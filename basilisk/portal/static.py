@@ -10,6 +10,7 @@ STATIC_ROOT = Path(__file__).resolve().parents[2] / "web" / "static"
 _STATIC_PAGES = {
     "my-keys": "my-keys.html",
     "key": "key.html",
+    "stats": "stats.html",
 }
 
 

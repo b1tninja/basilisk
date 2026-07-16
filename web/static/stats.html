@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stats — Basilisk</title>
+  <link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+  <nav>
+    <a class="nav-logo" href="/">Basilisk</a>
+    <div class="nav-links">
+      <a class="nav-link" href="/">Search</a>
+      <a class="nav-link" href="/my-keys">My Keys</a>
+      <a class="nav-link active" href="/stats">Stats</a>
+    </div>
+    <div class="auth-widget" id="auth-widget"></div>
+  </nav>
+
+  <div class="page-header">
+    <h1>Stats</h1>
+    <p class="muted">Keyserver inventory and upload counters.</p>
+  </div>
+
+  <p id="error" class="text-error hidden"></p>
+  <p id="loading" class="muted">Loading…</p>
+  <div id="content" class="hidden"></div>
+
+  <script src="/js/portal.js"></script>
+  <script>
+    Auth.initWidget(document.getElementById("auth-widget"), "/stats");
+
+    const KEY_STATS = [
+      { key: "total",    label: "Total keys" },
+      { key: "approved", label: "Approved" },
+      { key: "pending",  label: "Pending" },
+      { key: "rejected", label: "Rejected" },
+    ];
+    const RUNTIME_STATS = [
+      { key: "rejected_uploads",  label: "Rejected uploads" },
+      { key: "duplicate_uploads", label: "Duplicate uploads" },
+      { key: "rate_limited",      label: "Rate limited" },
+    ];
+
+    function renderStatGrid(items, stats) {
+      return `<div class="stats-grid">${items.map(({ key, label }) => `
+        <div class="stat-tile">
+          <div class="stat-value">${escapeHtml(String(stats[key] ?? 0))}</div>
+          <div class="stat-label">${escapeHtml(label)}</div>
+        </div>`).join("")}</div>`;
+    }
+
+    async function loadStats() {
+      const loading = document.getElementById("loading");
+      const content = document.getElementById("content");
+      const error = document.getElementById("error");
+      try {
+        const payload = await fetchJson("/pks/lookup?op=stats");
+        const stats = payload.stats || {};
+        content.innerHTML = `
+          <div class="card">
+            <p class="card-title">Keys</p>
+            ${renderStatGrid(KEY_STATS, stats)}
+          </div>
+          <div class="card">
+            <p class="card-title">Runtime counters</p>
+            <p class="muted" style="margin:-0.5rem 0 1rem">Per-instance counters since last process start.</p>
+            ${renderStatGrid(RUNTIME_STATS, stats)}
+          </div>`;
+        loading.classList.add("hidden");
+        content.classList.remove("hidden");
+      } catch (err) {
+        loading.classList.add("hidden");
+        showError(error, err.message);
+      }
+    }
+
+    loadStats();
+  </script>
+</body>
+</html>
