@@ -47,6 +47,7 @@ GOOGLE_REDIRECT="$(echo "$OAUTH_JSON" | jq -r '.google_redirect_uri // empty')"
 GOOGLE_REDIRECTS="$(echo "$OAUTH_JSON" | jq -r '.google_redirect_uris[]? // empty' 2>/dev/null || true)"
 AAD_REDIRECT="$(echo "$OAUTH_JSON" | jq -r '.aad_redirect_uri // empty')"
 AAD_REDIRECTS="$(echo "$OAUTH_JSON" | jq -r '.aad_redirect_uris[]? // empty' 2>/dev/null || true)"
+PUBLIC_URL_OAUTH="$(echo "$OAUTH_JSON" | jq -r '.public_url // empty')"
 FN_HOST="$(echo "$OAUTH_JSON" | jq -r '.function_app_hostname // empty')"
 AUTH_DOMAIN="$(echo "$OAUTH_JSON" | jq -r '.google_authorized_domain // empty')"
 
@@ -94,13 +95,21 @@ Deployed endpoints:
   Storage account:  $STORAGE
 
 --- OAuth / IdP setup (from terraform output oauth_setup) ---
-Public URL:            ${PUBLIC_URL:-https://keys.b1tninja.com}
+Public URL:            ${PUBLIC_URL_OAUTH:-${PUBLIC_URL:-https://keys.b1tninja.com}}
 Function hostname:     ${FN_HOST:-$FN.azurewebsites.net}
+Google redirect URI:   ${GOOGLE_REDIRECT:-https://keys.b1tninja.com/.auth/login/google/callback}
 Google redirect URIs (add ALL to Google Cloud OAuth client):
-$(if [[ -n "$GOOGLE_REDIRECTS" ]]; then echo "$GOOGLE_REDIRECTS" | sed 's/^/  /'; else echo "  ${GOOGLE_REDIRECT:-https://${FN}.azurewebsites.net/.auth/login/google/callback}"; echo "  https://keys.b1tninja.com/.auth/login/google/callback"; fi)
+$(if [[ -n "$GOOGLE_REDIRECTS" ]]; then echo "$GOOGLE_REDIRECTS" | sed 's/^/  /'; else
+  echo "  https://keys.b1tninja.com/.auth/login/google/callback"
+  echo "  https://${FN}.azurewebsites.net/.auth/login/google/callback"
+fi)
   → Google Cloud → Credentials → OAuth client → Authorized redirect URIs
+Entra redirect URI:    ${AAD_REDIRECT:-https://keys.b1tninja.com/.auth/login/aad/callback}
 Entra redirect URIs (add ALL to App Registration):
-$(if [[ -n "$AAD_REDIRECTS" ]]; then echo "$AAD_REDIRECTS" | sed 's/^/  /'; else echo "  ${AAD_REDIRECT:-https://${FN}.azurewebsites.net/.auth/login/aad/callback}"; fi)
+$(if [[ -n "$AAD_REDIRECTS" ]]; then echo "$AAD_REDIRECTS" | sed 's/^/  /'; else
+  echo "  https://keys.b1tninja.com/.auth/login/aad/callback"
+  echo "  https://${FN}.azurewebsites.net/.auth/login/aad/callback"
+fi)
   → Entra → App registrations → Authentication → Redirect URI (Web)
 
 Google consent screen Authorized domains:
