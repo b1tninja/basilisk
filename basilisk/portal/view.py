@@ -3,6 +3,7 @@ from __future__ import annotations
 from basilisk.config import Settings
 from basilisk.db.blob_store import LocalBlobStore
 from basilisk.db.store import CertRecord, CertStore
+from basilisk.openpgp.canonical import parse_uid_parts
 from basilisk.openpgp.ingest import strip_uids_for_pending
 
 
@@ -16,9 +17,10 @@ def can_view_key(record: CertRecord, viewer_email: str | None, viewer_oid: str |
     if viewer_email and record.claimer_email and record.claimer_email.lower() == viewer_email.lower():
         return True
     pending = record.pending_uids or []
+    viewer = (viewer_email or "").lower()
     for uid in pending:
-        addr = uid.split("<")[-1].rstrip(">").strip() if "<" in uid else uid.strip()
-        if viewer_email and addr.lower() == viewer_email.lower():
+        email = parse_uid_parts(uid)["email"]
+        if viewer and email and email == viewer:
             return True
     return False
 

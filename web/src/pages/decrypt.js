@@ -10,6 +10,7 @@ import {
   verify,
 } from "openpgp";
 import { Auth } from "../lib/auth.js";
+import { SELF_TEST_LABELS, runCryptoSelfTests } from "../lib/crypto-self-test.js";
 import {
   escapeHtml,
   fetchText,
@@ -29,8 +30,13 @@ const app = document.getElementById("decrypt-app");
 let currentAnalysis = null;
 let analyzeTimer = null;
 let verifyGen = 0;
+let cryptoReady = false;
 
 app.innerHTML = `
+  <div id="crypto-status" class="status-row" role="status" aria-live="polite">
+    Verifying crypto module…
+  </div>
+
   <div class="card">
     <p class="card-title">Message or signature</p>
     <label class="field-label" for="ciphertext">Armored PGP message, cleartext signature, or detached signature</label>
@@ -47,21 +53,106 @@ app.innerHTML = `
 
   <div id="decrypt-section" class="hidden">
     <div class="card">
-      <p class="card-title">Private key (local only)</p>
+      <div class="card-title-row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+        <p class="card-title" style="margin:0">Private key (local only)</p>
+        <button type="button" class="btn btn-ghost btn-compact" id="clear-sensitive-btn"
+          title="Zero and clear all sensitive fields">Clear sensitive data</button>
+      </div>
       <label class="field-label" for="private-key">Armored private key</label>
       <textarea id="private-key" class="compose-message" rows="8"
         placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;…"></textarea>
       <label class="field-label" for="passphrase" style="margin-top:0.75rem">Passphrase</label>
       <input type="password" id="passphrase" class="text-input" autocomplete="off" placeholder="Key passphrase (if any)">
-      <p class="muted" style="margin-top:0.65rem">Nothing is uploaded. Clear this page when finished.</p>
+      <p class="muted" style="margin-top:0.65rem">Key material is zeroed from memory after use. Clear this page when finished.</p>
     </div>
     <div class="btn-row">
-      <button type="button" class="btn" id="decrypt-btn">Decrypt</button>
+      <button type="button" class="btn" id="decrypt-btn" disabled>Decrypt</button>
     </div>
     <div id="decrypt-status" class="hidden"></div>
     <div id="decrypt-output" class="card hidden"></div>
   </div>
 `;
+
+// ── Self-test: run at module startup, block decrypt until done ──────────────
+runCryptoSelfTests().then((result) => {
+  const banner = document.getElementById("crypto-status");
+  const decryptBtn = document.getElementById("decrypt-btn");
+  if (result.passed) {
+    cryptoReady = true;
+    if (banner) {
+      banner.className = "status-row ok";
+      banner.textContent = `Crypto module verified (${result.elapsed} ms) — ${Object.keys(result.results).length} checks passed.`;
+      setTimeout(() => {
+        banner.classList.add("hidden");
+      }, 4000);
+    }
+    if (decryptBtn) decryptBtn.disabled = false;
+  } else {
+    cryptoReady = false;
+    if (banner) {
+      const failedChecks = Object.entries(result.results)
+        .filter(([, v]) => !v)
+        .map(([k]) => SELF_TEST_LABELS[k] || k)
+        .join(", ");
+      banner.className = "status-row err";
+      banner.innerHTML =
+        `<strong>Crypto self-test FAILED</strong> — do not use this page to decrypt private data. ` +
+        (failedChecks ? `Failed: ${escapeHtml(failedChecks)}. ` : "") +
+        (result.error ? `Error: ${escapeHtml(result.error)}.` : "");
+    }
+    if (decryptBtn) decryptBtn.disabled = true;
+  }
+});
+
+// ── Memory protection helpers ────────────────────────────────────────────────
+
+/**
+ * Best-effort wipe of secret-key material from an OpenPGP.js private key object.
+ *
+ * Zeroes every Uint8Array found in `keyPacket.privateParams` for the primary
+ * key and all subkeys.  This mitigates devtools / extension inspection of the
+ * live JS heap, but cannot guarantee that the engine has not already copied
+ * the material to JIT-compiled code, GC survivor spaces, or CPU registers.
+ * @param {import("openpgp").PrivateKey | null | undefined} key
+ */
+function zeroKeyMaterial(key) {
+  if (!key) return;
+  const wipePacket = (pkt) => {
+    const params = pkt?.privateParams;
+    if (!params || typeof params !== "object") return;
+    for (const v of Object.values(params)) {
+      if (v instanceof Uint8Array) {
+        v.fill(0);
+      } else if (v && v.data instanceof Uint8Array) {
+        // MPI wrapper (used by RSA / legacy keys)
+        v.data.fill(0);
+      }
+    }
+  };
+  try {
+    wipePacket(key.keyPacket);
+    for (const sk of key.subkeys || []) {
+      wipePacket(sk?.keyPacket);
+    }
+  } catch (_) {
+    // Best-effort only — never throw from a cleanup path
+  }
+}
+
+/** Clear all sensitive DOM fields and the decrypt output. */
+function clearSensitiveFields() {
+  const keyEl = document.getElementById("private-key");
+  const passEl = document.getElementById("passphrase");
+  const out = document.getElementById("decrypt-output");
+  const status = document.getElementById("decrypt-status");
+  if (keyEl) keyEl.value = "";
+  if (passEl) passEl.value = "";
+  if (out) {
+    out.classList.add("hidden");
+    out.innerHTML = "";
+  }
+  if (status) status.className = "hidden";
+}
 
 /**
  * @param {import("openpgp").KeyID | { toHex?: () => string, bytes?: Uint8Array } | null | undefined} keyID
@@ -511,6 +602,11 @@ document.getElementById("cipher-file").addEventListener("change", async (e) => {
 });
 
 document.getElementById("decrypt-btn").addEventListener("click", async () => {
+  if (!cryptoReady) {
+    showError(errorEl, "Crypto self-test has not passed. Refusing to decrypt.");
+    return;
+  }
+
   errorEl.classList.add("hidden");
   const status = document.getElementById("decrypt-status");
   const out = document.getElementById("decrypt-output");
@@ -534,8 +630,9 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
     return;
   }
 
+  let privateKey = null;
   try {
-    let privateKey = await readPrivateKey({ armoredKey: privArmored });
+    privateKey = await readPrivateKey({ armoredKey: privArmored });
     if (!privateKey.isDecrypted()) {
       privateKey = await decryptKey({ privateKey, passphrase });
     }
@@ -594,18 +691,12 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
       const parts = [];
       for (const s of sigs) {
         const kid = keyIdHex(s.keyID);
-        const link = kid
-          ? keySearchLink(kid, formatFingerprint(kid))
-          : "";
+        const link = kid ? keySearchLink(kid, formatFingerprint(kid)) : "";
         try {
           await s.verified;
-          parts.push(
-            `<span>${link} <span class="badge approved">verified</span></span>`
-          );
+          parts.push(`<span>${link} <span class="badge approved">verified</span></span>`);
         } catch (_) {
-          parts.push(
-            `<span>${link} <span class="badge">signature unverified</span></span>`
-          );
+          parts.push(`<span>${link} <span class="badge">signature unverified</span></span>`);
         }
       }
       sigHtml = `<p style="margin-bottom:0.75rem">${parts.join(" · ")}</p>`;
@@ -616,11 +707,33 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
       <pre class="output-pre">${escapeHtml(plaintext)}</pre>
     `;
     out.classList.remove("hidden");
-    status.textContent = "Decrypted locally.";
+    status.textContent = "Decrypted locally. Key material zeroed.";
     status.className = "status-row ok";
   } catch (err) {
     status.className = "status-row err";
     status.textContent = err.message || "Decrypt failed";
     showError(errorEl, err.message || "Decrypt failed");
+  } finally {
+    // Zero secret-key Uint8Array buffers regardless of success/failure.
+    zeroKeyMaterial(privateKey);
+    privateKey = null;
+    // Always clear the passphrase field — the armored key stays for retry.
+    const passEl = document.getElementById("passphrase");
+    if (passEl) passEl.value = "";
+  }
+});
+
+// ── Clear sensitive data button ───────────────────────────────────────────────
+document.addEventListener("click", (e) => {
+  if (e.target?.id === "clear-sensitive-btn") {
+    clearSensitiveFields();
+  }
+});
+
+// ── beforeunload warning when private key is present ─────────────────────────
+window.addEventListener("beforeunload", (e) => {
+  const keyEl = document.getElementById("private-key");
+  if (keyEl && keyEl.value.trim()) {
+    e.preventDefault();
   }
 });

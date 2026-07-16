@@ -9,6 +9,7 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.data.tables import TableServiceClient
 
 from basilisk.db.store import CertRecord, CertStore
+from basilisk.openpgp.canonical import parse_uid_parts
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +55,9 @@ class AzureTableCertStore(CertStore):
     def _index_emails(self, fingerprint: str, uids: list[str]) -> None:
         fpr = fingerprint.upper()
         for uid in uids:
-            addr = uid.split("<")[-1].rstrip(">").strip() if "<" in uid else uid.strip()
-            if "@" not in addr:
+            email = parse_uid_parts(uid)["email"]
+            if not email:
                 continue
-            email = addr.lower()
             self._emails.upsert_entity(
                 {"PartitionKey": email, "RowKey": fpr, "fingerprint": fpr}
             )

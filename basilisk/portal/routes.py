@@ -9,7 +9,7 @@ from basilisk.auth.azure import require_principal
 from basilisk.auth.errors import AuthError
 from basilisk.config import get_settings
 from basilisk.hkp.handlers import get_store
-from basilisk.openpgp.canonical import emails_from_uids
+from basilisk.openpgp.canonical import emails_from_uids, structure_uids
 from basilisk.portal.me import my_keys
 from basilisk.portal.search import search_keys
 from basilisk.portal.serializers import key_summary
@@ -64,7 +64,9 @@ def register_portal_api(app: Flask) -> None:
             "approval_state": record.approval_state,
             "revoked": record.revoked,
             "key_expiration": record.key_expiration,
-            "approved_uids": record.approved_uids if record.approval_state == "approved" else [],
+            "approved_uids": structure_uids(record.approved_uids)
+            if record.approval_state == "approved"
+            else [],
             "sha256": record.sha256,
         }
 
@@ -83,7 +85,7 @@ def register_portal_api(app: Flask) -> None:
             # Claimants (or signed-in users inspecting a pending key they may claim)
             # can see pending UIDs; claimer_email only if they are the claimer.
             if record.approval_state == "pending":
-                payload["pending_uids"] = record.pending_uids or []
+                payload["pending_uids"] = structure_uids(record.pending_uids)
             if is_claimer:
                 payload["claimer_email"] = record.claimer_email
         elif record.approval_state == "approved":

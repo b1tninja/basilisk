@@ -4,7 +4,6 @@ import {
   copyText,
   describeExpiry,
   escapeHtml,
-  extractEmail,
   fetchJson,
   fetchText,
   formatDate,
@@ -12,6 +11,8 @@ import {
   queryParam,
   searchUrl,
   showError,
+  uidEmail,
+  uidRaw,
   uidWithSearchLinks,
 } from "../lib/utils.js";
 import { badgeClass } from "../lib/keys.js";
@@ -65,10 +66,11 @@ function usageTags(keyPacket) {
 function renderUids(record) {
   const approved = record.approved_uids || [];
   const pending = record.pending_uids || [];
+  const approvedRaws = new Set(approved.map(uidRaw));
   const items = [
     ...approved.map((u) => ({ uid: u, state: "approved" })),
     ...pending
-      .filter((u) => !approved.includes(u))
+      .filter((u) => !approvedRaws.has(uidRaw(u)))
       .map((u) => ({ uid: u, state: "pending" })),
   ];
   if (!items.length) return `<p class="muted">No user IDs available.</p>`;
@@ -171,7 +173,7 @@ async function maybeClaimNotice(record) {
   }
   const email = (user.email || "").toLowerCase();
   const pending = record.pending_uids || [];
-  const match = pending.some((u) => extractEmail(u) === email);
+  const match = pending.some((u) => uidEmail(u) === email);
   if (!match) {
     return `<div class="card claim-notice">
       <p class="muted">This key is pending. Your signed-in email does not match any pending UID.</p>

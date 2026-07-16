@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from basilisk.db.store import CertRecord, CertStore
+from basilisk.openpgp.canonical import parse_uid_parts
 
 
 def _utcnow() -> str:
@@ -69,11 +70,11 @@ class SqliteCertStore(CertStore):
         fpr = fingerprint.upper()
         self._conn.execute("DELETE FROM emails WHERE fingerprint=?", (fpr,))
         for uid in uids:
-            addr = uid.split("<")[-1].rstrip(">").strip() if "<" in uid else uid.strip()
-            if "@" in addr:
+            email = parse_uid_parts(uid)["email"]
+            if email:
                 self._conn.execute(
                     "INSERT OR REPLACE INTO emails (email, fingerprint) VALUES (?, ?)",
-                    (addr.lower(), fpr),
+                    (email, fpr),
                 )
 
     def upsert_pending(

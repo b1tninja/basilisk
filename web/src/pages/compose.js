@@ -1,5 +1,6 @@
 import { createMessage, encrypt, readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
+import { runCryptoSelfTests } from "../lib/crypto-self-test.js";
 import { badgeClass } from "../lib/keys.js";
 import {
   copyText,
@@ -10,6 +11,7 @@ import {
   formatFingerprint,
   queryParam,
   showError,
+  uidEmail,
 } from "../lib/utils.js";
 import "../css/site.css";
 
@@ -20,6 +22,29 @@ const ENCRYPT_FLAG = 0x04 | 0x08;
 
 const errorEl = document.getElementById("error");
 const app = document.getElementById("compose-app");
+
+// ── Crypto self-test: verify OpenPGP.js is functional before first encrypt ───
+(async () => {
+  const banner = document.createElement("div");
+  banner.id = "crypto-status";
+  banner.className = "status-row";
+  banner.setAttribute("role", "status");
+  banner.setAttribute("aria-live", "polite");
+  banner.textContent = "Verifying crypto module…";
+  app.before(banner);
+
+  const result = await runCryptoSelfTests();
+  if (result.passed) {
+    banner.className = "status-row ok";
+    banner.textContent = `Crypto module verified (${result.elapsed} ms).`;
+    setTimeout(() => banner.classList.add("hidden"), 4000);
+  } else {
+    banner.className = "status-row err";
+    banner.textContent =
+      `Crypto self-test FAILED — encryption may be unreliable. ` +
+      (result.error ? `Error: ${result.error}` : "");
+  }
+})();
 
 /** @type {Map<string, Recipient>} */
 const recipients = new Map();
@@ -56,11 +81,13 @@ function uidLabel(uids) {
   const list = uids || [];
   if (!list.length) return "";
   const uid = list[0];
-  const email = extractEmail(uid);
-  const m = String(uid).match(/^(.*)<[^>]+>\s*$/);
-  const name = m ? m[1].trim() : "";
-  if (name && email) return `${name} <${email}>`;
-  return email || uid;
+  if (uid && typeof uid === "object") {
+    const email = uid.email || "";
+    const name = (uid.name || "").trim();
+    if (name && email) return `${name} <${email}>`;
+    return email || uid.raw || "";
+  }
+  return typeof uid === "string" ? uid : "";
 }
 
 function formatBytes(n) {
@@ -100,7 +127,7 @@ async function loadRecipientKey(fingerprint) {
   const pgpKey = await readKey({ armoredKey: armored });
   const uids = meta.approved_uids || meta.pending_uids || [];
   const label = uidLabel(uids) || formatFingerprint(clean);
-  const email = extractEmail(uids[0] || "") || "";
+  const email = uidEmail(uids[0]) || "";
   let valid = true;
   let err = "";
   if (meta.revoked) {
@@ -265,7 +292,6 @@ function renderOutput() {
     <div class="card-title-row">
       <p class="card-title" style="margin:0">Encrypted output</p>
       <div class="btn-row">
-        <button type="button" class="btn btn-ghost" id="reencrypt-btn">Re-encrypt</button>
         <button type="button" class="btn btn-ghost" id="clear-output-btn">Encrypt another</button>
       </div>
     </div>
@@ -421,8 +447,18 @@ async function runEncrypt() {
     }
     outputs = next;
     renderOutput();
+
+    // Clear sensitive plaintext now that it is encrypted.
+    const msgEl = document.getElementById("compose-message");
+    if (msgEl) msgEl.value = "";
+    files = [];
+    const fileInput = document.getElementById("compose-files");
+    if (fileInput) fileInput.value = "";
+    renderFiles();
+    updateEncryptButton();
+
     if (status) {
-      status.textContent = `Encrypted ${next.length} artifact${next.length === 1 ? "" : "s"} for ${keys.length} recipient${keys.length === 1 ? "" : "s"}.`;
+      status.textContent = `Encrypted ${next.length} artifact${next.length === 1 ? "" : "s"} for ${keys.length} recipient${keys.length === 1 ? "" : "s"}. Plaintext cleared.`;
       status.className = "status-row ok";
     }
   } catch (err) {
@@ -540,11 +576,6 @@ function wireEvents() {
     }
 
     if (t.id === "encrypt-btn" || t.closest("#encrypt-btn")) {
-      await runEncrypt();
-      return;
-    }
-
-    if (t.id === "reencrypt-btn") {
       await runEncrypt();
       return;
     }

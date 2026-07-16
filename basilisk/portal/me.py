@@ -29,8 +29,9 @@ def my_keys(
             item["approval_state"] == "pending"
             and email
             and any(
-                email in (uid.split("<")[-1].rstrip(">").strip() if "<" in uid else uid).lower()
+                (uid.get("email") or "").lower() == email
                 for uid in item.get("pending_uids") or item.get("uids") or []
+                if isinstance(uid, dict)
             )
         )
     return results

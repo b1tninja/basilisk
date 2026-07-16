@@ -42,6 +42,65 @@
   <div id="results"></div>
   <div id="cli-help" style="margin-top:2rem"></div>
 
+  <section class="project-info" aria-label="About Basilisk">
+    <div class="about-bar">
+      <a class="github-link" href="https://github.com/b1tninja/basilisk" target="_blank" rel="noopener noreferrer">
+        <svg class="github-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+            0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+            -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66
+            .07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15
+            -.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68
+            0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56
+            .82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07
+            -.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+        b1tninja/basilisk
+      </a>
+      <span class="about-tagline">Open-source verifying OpenPGP keyserver</span>
+    </div>
+
+    <div class="tech-pills">
+      <span class="tech-pill">OpenPGP RFC&nbsp;9580</span>
+      <span class="tech-pill">HKP protocol</span>
+      <span class="tech-pill">WKD</span>
+      <span class="tech-pill">Azure Functions</span>
+      <span class="tech-pill tech-pill-green">Open source · MIT</span>
+    </div>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 1l2.39 4.84 5.34.78-3.87 3.77.91 5.32L10 13.27l-4.77 2.44.91-5.32L2.27 6.62l5.34-.78z"/>
+          </svg>
+        </div>
+        <p class="feature-title">Verified keys</p>
+        <p class="feature-body">Every key is linked to an email address you own. Claimants verify via a one-time token — no unowned keys in the index.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="8" width="14" height="10" rx="2"/>
+            <path d="M7 8V6a3 3 0 016 0v2"/>
+          </svg>
+        </div>
+        <p class="feature-title">In-browser crypto</p>
+        <p class="feature-body">Encrypt, decrypt, and verify messages entirely in your browser with OpenPGP.js. Your private key and plaintext never leave your device.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="10" cy="10" r="8"/>
+            <path d="M10 2c0 0-4 4-4 8s4 8 4 8M10 2c0 0 4 4 4 8s-4 8-4 8M2 10h16"/>
+          </svg>
+        </div>
+        <p class="feature-title">Standard protocols</p>
+        <p class="feature-body">Compatible with GnuPG via HKP (<code>--recv-keys</code>, <code>--send-keys</code>) and WKD for automatic key discovery by email domain.</p>
+      </div>
+    </div>
+  </section>
+
   <script type="module" src="/src/pages/index.js"></script>
 </body>
 </html>

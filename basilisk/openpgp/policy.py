@@ -56,13 +56,11 @@ class PolicyConfig:
         )
 
 
+from basilisk.openpgp.canonical import parse_uid_parts
+
+
 def _email_from_uid(uid: str) -> str | None:
-    m = re.search(r"<([^>]+)>", uid)
-    if m and "@" in m.group(1):
-        return m.group(1).lower()
-    if "@" in uid:
-        return uid.strip().lower()
-    return None
+    return parse_uid_parts(uid)["email"]
 
 
 def validate_armor_format(keytext: str) -> None:

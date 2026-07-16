@@ -83,14 +83,43 @@ export function describeExpiry(value) {
   return { absolute, relative: `Expires in ~${years} yr`, tone: "ok" };
 }
 
-export function extractEmail(uid) {
-  const m = String(uid).match(/<([^>]+)>/);
-  if (m && m[1].includes("@")) return m[1].toLowerCase();
-  if (String(uid).includes("@")) return String(uid).trim().toLowerCase();
+/**
+ * Structured User ID from the API: { raw, name, email, comment }.
+ * Opaque strings are display-only (no client parsing / no search links).
+ * @typedef {{ raw?: string, name?: string|null, email?: string|null, comment?: string|null } | string} UidValue
+ */
+
+/** Email from a structured UID (server-parsed). Empty for opaque strings. */
+export function uidEmail(uid) {
+  if (uid && typeof uid === "object" && uid.email) {
+    return String(uid.email).toLowerCase();
+  }
   return "";
 }
 
-/** Relative search URL for email, name, fingerprint, or key ID. */
+/** Raw UID string for display / equality. */
+export function uidRaw(uid) {
+  if (uid && typeof uid === "object") return String(uid.raw || "");
+  if (typeof uid === "string") return uid;
+  return "";
+}
+
+/**
+ * Prefer structured API email; for free-text search inputs only, accept a bare address.
+ * Do not parse name-prefixed UID strings on the client.
+ */
+export function extractEmail(uid) {
+  const fromStruct = uidEmail(uid);
+  if (fromStruct) return fromStruct;
+  if (typeof uid === "string") {
+    const s = uid.trim();
+    // Bare addr-spec typed by the user (search / compose), not a full UID.
+    if (/^[^<>\s@]+@[^<>\s@]+\.[^<>\s@]+$/.test(s)) return s.toLowerCase();
+  }
+  return "";
+}
+
+/** Relative search URL for email, fingerprint, or key ID. */
 export function searchUrl(query) {
   const q = String(query || "").trim();
   if (!q) return "/";
@@ -98,23 +127,32 @@ export function searchUrl(query) {
 }
 
 /**
- * Render a UID with the email linked to search.
- * Names are not linked — the search API only supports email / fingerprint / key ID.
+ * Render a UID. Only the server-provided email is linked — never the name.
+ * Opaque string UIDs are escaped with no search link.
  */
 export function uidWithSearchLinks(uid) {
-  const raw = String(uid || "");
-  const m = raw.match(/^(.*)<([^>]+)>\s*$/);
-  if (m && m[2].includes("@")) {
-    const name = m[1].trim();
-    const email = m[2].trim();
-    const nameHtml = name ? `${escapeHtml(name)} ` : "";
-    return `${nameHtml}&lt;<a class="text-link" href="${escapeHtml(searchUrl(email))}" title="Search for this email">${escapeHtml(email)}</a>&gt;`;
+  if (uid && typeof uid === "object") {
+    const email = uid.email ? String(uid.email) : "";
+    const name = uid.name ? String(uid.name).trim() : "";
+    const comment = uid.comment ? String(uid.comment).trim() : "";
+    if (email) {
+      const emailLink = `<a class="text-link" href="${escapeHtml(searchUrl(email))}" title="Search for this email">${escapeHtml(email)}</a>`;
+      const prefix = [
+        name ? escapeHtml(name) : null,
+        comment ? `(${escapeHtml(comment)})` : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      if (prefix) return `${prefix} &lt;${emailLink}&gt;`;
+      // Prefer angle-bracket form when raw used it; otherwise bare linked email.
+      if (uid.raw && String(uid.raw).includes("<")) {
+        return `&lt;${emailLink}&gt;`;
+      }
+      return emailLink;
+    }
+    return escapeHtml(uid.raw || "");
   }
-  const email = extractEmail(raw);
-  if (email) {
-    return `<a class="text-link" href="${escapeHtml(searchUrl(email))}" title="Search for this email">${escapeHtml(raw)}</a>`;
-  }
-  return escapeHtml(raw);
+  return escapeHtml(String(uid || ""));
 }
 
 export async function copyText(text) {
