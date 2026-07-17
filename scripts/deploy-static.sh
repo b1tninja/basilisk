@@ -47,7 +47,7 @@ az storage blob upload-batch \
   --only-show-errors
 
 # Ensure HTML content-types for clean URL blobs and root pages.
-for blob in index.html search my-keys key stats; do
+for blob in index.html search my-keys key stats encrypt compose decrypt verify; do
   if [[ -f "${STAGE}/${blob}" ]] || [[ -f "${STAGE}/${blob}.html" ]]; then
     src="${STAGE}/${blob}"
     [[ -f "$src" ]] || src="${STAGE}/${blob}.html"

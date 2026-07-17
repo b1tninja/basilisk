@@ -28,7 +28,7 @@ import {
 } from "../lib/utils.js";
 import "../css/site.css";
 
-Auth.initWidget(document.getElementById("auth-widget"), "/compose");
+Auth.initWidget(document.getElementById("auth-widget"), "/encrypt");
 
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
 const ENCRYPT_FLAG = 0x04 | 0x08;

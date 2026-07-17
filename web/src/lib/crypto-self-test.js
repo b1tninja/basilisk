@@ -3,7 +3,7 @@
  *
  * Runs a keygen + encrypt/decrypt + sign/verify roundtrip with an ephemeral
  * Curve25519 key pair to verify that OpenPGP.js is loaded and functional.
- * Called at page startup by decrypt.js and compose.js; also imported by
+ * Called at page startup by decrypt.js and encrypt.js; also imported by
  * vitest for CI coverage (src/test/crypto-self-test.test.js).
  *
  * Memory-protection note: JS engines do not expose deterministic memory

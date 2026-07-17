@@ -38,8 +38,9 @@ cp "${OUT}/index.html" "${OUT}/search"
 cp "${OUT}/my-keys.html" "${OUT}/my-keys"
 cp "${OUT}/key.html" "${OUT}/key"
 cp "${OUT}/stats.html" "${OUT}/stats"
-cp "${OUT}/compose.html" "${OUT}/compose"
+cp "${OUT}/encrypt.html" "${OUT}/encrypt"
 cp "${OUT}/decrypt.html" "${OUT}/decrypt"
+cp "${OUT}/verify.html" "${OUT}/verify"
 
 # Only the dist path is printed to stdout — callers capture it with $().
 echo "$OUT"

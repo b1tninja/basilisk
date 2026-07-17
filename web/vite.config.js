@@ -17,7 +17,7 @@ export default defineConfig({
         myKeys: resolve(__dirname, "my-keys.html"),
         key: resolve(__dirname, "key.html"),
         stats: resolve(__dirname, "stats.html"),
-        compose: resolve(__dirname, "compose.html"),
+        encrypt: resolve(__dirname, "encrypt.html"),
         decrypt: resolve(__dirname, "decrypt.html"),
         verify: resolve(__dirname, "verify.html"),
       },

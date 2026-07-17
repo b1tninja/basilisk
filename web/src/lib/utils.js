@@ -113,7 +113,7 @@ export function extractEmail(uid) {
   if (fromStruct) return fromStruct;
   if (typeof uid === "string") {
     const s = uid.trim();
-    // Bare addr-spec typed by the user (search / compose), not a full UID.
+    // Bare addr-spec typed by the user (search / encrypt), not a full UID.
     if (/^[^<>\s@]+@[^<>\s@]+\.[^<>\s@]+$/.test(s)) return s.toLowerCase();
   }
   return "";

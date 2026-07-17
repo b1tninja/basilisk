@@ -5,7 +5,7 @@
  */
 
 /**
- * Encryption algorithm profile selected in the compose UI.
+ * Encryption algorithm profile selected in the encrypt UI.
  * @typedef {object} EncryptProfile
  * @property {"aes128"|"aes192"|"aes256"} cipher
  * @property {null|"gcm"|"ocb"|"eax"} aead  null = SEIPD v1 (CFB+MDC)
