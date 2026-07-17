@@ -104,8 +104,8 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
 
   tags = var.tags
 
-  # Do not depend_on kv_function_secrets — that role needs this app's identity (cycle).
-  # Apply order: Key Vault secret → Function App → role assignment. KV refs resolve at runtime.
+  # Do not depend_on function access policy — that policy needs this app's identity (cycle).
+  # Apply order: deployer policy → secret → Function App → function policy. KV refs resolve at runtime.
   depends_on = [
     azurerm_key_vault_secret.token_secret,
   ]
