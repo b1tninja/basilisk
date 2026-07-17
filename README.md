@@ -1,11 +1,4 @@
-<p align="center">
-  <img alt="Basilisk" src="docs/assets/basilisk-logo.png" width="160">
-</p>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/basilisk-wordmark-dark.png">
-  <img alt="Basilisk — Verifying Keyserver" src="docs/assets/basilisk-wordmark.png" width="480">
-</picture>
+![Basilisk](docs/assets/basilisk-logo.png)
 
 Minimalist serverless verifying OpenPGP keyserver (HKP v1/v2) with Azure Functions, Logic Apps, and WORM blob storage.
 
