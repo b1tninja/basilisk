@@ -85,6 +85,12 @@ variable "route53_zone_id" {
   default     = ""
 }
 
+variable "budget_contact_emails" {
+  type        = list(string)
+  description = "Optional email addresses for the monthly spend budget alert (Owner role is always notified)."
+  default     = []
+}
+
 variable "aws_region" {
   type        = string
   description = "AWS region for the Route53 provider (Route53 is global; us-east-1 is typical)."

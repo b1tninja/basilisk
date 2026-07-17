@@ -21,4 +21,5 @@ module "basilisk" {
   custom_domain            = var.custom_domain
   route53_zone_name        = var.route53_zone_name
   route53_zone_id          = var.route53_zone_id
+  budget_contact_emails    = var.budget_contact_emails
 }

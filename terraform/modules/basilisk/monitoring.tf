@@ -48,7 +48,10 @@ resource "azurerm_consumption_budget_resource_group" "basilisk" {
     threshold      = 80
     operator       = "GreaterThan"
     threshold_type = "Actual"
-    contact_emails = []
+    # Azure rejects budgets with no contacts. Owner role always receives the alert;
+    # optional emails can be added via var.budget_contact_emails.
+    contact_roles  = ["Owner"]
+    contact_emails = var.budget_contact_emails
   }
 
   lifecycle {

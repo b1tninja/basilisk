@@ -139,7 +139,17 @@ Optional repository **variables** (auto-detected when unset in CI if app storage
 
 The deploy workflow exports `ARM_CLIENT_ID`, `ARM_CLIENT_SECRET`, `ARM_TENANT_ID`, and `ARM_SUBSCRIPTION_ID` from `AZURE_CREDENTIALS` so Terraform's remote state backend works under the GitHub Actions service principal (`use_azuread_auth`).
 
-The deploy SP needs **Storage Blob Data Contributor** on the storage account (bootstrap script grants this).
+The deploy SP needs **Contributor** plus **User Access Administrator** on the resource group (Terraform assigns Key Vault RBAC). `scripts/bootstrap-tfstate.sh` grants both Storage Blob Data Contributor and User Access Administrator when the app RG exists.
+
+One-time fix if deploy fails with `AuthorizationFailed` on `roleAssignments/write`:
+
+```bash
+SP_OID=$(az ad sp list --display-name basilisk-github-deploy --query "[0].id" -o tsv)
+az role assignment create \
+  --assignee "$SP_OID" \
+  --role "User Access Administrator" \
+  --scope "/subscriptions/<sub-id>/resourceGroups/basilisk-dev-rg"
+```
 
 Cloud Shell auto-detects the same storage account and uses the shared blob state (see `scripts/cloudshell-setup.sh`).
 

@@ -96,7 +96,7 @@ output "github_actions_setup" {
       "AWS_ACCESS_KEY_ID",
       "AWS_SECRET_ACCESS_KEY",
     ]
-    azure_credentials_command = "az ad sp create-for-rbac --name basilisk-github-deploy --role contributor --scopes /subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${module.basilisk.resource_group_name} --sdk-auth"
+    azure_credentials_command = "az ad sp create-for-rbac --name basilisk-github-deploy --role contributor --scopes /subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${module.basilisk.resource_group_name} --sdk-auth  # then: bootstrap-tfstate.sh grants User Access Administrator for Key Vault RBAC"
     export_script             = "bash scripts/export-github-secrets.sh"
     subscription_id           = data.azurerm_client_config.current.subscription_id
     tenant_id                 = data.azurerm_client_config.current.tenant_id

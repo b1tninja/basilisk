@@ -63,6 +63,12 @@ variable "tags" {
   default     = {}
 }
 
+variable "budget_contact_emails" {
+  type        = list(string)
+  description = "Optional email addresses for the resource-group spend budget alert (in addition to Owner role)."
+  default     = []
+}
+
 variable "existing_token_secret" {
   type        = string
   description = "Use an existing HMAC secret when importing infrastructure (skips random_password)."

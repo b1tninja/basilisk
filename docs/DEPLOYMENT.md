@@ -90,9 +90,10 @@ This:
 1. Creates `tfstate` blob container on `basiliskdevstore`
 2. Creates `cloudshell` file share on `basiliskdevstore`
 3. Grants `Storage Blob Data Contributor` to you and the deploy SP
-4. Writes `terraform/cloudshell/backend.hcl` pointing at the blob
-5. Runs `terraform init` against the remote backend
-6. Runs `clouddrive mount` — **this opens a new terminal session**
+4. Grants `User Access Administrator` on the app RG to the deploy SP (needed so Terraform can assign Key Vault RBAC)
+5. Writes `terraform/cloudshell/backend.hcl` pointing at the blob
+6. Runs `terraform init` against the remote backend
+7. Runs `clouddrive mount` — **this opens a new terminal session**
 
 **Step 3 — re-clone into the new persistent `$HOME`**
 

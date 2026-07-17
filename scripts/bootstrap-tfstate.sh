@@ -105,6 +105,7 @@ else
 fi
 
 SA_ID="/subscriptions/${SUB}/resourceGroups/${TFSTATE_RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${TFSTATE_STORAGE_ACCOUNT}"
+APP_RG_ID="/subscriptions/${SUB}/resourceGroups/${APP_RG}"
 
 echo "Creating container $CONTAINER (if missing) ..."
 az storage container create \
@@ -146,6 +147,29 @@ grant_blob_contributor() {
     --output none
 }
 
+# Terraform creates Key Vault RBAC assignments (kv_admin, kv_function_secrets).
+# Contributor alone cannot write roleAssignments — the deploy SP needs
+# User Access Administrator on the resource group.
+grant_uaa_on_rg() {
+  local assignee="$1"
+  local label="$2"
+  local scope="$3"
+  if [[ -z "$assignee" || "$assignee" == "null" || -z "$scope" ]]; then
+    return 0
+  fi
+  if az role assignment list --scope "$scope" --assignee "$assignee" \
+    --query "[?roleDefinitionName=='User Access Administrator'] | length(@)" -o tsv 2>/dev/null | grep -q '^[1-9]'; then
+    echo "  $label already has User Access Administrator on RG"
+    return 0
+  fi
+  echo "Granting User Access Administrator to $label on $scope ..."
+  az role assignment create \
+    --role "User Access Administrator" \
+    --assignee "$assignee" \
+    --scope "$scope" \
+    --output none
+}
+
 CALLER_OID="$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)"
 grant_blob_contributor "$CALLER_OID" "signed-in user"
 
@@ -153,6 +177,11 @@ if GITHUB_SP_CLIENT_ID="$(resolve_github_sp_client_id)"; then
   echo "GitHub deploy SP: $GITHUB_SP_NAME ($GITHUB_SP_CLIENT_ID)"
   SP_OID="$(az ad sp show --id "$GITHUB_SP_CLIENT_ID" --query id -o tsv 2>/dev/null || true)"
   grant_blob_contributor "$SP_OID" "GitHub SP ($GITHUB_SP_CLIENT_ID)"
+  if az group show --name "$APP_RG" >/dev/null 2>&1; then
+    grant_uaa_on_rg "$SP_OID" "GitHub SP ($GITHUB_SP_CLIENT_ID)" "$APP_RG_ID"
+  else
+    echo "  (skip UAA — $APP_RG not found yet; re-run bootstrap after first deploy)"
+  fi
 else
   echo ""
   echo "Tip: create the deploy SP (see docs/CI.md), or set GITHUB_SP_CLIENT_ID explicitly:"
