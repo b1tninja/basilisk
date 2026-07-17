@@ -4,4 +4,5 @@ pytest>=8.0.0
 pytest-cov>=5.0.0
 pytest-timeout>=2.3.0
 pytest-docker>=3.1.0
-pip-tools>=7.0.0
+# pip-tools is for regenerating lockfiles (scripts/update-deps.sh), not CI install.
+# Install locally: pip install pip-tools
