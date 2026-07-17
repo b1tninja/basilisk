@@ -15,7 +15,6 @@ _STATIC_PAGES = {
     "stats": "stats.html",
     "search": "index.html",
     "encrypt": "encrypt.html",
-    "compose": "encrypt.html",  # legacy alias
     "decrypt": "decrypt.html",
     "verify": "verify.html",
 }
