@@ -751,6 +751,54 @@ pre {
   border: 0;
 }
 
+/* ===== Crypto POST / CAST verification UI ===== */
+
+/* Loading card shown while the pre-operational self-test runs */
+.crypto-post-pending {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.crypto-post-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+}
+
+/* Spinning ring indicator */
+.crypto-post-spinner {
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 3px solid var(--border);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: crypto-spin 0.8s linear infinite;
+}
+
+@keyframes crypto-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Permanent error card when POST / CAST fails */
+.crypto-error-state {
+  border-color: var(--error);
+  border-left: 4px solid var(--error);
+}
+
+.crypto-error-state .card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.crypto-error-state .card-title::before {
+  content: "⛔";
+  font-size: 1.1em;
+}
+
 /* ===== Encrypt composer ===== */
 .btn-compose {
   gap: 0.35rem;

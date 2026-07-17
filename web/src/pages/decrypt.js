@@ -9,7 +9,12 @@ import {
   verify,
 } from "openpgp";
 import { Auth } from "../lib/auth.js";
-import { SELF_TEST_LABELS, runCryptoSelfTests } from "../lib/crypto-self-test.js";
+import {
+  CryptoModuleError,
+  SELF_TEST_LABELS,
+  assertCryptoReady,
+  runCryptoSelfTests,
+} from "../lib/crypto-self-test.js";
 import {
   applySessionKeyDetails,
   dearmorToBytes,
@@ -806,8 +811,19 @@ document.getElementById("cipher-file").addEventListener("change", async (e) => {
 });
 
 document.getElementById("decrypt-btn").addEventListener("click", async () => {
+  // Primary gate: flag set by the POST completion handler below.
   if (!cryptoReady) {
     showError(errorEl, "Crypto self-test has not passed. Refusing to decrypt.");
+    return;
+  }
+  // Defensive CAST gate: assertCryptoReady() catches any race where the button
+  // became clickable before the module state was latched to READY/ERROR.
+  try {
+    await assertCryptoReady();
+  } catch (err) {
+    showError(errorEl, err instanceof CryptoModuleError
+      ? `Decryption refused — crypto self-test failed: ${err.message}`
+      : String(err));
     return;
   }
   touchActivity();

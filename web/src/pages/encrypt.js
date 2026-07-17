@@ -1,6 +1,11 @@
 import { readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
-import { runCryptoSelfTests } from "../lib/crypto-self-test.js";
+import {
+  CryptoModuleError,
+  SELF_TEST_LABELS,
+  assertCryptoReady,
+  runCryptoSelfTests,
+} from "../lib/crypto-self-test.js";
 import { badgeClass } from "../lib/keys.js";
 import {
   summarizeRecipientCapabilities,
@@ -36,28 +41,8 @@ const ENCRYPT_FLAG = 0x04 | 0x08;
 const errorEl = document.getElementById("error");
 const app = document.getElementById("compose-app");
 
-// ── Crypto self-test: verify OpenPGP.js is functional before first encrypt ───
-(async () => {
-  const banner = document.createElement("div");
-  banner.id = "crypto-status";
-  banner.className = "status-row";
-  banner.setAttribute("role", "status");
-  banner.setAttribute("aria-live", "polite");
-  banner.textContent = "Verifying crypto module…";
-  app.before(banner);
-
-  const result = await runCryptoSelfTests();
-  if (result.passed) {
-    banner.className = "status-row ok";
-    banner.textContent = `Crypto module verified (${result.elapsed} ms).`;
-    setTimeout(() => banner.classList.add("hidden"), 4000);
-  } else {
-    banner.className = "status-row err";
-    banner.textContent =
-      `Crypto self-test FAILED — encryption may be unreliable. ` +
-      (result.error ? `Error: ${result.error}` : "");
-  }
-})();
+/** True once the POST has passed. Gated by startEncryptPage(). */
+let cryptoReady = false;
 
 /** @type {Map<string, Recipient>} */
 const recipients = new Map();
@@ -612,6 +597,15 @@ function downloadBlob(filename, text) {
 }
 
 async function runEncrypt() {
+  // CAST gate: refuse to encrypt if the module self-test did not pass.
+  try {
+    await assertCryptoReady();
+  } catch (err) {
+    showError(errorEl, err instanceof CryptoModuleError
+      ? `Encryption refused — crypto self-test failed: ${err.message}`
+      : String(err));
+    return;
+  }
   errorEl.classList.add("hidden");
   if (!canEncrypt()) return;
   const usePw = passphraseEnabled();
@@ -1198,4 +1192,90 @@ async function init() {
   setTab(activeTab);
 }
 
-init().catch((err) => showError(errorEl, err.message || "Failed to load composer"));
+/**
+ * Entry point.  Shows the POST verification screen immediately (hiding the
+ * compose UI), waits for all CASTs to complete, then either reveals the
+ * composer (on pass) or renders a permanent error card (on failure).
+ *
+ * FIPS 140-3 §4.9.3: the module must "inhibit all data output" while in error
+ * state — we achieve this by never calling init() (which renders the form) if
+ * the POST fails.
+ */
+async function startEncryptPage() {
+  // Show the POST verification screen immediately — app div is empty at this
+  // point so no compose UI is visible to the user.
+  app.innerHTML = `
+    <div class="card crypto-post-pending" role="status" aria-live="polite" aria-busy="true">
+      <div class="crypto-post-header">
+        <div class="crypto-post-spinner" aria-hidden="true"></div>
+        <div>
+          <p class="card-title" style="margin:0 0 0.3rem">Verifying crypto module</p>
+          <p class="muted" style="margin:0;font-size:0.88rem">
+            Running pre-operational self-tests before enabling encryption services.
+            This usually completes in under a second.
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const result = await runCryptoSelfTests();
+
+  if (result.passed) {
+    cryptoReady = true;
+
+    // Brief confirmation flash before handing off to the composer.
+    app.innerHTML = `
+      <div class="status-row ok" role="status">
+        Crypto module verified (${result.elapsed}\u202fms) — ${Object.keys(result.results).length} algorithm checks passed.
+      </div>
+    `;
+    await new Promise((r) => setTimeout(r, 700));
+
+    // Hand off to the regular init() path.
+    await init();
+
+    // Replace the status row with a dismissable banner inside the rendered app.
+    const old = app.querySelector(".status-row.ok");
+    if (old) old.remove();
+
+  } else {
+    // ── Permanent error state ─────────────────────────────────────────────
+    // FIPS 140-3 §4.9.3: module must enter error state and inhibit all data
+    // output.  We never call init(), so the compose form is never rendered.
+    const failedChecks = Object.entries(result.results)
+      .filter(([, v]) => !v)
+      .map(([k]) => SELF_TEST_LABELS[k] || k);
+
+    app.innerHTML = `
+      <div class="card crypto-error-state" role="alert">
+        <p class="card-title text-error" style="margin:0 0 0.5rem">
+          Crypto self-test failed
+        </p>
+        <p style="margin:0 0 0.75rem">
+          The cryptographic module failed its pre-operational self-test.
+          <strong>All encryption services are disabled.</strong>
+          Do not use this browser to encrypt sensitive data until this is resolved.
+        </p>
+        ${failedChecks.length
+          ? `<p class="muted" style="margin:0 0 0.5rem">
+               Failed checks: ${failedChecks.map((s) => `<code>${escapeHtml(s)}</code>`).join(", ")}
+             </p>`
+          : ""}
+        ${result.error
+          ? `<p class="muted" style="margin:0 0 0.5rem">
+               Error: <code>${escapeHtml(result.error)}</code>
+             </p>`
+          : ""}
+        <p class="muted" style="margin:0.75rem 0 0;font-size:0.85rem">
+          This failure has been recorded in the browser console.
+          Reloading the page will re-run the self-test.
+          If the problem persists, the browser's cryptographic implementation
+          may be corrupted or tampered with.
+        </p>
+      </div>
+    `;
+  }
+}
+
+startEncryptPage();
