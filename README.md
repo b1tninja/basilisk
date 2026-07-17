@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="Basilisk" src="docs/assets/basilisk-logo.png" width="160">
+</p>
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/basilisk-wordmark-dark.png">
   <img alt="Basilisk — Verifying Keyserver" src="docs/assets/basilisk-wordmark.png" width="480">
@@ -38,7 +42,7 @@ gpg --keyserver http://localhost:8080 --recv-keys YOURKEYID
 |------|-----|
 | [`docs/assets/basilisk-wordmark.png`](docs/assets/basilisk-wordmark.png) | README / light theme |
 | [`docs/assets/basilisk-wordmark-dark.png`](docs/assets/basilisk-wordmark-dark.png) | Dark theme |
-| [`docs/assets/basilisk-logo.png`](docs/assets/basilisk-logo.png) | Icon, light background |
+| [`docs/assets/basilisk-logo.png`](docs/assets/basilisk-logo.png) | Icon (transparent) |
 | [`docs/assets/basilisk-logo-dark.png`](docs/assets/basilisk-logo-dark.png) | Icon, dark background |
 | [`docs/assets/basilisk-favicon.png`](docs/assets/basilisk-favicon.png) | Favicon (32–64 px) |
 
