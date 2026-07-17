@@ -54,6 +54,15 @@ output "key_vault_name" {
   value = azurerm_key_vault.basilisk.name
 }
 
+output "key_vault_id" {
+  value = azurerm_key_vault.basilisk.id
+}
+
+output "kv_uaa_grant_command" {
+  description = "One-time command: grant the deploy SP User Access Administrator scoped to this vault so Terraform can assign Key Vault RBAC roles."
+  value       = "az role assignment create --assignee ${data.azurerm_client_config.current.object_id} --role 'User Access Administrator' --scope ${azurerm_key_vault.basilisk.id}"
+}
+
 output "front_door_id" {
   description = "Front Door profile resource GUID (X-Azure-FDID)."
   value       = azurerm_cdn_frontdoor_profile.basilisk.resource_guid

@@ -12,14 +12,14 @@ if [[ ! -f "${WEB_DIR}/package.json" ]]; then
 fi
 
 if [[ ! -d "${WEB_DIR}/node_modules" ]]; then
-  (cd "$WEB_DIR" && npm ci)
+  (cd "$WEB_DIR" && npm ci) >&2
 fi
 
-(cd "$WEB_DIR" && npm run build)
+(cd "$WEB_DIR" && npm run build) >&2
 
 # Strip inline importmap scripts so CSP can stay script-src 'self' (no unsafe-inline).
 # Script/link integrity attributes from vite-plugin-sri-gen remain intact.
-python - "$OUT" <<'PY'
+python - "$OUT" >&2 <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -41,4 +41,5 @@ cp "${OUT}/stats.html" "${OUT}/stats"
 cp "${OUT}/compose.html" "${OUT}/compose"
 cp "${OUT}/decrypt.html" "${OUT}/decrypt"
 
+# Only the dist path is printed to stdout — callers capture it with $().
 echo "$OUT"

@@ -78,6 +78,11 @@ output "key_vault_name" {
   value       = module.basilisk.key_vault_name
 }
 
+output "kv_uaa_grant_command" {
+  description = "One-time command: run this as subscription Owner/admin to let Terraform assign Key Vault RBAC roles."
+  value       = module.basilisk.kv_uaa_grant_command
+}
+
 output "github_actions_setup" {
   description = "Non-sensitive deploy metadata and secret setup checklist."
   value = {
