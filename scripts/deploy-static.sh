@@ -64,3 +64,38 @@ done
 
 static_host="$(az storage account show -n "$STORAGE_ACCOUNT" ${RESOURCE_GROUP:+-g "$RESOURCE_GROUP"} --query primaryEndpoints.web -o tsv | sed 's#https://##;s#/$##')"
 echo "Static site deployed to https://${static_host}/"
+
+# ── Purge Azure Front Door cache ─────────────────────────────────────────────
+# HTML files and clean-URL aliases keep the same names across deploys, so
+# Front Door's CDN caches (up to 7 days for assets, 1 day for HTML) would
+# otherwise serve stale content.  Vite-hashed asset bundles (/assets/…) are
+# inherently cache-busted by their filenames and don't strictly need purging,
+# but purging /* is simpler and safe.
+#
+# FD profile/endpoint names come from Terraform outputs when available;
+# fall back to env vars BASILISK_FD_PROFILE and BASILISK_FD_ENDPOINT, or
+# derive from the storage account name convention.
+FD_RG="${RESOURCE_GROUP:-}"
+FD_PROFILE="${BASILISK_FD_PROFILE:-}"
+FD_ENDPOINT="${BASILISK_FD_ENDPOINT:-}"
+
+if [[ -z "$FD_PROFILE" ]] && [[ -n "${TF_DIR:-}" ]] && terraform -chdir="$TF_DIR" output -raw front_door_profile_name >/dev/null 2>&1; then
+  FD_PROFILE="$(terraform -chdir="$TF_DIR" output -raw front_door_profile_name 2>/dev/null || true)"
+  FD_ENDPOINT="$(terraform -chdir="$TF_DIR" output -raw front_door_endpoint_name 2>/dev/null || true)"
+fi
+
+if [[ -n "$FD_PROFILE" && -n "$FD_ENDPOINT" && -n "$FD_RG" ]]; then
+  echo "Purging Front Door cache (${FD_PROFILE} / ${FD_ENDPOINT}) …"
+  az afd endpoint purge \
+    --resource-group "$FD_RG" \
+    --profile-name   "$FD_PROFILE" \
+    --endpoint-name  "$FD_ENDPOINT" \
+    --content-paths  "/*" \
+    --no-wait \
+    --only-show-errors \
+  && echo "Cache purge queued (async — propagates to all PoPs within ~2 min)." \
+  || echo "Warning: cache purge failed — users may see stale content for up to 1 day." >&2
+else
+  echo "Skipping Front Door cache purge (FD_PROFILE/FD_ENDPOINT/RESOURCE_GROUP not set)." >&2
+  echo "  Set BASILISK_FD_PROFILE, BASILISK_FD_ENDPOINT, and RESOURCE_GROUP to enable." >&2
+fi

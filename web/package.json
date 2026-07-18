@@ -12,6 +12,7 @@
     "openpgp": "^6.1.0"
   },
   "devDependencies": {
+    "fake-indexeddb": "^6.0.0",
     "vite": "^6.0.0",
     "vite-plugin-sri-gen": "^1.0.0",
     "vitest": "^4.1.10"

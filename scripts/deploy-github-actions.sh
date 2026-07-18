@@ -65,7 +65,8 @@ az functionapp deployment source config-zip \
 
 if [[ -n "${STORAGE_ACCOUNT:-}" ]]; then
   echo "Deploying static portal to $STORAGE_ACCOUNT ..."
-  STORAGE_ACCOUNT="$STORAGE_ACCOUNT" RESOURCE_GROUP="$RG" bash "${REPO_ROOT}/scripts/deploy-static.sh"
+  STORAGE_ACCOUNT="$STORAGE_ACCOUNT" RESOURCE_GROUP="$RG" TF_DIR="$TF_DIR" \
+    bash "${REPO_ROOT}/scripts/deploy-static.sh"
 else
   echo "Skipping static deploy (storage account unknown)."
 fi

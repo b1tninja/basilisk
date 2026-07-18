@@ -1,15 +1,17 @@
 /**
- * Web Worker: encrypt / private-key decrypt in an isolated heap.
+ * Web Worker: encrypt / private-key decrypt / keygen in an isolated heap.
  *
- * Decrypt: { id, type:"decrypt", armoredMessage, privateKeyArmored, passphrase?, verificationKeysArmored? }
- * Encrypt: { id, type:"encrypt", recipientKeysArmored[], passwords[], payloads[], profile, hideRecipients? }
- *          File payloads may include transferable ArrayBuffer `bytes`.
+ * Decrypt:  { id, type:"decrypt", armoredMessage, privateKeyArmored, passphrase?, verificationKeysArmored? }
+ * Encrypt:  { id, type:"encrypt", recipientKeysArmored[], passwords[], payloads[], profile, hideRecipients? }
+ * Generate: { id, type:"generate", name?, email, keyExpirationTime?, passphrase? }
+ *           → { armoredPublic, armoredPrivate, fingerprint }
  */
 
 import {
   decrypt,
   decryptKey,
   decryptSessionKeys,
+  generateKey,
   readKey,
   readMessage,
   readPrivateKey,
@@ -126,6 +128,36 @@ self.onmessage = async (ev) => {
         }
       }
       self.postMessage({ id, ok: true, artifacts });
+    } else if (msg.type === "generate") {
+      const email = String(msg.email || "").trim();
+      if (!email) throw new Error("Email is required for key generation");
+      const name = String(msg.name || "").trim();
+      const userIDs = [{ name: name || email, email }];
+      /** @type {Parameters<typeof generateKey>[0]} */
+      const genOpts = {
+        type: "ecc",
+        curve: "curve25519",
+        userIDs,
+        format: "armored",
+      };
+      if (msg.passphrase) {
+        genOpts.passphrase = String(msg.passphrase);
+      }
+      if (msg.keyExpirationTime != null && msg.keyExpirationTime > 0) {
+        genOpts.keyExpirationTime = Number(msg.keyExpirationTime);
+      }
+      const { privateKey: armoredPrivate, publicKey: armoredPublic } =
+        await generateKey(genOpts);
+      // Parse public key for fingerprint (never leave object keys lingering).
+      const pub = await readKey({ armoredKey: String(armoredPublic) });
+      const fingerprint = pub.getFingerprint().toUpperCase();
+      self.postMessage({
+        id,
+        ok: true,
+        armoredPublic: String(armoredPublic),
+        armoredPrivate: String(armoredPrivate),
+        fingerprint,
+      });
     } else {
       self.postMessage({ id, ok: false, error: "Unknown worker message type" });
     }

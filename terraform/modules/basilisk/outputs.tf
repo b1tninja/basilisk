@@ -68,6 +68,16 @@ output "front_door_id" {
   value       = azurerm_cdn_frontdoor_profile.basilisk.resource_guid
 }
 
+output "front_door_profile_name" {
+  description = "AFD profile name — used by az afd endpoint purge after static deploys."
+  value       = azurerm_cdn_frontdoor_profile.basilisk.name
+}
+
+output "front_door_endpoint_name" {
+  description = "AFD endpoint name — used by az afd endpoint purge after static deploys."
+  value       = azurerm_cdn_frontdoor_endpoint.basilisk.name
+}
+
 output "static_website_host" {
   value = azurerm_storage_account.basilisk.primary_web_host
 }

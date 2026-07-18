@@ -10,6 +10,7 @@ import { renderSubmitSnippets, wireSnippetCopy } from "./snippets.js";
 export function badgeClass(state) {
   if (state === "approved") return "badge approved";
   if (state === "pending") return "badge pending";
+  if (state === "expired") return "badge pending";
   return "badge";
 }
 

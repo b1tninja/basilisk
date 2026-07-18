@@ -1516,6 +1516,46 @@ pre {
   margin: 1rem 0;
 }
 
+/* Browser vault / generate key */
+.vault-protection-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+.radio-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.radio-row input {
+  margin-top: 0.2rem;
+}
+
+/* Passphrase suggestion + vault export panel */
+.suggested-pw {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.1));
+  border: 1px dashed var(--border, #555);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  margin: 0.5rem 0 0;
+  word-break: break-all;
+  user-select: all;
+}
+.vault-export-row > td {
+  padding: 0;
+  border-top: none;
+}
+.vault-export-panel {
+  padding: 0.75rem 1rem 1rem;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.06));
+  border-left: 3px solid var(--accent, #7aa2f7);
+}
+
 /* Label editor widget */
 .label-editor {
   flex: 1 1 240px;

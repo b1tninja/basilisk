@@ -87,6 +87,13 @@ def lookup_get(
     if not record:
         return HttpResponse(404, "Not found", {}, "text/plain")
 
+    # Expired keys are hidden from HKP (search already excludes them).
+    # Pending keys remain fetchable with UIDs stripped for the claim flow.
+    if record.approval_state == "expired":
+        return HttpResponse(404, "Not found", {}, "text/plain")
+    if record.approval_state == "rejected":
+        return HttpResponse(404, "Not found", {}, "text/plain")
+
     data, headers = _read_blob(record, blobs, settings, if_none_match)
     if headers.get("X-Not-Modified"):
         return HttpResponse(304, "", headers, "application/pgp-keys")

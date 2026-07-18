@@ -38,6 +38,11 @@ import {
   showError,
 } from "../lib/utils.js";
 import { getExpertMode, setExpertMode } from "../lib/prefs.js";
+import {
+  getPasskeyPrf,
+  listKeys as vaultListKeys,
+  unlockKey as vaultUnlockKey,
+} from "../lib/vault.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"), "/decrypt");
@@ -56,6 +61,8 @@ let currentPacketMap = null;
 let expertMode = getExpertMode();
 /** @type {string} */
 let lastPlaintext = "";
+/** @type {import("../lib/vault.js").VaultKeyMeta[]} */
+let vaultKeys = [];
 
 const IDLE_CLEAR_MS = 5 * 60 * 1000;
 const HIDDEN_CLEAR_MS = 60 * 1000;
@@ -102,6 +109,16 @@ app.innerHTML = `
         <p class="card-title" style="margin:0">Private key (local only)</p>
         <button type="button" class="btn btn-ghost btn-compact" id="clear-sensitive-btn"
           title="Zero and clear all sensitive fields">Clear sensitive data</button>
+      </div>
+      <div id="vault-key-row" class="hidden" style="margin-bottom:0.85rem">
+        <label class="field-label" for="vault-key-select">Use a stored key</label>
+        <div class="btn-row" style="gap:0.5rem;align-items:center">
+          <select id="vault-key-select" class="text-input" style="flex:1">
+            <option value="">— paste key below —</option>
+          </select>
+          <button type="button" class="btn btn-ghost btn-compact" id="vault-unlock-btn">Unlock</button>
+        </div>
+        <p id="vault-unlock-status" class="muted" style="margin-top:0.4rem;font-size:0.85rem"></p>
       </div>
       <label class="field-label" for="private-key">Armored private key</label>
       <textarea id="private-key" class="compose-message" rows="8"
@@ -162,6 +179,10 @@ function clearSensitiveFields() {
   if (keyEl) keyEl.value = "";
   if (passEl) passEl.value = "";
   if (msgPass) msgPass.value = "";
+  const vaultSelect = document.getElementById("vault-key-select");
+  if (vaultSelect instanceof HTMLSelectElement) vaultSelect.value = "";
+  const vaultStatus = document.getElementById("vault-unlock-status");
+  if (vaultStatus) vaultStatus.textContent = "";
   if (out) {
     out.classList.add("hidden");
     out.innerHTML = "";
@@ -1057,4 +1078,72 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 
+async function refreshVaultKeySelect() {
+  const row = document.getElementById("vault-key-row");
+  const select = document.getElementById("vault-key-select");
+  if (!row || !select) return;
+  try {
+    vaultKeys = await vaultListKeys();
+  } catch (_) {
+    vaultKeys = [];
+  }
+  if (!vaultKeys.length) {
+    row.classList.add("hidden");
+    return;
+  }
+  row.classList.remove("hidden");
+  const prev = select.value;
+  select.innerHTML =
+    `<option value="">— paste key below —</option>` +
+    vaultKeys
+      .map((k) => {
+        const label = `${formatFingerprint(k.fingerprint)} · ${k.protection}${
+          k.email ? ` · ${k.email}` : ""
+        }`;
+        return `<option value="${escapeHtml(k.fingerprint)}">${escapeHtml(label)}</option>`;
+      })
+      .join("");
+  if (prev && vaultKeys.some((k) => k.fingerprint === prev)) {
+    select.value = prev;
+  }
+}
+
+document.getElementById("vault-unlock-btn")?.addEventListener("click", async () => {
+  const select = document.getElementById("vault-key-select");
+  const status = document.getElementById("vault-unlock-status");
+  const fpr = select?.value || "";
+  if (!fpr) {
+    if (status) status.textContent = "Choose a stored key first.";
+    return;
+  }
+  const meta = vaultKeys.find((k) => k.fingerprint === fpr);
+  if (!meta) {
+    if (status) status.textContent = "Key not found in vault.";
+    return;
+  }
+  if (status) status.textContent = "Unlocking…";
+  try {
+    /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
+    const opts = {};
+    if (meta.protection === "passkey") {
+      if (status) status.textContent = "Confirm passkey…";
+      opts.prfIkm = await getPasskeyPrf();
+    }
+    const armored = await vaultUnlockKey(fpr, opts);
+    const keyEl = document.getElementById("private-key");
+    if (keyEl) keyEl.value = armored;
+    if (status) {
+      status.textContent =
+        meta.protection === "passphrase"
+          ? "Vault unlocked — enter the key passphrase below if prompted."
+          : "Vault key loaded into the private key field.";
+    }
+    touchActivity();
+  } catch (err) {
+    if (status) status.textContent = err?.message || "Unlock failed";
+    showError(errorEl, err?.message || "Vault unlock failed");
+  }
+});
+
+refreshVaultKeySelect();
 touchActivity();

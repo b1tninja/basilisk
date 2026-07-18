@@ -73,6 +73,16 @@ output "github_actions_secrets" {
   }
 }
 
+output "front_door_profile_name" {
+  description = "AFD profile name — used by az afd endpoint purge."
+  value       = module.basilisk.front_door_profile_name
+}
+
+output "front_door_endpoint_name" {
+  description = "AFD endpoint name — used by az afd endpoint purge."
+  value       = module.basilisk.front_door_endpoint_name
+}
+
 output "key_vault_name" {
   description = "Key Vault holding basilisk-token-secret."
   value       = module.basilisk.key_vault_name

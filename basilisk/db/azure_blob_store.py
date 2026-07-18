@@ -35,5 +35,13 @@ class AzureBlobStore:
         blob = self._container.get_blob_client(blob_uri)
         return blob.download_blob().readall()
 
+    def delete(self, blob_uri: str) -> None:
+        """Best-effort delete; WORM/immutability policies may reject this."""
+        try:
+            blob = self._container.get_blob_client(blob_uri)
+            blob.delete_blob()
+        except Exception:
+            logger.warning("Could not delete blob %s (may be immutable)", blob_uri, exc_info=True)
+
     def uri_to_absolute(self, blob_uri: str) -> Path:
         raise NotImplementedError("Azure blobs have no local path")

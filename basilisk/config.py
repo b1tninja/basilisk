@@ -56,6 +56,7 @@ class Settings:
     proof_max_age_sec: int
     auth_providers: tuple[str, ...]
     pending_ttl_days: int
+    expired_grace_days: int
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -106,6 +107,7 @@ class Settings:
                 if p.strip()
             ),
             pending_ttl_days=int(os.environ.get("BASILISK_PENDING_TTL_DAYS", "30")),
+            expired_grace_days=int(os.environ.get("BASILISK_EXPIRED_GRACE_DAYS", "30")),
         )
 
 

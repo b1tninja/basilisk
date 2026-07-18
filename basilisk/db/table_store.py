@@ -256,6 +256,70 @@ class AzureTableCertStore(CertStore):
                 out.append(self._record(entity))
         return out
 
+    def list_approved_past_expiration(self, now_iso: str) -> list[CertRecord]:
+        out: list[CertRecord] = []
+        for entity in self._certs.query_entities(
+            query_filter="approval_state eq 'approved'"
+        ):
+            exp = str(entity.get("key_expiration") or "")
+            if exp and exp < now_iso:
+                out.append(self._record(entity))
+        return out
+
+    def mark_expired(self, fingerprint: str) -> None:
+        fpr = fingerprint.upper()
+        entity = self._certs.get_entity(partition_key=fpr, row_key=fpr)
+        if entity.get("approval_state") != "approved":
+            return
+        entity["approval_state"] = "expired"
+        entity["updated_at"] = _utcnow()
+        self._certs.update_entity(entity, mode="replace")
+
+    def list_expired_past_grace(self, cutoff_iso: str) -> list[CertRecord]:
+        out: list[CertRecord] = []
+        for entity in self._certs.query_entities(
+            query_filter="approval_state eq 'expired'"
+        ):
+            exp = str(entity.get("key_expiration") or "")
+            if exp and exp < cutoff_iso:
+                out.append(self._record(entity))
+        return out
+
+    def delete_cert(self, fingerprint: str) -> CertRecord | None:
+        fpr = fingerprint.upper()
+        try:
+            entity = self._certs.get_entity(partition_key=fpr, row_key=fpr)
+        except Exception:
+            return None
+        record = self._record(entity)
+        # Best-effort cleanup of secondary indexes.
+        for uid in record.approved_uids or []:
+            email = ""
+            try:
+                from basilisk.openpgp.canonical import parse_uid_parts
+
+                email = parse_uid_parts(uid).get("email") or ""
+            except Exception:
+                email = ""
+            if email:
+                try:
+                    self._emails.delete_entity(partition_key=email.lower(), row_key=fpr)
+                except Exception:
+                    pass
+        for ident in (fpr, (record.key_id or "").lower().removeprefix("0x")):
+            if not ident:
+                continue
+            for id_type in ("fingerprint", "keyid"):
+                try:
+                    self._ids.delete_entity(partition_key=ident, row_key=id_type)
+                except Exception:
+                    pass
+        try:
+            self._certs.delete_entity(partition_key=fpr, row_key=fpr)
+        except Exception:
+            return None
+        return record
+
     def set_label(self, fingerprint: str, label: str | None) -> None:
         fpr = fingerprint.upper()
         entity = self._certs.get_entity(partition_key=fpr, row_key=fpr)
@@ -264,7 +328,7 @@ class AzureTableCertStore(CertStore):
         self._certs.update_entity(entity, mode="replace")
 
     def stats(self) -> dict[str, int]:
-        out = {"total": 0, "pending": 0, "approved": 0, "rejected": 0}
+        out = {"total": 0, "pending": 0, "approved": 0, "rejected": 0, "expired": 0}
         for entity in self._certs.list_entities():
             state = entity.get("approval_state", "pending")
             out[state] = out.get(state, 0) + 1

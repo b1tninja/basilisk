@@ -299,16 +299,63 @@ class SqliteCertStore(CertStore):
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
+    def list_approved_past_expiration(self, now_iso: str) -> list[CertRecord]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM certs
+            WHERE approval_state='approved'
+              AND key_expiration IS NOT NULL
+              AND key_expiration != ''
+              AND key_expiration < ?
+            """,
+            (now_iso,),
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def mark_expired(self, fingerprint: str) -> None:
+        fpr = fingerprint.upper()
+        self._conn.execute(
+            "UPDATE certs SET approval_state='expired', updated_at=? WHERE fingerprint=? AND approval_state='approved'",
+            (_utcnow(), fpr),
+        )
+        self._conn.commit()
+
+    def list_expired_past_grace(self, cutoff_iso: str) -> list[CertRecord]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM certs
+            WHERE approval_state='expired'
+              AND key_expiration IS NOT NULL
+              AND key_expiration != ''
+              AND key_expiration < ?
+            """,
+            (cutoff_iso,),
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def delete_cert(self, fingerprint: str) -> CertRecord | None:
+        fpr = fingerprint.upper()
+        row = self._conn.execute(
+            "SELECT * FROM certs WHERE fingerprint=?", (fpr,)
+        ).fetchone()
+        if not row:
+            return None
+        record = self._row_to_record(row)
+        self._conn.execute("DELETE FROM emails WHERE fingerprint=?", (fpr,))
+        self._conn.execute("DELETE FROM identifiers WHERE fingerprint=?", (fpr,))
+        self._conn.execute("DELETE FROM certs WHERE fingerprint=?", (fpr,))
+        self._conn.commit()
+        return record
+
     def stats(self) -> dict[str, int]:
         rows = self._conn.execute(
             "SELECT approval_state, COUNT(*) as n FROM certs GROUP BY approval_state"
         ).fetchall()
-        out = {"total": 0, "pending": 0, "approved": 0, "rejected": 0}
+        out = {"total": 0, "pending": 0, "approved": 0, "rejected": 0, "expired": 0}
         for row in rows:
             out[row["approval_state"]] = row["n"]
             out["total"] += row["n"]
         return out
-
 
     def set_label(self, fingerprint: str, label: str | None) -> None:
         fpr = fingerprint.upper()

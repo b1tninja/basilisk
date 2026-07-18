@@ -9,6 +9,10 @@ class BlobStore(Protocol):
 
     def read(self, blob_uri: str) -> bytes: ...
 
+    def delete(self, blob_uri: str) -> None:
+        """Best-effort delete of a blob (may be a no-op on immutable/WORM stores)."""
+        ...
+
 
 class LocalBlobStore:
     """Filesystem blob store mirroring certs/{fpr}/{sha256_prefix}.asc layout."""
@@ -29,6 +33,11 @@ class LocalBlobStore:
     def read(self, blob_uri: str) -> bytes:
         path = self._root / blob_uri
         return path.read_bytes()
+
+    def delete(self, blob_uri: str) -> None:
+        path = self._root / blob_uri
+        if path.is_file():
+            path.unlink()
 
     def uri_to_absolute(self, blob_uri: str) -> Path:
         return self._root / blob_uri

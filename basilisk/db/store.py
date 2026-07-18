@@ -75,6 +75,22 @@ class CertStore(Protocol):
         """Return pending certs with updated_at (or created_at) before cutoff."""
         ...
 
+    def list_approved_past_expiration(self, now_iso: str) -> list[CertRecord]:
+        """Return approved certs whose OpenPGP key_expiration is before ``now_iso``."""
+        ...
+
+    def mark_expired(self, fingerprint: str) -> None:
+        """Transition an approved cert to approval_state='expired' (hidden from search)."""
+        ...
+
+    def list_expired_past_grace(self, cutoff_iso: str) -> list[CertRecord]:
+        """Return expired certs whose key_expiration is before ``cutoff_iso`` (grace elapsed)."""
+        ...
+
+    def delete_cert(self, fingerprint: str) -> CertRecord | None:
+        """Permanently remove a cert record and its indexes. Returns the removed record."""
+        ...
+
     def set_label(self, fingerprint: str, label: str | None) -> None:
         """Set (or clear) the owner-supplied friendly label for a key."""
         ...
