@@ -1534,6 +1534,97 @@ pre {
   margin-top: 0.2rem;
 }
 
+/* Crypto Toolkit */
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  text-align: left;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.06));
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.preset-card:hover {
+  border-color: var(--accent, #7aa2f7);
+}
+.preset-recipe {
+  font-size: 0.72rem;
+  word-break: break-all;
+  opacity: 0.85;
+}
+.builder-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.builder-card {
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.04));
+}
+.builder-card.dragging {
+  opacity: 0.5;
+}
+.builder-foreach {
+  border-left: 3px solid var(--accent, #7aa2f7);
+}
+.builder-foreach-child {
+  margin-left: 1rem;
+  border-left: 2px dashed var(--accent, #7aa2f7);
+}
+.builder-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.builder-drag {
+  cursor: grab;
+  opacity: 0.6;
+}
+.builder-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.builder-param {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  min-width: 120px;
+}
+.binder-slot {
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border, #333);
+}
+.ref-step {
+  margin-bottom: 0.5rem;
+}
+.artifact-card {
+  margin-bottom: 0.75rem;
+}
+.qr-preview svg {
+  max-width: 220px;
+  height: auto;
+}
+.toolkit-banner {
+  margin-bottom: 1rem;
+  border-left: 3px solid var(--accent, #7aa2f7);
+}
+
 /* Passphrase suggestion + vault export panel */
 .suggested-pw {
   font-family: var(--font-mono, ui-monospace, monospace);

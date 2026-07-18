@@ -1,4 +1,3 @@
-import { readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
 import {
   CryptoModuleError,
@@ -9,7 +8,6 @@ import {
 import { badgeClass } from "../lib/keys.js";
 import {
   summarizeRecipientCapabilities,
-  supportsSeipdV2,
 } from "../lib/pgp/capabilities.js";
 import {
   PROFILE_AUTO,
@@ -20,23 +18,21 @@ import {
 } from "../lib/pgp/encrypt.js";
 import { estimatePassphraseStrength } from "../lib/pgp/passphrase.js";
 import { getExpertMode, setExpertMode } from "../lib/prefs.js";
+import { loadRecipientKey } from "../lib/recipient-picker.js";
 import {
   copyText,
   escapeHtml,
   extractEmail,
   fetchJson,
-  fetchText,
   formatFingerprint,
   queryParam,
   showError,
-  uidEmail,
 } from "../lib/utils.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"), "/encrypt");
 
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
-const ENCRYPT_FLAG = 0x04 | 0x08;
 
 const errorEl = document.getElementById("error");
 const app = document.getElementById("compose-app");
@@ -60,27 +56,8 @@ let encryptPreset = "auto";
 let expertMode = getExpertMode();
 
 /**
- * @typedef {{
- *   fingerprint: string,
- *   keyId: string,
- *   label: string,
- *   email: string,
- *   approvalState: string,
- *   revoked: boolean,
- *   valid: boolean,
- *   error: string,
- *   pgpKey: import("openpgp").Key | null,
- *   modernCapable: boolean,
- *   armoredKey: string,
- * }} Recipient
+ * @typedef {import("../lib/recipient-picker.js").Recipient} Recipient
  */
-
-function shortFpr(fpr) {
-  const c = String(fpr || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
-  return c.length > 8 ? c.slice(-8) : c;
-}
 
 function uidLabel(uids) {
   const list = uids || [];
@@ -95,6 +72,13 @@ function uidLabel(uids) {
   return typeof uid === "string" ? uid : "";
 }
 
+function shortFpr(fpr) {
+  const c = String(fpr || "")
+    .toUpperCase()
+    .replace(/[^0-9A-F]/g, "");
+  return c.length > 8 ? c.slice(-8) : c;
+}
+
 function formatBytes(n) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -103,77 +87,6 @@ function formatBytes(n) {
 
 function totalFileBytes() {
   return files.reduce((sum, f) => sum + f.size, 0);
-}
-
-function hasEncryptCapability(pgpKey) {
-  try {
-    const keys = [pgpKey, ...(pgpKey.subkeys || []).map((s) => s)];
-    for (const k of keys) {
-      const pkt = k.keyPacket || k;
-      if (pkt && pkt.flags != null && pkt.flags & ENCRYPT_FLAG) return true;
-    }
-  } catch (_) {
-    /* fall through */
-  }
-  return false;
-}
-
-async function loadRecipientKey(fingerprint) {
-  const clean = String(fingerprint)
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
-  const [meta, armored] = await Promise.all([
-    fetchJson(`/api/v1/key/${encodeURIComponent(clean)}`),
-    fetchText(`/pks/lookup?op=get&search=${encodeURIComponent(`0x${clean}`)}`),
-  ]);
-  if (!String(armored).includes("BEGIN PGP")) {
-    throw new Error("Could not fetch public key");
-  }
-  const pgpKey = await readKey({ armoredKey: armored });
-  const uids = meta.approved_uids || meta.pending_uids || [];
-  const label = uidLabel(uids) || formatFingerprint(clean);
-  const email = uidEmail(uids[0]) || "";
-  let valid = true;
-  let err = "";
-  if (meta.revoked) {
-    valid = false;
-    err = "Key is revoked";
-  } else if (meta.approval_state !== "approved") {
-    valid = false;
-    err = `Key is ${meta.approval_state || "not approved"}`;
-  } else if (!hasEncryptCapability(pgpKey)) {
-    // Still try getEncryptionKey — OpenPGP.js is authoritative
-    try {
-      await pgpKey.getEncryptionKey();
-    } catch (_) {
-      valid = false;
-      err = "No encryption-capable subkey";
-    }
-  }
-  if (valid) {
-    try {
-      await pgpKey.getEncryptionKey();
-    } catch (_) {
-      valid = false;
-      err = "No encryption-capable subkey";
-    }
-  }
-  const modernCapable = valid ? await supportsSeipdV2(pgpKey) : false;
-  /** @type {Recipient} */
-  const recipient = {
-    fingerprint: clean,
-    keyId: meta.key_id || clean.slice(-16),
-    label,
-    email,
-    approvalState: meta.approval_state || "",
-    revoked: !!meta.revoked,
-    valid,
-    error: err,
-    pgpKey: valid ? pgpKey : null,
-    modernCapable,
-    armoredKey: valid ? pgpKey.armor() : "",
-  };
-  return recipient;
 }
 
 function validRecipients() {

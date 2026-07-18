@@ -42,6 +42,7 @@ import {
   getPasskeyPrf,
   listKeys as vaultListKeys,
   unlockKey as vaultUnlockKey,
+  vaultKeyMatchesRecipients,
 } from "../lib/vault.js";
 import "../css/site.css";
 
@@ -116,16 +117,18 @@ app.innerHTML = `
           <select id="vault-key-select" class="text-input" style="flex:1">
             <option value="">— paste key below —</option>
           </select>
-          <button type="button" class="btn btn-ghost btn-compact" id="vault-unlock-btn">Unlock</button>
         </div>
         <p id="vault-unlock-status" class="muted" style="margin-top:0.4rem;font-size:0.85rem"></p>
+        <p class="muted" style="margin-top:0.35rem;font-size:0.8rem">
+          Matching vault keys unlock and decrypt in one step — the private key is not left in the text field.
+        </p>
       </div>
-      <label class="field-label" for="private-key">Armored private key</label>
+      <label class="field-label" for="private-key">Armored private key <span class="muted">(optional if using a vault key)</span></label>
       <textarea id="private-key" class="compose-message" rows="8"
-        placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;…"></textarea>
+        placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;…&#10;(leave empty to use the selected vault key)"></textarea>
       <label class="field-label" for="passphrase" style="margin-top:0.75rem">Key passphrase</label>
-      <input type="password" id="passphrase" class="text-input" autocomplete="off" placeholder="Key passphrase (if any)">
-      <p class="muted" style="margin-top:0.65rem">Decrypt runs in a Web Worker when available. Sensitive fields auto-clear after 5 minutes idle.</p>
+      <input type="password" id="passphrase" class="text-input" autocomplete="off" placeholder="Key passphrase (if the OpenPGP key is locked)">
+      <p class="muted" style="margin-top:0.65rem">Decrypt runs in a Web Worker when available. Vault keys are scrubbed from memory after use. Sensitive fields auto-clear after 5 minutes idle.</p>
       <p id="idle-clear-note" class="muted" style="margin-top:0.35rem"></p>
     </div>
     <div class="btn-row">
@@ -183,6 +186,7 @@ function clearSensitiveFields() {
   if (vaultSelect instanceof HTMLSelectElement) vaultSelect.value = "";
   const vaultStatus = document.getElementById("vault-unlock-status");
   if (vaultStatus) vaultStatus.textContent = "";
+  updateDecryptButtonLabel();
   if (out) {
     out.classList.add("hidden");
     out.innerHTML = "";
@@ -591,6 +595,7 @@ async function runAnalyze() {
     renderInspect(analysis);
     renderPacketMap(analysis);
     updateDecryptSection(analysis);
+    await autoSelectVaultKey(analysis);
     await verifySigners(analysis);
   } catch (err) {
     currentAnalysis = null;
@@ -707,7 +712,8 @@ async function decryptWithPrivateKeyInline(armored, privArmored, keyPassphrase, 
     if (!privateKey.isDecrypted()) {
       privateKey = await decryptKey({ privateKey, passphrase: keyPassphrase || "" });
     }
-    const message = await readMessage({ armoredMessage: armored });
+    // OpenPGP.js Message objects are stateful — do not reuse across
+    // decryptSessionKeys + decrypt (causes null sessionKeyParams destructure).
     const verificationKeys = [];
     for (const a of verificationKeysArmored || []) {
       try {
@@ -719,14 +725,14 @@ async function decryptWithPrivateKeyInline(armored, privArmored, keyPassphrase, 
     let sessionKeys = [];
     try {
       sessionKeys = await decryptSessionKeys({
-        message,
+        message: await readMessage({ armoredMessage: armored }),
         decryptionKeys: privateKey,
       });
     } catch (_) {
       sessionKeys = [];
     }
     const result = await decrypt({
-      message,
+      message: await readMessage({ armoredMessage: armored }),
       decryptionKeys: privateKey,
       ...(verificationKeys.length ? { verificationKeys } : {}),
       config: { allowInsecureDecryptionWithSigningKeys: true },
@@ -858,9 +864,11 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
   status.classList.remove("hidden");
 
   const armored = document.getElementById("ciphertext").value.trim();
-  const privArmored = document.getElementById("private-key")?.value.trim() || "";
+  const pastedKey = document.getElementById("private-key")?.value.trim() || "";
   const keyPassphrase = document.getElementById("passphrase")?.value || "";
   const msgPassphrase = document.getElementById("msg-passphrase")?.value || "";
+  const vaultSelect = document.getElementById("vault-key-select");
+  const vaultFpr = vaultSelect instanceof HTMLSelectElement ? vaultSelect.value : "";
 
   if (!armored) {
     showError(errorEl, "Paste a PGP message or choose a file.");
@@ -869,16 +877,9 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
   }
 
   const usePassword = !!msgPassphrase;
-  if (!usePassword && !privArmored) {
-    showError(
-      errorEl,
-      currentAnalysis?.hasSkesk
-        ? "Enter the message passphrase, or paste a private key."
-        : "Paste your private key to decrypt (stays in the browser)."
-    );
-    status.className = "hidden";
-    return;
-  }
+  /** Ephemeral vault-sourced armored key — never written to the textarea. */
+  let vaultArmored = "";
+  let usedVaultEphemeral = false;
 
   try {
     let plaintext = "";
@@ -887,17 +888,17 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
 
     if (usePassword) {
       // OpenPGP.js: passwords XOR decryptionKeys — not both.
-      const message = await readMessage({ armoredMessage: armored });
+      // Fresh message reads — Message objects are stateful.
       try {
         sessionKeys = await decryptSessionKeys({
-          message,
+          message: await readMessage({ armoredMessage: armored }),
           passwords: [msgPassphrase],
         });
       } catch (_) {
         sessionKeys = [];
       }
       const result = await decrypt({
-        message,
+        message: await readMessage({ armoredMessage: armored }),
         passwords: [msgPassphrase],
         config: { allowInsecureDecryptionWithSigningKeys: true },
       });
@@ -916,17 +917,58 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
         sigStatuses.push({ keyID: keyIdHex(s.keyID), verified });
       }
     } else {
+      let privArmored = pastedKey;
+
+      // Combined unlock + decrypt: prefer selected vault key (or auto-match)
+      // without parking the private key in the DOM.
+      if (!privArmored) {
+        const fpr =
+          vaultFpr ||
+          matchingVaultKeys(currentAnalysis?.recipientKeyIDs || [])[0]
+            ?.fingerprint ||
+          "";
+        if (fpr) {
+          status.textContent = "Unlocking vault key…";
+          vaultArmored = await unlockVaultArmoredEphemeral(fpr, status);
+          privArmored = vaultArmored;
+          usedVaultEphemeral = true;
+          if (vaultSelect instanceof HTMLSelectElement) {
+            vaultSelect.value = fpr;
+          }
+        }
+      }
+
+      if (!privArmored) {
+        showError(
+          errorEl,
+          currentAnalysis?.hasSkesk
+            ? "Enter the message passphrase, select a vault key, or paste a private key."
+            : "Select a stored vault key or paste your private key to decrypt."
+        );
+        status.className = "hidden";
+        return;
+      }
+
       // Prefetch signer keys if we already know IDs from inspect.
       const knownSigners = (currentAnalysis?.sigDetails || [])
         .map((s) => s.fingerprint || s.keyId)
         .filter((id) => id && !isAnonymousKeyId(id));
       const verificationKeysArmored = await fetchVerificationArmored(knownSigners);
+      status.textContent = usedVaultEphemeral
+        ? "Decrypting with vault key…"
+        : "Working…";
       const workerResult = await decryptWithPrivateKeyWorker(
         armored,
         privArmored,
         keyPassphrase,
         verificationKeysArmored
       );
+      // Drop armored private key from this frame as soon as decrypt returns.
+      // (OpenPGP key objects are zeroed inside the worker / inline path.)
+      if (usedVaultEphemeral) {
+        privArmored = "";
+        vaultArmored = "";
+      }
       plaintext = workerResult.plaintext;
       sigStatuses = workerResult.signatures || [];
       sessionKeys = (workerResult.sessionKeys || []).map((sk) => ({
@@ -980,13 +1022,22 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
     lastPlaintext = plaintext;
     status.textContent = usePassword
       ? "Decrypted with passphrase. Passphrase cleared."
-      : "Decrypted (worker when available). Key material zeroed.";
+      : usedVaultEphemeral
+        ? "Decrypted with vault key. Private key scrubbed from memory (not left in the text field)."
+        : "Decrypted (worker when available). Key material zeroed.";
     status.className = "status-row ok";
+    const vaultStatus = document.getElementById("vault-unlock-status");
+    if (vaultStatus && usedVaultEphemeral) {
+      vaultStatus.textContent =
+        "Vault key used for decrypt and scrubbed — not retained in the private key field.";
+    }
   } catch (err) {
     status.className = "status-row err";
     status.textContent = err.message || "Decrypt failed";
     showError(errorEl, err.message || "Decrypt failed");
   } finally {
+    // Drop ephemeral vault material as soon as decrypt finishes (success or fail).
+    vaultArmored = "";
     const passEl = document.getElementById("passphrase");
     if (passEl) passEl.value = "";
     const msgPass = document.getElementById("msg-passphrase");
@@ -1078,6 +1129,99 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 
+/**
+ * Find vault keys that can decrypt the message (PKESK recipient match).
+ * @param {string[]} recipientKeyIDs
+ * @returns {import("../lib/vault.js").VaultKeyMeta[]}
+ */
+function matchingVaultKeys(recipientKeyIDs) {
+  return vaultKeys.filter((k) => vaultKeyMatchesRecipients(k, recipientKeyIDs));
+}
+
+/**
+ * After inspecting a message, select a matching vault key when unambiguous.
+ * Does NOT load the private key into the textarea — Decrypt unlocks ephemerally.
+ * @param {typeof currentAnalysis} analysis
+ */
+async function autoSelectVaultKey(analysis) {
+  const select = document.getElementById("vault-key-select");
+  const status = document.getElementById("vault-unlock-status");
+  if (!select || !vaultKeys.length) return;
+
+  const recipients = analysis?.recipientKeyIDs || [];
+  if (!recipients.length || analysis?.type !== "encrypted") return;
+
+  const matches = matchingVaultKeys(recipients);
+  if (!matches.length) {
+    if (status && !select.value) {
+      status.textContent =
+        "No stored vault key matches this message's recipient key ID(s). Paste a key or pick one below.";
+    }
+    return;
+  }
+
+  let chosen = matches[0];
+  if (matches.length > 1) {
+    const current = vaultKeys.find((k) => k.fingerprint === select.value);
+    if (current && matches.some((m) => m.fingerprint === current.fingerprint)) {
+      chosen = current;
+    }
+  }
+
+  select.value = chosen.fingerprint;
+  updateDecryptButtonLabel();
+
+  if (status) {
+    const fpr = formatFingerprint(chosen.fingerprint);
+    if (matches.length > 1) {
+      status.textContent = `Matched ${matches.length} vault keys — selected ${fpr}. Click Decrypt to unlock and decrypt (key will not stay loaded).`;
+    } else if (chosen.protection === "passkey") {
+      status.textContent = `Matched vault key ${fpr}. Click Decrypt — you will confirm your passkey, then the key is scrubbed.`;
+    } else if (chosen.protection === "passphrase") {
+      status.textContent = `Matched vault key ${fpr}. Enter the key passphrase if needed, then Decrypt (key will not stay loaded).`;
+    } else {
+      status.textContent = `Matched vault key ${fpr}. Click Decrypt to unlock and decrypt in one step (key will not stay loaded).`;
+    }
+  }
+}
+
+/**
+ * Unlock a vault private key into a local string only (never the textarea).
+ * @param {string} fpr
+ * @param {HTMLElement|null} statusEl
+ * @returns {Promise<string>} armored private key
+ */
+async function unlockVaultArmoredEphemeral(fpr, statusEl) {
+  const meta = vaultKeys.find((k) => k.fingerprint === fpr);
+  if (!meta) throw new Error("Key not found in vault");
+
+  /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
+  const opts = {};
+  if (meta.protection === "passkey") {
+    if (statusEl) statusEl.textContent = "Confirm passkey…";
+    opts.prfIkm = await getPasskeyPrf();
+  }
+  return vaultUnlockKey(fpr, opts);
+}
+
+function updateDecryptButtonLabel() {
+  const btn = document.getElementById("decrypt-btn");
+  const select = document.getElementById("vault-key-select");
+  const pasted = document.getElementById("private-key")?.value.trim();
+  if (!(btn instanceof HTMLButtonElement)) return;
+  const vaultFpr = select instanceof HTMLSelectElement ? select.value : "";
+  if (vaultFpr && !pasted) {
+    const meta = vaultKeys.find((k) => k.fingerprint === vaultFpr);
+    if (meta?.protection === "passkey") {
+      btn.textContent = "Unlock passkey & decrypt";
+    } else {
+      btn.textContent = "Unlock & decrypt";
+    }
+  } else {
+    btn.textContent = "Decrypt";
+  }
+}
+
 async function refreshVaultKeySelect() {
   const row = document.getElementById("vault-key-row");
   const select = document.getElementById("vault-key-select");
@@ -1089,6 +1233,7 @@ async function refreshVaultKeySelect() {
   }
   if (!vaultKeys.length) {
     row.classList.add("hidden");
+    updateDecryptButtonLabel();
     return;
   }
   row.classList.remove("hidden");
@@ -1106,43 +1251,33 @@ async function refreshVaultKeySelect() {
   if (prev && vaultKeys.some((k) => k.fingerprint === prev)) {
     select.value = prev;
   }
+  if (currentAnalysis?.type === "encrypted") {
+    await autoSelectVaultKey(currentAnalysis);
+  }
+  updateDecryptButtonLabel();
 }
 
-document.getElementById("vault-unlock-btn")?.addEventListener("click", async () => {
-  const select = document.getElementById("vault-key-select");
+document.getElementById("vault-key-select")?.addEventListener("change", () => {
+  updateDecryptButtonLabel();
   const status = document.getElementById("vault-unlock-status");
-  const fpr = select?.value || "";
-  if (!fpr) {
-    if (status) status.textContent = "Choose a stored key first.";
-    return;
-  }
+  const select = document.getElementById("vault-key-select");
+  const fpr = select instanceof HTMLSelectElement ? select.value : "";
   const meta = vaultKeys.find((k) => k.fingerprint === fpr);
+  if (!status) return;
   if (!meta) {
-    if (status) status.textContent = "Key not found in vault.";
+    status.textContent = "";
     return;
   }
-  if (status) status.textContent = "Unlocking…";
-  try {
-    /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
-    const opts = {};
-    if (meta.protection === "passkey") {
-      if (status) status.textContent = "Confirm passkey…";
-      opts.prfIkm = await getPasskeyPrf();
-    }
-    const armored = await vaultUnlockKey(fpr, opts);
-    const keyEl = document.getElementById("private-key");
-    if (keyEl) keyEl.value = armored;
-    if (status) {
-      status.textContent =
-        meta.protection === "passphrase"
-          ? "Vault unlocked — enter the key passphrase below if prompted."
-          : "Vault key loaded into the private key field.";
-    }
-    touchActivity();
-  } catch (err) {
-    if (status) status.textContent = err?.message || "Unlock failed";
-    showError(errorEl, err?.message || "Vault unlock failed");
-  }
+  status.textContent =
+    meta.protection === "passkey"
+      ? "Click Unlock & decrypt — confirm your passkey; the private key will not stay loaded."
+      : meta.protection === "passphrase"
+        ? "Enter the key passphrase if needed, then Unlock & decrypt (key will not stay loaded)."
+        : "Click Unlock & decrypt — vault key unlocks only for this decrypt, then is scrubbed.";
+});
+
+document.getElementById("private-key")?.addEventListener("input", () => {
+  updateDecryptButtonLabel();
 });
 
 refreshVaultKeySelect();

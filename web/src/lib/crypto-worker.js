@@ -18,6 +18,7 @@ import {
 } from "openpgp";
 import { encryptArtifacts } from "./pgp/encrypt.js";
 import { zeroKeyMaterial } from "./pgp/memory.js";
+import { runRecipe } from "./toolkit/engine.js";
 
 self.onmessage = async (ev) => {
   const msg = ev.data || {};
@@ -32,7 +33,9 @@ self.onmessage = async (ev) => {
           passphrase: msg.passphrase || "",
         });
       }
-      const message = await readMessage({ armoredMessage: msg.armoredMessage });
+      // Message objects are stateful in OpenPGP.js — decryptSessionKeys
+      // consumes internal packet state, so each call needs a fresh read.
+      // Reusing the same object yields: "Cannot destructure property 'V' of 'e' as it is null".
       const verificationKeys = [];
       for (const armored of msg.verificationKeysArmored || []) {
         try {
@@ -44,14 +47,14 @@ self.onmessage = async (ev) => {
       let sessionKeys = [];
       try {
         sessionKeys = await decryptSessionKeys({
-          message,
+          message: await readMessage({ armoredMessage: msg.armoredMessage }),
           decryptionKeys: privateKey,
         });
       } catch (_) {
         sessionKeys = [];
       }
       const result = await decrypt({
-        message,
+        message: await readMessage({ armoredMessage: msg.armoredMessage }),
         decryptionKeys: privateKey,
         ...(verificationKeys.length ? { verificationKeys } : {}),
         config: { allowInsecureDecryptionWithSigningKeys: true },
@@ -127,6 +130,19 @@ self.onmessage = async (ev) => {
           }
         }
       }
+      self.postMessage({ id, ok: true, artifacts });
+    } else if (msg.type === "toolkit-run") {
+      // Execute a toolkit recipe AST; return encoded artifacts only.
+      // Recipient keys arrive as armored strings (structured-clone safe).
+      /** @type {import("openpgp").Key[]} */
+      const recipients = [];
+      for (const armored of msg.recipientKeysArmored || []) {
+        recipients.push(await readKey({ armoredKey: armored }));
+      }
+      const artifacts = await runRecipe(msg.ast, {
+        recipients,
+        recipientFingerprints: msg.recipientFingerprints || [],
+      });
       self.postMessage({ id, ok: true, artifacts });
     } else if (msg.type === "generate") {
       const email = String(msg.email || "").trim();

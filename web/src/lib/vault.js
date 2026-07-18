@@ -9,6 +9,8 @@
  * localStorage is intentionally unused for secrets (string-only, XSS-readable).
  */
 
+import { readPrivateKey } from "openpgp";
+
 const DB_NAME = "basilisk-vault";
 const DB_VERSION = 1;
 const STORE_KEYS = "keys";
@@ -28,6 +30,7 @@ const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
  * @property {string|null} expires  ISO timestamp or null
  * @property {VaultProtection} protection
  * @property {string} [name]
+ * @property {string[]} [keyIds]  Primary + subkey key IDs (uppercase hex), for PKESK matching
  */
 
 /**
@@ -36,6 +39,7 @@ const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
  *   iv: ArrayBuffer,
  *   outerWrapped?: ArrayBuffer,
  *   outerIv?: ArrayBuffer,
+ *   keyIds?: string[],
  * }} VaultKeyRecord
  */
 
@@ -302,21 +306,109 @@ function zeroBuffer(buf) {
 }
 
 /**
+ * Collect uppercase hex key IDs (primary + all subkeys) from an armored private key.
+ * Works without unlocking — key IDs live in the public half of the packets.
+ * @param {string} armoredPrivate
+ * @returns {Promise<string[]>}
+ */
+export async function collectKeyIds(armoredPrivate) {
+  const key = await readPrivateKey({ armoredKey: armoredPrivate });
+  /** @type {string[]} */
+  const ids = [];
+  const pushId = (kid) => {
+    try {
+      const hex = String(kid?.toHex?.() || "")
+        .toUpperCase()
+        .replace(/[^0-9A-F]/g, "");
+      if (hex && !ids.includes(hex)) ids.push(hex);
+    } catch (_) {
+      /* ignore */
+    }
+  };
+  pushId(key.getKeyID?.());
+  try {
+    for (const sub of key.getSubkeys?.() || []) {
+      pushId(sub.getKeyID?.());
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  // Also accept getKeys() if present (primary + subs).
+  try {
+    for (const k of key.getKeys?.() || []) {
+      pushId(k.getKeyID?.());
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return ids;
+}
+
+/**
+ * Whether a vault key matches any of the message's recipient key IDs.
+ * Matches full key ID, fingerprint, or fingerprint suffix (v4 key ID).
+ * @param {VaultKeyMeta} meta
+ * @param {string[]} recipientKeyIDs
+ * @returns {boolean}
+ */
+export function vaultKeyMatchesRecipients(meta, recipientKeyIDs) {
+  const recipients = (recipientKeyIDs || [])
+    .map((id) =>
+      String(id || "")
+        .toUpperCase()
+        .replace(/[^0-9A-F]/g, "")
+    )
+    .filter((id) => id && !/^0+$/.test(id));
+  if (!recipients.length) return false;
+
+  const fpr = String(meta.fingerprint || "")
+    .toUpperCase()
+    .replace(/[^0-9A-F]/g, "");
+  /** @type {string[]} */
+  const candidates = [...(meta.keyIds || [])];
+  if (fpr) {
+    candidates.push(fpr);
+    if (fpr.length >= 16) candidates.push(fpr.slice(-16));
+  }
+  const norms = candidates
+    .map((id) =>
+      String(id || "")
+        .toUpperCase()
+        .replace(/[^0-9A-F]/g, "")
+    )
+    .filter(Boolean);
+
+  return recipients.some((r) =>
+    norms.some((c) => c === r || c.endsWith(r) || r.endsWith(c))
+  );
+}
+
+/**
  * List vault key metadata (no private material).
  * @returns {Promise<VaultKeyMeta[]>}
  */
 export async function listKeys() {
   await purgeExpired();
   const rows = await withStore(STORE_KEYS, "readonly", (s) => s.getAll());
-  return (rows || []).map((r) => ({
-    fingerprint: r.fingerprint,
-    uid: r.uid || "",
-    email: r.email || "",
-    name: r.name || "",
-    created: r.created,
-    expires: r.expires ?? null,
-    protection: r.protection,
-  }));
+  return (rows || []).map((r) => {
+    const fpr = r.fingerprint || "";
+    /** @type {string[]} */
+    let keyIds = Array.isArray(r.keyIds) ? [...r.keyIds] : [];
+    // Legacy records: fall back to primary key ID = last 16 of fingerprint.
+    if (!keyIds.length && fpr.length >= 16) {
+      keyIds = [fpr.slice(-16).toUpperCase()];
+    }
+    return {
+      fingerprint: fpr,
+      uid: r.uid || "",
+      email: r.email || "",
+      name: r.name || "",
+      created: r.created,
+      expires: r.expires ?? null,
+      protection: r.protection,
+      keyIds,
+    };
+  });
 }
 
 /**
@@ -331,6 +423,7 @@ export async function listKeys() {
  * @param {string|null} [opts.expires]  ISO
  * @param {VaultProtection} opts.protection
  * @param {Uint8Array} [opts.prfIkm]  Required when protection === "passkey"
+ * @param {string[]} [opts.keyIds]  Optional; extracted from armoredPrivate when omitted
  * @returns {Promise<VaultKeyMeta>}
  */
 export async function saveKey(opts) {
@@ -338,6 +431,16 @@ export async function saveKey(opts) {
     .toUpperCase()
     .replace(/[^0-9A-F]/g, "");
   if (fpr.length < 40) throw new Error("Invalid fingerprint");
+
+  /** @type {string[]} */
+  let keyIds = Array.isArray(opts.keyIds) ? [...opts.keyIds] : [];
+  if (!keyIds.length && opts.armoredPrivate) {
+    try {
+      keyIds = await collectKeyIds(opts.armoredPrivate);
+    } catch (_) {
+      keyIds = fpr.length >= 16 ? [fpr.slice(-16)] : [];
+    }
+  }
 
   const encoder = new TextEncoder();
   const payload = encoder.encode(opts.armoredPrivate);
@@ -354,6 +457,7 @@ export async function saveKey(opts) {
     created: new Date().toISOString(),
     expires: opts.expires || null,
     protection: opts.protection,
+    keyIds,
     wrapped: ciphertext,
     iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength),
   };
@@ -383,6 +487,7 @@ export async function saveKey(opts) {
     created: record.created,
     expires: record.expires,
     protection: record.protection,
+    keyIds: record.keyIds || [],
   };
 }
 
@@ -416,6 +521,21 @@ export async function unlockKey(fingerprint, opts = {}) {
   if (deviceCipher instanceof ArrayBuffer && record.protection === "passkey") {
     zeroBuffer(deviceCipher);
   }
+
+  // Backfill key IDs for legacy vault entries (needed for recipient matching).
+  if (!Array.isArray(record.keyIds) || !record.keyIds.length) {
+    try {
+      const keyIds = await collectKeyIds(armored);
+      if (keyIds.length) {
+        await withStore(STORE_KEYS, "readwrite", (s) =>
+          s.put({ ...record, keyIds })
+        );
+      }
+    } catch (_) {
+      /* ignore — unlock still succeeds */
+    }
+  }
+
   return armored;
 }
 

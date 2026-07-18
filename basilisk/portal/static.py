@@ -17,6 +17,7 @@ _STATIC_PAGES = {
     "encrypt": "encrypt.html",
     "decrypt": "decrypt.html",
     "verify": "verify.html",
+    "toolkit": "toolkit.html",
 }
 
 

@@ -41,6 +41,7 @@ cp "${OUT}/stats.html" "${OUT}/stats"
 cp "${OUT}/encrypt.html" "${OUT}/encrypt"
 cp "${OUT}/decrypt.html" "${OUT}/decrypt"
 cp "${OUT}/verify.html" "${OUT}/verify"
+cp "${OUT}/toolkit.html" "${OUT}/toolkit"
 
 # Only the dist path is printed to stdout — callers capture it with $().
 echo "$OUT"

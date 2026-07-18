@@ -20,6 +20,7 @@ export default defineConfig({
         encrypt: resolve(__dirname, "encrypt.html"),
         decrypt: resolve(__dirname, "decrypt.html"),
         verify: resolve(__dirname, "verify.html"),
+        toolkit: resolve(__dirname, "toolkit.html"),
       },
     },
   },

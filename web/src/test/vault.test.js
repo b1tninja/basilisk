@@ -3,7 +3,9 @@
  */
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
+import { generateKey } from "openpgp";
 import {
+  collectKeyIds,
   deleteKey,
   derivePrfKek,
   expiryIsoFromPreset,
@@ -11,6 +13,7 @@ import {
   purgeExpired,
   saveKey,
   unlockKey,
+  vaultKeyMatchesRecipients,
 } from "../lib/vault.js";
 
 const SAMPLE_ARMORED = `-----BEGIN PGP PRIVATE KEY BLOCK-----
@@ -174,5 +177,68 @@ describe("vault — expiry helpers", () => {
     const iso = expiryIsoFromPreset("1d");
     expect(iso).toBeTruthy();
     expect(Date.parse(iso)).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("vault — recipient key ID matching", () => {
+  it("collectKeyIds returns primary and encryption subkey IDs", async () => {
+    const { privateKey: armoredPrivate, publicKey: armoredPublic } =
+      await generateKey({
+        type: "ecc",
+        curve: "curve25519",
+        userIDs: [{ email: "match@example.com" }],
+        format: "armored",
+      });
+    const ids = await collectKeyIds(armoredPrivate);
+    expect(ids.length).toBeGreaterThanOrEqual(1);
+    for (const id of ids) {
+      expect(id).toMatch(/^[0-9A-F]{16}$/);
+    }
+
+    // Encrypt to the public key and confirm a recipient ID is in our list.
+    const { createMessage, encrypt, readKey, readMessage } = await import(
+      "openpgp"
+    );
+    const pub = await readKey({ armoredKey: armoredPublic });
+    const enc = String(
+      await encrypt({
+        message: await createMessage({ text: "match me" }),
+        encryptionKeys: pub,
+        format: "armored",
+      })
+    );
+    const msg = await readMessage({ armoredMessage: enc });
+    const recipients = (msg.getEncryptionKeyIDs() || []).map((k) =>
+      k.toHex().toUpperCase()
+    );
+    expect(recipients.some((r) => ids.includes(r))).toBe(true);
+
+    const fpr = pub.getFingerprint().toUpperCase();
+    await saveKey({
+      fingerprint: fpr,
+      armoredPrivate,
+      uid: "match@example.com",
+      email: "match@example.com",
+      protection: "device",
+    });
+    const meta = (await listKeys()).find((k) => k.fingerprint === fpr);
+    expect(meta?.keyIds?.length).toBeGreaterThanOrEqual(1);
+    expect(vaultKeyMatchesRecipients(meta, recipients)).toBe(true);
+    expect(vaultKeyMatchesRecipients(meta, ["DEADBEEFDEADBEEF"])).toBe(false);
+  }, 30_000);
+
+  it("legacy records without keyIds match via fingerprint suffix", () => {
+    const fpr = "AABBCCDDEEFF00112233445566778899AABBCCDD";
+    const meta = {
+      fingerprint: fpr,
+      uid: "",
+      email: "",
+      created: "",
+      expires: null,
+      protection: /** @type {const} */ ("device"),
+      keyIds: [fpr.slice(-16)],
+    };
+    expect(vaultKeyMatchesRecipients(meta, [fpr.slice(-16)])).toBe(true);
+    expect(vaultKeyMatchesRecipients(meta, [fpr])).toBe(true);
   });
 });
