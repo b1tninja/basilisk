@@ -133,17 +133,36 @@ self.onmessage = async (ev) => {
       self.postMessage({ id, ok: true, artifacts });
     } else if (msg.type === "toolkit-run") {
       // Execute a toolkit recipe AST; return encoded artifacts only.
-      // Recipient keys arrive as armored strings (structured-clone safe).
+      // Recipient keys and optional decrypt private key arrive as armored strings.
       /** @type {import("openpgp").Key[]} */
       const recipients = [];
       for (const armored of msg.recipientKeysArmored || []) {
         recipients.push(await readKey({ armoredKey: armored }));
       }
-      const artifacts = await runRecipe(msg.ast, {
-        recipients,
-        recipientFingerprints: msg.recipientFingerprints || [],
-      });
-      self.postMessage({ id, ok: true, artifacts });
+      /** @type {import("./toolkit/engine.js").RuntimeBindings["inputs"]} */
+      const inputs = msg.inputs || {};
+      // Prefer a top-level private key field so the worker finally-block can zero it.
+      if (msg.privateKeyArmored && inputs.gpg) {
+        inputs.gpg = {
+          ...inputs.gpg,
+          privateKeyArmored: String(msg.privateKeyArmored),
+          passphrase: msg.passphrase || inputs.gpg.passphrase || "",
+        };
+        privateKey = await readPrivateKey({
+          armoredKey: String(msg.privateKeyArmored),
+        });
+      }
+      try {
+        const artifacts = await runRecipe(msg.ast, {
+          recipients,
+          recipientFingerprints: msg.recipientFingerprints || [],
+          inputs,
+        });
+        self.postMessage({ id, ok: true, artifacts });
+      } finally {
+        // Drop armored private key string from the inputs binding.
+        if (inputs.gpg) inputs.gpg.privateKeyArmored = "";
+      }
     } else if (msg.type === "generate") {
       const email = String(msg.email || "").trim();
       if (!email) throw new Error("Email is required for key generation");

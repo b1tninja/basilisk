@@ -3,15 +3,25 @@
  * Returns encoded artifacts only (never CryptoKey handles).
  */
 
+import {
+  decrypt as openpgpDecrypt,
+  decryptKey,
+  readMessage,
+  readPrivateKey,
+} from "openpgp";
 import { generateWordPassphrase } from "../passphrase-gen.js";
 import { qrSvg } from "../qr.js";
 import { PROFILE_AUTO, encryptArtifacts } from "../pgp/encrypt.js";
-import { splitShares } from "../slip39/slip39.js";
+import { zeroKeyMaterial } from "../pgp/memory.js";
+import { combineShares, splitShares } from "../slip39/slip39.js";
 import {
+  base64ToBytes,
   bytesToBase64,
   bytesToBase64Url,
   bytesToHex,
   bytesToText,
+  fromPem,
+  hexToBytes,
   pemLabelFor,
   textToBytes,
   toPem,
@@ -32,8 +42,17 @@ import { getStep } from "./registry.js";
 
 /**
  * @typedef {object} RuntimeBindings
- * @property {import("openpgp").Key[]} [recipients]  ordered; for foreach gpg, one per share
+ * @property {import("openpgp").Key[]} [recipients]  ordered; for foreach encrypt, one per share
  * @property {string[]} [recipientFingerprints]
+ * @property {{
+ *   shares?: { mnemonics: string[], envelopeB64?: string, passphrase?: string },
+ *   gpg?: {
+ *     armoredMessages: string[],
+ *     privateKeyArmored: string,
+ *     passphrase?: string,
+ *     envelopeB64?: string,
+ *   },
+ * }} [inputs]
  */
 
 /**
@@ -57,8 +76,9 @@ export async function runRecipe(ast, bindings = {}) {
   const artifacts = [];
   /** @type {PipelineValue|null} */
   let value = null;
+  /** Track whether envelope was already emitted for this run. */
+  let envelopeEmitted = false;
 
-  // Expand foreach scopes into an execution plan
   const plan = expandPlan(steps);
 
   for (const node of plan) {
@@ -84,7 +104,6 @@ export async function runRecipe(ast, bindings = {}) {
         for (const step of body) {
           itemVal = await execStep(step, itemVal, bindings, artifacts, i);
         }
-        // If last step wasn't a sink that already emitted, emit out
         if (itemVal && itemVal.type === "text") {
           const last = body[body.length - 1];
           if (last && getStep(last.name)?.kind !== "sink") {
@@ -98,19 +117,45 @@ export async function runRecipe(ast, bindings = {}) {
           }
         }
       }
+      // Envelope must be emitted once so share sets are recoverable.
+      if (envelope && !envelopeEmitted) {
+        emitEnvelope(artifacts, envelope);
+        envelopeEmitted = true;
+      }
       value = { type: "bundle", data: artifacts };
       continue;
     }
 
     value = await execStep(node.step, value, bindings, artifacts, 0);
+    if (
+      value?.meta?.envelope &&
+      !envelopeEmitted &&
+      getStep(node.step.name)?.kind === "sink"
+    ) {
+      emitEnvelope(artifacts, value.meta.envelope);
+      envelopeEmitted = true;
+    }
   }
 
-  // If pipeline ended with a non-sink value, emit it
   if (value && value.type !== "bundle" && value.type !== "artifact") {
     artifacts.push(...valueToArtifacts(value));
   }
 
   return artifacts;
+}
+
+/**
+ * @param {ToolkitArtifact[]} artifacts
+ * @param {Uint8Array} envelope
+ */
+function emitEnvelope(artifacts, envelope) {
+  artifacts.push({
+    label: "Envelope ciphertext — required for recovery, not secret",
+    filename: "envelope.bin.b64",
+    content: bytesToBase64(envelope),
+    sensitive: false,
+    mime: "application/octet-stream",
+  });
 }
 
 /**
@@ -131,7 +176,6 @@ function expandPlan(steps) {
         body.push(steps[i]);
         i++;
       }
-      // i points at merge or past end
       plan.push({ kind: "foreach", body });
       continue;
     }
@@ -146,10 +190,11 @@ function expandPlan(steps) {
  * @param {PipelineValue|null} value
  * @param {RuntimeBindings} bindings
  * @param {ToolkitArtifact[]} artifacts
- * @param {number} shareIndex0
+ * @param {number} _shareIndex0
  * @returns {Promise<PipelineValue>}
  */
-async function execStep(step, value, bindings, artifacts, shareIndex0) {
+async function execStep(step, value, bindings, artifacts, _shareIndex0) {
+  void _shareIndex0;
   switch (step.name) {
     case "genkey":
       return generateKeyValue(String(step.params.alg || "ec/p256"), String(step.params.usage || "auto"));
@@ -163,9 +208,60 @@ async function execStep(step, value, bindings, artifacts, shareIndex0) {
       const { passphrase } = generateWordPassphrase(words);
       return { type: "text", data: passphrase, meta: { sensitive: true } };
     }
+    case "input": {
+      const kind = String(step.params.kind || "shares");
+      const inp = bindings.inputs?.shares;
+      if (kind === "text") {
+        const text = (inp?.mnemonics || []).join("\n");
+        if (!text.trim()) throw new Error("No input text provided");
+        return { type: "text", data: text, meta: { sensitive: true } };
+      }
+      const mnemonics = (inp?.mnemonics || []).map((m) => String(m).trim()).filter(Boolean);
+      if (!mnemonics.length) {
+        throw new Error("No SLIP-39 share mnemonics provided — paste shares before running.");
+      }
+      /** @type {Uint8Array|null} */
+      let envelope = null;
+      if (inp?.envelopeB64) {
+        envelope = base64ToBytes(String(inp.envelopeB64).replace(/\s+/g, ""));
+      }
+      return {
+        type: "shares",
+        data: {
+          mnemonics,
+          envelope,
+          threshold: 0,
+          shares: mnemonics.length,
+          enveloped: !!envelope,
+        },
+        meta: {
+          sensitive: true,
+          envelope,
+          passphrase: inp?.passphrase || "",
+        },
+      };
+    }
+    case "decrypt":
+      return decryptGpgSource(bindings, artifacts);
     case "export":
       return exportKey(value, String(step.params.format || "pkcs8"), String(step.params.which || "private"));
+    case "import":
+      return importKey(
+        value,
+        String(step.params.format || "pkcs8"),
+        String(step.params.alg || "ec/p256"),
+        String(step.params.usage || "auto")
+      );
     case "pem": {
+      if (step.params.decode) {
+        if (!value || value.type !== "text") throw new Error("pem -d expects PEM text");
+        const der = fromPem(String(value.data));
+        return {
+          type: "bytes",
+          data: der,
+          meta: { ...value.meta, format: "pkcs8", sensitive: true },
+        };
+      }
       if (!value || value.type !== "bytes") throw new Error("pem expects bytes");
       let label = String(step.params.label || "auto");
       if (label === "auto") {
@@ -178,6 +274,14 @@ async function execStep(step, value, bindings, artifacts, shareIndex0) {
       if (!value || value.type !== "bytes") throw new Error("der expects bytes");
       return value;
     case "base64":
+      if (step.params.decode) {
+        if (!value || value.type !== "text") throw new Error("base64 -d expects text");
+        return {
+          type: "bytes",
+          data: base64ToBytes(String(value.data).replace(/\s+/g, "")),
+          meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
+        };
+      }
       if (!value || value.type !== "bytes") throw new Error("base64 expects bytes");
       return {
         type: "text",
@@ -192,12 +296,38 @@ async function execStep(step, value, bindings, artifacts, shareIndex0) {
         meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
       };
     case "hex":
+      if (step.params.decode) {
+        if (!value || value.type !== "text") throw new Error("hex -d expects text");
+        return {
+          type: "bytes",
+          data: hexToBytes(String(value.data)),
+          meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
+        };
+      }
       if (!value || value.type !== "bytes") throw new Error("hex expects bytes");
       return {
         type: "text",
         data: bytesToHex(value.data),
         meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
       };
+    case "utf8": {
+      if (!value) throw new Error("utf8 expects a value");
+      if (value.type === "bytes") {
+        return {
+          type: "text",
+          data: bytesToText(value.data),
+          meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
+        };
+      }
+      if (value.type === "text") {
+        return {
+          type: "bytes",
+          data: textToBytes(value.data),
+          meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
+        };
+      }
+      throw new Error("utf8 expects bytes or text");
+    }
     case "slip39": {
       let bytes;
       if (value?.type === "bytes") bytes = value.data;
@@ -211,12 +341,32 @@ async function execStep(step, value, bindings, artifacts, shareIndex0) {
       return {
         type: "shares",
         data: result,
+        meta: { sensitive: true, envelope: result.envelope },
+      };
+    }
+    case "combine": {
+      if (!value || value.type !== "shares") throw new Error("combine expects shares");
+      const mnemonics = value.data.mnemonics || [];
+      const passphrase =
+        String(step.params.passphrase || "") ||
+        String(value.meta?.passphrase || "") ||
+        "";
+      const envelope = value.data.envelope || value.meta?.envelope || null;
+      const secret = await combineShares(mnemonics, {
+        passphrase: passphrase || undefined,
+        envelope,
+      });
+      return {
+        type: "bytes",
+        data: secret,
         meta: { sensitive: true },
       };
     }
+    case "encrypt":
     case "gpg": {
+      // "gpg" alias resolves to encrypt at parse time; keep case for safety.
       if (!value || (value.type !== "text" && value.type !== "bytes")) {
-        throw new Error("gpg expects text");
+        throw new Error("encrypt expects text");
       }
       const text =
         value.type === "text" ? String(value.data) : bytesToBase64(value.data);
@@ -281,20 +431,74 @@ async function execStep(step, value, bindings, artifacts, shareIndex0) {
         }
         artifacts.push(a);
       }
-      // Also emit envelope alongside first share if present
-      if (value.meta?.envelope && shareIndex0 === 0 && value.meta.shareIndex === 1) {
-        artifacts.push({
-          label: "Envelope ciphertext",
-          filename: "envelope.bin.b64",
-          content: bytesToBase64(value.meta.envelope),
-          sensitive: false,
-          mime: "application/octet-stream",
-        });
-      }
+      // Envelope is emitted once by the foreach/top-level sink path in runRecipe.
       return { type: "artifact", data: null, meta: value.meta };
     }
     default:
       throw new Error(`Unsupported step: ${step.name}`);
+  }
+}
+
+/**
+ * Decrypt one or more armored OpenPGP messages into share-like texts.
+ * @param {RuntimeBindings} bindings
+ * @param {ToolkitArtifact[]} _artifacts
+ * @returns {Promise<PipelineValue>}
+ */
+async function decryptGpgSource(bindings, _artifacts) {
+  void _artifacts;
+  const gpg = bindings.inputs?.gpg;
+  if (!gpg?.armoredMessages?.length) {
+    throw new Error("No GPG ciphertext provided — paste armored messages before running.");
+  }
+  if (!gpg.privateKeyArmored) {
+    throw new Error("No private key bound — unlock a vault key or paste one before running.");
+  }
+
+  let privateKey = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
+  try {
+    if (!privateKey.isDecrypted()) {
+      privateKey = await decryptKey({
+        privateKey,
+        passphrase: gpg.passphrase || "",
+      });
+    }
+    /** @type {string[]} */
+    const mnemonics = [];
+    for (const armored of gpg.armoredMessages) {
+      const result = await openpgpDecrypt({
+        message: await readMessage({ armoredMessage: armored }),
+        decryptionKeys: privateKey,
+        config: { allowInsecureDecryptionWithSigningKeys: true },
+      });
+      const plaintext =
+        typeof result.data === "string"
+          ? result.data
+          : new TextDecoder().decode(result.data);
+      mnemonics.push(String(plaintext).trim());
+    }
+    /** @type {Uint8Array|null} */
+    let envelope = null;
+    if (gpg.envelopeB64) {
+      envelope = base64ToBytes(String(gpg.envelopeB64).replace(/\s+/g, ""));
+    } else if (bindings.inputs?.shares?.envelopeB64) {
+      envelope = base64ToBytes(
+        String(bindings.inputs.shares.envelopeB64).replace(/\s+/g, "")
+      );
+    }
+    return {
+      type: "shares",
+      data: {
+        mnemonics,
+        envelope,
+        threshold: 0,
+        shares: mnemonics.length,
+        enveloped: !!envelope,
+      },
+      meta: { sensitive: true, envelope },
+    };
+  } finally {
+    zeroKeyMaterial(privateKey);
   }
 }
 
@@ -352,9 +556,7 @@ async function generateKeyValue(alg, usage) {
         hash: "SHA-256",
       },
       true,
-      useEncrypt
-        ? ["encrypt", "decrypt"]
-        : ["sign", "verify"]
+      useEncrypt ? ["encrypt", "decrypt"] : ["sign", "verify"]
     );
     return {
       type: "keypair",
@@ -445,7 +647,6 @@ async function exportKey(value, format, which) {
     };
   }
 
-  // pkcs8 private
   try {
     const der = new Uint8Array(await crypto.subtle.exportKey("pkcs8", priv));
     return {
@@ -454,7 +655,6 @@ async function exportKey(value, format, which) {
       meta: { ...meta, format: "pkcs8", which: "private", sensitive: true },
     };
   } catch (err) {
-    // Symmetric keys: fall back to raw
     if (meta?.symmetric) {
       const raw = new Uint8Array(await crypto.subtle.exportKey("raw", priv));
       return {
@@ -465,6 +665,144 @@ async function exportKey(value, format, which) {
     }
     throw new Error(`pkcs8 export failed: ${err?.message || err}`);
   }
+}
+
+/**
+ * @param {PipelineValue|null} value
+ * @param {string} format
+ * @param {string} alg
+ * @param {string} usage
+ */
+async function importKey(value, format, alg, usage) {
+  if (!value || value.type !== "bytes") throw new Error("import expects bytes");
+  const der = value.data;
+  const useDerive = usage === "derive";
+  const useEncrypt = usage === "encrypt";
+
+  if (alg.startsWith("ec/")) {
+    const curve =
+      alg === "ec/p384" ? "P-384" : alg === "ec/p521" ? "P-521" : "P-256";
+    const name = useDerive ? "ECDH" : "ECDSA";
+    const usages = useDerive
+      ? /** @type {KeyUsage[]} */ (["deriveBits", "deriveKey"])
+      : /** @type {KeyUsage[]} */ (["sign", "verify"]);
+    if (format === "spki") {
+      const publicKey = await crypto.subtle.importKey(
+        "spki",
+        der,
+        { name, namedCurve: curve },
+        true,
+        useDerive ? [] : ["verify"]
+      );
+      return {
+        type: "keypair",
+        data: { privateKey: null, publicKey },
+        meta: { alg, curve, algorithm: name, sensitive: false },
+      };
+    }
+    const privateKey = await crypto.subtle.importKey(
+      format === "raw" ? "raw" : "pkcs8",
+      der,
+      { name, namedCurve: curve },
+      true,
+      usages.filter((u) => u !== "verify")
+    );
+    return {
+      type: "keypair",
+      data: { privateKey, publicKey: null },
+      meta: { alg, curve, algorithm: name, sensitive: true },
+    };
+  }
+
+  if (alg === "ed25519") {
+    if (format === "spki") {
+      const publicKey = await crypto.subtle.importKey(
+        "spki",
+        der,
+        "Ed25519",
+        true,
+        ["verify"]
+      );
+      return {
+        type: "keypair",
+        data: { privateKey: null, publicKey },
+        meta: { alg, algorithm: "Ed25519", sensitive: false },
+      };
+    }
+    const privateKey = await crypto.subtle.importKey(
+      format === "raw" ? "raw" : "pkcs8",
+      der,
+      "Ed25519",
+      true,
+      ["sign"]
+    );
+    return {
+      type: "keypair",
+      data: { privateKey, publicKey: null },
+      meta: { alg, algorithm: "Ed25519", sensitive: true },
+    };
+  }
+
+  if (alg === "x25519") {
+    const privateKey = await crypto.subtle.importKey(
+      format === "raw" ? "raw" : "pkcs8",
+      der,
+      "X25519",
+      true,
+      ["deriveBits", "deriveKey"]
+    );
+    return {
+      type: "keypair",
+      data: { privateKey, publicKey: null },
+      meta: { alg, algorithm: "X25519", sensitive: true },
+    };
+  }
+
+  if (alg.startsWith("rsa/")) {
+    const name = useEncrypt ? "RSA-OAEP" : "RSA-PSS";
+    const privateKey = await crypto.subtle.importKey(
+      "pkcs8",
+      der,
+      { name, hash: "SHA-256" },
+      true,
+      useEncrypt ? ["decrypt"] : ["sign"]
+    );
+    return {
+      type: "keypair",
+      data: { privateKey, publicKey: null },
+      meta: { alg, algorithm: name, sensitive: true },
+    };
+  }
+
+  if (alg.startsWith("aes/")) {
+    const key = await crypto.subtle.importKey("raw", der, "AES-GCM", true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    return {
+      type: "keypair",
+      data: { privateKey: key, publicKey: null },
+      meta: { alg, algorithm: "AES-GCM", symmetric: true, sensitive: true },
+    };
+  }
+
+  if (alg.startsWith("hmac/")) {
+    const hash = alg === "hmac/sha512" ? "SHA-512" : "SHA-256";
+    const key = await crypto.subtle.importKey(
+      "raw",
+      der,
+      { name: "HMAC", hash },
+      true,
+      ["sign", "verify"]
+    );
+    return {
+      type: "keypair",
+      data: { privateKey: key, publicKey: null },
+      meta: { alg, algorithm: "HMAC", symmetric: true, sensitive: true },
+    };
+  }
+
+  throw new Error(`Unsupported import algorithm: ${alg}`);
 }
 
 /**
@@ -515,4 +853,5 @@ function valueToArtifacts(value, name = "artifact") {
   return [];
 }
 
+export { splitArmoredMessages } from "../pgp/armor.js";
 export { zeroBuffer, bytesToText };

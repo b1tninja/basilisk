@@ -1,15 +1,20 @@
 /**
  * Toolkit recipe language: pipe-separated steps with key=value params.
  *
- *   genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | gpg
+ *   genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg
+ *   input shares | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem
  *
  * Flow control (CyberChef Fork/Merge):
  *   foreach (aliases: map, each, fork) opens a per-item scope
  *   merge   (aliases: collect) closes it (implicit at end of pipeline)
+ *
+ * Decode flags (shell-style):
+ *   base64 -d | hex -d | pem -d   → params.decode = true
  */
 
 import {
   canonicalName,
+  effectiveIo,
   getStep,
   ioCompatible,
   listSteps,
@@ -43,7 +48,8 @@ import {
  * @property {RecipeError[]} errors
  * @property {string[]} warnings
  * @property {number} [recipientSlots]  how many GPG recipient slots Run needs
- * @property {boolean} [foreachGpg]  gpg is inside foreach
+ * @property {boolean} [foreachGpg]  encrypt gpg is inside foreach
+ * @property {("shares"|"gpg")[]} [inputNeeds]  runtime input panels required
  */
 
 /**
@@ -58,7 +64,7 @@ export function parseRecipe(source) {
   if (!text) {
     return {
       ast: { steps: [], source: text },
-      errors: [{ message: "Empty recipe — start with a source step like genkey or random." }],
+      errors: [{ message: "Empty recipe — start with a source step like genkey, random, or input." }],
     };
   }
 
@@ -158,6 +164,21 @@ function parseSegment(segment, offset) {
 
   for (let i = 1; i < tokens.length; i++) {
     const t = tokens[i];
+    // Bare CLI flags (e.g. -d)
+    if (t.value.startsWith("-") && !t.value.includes("=")) {
+      const flagParam = (spec?.params || []).find((p) => p.flag === t.value);
+      if (!flagParam) {
+        return {
+          error: {
+            message: `Unknown flag "${t.value}" for ${canon}`,
+            start: offset + t.start,
+            end: offset + t.end,
+          },
+        };
+      }
+      params[flagParam.name] = true;
+      continue;
+    }
     if (t.value.includes("=")) {
       const eq = t.value.indexOf("=");
       const key = t.value.slice(0, eq).trim();
@@ -270,7 +291,7 @@ function coerceParam(spec, key, raw) {
 
 /**
  * Serialize an AST back to recipe text (canonical names, no aliases).
- * Recipients are never included.
+ * Recipients are never included. Decode flags emit as `-d`.
  * @param {RecipeAst|RecipeStep[]} astOrSteps
  * @returns {string}
  */
@@ -283,6 +304,11 @@ export function serializeRecipe(astOrSteps) {
       for (const p of spec?.params || []) {
         const v = step.params?.[p.name];
         if (v === undefined || v === "") continue;
+        // CLI flags: emit -d instead of decode=true
+        if (p.flag && p.type === "bool") {
+          if (v === true) parts.push(p.flag);
+          continue;
+        }
         // Always emit positional params (even when equal to default) so
         // recipes stay explicit and round-trip cleanly.
         if (p.positional && parts.length === 1) {
@@ -316,6 +342,7 @@ export function validateRecipe(ast) {
       ok: false,
       errors: [{ message: "Empty recipe" }],
       warnings,
+      inputNeeds: [],
     };
   }
 
@@ -325,8 +352,10 @@ export function validateRecipe(ast) {
   let sharesCount = 0;
   let gpgSlots = 0;
   let foreachGpg = false;
-  /** Last export format for pem auto-label */
-  let lastExportFormat = "";
+  /** @type {("shares"|"gpg")[]} */
+  const inputNeeds = [];
+  let sawInputShares = false;
+  let sawDecryptGpg = false;
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
@@ -340,6 +369,8 @@ export function validateRecipe(ast) {
       });
       continue;
     }
+
+    const io = effectiveIo(spec, step.params);
 
     // Param checks
     for (const p of spec.params || []) {
@@ -397,6 +428,34 @@ export function validateRecipe(ast) {
       sharesCount = n;
     }
 
+    if (step.name === "input") {
+      if (sawInputShares) {
+        errors.push({
+          message: "Only one input step is supported per recipe",
+          start: step.start,
+          end: step.end,
+          stepIndex: i,
+        });
+      }
+      sawInputShares = true;
+      if (spec.unresolvedInputs === "shares" || String(step.params.kind || "shares") === "shares") {
+        if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
+      }
+    }
+
+    if (step.name === "decrypt") {
+      if (sawDecryptGpg) {
+        errors.push({
+          message: "Only one decrypt step is supported per recipe",
+          start: step.start,
+          end: step.end,
+          stepIndex: i,
+        });
+      }
+      sawDecryptGpg = true;
+      if (!inputNeeds.includes("gpg")) inputNeeds.push("gpg");
+    }
+
     if (step.name === "foreach") {
       if (foreachDepth > 0) {
         errors.push({
@@ -408,14 +467,13 @@ export function validateRecipe(ast) {
       }
       if (current !== "shares") {
         errors.push({
-          message: `foreach requires a collection (shares) — got ${current}. Add slip39 before foreach.`,
+          message: `foreach requires a collection (shares) — got ${current}. Add slip39 or input shares before foreach.`,
           start: step.start,
           end: step.end,
           stepIndex: i,
         });
       }
       foreachDepth++;
-      // Inside foreach, each item is text (mnemonic / payload text)
       current = "text";
       continue;
     }
@@ -442,72 +500,74 @@ export function validateRecipe(ast) {
           `Source step "${step.name}" at position ${i + 1} discards prior pipeline value`
         );
       }
-      current = spec.output;
+      current = io.output;
     } else {
-      // Collection into non-foreach
-      if (current === "shares" && step.name !== "foreach") {
+      // Collection into non-foreach / non-combine
+      if (
+        current === "shares" &&
+        step.name !== "foreach" &&
+        step.name !== "combine"
+      ) {
         errors.push({
-          message: `Cannot pipe shares into "${step.name}" — add foreach to unpack the collection (CyberChef Fork / map).`,
+          message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, or combine to recover.`,
           start: step.start,
           end: step.end,
           stepIndex: i,
         });
       } else if (
-        !ioCompatible(current, spec.input, step.name) &&
-        !(foreachDepth > 0 && spec.input === "text" && current === "text")
+        !ioCompatible(current, io.input, step.name) &&
+        !(foreachDepth > 0 && io.input === "text" && current === "text")
       ) {
-        // Allow text→bytes via implicit? no
-        // Allow keypair→bytes via export only
-        // slip39 accepts text (UTF-8) or bytes — engine coerces.
         if (
           step.name === "slip39" &&
           (current === "text" || current === "bytes")
         ) {
-          current = spec.output;
-        } else if (current === "keypair" && spec.input === "bytes") {
+          current = io.output;
+        } else if (current === "keypair" && io.input === "bytes") {
           errors.push({
             message: `"${step.name}" expects DER bytes — add export pkcs8 (or spki) first.`,
             start: step.start,
             end: step.end,
             stepIndex: i,
           });
-        } else if (current === "bytes" && spec.input === "text") {
+        } else if (current === "bytes" && io.input === "text") {
           errors.push({
-            message: `"${step.name}" expects text — encode with pem, base64, base64url, or hex first.`,
+            message: `"${step.name}" expects text — encode with pem, base64, base64url, hex, or utf8 first.`,
+            start: step.start,
+            end: step.end,
+            stepIndex: i,
+          });
+        } else if (current === "text" && io.input === "bytes") {
+          errors.push({
+            message: `"${step.name}" expects bytes — decode with pem -d, base64 -d, or hex -d first.`,
             start: step.start,
             end: step.end,
             stepIndex: i,
           });
         } else if (current === "none") {
           errors.push({
-            message: `"${step.name}" needs an input — start with genkey, random, or passphrase.`,
+            message: `"${step.name}" needs an input — start with genkey, random, passphrase, input, or decrypt.`,
             start: step.start,
             end: step.end,
             stepIndex: i,
           });
         } else {
           errors.push({
-            message: `Type mismatch: "${step.name}" expects ${spec.input}, got ${current}.`,
+            message: `Type mismatch: "${step.name}" expects ${io.input}, got ${current}.`,
             start: step.start,
             end: step.end,
             stepIndex: i,
           });
         }
       } else {
-        current = spec.output;
+        current = io.output;
         if (foreachDepth > 0 && spec.kind === "sink") {
-          // stay in text-item mode for next sibling in foreach
           current = "text";
         }
       }
     }
 
-    if (step.name === "export") {
-      lastExportFormat = String(step.params.format || "pkcs8");
-    }
-    void lastExportFormat;
-
-    if (step.name === "gpg") {
+    if (step.name === "encrypt") {
       if (foreachDepth > 0) {
         foreachGpg = true;
         gpgSlots = Math.max(gpgSlots, sharesCount || 1);
@@ -518,15 +578,13 @@ export function validateRecipe(ast) {
   }
 
   if (foreachDepth > 0) {
-    // Implicit merge at end — OK, just a note
     warnings.push("foreach scope closed implicitly at end of pipeline");
   }
 
-  // Sources must come first typically
   const first = getStep(steps[0].name);
   if (first && first.kind !== "source" && first.kind !== "flow") {
     errors.push({
-      message: `Pipeline should start with a source (genkey, random, passphrase), not "${steps[0].name}".`,
+      message: `Pipeline should start with a source (genkey, random, passphrase, input, decrypt), not "${steps[0].name}".`,
       start: steps[0].start,
       end: steps[0].end,
       stepIndex: 0,
@@ -539,6 +597,7 @@ export function validateRecipe(ast) {
     warnings,
     recipientSlots: gpgSlots,
     foreachGpg,
+    inputNeeds,
   };
 }
 
@@ -552,7 +611,7 @@ export function compileRecipe(source) {
   if (!ast || errors.length) {
     return {
       ast: null,
-      validation: { ok: false, errors, warnings: [] },
+      validation: { ok: false, errors, warnings: [], inputNeeds: [] },
     };
   }
   return { ast, validation: validateRecipe(ast) };
@@ -566,6 +625,15 @@ export function compileRecipe(source) {
 export function unresolvedRecipients(ast) {
   const v = validateRecipe(ast);
   return { slots: v.recipientSlots || 0, foreach: !!v.foreachGpg };
+}
+
+/**
+ * Detect runtime input panels required.
+ * @param {RecipeAst} ast
+ * @returns {("shares"|"gpg")[]}
+ */
+export function unresolvedInputs(ast) {
+  return validateRecipe(ast).inputNeeds || [];
 }
 
 /**
@@ -584,9 +652,6 @@ export function registryIssues() {
     for (const p of s.params || []) {
       if (!p.name) issues.push(`${s.name}: param missing name`);
       if (!p.type) issues.push(`${s.name}.${p.name}: missing type`);
-      if (p.default === undefined && p.type !== "string") {
-        // string defaults may be empty
-      }
     }
   }
   return issues;
@@ -628,6 +693,26 @@ export const PRESETS = [
     id: "quorum-gpg",
     title: "Key + quorum-share to GPG",
     blurb: "P-256 key → SLIP-39 2-of-3 → encrypt each share to a different recipient (chosen at run time).",
-    recipe: "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | gpg",
+    recipe: "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg",
+  },
+  {
+    id: "recover-shares",
+    title: "Recover secret from SLIP-39 shares",
+    blurb: "Paste K-of-N mnemonics (+ envelope if prompted) and reconstruct the secret as Base64.",
+    recipe: "input shares | combine | base64",
+  },
+  {
+    id: "rebuild-p256",
+    title: "Rebuild P-256 key from shares",
+    blurb: "Combine SLIP-39 shares of a PEM private key and re-import as WebCrypto P-256.",
+    recipe:
+      "input shares | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem",
+  },
+  {
+    id: "decrypt-rebuild-p256",
+    title: "Decrypt GPG shares → rebuild key",
+    blurb: "Decrypt OpenPGP-wrapped shares, combine, and rebuild the P-256 PEM.",
+    recipe:
+      "decrypt gpg | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem",
   },
 ];

@@ -6,16 +6,17 @@
 import { Auth } from "../lib/auth.js";
 import {
   CryptoModuleError,
-  SELF_TEST_LABELS,
   assertCryptoReady,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
 import { mountRecipientBinder } from "../lib/recipient-picker.js";
+import { splitArmoredMessages } from "../lib/pgp/armor.js";
 import {
   PRESETS,
   compileRecipe,
   parseRecipe,
   serializeRecipe,
+  unresolvedInputs,
   unresolvedRecipients,
 } from "../lib/toolkit/recipe.js";
 import { getStep, listSteps, stepsAccepting } from "../lib/toolkit/registry.js";
@@ -25,6 +26,11 @@ import {
   formatFingerprint,
   showError,
 } from "../lib/utils.js";
+import {
+  getPasskeyPrf,
+  listKeys as vaultListKeys,
+  unlockKey as vaultUnlockKey,
+} from "../lib/vault.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"), "/toolkit");
@@ -43,6 +49,10 @@ let artifacts = [];
 let boundRecipients = [];
 /** @type {ReturnType<typeof mountRecipientBinder>|null} */
 let binder = null;
+/** @type {import("../lib/vault.js").VaultKeyMeta[]} */
+let vaultKeys = [];
+/** @type {("shares"|"gpg")[]} */
+let currentInputNeeds = [];
 
 const IDLE_CLEAR_MS = 5 * 60 * 1000;
 let idleTimer = null;
@@ -100,6 +110,7 @@ app.innerHTML = `
 
   <div class="card mt-lg">
     <p class="card-title">Run</p>
+    <div id="inputs-host"></div>
     <div id="recipient-bind-host"></div>
     <div class="btn-row mt-md">
       <button type="button" class="btn" id="run-btn" disabled>Run recipe</button>
@@ -170,6 +181,10 @@ function validateAndBind() {
     warnEl.textContent = (validation.warnings || []).join(" · ");
   }
 
+  // Runtime inputs (shares / GPG ciphertext)
+  currentInputNeeds = validation.inputNeeds || (ast ? unresolvedInputs(ast) : []);
+  renderInputsPanel(currentInputNeeds);
+
   // Recipient binder
   const host = document.getElementById("recipient-bind-host");
   if (!host) return;
@@ -191,6 +206,152 @@ function validateAndBind() {
   } else {
     host.innerHTML = "";
   }
+}
+
+/**
+ * @param {("shares"|"gpg")[]} needs
+ */
+function renderInputsPanel(needs) {
+  const host = document.getElementById("inputs-host");
+  if (!host) return;
+  if (!needs.length) {
+    host.innerHTML = "";
+    return;
+  }
+  /** @type {string[]} */
+  const parts = ['<p class="card-title">Inputs</p>'];
+  if (needs.includes("shares")) {
+    parts.push(`
+      <label class="field-label" for="input-shares">SLIP-39 share mnemonics</label>
+      <textarea id="input-shares" class="compose-message" rows="6" spellcheck="false"
+        placeholder="Paste one mnemonic share per line (K of N required)"></textarea>
+      <label class="field-label mt-md" for="input-envelope">Envelope ciphertext (base64)</label>
+      <textarea id="input-envelope" class="compose-message" rows="2" spellcheck="false"
+        placeholder="Required when shares were created from a non-16/32-byte payload (e.g. PEM)"></textarea>
+      <label class="field-label mt-md" for="input-share-pass">Share passphrase (optional)</label>
+      <input type="password" id="input-share-pass" class="text-input" autocomplete="off">
+    `);
+  }
+  if (needs.includes("gpg")) {
+    const vaultOpts = vaultKeys.length
+      ? vaultKeys
+          .map(
+            (k) =>
+              `<option value="${escapeHtml(k.fingerprint)}">${escapeHtml(
+                formatFingerprint(k.fingerprint)
+              )} · ${escapeHtml(k.protection)}${
+                k.email ? ` · ${escapeHtml(k.email)}` : ""
+              }</option>`
+          )
+          .join("")
+      : "";
+    parts.push(`
+      <label class="field-label mt-md" for="input-ciphertext">OpenPGP ciphertext</label>
+      <textarea id="input-ciphertext" class="compose-message" rows="8" spellcheck="false"
+        placeholder="Paste one or more -----BEGIN PGP MESSAGE----- blocks"></textarea>
+      <label class="field-label mt-md" for="input-envelope-gpg">Envelope ciphertext (base64, if needed)</label>
+      <textarea id="input-envelope-gpg" class="compose-message" rows="2" spellcheck="false"
+        placeholder="Paste envelope.bin.b64 from the encrypt pipeline"></textarea>
+      <label class="field-label mt-md" for="input-vault-key">Vault private key</label>
+      <select id="input-vault-key" class="text-input">
+        <option value="">— paste key below —</option>
+        ${vaultOpts}
+      </select>
+      <label class="field-label mt-md" for="input-privkey">Armored private key (optional if using vault)</label>
+      <textarea id="input-privkey" class="compose-message" rows="4" spellcheck="false"
+        placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"></textarea>
+      <label class="field-label mt-md" for="input-key-pass">Key passphrase</label>
+      <input type="password" id="input-key-pass" class="text-input" autocomplete="off"
+        placeholder="If the OpenPGP key is locked">
+      <p class="muted mt-xs fs-sm">Vault keys unlock only for this run and are scrubbed afterward.</p>
+    `);
+  }
+  host.innerHTML = parts.join("\n");
+}
+
+async function refreshVaultKeys() {
+  try {
+    vaultKeys = await vaultListKeys();
+  } catch (_) {
+    vaultKeys = [];
+  }
+}
+
+/**
+ * Collect runtime input bindings from the Inputs panel.
+ * Unlocks a vault key ephemerally when selected.
+ * @returns {Promise<{ inputs: import("../lib/toolkit/engine.js").RuntimeBindings["inputs"], privateKeyArmored: string, passphrase: string }>}
+ */
+async function collectRuntimeInputs() {
+  /** @type {import("../lib/toolkit/engine.js").RuntimeBindings["inputs"]} */
+  const inputs = {};
+  let privateKeyArmored = "";
+  let passphrase = "";
+
+  if (currentInputNeeds.includes("shares")) {
+    const sharesEl = document.getElementById("input-shares");
+    const envEl = document.getElementById("input-envelope");
+    const passEl = document.getElementById("input-share-pass");
+    const raw = sharesEl instanceof HTMLTextAreaElement ? sharesEl.value : "";
+    const mnemonics = raw
+      .split(/\n+/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    inputs.shares = {
+      mnemonics,
+      envelopeB64:
+        envEl instanceof HTMLTextAreaElement ? envEl.value.trim() : "",
+      passphrase: passEl instanceof HTMLInputElement ? passEl.value : "",
+    };
+  }
+
+  if (currentInputNeeds.includes("gpg")) {
+    const ctEl = document.getElementById("input-ciphertext");
+    const envEl = document.getElementById("input-envelope-gpg");
+    const vaultEl = document.getElementById("input-vault-key");
+    const privEl = document.getElementById("input-privkey");
+    const passEl = document.getElementById("input-key-pass");
+    const armored =
+      ctEl instanceof HTMLTextAreaElement ? ctEl.value.trim() : "";
+    const messages = splitArmoredMessages(armored);
+    if (!messages.length && armored) {
+      // Single blob without clear markers — try as one message
+      messages.push(armored);
+    }
+    passphrase = passEl instanceof HTMLInputElement ? passEl.value : "";
+    const pasted =
+      privEl instanceof HTMLTextAreaElement ? privEl.value.trim() : "";
+    const vaultFpr =
+      vaultEl instanceof HTMLSelectElement ? vaultEl.value : "";
+
+    if (pasted) {
+      privateKeyArmored = pasted;
+    } else if (vaultFpr) {
+      const meta = vaultKeys.find((k) => k.fingerprint === vaultFpr);
+      /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
+      const opts = {};
+      if (meta?.protection === "passkey") {
+        opts.prfIkm = await getPasskeyPrf();
+      }
+      privateKeyArmored = await vaultUnlockKey(vaultFpr, opts);
+    }
+
+    const envelopeB64 =
+      envEl instanceof HTMLTextAreaElement ? envEl.value.trim() : "";
+    inputs.gpg = {
+      armoredMessages: messages,
+      privateKeyArmored,
+      passphrase,
+      envelopeB64,
+    };
+    // Also surface envelope on shares for combine convenience
+    if (envelopeB64) {
+      inputs.shares = inputs.shares || { mnemonics: [] };
+      if (!inputs.shares.envelopeB64) inputs.shares.envelopeB64 = envelopeB64;
+    }
+  }
+
+  return { inputs, privateKeyArmored, passphrase };
 }
 
 function renderPresets() {
@@ -431,7 +592,15 @@ function renderResults() {
   });
 }
 
-async function runViaWorker(ast) {
+/**
+ * @param {import("../lib/toolkit/recipe.js").RecipeAst} ast
+ * @param {{
+ *   inputs?: import("../lib/toolkit/engine.js").RuntimeBindings["inputs"],
+ *   privateKeyArmored?: string,
+ *   passphrase?: string,
+ * }} [opts]
+ */
+async function runViaWorker(ast, opts = {}) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
@@ -477,6 +646,9 @@ async function runViaWorker(ast) {
       ast,
       recipientKeysArmored: boundRecipients.map((r) => r.armoredKey),
       recipientFingerprints: boundRecipients.map((r) => r.fingerprint),
+      inputs: opts.inputs || {},
+      privateKeyArmored: opts.privateKeyArmored || "",
+      passphrase: opts.passphrase || "",
     });
   });
 }
@@ -562,8 +734,28 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
   if (btn) btn.disabled = true;
   errorEl.classList.add("hidden");
 
+  /** Ephemeral vault key — scrubbed after postMessage. */
+  let privateKeyArmored = "";
   try {
-    artifacts = await runViaWorker(ast);
+    const collected = await collectRuntimeInputs();
+    privateKeyArmored = collected.privateKeyArmored;
+    if (currentInputNeeds.includes("gpg") && !privateKeyArmored) {
+      throw new Error("Select a vault key or paste a private key to decrypt.");
+    }
+    if (
+      currentInputNeeds.includes("shares") &&
+      !(collected.inputs.shares?.mnemonics || []).length
+    ) {
+      throw new Error("Paste at least one SLIP-39 share mnemonic.");
+    }
+    if (currentInputNeeds.includes("gpg")) {
+      status.textContent = "Unlocking key & running…";
+    }
+    artifacts = await runViaWorker(ast, {
+      inputs: collected.inputs,
+      privateKeyArmored,
+      passphrase: collected.passphrase,
+    });
     renderResults();
     touchActivity();
     if (status) {
@@ -577,6 +769,12 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
     }
     showError(errorEl, err?.message || "Run failed");
   } finally {
+    privateKeyArmored = "";
+    const privEl = document.getElementById("input-privkey");
+    // Do not clear pasted key unless from vault path — user may retry.
+    const passEl = document.getElementById("input-key-pass");
+    if (passEl instanceof HTMLInputElement) passEl.value = "";
+    void privEl;
     if (btn) btn.disabled = false;
   }
 });
@@ -589,12 +787,15 @@ async function startPage() {
       throw new CryptoModuleError(result.error || "POST failed");
     }
     cryptoReady = true;
+    await refreshVaultKeys();
     if (status) {
       status.className = "status-row ok";
       status.textContent = "Crypto module verified.";
     }
     const runBtn = document.getElementById("run-btn");
     if (runBtn) runBtn.disabled = false;
+    // Re-render inputs so vault dropdown is populated.
+    if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
   } catch (err) {
     cryptoReady = false;
     if (status) {

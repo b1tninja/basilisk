@@ -22,6 +22,7 @@ import {
   mapPacketSpans,
   tagColorClass,
 } from "../lib/packet-map.js";
+import { splitArmoredMessages } from "../lib/pgp/armor.js";
 import { analyzeArmored } from "../lib/pgp/inspect.js";
 import {
   isAnonymousKeyId,
@@ -62,6 +63,8 @@ let currentPacketMap = null;
 let expertMode = getExpertMode();
 /** @type {string} */
 let lastPlaintext = "";
+/** @type {string[]} */
+let lastPlaintexts = [];
 /** @type {import("../lib/vault.js").VaultKeyMeta[]} */
 let vaultKeys = [];
 
@@ -85,12 +88,12 @@ app.innerHTML = `
 
   <div class="card">
     <p class="card-title">Message or signature</p>
-    <label class="field-label" for="ciphertext">Armored PGP message, cleartext signature, or detached signature</label>
+    <label class="field-label" for="ciphertext">Armored PGP message(s), cleartext signature, or detached signature</label>
     <textarea id="ciphertext" class="compose-message" rows="10"
-      placeholder="-----BEGIN PGP MESSAGE-----&#10;…&#10;-----END PGP MESSAGE-----"></textarea>
+      placeholder="-----BEGIN PGP MESSAGE-----&#10;…&#10;-----END PGP MESSAGE-----&#10;&#10;(multiple MESSAGE blocks OK)"></textarea>
     <div class="mt-md">
-      <label class="file-label" for="cipher-file">Or choose a .asc / .pgp file</label>
-      <input type="file" id="cipher-file" accept=".asc,.pgp,.gpg,text/plain" hidden>
+      <label class="file-label" for="cipher-file">Or choose .asc / .pgp file(s)</label>
+      <input type="file" id="cipher-file" accept=".asc,.pgp,.gpg,text/plain" multiple hidden>
       <span class="file-name" id="cipher-file-name"></span>
     </div>
   </div>
@@ -192,6 +195,7 @@ function clearSensitiveFields() {
     out.innerHTML = "";
   }
   lastPlaintext = "";
+  lastPlaintexts = [];
   if (status) status.className = "hidden";
   touchActivity();
 }
@@ -270,9 +274,19 @@ function renderInspect(analysis) {
       ? `<p class="card-title mt-lg">Encrypted to</p>${recipientsHtml}`
       : "";
 
+  const multiNote =
+    analysis.multiMessage && analysis.messageCount > 1
+      ? `<p class="muted mt-sm">${analysis.messageCount} PGP MESSAGE blocks detected. Inspect shows the first; Decrypt unlocks once and opens all.</p>`
+      : "";
+
   card.innerHTML = `
     <p class="card-title">Inspect</p>
-    <p><span class="badge">${escapeHtml(typeLabel(analysis.type))}</span></p>
+    <p><span class="badge">${escapeHtml(typeLabel(analysis.type))}</span>${
+      analysis.messageCount > 1
+        ? ` <span class="badge pending">${analysis.messageCount} messages</span>`
+        : ""
+    }</p>
+    ${multiNote}
     ${recipientBlock}
     <p class="card-title mt-lg">Signed by</p>
     ${signersHtml}
@@ -590,10 +604,16 @@ async function runAnalyze() {
     return;
   }
   try {
-    const analysis = await analyzeArmored(armored);
+    const blocks = splitArmoredMessages(armored);
+    const primary = blocks[0] || armored;
+    const analysis = await analyzeArmored(primary);
+    if (blocks.length > 1) {
+      analysis.messageCount = blocks.length;
+      analysis.multiMessage = true;
+    }
     currentAnalysis = analysis;
     renderInspect(analysis);
-    renderPacketMap(analysis);
+    renderPacketMap(blocks.length > 1 ? null : analysis);
     updateDecryptSection(analysis);
     await autoSelectVaultKey(analysis);
     await verifySigners(analysis);
@@ -829,12 +849,14 @@ document.getElementById("ciphertext").addEventListener("input", () => {
 
 document.getElementById("cipher-file").addEventListener("change", async (e) => {
   touchActivity();
-  const f = e.target.files?.[0];
-  document.getElementById("cipher-file-name").textContent = f ? f.name : "";
-  if (f) {
-    document.getElementById("ciphertext").value = await f.text();
-    await runAnalyze();
-  }
+  const files = Array.from(e.target.files || []);
+  document.getElementById("cipher-file-name").textContent = files.length
+    ? files.map((f) => f.name).join(", ")
+    : "";
+  if (!files.length) return;
+  const texts = await Promise.all(files.map((f) => f.text()));
+  document.getElementById("ciphertext").value = texts.join("\n\n");
+  await runAnalyze();
 });
 
 document.getElementById("decrypt-btn").addEventListener("click", async () => {
@@ -863,64 +885,35 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
   status.textContent = "Working…";
   status.classList.remove("hidden");
 
-  const armored = document.getElementById("ciphertext").value.trim();
+  const armoredRaw = document.getElementById("ciphertext").value.trim();
   const pastedKey = document.getElementById("private-key")?.value.trim() || "";
   const keyPassphrase = document.getElementById("passphrase")?.value || "";
   const msgPassphrase = document.getElementById("msg-passphrase")?.value || "";
   const vaultSelect = document.getElementById("vault-key-select");
   const vaultFpr = vaultSelect instanceof HTMLSelectElement ? vaultSelect.value : "";
 
-  if (!armored) {
+  if (!armoredRaw) {
     showError(errorEl, "Paste a PGP message or choose a file.");
     status.className = "hidden";
     return;
   }
 
+  const blocks = splitArmoredMessages(armoredRaw);
+  const messages = blocks.length ? blocks : [armoredRaw];
   const usePassword = !!msgPassphrase;
   /** Ephemeral vault-sourced armored key — never written to the textarea. */
   let vaultArmored = "";
   let usedVaultEphemeral = false;
+  /** @type {{ ok: boolean, index: number, plaintext?: string, sigStatuses?: {keyID:string,verified:boolean}[], sessionKeys?: object[], error?: string }[]} */
+  const results = [];
 
   try {
-    let plaintext = "";
-    let sigStatuses = [];
-    let sessionKeys = [];
+    let privArmored = "";
+    /** @type {string[]} */
+    let verificationKeysArmored = [];
 
-    if (usePassword) {
-      // OpenPGP.js: passwords XOR decryptionKeys — not both.
-      // Fresh message reads — Message objects are stateful.
-      try {
-        sessionKeys = await decryptSessionKeys({
-          message: await readMessage({ armoredMessage: armored }),
-          passwords: [msgPassphrase],
-        });
-      } catch (_) {
-        sessionKeys = [];
-      }
-      const result = await decrypt({
-        message: await readMessage({ armoredMessage: armored }),
-        passwords: [msgPassphrase],
-        config: { allowInsecureDecryptionWithSigningKeys: true },
-      });
-      plaintext =
-        typeof result.data === "string"
-          ? result.data
-          : new TextDecoder().decode(result.data);
-      for (const s of result.signatures || []) {
-        let verified = false;
-        try {
-          await s.verified;
-          verified = true;
-        } catch (_) {
-          verified = false;
-        }
-        sigStatuses.push({ keyID: keyIdHex(s.keyID), verified });
-      }
-    } else {
-      let privArmored = pastedKey;
-
-      // Combined unlock + decrypt: prefer selected vault key (or auto-match)
-      // without parking the private key in the DOM.
+    if (!usePassword) {
+      privArmored = pastedKey;
       if (!privArmored) {
         const fpr =
           vaultFpr ||
@@ -937,7 +930,6 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
           }
         }
       }
-
       if (!privArmored) {
         showError(
           errorEl,
@@ -948,84 +940,153 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
         status.className = "hidden";
         return;
       }
-
-      // Prefetch signer keys if we already know IDs from inspect.
       const knownSigners = (currentAnalysis?.sigDetails || [])
         .map((s) => s.fingerprint || s.keyId)
         .filter((id) => id && !isAnonymousKeyId(id));
-      const verificationKeysArmored = await fetchVerificationArmored(knownSigners);
-      status.textContent = usedVaultEphemeral
-        ? "Decrypting with vault key…"
-        : "Working…";
-      const workerResult = await decryptWithPrivateKeyWorker(
-        armored,
-        privArmored,
-        keyPassphrase,
-        verificationKeysArmored
-      );
-      // Drop armored private key from this frame as soon as decrypt returns.
-      // (OpenPGP key objects are zeroed inside the worker / inline path.)
-      if (usedVaultEphemeral) {
-        privArmored = "";
-        vaultArmored = "";
-      }
-      plaintext = workerResult.plaintext;
-      sigStatuses = workerResult.signatures || [];
-      sessionKeys = (workerResult.sessionKeys || []).map((sk) => ({
-        algorithm: sk.algorithm,
-        aeadAlgorithm: sk.aeadAlgorithm,
-        data: sk.length ? new Uint8Array(sk.length) : undefined,
-        length: sk.length,
-      }));
+      verificationKeysArmored = await fetchVerificationArmored(knownSigners);
     }
 
-    applySessionKeysToMap(sessionKeys);
+    status.textContent =
+      messages.length > 1
+        ? `Decrypting ${messages.length} messages…`
+        : usedVaultEphemeral
+          ? "Decrypting with vault key…"
+          : "Working…";
 
-    let sigHtml = "";
-    if (sigStatuses.length) {
-      const parts = [];
-      for (const s of sigStatuses) {
-        const kid = (s.keyID || "").toUpperCase();
-        const link = kid ? keySearchLink(kid, formatFingerprint(kid)) : "";
-        parts.push(
-          s.verified
-            ? `<span>${link} <span class="badge approved">verified</span></span>`
-            : `<span>${link} <span class="badge">signature unverified</span></span>`
-        );
+    for (let i = 0; i < messages.length; i++) {
+      const armored = messages[i];
+      try {
+        if (usePassword) {
+          let sessionKeys = [];
+          try {
+            sessionKeys = await decryptSessionKeys({
+              message: await readMessage({ armoredMessage: armored }),
+              passwords: [msgPassphrase],
+            });
+          } catch (_) {
+            sessionKeys = [];
+          }
+          const result = await decrypt({
+            message: await readMessage({ armoredMessage: armored }),
+            passwords: [msgPassphrase],
+            config: { allowInsecureDecryptionWithSigningKeys: true },
+          });
+          const plaintext =
+            typeof result.data === "string"
+              ? result.data
+              : new TextDecoder().decode(result.data);
+          /** @type {{keyID:string,verified:boolean}[]} */
+          const sigStatuses = [];
+          for (const s of result.signatures || []) {
+            let verified = false;
+            try {
+              await s.verified;
+              verified = true;
+            } catch (_) {
+              verified = false;
+            }
+            sigStatuses.push({ keyID: keyIdHex(s.keyID), verified });
+          }
+          results.push({ ok: true, index: i, plaintext, sigStatuses, sessionKeys });
+        } else {
+          const workerResult = await decryptWithPrivateKeyWorker(
+            armored,
+            privArmored,
+            keyPassphrase,
+            verificationKeysArmored
+          );
+          results.push({
+            ok: true,
+            index: i,
+            plaintext: workerResult.plaintext,
+            sigStatuses: workerResult.signatures || [],
+            sessionKeys: (workerResult.sessionKeys || []).map((sk) => ({
+              algorithm: sk.algorithm,
+              aeadAlgorithm: sk.aeadAlgorithm,
+              length: sk.length,
+            })),
+          });
+        }
+      } catch (err) {
+        results.push({
+          ok: false,
+          index: i,
+          error: err?.message || "Decrypt failed",
+        });
       }
-      sigHtml = `<p class="mb-md">${parts.join(" · ")}</p>`;
     }
 
-    const cipherNote =
-      sessionKeys[0]?.algorithm
-        ? `<p class="muted">Session cipher: <code>${escapeHtml(
-            String(sessionKeys[0].algorithm).toUpperCase()
-          )}${
-            sessionKeys[0].aeadAlgorithm
-              ? "-" + String(sessionKeys[0].aeadAlgorithm).toUpperCase()
-              : ""
-          }</code>${
-            sessionKeys[0].length ? ` (${sessionKeys[0].length} bytes)` : ""
-          }</p>`
-        : "";
+    if (usedVaultEphemeral) {
+      privArmored = "";
+      vaultArmored = "";
+    }
 
-    out.innerHTML = `
-      <div class="card-title-row">
-        <p class="card-title m-0">Plaintext</p>
-        <button type="button" class="btn btn-ghost btn-compact" id="copy-plaintext-btn" title="Clipboard clears after 60 seconds">Copy (clears in 60s)</button>
-      </div>
-      ${cipherNote}
-      ${sigHtml}
-      <pre class="output-pre" id="decrypt-plaintext">${escapeHtml(plaintext)}</pre>
-    `;
+    const firstOk = results.find((r) => r.ok);
+    if (firstOk?.sessionKeys) applySessionKeysToMap(firstOk.sessionKeys);
+
+    const cards = results
+      .map((r) => {
+        const title =
+          messages.length > 1 ? `Message ${r.index + 1}` : "Plaintext";
+        if (!r.ok) {
+          return `
+          <div class="card artifact-card mb-md">
+            <p class="card-title m-0-b-xs">${escapeHtml(title)}
+              <span class="badge">failed</span></p>
+            <p class="text-error m-0">${escapeHtml(r.error || "Decrypt failed")}</p>
+          </div>`;
+        }
+        let sigHtml = "";
+        if (r.sigStatuses?.length) {
+          const parts = r.sigStatuses.map((s) => {
+            const kid = (s.keyID || "").toUpperCase();
+            const link = kid ? keySearchLink(kid, formatFingerprint(kid)) : "";
+            return s.verified
+              ? `<span>${link} <span class="badge approved">verified</span></span>`
+              : `<span>${link} <span class="badge">signature unverified</span></span>`;
+          });
+          sigHtml = `<p class="mb-md">${parts.join(" · ")}</p>`;
+        }
+        const sk = r.sessionKeys?.[0];
+        const cipherNote = sk?.algorithm
+          ? `<p class="muted">Session cipher: <code>${escapeHtml(
+              String(sk.algorithm).toUpperCase()
+            )}${
+              sk.aeadAlgorithm
+                ? "-" + String(sk.aeadAlgorithm).toUpperCase()
+                : ""
+            }</code>${sk.length ? ` (${sk.length} bytes)` : ""}</p>`
+          : "";
+        return `
+        <div class="card artifact-card mb-md">
+          <div class="card-title-row">
+            <p class="card-title m-0">${escapeHtml(title)}</p>
+            <button type="button" class="btn btn-ghost btn-compact" data-copy-plain="${r.index}"
+              title="Clipboard clears after 60 seconds">Copy (clears in 60s)</button>
+          </div>
+          ${cipherNote}
+          ${sigHtml}
+          <pre class="output-pre">${escapeHtml(r.plaintext || "")}</pre>
+        </div>`;
+      })
+      .join("");
+
+    out.innerHTML = cards;
     out.classList.remove("hidden");
-    lastPlaintext = plaintext;
-    status.textContent = usePassword
-      ? "Decrypted with passphrase. Passphrase cleared."
-      : usedVaultEphemeral
-        ? "Decrypted with vault key. Private key scrubbed from memory (not left in the text field)."
-        : "Decrypted (worker when available). Key material zeroed.";
-    status.className = "status-row ok";
+    lastPlaintexts = results.map((r) => (r.ok ? r.plaintext || "" : ""));
+    lastPlaintext = lastPlaintexts.filter(Boolean).join("\n\n---\n\n");
+
+    const okCount = results.filter((r) => r.ok).length;
+    const failCount = results.length - okCount;
+    status.textContent =
+      failCount === 0
+        ? usePassword
+          ? `Decrypted ${okCount} message${okCount === 1 ? "" : "s"} with passphrase. Passphrase cleared.`
+          : usedVaultEphemeral
+            ? `Decrypted ${okCount} message${okCount === 1 ? "" : "s"} with vault key. Private key scrubbed.`
+            : `Decrypted ${okCount} message${okCount === 1 ? "" : "s"}. Key material zeroed.`
+        : `Decrypted ${okCount} of ${results.length}; ${failCount} failed.`;
+    status.className = failCount && !okCount ? "status-row err" : "status-row ok";
     const vaultStatus = document.getElementById("vault-unlock-status");
     if (vaultStatus && usedVaultEphemeral) {
       vaultStatus.textContent =
@@ -1036,7 +1097,6 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
     status.textContent = err.message || "Decrypt failed";
     showError(errorEl, err.message || "Decrypt failed");
   } finally {
-    // Drop ephemeral vault material as soon as decrypt finishes (success or fail).
     vaultArmored = "";
     const passEl = document.getElementById("passphrase");
     if (passEl) passEl.value = "";
@@ -1053,8 +1113,12 @@ document.addEventListener("click", (e) => {
     clearSensitiveFields();
     return;
   }
-  if (t.id === "copy-plaintext-btn") {
-    const text = lastPlaintext;
+  const copyIdx = t.getAttribute?.("data-copy-plain");
+  if (t.id === "copy-plaintext-btn" || copyIdx != null) {
+    const text =
+      copyIdx != null
+        ? lastPlaintexts[Number(copyIdx)] || ""
+        : lastPlaintext;
     const original = t.textContent;
     copyTextTransient(text, 60000)
       .then(() => {

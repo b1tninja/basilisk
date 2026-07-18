@@ -45,6 +45,39 @@ export function bytesToHex(bytes) {
 }
 
 /**
+ * Decode hex (optionally whitespace-separated) to bytes.
+ * @param {string} hex
+ * @returns {Uint8Array}
+ */
+export function hexToBytes(hex) {
+  const clean = String(hex || "").replace(/\s+/g, "").toLowerCase();
+  if (!clean.length) return new Uint8Array(0);
+  if (clean.length % 2 !== 0 || /[^0-9a-f]/.test(clean)) {
+    throw new Error("Invalid hex");
+  }
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+/**
+ * Strip PEM armor and return DER bytes.
+ * @param {string} pem
+ * @returns {Uint8Array}
+ */
+export function fromPem(pem) {
+  const text = String(pem || "");
+  const m = text.match(
+    /-----BEGIN [^-]+-----([\s\S]*?)-----END [^-]+-----/
+  );
+  if (!m) throw new Error("No PEM block found");
+  const b64 = m[1].replace(/\s+/g, "");
+  return base64ToBytes(b64);
+}
+
+/**
  * Wrap DER bytes as PEM.
  * @param {Uint8Array} der
  * @param {string} label  e.g. "PRIVATE KEY"

@@ -109,6 +109,7 @@ describe("validation", () => {
     const out = serializeRecipe(ast);
     expect(out).not.toMatch(/@/);
     expect(out).not.toMatch(/to=/);
+    expect(out).toContain("encrypt gpg");
     expect(unresolvedRecipients(ast).slots).toBe(3);
   });
 
@@ -116,5 +117,36 @@ describe("validation", () => {
     const { validation } = compileRecipe("genkey ec/p256 | pem");
     expect(validation.ok).toBe(false);
     expect(validation.errors.some((e) => /export/i.test(e.message))).toBe(true);
+  });
+
+  it("parses and serializes -d decode flags", () => {
+    const src = "input shares | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem";
+    const { ast, errors } = parseRecipe(src);
+    expect(errors).toEqual([]);
+    expect(ast.steps.find((s) => s.name === "pem" && s.params.decode === true)).toBeTruthy();
+    expect(serializeRecipe(ast)).toContain("pem -d");
+    expect(serializeRecipe(ast)).not.toContain("decode=true");
+  });
+
+  it("allows shares | combine and reports inputNeeds", () => {
+    const { validation } = compileRecipe("input shares | combine | base64");
+    expect(validation.ok).toBe(true);
+    expect(validation.inputNeeds).toContain("shares");
+  });
+
+  it("canonicalizes gpgdecrypt to decrypt gpg", () => {
+    const { ast, errors } = parseRecipe("gpgdecrypt | combine | hex");
+    expect(errors).toEqual([]);
+    expect(ast.steps[0].name).toBe("decrypt");
+    expect(ast.steps[0].params.with).toBe("gpg");
+    expect(serializeRecipe(ast)).toContain("decrypt gpg");
+  });
+
+  it("accepts rebuild-p256 preset", () => {
+    const { validation } = compileRecipe(
+      PRESETS.find((p) => p.id === "rebuild-p256").recipe
+    );
+    expect(validation.ok).toBe(true);
+    expect(validation.inputNeeds).toContain("shares");
   });
 });
