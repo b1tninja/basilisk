@@ -62,7 +62,7 @@ function signInMenu(redirectUrl, providers) {
       </a>`);
   }
   if (!links.length) {
-    return `<p class="muted" style="font-size:.85rem">Sign-in is not configured.</p>`;
+    return `<p class="muted fs-sm">Sign-in is not configured.</p>`;
   }
   return `
     <div class="sign-in-menu" id="sign-in-menu" hidden>

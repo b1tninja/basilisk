@@ -150,13 +150,13 @@ export function mountRecipientBinder(host, opts) {
   const render = () => {
     host.innerHTML = `
       <div class="recipient-binder">
-        <p class="muted" style="margin:0 0 0.75rem;font-size:0.88rem">
+        <p class="muted m-0-b-md fs-md">
           Choose GPG recipients and confirm fingerprints before running.
           Identities are not stored in the recipe.
         </p>
         ${
           foreach && slots > 1
-            ? `<label class="radio-row" style="margin-bottom:0.75rem">
+            ? `<label class="radio-row mb-md">
                 <input type="checkbox" id="binder-same-all" ${sameForAll ? "checked" : ""}>
                 Same recipient for all shares
               </label>`
@@ -179,14 +179,14 @@ export function mountRecipientBinder(host, opts) {
               return `
                 <div class="binder-slot" data-slot="${i}">
                   <p class="field-label">${escapeHtml(title)}</p>
-                  <div class="btn-row" style="flex-wrap:wrap;align-items:center">
-                    <input type="search" class="text-input binder-search" data-slot="${i}"
-                           placeholder="Email, fingerprint, or key ID" style="flex:1;min-width:180px"
+                  <div class="btn-row wrap items-center">
+                    <input type="search" class="text-input binder-search flex-1 minw-180" data-slot="${i}"
+                           placeholder="Email, fingerprint, or key ID"
                            autocomplete="off">
                     <button type="button" class="btn btn-ghost btn-compact binder-go" data-slot="${i}">Look up</button>
                   </div>
                   <div class="binder-hits" data-slot="${i}"></div>
-                  <div class="binder-current" style="margin-top:0.4rem">${pill}</div>
+                  <div class="binder-current mt-xs">${pill}</div>
                 </div>`;
             })
             .join("")}

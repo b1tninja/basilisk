@@ -58,9 +58,9 @@ async function renderSignedOut() {
         : "Sign in with your Microsoft account to view and claim keys associated with your email address.";
   content.innerHTML = `
     ${renderUploadCard({ signedIn: false })}
-    <div class="card" style="max-width:440px">
+    <div class="card maxw-440">
       <p class="card-title">Sign in to manage your keys</p>
-      <p class="muted" style="margin-bottom:1.25rem">${hint}</p>
+      <p class="muted mb-xl">${hint}</p>
       ${buttons || "<p class='muted'>Sign-in is not configured.</p>"}
     </div>`;
 }
@@ -103,7 +103,7 @@ function renderKeyLabelsSection(keys) {
           <div class="key-label-body">
             <div class="key-label-row">
               <div>
-                <p class="label-section-title">Key label <span class="badge approved" style="font-size:0.7rem;vertical-align:middle">public</span></p>
+                <p class="label-section-title">Key label <span class="badge approved fs-2xs va-middle">public</span></p>
                 <p class="muted label-description">Shown to anyone who views this key. Use it to describe the key's purpose.</p>
               </div>
               ${renderLabelEditor({
@@ -116,7 +116,7 @@ function renderKeyLabelsSection(keys) {
             <hr class="label-divider" />
             <div class="key-label-row">
               <div>
-                <p class="label-section-title">Device label <span class="muted" style="font-size:0.75rem">(private, this browser only)</span></p>
+                <p class="label-section-title">Device label <span class="muted fs-2xs">(private, this browser only)</span></p>
                 <p class="muted label-description">Stored only in your browser. Use it to identify which physical card or device holds this key without exposing hardware serial numbers.</p>
               </div>
               ${renderLabelEditor({
@@ -133,7 +133,7 @@ function renderKeyLabelsSection(keys) {
 
   return `
     <h2>Key labels</h2>
-    <p class="muted" style="margin-bottom:0.75rem">
+    <p class="muted mb-md">
       <strong>Key labels</strong> are public and stored on the server.
       <strong>Device labels</strong> are private and stored only in this browser — use them to distinguish physical smart cards without sharing hardware identifiers.
     </p>
@@ -143,12 +143,12 @@ function renderKeyLabelsSection(keys) {
 function renderGenerateCard(userEmail) {
   const passkeyOpt = passkeyAvailable
     ? `<label class="radio-row"><input type="radio" name="vault-protection" value="passkey"> Passkey (WebAuthn PRF) — hardware-gated unlock</label>`
-    : `<p class="muted" style="font-size:0.85rem">Passkey (PRF) protection is not available in this browser.</p>`;
+    : `<p class="muted fs-sm">Passkey (PRF) protection is not available in this browser.</p>`;
 
   return `
     <div class="card" id="generate-key-card">
       <p class="card-title">Generate a key in your browser</p>
-      <p class="muted" style="margin:0 0 1rem;font-size:0.88rem">
+      <p class="muted m-0-b-lg fs-md">
         Creates a Curve25519 OpenPGP keypair locally, stores the private key in an encrypted browser vault
         (IndexedDB), and publishes the public key under your verified email.
         Convenience for short-lived keys — not a replacement for hardware tokens.
@@ -158,10 +158,10 @@ function renderGenerateCard(userEmail) {
         <label class="field-label" for="gen-name">Display name (optional)</label>
         <input type="text" id="gen-name" class="text-input" maxlength="100" placeholder="Your name">
 
-        <label class="field-label" for="gen-email" style="margin-top:0.75rem">Email</label>
+        <label class="field-label mt-md" for="gen-email">Email</label>
         <input type="email" id="gen-email" class="text-input" value="${escapeHtml(userEmail)}" readonly>
 
-        <label class="field-label" for="gen-expiry" style="margin-top:0.75rem">Key expiration</label>
+        <label class="field-label mt-md" for="gen-expiry">Key expiration</label>
         <select id="gen-expiry" class="text-input">
           <option value="1w">1 week</option>
           <option value="1d">1 day</option>
@@ -170,35 +170,35 @@ function renderGenerateCard(userEmail) {
           <option value="none">No expiration</option>
         </select>
 
-        <p class="field-label" style="margin-top:0.75rem">Private key protection</p>
+        <p class="field-label mt-md">Private key protection</p>
         <div class="vault-protection-options">
           <label class="radio-row"><input type="radio" name="vault-protection" value="passphrase" checked> Passphrase (Argon2) — recommended</label>
           ${passkeyOpt}
           <label class="radio-row"><input type="radio" name="vault-protection" value="device"> Device-only — weakest (any script on this origin can use it while the page is open)</label>
         </div>
-        <p id="device-only-warn" class="status-row err hidden" style="margin-top:0.5rem">
+        <p id="device-only-warn" class="status-row err hidden mt-sm">
           Device-only mode does not require a passphrase or passkey. Prefer passphrase protection for sensitive use.
         </p>
 
-        <div id="gen-passphrase-row" style="margin-top:0.75rem">
+        <div id="gen-passphrase-row" class="mt-md">
           <label class="field-label" for="gen-passphrase">Passphrase</label>
           <input type="password" id="gen-passphrase" class="text-input" autocomplete="new-password">
-          <label class="field-label" for="gen-passphrase-confirm" style="margin-top:0.5rem">Confirm passphrase</label>
+          <label class="field-label mt-sm" for="gen-passphrase-confirm">Confirm passphrase</label>
           <input type="password" id="gen-passphrase-confirm" class="text-input" autocomplete="new-password">
-          <div class="btn-row" style="margin-top:0.5rem">
+          <div class="btn-row mt-sm">
             <button type="button" class="btn btn-ghost btn-compact" id="gen-suggest-pw">Suggest a passphrase</button>
           </div>
           <p id="gen-suggested-pw" class="suggested-pw hidden"></p>
-          <div id="gen-pw-strength-meter" class="pw-strength-meter" data-strength="empty" style="margin-top:0.5rem">
+          <div id="gen-pw-strength-meter" class="pw-strength-meter mt-sm" data-strength="empty">
             <div class="pw-strength-fill"></div>
           </div>
           <p id="gen-pw-strength-label" class="pw-strength-label muted"></p>
         </div>
 
-        <div class="btn-row" style="margin-top:1rem">
+        <div class="btn-row mt-lg">
           <button type="submit" class="btn" id="gen-submit-btn">Generate &amp; publish</button>
         </div>
-        <div id="gen-status" class="hidden" style="margin-top:0.75rem"></div>
+        <div id="gen-status" class="hidden mt-md"></div>
       </form>
     </div>`;
 }
@@ -230,18 +230,18 @@ function renderExportPanel(k) {
   const needsExportPassphrase = k.protection !== "passphrase";
   const passphraseBlock = needsExportPassphrase
     ? `
-      <p class="muted" style="font-size:0.85rem;margin:0 0 0.5rem">
+      <p class="muted fs-sm m-0-b-sm">
         This key is not passphrase-protected in the vault. Exports are always
         passphrase-protected (GnuPG-compatible) — set one to encrypt the exported key.
       </p>
-      <div class="btn-row" style="align-items:center;flex-wrap:wrap">
-        <input type="password" class="text-input export-passphrase" style="max-width:280px"
+      <div class="btn-row items-center wrap">
+        <input type="password" class="text-input export-passphrase maxw-280"
                placeholder="Export passphrase" autocomplete="new-password" data-fpr="${fpr}">
         <button type="button" class="btn btn-ghost btn-compact" data-export-suggest="${fpr}">Suggest</button>
       </div>
       <p class="suggested-pw hidden" data-export-suggested="${fpr}"></p>`
     : `
-      <p class="muted" style="font-size:0.85rem;margin:0 0 0.5rem">
+      <p class="muted fs-sm m-0-b-sm">
         Exports keep the key's existing passphrase protection — GnuPG will ask
         for your passphrase when you use the imported key.
       </p>`;
@@ -251,13 +251,13 @@ function renderExportPanel(k) {
       <td colspan="5">
         <div class="vault-export-panel">
           ${passphraseBlock}
-          <div class="btn-row" style="margin-top:0.5rem;flex-wrap:wrap">
+          <div class="btn-row mt-sm wrap">
             <button type="button" class="btn btn-compact" data-export-format="asc" data-fpr="${fpr}">Armored (.asc)</button>
             <button type="button" class="btn btn-compact" data-export-format="gpg" data-fpr="${fpr}">Binary (.gpg)</button>
             <button type="button" class="btn btn-compact" data-export-format="qr" data-fpr="${fpr}">QR code (.svg)</button>
             <button type="button" class="btn btn-compact" data-export-format="paper" data-fpr="${fpr}">Paper backup (.html)</button>
           </div>
-          <p class="muted" style="font-size:0.8rem;margin:0.5rem 0 0">
+          <p class="muted fs-xs mt-sm">
             Restore anywhere with <code>gpg --import</code>. The paper backup includes
             a QR code and printed instructions — store it like cash.
           </p>
@@ -297,11 +297,11 @@ function renderVaultSection(vaultKeys) {
 
   return `
     <h2>Your browser vault</h2>
-    <p class="muted" style="margin-bottom:0.75rem">
+    <p class="muted mb-md">
       Private keys stored only in this browser (IndexedDB), envelope-encrypted with a device-bound key.
       Every export is passphrase-protected in GnuPG-compatible format (armored, binary, QR, or printable paper backup).
     </p>
-    <div class="card" style="overflow-x:auto">
+    <div class="card scroll-x">
       <table class="keys-table">
         <thead>
           <tr><th>Fingerprint</th><th>UID</th><th>Protection</th><th>Expiry</th><th></th></tr>
@@ -314,33 +314,33 @@ function renderVaultSection(vaultKeys) {
 
 function renderImportCard() {
   return `
-    <div class="card" id="vault-import-card" style="margin-top:1rem">
+    <div class="card mt-lg" id="vault-import-card">
       <p class="card-title">Import an existing private key</p>
-      <p class="muted" style="margin:0 0 0.75rem;font-size:0.88rem">
+      <p class="muted m-0-b-md fs-md">
         Paste an ASCII-armored private key (from <code>gpg --armor --export-secret-keys</code>).
         Passphrase-protected keys are stored as-is; unprotected keys must be given a passphrase.
       </p>
       <form id="vault-import-form" autocomplete="off">
         <textarea id="import-armored" class="text-input" rows="6" spellcheck="false"
                   placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"></textarea>
-        <div id="import-passphrase-row" class="hidden" style="margin-top:0.75rem">
+        <div id="import-passphrase-row" class="hidden mt-md">
           <label class="field-label" for="import-passphrase">Passphrase to protect this key</label>
-          <div class="btn-row" style="align-items:center;flex-wrap:wrap">
-            <input type="password" id="import-passphrase" class="text-input" style="max-width:280px" autocomplete="new-password">
+          <div class="btn-row items-center wrap">
+            <input type="password" id="import-passphrase" class="text-input maxw-280" autocomplete="new-password">
             <button type="button" class="btn btn-ghost btn-compact" id="import-suggest-pw">Suggest</button>
           </div>
           <p id="import-suggested-pw" class="suggested-pw hidden"></p>
         </div>
-        <div class="btn-row" style="margin-top:0.75rem">
+        <div class="btn-row mt-md">
           <button type="submit" class="btn" id="import-submit-btn">Import into vault</button>
         </div>
-        <p id="import-status" class="status-row hidden" style="margin-top:0.5rem"></p>
+        <p id="import-status" class="status-row hidden mt-sm"></p>
       </form>
     </div>`;
 }
 
 async function renderSignedIn(user, keys) {
-  const userInfo = `<p style="margin-bottom:1.25rem">Signed in as
+  const userInfo = `<p class="mb-xl">Signed in as
       <strong>${escapeHtml(user.email)}</strong></p>`;
 
   let vaultKeys = [];
@@ -354,7 +354,7 @@ async function renderSignedIn(user, keys) {
   const keysSection =
     keys && keys.length
       ? `<h2>Your keys</h2>
-         <p class="muted" style="margin-bottom:0.75rem">Unclaimed pending keys expire after 30 days. Claimed keys can be deleted below.</p>
+         <p class="muted mb-md">Unclaimed pending keys expire after 30 days. Claimed keys can be deleted below.</p>
          ${renderKeysTable(keys, { showClaim: true, showDelete: true })}
          ${renderKeyLabelsSection(keys)}`
       : `<p class="muted">No keys on file yet for your account. Generate one below or submit a public key above.</p>`;

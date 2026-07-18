@@ -138,7 +138,7 @@ function renderArmored(armored, fingerprint) {
   return `
     <div class="card">
       <div class="card-title-row">
-        <p class="card-title" style="margin:0">Public key</p>
+        <p class="card-title m-0">Public key</p>
         <div class="btn-row">
           <button type="button" class="btn btn-ghost" id="copy-armored">Copy</button>
           <a class="btn btn-ghost" id="download-armored"
@@ -161,7 +161,7 @@ async function maybeClaimNotice(record) {
     );
     return `<div class="card claim-notice">
       <p class="card-title">Claim this key</p>
-      <p class="muted" style="margin-bottom:1rem">Sign in with an email that matches a UID on this key to claim ownership.</p>
+      <p class="muted mb-lg">Sign in with an email that matches a UID on this key to claim ownership.</p>
       ${buttons || ""}
     </div>`;
   }
@@ -175,7 +175,7 @@ async function maybeClaimNotice(record) {
   }
   return `<div class="card claim-notice">
     <p class="card-title">Claim this key</p>
-    <p class="muted" style="margin-bottom:1rem">Your email matches a UID on this key. Submit a claim to verify ownership.</p>
+    <p class="muted mb-lg">Your email matches a UID on this key. Submit a claim to verify ownership.</p>
     <button type="button" class="btn" id="claim-btn" data-fpr="${escapeHtml(record.fingerprint)}">Claim key</button>
     <p id="claim-status" class="hidden"></p>
   </div>`;
@@ -252,7 +252,7 @@ async function loadKey() {
     const revokedBanner = record.revoked
       ? `<div class="card revoked-notice">
           <p class="card-title">This key is revoked</p>
-          <p class="muted" style="margin:0">Do not use it for encryption or trust decisions. Fetch the revocation with GnuPG if you need the certificate update.</p>
+          <p class="muted m-0">Do not use it for encryption or trust decisions. Fetch the revocation with GnuPG if you need the certificate update.</p>
         </div>`
       : "";
 
@@ -304,15 +304,15 @@ async function loadKey() {
       verifyQrHtml = `
       <div class="card verify-card">
         <div class="card-title-row">
-          <p class="card-title" style="margin:0">Out-of-band verify</p>
+          <p class="card-title m-0">Out-of-band verify</p>
           <a class="text-link" href="/verify?fpr=${encodeURIComponent(fpRaw)}">Open verifier</a>
         </div>
         <div class="verify-qr-row">
           <div class="verify-qr" aria-hidden="true">${svg}</div>
           <div>
-            <p style="margin:0 0 0.5rem">Compare this fingerprint in person or over a trusted channel.</p>
-            <p class="muted fpr" style="margin:0 0 0.65rem">${escapeHtml(fpDisplay)}</p>
-            <p class="muted" style="margin:0;font-size:0.85rem">QR encodes <code>${escapeHtml(uri)}</code> (OpenKeychain-compatible). Always confirm the email and full fingerprint — never trust a name alone.</p>
+            <p class="m-0-b-sm">Compare this fingerprint in person or over a trusted channel.</p>
+            <p class="muted fpr m-0-b-md">${escapeHtml(fpDisplay)}</p>
+            <p class="muted m-0 fs-sm">QR encodes <code>${escapeHtml(uri)}</code> (OpenKeychain-compatible). Always confirm the email and full fingerprint — never trust a name alone.</p>
           </div>
         </div>
       </div>`;
@@ -336,7 +336,7 @@ async function loadKey() {
               </li>`;
             })
             .join("")}</ul>
-          <p class="muted" style="margin:0.75rem 0 0;font-size:0.85rem">Attested certifications from keys approved on this server. Still verify fingerprints out of band.</p>
+          <p class="muted mt-md fs-sm">Attested certifications from keys approved on this server. Still verify fingerprints out of band.</p>
         </div>`
       : "";
 
@@ -348,7 +348,7 @@ async function loadKey() {
             <p class="muted fpr">${escapeHtml(fpDisplay)}</p>
             ${labelDisplayHtml}
             ${labelEditHtml}
-            <p style="margin-top:0.5rem">${statusBadge}</p>
+            <p class="mt-sm">${statusBadge}</p>
           </div>
           <div class="btn-row">
             ${
@@ -387,8 +387,8 @@ async function loadKey() {
 
       <div class="card">
         <div class="card-title-row">
-          <p class="card-title" style="margin:0">User IDs</p>
-          <p class="muted" style="margin:0;font-size:0.8rem">Verified emails are solid links; names are dashed (unverified) — always confirm email and fingerprint</p>
+          <p class="card-title m-0">User IDs</p>
+          <p class="muted m-0 fs-xs">Verified emails are solid links; names are dashed (unverified) — always confirm email and fingerprint</p>
         </div>
         ${renderUids(record)}
       </div>

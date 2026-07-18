@@ -25,7 +25,7 @@ export function renderSnippetCard(opts) {
     })
     .join("");
   const hint = opts.hint
-    ? `<p class="muted" style="margin:-0.35rem 0 0.85rem">${escapeHtml(opts.hint)}</p>`
+    ? `<p class="muted stack-hint">${escapeHtml(opts.hint)}</p>`
     : "";
   return `
     <div class="card snippet-card">

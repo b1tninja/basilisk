@@ -135,7 +135,7 @@ function renderPills() {
   const el = document.getElementById("recipient-pills");
   if (!el) return;
   if (!recipients.size) {
-    el.innerHTML = `<p class="muted" style="margin:0">No recipients yet. Search by email, fingerprint, or key ID.</p>`;
+    el.innerHTML = `<p class="muted m-0">No recipients yet. Search by email, fingerprint, or key ID.</p>`;
     updateCapabilityHint();
     return;
   }
@@ -254,12 +254,12 @@ function renderOutput() {
   }
   el.classList.remove("hidden");
   const summaryHtml = lastEncryptSummary
-    ? `<p class="encrypt-summary muted" style="margin:0.35rem 0 0">Used: <strong>${escapeHtml(lastEncryptSummary)}</strong></p>`
+    ? `<p class="encrypt-summary muted mt-xs">Used: <strong>${escapeHtml(lastEncryptSummary)}</strong></p>`
     : "";
   el.innerHTML = `
     <div class="card-title-row">
       <div>
-        <p class="card-title" style="margin:0">Encrypted output</p>
+        <p class="card-title m-0">Encrypted output</p>
         ${summaryHtml}
       </div>
       <div class="btn-row">
@@ -270,8 +270,8 @@ function renderOutput() {
       .map((o, i) => {
         const trunc = truncateArmored(o.armored);
         return `<div class="output-artifact" data-output-idx="${i}">
-          <div class="card-title-row" style="margin-bottom:0.5rem">
-            <p style="margin:0;font-weight:600">${escapeHtml(o.label)}</p>
+          <div class="card-title-row mb-sm">
+            <p class="m-0 fw-600">${escapeHtml(o.label)}</p>
             <div class="btn-row">
               <button type="button" class="btn btn-ghost btn-compact" data-copy-output="${i}">Copy</button>
               <button type="button" class="btn btn-ghost btn-compact" data-download-output="${i}">Download</button>
@@ -751,7 +751,7 @@ function renderApp() {
     <div class="card">
       <p class="card-title">Recipients</p>
       <div id="recipient-pills" class="recipient-pills"></div>
-      <p id="recipient-cap-hint" class="muted hidden" style="margin:0.5rem 0 0;font-size:0.85rem"></p>
+      <p id="recipient-cap-hint" class="muted hidden mt-sm fs-sm"></p>
       <div class="recipient-input-row">
         <input type="search" id="recipient-search" placeholder="Add recipient by email, fingerprint, or key ID…" autocomplete="off">
         <div id="recipient-dropdown" class="recipient-dropdown" hidden></div>
@@ -773,7 +773,7 @@ function renderApp() {
           <p><strong>Drop files here</strong> or</p>
           <label class="file-label" for="compose-files">Choose files</label>
           <input type="file" id="compose-files" multiple hidden>
-          <p class="muted" style="margin-top:0.75rem">Max total ${formatBytes(MAX_TOTAL_BYTES)}. Each file becomes its own encrypted .asc.</p>
+          <p class="muted mt-md">Max total ${formatBytes(MAX_TOTAL_BYTES)}. Each file becomes its own encrypted .asc.</p>
         </div>
         <div id="file-list"></div>
         <p class="size-tally muted" id="size-tally">0 B / ${formatBytes(MAX_TOTAL_BYTES)}</p>
@@ -782,27 +782,27 @@ function renderApp() {
 
     <div class="card">
       <p class="card-title">Passphrase (optional)</p>
-      <label class="field-label" style="display:flex;align-items:center;gap:0.5rem;font-weight:500">
+      <label class="field-label field-label-inline">
         <input type="checkbox" id="use-passphrase">
         Protect with a shared passphrase (SKESK)
       </label>
-      <div id="passphrase-fields" class="hidden" style="margin-top:0.75rem">
+      <div id="passphrase-fields" class="hidden mt-md">
         <label class="field-label" for="msg-passphrase">Passphrase</label>
         <input type="password" id="msg-passphrase" class="text-input" autocomplete="new-password" placeholder="Shared secret">
         <div id="pw-strength-meter" class="pw-strength-meter" data-strength="empty" aria-hidden="true">
           <div class="pw-strength-fill"></div>
         </div>
         <p id="pw-strength-label" class="pw-strength-label muted"></p>
-        <label class="field-label" for="msg-passphrase-confirm" style="margin-top:0.65rem">Confirm</label>
+        <label class="field-label mt-md" for="msg-passphrase-confirm">Confirm</label>
         <input type="password" id="msg-passphrase-confirm" class="text-input" autocomplete="new-password" placeholder="Repeat passphrase">
-        <p class="muted" style="margin-top:0.5rem">Works alone or together with recipient keys — either can open the message. Cleared after encrypt.</p>
+        <p class="muted mt-sm">Works alone or together with recipient keys — either can open the message. Cleared after encrypt.</p>
       </div>
     </div>
 
     <details class="card encrypt-options${expertMode ? "" : " hidden"}" id="encrypt-options">
-      <summary class="card-title" style="cursor:pointer;list-style-position:outside">Encryption options</summary>
-      <div class="encrypt-options-body" style="margin-top:0.85rem">
-        <fieldset class="enc-preset-fieldset" style="border:none;margin:0;padding:0">
+      <summary class="card-title enc-options-summary">Encryption options</summary>
+      <div class="encrypt-options-body mt-md">
+        <fieldset class="enc-preset-fieldset">
           <legend class="field-label">Preset</legend>
           <label class="enc-preset-option">
             <input type="radio" name="enc-preset" value="auto" checked>
@@ -816,17 +816,17 @@ function renderApp() {
             <input type="radio" name="enc-preset" value="modern">
             <span><strong>Modern (RFC 9580)</strong> — AES-256-OCB, Argon2</span>
           </label>
-          <p id="enc-preset-hint" class="muted" style="margin:0.4rem 0 0">Requests modern encryption; OpenPGP.js uses SEIPD v1 automatically when any recipient key lacks RFC 9580 support.</p>
+          <p id="enc-preset-hint" class="muted mt-xs">Requests modern encryption; OpenPGP.js uses SEIPD v1 automatically when any recipient key lacks RFC 9580 support.</p>
         </fieldset>
 
-        <label id="hide-recipients-row" class="enc-preset-option${expertMode ? "" : " hidden"}" style="margin-top:0.85rem">
+        <label id="hide-recipients-row" class="enc-preset-option mt-md${expertMode ? "" : " hidden"}">
           <input type="checkbox" id="hide-recipients">
           <span><strong>Hide recipient key IDs</strong> — PKESK uses anonymous (all-zero) key IDs. Recipients must try all their keys; metadata of who can read the message is not leaked.</span>
         </label>
 
-        <details class="enc-advanced" style="margin-top:1rem">
-          <summary class="field-label" style="cursor:pointer">Advanced</summary>
-          <div class="enc-advanced-grid" style="margin-top:0.75rem;display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+        <details class="enc-advanced mt-lg">
+          <summary class="field-label pointer">Advanced</summary>
+          <div class="enc-advanced-grid">
             <div>
               <label class="field-label" for="enc-cipher">Cipher</label>
               <select id="enc-cipher" class="text-input">
@@ -860,24 +860,24 @@ function renderApp() {
               </select>
             </div>
           </div>
-          <p id="aead-interop-warn" class="status-row err hidden" style="margin-top:0.75rem" role="status">
+          <p id="aead-interop-warn" class="status-row err hidden mt-md" role="status">
             AEAD (SEIPD v2) requires GnuPG 2.4+ or other modern OpenPGP clients. Older clients cannot decrypt.
           </p>
-          <p id="compression-warn" class="status-row err hidden" style="margin-top:0.75rem" role="status">
+          <p id="compression-warn" class="status-row err hidden mt-md" role="status">
             Compression before encryption can leak plaintext length (CRIME-style) when attacker-influenced data is mixed with secrets. Prefer Off unless you need smaller ciphertext.
           </p>
         </details>
       </div>
     </details>
 
-    <div class="btn-row" style="margin:1rem 0">
+    <div class="btn-row my-lg">
       <button type="button" class="btn" id="encrypt-btn" disabled>Encrypt</button>
       <span id="encrypt-status" class="hidden"></span>
     </div>
 
     <div id="compose-output" class="card compose-output hidden"></div>
 
-    <p class="muted" style="margin-top:1.5rem">
+    <p class="muted mt-xl">
       Encrypt-only — no signing. Recipients decrypt with their private keys or the shared passphrase
       (<code>gpg --decrypt file.asc</code>).
     </p>
@@ -1122,8 +1122,8 @@ async function startEncryptPage() {
       <div class="crypto-post-header">
         <div class="crypto-post-spinner" aria-hidden="true"></div>
         <div>
-          <p class="card-title" style="margin:0 0 0.3rem">Verifying crypto module</p>
-          <p class="muted" style="margin:0;font-size:0.88rem">
+          <p class="card-title m-0-b-xs">Verifying crypto module</p>
+          <p class="muted m-0 fs-md">
             Running pre-operational self-tests before enabling encryption services.
             This usually completes in under a second.
           </p>
@@ -1162,25 +1162,25 @@ async function startEncryptPage() {
 
     app.innerHTML = `
       <div class="card crypto-error-state" role="alert">
-        <p class="card-title text-error" style="margin:0 0 0.5rem">
+        <p class="card-title text-error m-0-b-sm">
           Crypto self-test failed
         </p>
-        <p style="margin:0 0 0.75rem">
+        <p class="m-0-b-md">
           The cryptographic module failed its pre-operational self-test.
           <strong>All encryption services are disabled.</strong>
           Do not use this browser to encrypt sensitive data until this is resolved.
         </p>
         ${failedChecks.length
-          ? `<p class="muted" style="margin:0 0 0.5rem">
+          ? `<p class="muted m-0-b-sm">
                Failed checks: ${failedChecks.map((s) => `<code>${escapeHtml(s)}</code>`).join(", ")}
              </p>`
           : ""}
         ${result.error
-          ? `<p class="muted" style="margin:0 0 0.5rem">
+          ? `<p class="muted m-0-b-sm">
                Error: <code>${escapeHtml(result.error)}</code>
              </p>`
           : ""}
-        <p class="muted" style="margin:0.75rem 0 0;font-size:0.85rem">
+        <p class="muted mt-md fs-sm">
           This failure has been recorded in the browser console.
           Reloading the page will re-run the self-test.
           If the problem persists, the browser's cryptographic implementation

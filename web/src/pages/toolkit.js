@@ -51,7 +51,7 @@ app.innerHTML = `
   <div id="crypto-status" class="status-row" role="status">Verifying crypto module…</div>
 
   <div class="card toolkit-banner">
-    <p style="margin:0;font-size:0.9rem">
+    <p class="m-0 fs-md">
       <strong>Advanced tool.</strong> This page generates extractable key material and shareable backups.
       Prefer hardware tokens for long-lived identity keys. Everyday messaging belongs on
       <a class="text-link" href="/encrypt">Encrypt</a>.
@@ -60,11 +60,11 @@ app.innerHTML = `
 
   <div id="preset-gallery" class="card">
     <p class="card-title">Templates</p>
-    <p class="muted" style="margin:0 0 1rem;font-size:0.88rem">One-click recipes. Customize afterward if you need a different pipeline.</p>
+    <p class="muted m-0-b-lg fs-md">One-click recipes. Customize afterward if you need a different pipeline.</p>
     <div class="preset-grid" id="preset-grid"></div>
   </div>
 
-  <div class="btn-row" style="margin:1rem 0">
+  <div class="btn-row my-lg">
     <button type="button" class="btn btn-ghost" id="toggle-customize">Customize pipeline</button>
     <button type="button" class="btn btn-ghost" id="toggle-reference">Reference</button>
   </div>
@@ -73,41 +73,41 @@ app.innerHTML = `
     <div class="card">
       <p class="card-title">Pipeline builder</p>
       <div id="builder-steps" class="builder-steps"></div>
-      <div class="btn-row" style="margin-top:0.75rem;flex-wrap:wrap">
-        <select id="add-step-select" class="text-input" style="max-width:220px"></select>
+      <div class="btn-row mt-md wrap">
+        <select id="add-step-select" class="text-input maxw-220"></select>
         <button type="button" class="btn btn-compact" id="add-step-btn">Add step</button>
       </div>
     </div>
 
-    <div class="card" style="margin-top:1rem">
+    <div class="card mt-lg">
       <p class="card-title">Recipe</p>
-      <p class="muted" style="margin:0 0 0.5rem;font-size:0.85rem">
+      <p class="muted m-0-b-sm fs-sm">
         Pipe-separated steps. Flow control: <code>foreach</code> / <code>merge</code>
         (aliases: map, each, fork / collect). Recipients are chosen at run time — never written into the recipe.
       </p>
       <textarea id="recipe-text" class="compose-message" rows="3" spellcheck="false"
         placeholder="genkey ec/p256 | export pkcs8 | pem"></textarea>
-      <p id="recipe-errors" class="status-row err hidden" style="margin-top:0.5rem"></p>
-      <p id="recipe-warnings" class="muted" style="margin-top:0.35rem;font-size:0.85rem"></p>
+      <p id="recipe-errors" class="status-row err hidden mt-sm"></p>
+      <p id="recipe-warnings" class="muted mt-xs fs-sm"></p>
       <div id="autocomplete" class="recipient-dropdown hidden"></div>
     </div>
   </div>
 
-  <div id="reference-panel" class="card hidden" style="margin-top:1rem">
+  <div id="reference-panel" class="card hidden mt-lg">
     <p class="card-title">Step reference</p>
     <div id="reference-body"></div>
   </div>
 
-  <div class="card" style="margin-top:1rem">
+  <div class="card mt-lg">
     <p class="card-title">Run</p>
     <div id="recipient-bind-host"></div>
-    <div class="btn-row" style="margin-top:0.75rem">
+    <div class="btn-row mt-md">
       <button type="button" class="btn" id="run-btn" disabled>Run recipe</button>
     </div>
-    <p id="run-status" class="status-row hidden" style="margin-top:0.5rem"></p>
+    <p id="run-status" class="status-row hidden mt-sm"></p>
   </div>
 
-  <div id="results-panel" class="hidden" style="margin-top:1rem"></div>
+  <div id="results-panel" class="hidden mt-lg"></div>
 `;
 
 function touchActivity() {
@@ -257,10 +257,10 @@ function renderBuilder() {
           <div class="builder-card-head">
             <span class="builder-drag" title="Drag to reorder">⠿</span>
             <strong>${escapeHtml(step.name)}</strong>
-            <span class="muted" style="font-size:0.8rem">${escapeHtml(spec?.kind || "")}</span>
+            <span class="muted fs-xs">${escapeHtml(spec?.kind || "")}</span>
             <button type="button" class="btn btn-ghost btn-compact text-error" data-remove="${i}">Remove</button>
           </div>
-          <p class="muted" style="margin:0.25rem 0 0.5rem;font-size:0.8rem">${escapeHtml(spec?.doc || "")}</p>
+          <p class="muted mt-xs mb-sm fs-xs">${escapeHtml(spec?.doc || "")}</p>
           <div class="builder-params">${paramFields}</div>
         </div>`;
     })
@@ -337,14 +337,14 @@ function renderReference() {
         )
         .join("");
       const aliases = (s.aliases || []).length
-        ? `<p class="muted" style="font-size:0.8rem">Aliases: ${(s.aliases || []).map(escapeHtml).join(", ")}</p>`
+        ? `<p class="muted fs-xs">Aliases: ${(s.aliases || []).map(escapeHtml).join(", ")}</p>`
         : "";
       return `<details class="ref-step">
         <summary><code>${escapeHtml(s.name)}</code> <span class="muted">${escapeHtml(s.kind)}</span>
           · ${escapeHtml(s.input)} → ${escapeHtml(s.output)}</summary>
-        <p style="font-size:0.88rem">${escapeHtml(s.doc)}</p>
+        <p class="fs-md">${escapeHtml(s.doc)}</p>
         ${aliases}
-        ${params ? `<ul style="font-size:0.85rem">${params}</ul>` : "<p class='muted'>No parameters.</p>"}
+        ${params ? `<ul class="fs-sm">${params}</ul>` : "<p class='muted'>No parameters.</p>"}
       </details>`;
     })
     .join("");
@@ -361,7 +361,7 @@ function renderResults() {
   panel.classList.remove("hidden");
   panel.innerHTML = `
     <h2>Results</h2>
-    <p class="muted" style="margin-bottom:0.75rem">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
+    <p class="muted mb-md">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
     ${artifacts
       .map((a, i) => {
         const masked = a.sensitive;
@@ -373,16 +373,16 @@ function renderResults() {
         const isSvg = a.mime === "image/svg+xml";
         return `
         <div class="card artifact-card" data-art="${i}">
-          <p class="card-title" style="margin:0 0 0.35rem">${escapeHtml(a.label)}
+          <p class="card-title m-0-b-xs">${escapeHtml(a.label)}
             ${a.shareIndex ? `<span class="badge pending">share ${a.shareIndex}</span>` : ""}
-            ${a.recipientFingerprint ? `<span class="muted" style="font-size:0.8rem">→ ${escapeHtml(formatFingerprint(a.recipientFingerprint))}</span>` : ""}
+            ${a.recipientFingerprint ? `<span class="muted fs-xs">→ ${escapeHtml(formatFingerprint(a.recipientFingerprint))}</span>` : ""}
           </p>
           ${
             isSvg && !masked
               ? `<div class="qr-preview">${a.content}</div>`
               : `<pre class="output-pre artifact-body" data-art="${i}">${preview}</pre>`
           }
-          <div class="btn-row" style="margin-top:0.5rem;flex-wrap:wrap">
+          <div class="btn-row mt-sm wrap">
             ${masked ? `<button type="button" class="btn btn-ghost btn-compact" data-reveal="${i}">Reveal</button>` : ""}
             <button type="button" class="btn btn-ghost btn-compact" data-copy="${i}">Copy</button>
             <button type="button" class="btn btn-ghost btn-compact" data-download="${i}">Download</button>
@@ -585,7 +585,9 @@ async function startPage() {
   const status = document.getElementById("crypto-status");
   try {
     const result = await runCryptoSelfTests();
-    if (!result.ok) throw new CryptoModuleError(result.failed || "POST failed");
+    if (!result.passed) {
+      throw new CryptoModuleError(result.error || "POST failed");
+    }
     cryptoReady = true;
     if (status) {
       status.className = "status-row ok";

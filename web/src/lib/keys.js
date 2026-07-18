@@ -60,7 +60,7 @@ function renderUploadForm() {
         placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----&#10;&#10;..."></textarea>
     </div>
     <div class="or-divider">or upload a file</div>
-    <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+    <div class="inline-meta">
       <label class="file-label" for="key-file">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -72,7 +72,7 @@ function renderUploadForm() {
       <input type="file" id="key-file" accept=".asc,.gpg,.pgp,text/plain">
       <span class="file-name" id="file-name-display"></span>
     </div>
-    <div style="margin-top:1rem">
+    <div class="mt-lg">
       <button class="btn" id="submit-key-btn" type="button">Submit key</button>
     </div>
     <div id="submit-status" class="hidden"></div>`;
@@ -86,7 +86,7 @@ export function renderUploadCard(options = {}) {
   return `
     <div class="card" id="submit-key-card">
       <p class="card-title">Submit a public key</p>
-      <p class="muted" style="margin-bottom:1rem">${intro}</p>
+      <p class="muted mb-lg">${intro}</p>
       ${renderUploadForm()}
     </div>
     ${renderSubmitSnippets()}`;

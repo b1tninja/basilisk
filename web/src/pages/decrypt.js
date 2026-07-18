@@ -88,7 +88,7 @@ app.innerHTML = `
     <label class="field-label" for="ciphertext">Armored PGP message, cleartext signature, or detached signature</label>
     <textarea id="ciphertext" class="compose-message" rows="10"
       placeholder="-----BEGIN PGP MESSAGE-----&#10;…&#10;-----END PGP MESSAGE-----"></textarea>
-    <div style="margin-top:0.75rem">
+    <div class="mt-md">
       <label class="file-label" for="cipher-file">Or choose a .asc / .pgp file</label>
       <input type="file" id="cipher-file" accept=".asc,.pgp,.gpg,text/plain" hidden>
       <span class="file-name" id="cipher-file-name"></span>
@@ -103,33 +103,33 @@ app.innerHTML = `
       <p class="card-title">Message passphrase</p>
       <label class="field-label" for="msg-passphrase">Shared passphrase (SKESK)</label>
       <input type="password" id="msg-passphrase" class="text-input" autocomplete="off" placeholder="Passphrase used to encrypt this message">
-      <p class="muted" style="margin-top:0.5rem">Detected password-protected session key. Private key not required if you have the passphrase.</p>
+      <p class="muted mt-sm">Detected password-protected session key. Private key not required if you have the passphrase.</p>
     </div>
     <div class="card" id="private-key-card">
-      <div class="card-title-row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
-        <p class="card-title" style="margin:0">Private key (local only)</p>
+      <div class="card-title-row">
+        <p class="card-title m-0">Private key (local only)</p>
         <button type="button" class="btn btn-ghost btn-compact" id="clear-sensitive-btn"
           title="Zero and clear all sensitive fields">Clear sensitive data</button>
       </div>
-      <div id="vault-key-row" class="hidden" style="margin-bottom:0.85rem">
+      <div id="vault-key-row" class="hidden mb-md">
         <label class="field-label" for="vault-key-select">Use a stored key</label>
-        <div class="btn-row" style="gap:0.5rem;align-items:center">
-          <select id="vault-key-select" class="text-input" style="flex:1">
+        <div class="btn-row gap-sm items-center">
+          <select id="vault-key-select" class="text-input flex-1">
             <option value="">— paste key below —</option>
           </select>
         </div>
-        <p id="vault-unlock-status" class="muted" style="margin-top:0.4rem;font-size:0.85rem"></p>
-        <p class="muted" style="margin-top:0.35rem;font-size:0.8rem">
+        <p id="vault-unlock-status" class="muted mt-xs fs-sm"></p>
+        <p class="muted mt-xs fs-xs">
           Matching vault keys unlock and decrypt in one step — the private key is not left in the text field.
         </p>
       </div>
       <label class="field-label" for="private-key">Armored private key <span class="muted">(optional if using a vault key)</span></label>
       <textarea id="private-key" class="compose-message" rows="8"
         placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;…&#10;(leave empty to use the selected vault key)"></textarea>
-      <label class="field-label" for="passphrase" style="margin-top:0.75rem">Key passphrase</label>
+      <label class="field-label mt-md" for="passphrase">Key passphrase</label>
       <input type="password" id="passphrase" class="text-input" autocomplete="off" placeholder="Key passphrase (if the OpenPGP key is locked)">
-      <p class="muted" style="margin-top:0.65rem">Decrypt runs in a Web Worker when available. Vault keys are scrubbed from memory after use. Sensitive fields auto-clear after 5 minutes idle.</p>
-      <p id="idle-clear-note" class="muted" style="margin-top:0.35rem"></p>
+      <p class="muted mt-md">Decrypt runs in a Web Worker when available. Vault keys are scrubbed from memory after use. Sensitive fields auto-clear after 5 minutes idle.</p>
+      <p id="idle-clear-note" class="muted mt-xs"></p>
     </div>
     <div class="btn-row">
       <button type="button" class="btn" id="decrypt-btn" disabled>Decrypt</button>
@@ -261,20 +261,20 @@ function renderInspect(analysis) {
 
   const clearHtml =
     analysis.type === "cleartext" && analysis.cleartext
-      ? `<p class="card-title" style="margin-top:1rem">Cleartext</p>
+      ? `<p class="card-title mt-lg">Cleartext</p>
          <pre class="output-pre">${escapeHtml(analysis.cleartext)}</pre>`
       : "";
 
   const recipientBlock =
     analysis.type === "encrypted" || recipients.length
-      ? `<p class="card-title" style="margin-top:1rem">Encrypted to</p>${recipientsHtml}`
+      ? `<p class="card-title mt-lg">Encrypted to</p>${recipientsHtml}`
       : "";
 
   card.innerHTML = `
     <p class="card-title">Inspect</p>
     <p><span class="badge">${escapeHtml(typeLabel(analysis.type))}</span></p>
     ${recipientBlock}
-    <p class="card-title" style="margin-top:1rem">Signed by</p>
+    <p class="card-title mt-lg">Signed by</p>
     ${signersHtml}
     ${clearHtml}
   `;
@@ -528,7 +528,7 @@ function renderPacketMap(analysis) {
           }</button>`
         : ""
     }
-    <p class="card-title" style="margin-top:1rem">Packet details</p>
+    <p class="card-title mt-lg">Packet details</p>
     <div class="pkt-detail-list">${detailRows}</div>
   `;
   card.classList.remove("hidden");
@@ -993,7 +993,7 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
             : `<span>${link} <span class="badge">signature unverified</span></span>`
         );
       }
-      sigHtml = `<p style="margin-bottom:0.75rem">${parts.join(" · ")}</p>`;
+      sigHtml = `<p class="mb-md">${parts.join(" · ")}</p>`;
     }
 
     const cipherNote =
@@ -1011,7 +1011,7 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
 
     out.innerHTML = `
       <div class="card-title-row">
-        <p class="card-title" style="margin:0">Plaintext</p>
+        <p class="card-title m-0">Plaintext</p>
         <button type="button" class="btn btn-ghost btn-compact" id="copy-plaintext-btn" title="Clipboard clears after 60 seconds">Copy (clears in 60s)</button>
       </div>
       ${cipherNote}

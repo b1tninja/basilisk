@@ -46,20 +46,20 @@ function renderApp() {
       <label class="field-label" for="expected-fpr">Fingerprint (or paste openpgp4fpr:…)</label>
       <input type="text" id="expected-fpr" class="text-input" autocomplete="off"
         placeholder="40 hex characters" value="${escapeHtml(initial)}">
-      <p class="muted" style="margin-top:0.5rem">Optional: leave blank and only look up what you scan.</p>
+      <p class="muted mt-sm">Optional: leave blank and only look up what you scan.</p>
     </div>
 
     <div class="card">
       <p class="card-title">Scan or enter</p>
-      <div class="btn-row" style="margin-bottom:0.75rem">
+      <div class="btn-row mb-md">
         <button type="button" class="btn" id="start-camera-btn">Start camera</button>
         <button type="button" class="btn btn-ghost" id="stop-camera-btn">Stop</button>
       </div>
       <video id="verify-video" class="verify-camera hidden" playsinline muted></video>
-      <p id="camera-status" class="muted" style="margin:0.5rem 0 0"></p>
-      <label class="field-label" for="scanned-fpr" style="margin-top:1rem">Fingerprint from QR / manual entry</label>
+      <p id="camera-status" class="muted mt-sm"></p>
+      <label class="field-label mt-lg" for="scanned-fpr">Fingerprint from QR / manual entry</label>
       <input type="text" id="scanned-fpr" class="text-input" autocomplete="off" placeholder="Scan QR or type fingerprint">
-      <div class="btn-row" style="margin-top:0.85rem">
+      <div class="btn-row mt-md">
         <button type="button" class="btn" id="check-btn">Check against keyserver</button>
       </div>
     </div>
@@ -79,7 +79,7 @@ async function showResult(fpr, cmp) {
   if (clean.length !== 40) {
     out.className = "verify-result fail";
     out.classList.remove("hidden");
-    out.innerHTML = `<p class="card-title" style="margin:0 0 0.35rem">FAIL</p><p style="margin:0">Invalid fingerprint.</p>`;
+    out.innerHTML = `<p class="card-title m-0-b-xs">FAIL</p><p class="m-0">Invalid fingerprint.</p>`;
     return;
   }
 
@@ -90,9 +90,9 @@ async function showResult(fpr, cmp) {
     out.className = "verify-result fail";
     out.classList.remove("hidden");
     out.innerHTML = `
-      <p class="card-title" style="margin:0 0 0.35rem">FAIL</p>
-      <p style="margin:0">${escapeHtml(err.message || "Key not found on this server.")}</p>
-      <p class="muted fpr" style="margin:0.65rem 0 0">${escapeHtml(formatFingerprint(clean))}</p>`;
+      <p class="card-title m-0-b-xs">FAIL</p>
+      <p class="m-0">${escapeHtml(err.message || "Key not found on this server.")}</p>
+      <p class="muted fpr mt-md">${escapeHtml(formatFingerprint(clean))}</p>`;
     return;
   }
 
@@ -107,8 +107,8 @@ async function showResult(fpr, cmp) {
   out.className = `verify-result ${pass ? "pass" : "fail"}`;
   out.classList.remove("hidden");
   out.innerHTML = `
-    <p class="card-title" style="margin:0 0 0.35rem">${pass ? "PASS" : "FAIL"}</p>
-    <p style="margin:0 0 0.5rem">${escapeHtml(
+    <p class="card-title m-0-b-xs">${pass ? "PASS" : "FAIL"}</p>
+    <p class="m-0-b-sm">${escapeHtml(
       cmp && !cmp.ok
         ? cmp.reason
         : revoked
@@ -117,10 +117,10 @@ async function showResult(fpr, cmp) {
             ? "Fingerprint found and approved on this keyserver."
             : `Key state: ${record.approval_state || "unknown"}`
     )}</p>
-    <p class="fpr" style="margin:0 0 0.5rem"><code>${escapeHtml(formatFingerprint(clean))}</code></p>
-    <p class="muted" style="margin:0 0 0.5rem">Still confirm this fingerprint and verified email out of band before trusting the key.</p>
+    <p class="fpr m-0-b-sm"><code>${escapeHtml(formatFingerprint(clean))}</code></p>
+    <p class="muted m-0-b-sm">Still confirm this fingerprint and verified email out of band before trusting the key.</p>
     ${uids ? `<ul class="uid-list">${uids}</ul>` : ""}
-    <p style="margin:0.75rem 0 0"><a class="text-link" href="/key?fpr=${encodeURIComponent(clean)}">Open key page</a></p>
+    <p class="mt-md"><a class="text-link" href="/key?fpr=${encodeURIComponent(clean)}">Open key page</a></p>
   `;
 }
 
