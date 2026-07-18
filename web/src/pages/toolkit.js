@@ -11,6 +11,8 @@ import {
 } from "../lib/crypto-self-test.js";
 import { mountRecipientBinder } from "../lib/recipient-picker.js";
 import { splitArmoredMessages } from "../lib/pgp/armor.js";
+import { validateShareMnemonic } from "../lib/slip39/slip39.js";
+import { bytesToBase64 } from "../lib/toolkit/encode.js";
 import {
   PRESETS,
   compileRecipe,
@@ -53,6 +55,13 @@ let binder = null;
 let vaultKeys = [];
 /** @type {("shares"|"gpg")[]} */
 let currentInputNeeds = [];
+/** Per-share mnemonic rows for the modular inputs UI (survives panel re-renders). */
+/** @type {string[]} */
+let shareRows = [""];
+/** Envelope base64 retained across re-renders. */
+let envelopeDraft = "";
+/** Share passphrase retained across re-renders. */
+let sharePassDraft = "";
 
 const IDLE_CLEAR_MS = 5 * 60 * 1000;
 let idleTimer = null;
@@ -209,6 +218,45 @@ function validateAndBind() {
 }
 
 /**
+ * @param {string} mnemonic
+ * @returns {string}
+ */
+function shareChecksumBadge(mnemonic) {
+  const trimmed = String(mnemonic || "").trim();
+  if (!trimmed) {
+    return `<span class="share-badge share-badge-empty">empty</span>`;
+  }
+  const v = validateShareMnemonic(trimmed);
+  if (v.ok) {
+    return `<span class="share-badge share-badge-ok" title="RS1024 checksum valid">valid</span>`;
+  }
+  return `<span class="share-badge share-badge-bad" title="${escapeHtml(
+    v.error || "invalid"
+  )}">invalid</span>`;
+}
+
+/**
+ * Split pasted text into mnemonic lines (blank-line or newline separated).
+ * @param {string} text
+ * @returns {string[]}
+ */
+function splitSharePaste(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return [];
+  // Prefer blank-line separated blocks (full mnemonics), else one line each.
+  if (/\n\s*\n/.test(raw)) {
+    return raw
+      .split(/\n\s*\n/)
+      .map((b) => b.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+  }
+  return raw
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+/**
  * @param {("shares"|"gpg")[]} needs
  */
 function renderInputsPanel(needs) {
@@ -218,18 +266,46 @@ function renderInputsPanel(needs) {
     host.innerHTML = "";
     return;
   }
+  if (!shareRows.length) shareRows = [""];
+
   /** @type {string[]} */
   const parts = ['<p class="card-title">Inputs</p>'];
   if (needs.includes("shares")) {
+    const rowsHtml = shareRows
+      .map(
+        (m, i) => `
+      <div class="share-row" data-share-idx="${i}">
+        <div class="share-row-head">
+          <span class="field-label m-0">Share ${i + 1}</span>
+          ${shareChecksumBadge(m)}
+          <button type="button" class="btn btn-ghost btn-compact text-error" data-remove-share="${i}"
+            ${shareRows.length <= 1 ? "disabled" : ""} aria-label="Remove share">Remove</button>
+        </div>
+        <textarea class="compose-message share-mnemonic" data-share-input="${i}" rows="2"
+          spellcheck="false" placeholder="Paste one mnemonic share (or several lines — they will split into rows)">${escapeHtml(m)}</textarea>
+      </div>`
+      )
+      .join("");
     parts.push(`
-      <label class="field-label" for="input-shares">SLIP-39 share mnemonics</label>
-      <textarea id="input-shares" class="compose-message" rows="6" spellcheck="false"
-        placeholder="Paste one mnemonic share per line (K of N required)"></textarea>
-      <label class="field-label mt-md" for="input-envelope">Envelope ciphertext (base64)</label>
-      <textarea id="input-envelope" class="compose-message" rows="2" spellcheck="false"
-        placeholder="Required when shares were created from a non-16/32-byte payload (e.g. PEM)"></textarea>
-      <label class="field-label mt-md" for="input-share-pass">Share passphrase (optional)</label>
-      <input type="password" id="input-share-pass" class="text-input" autocomplete="off">
+      <div class="share-inputs">
+        <div class="btn-row wrap mb-sm">
+          <span class="field-label m-0">SLIP-39 share mnemonics</span>
+          <button type="button" class="btn btn-ghost btn-compact" id="add-share-btn">+ Add share</button>
+          <button type="button" class="btn btn-ghost btn-compact" id="load-shares-btn">Load from file…</button>
+          <input type="file" id="load-shares-file" class="hidden" multiple accept=".txt,text/plain,*/*">
+        </div>
+        <p class="muted fs-sm mb-sm">One share per row. Paste multiple lines into a row to auto-split. K-of-N required to recover.</p>
+        <div id="share-rows">${rowsHtml}</div>
+        <label class="field-label mt-md" for="input-envelope">Envelope ciphertext (base64)</label>
+        <div class="btn-row wrap mb-xs">
+          <button type="button" class="btn btn-ghost btn-compact" id="load-envelope-btn">Load envelope…</button>
+          <input type="file" id="load-envelope-file" class="hidden" accept=".b64,.bin,.txt,*/*">
+        </div>
+        <textarea id="input-envelope" class="compose-message" rows="2" spellcheck="false"
+          placeholder="Required when shares were created from a non-16/32-byte payload (e.g. PEM) — look for envelope.bin.b64 in Results">${escapeHtml(envelopeDraft)}</textarea>
+        <label class="field-label mt-md" for="input-share-pass">Share passphrase (optional)</label>
+        <input type="password" id="input-share-pass" class="text-input" autocomplete="off" value="${escapeHtml(sharePassDraft)}">
+      </div>
     `);
   }
   if (needs.includes("gpg")) {
@@ -246,12 +322,22 @@ function renderInputsPanel(needs) {
           .join("")
       : "";
     parts.push(`
-      <label class="field-label mt-md" for="input-ciphertext">OpenPGP ciphertext</label>
+      <div class="btn-row wrap mt-md mb-xs">
+        <label class="field-label m-0" for="input-ciphertext">OpenPGP ciphertext</label>
+        <button type="button" class="btn btn-ghost btn-compact" id="load-ciphertext-btn">Load from file…</button>
+        <input type="file" id="load-ciphertext-file" class="hidden" multiple accept=".asc,.pgp,.txt,*/*">
+      </div>
       <textarea id="input-ciphertext" class="compose-message" rows="8" spellcheck="false"
         placeholder="Paste one or more -----BEGIN PGP MESSAGE----- blocks"></textarea>
       <label class="field-label mt-md" for="input-envelope-gpg">Envelope ciphertext (base64, if needed)</label>
+      <div class="btn-row wrap mb-xs">
+        <button type="button" class="btn btn-ghost btn-compact" id="load-envelope-gpg-btn">Load envelope…</button>
+        <input type="file" id="load-envelope-gpg-file" class="hidden" accept=".b64,.bin,.txt,*/*">
+      </div>
       <textarea id="input-envelope-gpg" class="compose-message" rows="2" spellcheck="false"
-        placeholder="Paste envelope.bin.b64 from the encrypt pipeline"></textarea>
+        placeholder="Paste envelope.bin.b64 from the encrypt pipeline">${escapeHtml(
+          needs.includes("shares") ? "" : envelopeDraft
+        )}</textarea>
       <label class="field-label mt-md" for="input-vault-key">Vault private key</label>
       <select id="input-vault-key" class="text-input">
         <option value="">— paste key below —</option>
@@ -267,6 +353,153 @@ function renderInputsPanel(needs) {
     `);
   }
   host.innerHTML = parts.join("\n");
+  wireInputsPanel(host, needs);
+}
+
+/**
+ * @param {HTMLElement} host
+ * @param {("shares"|"gpg")[]} needs
+ */
+function wireInputsPanel(host, needs) {
+  if (needs.includes("shares")) {
+    host.querySelector("#add-share-btn")?.addEventListener("click", () => {
+      shareRows.push("");
+      renderInputsPanel(currentInputNeeds);
+    });
+
+    host.querySelectorAll("[data-remove-share]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const i = Number(btn.getAttribute("data-remove-share"));
+        if (shareRows.length <= 1) return;
+        shareRows.splice(i, 1);
+        renderInputsPanel(currentInputNeeds);
+      });
+    });
+
+    host.querySelectorAll("[data-share-input]").forEach((el) => {
+      el.addEventListener("input", () => {
+        const i = Number(el.getAttribute("data-share-input"));
+        if (!(el instanceof HTMLTextAreaElement) || i < 0) return;
+        const parts = splitSharePaste(el.value);
+        if (parts.length > 1) {
+          shareRows.splice(i, 1, ...parts);
+          renderInputsPanel(currentInputNeeds);
+          return;
+        }
+        shareRows[i] = el.value;
+        const row = el.closest(".share-row");
+        const badge = row?.querySelector(".share-badge");
+        if (badge) {
+          badge.outerHTML = shareChecksumBadge(el.value);
+        }
+      });
+    });
+
+    const envEl = host.querySelector("#input-envelope");
+    envEl?.addEventListener("input", () => {
+      if (envEl instanceof HTMLTextAreaElement) envelopeDraft = envEl.value;
+    });
+    const passEl = host.querySelector("#input-share-pass");
+    passEl?.addEventListener("input", () => {
+      if (passEl instanceof HTMLInputElement) sharePassDraft = passEl.value;
+    });
+
+    wireFileButton(host, "#load-shares-btn", "#load-shares-file", async (files) => {
+      /** @type {string[]} */
+      const loaded = [];
+      for (const f of files) {
+        const text = await f.text();
+        loaded.push(...splitSharePaste(text));
+      }
+      if (!loaded.length) return;
+      const nonempty = shareRows.filter((s) => s.trim());
+      shareRows = nonempty.length ? [...nonempty, ...loaded] : loaded;
+      renderInputsPanel(currentInputNeeds);
+    });
+
+    wireFileButton(host, "#load-envelope-btn", "#load-envelope-file", async (files) => {
+      const f = files[0];
+      if (!f) return;
+      envelopeDraft = await readEnvelopeFile(f);
+      renderInputsPanel(currentInputNeeds);
+    });
+  }
+
+  if (needs.includes("gpg")) {
+    wireFileButton(host, "#load-ciphertext-btn", "#load-ciphertext-file", async (files) => {
+      const ctEl = host.querySelector("#input-ciphertext");
+      if (!(ctEl instanceof HTMLTextAreaElement)) return;
+      /** @type {string[]} */
+      const chunks = [];
+      for (const f of files) chunks.push(await f.text());
+      const joined = chunks.join("\n\n").trim();
+      ctEl.value = ctEl.value.trim()
+        ? `${ctEl.value.trim()}\n\n${joined}`
+        : joined;
+    });
+
+    wireFileButton(
+      host,
+      "#load-envelope-gpg-btn",
+      "#load-envelope-gpg-file",
+      async (files) => {
+        const f = files[0];
+        if (!f) return;
+        const b64 = await readEnvelopeFile(f);
+        envelopeDraft = b64;
+        const envEl = host.querySelector("#input-envelope-gpg");
+        if (envEl instanceof HTMLTextAreaElement) envEl.value = b64;
+      }
+    );
+  }
+}
+
+/**
+ * @param {ParentNode} host
+ * @param {string} btnSel
+ * @param {string} inputSel
+ * @param {(files: File[]) => void | Promise<void>} onFiles
+ */
+function wireFileButton(host, btnSel, inputSel, onFiles) {
+  const btn = host.querySelector(btnSel);
+  const input = host.querySelector(inputSel);
+  if (!(btn instanceof HTMLElement) || !(input instanceof HTMLInputElement)) {
+    return;
+  }
+  btn.addEventListener("click", () => input.click());
+  input.addEventListener("change", async () => {
+    const files = [...(input.files || [])];
+    input.value = "";
+    if (!files.length) return;
+    try {
+      await onFiles(files);
+    } catch (err) {
+      showError(errorEl, err?.message || "Failed to read file");
+    }
+  });
+}
+
+/**
+ * Read envelope as base64 (text passthrough, or binary → base64).
+ * @param {File} file
+ * @returns {Promise<string>}
+ */
+async function readEnvelopeFile(file) {
+  const name = (file.name || "").toLowerCase();
+  if (name.endsWith(".b64") || name.endsWith(".txt") || file.type.startsWith("text/")) {
+    return (await file.text()).replace(/\s+/g, "");
+  }
+  // Heuristic: try text; if it looks like base64 keep it, else treat as binary.
+  const buf = new Uint8Array(await file.arrayBuffer());
+  try {
+    const asText = new TextDecoder("utf-8", { fatal: true }).decode(buf).trim();
+    if (/^[A-Za-z0-9+/=\s]+$/.test(asText) && asText.length > 16) {
+      return asText.replace(/\s+/g, "");
+    }
+  } catch (_) {
+    /* binary */
+  }
+  return bytesToBase64(buf);
 }
 
 async function refreshVaultKeys() {
@@ -289,19 +522,20 @@ async function collectRuntimeInputs() {
   let passphrase = "";
 
   if (currentInputNeeds.includes("shares")) {
-    const sharesEl = document.getElementById("input-shares");
+    // Sync from live DOM in case last keystroke wasn't flushed to shareRows.
+    document.querySelectorAll("[data-share-input]").forEach((el) => {
+      const i = Number(el.getAttribute("data-share-input"));
+      if (el instanceof HTMLTextAreaElement && i >= 0) shareRows[i] = el.value;
+    });
     const envEl = document.getElementById("input-envelope");
     const passEl = document.getElementById("input-share-pass");
-    const raw = sharesEl instanceof HTMLTextAreaElement ? sharesEl.value : "";
-    const mnemonics = raw
-      .split(/\n+/)
-      .map((l) => l.trim())
-      .filter(Boolean);
+    if (envEl instanceof HTMLTextAreaElement) envelopeDraft = envEl.value;
+    if (passEl instanceof HTMLInputElement) sharePassDraft = passEl.value;
+    const mnemonics = shareRows.map((m) => m.trim()).filter(Boolean);
     inputs.shares = {
       mnemonics,
-      envelopeB64:
-        envEl instanceof HTMLTextAreaElement ? envEl.value.trim() : "",
-      passphrase: passEl instanceof HTMLInputElement ? passEl.value : "",
+      envelopeB64: envelopeDraft.trim(),
+      passphrase: sharePassDraft,
     };
   }
 
@@ -336,8 +570,10 @@ async function collectRuntimeInputs() {
       privateKeyArmored = await vaultUnlockKey(vaultFpr, opts);
     }
 
-    const envelopeB64 =
+    let envelopeB64 =
       envEl instanceof HTMLTextAreaElement ? envEl.value.trim() : "";
+    if (envelopeB64) envelopeDraft = envelopeB64;
+    else if (envelopeDraft.trim()) envelopeB64 = envelopeDraft.trim();
     inputs.gpg = {
       armoredMessages: messages,
       privateKeyArmored,
@@ -520,9 +756,18 @@ function renderResults() {
     return;
   }
   panel.classList.remove("hidden");
+  const hasEnvelope = artifacts.some(
+    (a) => /envelope/i.test(a.label || "") || /envelope/i.test(a.filename || "")
+  );
+  const hasShares = artifacts.some((a) => a.shareIndex || /^Share\s+\d+/i.test(a.label || ""));
   panel.innerHTML = `
     <h2>Results</h2>
     <p class="muted mb-md">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
+    ${
+      hasEnvelope && hasShares
+        ? `<p class="status-row warn mb-md" role="status">Keep <strong>envelope.bin.b64</strong> with the shares — it is required for recovery of PEM / non-16/32-byte secrets (not secret itself, but without it the shares cannot be unwrapped).</p>`
+        : ""
+    }
     ${artifacts
       .map((a, i) => {
         const masked = a.sensitive;

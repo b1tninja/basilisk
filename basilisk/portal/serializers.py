@@ -27,6 +27,8 @@ def key_summary(record: CertRecord, settings: Settings, *, include_uids: bool = 
         else [],
         "claimer_email": record.claimer_email,
         "label": record.label,
+        "revoked": bool(record.revoked),
+        "key_expiration": record.key_expiration,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
         "sha256": record.sha256,

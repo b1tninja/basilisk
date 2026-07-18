@@ -6,7 +6,7 @@ import {
   assertCryptoReady,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
-import { badgeClass } from "../lib/keys.js";
+import { keyHitHtml, keyPillExtrasHtml } from "../lib/key-hit.js";
 import { formatAlgo } from "../lib/pgp/algos.js";
 import {
   summarizeRecipientCapabilities,
@@ -79,19 +79,6 @@ let expertMode = getExpertMode();
 /**
  * @typedef {import("../lib/recipient-picker.js").Recipient} Recipient
  */
-
-function uidLabel(uids) {
-  const list = uids || [];
-  if (!list.length) return "";
-  const uid = list[0];
-  if (uid && typeof uid === "object") {
-    const email = uid.email || "";
-    const name = (uid.name || "").trim();
-    if (name && email) return `${name} <${email}>`;
-    return email || uid.raw || "";
-  }
-  return typeof uid === "string" ? uid : "";
-}
 
 function shortFpr(fpr) {
   const c = String(fpr || "")
@@ -213,11 +200,19 @@ function renderPills() {
             ? `<span class="pill-cap legacy" title="Compatible format (SEIPD v1)">compat</span>`
             : "";
       const trust = trustBadgeHtml(r.fingerprint);
+      const extras = keyPillExtrasHtml({
+        fingerprint: r.fingerprint,
+        userLabel: r.userLabel,
+        label: r.userLabel,
+        keyExpiration: r.keyExpiration,
+        key_id: r.keyId,
+      });
       return `<span class="recipient-pill${r.valid ? "" : " invalid"}" title="${escapeHtml(title)}" data-fpr="${escapeHtml(r.fingerprint)}">
         <span class="pill-avatar">${escapeHtml(initial)}</span>
         <span class="pill-body">
           <span class="pill-label">${escapeHtml(r.label)}</span>
           <span class="pill-fpr muted">${escapeHtml(shortFpr(r.fingerprint))}</span>
+          ${extras ? `<span class="pill-extras">${extras}</span>` : ""}
         </span>
         ${trust}
         ${modernBadge}
@@ -343,21 +338,12 @@ function renderDropdown(results) {
   el.hidden = false;
   el.innerHTML = sortByTrust(results)
     .map((item) => {
-      const fp = item.fingerprint || "";
-      const uids = item.approved_uids || item.uids || [];
-      const label = uidLabel(uids) || formatFingerprint(fp);
-      const state = item.approval_state || "";
-      const already = recipients.has(fp.toUpperCase());
-      const trust = trustBadgeHtml(fp);
-      return `<button type="button" class="recipient-hit" data-add-fpr="${escapeHtml(fp)}" ${already ? "disabled" : ""}>
-        <span class="hit-main">
-          <span class="hit-label">${escapeHtml(label)}</span>
-          <code class="hit-fpr muted">${escapeHtml(formatFingerprint(fp))}</code>
-        </span>
-        <span class="${badgeClass(state)}">${escapeHtml(state)}</span>
-        ${trust}
-        ${already ? `<span class="muted">Added</span>` : ""}
-      </button>`;
+      const fp = String(item.fingerprint || "").toUpperCase();
+      const already = recipients.has(fp);
+      return keyHitHtml(item, {
+        already,
+        dataAttrs: { "data-add-fpr": fp },
+      });
     })
     .join("");
 }
@@ -599,6 +585,8 @@ async function addRecipient(fingerprint) {
     keyId: clean.slice(-16),
     label: "Loading…",
     email: "",
+    userLabel: "",
+    keyExpiration: null,
     approvalState: "",
     revoked: false,
     valid: false,
@@ -618,6 +606,8 @@ async function addRecipient(fingerprint) {
       keyId: clean.slice(-16),
       label: formatFingerprint(clean),
       email: "",
+      userLabel: "",
+      keyExpiration: null,
       approvalState: "",
       revoked: false,
       valid: false,

@@ -52,7 +52,18 @@ Check-Status "/pks/lookup?op=stats"          "$BaseUrl/pks/lookup?op=stats"
 # 3. Static homepage — match HTML title, not JS bundle content
 Check-Body   "/ (HTML title check)"          "$BaseUrl/"  "Basilisk"
 
-# 4. Search API — confirms the route is live
+# 4. Clean-URL page aliases — derived from web/*.html so new pages are covered.
+#    index.html → /search; every other page → /<name>.
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Check-Status "/search"                       "$BaseUrl/search"
+Get-ChildItem -Path (Join-Path $repoRoot "web") -Filter "*.html" |
+    ForEach-Object {
+        $page = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+        if ($page -eq "index") { return }
+        Check-Status "/$page"                "$BaseUrl/$page"
+    }
+
+# 5. Search API — confirms the route is live
 Check-Status "/api/v1/search?q=test"         "$BaseUrl/api/v1/search?q=test%40example.com"
 
 Write-Host ""

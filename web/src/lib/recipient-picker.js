@@ -4,8 +4,10 @@
  */
 
 import { readKey } from "openpgp";
+import { keyHitHtml, keyPillExtrasHtml } from "./key-hit.js";
 import { supportsSeipdV2 } from "./pgp/capabilities.js";
 import { normalizeSearchQuery } from "./pgp/verify-fpr.js";
+import { sortByTrust } from "./trust.js";
 import {
   escapeHtml,
   fetchJson,
@@ -22,6 +24,8 @@ const ENCRYPT_FLAG = 0x04 | 0x08;
  *   keyId: string,
  *   label: string,
  *   email: string,
+ *   userLabel: string,
+ *   keyExpiration: string|null,
  *   approvalState: string,
  *   revoked: boolean,
  *   valid: boolean,
@@ -108,6 +112,8 @@ export async function loadRecipientKey(fingerprint) {
     keyId: meta.key_id || clean.slice(-16),
     label,
     email,
+    userLabel: String(meta.label || "").trim(),
+    keyExpiration: meta.key_expiration || null,
     approvalState: meta.approval_state || "",
     revoked: !!meta.revoked,
     valid,
@@ -168,12 +174,24 @@ export function mountRecipientBinder(host, opts) {
             .map((r, i) => {
               if (sameForAll && i > 0) return "";
               const title = foreach ? `Share ${i + 1} of ${slots}` : "Recipient";
+              const extras = r
+                ? keyPillExtrasHtml({
+                    fingerprint: r.fingerprint,
+                    userLabel: r.userLabel,
+                    label: r.userLabel,
+                    keyExpiration: r.keyExpiration,
+                    key_id: r.keyId,
+                  })
+                : "";
               const pill = r
                 ? `<span class="recipient-pill">
-                     ${escapeHtml(r.label)}
-                     <a class="text-link fpr" href="/key?fpr=${escapeHtml(r.fingerprint)}" target="_blank" rel="noopener">
-                       ${escapeHtml(formatFingerprint(r.fingerprint))}
-                     </a>
+                     <span class="pill-body">
+                       <span class="pill-label">${escapeHtml(r.label)}</span>
+                       <a class="text-link fpr pill-fpr" href="/key?fpr=${escapeHtml(r.fingerprint)}" target="_blank" rel="noopener">
+                         ${escapeHtml(formatFingerprint(r.fingerprint))}
+                       </a>
+                       ${extras ? `<span class="pill-extras">${extras}</span>` : ""}
+                     </span>
                      <button type="button" class="pill-remove" data-clear="${i}" aria-label="Clear">×</button>
                    </span>`
                 : `<span class="muted">Not selected</span>`;
@@ -218,19 +236,21 @@ export function mountRecipientBinder(host, opts) {
             await select(i, r);
             return;
           }
-          const results = await searchRecipients(q);
+          const results = sortByTrust(await searchRecipients(q));
           if (!results.length) {
             hitsEl.innerHTML = `<p class="muted">No keys found.</p>`;
             return;
           }
           hitsEl.innerHTML = results
+            .slice(0, 12)
             .map((k) => {
-              const fpr = k.fingerprint || "";
-              const label = k.email || k.label || formatFingerprint(fpr);
-              return `<button type="button" class="recipient-hit" data-pick="${escapeHtml(fpr)}" data-slot="${i}">
-                ${escapeHtml(label)}
-                <code class="fpr">${escapeHtml(formatFingerprint(fpr))}</code>
-              </button>`;
+              const fpr = String(k.fingerprint || "").toUpperCase();
+              return keyHitHtml(k, {
+                dataAttrs: {
+                  "data-pick": fpr,
+                  "data-slot": String(i),
+                },
+              });
             })
             .join("");
           hitsEl.querySelectorAll("[data-pick]").forEach((el) => {

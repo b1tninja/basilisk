@@ -138,6 +138,13 @@ export async function runRecipe(ast, bindings = {}) {
   }
 
   if (value && value.type !== "bundle" && value.type !== "artifact") {
+    // Bare slip39 (no foreach/sink) leaves a shares value here — emit the
+    // envelope before converting mnemonics, or PEM/large payloads become unrecoverable.
+    const bareEnvelope = value.data?.envelope || value.meta?.envelope || null;
+    if (value.type === "shares" && bareEnvelope && !envelopeEmitted) {
+      emitEnvelope(artifacts, bareEnvelope);
+      envelopeEmitted = true;
+    }
     artifacts.push(...valueToArtifacts(value));
   }
 

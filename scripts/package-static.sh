@@ -34,14 +34,15 @@ for html in dist.glob("*.html"):
 PY
 
 # Clean URL aliases without .html suffix (Azure static website / Front Door).
+# index.html is served at / and also aliased as /search; every other *.html
+# page gets a matching extensionless blob so /page resolves without a 404.
 cp "${OUT}/index.html" "${OUT}/search"
-cp "${OUT}/my-keys.html" "${OUT}/my-keys"
-cp "${OUT}/key.html" "${OUT}/key"
-cp "${OUT}/stats.html" "${OUT}/stats"
-cp "${OUT}/encrypt.html" "${OUT}/encrypt"
-cp "${OUT}/decrypt.html" "${OUT}/decrypt"
-cp "${OUT}/verify.html" "${OUT}/verify"
-cp "${OUT}/toolkit.html" "${OUT}/toolkit"
+shopt -s nullglob
+for html in "${OUT}"/*.html; do
+  base="$(basename "$html" .html)"
+  [[ "$base" == "index" ]] && continue
+  cp "$html" "${OUT}/${base}"
+done
 
 # Only the dist path is printed to stdout — callers capture it with $().
 echo "$OUT"

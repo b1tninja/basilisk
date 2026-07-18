@@ -47,19 +47,34 @@ az storage blob upload-batch \
   --only-show-errors
 
 # Ensure HTML content-types for clean URL blobs and root pages.
-for blob in index.html search my-keys key stats encrypt compose decrypt verify toolkit; do
-  if [[ -f "${STAGE}/${blob}" ]] || [[ -f "${STAGE}/${blob}.html" ]]; then
-    src="${STAGE}/${blob}"
-    [[ -f "$src" ]] || src="${STAGE}/${blob}.html"
-    az storage blob upload \
-      "${storage_args[@]}" \
-      --container-name '$web' \
-      --name "$blob" \
-      --file "$src" \
-      --content-type "text/html; charset=utf-8" \
-      --overwrite \
-      --only-show-errors
-  fi
+# Derived from staged *.html plus any extensionless aliases (e.g. search).
+shopt -s nullglob
+html_blobs=()
+for html in "${STAGE}"/*.html; do
+  html_blobs+=("$(basename "$html")")
+done
+for alias in "${STAGE}"/*; do
+  [[ -f "$alias" ]] || continue
+  name="$(basename "$alias")"
+  [[ "$name" == *.* ]] && continue
+  html_blobs+=("$name")
+done
+# Deduplicate while preserving order.
+declare -A seen=()
+for blob in "${html_blobs[@]}"; do
+  [[ -n "${seen[$blob]+x}" ]] && continue
+  seen[$blob]=1
+  src="${STAGE}/${blob}"
+  [[ -f "$src" ]] || src="${STAGE}/${blob}.html"
+  [[ -f "$src" ]] || continue
+  az storage blob upload \
+    "${storage_args[@]}" \
+    --container-name '$web' \
+    --name "$blob" \
+    --file "$src" \
+    --content-type "text/html; charset=utf-8" \
+    --overwrite \
+    --only-show-errors
 done
 
 static_host="$(az storage account show -n "$STORAGE_ACCOUNT" ${RESOURCE_GROUP:+-g "$RESOURCE_GROUP"} --query primaryEndpoints.web -o tsv | sed 's#https://##;s#/$##')"

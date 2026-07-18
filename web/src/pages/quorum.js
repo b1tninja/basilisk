@@ -1,5 +1,10 @@
 import { decryptKey, readPrivateKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
+import {
+  keyHitHtml,
+  keyPillExtrasHtml,
+  primaryUidLabel,
+} from "../lib/key-hit.js";
 import { normalizeFingerprintInput, normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
 import { DEFAULT_ICE_SERVERS, QuorumSession } from "../lib/quorum/rtc.js";
 import { unlockPrivateKey } from "../lib/quorum/crypto.js";
@@ -29,7 +34,7 @@ Auth.initWidget(document.getElementById("auth-widget"), "/quorum");
 const errorEl = document.getElementById("error");
 const app = document.getElementById("quorum-app");
 
-/** @type {Array<{ fingerprint: string, label: string }>} */
+/** @type {Array<{ fingerprint: string, label: string, userLabel?: string, keyExpiration?: string|null, keyId?: string }>} */
 let audience = [];
 /** @type {QuorumSession|null} */
 let session = null;
@@ -158,16 +163,24 @@ function renderAudiencePills() {
   if (!el) return;
   const sorted = sortByTrust(audience);
   el.innerHTML = sorted
-    .map(
-      (r) => `
+    .map((r) => {
+      const extras = keyPillExtrasHtml({
+        fingerprint: r.fingerprint,
+        userLabel: r.userLabel,
+        label: r.userLabel,
+        keyExpiration: r.keyExpiration,
+        key_id: r.keyId,
+      });
+      return `
       <span class="recipient-pill">
         <span class="pill-body">
           <span class="pill-label">${escapeHtml(r.label)} ${trustBadgeHtml(r.fingerprint)}</span>
           <span class="pill-fpr">${escapeHtml(formatFingerprint(r.fingerprint))}</span>
+          ${extras ? `<span class="pill-extras">${extras}</span>` : ""}
         </span>
         <button type="button" class="pill-remove" data-remove="${escapeHtml(r.fingerprint)}" aria-label="Remove">×</button>
-      </span>`
-    )
+      </span>`;
+    })
     .join("");
   void updateDerivedRoom();
 }
@@ -202,16 +215,17 @@ function renderDropdown(results) {
     .slice(0, 12)
     .map((r) => {
       const fpr = String(r.fingerprint || "").toUpperCase();
-      const uids = r.approved_uids || r.uids || [];
-      const label =
-        (Array.isArray(uids) && uids[0] && (uids[0].uid || uids[0])) ||
-        formatFingerprint(fpr);
-      return `<button type="button" class="recipient-hit audience-pick" data-fpr="${escapeHtml(fpr)}" data-label="${escapeHtml(String(label))}">
-        <span class="hit-main">
-          <span class="hit-label">${escapeHtml(String(label))} ${trustBadgeHtml(fpr)}</span>
-          <span class="hit-meta mono">${escapeHtml(formatFingerprint(fpr))}</span>
-        </span>
-      </button>`;
+      const label = primaryUidLabel(r);
+      return keyHitHtml(r, {
+        className: "audience-pick",
+        dataAttrs: {
+          "data-fpr": fpr,
+          "data-label": label,
+          "data-user-label": String(r.label || ""),
+          "data-key-id": String(r.key_id || ""),
+          "data-key-exp": String(r.key_expiration || ""),
+        },
+      });
     })
     .join("");
 }
@@ -346,7 +360,12 @@ async function startSession(roomId, audienceFprs) {
   await session.start();
 }
 
-function addAudience(fpr, label) {
+/**
+ * @param {string} fpr
+ * @param {string} [label]
+ * @param {{ userLabel?: string, keyExpiration?: string|null, keyId?: string }} [meta]
+ */
+function addAudience(fpr, label, meta = {}) {
   const clean = normalizeFingerprintInput(fpr);
   if (!(clean.length === 40 || clean.length === 64)) return;
   if (getTrust(clean)?.level === "never") {
@@ -362,6 +381,9 @@ function addAudience(fpr, label) {
   audience.push({
     fingerprint: clean,
     label: label || formatFingerprint(clean),
+    userLabel: meta.userLabel || "",
+    keyExpiration: meta.keyExpiration || null,
+    keyId: meta.keyId || "",
   });
   renderAudiencePills();
 }
@@ -403,7 +425,11 @@ function wireEvents() {
 
     const pick = t.closest(".audience-pick");
     if (pick instanceof HTMLElement) {
-      addAudience(pick.dataset.fpr || "", pick.dataset.label || "");
+      addAudience(pick.dataset.fpr || "", pick.dataset.label || "", {
+        userLabel: pick.dataset.userLabel || "",
+        keyExpiration: pick.dataset.keyExp || null,
+        keyId: pick.dataset.keyId || "",
+      });
       renderDropdown([]);
       const search = document.getElementById("audience-search");
       if (search instanceof HTMLInputElement) search.value = "";

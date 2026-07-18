@@ -63,7 +63,18 @@ check_status "/pks/lookup?op=stats"            "$BASE_URL/pks/lookup?op=stats"
 #    so this check is valid for both the static-site and local dev deployments.
 check_body   "/ (HTML title)"                  "$BASE_URL/" "Basilisk"
 
-# 4. Search API — confirms the API route is live (result set is not validated).
+# 4. Clean-URL page aliases — derived from web/*.html so new pages are covered.
+#    index.html → /search; every other page → /<name>.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+check_status "/search"                         "$BASE_URL/search"
+shopt -s nullglob
+for html in "${REPO_ROOT}/web"/*.html; do
+  page="$(basename "$html" .html)"
+  [[ "$page" == "index" ]] && continue
+  check_status "/$page"                        "$BASE_URL/$page"
+done
+
+# 5. Search API — confirms the API route is live (result set is not validated).
 check_status "/api/v1/search?q=test"           "$BASE_URL/api/v1/search?q=test%40example.com"
 
 echo ""

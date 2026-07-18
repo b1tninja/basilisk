@@ -920,7 +920,7 @@ pre {
 
 .recipient-hit {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.75rem;
   width: 100%;
   text-align: left;
@@ -936,6 +936,59 @@ pre {
 .recipient-hit.active:not(:disabled) { background: var(--surface-raised); }
 .recipient-hit:disabled { opacity: 0.55; cursor: default; }
 .recipient-hit:focus { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+.hit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+.key-chip {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--surface-raised, transparent);
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.key-chip-label {
+  color: var(--brand);
+  border-color: color-mix(in srgb, var(--brand) 40%, var(--border));
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+}
+.key-chip-kid {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.02em;
+}
+.key-chip-revoked,
+.key-chip-expiry.expired {
+  color: var(--error, #ff7b72);
+  border-color: color-mix(in srgb, var(--error, #ff7b72) 45%, var(--border));
+}
+.key-chip-expiry.warn {
+  color: var(--warn, #d4a017);
+  border-color: color-mix(in srgb, var(--warn, #d4a017) 45%, var(--border));
+}
+.key-chip-expiry.none {
+  opacity: 0.75;
+}
+.key-chip-state {
+  text-transform: lowercase;
+}
+.pill-extras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+}
 
 .hit-main {
   flex: 1;
@@ -1799,6 +1852,56 @@ pre {
 .toolkit-banner {
   margin-bottom: 1rem;
   border-left: 3px solid var(--accent, #7aa2f7);
+}
+
+.share-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.share-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  background: var(--surface-raised, var(--bg-subtle, rgba(127, 127, 127, 0.04)));
+  margin-bottom: 0.5rem;
+}
+.share-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+.share-mnemonic {
+  min-height: 2.5rem;
+}
+.share-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.share-badge-ok {
+  color: var(--ok, #3fb950);
+  border-color: color-mix(in srgb, var(--ok, #3fb950) 40%, var(--border));
+}
+.share-badge-bad {
+  color: var(--error, #ff7b72);
+  border-color: color-mix(in srgb, var(--error, #ff7b72) 40%, var(--border));
+}
+.share-badge-empty {
+  color: var(--text-muted);
+}
+.status-row.warn {
+  color: var(--text);
+  background: color-mix(in srgb, var(--category-yellow, #d4a017) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--category-yellow, #d4a017) 35%, var(--border));
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
 }
 
 /* Passphrase suggestion + vault export panel */

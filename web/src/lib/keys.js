@@ -1,4 +1,5 @@
 import { Auth } from "./auth.js";
+import { expiryCellText, shortKeyId, userLabelOf } from "./key-hit.js";
 import { sortByTrust, trustBadgeHtml } from "./trust.js";
 import {
   escapeHtml,
@@ -39,20 +40,37 @@ export function renderKeysTable(items, options = {}) {
       actions += ` · <button type="button" class="text-link link-btn" data-delete-fpr="${escapeHtml(fp)}">Delete</button>`;
     }
     const trust = trustBadgeHtml(fp);
+    const userLabel = userLabelOf(item);
+    const kid = shortKeyId(item);
+    const revoked = item.revoked
+      ? ` <span class="key-chip key-chip-revoked">revoked</span>`
+      : "";
+    const expires = expiryCellText(item);
     return (
       `<tr>` +
-      `<td><a class="text-link fpr" href="${fpHref}">${escapeHtml(formatFingerprint(fp))}</a></td>` +
+      `<td>` +
+      `<a class="text-link fpr" href="${fpHref}">${escapeHtml(formatFingerprint(fp))}</a>` +
+      (kid
+        ? `<div class="muted fs-xs mono" title="Key ID">…${escapeHtml(kid)}</div>`
+        : "") +
+      `</td>` +
+      `<td>${
+        userLabel
+          ? `<span class="key-chip key-chip-label">${escapeHtml(userLabel)}</span>`
+          : "—"
+      }</td>` +
       `<td><span class="${badgeClass(item.approval_state)}">${escapeHtml(item.approval_state || "")}</span>${
         trust ? ` ${trust}` : ""
-      }</td>` +
+      }${revoked}</td>` +
       `<td class="uid-cell">${renderUidCell(item)}</td>` +
+      `<td title="${escapeHtml(item.key_expiration || "Does not expire")}">${escapeHtml(expires)}</td>` +
       `<td>${actions}</td>` +
       `</tr>`
     );
   });
   return (
     `<div class="table-scroll"><table class="key-table"><thead><tr>` +
-    `<th>Fingerprint</th><th>Status</th><th>UIDs</th><th></th>` +
+    `<th>Fingerprint</th><th>Label</th><th>Status</th><th>UIDs</th><th>Expires</th><th></th>` +
     `</tr></thead><tbody>${rows.join("")}</tbody></table></div>`
   );
 }

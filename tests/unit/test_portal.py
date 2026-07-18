@@ -17,7 +17,12 @@ def test_search_approved_by_email(sample_armored, sample_fingerprint):
     approve_cert(store, sample_fingerprint, ["test@basilisk.local"])
     result = search_keys("test@basilisk.local", store)
     assert len(result["results"]) == 1
-    assert result["results"][0]["fingerprint"] == sample_fingerprint
+    hit = result["results"][0]
+    assert hit["fingerprint"] == sample_fingerprint
+    assert "key_expiration" in hit
+    assert "revoked" in hit
+    assert hit["revoked"] is False
+    assert "label" in hit
 
 
 @pytest.mark.unit
@@ -147,4 +152,8 @@ def test_api_search(sample_armored, sample_fingerprint):
     assert r.status_code == 200
     payload = r.get_json()
     assert len(payload["results"]) == 1
-    assert payload["results"][0]["fingerprint"] == sample_fingerprint
+    hit = payload["results"][0]
+    assert hit["fingerprint"] == sample_fingerprint
+    assert "key_expiration" in hit
+    assert hit["revoked"] is False
+    assert "label" in hit

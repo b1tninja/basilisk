@@ -123,13 +123,29 @@ export async function combineShares(mnemonics, opts = {}) {
 
   if (decoded[0].flags & ENVELOPE_FLAG) {
     if (!opts.envelope) {
-      throw new Error("Envelope ciphertext required to recover this secret");
+      throw new Error(
+        "Envelope ciphertext required to recover this secret — paste the envelope.bin.b64 artifact that was emitted with the shares (required for PEM / non-16/32-byte payloads)"
+      );
     }
     const plain = await aesGcmOpen(master, opts.envelope);
     zeroBuffer(master);
     return plain;
   }
   return master;
+}
+
+/**
+ * Lightweight share mnemonic check for UI (checksum + wordlist).
+ * @param {string} mnemonic
+ * @returns {{ ok: boolean, error?: string }}
+ */
+export function validateShareMnemonic(mnemonic) {
+  try {
+    decodeMnemonic(mnemonic);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
 }
 
 /**
