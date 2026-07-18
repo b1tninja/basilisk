@@ -1072,6 +1072,150 @@ pre {
   font-weight: 600;
 }
 
+.encrypt-intent {
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  border-left: 3px solid var(--accent, #2a6f6a);
+}
+.encrypt-intent.degraded {
+  border-left-color: #c47d2b;
+}
+.encrypt-intent-summary {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.encrypt-custom-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #fff4e5;
+  color: #8a4b08;
+  border: 1px solid #e8c48a;
+}
+@media (prefers-color-scheme: dark) {
+  .encrypt-custom-badge {
+    background: rgba(232, 196, 138, 0.15);
+    color: #f0c674;
+    border-color: rgba(232, 196, 138, 0.35);
+  }
+}
+.encrypt-custom-note {
+  color: var(--muted);
+}
+.encrypt-actions {
+  align-items: center;
+  gap: 0.65rem;
+}
+.encrypt-next-steps {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.encrypt-next-list {
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}
+.encrypt-next-list li + li {
+  margin-top: 0.25rem;
+}
+
+.recipient-cap-matrix {
+  margin-top: 0.85rem;
+  overflow-x: auto;
+}
+.cap-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.cap-matrix th,
+.cap-matrix td {
+  text-align: left;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+}
+.cap-matrix th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.cap-matrix tr.invalid td {
+  opacity: 0.65;
+}
+.cap-matrix .cap-yes {
+  color: var(--badge-approved-fg, #1a7a4c);
+  font-weight: 600;
+}
+.cap-matrix .cap-no {
+  color: #8a4b08;
+  font-weight: 600;
+}
+
+.deprecation-notice {
+  border-left: 3px solid #c47d2b;
+}
+.deprecation-list {
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}
+.deprecation-list li + li {
+  margin-top: 0.35rem;
+}
+.pref-algo {
+  display: inline-block;
+  margin: 0.1rem 0.25rem 0.1rem 0;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.8rem;
+  background: var(--code-bg, rgba(127, 127, 127, 0.12));
+  border-radius: 3px;
+}
+.key-version-badge {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+}
+.notation-list {
+  list-style: none;
+  padding: 0;
+}
+.notation-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.notation-list li:last-child {
+  border-bottom: none;
+}
+.notation-name {
+  font-size: 0.8rem;
+}
+.notation-value {
+  word-break: break-all;
+}
+.fpr-breakdown {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+.fpr-breakdown .fpr-group {
+  margin-right: 0.35em;
+}
+.fpr-breakdown .fpr-keyid {
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .compose-toolbar {
   display: flex;
   justify-content: flex-end;

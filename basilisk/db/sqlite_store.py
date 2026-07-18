@@ -52,6 +52,16 @@ class SqliteCertStore(CertStore):
             migration = (migrations_dir / "004_key_label.sql").read_text(encoding="utf-8")
             self._conn.executescript(migration)
             self._conn.commit()
+        tables = {
+            row[0]
+            for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if "cert_history" not in tables:
+            migration = (migrations_dir / "005_cert_history.sql").read_text(encoding="utf-8")
+            self._conn.executescript(migration)
+            self._conn.commit()
 
     def _row_to_record(self, row: sqlite3.Row) -> CertRecord:
         keys = row.keys()
@@ -70,6 +80,8 @@ class SqliteCertStore(CertStore):
             revoked=bool(row["revoked"]),
             key_expiration=row["key_expiration"] if "key_expiration" in keys else None,
             label=row["label"] if "label" in keys else None,
+            created_at=row["created_at"] if "created_at" in keys else None,
+            updated_at=row["updated_at"] if "updated_at" in keys else None,
         )
 
     def _index_emails(self, fingerprint: str, uids: list[str]) -> None:
@@ -96,6 +108,7 @@ class SqliteCertStore(CertStore):
     ) -> None:
         now = _utcnow()
         fpr = fingerprint.upper()
+        prior = self.get_by_fingerprint(fpr)
         self._conn.execute(
             """
             INSERT INTO certs (fingerprint, approval_state, blob_uri, sha256, key_id,
@@ -125,6 +138,10 @@ class SqliteCertStore(CertStore):
                 now,
             ),
         )
+        if prior is None:
+            self.append_history(fpr, sha256, "first_seen", recorded_at=now)
+        elif prior.sha256 != sha256:
+            self.append_history(fpr, sha256, "blob_changed", recorded_at=now)
         kid = key_id.lower().removeprefix("0x")
         self._conn.execute("DELETE FROM identifiers WHERE fingerprint=?", (fpr,))
         self._conn.execute(
@@ -272,6 +289,7 @@ class SqliteCertStore(CertStore):
     ) -> None:
         fpr = fingerprint.upper()
         now = _utcnow()
+        prior = self.get_by_fingerprint(fpr)
         self._conn.execute(
             """
             UPDATE certs SET blob_uri=?, sha256=?, key_id=?, revoked=?, key_expiration=?,
@@ -290,7 +308,49 @@ class SqliteCertStore(CertStore):
             "INSERT OR REPLACE INTO identifiers (identifier, fingerprint, id_type) VALUES (?, ?, 'keyid')",
             (kid, fpr),
         )
+        if prior is None:
+            self.append_history(fpr, sha256, "first_seen", recorded_at=now)
+        elif prior.sha256 != sha256:
+            self.append_history(fpr, sha256, "blob_changed", recorded_at=now)
         self._conn.commit()
+
+    def append_history(
+        self,
+        fingerprint: str,
+        sha256: str,
+        event: str,
+        *,
+        recorded_at: str | None = None,
+    ) -> None:
+        fpr = fingerprint.upper()
+        self._conn.execute(
+            """
+            INSERT INTO cert_history (fingerprint, sha256, event, recorded_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (fpr, sha256, event, recorded_at or _utcnow()),
+        )
+
+    def list_history(self, fingerprint: str) -> list[dict[str, str]]:
+        fpr = fingerprint.upper()
+        rows = self._conn.execute(
+            """
+            SELECT fingerprint, sha256, event, recorded_at
+            FROM cert_history
+            WHERE fingerprint=?
+            ORDER BY id ASC
+            """,
+            (fpr,),
+        ).fetchall()
+        return [
+            {
+                "fingerprint": row["fingerprint"],
+                "sha256": row["sha256"],
+                "event": row["event"],
+                "recorded_at": row["recorded_at"],
+            }
+            for row in rows
+        ]
 
     def list_pending_older_than(self, cutoff_iso: str) -> list[CertRecord]:
         rows = self._conn.execute(

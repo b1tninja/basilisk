@@ -134,21 +134,13 @@ def _iter_subpackets(data: bytes) -> list[tuple[int, bytes]]:
     return packets
 
 
-def _signature_issuer(body: bytes) -> str | None:
-    """Return issuer fingerprint or key ID (hex uppercase), or None."""
+def _signature_subpacket_areas(body: bytes) -> tuple[bytes, bytes] | None:
+    """Return (hashed, unhashed) subpacket areas for a v4/v5/v6 signature body."""
     if not body:
         return None
     version = body[0]
-    if version == 3:
-        # v3: version, type, created(4), keyid(8), ...
-        if len(body) < 14:
-            return None
-        return body[6:14].hex().upper()
-    if version not in (4, 5, 6):
+    if version not in (4, 5, 6) or len(body) < 6:
         return None
-    if len(body) < 6:
-        return None
-    # v4/v6: version, type, pk_algo, hash_algo, hashed_len, hashed, unhashed_len, unhashed
     pos = 4
     if version == 6:
         if len(body) < 8:
@@ -173,6 +165,23 @@ def _signature_issuer(body: bytes) -> str | None:
         unhashed_len = int.from_bytes(body[pos : pos + 2], "big")
         pos += 2
     unhashed = body[pos : pos + unhashed_len] if pos + unhashed_len <= len(body) else b""
+    return hashed, unhashed
+
+
+def _signature_issuer(body: bytes) -> str | None:
+    """Return issuer fingerprint or key ID (hex uppercase), or None."""
+    if not body:
+        return None
+    version = body[0]
+    if version == 3:
+        # v3: version, type, created(4), keyid(8), ...
+        if len(body) < 14:
+            return None
+        return body[6:14].hex().upper()
+    areas = _signature_subpacket_areas(body)
+    if not areas:
+        return None
+    hashed, unhashed = areas
 
     fingerprint: str | None = None
     key_id: str | None = None
@@ -183,6 +192,90 @@ def _signature_issuer(body: bytes) -> str | None:
         elif stype == 16 and len(sbody) >= 8:
             key_id = sbody[:8].hex().upper()
     return fingerprint or key_id
+
+
+# RFC 9580 §5.2.3.25 — Key Server Preferences, bit 7 = No-modify
+_KEY_SERVER_PREFS = 23
+_KEY_SERVER_NO_MODIFY = 0x80
+# RFC 9580 §5.2.3.24 — Notation Data
+_NOTATION_DATA = 20
+
+
+def parse_notation_subpacket(body: bytes) -> dict[str, str | bool] | None:
+    """Parse a Notation Data subpacket body → name/value dict."""
+    if len(body) < 8:
+        return None
+    flags = int.from_bytes(body[0:4], "big")
+    name_len = int.from_bytes(body[4:6], "big")
+    value_len = int.from_bytes(body[6:8], "big")
+    if 8 + name_len + value_len > len(body):
+        return None
+    name = body[8 : 8 + name_len].decode("utf-8", errors="replace")
+    raw_value = body[8 + name_len : 8 + name_len + value_len]
+    human = bool(flags & 0x80000000)
+    value = (
+        raw_value.decode("utf-8", errors="replace")
+        if human
+        else raw_value.hex()
+    )
+    return {
+        "name": name,
+        "value": value,
+        "human_readable": human,
+        "critical": False,
+    }
+
+
+def list_self_notations(binary: bytes, primary_fingerprint: str) -> list[dict[str, str | bool]]:
+    """Collect Notation Data from self-certifications on the primary key."""
+    out: list[dict[str, str | bool]] = []
+    for tag, _hdr_len, body, _start, _end in iter_packets(binary):
+        if tag != 2 or not body:
+            continue
+        version = body[0]
+        if version not in (4, 5, 6) or len(body) < 2:
+            continue
+        sig_type = body[1]
+        if sig_type not in (0x10, 0x11, 0x12, 0x13, 0x1F):
+            continue
+        issuer = _signature_issuer(body)
+        if not _issuer_is_self(issuer, primary_fingerprint):
+            continue
+        areas = _signature_subpacket_areas(body)
+        if not areas:
+            continue
+        hashed, unhashed = areas
+        for stype, sbody in _iter_subpackets(hashed) + _iter_subpackets(unhashed):
+            if stype != _NOTATION_DATA:
+                continue
+            parsed = parse_notation_subpacket(sbody)
+            if parsed:
+                out.append(parsed)
+    return out
+
+
+def has_keyserver_no_modify(binary: bytes, primary_fingerprint: str) -> bool:
+    """True if a primary self-signature sets Key Server Preferences no-modify (§5.2.3.25)."""
+    for tag, _hdr_len, body, _start, _end in iter_packets(binary):
+        if tag != 2 or not body:
+            continue
+        version = body[0]
+        if version not in (4, 5, 6) or len(body) < 2:
+            continue
+        sig_type = body[1]
+        if sig_type not in (0x10, 0x11, 0x12, 0x13, 0x1F):
+            continue
+        issuer = _signature_issuer(body)
+        if not _issuer_is_self(issuer, primary_fingerprint):
+            continue
+        areas = _signature_subpacket_areas(body)
+        if not areas:
+            continue
+        hashed, unhashed = areas
+        for stype, sbody in _iter_subpackets(hashed) + _iter_subpackets(unhashed):
+            if stype == _KEY_SERVER_PREFS and sbody and (sbody[0] & _KEY_SERVER_NO_MODIFY):
+                return True
+    return False
 
 
 def _issuer_is_self(issuer: str | None, primary_fingerprint: str) -> bool:

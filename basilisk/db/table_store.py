@@ -27,7 +27,7 @@ class AzureTableCertStore(CertStore):
 
     def __init__(self, connection_string: str) -> None:
         self._client = TableServiceClient.from_connection_string(connection_string)
-        for name in ("Certs", "Identifiers", "Emails"):
+        for name in ("Certs", "Identifiers", "Emails", "CertHistory"):
             try:
                 self._client.create_table_if_not_exists(name)
             except Exception:
@@ -35,6 +35,7 @@ class AzureTableCertStore(CertStore):
         self._certs = self._client.get_table_client("Certs")
         self._ids = self._client.get_table_client("Identifiers")
         self._emails = self._client.get_table_client("Emails")
+        self._history = self._client.get_table_client("CertHistory")
 
     def _record(self, entity: dict) -> CertRecord:
         return CertRecord(
@@ -51,6 +52,8 @@ class AzureTableCertStore(CertStore):
             revoked=bool(entity.get("revoked", False)),
             key_expiration=entity.get("key_expiration"),
             label=entity.get("label") or None,
+            created_at=entity.get("created_at"),
+            updated_at=entity.get("updated_at"),
         )
 
     def _index_emails(self, fingerprint: str, uids: list[str]) -> None:
@@ -76,6 +79,8 @@ class AzureTableCertStore(CertStore):
     ) -> None:
         fpr = fingerprint.upper()
         now = _utcnow()
+        prior = self.get_by_fingerprint(fpr)
+        created_at = (prior.created_at if prior and prior.created_at else now)
         self._certs.upsert_entity(
             {
                 "PartitionKey": fpr,
@@ -88,10 +93,14 @@ class AzureTableCertStore(CertStore):
                 "pending_uids": json.dumps(uids),
                 "revoked": revoked,
                 "key_expiration": expiration,
-                "created_at": now,
+                "created_at": created_at,
                 "updated_at": now,
             }
         )
+        if prior is None:
+            self.append_history(fpr, sha256, "first_seen", recorded_at=now)
+        elif prior.sha256 != sha256:
+            self.append_history(fpr, sha256, "blob_changed", recorded_at=now)
         kid = key_id.lower().removeprefix("0x")
         for ident, id_type in ((fpr, "fingerprint"), (kid, "keyid")):
             self._ids.upsert_entity(
@@ -233,18 +242,62 @@ class AzureTableCertStore(CertStore):
         entity = self._certs.get_entity(partition_key=fpr, row_key=fpr)
         if entity.get("approval_state") != "approved":
             return
+        prior_sha = entity.get("sha256")
+        now = _utcnow()
         entity["blob_uri"] = blob_uri
         entity["sha256"] = sha256
         entity["key_id"] = key_id
         entity["revoked"] = revoked
         entity["key_expiration"] = expiration
-        entity["updated_at"] = _utcnow()
+        entity["updated_at"] = now
         self._certs.update_entity(entity, mode="replace")
         kid = key_id.lower().removeprefix("0x")
         for ident, id_type in ((fpr, "fingerprint"), (kid, "keyid")):
             self._ids.upsert_entity(
                 {"PartitionKey": ident, "RowKey": id_type, "fingerprint": fpr, "id_type": id_type}
             )
+        if prior_sha != sha256:
+            self.append_history(fpr, sha256, "blob_changed", recorded_at=now)
+
+    def append_history(
+        self,
+        fingerprint: str,
+        sha256: str,
+        event: str,
+        *,
+        recorded_at: str | None = None,
+    ) -> None:
+        fpr = fingerprint.upper()
+        when = recorded_at or _utcnow()
+        # RowKey = timestamp + sha prefix for uniqueness / chronological order
+        row_key = f"{when}_{sha256[:16]}_{event}"
+        self._history.upsert_entity(
+            {
+                "PartitionKey": fpr,
+                "RowKey": row_key,
+                "fingerprint": fpr,
+                "sha256": sha256,
+                "event": event,
+                "recorded_at": when,
+            }
+        )
+
+    def list_history(self, fingerprint: str) -> list[dict[str, str]]:
+        fpr = fingerprint.upper()
+        rows = []
+        for entity in self._history.query_entities(
+            query_filter=f"PartitionKey eq '{_escape_odata(fpr)}'"
+        ):
+            rows.append(
+                {
+                    "fingerprint": entity.get("fingerprint") or fpr,
+                    "sha256": str(entity.get("sha256") or ""),
+                    "event": str(entity.get("event") or ""),
+                    "recorded_at": str(entity.get("recorded_at") or ""),
+                }
+            )
+        rows.sort(key=lambda r: r.get("recorded_at") or "")
+        return rows
 
     def list_pending_older_than(self, cutoff_iso: str) -> list[CertRecord]:
         out: list[CertRecord] = []

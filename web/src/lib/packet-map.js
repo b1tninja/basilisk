@@ -211,6 +211,7 @@ export function describePacket(span, pkt) {
     }
   } else if (span.tag === 2) {
     lines.push(`Signature packet`);
+    if (pkt.version != null) lines.push(`Version: v${pkt.version}`);
     if (pkt.created instanceof Date) lines.push(`Created: ${pkt.created.toISOString()}`);
     const kid = keyIdHex(pkt.issuerKeyID);
     if (kid) lines.push(`Issuer key ID: 0x${kid}`);
@@ -220,6 +221,35 @@ export function describePacket(span, pkt) {
       lines.push(`Public-key algo: ${algoName(PUBLIC_KEY_ALGOS, pkt.publicKeyAlgorithm)}`);
     }
     if (pkt.signatureType != null) lines.push(`Signature type: ${pkt.signatureType}`);
+    // RFC 9580 §5.2.3.6 / §13.2 — salt field (v6) or OpenPGP.js salt notation on v4
+    const saltBytes =
+      pkt.salt instanceof Uint8Array && pkt.salt.length
+        ? pkt.salt
+        : null;
+    const saltNotation = (pkt.rawNotations || []).find(
+      (n) => n?.name === "salt@notations.openpgpjs.org"
+    );
+    if (saltBytes) {
+      lines.push(`Salt: ${saltBytes.length} bytes (RFC 9580)`);
+    } else if (saltNotation?.value?.length) {
+      lines.push(
+        `Salt: ${saltNotation.value.length} bytes (OpenPGP.js notation; not the v6 salt field)`
+      );
+    } else if (pkt.version === 4) {
+      lines.push("v4 signature — no RFC 9580 salt field");
+    } else if (pkt.version === 6) {
+      warnings.push("v6 signature missing required salt field (RFC 9580 §5.2.3.6)");
+    }
+    const notationNames = [
+      ...(pkt.rawNotations || []).map((n) => n?.name).filter(Boolean),
+      ...Object.keys(pkt.notations || {}),
+    ];
+    const uniqueNotations = [...new Set(notationNames)].filter(
+      (n) => n !== "salt@notations.openpgpjs.org"
+    );
+    if (uniqueNotations.length) {
+      lines.push(`Notations: ${uniqueNotations.join(", ")}`);
+    }
   } else if (span.tag === 11) {
     lines.push("Literal data");
     if (pkt.filename) lines.push(`Filename: ${pkt.filename}`);

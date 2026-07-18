@@ -1,3 +1,4 @@
+import { decryptKey, readPrivateKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
 import {
   CryptoModuleError,
@@ -6,6 +7,7 @@ import {
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
 import { badgeClass } from "../lib/keys.js";
+import { formatAlgo } from "../lib/pgp/algos.js";
 import {
   summarizeRecipientCapabilities,
 } from "../lib/pgp/capabilities.js";
@@ -16,14 +18,27 @@ import {
   encryptArtifacts,
   summarizeEncryption,
 } from "../lib/pgp/encrypt.js";
+import {
+  describeEncryptIntent,
+  describeProfileDivergence,
+  formatProfileSpec,
+} from "../lib/pgp/encrypt-intent.js";
+import { fingerprintHex } from "../lib/pgp/identity.js";
+import { zeroKeyMaterial } from "../lib/pgp/memory.js";
 import { estimatePassphraseStrength } from "../lib/pgp/passphrase.js";
 import { getExpertMode, setExpertMode } from "../lib/prefs.js";
 import { loadRecipientKey } from "../lib/recipient-picker.js";
+import {
+  getPasskeyPrf,
+  listKeys as vaultListKeys,
+  unlockKey as vaultUnlockKey,
+} from "../lib/vault.js";
 import {
   copyText,
   escapeHtml,
   extractEmail,
   fetchJson,
+  formatDate,
   formatFingerprint,
   queryParam,
   showError,
@@ -49,6 +64,10 @@ let activeTab = "message";
 let outputs = [];
 /** Last honest encryption summary from packet re-parse */
 let lastEncryptSummary = "";
+/** Signing key fingerprint shown after sign+encrypt (uppercase hex) */
+let lastSigningFpr = "";
+/** @type {import("../lib/vault.js").VaultKeyMeta[]} */
+let vaultKeys = [];
 let searchTimer = null;
 let encrypting = false;
 /** @type {"auto"|"compatible"|"modern"|"custom"} */
@@ -129,6 +148,46 @@ function updateEncryptButton() {
     tally.textContent = `${formatBytes(total)} / ${formatBytes(MAX_TOTAL_BYTES)}`;
     tally.classList.toggle("over", over);
   }
+  updateEncryptIntentUI();
+}
+
+/**
+ * Live "will encrypt with" card + Custom badge (A1 / A3).
+ * Driven by the active profile and recipient capabilities — not post-encrypt parse.
+ */
+async function updateEncryptIntentUI() {
+  const card = document.getElementById("encrypt-intent");
+  const summaryEl = document.getElementById("encrypt-intent-summary");
+  const noteEl = document.getElementById("encrypt-intent-note");
+  const badge = document.getElementById("encrypt-custom-badge");
+  const divergeEl = document.getElementById("encrypt-custom-note");
+  if (!card || !summaryEl) return;
+
+  const profile = readEncryptProfile();
+  const keys = validRecipients();
+  const caps = await summarizeRecipientCapabilities(keys);
+  const intent = describeEncryptIntent(profile, {
+    hasKeys: keys.length > 0,
+    hasPassphrase: passphraseEnabled(),
+    allModern: caps.total === 0 || caps.legacy === 0,
+    legacyCount: caps.legacy,
+    totalKeys: caps.total,
+  });
+
+  summaryEl.textContent = `Will encrypt with: ${intent.summary}`;
+  card.classList.toggle("degraded", intent.degraded);
+  if (noteEl) {
+    noteEl.textContent = intent.note;
+    noteEl.classList.toggle("hidden", !intent.note);
+  }
+
+  const divergence = describeProfileDivergence(profile);
+  const isCustom = encryptPreset === "custom" || divergence.preset === "custom";
+  if (badge) badge.classList.toggle("hidden", !isCustom);
+  if (divergeEl) {
+    divergeEl.textContent = isCustom ? divergence.explanation : "";
+    divergeEl.classList.toggle("hidden", !isCustom);
+  }
 }
 
 function renderPills() {
@@ -137,6 +196,8 @@ function renderPills() {
   if (!recipients.size) {
     el.innerHTML = `<p class="muted m-0">No recipients yet. Search by email, fingerprint, or key ID.</p>`;
     updateCapabilityHint();
+    renderRecipientMatrix();
+    updateEncryptIntentUI();
     return;
   }
   el.innerHTML = [...recipients.values()]
@@ -162,6 +223,70 @@ function renderPills() {
     })
     .join("");
   updateCapabilityHint();
+  renderRecipientMatrix();
+  updateEncryptIntentUI();
+}
+
+/**
+ * Recipient capability matrix (A2): email / SEIPDv2 / algorithm / expiration.
+ */
+async function renderRecipientMatrix() {
+  const wrap = document.getElementById("recipient-cap-matrix");
+  if (!wrap) return;
+  const list = [...recipients.values()];
+  if (!list.length) {
+    wrap.innerHTML = "";
+    wrap.classList.add("hidden");
+    return;
+  }
+  wrap.classList.remove("hidden");
+  const rows = await Promise.all(
+    list.map(async (r) => {
+      let algo = "—";
+      let expires = "—";
+      if (r.pgpKey) {
+        try {
+          algo = formatAlgo(await r.pgpKey.getAlgorithmInfo());
+        } catch (_) {
+          /* ignore */
+        }
+        try {
+          const exp = await r.pgpKey.getExpirationTime();
+          if (!exp || exp === Infinity) expires = "never";
+          else expires = formatDate(exp);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      const seipd = !r.valid
+        ? "—"
+        : r.modernCapable
+          ? "Yes"
+          : "No";
+      const seipdClass = !r.valid
+        ? ""
+        : r.modernCapable
+          ? "cap-yes"
+          : "cap-no";
+      return `<tr class="${r.valid ? "" : "invalid"}">
+        <td>${escapeHtml(r.email || r.label || shortFpr(r.fingerprint))}</td>
+        <td class="${seipdClass}">${escapeHtml(seipd)}</td>
+        <td>${escapeHtml(algo)}</td>
+        <td>${escapeHtml(expires)}</td>
+      </tr>`;
+    })
+  );
+  wrap.innerHTML = `<table class="cap-matrix" aria-label="Recipient encryption capabilities">
+    <thead>
+      <tr>
+        <th scope="col">Recipient</th>
+        <th scope="col">SEIPDv2</th>
+        <th scope="col">Algorithm</th>
+        <th scope="col">Expires</th>
+      </tr>
+    </thead>
+    <tbody>${rows.join("")}</tbody>
+  </table>`;
 }
 
 async function updateCapabilityHint() {
@@ -256,11 +381,30 @@ function renderOutput() {
   const summaryHtml = lastEncryptSummary
     ? `<p class="encrypt-summary muted mt-xs">Used: <strong>${escapeHtml(lastEncryptSummary)}</strong></p>`
     : "";
+  const signedHtml = lastSigningFpr
+    ? `<p class="encrypt-summary muted mt-xs">Signed by: <code class="fpr">${escapeHtml(formatFingerprint(lastSigningFpr))}</code></p>`
+    : "";
+  const firstRecipient = validRecipients()[0];
+  const verifyHref = firstRecipient
+    ? `/verify?fpr=${encodeURIComponent(firstRecipient.fingerprint)}`
+    : "";
+  const nextSteps = `<div class="encrypt-next-steps mt-md">
+      <p class="field-label m-0-b-xs">Next steps</p>
+      <ul class="encrypt-next-list m-0">
+        <li>Copy or download the ciphertext above</li>
+        ${
+          verifyHref
+            ? `<li><a class="text-link" href="${escapeHtml(verifyHref)}">Confirm the recipient fingerprint</a> on /verify before sending</li>`
+            : `<li>Confirm the recipient fingerprint out of band before sending</li>`
+        }
+      </ul>
+    </div>`;
   el.innerHTML = `
     <div class="card-title-row">
       <div>
         <p class="card-title m-0">Encrypted output</p>
         ${summaryHtml}
+        ${signedHtml}
       </div>
       <div class="btn-row">
         <button type="button" class="btn btn-ghost" id="clear-output-btn">Encrypt another</button>
@@ -285,7 +429,8 @@ function renderOutput() {
           }
         </div>`;
       })
-      .join("")}`;
+      .join("")}
+    ${nextSteps}`;
 }
 
 /**
@@ -360,18 +505,19 @@ function updateEncryptOptionsUI() {
   const hint = document.getElementById("enc-preset-hint");
   if (hint) {
     if (encryptPreset === "auto") {
-      hint.textContent =
-        "Requests modern encryption; OpenPGP.js uses SEIPD v1 automatically when any recipient key lacks RFC 9580 support.";
+      hint.textContent = `Auto: ${formatProfileSpec(PROFILE_MODERN)} when all recipients support SEIPDv2; otherwise ${formatProfileSpec(PROFILE_COMPATIBLE)}.`;
     } else if (encryptPreset === "modern") {
-      hint.textContent =
-        "Requires GnuPG 2.4+ / modern clients. AEAD applies when encrypting with a passphrase, or to keys that advertise RFC 9580 SEIPDv2.";
+      hint.textContent = `Modern: ${formatProfileSpec(PROFILE_MODERN)}. Requires GnuPG 2.4+ / modern clients.`;
     } else if (encryptPreset === "custom") {
+      const divergence = describeProfileDivergence(readEncryptProfile());
       hint.textContent =
+        divergence.explanation ||
         "Custom options — verify recipients can decrypt. Output summary reflects what was actually written.";
     } else {
-      hint.textContent = "Works with all GnuPG versions (SEIPD v1 / iterated S2K).";
+      hint.textContent = `Compatible: ${formatProfileSpec(PROFILE_COMPATIBLE)}.`;
     }
   }
+  updateEncryptIntentUI();
 }
 
 function markCustomIfAdvancedChanged() {
@@ -535,12 +681,27 @@ async function runEncrypt() {
     status.classList.remove("hidden");
     status.textContent = "Encrypting…";
   }
+  /** @type {import("openpgp").PrivateKey | null} */
+  let signingKey = null;
+  /** Ephemeral vault armored — scrubbed after use */
+  let signingArmored = "";
+  let signingPassphrase = "";
+  lastSigningFpr = "";
   try {
     // Re-validate recipient keys against the keyserver before encrypting.
     await revalidateRecipients();
     const keys = validRecipients().map((r) => r.pgpKey);
     if (!keys.length && !usePw) {
       throw new Error("No valid recipients remain after key re-check.");
+    }
+
+    const wantSign = !!document.getElementById("use-signing")?.checked;
+    if (wantSign) {
+      if (status) status.textContent = "Unlocking signing key…";
+      const prepared = await prepareSigningKeyMaterial();
+      signingArmored = prepared.armored;
+      signingPassphrase = prepared.passphrase;
+      lastSigningFpr = prepared.fingerprint;
     }
 
     /** @type {import("../lib/pgp/types.js").EncryptPayload[]} */
@@ -568,15 +729,21 @@ async function runEncrypt() {
         payloads,
         profile,
         hideRecipients,
+        signingKeyArmored: signingArmored || undefined,
+        signingKeyPassphrase: signingPassphrase || undefined,
       });
     } catch (_) {
       // Fallback: main-thread encrypt (e.g. worker / CSP failure).
+      if (signingArmored) {
+        signingKey = await unlockSigningKeyLocal(signingArmored, signingPassphrase);
+      }
       next = await encryptArtifacts({
         recipients: keys,
         passwords: usePw ? [pw] : [],
         payloads,
         profile,
         hideRecipients,
+        signingKeys: signingKey ? [signingKey] : [],
       });
     }
     lastEncryptSummary = next.length
@@ -595,6 +762,10 @@ async function runEncrypt() {
     const pwConfirm = document.getElementById("msg-passphrase-confirm");
     if (pwEl) pwEl.value = "";
     if (pwConfirm) pwConfirm.value = "";
+    const signKeyEl = document.getElementById("sign-private-key");
+    const signPwEl = document.getElementById("sign-key-passphrase");
+    if (signKeyEl instanceof HTMLTextAreaElement) signKeyEl.value = "";
+    if (signPwEl instanceof HTMLInputElement) signPwEl.value = "";
     updatePassphraseMeter();
     renderFiles();
     updateEncryptButton();
@@ -602,6 +773,7 @@ async function runEncrypt() {
     const parts = [];
     if (keys.length) parts.push(`${keys.length} recipient${keys.length === 1 ? "" : "s"}`);
     if (usePw) parts.push("passphrase");
+    if (lastSigningFpr) parts.push("signed");
     if (status) {
       const used = lastEncryptSummary ? ` · ${lastEncryptSummary}` : "";
       status.textContent = `Encrypted ${next.length} artifact${next.length === 1 ? "" : "s"} for ${parts.join(" + ")}. Plaintext cleared.${used}`;
@@ -614,8 +786,104 @@ async function runEncrypt() {
       status.className = "status-row err";
     }
   } finally {
+    if (signingKey) {
+      try {
+        zeroKeyMaterial(signingKey);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    signingArmored = "";
+    signingPassphrase = "";
     encrypting = false;
     updateEncryptButton();
+  }
+}
+
+/**
+ * @returns {Promise<{ armored: string, passphrase: string, fingerprint: string }>}
+ */
+async function prepareSigningKeyMaterial() {
+  const vaultSelect = document.getElementById("sign-vault-select");
+  const vaultFpr =
+    vaultSelect instanceof HTMLSelectElement ? vaultSelect.value : "";
+  const pasted = document.getElementById("sign-private-key")?.value?.trim() || "";
+  const passphrase =
+    document.getElementById("sign-key-passphrase")?.value || "";
+
+  if (vaultFpr && !pasted) {
+    const meta = vaultKeys.find((k) => k.fingerprint === vaultFpr);
+    if (!meta) throw new Error("Signing key not found in vault");
+    /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
+    const opts = {};
+    if (meta.protection === "passkey") {
+      opts.prfIkm = await getPasskeyPrf();
+    } else if (meta.protection === "passphrase") {
+      opts.passphrase = passphrase;
+    }
+    const armored = await vaultUnlockKey(vaultFpr, opts);
+    return { armored, passphrase: "", fingerprint: vaultFpr.toUpperCase() };
+  }
+
+  if (!pasted) {
+    throw new Error("Select a vault signing key or paste a private key.");
+  }
+  const key = await unlockSigningKeyLocal(pasted, passphrase);
+  let fpr = "";
+  try {
+    fpr = String(key.getFingerprint() || "")
+      .toUpperCase()
+      .replace(/[^0-9A-F]/g, "");
+  } catch (_) {
+    fpr = fingerprintHex(key.keyPacket?.getFingerprintBytes?.()) || "";
+  }
+  try {
+    zeroKeyMaterial(key);
+  } catch (_) {
+    /* ignore */
+  }
+  return { armored: pasted, passphrase, fingerprint: fpr };
+}
+
+/**
+ * @param {string} armored
+ * @param {string} passphrase
+ */
+async function unlockSigningKeyLocal(armored, passphrase) {
+  let key = await readPrivateKey({ armoredKey: armored });
+  if (!key.isDecrypted()) {
+    key = await decryptKey({ privateKey: key, passphrase: passphrase || "" });
+  }
+  return key;
+}
+
+async function refreshSignVaultSelect() {
+  const row = document.getElementById("sign-vault-row");
+  const select = document.getElementById("sign-vault-select");
+  if (!row || !select) return;
+  try {
+    vaultKeys = await vaultListKeys();
+  } catch (_) {
+    vaultKeys = [];
+  }
+  if (!vaultKeys.length) {
+    row.classList.add("hidden");
+    return;
+  }
+  row.classList.remove("hidden");
+  const prev = select.value;
+  select.innerHTML =
+    `<option value="">— paste private key below —</option>` +
+    vaultKeys
+      .map((k) => {
+        const label = `${formatFingerprint(k.fingerprint)} · ${k.protection}${
+          k.email ? ` · ${k.email}` : ""
+        }`;
+        return `<option value="${escapeHtml(k.fingerprint)}">${escapeHtml(label)}</option>`;
+      })
+      .join("");
+  if (prev && vaultKeys.some((k) => k.fingerprint === prev)) {
+    select.value = prev;
   }
 }
 
@@ -672,6 +940,8 @@ async function revalidateRecipients() {
  *   payloads: import("../lib/pgp/types.js").EncryptPayload[],
  *   profile: import("../lib/pgp/types.js").EncryptProfile,
  *   hideRecipients: boolean,
+ *   signingKeyArmored?: string,
+ *   signingKeyPassphrase?: string,
  * }} opts
  */
 function encryptWithWorker(opts) {
@@ -734,6 +1004,12 @@ function encryptWithWorker(opts) {
       payloads: serialPayloads,
       profile: opts.profile,
       hideRecipients: opts.hideRecipients,
+      ...(opts.signingKeyArmored
+        ? {
+            signingKeyArmored: opts.signingKeyArmored,
+            signingKeyPassphrase: opts.signingKeyPassphrase || "",
+          }
+        : {}),
     });
   });
 }
@@ -752,6 +1028,7 @@ function renderApp() {
       <p class="card-title">Recipients</p>
       <div id="recipient-pills" class="recipient-pills"></div>
       <p id="recipient-cap-hint" class="muted hidden mt-sm fs-sm"></p>
+      <div id="recipient-cap-matrix" class="recipient-cap-matrix hidden" aria-live="polite"></div>
       <div class="recipient-input-row">
         <input type="search" id="recipient-search" placeholder="Add recipient by email, fingerprint, or key ID…" autocomplete="off">
         <div id="recipient-dropdown" class="recipient-dropdown" hidden></div>
@@ -799,6 +1076,28 @@ function renderApp() {
       </div>
     </div>
 
+    <div class="card">
+      <p class="card-title">Sign before encrypt (optional)</p>
+      <label class="field-label field-label-inline">
+        <input type="checkbox" id="use-signing">
+        Also sign this message (RFC 9580 §2.1)
+      </label>
+      <div id="signing-fields" class="hidden mt-md">
+        <div id="sign-vault-row" class="hidden mb-md">
+          <label class="field-label" for="sign-vault-select">Signing key from vault</label>
+          <select id="sign-vault-select" class="text-input">
+            <option value="">— paste private key below —</option>
+          </select>
+        </div>
+        <label class="field-label" for="sign-private-key">Armored private key</label>
+        <textarea id="sign-private-key" class="compose-message" rows="4"
+          placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;…&#10;(leave empty to use a vault key)"></textarea>
+        <label class="field-label mt-md" for="sign-key-passphrase">Key passphrase</label>
+        <input type="password" id="sign-key-passphrase" class="text-input" autocomplete="current-password" placeholder="If the private key is locked">
+        <p class="muted mt-sm mb-0">Private key material is unlocked only for encrypt and then scrubbed. Signing fingerprint appears in the output summary.</p>
+      </div>
+    </div>
+
     <details class="card encrypt-options${expertMode ? "" : " hidden"}" id="encrypt-options">
       <summary class="card-title enc-options-summary">Encryption options</summary>
       <div class="encrypt-options-body mt-md">
@@ -806,17 +1105,17 @@ function renderApp() {
           <legend class="field-label">Preset</legend>
           <label class="enc-preset-option">
             <input type="radio" name="enc-preset" value="auto" checked>
-            <span><strong>Auto</strong> — modern when recipients support it, otherwise compatible</span>
+            <span><strong>Auto</strong> — AES-256 · OCB · SEIPD v2 · Argon2 when supported, else Compatible</span>
           </label>
           <label class="enc-preset-option">
             <input type="radio" name="enc-preset" value="compatible">
-            <span><strong>Compatible</strong> — AES-256, SEIPD v1, iterated S2K</span>
+            <span><strong>Compatible</strong> — AES-256 · SEIPD v1 (CFB+MDC) · iterated S2K</span>
           </label>
           <label class="enc-preset-option">
             <input type="radio" name="enc-preset" value="modern">
-            <span><strong>Modern (RFC 9580)</strong> — AES-256-OCB, Argon2</span>
+            <span><strong>Modern</strong> — AES-256 · OCB · SEIPD v2 · Argon2</span>
           </label>
-          <p id="enc-preset-hint" class="muted mt-xs">Requests modern encryption; OpenPGP.js uses SEIPD v1 automatically when any recipient key lacks RFC 9580 support.</p>
+          <p id="enc-preset-hint" class="muted mt-xs">Auto: AES-256 · OCB · SEIPD v2 · Argon2 when all recipients support SEIPDv2; otherwise AES-256 · SEIPD v1 (CFB+MDC) · iterated S2K.</p>
         </fieldset>
 
         <label id="hide-recipients-row" class="enc-preset-option mt-md${expertMode ? "" : " hidden"}">
@@ -870,16 +1169,23 @@ function renderApp() {
       </div>
     </details>
 
-    <div class="btn-row my-lg">
+    <div id="encrypt-intent" class="encrypt-intent card" aria-live="polite">
+      <p id="encrypt-intent-summary" class="encrypt-intent-summary m-0">Will encrypt with: AES-256 · OCB · SEIPD v2</p>
+      <p id="encrypt-intent-note" class="muted mt-xs mb-0 fs-sm hidden"></p>
+      <p id="encrypt-custom-note" class="encrypt-custom-note muted mt-xs mb-0 fs-sm hidden"></p>
+    </div>
+
+    <div class="btn-row my-lg encrypt-actions">
       <button type="button" class="btn" id="encrypt-btn" disabled>Encrypt</button>
+      <span id="encrypt-custom-badge" class="encrypt-custom-badge hidden" title="Expert options diverge from named presets">Custom</span>
       <span id="encrypt-status" class="hidden"></span>
     </div>
 
     <div id="compose-output" class="card compose-output hidden"></div>
 
     <p class="muted mt-xl">
-      Encrypt-only — no signing. Recipients decrypt with their private keys or the shared passphrase
-      (<code>gpg --decrypt file.asc</code>).
+      Recipients decrypt with their private keys or the shared passphrase
+      (<code>gpg --decrypt file.asc</code>). Optional signing proves the sender's key.
     </p>
   `;
 
@@ -888,6 +1194,7 @@ function renderApp() {
   applyPreset("auto");
   applyExpertModeUI();
   updateEncryptButton();
+  refreshSignVaultSelect();
 }
 
 function wireEvents() {
@@ -928,6 +1235,10 @@ function wireEvents() {
       updateEncryptButton();
       updateEncryptOptionsUI();
       updatePassphraseMeter();
+    }
+    if (e.target && e.target.id === "use-signing") {
+      const fields = document.getElementById("signing-fields");
+      if (fields) fields.classList.toggle("hidden", !e.target.checked);
     }
     if (e.target && e.target.name === "enc-preset") {
       const val = e.target.value;

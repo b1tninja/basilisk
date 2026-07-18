@@ -27,6 +27,9 @@ def key_summary(record: CertRecord, settings: Settings, *, include_uids: bool = 
         else [],
         "claimer_email": record.claimer_email,
         "label": record.label,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "sha256": record.sha256,
         "claim_url": f"{settings.base_url}/claim/{record.fingerprint}",
         "view_url": f"{settings.base_url}/key?fpr={record.fingerprint}",
     }

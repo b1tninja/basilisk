@@ -25,10 +25,15 @@ import {
 import { splitArmoredMessages } from "../lib/pgp/armor.js";
 import { analyzeArmored } from "../lib/pgp/inspect.js";
 import {
+  fingerprintHex,
   isAnonymousKeyId,
   keyIdHex,
   keySearchLink,
 } from "../lib/pgp/identity.js";
+import {
+  checkIntendedRecipient,
+  intendedRecipientsFromDecryptSignatures,
+} from "../lib/pgp/intended-recipient.js";
 import { zeroKeyMaterial } from "../lib/pgp/memory.js";
 import {
   escapeHtml,
@@ -904,7 +909,9 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
   /** Ephemeral vault-sourced armored key — never written to the textarea. */
   let vaultArmored = "";
   let usedVaultEphemeral = false;
-  /** @type {{ ok: boolean, index: number, plaintext?: string, sigStatuses?: {keyID:string,verified:boolean}[], sessionKeys?: object[], error?: string }[]} */
+  /** Decryption key fingerprint for Intended Recipient checks */
+  let decryptKeyFpr = "";
+  /** @type {{ ok: boolean, index: number, plaintext?: string, sigStatuses?: object[], sessionKeys?: object[], intendedCheck?: ReturnType<typeof checkIntendedRecipient> | null, error?: string }[]} */
   const results = [];
 
   try {
@@ -925,6 +932,7 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
           vaultArmored = await unlockVaultArmoredEphemeral(fpr, status);
           privArmored = vaultArmored;
           usedVaultEphemeral = true;
+          decryptKeyFpr = fpr.toUpperCase().replace(/[^0-9A-F]/g, "");
           if (vaultSelect instanceof HTMLSelectElement) {
             vaultSelect.value = fpr;
           }
@@ -939,6 +947,18 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
         );
         status.className = "hidden";
         return;
+      }
+      if (!decryptKeyFpr) {
+        try {
+          const pk = await readPrivateKey({ armoredKey: privArmored });
+          decryptKeyFpr =
+            fingerprintHex(pk.getFingerprintBytes?.()) ||
+            String(pk.getFingerprint?.() || "")
+              .toUpperCase()
+              .replace(/[^0-9A-F]/g, "");
+        } catch (_) {
+          decryptKeyFpr = "";
+        }
       }
       const knownSigners = (currentAnalysis?.sigDetails || [])
         .map((s) => s.fingerprint || s.keyId)
@@ -975,7 +995,7 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
             typeof result.data === "string"
               ? result.data
               : new TextDecoder().decode(result.data);
-          /** @type {{keyID:string,verified:boolean}[]} */
+          /** @type {{keyID:string,verified:boolean,intendedRecipients?:string[]}[]} */
           const sigStatuses = [];
           for (const s of result.signatures || []) {
             let verified = false;
@@ -987,7 +1007,21 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
             }
             sigStatuses.push({ keyID: keyIdHex(s.keyID), verified });
           }
-          results.push({ ok: true, index: i, plaintext, sigStatuses, sessionKeys });
+          const intended = await intendedRecipientsFromDecryptSignatures(
+            result.signatures || []
+          );
+          const intendedCheck =
+            sigStatuses.length && decryptKeyFpr
+              ? checkIntendedRecipient(intended, decryptKeyFpr)
+              : null;
+          results.push({
+            ok: true,
+            index: i,
+            plaintext,
+            sigStatuses,
+            sessionKeys,
+            intendedCheck,
+          });
         } else {
           const workerResult = await decryptWithPrivateKeyWorker(
             armored,
@@ -995,6 +1029,17 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
             keyPassphrase,
             verificationKeysArmored
           );
+          const intended = [
+            ...new Set(
+              (workerResult.signatures || []).flatMap(
+                (s) => s.intendedRecipients || []
+              )
+            ),
+          ];
+          const intendedCheck =
+            (workerResult.signatures || []).length && decryptKeyFpr
+              ? checkIntendedRecipient(intended, decryptKeyFpr)
+              : null;
           results.push({
             ok: true,
             index: i,
@@ -1005,6 +1050,7 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
               aeadAlgorithm: sk.aeadAlgorithm,
               length: sk.length,
             })),
+            intendedCheck,
           });
         }
       } catch (err) {
@@ -1047,6 +1093,18 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
           });
           sigHtml = `<p class="mb-md">${parts.join(" · ")}</p>`;
         }
+        let irfHtml = "";
+        if (r.intendedCheck) {
+          const tone =
+            r.intendedCheck.status === "mismatch"
+              ? "err"
+              : r.intendedCheck.status === "ok"
+                ? "ok"
+                : "";
+          irfHtml = `<p class="status-row ${tone} mb-md" role="status">${escapeHtml(
+            r.intendedCheck.message
+          )}</p>`;
+        }
         const sk = r.sessionKeys?.[0];
         const cipherNote = sk?.algorithm
           ? `<p class="muted">Session cipher: <code>${escapeHtml(
@@ -1066,6 +1124,7 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
           </div>
           ${cipherNote}
           ${sigHtml}
+          ${irfHtml}
           <pre class="output-pre">${escapeHtml(r.plaintext || "")}</pre>
         </div>`;
       })

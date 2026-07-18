@@ -972,3 +972,21 @@ export function openpgp4fprUri(fingerprint) {
 	hex = hex.replace(/^0x/i, "");
 	return `openpgp4fpr:${hex.toUpperCase()}`;
 }
+
+/**
+ * Rich QR payload: primary UID + openpgp4fpr URI for offline identity check.
+ * @param {string} fingerprint
+ * @param {{ name?: string, email?: string } | null | undefined} uid
+ * @returns {string}
+ */
+export function richOpenpgpQrPayload(fingerprint, uid) {
+	const uri = openpgp4fprUri(fingerprint);
+	const name = (uid?.name || "").trim();
+	const email = (uid?.email || "").trim();
+	const lines = [];
+	if (name && email) lines.push(`${name} <${email}>`);
+	else if (email) lines.push(email);
+	else if (name) lines.push(name);
+	lines.push(uri);
+	return lines.join("\n");
+}

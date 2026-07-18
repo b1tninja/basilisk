@@ -1,7 +1,9 @@
 import { readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
 import { formatAlgo } from "../lib/pgp/algos.js";
-import { openpgp4fprUri, qrSvg } from "../lib/qr.js";
+import { collectDeprecationWarnings } from "../lib/pgp/deprecation.js";
+import { readKeyPreferences } from "../lib/pgp/preferences.js";
+import { openpgp4fprUri, qrSvg, richOpenpgpQrPayload } from "../lib/qr.js";
 import {
   copyText,
   describeExpiry,
@@ -55,6 +57,75 @@ function usageTags(keyPacket) {
   }
   if (!tags.length) return '<span class="muted">—</span>';
   return tags.map((t) => `<span class="usage-tag">${escapeHtml(t)}</span>`).join(" ");
+}
+
+/**
+ * @param {string[]} warnings
+ */
+function renderDeprecationNotice(warnings) {
+  if (!warnings.length) return "";
+  return `<div class="card deprecation-notice" role="status">
+    <p class="card-title">Deprecated algorithms (RFC 9580 §9.1)</p>
+    <ul class="deprecation-list m-0">
+      ${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}
+    </ul>
+    <p class="muted mt-sm mb-0 fs-sm">Shown for awareness — this key remains usable for interoperability.</p>
+  </div>`;
+}
+
+/**
+ * @param {Awaited<ReturnType<typeof readKeyPreferences>>} prefs
+ */
+function renderPreferencesCard(prefs) {
+  const rows = [
+    ["Preferred symmetric", prefs.symmetric],
+    ["Preferred AEAD", prefs.aead],
+    ["Preferred hash", prefs.hash],
+    ["Preferred compression", prefs.compression],
+  ];
+  const hasAny = rows.some(([, list]) => list.length);
+  if (!hasAny && !prefs.noModify) {
+    return `<div class="card">
+      <p class="card-title">Algorithm preferences</p>
+      <p class="muted m-0">No preference subpackets on the primary self-signature (RFC 9580 §5.2.3.14–17).</p>
+    </div>`;
+  }
+  const prefRows = rows
+    .map(([label, list]) => {
+      const value = list.length
+        ? list.map((a) => `<code class="pref-algo">${escapeHtml(a)}</code>`).join(" ")
+        : `<span class="muted">—</span>`;
+      return metaRow(label, value);
+    })
+    .join("");
+  const noModify = prefs.noModify
+    ? `<p class="status-row mt-md mb-0" role="status">Key server preference: <strong>no-modify</strong> — third-party certifications should not be merged onto this key (RFC 9580 §5.2.3.25).</p>`
+    : "";
+  return `<div class="card">
+    <p class="card-title">Algorithm preferences</p>
+    <p class="muted fs-sm mt-0">From the primary self-signature (RFC 9580 §5.2.3.14–17).</p>
+    <dl class="key-meta-grid">${prefRows}</dl>
+    ${noModify}
+  </div>`;
+}
+
+/**
+ * @param {import("../lib/pgp/notations.js").NotationEntry[]} notations
+ */
+function renderNotationsCard(notations) {
+  if (!notations?.length) return "";
+  return `<div class="card">
+    <p class="card-title">Notations</p>
+    <p class="muted fs-sm mt-0">Notation Data on the primary self-signature (RFC 9580 §5.2.3.24).</p>
+    <ul class="notation-list m-0">${notations
+      .map(
+        (n) => `<li>
+        <code class="notation-name">${escapeHtml(n.name)}</code>
+        <span class="notation-value">${escapeHtml(n.value)}</span>
+      </li>`
+      )
+      .join("")}</ul>
+  </div>`;
 }
 
 function renderUids(record) {
@@ -219,11 +290,33 @@ async function loadKey() {
     let algo = "—";
     let created = "—";
     let pgpExpiry = null;
+    /** @type {{ algorithm?: string, algo?: string, curve?: string } | null} */
+    let primaryAlgoInfo = null;
+    /** @type {Array<{ algorithm?: string, algo?: string, curve?: string }>} */
+    const subAlgoInfos = [];
+    let prefs = {
+      symmetric: [],
+      aead: [],
+      hash: [],
+      compression: [],
+      noModify: false,
+      hashAlgorithm: null,
+      notations: [],
+    };
+    let keyVersion = null;
+    /** @type {string[]} */
+    let bindingWarnings = [];
     if (pgpKey) {
       try {
-        algo = formatAlgo(await pgpKey.getAlgorithmInfo());
+        primaryAlgoInfo = await pgpKey.getAlgorithmInfo();
+        algo = formatAlgo(primaryAlgoInfo);
       } catch (_) {
         /* ignore */
+      }
+      try {
+        keyVersion = pgpKey.keyPacket?.version ?? null;
+      } catch (_) {
+        keyVersion = null;
       }
       try {
         created = formatDate(pgpKey.getCreationTime());
@@ -236,8 +329,49 @@ async function loadKey() {
       } catch (_) {
         /* ignore */
       }
+      if (pgpKey.subkeys?.length) {
+        for (const sub of pgpKey.subkeys) {
+          try {
+            subAlgoInfos.push(await sub.getAlgorithmInfo());
+          } catch (_) {
+            /* ignore */
+          }
+          if (keyVersion === 6) {
+            try {
+              await sub.verify();
+            } catch (err) {
+              bindingWarnings.push(
+                `Subkey ${formatFingerprint(sub.getFingerprint?.() || "")}: ${err?.message || "binding check failed"}`
+              );
+            }
+          }
+        }
+      }
+      prefs = await readKeyPreferences(pgpKey);
+    }
+    if (!keyVersion) {
+      const hexLen = String(record.fingerprint || "")
+        .replace(/[^0-9A-Fa-f]/g, "").length;
+      if (hexLen === 64) keyVersion = 6;
+      else if (hexLen === 40) keyVersion = 4;
     }
 
+    const deprecationWarnings = collectDeprecationWarnings({
+      primary: primaryAlgoInfo,
+      subkeys: subAlgoInfos,
+      hashAlgorithm: prefs.hashAlgorithm,
+    });
+    const deprecationHtml = renderDeprecationNotice(deprecationWarnings);
+    const preferencesHtml = pgpKey ? renderPreferencesCard(prefs) : "";
+    const notationsHtml = renderNotationsCard(prefs.notations || []);
+    const bindingWarnHtml = bindingWarnings.length
+      ? `<div class="card deprecation-notice" role="status">
+          <p class="card-title">v6 subkey binding</p>
+          <ul class="deprecation-list m-0">${bindingWarnings
+            .map((w) => `<li>${escapeHtml(w)}</li>`)
+            .join("")}</ul>
+        </div>`
+      : "";
     // Prefer DB value (set at ingest); fall back to OpenPGP.js for legacy rows.
     const expirySource = record.key_expiration || pgpExpiry;
     const expiryInfo = describeExpiry(expirySource);
@@ -265,9 +399,25 @@ async function loadKey() {
     });
 
     const fpDisplay = formatFingerprint(record.fingerprint);
-    const fpRaw = String(record.fingerprint || "").toUpperCase();
+    const fpRaw = String(record.fingerprint || "")
+      .toUpperCase()
+      .replace(/[^0-9A-F]/g, "");
     const keyId = String(record.key_id || "");
     const pageUrl = `${window.location.origin}/key?fpr=${encodeURIComponent(fpRaw)}`;
+    const firstSeen = record.created_at ? formatDate(record.created_at) : "—";
+    const lastModified = record.updated_at ? formatDate(record.updated_at) : "—";
+    const tofuHtml = `<div class="card">
+        <div class="card-title-row">
+          <p class="card-title m-0">Key continuity (server TOFU)</p>
+          <a class="text-link fs-sm" href="/api/v1/key/${encodeURIComponent(fpRaw)}/history" target="_blank" rel="noopener">History JSON</a>
+        </div>
+        <dl class="key-meta-grid">
+          ${metaRow("First seen", escapeHtml(firstSeen))}
+          ${metaRow("Last modified", escapeHtml(lastModified))}
+          ${metaRow("SHA-256", `<code class="fpr">${escapeHtml(record.sha256 || "—")}</code>`)}
+        </dl>
+        <p class="muted fs-sm mb-0">Compare these timestamps and digests on later visits to detect silent key substitution.</p>
+      </div>`;
     const claimerHtml = record.claimer_email
       ? `<a class="text-link" href="${escapeHtml(searchUrl(record.claimer_email))}" title="Search for this email">${escapeHtml(record.claimer_email)}</a>`
       : "";
@@ -297,22 +447,40 @@ async function loadKey() {
          <span id="label-status" class="label-status hidden"></span>`
       : "";
 
+    const primaryUid =
+      (record.approved_uids && record.approved_uids[0]) ||
+      (record.pending_uids && record.pending_uids[0]) ||
+      null;
+    const richUid = {
+      name:
+        primaryUid && typeof primaryUid === "object"
+          ? String(primaryUid.name || "").trim()
+          : "",
+      email: uidEmail(primaryUid),
+    };
+    const fprUri = openpgp4fprUri(fpRaw);
+    const richPayload = richOpenpgpQrPayload(fpRaw, richUid);
     let verifyQrHtml = "";
     try {
-      const uri = openpgp4fprUri(fpRaw);
-      const svg = qrSvg(uri, { moduleSize: 3, margin: 2 });
+      const svgFpr = qrSvg(fprUri, { moduleSize: 3, margin: 2 });
       verifyQrHtml = `
       <div class="card verify-card">
         <div class="card-title-row">
           <p class="card-title m-0">Out-of-band verify</p>
           <a class="text-link" href="/verify?fpr=${encodeURIComponent(fpRaw)}">Open verifier</a>
         </div>
+        <label class="field-label field-label-inline mb-md">
+          <input type="checkbox" id="rich-qr-toggle"
+            data-fpr-uri="${escapeHtml(fprUri)}"
+            data-rich-payload="${escapeHtml(richPayload)}">
+          Rich QR (include name/email for offline check)
+        </label>
         <div class="verify-qr-row">
-          <div class="verify-qr" aria-hidden="true">${svg}</div>
+          <div class="verify-qr" id="verify-qr-svg" aria-hidden="true">${svgFpr}</div>
           <div>
             <p class="m-0-b-sm">Compare this fingerprint in person or over a trusted channel.</p>
             <p class="muted fpr m-0-b-md">${escapeHtml(fpDisplay)}</p>
-            <p class="muted m-0 fs-sm">QR encodes <code>${escapeHtml(uri)}</code> (OpenKeychain-compatible). Always confirm the email and full fingerprint — never trust a name alone.</p>
+            <p class="muted m-0 fs-sm" id="verify-qr-caption">QR encodes <code>${escapeHtml(fprUri)}</code> (OpenKeychain-compatible). Always confirm the email and full fingerprint — never trust a name alone.</p>
           </div>
         </div>
       </div>`;
@@ -363,6 +531,8 @@ async function loadKey() {
       </div>
 
       ${revokedBanner}
+      ${deprecationHtml}
+      ${bindingWarnHtml}
 
       <div class="card">
         <p class="card-title">Key information</p>
@@ -375,6 +545,18 @@ async function loadKey() {
             "Key ID",
             `<span class="meta-with-action"><a class="text-link" href="${escapeHtml(searchUrl(`0x${keyId}`))}" title="Search by key ID"><code>${escapeHtml(keyId)}</code></a>${copyButton("Copy", keyId, "copy-keyid")}</span>`
           )}
+          ${
+            keyVersion
+              ? metaRow(
+                  "Version",
+                  `<span class="key-version-badge">v${escapeHtml(String(keyVersion))}</span>${
+                    keyVersion === 6
+                      ? ` <span class="muted fs-sm">(${fpRaw.length}-hex fingerprint)</span>`
+                      : ""
+                  }`
+                )
+              : ""
+          }
           ${metaRow("Algorithm", escapeHtml(algo))}
           ${metaRow("Created", escapeHtml(created))}
           ${metaRow("Primary expires", expiryHtml)}
@@ -382,6 +564,10 @@ async function loadKey() {
           ${claimerHtml ? metaRow("Claimed by", claimerHtml) : ""}
         </dl>
       </div>
+
+      ${tofuHtml}
+      ${preferencesHtml}
+      ${notationsHtml}
 
       ${verifyQrHtml}
 
@@ -410,6 +596,26 @@ async function loadKey() {
     content.classList.remove("hidden");
 
     wireSnippetCopy(content);
+
+    const richToggle = document.getElementById("rich-qr-toggle");
+    const qrSvgEl = document.getElementById("verify-qr-svg");
+    const qrCaption = document.getElementById("verify-qr-caption");
+    richToggle?.addEventListener("change", () => {
+      if (!(richToggle instanceof HTMLInputElement) || !qrSvgEl) return;
+      const fprUri = richToggle.dataset.fprUri || "";
+      const rich = richToggle.dataset.richPayload || "";
+      const payload = richToggle.checked ? rich : fprUri;
+      try {
+        qrSvgEl.innerHTML = qrSvg(payload, { moduleSize: 3, margin: 2 });
+        if (qrCaption) {
+          qrCaption.innerHTML = richToggle.checked
+            ? `Rich QR includes UID text plus <code>${escapeHtml(fprUri)}</code> for offline identity check.`
+            : `QR encodes <code>${escapeHtml(fprUri)}</code> (OpenKeychain-compatible). Always confirm the email and full fingerprint — never trust a name alone.`;
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    });
 
     // Label edit (claimer only)
     const labelEditBtn = document.getElementById("label-edit-btn");

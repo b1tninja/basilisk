@@ -3,7 +3,8 @@
  */
 
 /**
- * Normalize a fingerprint or openpgp4fpr URI to 40 hex uppercase chars.
+ * Normalize a fingerprint or openpgp4fpr URI to hex uppercase chars.
+ * Accepts v4 (40) and v6 (64) lengths.
  * @param {string} raw
  * @returns {string}
  */
@@ -16,6 +17,14 @@ export function normalizeFingerprintInput(raw) {
 }
 
 /**
+ * @param {string} hex
+ * @returns {boolean}
+ */
+function isValidFprLength(hex) {
+  return hex.length === 40 || hex.length === 64;
+}
+
+/**
  * @param {string} expected
  * @param {string} scanned
  * @returns {{ ok: boolean, expected: string, scanned: string, reason: string }}
@@ -23,11 +32,21 @@ export function normalizeFingerprintInput(raw) {
 export function compareFingerprints(expected, scanned) {
   const a = normalizeFingerprintInput(expected);
   const b = normalizeFingerprintInput(scanned);
-  if (!a || a.length !== 40) {
-    return { ok: false, expected: a, scanned: b, reason: "Expected fingerprint is missing or invalid." };
+  if (!a || !isValidFprLength(a)) {
+    return {
+      ok: false,
+      expected: a,
+      scanned: b,
+      reason: "Expected fingerprint is missing or invalid.",
+    };
   }
-  if (!b || b.length !== 40) {
-    return { ok: false, expected: a, scanned: b, reason: "Scanned fingerprint is missing or invalid." };
+  if (!b || !isValidFprLength(b)) {
+    return {
+      ok: false,
+      expected: a,
+      scanned: b,
+      reason: "Scanned fingerprint is missing or invalid.",
+    };
   }
   if (a !== b) {
     return { ok: false, expected: a, scanned: b, reason: "Fingerprints do not match." };

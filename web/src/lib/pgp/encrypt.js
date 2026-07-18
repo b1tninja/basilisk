@@ -97,6 +97,7 @@ export async function encryptArtifacts(request) {
     payloads = [],
     profile,
     hideRecipients = false,
+    signingKeys = [],
   } = request;
   if (!payloads.length) return [];
   if (!recipients.length && !passwords.length) {
@@ -110,6 +111,7 @@ export async function encryptArtifacts(request) {
     wildcard: !!hideRecipients,
     ...(recipients.length ? { encryptionKeys: recipients } : {}),
     ...(passwords.length ? { passwords } : {}),
+    ...(signingKeys.length ? { signingKeys } : {}),
   };
 
   /** @type {import("./types.js").EncryptArtifact[]} */

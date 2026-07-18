@@ -19,6 +19,8 @@ class CertRecord:
     revoked: bool = False
     key_expiration: str | None = None
     label: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class CertStore(Protocol):
@@ -93,6 +95,21 @@ class CertStore(Protocol):
 
     def set_label(self, fingerprint: str, label: str | None) -> None:
         """Set (or clear) the owner-supplied friendly label for a key."""
+        ...
+
+    def append_history(
+        self,
+        fingerprint: str,
+        sha256: str,
+        event: str,
+        *,
+        recorded_at: str | None = None,
+    ) -> None:
+        """Append a digest history row (first_seen / blob_changed)."""
+        ...
+
+    def list_history(self, fingerprint: str) -> list[dict[str, str]]:
+        """Return chronological history rows for a fingerprint."""
         ...
 
     def stats(self) -> dict[str, int]: ...

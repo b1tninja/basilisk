@@ -11,7 +11,7 @@ from basilisk.db.sqlite_store import SqliteCertStore, sha256_hex
 from basilisk.openpgp.certifications import merge_attested_certifications
 from basilisk.openpgp.errors import IngestError
 from basilisk.openpgp.ingest import parse_armored_keytext
-from basilisk.openpgp.packets import dearmor, list_third_party_certifications
+from basilisk.openpgp.packets import armor_public_key, dearmor, list_third_party_certifications
 
 
 @pytest.fixture
@@ -28,10 +28,23 @@ def store_and_blobs(tmp_path):
     return store, blobs
 
 
-def _approve_sample(store, blobs, sample_armored: str):
+def _clear_no_modify(binary: bytes) -> bytes:
+    data = bytearray(binary)
+    needle = bytes([2, 23, 0x80])
+    idx = bytes(data).find(needle)
+    if idx >= 0:
+        data[idx + 2] = 0
+    return bytes(data)
+
+
+def _approve_sample(store, blobs, sample_armored: str, *, clear_no_modify: bool = True):
+    """Approve sample key; clear no-modify by default so merge tests can exercise later checks."""
     parsed = parse_armored_keytext(sample_armored, path="v1")
-    digest = sha256_hex(parsed.armored)
-    uri = blobs.write_cert(parsed.fingerprint, digest, parsed.armored)
+    raw = parsed.armored
+    if clear_no_modify:
+        raw = armor_public_key(_clear_no_modify(dearmor(parsed.armored)))
+    digest = sha256_hex(raw)
+    uri = blobs.write_cert(parsed.fingerprint, digest, raw)
     store.upsert_pending(
         parsed.fingerprint,
         uri,
@@ -79,9 +92,7 @@ def test_merge_rejects_unapproved_issuer(store_and_blobs, sample_armored):
     body += (0).to_bytes(2, "big")
     body += b"\x00" * 34
     fake_sig = bytes([0xC2, len(body)]) + body
-    from basilisk.openpgp.packets import armor_public_key
-
-    uploaded = armor_public_key(binary + fake_sig).decode("utf-8")
+    uploaded = armor_public_key(_clear_no_modify(binary) + fake_sig).decode("utf-8")
 
     with pytest.raises(IngestError) as exc:
         merge_attested_certifications(store, blobs, parsed.fingerprint, uploaded)

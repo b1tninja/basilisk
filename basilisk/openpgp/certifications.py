@@ -15,6 +15,7 @@ from basilisk.openpgp.ingest import normalize_fingerprint
 from basilisk.openpgp.packets import (
     armor_public_key,
     dearmor,
+    has_keyserver_no_modify,
     list_third_party_certifications,
     strip_third_party_from_armored,
     strip_third_party_sigs,
@@ -136,6 +137,18 @@ def merge_attested_certifications(
         )
 
     stored = blobs.read(record.blob_uri)
+    try:
+        if has_keyserver_no_modify(dearmor(stored), fpr):
+            raise IngestError(
+                "Target key sets key server preference no-modify; "
+                "third-party certifications cannot be merged (RFC 9580 §5.2.3.25)",
+                422,
+            )
+    except IngestError:
+        raise
+    except Exception:
+        logger.debug("no-modify preference check skipped for %s", fpr, exc_info=True)
+
     try:
         base_cert = Cert.from_bytes(stored)
     except Exception as exc:

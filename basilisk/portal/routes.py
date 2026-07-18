@@ -71,6 +71,8 @@ def register_portal_api(app: Flask) -> None:
             "sha256": record.sha256,
             "certifications": [],
             "label": record.label,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
         }
 
         if record.approval_state == "approved" and record.blob_uri:
@@ -112,6 +114,41 @@ def register_portal_api(app: Flask) -> None:
             payload["pending_uids"] = []
 
         return Response(json.dumps(payload), mimetype="application/json")
+
+    @app.get("/api/v1/key/<fingerprint>/history")
+    def api_key_history(fingerprint: str) -> Response:
+        """Timestamped digest log for TOFU / substitution detection."""
+        store = get_store(settings)
+        record = store.get_by_fingerprint(fingerprint)
+        if not record:
+            return Response(
+                json.dumps({"error": "Not found"}),
+                status=404,
+                mimetype="application/json",
+            )
+        list_history = getattr(store, "list_history", None)
+        history = list_history(record.fingerprint) if callable(list_history) else []
+        if not history and record.created_at:
+            history = [
+                {
+                    "fingerprint": record.fingerprint,
+                    "sha256": record.sha256,
+                    "event": "first_seen",
+                    "recorded_at": record.created_at,
+                }
+            ]
+        return Response(
+            json.dumps(
+                {
+                    "fingerprint": record.fingerprint,
+                    "sha256": record.sha256,
+                    "created_at": record.created_at,
+                    "updated_at": record.updated_at,
+                    "history": history,
+                }
+            ),
+            mimetype="application/json",
+        )
 
     @app.post("/api/v1/key/<fingerprint>/certifications")
     def api_key_certifications(fingerprint: str) -> Response:

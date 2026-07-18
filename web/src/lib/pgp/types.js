@@ -30,6 +30,7 @@
  * @property {EncryptPayload[]} payloads
  * @property {EncryptProfile} profile
  * @property {boolean} [hideRecipients]  wildcard PKESK key IDs (anonymous recipients)
+ * @property {import("openpgp").PrivateKey[]} [signingKeys]  sign then encrypt (RFC 9580 §2.1)
  */
 
 /**
@@ -94,6 +95,8 @@
  * @property {Array<{ kind: "text"|"file", text?: string, bytes?: ArrayBuffer, filename?: string }>} payloads
  * @property {EncryptProfile} profile
  * @property {boolean} [hideRecipients]
+ * @property {string} [signingKeyArmored]
+ * @property {string} [signingKeyPassphrase]
  */
 
 /**

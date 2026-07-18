@@ -17,8 +17,22 @@ import {
   readPrivateKey,
 } from "openpgp";
 import { encryptArtifacts } from "./pgp/encrypt.js";
+import { intendedRecipientsFromSigPacket } from "./pgp/intended-recipient.js";
 import { zeroKeyMaterial } from "./pgp/memory.js";
 import { runRecipe } from "./toolkit/engine.js";
+
+/**
+ * Unlock an armored private key for signing (worker-local; wiped after use).
+ * @param {string} armored
+ * @param {string} [passphrase]
+ */
+async function unlockSigningKey(armored, passphrase) {
+  let key = await readPrivateKey({ armoredKey: armored });
+  if (!key.isDecrypted()) {
+    key = await decryptKey({ privateKey: key, passphrase: passphrase || "" });
+  }
+  return key;
+}
 
 self.onmessage = async (ev) => {
   const msg = ev.data || {};
@@ -72,9 +86,21 @@ self.onmessage = async (ev) => {
         } catch (_) {
           ok = false;
         }
+        /** @type {string[]} */
+        let intendedRecipients = [];
+        try {
+          const sigObj = await s.signature;
+          for (const pkt of sigObj?.packets || []) {
+            intendedRecipients.push(...intendedRecipientsFromSigPacket(pkt));
+          }
+          intendedRecipients = [...new Set(intendedRecipients)];
+        } catch (_) {
+          intendedRecipients = [];
+        }
         sigStatuses.push({
           keyID: s.keyID?.toHex?.() || "",
           verified: ok,
+          intendedRecipients,
         });
       }
       self.postMessage({
@@ -113,24 +139,42 @@ self.onmessage = async (ev) => {
           });
         }
       }
-      const artifacts = await encryptArtifacts({
-        recipients,
-        passwords: msg.passwords || [],
-        payloads,
-        profile: msg.profile,
-        hideRecipients: !!msg.hideRecipients,
-      });
-      // Wipe any remaining payload buffers (encryptArtifacts already zeroes file bytes).
-      for (const p of payloads) {
-        if (p.bytes instanceof Uint8Array) {
+      /** @type {import("openpgp").PrivateKey[]} */
+      const signingKeys = [];
+      if (msg.signingKeyArmored) {
+        signingKeys.push(
+          await unlockSigningKey(msg.signingKeyArmored, msg.signingKeyPassphrase || "")
+        );
+      }
+      try {
+        const artifacts = await encryptArtifacts({
+          recipients,
+          passwords: msg.passwords || [],
+          payloads,
+          profile: msg.profile,
+          hideRecipients: !!msg.hideRecipients,
+          signingKeys,
+        });
+        // Wipe any remaining payload buffers (encryptArtifacts already zeroes file bytes).
+        for (const p of payloads) {
+          if (p.bytes instanceof Uint8Array) {
+            try {
+              p.bytes.fill(0);
+            } catch (_) {
+              /* ignore */
+            }
+          }
+        }
+        self.postMessage({ id, ok: true, artifacts });
+      } finally {
+        for (const sk of signingKeys) {
           try {
-            p.bytes.fill(0);
+            zeroKeyMaterial(sk);
           } catch (_) {
             /* ignore */
           }
         }
       }
-      self.postMessage({ id, ok: true, artifacts });
     } else if (msg.type === "toolkit-run") {
       // Execute a toolkit recipe AST; return encoded artifacts only.
       // Recipient keys and optional decrypt private key arrive as armored strings.
