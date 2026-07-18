@@ -126,6 +126,9 @@ describe("toolkit recover / combine", () => {
       "decrypt gpg | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
     );
     expect(recover.validation.ok).toBe(true);
+    expect(recover.validation.inputNeeds).toEqual(
+      expect.arrayContaining(["gpg", "shares"])
+    );
     const out = await runRecipe(recover.ast, {
       inputs: {
         gpg: {
@@ -135,6 +138,59 @@ describe("toolkit recover / combine", () => {
           envelopeB64: envelope.content,
         },
         shares: { mnemonics: [], envelopeB64: envelope.content },
+      },
+    });
+    expect(out[0].content).toContain("BEGIN PRIVATE KEY");
+  }, 90_000);
+
+  it("hybrid: one in-browser decrypt + one externally-decrypted mnemonic", async () => {
+    const { privateKey: pgpPriv, publicKey } = await generateKey({
+      type: "ecc",
+      curve: "curve25519",
+      userIDs: [{ name: "Hybrid", email: "h@example.com" }],
+      format: "object",
+    });
+    const fpr = publicKey.getFingerprint().toUpperCase();
+
+    const split = compileRecipe(
+      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg"
+    );
+    const arts = await runRecipe(split.ast, {
+      recipients: [publicKey],
+      recipientFingerprints: [fpr],
+    });
+    const ciphertexts = arts
+      .filter((a) => a.mime === "application/pgp-encrypted")
+      .map((a) => a.content);
+    const envelope = arts.find((a) => /envelope/i.test(a.filename));
+
+    // Simulate Kleopatra/gpg external decrypt of share 0
+    const { decrypt, readMessage } = await import("openpgp");
+    const external = await decrypt({
+      message: await readMessage({ armoredMessage: ciphertexts[0] }),
+      decryptionKeys: pgpPriv,
+      config: { allowInsecureDecryptionWithSigningKeys: true },
+    });
+    const externalMnemonic = String(external.data).trim();
+    expect(validateShareMnemonic(externalMnemonic).ok).toBe(true);
+
+    const recover = compileRecipe(
+      "decrypt gpg | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
+    );
+    // Only one ciphertext left for the browser key; other share is plaintext.
+    // This is the "Need at least 2 shares, got 1" failure mode before the fix.
+    const out = await runRecipe(recover.ast, {
+      inputs: {
+        gpg: {
+          armoredMessages: [ciphertexts[2]],
+          privateKeyArmored: pgpPriv.armor(),
+          passphrase: "",
+          envelopeB64: envelope.content,
+        },
+        shares: {
+          mnemonics: [externalMnemonic],
+          envelopeB64: envelope.content,
+        },
       },
     });
     expect(out[0].content).toContain("BEGIN PRIVATE KEY");

@@ -1,4 +1,4 @@
-import { copyText, escapeHtml } from "./utils.js";
+import { copyButtonHtml, escapeHtml, wireCopyButtons } from "./utils.js";
 
 export function keyserverOrigin() {
   return window.location.origin.replace(/\/$/, "");
@@ -8,7 +8,7 @@ function snippetRow(cmd, id) {
   return `
     <div class="snippet-row">
       <pre class="snippet-code"><code>${escapeHtml(cmd)}</code></pre>
-      <button type="button" class="btn btn-ghost btn-compact" data-copy="${escapeHtml(cmd)}" id="${escapeHtml(id)}">Copy</button>
+      ${copyButtonHtml("Copy", cmd, { id })}
     </div>`;
 }
 
@@ -120,25 +120,5 @@ export function renderSearchHelpSnippets() {
 }
 
 export function wireSnippetCopy(_root) {
-  if (wireSnippetCopy._bound) return;
-  wireSnippetCopy._bound = true;
-  document.addEventListener("click", async (e) => {
-    const btn = e.target.closest("[data-copy]");
-    if (!btn) return;
-    e.preventDefault();
-    const value = btn.getAttribute("data-copy") || "";
-    const original = btn.textContent;
-    try {
-      await copyText(value);
-      btn.textContent = "Copied";
-      setTimeout(() => {
-        btn.textContent = original;
-      }, 1500);
-    } catch (_) {
-      btn.textContent = "Failed";
-      setTimeout(() => {
-        btn.textContent = original;
-      }, 1500);
-    }
-  });
+  wireCopyButtons();
 }

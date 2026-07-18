@@ -5,6 +5,7 @@ import { collectDeprecationWarnings } from "../lib/pgp/deprecation.js";
 import { readKeyPreferences } from "../lib/pgp/preferences.js";
 import { openpgp4fprUri, qrSvg, richOpenpgpQrPayload } from "../lib/qr.js";
 import {
+  copyButtonHtml,
   copyText,
   describeExpiry,
   escapeHtml,
@@ -43,7 +44,7 @@ function metaRow(label, valueHtml) {
 }
 
 function copyButton(label, value, id) {
-  return `<button type="button" class="btn btn-ghost btn-compact" data-copy="${escapeHtml(value)}" id="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
+  return copyButtonHtml(label, value, { id });
 }
 
 function usageTags(keyPacket) {

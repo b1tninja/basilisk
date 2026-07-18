@@ -14,3 +14,16 @@ export function splitArmoredMessages(text) {
   }
   return out;
 }
+
+/**
+ * Text remaining after removing armored MESSAGE blocks (for hybrid pastes
+ * that interleave ciphertext with already-decrypted mnemonics).
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripArmoredMessages(text) {
+  return String(text || "").replace(
+    /-----BEGIN PGP MESSAGE-----[\s\S]*?-----END PGP MESSAGE-----/g,
+    "\n"
+  );
+}

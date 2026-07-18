@@ -1905,14 +1905,25 @@ pre {
 }
 
 /* Passphrase suggestion + vault export panel */
+.suggested-pw-host:not(.hidden) {
+  display: block;
+  margin: 0.5rem 0 0;
+}
+.suggested-pw-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem 0.65rem;
+}
 .suggested-pw {
+  flex: 1 1 12rem;
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.85rem;
   background: var(--bg-subtle, rgba(127, 127, 127, 0.1));
   border: 1px dashed var(--border, #555);
   border-radius: 6px;
   padding: 0.5rem 0.65rem;
-  margin: 0.5rem 0 0;
+  margin: 0;
   word-break: break-all;
   user-select: all;
 }

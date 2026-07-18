@@ -1,6 +1,13 @@
 import { Auth } from "../lib/auth.js";
 import { generateKeyViaWorker } from "../lib/generate-key.js";
-import { escapeHtml, fetchJson, formatFingerprint, showError } from "../lib/utils.js";
+import {
+  copyButtonHtml,
+  escapeHtml,
+  fetchJson,
+  formatFingerprint,
+  showError,
+  wireCopyButtons,
+} from "../lib/utils.js";
 import { renderKeysTable, renderUploadCard, wireUploadForm } from "../lib/keys.js";
 import { estimatePassphraseStrength } from "../lib/pgp/passphrase.js";
 
@@ -13,6 +20,24 @@ import { estimatePassphraseStrength } from "../lib/pgp/passphrase.js";
 async function suggestPassphrase(words = 6) {
   const { generateWordPassphrase } = await import("../lib/passphrase-gen.js");
   return generateWordPassphrase(words);
+}
+
+/**
+ * Visible suggested passphrase with a copy control (clipboard clears after 60s).
+ * @param {string} passphrase
+ * @param {number} bits
+ * @param {string} hint
+ * @returns {string}
+ */
+function suggestedPassphraseHtml(passphrase, bits, hint) {
+  return `
+    <div class="suggested-pw-row">
+      <p class="suggested-pw mb-0">${escapeHtml(passphrase)} <span class="muted">(~${bits} bits — ${escapeHtml(hint)})</span></p>
+      ${copyButtonHtml("Copy", passphrase, {
+        transientMs: 60000,
+        title: "Copy passphrase (clipboard clears in 60s)",
+      })}
+    </div>`;
 }
 import {
   armoredToBinary,
@@ -98,6 +123,7 @@ function renderKeyLabelsSection(keys) {
         <details class="key-label-details">
           <summary class="key-label-summary">
             <code class="fpr">${escapeHtml(fpDisplay)}</code>
+            ${copyButtonHtml("Copy", fpr, { title: "Copy fingerprint" })}
             ${item.label ? `<span class="key-label">🏷 ${escapeHtml(item.label)}</span>` : ""}
           </summary>
           <div class="key-label-body">
@@ -188,7 +214,7 @@ function renderGenerateCard(userEmail) {
           <div class="btn-row mt-sm">
             <button type="button" class="btn btn-ghost btn-compact" id="gen-suggest-pw">Suggest a passphrase</button>
           </div>
-          <p id="gen-suggested-pw" class="suggested-pw hidden"></p>
+          <p id="gen-suggested-pw" class="suggested-pw-host hidden"></p>
           <div id="gen-pw-strength-meter" class="pw-strength-meter mt-sm" data-strength="empty">
             <div class="pw-strength-fill"></div>
           </div>
@@ -239,7 +265,7 @@ function renderExportPanel(k) {
                placeholder="Export passphrase" autocomplete="new-password" data-fpr="${fpr}">
         <button type="button" class="btn btn-ghost btn-compact" data-export-suggest="${fpr}">Suggest</button>
       </div>
-      <p class="suggested-pw hidden" data-export-suggested="${fpr}"></p>`
+      <p class="suggested-pw-host hidden" data-export-suggested="${fpr}"></p>`
     : `
       <p class="muted fs-sm m-0-b-sm">
         Exports keep the key's existing passphrase protection — GnuPG will ask
@@ -329,7 +355,7 @@ function renderImportCard() {
             <input type="password" id="import-passphrase" class="text-input maxw-280" autocomplete="new-password">
             <button type="button" class="btn btn-ghost btn-compact" id="import-suggest-pw">Suggest</button>
           </div>
-          <p id="import-suggested-pw" class="suggested-pw hidden"></p>
+          <p id="import-suggested-pw" class="suggested-pw-host hidden"></p>
         </div>
         <div class="btn-row mt-md">
           <button type="submit" class="btn" id="import-submit-btn">Import into vault</button>
@@ -552,7 +578,11 @@ function wireGenerateForm(user) {
     if (p2 instanceof HTMLInputElement) p2.value = passphrase;
     const out = document.getElementById("gen-suggested-pw");
     if (out) {
-      out.textContent = `${passphrase} (~${bits} bits — write it down before continuing)`;
+      out.innerHTML = suggestedPassphraseHtml(
+        passphrase,
+        bits,
+        "write it down before continuing"
+      );
       out.classList.remove("hidden");
     }
     updateMeter();
@@ -719,7 +749,11 @@ function wireVaultActions() {
         `[data-export-suggested="${CSS.escape(fpr)}"]`
       );
       if (out) {
-        out.textContent = `${passphrase} (~${bits} bits — write it down; you need it to import the key)`;
+        out.innerHTML = suggestedPassphraseHtml(
+          passphrase,
+          bits,
+          "write it down; you need it to import the key"
+        );
         out.classList.remove("hidden");
       }
       return;
@@ -854,7 +888,7 @@ function wireImportForm() {
     if (input instanceof HTMLInputElement) input.value = passphrase;
     const out = document.getElementById("import-suggested-pw");
     if (out) {
-      out.textContent = `${passphrase} (~${bits} bits — write it down)`;
+      out.innerHTML = suggestedPassphraseHtml(passphrase, bits, "write it down");
       out.classList.remove("hidden");
     }
   });
@@ -949,4 +983,5 @@ document.addEventListener("click", async (e) => {
 });
 
 Auth.initWidget(document.getElementById("auth-widget"), "/my-keys");
+wireCopyButtons();
 loadMyKeys();

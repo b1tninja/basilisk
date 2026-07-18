@@ -163,6 +163,71 @@ export async function copyText(text) {
 }
 
 /**
+ * Compact copy control for IDs, passphrases, etc.
+ * Prefer {@link wireCopyButtons} (or snippets `wireSnippetCopy`) for click handling.
+ * @param {string} label
+ * @param {string} value
+ * @param {{ id?: string, className?: string, transientMs?: number, title?: string }} [opts]
+ * @returns {string}
+ */
+export function copyButtonHtml(label, value, opts = {}) {
+  const classes = ["btn", "btn-ghost", "btn-compact", opts.className || ""]
+    .filter(Boolean)
+    .join(" ");
+  const idAttr = opts.id ? ` id="${escapeHtml(opts.id)}"` : "";
+  const titleAttr = opts.title
+    ? ` title="${escapeHtml(opts.title)}"`
+    : "";
+  const transientAttr =
+    opts.transientMs != null
+      ? ` data-copy-transient="${Number(opts.transientMs)}"`
+      : "";
+  return `<button type="button" class="${classes}" data-copy="${escapeHtml(String(value || ""))}"${idAttr}${titleAttr}${transientAttr}>${escapeHtml(label)}</button>`;
+}
+
+/**
+ * Flash button label to "Copied" / "Failed" briefly.
+ * @param {HTMLElement} btn
+ * @param {string} [okLabel="Copied"]
+ */
+export function flashCopied(btn, okLabel = "Copied") {
+  const original = btn.textContent || "Copy";
+  btn.textContent = okLabel;
+  setTimeout(() => {
+    btn.textContent = original;
+  }, 1500);
+}
+
+let _copyButtonsWired = false;
+
+/**
+ * Global delegated handler for `[data-copy]` buttons.
+ * Optional `data-copy-transient` (ms) clears the clipboard after that delay.
+ */
+export function wireCopyButtons() {
+  if (_copyButtonsWired) return;
+  _copyButtonsWired = true;
+  document.addEventListener("click", async (e) => {
+    const btn = e.target instanceof Element ? e.target.closest("[data-copy]") : null;
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const value = btn.getAttribute("data-copy") || "";
+    const transientRaw = btn.getAttribute("data-copy-transient");
+    try {
+      if (transientRaw != null && transientRaw !== "") {
+        await copyTextTransient(value, Number(transientRaw) || 60000);
+      } else {
+        await copyText(value);
+      }
+      flashCopied(btn);
+    } catch (_) {
+      flashCopied(btn, "Failed");
+    }
+  });
+}
+
+/**
  * Copy text, then best-effort clear the clipboard after `ms` if the document
  * is still focused (cloud clipboard sync / long-lived pastes are a risk for
  * decrypted plaintext).

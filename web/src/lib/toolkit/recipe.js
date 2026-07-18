@@ -454,6 +454,9 @@ export function validateRecipe(ast) {
       }
       sawDecryptGpg = true;
       if (!inputNeeds.includes("gpg")) inputNeeds.push("gpg");
+      // Share rows for mnemonics already decrypted outside the browser
+      // (Kleopatra/gpg/YubiKey — OpenPGP cards are not reachable from JS).
+      if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
     }
 
     if (step.name === "foreach") {
@@ -711,7 +714,8 @@ export const PRESETS = [
   {
     id: "decrypt-rebuild-p256",
     title: "Decrypt GPG shares → rebuild key",
-    blurb: "Decrypt OpenPGP-wrapped shares, combine, and rebuild the P-256 PEM.",
+    blurb:
+      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then combine and rebuild the P-256 PEM.",
     recipe:
       "decrypt gpg | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem",
   },

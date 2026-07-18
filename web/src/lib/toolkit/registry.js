@@ -140,7 +140,7 @@ export const STEPS = [
   {
     name: "decrypt",
     kind: "source",
-    doc: "Decrypt OpenPGP ciphertext supplied at run time (gpg --decrypt). Private key is unlocked ephemerally and scrubbed.",
+    doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext SLIP-39 mnemonics. Browser vault keys only — OpenPGP smartcards/YubiKey GPG are not available to web pages; decrypt those shares externally and paste the mnemonics.",
     input: "none",
     output: "shares",
     unresolvedInputs: "gpg",

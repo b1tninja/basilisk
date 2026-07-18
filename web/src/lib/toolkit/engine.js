@@ -13,7 +13,11 @@ import { generateWordPassphrase } from "../passphrase-gen.js";
 import { qrSvg } from "../qr.js";
 import { PROFILE_AUTO, encryptArtifacts } from "../pgp/encrypt.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
-import { combineShares, splitShares } from "../slip39/slip39.js";
+import {
+  combineShares,
+  splitShares,
+  validateShareMnemonic,
+} from "../slip39/slip39.js";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -359,10 +363,21 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
         String(value.meta?.passphrase || "") ||
         "";
       const envelope = value.data.envelope || value.meta?.envelope || null;
-      const secret = await combineShares(mnemonics, {
-        passphrase: passphrase || undefined,
-        envelope,
-      });
+      let secret;
+      try {
+        secret = await combineShares(mnemonics, {
+          passphrase: passphrase || undefined,
+          envelope,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/Need at least \d+ shares/i.test(msg)) {
+          throw new Error(
+            `${msg}. If some shares were decrypted outside the browser (Kleopatra/gpg/YubiKey), paste those mnemonics in the share rows and keep remaining OpenPGP ciphertext in the GPG panel.`
+          );
+        }
+        throw err;
+      }
       return {
         type: "bytes",
         data: secret,
@@ -447,7 +462,31 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
 }
 
 /**
- * Decrypt one or more armored OpenPGP messages into share-like texts.
+ * True when text looks like an OpenPGP armored message (not a bare mnemonic).
+ * @param {string} text
+ */
+function looksLikePgpMessage(text) {
+  return /-----BEGIN PGP MESSAGE-----/i.test(String(text || ""));
+}
+
+/**
+ * Normalize and accept a SLIP-39 mnemonic if the checksum validates.
+ * @param {string} text
+ * @returns {string|null}
+ */
+function asShareMnemonic(text) {
+  const normalized = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return null;
+  return validateShareMnemonic(normalized).ok ? normalized : null;
+}
+
+/**
+ * Decrypt OpenPGP-wrapped shares and/or accept already-plaintext mnemonics.
+ * Merges share-panel mnemonics (e.g. decrypted externally via Kleopatra/gpg)
+ * with in-browser decrypt results — browsers cannot use OpenPGP smartcards /
+ * YubiKey GPG applets, so hybrid recovery is the supported path.
  * @param {RuntimeBindings} bindings
  * @param {ToolkitArtifact[]} _artifacts
  * @returns {Promise<PipelineValue>}
@@ -455,38 +494,97 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
 async function decryptGpgSource(bindings, _artifacts) {
   void _artifacts;
   const gpg = bindings.inputs?.gpg;
-  if (!gpg?.armoredMessages?.length) {
-    throw new Error("No GPG ciphertext provided — paste armored messages before running.");
-  }
-  if (!gpg.privateKeyArmored) {
-    throw new Error("No private key bound — unlock a vault key or paste one before running.");
+  const external = (bindings.inputs?.shares?.mnemonics || [])
+    .map((m) => asShareMnemonic(String(m)))
+    .filter(Boolean);
+  const chunks = gpg?.armoredMessages || [];
+
+  /** @type {string[]} */
+  const ciphertexts = [];
+  /** @type {string[]} */
+  const mnemonics = [...external];
+  /** @type {string[]} */
+  const problems = [];
+
+  for (const raw of chunks) {
+    const text = String(raw || "").trim();
+    if (!text) continue;
+    if (looksLikePgpMessage(text)) {
+      ciphertexts.push(text);
+      continue;
+    }
+    const mnemonic = asShareMnemonic(text);
+    if (mnemonic) {
+      mnemonics.push(mnemonic);
+      continue;
+    }
+    problems.push(
+      "A pasted block was neither an OpenPGP message nor a valid SLIP-39 mnemonic"
+    );
   }
 
-  let privateKey = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
+  if (!ciphertexts.length && !mnemonics.length) {
+    throw new Error(
+      "Paste OpenPGP-encrypted shares and/or already-decrypted SLIP-39 mnemonics (share rows)."
+    );
+  }
+
+  /** @type {import("openpgp").PrivateKey|null} */
+  let privateKey = null;
   try {
-    if (!privateKey.isDecrypted()) {
-      privateKey = await decryptKey({
-        privateKey,
-        passphrase: gpg.passphrase || "",
-      });
+    if (ciphertexts.length) {
+      if (!gpg?.privateKeyArmored) {
+        throw new Error(
+          `${ciphertexts.length} OpenPGP message(s) still need a browser-unlockable private key. ` +
+            `YubiKey/OpenPGP smartcards are not available to the browser — decrypt those shares in Kleopatra/gpg, then paste the mnemonics into the share rows.`
+        );
+      }
+      privateKey = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
+      if (!privateKey.isDecrypted()) {
+        privateKey = await decryptKey({
+          privateKey,
+          passphrase: gpg.passphrase || "",
+        });
+      }
+      for (const armored of ciphertexts) {
+        try {
+          const result = await openpgpDecrypt({
+            message: await readMessage({ armoredMessage: armored }),
+            decryptionKeys: privateKey,
+            config: { allowInsecureDecryptionWithSigningKeys: true },
+          });
+          const plaintext =
+            typeof result.data === "string"
+              ? result.data
+              : new TextDecoder().decode(result.data);
+          const mnemonic = asShareMnemonic(plaintext) || String(plaintext).trim();
+          if (mnemonic) mnemonics.push(mnemonic);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          problems.push(`Decrypt failed: ${msg}`);
+        }
+      }
     }
+
     /** @type {string[]} */
-    const mnemonics = [];
-    for (const armored of gpg.armoredMessages) {
-      const result = await openpgpDecrypt({
-        message: await readMessage({ armoredMessage: armored }),
-        decryptionKeys: privateKey,
-        config: { allowInsecureDecryptionWithSigningKeys: true },
-      });
-      const plaintext =
-        typeof result.data === "string"
-          ? result.data
-          : new TextDecoder().decode(result.data);
-      mnemonics.push(String(plaintext).trim());
+    const unique = [];
+    /** @type {Set<string>} */
+    const seen = new Set();
+    for (const m of mnemonics) {
+      const key = String(m).replace(/\s+/g, " ").trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      unique.push(key);
     }
+
+    if (!unique.length) {
+      const detail = problems.length ? ` (${problems.join("; ")})` : "";
+      throw new Error(`No share mnemonics recovered${detail}`);
+    }
+
     /** @type {Uint8Array|null} */
     let envelope = null;
-    if (gpg.envelopeB64) {
+    if (gpg?.envelopeB64) {
       envelope = base64ToBytes(String(gpg.envelopeB64).replace(/\s+/g, ""));
     } else if (bindings.inputs?.shares?.envelopeB64) {
       envelope = base64ToBytes(
@@ -496,16 +594,21 @@ async function decryptGpgSource(bindings, _artifacts) {
     return {
       type: "shares",
       data: {
-        mnemonics,
+        mnemonics: unique,
         envelope,
         threshold: 0,
-        shares: mnemonics.length,
+        shares: unique.length,
         enveloped: !!envelope,
       },
-      meta: { sensitive: true, envelope },
+      meta: {
+        sensitive: true,
+        envelope,
+        passphrase: bindings.inputs?.shares?.passphrase || "",
+        decryptNotes: problems,
+      },
     };
   } finally {
-    zeroKeyMaterial(privateKey);
+    if (privateKey) zeroKeyMaterial(privateKey);
   }
 }
 

@@ -24,11 +24,12 @@ import {
   unlockKey as vaultUnlockKey,
 } from "../lib/vault.js";
 import {
-  copyText,
+  copyButtonHtml,
   escapeHtml,
   fetchJson,
   formatFingerprint,
   showError,
+  wireCopyButtons,
 } from "../lib/utils.js";
 import "../css/site.css";
 
@@ -96,10 +97,13 @@ function render() {
           <div id="audience-dropdown" class="recipient-dropdown hidden"></div>
         </div>
         <div id="audience-pills" class="recipient-pills mt-md"></div>
-        <p id="derived-room" class="mono mt-md muted">Room ID: —</p>
+        <div id="derived-room-row" class="meta-with-action mt-md">
+          <p id="derived-room" class="mono muted mb-0">Room ID: —</p>
+          <button type="button" class="btn btn-ghost btn-compact hidden" id="copy-room-btn" title="Copy room ID">Copy ID</button>
+          <button type="button" class="btn btn-ghost btn-compact hidden" id="copy-audience-btn" title="Copy audience fingerprints">Copy audience</button>
+        </div>
         <div class="btn-row mt-md">
           <button type="button" class="btn" id="create-join-btn">Create &amp; join</button>
-          <button type="button" class="btn btn-ghost" id="copy-room-btn">Copy room ID</button>
         </div>
       </div>
 
@@ -202,17 +206,36 @@ function renderAudiencePills() {
 
 async function updateDerivedRoom() {
   const el = document.getElementById("derived-room");
+  const copyRoom = document.getElementById("copy-room-btn");
+  const copyAud = document.getElementById("copy-audience-btn");
   if (!el) return;
   if (audience.length < 2) {
     el.textContent = "Room ID: — (need at least two fingerprints)";
+    delete el.dataset.roomId;
+    copyRoom?.classList.add("hidden");
+    copyAud?.classList.add("hidden");
     return;
   }
   try {
     const id = await deriveRoomId(audience.map((a) => a.fingerprint));
     el.textContent = `Room ID: ${id}`;
     el.dataset.roomId = id;
+    if (copyRoom instanceof HTMLButtonElement) {
+      copyRoom.classList.remove("hidden");
+      copyRoom.setAttribute("data-copy", id);
+    }
+    if (copyAud instanceof HTMLButtonElement) {
+      copyAud.classList.remove("hidden");
+      copyAud.setAttribute(
+        "data-copy",
+        audience.map((a) => a.fingerprint).join("\n")
+      );
+    }
   } catch (err) {
     el.textContent = `Room ID: error — ${err.message || err}`;
+    delete el.dataset.roomId;
+    copyRoom?.classList.add("hidden");
+    copyAud?.classList.add("hidden");
   }
 }
 
@@ -269,6 +292,7 @@ function renderRoster(peers) {
         .join(" ");
       return `<li>
         <code class="mono">${escapeHtml(formatFingerprint(p.fingerprint))}</code>
+        ${copyButtonHtml("Copy", p.fingerprint, { title: "Copy fingerprint" })}
         ${badges}
         <span class="muted fs-sm">${escapeHtml(p.status)}</span>
         ${trustBadgeHtml(p.fingerprint)}
@@ -527,13 +551,12 @@ function wireEvents() {
       return;
     }
 
-    if (t.id === "copy-room-btn") {
-      const el = document.getElementById("derived-room");
-      const id = el?.dataset?.roomId;
-      if (id) {
-        await copyText(id);
-        const st = document.getElementById("session-status");
-        if (st) st.textContent = "Room ID copied";
+    if (t.id === "copy-room-btn" || t.id === "copy-audience-btn") {
+      // Handled by wireCopyButtons via data-copy; keep a status hint.
+      const st = document.getElementById("session-status");
+      if (st && t.getAttribute("data-copy")) {
+        st.textContent =
+          t.id === "copy-audience-btn" ? "Audience copied" : "Room ID copied";
       }
       return;
     }
@@ -632,3 +655,4 @@ function wireEvents() {
 }
 
 render();
+wireCopyButtons();

@@ -36,6 +36,7 @@ import {
   unlockKey as vaultUnlockKey,
 } from "../lib/vault.js";
 import {
+  copyButtonHtml,
   copyText,
   escapeHtml,
   extractEmail,
@@ -44,10 +45,12 @@ import {
   formatFingerprint,
   queryParam,
   showError,
+  wireCopyButtons,
 } from "../lib/utils.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"), "/encrypt");
+wireCopyButtons();
 
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
 
@@ -1074,6 +1077,10 @@ function renderApp() {
         <p id="pw-strength-label" class="pw-strength-label muted"></p>
         <label class="field-label mt-md" for="msg-passphrase-confirm">Confirm</label>
         <input type="password" id="msg-passphrase-confirm" class="text-input" autocomplete="new-password" placeholder="Repeat passphrase">
+        <div class="btn-row mt-sm">
+          <button type="button" class="btn btn-ghost btn-compact" id="suggest-msg-pw">Suggest a passphrase</button>
+        </div>
+        <div id="msg-suggested-pw" class="suggested-pw-host hidden"></div>
         <p class="muted mt-sm">Works alone or together with recipient keys — either can open the message. Cleared after encrypt.</p>
       </div>
     </div>
@@ -1285,6 +1292,30 @@ function wireEvents() {
       const idx = Number(remFile.getAttribute("data-remove-file"));
       files.splice(idx, 1);
       renderFiles();
+      return;
+    }
+
+    if (t.id === "suggest-msg-pw") {
+      const { generateWordPassphrase } = await import("../lib/passphrase-gen.js");
+      const { passphrase, bits } = generateWordPassphrase(6);
+      const p1 = document.getElementById("msg-passphrase");
+      const p2 = document.getElementById("msg-passphrase-confirm");
+      if (p1 instanceof HTMLInputElement) p1.value = passphrase;
+      if (p2 instanceof HTMLInputElement) p2.value = passphrase;
+      const out = document.getElementById("msg-suggested-pw");
+      if (out) {
+        out.innerHTML = `
+          <div class="suggested-pw-row">
+            <p class="suggested-pw mb-0">${escapeHtml(passphrase)} <span class="muted">(~${bits} bits — share out of band)</span></p>
+            ${copyButtonHtml("Copy", passphrase, {
+              transientMs: 60000,
+              title: "Copy passphrase (clipboard clears in 60s)",
+            })}
+          </div>`;
+        out.classList.remove("hidden");
+      }
+      updatePassphraseMeter();
+      updateEncryptButton();
       return;
     }
 

@@ -10,7 +10,10 @@ import {
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
 import { mountRecipientBinder } from "../lib/recipient-picker.js";
-import { splitArmoredMessages } from "../lib/pgp/armor.js";
+import {
+  splitArmoredMessages,
+  stripArmoredMessages,
+} from "../lib/pgp/armor.js";
 import { validateShareMnemonic } from "../lib/slip39/slip39.js";
 import { bytesToBase64 } from "../lib/toolkit/encode.js";
 import {
@@ -28,6 +31,7 @@ import {
   formatFingerprint,
   showError,
 } from "../lib/utils.js";
+import { buildZipStore, uniquifyFilenames } from "../lib/zip-store.js";
 import {
   getPasskeyPrf,
   listKeys as vaultListKeys,
@@ -294,7 +298,11 @@ function renderInputsPanel(needs) {
           <button type="button" class="btn btn-ghost btn-compact" id="load-shares-btn">Load from file…</button>
           <input type="file" id="load-shares-file" class="hidden" multiple accept=".txt,text/plain,*/*">
         </div>
-        <p class="muted fs-sm mb-sm">One share per row. Paste multiple lines into a row to auto-split. K-of-N required to recover.</p>
+        <p class="muted fs-sm mb-sm">${
+          needs.includes("gpg")
+            ? "Use these rows for mnemonics already decrypted outside the browser (Kleopatra/gpg/YubiKey). Mix with OpenPGP ciphertext below — the pipeline merges both before combine."
+            : "One share per row. Paste multiple lines into a row to auto-split. K-of-N required to recover."
+        }</p>
         <div id="share-rows">${rowsHtml}</div>
         <label class="field-label mt-md" for="input-envelope">Envelope ciphertext (base64)</label>
         <div class="btn-row wrap mb-xs">
@@ -328,7 +336,7 @@ function renderInputsPanel(needs) {
         <input type="file" id="load-ciphertext-file" class="hidden" multiple accept=".asc,.pgp,.txt,*/*">
       </div>
       <textarea id="input-ciphertext" class="compose-message" rows="8" spellcheck="false"
-        placeholder="Paste one or more -----BEGIN PGP MESSAGE----- blocks"></textarea>
+        placeholder="Paste -----BEGIN PGP MESSAGE----- blocks (and/or already-decrypted mnemonics). Smartcard/YubiKey OpenPGP keys cannot be used in the browser — decrypt those externally and paste mnemonics in the share rows above."></textarea>
       <label class="field-label mt-md" for="input-envelope-gpg">Envelope ciphertext (base64, if needed)</label>
       <div class="btn-row wrap mb-xs">
         <button type="button" class="btn btn-ghost btn-compact" id="load-envelope-gpg-btn">Load envelope…</button>
@@ -338,9 +346,9 @@ function renderInputsPanel(needs) {
         placeholder="Paste envelope.bin.b64 from the encrypt pipeline">${escapeHtml(
           needs.includes("shares") ? "" : envelopeDraft
         )}</textarea>
-      <label class="field-label mt-md" for="input-vault-key">Vault private key</label>
+      <label class="field-label mt-md" for="input-vault-key">Vault private key (only for ciphertext you can decrypt here)</label>
       <select id="input-vault-key" class="text-input">
-        <option value="">— paste key below —</option>
+        <option value="">— paste key below / not needed if all shares are plaintext —</option>
         ${vaultOpts}
       </select>
       <label class="field-label mt-md" for="input-privkey">Armored private key (optional if using vault)</label>
@@ -349,7 +357,7 @@ function renderInputsPanel(needs) {
       <label class="field-label mt-md" for="input-key-pass">Key passphrase</label>
       <input type="password" id="input-key-pass" class="text-input" autocomplete="off"
         placeholder="If the OpenPGP key is locked">
-      <p class="muted mt-xs fs-sm">Vault keys unlock only for this run and are scrubbed afterward.</p>
+      <p class="muted mt-xs fs-sm">Software/vault keys unlock only for this run. OpenPGP smartcards are not accessible from the browser — leave the key blank and paste externally decrypted mnemonics above.</p>
     `);
   }
   host.innerHTML = parts.join("\n");
@@ -548,8 +556,18 @@ async function collectRuntimeInputs() {
     const armored =
       ctEl instanceof HTMLTextAreaElement ? ctEl.value.trim() : "";
     const messages = splitArmoredMessages(armored);
-    if (!messages.length && armored) {
-      // Single blob without clear markers — try as one message
+    // Mnemonics interleaved with ciphertext (or a ciphertext-box-only paste).
+    const remainder = stripArmoredMessages(armored);
+    /** @type {string[]} */
+    const plainFromCt = [];
+    for (const part of remainder.split(/\n\s*\n+/)) {
+      const normalized = part.replace(/\s+/g, " ").trim();
+      if (normalized && validateShareMnemonic(normalized).ok) {
+        plainFromCt.push(normalized);
+      }
+    }
+    if (!messages.length && !plainFromCt.length && armored) {
+      // Single blob without armor markers — try as one message/mnemonic
       messages.push(armored);
     }
     passphrase = passEl instanceof HTMLInputElement ? passEl.value : "";
@@ -575,15 +593,23 @@ async function collectRuntimeInputs() {
     if (envelopeB64) envelopeDraft = envelopeB64;
     else if (envelopeDraft.trim()) envelopeB64 = envelopeDraft.trim();
     inputs.gpg = {
-      armoredMessages: messages,
+      armoredMessages: [...messages, ...plainFromCt],
       privateKeyArmored,
       passphrase,
       envelopeB64,
     };
-    // Also surface envelope on shares for combine convenience
-    if (envelopeB64) {
+    // Merge ciphertext-box mnemonics + share rows for decrypt hybrid path
+    if (plainFromCt.length || envelopeB64) {
       inputs.shares = inputs.shares || { mnemonics: [] };
-      if (!inputs.shares.envelopeB64) inputs.shares.envelopeB64 = envelopeB64;
+      if (plainFromCt.length) {
+        inputs.shares.mnemonics = [
+          ...(inputs.shares.mnemonics || []),
+          ...plainFromCt,
+        ];
+      }
+      if (envelopeB64 && !inputs.shares.envelopeB64) {
+        inputs.shares.envelopeB64 = envelopeB64;
+      }
     }
   }
 
@@ -762,7 +788,14 @@ function renderResults() {
   const hasShares = artifacts.some((a) => a.shareIndex || /^Share\s+\d+/i.test(a.label || ""));
   panel.innerHTML = `
     <h2>Results</h2>
-    <p class="muted mb-md">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
+    <div class="btn-row wrap mb-md items-center">
+      <p class="muted mb-0 flex-1">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
+      ${
+        artifacts.length > 1
+          ? `<button type="button" class="btn btn-ghost btn-compact" id="download-all-btn">Download all (${artifacts.length})</button>`
+          : ""
+      }
+    </div>
     ${
       hasEnvelope && hasShares
         ? `<p class="status-row warn mb-md" role="status">Keep <strong>envelope.bin.b64</strong> with the shares — it is required for recovery of PEM / non-16/32-byte secrets (not secret itself, but without it the shares cannot be unwrapped).</p>`
@@ -820,21 +853,56 @@ function renderResults() {
   panel.querySelectorAll("[data-download]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const i = Number(btn.getAttribute("data-download"));
-      const a = artifacts[i];
-      const blob = new Blob([a.content], {
-        type: a.mime || "text/plain",
-      });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = a.filename || "artifact.txt";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      downloadArtifact(artifacts[i]);
       touchActivity();
     });
   });
+  panel.querySelector("#download-all-btn")?.addEventListener("click", () => {
+    downloadAllArtifacts();
+    touchActivity();
+  });
+}
+
+/**
+ * @param {{ filename?: string, content: string, mime?: string }} a
+ */
+function downloadArtifact(a) {
+  const blob = new Blob([a.content], {
+    type: a.mime || "text/plain",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = a.filename || "artifact.txt";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function downloadAllArtifacts() {
+  if (artifacts.length < 2) {
+    if (artifacts[0]) downloadArtifact(artifacts[0]);
+    return;
+  }
+  const names = uniquifyFilenames(
+    artifacts.map((a, i) => a.filename || `artifact-${i + 1}.txt`)
+  );
+  const zip = buildZipStore(
+    artifacts.map((a, i) => ({
+      name: names[i],
+      content: a.content,
+    }))
+  );
+  const blob = new Blob([zip], { type: "application/zip" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `toolkit-results-${artifacts.length}.zip`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 /**
@@ -984,16 +1052,33 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
   try {
     const collected = await collectRuntimeInputs();
     privateKeyArmored = collected.privateKeyArmored;
-    if (currentInputNeeds.includes("gpg") && !privateKeyArmored) {
-      throw new Error("Select a vault key or paste a private key to decrypt.");
+    const gpgMessages = collected.inputs.gpg?.armoredMessages || [];
+    const hasPgpCipher = gpgMessages.some((m) =>
+      /-----BEGIN PGP MESSAGE-----/i.test(String(m || ""))
+    );
+    const shareMnemonics = collected.inputs.shares?.mnemonics || [];
+    if (currentInputNeeds.includes("gpg") && hasPgpCipher && !privateKeyArmored) {
+      throw new Error(
+        "OpenPGP ciphertext needs a vault/pasted private key, or decrypt those messages externally and paste the mnemonics in the share rows."
+      );
     }
     if (
       currentInputNeeds.includes("shares") &&
-      !(collected.inputs.shares?.mnemonics || []).length
+      !currentInputNeeds.includes("gpg") &&
+      !shareMnemonics.length
     ) {
       throw new Error("Paste at least one SLIP-39 share mnemonic.");
     }
-    if (currentInputNeeds.includes("gpg")) {
+    if (
+      currentInputNeeds.includes("gpg") &&
+      !gpgMessages.length &&
+      !shareMnemonics.length
+    ) {
+      throw new Error(
+        "Paste OpenPGP ciphertext and/or already-decrypted share mnemonics."
+      );
+    }
+    if (currentInputNeeds.includes("gpg") && hasPgpCipher) {
       status.textContent = "Unlocking key & running…";
     }
     artifacts = await runViaWorker(ast, {

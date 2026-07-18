@@ -142,6 +142,14 @@ describe("validation", () => {
     expect(serializeRecipe(ast)).toContain("decrypt gpg");
   });
 
+  it("decrypt recipes request gpg + shares panels for hybrid recovery", () => {
+    const { validation } = compileRecipe("decrypt gpg | combine | hex");
+    expect(validation.ok).toBe(true);
+    expect(validation.inputNeeds).toEqual(
+      expect.arrayContaining(["gpg", "shares"])
+    );
+  });
+
   it("accepts rebuild-p256 preset", () => {
     const { validation } = compileRecipe(
       PRESETS.find((p) => p.id === "rebuild-p256").recipe
