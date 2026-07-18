@@ -7,7 +7,10 @@ import {
 } from "../lib/key-hit.js";
 import { normalizeFingerprintInput, normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
 import { DEFAULT_ICE_SERVERS, QuorumSession } from "../lib/quorum/rtc.js";
-import { unlockPrivateKey } from "../lib/quorum/crypto.js";
+import {
+  requireSelfInAudience,
+  unlockPrivateKey,
+} from "../lib/quorum/crypto.js";
 import { deriveRoomId, isValidRoomId, quorumRelyingPartyId } from "../lib/quorum/room.js";
 import {
   getTrust,
@@ -34,8 +37,13 @@ Auth.initWidget(document.getElementById("auth-widget"), "/quorum");
 const errorEl = document.getElementById("error");
 const app = document.getElementById("quorum-app");
 
-/** @type {Array<{ fingerprint: string, label: string, userLabel?: string, keyExpiration?: string|null, keyId?: string }>} */
+/**
+ * @typedef {{ fingerprint: string, label: string, userLabel?: string, keyExpiration?: string|null, keyId?: string, self?: boolean }} AudienceEntry
+ */
+/** @type {AudienceEntry[]} */
 let audience = [];
+/** @type {string} */
+let selfFpr = "";
 /** @type {QuorumSession|null} */
 let session = null;
 /** @type {Array<{ from: string, text: string, ts: number, self?: boolean }>} */
@@ -50,7 +58,7 @@ function render() {
     <div class="quorum-layout">
       <div class="card">
         <p class="card-title">Your identity</p>
-        <p class="muted fs-sm mb-md">Signaling is OpenPGP-signed with your key and encrypted to the audience. Unlock a vault key or paste a private key.</p>
+        <p class="muted fs-sm mb-md">You are always a room participant. Signaling is OpenPGP-signed (proving key possession) and encrypted to the audience. Unlock a vault key or paste a private key.</p>
         <div id="vault-row" class="mb-md">
           <label class="field-label" for="vault-key-select">Vault key</label>
           <select id="vault-key-select" class="text-input">
@@ -66,7 +74,7 @@ function render() {
 
       <div class="card">
         <p class="card-title">Create room</p>
-        <p class="muted fs-sm mb-md">Pick the audience (including yourself). Room ID is derived from this site’s hostname (<code>${escapeHtml(quorumRelyingPartyId())}</code>, same as the WebAuthn RP id) plus sorted audience fingerprints — no extra config.</p>
+        <p class="muted fs-sm mb-md">Add peers; your unlocked key is included automatically and cannot be removed. Creating publishes a signed invite. Room ID = hostname (<code>${escapeHtml(quorumRelyingPartyId())}</code>) + sorted audience fingerprints.</p>
         ${
           trusted.length
             ? `<div class="mb-md">
@@ -99,9 +107,9 @@ function render() {
         <p class="card-title">Join by room ID</p>
         <label class="field-label" for="join-room-id">Room ID</label>
         <input type="text" id="join-room-id" class="text-input mono" autocomplete="off" placeholder="16-character base32">
-        <label class="field-label mt-md" for="join-audience">Audience fingerprints (one per line)</label>
+        <label class="field-label mt-md" for="join-audience">Audience fingerprints (one per line, including yours)</label>
         <textarea id="join-audience" class="text-input mono" rows="4"
-          placeholder="Required so peers can verify PGP signatures against the pinned audience"></textarea>
+          placeholder="Must match the creator’s audience (including your fingerprint). Join waits for their signed invite."></textarea>
         <div class="btn-row mt-md">
           <button type="button" class="btn" id="join-btn">Join room</button>
         </div>
@@ -171,14 +179,21 @@ function renderAudiencePills() {
         keyExpiration: r.keyExpiration,
         key_id: r.keyId,
       });
+      const isSelf = Boolean(r.self) || (selfFpr && r.fingerprint === selfFpr);
+      const youBadge = isSelf
+        ? `<span class="trust-badge trust-trusted">you</span>`
+        : "";
+      const removeBtn = isSelf
+        ? ""
+        : `<button type="button" class="pill-remove" data-remove="${escapeHtml(r.fingerprint)}" aria-label="Remove">×</button>`;
       return `
-      <span class="recipient-pill">
+      <span class="recipient-pill${isSelf ? " pill-self" : ""}">
         <span class="pill-body">
-          <span class="pill-label">${escapeHtml(r.label)} ${trustBadgeHtml(r.fingerprint)}</span>
+          <span class="pill-label">${escapeHtml(r.label)} ${youBadge} ${trustBadgeHtml(r.fingerprint)}</span>
           <span class="pill-fpr">${escapeHtml(formatFingerprint(r.fingerprint))}</span>
           ${extras ? `<span class="pill-extras">${extras}</span>` : ""}
         </span>
-        <button type="button" class="pill-remove" data-remove="${escapeHtml(r.fingerprint)}" aria-label="Remove">×</button>
+        ${removeBtn}
       </span>`;
     })
     .join("");
@@ -239,12 +254,22 @@ function renderRoster(peers) {
   }
   el.innerHTML = `<ul class="quorum-roster-list">${[...peers.values()]
     .map((p) => {
-      const verify = p.pgpVerified
-        ? `<span class="trust-badge trust-trusted">PGP verified</span>`
-        : `<span class="trust-badge">unverified</span>`;
+      const badges = [
+        p.isInitiator
+          ? `<span class="trust-badge trust-trusted">initiator</span>`
+          : "",
+        p.pgpVerified
+          ? `<span class="trust-badge trust-trusted">PGP</span>`
+          : `<span class="trust-badge">no PGP</span>`,
+        p.kcVerified
+          ? `<span class="trust-badge trust-trusted">key confirmed</span>`
+          : `<span class="trust-badge">awaiting KC</span>`,
+      ]
+        .filter(Boolean)
+        .join(" ");
       return `<li>
         <code class="mono">${escapeHtml(formatFingerprint(p.fingerprint))}</code>
-        ${verify}
+        ${badges}
         <span class="muted fs-sm">${escapeHtml(p.status)}</span>
         ${trustBadgeHtml(p.fingerprint)}
       </li>`;
@@ -319,10 +344,39 @@ function setSessionUi(active) {
 }
 
 /**
+ * Ensure unlocked key appears as a locked audience member.
+ * @param {string} fingerprint
+ */
+function ensureSelfInAudienceList(fingerprint) {
+  const me = normalizeFingerprintInput(fingerprint);
+  selfFpr = me;
+  const existing = audience.find((a) => a.fingerprint === me);
+  if (existing) {
+    existing.self = true;
+    existing.label = existing.label || "You";
+  } else {
+    audience.unshift({
+      fingerprint: me,
+      label: "You",
+      self: true,
+    });
+  }
+  // Drop accidental duplicates of self without the flag
+  audience = audience.filter(
+    (a, i, arr) => a.fingerprint !== me || arr.findIndex((x) => x.fingerprint === me) === i
+  );
+  const selfEntry = audience.find((a) => a.fingerprint === me);
+  if (selfEntry) selfEntry.self = true;
+  renderAudiencePills();
+}
+
+/**
  * @param {string} roomId
  * @param {string[]} audienceFprs
+ * @param {"creator"|"joiner"} role
+ * @param {{ key: import("openpgp").PrivateKey, fingerprint: string }} [identity]
  */
-async function startSession(roomId, audienceFprs) {
+async function startSession(roomId, audienceFprs, role, identity) {
   showError(errorEl, "");
   if (session) {
     session.stop();
@@ -330,16 +384,21 @@ async function startSession(roomId, audienceFprs) {
   }
   chatLog = [];
   renderChat();
-  const { key, fingerprint } = await resolvePrivateKey();
-  const fprs = [...new Set([...audienceFprs.map(normalizeFingerprintInput), fingerprint])];
-  if (fprs.length < 2) {
-    throw new Error("Audience must include at least two fingerprints (you + peers)");
+  const { key, fingerprint } = identity || (await resolvePrivateKey());
+  ensureSelfInAudienceList(fingerprint);
+  const fprs = requireSelfInAudience(fingerprint, audienceFprs);
+  const derived = await deriveRoomId(fprs);
+  if (derived !== String(roomId || "").trim().toUpperCase()) {
+    throw new Error(
+      "Room ID does not match this audience (hostname + fingerprints). Check the audience list."
+    );
   }
   session = new QuorumSession({
-    roomId,
+    roomId: derived,
     audienceFprs: fprs,
     privateKey: key,
     myFingerprint: fingerprint,
+    role,
     iceServers: parseIceServers(),
     onRoster: (peers) => renderRoster(peers),
     onChat: (msg) => {
@@ -368,6 +427,10 @@ async function startSession(roomId, audienceFprs) {
 function addAudience(fpr, label, meta = {}) {
   const clean = normalizeFingerprintInput(fpr);
   if (!(clean.length === 40 || clean.length === 64)) return;
+  if (selfFpr && clean === selfFpr) {
+    ensureSelfInAudienceList(clean);
+    return;
+  }
   if (getTrust(clean)?.level === "never") {
     if (
       !confirm(
@@ -384,11 +447,29 @@ function addAudience(fpr, label, meta = {}) {
     userLabel: meta.userLabel || "",
     keyExpiration: meta.keyExpiration || null,
     keyId: meta.keyId || "",
+    self: false,
   });
   renderAudiencePills();
 }
 
+async function syncSelfFromIdentity() {
+  try {
+    const { fingerprint } = await resolvePrivateKey();
+    ensureSelfInAudienceList(fingerprint);
+  } catch (_) {
+    /* identity not unlocked yet */
+  }
+}
+
 function wireEvents() {
+  app.addEventListener("change", (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement)) return;
+    if (t.id === "vault-key-select" || t.id === "private-key") {
+      void syncSelfFromIdentity();
+    }
+  });
+
   app.addEventListener("input", (e) => {
     const t = e.target;
     if (!(t instanceof HTMLElement)) return;
@@ -439,7 +520,9 @@ function wireEvents() {
     const rem = t.closest("[data-remove]");
     if (rem instanceof HTMLElement) {
       const fpr = rem.getAttribute("data-remove") || "";
-      audience = audience.filter((a) => a.fingerprint !== fpr);
+      const clean = normalizeFingerprintInput(fpr);
+      if (selfFpr && clean === selfFpr) return;
+      audience = audience.filter((a) => a.fingerprint !== clean);
       renderAudiencePills();
       return;
     }
@@ -458,14 +541,17 @@ function wireEvents() {
     if (t.id === "create-join-btn") {
       try {
         showError(errorEl, "");
-        if (audience.length < 2) {
-          throw new Error("Add at least two audience fingerprints");
-        }
-        const roomId = await deriveRoomId(audience.map((a) => a.fingerprint));
-        await startSession(
-          roomId,
+        const identity = await resolvePrivateKey();
+        ensureSelfInAudienceList(identity.fingerprint);
+        const fprs = requireSelfInAudience(
+          identity.fingerprint,
           audience.map((a) => a.fingerprint)
         );
+        if (fprs.length < 2) {
+          throw new Error("Add at least one peer (you are included automatically)");
+        }
+        const roomId = await deriveRoomId(fprs);
+        await startSession(roomId, fprs, "creator", identity);
       } catch (err) {
         showError(errorEl, err.message || String(err));
       }
@@ -481,16 +567,24 @@ function wireEvents() {
           .trim()
           .toUpperCase();
         if (!isValidRoomId(roomId)) throw new Error("Invalid room ID");
+        const identity = await resolvePrivateKey();
         const lines = String(
           document.getElementById("join-audience")?.value || ""
         ).split(/\r?\n/);
         const fprs = lines
           .map((l) => normalizeFingerprintInput(l))
           .filter((f) => f.length === 40 || f.length === 64);
-        if (fprs.length < 2) {
-          throw new Error("Paste at least two audience fingerprints");
+        const audienceWithSelf = requireSelfInAudience(
+          identity.fingerprint,
+          fprs
+        );
+        const derived = await deriveRoomId(audienceWithSelf);
+        if (derived !== roomId) {
+          throw new Error(
+            "Room ID does not match the pasted audience on this host"
+          );
         }
-        await startSession(roomId, fprs);
+        await startSession(roomId, audienceWithSelf, "joiner", identity);
       } catch (err) {
         showError(errorEl, err.message || String(err));
       }

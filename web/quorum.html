@@ -29,7 +29,7 @@
 
   <div class="page-header">
     <h1>Quorum</h1>
-    <p class="muted">Peer-to-peer encrypted meeting over WebRTC data channels. The keyserver only relays OpenPGP-encrypted signaling — it cannot read SDP or chat. Room IDs are scoped to this hostname so the same audience on another deployment does not collide.</p>
+    <p class="muted">Peer-to-peer encrypted meeting over WebRTC data channels. The creator posts a PGP-signed invite proving key possession; joiners mesh only after verifying it. The keyserver relays opaque OpenPGP signaling only — it cannot read SDP or chat. Data-channel keys use ephemeral ECDH (forward secrecy); room IDs are scoped to this hostname.</p>
   </div>
 
   <p id="error" class="text-error hidden"></p>
