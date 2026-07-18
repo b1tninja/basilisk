@@ -193,11 +193,13 @@ def create_app() -> Flask:
 
     register_v2(app)
 
+    from basilisk.portal.quorum_routes import register_quorum_api
     from basilisk.portal.routes import register_portal_api
     from basilisk.portal.static import register_static_portal
     from basilisk.portal.wkd_routes import register_wkd
 
     register_portal_api(app)
+    register_quorum_api(app)
     register_wkd(app)
     register_static_portal(app)
     return app

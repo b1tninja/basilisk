@@ -18,6 +18,7 @@ _STATIC_PAGES = {
     "decrypt": "decrypt.html",
     "verify": "verify.html",
     "toolkit": "toolkit.html",
+    "quorum": "quorum.html",
 }
 
 

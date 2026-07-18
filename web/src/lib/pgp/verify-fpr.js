@@ -17,6 +17,28 @@ export function normalizeFingerprintInput(raw) {
 }
 
 /**
+ * If the query looks like a fingerprint / key ID (hex with optional spaces / 0x),
+ * return contiguous hex; otherwise return the trimmed original (email / name).
+ * @param {string} raw
+ * @returns {string}
+ */
+export function normalizeSearchQuery(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return "";
+  if (trimmed.includes("@")) return trimmed;
+  const hex = normalizeFingerprintInput(trimmed);
+  if (
+    hex.length === 8 ||
+    hex.length === 16 ||
+    hex.length === 40 ||
+    hex.length === 64
+  ) {
+    return hex;
+  }
+  return trimmed;
+}
+
+/**
  * @param {string} hex
  * @returns {boolean}
  */

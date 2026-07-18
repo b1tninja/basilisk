@@ -20,7 +20,9 @@ MAX_UPLOAD_BYTES = 64 * 1024
 
 
 def normalize_fingerprint(fpr: str) -> str:
-    return fpr.upper().removeprefix("0X")
+    """Uppercase hex fingerprint; strip 0x prefix and internal whitespace."""
+    s = fpr.strip().upper().removeprefix("0X")
+    return re.sub(r"\s+", "", s)
 
 
 def key_id_from_fingerprint(fpr: str) -> str:
@@ -28,21 +30,32 @@ def key_id_from_fingerprint(fpr: str) -> str:
 
 
 def parse_search(search: str) -> tuple[str, str]:
-    """Return (kind, normalized) where kind is email|fingerprint|keyid|name."""
-    s = search.strip()
-    if s.lower().startswith("0x"):
-        s = s[2:]
-    if re.fullmatch(r"[0-9a-fA-F]{40}", s):
-        return "fingerprint", normalize_fingerprint(s)
-    if re.fullmatch(r"[0-9a-fA-F]{16}", s):
-        return "keyid", s.lower()
-    if re.fullmatch(r"[0-9a-fA-F]{8}", s):
+    """Return (kind, normalized) where kind is email|fingerprint|keyid|name.
+
+    Fingerprint / key-ID queries may include spaces or a ``0x`` prefix
+    (e.g. ``AABB CCDD …``). Those are stripped before hex length checks so
+    they are not misclassified as name searches.
+    """
+    raw = search.strip()
+    # Contiguous hex form for fingerprint / keyid classification.
+    hex_candidate = raw
+    if hex_candidate.lower().startswith("0x"):
+        hex_candidate = hex_candidate[2:]
+    hex_candidate = re.sub(r"\s+", "", hex_candidate)
+
+    if re.fullmatch(r"[0-9a-fA-F]{40}", hex_candidate) or re.fullmatch(
+        r"[0-9a-fA-F]{64}", hex_candidate
+    ):
+        return "fingerprint", normalize_fingerprint(hex_candidate)
+    if re.fullmatch(r"[0-9a-fA-F]{16}", hex_candidate):
+        return "keyid", hex_candidate.lower()
+    if re.fullmatch(r"[0-9a-fA-F]{8}", hex_candidate):
         raise IngestError("Short key IDs are not supported", 400)
-    if "@" in s:
-        return "email", s.lower()
+    if "@" in raw:
+        return "email", raw.lower()
     # Free-text / conventional UID name (min 2 chars, must include a letter).
-    if len(s) >= 2 and re.search(r"[A-Za-z]", s):
-        return "name", s.casefold()
+    if len(raw) >= 2 and re.search(r"[A-Za-z]", raw):
+        return "name", raw.casefold()
     raise IngestError("Unsupported search format", 404)
 
 

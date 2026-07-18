@@ -24,6 +24,11 @@ import {
   renderKeyClientSnippets,
   wireSnippetCopy,
 } from "../lib/snippets.js";
+import {
+  trustBadgeHtml,
+  trustControlsHtml,
+  wireTrustControls,
+} from "../lib/trust.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"));
@@ -516,7 +521,7 @@ async function loadKey() {
             <p class="muted fpr">${escapeHtml(fpDisplay)}</p>
             ${labelDisplayHtml}
             ${labelEditHtml}
-            <p class="mt-sm">${statusBadge}</p>
+            <p class="mt-sm">${statusBadge} ${trustBadgeHtml(fpRaw)}</p>
           </div>
           <div class="btn-row">
             ${
@@ -527,6 +532,9 @@ async function loadKey() {
             ${copyButton("Copy link", pageUrl, "copy-page-link")}
             ${copyButton("Copy fingerprint", fpRaw, "copy-fingerprint")}
           </div>
+        </div>
+        <div class="card mt-md trust-card">
+          ${trustControlsHtml(fpRaw, "key-trust")}
         </div>
       </div>
 
@@ -596,6 +604,7 @@ async function loadKey() {
     content.classList.remove("hidden");
 
     wireSnippetCopy(content);
+    wireTrustControls(content);
 
     const richToggle = document.getElementById("rich-qr-toggle");
     const qrSvgEl = document.getElementById("verify-qr-svg");

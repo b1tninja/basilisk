@@ -26,8 +26,10 @@ import {
 import { fingerprintHex } from "../lib/pgp/identity.js";
 import { zeroKeyMaterial } from "../lib/pgp/memory.js";
 import { estimatePassphraseStrength } from "../lib/pgp/passphrase.js";
+import { normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
 import { getExpertMode, setExpertMode } from "../lib/prefs.js";
 import { loadRecipientKey } from "../lib/recipient-picker.js";
+import { getTrust, sortByTrust, trustBadgeHtml } from "../lib/trust.js";
 import {
   getPasskeyPrf,
   listKeys as vaultListKeys,
@@ -200,7 +202,7 @@ function renderPills() {
     updateEncryptIntentUI();
     return;
   }
-  el.innerHTML = [...recipients.values()]
+  el.innerHTML = sortByTrust([...recipients.values()])
     .map((r) => {
       const initial = (r.email || r.label || "?").charAt(0).toUpperCase();
       const title = r.error || formatFingerprint(r.fingerprint);
@@ -210,12 +212,14 @@ function renderPills() {
           : r.valid
             ? `<span class="pill-cap legacy" title="Compatible format (SEIPD v1)">compat</span>`
             : "";
+      const trust = trustBadgeHtml(r.fingerprint);
       return `<span class="recipient-pill${r.valid ? "" : " invalid"}" title="${escapeHtml(title)}" data-fpr="${escapeHtml(r.fingerprint)}">
         <span class="pill-avatar">${escapeHtml(initial)}</span>
         <span class="pill-body">
           <span class="pill-label">${escapeHtml(r.label)}</span>
           <span class="pill-fpr muted">${escapeHtml(shortFpr(r.fingerprint))}</span>
         </span>
+        ${trust}
         ${modernBadge}
         ${r.valid ? "" : `<span class="pill-warn" title="${escapeHtml(r.error)}">!</span>`}
         <button type="button" class="pill-remove" data-remove-fpr="${escapeHtml(r.fingerprint)}" aria-label="Remove recipient">×</button>
@@ -337,19 +341,21 @@ function renderDropdown(results) {
     return;
   }
   el.hidden = false;
-  el.innerHTML = results
+  el.innerHTML = sortByTrust(results)
     .map((item) => {
       const fp = item.fingerprint || "";
       const uids = item.approved_uids || item.uids || [];
       const label = uidLabel(uids) || formatFingerprint(fp);
       const state = item.approval_state || "";
       const already = recipients.has(fp.toUpperCase());
+      const trust = trustBadgeHtml(fp);
       return `<button type="button" class="recipient-hit" data-add-fpr="${escapeHtml(fp)}" ${already ? "disabled" : ""}>
         <span class="hit-main">
           <span class="hit-label">${escapeHtml(label)}</span>
           <code class="hit-fpr muted">${escapeHtml(formatFingerprint(fp))}</code>
         </span>
         <span class="${badgeClass(state)}">${escapeHtml(state)}</span>
+        ${trust}
         ${already ? `<span class="muted">Added</span>` : ""}
       </button>`;
     })
@@ -581,6 +587,12 @@ async function addRecipient(fingerprint) {
     .toUpperCase()
     .replace(/[^0-9A-F]/g, "");
   if (!clean || recipients.has(clean)) return;
+  if (getTrust(clean)?.level === "never") {
+    const ok = window.confirm(
+      "This key is marked \"never trust\" in this browser. Add it as a recipient anyway?"
+    );
+    if (!ok) return;
+  }
   // Optimistic placeholder
   recipients.set(clean, {
     fingerprint: clean,
@@ -1205,14 +1217,15 @@ function wireEvents() {
       if (e.target.id === "msg-passphrase") updatePassphraseMeter();
     }
     if (e.target && e.target.id === "recipient-search") {
-      const q = e.target.value.trim();
+      const raw = e.target.value.trim();
       clearTimeout(searchTimer);
-      if (!q) {
+      if (!raw) {
         renderDropdown([]);
         return;
       }
       searchTimer = setTimeout(async () => {
         try {
+          const q = normalizeSearchQuery(raw);
           const payload = await fetchJson(`/api/v1/search?q=${encodeURIComponent(q)}`);
           renderDropdown(payload.results || []);
         } catch (_) {

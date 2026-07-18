@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareFingerprints,
   normalizeFingerprintInput,
+  normalizeSearchQuery,
 } from "../lib/pgp/verify-fpr.js";
 
 describe("verify-fpr", () => {
@@ -27,5 +28,13 @@ describe("verify-fpr", () => {
     );
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/do not match/i);
+  });
+
+  it("normalizeSearchQuery strips spaces from fingerprints", () => {
+    expect(
+      normalizeSearchQuery("ABB3 A728 3D5E E084 295C F439 FDBA 0D54 45AA 8148")
+    ).toBe("ABB3A7283D5EE084295CF439FDBA0D5445AA8148");
+    expect(normalizeSearchQuery("alice@example.com")).toBe("alice@example.com");
+    expect(normalizeSearchQuery("Alice Example")).toBe("Alice Example");
   });
 });

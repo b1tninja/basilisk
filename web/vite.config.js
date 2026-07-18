@@ -21,6 +21,7 @@ export default defineConfig({
         decrypt: resolve(__dirname, "decrypt.html"),
         verify: resolve(__dirname, "verify.html"),
         toolkit: resolve(__dirname, "toolkit.html"),
+        quorum: resolve(__dirname, "quorum.html"),
       },
     },
   },

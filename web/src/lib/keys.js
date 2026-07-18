@@ -1,4 +1,5 @@
 import { Auth } from "./auth.js";
+import { sortByTrust, trustBadgeHtml } from "./trust.js";
 import {
   escapeHtml,
   fetchJson,
@@ -26,7 +27,8 @@ export function renderKeysTable(items, options = {}) {
   if (!items || !items.length) {
     return "<p class='muted'>No keys found.</p>";
   }
-  const rows = items.map((item) => {
+  const sorted = sortByTrust(items);
+  const rows = sorted.map((item) => {
     const fp = item.fingerprint || "";
     const fpHref = `/key?fpr=${encodeURIComponent(fp)}`;
     let actions = `<a class="text-link" href="${fpHref}">View</a>`;
@@ -36,10 +38,13 @@ export function renderKeysTable(items, options = {}) {
     if (options.showDelete) {
       actions += ` · <button type="button" class="text-link link-btn" data-delete-fpr="${escapeHtml(fp)}">Delete</button>`;
     }
+    const trust = trustBadgeHtml(fp);
     return (
       `<tr>` +
       `<td><a class="text-link fpr" href="${fpHref}">${escapeHtml(formatFingerprint(fp))}</a></td>` +
-      `<td><span class="${badgeClass(item.approval_state)}">${escapeHtml(item.approval_state || "")}</span></td>` +
+      `<td><span class="${badgeClass(item.approval_state)}">${escapeHtml(item.approval_state || "")}</span>${
+        trust ? ` ${trust}` : ""
+      }</td>` +
       `<td class="uid-cell">${renderUidCell(item)}</td>` +
       `<td>${actions}</td>` +
       `</tr>`

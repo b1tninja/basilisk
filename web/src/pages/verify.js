@@ -3,6 +3,7 @@ import {
   compareFingerprints,
   normalizeFingerprintInput,
 } from "../lib/pgp/verify-fpr.js";
+import { setTrust, trustBadgeHtml } from "../lib/trust.js";
 import { getFirstVerifiedAt, recordVerification } from "../lib/verify-tofu.js";
 import {
   copyText,
@@ -189,6 +190,14 @@ async function showResult(fpr, cmp) {
     <p class="muted m-0-b-sm">Still confirm this fingerprint and verified email out of band before trusting the key.</p>
     ${uids ? `<ul class="uid-list">${uids}</ul>` : ""}
     ${tofuNote}
+    ${
+      pass
+        ? `<div class="btn-row mt-md">
+      <button type="button" class="btn" id="mark-trusted-btn">Mark this key as trusted</button>
+      <span id="mark-trusted-status" class="muted fs-sm">${trustBadgeHtml(clean)}</span>
+    </div>`
+        : ""
+    }
     <div class="btn-row mt-md">
       <a class="text-link" href="/key?fpr=${encodeURIComponent(clean)}">Open key page</a>
       <button type="button" class="btn btn-ghost btn-compact" id="share-result-btn"
@@ -205,6 +214,17 @@ async function showResult(fpr, cmp) {
       },
       () => showError(errorEl, "Could not copy link")
     );
+  });
+
+  document.getElementById("mark-trusted-btn")?.addEventListener("click", () => {
+    setTrust(clean, "trusted");
+    const st = document.getElementById("mark-trusted-status");
+    if (st) st.innerHTML = trustBadgeHtml(clean);
+    const btn = document.getElementById("mark-trusted-btn");
+    if (btn) {
+      btn.textContent = "Marked trusted";
+      btn.disabled = true;
+    }
   });
 }
 

@@ -5,6 +5,7 @@
 
 import { readKey } from "openpgp";
 import { supportsSeipdV2 } from "./pgp/capabilities.js";
+import { normalizeSearchQuery } from "./pgp/verify-fpr.js";
 import {
   escapeHtml,
   fetchJson,
@@ -123,7 +124,7 @@ export async function loadRecipientKey(fingerprint) {
  * @returns {Promise<object[]>}
  */
 export async function searchRecipients(q) {
-  const query = String(q || "").trim();
+  const query = normalizeSearchQuery(q);
   if (query.length < 2) return [];
   const payload = await fetchJson(
     `/api/v1/search?q=${encodeURIComponent(query)}`

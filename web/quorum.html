@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
-  <title>Encrypt — Basilisk</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' stun:stun.cloudflare.com:3478 stun:stun.l.google.com:19302; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
+  <title>Quorum — Basilisk</title>
   <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
@@ -16,12 +16,11 @@
     </a>
     <div class="nav-links">
       <a class="nav-link" href="/">Search</a>
-      <a class="nav-link active" href="/encrypt">Encrypt</a>
+      <a class="nav-link" href="/encrypt">Encrypt</a>
       <a class="nav-link" href="/decrypt">Decrypt</a>
       <a class="nav-link" href="/verify">Verify</a>
       <a class="nav-link" href="/my-keys">My Keys</a>
-      
-      <a class="nav-link" href="/quorum">Quorum</a>
+      <a class="nav-link active" href="/quorum">Quorum</a>
       <a class="nav-link" href="/toolkit">Toolkit</a>
       <a class="nav-link" href="/stats">Stats</a>
     </div>
@@ -29,13 +28,13 @@
   </nav>
 
   <div class="page-header">
-    <h1>Encrypt</h1>
-    <p class="muted">Compose an OpenPGP message or encrypt files. Everything stays in your browser — plaintext is never uploaded.</p>
+    <h1>Quorum</h1>
+    <p class="muted">Peer-to-peer encrypted meeting over WebRTC data channels. The keyserver only relays OpenPGP-encrypted signaling — it cannot read SDP or chat. Room IDs are scoped to this hostname so the same audience on another deployment does not collide.</p>
   </div>
 
   <p id="error" class="text-error hidden"></p>
-  <div id="compose-app"></div>
+  <div id="quorum-app"></div>
 
-  <script type="module" src="/src/pages/encrypt.js"></script>
+  <script type="module" src="/src/pages/quorum.js"></script>
 </body>
 </html>

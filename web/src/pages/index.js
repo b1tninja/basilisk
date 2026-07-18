@@ -1,4 +1,5 @@
 import { Auth } from "../lib/auth.js";
+import { normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
 import { fetchJson, queryParam, showError } from "../lib/utils.js";
 import { renderKeysTable } from "../lib/keys.js";
 import {
@@ -26,7 +27,12 @@ function isNameQuery(q) {
   if (!s || s.includes("@")) return false;
   if (s.toLowerCase().startsWith("0x")) return false;
   const hex = s.replace(/\s+/g, "");
-  if (/^[0-9a-fA-F]{8}$/.test(hex) || /^[0-9a-fA-F]{16}$/.test(hex) || /^[0-9a-fA-F]{40}$/.test(hex)) {
+  if (
+    /^[0-9a-fA-F]{8}$/.test(hex) ||
+    /^[0-9a-fA-F]{16}$/.test(hex) ||
+    /^[0-9a-fA-F]{40}$/.test(hex) ||
+    /^[0-9a-fA-F]{64}$/.test(hex)
+  ) {
     return false;
   }
   // At least one letter — treat as a name / free-text UID search.
@@ -41,14 +47,27 @@ function validateQuery(q) {
     if (/^[0-9a-fA-F]{8}$/.test(hex)) {
       return { ok: false, message: "Short (8-character) key IDs are not supported. Use the full fingerprint or 16-character key ID." };
     }
-    if (!/^[0-9a-fA-F]{16}$/.test(hex) && !/^[0-9a-fA-F]{40}$/.test(hex)) {
-      return { ok: false, message: "Fingerprints must be 40 hex characters; key IDs must be 16." };
+    if (
+      !/^[0-9a-fA-F]{16}$/.test(hex) &&
+      !/^[0-9a-fA-F]{40}$/.test(hex) &&
+      !/^[0-9a-fA-F]{64}$/.test(hex)
+    ) {
+      return {
+        ok: false,
+        message: "Fingerprints must be 40 or 64 hex characters; key IDs must be 16.",
+      };
     }
     return { ok: true };
   }
   if (s.includes("@")) return { ok: true };
   const hex = s.replace(/\s+/g, "");
-  if (/^[0-9a-fA-F]{40}$/.test(hex) || /^[0-9a-fA-F]{16}$/.test(hex)) return { ok: true };
+  if (
+    /^[0-9a-fA-F]{40}$/.test(hex) ||
+    /^[0-9a-fA-F]{64}$/.test(hex) ||
+    /^[0-9a-fA-F]{16}$/.test(hex)
+  ) {
+    return { ok: true };
+  }
   if (/^[0-9a-fA-F]{8}$/.test(hex)) {
     return { ok: false, message: "Short (8-character) key IDs are not supported." };
   }
@@ -97,9 +116,10 @@ async function runSearch(query) {
   results.innerHTML = `<p class="muted">Searching…</p>`;
 
   try {
-    const payload = await fetchJson(`/api/v1/search?q=${encodeURIComponent(query.trim())}`);
+    const q = normalizeSearchQuery(query);
+    const payload = await fetchJson(`/api/v1/search?q=${encodeURIComponent(q)}`);
     if (!payload.results || !payload.results.length) {
-      results.innerHTML = `<p class="muted">${reasonMessage(payload, query.trim())}</p>`;
+      results.innerHTML = `<p class="muted">${reasonMessage(payload, q)}</p>`;
       return;
     }
     const caution =

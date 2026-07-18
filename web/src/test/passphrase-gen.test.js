@@ -34,10 +34,16 @@ describe("EFF large wordlist", () => {
 describe("generateWordPassphrase", () => {
   it("produces six EFF words by default (~77 bits, EFF recommendation)", () => {
     const { passphrase, bits, words } = generateWordPassphrase();
-    const parts = passphrase.split("-");
-    expect(parts.length).toBe(6);
     expect(words).toBe(6);
     expect(bits).toBe(77);
+    // Default separator is "-"; a few EFF words also contain "-" (e.g. t-shirt),
+    // so do not split the passphrase on that character to count words.
+    expect(passphrase).toContain("-");
+
+    // Verify membership with a separator that cannot appear in the wordlist.
+    const { passphrase: joined } = generateWordPassphrase(6, "\u0001");
+    const parts = joined.split("\u0001");
+    expect(parts.length).toBe(6);
     for (const p of parts) {
       expect(WORDLIST).toContain(p);
     }
