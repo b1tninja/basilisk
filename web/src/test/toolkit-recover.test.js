@@ -3,6 +3,7 @@
  */
 import { generateKey } from "openpgp";
 import { describe, expect, it } from "vitest";
+import { PROFILE_COMPATIBLE } from "../lib/pgp/encrypt.js";
 import { base64ToBytes } from "../lib/toolkit/encode.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { compileRecipe, PRESETS } from "../lib/toolkit/recipe.js";
@@ -50,15 +51,26 @@ describe("toolkit recover / combine", () => {
     const arts = await runRecipe(ast, {
       recipients: [publicKey],
       recipientFingerprints: [fpr],
+      encryption: {
+        profile: PROFILE_COMPATIBLE,
+        hideRecipients: true,
+      },
     });
 
     const envelope = arts.find((a) => /envelope/i.test(a.label) || /envelope/i.test(a.filename));
     expect(envelope).toBeTruthy();
     expect(envelope.sensitive).toBe(false);
     expect(base64ToBytes(envelope.content).length).toBeGreaterThan(12);
+    expect(envelope.cryptoSummary).toContain("AES-256-GCM");
+    // Envelope is attributed to the slip39 step that created it (step 4).
+    expect(envelope.stepIndex).toBe(4);
+    expect(envelope.stepName).toBe("slip39");
 
     const gpgShares = arts.filter((a) => a.mime === "application/pgp-encrypted");
     expect(gpgShares.length).toBe(3);
+    expect(gpgShares.every((a) => /SEIPD v1/.test(a.cryptoSummary))).toBe(true);
+    // GPG share artifacts point back at the encrypt step (step 6).
+    expect(gpgShares.every((a) => a.stepIndex === 6 && a.stepName === "encrypt")).toBe(true);
   }, 60_000);
 
   it("rebuilds P-256 PEM from shares (envelope path)", async () => {

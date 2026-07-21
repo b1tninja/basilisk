@@ -201,6 +201,7 @@ self.onmessage = async (ev) => {
           recipients,
           recipientFingerprints: msg.recipientFingerprints || [],
           inputs,
+          encryption: msg.encryption,
         });
         self.postMessage({ id, ok: true, artifacts });
       } finally {

@@ -47,6 +47,7 @@ import {
   showError,
   wireCopyButtons,
 } from "../lib/utils.js";
+import { sanitizeFilename } from "../lib/zip-store.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"), "/encrypt");
@@ -1063,6 +1064,7 @@ function renderApp() {
           <p class="muted mt-md">Max total ${formatBytes(MAX_TOTAL_BYTES)}. Each file becomes its own encrypted .asc.</p>
         </div>
         <div id="file-list"></div>
+        <p id="toolkit-import-status" class="status-row ok hidden mt-sm" role="status"></p>
         <p class="size-tally muted" id="size-tally">0 B / ${formatBytes(MAX_TOTAL_BYTES)}</p>
       </div>
     </div>
@@ -1453,6 +1455,64 @@ async function init() {
     await addRecipient(fpr);
   }
   setTab(activeTab);
+  initToolkitArtifactTransfer();
+}
+
+/**
+ * Receive an artifact from a same-origin Toolkit popout and attach it as a
+ * file. The opener waits for the ready message, so no plaintext is sent while
+ * the crypto module is still running its pre-operational self-test.
+ */
+function initToolkitArtifactTransfer() {
+  if (queryParam("source") !== "toolkit" || !window.opener) return;
+  const opener = window.opener;
+
+  /** @param {MessageEvent} event */
+  function onArtifact(event) {
+    if (
+      event.origin !== window.location.origin ||
+      event.source !== opener ||
+      event.data?.type !== "basilisk:encrypt-artifact"
+    ) {
+      return;
+    }
+    const artifact = event.data.artifact;
+    if (!artifact || typeof artifact.content !== "string") return;
+
+    const filename = sanitizeFilename(artifact.filename);
+    const mime =
+      typeof artifact.mime === "string"
+        ? artifact.mime
+        : "application/octet-stream";
+    const file = new File([artifact.content], filename, { type: mime });
+    if (file.size > MAX_TOTAL_BYTES) {
+      showError(
+        errorEl,
+        `The Toolkit artifact is larger than the ${formatBytes(MAX_TOTAL_BYTES)} encryption limit.`
+      );
+      return;
+    }
+
+    window.removeEventListener("message", onArtifact);
+    addFiles([file]);
+    setTab("files");
+    const status = document.getElementById("toolkit-import-status");
+    if (status) {
+      const label =
+        typeof artifact.label === "string" && artifact.label.trim()
+          ? artifact.label.trim()
+          : "Toolkit artifact";
+      status.textContent = `${label} attached from Toolkit. Choose recipients, then encrypt.`;
+      status.classList.remove("hidden");
+    }
+    document.getElementById("drop-zone")?.focus();
+  }
+
+  window.addEventListener("message", onArtifact);
+  opener.postMessage(
+    { type: "basilisk:encrypt-ready" },
+    window.location.origin
+  );
 }
 
 /**

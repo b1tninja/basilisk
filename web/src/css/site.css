@@ -2237,38 +2237,64 @@ pre {
   gap: 0.25rem;
   margin-bottom: 0.45rem;
 }
-.artifact-label-field,
+.artifact-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.artifact-step-badge {
+  flex-shrink: 0;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--brand) 45%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+  color: var(--brand);
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.artifact-step-badge:hover {
+  background: color-mix(in srgb, var(--brand) 20%, transparent);
+}
+.builder-step-num {
+  flex-shrink: 0;
+  min-width: 1.35rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  color: var(--brand);
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  text-align: center;
+}
+.builder-card-linked {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 35%, transparent);
+}
 .artifact-filename-field {
   display: flex;
   align-items: center;
   gap: 0.4rem;
 }
-.artifact-label-input,
 .artifact-filename-input {
   min-width: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text);
   font: inherit;
-}
-.artifact-label-input {
-  width: 100%;
-  padding: 0.2rem 0.35rem;
-  font-weight: 700;
-}
-.artifact-filename-input {
   width: min(22rem, 100%);
   padding: 0.15rem 0.3rem;
   color: var(--text-muted);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.75rem;
 }
-.artifact-label-input:hover,
 .artifact-filename-input:hover {
   border-color: var(--border);
 }
-.artifact-label-input:focus,
 .artifact-filename-input:focus {
   border-color: var(--brand);
   outline: 2px solid color-mix(in srgb, var(--brand) 20%, transparent);
@@ -2287,6 +2313,48 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+.crypto-params-details > summary {
+  cursor: pointer;
+}
+.crypto-params-details[open] {
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+.expert-crypto-section {
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--border);
+}
+.expert-crypto-section > summary {
+  cursor: pointer;
+}
+.expert-crypto-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 0.65rem;
+}
+.crypto-param-list {
+  margin: 0.75rem 0;
+}
+.crypto-param-list > div {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.35fr) 1fr;
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+}
+.crypto-param-list dt {
+  color: var(--text-muted);
+}
+.crypto-param-list dd {
+  margin: 0;
+}
+@media (max-width: 600px) {
+  .crypto-param-list > div {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+  }
 }
 .builder-param {
   display: flex;

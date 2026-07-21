@@ -11,7 +11,11 @@ import {
 } from "openpgp";
 import { generateWordPassphrase } from "../passphrase-gen.js";
 import { qrSvg } from "../qr.js";
-import { PROFILE_AUTO, encryptArtifacts } from "../pgp/encrypt.js";
+import {
+  PROFILE_AUTO,
+  encryptArtifacts,
+  summarizeEncryption,
+} from "../pgp/encrypt.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
 import {
   combineShares,
@@ -44,6 +48,9 @@ import { getStep } from "./registry.js";
  * @property {string} [mime]
  * @property {string} [encoding]
  * @property {string} [recipientFingerprint]
+ * @property {string} [cryptoSummary]
+ * @property {number} [stepIndex]  1-based index of the pipeline step that produced this artifact
+ * @property {string} [stepName]
  */
 
 /**
@@ -60,6 +67,10 @@ import { getStep } from "./registry.js";
  *     envelopeB64?: string,
  *   },
  * }} [inputs]
+ * @property {{
+ *   profile?: import("../pgp/types.js").EncryptProfile,
+ *   hideRecipients?: boolean,
+ * }} [encryption]
  */
 
 /**
@@ -90,6 +101,22 @@ export async function runRecipe(ast, bindings = {}) {
 
   const plan = expandPlan(steps);
 
+  // Stamp artifacts pushed since `before` with the pipeline step that produced
+  // them, so the UI can point each output tile back at its builder card.
+  /** @param {number} before @param {import("./recipe.js").RecipeStep|undefined} step */
+  const stampNew = (before, step) => {
+    if (!step) return;
+    const idx = steps.indexOf(step);
+    for (let i = before; i < artifacts.length; i++) {
+      if (artifacts[i].stepIndex == null) {
+        if (idx >= 0) artifacts[i].stepIndex = idx + 1;
+        artifacts[i].stepName = step.name;
+      }
+    }
+  };
+  // Envelope ciphertext is created by slip39 even though it is emitted later.
+  const slip39Step = steps.find((s) => s.name === "slip39");
+
   for (const node of plan) {
     if (node.kind === "foreach") {
       lastStepWasOut = false;
@@ -112,11 +139,14 @@ export async function runRecipe(ast, bindings = {}) {
           },
         };
         for (const step of body) {
+          const before = artifacts.length;
           itemVal = await execStep(step, itemVal, bindings, artifacts, i);
+          stampNew(before, step);
         }
         if (itemVal && itemVal.type === "text") {
           const last = body[body.length - 1];
           if (last && getStep(last.name)?.kind !== "sink") {
+            const before = artifacts.length;
             artifacts.push({
               label: `Share ${i + 1}`,
               filename: `share-${i + 1}.txt`,
@@ -124,26 +154,33 @@ export async function runRecipe(ast, bindings = {}) {
               sensitive: true,
               shareIndex: i + 1,
             });
+            stampNew(before, last);
           }
         }
       }
       // Envelope must be emitted once so share sets are recoverable.
       if (envelope && !envelopeEmitted) {
+        const before = artifacts.length;
         emitEnvelope(artifacts, envelope);
+        stampNew(before, slip39Step);
         envelopeEmitted = true;
       }
       value = { type: "bundle", data: artifacts };
       continue;
     }
 
+    const before = artifacts.length;
     value = await execStep(node.step, value, bindings, artifacts, 0);
+    stampNew(before, node.step);
     lastStepWasOut = node.step.name === "out";
     if (
       value?.meta?.envelope &&
       !envelopeEmitted &&
       getStep(node.step.name)?.kind === "sink"
     ) {
+      const beforeEnv = artifacts.length;
       emitEnvelope(artifacts, value.meta.envelope);
+      stampNew(beforeEnv, slip39Step);
       envelopeEmitted = true;
     }
   }
@@ -153,12 +190,16 @@ export async function runRecipe(ast, bindings = {}) {
     // envelope before converting mnemonics, or PEM/large payloads become unrecoverable.
     const bareEnvelope = value.data?.envelope || value.meta?.envelope || null;
     if (value.type === "shares" && bareEnvelope && !envelopeEmitted) {
+      const before = artifacts.length;
       emitEnvelope(artifacts, bareEnvelope);
+      stampNew(before, slip39Step);
       envelopeEmitted = true;
     }
     // Terminal `out` already pushed tiles; later transforms clear lastStepWasOut.
     if (!lastStepWasOut) {
+      const before = artifacts.length;
       artifacts.push(...valueToArtifacts(value));
+      stampNew(before, steps[steps.length - 1]);
     }
   }
 
@@ -176,6 +217,7 @@ function emitEnvelope(artifacts, envelope) {
     content: bytesToBase64(envelope),
     sensitive: false,
     mime: "application/octet-stream",
+    cryptoSummary: "AES-256-GCM · 256-bit random envelope key · 96-bit IV · 128-bit tag",
   });
 }
 
@@ -424,9 +466,11 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
         recipients: [key],
         passwords: [],
         payloads: [{ kind: "text", text }],
-        profile: PROFILE_AUTO,
+        profile: bindings.encryption?.profile || PROFILE_AUTO,
+        hideRecipients: !!bindings.encryption?.hideRecipients,
       });
       for (const a of arts) {
+        const cryptoSummary = await summarizeEncryption(a.armored);
         artifacts.push({
           label: value.meta?.shareIndex
             ? `Share ${value.meta.shareIndex} (GPG)`
@@ -439,6 +483,7 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
           shareIndex: value.meta?.shareIndex,
           recipientFingerprint: fpr,
           mime: "application/pgp-encrypted",
+          cryptoSummary,
         });
       }
       return { type: "artifact", data: null, meta: value.meta };
