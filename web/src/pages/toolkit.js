@@ -85,68 +85,72 @@ const KIND_META = {
 };
 
 app.innerHTML = `
-  <div id="crypto-status" class="status-row" role="status">Verifying crypto module…</div>
-
-  <div class="card toolkit-banner">
-    <p class="m-0 fs-md">
-      <strong>Advanced tool.</strong> Drag operations from the drawer into the recipe (CyberChef-style),
-      or start from a template. Prefer hardware tokens for long-lived identity keys.
-      Everyday messaging belongs on <a class="text-link" href="/encrypt">Encrypt</a>.
-    </p>
+  <div class="app-toolbar">
+    <details class="toolbar-menu" id="preset-gallery">
+      <summary class="btn btn-ghost btn-compact toolkit-presets-summary">Templates <span aria-hidden="true">▾</span></summary>
+      <div class="toolbar-popover">
+        <p class="muted m-0-b-md fs-sm">One-click recipes. Drop more operations into the pipeline afterward.</p>
+        <div class="preset-grid" id="preset-grid"></div>
+      </div>
+    </details>
+    <span id="crypto-status" class="app-status" role="status">Verifying crypto module…</span>
+    <span class="app-toolbar-note muted fs-xs">Advanced tool — everyday messaging belongs on <a class="text-link" href="/encrypt">Encrypt</a>.</span>
+    <button type="button" class="btn btn-ghost btn-compact" id="toggle-reference" title="Full step docs">Docs</button>
   </div>
-
-  <details class="card toolkit-presets" id="preset-gallery" open>
-    <summary class="card-title toolkit-presets-summary">Templates</summary>
-    <p class="muted m-0-b-md fs-sm">One-click recipes. Drop more operations into the pipeline afterward.</p>
-    <div class="preset-grid" id="preset-grid"></div>
-  </details>
 
   <div class="chef-workspace" id="chef-workspace">
-    <aside class="chef-ops card" aria-label="Operations">
-      <div class="chef-ops-head">
-        <p class="card-title mb-0">Operations</p>
-        <button type="button" class="btn btn-ghost btn-compact" id="toggle-reference" title="Full step docs">Docs</button>
+    <aside class="chef-ops chef-pane" aria-label="Operations">
+      <div class="pane-head">
+        <p class="pane-title">Operations</p>
       </div>
-      <input type="search" id="ops-filter" class="text-input" placeholder="Search operations…" autocomplete="off">
-      <p class="muted fs-xs mt-xs mb-sm" id="ops-hint">Drag onto the recipe, or click to append.</p>
-      <div id="ops-drawer" class="ops-drawer"></div>
+      <div class="pane-body">
+        <input type="search" id="ops-filter" class="text-input" placeholder="Search operations…" autocomplete="off">
+        <p class="muted fs-xs mt-xs mb-sm" id="ops-hint">Drag onto the recipe, or click to append.</p>
+        <div id="ops-drawer" class="ops-drawer"></div>
+      </div>
     </aside>
 
-    <section class="chef-recipe card" aria-label="Recipe">
-      <div class="chef-recipe-head">
-        <p class="card-title mb-0">Recipe</p>
-        <div class="btn-row wrap mb-0">
-          <button type="button" class="btn btn-ghost btn-compact" id="clear-recipe-btn">Clear</button>
+    <section class="chef-recipe chef-pane" aria-label="Recipe">
+      <div class="pane-head">
+        <p class="pane-title">Recipe</p>
+        <button type="button" class="btn btn-ghost btn-compact" id="clear-recipe-btn">Clear</button>
+      </div>
+      <div class="pane-body">
+        <p class="muted fs-sm mb-md">Drop operations here. Reorder by dragging cards. Recipients are chosen at run time — never stored in the recipe text.</p>
+        <div id="builder-steps" class="builder-steps"></div>
+        <details class="recipe-text-details mt-md">
+          <summary class="muted fs-sm">Recipe text (pipe language)</summary>
+          <textarea id="recipe-text" class="compose-message mt-sm" rows="3" spellcheck="false"
+            placeholder="genkey ec/p256 | export pkcs8 | pem"></textarea>
+          <p id="recipe-errors" class="status-row err hidden mt-sm"></p>
+          <p id="recipe-warnings" class="muted mt-xs fs-sm"></p>
+        </details>
+      </div>
+    </section>
+
+    <section class="chef-run chef-pane" aria-label="Run">
+      <div class="pane-head">
+        <p class="pane-title">Run</p>
+      </div>
+      <div class="pane-body">
+        <div id="inputs-host"></div>
+        <div id="recipient-bind-host"></div>
+        <div class="btn-row mt-md">
+          <button type="button" class="btn" id="run-btn" disabled>Bake</button>
         </div>
+        <p id="run-status" class="status-row hidden mt-sm"></p>
+        <div id="results-panel" class="hidden mt-lg"></div>
       </div>
-      <p class="muted fs-sm mb-md">Drop operations here. Reorder by dragging cards. Recipients are chosen at run time — never stored in the recipe text.</p>
-      <div id="builder-steps" class="builder-steps"></div>
-      <details class="recipe-text-details mt-md">
-        <summary class="muted fs-sm">Recipe text (pipe language)</summary>
-        <textarea id="recipe-text" class="compose-message mt-sm" rows="3" spellcheck="false"
-          placeholder="genkey ec/p256 | export pkcs8 | pem"></textarea>
-        <p id="recipe-errors" class="status-row err hidden mt-sm"></p>
-        <p id="recipe-warnings" class="muted mt-xs fs-sm"></p>
-      </details>
-    </section>
-
-    <section class="chef-run card" aria-label="Run">
-      <p class="card-title">Run</p>
-      <div id="inputs-host"></div>
-      <div id="recipient-bind-host"></div>
-      <div class="btn-row mt-md">
-        <button type="button" class="btn" id="run-btn" disabled>Bake</button>
-      </div>
-      <p id="run-status" class="status-row hidden mt-sm"></p>
     </section>
   </div>
 
-  <div id="reference-panel" class="card hidden mt-lg">
-    <p class="card-title">Step reference</p>
-    <div id="reference-body"></div>
+  <div id="reference-panel" class="reference-drawer hidden">
+    <div class="pane-head">
+      <p class="pane-title">Step reference</p>
+      <button type="button" class="btn btn-ghost btn-compact" id="close-reference" aria-label="Close reference">✕</button>
+    </div>
+    <div class="pane-body" id="reference-body"></div>
   </div>
-
-  <div id="results-panel" class="hidden mt-lg"></div>
 `;
 
 function touchActivity() {
@@ -696,10 +700,7 @@ function renderPresets() {
       const preset = PRESETS.find((p) => p.id === id);
       if (!preset) return;
       loadRecipeText(preset.recipe);
-      document.getElementById("chef-workspace")?.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-      });
+      document.getElementById("preset-gallery")?.removeAttribute("open");
     });
   });
 }
@@ -1010,7 +1011,7 @@ function renderResults() {
   );
   const hasShares = artifacts.some((a) => a.shareIndex || /^Share\s+\d+/i.test(a.label || ""));
   panel.innerHTML = `
-    <h2>Results</h2>
+    <h2 class="pane-subtitle">Results</h2>
     <div class="btn-row wrap mb-md items-center">
       <p class="muted mb-0 flex-1">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
       ${
@@ -1202,10 +1203,18 @@ async function runViaWorker(ast, opts = {}) {
   });
 }
 
-document.getElementById("toggle-reference")?.addEventListener("click", () => {
-  referenceOpen = !referenceOpen;
+function setReferenceOpen(open) {
+  referenceOpen = open;
   document.getElementById("reference-panel")?.classList.toggle("hidden", !referenceOpen);
   if (referenceOpen) renderReference();
+}
+
+document.getElementById("toggle-reference")?.addEventListener("click", () => {
+  setReferenceOpen(!referenceOpen);
+});
+
+document.getElementById("close-reference")?.addEventListener("click", () => {
+  setReferenceOpen(false);
 });
 
 document.getElementById("clear-recipe-btn")?.addEventListener("click", () => {
@@ -1344,7 +1353,7 @@ async function startPage() {
     cryptoReady = true;
     await refreshVaultKeys();
     if (status) {
-      status.className = "status-row ok";
+      status.className = "app-status ok";
       status.textContent = "Crypto module verified.";
     }
     const runBtn = document.getElementById("run-btn");
@@ -1354,7 +1363,7 @@ async function startPage() {
   } catch (err) {
     cryptoReady = false;
     if (status) {
-      status.className = "status-row err";
+      status.className = "app-status err";
       status.innerHTML =
         `<strong>Crypto self-test FAILED</strong> — toolkit disabled. ` +
         escapeHtml(err?.message || String(err));

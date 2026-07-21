@@ -52,13 +52,152 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  max-width: 900px;
+  max-width: 1000px;
   margin: 0 auto;
   padding: 0 1.5rem 4rem;
   line-height: 1.6;
   color: var(--text);
   background: var(--surface);
   font-size: 15px;
+}
+
+/* ===== App shell (full-viewport workspace pages, e.g. Toolkit) ===== */
+body.layout-app {
+  max-width: none;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.layout-app nav {
+  margin-bottom: 0;
+  padding: 0.55rem 1.25rem;
+  flex-shrink: 0;
+}
+.layout-app .app-error {
+  margin: 0.5rem 1.25rem;
+  flex-shrink: 0;
+}
+.app-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Toolbar strip under the nav */
+.app-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.45rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+  flex-shrink: 0;
+}
+.app-toolbar-note {
+  margin-left: auto;
+}
+.app-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.app-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--badge-pending-fg);
+  flex-shrink: 0;
+}
+.app-status.ok { color: var(--success); }
+.app-status.ok::before { background: var(--success); }
+.app-status.err { color: var(--error); }
+.app-status.err::before { background: var(--error); }
+
+/* Dropdown menu in the toolbar (details-based, no JS needed to open) */
+.toolbar-menu {
+  position: relative;
+}
+.toolbar-menu > summary {
+  list-style: none;
+}
+.toolbar-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.toolbar-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 300;
+  width: min(760px, calc(100vw - 2.5rem));
+  max-height: 65vh;
+  overflow: auto;
+  padding: 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* Panes */
+.chef-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.pane-title,
+.pane-subtitle {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.pane-subtitle {
+  margin: 1.25rem 0 0.65rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.85rem 0.9rem 1.5rem;
+}
+
+/* Docs slide-over */
+.reference-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(480px, 100vw);
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+.reference-drawer .pane-head {
+  background: var(--surface-raised);
 }
 
 /* ===== Nav ===== */
@@ -1800,45 +1939,41 @@ pre {
 }
 
 .chef-workspace {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr) minmax(240px, 320px);
-  gap: 0.85rem;
-  align-items: start;
-  margin-top: 1rem;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) minmax(320px, 440px);
 }
-@media (max-width: 1100px) {
-  .chef-workspace {
-    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
-  }
-  .chef-run {
-    grid-column: 1 / -1;
-  }
-}
-@media (max-width: 720px) {
-  .chef-workspace {
-    grid-template-columns: 1fr;
-  }
-}
-
 .chef-ops,
-.chef-recipe,
 .chef-run {
-  min-width: 0;
+  background: var(--surface-raised);
 }
-.chef-ops {
-  position: sticky;
-  top: 0.75rem;
-  max-height: calc(100vh - 2rem);
-  overflow: auto;
-  padding-bottom: 0.75rem;
+.chef-ops,
+.chef-recipe {
+  border-right: 1px solid var(--border);
 }
-.chef-ops-head,
-.chef-recipe-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.65rem;
+@media (max-width: 1000px) {
+  /* Fall back to a normally scrolling stacked page on narrow viewports */
+  body.layout-app {
+    height: auto;
+    overflow: auto;
+  }
+  .chef-workspace {
+    display: flex;
+    flex-direction: column;
+  }
+  .chef-ops,
+  .chef-recipe {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .pane-body {
+    overflow-y: visible;
+  }
+  .chef-ops .pane-body {
+    max-height: 45vh;
+    overflow-y: auto;
+  }
 }
 
 .ops-drawer {
@@ -2006,11 +2141,6 @@ pre {
   max-width: 220px;
   height: auto;
 }
-.toolkit-banner {
-  margin-bottom: 1rem;
-  border-left: 3px solid var(--accent, #7aa2f7);
-}
-
 .share-inputs {
   display: flex;
   flex-direction: column;
