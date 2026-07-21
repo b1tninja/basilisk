@@ -120,7 +120,7 @@ describe("validation", () => {
   });
 
   it("parses and serializes -d decode flags", () => {
-    const src = "input shares | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem";
+    const src = "recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem";
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     expect(ast.steps.find((s) => s.name === "pem" && s.params.decode === true)).toBeTruthy();
@@ -129,9 +129,27 @@ describe("validation", () => {
   });
 
   it("allows shares | combine and reports inputNeeds", () => {
-    const { validation } = compileRecipe("input shares | combine | base64");
+    const { validation } = compileRecipe("recombine | combine | base64");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("shares");
+  });
+
+  it("input step reports text inputNeeds and canonicalizes paste/cat aliases", () => {
+    const { validation } = compileRecipe("input | utf8 | hex");
+    expect(validation.ok).toBe(true);
+    expect(validation.inputNeeds).toContain("text");
+
+    const { ast, errors } = parseRecipe("paste | utf8 | hex");
+    expect(errors).toEqual([]);
+    expect(ast.steps[0].name).toBe("input");
+    expect(parseRecipe("cat | utf8 | hex").ast.steps[0].name).toBe("input");
+  });
+
+  it("rejects more than one input step per pipeline", () => {
+    const { validation } = compileRecipe("input | utf8 | base64");
+    expect(validation.ok).toBe(true);
+    const dup = compileRecipe("input | utf8 | base64 | input");
+    expect(dup.validation.ok).toBe(false);
   });
 
   it("canonicalizes gpgdecrypt to decrypt gpg", () => {

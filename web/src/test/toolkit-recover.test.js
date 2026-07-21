@@ -18,7 +18,7 @@ describe("toolkit recover / combine", () => {
     const shares = arts.filter((a) => a.shareIndex).map((a) => a.content);
     expect(shares.length).toBe(3);
 
-    const recover = compileRecipe("input shares | combine | hex");
+    const recover = compileRecipe("recombine | combine | hex");
     expect(recover.validation.ok).toBe(true);
     const out = await runRecipe(recover.ast, {
       inputs: { shares: { mnemonics: [shares[0], shares[2]] } },
@@ -71,7 +71,7 @@ describe("toolkit recover / combine", () => {
     expect(envelope).toBeTruthy();
 
     const recover = compileRecipe(
-      "input shares | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
+      "recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
     );
     expect(recover.validation.ok).toBe(true);
     const out = await runRecipe(recover.ast, {
@@ -226,7 +226,7 @@ describe("toolkit recover / combine", () => {
     );
 
     const recover = compileRecipe(
-      "input shares | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
+      "recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
     );
     const out = await runRecipe(recover.ast, {
       inputs: {
@@ -254,7 +254,7 @@ describe("toolkit recover / combine", () => {
     );
     expect(envelope).toBeFalsy();
 
-    const recover = compileRecipe("input shares | combine | hex");
+    const recover = compileRecipe("recombine | combine | hex");
     const out = await runRecipe(recover.ast, {
       inputs: { shares: { mnemonics: [mnemonics[0], mnemonics[1]] } },
     });
@@ -268,7 +268,7 @@ describe("toolkit recover / combine", () => {
     const arts = await runRecipe(split.ast);
     const mnemonics = arts.filter((a) => a.shareIndex).map((a) => a.content);
 
-    const wrong = compileRecipe("input shares | combine | hex");
+    const wrong = compileRecipe("recombine | combine | hex");
     const wrongOut = await runRecipe(wrong.ast, {
       inputs: {
         shares: {

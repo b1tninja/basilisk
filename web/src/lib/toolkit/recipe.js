@@ -2,7 +2,8 @@
  * Toolkit recipe language: pipe-separated steps with key=value params.
  *
  *   genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg
- *   input shares | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem
+ *   recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem
+ *   (aliases: input / read / paste for recombine)
  *
  * Flow control (CyberChef Fork/Merge):
  *   foreach (aliases: map, each, fork) opens a per-item scope
@@ -49,7 +50,7 @@ import {
  * @property {string[]} warnings
  * @property {number} [recipientSlots]  how many GPG recipient slots Run needs
  * @property {boolean} [foreachGpg]  encrypt gpg is inside foreach
- * @property {("shares"|"gpg")[]} [inputNeeds]  runtime input panels required
+ * @property {("shares"|"gpg"|"text")[]} [inputNeeds]  runtime input panels required
  */
 
 /**
@@ -357,9 +358,10 @@ export function validateRecipe(ast) {
   let sharesCount = 0;
   let gpgSlots = 0;
   let foreachGpg = false;
-  /** @type {("shares"|"gpg")[]} */
+  /** @type {("shares"|"gpg"|"text")[]} */
   const inputNeeds = [];
   let sawInputShares = false;
+  let sawInputText = false;
   let sawDecryptGpg = false;
 
   for (let i = 0; i < steps.length; i++) {
@@ -433,10 +435,10 @@ export function validateRecipe(ast) {
       sharesCount = n;
     }
 
-    if (step.name === "input") {
+    if (step.name === "recombine") {
       if (sawInputShares) {
         errors.push({
-          message: "Only one input step is supported per recipe",
+          message: "Only one recombine step is supported per pipeline",
           start: step.start,
           end: step.end,
           stepIndex: i,
@@ -446,6 +448,19 @@ export function validateRecipe(ast) {
       if (spec.unresolvedInputs === "shares" || String(step.params.kind || "shares") === "shares") {
         if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
       }
+    }
+
+    if (step.name === "input") {
+      if (sawInputText) {
+        errors.push({
+          message: "Only one input step is supported per pipeline",
+          start: step.start,
+          end: step.end,
+          stepIndex: i,
+        });
+      }
+      sawInputText = true;
+      if (!inputNeeds.includes("text")) inputNeeds.push("text");
     }
 
     if (step.name === "decrypt") {
@@ -475,7 +490,7 @@ export function validateRecipe(ast) {
       }
       if (current !== "shares") {
         errors.push({
-          message: `foreach requires a collection (shares) — got ${current}. Add slip39 or input shares before foreach.`,
+          message: `foreach requires a collection (shares) — got ${current}. Add slip39 or recombine before foreach.`,
           start: step.start,
           end: step.end,
           stepIndex: i,
@@ -612,7 +627,9 @@ export function validateRecipe(ast) {
           });
         }
       } else {
-        current = io.output;
+        // utf8 is bidirectional: text in → bytes out (encode), bytes in → text out.
+        current =
+          step.name === "utf8" && current === "text" ? "bytes" : io.output;
         if (foreachDepth > 0 && spec.kind === "sink") {
           current = "text";
         }
@@ -709,72 +726,95 @@ export function registryIssues() {
   return issues;
 }
 
-/** Preset recipes for the gallery. */
+/**
+ * Preset recipes for the gallery.
+ *
+ * `group` clusters presets under a heading. Presets sharing a `pair` value are
+ * companion pipelines (forward ⇄ inverse, e.g. split/recover or encrypt/decrypt)
+ * and render side by side; the one listed first appears on the left.
+ */
 export const PRESETS = [
   {
     id: "p256-pem",
+    group: "Generate keys",
     title: "P-256 private key (PEM)",
     blurb: "secp256r1 PKCS#8 PEM — drop-in for TLS / JWT / WebCrypto import.",
     recipe: "genkey ec/p256 | export pkcs8 | pem",
   },
   {
     id: "p256-tee-inspect",
+    group: "Generate keys",
     title: "P-256 with mid-pipeline tee",
     blurb: "Generate a key, tee an openssl-style dump, then export PEM (keypair still flows through).",
     recipe: "genkey ec/p256 | tee name=keypair | export pkcs8 | pem",
   },
   {
     id: "ed25519-jwk",
+    group: "Generate keys",
     title: "Ed25519 key (JWK)",
     blurb: "Signing key as JSON Web Key.",
     recipe: "genkey ed25519 | export jwk",
   },
   {
     id: "secret-b64url",
+    group: "Secrets & passphrases",
     title: "256-bit secret (base64url)",
     blurb: "Websafe random secret — no +/ or padding.",
     recipe: "random 32 | base64url",
   },
   {
     id: "diceware",
+    group: "Secrets & passphrases",
     title: "Diceware passphrase",
     blurb: "EFF Large Wordlist, 6 words (~77 bits).",
     recipe: "passphrase 6",
   },
   {
     id: "slip39-split",
+    group: "Split & recover",
+    pair: "slip39-secret",
     title: "SLIP-39 split a secret",
     blurb: "Generate 32 random bytes and split 2-of-3 mnemonic shares.",
     recipe: "random 32 | slip39 threshold=2 shares=3 | foreach | out name=share",
   },
   {
+    id: "recover-shares",
+    group: "Split & recover",
+    pair: "slip39-secret",
+    title: "Recover secret from SLIP-39 shares",
+    blurb: "Paste K-of-N mnemonics (+ envelope if prompted) and reconstruct the secret as Base64.",
+    recipe: "recombine | combine | base64",
+  },
+  {
     id: "out-mid-pipeline",
-    title: "Named output tile mid-pipeline",
+    group: "Split & recover",
+    pair: "slip39-pem",
+    title: "Split P-256 key into shares",
     blurb: "Save a PEM tile (copy/download), then keep piping into SLIP-39 — same pattern as out | encrypt gpg.",
     recipe:
       "genkey ec/p256 | export pkcs8 | pem | out name=private-key ext=pem label=PKCS8 | slip39 threshold=2 shares=3 | foreach | out name=share",
   },
   {
+    id: "rebuild-p256",
+    group: "Split & recover",
+    pair: "slip39-pem",
+    title: "Rebuild P-256 key from shares",
+    blurb: "Combine SLIP-39 shares of a PEM private key and re-import as WebCrypto P-256.",
+    recipe:
+      "recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem",
+  },
+  {
     id: "quorum-gpg",
+    group: "Split & recover",
+    pair: "quorum-gpg",
     title: "Key + quorum-share to GPG",
     blurb: "P-256 key → SLIP-39 2-of-3 → encrypt each share to a different recipient (chosen at run time).",
     recipe: "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg",
   },
   {
-    id: "recover-shares",
-    title: "Recover secret from SLIP-39 shares",
-    blurb: "Paste K-of-N mnemonics (+ envelope if prompted) and reconstruct the secret as Base64.",
-    recipe: "input shares | combine | base64",
-  },
-  {
-    id: "rebuild-p256",
-    title: "Rebuild P-256 key from shares",
-    blurb: "Combine SLIP-39 shares of a PEM private key and re-import as WebCrypto P-256.",
-    recipe:
-      "input shares | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem",
-  },
-  {
     id: "decrypt-rebuild-p256",
+    group: "Split & recover",
+    pair: "quorum-gpg",
     title: "Decrypt GPG shares → rebuild key",
     blurb:
       "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then combine and rebuild the P-256 PEM.",

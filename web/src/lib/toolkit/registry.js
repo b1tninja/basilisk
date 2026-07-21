@@ -34,7 +34,7 @@
  * @property {ParamSpec[]} [params]
  * @property {boolean} [flowControl]
  * @property {boolean} [unresolvedRecipients]  needs runtime recipient binding
- * @property {"shares"|"gpg"|null} [unresolvedInputs]  needs runtime input panel
+ * @property {"shares"|"gpg"|"text"|null} [unresolvedInputs]  needs runtime input panel
  * @property {string[]} [aliases]
  * @property {(params: Record<string, *>) => { input: IoType, output: IoType }} [effectiveIo]
  */
@@ -115,13 +115,13 @@ export const STEPS = [
     ],
   },
   {
-    name: "input",
+    name: "recombine",
     kind: "source",
-    doc: "Read runtime input (SLIP-39 share mnemonics or free text). Like cat — data is never stored in the recipe.",
+    doc: "Provide SLIP-39 share mnemonics (and optional envelope) at run time for recombination — data is never stored in the pipeline text.",
     input: "none",
     output: "shares",
     unresolvedInputs: "shares",
-    aliases: ["read", "paste"],
+    aliases: ["read"],
     params: [
       {
         name: "kind",
@@ -136,6 +136,16 @@ export const STEPS = [
       const kind = String(params?.kind || "shares");
       return { input: "none", output: kind === "text" ? "text" : "shares" };
     },
+  },
+  {
+    name: "input",
+    kind: "source",
+    doc: "Free-form text provided at run time via a textarea or loaded from a file (like cat). The data is never stored in the pipeline text.",
+    input: "none",
+    output: "text",
+    unresolvedInputs: "text",
+    aliases: ["paste", "cat"],
+    params: [],
   },
   {
     name: "decrypt",

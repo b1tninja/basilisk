@@ -52,6 +52,7 @@ import { getStep } from "./registry.js";
  * @property {string[]} [recipientFingerprints]
  * @property {{
  *   shares?: { mnemonics: string[], envelopeB64?: string, passphrase?: string },
+ *   text?: { value: string },
  *   gpg?: {
  *     armoredMessages: string[],
  *     privateKeyArmored: string,
@@ -229,6 +230,13 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
       return { type: "text", data: passphrase, meta: { sensitive: true } };
     }
     case "input": {
+      const text = String(bindings.inputs?.text?.value ?? "");
+      if (!text.trim()) {
+        throw new Error("No input text provided — paste or load a file before running.");
+      }
+      return { type: "text", data: text, meta: { sensitive: true } };
+    }
+    case "recombine": {
       const kind = String(step.params.kind || "shares");
       const inp = bindings.inputs?.shares;
       if (kind === "text") {

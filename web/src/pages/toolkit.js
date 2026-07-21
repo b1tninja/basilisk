@@ -15,7 +15,7 @@ import {
   stripArmoredMessages,
 } from "../lib/pgp/armor.js";
 import { validateShareMnemonic } from "../lib/slip39/slip39.js";
-import { bytesToBase64 } from "../lib/toolkit/encode.js";
+import { bytesToBase64, zeroBuffer } from "../lib/toolkit/encode.js";
 import {
   PRESETS,
   compileRecipe,
@@ -56,7 +56,7 @@ let boundRecipients = [];
 let binder = null;
 /** @type {import("../lib/vault.js").VaultKeyMeta[]} */
 let vaultKeys = [];
-/** @type {("shares"|"gpg")[]} */
+/** @type {("shares"|"gpg"|"text")[]} */
 let currentInputNeeds = [];
 /** Per-share mnemonic rows for the modular inputs UI (survives panel re-renders). */
 /** @type {string[]} */
@@ -65,6 +65,8 @@ let shareRows = [""];
 let envelopeDraft = "";
 /** Share passphrase retained across re-renders. */
 let sharePassDraft = "";
+/** Free-form input text retained across re-renders. */
+let inputTextDraft = "";
 /** Ops drawer search query. */
 let opsFilter = "";
 /** Collapsed category keys in the ops drawer. */
@@ -73,6 +75,10 @@ let opsCollapsed = new Set();
 
 const IDLE_CLEAR_MS = 5 * 60 * 1000;
 let idleTimer = null;
+
+/** Worker for the in-flight run, so a secure-destroy can terminate it. */
+/** @type {Worker|null} */
+let activeWorker = null;
 
 const STEP_MIME = "application/x-basilisk-step";
 const REORDER_MIME = "application/x-basilisk-reorder";
@@ -89,57 +95,76 @@ app.innerHTML = `
     <details class="toolbar-menu" id="preset-gallery">
       <summary class="btn btn-ghost btn-compact toolkit-presets-summary">Templates <span aria-hidden="true">▾</span></summary>
       <div class="toolbar-popover">
-        <p class="muted m-0-b-md fs-sm">One-click recipes. Drop more operations into the pipeline afterward.</p>
+        <p class="muted m-0-b-md fs-sm">One-click pipelines. Drop more operations in afterward.</p>
         <div class="preset-grid" id="preset-grid"></div>
       </div>
     </details>
     <span id="crypto-status" class="app-status" role="status">Verifying crypto module…</span>
     <span class="app-toolbar-note muted fs-xs">Advanced tool — everyday messaging belongs on <a class="text-link" href="/encrypt">Encrypt</a>.</span>
     <button type="button" class="btn btn-ghost btn-compact" id="toggle-reference" title="Full step docs">Docs</button>
+    <button type="button" class="btn btn-ghost btn-compact text-error" id="destroy-btn"
+      title="Zeroize all in-memory secrets, inputs, and outputs (best-effort)">Destroy</button>
   </div>
 
   <div class="chef-workspace" id="chef-workspace">
     <aside class="chef-ops chef-pane" aria-label="Operations">
+      <button type="button" class="pane-rail" data-collapse="ops" title="Expand Operations panel">
+        <span>Operations</span>
+      </button>
       <div class="pane-head">
         <p class="pane-title">Operations</p>
+        <button type="button" class="btn btn-ghost btn-compact pane-collapse" data-collapse="ops"
+          aria-label="Collapse Operations panel" title="Collapse panel">‹</button>
       </div>
       <div class="pane-body">
         <input type="search" id="ops-filter" class="text-input" placeholder="Search operations…" autocomplete="off">
-        <p class="muted fs-xs mt-xs mb-sm" id="ops-hint">Drag onto the recipe, or click to append.</p>
+        <p class="muted fs-xs mt-xs mb-sm" id="ops-hint">Drag onto the pipeline, or click to append.</p>
         <div id="ops-drawer" class="ops-drawer"></div>
       </div>
     </aside>
 
-    <section class="chef-recipe chef-pane" aria-label="Recipe">
+    <div class="pane-splitter" data-resize="ops" role="separator" aria-orientation="vertical"
+      aria-label="Resize Operations panel" title="Drag to resize · double-click to reset"></div>
+
+    <section class="chef-recipe chef-pane" aria-label="Pipeline">
       <div class="pane-head">
-        <p class="pane-title">Recipe</p>
-        <button type="button" class="btn btn-ghost btn-compact" id="clear-recipe-btn">Clear</button>
+        <p class="pane-title">Pipeline</p>
+        <div class="pane-actions">
+          <button type="button" class="btn btn-ghost btn-compact" id="clear-recipe-btn">Clear</button>
+          <button type="button" class="btn btn-compact" id="run-btn" disabled>Execute</button>
+        </div>
       </div>
       <div class="pane-body">
-        <p class="muted fs-sm mb-md">Drop operations here. Reorder by dragging cards. Recipients are chosen at run time — never stored in the recipe text.</p>
+        <p class="muted fs-sm mb-md">Drop operations here. Reorder by dragging cards. Recipients are chosen at run time — never stored in the pipeline text.</p>
         <div id="builder-steps" class="builder-steps"></div>
         <details class="recipe-text-details mt-md">
-          <summary class="muted fs-sm">Recipe text (pipe language)</summary>
+          <summary class="muted fs-sm">Pipeline source (text)</summary>
           <textarea id="recipe-text" class="compose-message mt-sm" rows="3" spellcheck="false"
             placeholder="genkey ec/p256 | export pkcs8 | pem"></textarea>
           <p id="recipe-errors" class="status-row err hidden mt-sm"></p>
           <p id="recipe-warnings" class="muted mt-xs fs-sm"></p>
         </details>
+        <div id="inputs-host"></div>
+        <div id="recipient-bind-host"></div>
+        <p id="run-status" class="status-row hidden mt-sm"></p>
       </div>
     </section>
 
-    <section class="chef-run chef-pane" aria-label="Run">
+    <div class="pane-splitter" data-resize="run" role="separator" aria-orientation="vertical"
+      aria-label="Resize Output panel" title="Drag to resize · double-click to reset"></div>
+
+    <section class="chef-run chef-pane" aria-label="Output">
+      <button type="button" class="pane-rail" data-collapse="run" title="Expand Output panel">
+        <span>Output</span>
+      </button>
       <div class="pane-head">
-        <p class="pane-title">Run</p>
+        <p class="pane-title">Output</p>
+        <button type="button" class="btn btn-ghost btn-compact pane-collapse" data-collapse="run"
+          aria-label="Collapse Output panel" title="Collapse panel">›</button>
       </div>
       <div class="pane-body">
-        <div id="inputs-host"></div>
-        <div id="recipient-bind-host"></div>
-        <div class="btn-row mt-md">
-          <button type="button" class="btn" id="run-btn" disabled>Bake</button>
-        </div>
-        <p id="run-status" class="status-row hidden mt-sm"></p>
-        <div id="results-panel" class="hidden mt-lg"></div>
+        <p id="output-empty" class="muted fs-sm">Execute a pipeline to see results here.</p>
+        <div id="results-panel" class="hidden"></div>
       </div>
     </section>
   </div>
@@ -153,14 +178,183 @@ app.innerHTML = `
   </div>
 `;
 
+/* ===== Workspace layout: resizable + collapsible panes (desktop) ===== */
+
+const LAYOUT_KEY = "basilisk.toolkit.layout";
+const PANE_LIMITS = {
+  ops: { min: 180, max: 520, def: 280 },
+  run: { min: 260, max: 720, def: 380 },
+};
+
+function loadLayout() {
+  try {
+    return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+/** @param {Record<string, number|boolean|null>} patch */
+function saveLayout(patch) {
+  try {
+    const next = { ...loadLayout(), ...patch };
+    for (const k of Object.keys(next)) {
+      if (next[k] == null) delete next[k];
+    }
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+  } catch (_) {
+    /* private mode etc. — layout just won't persist */
+  }
+}
+
+function initWorkspaceLayout() {
+  const ws = document.getElementById("chef-workspace");
+  if (!ws) return;
+
+  const layout = loadLayout();
+  for (const side of /** @type {("ops"|"run")[]} */ (["ops", "run"])) {
+    const w = Number(layout[`${side}W`]);
+    if (Number.isFinite(w) && w >= PANE_LIMITS[side].min) {
+      ws.style.setProperty(`--${side}-w`, `${w}px`);
+    }
+    ws.classList.toggle(`${side}-collapsed`, !!layout[`${side}Collapsed`]);
+  }
+
+  // Collapse buttons and expand rails share the data-collapse attribute.
+  ws.querySelectorAll("[data-collapse]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const side = btn.getAttribute("data-collapse");
+      if (side !== "ops" && side !== "run") return;
+      const collapsed = ws.classList.toggle(`${side}-collapsed`);
+      saveLayout({ [`${side}Collapsed`]: collapsed || null });
+    });
+  });
+
+  ws.querySelectorAll(".pane-splitter").forEach((split) => {
+    const side = split.getAttribute("data-resize");
+    if ((side !== "ops" && side !== "run") || !(split instanceof HTMLElement)) return;
+    const limits = PANE_LIMITS[side];
+
+    split.addEventListener("dblclick", () => {
+      ws.style.removeProperty(`--${side}-w`);
+      saveLayout({ [`${side}W`]: null });
+    });
+
+    split.addEventListener("pointerdown", (e) => {
+      if (ws.classList.contains(`${side}-collapsed`)) return;
+      e.preventDefault();
+      split.setPointerCapture(e.pointerId);
+      split.classList.add("dragging");
+      let width = NaN;
+
+      const onMove = (ev) => {
+        const rect = ws.getBoundingClientRect();
+        width =
+          side === "ops" ? ev.clientX - rect.left : rect.right - ev.clientX;
+        width = Math.round(Math.max(limits.min, Math.min(limits.max, width)));
+        ws.style.setProperty(`--${side}-w`, `${width}px`);
+      };
+      const onUp = () => {
+        split.classList.remove("dragging");
+        split.removeEventListener("pointermove", onMove);
+        if (Number.isFinite(width)) saveLayout({ [`${side}W`]: width });
+      };
+      split.addEventListener("pointermove", onMove);
+      split.addEventListener("pointerup", onUp, { once: true });
+      split.addEventListener("pointercancel", onUp, { once: true });
+    });
+  });
+}
+
+initWorkspaceLayout();
+
 function touchActivity() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    artifacts = [];
-    renderResults();
-    const rt = document.getElementById("recipe-text");
-    // don't clear recipe — only sensitive outputs
+    // Idle auto-scrub: wipe secrets, inputs and outputs but keep the pipeline
+    // definition (it is not secret) so the user can re-run after stepping away.
+    secureDestroy({ quiet: true });
   }, IDLE_CLEAR_MS);
+}
+
+/**
+ * Best-effort secure destroy of in-memory sensitive material.
+ *
+ * JavaScript cannot guarantee zeroization: strings are immutable and managed by
+ * the garbage collector, the engine may retain copies, and there is no way to
+ * pin memory or mlock() pages. WebCrypto/W3C explicitly does not zeroize key
+ * material when a CryptoKey is dropped. We therefore do the accepted best-effort
+ * (per FIPS 140-3 CSP-zeroization guidance for JS modules):
+ *   - terminate the crypto worker so its heap (decrypted private keys, plaintext,
+ *     pipeline byte buffers) is discarded wholesale;
+ *   - overwrite any Uint8Array we still own with zeros (done at each use site);
+ *   - drop every reference to secret-bearing objects and strings so they become
+ *     collectable;
+ *   - clear all input/output DOM fields so revealed secrets leave the layout.
+ * The pipeline definition itself is not a secret and is preserved (use Clear to
+ * reset it).
+ *
+ * @param {{ quiet?: boolean }} [opts]
+ */
+function secureDestroy(opts = {}) {
+  // 1. Kill any in-flight worker — its heap holds the most sensitive material.
+  if (activeWorker) {
+    try {
+      activeWorker.terminate();
+    } catch (_) {
+      /* ignore */
+    }
+    activeWorker = null;
+  }
+
+  // 2. Drop references to secret-bearing module state.
+  artifacts = [];
+  boundRecipients = [];
+  if (binder) {
+    binder.destroy();
+    binder = null;
+  }
+  shareRows = [""];
+  envelopeDraft = "";
+  sharePassDraft = "";
+  inputTextDraft = "";
+
+  // 3. Clear sensitive DOM fields (pasted keys, passphrases, shares, ciphertext).
+  for (const id of [
+    "input-text",
+    "input-envelope",
+    "input-envelope-gpg",
+    "input-share-pass",
+    "input-ciphertext",
+    "input-privkey",
+    "input-key-pass",
+  ]) {
+    const el = document.getElementById(id);
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      el.value = "";
+    }
+  }
+  document.querySelectorAll(".share-mnemonic").forEach((el) => {
+    if (el instanceof HTMLTextAreaElement) el.value = "";
+  });
+
+  // 4. Re-render: rebuilds inputs empty and replaces the output pane (revealed
+  //    secrets in the DOM are dropped with the old markup).
+  renderResults();
+  validateAndBind();
+
+  // 5. Idle timer no longer needed until next activity.
+  clearTimeout(idleTimer);
+
+  if (!opts.quiet) {
+    const status = document.getElementById("run-status");
+    if (status) {
+      status.className = "status-row ok";
+      status.textContent =
+        "Destroyed — in-memory secrets, inputs and outputs cleared (best-effort).";
+      status.classList.remove("hidden");
+    }
+  }
 }
 
 function setRecipeFromSteps() {
@@ -328,7 +522,7 @@ function splitSharePaste(text) {
 }
 
 /**
- * @param {("shares"|"gpg")[]} needs
+ * @param {("shares"|"gpg"|"text")[]} needs
  */
 function renderInputsPanel(needs) {
   const host = document.getElementById("inputs-host");
@@ -339,8 +533,24 @@ function renderInputsPanel(needs) {
   }
   if (!shareRows.length) shareRows = [""];
 
+  const title = needs.includes("shares")
+    ? "Recombine"
+    : needs.includes("gpg")
+      ? "Decrypt"
+      : "Input";
   /** @type {string[]} */
-  const parts = ['<p class="card-title">Inputs</p>'];
+  const parts = [`<p class="card-title">${title}</p>`];
+  if (needs.includes("text")) {
+    parts.push(`
+      <div class="btn-row wrap mb-xs">
+        <label class="field-label m-0" for="input-text">Input text</label>
+        <button type="button" class="btn btn-ghost btn-compact" id="load-input-text-btn">Load from file…</button>
+        <input type="file" id="load-input-text-file" class="hidden" multiple accept="*/*">
+      </div>
+      <textarea id="input-text" class="compose-message" rows="6" spellcheck="false"
+        placeholder="Paste text here, or load it from a file — it feeds the input step at run time and is never stored in the pipeline.">${escapeHtml(inputTextDraft)}</textarea>
+    `);
+  }
   if (needs.includes("shares")) {
     const rowsHtml = shareRows
       .map(
@@ -433,9 +643,28 @@ function renderInputsPanel(needs) {
 
 /**
  * @param {HTMLElement} host
- * @param {("shares"|"gpg")[]} needs
+ * @param {("shares"|"gpg"|"text")[]} needs
  */
 function wireInputsPanel(host, needs) {
+  if (needs.includes("text")) {
+    const textEl = host.querySelector("#input-text");
+    textEl?.addEventListener("input", () => {
+      if (textEl instanceof HTMLTextAreaElement) inputTextDraft = textEl.value;
+    });
+
+    wireFileButton(host, "#load-input-text-btn", "#load-input-text-file", async (files) => {
+      /** @type {string[]} */
+      const chunks = [];
+      for (const f of files) chunks.push(await f.text());
+      const joined = chunks.join("\n").replace(/\n+$/, "");
+      if (!joined) return;
+      inputTextDraft = inputTextDraft.trim()
+        ? `${inputTextDraft.replace(/\n+$/, "")}\n${joined}`
+        : joined;
+      if (textEl instanceof HTMLTextAreaElement) textEl.value = inputTextDraft;
+    });
+  }
+
   if (needs.includes("shares")) {
     host.querySelector("#add-share-btn")?.addEventListener("click", () => {
       shareRows.push("");
@@ -596,6 +825,13 @@ async function collectRuntimeInputs() {
   let privateKeyArmored = "";
   let passphrase = "";
 
+  if (currentInputNeeds.includes("text")) {
+    // Sync from live DOM in case the last keystroke wasn't flushed to the draft.
+    const textEl = document.getElementById("input-text");
+    if (textEl instanceof HTMLTextAreaElement) inputTextDraft = textEl.value;
+    inputs.text = { value: inputTextDraft };
+  }
+
   if (currentInputNeeds.includes("shares")) {
     // Sync from live DOM in case last keystroke wasn't flushed to shareRows.
     document.querySelectorAll("[data-share-input]").forEach((el) => {
@@ -649,10 +885,16 @@ async function collectRuntimeInputs() {
       const meta = vaultKeys.find((k) => k.fingerprint === vaultFpr);
       /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
       const opts = {};
-      if (meta?.protection === "passkey") {
-        opts.prfIkm = await getPasskeyPrf();
+      try {
+        if (meta?.protection === "passkey") {
+          opts.prfIkm = await getPasskeyPrf();
+        }
+        privateKeyArmored = await vaultUnlockKey(vaultFpr, opts);
+      } finally {
+        // PRF-derived input keying material is a real Uint8Array — zeroize it
+        // as soon as the KEK has been derived (best-effort per FIPS 140-3).
+        zeroBuffer(opts.prfIkm);
       }
-      privateKeyArmored = await vaultUnlockKey(vaultFpr, opts);
     }
 
     let envelopeB64 =
@@ -686,14 +928,47 @@ async function collectRuntimeInputs() {
 function renderPresets() {
   const grid = document.getElementById("preset-grid");
   if (!grid) return;
-  grid.innerHTML = PRESETS.map(
-    (p) => `
+
+  /** @param {typeof PRESETS[number]} p */
+  const card = (p) => `
     <button type="button" class="preset-card" data-preset="${escapeHtml(p.id)}">
       <strong>${escapeHtml(p.title)}</strong>
       <span class="muted">${escapeHtml(p.blurb)}</span>
       <code class="preset-recipe">${escapeHtml(p.recipe)}</code>
-    </button>`
-  ).join("");
+    </button>`;
+
+  /** @type {Map<string, typeof PRESETS>} */
+  const groups = new Map();
+  for (const p of PRESETS) {
+    const g = p.group || "Pipelines";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(p);
+  }
+
+  let html = "";
+  for (const [name, presets] of groups) {
+    let items = "";
+    for (let i = 0; i < presets.length; i++) {
+      const p = presets[i];
+      const next = presets[i + 1];
+      if (p.pair && next?.pair === p.pair) {
+        // Companion pipelines (forward ⇄ inverse) render as one linked row.
+        items += `
+          <div class="preset-pair">
+            ${card(p)}
+            <span class="preset-pair-link" aria-hidden="true" title="Companion pipelines">⇄</span>
+            ${card(next)}
+          </div>`;
+        i++;
+      } else {
+        items += card(p);
+      }
+    }
+    html += `
+      <p class="preset-group-title">${escapeHtml(name)}</p>
+      <div class="preset-grid-items">${items}</div>`;
+  }
+  grid.innerHTML = html;
   grid.querySelectorAll("[data-preset]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-preset");
@@ -744,7 +1019,7 @@ function renderOpsDrawer() {
   if (hint) {
     hint.textContent = steps.length
       ? `Suggested next (from ${from}): highlighted. Drag or click to add.`
-      : "Drag onto the recipe, or click to append.";
+      : "Drag onto the pipeline, or click to append.";
   }
 
   host.innerHTML = kinds
@@ -810,8 +1085,8 @@ function renderBuilder() {
   if (!steps.length) {
     host.innerHTML = `
       <div class="builder-dropzone builder-empty" data-insert="0">
-        <p class="muted mb-0">Drop an operation here to start the recipe</p>
-        <p class="muted fs-xs mb-0">Sources like <code>genkey</code>, <code>random</code>, or <code>input</code> work well first.</p>
+        <p class="muted mb-0">Drop an operation here to start the pipeline</p>
+        <p class="muted fs-xs mb-0">Sources like <code>genkey</code>, <code>random</code>, or <code>recombine</code> work well first.</p>
       </div>`;
     wireDropZones(host);
     return;
@@ -999,19 +1274,21 @@ function renderReference() {
 
 function renderResults() {
   const panel = document.getElementById("results-panel");
+  const empty = document.getElementById("output-empty");
   if (!panel) return;
   if (!artifacts.length) {
     panel.classList.add("hidden");
     panel.innerHTML = "";
+    empty?.classList.remove("hidden");
     return;
   }
+  empty?.classList.add("hidden");
   panel.classList.remove("hidden");
   const hasEnvelope = artifacts.some(
     (a) => /envelope/i.test(a.label || "") || /envelope/i.test(a.filename || "")
   );
   const hasShares = artifacts.some((a) => a.shareIndex || /^Share\s+\d+/i.test(a.label || ""));
   panel.innerHTML = `
-    <h2 class="pane-subtitle">Results</h2>
     <div class="btn-row wrap mb-md items-center">
       <p class="muted mb-0 flex-1">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
       ${
@@ -1161,33 +1438,30 @@ async function runViaWorker(ast, opts = {}) {
       reject(err);
       return;
     }
-    const id = `tk-${Date.now()}`;
-    const timer = setTimeout(() => {
+    activeWorker = worker;
+    const finish = () => {
       try {
         worker.terminate();
       } catch (_) {
         /* ignore */
       }
+      if (activeWorker === worker) activeWorker = null;
+    };
+    const id = `tk-${Date.now()}`;
+    const timer = setTimeout(() => {
+      finish();
       reject(new Error("Toolkit worker timed out"));
     }, 120_000);
     worker.onmessage = (ev) => {
       if (ev.data?.id !== id) return;
       clearTimeout(timer);
-      try {
-        worker.terminate();
-      } catch (_) {
-        /* ignore */
-      }
+      finish();
       if (ev.data.ok) resolve(ev.data.artifacts || []);
       else reject(new Error(ev.data.error || "Toolkit run failed"));
     };
     worker.onerror = (err) => {
       clearTimeout(timer);
-      try {
-        worker.terminate();
-      } catch (_) {
-        /* ignore */
-      }
+      finish();
       reject(err?.message ? new Error(err.message) : new Error("Worker error"));
     };
     worker.postMessage({
@@ -1215,6 +1489,10 @@ document.getElementById("toggle-reference")?.addEventListener("click", () => {
 
 document.getElementById("close-reference")?.addEventListener("click", () => {
   setReferenceOpen(false);
+});
+
+document.getElementById("destroy-btn")?.addEventListener("click", () => {
+  secureDestroy();
 });
 
 document.getElementById("clear-recipe-btn")?.addEventListener("click", () => {
@@ -1291,6 +1569,12 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
       /-----BEGIN PGP MESSAGE-----/i.test(String(m || ""))
     );
     const shareMnemonics = collected.inputs.shares?.mnemonics || [];
+    if (
+      currentInputNeeds.includes("text") &&
+      !(collected.inputs.text?.value || "").trim()
+    ) {
+      throw new Error("Paste input text or load it from a file before executing.");
+    }
     if (currentInputNeeds.includes("gpg") && hasPgpCipher && !privateKeyArmored) {
       throw new Error(
         "OpenPGP ciphertext needs a vault/pasted private key, or decrypt those messages externally and paste the mnemonics in the share rows."

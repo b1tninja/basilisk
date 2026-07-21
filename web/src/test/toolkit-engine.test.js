@@ -85,4 +85,20 @@ describe("toolkit engine", () => {
     );
     expect(validation.ok).toBe(true);
   });
+
+  it("input step feeds runtime text through the pipeline", async () => {
+    const { ast, validation } = compileRecipe("input | utf8 | hex");
+    expect(validation.ok).toBe(true);
+    expect(validation.inputNeeds).toContain("text");
+    const arts = await runRecipe(ast, {
+      inputs: { text: { value: "hi" } },
+    });
+    // "hi" → utf8 bytes 0x68 0x69 → hex
+    expect(arts[0].content).toBe("6869");
+  });
+
+  it("input step fails without runtime text", async () => {
+    const { ast } = compileRecipe("input | utf8 | hex");
+    await expect(runRecipe(ast, { inputs: {} })).rejects.toThrow(/input text/i);
+  });
 });

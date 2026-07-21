@@ -69,6 +69,9 @@ body.layout-app {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
+  /* Slim, theme-matched scrollbars; inherited by every scroll container in the app */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 40%, transparent) transparent;
 }
 .layout-app nav {
   margin-bottom: 0;
@@ -161,8 +164,7 @@ body.layout-app {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.pane-title,
-.pane-subtitle {
+.pane-title {
   margin: 0;
   font-size: 0.72rem;
   font-weight: 700;
@@ -170,16 +172,24 @@ body.layout-app {
   letter-spacing: 0.08em;
   color: var(--text-muted);
 }
-.pane-subtitle {
-  margin: 1.25rem 0 0.65rem;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--border);
+.pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 .pane-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 0.85rem 0.9rem 1.5rem;
+}
+
+/* Run-time inputs sit below the recipe; divider only when they have content */
+#inputs-host:not(:empty),
+#recipient-bind-host:not(:empty) {
+  margin-top: 1.1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
 }
 
 /* Docs slide-over */
@@ -1911,9 +1921,52 @@ pre {
   display: none;
 }
 .preset-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.preset-group-title {
+  margin: 0.5rem 0 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.preset-group-title:first-child {
+  margin-top: 0;
+}
+.preset-grid-items {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 0.65rem;
+}
+
+/* Companion pipelines (e.g. split ⇄ recover) rendered as a linked row */
+.preset-pair {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0.45rem;
+}
+.preset-pair .preset-card {
+  height: 100%;
+}
+.preset-pair-link {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: 1.05rem;
+  user-select: none;
+}
+@media (max-width: 560px) {
+  .preset-pair {
+    grid-template-columns: 1fr;
+  }
+  .preset-pair-link {
+    justify-self: center;
+    transform: rotate(90deg);
+  }
 }
 .preset-card {
   display: flex;
@@ -1942,16 +1995,94 @@ pre {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) minmax(320px, 440px);
+  /* JS writes --ops-w / --run-w inline when panes are resized; the -col
+     indirection lets the collapsed classes below still win the cascade. */
+  --ops-col: var(--ops-w, 280px);
+  --run-col: var(--run-w, 380px);
+  grid-template-columns: var(--ops-col) auto minmax(0, 1fr) auto var(--run-col);
 }
 .chef-ops,
 .chef-run {
   background: var(--surface-raised);
 }
-.chef-ops,
-.chef-recipe {
-  border-right: 1px solid var(--border);
+
+/* Drag handles between panes (the 1px divider line lives here) */
+.pane-splitter {
+  position: relative;
+  width: 7px;
+  cursor: col-resize;
+  flex-shrink: 0;
+  touch-action: none;
+  user-select: none;
 }
+.pane-splitter::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+}
+.pane-splitter:hover::before,
+.pane-splitter.dragging::before {
+  left: 2px;
+  width: 3px;
+  background: var(--brand);
+}
+
+/* Collapsed pane rail (click to expand) */
+.pane-rail {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  height: 100%;
+  width: 100%;
+}
+.pane-rail:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--brand) 8%, transparent);
+}
+.pane-rail span {
+  writing-mode: vertical-rl;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.pane-collapse {
+  line-height: 1;
+}
+
+@media (min-width: 1001px) {
+  .chef-workspace.ops-collapsed {
+    --ops-col: 2.3rem;
+  }
+  .chef-workspace.run-collapsed {
+    --run-col: 2.3rem;
+  }
+  .chef-workspace.ops-collapsed .chef-ops .pane-head,
+  .chef-workspace.ops-collapsed .chef-ops .pane-body,
+  .chef-workspace.run-collapsed .chef-run .pane-head,
+  .chef-workspace.run-collapsed .chef-run .pane-body {
+    display: none;
+  }
+  .chef-workspace.ops-collapsed .chef-ops .pane-rail,
+  .chef-workspace.run-collapsed .chef-run .pane-rail {
+    display: flex;
+  }
+  .chef-workspace.ops-collapsed .pane-splitter[data-resize="ops"],
+  .chef-workspace.run-collapsed .pane-splitter[data-resize="run"] {
+    cursor: default;
+  }
+}
+
 @media (max-width: 1000px) {
   /* Fall back to a normally scrolling stacked page on narrow viewports */
   body.layout-app {
@@ -1962,9 +2093,14 @@ pre {
     display: flex;
     flex-direction: column;
   }
+  .pane-splitter,
+  .pane-rail,
+  .pane-collapse {
+    display: none !important;
+  }
+  /* Collapse state is a desktop concept — always show panes when stacked */
   .chef-ops,
   .chef-recipe {
-    border-right: none;
     border-bottom: 1px solid var(--border);
   }
   .pane-body {
