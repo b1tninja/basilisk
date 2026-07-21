@@ -276,20 +276,32 @@ class SqliteCertStore(CertStore):
     ) -> list[CertRecord]:
         needle = normalize_hex_needle(hex_query)
         types = id_types_for_needle(needle)
-        if not types:
+        if not needle or not types:
             return []
-        placeholders = ",".join("?" for _ in types)
-        rows = self._conn.execute(
-            f"""
-            SELECT DISTINCT c.* FROM certs c
-            JOIN identifiers i ON c.fingerprint = i.fingerprint
-            WHERE i.identifier = ?
-              AND i.id_type IN ({placeholders})
-              AND c.approval_state IN ('approved', 'pending')
-            LIMIT ?
-            """,
-            (needle, *types, limit),
-        ).fetchall()
+        # Fixed SQL shapes only — never interpolate user text into the query string.
+        if len(types) == 1:
+            sql = """
+                SELECT DISTINCT c.* FROM certs c
+                JOIN identifiers i ON c.fingerprint = i.fingerprint
+                WHERE i.identifier = ?
+                  AND i.id_type = ?
+                  AND c.approval_state IN ('approved', 'pending')
+                LIMIT ?
+                """
+            params: tuple = (needle, types[0], limit)
+        elif len(types) == 2:
+            sql = """
+                SELECT DISTINCT c.* FROM certs c
+                JOIN identifiers i ON c.fingerprint = i.fingerprint
+                WHERE i.identifier = ?
+                  AND i.id_type IN (?, ?)
+                  AND c.approval_state IN ('approved', 'pending')
+                LIMIT ?
+                """
+            params = (needle, types[0], types[1], limit)
+        else:
+            return []
+        rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_record(row) for row in rows]
 
     def list_approved(self, *, limit: int = 10_000) -> list[CertRecord]:

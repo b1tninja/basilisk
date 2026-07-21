@@ -58,11 +58,17 @@ def id_types_for_needle(hex_needle: str) -> tuple[str, ...]:
 
 
 def normalize_hex_needle(hex_query: str) -> str:
-    """Contiguous hex for alias lookup (lowercase; strip 0x / spaces / colons)."""
+    """Contiguous lowercase hex for alias lookup, or ``\"\"`` if not pure hex.
+
+    Strips optional ``0x``, spaces, and colons. Rejects any other characters so
+    callers never interpolate untrusted text into queries.
+    """
     import re
 
     s = (hex_query or "").strip()
     if s.lower().startswith("0x"):
         s = s[2:]
     s = re.sub(r"[\s:]+", "", s)
+    if not s or not re.fullmatch(r"[0-9a-fA-F]+", s):
+        return ""
     return s.lower()

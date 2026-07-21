@@ -24,8 +24,18 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _escape_odata(value: str) -> str:
-    return value.replace("'", "''")
+_ALLOWED_ODATA_FIELDS = frozenset(
+    {"PartitionKey", "RowKey", "claimer_email", "claimer_oid", "approval_state"}
+)
+
+
+def _odata_eq(field: str, param_name: str) -> str:
+    """OData equality filter using an SDK ``parameters`` placeholder (not string concat)."""
+    if field not in _ALLOWED_ODATA_FIELDS:
+        raise ValueError(f"Disallowed OData field: {field}")
+    if not param_name.isidentifier():
+        raise ValueError(f"Invalid OData parameter name: {param_name}")
+    return f"{field} eq @{param_name}"
 
 
 class AzureTableCertStore(CertStore):
@@ -209,7 +219,8 @@ class AzureTableCertStore(CertStore):
 
     def get_by_email(self, email: str) -> CertRecord | None:
         for entity in self._emails.query_entities(
-            query_filter=f"PartitionKey eq '{_escape_odata(email.lower())}'"
+            _odata_eq("PartitionKey", "pk"),
+            parameters={"pk": email.lower()},
         ):
             record = self.get_by_fingerprint(entity["fingerprint"])
             if record and record.approval_state == "approved":
@@ -221,14 +232,16 @@ class AzureTableCertStore(CertStore):
         seen: set[str] = set()
         out: list[CertRecord] = []
         for entity in self._emails.query_entities(
-            query_filter=f"PartitionKey eq '{_escape_odata(target)}'"
+            _odata_eq("PartitionKey", "pk"),
+            parameters={"pk": target},
         ):
             record = self.get_by_fingerprint(entity["fingerprint"])
             if record and record.fingerprint not in seen:
                 seen.add(record.fingerprint)
                 out.append(record)
         for entity in self._certs.query_entities(
-            query_filter=f"claimer_email eq '{_escape_odata(target)}'"
+            _odata_eq("claimer_email", "email"),
+            parameters={"email": target},
         ):
             record = self._record(entity)
             if record.fingerprint not in seen:
@@ -267,7 +280,8 @@ class AzureTableCertStore(CertStore):
         out: list[CertRecord] = []
         seen: set[str] = set()
         for entity in self._ids.query_entities(
-            query_filter=f"PartitionKey eq '{_escape_odata(needle)}'"
+            _odata_eq("PartitionKey", "pk"),
+            parameters={"pk": needle},
         ):
             id_type = str(entity.get("id_type") or "")
             if id_type not in types:
@@ -300,7 +314,8 @@ class AzureTableCertStore(CertStore):
         return [
             self._record(entity)
             for entity in self._certs.query_entities(
-                query_filter=f"claimer_oid eq '{_escape_odata(oid)}'"
+                _odata_eq("claimer_oid", "oid"),
+                parameters={"oid": oid},
             )
         ]
 
@@ -385,7 +400,8 @@ class AzureTableCertStore(CertStore):
         fpr = fingerprint.upper()
         rows = []
         for entity in self._history.query_entities(
-            query_filter=f"PartitionKey eq '{_escape_odata(fpr)}'"
+            _odata_eq("PartitionKey", "pk"),
+            parameters={"pk": fpr},
         ):
             rows.append(
                 {

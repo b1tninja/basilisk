@@ -29,3 +29,5 @@ def test_id_types_for_needle():
 @pytest.mark.unit
 def test_normalize_hex_needle():
     assert normalize_hex_needle("0x AA BB CC DD") == "aabbccdd"
+    assert normalize_hex_needle("aabb'or") == ""
+    assert normalize_hex_needle("'; DROP") == ""
