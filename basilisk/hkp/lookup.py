@@ -80,7 +80,19 @@ def lookup_get(
         filtered = filter_armored_by_uids(data, emails_from_uids(record.approved_uids))
         return HttpResponse(200, filtered, headers, "application/pgp-keys")
 
-    if kind == "fingerprint":
+    if kind == "name":
+        return HttpResponse(404, "Not found", {}, "text/plain")
+
+    if kind == "fingerprint_partial" or kind == "short_keyid":
+        matches = [
+            r
+            for r in store.list_by_fingerprint_substring(ident)
+            if r.approval_state in ("approved", "pending")
+        ]
+        if len(matches) != 1:
+            return HttpResponse(404, "Not found", {}, "text/plain")
+        record = matches[0]
+    elif kind == "fingerprint":
         record = store.get_by_fingerprint(ident)
     else:
         record = store.get_by_identifier(ident)
@@ -119,6 +131,17 @@ def lookup_index(search: str, store: CertStore | None = None) -> HttpResponse:
         record = store.get_by_email(ident)
     elif kind == "fingerprint":
         record = store.get_by_fingerprint(ident)
+    elif kind == "fingerprint_partial" or kind == "short_keyid":
+        matches = [
+            r
+            for r in store.list_by_fingerprint_substring(ident)
+            if r.approval_state == "approved"
+        ]
+        if len(matches) != 1:
+            return HttpResponse(404, "Not found", {}, "text/plain")
+        record = matches[0]
+    elif kind == "name":
+        return HttpResponse(404, "Not found", {}, "text/plain")
     else:
         record = store.get_by_identifier(ident)
 

@@ -45,6 +45,53 @@ def test_search_pending_by_fingerprint(sample_armored, sample_fingerprint):
 
 
 @pytest.mark.unit
+def test_search_approved_by_partial_fingerprint(sample_armored, sample_fingerprint):
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    approve_cert(store, sample_fingerprint, ["test@basilisk.local"])
+    # Indexed half-fingerprint: suffix and prefix (not arbitrary mid-string)
+    suffix = sample_fingerprint[-32:]
+    result = search_keys(suffix, store)
+    assert result["reason"] == "ok"
+    assert len(result["results"]) == 1
+    assert result["results"][0]["fingerprint"] == sample_fingerprint
+
+    prefix = sample_fingerprint[:32]
+    result_prefix = search_keys(prefix, store)
+    assert result_prefix["reason"] == "ok"
+    assert result_prefix["results"][0]["fingerprint"] == sample_fingerprint
+
+    spaced = " ".join(suffix[i : i + 4] for i in range(0, len(suffix), 4))
+    result2 = search_keys(spaced, store)
+    assert result2["reason"] == "ok"
+    assert result2["results"][0]["fingerprint"] == sample_fingerprint
+
+    # Arbitrary lengths (e.g. 12 hex) are not partial-fingerprint searches
+    assert search_keys(sample_fingerprint[-12:], store)["reason"] in (
+        "not_found",
+        "name",
+    )
+
+
+@pytest.mark.unit
+def test_search_approved_by_short_keyid_warns(sample_armored, sample_fingerprint):
+    store = get_store()
+    ingest_keytext(store, get_blob_store(), sample_armored)
+    approve_cert(store, sample_fingerprint, ["test@basilisk.local"])
+    short = sample_fingerprint[-8:]
+    result = search_keys(short, store)
+    assert result["reason"] == "short_keyid"
+    assert result.get("warning")
+    assert "collision" in result["warning"].lower()
+    assert len(result["results"]) == 1
+    assert result["results"][0]["fingerprint"] == sample_fingerprint
+
+    result_0x = search_keys(f"0x{short}", store)
+    assert result_0x["reason"] == "short_keyid"
+    assert len(result_0x["results"]) == 1
+
+
+@pytest.mark.unit
 def test_my_keys_lists_pending_by_email(sample_armored, sample_fingerprint):
     store = get_store()
     ingest_keytext(store, get_blob_store(), sample_armored)

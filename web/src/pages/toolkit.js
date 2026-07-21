@@ -24,7 +24,7 @@ import {
   unresolvedInputs,
   unresolvedRecipients,
 } from "../lib/toolkit/recipe.js";
-import { getStep, listSteps, stepsAccepting } from "../lib/toolkit/registry.js";
+import { getStep, listSteps, stepsAccepting, effectiveIo } from "../lib/toolkit/registry.js";
 import {
   copyTextTransient,
   escapeHtml,
@@ -47,7 +47,6 @@ const app = document.getElementById("toolkit-app");
 let cryptoReady = false;
 /** @type {import("../lib/toolkit/recipe.js").RecipeStep[]} */
 let steps = [];
-let customizeOpen = false;
 let referenceOpen = false;
 /** @type {import("../lib/toolkit/engine.js").ToolkitArtifact[]} */
 let artifacts = [];
@@ -66,69 +65,85 @@ let shareRows = [""];
 let envelopeDraft = "";
 /** Share passphrase retained across re-renders. */
 let sharePassDraft = "";
+/** Ops drawer search query. */
+let opsFilter = "";
+/** Collapsed category keys in the ops drawer. */
+/** @type {Set<string>} */
+let opsCollapsed = new Set();
 
 const IDLE_CLEAR_MS = 5 * 60 * 1000;
 let idleTimer = null;
+
+const STEP_MIME = "application/x-basilisk-step";
+const REORDER_MIME = "application/x-basilisk-reorder";
+
+const KIND_META = {
+  source: { label: "Sources", order: 0 },
+  transform: { label: "Transforms", order: 1 },
+  sink: { label: "Outputs", order: 2 },
+  flow: { label: "Flow control", order: 3 },
+};
 
 app.innerHTML = `
   <div id="crypto-status" class="status-row" role="status">Verifying crypto module…</div>
 
   <div class="card toolkit-banner">
     <p class="m-0 fs-md">
-      <strong>Advanced tool.</strong> This page generates extractable key material and shareable backups.
-      Prefer hardware tokens for long-lived identity keys. Everyday messaging belongs on
-      <a class="text-link" href="/encrypt">Encrypt</a>.
+      <strong>Advanced tool.</strong> Drag operations from the drawer into the recipe (CyberChef-style),
+      or start from a template. Prefer hardware tokens for long-lived identity keys.
+      Everyday messaging belongs on <a class="text-link" href="/encrypt">Encrypt</a>.
     </p>
   </div>
 
-  <div id="preset-gallery" class="card">
-    <p class="card-title">Templates</p>
-    <p class="muted m-0-b-lg fs-md">One-click recipes. Customize afterward if you need a different pipeline.</p>
+  <details class="card toolkit-presets" id="preset-gallery" open>
+    <summary class="card-title toolkit-presets-summary">Templates</summary>
+    <p class="muted m-0-b-md fs-sm">One-click recipes. Drop more operations into the pipeline afterward.</p>
     <div class="preset-grid" id="preset-grid"></div>
-  </div>
+  </details>
 
-  <div class="btn-row my-lg">
-    <button type="button" class="btn btn-ghost" id="toggle-customize">Customize pipeline</button>
-    <button type="button" class="btn btn-ghost" id="toggle-reference">Reference</button>
-  </div>
-
-  <div id="customize-panel" class="hidden">
-    <div class="card">
-      <p class="card-title">Pipeline builder</p>
-      <div id="builder-steps" class="builder-steps"></div>
-      <div class="btn-row mt-md wrap">
-        <select id="add-step-select" class="text-input maxw-220"></select>
-        <button type="button" class="btn btn-compact" id="add-step-btn">Add step</button>
+  <div class="chef-workspace" id="chef-workspace">
+    <aside class="chef-ops card" aria-label="Operations">
+      <div class="chef-ops-head">
+        <p class="card-title mb-0">Operations</p>
+        <button type="button" class="btn btn-ghost btn-compact" id="toggle-reference" title="Full step docs">Docs</button>
       </div>
-    </div>
+      <input type="search" id="ops-filter" class="text-input" placeholder="Search operations…" autocomplete="off">
+      <p class="muted fs-xs mt-xs mb-sm" id="ops-hint">Drag onto the recipe, or click to append.</p>
+      <div id="ops-drawer" class="ops-drawer"></div>
+    </aside>
 
-    <div class="card mt-lg">
-      <p class="card-title">Recipe</p>
-      <p class="muted m-0-b-sm fs-sm">
-        Pipe-separated steps. Flow control: <code>foreach</code> / <code>merge</code>
-        (aliases: map, each, fork / collect). Recipients are chosen at run time — never written into the recipe.
-      </p>
-      <textarea id="recipe-text" class="compose-message" rows="3" spellcheck="false"
-        placeholder="genkey ec/p256 | export pkcs8 | pem"></textarea>
-      <p id="recipe-errors" class="status-row err hidden mt-sm"></p>
-      <p id="recipe-warnings" class="muted mt-xs fs-sm"></p>
-      <div id="autocomplete" class="recipient-dropdown hidden"></div>
-    </div>
+    <section class="chef-recipe card" aria-label="Recipe">
+      <div class="chef-recipe-head">
+        <p class="card-title mb-0">Recipe</p>
+        <div class="btn-row wrap mb-0">
+          <button type="button" class="btn btn-ghost btn-compact" id="clear-recipe-btn">Clear</button>
+        </div>
+      </div>
+      <p class="muted fs-sm mb-md">Drop operations here. Reorder by dragging cards. Recipients are chosen at run time — never stored in the recipe text.</p>
+      <div id="builder-steps" class="builder-steps"></div>
+      <details class="recipe-text-details mt-md">
+        <summary class="muted fs-sm">Recipe text (pipe language)</summary>
+        <textarea id="recipe-text" class="compose-message mt-sm" rows="3" spellcheck="false"
+          placeholder="genkey ec/p256 | export pkcs8 | pem"></textarea>
+        <p id="recipe-errors" class="status-row err hidden mt-sm"></p>
+        <p id="recipe-warnings" class="muted mt-xs fs-sm"></p>
+      </details>
+    </section>
+
+    <section class="chef-run card" aria-label="Run">
+      <p class="card-title">Run</p>
+      <div id="inputs-host"></div>
+      <div id="recipient-bind-host"></div>
+      <div class="btn-row mt-md">
+        <button type="button" class="btn" id="run-btn" disabled>Bake</button>
+      </div>
+      <p id="run-status" class="status-row hidden mt-sm"></p>
+    </section>
   </div>
 
   <div id="reference-panel" class="card hidden mt-lg">
     <p class="card-title">Step reference</p>
     <div id="reference-body"></div>
-  </div>
-
-  <div class="card mt-lg">
-    <p class="card-title">Run</p>
-    <div id="inputs-host"></div>
-    <div id="recipient-bind-host"></div>
-    <div class="btn-row mt-md">
-      <button type="button" class="btn" id="run-btn" disabled>Run recipe</button>
-    </div>
-    <p id="run-status" class="status-row hidden mt-sm"></p>
   </div>
 
   <div id="results-panel" class="hidden mt-lg"></div>
@@ -151,6 +166,53 @@ function setRecipeFromSteps() {
   }
   validateAndBind();
   renderBuilder();
+  renderOpsDrawer();
+}
+
+/**
+ * @param {import("../lib/toolkit/registry.js").StepSpec} spec
+ * @returns {Record<string, string|number|boolean>}
+ */
+function defaultParams(spec) {
+  /** @type {Record<string, string|number|boolean>} */
+  const params = {};
+  for (const p of spec.params || []) {
+    if (p.default !== undefined) params[p.name] = p.default;
+  }
+  return params;
+}
+
+/**
+ * @param {string} name
+ * @param {number} [index]
+ */
+function addStepAt(name, index) {
+  const spec = getStep(name);
+  if (!spec) return;
+  const step = {
+    name: spec.name,
+    params: defaultParams(spec),
+    start: 0,
+    end: 0,
+  };
+  const at =
+    index == null || Number.isNaN(index)
+      ? steps.length
+      : Math.max(0, Math.min(steps.length, index));
+  steps.splice(at, 0, step);
+  setRecipeFromSteps();
+}
+
+/**
+ * Output type after the last step (for suggesting compatible ops).
+ * @returns {import("../lib/toolkit/registry.js").IoType|"none"}
+ */
+function currentPipelineOutput() {
+  if (!steps.length) return "none";
+  const last = steps[steps.length - 1];
+  const spec = getStep(last.name);
+  if (!spec) return "none";
+  return effectiveIo(spec, last.params).output;
 }
 
 function loadRecipeText(text) {
@@ -172,6 +234,7 @@ function loadRecipeText(text) {
   if (errEl) errEl.classList.add("hidden");
   validateAndBind();
   renderBuilder();
+  renderOpsDrawer();
 }
 
 function validateAndBind() {
@@ -633,63 +696,189 @@ function renderPresets() {
       const preset = PRESETS.find((p) => p.id === id);
       if (!preset) return;
       loadRecipeText(preset.recipe);
-      customizeOpen = true;
-      document.getElementById("customize-panel")?.classList.remove("hidden");
-      document.getElementById("toggle-customize").textContent = "Hide pipeline";
+      document.getElementById("chef-workspace")?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
     });
+  });
+}
+
+/**
+ * CyberChef-style operations drawer grouped by kind.
+ */
+function renderOpsDrawer() {
+  const host = document.getElementById("ops-drawer");
+  const hint = document.getElementById("ops-hint");
+  if (!host) return;
+
+  const q = opsFilter.trim().toLowerCase();
+  const from = currentPipelineOutput();
+  const suggested = new Set(stepsAccepting(from).map((s) => s.name));
+  const all = listSteps().filter(
+    (s) => s.kind !== "flow" || s.name === "foreach" || s.name === "merge"
+  );
+
+  /** @type {Map<string, typeof all>} */
+  const byKind = new Map();
+  for (const s of all) {
+    if (q) {
+      const hay = `${s.name} ${s.kind} ${s.doc} ${(s.aliases || []).join(" ")}`.toLowerCase();
+      if (!hay.includes(q)) continue;
+    }
+    const list = byKind.get(s.kind) || [];
+    list.push(s);
+    byKind.set(s.kind, list);
+  }
+
+  const kinds = [...byKind.keys()].sort(
+    (a, b) => (KIND_META[a]?.order ?? 9) - (KIND_META[b]?.order ?? 9)
+  );
+
+  if (!kinds.length) {
+    host.innerHTML = `<p class="muted fs-sm">No operations match “${escapeHtml(opsFilter)}”.</p>`;
+    return;
+  }
+
+  if (hint) {
+    hint.textContent = steps.length
+      ? `Suggested next (from ${from}): highlighted. Drag or click to add.`
+      : "Drag onto the recipe, or click to append.";
+  }
+
+  host.innerHTML = kinds
+    .map((kind) => {
+      const meta = KIND_META[kind] || { label: kind };
+      const collapsed = opsCollapsed.has(kind) && !q;
+      const items = byKind.get(kind) || [];
+      return `
+        <div class="ops-category" data-kind="${escapeHtml(kind)}">
+          <button type="button" class="ops-category-toggle" data-toggle-kind="${escapeHtml(kind)}"
+            aria-expanded="${collapsed ? "false" : "true"}">
+            <span>${escapeHtml(meta.label)}</span>
+            <span class="muted fs-xs">${items.length}</span>
+          </button>
+          <div class="ops-category-body ${collapsed ? "hidden" : ""}">
+            ${items
+              .map((s) => {
+                const fit = !steps.length
+                  ? s.kind === "source" || s.input === "none"
+                  : suggested.has(s.name);
+                return `
+                <button type="button" class="ops-item ${fit ? "ops-item-fit" : "ops-item-dim"}"
+                  draggable="true" data-op="${escapeHtml(s.name)}"
+                  title="${escapeHtml(s.doc)}">
+                  <span class="ops-item-name">${escapeHtml(s.name)}</span>
+                  <span class="muted fs-xs ops-item-io">${escapeHtml(s.input)} → ${escapeHtml(s.output)}</span>
+                </button>`;
+              })
+              .join("")}
+          </div>
+        </div>`;
+    })
+    .join("");
+
+  host.querySelectorAll("[data-toggle-kind]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const kind = btn.getAttribute("data-toggle-kind") || "";
+      if (opsCollapsed.has(kind)) opsCollapsed.delete(kind);
+      else opsCollapsed.add(kind);
+      renderOpsDrawer();
+    });
+  });
+
+  host.querySelectorAll("[data-op]").forEach((el) => {
+    const name = el.getAttribute("data-op") || "";
+    el.addEventListener("dragstart", (e) => {
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      dt.setData(STEP_MIME, name);
+      dt.setData("text/plain", name);
+      dt.effectAllowed = "copy";
+      el.classList.add("ops-dragging");
+    });
+    el.addEventListener("dragend", () => el.classList.remove("ops-dragging"));
+    el.addEventListener("click", () => addStepAt(name));
   });
 }
 
 function renderBuilder() {
   const host = document.getElementById("builder-steps");
-  const addSelect = document.getElementById("add-step-select");
   if (!host) return;
 
+  if (!steps.length) {
+    host.innerHTML = `
+      <div class="builder-dropzone builder-empty" data-insert="0">
+        <p class="muted mb-0">Drop an operation here to start the recipe</p>
+        <p class="muted fs-xs mb-0">Sources like <code>genkey</code>, <code>random</code>, or <code>input</code> work well first.</p>
+      </div>`;
+    wireDropZones(host);
+    return;
+  }
+
   let foreachOpen = false;
-  host.innerHTML = steps
-    .map((step, i) => {
-      const spec = getStep(step.name);
-      if (step.name === "foreach") foreachOpen = true;
-      const inForeach =
-        foreachOpen && step.name !== "foreach" && step.name !== "merge";
-      if (step.name === "merge") foreachOpen = false;
+  /** @type {string[]} */
+  const parts = [];
+  parts.push(`<div class="builder-dropzone" data-insert="0" aria-label="Insert at start"></div>`);
 
-      const paramFields = (spec?.params || [])
-        .map((p) => {
-          const val = step.params[p.name] ?? p.default ?? "";
-          if (p.type === "enum") {
-            return `<label class="builder-param">${escapeHtml(p.name)}
-              <select data-step="${i}" data-param="${escapeHtml(p.name)}" class="text-input">
-                ${(p.enum || [])
-                  .map(
-                    (e) =>
-                      `<option value="${escapeHtml(e)}" ${String(val) === e ? "selected" : ""}>${escapeHtml(e)}</option>`
-                  )
-                  .join("")}
-              </select></label>`;
-          }
+  steps.forEach((step, i) => {
+    const spec = getStep(step.name);
+    if (step.name === "foreach") foreachOpen = true;
+    const inForeach =
+      foreachOpen && step.name !== "foreach" && step.name !== "merge";
+    if (step.name === "merge") foreachOpen = false;
+
+    const paramFields = (spec?.params || [])
+      .map((p) => {
+        const val = step.params[p.name] ?? p.default ?? "";
+        if (p.type === "enum") {
           return `<label class="builder-param">${escapeHtml(p.name)}
-            <input class="text-input" data-step="${i}" data-param="${escapeHtml(p.name)}"
-                   value="${escapeHtml(String(val))}" ${p.type === "int" ? 'type="number"' : 'type="text"'}></label>`;
-        })
-        .join("");
+            <select data-step="${i}" data-param="${escapeHtml(p.name)}" class="text-input">
+              ${(p.enum || [])
+                .map(
+                  (e) =>
+                    `<option value="${escapeHtml(e)}" ${String(val) === e ? "selected" : ""}>${escapeHtml(e)}</option>`
+                )
+                .join("")}
+            </select></label>`;
+        }
+        return `<label class="builder-param">${escapeHtml(p.name)}
+          <input class="text-input" data-step="${i}" data-param="${escapeHtml(p.name)}"
+                 value="${escapeHtml(String(val))}" ${p.type === "int" ? 'type="number"' : 'type="text"'}></label>`;
+      })
+      .join("");
 
-      return `
-        <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""}"
-             draggable="true" data-index="${i}">
-          <div class="builder-card-head">
-            <span class="builder-drag" title="Drag to reorder">⠿</span>
-            <strong>${escapeHtml(step.name)}</strong>
-            <span class="muted fs-xs">${escapeHtml(spec?.kind || "")}</span>
-            <button type="button" class="btn btn-ghost btn-compact text-error" data-remove="${i}">Remove</button>
-          </div>
-          <p class="muted mt-xs mb-sm fs-xs">${escapeHtml(spec?.doc || "")}</p>
-          <div class="builder-params">${paramFields}</div>
-        </div>`;
-    })
-    .join("");
+    const isOut = step.name === "out";
+    const outSummary = isOut
+      ? [
+          step.params.name || "output",
+          step.params.encoding && step.params.encoding !== "auto"
+            ? String(step.params.encoding)
+            : "",
+          step.params.ext ? `.${String(step.params.ext).replace(/^\./, "")}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : "";
 
-  // Param change handlers
+    parts.push(`
+      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""}"
+           draggable="true" data-index="${i}">
+        <div class="builder-card-head">
+          <span class="builder-drag" title="Drag to reorder">⠿</span>
+          <strong>${escapeHtml(step.name)}</strong>
+          ${isOut ? `<span class="badge pending">output tile</span>` : `<span class="muted fs-xs">${escapeHtml(spec?.kind || "")}</span>`}
+          ${outSummary ? `<span class="muted fs-xs">${escapeHtml(outSummary)}</span>` : ""}
+          <button type="button" class="btn btn-ghost btn-compact text-error" data-remove="${i}">Remove</button>
+        </div>
+        <p class="muted mt-xs mb-sm fs-xs">${escapeHtml(spec?.doc || "")}</p>
+        <div class="builder-params">${paramFields}</div>
+      </div>
+      <div class="builder-dropzone" data-insert="${i + 1}" aria-label="Insert after ${escapeHtml(step.name)}"></div>`);
+  });
+
+  host.innerHTML = parts.join("");
+
   host.querySelectorAll("[data-param]").forEach((el) => {
     el.addEventListener("change", () => {
       const i = Number(el.getAttribute("data-step"));
@@ -714,36 +903,70 @@ function renderBuilder() {
     });
   });
 
-  // Drag reorder
-  let dragFrom = -1;
   host.querySelectorAll(".builder-card").forEach((card) => {
-    card.addEventListener("dragstart", () => {
-      dragFrom = Number(card.getAttribute("data-index"));
+    card.addEventListener("dragstart", (e) => {
+      const i = Number(card.getAttribute("data-index"));
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      dt.setData(REORDER_MIME, String(i));
+      dt.setData("text/plain", steps[i]?.name || "");
+      dt.effectAllowed = "move";
       card.classList.add("dragging");
     });
     card.addEventListener("dragend", () => card.classList.remove("dragging"));
-    card.addEventListener("dragover", (e) => e.preventDefault());
-    card.addEventListener("drop", (e) => {
-      e.preventDefault();
-      const to = Number(card.getAttribute("data-index"));
-      if (dragFrom < 0 || to < 0 || dragFrom === to) return;
-      const [moved] = steps.splice(dragFrom, 1);
-      steps.splice(to, 0, moved);
-      setRecipeFromSteps();
-    });
   });
 
-  // Add-step select: suggest based on last output
-  if (addSelect instanceof HTMLSelectElement) {
-    const last = steps[steps.length - 1];
-    const from = last ? getStep(last.name)?.output || "none" : "none";
-    const candidates = stepsAccepting(from);
-    const all = listSteps().filter((s) => s.kind !== "flow" || s.name === "foreach" || s.name === "merge");
-    const list = candidates.length ? candidates : all;
-    addSelect.innerHTML = list
-      .map((s) => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)} — ${escapeHtml(s.kind)}</option>`)
-      .join("");
-  }
+  wireDropZones(host);
+}
+
+/**
+ * @param {HTMLElement} host
+ */
+function wireDropZones(host) {
+  const clearHi = () => {
+    host.querySelectorAll(".builder-dropzone-active").forEach((z) => {
+      z.classList.remove("builder-dropzone-active");
+    });
+  };
+
+  host.querySelectorAll(".builder-dropzone").forEach((zone) => {
+    zone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      const dt = e.dataTransfer;
+      if (dt) {
+        const types = Array.from(dt.types || []);
+        dt.dropEffect = types.includes(REORDER_MIME) ? "move" : "copy";
+      }
+      clearHi();
+      zone.classList.add("builder-dropzone-active");
+    });
+    zone.addEventListener("dragleave", () => {
+      zone.classList.remove("builder-dropzone-active");
+    });
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      clearHi();
+      const insertAt = Number(zone.getAttribute("data-insert"));
+      const dt = e.dataTransfer;
+      if (!dt) return;
+
+      const reorderRaw = dt.getData(REORDER_MIME);
+      if (reorderRaw !== "") {
+        const from = Number(reorderRaw);
+        if (Number.isNaN(from) || from < 0 || from >= steps.length) return;
+        let to = insertAt;
+        if (from < to) to -= 1;
+        if (to === from) return;
+        const [moved] = steps.splice(from, 1);
+        steps.splice(to, 0, moved);
+        setRecipeFromSteps();
+        return;
+      }
+
+      const name = dt.getData(STEP_MIME) || dt.getData("text/plain");
+      if (name && getStep(name)) addStepAt(name, insertAt);
+    });
+  });
 }
 
 function renderReference() {
@@ -810,12 +1033,25 @@ function renderResults() {
             ? escapeHtml(a.content.slice(0, 400)) + "…"
             : escapeHtml(a.content);
         const isSvg = a.mime === "image/svg+xml";
+        const metaBits = [
+          a.filename ? `<code class="fs-xs">${escapeHtml(a.filename)}</code>` : "",
+          a.encoding ? `<span class="badge pending">${escapeHtml(a.encoding)}</span>` : "",
+          a.mime && a.mime !== "text/plain; charset=utf-8" && a.mime !== "text/plain"
+            ? `<span class="muted fs-xs">${escapeHtml(a.mime)}</span>`
+            : "",
+          a.shareIndex ? `<span class="badge pending">share ${a.shareIndex}</span>` : "",
+          a.recipientFingerprint
+            ? `<span class="muted fs-xs">→ ${escapeHtml(formatFingerprint(a.recipientFingerprint))}</span>`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
         return `
         <div class="card artifact-card" data-art="${i}">
-          <p class="card-title m-0-b-xs">${escapeHtml(a.label)}
-            ${a.shareIndex ? `<span class="badge pending">share ${a.shareIndex}</span>` : ""}
-            ${a.recipientFingerprint ? `<span class="muted fs-xs">→ ${escapeHtml(formatFingerprint(a.recipientFingerprint))}</span>` : ""}
-          </p>
+          <div class="artifact-card-head">
+            <p class="card-title m-0">${escapeHtml(a.label)}</p>
+            <div class="artifact-meta">${metaBits}</div>
+          </div>
           ${
             isSvg && !masked
               ? `<div class="qr-preview">${a.content}</div>`
@@ -966,32 +1202,21 @@ async function runViaWorker(ast, opts = {}) {
   });
 }
 
-document.getElementById("toggle-customize")?.addEventListener("click", () => {
-  customizeOpen = !customizeOpen;
-  document.getElementById("customize-panel")?.classList.toggle("hidden", !customizeOpen);
-  document.getElementById("toggle-customize").textContent = customizeOpen
-    ? "Hide pipeline"
-    : "Customize pipeline";
-});
-
 document.getElementById("toggle-reference")?.addEventListener("click", () => {
   referenceOpen = !referenceOpen;
   document.getElementById("reference-panel")?.classList.toggle("hidden", !referenceOpen);
   if (referenceOpen) renderReference();
 });
 
-document.getElementById("add-step-btn")?.addEventListener("click", () => {
-  const sel = document.getElementById("add-step-select");
-  const name = sel instanceof HTMLSelectElement ? sel.value : "";
-  const spec = getStep(name);
-  if (!spec) return;
-  /** @type {Record<string, string|number|boolean>} */
-  const params = {};
-  for (const p of spec.params || []) {
-    if (p.default !== undefined) params[p.name] = p.default;
-  }
-  steps.push({ name: spec.name, params, start: 0, end: 0 });
+document.getElementById("clear-recipe-btn")?.addEventListener("click", () => {
+  steps = [];
   setRecipeFromSteps();
+});
+
+document.getElementById("ops-filter")?.addEventListener("input", (e) => {
+  const t = e.target;
+  opsFilter = t instanceof HTMLInputElement ? t.value : "";
+  renderOpsDrawer();
 });
 
 let recipeTimer = 0;
@@ -1138,5 +1363,6 @@ async function startPage() {
 }
 
 renderPresets();
+renderOpsDrawer();
 loadRecipeText(PRESETS[0].recipe);
 startPage();

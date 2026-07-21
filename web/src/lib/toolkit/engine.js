@@ -31,6 +31,7 @@ import {
   toPem,
   zeroBuffer,
 } from "./encode.js";
+import { inspectValue } from "./inspect.js";
 import { getStep } from "./registry.js";
 
 /**
@@ -38,9 +39,10 @@ import { getStep } from "./registry.js";
  * @property {string} label
  * @property {string} filename
  * @property {string} content  text (PEM, mnemonic, armored, SVG, …)
- * @property {boolean} sensitive
- * @property {string} [mime]
+ * @property {boolean} [sensitive]
  * @property {number} [shareIndex]
+ * @property {string} [mime]
+ * @property {string} [encoding]
  * @property {string} [recipientFingerprint]
  */
 
@@ -82,11 +84,14 @@ export async function runRecipe(ast, bindings = {}) {
   let value = null;
   /** Track whether envelope was already emitted for this run. */
   let envelopeEmitted = false;
+  /** True when the last top-level step was `out` (already materialized; skip trailing emit). */
+  let lastStepWasOut = false;
 
   const plan = expandPlan(steps);
 
   for (const node of plan) {
     if (node.kind === "foreach") {
+      lastStepWasOut = false;
       if (!value || value.type !== "shares") {
         throw new Error("foreach requires shares");
       }
@@ -131,6 +136,7 @@ export async function runRecipe(ast, bindings = {}) {
     }
 
     value = await execStep(node.step, value, bindings, artifacts, 0);
+    lastStepWasOut = node.step.name === "out";
     if (
       value?.meta?.envelope &&
       !envelopeEmitted &&
@@ -149,7 +155,10 @@ export async function runRecipe(ast, bindings = {}) {
       emitEnvelope(artifacts, bareEnvelope);
       envelopeEmitted = true;
     }
-    artifacts.push(...valueToArtifacts(value));
+    // Terminal `out` already pushed tiles; later transforms clear lastStepWasOut.
+    if (!lastStepWasOut) {
+      artifacts.push(...valueToArtifacts(value));
+    }
   }
 
   return artifacts;
@@ -443,18 +452,50 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
     }
     case "out": {
       if (!value) throw new Error("out expects a value");
-      const name = String(step.params.name || "artifact");
-      const emitted = valueToArtifacts(value, name);
+      const emitted = await materializeOutArtifacts(value, step.params || {});
       for (const a of emitted) {
-        if (value.meta?.shareIndex) {
+        if (value.meta?.shareIndex && !a.shareIndex) {
           a.shareIndex = value.meta.shareIndex;
-          a.label = `Share ${value.meta.shareIndex}`;
-          a.filename = `${name}-${value.meta.shareIndex}.txt`;
         }
         artifacts.push(a);
       }
-      // Envelope is emitted once by the foreach/top-level sink path in runRecipe.
-      return { type: "artifact", data: null, meta: value.meta };
+      // Pass through so the recipe can continue (e.g. out | encrypt gpg).
+      return value;
+    }
+    case "inspect": {
+      if (!value) throw new Error("inspect expects a value");
+      const format = String(step.params.format || "auto");
+      const dump = await inspectValue(value, format);
+      return {
+        type: "text",
+        data: dump,
+        meta: {
+          ...value.meta,
+          sensitive:
+            !!value.meta?.sensitive ||
+            value.type === "keypair" ||
+            value.type === "shares",
+          inspect: true,
+        },
+      };
+    }
+    case "tee": {
+      if (!value) throw new Error("tee expects a value");
+      const name = String(step.params.name || "tee")
+        .replace(/[^\w.-]+/g, "_")
+        .slice(0, 64) || "tee";
+      const format = String(step.params.format || "auto");
+      const dump = await inspectValue(value, format);
+      artifacts.push({
+        label: `tee:${name}`,
+        filename: `${name}.inspect.txt`,
+        content: dump,
+        sensitive:
+          !!value.meta?.sensitive ||
+          value.type === "keypair" ||
+          value.type === "shares",
+      });
+      return value;
     }
     default:
       throw new Error(`Unsupported step: ${step.name}`);
@@ -916,6 +957,172 @@ async function importKey(value, format, alg, usage) {
 }
 
 /**
+ * @param {string} raw
+ * @returns {string}
+ */
+function safeOutputStem(raw) {
+  const s = String(raw || "output")
+    .trim()
+    .replace(/[^\w.-]+/g, "_")
+    .replace(/^\.+/, "")
+    .slice(0, 64);
+  return s || "output";
+}
+
+/**
+ * Build downloadable tiles from a pipeline value for `out`.
+ * @param {PipelineValue} value
+ * @param {Record<string, *>} params
+ * @returns {Promise<ToolkitArtifact[]>}
+ */
+async function materializeOutArtifacts(value, params) {
+  const stem = safeOutputStem(params.name || "output");
+  const label = String(params.label || stem);
+  const encoding = String(params.encoding || "auto").toLowerCase();
+  const extOverride = String(params.ext || "")
+    .replace(/^\./, "")
+    .replace(/[^\w.-]+/g, "");
+  const mimeOverride = String(params.mime || "").trim();
+  const shareSuffix = value.meta?.shareIndex
+    ? `-${value.meta.shareIndex}`
+    : "";
+
+  if (value.type === "text") {
+    let content = String(value.data);
+    let encodingUsed = "text";
+    let ext = extOverride || "txt";
+    let mime = mimeOverride || "text/plain; charset=utf-8";
+    if (encoding === "hex") {
+      content = bytesToHex(textToBytes(content));
+      encodingUsed = "hex";
+      ext = extOverride || "hex";
+      mime = mimeOverride || "text/plain";
+    } else if (encoding === "base64") {
+      content = bytesToBase64(textToBytes(String(value.data)));
+      encodingUsed = "base64";
+      ext = extOverride || "b64";
+      mime = mimeOverride || "text/plain";
+    }
+    return [
+      {
+        label: value.meta?.shareIndex
+          ? `${label} (share ${value.meta.shareIndex})`
+          : label,
+        filename: `${stem}${shareSuffix}.${ext}`,
+        content,
+        sensitive: !!value.meta?.sensitive,
+        mime,
+        encoding: encodingUsed,
+        shareIndex: value.meta?.shareIndex,
+      },
+    ];
+  }
+
+  if (value.type === "bytes") {
+    let content;
+    let encodingUsed;
+    let ext;
+    let mime;
+    if (encoding === "hex") {
+      content = bytesToHex(value.data);
+      encodingUsed = "hex";
+      ext = extOverride || "hex";
+      mime = mimeOverride || "text/plain";
+    } else if (encoding === "text") {
+      content = bytesToText(value.data);
+      encodingUsed = "text";
+      ext = extOverride || "txt";
+      mime = mimeOverride || "text/plain; charset=utf-8";
+    } else {
+      // auto / base64
+      content = bytesToBase64(value.data);
+      encodingUsed = "base64";
+      ext = extOverride || "bin.b64";
+      mime = mimeOverride || "application/octet-stream";
+    }
+    return [
+      {
+        label,
+        filename: `${stem}${shareSuffix}.${ext}`,
+        content,
+        sensitive: !!value.meta?.sensitive,
+        mime,
+        encoding: encodingUsed,
+        shareIndex: value.meta?.shareIndex,
+      },
+    ];
+  }
+
+  if (value.type === "shares") {
+    return (value.data.mnemonics || []).map((m, i) => ({
+      label: `${label} · share ${i + 1}`,
+      filename: `${stem}-${i + 1}.${extOverride || "txt"}`,
+      content: String(m),
+      sensitive: true,
+      mime: mimeOverride || "text/plain; charset=utf-8",
+      encoding: "text",
+      shareIndex: i + 1,
+    }));
+  }
+
+  if (value.type === "keypair") {
+    const parts = [];
+    const priv = value.data?.privateKey;
+    const pub = value.data?.publicKey;
+    if (priv) {
+      try {
+        const jwk = await crypto.subtle.exportKey("jwk", priv);
+        parts.push({
+          label: `${label} · private JWK`,
+          filename: `${stem}-private.${extOverride || "jwk.json"}`,
+          content: JSON.stringify(jwk, null, 2),
+          sensitive: true,
+          mime: mimeOverride || "application/json",
+          encoding: "jwk",
+        });
+      } catch (err) {
+        parts.push({
+          label: `${label} · private`,
+          filename: `${stem}-private.txt`,
+          content: `Private key present but not exportable: ${err?.message || err}`,
+          sensitive: true,
+          mime: "text/plain",
+          encoding: "text",
+        });
+      }
+    }
+    if (pub) {
+      try {
+        const jwk = await crypto.subtle.exportKey("jwk", pub);
+        parts.push({
+          label: `${label} · public JWK`,
+          filename: `${stem}-public.${extOverride || "jwk.json"}`,
+          content: JSON.stringify(jwk, null, 2),
+          sensitive: false,
+          mime: mimeOverride || "application/json",
+          encoding: "jwk",
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (!parts.length) {
+      parts.push({
+        label,
+        filename: `${stem}.txt`,
+        content: "[keypair — no extractable material]",
+        sensitive: true,
+        mime: "text/plain",
+        encoding: "text",
+      });
+    }
+    return parts;
+  }
+
+  return valueToArtifacts(value, stem);
+}
+
+/**
  * @param {PipelineValue} value
  * @param {string} [name]
  * @returns {ToolkitArtifact[]}
@@ -928,6 +1135,8 @@ function valueToArtifacts(value, name = "artifact") {
         filename: `${name}.txt`,
         content: String(value.data),
         sensitive: !!value.meta?.sensitive,
+        mime: "text/plain; charset=utf-8",
+        encoding: "text",
       },
     ];
   }
@@ -938,6 +1147,8 @@ function valueToArtifacts(value, name = "artifact") {
         filename: `${name}.bin.b64`,
         content: bytesToBase64(value.data),
         sensitive: !!value.meta?.sensitive,
+        mime: "application/octet-stream",
+        encoding: "base64",
       },
     ];
   }
@@ -948,6 +1159,8 @@ function valueToArtifacts(value, name = "artifact") {
       content: m,
       sensitive: true,
       shareIndex: i + 1,
+      mime: "text/plain; charset=utf-8",
+      encoding: "text",
     }));
   }
   if (value.type === "keypair") {
@@ -955,8 +1168,10 @@ function valueToArtifacts(value, name = "artifact") {
       {
         label: name,
         filename: `${name}.txt`,
-        content: "[keypair — export before emitting]",
+        content: "[keypair — use out or export before emitting]",
         sensitive: true,
+        mime: "text/plain",
+        encoding: "text",
       },
     ];
   }

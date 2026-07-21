@@ -6,6 +6,11 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from basilisk.db.hex_aliases import (
+    hex_aliases,
+    id_types_for_needle,
+    normalize_hex_needle,
+)
 from basilisk.db.store import CertRecord, CertStore
 from basilisk.openpgp.canonical import parse_uid_parts
 
@@ -62,6 +67,46 @@ class SqliteCertStore(CertStore):
             migration = (migrations_dir / "005_cert_history.sql").read_text(encoding="utf-8")
             self._conn.executescript(migration)
             self._conn.commit()
+        self._migrate_hex_alias_identifiers(migrations_dir)
+
+    def _identifiers_needs_hex_alias_migration(self) -> bool:
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='identifiers'"
+        ).fetchone()
+        sql = (row[0] if row else "") or ""
+        return "PRIMARY KEY (identifier, id_type, fingerprint)" not in sql
+
+    def _migrate_hex_alias_identifiers(self, migrations_dir: Path) -> None:
+        if not self._identifiers_needs_hex_alias_migration():
+            # Still backfill alias rows if an upgraded DB never wrote them.
+            has_short = self._conn.execute(
+                "SELECT 1 FROM identifiers WHERE id_type='short_keyid' LIMIT 1"
+            ).fetchone()
+            if has_short is None:
+                n_certs = self._conn.execute("SELECT COUNT(*) FROM certs").fetchone()[0]
+                if n_certs:
+                    self._backfill_hex_aliases()
+            return
+        migration = (migrations_dir / "006_hex_aliases.sql").read_text(encoding="utf-8")
+        self._conn.executescript(migration)
+        self._conn.commit()
+        self._backfill_hex_aliases()
+
+    def _backfill_hex_aliases(self) -> None:
+        rows = self._conn.execute("SELECT fingerprint, key_id FROM certs").fetchall()
+        for row in rows:
+            self._replace_identifiers(row["fingerprint"], row["key_id"])
+        self._conn.commit()
+
+    def _replace_identifiers(self, fingerprint: str, key_id: str) -> None:
+        fpr = fingerprint.upper()
+        self._conn.execute("DELETE FROM identifiers WHERE fingerprint=?", (fpr,))
+        for ident, id_type in hex_aliases(fpr, key_id):
+            self._conn.execute(
+                "INSERT OR REPLACE INTO identifiers (identifier, fingerprint, id_type) "
+                "VALUES (?, ?, ?)",
+                (ident, fpr, id_type),
+            )
 
     def _row_to_record(self, row: sqlite3.Row) -> CertRecord:
         keys = row.keys()
@@ -142,16 +187,7 @@ class SqliteCertStore(CertStore):
             self.append_history(fpr, sha256, "first_seen", recorded_at=now)
         elif prior.sha256 != sha256:
             self.append_history(fpr, sha256, "blob_changed", recorded_at=now)
-        kid = key_id.lower().removeprefix("0x")
-        self._conn.execute("DELETE FROM identifiers WHERE fingerprint=?", (fpr,))
-        self._conn.execute(
-            "INSERT OR REPLACE INTO identifiers (identifier, fingerprint, id_type) VALUES (?, ?, 'fingerprint')",
-            (fpr, fpr),
-        )
-        self._conn.execute(
-            "INSERT OR REPLACE INTO identifiers (identifier, fingerprint, id_type) VALUES (?, ?, 'keyid')",
-            (kid, fpr),
-        )
+        self._replace_identifiers(fpr, key_id)
         self._index_emails(fpr, uids)
         self._conn.commit()
 
@@ -235,6 +271,27 @@ class SqliteCertStore(CertStore):
                 break
         return out
 
+    def list_by_fingerprint_substring(
+        self, hex_query: str, *, limit: int = 50
+    ) -> list[CertRecord]:
+        needle = normalize_hex_needle(hex_query)
+        types = id_types_for_needle(needle)
+        if not types:
+            return []
+        placeholders = ",".join("?" for _ in types)
+        rows = self._conn.execute(
+            f"""
+            SELECT DISTINCT c.* FROM certs c
+            JOIN identifiers i ON c.fingerprint = i.fingerprint
+            WHERE i.identifier = ?
+              AND i.id_type IN ({placeholders})
+              AND c.approval_state IN ('approved', 'pending')
+            LIMIT ?
+            """,
+            (needle, *types, limit),
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def list_approved(self, *, limit: int = 10_000) -> list[CertRecord]:
         rows = self._conn.execute(
             "SELECT * FROM certs WHERE approval_state='approved' LIMIT ?",
@@ -298,16 +355,7 @@ class SqliteCertStore(CertStore):
             """,
             (blob_uri, sha256, key_id, 1 if revoked else 0, expiration, now, fpr),
         )
-        kid = key_id.lower().removeprefix("0x")
-        self._conn.execute("DELETE FROM identifiers WHERE fingerprint=?", (fpr,))
-        self._conn.execute(
-            "INSERT OR REPLACE INTO identifiers (identifier, fingerprint, id_type) VALUES (?, ?, 'fingerprint')",
-            (fpr, fpr),
-        )
-        self._conn.execute(
-            "INSERT OR REPLACE INTO identifiers (identifier, fingerprint, id_type) VALUES (?, ?, 'keyid')",
-            (kid, fpr),
-        )
+        self._replace_identifiers(fpr, key_id)
         if prior is None:
             self.append_history(fpr, sha256, "first_seen", recorded_at=now)
         elif prior.sha256 != sha256:

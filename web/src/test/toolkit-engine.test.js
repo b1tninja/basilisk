@@ -52,4 +52,37 @@ describe("toolkit engine", () => {
     const s = bytesToBase64Url(u8);
     expect(s).not.toMatch(/[+/=]/);
   });
+
+  it("out emits a named tile without duplicating a terminal value", async () => {
+    const { ast, validation } = compileRecipe(
+      "random 16 | out name=secret encoding=hex ext=hex"
+    );
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    expect(arts).toHaveLength(1);
+    expect(arts[0].label).toBe("secret");
+    expect(arts[0].filename).toBe("secret.hex");
+    expect(arts[0].encoding).toBe("hex");
+    expect(arts[0].content).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("out passes the value through for later steps", async () => {
+    const { ast, validation } = compileRecipe(
+      "random 8 | out name=raw encoding=base64 | hex"
+    );
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    const tile = arts.find((a) => a.filename === "raw.bin.b64" || a.label === "raw");
+    expect(tile).toBeTruthy();
+    expect(tile.encoding).toBe("base64");
+    const hex = arts.find((a) => /^[0-9a-f]{16}$/.test(a.content));
+    expect(hex).toBeTruthy();
+  });
+
+  it("validates pem | out | encrypt-style type flow", () => {
+    const { validation } = compileRecipe(
+      "genkey ec/p256 | export pkcs8 | pem | out name=key ext=pem | encrypt gpg"
+    );
+    expect(validation.ok).toBe(true);
+  });
 });

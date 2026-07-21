@@ -8,6 +8,12 @@ from datetime import datetime, timezone
 from azure.core.exceptions import ResourceNotFoundError
 from azure.data.tables import TableServiceClient
 
+from basilisk.db.hex_aliases import (
+    UNIQUE_ID_TYPES,
+    hex_aliases,
+    id_types_for_needle,
+    normalize_hex_needle,
+)
 from basilisk.db.store import CertRecord, CertStore
 from basilisk.openpgp.canonical import parse_uid_parts
 
@@ -36,6 +42,74 @@ class AzureTableCertStore(CertStore):
         self._ids = self._client.get_table_client("Identifiers")
         self._emails = self._client.get_table_client("Emails")
         self._history = self._client.get_table_client("CertHistory")
+        self._ensure_hex_alias_index()
+
+    def _ensure_hex_alias_index(self) -> None:
+        """One-time backfill of short/fpr32 aliases (marker in Identifiers)."""
+        try:
+            self._ids.get_entity(partition_key="_meta", row_key="hex_alias_v1")
+            return
+        except ResourceNotFoundError:
+            pass
+        except Exception:
+            logger.warning("Could not read hex-alias marker", exc_info=True)
+            return
+        try:
+            self.backfill_hex_identifier_index()
+            self._ids.upsert_entity(
+                {
+                    "PartitionKey": "_meta",
+                    "RowKey": "hex_alias_v1",
+                    "id_type": "meta",
+                    "fingerprint": "",
+                }
+            )
+        except Exception:
+            logger.warning("Hex-alias backfill failed", exc_info=True)
+
+    def backfill_hex_identifier_index(self) -> int:
+        """Re-index hex aliases for every cert. Returns number of certs processed."""
+        n = 0
+        for entity in self._certs.list_entities():
+            fpr = str(entity.get("RowKey") or entity.get("fingerprint") or "")
+            kid = str(entity.get("key_id") or "")
+            if not fpr:
+                continue
+            self._replace_hex_aliases(fpr, kid)
+            n += 1
+        return n
+
+    def _identifier_row_key(self, id_type: str, fingerprint: str) -> str:
+        if id_type in UNIQUE_ID_TYPES:
+            return id_type
+        return fingerprint.upper()
+
+    def _clear_hex_aliases(self, fingerprint: str, key_id: str) -> None:
+        fpr = fingerprint.upper()
+        for ident, id_type in hex_aliases(fpr, key_id):
+            try:
+                self._ids.delete_entity(
+                    partition_key=ident,
+                    row_key=self._identifier_row_key(id_type, fpr),
+                )
+            except ResourceNotFoundError:
+                pass
+            except Exception:
+                pass
+
+    def _replace_hex_aliases(self, fingerprint: str, key_id: str) -> None:
+        fpr = fingerprint.upper()
+        # Drop any prior alias set for this fingerprint (uses current key_id material).
+        self._clear_hex_aliases(fpr, key_id)
+        for ident, id_type in hex_aliases(fpr, key_id):
+            self._ids.upsert_entity(
+                {
+                    "PartitionKey": ident,
+                    "RowKey": self._identifier_row_key(id_type, fpr),
+                    "fingerprint": fpr,
+                    "id_type": id_type,
+                }
+            )
 
     def _record(self, entity: dict) -> CertRecord:
         return CertRecord(
@@ -101,11 +175,9 @@ class AzureTableCertStore(CertStore):
             self.append_history(fpr, sha256, "first_seen", recorded_at=now)
         elif prior.sha256 != sha256:
             self.append_history(fpr, sha256, "blob_changed", recorded_at=now)
-        kid = key_id.lower().removeprefix("0x")
-        for ident, id_type in ((fpr, "fingerprint"), (kid, "keyid")):
-            self._ids.upsert_entity(
-                {"PartitionKey": ident, "RowKey": id_type, "fingerprint": fpr, "id_type": id_type}
-            )
+        if prior is not None and prior.key_id and prior.key_id != key_id:
+            self._clear_hex_aliases(fpr, prior.key_id)
+        self._replace_hex_aliases(fpr, key_id)
         self._index_emails(fpr, uids)
 
     def get_by_fingerprint(self, fingerprint: str) -> CertRecord | None:
@@ -184,6 +256,34 @@ class AzureTableCertStore(CertStore):
                 break
         return out
 
+    def list_by_fingerprint_substring(
+        self, hex_query: str, *, limit: int = 50
+    ) -> list[CertRecord]:
+        needle = normalize_hex_needle(hex_query)
+        types = set(id_types_for_needle(needle))
+        if not types:
+            return []
+        # Partition-key point query on Identifiers (no Certs table scan).
+        out: list[CertRecord] = []
+        seen: set[str] = set()
+        for entity in self._ids.query_entities(
+            query_filter=f"PartitionKey eq '{_escape_odata(needle)}'"
+        ):
+            id_type = str(entity.get("id_type") or "")
+            if id_type not in types:
+                continue
+            fpr = str(entity.get("fingerprint") or entity.get("RowKey") or "")
+            if not fpr or fpr in seen:
+                continue
+            record = self.get_by_fingerprint(fpr)
+            if not record or record.approval_state not in ("approved", "pending"):
+                continue
+            seen.add(record.fingerprint)
+            out.append(record)
+            if len(out) >= limit:
+                break
+        return out
+
     def list_approved(self, *, limit: int = 10_000) -> list[CertRecord]:
         out: list[CertRecord] = []
         for entity in self._certs.list_entities():
@@ -243,6 +343,7 @@ class AzureTableCertStore(CertStore):
         if entity.get("approval_state") != "approved":
             return
         prior_sha = entity.get("sha256")
+        prior_kid = str(entity.get("key_id") or "")
         now = _utcnow()
         entity["blob_uri"] = blob_uri
         entity["sha256"] = sha256
@@ -251,11 +352,9 @@ class AzureTableCertStore(CertStore):
         entity["key_expiration"] = expiration
         entity["updated_at"] = now
         self._certs.update_entity(entity, mode="replace")
-        kid = key_id.lower().removeprefix("0x")
-        for ident, id_type in ((fpr, "fingerprint"), (kid, "keyid")):
-            self._ids.upsert_entity(
-                {"PartitionKey": ident, "RowKey": id_type, "fingerprint": fpr, "id_type": id_type}
-            )
+        if prior_kid and prior_kid != key_id:
+            self._clear_hex_aliases(fpr, prior_kid)
+        self._replace_hex_aliases(fpr, key_id)
         if prior_sha != sha256:
             self.append_history(fpr, sha256, "blob_changed", recorded_at=now)
 
@@ -359,14 +458,14 @@ class AzureTableCertStore(CertStore):
                     self._emails.delete_entity(partition_key=email.lower(), row_key=fpr)
                 except Exception:
                     pass
-        for ident in (fpr, (record.key_id or "").lower().removeprefix("0x")):
-            if not ident:
-                continue
-            for id_type in ("fingerprint", "keyid"):
-                try:
-                    self._ids.delete_entity(partition_key=ident, row_key=id_type)
-                except Exception:
-                    pass
+        for ident, id_type in hex_aliases(fpr, record.key_id or fpr[-16:]):
+            try:
+                self._ids.delete_entity(
+                    partition_key=ident,
+                    row_key=self._identifier_row_key(id_type, fpr),
+                )
+            except Exception:
+                pass
         try:
             self._certs.delete_entity(partition_key=fpr, row_key=fpr)
         except Exception:

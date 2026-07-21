@@ -330,7 +330,7 @@ function renderFiles() {
   updateEncryptButton();
 }
 
-function renderDropdown(results) {
+function renderDropdown(results, warning = "") {
   const el = document.getElementById("recipient-dropdown");
   if (!el) return;
   if (!results || !results.length) {
@@ -339,16 +339,21 @@ function renderDropdown(results) {
     return;
   }
   el.hidden = false;
-  el.innerHTML = sortByTrust(results)
-    .map((item) => {
-      const fp = String(item.fingerprint || "").toUpperCase();
-      const already = recipients.has(fp);
-      return keyHitHtml(item, {
-        already,
-        dataAttrs: { "data-add-fpr": fp },
-      });
-    })
-    .join("");
+  const caution = warning
+    ? `<p class="name-search-caution m-0-b-sm" role="status"><strong>Short key ID.</strong> ${escapeHtml(warning)}</p>`
+    : "";
+  el.innerHTML =
+    caution +
+    sortByTrust(results)
+      .map((item) => {
+        const fp = String(item.fingerprint || "").toUpperCase();
+        const already = recipients.has(fp);
+        return keyHitHtml(item, {
+          already,
+          dataAttrs: { "data-add-fpr": fp },
+        });
+      })
+      .join("");
 }
 
 function truncateArmored(text, maxLines = 40) {
@@ -1224,7 +1229,7 @@ function wireEvents() {
         try {
           const q = normalizeSearchQuery(raw);
           const payload = await fetchJson(`/api/v1/search?q=${encodeURIComponent(q)}`);
-          renderDropdown(payload.results || []);
+          renderDropdown(payload.results || [], payload.warning || "");
         } catch (_) {
           renderDropdown([]);
         }

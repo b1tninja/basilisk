@@ -37,4 +37,16 @@ describe("verify-fpr", () => {
     expect(normalizeSearchQuery("alice@example.com")).toBe("alice@example.com");
     expect(normalizeSearchQuery("Alice Example")).toBe("Alice Example");
   });
+
+  it("normalizeSearchQuery keeps common-length hex fingerprints contiguous", () => {
+    expect(normalizeSearchQuery("0xdeadbeef")).toBe("DEADBEEF"); // 8 short key ID
+    expect(normalizeSearchQuery("0xdeadbeefcafebabe")).toBe("DEADBEEFCAFEBABE"); // 16
+    expect(
+      normalizeSearchQuery("AABB CCDD EEFF 0011 2233 4455 6677 8899")
+    ).toBe("AABBCCDDEEFF00112233445566778899"); // 32 partial
+    // Non-standard / short all-hex stay as text (name search)
+    expect(normalizeSearchQuery("FDBA 0D54 45AA")).toBe("FDBA 0D54 45AA");
+    expect(normalizeSearchQuery("Ada")).toBe("Ada");
+    expect(normalizeSearchQuery("Cafe")).toBe("Cafe");
+  });
 });

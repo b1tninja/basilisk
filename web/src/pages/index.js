@@ -30,6 +30,7 @@ function isNameQuery(q) {
   if (
     /^[0-9a-fA-F]{8}$/.test(hex) ||
     /^[0-9a-fA-F]{16}$/.test(hex) ||
+    /^[0-9a-fA-F]{32}$/.test(hex) ||
     /^[0-9a-fA-F]{40}$/.test(hex) ||
     /^[0-9a-fA-F]{64}$/.test(hex)
   ) {
@@ -41,35 +42,36 @@ function isNameQuery(q) {
 
 function validateQuery(q) {
   const s = q.trim();
-  if (!s) return { ok: false, message: "Enter an email, name, fingerprint, or 16-character key ID." };
+  if (!s) return { ok: false, message: "Enter an email, name, fingerprint, or key ID." };
   if (s.toLowerCase().startsWith("0x")) {
     const hex = s.slice(2).replace(/\s+/g, "");
-    if (/^[0-9a-fA-F]{8}$/.test(hex)) {
-      return { ok: false, message: "Short (8-character) key IDs are not supported. Use the full fingerprint or 16-character key ID." };
-    }
     if (
+      !/^[0-9a-fA-F]{8}$/.test(hex) &&
       !/^[0-9a-fA-F]{16}$/.test(hex) &&
+      !/^[0-9a-fA-F]{32}$/.test(hex) &&
       !/^[0-9a-fA-F]{40}$/.test(hex) &&
       !/^[0-9a-fA-F]{64}$/.test(hex)
     ) {
       return {
         ok: false,
-        message: "Fingerprints must be 40 or 64 hex characters; key IDs must be 16.",
+        message:
+          "Fingerprints must be 40 or 64 hex characters; key IDs must be 8 or 16 (32 = half fingerprint).",
       };
     }
-    return { ok: true };
+    return { ok: true, shortKeyId: hex.length === 8 };
   }
   if (s.includes("@")) return { ok: true };
   const hex = s.replace(/\s+/g, "");
   if (
     /^[0-9a-fA-F]{40}$/.test(hex) ||
     /^[0-9a-fA-F]{64}$/.test(hex) ||
+    /^[0-9a-fA-F]{32}$/.test(hex) ||
     /^[0-9a-fA-F]{16}$/.test(hex)
   ) {
     return { ok: true };
   }
   if (/^[0-9a-fA-F]{8}$/.test(hex)) {
-    return { ok: false, message: "Short (8-character) key IDs are not supported." };
+    return { ok: true, shortKeyId: true };
   }
   if (isNameQuery(s)) {
     if (s.length < 2) {
@@ -79,7 +81,7 @@ function validateQuery(q) {
   }
   return {
     ok: false,
-    message: "Search by email, name, 40-character fingerprint, or 16-character key ID.",
+    message: "Search by email, name, fingerprint, or 8/16-character key ID.",
   };
 }
 
@@ -91,11 +93,29 @@ function reasonMessage(payload, query) {
     }
     return "A matching key exists but is still pending approval (not published for email search yet).";
   }
-  if (reason === "invalid_query" || reason === "short_keyid") {
+  if (reason === "invalid_query") {
     return payload.error || "Unsupported search format.";
   }
   if (reason === "empty") return "";
   return "No matching approved keys found.";
+}
+
+function searchCautionHtml(payload, v) {
+  const parts = [];
+  if (v.nameSearch || payload.reason === "name") {
+    parts.push(
+      `<p class="name-search-caution" role="status"><strong>Names are unverified.</strong> Match keys by verified email and confirm the full fingerprint out of band before trusting a key.</p>`
+    );
+  }
+  if (payload.warning || payload.reason === "short_keyid" || v.shortKeyId) {
+    const msg =
+      payload.warning ||
+      "Short (8-character) key IDs are collision-prone. Confirm the full fingerprint out of band before trusting a key.";
+    parts.push(
+      `<p class="name-search-caution" role="status"><strong>Short key ID.</strong> ${msg}</p>`
+    );
+  }
+  return parts.join("");
 }
 
 async function runSearch(query) {
@@ -118,14 +138,11 @@ async function runSearch(query) {
   try {
     const q = normalizeSearchQuery(query);
     const payload = await fetchJson(`/api/v1/search?q=${encodeURIComponent(q)}`);
+    const caution = searchCautionHtml(payload, v);
     if (!payload.results || !payload.results.length) {
-      results.innerHTML = `<p class="muted">${reasonMessage(payload, q)}</p>`;
+      results.innerHTML = caution + `<p class="muted">${reasonMessage(payload, q)}</p>`;
       return;
     }
-    const caution =
-      v.nameSearch || payload.reason === "name"
-        ? `<p class="name-search-caution" role="status"><strong>Names are unverified.</strong> Match keys by verified email and confirm the full fingerprint out of band before trusting a key.</p>`
-        : "";
     results.innerHTML = caution + renderKeysTable(payload.results);
   } catch (err) {
     results.innerHTML = "";

@@ -48,6 +48,15 @@ class CertStore(Protocol):
         """Return approved certs whose approved UID names contain ``name_query`` (casefold)."""
         ...
 
+    def list_by_fingerprint_substring(
+        self, hex_query: str, *, limit: int = 50
+    ) -> list[CertRecord]:
+        """Return certs via indexed hex aliases (short key ID / fpr32 prefix|suffix).
+
+        Point-lookup on the identifiers index — does not scan the certs table.
+        """
+        ...
+
     def list_approved(self, *, limit: int = 10_000) -> list[CertRecord]:
         """Return approved (optionally including revoked) certs for attestation allowlists."""
         ...

@@ -29,28 +29,64 @@ def key_id_from_fingerprint(fpr: str) -> str:
     return normalize_fingerprint(fpr)[-16:].lower()
 
 
+# Common OpenPGP hex identity lengths (contiguous hex after stripping 0x/spaces/colons).
+# 8 = short key ID (allowed with warning); 16 = long key ID; 32 = half of a v4 fingerprint
+# (partial substring match); 40 = v4 fingerprint; 64 = v6 fingerprint.
+_HEX_SEARCH_KIND = {
+    8: "short_keyid",
+    16: "keyid",
+    32: "fingerprint_partial",
+    40: "fingerprint",
+    64: "fingerprint",
+}
+
+
+def hex_search_candidate(search: str) -> str | None:
+    """If ``search`` is only hex (optional ``0x``, spaces, colons), return contiguous hex.
+
+    Otherwise return ``None`` (likely an email/name query).
+    """
+    raw = search.strip()
+    if not raw or "@" in raw:
+        return None
+    candidate = raw
+    if candidate.lower().startswith("0x"):
+        candidate = candidate[2:]
+    candidate = re.sub(r"[\s:]+", "", candidate)
+    if not candidate or not re.fullmatch(r"[0-9a-fA-F]+", candidate):
+        return None
+    return candidate
+
+
 def parse_search(search: str) -> tuple[str, str]:
-    """Return (kind, normalized) where kind is email|fingerprint|keyid|name.
+    """Return (kind, normalized) where kind is
+    email|fingerprint|fingerprint_partial|short_keyid|keyid|name.
+
+    Hex queries are classified only at common lengths (8 / 16 / 32 / 40 / 64).
+    Short key IDs (8 hex) are allowed for search but should be surfaced with a
+    collision warning in the portal UI. 32-hex queries match indexed fingerprint
+    prefix or suffix aliases (not an arbitrary mid-string scan).
 
     Fingerprint / key-ID queries may include spaces or a ``0x`` prefix
     (e.g. ``AABB CCDD …``). Those are stripped before hex length checks so
     they are not misclassified as name searches.
     """
     raw = search.strip()
-    # Contiguous hex form for fingerprint / keyid classification.
-    hex_candidate = raw
-    if hex_candidate.lower().startswith("0x"):
-        hex_candidate = hex_candidate[2:]
-    hex_candidate = re.sub(r"\s+", "", hex_candidate)
+    hex_candidate = hex_search_candidate(raw)
 
-    if re.fullmatch(r"[0-9a-fA-F]{40}", hex_candidate) or re.fullmatch(
-        r"[0-9a-fA-F]{64}", hex_candidate
-    ):
-        return "fingerprint", normalize_fingerprint(hex_candidate)
-    if re.fullmatch(r"[0-9a-fA-F]{16}", hex_candidate):
-        return "keyid", hex_candidate.lower()
-    if re.fullmatch(r"[0-9a-fA-F]{8}", hex_candidate):
-        raise IngestError("Short key IDs are not supported", 400)
+    if hex_candidate is not None:
+        n = len(hex_candidate)
+        kind = _HEX_SEARCH_KIND.get(n)
+        if kind == "short_keyid":
+            return "short_keyid", hex_candidate.lower()
+        if kind == "keyid":
+            return "keyid", hex_candidate.lower()
+        if kind == "fingerprint":
+            return "fingerprint", normalize_fingerprint(hex_candidate)
+        if kind == "fingerprint_partial":
+            return "fingerprint_partial", normalize_fingerprint(hex_candidate)
+        # Non-standard hex lengths (e.g. Ada, Cafe, 12/20-hex) fall through.
+
     if "@" in raw:
         return "email", raw.lower()
     # Free-text / conventional UID name (min 2 chars, must include a letter).

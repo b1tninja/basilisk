@@ -224,6 +224,11 @@ function parseSegment(segment, offset) {
     }
   }
 
+  // Alias `hexdump` forces classic dump layout (canonical step is still inspect).
+  if (String(nameTok.value || "").toLowerCase() === "hexdump") {
+    params.format = "hexdump";
+  }
+
   return {
     step: {
       name: canon,
@@ -496,6 +501,47 @@ export function validateRecipe(ast) {
       continue;
     }
 
+    // tee: side-channel inspect, value type unchanged
+    if (step.name === "tee") {
+      if (current === "none") {
+        errors.push({
+          message: `"tee" needs a pipeline value — start with genkey, random, input, or decrypt.`,
+          start: step.start,
+          end: step.end,
+          stepIndex: i,
+        });
+      }
+      continue;
+    }
+
+    // out: named output tile; value type unchanged so it can pipe to encrypt/gpg/…
+    if (step.name === "out") {
+      if (current === "none") {
+        errors.push({
+          message: `"out" needs a pipeline value to emit.`,
+          start: step.start,
+          end: step.end,
+          stepIndex: i,
+        });
+      }
+      continue;
+    }
+
+    // inspect / print / hexdump: any value → text dump
+    if (step.name === "inspect") {
+      if (current === "none") {
+        errors.push({
+          message: `"inspect" needs a pipeline value to dump.`,
+          start: step.start,
+          end: step.end,
+          stepIndex: i,
+        });
+      } else {
+        current = "text";
+      }
+      continue;
+    }
+
     // Type flow
     if (spec.kind === "source") {
       if (i > 0 && current !== "none" && foreachDepth === 0) {
@@ -505,11 +551,14 @@ export function validateRecipe(ast) {
       }
       current = io.output;
     } else {
-      // Collection into non-foreach / non-combine
+      // Collection into non-foreach / non-combine / non-inspect
       if (
         current === "shares" &&
         step.name !== "foreach" &&
-        step.name !== "combine"
+        step.name !== "combine" &&
+        step.name !== "tee" &&
+        step.name !== "inspect" &&
+        step.name !== "out"
       ) {
         errors.push({
           message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, or combine to recover.`,
@@ -669,6 +718,12 @@ export const PRESETS = [
     recipe: "genkey ec/p256 | export pkcs8 | pem",
   },
   {
+    id: "p256-tee-inspect",
+    title: "P-256 with mid-pipeline tee",
+    blurb: "Generate a key, tee an openssl-style dump, then export PEM (keypair still flows through).",
+    recipe: "genkey ec/p256 | tee name=keypair | export pkcs8 | pem",
+  },
+  {
     id: "ed25519-jwk",
     title: "Ed25519 key (JWK)",
     blurb: "Signing key as JSON Web Key.",
@@ -691,6 +746,13 @@ export const PRESETS = [
     title: "SLIP-39 split a secret",
     blurb: "Generate 32 random bytes and split 2-of-3 mnemonic shares.",
     recipe: "random 32 | slip39 threshold=2 shares=3 | foreach | out name=share",
+  },
+  {
+    id: "out-mid-pipeline",
+    title: "Named output tile mid-pipeline",
+    blurb: "Save a PEM tile (copy/download), then keep piping into SLIP-39 — same pattern as out | encrypt gpg.",
+    recipe:
+      "genkey ec/p256 | export pkcs8 | pem | out name=private-key ext=pem label=PKCS8 | slip39 threshold=2 shares=3 | foreach | out name=share",
   },
   {
     id: "quorum-gpg",

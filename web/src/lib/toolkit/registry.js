@@ -430,15 +430,84 @@ export const STEPS = [
   {
     name: "out",
     kind: "sink",
-    doc: "Emit the current value as a downloadable/copyable artifact (> file).",
+    doc: "Emit a named output tile (copy/download) and pass the value through so you can keep piping — e.g. pem | out name=key | encrypt gpg.",
     input: "text",
-    output: "artifact",
+    output: "text",
+    aliases: ["output", "save", "emit"],
     params: [
       {
         name: "name",
         type: "string",
-        default: "artifact",
-        doc: "Filename stem for downloads",
+        positional: true,
+        default: "output",
+        doc: "Tile title / filename stem",
+      },
+      {
+        name: "encoding",
+        type: "enum",
+        default: "auto",
+        enum: ["auto", "text", "base64", "hex"],
+        doc: "How bytes are encoded into the tile (text values stay text unless hex/base64)",
+      },
+      {
+        name: "ext",
+        type: "string",
+        default: "",
+        doc: "File extension override (e.g. pem, asc, bin) — empty = infer",
+      },
+      {
+        name: "mime",
+        type: "string",
+        default: "",
+        doc: "MIME type override (empty = infer)",
+      },
+      {
+        name: "label",
+        type: "string",
+        default: "",
+        doc: "Display label on the results tile (defaults to name)",
+      },
+    ],
+  },
+  {
+    name: "inspect",
+    kind: "transform",
+    doc: "Human-readable dump of the current value (openssl … -text / hexdump). Replaces the pipeline value with the dump text. Accepts bytes, text, shares, or keypairs.",
+    input: "bytes",
+    output: "text",
+    aliases: ["print", "dump", "hexdump"],
+    params: [
+      {
+        name: "format",
+        type: "enum",
+        positional: true,
+        default: "auto",
+        enum: ["auto", "text", "hex", "hexdump", "jwk", "meta"],
+        doc: "Dump style (hexdump forced when the step is named hexdump)",
+      },
+    ],
+  },
+  {
+    name: "tee",
+    kind: "transform",
+    doc: "Pass the value through unchanged while emitting an inspection artifact (Unix tee). Useful mid-pipeline for keypairs before export/slip39.",
+    input: "bytes",
+    output: "bytes",
+    aliases: ["peek"],
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "tee",
+        doc: "Artifact label / filename stem",
+      },
+      {
+        name: "format",
+        type: "enum",
+        default: "auto",
+        enum: ["auto", "text", "hex", "hexdump", "jwk", "meta"],
+        doc: "Inspection format for the side artifact",
       },
     ],
   },
@@ -505,6 +574,7 @@ export function stepsAccepting(from) {
     return STEPS.filter((s) => s.kind === "source" || s.input === "none");
   }
   return STEPS.filter((s) => {
+    if (s.name === "tee" || s.name === "inspect" || s.name === "out") return true;
     if (s.kind === "flow") {
       if (s.name === "foreach") return from === "shares";
       if (s.name === "merge") return true;
@@ -530,6 +600,9 @@ export function stepsAccepting(from) {
  * @returns {boolean}
  */
 export function ioCompatible(from, to, stepName) {
+  if (stepName === "tee" || stepName === "inspect" || stepName === "out") {
+    return !!from && from !== "none";
+  }
   if (to === "none") return from === "none" || !from;
   if (from === to) return true;
   if (stepName === "merge") return true;

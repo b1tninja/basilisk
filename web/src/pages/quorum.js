@@ -239,7 +239,7 @@ async function updateDerivedRoom() {
   }
 }
 
-function renderDropdown(results) {
+function renderDropdown(results, warning = "") {
   const el = document.getElementById("audience-dropdown");
   if (!el) return;
   const rows = sortByTrust(results || []);
@@ -249,23 +249,28 @@ function renderDropdown(results) {
     return;
   }
   el.classList.remove("hidden");
-  el.innerHTML = rows
-    .slice(0, 12)
-    .map((r) => {
-      const fpr = String(r.fingerprint || "").toUpperCase();
-      const label = primaryUidLabel(r);
-      return keyHitHtml(r, {
-        className: "audience-pick",
-        dataAttrs: {
-          "data-fpr": fpr,
-          "data-label": label,
-          "data-user-label": String(r.label || ""),
-          "data-key-id": String(r.key_id || ""),
-          "data-key-exp": String(r.key_expiration || ""),
-        },
-      });
-    })
-    .join("");
+  const caution = warning
+    ? `<p class="name-search-caution m-0-b-sm" role="status"><strong>Short key ID.</strong> ${escapeHtml(warning)}</p>`
+    : "";
+  el.innerHTML =
+    caution +
+    rows
+      .slice(0, 12)
+      .map((r) => {
+        const fpr = String(r.fingerprint || "").toUpperCase();
+        const label = primaryUidLabel(r);
+        return keyHitHtml(r, {
+          className: "audience-pick",
+          dataAttrs: {
+            "data-fpr": fpr,
+            "data-label": label,
+            "data-user-label": String(r.label || ""),
+            "data-key-id": String(r.key_id || ""),
+            "data-key-exp": String(r.key_expiration || ""),
+          },
+        });
+      })
+      .join("");
 }
 
 function renderRoster(peers) {
@@ -510,7 +515,7 @@ function wireEvents() {
           const payload = await fetchJson(
             `/api/v1/search?q=${encodeURIComponent(q)}`
           );
-          renderDropdown(payload.results || []);
+          renderDropdown(payload.results || [], payload.warning || "");
         } catch (_) {
           renderDropdown([]);
         }

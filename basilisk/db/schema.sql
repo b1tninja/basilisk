@@ -16,9 +16,10 @@ CREATE TABLE IF NOT EXISTS certs (
 );
 
 CREATE TABLE IF NOT EXISTS identifiers (
-    identifier TEXT PRIMARY KEY,
+    identifier TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
     id_type TEXT NOT NULL,
+    PRIMARY KEY (identifier, id_type, fingerprint),
     FOREIGN KEY (fingerprint) REFERENCES certs(fingerprint)
 );
 
@@ -45,3 +46,4 @@ CREATE TABLE IF NOT EXISTS approvals (
 
 CREATE INDEX IF NOT EXISTS idx_certs_state ON certs(approval_state);
 CREATE INDEX IF NOT EXISTS idx_identifiers_fpr ON identifiers(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_identifiers_lookup ON identifiers(identifier, id_type);

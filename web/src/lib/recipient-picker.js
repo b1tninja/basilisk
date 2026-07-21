@@ -127,15 +127,28 @@ export async function loadRecipientKey(fingerprint) {
 /**
  * Search keys by query (email / fpr / key id).
  * @param {string} q
- * @returns {Promise<object[]>}
+ * @returns {Promise<{ results: object[], warning: string, reason: string }>}
  */
-export async function searchRecipients(q) {
+export async function searchRecipientsPayload(q) {
   const query = normalizeSearchQuery(q);
-  if (query.length < 2) return [];
+  if (query.length < 2) return { results: [], warning: "", reason: "empty" };
   const payload = await fetchJson(
     `/api/v1/search?q=${encodeURIComponent(query)}`
   );
-  return payload.results || payload.keys || [];
+  return {
+    results: payload.results || payload.keys || [],
+    warning: String(payload.warning || ""),
+    reason: String(payload.reason || ""),
+  };
+}
+
+/**
+ * Search keys by query (email / fpr / key id).
+ * @param {string} q
+ * @returns {Promise<object[]>}
+ */
+export async function searchRecipients(q) {
+  return (await searchRecipientsPayload(q)).results;
 }
 
 /**
@@ -236,23 +249,29 @@ export function mountRecipientBinder(host, opts) {
             await select(i, r);
             return;
           }
-          const results = sortByTrust(await searchRecipients(q));
-          if (!results.length) {
+          const { results, warning } = await searchRecipientsPayload(q);
+          const sorted = sortByTrust(results);
+          if (!sorted.length) {
             hitsEl.innerHTML = `<p class="muted">No keys found.</p>`;
             return;
           }
-          hitsEl.innerHTML = results
-            .slice(0, 12)
-            .map((k) => {
-              const fpr = String(k.fingerprint || "").toUpperCase();
-              return keyHitHtml(k, {
-                dataAttrs: {
-                  "data-pick": fpr,
-                  "data-slot": String(i),
-                },
-              });
-            })
-            .join("");
+          const caution = warning
+            ? `<p class="name-search-caution" role="status"><strong>Short key ID.</strong> ${escapeHtml(warning)}</p>`
+            : "";
+          hitsEl.innerHTML =
+            caution +
+            sorted
+              .slice(0, 12)
+              .map((k) => {
+                const fpr = String(k.fingerprint || "").toUpperCase();
+                return keyHitHtml(k, {
+                  dataAttrs: {
+                    "data-pick": fpr,
+                    "data-slot": String(i),
+                  },
+                });
+              })
+              .join("");
           hitsEl.querySelectorAll("[data-pick]").forEach((el) => {
             el.addEventListener("click", async () => {
               const fpr = el.getAttribute("data-pick") || "";

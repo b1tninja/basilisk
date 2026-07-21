@@ -17,8 +17,29 @@ export function normalizeFingerprintInput(raw) {
 }
 
 /**
- * If the query looks like a fingerprint / key ID (hex with optional spaces / 0x),
- * return contiguous hex; otherwise return the trimmed original (email / name).
+ * Common OpenPGP hex identity lengths we normalize for search.
+ * 8 = short key ID (allowed; UI shows collision warning); 16 = long key ID;
+ * 32 = half v4 fingerprint; 40 = v4 fingerprint; 64 = v6 fingerprint.
+ */
+const SEARCH_HEX_LENGTHS = new Set([8, 16, 32, 40, 64]);
+
+/**
+ * True when the query is only hex (optional 0x / spaces / colons) — not email/name.
+ * @param {string} raw
+ * @returns {boolean}
+ */
+export function looksLikeHexFingerprintQuery(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed || trimmed.includes("@")) return false;
+  let s = trimmed.replace(/^0x/i, "");
+  s = s.replace(/[\s:]+/g, "");
+  return s.length > 0 && /^[0-9a-fA-F]+$/.test(s);
+}
+
+/**
+ * If the query looks like a fingerprint / key ID at a common hex length
+ * (8 / 16 / 32 / 40 / 64), return contiguous hex. Otherwise return the trimmed
+ * original (email / name / non-standard hex lengths).
  * @param {string} raw
  * @returns {string}
  */
@@ -26,15 +47,9 @@ export function normalizeSearchQuery(raw) {
   const trimmed = String(raw || "").trim();
   if (!trimmed) return "";
   if (trimmed.includes("@")) return trimmed;
+  if (!looksLikeHexFingerprintQuery(trimmed)) return trimmed;
   const hex = normalizeFingerprintInput(trimmed);
-  if (
-    hex.length === 8 ||
-    hex.length === 16 ||
-    hex.length === 40 ||
-    hex.length === 64
-  ) {
-    return hex;
-  }
+  if (SEARCH_HEX_LENGTHS.has(hex.length)) return hex;
   return trimmed;
 }
 
