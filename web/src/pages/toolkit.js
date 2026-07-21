@@ -31,7 +31,11 @@ import {
   formatFingerprint,
   showError,
 } from "../lib/utils.js";
-import { buildZipStore, uniquifyFilenames } from "../lib/zip-store.js";
+import {
+  buildZipStore,
+  sanitizeFilename,
+  uniquifyFilenames,
+} from "../lib/zip-store.js";
 import {
   getPasskeyPrf,
   listKeys as vaultListKeys,
@@ -1299,7 +1303,7 @@ function renderResults() {
     </div>
     ${
       hasEnvelope && hasShares
-        ? `<p class="status-row warn mb-md" role="status">Keep <strong>envelope.bin.b64</strong> with the shares — it is required for recovery of PEM / non-16/32-byte secrets (not secret itself, but without it the shares cannot be unwrapped).</p>`
+        ? `<p class="status-row warn mb-md" role="status">Keep the <strong>envelope artifact</strong> with the shares — it is required for recovery of PEM / non-16/32-byte secrets (not secret itself, but without it the shares cannot be unwrapped).</p>`
         : ""
     }
     ${artifacts
@@ -1311,8 +1315,8 @@ function renderResults() {
             ? escapeHtml(a.content.slice(0, 400)) + "…"
             : escapeHtml(a.content);
         const isSvg = a.mime === "image/svg+xml";
+        const suggestedFilename = a.filename || `artifact-${i + 1}.txt`;
         const metaBits = [
-          a.filename ? `<code class="fs-xs">${escapeHtml(a.filename)}</code>` : "",
           a.encoding ? `<span class="badge pending">${escapeHtml(a.encoding)}</span>` : "",
           a.mime && a.mime !== "text/plain; charset=utf-8" && a.mime !== "text/plain"
             ? `<span class="muted fs-xs">${escapeHtml(a.mime)}</span>`
@@ -1327,8 +1331,20 @@ function renderResults() {
         return `
         <div class="card artifact-card" data-art="${i}">
           <div class="artifact-card-head">
-            <p class="card-title m-0">${escapeHtml(a.label)}</p>
-            <div class="artifact-meta">${metaBits}</div>
+            <label class="artifact-label-field">
+              <span class="sr-only">Artifact label</span>
+              <input type="text" class="artifact-label-input" data-art-label="${i}"
+                value="${escapeHtml(a.label || `Artifact ${i + 1}`)}" aria-label="Artifact label">
+            </label>
+            <div class="artifact-meta">
+              <label class="artifact-filename-field">
+                <span class="muted fs-xs">File</span>
+                <input type="text" class="artifact-filename-input" data-art-filename="${i}"
+                  value="${escapeHtml(suggestedFilename)}" aria-label="Suggested download filename"
+                  spellcheck="false">
+              </label>
+              ${metaBits}
+            </div>
           </div>
           ${
             isSvg && !masked
@@ -1344,6 +1360,31 @@ function renderResults() {
       })
       .join("")}`;
 
+  panel.querySelectorAll("[data-art-label]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const i = Number(input.getAttribute("data-art-label"));
+      if (artifacts[i] && input instanceof HTMLInputElement) {
+        artifacts[i].label = input.value;
+        touchActivity();
+      }
+    });
+  });
+  panel.querySelectorAll("[data-art-filename]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const i = Number(input.getAttribute("data-art-filename"));
+      if (artifacts[i] && input instanceof HTMLInputElement) {
+        artifacts[i].filename = input.value;
+        touchActivity();
+      }
+    });
+    input.addEventListener("change", () => {
+      const i = Number(input.getAttribute("data-art-filename"));
+      if (!artifacts[i] || !(input instanceof HTMLInputElement)) return;
+      const filename = sanitizeFilename(input.value, `artifact-${i + 1}.txt`);
+      artifacts[i].filename = filename;
+      input.value = filename;
+    });
+  });
   panel.querySelectorAll("[data-reveal]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const i = Number(btn.getAttribute("data-reveal"));
@@ -1387,7 +1428,7 @@ function downloadArtifact(a) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = a.filename || "artifact.txt";
+  link.download = sanitizeFilename(a.filename);
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -1400,7 +1441,9 @@ function downloadAllArtifacts() {
     return;
   }
   const names = uniquifyFilenames(
-    artifacts.map((a, i) => a.filename || `artifact-${i + 1}.txt`)
+    artifacts.map((a, i) =>
+      sanitizeFilename(a.filename, `artifact-${i + 1}.txt`)
+    )
   );
   const zip = buildZipStore(
     artifacts.map((a, i) => ({

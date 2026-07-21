@@ -161,3 +161,21 @@ export function uniquifyFilenames(names) {
     return `${name} (${n})`;
   });
 }
+
+/**
+ * Convert a user-supplied download name into a single safe filename.
+ * This prevents path components in ZIP entries and removes characters that
+ * are invalid on common desktop filesystems.
+ * @param {unknown} value
+ * @param {string} [fallback]
+ * @returns {string}
+ */
+export function sanitizeFilename(value, fallback = "artifact.txt") {
+  const clean = String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .trim()
+    .replace(/[. ]+$/g, "")
+    .slice(0, 180);
+  return clean && clean !== "." && clean !== ".." ? clean : fallback;
+}

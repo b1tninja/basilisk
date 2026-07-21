@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildZipStore,
   crc32,
+  sanitizeFilename,
   uniquifyFilenames,
 } from "../lib/zip-store.js";
 
@@ -16,6 +17,23 @@ describe("uniquifyFilenames", () => {
       "share (2).txt",
       "share (3).txt",
     ]);
+  });
+});
+
+describe("sanitizeFilename", () => {
+  it("preserves normal suggested filenames", () => {
+    expect(sanitizeFilename("recovery key.pem")).toBe("recovery key.pem");
+  });
+
+  it("removes paths, control characters, and invalid filename characters", () => {
+    expect(sanitizeFilename("../keys\\secret\u0000:key?.pem")).toBe(
+      "..-keys-secret-key-.pem"
+    );
+  });
+
+  it("uses the fallback for blank and dot-only names", () => {
+    expect(sanitizeFilename("   ", "output.bin")).toBe("output.bin");
+    expect(sanitizeFilename("..", "output.bin")).toBe("output.bin");
   });
 });
 

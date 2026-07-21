@@ -2237,6 +2237,42 @@ pre {
   gap: 0.25rem;
   margin-bottom: 0.45rem;
 }
+.artifact-label-field,
+.artifact-filename-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.artifact-label-input,
+.artifact-filename-input {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+.artifact-label-input {
+  width: 100%;
+  padding: 0.2rem 0.35rem;
+  font-weight: 700;
+}
+.artifact-filename-input {
+  width: min(22rem, 100%);
+  padding: 0.15rem 0.3rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+}
+.artifact-label-input:hover,
+.artifact-filename-input:hover {
+  border-color: var(--border);
+}
+.artifact-label-input:focus,
+.artifact-filename-input:focus {
+  border-color: var(--brand);
+  outline: 2px solid color-mix(in srgb, var(--brand) 20%, transparent);
+}
 .artifact-meta {
   display: flex;
   flex-wrap: wrap;
