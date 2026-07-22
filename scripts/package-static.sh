@@ -19,10 +19,11 @@ fi
 
 # Integrity contract (do not weaken):
 #   - Entry scripts/styles/modulepreloads carry integrity= from vite-plugin-sri-gen.
-#   - Module-graph / worker SRI lives in an *external* importmap JSON under /assets/
-#     (see web/scripts/externalize-importmaps.js). CSP is script-src 'self' — never
-#     strip those maps; browsers refuse to load a module whose bytes ≠ the hash
-#     (CDN cache skew or tampering). Mixing old and new chunks must fail closed.
+#   - Module-graph / worker SRI lives in an *external* importmap JSON under
+#     /importmaps/ (see web/scripts/externalize-importmaps.js). CSP is
+#     script-src 'self' — never strip those maps; browsers refuse to load a
+#     module whose bytes ≠ the hash (CDN cache skew or tampering). Mixing old
+#     and new chunks must fail closed.
 python - "$OUT" >&2 <<'PY'
 from pathlib import Path
 import sys
