@@ -1459,9 +1459,10 @@ async function init() {
 }
 
 /**
- * Receive an artifact from a same-origin Toolkit popout and attach it as a
- * file. The opener waits for the ready message, so no plaintext is sent while
- * the crypto module is still running its pre-operational self-test.
+ * Receive an artifact from a same-origin Toolkit popout. Text dispositions
+ * become the compose message; file dispositions attach on the Files tab.
+ * The opener waits for the ready message, so no plaintext is sent while the
+ * crypto module is still running its pre-operational self-test.
  */
 function initToolkitArtifactTransfer() {
   if (queryParam("source") !== "toolkit" || !window.opener) return;
@@ -1479,6 +1480,31 @@ function initToolkitArtifactTransfer() {
     const artifact = event.data.artifact;
     if (!artifact || typeof artifact.content !== "string") return;
 
+    const label =
+      typeof artifact.label === "string" && artifact.label.trim()
+        ? artifact.label.trim()
+        : "Toolkit artifact";
+    const asMessage = artifact.disposition === "message";
+
+    window.removeEventListener("message", onArtifact);
+
+    if (asMessage) {
+      setTab("message");
+      const msgEl = document.getElementById("compose-message");
+      if (msgEl instanceof HTMLTextAreaElement) {
+        msgEl.value = artifact.content;
+        msgEl.focus();
+      }
+      updateEncryptButton();
+      const note = document.getElementById("encrypt-status");
+      if (note) {
+        note.className = "status-row ok";
+        note.textContent = `${label} loaded as message from Toolkit. Choose recipients, then encrypt.`;
+        note.classList.remove("hidden");
+      }
+      return;
+    }
+
     const filename = sanitizeFilename(artifact.filename);
     const mime =
       typeof artifact.mime === "string"
@@ -1493,15 +1519,10 @@ function initToolkitArtifactTransfer() {
       return;
     }
 
-    window.removeEventListener("message", onArtifact);
     addFiles([file]);
     setTab("files");
     const status = document.getElementById("toolkit-import-status");
     if (status) {
-      const label =
-        typeof artifact.label === "string" && artifact.label.trim()
-          ? artifact.label.trim()
-          : "Toolkit artifact";
       status.textContent = `${label} attached from Toolkit. Choose recipients, then encrypt.`;
       status.classList.remove("hidden");
     }

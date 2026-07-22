@@ -2225,6 +2225,10 @@ pre {
   border-left: 3px solid var(--ok, #3dd68c);
   background: color-mix(in srgb, var(--ok, #3dd68c) 6%, transparent);
 }
+.builder-text {
+  border-left: 3px solid var(--brand);
+  background: color-mix(in srgb, var(--brand) 6%, transparent);
+}
 .builder-card-head {
   display: flex;
   align-items: center;

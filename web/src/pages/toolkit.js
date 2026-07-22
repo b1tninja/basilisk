@@ -1144,6 +1144,7 @@ function renderBuilder() {
       .join("");
 
     const isOut = step.name === "out";
+    const isText = step.name === "text";
     const outSummary = isOut
       ? [
           step.params.name || "output",
@@ -1154,16 +1155,24 @@ function renderBuilder() {
         ]
           .filter(Boolean)
           .join(" · ")
-      : "";
+      : isText
+        ? String(step.params.label || step.params.name || "text")
+        : "";
 
     parts.push(`
-      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""}"
+      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""}"
            draggable="true" data-index="${i}" data-step-card="${i}">
         <div class="builder-card-head">
           <span class="builder-drag" title="Drag to reorder">⠿</span>
           <span class="builder-step-num" aria-hidden="true">${i + 1}</span>
           <strong>${escapeHtml(step.name)}</strong>
-          ${isOut ? `<span class="badge pending">output tile</span>` : `<span class="muted fs-xs">${escapeHtml(spec?.kind || "")}</span>`}
+          ${
+            isOut
+              ? `<span class="badge pending">file tile</span>`
+              : isText
+                ? `<span class="badge pending">message tile</span>`
+                : `<span class="muted fs-xs">${escapeHtml(spec?.kind || "")}</span>`
+          }
           ${outSummary ? `<span class="muted fs-xs">${escapeHtml(outSummary)}</span>` : ""}
           <button type="button" class="btn btn-ghost btn-compact text-error" data-remove="${i}">Remove</button>
         </div>
@@ -1514,7 +1523,11 @@ function renderResults() {
             <button type="button" class="btn btn-ghost btn-compact" data-copy="${i}">Copy</button>
             <button type="button" class="btn btn-ghost btn-compact" data-download="${i}">Download</button>
             <button type="button" class="btn btn-ghost btn-compact" data-encrypt="${i}"
-              title="Open this artifact as a file in a separate Encrypt window">Encrypt…</button>
+              title="${
+                artifactIsMessage(a)
+                  ? "Open as an Encrypt compose message"
+                  : "Attach as a file in a separate Encrypt window"
+              }">${artifactIsMessage(a) ? "Encrypt as message…" : "Encrypt as file…"}</button>
           </div>
         </div>`;
       })
@@ -1557,8 +1570,20 @@ function renderResults() {
   panel.querySelectorAll("[data-reveal]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const i = Number(btn.getAttribute("data-reveal"));
+      const a = artifacts[i];
       const pre = panel.querySelector(`.artifact-body[data-art="${i}"]`);
-      if (pre) pre.textContent = artifacts[i].content;
+      if (a && pre) {
+        if (a.mime === "image/svg+xml") {
+          // Render the QR image, same as the unmasked path (SVG is generated
+          // locally by qrSvg, never from user input).
+          const preview = document.createElement("div");
+          preview.className = "qr-preview";
+          preview.innerHTML = a.content;
+          pre.replaceWith(preview);
+        } else {
+          pre.textContent = a.content;
+        }
+      }
       btn.remove();
       touchActivity();
     });
@@ -1597,14 +1622,33 @@ function renderResults() {
 }
 
 /**
+ * Whether Encrypt should open this artifact as a compose message (vs file).
+ * @param {{ disposition?: string, mime?: string, stepName?: string, shareIndex?: number }} a
+ */
+function artifactIsMessage(a) {
+  if (a?.disposition === "message") return true;
+  if (a?.disposition === "file") return false;
+  // Fallback for older in-memory artifacts: plain text that isn't an out/QR/share file.
+  const mime = String(a?.mime || "");
+  if (!mime.startsWith("text/plain")) return false;
+  if (a?.shareIndex) return false;
+  if (a?.stepName === "out" || a?.stepName === "qr" || a?.stepName === "tee") {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Open the Encrypt composer and transfer one artifact after it signals that
  * its crypto self-test and UI initialization have completed. Content travels
  * only through a same-origin window message; it is never put in a URL or
  * persistent browser storage.
- * @param {{ label?: string, filename?: string, content: string, mime?: string }} artifact
+ * @param {{ label?: string, filename?: string, content: string, mime?: string, disposition?: string }} artifact
  * @param {HTMLButtonElement} button
  */
 function openArtifactInEncrypt(artifact, button) {
+  const asMessage = artifactIsMessage(artifact);
+  const idleLabel = asMessage ? "Encrypt as message…" : "Encrypt as file…";
   const popup = window.open(
     "/encrypt?source=toolkit",
     "_blank",
@@ -1613,7 +1657,7 @@ function openArtifactInEncrypt(artifact, button) {
   if (!popup) {
     button.textContent = "Pop-up blocked";
     setTimeout(() => {
-      button.textContent = "Encrypt…";
+      button.textContent = idleLabel;
     }, 1800);
     return;
   }
@@ -1623,7 +1667,7 @@ function openArtifactInEncrypt(artifact, button) {
   const timeout = setTimeout(() => {
     window.removeEventListener("message", onReady);
     button.disabled = false;
-    button.textContent = "Encrypt…";
+    button.textContent = idleLabel;
   }, 15_000);
 
   /** @param {MessageEvent} event */
@@ -1645,6 +1689,7 @@ function openArtifactInEncrypt(artifact, button) {
           filename: sanitizeFilename(artifact.filename),
           content: artifact.content,
           mime: artifact.mime || "application/octet-stream",
+          disposition: asMessage ? "message" : "file",
         },
       },
       window.location.origin
@@ -1653,7 +1698,7 @@ function openArtifactInEncrypt(artifact, button) {
     button.textContent = "Opened";
     setTimeout(() => {
       button.disabled = false;
-      button.textContent = "Encrypt…";
+      button.textContent = idleLabel;
     }, 1200);
   }
 

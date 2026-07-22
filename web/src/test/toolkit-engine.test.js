@@ -53,7 +53,7 @@ describe("toolkit engine", () => {
     expect(s).not.toMatch(/[+/=]/);
   });
 
-  it("out emits a named tile without duplicating a terminal value", async () => {
+  it("out emits a named file tile without duplicating a terminal value", async () => {
     const { ast, validation } = compileRecipe(
       "random 16 | out name=secret encoding=hex ext=hex"
     );
@@ -63,6 +63,7 @@ describe("toolkit engine", () => {
     expect(arts[0].label).toBe("secret");
     expect(arts[0].filename).toBe("secret.hex");
     expect(arts[0].encoding).toBe("hex");
+    expect(arts[0].disposition).toBe("file");
     expect(arts[0].content).toMatch(/^[0-9a-f]{32}$/);
   });
 
@@ -75,8 +76,29 @@ describe("toolkit engine", () => {
     const tile = arts.find((a) => a.filename === "raw.bin.b64" || a.label === "raw");
     expect(tile).toBeTruthy();
     expect(tile.encoding).toBe("base64");
+    expect(tile.disposition).toBe("file");
     const hex = arts.find((a) => /^[0-9a-f]{16}$/.test(a.content));
     expect(hex).toBeTruthy();
+    // Trailing hex is bare printed text → message disposition for Encrypt.
+    expect(hex.disposition).toBe("message");
+  });
+
+  it("text / print emits a message tile (not a file disposition)", async () => {
+    const { ast, validation } = compileRecipe(
+      "passphrase words=4 | text name=secret-phrase"
+    );
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    expect(arts).toHaveLength(1);
+    expect(arts[0].label).toBe("secret-phrase");
+    expect(arts[0].disposition).toBe("message");
+    expect(arts[0].mime).toMatch(/^text\/plain/);
+  });
+
+  it("print alias resolves to the text sink", () => {
+    const { ast, validation } = compileRecipe("passphrase words=4 | print");
+    expect(validation.ok).toBe(true);
+    expect(ast.steps.at(-1)?.name).toBe("text");
   });
 
   it("validates pem | out | encrypt-style type flow", () => {

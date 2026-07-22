@@ -529,7 +529,7 @@ export function validateRecipe(ast) {
       continue;
     }
 
-    // out: named output tile; value type unchanged so it can pipe to encrypt/gpg/…
+    // out: named file tile; value type unchanged so it can pipe to encrypt/gpg/…
     if (step.name === "out") {
       if (current === "none") {
         errors.push({
@@ -542,7 +542,22 @@ export function validateRecipe(ast) {
       continue;
     }
 
-    // inspect / print / hexdump: any value → text dump
+    // text / print: message tile; pass through (bytes become UTF-8 text for display)
+    if (step.name === "text") {
+      if (current === "none") {
+        errors.push({
+          message: `"text" needs a pipeline value to print.`,
+          start: step.start,
+          end: step.end,
+          stepIndex: i,
+        });
+      } else if (current === "bytes") {
+        current = "text";
+      }
+      continue;
+    }
+
+    // inspect / dump / hexdump: any value → text dump
     if (step.name === "inspect") {
       if (current === "none") {
         errors.push({

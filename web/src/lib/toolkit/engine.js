@@ -51,6 +51,9 @@ import { getStep } from "./registry.js";
  * @property {string} [cryptoSummary]
  * @property {number} [stepIndex]  1-based index of the pipeline step that produced this artifact
  * @property {string} [stepName]
+ * @property {"message"|"file"} [disposition]
+ *   message = printable text (Encrypt opens as a compose message);
+ *   file = named/binary/QR/share output (Encrypt attaches as a file)
  */
 
 /**
@@ -96,8 +99,8 @@ export async function runRecipe(ast, bindings = {}) {
   let value = null;
   /** Track whether envelope was already emitted for this run. */
   let envelopeEmitted = false;
-  /** True when the last top-level step was `out` (already materialized; skip trailing emit). */
-  let lastStepWasOut = false;
+  /** True when the last top-level step already materialized tiles (`out` / `text`). */
+  let lastStepEmitted = false;
 
   const plan = expandPlan(steps);
 
@@ -119,7 +122,7 @@ export async function runRecipe(ast, bindings = {}) {
 
   for (const node of plan) {
     if (node.kind === "foreach") {
-      lastStepWasOut = false;
+      lastStepEmitted = false;
       if (!value || value.type !== "shares") {
         throw new Error("foreach requires shares");
       }
@@ -153,6 +156,7 @@ export async function runRecipe(ast, bindings = {}) {
               content: String(itemVal.data),
               sensitive: true,
               shareIndex: i + 1,
+              disposition: "file",
             });
             stampNew(before, last);
           }
@@ -172,7 +176,7 @@ export async function runRecipe(ast, bindings = {}) {
     const before = artifacts.length;
     value = await execStep(node.step, value, bindings, artifacts, 0);
     stampNew(before, node.step);
-    lastStepWasOut = node.step.name === "out";
+    lastStepEmitted = node.step.name === "out" || node.step.name === "text";
     if (
       value?.meta?.envelope &&
       !envelopeEmitted &&
@@ -195,8 +199,8 @@ export async function runRecipe(ast, bindings = {}) {
       stampNew(before, slip39Step);
       envelopeEmitted = true;
     }
-    // Terminal `out` already pushed tiles; later transforms clear lastStepWasOut.
-    if (!lastStepWasOut) {
+    // Terminal `out` / `text` already pushed tiles; later transforms clear this flag.
+    if (!lastStepEmitted) {
       const before = artifacts.length;
       artifacts.push(...valueToArtifacts(value));
       stampNew(before, steps[steps.length - 1]);
@@ -218,6 +222,7 @@ function emitEnvelope(artifacts, envelope) {
     sensitive: false,
     mime: "application/octet-stream",
     cryptoSummary: "AES-256-GCM · 256-bit random envelope key · 96-bit IV · 128-bit tag",
+    disposition: "file",
   });
 }
 
@@ -484,6 +489,7 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
           recipientFingerprint: fpr,
           mime: "application/pgp-encrypted",
           cryptoSummary,
+          disposition: "file",
         });
       }
       return { type: "artifact", data: null, meta: value.meta };
@@ -500,6 +506,7 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
         sensitive: !!value.meta?.sensitive,
         shareIndex: value.meta?.shareIndex,
         mime: "image/svg+xml",
+        disposition: "file",
       });
       return { type: "artifact", data: null, meta: value.meta };
     }
@@ -510,9 +517,37 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
         if (value.meta?.shareIndex && !a.shareIndex) {
           a.shareIndex = value.meta.shareIndex;
         }
+        a.disposition = "file";
         artifacts.push(a);
       }
       // Pass through so the recipe can continue (e.g. out | encrypt gpg).
+      return value;
+    }
+    case "text": {
+      // Print as a message tile (not a named downloadable file — use `out` for that).
+      if (!value) throw new Error("text expects a value");
+      const label = String(step.params.label || step.params.name || "text").trim() || "text";
+      const stem = safeOutputStem(label);
+      let content;
+      if (value.type === "text") {
+        content = String(value.data);
+      } else if (value.type === "bytes") {
+        content = bytesToText(value.data);
+      } else {
+        throw new Error("text expects text or bytes (use inspect for other types)");
+      }
+      artifacts.push({
+        label: value.meta?.shareIndex
+          ? `${label} (share ${value.meta.shareIndex})`
+          : label,
+        filename: `${stem}.txt`,
+        content,
+        sensitive: !!value.meta?.sensitive,
+        shareIndex: value.meta?.shareIndex,
+        mime: "text/plain; charset=utf-8",
+        encoding: "text",
+        disposition: "message",
+      });
       return value;
     }
     case "inspect": {
@@ -547,6 +582,7 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
           !!value.meta?.sensitive ||
           value.type === "keypair" ||
           value.type === "shares",
+        disposition: "file",
       });
       return value;
     }
@@ -1190,6 +1226,8 @@ function valueToArtifacts(value, name = "artifact") {
         sensitive: !!value.meta?.sensitive,
         mime: "text/plain; charset=utf-8",
         encoding: "text",
+        // Bare pipeline text prints as a message (use `out` for a named file).
+        disposition: "message",
       },
     ];
   }
@@ -1202,6 +1240,7 @@ function valueToArtifacts(value, name = "artifact") {
         sensitive: !!value.meta?.sensitive,
         mime: "application/octet-stream",
         encoding: "base64",
+        disposition: "file",
       },
     ];
   }
@@ -1214,6 +1253,7 @@ function valueToArtifacts(value, name = "artifact") {
       shareIndex: i + 1,
       mime: "text/plain; charset=utf-8",
       encoding: "text",
+      disposition: "file",
     }));
   }
   if (value.type === "keypair") {
@@ -1225,6 +1265,7 @@ function valueToArtifacts(value, name = "artifact") {
         sensitive: true,
         mime: "text/plain",
         encoding: "text",
+        disposition: "file",
       },
     ];
   }

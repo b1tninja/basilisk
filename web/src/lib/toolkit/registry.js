@@ -438,9 +438,32 @@ export const STEPS = [
     params: [],
   },
   {
+    name: "text",
+    kind: "sink",
+    doc: "Print the current value as a text message tile (like print). Encrypt opens it as a compose message. Use out when you want a named downloadable file attachment instead.",
+    input: "text",
+    output: "text",
+    aliases: ["print", "echo"],
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "text",
+        doc: "Tile label",
+      },
+      {
+        name: "label",
+        type: "string",
+        default: "",
+        doc: "Display label override (defaults to name)",
+      },
+    ],
+  },
+  {
     name: "out",
     kind: "sink",
-    doc: "Emit a named output tile (copy/download) and pass the value through so you can keep piping — e.g. pem | out name=key | encrypt gpg.",
+    doc: "Emit a named downloadable file tile and pass the value through so you can keep piping — e.g. pem | out name=key ext=pem | encrypt gpg. Contrast with text, which prints a message rather than a file.",
     input: "text",
     output: "text",
     aliases: ["output", "save", "emit"],
@@ -485,7 +508,7 @@ export const STEPS = [
     doc: "Human-readable dump of the current value (openssl … -text / hexdump). Replaces the pipeline value with the dump text. Accepts bytes, text, shares, or keypairs.",
     input: "bytes",
     output: "text",
-    aliases: ["print", "dump", "hexdump"],
+    aliases: ["dump", "hexdump"],
     params: [
       {
         name: "format",
@@ -610,7 +633,12 @@ export function stepsAccepting(from) {
  * @returns {boolean}
  */
 export function ioCompatible(from, to, stepName) {
-  if (stepName === "tee" || stepName === "inspect" || stepName === "out") {
+  if (
+    stepName === "tee" ||
+    stepName === "inspect" ||
+    stepName === "out" ||
+    stepName === "text"
+  ) {
     return !!from && from !== "none";
   }
   if (to === "none") return from === "none" || !from;
