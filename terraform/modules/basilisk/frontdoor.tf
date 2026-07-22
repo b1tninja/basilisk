@@ -214,7 +214,7 @@ resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
   conditions {
     url_path_condition {
       operator     = "Contains"
-      match_values = ["/css/", "/js/", "/assets/"]
+      match_values = ["/css/", "/js/", "/assets/", "/importmaps/"]
     }
   }
 
@@ -253,13 +253,14 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
     route_configuration_override_action {
       cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
       forwarding_protocol           = "HttpsOnly"
-      # HTML (+ clean-URL aliases) pin SRI hashes for the module graph. A long
-      # TTL lets a PoP serve stale HTML while new /assets/* hashes 404 or —
-      # worse — an old HTML doc that still resolves old hashed names while a
-      # partially purged edge mixes deploys. Keep this short; hashed assets
-      # below stay at 7 days.
+      # Portal HTML is static ($web blob), not the Function App — long CDN TTL
+      # cuts origin fetches/egress. Integrity against mix-and-match comes from:
+      #   · content-hashed /assets/* filenames
+      #   · content-hashed /importmaps/importmap-*.json pins
+      #   · mandatory Front Door purge on every static deploy
+      # A short TTL is unnecessary cost; do not shrink this “for SRI”.
       cache_behavior                = "OverrideAlways"
-      cache_duration                = "0.00:05:00"
+      cache_duration                = "1.00:00:00"
       query_string_caching_behavior = "UseQueryString"
       compression_enabled           = true
     }

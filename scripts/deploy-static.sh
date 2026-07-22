@@ -48,8 +48,8 @@ az storage blob upload-batch \
 
 # Ensure HTML content-types for clean URL blobs and root pages.
 # Derived from staged *.html plus any extensionless aliases (e.g. search).
-# Cache-Control: no-cache so Front Door / browsers revalidate HTML (SRI pin)
-# even if a PoP still has a longer OverrideAlways TTL from an older rule set.
+# Cache 1 day at the origin; Front Door OverrideAlways also uses 1 day for
+# HTML. Post-deploy purge (required below) drops stale pins immediately.
 shopt -s nullglob
 html_blobs=()
 for html in "${STAGE}"/*.html; do
@@ -75,14 +75,13 @@ for blob in "${html_blobs[@]}"; do
     --name "$blob" \
     --file "$src" \
     --content-type "text/html; charset=utf-8" \
-    --content-cache-control "no-cache, must-revalidate" \
+    --content-cache-control "public, max-age=86400" \
     --overwrite \
     --only-show-errors
 done
 
-# External importmaps pin module-graph SRI — same freshness policy as HTML.
-# Kept under /importmaps/ (not /assets/) so the 7-day hashed-asset CDN rule
-# does not apply.
+# External importmaps are content-hashed filenames — cache like other static
+# pins; HTML references a specific importmap-* name per deploy.
 for imap in "${STAGE}"/importmaps/importmap-*.json; do
   [[ -f "$imap" ]] || continue
   az storage blob upload \
@@ -91,7 +90,7 @@ for imap in "${STAGE}"/importmaps/importmap-*.json; do
     --name "importmaps/$(basename "$imap")" \
     --file "$imap" \
     --content-type "application/importmap+json" \
-    --content-cache-control "no-cache, must-revalidate" \
+    --content-cache-control "public, max-age=604800, immutable" \
     --overwrite \
     --only-show-errors
 done

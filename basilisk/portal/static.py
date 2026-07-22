@@ -21,10 +21,12 @@ _STATIC_PAGES = {
     "quorum": "quorum.html",
 }
 
-# HTML + importmaps pin the SRI hashes for that deploy. Keep them fresh so a
-# CDN PoP cannot serve yesterday’s pin against today’s /assets/* chunks.
+# HTML pins SRI hashes for that deploy. Content-hashed /assets/* and
+# /importmaps/* mean a cached HTML document stays self-consistent (old pin →
+# old chunks). Freshness after deploy is the Front Door purge in
+# deploy-static.sh — not a tiny Cache-Control max-age.
 # Hashed assets under /assets/ are immutable and safe to cache aggressively.
-_HTML_CACHE_CONTROL = "no-cache, must-revalidate"
+_HTML_CACHE_CONTROL = "public, max-age=86400"
 _ASSET_CACHE_CONTROL = "public, max-age=604800, immutable"
 
 
@@ -67,7 +69,8 @@ def register_static_portal(app: Flask) -> None:
     @app.get("/importmaps/<path:filename>")
     def static_importmaps(filename: str) -> Response:
         resp = send_from_directory(_static_root() / "importmaps", filename)
-        resp.headers["Cache-Control"] = _HTML_CACHE_CONTROL
+        # Content-hashed filenames — same caching posture as /assets/*.
+        resp.headers["Cache-Control"] = _ASSET_CACHE_CONTROL
         resp.headers["Content-Type"] = "application/importmap+json"
         return resp
 
