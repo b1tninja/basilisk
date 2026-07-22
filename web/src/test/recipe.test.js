@@ -104,7 +104,8 @@ describe("validation", () => {
   });
 
   it("never serializes recipient identities", () => {
-    const recipe = "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | gpg";
+    const recipe =
+      "genkey ec/p256 | export scalar | slip39 threshold=2 shares=3 | foreach | gpg";
     const { ast } = parseRecipe(recipe);
     const out = serializeRecipe(ast);
     expect(out).not.toMatch(/@/);
@@ -174,5 +175,42 @@ describe("validation", () => {
     );
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("shares");
+  });
+
+  it("rejects pem | slip39 at compile time", () => {
+    const { validation } = compileRecipe(
+      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3"
+    );
+    expect(validation.ok).toBe(false);
+    expect(
+      validation.errors.some((e) => /slip39|export scalar|symencrypt/i.test(e.message))
+    ).toBe(true);
+  });
+
+  it("accepts export scalar | slip39", () => {
+    const { validation } = compileRecipe(
+      "genkey ec/p256 | export scalar | slip39 threshold=2 shares=3"
+    );
+    expect(validation.ok).toBe(true);
+  });
+
+  it("accepts pem | symencrypt | slip39", () => {
+    const { validation } = compileRecipe(
+      "genkey ec/p256 | export pkcs8 | pem | symencrypt | slip39 threshold=2 shares=3"
+    );
+    expect(validation.ok).toBe(true);
+  });
+
+  it("rejects symencrypt on master-sized bytes", () => {
+    const { validation } = compileRecipe("random 32 | symencrypt");
+    expect(validation.ok).toBe(false);
+    expect(validation.errors.some((e) => /symencrypt/i.test(e.message))).toBe(true);
+  });
+
+  it("rejects P-384 scalar | slip39 (not 16/32)", () => {
+    const { validation } = compileRecipe(
+      "genkey ec/p384 | export scalar | slip39 threshold=2 shares=3"
+    );
+    expect(validation.ok).toBe(false);
   });
 });

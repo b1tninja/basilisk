@@ -2,6 +2,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import sri from "vite-plugin-sri-gen";
+import { basiliskExternalizeImportMaps } from "./scripts/externalize-importmaps.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -11,6 +12,7 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // Content-hashed filenames + SRI (below) pin each deploy; do not disable.
     rollupOptions: {
       input: {
         index: resolve(__dirname, "index.html"),
@@ -30,5 +32,7 @@ export default defineConfig({
       algorithm: "sha384",
       crossorigin: "anonymous",
     }),
+    // Must run after sri-gen writes the inline integrity importmap.
+    basiliskExternalizeImportMaps(),
   ],
 });

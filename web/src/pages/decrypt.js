@@ -839,16 +839,35 @@ async function decryptWithPrivateKeyInline(armored, privArmored, keyPassphrase, 
       ok: true,
       plaintext,
       signatures,
-      sessionKeys: (sessionKeys || []).map((sk) => ({
-        algorithm: sk.algorithm,
-        aeadAlgorithm: sk.aeadAlgorithm,
-        length: sk.data?.length || 0,
-        data: sk.data,
-      })),
+      // Never retain raw session-key octets on the main thread (worker path
+      // already sends length-only). UI only needs algorithm + bit length.
+      sessionKeys: sanitizeSessionKeysForUi(sessionKeys),
     };
   } finally {
     zeroKeyMaterial(privateKey);
   }
+}
+
+/**
+ * Strip session-key material to metadata and wipe any raw key bytes.
+ * @param {Array<{ algorithm?: *, aeadAlgorithm?: *, data?: Uint8Array }>|null|undefined} sessionKeys
+ */
+function sanitizeSessionKeysForUi(sessionKeys) {
+  return (sessionKeys || []).map((sk) => {
+    const length = sk.data?.length || 0;
+    if (sk.data instanceof Uint8Array) {
+      try {
+        sk.data.fill(0);
+      } catch (_) {
+        /* wipe */
+      }
+    }
+    return {
+      algorithm: sk.algorithm,
+      aeadAlgorithm: sk.aeadAlgorithm,
+      length,
+    };
+  });
 }
 
 async function fetchVerificationArmored(signerIds) {
@@ -870,23 +889,19 @@ async function fetchVerificationArmored(signerIds) {
 
 function applySessionKeysToMap(sessionKeys) {
   if (!currentPacketMap || !sessionKeys?.length) return;
-  const normalized = sessionKeys.map((sk) => ({
-    algorithm: sk.algorithm,
-    aeadAlgorithm: sk.aeadAlgorithm,
-    data:
-      sk.data ||
-      (sk.length ? { length: sk.length } : undefined),
-  }));
-  // Length-only from worker: synthesize a stand-in so applySessionKeyDetails can show bit length.
-  const forApply = normalized.map((sk) => ({
+  // Length-only metadata: synthesize a zeroed stand-in so applySessionKeyDetails
+  // can show bit length without ever holding real session-key octets.
+  const forApply = sessionKeys.map((sk) => ({
     algorithm: sk.algorithm,
     aeadAlgorithm: sk.aeadAlgorithm,
     data:
       sk.data instanceof Uint8Array
         ? sk.data
-        : sk.data?.length
-          ? new Uint8Array(sk.data.length)
-          : undefined,
+        : sk.length
+          ? new Uint8Array(sk.length)
+          : sk.data?.length
+            ? new Uint8Array(sk.data.length)
+            : undefined,
   }));
   currentPacketMap = applySessionKeyDetails(currentPacketMap, forApply);
   const list = document.querySelector("#packet-map-card .pkt-detail-list");
@@ -1077,7 +1092,7 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
             index: i,
             plaintext,
             sigStatuses,
-            sessionKeys,
+            sessionKeys: sanitizeSessionKeysForUi(sessionKeys),
             intendedCheck,
           });
         } else {
@@ -1378,11 +1393,19 @@ async function unlockVaultArmoredEphemeral(fpr, statusEl) {
 
   /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
   const opts = {};
-  if (meta.protection === "passkey") {
-    if (statusEl) statusEl.textContent = "Confirm passkey…";
-    opts.prfIkm = await getPasskeyPrf();
+  try {
+    if (meta.protection === "passkey") {
+      if (statusEl) statusEl.textContent = "Confirm passkey…";
+      opts.prfIkm = await getPasskeyPrf();
+    }
+    return await vaultUnlockKey(fpr, opts);
+  } finally {
+    try {
+      opts.prfIkm?.fill?.(0);
+    } catch (_) {
+      /* wipe */
+    }
   }
-  return vaultUnlockKey(fpr, opts);
 }
 
 function updateDecryptButtonLabel() {

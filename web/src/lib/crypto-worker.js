@@ -161,7 +161,7 @@ self.onmessage = async (ev) => {
             try {
               p.bytes.fill(0);
             } catch (_) {
-              /* ignore */
+              /* wipe */
             }
           }
         }

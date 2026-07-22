@@ -63,6 +63,11 @@ check_status "/pks/lookup?op=stats"            "$BASE_URL/pks/lookup?op=stats"
 #    so this check is valid for both the static-site and local dev deployments.
 check_body   "/ (HTML title)"                  "$BASE_URL/" "Basilisk"
 
+# 3b. SRI pin — production HTML must advertise integrity= and an external
+#     importmap so the browser can refuse mismatched CDN module bytes.
+check_body   "/ (SRI integrity=)"              "$BASE_URL/" "integrity="
+check_body   "/ (external importmap)"          "$BASE_URL/" "/importmaps/importmap-"
+
 # 4. Clean-URL page aliases — derived from web/*.html so new pages are covered.
 #    index.html → /search; every other page → /<name>.
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"

@@ -134,11 +134,11 @@ export async function encryptArtifacts(request) {
       const filename = payload.filename || "file";
       const msg = await createMessage({ binary: bytes, filename });
       const armored = await encrypt({ message: msg, ...encryptOpts });
-      // Best-effort wipe of plaintext buffer after encrypt.
+      // Best-effort wipe of plaintext buffer after encrypt (inlined — see memory-safety.js).
       try {
         bytes.fill(0);
       } catch (_) {
-        /* ignore */
+        /* wipe */
       }
       out.push({
         label: filename,

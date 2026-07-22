@@ -1,7 +1,8 @@
 /**
  * Toolkit recipe language: pipe-separated steps with key=value params.
  *
- *   genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg
+ *   genkey ec/p256 | fanout format=spki which=public name=public-key
+ *     | export scalar | slip39 threshold=2 shares=3 | foreach | encrypt gpg
  *   recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem
  *   (aliases: input / read / paste for recombine)
  *
@@ -15,11 +16,15 @@
 
 import {
   canonicalName,
-  effectiveIo,
   getStep,
-  ioCompatible,
   listSteps,
 } from "./registry.js";
+import {
+  formatType,
+  resolveStepType,
+  tNone,
+  typeOf,
+} from "./types.js";
 
 /**
  * @typedef {object} RecipeStep
@@ -50,7 +55,7 @@ import {
  * @property {string[]} warnings
  * @property {number} [recipientSlots]  how many GPG recipient slots Run needs
  * @property {boolean} [foreachGpg]  encrypt gpg is inside foreach
- * @property {("shares"|"gpg"|"text")[]} [inputNeeds]  runtime input panels required
+ * @property {("shares"|"gpg"|"text"|"envelope")[]} [inputNeeds]  runtime input panels required
  */
 
 /**
@@ -352,13 +357,13 @@ export function validateRecipe(ast) {
     };
   }
 
-  /** @type {import("./registry.js").IoType} */
-  let current = "none";
+  /** @type {import("./types.js").RefinedType} */
+  let current = tNone();
   let foreachDepth = 0;
   let sharesCount = 0;
   let gpgSlots = 0;
   let foreachGpg = false;
-  /** @type {("shares"|"gpg"|"text")[]} */
+  /** @type {("shares"|"gpg"|"text"|"envelope")[]} */
   const inputNeeds = [];
   let sawInputShares = false;
   let sawInputText = false;
@@ -376,8 +381,6 @@ export function validateRecipe(ast) {
       });
       continue;
     }
-
-    const io = effectiveIo(spec, step.params);
 
     // Param checks
     for (const p of spec.params || []) {
@@ -479,6 +482,10 @@ export function validateRecipe(ast) {
       if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
     }
 
+    if (step.name === "symdecrypt") {
+      if (!inputNeeds.includes("envelope")) inputNeeds.push("envelope");
+    }
+
     if (step.name === "foreach") {
       if (foreachDepth > 0) {
         errors.push({
@@ -488,16 +495,17 @@ export function validateRecipe(ast) {
           stepIndex: i,
         });
       }
-      if (current !== "shares") {
+      if (current.base !== "shares") {
         errors.push({
-          message: `foreach requires a collection (shares) — got ${current}. Add slip39 or recombine before foreach.`,
+          message: `foreach requires a collection (shares) — got ${formatType(current)}. Add slip39 or recombine before foreach.`,
           start: step.start,
           end: step.end,
           stepIndex: i,
         });
       }
       foreachDepth++;
-      current = "text";
+      // Per-item mnemonic text inside foreach
+      current = typeOf("text", { kind: "mnemonic" });
       continue;
     }
 
@@ -512,143 +520,70 @@ export function validateRecipe(ast) {
       } else {
         foreachDepth--;
       }
-      current = "bundle";
+      current = typeOf("bundle");
       continue;
     }
 
-    // tee: side-channel inspect, value type unchanged
-    if (step.name === "tee") {
-      if (current === "none") {
-        errors.push({
-          message: `"tee" needs a pipeline value — start with genkey, random, input, or decrypt.`,
-          start: step.start,
-          end: step.end,
-          stepIndex: i,
-        });
-      }
+    // Collection into non-foreach / non-combine / pass-through
+    if (
+      current.base === "shares" &&
+      step.name !== "combine" &&
+      step.name !== "tee" &&
+      step.name !== "inspect" &&
+      step.name !== "out" &&
+      step.name !== "fanout"
+    ) {
+      errors.push({
+        message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, or combine to recover.`,
+        start: step.start,
+        end: step.end,
+        stepIndex: i,
+      });
       continue;
     }
 
-    // out: named file tile; value type unchanged so it can pipe to encrypt/gpg/…
-    if (step.name === "out") {
-      if (current === "none") {
-        errors.push({
-          message: `"out" needs a pipeline value to emit.`,
-          start: step.start,
-          end: step.end,
-          stepIndex: i,
-        });
-      }
-      continue;
-    }
-
-    // text / print: message tile; pass through (bytes become UTF-8 text for display)
-    if (step.name === "text") {
-      if (current === "none") {
-        errors.push({
-          message: `"text" needs a pipeline value to print.`,
-          start: step.start,
-          end: step.end,
-          stepIndex: i,
-        });
-      } else if (current === "bytes") {
-        current = "text";
-      }
-      continue;
-    }
-
-    // inspect / dump / hexdump: any value → text dump
-    if (step.name === "inspect") {
-      if (current === "none") {
-        errors.push({
-          message: `"inspect" needs a pipeline value to dump.`,
-          start: step.start,
-          end: step.end,
-          stepIndex: i,
-        });
-      } else {
-        current = "text";
-      }
-      continue;
-    }
-
-    // Type flow
     if (spec.kind === "source") {
-      if (i > 0 && current !== "none" && foreachDepth === 0) {
+      if (i > 0 && current.base !== "none" && foreachDepth === 0) {
         warnings.push(
           `Source step "${step.name}" at position ${i + 1} discards prior pipeline value`
         );
       }
-      current = io.output;
-    } else {
-      // Collection into non-foreach / non-combine / non-inspect
-      if (
-        current === "shares" &&
-        step.name !== "foreach" &&
-        step.name !== "combine" &&
-        step.name !== "tee" &&
-        step.name !== "inspect" &&
-        step.name !== "out"
-      ) {
-        errors.push({
-          message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, or combine to recover.`,
-          start: step.start,
-          end: step.end,
-          stepIndex: i,
-        });
-      } else if (
-        !ioCompatible(current, io.input, step.name) &&
-        !(foreachDepth > 0 && io.input === "text" && current === "text")
-      ) {
-        if (
-          step.name === "slip39" &&
-          (current === "text" || current === "bytes")
-        ) {
-          current = io.output;
-        } else if (current === "keypair" && io.input === "bytes") {
-          errors.push({
-            message: `"${step.name}" expects DER bytes — add export pkcs8 (or spki) first.`,
-            start: step.start,
-            end: step.end,
-            stepIndex: i,
-          });
-        } else if (current === "bytes" && io.input === "text") {
-          errors.push({
-            message: `"${step.name}" expects text — encode with pem, base64, base64url, hex, or utf8 first.`,
-            start: step.start,
-            end: step.end,
-            stepIndex: i,
-          });
-        } else if (current === "text" && io.input === "bytes") {
-          errors.push({
-            message: `"${step.name}" expects bytes — decode with pem -d, base64 -d, or hex -d first.`,
-            start: step.start,
-            end: step.end,
-            stepIndex: i,
-          });
-        } else if (current === "none") {
-          errors.push({
-            message: `"${step.name}" needs an input — start with genkey, random, passphrase, input, or decrypt.`,
-            start: step.start,
-            end: step.end,
-            stepIndex: i,
-          });
-        } else {
-          errors.push({
-            message: `Type mismatch: "${step.name}" expects ${io.input}, got ${current}.`,
-            start: step.start,
-            end: step.end,
-            stepIndex: i,
-          });
-        }
-      } else {
-        // utf8 is bidirectional: text in → bytes out (encode), bytes in → text out.
-        current =
-          step.name === "utf8" && current === "text" ? "bytes" : io.output;
-        if (foreachDepth > 0 && spec.kind === "sink") {
-          current = "text";
-        }
+    }
+
+    const resolved = resolveStepType(spec, current, step.params || {});
+    if (!resolved.ok) {
+      let message = resolved.error;
+      if (current.base === "keypair" && /expects bytes/i.test(message)) {
+        message = `"${step.name}" expects DER bytes — add export pkcs8, export scalar, or spki first.`;
+      } else if (current.base === "none") {
+        message = `"${step.name}" needs an input — start with genkey, random, passphrase, input, or decrypt.`;
       }
+      errors.push({
+        message,
+        start: step.start,
+        end: step.end,
+        stepIndex: i,
+      });
+      continue;
+    }
+
+    current = resolved.output;
+    if (foreachDepth > 0 && spec.kind === "sink") {
+      current = typeOf("text", { kind: "mnemonic" });
+    }
+
+    // Reject slip39 on scalars that are not 16/32 (e.g. P-384)
+    if (
+      step.name === "export" &&
+      (String(step.params.format || "") === "scalar" ||
+        String(step.params.format || "") === "d") &&
+      current.length != null &&
+      current.length !== 16 &&
+      current.length !== 32
+    ) {
+      warnings.push(
+        `export scalar produced ${current.length}-byte material — slip39 only accepts 16/32; use symencrypt for larger scalars`
+      );
     }
 
     if (step.name === "encrypt") {
@@ -714,7 +649,7 @@ export function unresolvedRecipients(ast) {
 /**
  * Detect runtime input panels required.
  * @param {RecipeAst} ast
- * @returns {("shares"|"gpg")[]}
+ * @returns {("shares"|"gpg"|"text"|"envelope")[]}
  */
 export function unresolvedInputs(ast) {
   return validateRecipe(ast).inputNeeds || [];
@@ -797,34 +732,37 @@ export const PRESETS = [
     group: "Split & recover",
     pair: "slip39-secret",
     title: "Recover secret from SLIP-39 shares",
-    blurb: "Paste K-of-N mnemonics (+ envelope if prompted) and reconstruct the secret as Base64.",
+    blurb: "Paste K-of-N mnemonics and reconstruct the 16/32-byte master as Base64.",
     recipe: "recombine | combine | base64",
   },
   {
     id: "out-mid-pipeline",
     group: "Split & recover",
-    pair: "slip39-pem",
-    title: "Split P-256 key into shares",
-    blurb: "Save a PEM tile (copy/download), then keep piping into SLIP-39 — same pattern as out | encrypt gpg.",
+    pair: "slip39-scalar",
+    title: "Split P-256 scalar into shares",
+    blurb:
+      "Emit the public SPKI beside a direct 32-byte scalar split (no envelope) — preferred for P-256 keys.",
     recipe:
-      "genkey ec/p256 | export pkcs8 | pem | out name=private-key ext=pem label=PKCS8 | slip39 threshold=2 shares=3 | foreach | out name=share",
+      "genkey ec/p256 | fanout format=spki which=public name=public-key ext=spki | export scalar | slip39 threshold=2 shares=3 | foreach | out name=share",
   },
   {
     id: "rebuild-p256",
     group: "Split & recover",
-    pair: "slip39-pem",
-    title: "Rebuild P-256 key from shares",
-    blurb: "Combine SLIP-39 shares of a PEM private key and re-import as WebCrypto P-256.",
+    pair: "slip39-scalar",
+    title: "Rebuild P-256 key from scalar shares",
+    blurb: "Combine SLIP-39 shares of a P-256 private scalar and re-import as WebCrypto.",
     recipe:
-      "recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem",
+      "recombine | combine | import scalar alg=ec/p256 | export pkcs8 | pem",
   },
   {
     id: "quorum-gpg",
     group: "Split & recover",
     pair: "quorum-gpg",
-    title: "Key + quorum-share to GPG",
-    blurb: "P-256 key → SLIP-39 2-of-3 → encrypt each share to a different recipient (chosen at run time).",
-    recipe: "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg",
+    title: "P-256 scalar + quorum-share to GPG",
+    blurb:
+      "Fan out public key, split the 32-byte scalar 2-of-3, encrypt each share to a different recipient.",
+    recipe:
+      "genkey ec/p256 | fanout format=spki which=public name=public-key | export scalar | slip39 threshold=2 shares=3 | foreach | encrypt gpg",
   },
   {
     id: "decrypt-rebuild-p256",
@@ -832,8 +770,27 @@ export const PRESETS = [
     pair: "quorum-gpg",
     title: "Decrypt GPG shares → rebuild key",
     blurb:
-      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then combine and rebuild the P-256 PEM.",
+      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then combine and rebuild the P-256 PEM from the scalar.",
     recipe:
-      "decrypt gpg | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem",
+      "decrypt gpg | combine | import scalar alg=ec/p256 | export pkcs8 | pem",
+  },
+  {
+    id: "pem-envelope-split",
+    group: "Split & recover",
+    pair: "slip39-pem-envelope",
+    title: "Split PEM via OpenPGP envelope",
+    blurb:
+      "For PKCS#8 PEM (or any large payload): OpenPGP-encrypt under a random 32-byte master, then SLIP-39-split the master. Keep envelope.asc with the shares.",
+    recipe:
+      "genkey ec/p256 | export pkcs8 | pem | symencrypt | slip39 threshold=2 shares=3 | foreach | out name=share",
+  },
+  {
+    id: "pem-envelope-rebuild",
+    group: "Split & recover",
+    pair: "slip39-pem-envelope",
+    title: "Recover PEM from envelope + shares",
+    blurb:
+      "Combine shares to the hex master, then symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
+    recipe: "recombine | combine | symdecrypt | utf8",
   },
 ];

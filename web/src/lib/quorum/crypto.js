@@ -42,6 +42,12 @@ export const INVITE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Generate an ephemeral P-256 ECDH keypair (WebCrypto).
+ *
+ * extractable must be true: WebCrypto applies the flag to *both* halves of the
+ * pair, and we must exportKey("jwk") the public half for signaling. The private
+ * half is session-scoped (dropped on leave) and never written to storage.
+ * Prefer extractable:false whenever a key never needs export (see import of
+ * peer public JWKs below, and vault device KEKs).
  * @returns {Promise<CryptoKeyPair>}
  */
 export async function generateEcdhKeyPair() {
@@ -61,6 +67,7 @@ export async function exportEcdhPublicJwk(publicKey) {
 }
 
 /**
+ * Import a peer ECDH public JWK. extractable:false — we never re-export it.
  * @param {JsonWebKey} jwk
  * @returns {Promise<CryptoKey>}
  */
@@ -69,7 +76,7 @@ export async function importEcdhPublicJwk(jwk) {
     "jwk",
     jwk,
     { name: "ECDH", namedCurve: "P-256" },
-    true,
+    false,
     []
   );
 }
@@ -306,22 +313,32 @@ export async function derivePairwiseSessionKey({
     privateKey,
     256
   );
-  const ikm = await crypto.subtle.importKey("raw", bits, "HKDF", false, [
-    "deriveKey",
-  ]);
-  const aesKey = await crypto.subtle.deriveKey(
-    {
-      name: "HKDF",
-      hash: "SHA-256",
-      salt: new Uint8Array(saltDigest),
-      info: new TextEncoder().encode(infoStr),
-    },
-    ikm,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
-  return { aesKey, transcriptHash };
+  const bitsU8 = new Uint8Array(bits);
+  try {
+    const ikm = await crypto.subtle.importKey("raw", bitsU8, "HKDF", false, [
+      "deriveKey",
+    ]);
+    const aesKey = await crypto.subtle.deriveKey(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: new Uint8Array(saltDigest),
+        info: new TextEncoder().encode(infoStr),
+      },
+      ikm,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"]
+    );
+    return { aesKey, transcriptHash };
+  } finally {
+    // ECDH shared secret must not linger as a reachable ArrayBuffer.
+    try {
+      bitsU8.fill(0);
+    } catch (_) {
+      /* wipe */
+    }
+  }
 }
 
 /**

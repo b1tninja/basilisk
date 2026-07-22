@@ -164,6 +164,12 @@ def test_static_search_page():
         html = dist_index.read_text(encoding="utf-8")
         assert "/assets/" in html
         assert "integrity=" in html
+        # Module-graph SRI must be an *external* importmap (CSP script-src 'self').
+        assert 'type="importmap"' in html
+        assert "<script type=\"importmap\">{" not in html
+        assert "/importmaps/importmap-" in html
+        maps = list((web_root / "dist" / "importmaps").glob("importmap-*.json"))
+        assert maps, "expected externalized importmap JSON under dist/importmaps/"
     else:
         html = src_index.read_text(encoding="utf-8")
         assert "/src/pages/index.js" in html

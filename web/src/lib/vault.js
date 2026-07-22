@@ -7,6 +7,8 @@
  *   - passkey (WebAuthn PRF): PRF→HKDF KEK wraps the device-encrypted blob
  *
  * localStorage is intentionally unused for secrets (string-only, XSS-readable).
+ * Wipe ephemeral buffers with inlined fill(0) (see memory-safety.js — no
+ * shared zeroBuffer chokepoint).
  */
 
 import { readPrivateKey } from "openpgp";
@@ -292,20 +294,6 @@ export async function getPasskeyPrf() {
 }
 
 /**
- * Zero a buffer best-effort.
- * @param {ArrayBuffer|Uint8Array|null|undefined} buf
- */
-function zeroBuffer(buf) {
-  if (!buf) return;
-  try {
-    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-    u8.fill(0);
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-/**
  * Collect uppercase hex key IDs (primary + all subkeys) from an armored private key.
  * Works without unlocking — key IDs live in the public half of the packets.
  * @param {string} armoredPrivate
@@ -446,7 +434,11 @@ export async function saveKey(opts) {
   const payload = encoder.encode(opts.armoredPrivate);
   const deviceKek = await getOrCreateDeviceKek();
   const { iv, ciphertext } = await aesGcmEncrypt(deviceKek, payload);
-  zeroBuffer(payload);
+  try {
+    payload.fill(0);
+  } catch (_) {
+    /* wipe */
+  }
 
   /** @type {VaultKeyRecord} */
   const record = {
@@ -467,7 +459,11 @@ export async function saveKey(opts) {
     const prfKek = await derivePrfKek(opts.prfIkm);
     const outerPlain = new Uint8Array(ciphertext);
     const outer = await aesGcmEncrypt(prfKek, outerPlain);
-    zeroBuffer(outerPlain);
+    try {
+      outerPlain.fill(0);
+    } catch (_) {
+      /* wipe */
+    }
     record.outerWrapped = outer.ciphertext;
     record.outerIv = outer.iv.buffer.slice(
       outer.iv.byteOffset,
@@ -517,9 +513,17 @@ export async function unlockKey(fingerprint, opts = {}) {
   const deviceKek = await getOrCreateDeviceKek();
   const plainBuf = await aesGcmDecrypt(deviceKek, record.iv, deviceCipher);
   const armored = new TextDecoder().decode(plainBuf);
-  zeroBuffer(plainBuf);
+  try {
+    (plainBuf instanceof Uint8Array ? plainBuf : new Uint8Array(plainBuf)).fill(0);
+  } catch (_) {
+    /* wipe */
+  }
   if (deviceCipher instanceof ArrayBuffer && record.protection === "passkey") {
-    zeroBuffer(deviceCipher);
+    try {
+      new Uint8Array(deviceCipher).fill(0);
+    } catch (_) {
+      /* wipe */
+    }
   }
 
   // Backfill key IDs for legacy vault entries (needed for recipient matching).
@@ -549,10 +553,18 @@ export async function deleteKey(fingerprint) {
     .replace(/[^0-9A-F]/g, "");
   const record = await withStore(STORE_KEYS, "readonly", (s) => s.get(fpr));
   if (record) {
-    zeroBuffer(record.wrapped);
-    zeroBuffer(record.iv);
-    zeroBuffer(record.outerWrapped);
-    zeroBuffer(record.outerIv);
+    for (const buf of [
+      record.wrapped,
+      record.iv,
+      record.outerWrapped,
+      record.outerIv,
+    ]) {
+      try {
+        if (buf) new Uint8Array(buf).fill(0);
+      } catch (_) {
+        /* wipe */
+      }
+    }
     // Write zeros back then delete
     await withStore(STORE_KEYS, "readwrite", (s) =>
       s.put({

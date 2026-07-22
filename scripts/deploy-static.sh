@@ -48,6 +48,8 @@ az storage blob upload-batch \
 
 # Ensure HTML content-types for clean URL blobs and root pages.
 # Derived from staged *.html plus any extensionless aliases (e.g. search).
+# Cache-Control: no-cache so Front Door / browsers revalidate HTML (SRI pin)
+# even if a PoP still has a longer OverrideAlways TTL from an older rule set.
 shopt -s nullglob
 html_blobs=()
 for html in "${STAGE}"/*.html; do
@@ -73,6 +75,23 @@ for blob in "${html_blobs[@]}"; do
     --name "$blob" \
     --file "$src" \
     --content-type "text/html; charset=utf-8" \
+    --content-cache-control "no-cache, must-revalidate" \
+    --overwrite \
+    --only-show-errors
+done
+
+# External importmaps pin module-graph SRI — same freshness policy as HTML.
+# Kept under /importmaps/ (not /assets/) so the 7-day hashed-asset CDN rule
+# does not apply.
+for imap in "${STAGE}"/importmaps/importmap-*.json; do
+  [[ -f "$imap" ]] || continue
+  az storage blob upload \
+    "${storage_args[@]}" \
+    --container-name '$web' \
+    --name "importmaps/$(basename "$imap")" \
+    --file "$imap" \
+    --content-type "application/importmap+json" \
+    --content-cache-control "no-cache, must-revalidate" \
     --overwrite \
     --only-show-errors
 done
@@ -81,11 +100,9 @@ static_host="$(az storage account show -n "$STORAGE_ACCOUNT" ${RESOURCE_GROUP:+-
 echo "Static site deployed to https://${static_host}/"
 
 # ── Purge Azure Front Door cache ─────────────────────────────────────────────
-# HTML files and clean-URL aliases keep the same names across deploys, so
-# Front Door's CDN caches (up to 7 days for assets, 1 day for HTML) would
-# otherwise serve stale content.  Vite-hashed asset bundles (/assets/…) are
-# inherently cache-busted by their filenames and don't strictly need purging,
-# but purging /* is simpler and safe.
+# HTML / importmaps keep stable paths across deploys; hashed /assets/* chunks
+# are cache-busted by filename. Purge is required so PoPs drop stale HTML that
+# would otherwise pin old SRI hashes (or mix with a new deploy).
 #
 # FD profile/endpoint names come from Terraform outputs when available;
 # fall back to env vars BASILISK_FD_PROFILE and BASILISK_FD_ENDPOINT, or
@@ -101,15 +118,18 @@ fi
 
 if [[ -n "$FD_PROFILE" && -n "$FD_ENDPOINT" && -n "$FD_RG" ]]; then
   echo "Purging Front Door cache (${FD_PROFILE} / ${FD_ENDPOINT}) …"
-  az afd endpoint purge \
+  if az afd endpoint purge \
     --resource-group "$FD_RG" \
     --profile-name   "$FD_PROFILE" \
     --endpoint-name  "$FD_ENDPOINT" \
     --content-paths  "/*" \
     --no-wait \
-    --only-show-errors \
-  && echo "Cache purge queued (async — propagates to all PoPs within ~2 min)." \
-  || echo "Warning: cache purge failed — users may see stale content for up to 1 day." >&2
+    --only-show-errors; then
+    echo "Cache purge queued (async — propagates to all PoPs within ~2 min)."
+  else
+    echo "ERROR: Front Door cache purge failed — refusing to leave stale HTML/SRI pins in CDN." >&2
+    exit 1
+  fi
 else
   echo "Skipping Front Door cache purge (FD_PROFILE/FD_ENDPOINT/RESOURCE_GROUP not set)." >&2
   echo "  Set BASILISK_FD_PROFILE, BASILISK_FD_ENDPOINT, and RESOURCE_GROUP to enable." >&2

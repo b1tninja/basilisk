@@ -34,28 +34,32 @@
  *   recent failure.  getModuleStatus() exposes this log to the operator UI.
  *
  * ── Zeroization (FIPS 140-3 §4.9.3) ────────────────────────────────────────
- *   Ephemeral test key material is zeroed via Uint8Array.fill(0) after each
- *   test round.  JS engines may retain JIT copies beyond our reach; true
- *   deterministic memory erasure is not possible in a browser sandbox.
+ *   Ephemeral test key material is zeroed via zeroKeyMaterial / Uint8Array
+ *   fills after each test round. Wipe with inlined fill(0) at each site
+ *   (see `src/lib/memory-safety.js`) — do not reintroduce a shared zeroBuffer.
  *
  * ── Module integrity (SRI) ──────────────────────────────────────────────────
- *   In FIPS 140-3, startup integrity is primarily established by code-signing.
- *   In the browser context this is handled by HTTP Content-Security-Policy and
- *   Subresource Integrity (SRI) enforced by the server — external to this file.
+ *   FIPS 140-3 treats startup integrity as code-signing / verified load.
+ *   In the browser this is Subresource Integrity enforced by the UA:
+ *     · Entry scripts, styles, and modulepreloads carry integrity= (sha384)
+ *       from vite-plugin-sri-gen.
+ *     · Lazy chunks, dynamic import(), and module workers are covered by an
+ *       external import map at /importmaps/importmap-*.json (also SRI’d),
+ *       externalized post-build so CSP can stay script-src 'self'.
+ *     · On hash mismatch the browser refuses to execute the module — fail
+ *       closed on CDN cache skew (old chunk + new HTML) or tampering.
+ *   This file’s algorithm POST does not re-hash CDN bytes; packaging lives in
+ *   web/scripts/externalize-importmaps.js and scripts/package-static.sh.
  *
  * Called at page startup by decrypt.js and encrypt.js; also imported by
  * vitest for CI coverage (src/test/crypto-self-test.test.js).
  *
- * Memory-protection note: JS engines do not expose deterministic memory
- * management to userland — we cannot guarantee that zeroing a Uint8Array
- * actually erases all copies the engine may have made during JIT compilation
- * or GC compaction. The best-effort mitigations available are:
- *   1. Strict CSP + SRI (already enforced) — blocks XSS key exfiltration.
- *   2. Zeroing Uint8Array secret-key buffers immediately after use.
- *   3. Clearing DOM fields so devtools / extensions cannot read them.
- *   4. Short key lifetime — parse, use, wipe in a single async scope.
- *   5. beforeunload warning — prevents accidental tab close with key in DOM.
- * True OS-level memory protection (e.g. mlock) is not available in browsers.
+ * Memory-protection note (summary — full rules in memory-safety.js):
+ *   WebCrypto places no normative zeroization duty on UAs when CryptoKey
+ *   references drop (https://www.w3.org/TR/webcrypto/#security-developers).
+ *   Best-effort mitigations: CSP+SRI; wipe owned Uint8Arrays; clear DOM;
+ *   short key lifetime; worker terminate(); transferable postMessage for
+ *   cross-window secret octets. Strings and mlock are not available levers.
  */
 
 import {

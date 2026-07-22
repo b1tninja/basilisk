@@ -21,6 +21,12 @@ _STATIC_PAGES = {
     "quorum": "quorum.html",
 }
 
+# HTML + importmaps pin the SRI hashes for that deploy. Keep them fresh so a
+# CDN PoP cannot serve yesterday’s pin against today’s /assets/* chunks.
+# Hashed assets under /assets/ are immutable and safe to cache aggressively.
+_HTML_CACHE_CONTROL = "no-cache, must-revalidate"
+_ASSET_CACHE_CONTROL = "public, max-age=604800, immutable"
+
 
 def _static_root() -> Path:
     if (_DIST / "index.html").exists():
@@ -42,22 +48,38 @@ def _static_root() -> Path:
     )
 
 
+def _send_html(filename: str) -> Response:
+    resp = send_from_directory(_static_root(), filename)
+    resp.headers["Cache-Control"] = _HTML_CACHE_CONTROL
+    return resp
+
+
 def register_static_portal(app: Flask) -> None:
     @app.get("/")
     def index() -> Response:
-        return send_from_directory(_static_root(), "index.html")
+        return _send_html("index.html")
 
     @app.get("/search")
     def search_alias() -> Response:
-        return send_from_directory(_static_root(), "index.html")
+        return _send_html("index.html")
+
+    # Registered before /<page> so "importmaps" is not treated as a page name.
+    @app.get("/importmaps/<path:filename>")
+    def static_importmaps(filename: str) -> Response:
+        resp = send_from_directory(_static_root() / "importmaps", filename)
+        resp.headers["Cache-Control"] = _HTML_CACHE_CONTROL
+        resp.headers["Content-Type"] = "application/importmap+json"
+        return resp
+
+    @app.get("/assets/<path:filename>")
+    def static_assets(filename: str) -> Response:
+        resp = send_from_directory(_static_root() / "assets", filename)
+        resp.headers["Cache-Control"] = _ASSET_CACHE_CONTROL
+        return resp
 
     @app.get("/<page>")
     def static_page(page: str) -> Response:
         filename = _STATIC_PAGES.get(page)
         if filename:
-            return send_from_directory(_static_root(), filename)
+            return _send_html(filename)
         return Response("Not found", status=404)
-
-    @app.get("/assets/<path:filename>")
-    def static_assets(filename: str) -> Response:
-        return send_from_directory(_static_root() / "assets", filename)

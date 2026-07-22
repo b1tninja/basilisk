@@ -30,15 +30,22 @@ import {
   bytesToText,
   fromPem,
   hexToBytes,
+  jwkFieldToBytes,
   pemLabelFor,
+  pkcs8FromEcScalar,
   textToBytes,
   toPem,
-  zeroBuffer,
 } from "./encode.js";
 import { inspectValue } from "./inspect.js";
 import { getStep } from "./registry.js";
+import {
+  resolveStepType,
+  typeOf,
+} from "./types.js";
 
 /**
+ * @typedef {"share"|"envelope"|"ciphertext"|"key"|"secret"|"inspect"|"qr"|"text"} ArtifactRole
+ *
  * @typedef {object} ToolkitArtifact
  * @property {string} label
  * @property {string} filename
@@ -54,6 +61,16 @@ import { getStep } from "./registry.js";
  * @property {"message"|"file"} [disposition]
  *   message = printable text (Encrypt opens as a compose message);
  *   file = named/binary/QR/share output (Encrypt attaches as a file)
+ * @property {ArtifactRole} [role]
+ * @property {string[]} [tags]
+ * @property {{
+ *   shareOf?: number,
+ *   threshold?: number,
+ *   which?: "public"|"private",
+ *   alg?: string,
+ * }} [traits]
+ * @property {import("./types.js").RefinedType} [pipeType]  refined pipeline type at emit time
+ * @property {Uint8Array} [bytes]  raw octets when content is a textual encoding of binary
  */
 
 /**
@@ -61,13 +78,20 @@ import { getStep } from "./registry.js";
  * @property {import("openpgp").Key[]} [recipients]  ordered; for foreach encrypt, one per share
  * @property {string[]} [recipientFingerprints]
  * @property {{
- *   shares?: { mnemonics: string[], envelopeB64?: string, passphrase?: string },
+ *   shares?: {
+ *     mnemonics: string[],
+ *     envelopeB64?: string,
+ *     envelopeArmored?: string,
+ *     passphrase?: string,
+ *   },
+ *   envelope?: { armored: string },
  *   text?: { value: string },
  *   gpg?: {
  *     armoredMessages: string[],
  *     privateKeyArmored: string,
  *     passphrase?: string,
  *     envelopeB64?: string,
+ *     envelopeArmored?: string,
  *   },
  * }} [inputs]
  * @property {{
@@ -97,8 +121,6 @@ export async function runRecipe(ast, bindings = {}) {
   const artifacts = [];
   /** @type {PipelineValue|null} */
   let value = null;
-  /** Track whether envelope was already emitted for this run. */
-  let envelopeEmitted = false;
   /** True when the last top-level step already materialized tiles (`out` / `text`). */
   let lastStepEmitted = false;
 
@@ -117,8 +139,6 @@ export async function runRecipe(ast, bindings = {}) {
       }
     }
   };
-  // Envelope ciphertext is created by slip39 even though it is emitted later.
-  const slip39Step = steps.find((s) => s.name === "slip39");
 
   for (const node of plan) {
     if (node.kind === "foreach") {
@@ -127,7 +147,7 @@ export async function runRecipe(ast, bindings = {}) {
         throw new Error("foreach requires shares");
       }
       const items = /** @type {string[]} */ (value.data.mnemonics);
-      const envelope = value.data.envelope;
+      const threshold = Number(value.data.threshold) || 0;
       const body = node.body;
       for (let i = 0; i < items.length; i++) {
         /** @type {PipelineValue} */
@@ -137,7 +157,7 @@ export async function runRecipe(ast, bindings = {}) {
           meta: {
             shareIndex: i + 1,
             shareCount: items.length,
-            envelope,
+            threshold,
             sensitive: true,
           },
         };
@@ -157,17 +177,16 @@ export async function runRecipe(ast, bindings = {}) {
               sensitive: true,
               shareIndex: i + 1,
               disposition: "file",
+              role: "share",
+              tags: ["mnemonic", "slip39"],
+              traits: {
+                shareOf: i + 1,
+                threshold: threshold || undefined,
+              },
             });
             stampNew(before, last);
           }
         }
-      }
-      // Envelope must be emitted once so share sets are recoverable.
-      if (envelope && !envelopeEmitted) {
-        const before = artifacts.length;
-        emitEnvelope(artifacts, envelope);
-        stampNew(before, slip39Step);
-        envelopeEmitted = true;
       }
       value = { type: "bundle", data: artifacts };
       continue;
@@ -177,28 +196,9 @@ export async function runRecipe(ast, bindings = {}) {
     value = await execStep(node.step, value, bindings, artifacts, 0);
     stampNew(before, node.step);
     lastStepEmitted = node.step.name === "out" || node.step.name === "text";
-    if (
-      value?.meta?.envelope &&
-      !envelopeEmitted &&
-      getStep(node.step.name)?.kind === "sink"
-    ) {
-      const beforeEnv = artifacts.length;
-      emitEnvelope(artifacts, value.meta.envelope);
-      stampNew(beforeEnv, slip39Step);
-      envelopeEmitted = true;
-    }
   }
 
   if (value && value.type !== "bundle" && value.type !== "artifact") {
-    // Bare slip39 (no foreach/sink) leaves a shares value here — emit the
-    // envelope before converting mnemonics, or PEM/large payloads become unrecoverable.
-    const bareEnvelope = value.data?.envelope || value.meta?.envelope || null;
-    if (value.type === "shares" && bareEnvelope && !envelopeEmitted) {
-      const before = artifacts.length;
-      emitEnvelope(artifacts, bareEnvelope);
-      stampNew(before, slip39Step);
-      envelopeEmitted = true;
-    }
     // Terminal `out` / `text` already pushed tiles; later transforms clear this flag.
     if (!lastStepEmitted) {
       const before = artifacts.length;
@@ -208,22 +208,6 @@ export async function runRecipe(ast, bindings = {}) {
   }
 
   return artifacts;
-}
-
-/**
- * @param {ToolkitArtifact[]} artifacts
- * @param {Uint8Array} envelope
- */
-function emitEnvelope(artifacts, envelope) {
-  artifacts.push({
-    label: "Envelope ciphertext — required for recovery, not secret",
-    filename: "envelope.bin.b64",
-    content: bytesToBase64(envelope),
-    sensitive: false,
-    mime: "application/octet-stream",
-    cryptoSummary: "AES-256-GCM · 256-bit random envelope key · 96-bit IV · 128-bit tag",
-    disposition: "file",
-  });
 }
 
 /**
@@ -263,6 +247,28 @@ function expandPlan(steps) {
  */
 async function execStep(step, value, bindings, artifacts, _shareIndex0) {
   void _shareIndex0;
+  const prevType =
+    value?.meta?.type ||
+    (value ? typeOf(/** @type {import("./registry.js").IoType} */ (value.type)) : typeOf("none"));
+  const result = await execStepBody(step, value, bindings, artifacts);
+  const spec = getStep(step.name);
+  if (result && spec && result.type !== "bundle") {
+    const resolved = resolveStepType(spec, prevType, step.params || {});
+    if (resolved.ok) {
+      result.meta = { ...result.meta, type: resolved.output };
+    }
+  }
+  return result;
+}
+
+/**
+ * @param {import("./recipe.js").RecipeStep} step
+ * @param {PipelineValue|null} value
+ * @param {RuntimeBindings} bindings
+ * @param {ToolkitArtifact[]} artifacts
+ * @returns {Promise<PipelineValue>}
+ */
+async function execStepBody(step, value, bindings, artifacts) {
   switch (step.name) {
     case "genkey":
       return generateKeyValue(String(step.params.alg || "ec/p256"), String(step.params.usage || "auto"));
@@ -408,6 +414,18 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
       if (value?.type === "bytes") bytes = value.data;
       else if (value?.type === "text") bytes = textToBytes(value.data);
       else throw new Error("slip39 expects bytes or text");
+      // Refined type is enforced at compile time; runtime still guards length.
+      const pipeKind = value?.meta?.type?.kind;
+      if (
+        pipeKind &&
+        pipeKind !== "master" &&
+        pipeKind !== "scalar"
+      ) {
+        throw new Error(
+          `slip39 expects bytes/master or bytes/scalar (got ${pipeKind}). ` +
+            `For EC keys use "export scalar"; for PEM/arbitrary data use "symencrypt" first.`
+        );
+      }
       const result = await splitShares(bytes, {
         threshold: Number(step.params.threshold) || 2,
         shares: Number(step.params.shares) || 3,
@@ -416,7 +434,7 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
       return {
         type: "shares",
         data: result,
-        meta: { sensitive: true, envelope: result.envelope },
+        meta: { sensitive: true },
       };
     }
     case "combine": {
@@ -426,6 +444,7 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
         String(step.params.passphrase || "") ||
         String(value.meta?.passphrase || "") ||
         "";
+      // Legacy AES-GCM envelope only (new OpenPGP envelopes use symdecrypt).
       const envelope = value.data.envelope || value.meta?.envelope || null;
       let secret;
       try {
@@ -447,6 +466,94 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
         data: secret,
         meta: { sensitive: true },
       };
+    }
+    case "symencrypt": {
+      if (!value || (value.type !== "text" && value.type !== "bytes")) {
+        throw new Error("symencrypt expects text or bytes");
+      }
+      /** @type {{ kind: "text", text: string } | { kind: "file", bytes: Uint8Array, filename: string }} */
+      let payload;
+      if (value.type === "text") {
+        payload = { kind: "text", text: String(value.data) };
+      } else {
+        // Copy — encryptArtifacts zeros file payload buffers after encrypt.
+        payload = {
+          kind: "file",
+          bytes: new Uint8Array(value.data),
+          filename: "payload.bin",
+        };
+      }
+      const master = crypto.getRandomValues(new Uint8Array(32));
+      const hexPass = bytesToHex(master);
+      const arts = await encryptArtifacts({
+        recipients: [],
+        passwords: [hexPass],
+        payloads: [payload],
+        profile: bindings.encryption?.profile || PROFILE_AUTO,
+        hideRecipients: false,
+      });
+      if (!arts.length) throw new Error("symencrypt produced no ciphertext");
+      const armored = arts[0].armored;
+      const cryptoSummary = await summarizeEncryption(armored);
+      const stem = safeOutputStem(step.params.name || "envelope");
+      artifacts.push({
+        label: "OpenPGP envelope — required for recovery (not a share)",
+        filename: `${stem}.asc`,
+        content: armored,
+        sensitive: false,
+        mime: "application/pgp-encrypted",
+        cryptoSummary,
+        disposition: "file",
+        role: "envelope",
+        tags: ["openpgp", "skesk"],
+      });
+      return {
+        type: "bytes",
+        data: master,
+        meta: { ...value.meta, sensitive: true, openPgpEnvelope: true },
+      };
+    }
+    case "symdecrypt": {
+      if (!value || value.type !== "bytes") {
+        throw new Error("symdecrypt expects master bytes from combine");
+      }
+      const master = value.data;
+      if (!(master instanceof Uint8Array) || (master.length !== 16 && master.length !== 32)) {
+        throw new Error(
+          `symdecrypt expects a 16- or 32-byte master (got ${master?.length ?? 0})`
+        );
+      }
+      const armored = resolveEnvelopeArmored(bindings);
+      if (!armored) {
+        throw new Error(
+          "No OpenPGP envelope.asc bound — paste the armored envelope before running."
+        );
+      }
+      const hexPass = bytesToHex(master);
+      const message = await readMessage({ armoredMessage: armored });
+      const { data } = await openpgpDecrypt({
+        message,
+        passwords: [hexPass],
+        format: "binary",
+      });
+      const plain =
+        data instanceof Uint8Array
+          ? data
+          : data instanceof ArrayBuffer
+            ? new Uint8Array(data)
+            : textToBytes(String(data));
+      return {
+        type: "bytes",
+        data: plain,
+        meta: { sensitive: true },
+      };
+    }
+    case "fanout": {
+      if (!value || value.type !== "keypair") {
+        throw new Error("fanout expects a keypair");
+      }
+      await emitFanoutArtifact(value, step.params || {}, artifacts);
+      return value;
     }
     case "encrypt":
     case "gpg": {
@@ -476,11 +583,12 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
       });
       for (const a of arts) {
         const cryptoSummary = await summarizeEncryption(a.armored);
+        const isShare = !!value.meta?.shareIndex;
         artifacts.push({
-          label: value.meta?.shareIndex
+          label: isShare
             ? `Share ${value.meta.shareIndex} (GPG)`
             : a.label || "GPG ciphertext",
-          filename: value.meta?.shareIndex
+          filename: isShare
             ? `share-${value.meta.shareIndex}.asc`
             : a.filename || "encrypted.asc",
           content: a.armored,
@@ -490,6 +598,16 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
           mime: "application/pgp-encrypted",
           cryptoSummary,
           disposition: "file",
+          role: isShare ? "share" : "ciphertext",
+          tags: isShare
+            ? ["encrypted", "openpgp", "slip39"]
+            : ["encrypted", "openpgp"],
+          traits: isShare
+            ? {
+                shareOf: value.meta.shareIndex,
+                threshold: value.meta.threshold,
+              }
+            : undefined,
         });
       }
       return { type: "artifact", data: null, meta: value.meta };
@@ -507,6 +625,8 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
         shareIndex: value.meta?.shareIndex,
         mime: "image/svg+xml",
         disposition: "file",
+        role: "qr",
+        tags: value.meta?.shareIndex ? ["share", "qr"] : ["qr"],
       });
       return { type: "artifact", data: null, meta: value.meta };
     }
@@ -518,6 +638,20 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
           a.shareIndex = value.meta.shareIndex;
         }
         a.disposition = "file";
+        if (!a.role) {
+          if (a.shareIndex) {
+            a.role = "share";
+            a.tags = a.tags || ["mnemonic", "slip39"];
+            a.traits = a.traits || {
+              shareOf: a.shareIndex,
+              threshold: value.meta?.threshold,
+            };
+          } else if (value.meta?.sensitive) {
+            a.role = "secret";
+          } else {
+            a.role = "text";
+          }
+        }
         artifacts.push(a);
       }
       // Pass through so the recipe can continue (e.g. out | encrypt gpg).
@@ -547,6 +681,8 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
         mime: "text/plain; charset=utf-8",
         encoding: "text",
         disposition: "message",
+        role: "text",
+        tags: value.meta?.sensitive ? ["sensitive"] : [],
       });
       return value;
     }
@@ -583,12 +719,150 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
           value.type === "keypair" ||
           value.type === "shares",
         disposition: "file",
+        role: "inspect",
+        tags: ["inspect"],
       });
       return value;
     }
     default:
       throw new Error(`Unsupported step: ${step.name}`);
   }
+}
+
+/**
+ * Resolve OpenPGP envelope.asc from runtime bindings.
+ * @param {RuntimeBindings} bindings
+ * @returns {string}
+ */
+function resolveEnvelopeArmored(bindings) {
+  const candidates = [
+    bindings.inputs?.envelope?.armored,
+    bindings.inputs?.shares?.envelopeArmored,
+    bindings.inputs?.gpg?.envelopeArmored,
+  ];
+  for (const c of candidates) {
+    const t = String(c || "").trim();
+    if (t) return t;
+  }
+  return "";
+}
+
+/**
+ * Emit a typed side-stream artifact from a keypair without consuming it.
+ * @param {PipelineValue} value
+ * @param {Record<string, *>} params
+ * @param {ToolkitArtifact[]} artifacts
+ */
+async function emitFanoutArtifact(value, params, artifacts) {
+  const format = String(params.format || "spki").toLowerCase();
+  const which = String(params.which || "public");
+  const stem = safeOutputStem(params.name || "fanout");
+  const label = String(params.label || stem).trim() || stem;
+  const extOverride = String(params.ext || "")
+    .replace(/^\./, "")
+    .replace(/[^\w.-]+/g, "");
+  const alg = String(value.meta?.alg || "");
+
+  if (format === "jwk") {
+    const exported = await exportKey(value, "jwk", which);
+    artifacts.push(
+      attachPipeMeta(
+        {
+          label,
+          filename: `${stem}.${extOverride || "jwk.json"}`,
+          content: String(exported.data),
+          sensitive: which !== "public",
+          mime: "application/json",
+          encoding: "jwk",
+          disposition: "file",
+          role: "key",
+          tags: which === "public" ? ["public", "jwk"] : ["private", "jwk"],
+          traits: {
+            which: /** @type {"public"|"private"} */ (which === "public" ? "public" : "private"),
+            alg,
+          },
+        },
+        value
+      )
+    );
+    return;
+  }
+
+  if (format === "pem") {
+    const derFmt = which === "public" ? "spki" : "pkcs8";
+    const exported = await exportKey(value, derFmt, which);
+    const pemLabel = pemLabelFor(derFmt, which);
+    const pem = toPem(exported.data, pemLabel);
+    artifacts.push(
+      attachPipeMeta(
+        {
+          label,
+          filename: `${stem}.${extOverride || "pem"}`,
+          content: pem,
+          sensitive: which !== "public",
+          mime: "application/x-pem-file",
+          encoding: "pem",
+          disposition: "file",
+          role: "key",
+          tags: which === "public" ? ["public", "pem"] : ["private", "pem"],
+          traits: { which: which === "public" ? "public" : "private", alg },
+        },
+        value
+      )
+    );
+    return;
+  }
+
+  if (format === "scalar" || format === "d") {
+    const exported = await exportKey(value, "scalar", "private");
+    artifacts.push(
+      attachPipeMeta(
+        {
+          label,
+          filename: `${stem}.${extOverride || "bin.b64"}`,
+          content: bytesToBase64(exported.data),
+          sensitive: true,
+          mime: "application/octet-stream",
+          encoding: "base64",
+          disposition: "file",
+          role: "secret",
+          tags: ["private", "scalar"],
+          traits: { which: "private", alg },
+          bytes: new Uint8Array(exported.data),
+        },
+        value
+      )
+    );
+    return;
+  }
+
+  const derFmt = format === "pkcs8" ? "pkcs8" : "spki";
+  const exportWhich = derFmt === "spki" ? "public" : which;
+  const exported = await exportKey(value, derFmt, exportWhich);
+  artifacts.push(
+    attachPipeMeta(
+      {
+        label,
+        filename: `${stem}.${extOverride || derFmt}`,
+        content: bytesToBase64(exported.data),
+        sensitive: exportWhich !== "public",
+        mime: "application/octet-stream",
+        encoding: "base64",
+        disposition: "file",
+        role: "key",
+        tags:
+          exportWhich === "public"
+            ? ["public", derFmt]
+            : ["private", derFmt],
+        traits: {
+          which: exportWhich === "public" ? "public" : "private",
+          alg,
+        },
+        bytes: new Uint8Array(exported.data),
+      },
+      value
+    )
+  );
 }
 
 /**
@@ -760,7 +1034,13 @@ async function generateKeyValue(alg, usage) {
     return {
       type: "keypair",
       data: keyPair,
-      meta: { alg, curve, algorithm: useDerive ? "ECDH" : "ECDSA", sensitive: true },
+      meta: {
+        alg,
+        curve,
+        algorithm: useDerive ? "ECDH" : "ECDSA",
+        sensitive: true,
+        type: typeOf("keypair", { alg, which: "private" }),
+      },
     };
   }
   if (alg === "ed25519") {
@@ -771,7 +1051,12 @@ async function generateKeyValue(alg, usage) {
     return {
       type: "keypair",
       data: keyPair,
-      meta: { alg, algorithm: "Ed25519", sensitive: true },
+      meta: {
+        alg,
+        algorithm: "Ed25519",
+        sensitive: true,
+        type: typeOf("keypair", { alg, which: "private" }),
+      },
     };
   }
   if (alg === "x25519") {
@@ -782,7 +1067,12 @@ async function generateKeyValue(alg, usage) {
     return {
       type: "keypair",
       data: keyPair,
-      meta: { alg, algorithm: "X25519", sensitive: true },
+      meta: {
+        alg,
+        algorithm: "X25519",
+        sensitive: true,
+        type: typeOf("keypair", { alg, which: "private" }),
+      },
     };
   }
   if (alg.startsWith("rsa/")) {
@@ -847,8 +1137,30 @@ async function exportKey(value, format, which) {
   const { data, meta } = value;
   const priv = data.privateKey;
   const pub = data.publicKey;
+  const fmt = String(format || "pkcs8").toLowerCase();
 
-  if (format === "jwk") {
+  if (fmt === "scalar" || fmt === "d") {
+    if (!priv) throw new Error("scalar export requires a private key");
+    const jwk = await crypto.subtle.exportKey("jwk", priv);
+    if (!jwk.d) {
+      throw new Error(
+        `scalar export unavailable for ${meta?.algorithm || "this key"} (no JWK.d)`
+      );
+    }
+    const bytes = jwkFieldToBytes(jwk.d);
+    return {
+      type: "bytes",
+      data: bytes,
+      meta: {
+        ...meta,
+        format: "scalar",
+        which: "private",
+        sensitive: true,
+      },
+    };
+  }
+
+  if (fmt === "jwk") {
     const jwk =
       which === "public" && pub
         ? await crypto.subtle.exportKey("jwk", pub)
@@ -861,7 +1173,7 @@ async function exportKey(value, format, which) {
     };
   }
 
-  if (format === "raw") {
+  if (fmt === "raw") {
     const key = which === "public" && pub ? pub : priv;
     try {
       const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
@@ -877,7 +1189,7 @@ async function exportKey(value, format, which) {
     }
   }
 
-  if (format === "spki" || which === "public") {
+  if (fmt === "spki" || which === "public") {
     if (!pub) throw new Error("No public key to export as SPKI");
     const der = new Uint8Array(await crypto.subtle.exportKey("spki", pub));
     return {
@@ -918,6 +1230,11 @@ async function importKey(value, format, alg, usage) {
   const der = value.data;
   const useDerive = usage === "derive";
   const useEncrypt = usage === "encrypt";
+  const fmt = String(format || "pkcs8").toLowerCase();
+
+  if (fmt === "scalar" || fmt === "d") {
+    return importScalarKey(der, alg, usage);
+  }
 
   if (alg.startsWith("ec/")) {
     const curve =
@@ -926,7 +1243,7 @@ async function importKey(value, format, alg, usage) {
     const usages = useDerive
       ? /** @type {KeyUsage[]} */ (["deriveBits", "deriveKey"])
       : /** @type {KeyUsage[]} */ (["sign", "verify"]);
-    if (format === "spki") {
+    if (fmt === "spki") {
       const publicKey = await crypto.subtle.importKey(
         "spki",
         der,
@@ -941,7 +1258,7 @@ async function importKey(value, format, alg, usage) {
       };
     }
     const privateKey = await crypto.subtle.importKey(
-      format === "raw" ? "raw" : "pkcs8",
+      fmt === "raw" ? "raw" : "pkcs8",
       der,
       { name, namedCurve: curve },
       true,
@@ -955,7 +1272,7 @@ async function importKey(value, format, alg, usage) {
   }
 
   if (alg === "ed25519") {
-    if (format === "spki") {
+    if (fmt === "spki") {
       const publicKey = await crypto.subtle.importKey(
         "spki",
         der,
@@ -970,7 +1287,7 @@ async function importKey(value, format, alg, usage) {
       };
     }
     const privateKey = await crypto.subtle.importKey(
-      format === "raw" ? "raw" : "pkcs8",
+      fmt === "raw" ? "raw" : "pkcs8",
       der,
       "Ed25519",
       true,
@@ -985,7 +1302,7 @@ async function importKey(value, format, alg, usage) {
 
   if (alg === "x25519") {
     const privateKey = await crypto.subtle.importKey(
-      format === "raw" ? "raw" : "pkcs8",
+      fmt === "raw" ? "raw" : "pkcs8",
       der,
       "X25519",
       true,
@@ -1046,6 +1363,119 @@ async function importKey(value, format, alg, usage) {
 }
 
 /**
+ * Reconstruct a keypair from a private scalar / seed (JWK.d bytes).
+ * @param {Uint8Array} scalar
+ * @param {string} alg
+ * @param {string} usage
+ * @returns {Promise<PipelineValue>}
+ */
+async function importScalarKey(scalar, alg, usage) {
+  if (!(scalar instanceof Uint8Array) || !scalar.length) {
+    throw new Error("import scalar expects non-empty bytes");
+  }
+  const useDerive = usage === "derive";
+
+  if (alg.startsWith("ec/")) {
+    const curve =
+      alg === "ec/p384" ? "P-384" : alg === "ec/p521" ? "P-521" : "P-256";
+    const expected = curve === "P-384" ? 48 : curve === "P-521" ? 66 : 32;
+    if (scalar.length !== expected) {
+      throw new Error(
+        `EC ${curve} scalar must be ${expected} bytes (got ${scalar.length})`
+      );
+    }
+    const name = useDerive ? "ECDH" : "ECDSA";
+    const pkcs8 = pkcs8FromEcScalar(scalar, curve);
+    const privateKey = await crypto.subtle.importKey(
+      "pkcs8",
+      pkcs8,
+      { name, namedCurve: curve },
+      true,
+      useDerive ? ["deriveBits", "deriveKey"] : ["sign"]
+    );
+    // JWK export includes public coordinates — rebuild the public half.
+    const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+    /** @type {JsonWebKey} */
+    const pubJwk = {
+      kty: jwk.kty,
+      crv: jwk.crv,
+      x: jwk.x,
+      y: jwk.y,
+      ext: true,
+      key_ops: useDerive ? [] : ["verify"],
+    };
+    const publicKey = await crypto.subtle.importKey(
+      "jwk",
+      pubJwk,
+      { name, namedCurve: curve },
+      true,
+      useDerive ? [] : ["verify"]
+    );
+    return {
+      type: "keypair",
+      data: { privateKey, publicKey },
+      meta: { alg, curve, algorithm: name, sensitive: true, format: "scalar" },
+    };
+  }
+
+  if (alg === "ed25519") {
+    if (scalar.length !== 32) {
+      throw new Error(`Ed25519 seed must be 32 bytes (got ${scalar.length})`);
+    }
+    const privateKey = await crypto.subtle.importKey(
+      "raw",
+      scalar,
+      "Ed25519",
+      true,
+      ["sign"]
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+    const publicKey = await crypto.subtle.importKey(
+      "jwk",
+      { kty: jwk.kty, crv: jwk.crv, x: jwk.x, ext: true, key_ops: ["verify"] },
+      "Ed25519",
+      true,
+      ["verify"]
+    );
+    return {
+      type: "keypair",
+      data: { privateKey, publicKey },
+      meta: { alg, algorithm: "Ed25519", sensitive: true, format: "scalar" },
+    };
+  }
+
+  if (alg === "x25519") {
+    if (scalar.length !== 32) {
+      throw new Error(`X25519 seed must be 32 bytes (got ${scalar.length})`);
+    }
+    const privateKey = await crypto.subtle.importKey(
+      "raw",
+      scalar,
+      "X25519",
+      true,
+      ["deriveBits", "deriveKey"]
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+    const publicKey = await crypto.subtle.importKey(
+      "jwk",
+      { kty: jwk.kty, crv: jwk.crv, x: jwk.x, ext: true, key_ops: [] },
+      "X25519",
+      true,
+      []
+    );
+    return {
+      type: "keypair",
+      data: { privateKey, publicKey },
+      meta: { alg, algorithm: "X25519", sensitive: true, format: "scalar" },
+    };
+  }
+
+  throw new Error(
+    `import scalar supports ec/p256|p384|p521, ed25519, x25519 (got ${alg})`
+  );
+}
+
+/**
  * @param {string} raw
  * @returns {string}
  */
@@ -1056,6 +1486,37 @@ function safeOutputStem(raw) {
     .replace(/^\.+/, "")
     .slice(0, 64);
   return s || "output";
+}
+
+/**
+ * Stamp refined pipeline type (and raw bytes when available) onto an artifact.
+ *
+ * Keeping `artifact.bytes` is a memory-safety requirement for file sinks:
+ * Encrypt transfers Uint8Array (transferable / wipeable). Do not remove this
+ * and force Encrypt to decode `content` strings — immutable strings cannot be
+ * zeroed (see `src/lib/memory-safety.js`).
+ *
+ * @param {ToolkitArtifact} artifact
+ * @param {PipelineValue} [value]
+ * @returns {ToolkitArtifact}
+ */
+function attachPipeMeta(artifact, value) {
+  if (value?.meta?.type) {
+    artifact.pipeType = value.meta.type;
+  }
+  if (
+    value?.type === "bytes" &&
+    value.data instanceof Uint8Array &&
+    (artifact.encoding === "base64" ||
+      artifact.encoding === "base64url" ||
+      artifact.encoding === "hex" ||
+      artifact.mime === "application/octet-stream")
+  ) {
+    // Dedicated copy: Encrypt may transfer a further copy; pipeline value.data
+    // can still be wiped by the engine without detaching this tile.
+    artifact.bytes = new Uint8Array(value.data);
+  }
+  return artifact;
 }
 
 /**
@@ -1093,17 +1554,25 @@ async function materializeOutArtifacts(value, params) {
       mime = mimeOverride || "text/plain";
     }
     return [
-      {
-        label: value.meta?.shareIndex
-          ? `${label} (share ${value.meta.shareIndex})`
-          : label,
-        filename: `${stem}${shareSuffix}.${ext}`,
-        content,
-        sensitive: !!value.meta?.sensitive,
-        mime,
-        encoding: encodingUsed,
-        shareIndex: value.meta?.shareIndex,
-      },
+      attachPipeMeta(
+        {
+          label: value.meta?.shareIndex
+            ? `${label} (share ${value.meta.shareIndex})`
+            : label,
+          filename: `${stem}${shareSuffix}.${ext}`,
+          content,
+          sensitive: !!value.meta?.sensitive,
+          mime,
+          encoding: encodingUsed,
+          shareIndex: value.meta?.shareIndex,
+          role: value.meta?.shareIndex ? "share" : value.meta?.sensitive ? "secret" : "text",
+          tags: value.meta?.shareIndex ? ["mnemonic", "slip39"] : [],
+          traits: value.meta?.shareIndex
+            ? { shareOf: value.meta.shareIndex, threshold: value.meta.threshold }
+            : undefined,
+        },
+        value
+      ),
     ];
   }
 
@@ -1129,29 +1598,46 @@ async function materializeOutArtifacts(value, params) {
       ext = extOverride || "bin.b64";
       mime = mimeOverride || "application/octet-stream";
     }
+    const isScalar = value.meta?.format === "scalar";
     return [
-      {
-        label,
-        filename: `${stem}${shareSuffix}.${ext}`,
-        content,
-        sensitive: !!value.meta?.sensitive,
-        mime,
-        encoding: encodingUsed,
-        shareIndex: value.meta?.shareIndex,
-      },
+      attachPipeMeta(
+        {
+          label,
+          filename: `${stem}${shareSuffix}.${ext}`,
+          content,
+          sensitive: !!value.meta?.sensitive,
+          mime,
+          encoding: encodingUsed,
+          shareIndex: value.meta?.shareIndex,
+          role: value.meta?.sensitive ? "secret" : "text",
+          tags: isScalar ? ["scalar"] : [],
+        },
+        value
+      ),
     ];
   }
 
   if (value.type === "shares") {
-    return (value.data.mnemonics || []).map((m, i) => ({
-      label: `${label} · share ${i + 1}`,
-      filename: `${stem}-${i + 1}.${extOverride || "txt"}`,
-      content: String(m),
-      sensitive: true,
-      mime: mimeOverride || "text/plain; charset=utf-8",
-      encoding: "text",
-      shareIndex: i + 1,
-    }));
+    return (value.data.mnemonics || []).map((m, i) =>
+      attachPipeMeta(
+        {
+          label: `${label} · share ${i + 1}`,
+          filename: `${stem}-${i + 1}.${extOverride || "txt"}`,
+          content: String(m),
+          sensitive: true,
+          mime: mimeOverride || "text/plain; charset=utf-8",
+          encoding: "text",
+          shareIndex: i + 1,
+          role: "share",
+          tags: ["mnemonic", "slip39"],
+          traits: {
+            shareOf: i + 1,
+            threshold: value.data.threshold,
+          },
+        },
+        value
+      )
+    );
   }
 
   if (value.type === "keypair") {
@@ -1219,58 +1705,84 @@ async function materializeOutArtifacts(value, params) {
 function valueToArtifacts(value, name = "artifact") {
   if (value.type === "text") {
     return [
-      {
-        label: name,
-        filename: `${name}.txt`,
-        content: String(value.data),
-        sensitive: !!value.meta?.sensitive,
-        mime: "text/plain; charset=utf-8",
-        encoding: "text",
-        // Bare pipeline text prints as a message (use `out` for a named file).
-        disposition: "message",
-      },
+      attachPipeMeta(
+        {
+          label: name,
+          filename: `${name}.txt`,
+          content: String(value.data),
+          sensitive: !!value.meta?.sensitive,
+          mime: "text/plain; charset=utf-8",
+          encoding: "text",
+          // Bare pipeline text prints as a message (use `out` for a named file).
+          disposition: "message",
+          role: "text",
+          tags: value.meta?.sensitive ? ["sensitive"] : [],
+        },
+        value
+      ),
     ];
   }
   if (value.type === "bytes") {
     return [
-      {
-        label: name,
-        filename: `${name}.bin.b64`,
-        content: bytesToBase64(value.data),
-        sensitive: !!value.meta?.sensitive,
-        mime: "application/octet-stream",
-        encoding: "base64",
-        disposition: "file",
-      },
+      attachPipeMeta(
+        {
+          label: name,
+          filename: `${name}.bin.b64`,
+          content: bytesToBase64(value.data),
+          sensitive: !!value.meta?.sensitive,
+          mime: "application/octet-stream",
+          encoding: "base64",
+          disposition: "file",
+          role: value.meta?.sensitive ? "secret" : "text",
+          tags: value.meta?.format === "scalar" ? ["scalar"] : [],
+        },
+        value
+      ),
     ];
   }
   if (value.type === "shares") {
-    return value.data.mnemonics.map((m, i) => ({
-      label: `Share ${i + 1}`,
-      filename: `share-${i + 1}.txt`,
-      content: m,
-      sensitive: true,
-      shareIndex: i + 1,
-      mime: "text/plain; charset=utf-8",
-      encoding: "text",
-      disposition: "file",
-    }));
+    return value.data.mnemonics.map((m, i) =>
+      attachPipeMeta(
+        {
+          label: `Share ${i + 1}`,
+          filename: `share-${i + 1}.txt`,
+          content: m,
+          sensitive: true,
+          shareIndex: i + 1,
+          mime: "text/plain; charset=utf-8",
+          encoding: "text",
+          disposition: "file",
+          role: "share",
+          tags: ["mnemonic", "slip39"],
+          traits: {
+            shareOf: i + 1,
+            threshold: value.data.threshold,
+          },
+        },
+        value
+      )
+    );
   }
   if (value.type === "keypair") {
     return [
-      {
-        label: name,
-        filename: `${name}.txt`,
-        content: "[keypair — use out or export before emitting]",
-        sensitive: true,
-        mime: "text/plain",
-        encoding: "text",
-        disposition: "file",
-      },
+      attachPipeMeta(
+        {
+          label: name,
+          filename: `${name}.txt`,
+          content: "[keypair — use out or export before emitting]",
+          sensitive: true,
+          mime: "text/plain",
+          encoding: "text",
+          disposition: "file",
+          role: "key",
+          tags: ["keypair"],
+        },
+        value
+      ),
     ];
   }
   return [];
 }
 
 export { splitArmoredMessages } from "../pgp/armor.js";
-export { zeroBuffer, bytesToText };
+export { bytesToText };

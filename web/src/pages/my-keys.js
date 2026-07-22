@@ -635,6 +635,8 @@ function wireGenerateForm(user) {
     error.classList.add("hidden");
 
     let armoredPrivate = "";
+    /** @type {Uint8Array|undefined} */
+    let prfIkm;
     try {
       const keyExpirationTime = EXPIRY_PRESETS[expiryPreset] ?? null;
       const gen = await generateKeyViaWorker({
@@ -645,8 +647,6 @@ function wireGenerateForm(user) {
       });
       armoredPrivate = gen.armoredPrivate;
 
-      /** @type {Uint8Array|undefined} */
-      let prfIkm;
       if (mode === "passkey") {
         if (status) status.textContent = "Create or confirm passkey…";
         prfIkm = await createPasskeyPrf(email);
@@ -700,6 +700,11 @@ function wireGenerateForm(user) {
       showError(error, err?.message || "Key generation failed");
     } finally {
       armoredPrivate = "";
+      try {
+        prfIkm?.fill?.(0);
+      } catch (_) {
+        /* wipe */
+      }
       if (btn) {
         btn.disabled = false;
         btn.textContent = "Generate & publish";
@@ -791,9 +796,9 @@ async function runVaultExport(fpr, format, btn) {
   };
   setStatus("");
   btn.disabled = true;
+  /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
+  const unlockOpts = {};
   try {
-    /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
-    const unlockOpts = {};
     if (meta?.protection === "passkey") {
       unlockOpts.prfIkm = await getPasskeyPrf();
     }
@@ -841,6 +846,11 @@ async function runVaultExport(fpr, format, btn) {
   } catch (err) {
     setStatus(err?.message || "Export failed");
   } finally {
+    try {
+      unlockOpts.prfIkm?.fill?.(0);
+    } catch (_) {
+      /* wipe */
+    }
     btn.disabled = false;
   }
 }

@@ -15,7 +15,7 @@ import {
   stripArmoredMessages,
 } from "../lib/pgp/armor.js";
 import { validateShareMnemonic } from "../lib/slip39/slip39.js";
-import { bytesToBase64, zeroBuffer } from "../lib/toolkit/encode.js";
+import { base64ToBytes, hexToBytes } from "../lib/toolkit/encode.js";
 import {
   PRESETS,
   compileRecipe,
@@ -24,7 +24,12 @@ import {
   unresolvedInputs,
   unresolvedRecipients,
 } from "../lib/toolkit/recipe.js";
-import { getStep, listSteps, stepsAccepting, effectiveIo } from "../lib/toolkit/registry.js";
+import { getStep, listSteps, stepsAccepting } from "../lib/toolkit/registry.js";
+import {
+  artifactIsTextualForEncrypt,
+  resolveStepType,
+  tNone,
+} from "../lib/toolkit/types.js";
 import {
   PROFILE_AUTO,
   PROFILE_COMPATIBLE,
@@ -297,19 +302,18 @@ function touchActivity() {
 /**
  * Best-effort secure destroy of in-memory sensitive material.
  *
- * JavaScript cannot guarantee zeroization: strings are immutable and managed by
- * the garbage collector, the engine may retain copies, and there is no way to
- * pin memory or mlock() pages. WebCrypto/W3C explicitly does not zeroize key
- * material when a CryptoKey is dropped. We therefore do the accepted best-effort
- * (per FIPS 140-3 CSP-zeroization guidance for JS modules):
- *   - terminate the crypto worker so its heap (decrypted private keys, plaintext,
- *     pipeline byte buffers) is discarded wholesale;
- *   - overwrite any Uint8Array we still own with zeros (done at each use site);
- *   - drop every reference to secret-bearing objects and strings so they become
- *     collectable;
- *   - clear all input/output DOM fields so revealed secrets leave the layout.
- * The pipeline definition itself is not a secret and is preserved (use Clear to
- * reset it).
+ * DO NOT weaken this without reading `src/lib/memory-safety.js` (canonical
+ * policy + W3C/MDN cites). Browser JS cannot mlock or force UA CryptoKey
+ * zeroization (https://www.w3.org/TR/webcrypto/#security-developers). We do
+ * the portable best-effort stack:
+ *   - terminate the crypto worker so its heap (decrypted private keys,
+ *     plaintext, pipeline buffers) is discarded wholesale;
+ *   - overwrite owned Uint8Array secrets with inlined fill(0) at each use site
+ *     (no shared zeroBuffer — see memory-safety.js; strings cannot be wiped);
+ *   - drop every reference to secret-bearing objects so they become collectable;
+ *   - clear input/output DOM fields so revealed secrets leave the layout.
+ * The pipeline definition itself is not a secret and is preserved (use Clear
+ * to reset it).
  *
  * @param {{ quiet?: boolean }} [opts]
  */
@@ -340,7 +344,6 @@ function secureDestroy(opts = {}) {
   for (const id of [
     "input-text",
     "input-envelope",
-    "input-envelope-gpg",
     "input-share-pass",
     "input-ciphertext",
     "input-privkey",
@@ -420,15 +423,28 @@ function addStepAt(name, index) {
 }
 
 /**
- * Output type after the last step (for suggesting compatible ops).
- * @returns {import("../lib/toolkit/registry.js").IoType|"none"}
+ * Refined output type after walking the builder pipeline (for suggesting ops).
+ * @returns {import("../lib/toolkit/types.js").RefinedType}
  */
 function currentPipelineOutput() {
-  if (!steps.length) return "none";
-  const last = steps[steps.length - 1];
-  const spec = getStep(last.name);
-  if (!spec) return "none";
-  return effectiveIo(spec, last.params).output;
+  /** @type {import("../lib/toolkit/types.js").RefinedType} */
+  let current = tNone();
+  for (const step of steps) {
+    const spec = getStep(step.name);
+    if (!spec) continue;
+    if (step.name === "foreach") {
+      current = { base: "text", kind: "mnemonic" };
+      continue;
+    }
+    if (step.name === "merge") {
+      current = { base: "bundle" };
+      continue;
+    }
+    const resolved = resolveStepType(spec, current, step.params || {});
+    if (!resolved.ok) break;
+    current = resolved.output;
+  }
+  return current;
 }
 
 function loadRecipeText(text) {
@@ -541,7 +557,7 @@ function splitSharePaste(text) {
 }
 
 /**
- * @param {("shares"|"gpg"|"text")[]} needs
+ * @param {("shares"|"gpg"|"text"|"envelope")[]} needs
  */
 function renderInputsPanel(needs) {
   const host = document.getElementById("inputs-host");
@@ -556,7 +572,9 @@ function renderInputsPanel(needs) {
     ? "Recombine"
     : needs.includes("gpg")
       ? "Decrypt"
-      : "Input";
+      : needs.includes("envelope")
+        ? "Envelope"
+        : "Input";
   /** @type {string[]} */
   const parts = [`<p class="card-title">${title}</p>`];
   if (needs.includes("text")) {
@@ -597,18 +615,25 @@ function renderInputsPanel(needs) {
         <p class="muted fs-sm mb-sm">${
           needs.includes("gpg")
             ? "Use these rows for mnemonics already decrypted outside the browser (Kleopatra/gpg/YubiKey). Mix with OpenPGP ciphertext below — the pipeline merges both before combine."
-            : "One share per row. Paste multiple lines into a row to auto-split. K-of-N required to recover."
+            : "One share per row. Paste multiple lines into a row to auto-split. K-of-N required to recover. Direct 16/32-byte splits need no envelope."
         }</p>
         <div id="share-rows">${rowsHtml}</div>
-        <label class="field-label mt-md" for="input-envelope">Envelope ciphertext (base64)</label>
-        <div class="btn-row wrap mb-xs">
-          <button type="button" class="btn btn-ghost btn-compact" id="load-envelope-btn">Load envelope…</button>
-          <input type="file" id="load-envelope-file" class="hidden" accept=".b64,.bin,.txt,*/*">
-        </div>
-        <textarea id="input-envelope" class="compose-message" rows="2" spellcheck="false"
-          placeholder="Required when shares were created from a non-16/32-byte payload (e.g. PEM) — look for envelope.bin.b64 in Results">${escapeHtml(envelopeDraft)}</textarea>
         <label class="field-label mt-md" for="input-share-pass">Share passphrase (optional)</label>
         <input type="password" id="input-share-pass" class="text-input" autocomplete="off" value="${escapeHtml(sharePassDraft)}">
+      </div>
+    `);
+  }
+  if (needs.includes("envelope")) {
+    parts.push(`
+      <div class="envelope-inputs mt-md">
+        <div class="btn-row wrap mb-xs">
+          <label class="field-label m-0" for="input-envelope">OpenPGP envelope (armored)</label>
+          <button type="button" class="btn btn-ghost btn-compact" id="load-envelope-btn">Load envelope.asc…</button>
+          <input type="file" id="load-envelope-file" class="hidden" accept=".asc,.pgp,.txt,*/*">
+        </div>
+        <textarea id="input-envelope" class="compose-message" rows="6" spellcheck="false"
+          placeholder="-----BEGIN PGP MESSAGE-----&#10;…&#10;-----END PGP MESSAGE-----&#10;Required for symdecrypt (PEM / large-payload path). Not used for direct scalar splits.">${escapeHtml(envelopeDraft)}</textarea>
+        <p class="muted fs-sm mt-xs">This is the OpenPGP symmetric ciphertext from <code>symencrypt</code> — distinct from SLIP-39 share mnemonics. External recovery: combine → hex master → <code>gpg --decrypt envelope.asc</code>.</p>
       </div>
     `);
   }
@@ -633,15 +658,6 @@ function renderInputsPanel(needs) {
       </div>
       <textarea id="input-ciphertext" class="compose-message" rows="8" spellcheck="false"
         placeholder="Paste -----BEGIN PGP MESSAGE----- blocks (and/or already-decrypted mnemonics). Smartcard/YubiKey OpenPGP keys cannot be used in the browser — decrypt those externally and paste mnemonics in the share rows above."></textarea>
-      <label class="field-label mt-md" for="input-envelope-gpg">Envelope ciphertext (base64, if needed)</label>
-      <div class="btn-row wrap mb-xs">
-        <button type="button" class="btn btn-ghost btn-compact" id="load-envelope-gpg-btn">Load envelope…</button>
-        <input type="file" id="load-envelope-gpg-file" class="hidden" accept=".b64,.bin,.txt,*/*">
-      </div>
-      <textarea id="input-envelope-gpg" class="compose-message" rows="2" spellcheck="false"
-        placeholder="Paste envelope.bin.b64 from the encrypt pipeline">${escapeHtml(
-          needs.includes("shares") ? "" : envelopeDraft
-        )}</textarea>
       <label class="field-label mt-md" for="input-vault-key">Vault private key (only for ciphertext you can decrypt here)</label>
       <select id="input-vault-key" class="text-input">
         <option value="">— paste key below / not needed if all shares are plaintext —</option>
@@ -662,7 +678,7 @@ function renderInputsPanel(needs) {
 
 /**
  * @param {HTMLElement} host
- * @param {("shares"|"gpg"|"text")[]} needs
+ * @param {("shares"|"gpg"|"text"|"envelope")[]} needs
  */
 function wireInputsPanel(host, needs) {
   if (needs.includes("text")) {
@@ -718,10 +734,6 @@ function wireInputsPanel(host, needs) {
       });
     });
 
-    const envEl = host.querySelector("#input-envelope");
-    envEl?.addEventListener("input", () => {
-      if (envEl instanceof HTMLTextAreaElement) envelopeDraft = envEl.value;
-    });
     const passEl = host.querySelector("#input-share-pass");
     passEl?.addEventListener("input", () => {
       if (passEl instanceof HTMLInputElement) sharePassDraft = passEl.value;
@@ -739,11 +751,17 @@ function wireInputsPanel(host, needs) {
       shareRows = nonempty.length ? [...nonempty, ...loaded] : loaded;
       renderInputsPanel(currentInputNeeds);
     });
+  }
 
+  if (needs.includes("envelope")) {
+    const envEl = host.querySelector("#input-envelope");
+    envEl?.addEventListener("input", () => {
+      if (envEl instanceof HTMLTextAreaElement) envelopeDraft = envEl.value;
+    });
     wireFileButton(host, "#load-envelope-btn", "#load-envelope-file", async (files) => {
       const f = files[0];
       if (!f) return;
-      envelopeDraft = await readEnvelopeFile(f);
+      envelopeDraft = await readEnvelopeAscFile(f);
       renderInputsPanel(currentInputNeeds);
     });
   }
@@ -760,20 +778,6 @@ function wireInputsPanel(host, needs) {
         ? `${ctEl.value.trim()}\n\n${joined}`
         : joined;
     });
-
-    wireFileButton(
-      host,
-      "#load-envelope-gpg-btn",
-      "#load-envelope-gpg-file",
-      async (files) => {
-        const f = files[0];
-        if (!f) return;
-        const b64 = await readEnvelopeFile(f);
-        envelopeDraft = b64;
-        const envEl = host.querySelector("#input-envelope-gpg");
-        if (envEl instanceof HTMLTextAreaElement) envEl.value = b64;
-      }
-    );
   }
 }
 
@@ -803,26 +807,12 @@ function wireFileButton(host, btnSel, inputSel, onFiles) {
 }
 
 /**
- * Read envelope as base64 (text passthrough, or binary → base64).
+ * Read an OpenPGP armored envelope (.asc) as text.
  * @param {File} file
  * @returns {Promise<string>}
  */
-async function readEnvelopeFile(file) {
-  const name = (file.name || "").toLowerCase();
-  if (name.endsWith(".b64") || name.endsWith(".txt") || file.type.startsWith("text/")) {
-    return (await file.text()).replace(/\s+/g, "");
-  }
-  // Heuristic: try text; if it looks like base64 keep it, else treat as binary.
-  const buf = new Uint8Array(await file.arrayBuffer());
-  try {
-    const asText = new TextDecoder("utf-8", { fatal: true }).decode(buf).trim();
-    if (/^[A-Za-z0-9+/=\s]+$/.test(asText) && asText.length > 16) {
-      return asText.replace(/\s+/g, "");
-    }
-  } catch (_) {
-    /* binary */
-  }
-  return bytesToBase64(buf);
+async function readEnvelopeAscFile(file) {
+  return (await file.text()).trim();
 }
 
 async function refreshVaultKeys() {
@@ -857,21 +847,27 @@ async function collectRuntimeInputs() {
       const i = Number(el.getAttribute("data-share-input"));
       if (el instanceof HTMLTextAreaElement && i >= 0) shareRows[i] = el.value;
     });
-    const envEl = document.getElementById("input-envelope");
     const passEl = document.getElementById("input-share-pass");
-    if (envEl instanceof HTMLTextAreaElement) envelopeDraft = envEl.value;
     if (passEl instanceof HTMLInputElement) sharePassDraft = passEl.value;
     const mnemonics = shareRows.map((m) => m.trim()).filter(Boolean);
     inputs.shares = {
       mnemonics,
-      envelopeB64: envelopeDraft.trim(),
       passphrase: sharePassDraft,
     };
   }
 
+  if (currentInputNeeds.includes("envelope")) {
+    const envEl = document.getElementById("input-envelope");
+    if (envEl instanceof HTMLTextAreaElement) envelopeDraft = envEl.value;
+    const armored = envelopeDraft.trim();
+    if (armored) {
+      inputs.envelope = { armored };
+      if (inputs.shares) inputs.shares.envelopeArmored = armored;
+    }
+  }
+
   if (currentInputNeeds.includes("gpg")) {
     const ctEl = document.getElementById("input-ciphertext");
-    const envEl = document.getElementById("input-envelope-gpg");
     const vaultEl = document.getElementById("input-vault-key");
     const privEl = document.getElementById("input-privkey");
     const passEl = document.getElementById("input-key-pass");
@@ -912,32 +908,27 @@ async function collectRuntimeInputs() {
       } finally {
         // PRF-derived input keying material is a real Uint8Array — zeroize it
         // as soon as the KEK has been derived (best-effort per FIPS 140-3).
-        zeroBuffer(opts.prfIkm);
+        try {
+          opts.prfIkm?.fill?.(0);
+        } catch (_) {
+          /* wipe */
+        }
       }
     }
 
-    let envelopeB64 =
-      envEl instanceof HTMLTextAreaElement ? envEl.value.trim() : "";
-    if (envelopeB64) envelopeDraft = envelopeB64;
-    else if (envelopeDraft.trim()) envelopeB64 = envelopeDraft.trim();
     inputs.gpg = {
       armoredMessages: [...messages, ...plainFromCt],
       privateKeyArmored,
       passphrase,
-      envelopeB64,
+      envelopeArmored: inputs.envelope?.armored || "",
     };
     // Merge ciphertext-box mnemonics + share rows for decrypt hybrid path
-    if (plainFromCt.length || envelopeB64) {
+    if (plainFromCt.length) {
       inputs.shares = inputs.shares || { mnemonics: [] };
-      if (plainFromCt.length) {
-        inputs.shares.mnemonics = [
-          ...(inputs.shares.mnemonics || []),
-          ...plainFromCt,
-        ];
-      }
-      if (envelopeB64 && !inputs.shares.envelopeB64) {
-        inputs.shares.envelopeB64 = envelopeB64;
-      }
+      inputs.shares.mnemonics = [
+        ...(inputs.shares.mnemonics || []),
+        ...plainFromCt,
+      ];
     }
   }
 
@@ -1168,9 +1159,9 @@ function renderBuilder() {
           <strong>${escapeHtml(step.name)}</strong>
           ${
             isOut
-              ? `<span class="badge pending">file tile</span>`
+              ? `<span class="badge pending" title="Named file — Encrypt attaches bytes">file · Encrypt as file</span>`
               : isText
-                ? `<span class="badge pending">message tile</span>`
+                ? `<span class="badge pending" title="Message tile — Encrypt opens compose">message · Encrypt as message</span>`
                 : `<span class="muted fs-xs">${escapeHtml(spec?.kind || "")}</span>`
           }
           ${outSummary ? `<span class="muted fs-xs">${escapeHtml(outSummary)}</span>` : ""}
@@ -1235,9 +1226,16 @@ function renderCryptoPanel() {
       const usage = String(step.params.usage || "auto");
       return `<code>${escapeHtml(alg)}</code> <span class="muted">(${escapeHtml(usage)})</span>`;
     });
-  const usesEnvelope = steps.some((step) => step.name === "slip39");
+  const usesSlip39 = steps.some((step) => step.name === "slip39");
+  const usesSymEnvelope = steps.some(
+    (step) => step.name === "symencrypt" || step.name === "symdecrypt"
+  );
   const usesOpenPgp = steps.some(
-    (step) => step.name === "encrypt" || step.name === "gpg"
+    (step) =>
+      step.name === "encrypt" ||
+      step.name === "gpg" ||
+      step.name === "symencrypt" ||
+      step.name === "symdecrypt"
   );
 
   const profileHint =
@@ -1252,17 +1250,26 @@ function renderCryptoPanel() {
         Runtime settings — not written into pipeline text. Artifact metadata reports what was actually emitted.
       </p>
 
-      <details class="expert-crypto-section" ${usesEnvelope ? "open" : ""}>
-        <summary><strong>SLIP-39 envelope</strong>${usesEnvelope ? "" : ' <span class="muted">(not used by this pipeline)</span>'}</summary>
+      <details class="expert-crypto-section" ${usesSlip39 ? "open" : ""}>
+        <summary><strong>Direct SSS (16/32-byte masters)</strong>${usesSlip39 ? "" : ' <span class="muted">(no slip39 step)</span>'}</summary>
         <dl class="crypto-param-list fs-sm">
-          <div><dt>Envelope cipher</dt><dd>AES-256-GCM · 96-bit random IV · 128-bit authentication tag</dd></div>
-          <div><dt>Envelope key</dt><dd>256-bit master generated by WebCrypto CSPRNG for each split</dd></div>
+          <div><dt>Master size</dt><dd>Exactly 16 or 32 bytes — random secrets, AES-256 keys, P-256 / Ed25519 / X25519 scalars via <code>export scalar</code></dd></div>
           <div><dt>Share protection</dt><dd>GF(256) Shamir threshold; optional passphrase mask uses PBKDF2-SHA-256 (20,000 iterations)</dd></div>
-          <div><dt>Format</dt><dd>Basilisk envelope v1 + RS1024-protected mnemonic shares</dd></div>
+          <div><dt>Mnemonic format</dt><dd>Basilisk SLIP-39-inspired v1 + RS1024 checksum (tag <code>basilisk-slip39-v1</code>)</dd></div>
+          <div><dt>No auto-envelope</dt><dd>PEM / PKCS#8 / larger payloads must use <code>symencrypt</code> first — slip39 never invents a custom ciphertext</dd></div>
+        </dl>
+      </details>
+
+      <details class="expert-crypto-section" ${usesSymEnvelope ? "open" : ""}>
+        <summary><strong>OpenPGP symmetric envelope</strong>${usesSymEnvelope ? "" : ' <span class="muted">(no symencrypt/symdecrypt)</span>'}</summary>
+        <dl class="crypto-param-list fs-sm">
+          <div><dt>When</dt><dd>PEM, PKCS#8 DER, or any payload that is not already 16/32 bytes</dd></div>
+          <div><dt>Master</dt><dd>32-byte CSPRNG secret — this is what slip39 splits; passphrase for stock gpg is lowercase hex of that master</dd></div>
+          <div><dt>Ciphertext</dt><dd>Standard OpenPGP SKESK + SEIPD (<code>envelope.asc</code>) — profile below; no custom AES-GCM padding</dd></div>
+          <div><dt>External recovery</dt><dd>combine shares → hex master → <code>gpg --decrypt envelope.asc</code></dd></div>
         </dl>
         <p class="status-row warn fs-sm">
-          Envelope cipher, nonce, key size, and KDF parameters are fixed by the versioned recovery format.
-          Changing them without a new format version would make existing shares unrecoverable.
+          The OpenPGP envelope is not a share mnemonic. Keep <code>envelope.asc</code> with the share set; without it the master alone cannot unwrap the payload.
         </p>
       </details>
 
@@ -1270,14 +1277,14 @@ function renderCryptoPanel() {
         <summary><strong>Generated / ephemeral keys</strong>${generatedKeys.length ? "" : ' <span class="muted">(no genkey step)</span>'}</summary>
         <p class="fs-sm">
           ${generatedKeys.length
-            ? `This pipeline generates: ${generatedKeys.join(", ")}. Change algorithm and usage directly on each <code>genkey</code> operation.`
+            ? `This pipeline generates: ${generatedKeys.join(", ")}. Change algorithm and usage directly on each <code>genkey</code> operation. For direct SSS use <code>export scalar</code> (P-256); P-384/P-521 scalars need the envelope path.`
             : "Add a genkey operation to choose EC, Ed25519, X25519, RSA, AES, or HMAC parameters."}
         </p>
         <p class="muted fs-sm">RSA uses exponent 65537 and SHA-256. All generated key material uses WebCrypto and remains inside the worker until encoded as an artifact.</p>
       </details>
 
       <details class="expert-crypto-section" ${usesOpenPgp ? "open" : ""}>
-        <summary><strong>OpenPGP wrapping</strong>${usesOpenPgp ? "" : ' <span class="muted">(no encrypt step)</span>'}</summary>
+        <summary><strong>OpenPGP wrapping</strong>${usesOpenPgp ? "" : ' <span class="muted">(no encrypt / symencrypt step)</span>'}</summary>
         <div class="expert-crypto-grid mt-sm">
           <label class="builder-param">Profile
             <select class="text-input" id="toolkit-pgp-preset">
@@ -1436,67 +1443,51 @@ function renderReference() {
     .join("");
 }
 
-function renderResults() {
-  const panel = document.getElementById("results-panel");
-  const empty = document.getElementById("output-empty");
-  if (!panel) return;
-  if (!artifacts.length) {
-    panel.classList.add("hidden");
-    panel.innerHTML = "";
-    empty?.classList.remove("hidden");
-    return;
-  }
-  empty?.classList.add("hidden");
-  panel.classList.remove("hidden");
-  const hasEnvelope = artifacts.some(
-    (a) => /envelope/i.test(a.label || "") || /envelope/i.test(a.filename || "")
-  );
-  const hasShares = artifacts.some((a) => a.shareIndex || /^Share\s+\d+/i.test(a.label || ""));
-  panel.innerHTML = `
-    <div class="btn-row wrap mb-md items-center">
-      <p class="muted mb-0 flex-1">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
-      ${
-        artifacts.length > 1
-          ? `<button type="button" class="btn btn-ghost btn-compact" id="download-all-btn">Download all (${artifacts.length})</button>`
-          : ""
-      }
-    </div>
-    ${
-      hasEnvelope && hasShares
-        ? `<p class="status-row warn mb-md" role="status">Keep the <strong>envelope artifact</strong> with the shares — it is required for recovery of PEM / non-16/32-byte secrets (not secret itself, but without it the shares cannot be unwrapped).</p>`
-        : ""
-    }
-    ${artifacts
-      .map((a, i) => {
-        const masked = a.sensitive;
-        const preview = masked
-          ? "•••••••• (click Reveal)"
-          : a.content.length > 400
-            ? escapeHtml(a.content.slice(0, 400)) + "…"
-            : escapeHtml(a.content);
-        const isSvg = a.mime === "image/svg+xml";
-        const suggestedFilename = a.filename || `artifact-${i + 1}.txt`;
-        const metaBits = [
-          a.encoding ? `<span class="badge pending">${escapeHtml(a.encoding)}</span>` : "",
-          a.mime && a.mime !== "text/plain; charset=utf-8" && a.mime !== "text/plain"
-            ? `<span class="muted fs-xs">${escapeHtml(a.mime)}</span>`
-            : "",
-          a.shareIndex ? `<span class="badge pending">share ${a.shareIndex}</span>` : "",
-          a.recipientFingerprint
-            ? `<span class="muted fs-xs">→ ${escapeHtml(formatFingerprint(a.recipientFingerprint))}</span>`
-            : "",
-          a.cryptoSummary
-            ? `<span class="badge approved" title="Parameters parsed from or associated with this artifact">${escapeHtml(a.cryptoSummary)}</span>`
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        const stepBadge = a.stepIndex
-          ? `<button type="button" class="artifact-step-badge" data-step-link="${a.stepIndex}"
-              title="Produced by pipeline step ${a.stepIndex} (${escapeHtml(a.stepName || "")}) — click to jump to it">
-              ${a.stepIndex}&#8202;·&#8202;${escapeHtml(a.stepName || "step")}</button>`
-          : "";
-        return `
+/**
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ * @param {number} i
+ * @returns {string}
+ */
+function renderArtifactCard(a, i) {
+  const masked = a.sensitive;
+  const preview = masked
+    ? "•••••••• (click Reveal)"
+    : a.content.length > 400
+      ? escapeHtml(a.content.slice(0, 400)) + "…"
+      : escapeHtml(a.content);
+  const isSvg = a.mime === "image/svg+xml";
+  const suggestedFilename = a.filename || `artifact-${i + 1}.txt`;
+  const role = a.role || "";
+  const tags = Array.isArray(a.tags) ? a.tags : [];
+  const metaBits = [
+    role ? `<span class="badge approved" title="Artifact role">${escapeHtml(role)}</span>` : "",
+    ...tags.map(
+      (t) => `<span class="badge pending" title="Tag">${escapeHtml(String(t))}</span>`
+    ),
+    a.encoding ? `<span class="badge pending">${escapeHtml(a.encoding)}</span>` : "",
+    a.mime && a.mime !== "text/plain; charset=utf-8" && a.mime !== "text/plain"
+      ? `<span class="muted fs-xs">${escapeHtml(a.mime)}</span>`
+      : "",
+    a.shareIndex || a.traits?.shareOf
+      ? `<span class="badge pending">share ${a.shareIndex || a.traits?.shareOf}${
+          a.traits?.threshold ? ` · ${a.traits.threshold}-of-N` : ""
+        }</span>`
+      : "",
+    a.recipientFingerprint
+      ? `<span class="muted fs-xs">→ ${escapeHtml(formatFingerprint(a.recipientFingerprint))}</span>`
+      : "",
+    a.cryptoSummary
+      ? `<span class="badge approved" title="Parameters parsed from or associated with this artifact">${escapeHtml(a.cryptoSummary)}</span>`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const stepBadge = a.stepIndex
+    ? `<button type="button" class="artifact-step-badge" data-step-link="${a.stepIndex}"
+        title="Produced by pipeline step ${a.stepIndex} (${escapeHtml(a.stepName || "")}) — click to jump to it">
+        ${a.stepIndex}&#8202;·&#8202;${escapeHtml(a.stepName || "step")}</button>`
+    : "";
+  return `
         <div class="card artifact-card" data-art="${i}">
           <div class="artifact-card-head">
             <div class="artifact-title-row">
@@ -1524,19 +1515,117 @@ function renderResults() {
             <button type="button" class="btn btn-ghost btn-compact" data-download="${i}">Download</button>
             ${
               artifactLooksLikePgpCiphertext(a)
-                ? `<button type="button" class="btn btn-ghost btn-compact" data-decrypt="${i}"
-                    title="Open this OpenPGP ciphertext in a separate Decrypt window">Decrypt…</button>`
-                : `<button type="button" class="btn btn-ghost btn-compact" data-encrypt="${i}"
+                ? `<button type="button" class="btn btn-ghost btn-compact btn-popout" data-decrypt="${i}"
+                    title="Open this OpenPGP ciphertext in a separate Decrypt window">${popoutButtonHtml("Decrypt…")}</button>`
+                : `<button type="button" class="btn btn-ghost btn-compact btn-popout" data-encrypt="${i}"
                     title="${
                       artifactIsMessage(a)
-                        ? "Open as an Encrypt compose message"
+                        ? "Open as an Encrypt compose message in a new window"
                         : "Attach as a file in a separate Encrypt window"
-                    }">${artifactIsMessage(a) ? "Encrypt as message…" : "Encrypt as file…"}</button>`
+                    }">${popoutButtonHtml(
+                      artifactIsMessage(a) ? "Encrypt as message…" : "Encrypt as file…"
+                    )}</button>`
             }
           </div>
         </div>`;
-      })
-      .join("")}`;
+}
+
+/**
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ */
+function isShareArtifact(a) {
+  return (
+    a.role === "share" ||
+    !!a.shareIndex ||
+    /^Share\s+\d+/i.test(a.label || "")
+  );
+}
+
+/**
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ */
+function isEnvelopeArtifact(a) {
+  return (
+    a.role === "envelope" ||
+    /\.asc$/i.test(a.filename || "") && /envelope/i.test(a.filename || "") ||
+    /envelope/i.test(a.label || "")
+  );
+}
+
+function renderResults() {
+  const panel = document.getElementById("results-panel");
+  const empty = document.getElementById("output-empty");
+  if (!panel) return;
+  if (!artifacts.length) {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    empty?.classList.remove("hidden");
+    return;
+  }
+  empty?.classList.add("hidden");
+  panel.classList.remove("hidden");
+
+  /** @type {number[]} */
+  const shareIdxs = [];
+  /** @type {number[]} */
+  const envelopeIdxs = [];
+  /** @type {number[]} */
+  const otherIdxs = [];
+  artifacts.forEach((a, i) => {
+    if (isShareArtifact(a)) shareIdxs.push(i);
+    else if (isEnvelopeArtifact(a)) envelopeIdxs.push(i);
+    else otherIdxs.push(i);
+  });
+
+  const threshold =
+    artifacts.find((a) => a.traits?.threshold)?.traits?.threshold ||
+    shareIdxs.length ||
+    0;
+  const hasShareSet = shareIdxs.length > 0;
+  const hasEnvelope = envelopeIdxs.length > 0;
+
+  /** @type {string[]} */
+  const blocks = [];
+  blocks.push(`
+    <div class="btn-row wrap mb-md items-center">
+      <p class="muted mb-0 flex-1">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
+      ${
+        artifacts.length > 1
+          ? `<button type="button" class="btn btn-ghost btn-compact" id="download-all-btn">Download all (${artifacts.length})</button>`
+          : ""
+      }
+    </div>`);
+
+  if (hasShareSet) {
+    const kOfN =
+      threshold && shareIdxs.length
+        ? `${threshold}-of-${shareIdxs.length}`
+        : `${shareIdxs.length} shares`;
+    blocks.push(`
+      <section class="share-set-group mb-md" aria-label="Share set">
+        <div class="share-set-head mb-sm">
+          <p class="card-title m-0">Share set (${escapeHtml(kOfN)})</p>
+          <p class="muted fs-sm mb-0">${
+            hasEnvelope
+              ? "OpenPGP envelope path — keep <code>envelope.asc</code> with the mnemonics (envelope ≠ shares)."
+              : "Direct secret / scalar — no envelope; combine recovers the 16/32-byte master."
+          }</p>
+        </div>
+        ${
+          hasEnvelope
+            ? `<p class="status-row warn mb-sm" role="status">The OpenPGP envelope unwraps the payload after combine; share mnemonics alone are not enough for PEM / large-payload recovery.</p>`
+            : ""
+        }
+        ${envelopeIdxs.map((i) => renderArtifactCard(artifacts[i], i)).join("")}
+        ${shareIdxs.map((i) => renderArtifactCard(artifacts[i], i)).join("")}
+      </section>`);
+  } else if (hasEnvelope) {
+    blocks.push(envelopeIdxs.map((i) => renderArtifactCard(artifacts[i], i)).join(""));
+  }
+
+  blocks.push(otherIdxs.map((i) => renderArtifactCard(artifacts[i], i)).join(""));
+
+  panel.innerHTML = blocks.join("");
 
   panel.querySelectorAll("[data-step-link]").forEach((badge) => {
     const stepIndex = Number(badge.getAttribute("data-step-link"));
@@ -1636,27 +1725,117 @@ function renderResults() {
 }
 
 /**
+ * Inline “open in new window” indicator for Encrypt/Decrypt popout buttons.
+ * Kept as a constant so label updates only touch `.btn-label`.
+ */
+const NEW_WINDOW_ICON = `<svg class="icon-new-window" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M10 1h5v5h-1.5V3.56L7.78 9.28 6.72 8.22l5.72-5.72H10V1zM2 2.5A1.5 1.5 0 0 1 3.5 1H8v1.5H3.5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5V8H15v3.5A1.5 1.5 0 0 1 13.5 13h-10A1.5 1.5 0 0 1 2 11.5v-9z"/></svg>`;
+
+/**
+ * @param {string} text
+ * @returns {string}
+ */
+function popoutButtonHtml(text) {
+  return `<span class="btn-label">${escapeHtml(text)}</span>${NEW_WINDOW_ICON}`;
+}
+
+/**
+ * @param {HTMLButtonElement} button
+ * @param {string} text
+ */
+function setPopoutButtonLabel(button, text) {
+  const label = button.querySelector(".btn-label");
+  if (label) {
+    label.textContent = text;
+    return;
+  }
+  button.innerHTML = popoutButtonHtml(text);
+}
+
+/**
  * Whether Encrypt should open this artifact as a compose message (vs file).
- * @param {{ disposition?: string, mime?: string, stepName?: string, shareIndex?: number }} a
+ *
+ * Disposition is recipe-driven (`text`/`print` → message, `out` → file).
+ * Do NOT reintroduce hex/base64/armor sniffing here — that pushes secrets into
+ * immutable JS strings and fights memory-safety.js rule 4.
+ *
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
  */
 function artifactIsMessage(a) {
-  if (a?.disposition === "message") return true;
-  if (a?.disposition === "file") return false;
-  // Fallback for older in-memory artifacts: plain text that isn't an out/QR/share file.
-  const mime = String(a?.mime || "");
-  if (!mime.startsWith("text/plain")) return false;
-  if (a?.shareIndex) return false;
-  if (a?.stepName === "out" || a?.stepName === "qr" || a?.stepName === "tee") {
-    return false;
+  return artifactIsTextualForEncrypt(a);
+}
+
+/**
+ * Build a binary-safe Encrypt transfer payload.
+ *
+ * Messages send UTF-8 text (string unavoidable for compose). Files send a
+ * Uint8Array so Encrypt can build a File without UTF-8 mangling and so the
+ * handoff can transfer/wipe the buffer (see openArtifactInEncrypt).
+ *
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} artifact
+ */
+function buildEncryptTransfer(artifact) {
+  const label = artifact.label || "Toolkit artifact";
+  const filename = sanitizeFilename(artifact.filename);
+  const mime = artifact.mime || "application/octet-stream";
+  const pipeType = artifact.pipeType || null;
+
+  if (artifactIsMessage(artifact)) {
+    return {
+      disposition: "message",
+      text: String(artifact.content ?? ""),
+      label,
+      filename,
+      mime: mime.startsWith("text/") ? mime : "text/plain; charset=utf-8",
+      encoding: artifact.encoding || "text",
+      pipeType,
+    };
   }
-  return true;
+
+  return {
+    disposition: "file",
+    bytes: artifactToBytes(artifact),
+    label,
+    filename,
+    mime,
+    encoding: artifact.encoding || "binary",
+    pipeType,
+  };
+}
+
+/**
+ * Recover raw octets for a file-disposition artifact.
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ * @returns {Uint8Array}
+ */
+function artifactToBytes(a) {
+  if (a.bytes instanceof Uint8Array) {
+    return a.bytes;
+  }
+  const enc = String(a.encoding || "").toLowerCase();
+  const content = String(a.content ?? "");
+  if (enc === "base64" || enc === "base64url" || /\.b64$/i.test(a.filename || "")) {
+    try {
+      return base64ToBytes(content.replace(/\s+/g, ""));
+    } catch (_) {
+      /* fall through */
+    }
+  }
+  if (enc === "hex") {
+    try {
+      return hexToBytes(content);
+    } catch (_) {
+      /* fall through */
+    }
+  }
+  return new TextEncoder().encode(content);
 }
 
 /**
  * Detect OpenPGP ciphertext so the Decrypt popout can replace Encrypt.
- * @param {{ content?: string, mime?: string }} a
+ * @param {{ content?: string, mime?: string, role?: string }} a
  */
 function artifactLooksLikePgpCiphertext(a) {
+  if (a?.role === "ciphertext" || a?.role === "envelope") return true;
   if (a?.mime === "application/pgp-encrypted") return true;
   return /-----BEGIN PGP MESSAGE-----/i.test(String(a?.content || ""));
 }
@@ -1666,31 +1845,39 @@ function artifactLooksLikePgpCiphertext(a) {
  * its crypto self-test and UI initialization have completed. Content travels
  * only through a same-origin window message; it is never put in a URL or
  * persistent browser storage.
- * @param {{ label?: string, filename?: string, content: string, mime?: string, disposition?: string }} artifact
+ *
+ * File dispositions: copy into a dedicated ArrayBuffer and *transfer* it via
+ * postMessage’s transfer list so the opener’s view is detached (byteLength → 0)
+ * instead of structured-clone duplicating the secret. Then wipe any still-live
+ * view with inlined fill(0). See memory-safety.js and MDN Transferable objects.
+ * Do not drop the transfer list “for simplicity”.
+ *
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} artifact
  * @param {HTMLButtonElement} button
  */
 function openArtifactInEncrypt(artifact, button) {
   const asMessage = artifactIsMessage(artifact);
   const idleLabel = asMessage ? "Encrypt as message…" : "Encrypt as file…";
+  const transfer = buildEncryptTransfer(artifact);
   const popup = window.open(
     "/encrypt?source=toolkit",
     "_blank",
     "popup,width=1100,height=850"
   );
   if (!popup) {
-    button.textContent = "Pop-up blocked";
+    setPopoutButtonLabel(button, "Pop-up blocked");
     setTimeout(() => {
-      button.textContent = idleLabel;
+      setPopoutButtonLabel(button, idleLabel);
     }, 1800);
     return;
   }
 
   button.disabled = true;
-  button.textContent = "Opening…";
+  setPopoutButtonLabel(button, "Opening…");
   const timeout = setTimeout(() => {
     window.removeEventListener("message", onReady);
     button.disabled = false;
-    button.textContent = idleLabel;
+    setPopoutButtonLabel(button, idleLabel);
   }, 15_000);
 
   /** @param {MessageEvent} event */
@@ -1704,24 +1891,43 @@ function openArtifactInEncrypt(artifact, button) {
     }
     clearTimeout(timeout);
     window.removeEventListener("message", onReady);
+
+    /** @type {Transferable[]} */
+    const transferList = [];
+    // Own a tightly packed buffer so transfer does not detach pipeline
+    // artifact.bytes (which may still back the Results download tile).
+    if (
+      transfer.disposition === "file" &&
+      transfer.bytes instanceof Uint8Array &&
+      transfer.bytes.byteLength > 0
+    ) {
+      const owned = new Uint8Array(transfer.bytes);
+      transfer.bytes = owned;
+      transferList.push(owned.buffer);
+    }
+
     popup.postMessage(
       {
         type: "basilisk:encrypt-artifact",
-        artifact: {
-          label: artifact.label || "Toolkit artifact",
-          filename: sanitizeFilename(artifact.filename),
-          content: artifact.content,
-          mime: artifact.mime || "application/octet-stream",
-          disposition: asMessage ? "message" : "file",
-        },
+        artifact: transfer,
       },
-      window.location.origin
+      window.location.origin,
+      transferList
     );
+    // Transfer usually detaches owned.buffer (byteLength → 0); wipe if still live.
+    if (transfer.disposition === "file") {
+      try {
+        if (transfer.bytes?.byteLength > 0) transfer.bytes.fill(0);
+      } catch (_) {
+        /* wipe */
+      }
+    }
+
     popup.focus();
-    button.textContent = "Opened";
+    setPopoutButtonLabel(button, "Opened");
     setTimeout(() => {
       button.disabled = false;
-      button.textContent = idleLabel;
+      setPopoutButtonLabel(button, idleLabel);
     }, 1200);
   }
 
@@ -1741,19 +1947,19 @@ function openArtifactInDecrypt(artifact, button) {
     "popup,width=1100,height=850"
   );
   if (!popup) {
-    button.textContent = "Pop-up blocked";
+    setPopoutButtonLabel(button, "Pop-up blocked");
     setTimeout(() => {
-      button.textContent = idleLabel;
+      setPopoutButtonLabel(button, idleLabel);
     }, 1800);
     return;
   }
 
   button.disabled = true;
-  button.textContent = "Opening…";
+  setPopoutButtonLabel(button, "Opening…");
   const timeout = setTimeout(() => {
     window.removeEventListener("message", onReady);
     button.disabled = false;
-    button.textContent = idleLabel;
+    setPopoutButtonLabel(button, idleLabel);
   }, 15_000);
 
   /** @param {MessageEvent} event */
@@ -1780,10 +1986,10 @@ function openArtifactInDecrypt(artifact, button) {
       window.location.origin
     );
     popup.focus();
-    button.textContent = "Opened";
+    setPopoutButtonLabel(button, "Opened");
     setTimeout(() => {
       button.disabled = false;
-      button.textContent = idleLabel;
+      setPopoutButtonLabel(button, idleLabel);
     }, 1200);
   }
 

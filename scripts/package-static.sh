@@ -17,20 +17,48 @@ fi
 
 (cd "$WEB_DIR" && npm run build) >&2
 
-# Strip inline importmap scripts so CSP can stay script-src 'self' (no unsafe-inline).
-# Script/link integrity attributes from vite-plugin-sri-gen remain intact.
+# Integrity contract (do not weaken):
+#   - Entry scripts/styles/modulepreloads carry integrity= from vite-plugin-sri-gen.
+#   - Module-graph / worker SRI lives in an *external* importmap JSON under /assets/
+#     (see web/scripts/externalize-importmaps.js). CSP is script-src 'self' — never
+#     strip those maps; browsers refuse to load a module whose bytes ≠ the hash
+#     (CDN cache skew or tampering). Mixing old and new chunks must fail closed.
 python - "$OUT" >&2 <<'PY'
 from pathlib import Path
-import re
 import sys
+
 dist = Path(sys.argv[1])
-pat = re.compile(r'<script type="importmap">\{.*?\}</script>', re.DOTALL)
-for html in dist.glob("*.html"):
+errors = []
+html_files = list(dist.glob("*.html"))
+if not html_files:
+    errors.append("no HTML files in dist/")
+
+for html in html_files:
     text = html.read_text(encoding="utf-8")
-    cleaned = pat.sub("", text)
-    if cleaned != text:
-        html.write_text(cleaned, encoding="utf-8")
-        print(f"stripped importmap: {html.name}")
+    if 'type="importmap"' not in text and "type='importmap'" not in text:
+        errors.append(f"{html.name}: missing importmap (module-graph SRI)")
+    if "<script type=\"importmap\">{" in text:
+        errors.append(
+            f"{html.name}: inline importmap still present — "
+            "externalize-importmaps plugin did not run"
+        )
+    if "integrity=" not in text:
+        errors.append(f"{html.name}: missing integrity= attributes")
+
+importmaps = list((dist / "importmaps").glob("importmap-*.json")) if (dist / "importmaps").is_dir() else []
+if not importmaps:
+    errors.append("no /importmaps/importmap-*.json files written")
+
+if errors:
+    print("Integrity packaging checks FAILED:", file=sys.stderr)
+    for e in errors:
+        print(f"  - {e}", file=sys.stderr)
+    sys.exit(1)
+
+print(
+    f"integrity OK: {len(html_files)} HTML page(s), "
+    f"{len(importmaps)} external importmap(s)"
+)
 PY
 
 # Clean URL aliases without .html suffix (Azure static website / Front Door).

@@ -253,8 +253,13 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
     route_configuration_override_action {
       cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
       forwarding_protocol           = "HttpsOnly"
+      # HTML (+ clean-URL aliases) pin SRI hashes for the module graph. A long
+      # TTL lets a PoP serve stale HTML while new /assets/* hashes 404 or —
+      # worse — an old HTML doc that still resolves old hashed names while a
+      # partially purged edge mixes deploys. Keep this short; hashed assets
+      # below stay at 7 days.
       cache_behavior                = "OverrideAlways"
-      cache_duration                = "1.00:00:00"
+      cache_duration                = "0.00:05:00"
       query_string_caching_behavior = "UseQueryString"
       compression_enabled           = true
     }

@@ -790,6 +790,21 @@ pre {
   font-size: 0.75rem;
 }
 
+.btn-popout {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.btn-popout .icon-new-window {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.btn-popout:hover .icon-new-window {
+  opacity: 1;
+}
+
 .usage-tag {
   display: inline-block;
   font-size: 0.68rem;
@@ -2380,6 +2395,15 @@ pre {
 }
 .artifact-card {
   margin-bottom: 0.75rem;
+}
+.share-set-group {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+  background: var(--surface-raised, var(--bg-subtle, rgba(127, 127, 127, 0.04)));
+}
+.share-set-head .card-title {
+  margin-bottom: 0.25rem;
 }
 .qr-preview svg {
   max-width: 220px;

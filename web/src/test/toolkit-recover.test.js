@@ -1,5 +1,5 @@
 /**
- * Inverse toolkit pipelines: combine, decode flags, envelope emission, GPG round-trip.
+ * Inverse toolkit pipelines: combine, scalar SSS, OpenPGP envelope, GPG round-trip.
  */
 import { generateKey } from "openpgp";
 import { describe, expect, it } from "vitest";
@@ -26,7 +26,6 @@ describe("toolkit recover / combine", () => {
     });
     expect(out[0].content).toMatch(/^[0-9a-f]{64}$/);
 
-    // Cross-check against library combine
     const direct = await combineShares([shares[0], shares[2]]);
     const hex = Array.from(direct)
       .map((b) => b.toString(16).padStart(2, "0"))
@@ -34,68 +33,13 @@ describe("toolkit recover / combine", () => {
     expect(out[0].content).toBe(hex);
   }, 30_000);
 
-  it("emits envelope ciphertext from foreach|encrypt pipeline", async () => {
-    const { privateKey, publicKey } = await generateKey({
-      type: "ecc",
-      curve: "curve25519",
-      userIDs: [{ name: "Test", email: "test@example.com" }],
-      format: "object",
-    });
-    void privateKey;
-    const fpr = publicKey.getFingerprint().toUpperCase();
-
+  it("export/import scalar round-trips P-256", async () => {
     const { ast, validation } = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg"
+      "genkey ec/p256 | export scalar | import scalar alg=ec/p256 | export pkcs8 | pem"
     );
     expect(validation.ok).toBe(true);
-    const arts = await runRecipe(ast, {
-      recipients: [publicKey],
-      recipientFingerprints: [fpr],
-      encryption: {
-        profile: PROFILE_COMPATIBLE,
-        hideRecipients: true,
-      },
-    });
-
-    const envelope = arts.find((a) => /envelope/i.test(a.label) || /envelope/i.test(a.filename));
-    expect(envelope).toBeTruthy();
-    expect(envelope.sensitive).toBe(false);
-    expect(base64ToBytes(envelope.content).length).toBeGreaterThan(12);
-    expect(envelope.cryptoSummary).toContain("AES-256-GCM");
-    // Envelope is attributed to the slip39 step that created it (step 4).
-    expect(envelope.stepIndex).toBe(4);
-    expect(envelope.stepName).toBe("slip39");
-
-    const gpgShares = arts.filter((a) => a.mime === "application/pgp-encrypted");
-    expect(gpgShares.length).toBe(3);
-    expect(gpgShares.every((a) => /SEIPD v1/.test(a.cryptoSummary))).toBe(true);
-    // GPG share artifacts point back at the encrypt step (step 6).
-    expect(gpgShares.every((a) => a.stepIndex === 6 && a.stepName === "encrypt")).toBe(true);
-  }, 60_000);
-
-  it("rebuilds P-256 PEM from shares (envelope path)", async () => {
-    const split = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | out name=share"
-    );
-    const arts = await runRecipe(split.ast);
-    const shares = arts.filter((a) => a.shareIndex).map((a) => a.content);
-    const envelope = arts.find((a) => /envelope/i.test(a.filename));
-    expect(envelope).toBeTruthy();
-
-    const recover = compileRecipe(
-      "recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
-    );
-    expect(recover.validation.ok).toBe(true);
-    const out = await runRecipe(recover.ast, {
-      inputs: {
-        shares: {
-          mnemonics: [shares[0], shares[1]],
-          envelopeB64: envelope.content,
-        },
-      },
-    });
+    const out = await runRecipe(ast);
     expect(out[0].content).toContain("BEGIN PRIVATE KEY");
-
     const b64 = out[0].content
       .replace(/-----[^-]+-----/g, "")
       .replace(/\s+/g, "");
@@ -108,9 +52,115 @@ describe("toolkit recover / combine", () => {
       ["sign"]
     );
     expect(key).toBeInstanceOf(CryptoKey);
+  }, 30_000);
+
+  it("fanout emits public key and does not consume keypair for scalar export", async () => {
+    const { ast, validation } = compileRecipe(
+      "genkey ec/p256 | fanout format=spki which=public name=public-key ext=spki | export scalar | hex"
+    );
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    const pub = arts.find((a) => a.role === "key" || /public-key/i.test(a.filename || ""));
+    expect(pub).toBeTruthy();
+    expect(pub.sensitive).toBe(false);
+    expect(pub.tags).toEqual(expect.arrayContaining(["public"]));
+    const hex = arts.find((a) => /^[0-9a-f]{64}$/.test(a.content));
+    expect(hex).toBeTruthy();
+  }, 30_000);
+
+  it("direct scalar SSS: fanout → slip39 → combine → import scalar", async () => {
+    const split = compileRecipe(
+      "genkey ec/p256 | fanout format=spki which=public name=public-key | export scalar | slip39 threshold=2 shares=3 | foreach | out name=share"
+    );
+    expect(split.validation.ok).toBe(true);
+    const arts = await runRecipe(split.ast);
+    expect(arts.some((a) => a.role === "envelope")).toBe(false);
+    const shares = arts.filter((a) => a.role === "share" || a.shareIndex);
+    expect(shares.length).toBe(3);
+    expect(shares.every((a) => a.role === "share")).toBe(true);
+
+    const recover = compileRecipe(
+      "recombine | combine | import scalar alg=ec/p256 | export pkcs8 | pem"
+    );
+    const out = await runRecipe(recover.ast, {
+      inputs: {
+        shares: { mnemonics: [shares[0].content, shares[1].content] },
+      },
+    });
+    expect(out[0].content).toContain("BEGIN PRIVATE KEY");
   }, 60_000);
 
-  it("full inverse: encrypt gpg shares → decrypt gpg → rebuild PEM", async () => {
+  it("slip39 rejects PEM at compile time (refined types)", () => {
+    const { validation } = compileRecipe(
+      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3"
+    );
+    expect(validation.ok).toBe(false);
+    expect(
+      validation.errors.some((e) => /export scalar|symencrypt|does not accept/i.test(e.message))
+    ).toBe(true);
+  });
+
+  it("OpenPGP envelope path: pem → symencrypt → slip39 → combine → symdecrypt", async () => {
+    const split = compileRecipe(
+      "genkey ec/p256 | export pkcs8 | pem | symencrypt | slip39 threshold=2 shares=3 | foreach | out name=share"
+    );
+    expect(split.validation.ok).toBe(true);
+    const arts = await runRecipe(split.ast, {
+      encryption: { profile: PROFILE_COMPATIBLE },
+    });
+    const envelope = arts.find((a) => a.role === "envelope");
+    expect(envelope).toBeTruthy();
+    expect(envelope.filename).toMatch(/\.asc$/i);
+    expect(envelope.content).toContain("BEGIN PGP MESSAGE");
+    expect(envelope.sensitive).toBe(false);
+    expect(envelope.stepName).toBe("symencrypt");
+    const shares = arts.filter((a) => a.shareIndex).map((a) => a.content);
+    expect(shares.length).toBe(3);
+
+    const recover = compileRecipe("recombine | combine | symdecrypt | utf8");
+    expect(recover.validation.inputNeeds).toEqual(
+      expect.arrayContaining(["shares", "envelope"])
+    );
+    const out = await runRecipe(recover.ast, {
+      inputs: {
+        shares: { mnemonics: [shares[0], shares[2]] },
+        envelope: { armored: envelope.content },
+      },
+    });
+    expect(out[0].content).toContain("BEGIN PRIVATE KEY");
+  }, 60_000);
+
+  it("foreach|encrypt on scalar shares emits GPG artifacts without slip39 envelope", async () => {
+    const { privateKey, publicKey } = await generateKey({
+      type: "ecc",
+      curve: "curve25519",
+      userIDs: [{ name: "Test", email: "test@example.com" }],
+      format: "object",
+    });
+    void privateKey;
+    const fpr = publicKey.getFingerprint().toUpperCase();
+
+    const { ast, validation } = compileRecipe(
+      "genkey ec/p256 | fanout format=spki which=public name=public-key | export scalar | slip39 threshold=2 shares=3 | foreach | encrypt gpg"
+    );
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast, {
+      recipients: [publicKey],
+      recipientFingerprints: [fpr],
+      encryption: {
+        profile: PROFILE_COMPATIBLE,
+        hideRecipients: true,
+      },
+    });
+
+    expect(arts.some((a) => a.role === "envelope")).toBe(false);
+    const gpgShares = arts.filter((a) => a.mime === "application/pgp-encrypted");
+    expect(gpgShares.length).toBe(3);
+    expect(gpgShares.every((a) => a.role === "share")).toBe(true);
+    expect(gpgShares.every((a) => /SEIPD v1/.test(a.cryptoSummary))).toBe(true);
+  }, 60_000);
+
+  it("full inverse: encrypt gpg scalar shares → decrypt gpg → rebuild PEM", async () => {
     const { privateKey: pgpPriv, publicKey } = await generateKey({
       type: "ecc",
       curve: "curve25519",
@@ -120,7 +170,7 @@ describe("toolkit recover / combine", () => {
     const fpr = publicKey.getFingerprint().toUpperCase();
 
     const split = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg"
+      "genkey ec/p256 | export scalar | slip39 threshold=2 shares=3 | foreach | encrypt gpg"
     );
     const arts = await runRecipe(split.ast, {
       recipients: [publicKey],
@@ -129,13 +179,10 @@ describe("toolkit recover / combine", () => {
     const ciphertexts = arts
       .filter((a) => a.mime === "application/pgp-encrypted")
       .map((a) => a.content);
-    const envelope = arts.find((a) => /envelope/i.test(a.filename));
     expect(ciphertexts.length).toBe(3);
-    expect(envelope).toBeTruthy();
 
-    const armoredPrivate = pgpPriv.armor();
     const recover = compileRecipe(
-      "decrypt gpg | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
+      "decrypt gpg | combine | import scalar alg=ec/p256 | export pkcs8 | pem"
     );
     expect(recover.validation.ok).toBe(true);
     expect(recover.validation.inputNeeds).toEqual(
@@ -145,11 +192,10 @@ describe("toolkit recover / combine", () => {
       inputs: {
         gpg: {
           armoredMessages: [ciphertexts[0], ciphertexts[2]],
-          privateKeyArmored: armoredPrivate,
+          privateKeyArmored: pgpPriv.armor(),
           passphrase: "",
-          envelopeB64: envelope.content,
         },
-        shares: { mnemonics: [], envelopeB64: envelope.content },
+        shares: { mnemonics: [] },
       },
     });
     expect(out[0].content).toContain("BEGIN PRIVATE KEY");
@@ -165,7 +211,7 @@ describe("toolkit recover / combine", () => {
     const fpr = publicKey.getFingerprint().toUpperCase();
 
     const split = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3 | foreach | encrypt gpg"
+      "genkey ec/p256 | export scalar | slip39 threshold=2 shares=3 | foreach | encrypt gpg"
     );
     const arts = await runRecipe(split.ast, {
       recipients: [publicKey],
@@ -174,9 +220,7 @@ describe("toolkit recover / combine", () => {
     const ciphertexts = arts
       .filter((a) => a.mime === "application/pgp-encrypted")
       .map((a) => a.content);
-    const envelope = arts.find((a) => /envelope/i.test(a.filename));
 
-    // Simulate Kleopatra/gpg external decrypt of share 0
     const { decrypt, readMessage } = await import("openpgp");
     const external = await decrypt({
       message: await readMessage({ armoredMessage: ciphertexts[0] }),
@@ -187,84 +231,31 @@ describe("toolkit recover / combine", () => {
     expect(validateShareMnemonic(externalMnemonic).ok).toBe(true);
 
     const recover = compileRecipe(
-      "decrypt gpg | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
+      "decrypt gpg | combine | import scalar alg=ec/p256 | export pkcs8 | pem"
     );
-    // Only one ciphertext left for the browser key; other share is plaintext.
-    // This is the "Need at least 2 shares, got 1" failure mode before the fix.
     const out = await runRecipe(recover.ast, {
       inputs: {
         gpg: {
           armoredMessages: [ciphertexts[2]],
           privateKeyArmored: pgpPriv.armor(),
           passphrase: "",
-          envelopeB64: envelope.content,
         },
         shares: {
           mnemonics: [externalMnemonic],
-          envelopeB64: envelope.content,
         },
       },
     });
     expect(out[0].content).toContain("BEGIN PRIVATE KEY");
   }, 90_000);
 
-  it("bare slip39 (no foreach/sink) emits envelope and round-trips PEM", async () => {
-    const split = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3"
-    );
-    expect(split.validation.ok).toBe(true);
-    const arts = await runRecipe(split.ast);
-    const shares = arts.filter(
-      (a) => a.sensitive && /share/i.test(a.label || a.filename || "")
-    );
-    // valueToArtifacts labels as Share N even without foreach
-    const mnemonics = arts
-      .filter((a) => a.shareIndex || /^Share\s+\d+/i.test(a.label || ""))
-      .map((a) => a.content);
-    expect(mnemonics.length).toBe(3);
-    for (const m of mnemonics) {
-      expect(validateShareMnemonic(m).ok).toBe(true);
-    }
-
-    const envelope = arts.find(
-      (a) => /envelope/i.test(a.label) || /envelope/i.test(a.filename)
-    );
-    expect(envelope).toBeTruthy();
-    expect(envelope.sensitive).toBe(false);
-
-    // Without envelope, combine must fail with a helpful message
-    await expect(combineShares([mnemonics[0], mnemonics[1]])).rejects.toThrow(
-      /envelope\.bin\.b64/i
-    );
-
-    const recover = compileRecipe(
-      "recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem"
-    );
-    const out = await runRecipe(recover.ast, {
-      inputs: {
-        shares: {
-          mnemonics: [mnemonics[0], mnemonics[2]],
-          envelopeB64: envelope.content,
-        },
-      },
-    });
-    expect(out[0].content).toContain("BEGIN PRIVATE KEY");
-    void shares;
-  }, 60_000);
-
   it("bare random 32 | slip39 has no envelope and recovers", async () => {
-    const split = compileRecipe(
-      "random 32 | slip39 threshold=2 shares=3"
-    );
+    const split = compileRecipe("random 32 | slip39 threshold=2 shares=3");
     const arts = await runRecipe(split.ast);
     const mnemonics = arts
       .filter((a) => a.shareIndex || /^Share\s+\d+/i.test(a.label || ""))
       .map((a) => a.content);
     expect(mnemonics.length).toBe(3);
-    const envelope = arts.find(
-      (a) => /envelope/i.test(a.label) || /envelope/i.test(a.filename)
-    );
-    expect(envelope).toBeFalsy();
+    expect(arts.some((a) => a.role === "envelope")).toBe(false);
 
     const recover = compileRecipe("recombine | combine | hex");
     const out = await runRecipe(recover.ast, {
@@ -309,43 +300,60 @@ describe("toolkit recover / combine", () => {
     const split = compileRecipe(splitPreset.recipe);
     const arts = await runRecipe(split.ast);
     const mnemonics = arts.filter((a) => a.shareIndex).map((a) => a.content);
-    const envelope = arts.find((a) => /envelope/i.test(a.filename));
 
     const recover = compileRecipe(recoverPreset.recipe);
     const out = await runRecipe(recover.ast, {
       inputs: {
         shares: {
           mnemonics: [mnemonics[0], mnemonics[2]],
-          envelopeB64: envelope?.content || "",
         },
       },
     });
-    // base64 of 32 random bytes
     expect(out[0].content.length).toBeGreaterThan(20);
     expect(base64ToBytes(out[0].content).length).toBe(32);
   }, 30_000);
 
-  it("preset rebuild-p256 recovers bare-slip39 PEM split", async () => {
+  it("preset rebuild-p256 recovers scalar split", async () => {
     const rebuild = PRESETS.find((p) => p.id === "rebuild-p256");
     expect(rebuild).toBeTruthy();
 
     const split = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3"
+      "genkey ec/p256 | export scalar | slip39 threshold=2 shares=3"
     );
     const arts = await runRecipe(split.ast);
     const mnemonics = arts
       .filter((a) => a.shareIndex || /^Share\s+\d+/i.test(a.label || ""))
       .map((a) => a.content);
-    const envelope = arts.find((a) => /envelope/i.test(a.filename));
-    expect(envelope).toBeTruthy();
 
     const recover = compileRecipe(rebuild.recipe);
     const out = await runRecipe(recover.ast, {
       inputs: {
         shares: {
           mnemonics: [mnemonics[1], mnemonics[2]],
-          envelopeB64: envelope.content,
         },
+      },
+    });
+    expect(out[0].content).toContain("BEGIN PRIVATE KEY");
+  }, 60_000);
+
+  it("preset pem-envelope-rebuild recovers symencrypt split", async () => {
+    const rebuild = PRESETS.find((p) => p.id === "pem-envelope-rebuild");
+    const splitPreset = PRESETS.find((p) => p.id === "pem-envelope-split");
+    expect(rebuild && splitPreset).toBeTruthy();
+
+    const split = compileRecipe(splitPreset.recipe);
+    const arts = await runRecipe(split.ast, {
+      encryption: { profile: PROFILE_COMPATIBLE },
+    });
+    const envelope = arts.find((a) => a.role === "envelope");
+    const mnemonics = arts.filter((a) => a.shareIndex).map((a) => a.content);
+    expect(envelope).toBeTruthy();
+
+    const recover = compileRecipe(rebuild.recipe);
+    const out = await runRecipe(recover.ast, {
+      inputs: {
+        shares: { mnemonics: [mnemonics[0], mnemonics[1]] },
+        envelope: { armored: envelope.content },
       },
     });
     expect(out[0].content).toContain("BEGIN PRIVATE KEY");

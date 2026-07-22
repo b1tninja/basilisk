@@ -5,6 +5,7 @@ import {
   keyPillExtrasHtml,
   primaryUidLabel,
 } from "../lib/key-hit.js";
+import { zeroKeyMaterial } from "../lib/pgp/memory.js";
 import { normalizeFingerprintInput, normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
 import { DEFAULT_ICE_SERVERS, QuorumSession } from "../lib/quorum/rtc.js";
 import {
@@ -340,14 +341,22 @@ async function resolvePrivateKey() {
     const meta = keys.find((k) => k.fingerprint === vaultFpr);
     /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
     const opts = {};
-    if (meta?.protection === "passkey") {
-      opts.prfIkm = await getPasskeyPrf();
-    } else if (meta?.protection === "passphrase") {
-      opts.passphrase = pass;
+    try {
+      if (meta?.protection === "passkey") {
+        opts.prfIkm = await getPasskeyPrf();
+      } else if (meta?.protection === "passphrase") {
+        opts.passphrase = pass;
+      }
+      const armored = await vaultUnlockKey(vaultFpr, opts);
+      const key = await unlockPrivateKey(armored, pass);
+      return { key, fingerprint: normalizeFingerprintInput(vaultFpr) };
+    } finally {
+      try {
+        opts.prfIkm?.fill?.(0);
+      } catch (_) {
+        /* wipe */
+      }
     }
-    const armored = await vaultUnlockKey(vaultFpr, opts);
-    const key = await unlockPrivateKey(armored, pass);
-    return { key, fingerprint: normalizeFingerprintInput(vaultFpr) };
   }
   const armored = document.getElementById("private-key")?.value || "";
   if (!armored.includes("BEGIN PGP")) {
@@ -361,6 +370,16 @@ async function resolvePrivateKey() {
     key,
     fingerprint: normalizeFingerprintInput(key.getFingerprint()),
   };
+}
+
+/** Clear private-key / passphrase DOM after leave (memory-safety.js rule 5). */
+function clearSensitiveQuorumFields() {
+  for (const id of ["private-key", "passphrase"]) {
+    const el = document.getElementById(id);
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      el.value = "";
+    }
+  }
 }
 
 function setSessionUi(active) {
@@ -622,6 +641,7 @@ function wireEvents() {
     if (t.id === "leave-btn") {
       session?.stop();
       session = null;
+      clearSensitiveQuorumFields();
       setSessionUi(false);
       renderRoster(new Map());
       const st = document.getElementById("session-status");

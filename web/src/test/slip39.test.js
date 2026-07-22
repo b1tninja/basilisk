@@ -64,19 +64,12 @@ describe("mnemonic shares", () => {
     );
   });
 
-  it("envelope mode round-trips a PEM-sized payload", async () => {
+  it("rejects non-16/32-byte masters with guidance", async () => {
     const pem = "-----BEGIN PRIVATE KEY-----\n" + "A".repeat(200) + "\n-----END PRIVATE KEY-----\n";
     const secret = new TextEncoder().encode(pem);
-    const { mnemonics, envelope, enveloped } = await splitShares(secret, {
-      threshold: 2,
-      shares: 3,
-    });
-    expect(enveloped).toBe(true);
-    expect(envelope).toBeInstanceOf(Uint8Array);
-    const recovered = await combineShares([mnemonics[1], mnemonics[2]], {
-      envelope,
-    });
-    expect(new TextDecoder().decode(recovered)).toBe(pem);
+    await expect(
+      splitShares(secret, { threshold: 2, shares: 3 })
+    ).rejects.toThrow(/export scalar|symencrypt/i);
   });
 
   it("passphrase masks prevent recovery without it", async () => {

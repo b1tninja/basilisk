@@ -26,6 +26,7 @@ import {
 } from "./crypto.js";
 import { canonicalAudience, isValidRoomId } from "./room.js";
 import { postSignaling, startSignalingPoll } from "./signaling.js";
+import { zeroKeyMaterial } from "../pgp/memory.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 
 export const DEFAULT_ICE_SERVERS = [
@@ -178,6 +179,13 @@ export class QuorumSession {
       peer.kcVerified = false;
       peer.status = "failed";
     }
+    // Wipe OpenPGP privateParams while the object is still reachable.
+    try {
+      zeroKeyMaterial(this.privateKey);
+    } catch (_) {
+      /* ignore */
+    }
+    this.privateKey = /** @type {any} */ (null);
     this._emitRoster();
     this.onStatus?.("Disconnected");
   }

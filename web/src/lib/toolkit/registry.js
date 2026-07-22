@@ -7,9 +7,13 @@
  * (gpg --encrypt/--decrypt, base64 -d, ssss-split/combine, openssl pkey).
  */
 
+import { stepAcceptsRefined, typeOf } from "./types.js";
+
 /** @typedef {"none"|"bytes"|"text"|"key"|"keypair"|"shares"|"artifact"|"bundle"} IoType */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
 /** @typedef {"enum"|"int"|"string"|"bool"|"flag"} ParamType */
+/** @typedef {import("./types.js").StepOverload} StepOverload */
+/** @typedef {import("./types.js").RefinedType} RefinedType */
 
 /**
  * @typedef {object} ParamSpec
@@ -34,9 +38,10 @@
  * @property {ParamSpec[]} [params]
  * @property {boolean} [flowControl]
  * @property {boolean} [unresolvedRecipients]  needs runtime recipient binding
- * @property {"shares"|"gpg"|"text"|null} [unresolvedInputs]  needs runtime input panel
+ * @property {"shares"|"gpg"|"text"|"envelope"|null} [unresolvedInputs]  needs runtime input panel
  * @property {string[]} [aliases]
  * @property {(params: Record<string, *>) => { input: IoType, output: IoType }} [effectiveIo]
+ * @property {StepOverload[]} [overloads]  refined-type overloads (compile-time dispatch)
  */
 
 /** @type {StepSpec[]} */
@@ -169,7 +174,7 @@ export const STEPS = [
   {
     name: "export",
     kind: "transform",
-    doc: "Export a key to a binary encoding (PKCS#8 private, SPKI public, JWK, or raw).",
+    doc: "Export a key to a binary encoding (PKCS#8 private, SPKI public, JWK, raw, or scalar/d for EC/OKP private keys).",
     input: "keypair",
     output: "bytes",
     params: [
@@ -178,8 +183,8 @@ export const STEPS = [
         type: "enum",
         positional: true,
         default: "pkcs8",
-        enum: ["pkcs8", "spki", "jwk", "raw"],
-        doc: "Export format (pkcs8 = private key DER)",
+        enum: ["pkcs8", "spki", "jwk", "raw", "scalar", "d"],
+        doc: "Export format (scalar/d = private key material as fixed-length bytes for slip39)",
       },
       {
         name: "which",
@@ -200,7 +205,7 @@ export const STEPS = [
   {
     name: "import",
     kind: "transform",
-    doc: "Import DER/raw key bytes into a WebCrypto keypair (openssl pkey -in / gpg --import).",
+    doc: "Import DER/raw/scalar key bytes into a WebCrypto keypair (openssl pkey -in / gpg --import).",
     input: "bytes",
     output: "keypair",
     params: [
@@ -209,8 +214,8 @@ export const STEPS = [
         type: "enum",
         positional: true,
         default: "pkcs8",
-        enum: ["pkcs8", "spki", "raw"],
-        doc: "Import format",
+        enum: ["pkcs8", "spki", "raw", "scalar", "d"],
+        doc: "Import format (scalar/d = EC/OKP private key bytes)",
       },
       {
         name: "alg",
@@ -338,7 +343,7 @@ export const STEPS = [
   {
     name: "slip39",
     kind: "transform",
-    doc: "Split a secret into SLIP-39 mnemonic shares (K-of-N), like ssss-split. Payloads larger than 256 bits use envelope encryption.",
+    doc: "Split a 16- or 32-byte master into SLIP-39 mnemonic shares (K-of-N). For EC keys use export scalar first; for PEM/arbitrary data use symencrypt first.",
     input: "bytes",
     output: "shares",
     aliases: ["split"],
@@ -363,14 +368,36 @@ export const STEPS = [
         name: "passphrase",
         type: "string",
         default: "",
-        doc: "Optional SLIP-39 passphrase (empty = none)",
+        doc: "Optional share passphrase mask (Basilisk-specific; empty = none)",
+      },
+    ],
+    overloads: [
+      {
+        when: { base: "bytes", kind: "master", length: 16 },
+        output: { base: "shares", kind: "mnemonic" },
+      },
+      {
+        when: { base: "bytes", kind: "master", length: 32 },
+        output: { base: "shares", kind: "mnemonic" },
+      },
+      {
+        when: { base: "bytes", kind: "master" },
+        output: { base: "shares", kind: "mnemonic" },
+      },
+      {
+        when: { base: "bytes", kind: "scalar", length: 32 },
+        output: { base: "shares", kind: "mnemonic" },
+      },
+      {
+        when: { base: "bytes", kind: "scalar", length: 16 },
+        output: { base: "shares", kind: "mnemonic" },
       },
     ],
   },
   {
     name: "combine",
     kind: "transform",
-    doc: "Combine SLIP-39 mnemonic shares to recover the secret (ssss-combine). Envelope ciphertext is taken from runtime input when required.",
+    doc: "Combine SLIP-39 mnemonic shares to recover the 16/32-byte master (ssss-combine). OpenPGP envelopes are unwrapped separately via symdecrypt.",
     input: "shares",
     output: "bytes",
     aliases: ["recover"],
@@ -379,7 +406,99 @@ export const STEPS = [
         name: "passphrase",
         type: "string",
         default: "",
-        doc: "Optional SLIP-39 passphrase used at split time",
+        doc: "Optional share passphrase used at split time",
+      },
+    ],
+    overloads: [
+      {
+        when: { base: "shares", kind: "mnemonic" },
+        output: { base: "bytes", kind: "master" },
+      },
+      {
+        when: { base: "shares" },
+        output: { base: "bytes", kind: "master" },
+      },
+    ],
+  },
+  {
+    name: "symencrypt",
+    kind: "transform",
+    doc: "OpenPGP symmetric-encrypt the payload under a fresh 32-byte master (SKESK / SEIPD), emit envelope.asc, and pass the master bytes to slip39. Recover with gpg --decrypt using the hex master as passphrase.",
+    input: "text",
+    output: "bytes",
+    aliases: ["pgpenvelop", "skesk"],
+    params: [
+      {
+        name: "name",
+        type: "string",
+        default: "envelope",
+        doc: "Envelope artifact filename stem",
+      },
+    ],
+    // Type flow via inferParamDrivenType (rejects master/scalar; accepts pem/der/opaque).
+  },
+  {
+    name: "symdecrypt",
+    kind: "transform",
+    doc: "Decrypt a runtime-bound OpenPGP envelope.asc using the pipeline bytes as the hex passphrase master (inverse of symencrypt).",
+    input: "bytes",
+    output: "bytes",
+    aliases: ["pgpunwrap"],
+    unresolvedInputs: "envelope",
+    params: [],
+    overloads: [
+      {
+        when: { base: "bytes", kind: "master" },
+        output: { base: "bytes", kind: "opaque" },
+      },
+    ],
+  },
+  {
+    name: "fanout",
+    kind: "transform",
+    doc: "Emit a side-stream artifact from the current value (e.g. public SPKI/PEM) and pass the value through unchanged — for multi-pronged outputs beside a private scalar split.",
+    input: "keypair",
+    output: "keypair",
+    aliases: ["side", "redirect"],
+    params: [
+      {
+        name: "format",
+        type: "enum",
+        positional: true,
+        default: "spki",
+        enum: ["spki", "pkcs8", "jwk", "pem", "scalar"],
+        doc: "What to emit as a side artifact",
+      },
+      {
+        name: "which",
+        type: "enum",
+        default: "public",
+        enum: ["private", "public"],
+        doc: "Which half to emit (ignored for scalar)",
+      },
+      {
+        name: "name",
+        type: "string",
+        default: "fanout",
+        doc: "Artifact filename stem",
+      },
+      {
+        name: "ext",
+        type: "string",
+        default: "",
+        doc: "File extension override",
+      },
+      {
+        name: "label",
+        type: "string",
+        default: "",
+        doc: "Display label",
+      },
+    ],
+    overloads: [
+      {
+        when: { base: "keypair" },
+        output: (current) => ({ ...current }),
       },
     ],
   },
@@ -440,7 +559,7 @@ export const STEPS = [
   {
     name: "text",
     kind: "sink",
-    doc: "Print the current value as a text message tile (like print). Encrypt opens it as a compose message. Use out when you want a named downloadable file attachment instead.",
+    doc: "Emit a message tile (no filename). Encrypt opens it in the compose box. Prefer this for PEM, hex, base64, or other printable secrets you want to encrypt as a message body.",
     input: "text",
     output: "text",
     aliases: ["print", "echo"],
@@ -463,7 +582,7 @@ export const STEPS = [
   {
     name: "out",
     kind: "sink",
-    doc: "Emit a named downloadable file tile and pass the value through so you can keep piping — e.g. pem | out name=key ext=pem | encrypt gpg. Contrast with text, which prints a message rather than a file.",
+    doc: "Emit a named file tile (set name/ext) and pass the value through. Encrypt attaches the raw bytes as a file — use this when you want a downloadable attachment rather than a compose message.",
     input: "text",
     output: "text",
     aliases: ["output", "save", "emit"],
@@ -473,20 +592,20 @@ export const STEPS = [
         type: "string",
         positional: true,
         default: "output",
-        doc: "Tile title / filename stem",
+        doc: "Filename stem (required intent for file disposition)",
       },
       {
         name: "encoding",
         type: "enum",
         default: "auto",
         enum: ["auto", "text", "base64", "hex"],
-        doc: "How bytes are encoded into the tile (text values stay text unless hex/base64)",
+        doc: "How pipeline bytes are shown in the tile (file handoff still uses zeroable raw bytes when available)",
       },
       {
         name: "ext",
         type: "string",
         default: "",
-        doc: "File extension override (e.g. pem, asc, bin) — empty = infer",
+        doc: "File extension (e.g. pem, asc, bin) — empty = infer",
       },
       {
         name: "mime",
@@ -599,34 +718,26 @@ export function effectiveIo(spec, params = {}) {
 
 /**
  * Steps whose input is compatible with `from` (or source steps when from is none/null).
- * @param {IoType|null} from
+ * Accepts a coarse IoType string or a RefinedType.
+ * @param {IoType|RefinedType|null} from
  * @returns {StepSpec[]}
  */
 export function stepsAccepting(from) {
-  if (!from || from === "none") {
+  /** @type {RefinedType} */
+  const refined =
+    from && typeof from === "object" && "base" in from
+      ? /** @type {RefinedType} */ (from)
+      : typeOf(/** @type {IoType} */ (from || "none"));
+
+  if (!refined || refined.base === "none") {
     return STEPS.filter((s) => s.kind === "source" || s.input === "none");
   }
-  return STEPS.filter((s) => {
-    if (s.name === "tee" || s.name === "inspect" || s.name === "out") return true;
-    if (s.kind === "flow") {
-      if (s.name === "foreach") return from === "shares";
-      if (s.name === "merge") return true;
-    }
-    if (s.name === "combine") return from === "shares";
-    // Prefer encode direction for suggestions; decode variants still listed via name.
-    const io = effectiveIo(s, {});
-    if (io.input === from) return true;
-    // Also suggest decode variants when current is text
-    if (from === "text" && s.params?.some((p) => p.flag === "-d")) return true;
-    if (s.input === from) return true;
-    if (s.input === "text" && (from === "text" || from === "artifact")) return true;
-    if (from === "shares" && s.name === "foreach") return true;
-    return false;
-  });
+  return STEPS.filter((s) => stepAcceptsRefined(s, refined));
 }
 
 /**
- * Whether a value type can feed a step's declared input.
+ * Whether a value type can feed a step's declared input (coarse legacy helper).
+ * Prefer resolveStepType / stepAcceptsRefined for refined checks.
  * @param {IoType} from
  * @param {IoType} to
  * @param {string} [stepName]
@@ -637,7 +748,8 @@ export function ioCompatible(from, to, stepName) {
     stepName === "tee" ||
     stepName === "inspect" ||
     stepName === "out" ||
-    stepName === "text"
+    stepName === "text" ||
+    stepName === "fanout"
   ) {
     return !!from && from !== "none";
   }
@@ -649,9 +761,7 @@ export function ioCompatible(from, to, stepName) {
   if (from === "shares" && to === "text") return false; // need foreach
   if (from === "text" && to === "artifact") return true;
   if (from === "artifact" && to === "bundle") return true;
-  // utf8 accepts text (encode) as well as bytes (decode) — engine handles both
   if (stepName === "utf8" && (from === "bytes" || from === "text")) return true;
-  // slip39 accepts text (UTF-8) or bytes
-  if (stepName === "slip39" && (from === "text" || from === "bytes")) return true;
+  if (stepName === "symencrypt" && (from === "text" || from === "bytes")) return true;
   return false;
 }

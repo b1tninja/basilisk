@@ -1,7 +1,18 @@
 /**
  * Best-effort wipe of decrypted private-key material from OpenPGP.js key objects.
- * Does not guarantee the runtime has not already copied material into JIT code,
- * GC survivor spaces, or CPU registers.
+ *
+ * ── Browser constraints (read before “improving” this) ─────────────────────
+ * WebCrypto / OpenPGP.js expose private scalars as Uint8Array (or MPI wrappers)
+ * once a key is decrypted in JS. We can overwrite those views with fill(0).
+ * We cannot:
+ *   - force the UA to zeroize non-extractable CryptoKey handles (W3C WebCrypto
+ *     § Security considerations for developers — no normative zeroization);
+ *   - erase immutable JS string copies of armored key blocks;
+ *   - scrub JIT/GC ghost copies of the same ArrayBuffer.
+ *
+ * Keep secrets in typed arrays for as long as they exist in script, wipe in
+ * finally{}, and drop references. Prefer extractable:false WebCrypto keys when
+ * the algorithm path allows it so raw bytes never enter JS at all.
  *
  * @param {import("openpgp").PrivateKey | null | undefined} key
  */

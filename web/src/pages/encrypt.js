@@ -756,6 +756,17 @@ async function runEncrypt() {
         hideRecipients,
         signingKeys: signingKey ? [signingKey] : [],
       });
+    } finally {
+      // Worker path transfers a copy; wipe the main-thread plaintext buffers.
+      for (const p of payloads) {
+        if (p.bytes instanceof Uint8Array) {
+          try {
+            p.bytes.fill(0);
+          } catch (_) {
+            /* wipe */
+          }
+        }
+      }
     }
     lastEncryptSummary = next.length
       ? await summarizeEncryption(next[0].armored)
@@ -827,13 +838,22 @@ async function prepareSigningKeyMaterial() {
     if (!meta) throw new Error("Signing key not found in vault");
     /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
     const opts = {};
-    if (meta.protection === "passkey") {
-      opts.prfIkm = await getPasskeyPrf();
-    } else if (meta.protection === "passphrase") {
-      opts.passphrase = passphrase;
+    try {
+      if (meta.protection === "passkey") {
+        opts.prfIkm = await getPasskeyPrf();
+      } else if (meta.protection === "passphrase") {
+        opts.passphrase = passphrase;
+      }
+      const armored = await vaultUnlockKey(vaultFpr, opts);
+      return { armored, passphrase: "", fingerprint: vaultFpr.toUpperCase() };
+    } finally {
+      // PRF IKM is secret key material — wipe even if unlock throws.
+      try {
+        opts.prfIkm?.fill?.(0);
+      } catch (_) {
+        /* wipe */
+      }
     }
-    const armored = await vaultUnlockKey(vaultFpr, opts);
-    return { armored, passphrase: "", fingerprint: vaultFpr.toUpperCase() };
   }
 
   if (!pasted) {
@@ -943,8 +963,11 @@ async function revalidateRecipients() {
 
 /**
  * Encrypt via Web Worker when available.
- * Structured-clones payload bytes (no transfer list) so main-thread fallback
- * still works if the worker fails.
+ *
+ * File plaintext is copied into a dedicated ArrayBuffer and *transferred* to the
+ * worker (memory-safety.js rule 3). Caller’s payloads[].bytes stay for fallback
+ * and must be wiped with inlined fill(0) after encrypt completes.
+ *
  * @param {{
  *   recipients: Recipient[],
  *   passwords: string[],
@@ -993,35 +1016,41 @@ function encryptWithWorker(opts) {
       reject(err?.message ? new Error(err.message) : new Error("Encrypt worker error"));
     };
 
+    /** @type {Transferable[]} */
+    const transferList = [];
     const serialPayloads = opts.payloads.map((p) => {
       if (p.kind === "file" && p.bytes instanceof Uint8Array) {
-        // Copy into a fresh ArrayBuffer so the worker gets its own bytes
-        // without detaching the main-thread view (needed for fallback).
-        const copy = p.bytes.slice().buffer;
+        // Dedicated tightly packed copy — transfer detaches this view only,
+        // not the caller’s payloads[].bytes used by main-thread fallback.
+        const owned = new Uint8Array(p.bytes);
+        transferList.push(owned.buffer);
         return {
           kind: "file",
           filename: p.filename,
-          bytes: copy,
+          bytes: owned.buffer,
         };
       }
       return { kind: "text", text: p.text || "" };
     });
 
-    worker.postMessage({
-      id,
-      type: "encrypt",
-      recipientKeysArmored: opts.recipients.map((r) => r.armoredKey).filter(Boolean),
-      passwords: opts.passwords,
-      payloads: serialPayloads,
-      profile: opts.profile,
-      hideRecipients: opts.hideRecipients,
-      ...(opts.signingKeyArmored
-        ? {
-            signingKeyArmored: opts.signingKeyArmored,
-            signingKeyPassphrase: opts.signingKeyPassphrase || "",
-          }
-        : {}),
-    });
+    worker.postMessage(
+      {
+        id,
+        type: "encrypt",
+        recipientKeysArmored: opts.recipients.map((r) => r.armoredKey).filter(Boolean),
+        passwords: opts.passwords,
+        payloads: serialPayloads,
+        profile: opts.profile,
+        hideRecipients: opts.hideRecipients,
+        ...(opts.signingKeyArmored
+          ? {
+              signingKeyArmored: opts.signingKeyArmored,
+              signingKeyPassphrase: opts.signingKeyPassphrase || "",
+            }
+          : {}),
+      },
+      transferList
+    );
   });
 }
 
@@ -1459,9 +1488,16 @@ async function init() {
 }
 
 /**
- * Receive an artifact from a same-origin Toolkit popout. Text dispositions
- * become the compose message; file dispositions attach on the Files tab.
- * The opener waits for the ready message, so no plaintext is sent while the
+ * Receive an artifact from a same-origin Toolkit popout.
+ *
+ * Text dispositions → compose message (immutable string — unavoidable for UX).
+ * File dispositions → Files tab as Uint8Array / File. Prefer this path for
+ * secret octets: Toolkit may transfer the ArrayBuffer (detached in the opener);
+ * we must keep accepting ArrayBuffer | Uint8Array here. Never coerce file
+ * payloads through a JS string “for convenience” — strings cannot be wiped
+ * (see `src/lib/memory-safety.js`).
+ *
+ * The opener waits for the ready message so no plaintext is sent while the
  * crypto module is still running its pre-operational self-test.
  */
 function initToolkitArtifactTransfer() {
@@ -1478,7 +1514,7 @@ function initToolkitArtifactTransfer() {
       return;
     }
     const artifact = event.data.artifact;
-    if (!artifact || typeof artifact.content !== "string") return;
+    if (!artifact || typeof artifact !== "object") return;
 
     const label =
       typeof artifact.label === "string" && artifact.label.trim()
@@ -1489,10 +1525,16 @@ function initToolkitArtifactTransfer() {
     window.removeEventListener("message", onArtifact);
 
     if (asMessage) {
+      const text =
+        typeof artifact.text === "string"
+          ? artifact.text
+          : typeof artifact.content === "string"
+            ? artifact.content
+            : "";
       setTab("message");
       const msgEl = document.getElementById("compose-message");
       if (msgEl instanceof HTMLTextAreaElement) {
-        msgEl.value = artifact.content;
+        msgEl.value = text;
         msgEl.focus();
       }
       updateEncryptButton();
@@ -1510,7 +1552,12 @@ function initToolkitArtifactTransfer() {
       typeof artifact.mime === "string"
         ? artifact.mime
         : "application/octet-stream";
-    const file = new File([artifact.content], filename, { type: mime });
+    const bytes = coerceTransferBytes(artifact);
+    if (!bytes) {
+      showError(errorEl, "Toolkit sent a file artifact without usable bytes.");
+      return;
+    }
+    const file = new File([bytes], filename, { type: mime });
     if (file.size > MAX_TOTAL_BYTES) {
       showError(
         errorEl,
@@ -1534,6 +1581,23 @@ function initToolkitArtifactTransfer() {
     { type: "basilisk:encrypt-ready" },
     window.location.origin
   );
+}
+
+/**
+ * Normalize Toolkit file-transfer bytes. Transferred ArrayBuffers arrive as
+ * ArrayBuffer or Uint8Array; both are valid. `content` string is legacy only.
+ *
+ * @param {{ bytes?: ArrayBuffer|Uint8Array, content?: string }} artifact
+ * @returns {Uint8Array|null}
+ */
+function coerceTransferBytes(artifact) {
+  if (artifact.bytes instanceof Uint8Array) return artifact.bytes;
+  if (artifact.bytes instanceof ArrayBuffer) return new Uint8Array(artifact.bytes);
+  if (typeof artifact.content === "string") {
+    // Legacy toolkit → encrypt transfers (string body). Prefer UTF-8.
+    return new TextEncoder().encode(artifact.content);
+  }
+  return null;
 }
 
 /**
