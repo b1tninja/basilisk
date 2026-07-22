@@ -1522,12 +1522,17 @@ function renderResults() {
             ${masked ? `<button type="button" class="btn btn-ghost btn-compact" data-reveal="${i}">Reveal</button>` : ""}
             <button type="button" class="btn btn-ghost btn-compact" data-copy="${i}">Copy</button>
             <button type="button" class="btn btn-ghost btn-compact" data-download="${i}">Download</button>
-            <button type="button" class="btn btn-ghost btn-compact" data-encrypt="${i}"
-              title="${
-                artifactIsMessage(a)
-                  ? "Open as an Encrypt compose message"
-                  : "Attach as a file in a separate Encrypt window"
-              }">${artifactIsMessage(a) ? "Encrypt as message…" : "Encrypt as file…"}</button>
+            ${
+              artifactLooksLikePgpCiphertext(a)
+                ? `<button type="button" class="btn btn-ghost btn-compact" data-decrypt="${i}"
+                    title="Open this OpenPGP ciphertext in a separate Decrypt window">Decrypt…</button>`
+                : `<button type="button" class="btn btn-ghost btn-compact" data-encrypt="${i}"
+                    title="${
+                      artifactIsMessage(a)
+                        ? "Open as an Encrypt compose message"
+                        : "Attach as a file in a separate Encrypt window"
+                    }">${artifactIsMessage(a) ? "Encrypt as message…" : "Encrypt as file…"}</button>`
+            }
           </div>
         </div>`;
       })
@@ -1615,6 +1620,15 @@ function renderResults() {
       touchActivity();
     });
   });
+  panel.querySelectorAll("[data-decrypt]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-decrypt"));
+      if (artifacts[i] && btn instanceof HTMLButtonElement) {
+        openArtifactInDecrypt(artifacts[i], btn);
+      }
+      touchActivity();
+    });
+  });
   panel.querySelector("#download-all-btn")?.addEventListener("click", () => {
     downloadAllArtifacts();
     touchActivity();
@@ -1636,6 +1650,15 @@ function artifactIsMessage(a) {
     return false;
   }
   return true;
+}
+
+/**
+ * Detect OpenPGP ciphertext so the Decrypt popout can replace Encrypt.
+ * @param {{ content?: string, mime?: string }} a
+ */
+function artifactLooksLikePgpCiphertext(a) {
+  if (a?.mime === "application/pgp-encrypted") return true;
+  return /-----BEGIN PGP MESSAGE-----/i.test(String(a?.content || ""));
 }
 
 /**
@@ -1690,6 +1713,68 @@ function openArtifactInEncrypt(artifact, button) {
           content: artifact.content,
           mime: artifact.mime || "application/octet-stream",
           disposition: asMessage ? "message" : "file",
+        },
+      },
+      window.location.origin
+    );
+    popup.focus();
+    button.textContent = "Opened";
+    setTimeout(() => {
+      button.disabled = false;
+      button.textContent = idleLabel;
+    }, 1200);
+  }
+
+  window.addEventListener("message", onReady);
+}
+
+/**
+ * Open Decrypt and transfer OpenPGP ciphertext after the page signals ready.
+ * @param {{ label?: string, filename?: string, content: string, mime?: string }} artifact
+ * @param {HTMLButtonElement} button
+ */
+function openArtifactInDecrypt(artifact, button) {
+  const idleLabel = "Decrypt…";
+  const popup = window.open(
+    "/decrypt?source=toolkit",
+    "_blank",
+    "popup,width=1100,height=850"
+  );
+  if (!popup) {
+    button.textContent = "Pop-up blocked";
+    setTimeout(() => {
+      button.textContent = idleLabel;
+    }, 1800);
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Opening…";
+  const timeout = setTimeout(() => {
+    window.removeEventListener("message", onReady);
+    button.disabled = false;
+    button.textContent = idleLabel;
+  }, 15_000);
+
+  /** @param {MessageEvent} event */
+  function onReady(event) {
+    if (
+      event.origin !== window.location.origin ||
+      event.source !== popup ||
+      event.data?.type !== "basilisk:decrypt-ready"
+    ) {
+      return;
+    }
+    clearTimeout(timeout);
+    window.removeEventListener("message", onReady);
+    popup.postMessage(
+      {
+        type: "basilisk:decrypt-ciphertext",
+        artifact: {
+          label: artifact.label || "Toolkit ciphertext",
+          filename: sanitizeFilename(artifact.filename, "encrypted.asc"),
+          content: artifact.content,
+          mime: artifact.mime || "application/pgp-encrypted",
         },
       },
       window.location.origin

@@ -41,6 +41,7 @@ import {
   formatDate,
   formatFingerprint,
   copyTextTransient,
+  queryParam,
   showError,
 } from "../lib/utils.js";
 import { getExpertMode, setExpertMode } from "../lib/prefs.js";
@@ -148,6 +149,7 @@ app.innerHTML = `
 `;
 
 // ── Self-test: run at module startup, block decrypt until done ──────────────
+initToolkitCiphertextTransfer();
 runCryptoSelfTests().then((result) => {
   const banner = document.getElementById("crypto-status");
   const decryptBtn = document.getElementById("decrypt-btn");
@@ -161,6 +163,7 @@ runCryptoSelfTests().then((result) => {
       }, 4000);
     }
     if (decryptBtn) decryptBtn.disabled = false;
+    signalToolkitDecryptReady();
   } else {
     cryptoReady = false;
     if (banner) {
@@ -177,6 +180,61 @@ runCryptoSelfTests().then((result) => {
     if (decryptBtn) decryptBtn.disabled = true;
   }
 });
+
+/**
+ * Receive OpenPGP ciphertext from a same-origin Toolkit popout.
+ * Ready is signaled only after the crypto self-test passes.
+ */
+function initToolkitCiphertextTransfer() {
+  if (queryParam("source") !== "toolkit" || !window.opener) return;
+  const opener = window.opener;
+
+  /** @param {MessageEvent} event */
+  function onCiphertext(event) {
+    if (
+      event.origin !== window.location.origin ||
+      event.source !== opener ||
+      event.data?.type !== "basilisk:decrypt-ciphertext"
+    ) {
+      return;
+    }
+    const artifact = event.data.artifact;
+    if (!artifact || typeof artifact.content !== "string") return;
+    if (!/-----BEGIN PGP MESSAGE-----/i.test(artifact.content)) {
+      showError(errorEl, "Toolkit transfer did not include an OpenPGP MESSAGE block.");
+      return;
+    }
+
+    window.removeEventListener("message", onCiphertext);
+    const ct = document.getElementById("ciphertext");
+    if (ct instanceof HTMLTextAreaElement) {
+      ct.value = artifact.content;
+      ct.focus();
+    }
+    touchActivity();
+    void runAnalyze();
+    const label =
+      typeof artifact.label === "string" && artifact.label.trim()
+        ? artifact.label.trim()
+        : "Toolkit ciphertext";
+    const status = document.getElementById("decrypt-status");
+    if (status) {
+      status.className = "status-row ok";
+      status.textContent = `${label} loaded from Toolkit. Unlock a key (or passphrase) to decrypt.`;
+      status.classList.remove("hidden");
+    }
+  }
+
+  window.addEventListener("message", onCiphertext);
+}
+
+function signalToolkitDecryptReady() {
+  if (queryParam("source") !== "toolkit" || !window.opener) return;
+  window.opener.postMessage(
+    { type: "basilisk:decrypt-ready" },
+    window.location.origin
+  );
+}
 
 // ── Memory protection helpers ────────────────────────────────────────────────
 
