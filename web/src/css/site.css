@@ -862,6 +862,25 @@ pre {
   flex-wrap: wrap;
 }
 
+.decrypt-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised, var(--bg, #fff));
+  box-shadow: 0 -6px 18px color-mix(in srgb, var(--text, #000) 8%, transparent);
+}
+.decrypt-actions.hidden {
+  display: none !important;
+}
+
 .claim-notice {
   border-color: var(--brand);
 }

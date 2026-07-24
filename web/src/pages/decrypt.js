@@ -98,11 +98,13 @@ app.innerHTML = `
     <label class="field-label" for="ciphertext">Armored PGP message(s), cleartext signature, or detached signature</label>
     <textarea id="ciphertext" class="compose-message" rows="10"
       placeholder="-----BEGIN PGP MESSAGE-----&#10;…&#10;-----END PGP MESSAGE-----&#10;&#10;(multiple MESSAGE blocks OK)"></textarea>
-    <div class="mt-md">
-      <label class="file-label" for="cipher-file">Or choose .asc / .pgp file(s)</label>
+    <div class="mt-md btn-row wrap items-center">
+      <label class="file-label m-0" for="cipher-file">Or choose .asc / .pgp file(s)</label>
       <input type="file" id="cipher-file" accept=".asc,.pgp,.gpg,text/plain" multiple hidden>
       <span class="file-name" id="cipher-file-name"></span>
+      <button type="button" class="btn btn-ghost" id="inspect-btn">Inspect</button>
     </div>
+    <p class="muted fs-xs mt-xs mb-0">Inspect runs automatically as you paste; use the button if you prefer an explicit action.</p>
   </div>
 
   <div id="inspect-card" class="card hidden"></div>
@@ -141,11 +143,13 @@ app.innerHTML = `
       <p class="muted mt-md">Decrypt runs in a Web Worker when available. Vault keys are scrubbed from memory after use. Sensitive fields auto-clear after 5 minutes idle.</p>
       <p id="idle-clear-note" class="muted mt-xs"></p>
     </div>
-    <div class="btn-row">
-      <button type="button" class="btn" id="decrypt-btn" disabled>Decrypt</button>
-    </div>
     <div id="decrypt-status" class="hidden"></div>
     <div id="decrypt-output" class="card hidden"></div>
+  </div>
+
+  <div id="decrypt-actions" class="decrypt-actions hidden" role="region" aria-label="Decrypt actions">
+    <p id="decrypt-actions-hint" class="muted fs-sm mb-0 flex-1">Choose a vault key or enter a passphrase, then decrypt.</p>
+    <button type="button" class="btn" id="decrypt-btn" disabled>Decrypt</button>
   </div>
 `;
 
@@ -215,17 +219,22 @@ function initToolkitCiphertextTransfer() {
       ct.focus();
     }
     touchActivity();
-    void runAnalyze();
     const label =
       typeof artifact.label === "string" && artifact.label.trim()
         ? artifact.label.trim()
         : "Toolkit ciphertext";
-    const status = document.getElementById("decrypt-status");
-    if (status) {
-      status.className = "status-row ok";
-      status.textContent = `${label} loaded from Toolkit. Unlock a key (or passphrase) to decrypt.`;
-      status.classList.remove("hidden");
-    }
+    void runAnalyze().then(() => {
+      const status = document.getElementById("decrypt-status");
+      if (status) {
+        status.className = "status-row ok";
+        status.textContent = `${label} loaded from Toolkit. Unlock a key (or passphrase), then Decrypt.`;
+        status.classList.remove("hidden");
+      }
+      document.getElementById("decrypt-actions")?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
   }
 
   window.addEventListener("message", onCiphertext);
@@ -523,9 +532,11 @@ async function verifySigners(analysis) {
 
 function updateDecryptSection(analysis) {
   const section = document.getElementById("decrypt-section");
+  const actions = document.getElementById("decrypt-actions");
   if (!section) return;
   const show = analysis && analysis.type === "encrypted";
   section.classList.toggle("hidden", !show);
+  if (actions) actions.classList.toggle("hidden", !show);
   const skesk = document.getElementById("skesk-card");
   const privCard = document.getElementById("private-key-card");
   if (skesk) skesk.classList.toggle("hidden", !(show && analysis.hasSkesk));
@@ -533,6 +544,16 @@ function updateDecryptSection(analysis) {
     // Hide private-key card only when SKESK-only (no PKESK recipients).
     const skeskOnly = show && analysis.hasSkesk && !analysis.hasPkesk && !(analysis.recipientKeyIDs || []).length;
     privCard.classList.toggle("hidden", !!skeskOnly);
+  }
+  const hint = document.getElementById("decrypt-actions-hint");
+  if (hint && show) {
+    const skeskOnly =
+      analysis.hasSkesk && !analysis.hasPkesk && !(analysis.recipientKeyIDs || []).length;
+    hint.textContent = skeskOnly
+      ? "Enter the message passphrase, then Decrypt."
+      : analysis.hasSkesk
+        ? "Unlock a vault/private key or enter the message passphrase, then Decrypt."
+        : "Unlock a vault or private key, then Decrypt.";
   }
   if (!show) {
     const out = document.getElementById("decrypt-output");
@@ -928,6 +949,11 @@ document.getElementById("ciphertext").addEventListener("input", () => {
   scheduleAnalyze();
 });
 
+document.getElementById("inspect-btn")?.addEventListener("click", () => {
+  touchActivity();
+  void runAnalyze();
+});
+
 document.getElementById("cipher-file").addEventListener("change", async (e) => {
   touchActivity();
   const files = Array.from(e.target.files || []);
@@ -940,7 +966,7 @@ document.getElementById("cipher-file").addEventListener("change", async (e) => {
   await runAnalyze();
 });
 
-document.getElementById("decrypt-btn").addEventListener("click", async () => {
+async function runDecrypt() {
   // Primary gate: flag set by the POST completion handler below.
   if (!cryptoReady) {
     showError(errorEl, "Crypto self-test has not passed. Refusing to decrypt.");
@@ -961,6 +987,7 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
   errorEl.classList.add("hidden");
   const status = document.getElementById("decrypt-status");
   const out = document.getElementById("decrypt-output");
+  if (!status || !out) return;
   out.classList.add("hidden");
   status.className = "status-row";
   status.textContent = "Working…";
@@ -1237,6 +1264,23 @@ document.getElementById("decrypt-btn").addEventListener("click", async () => {
     if (passEl) passEl.value = "";
     const msgPass = document.getElementById("msg-passphrase");
     if (msgPass) msgPass.value = "";
+  }
+}
+
+document.getElementById("decrypt-btn")?.addEventListener("click", () => {
+  void runDecrypt();
+});
+
+// Enter in passphrase fields triggers Decrypt (textarea paste no longer the only path).
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  const t = e.target;
+  if (!(t instanceof HTMLInputElement)) return;
+  if (t.id !== "msg-passphrase" && t.id !== "passphrase") return;
+  e.preventDefault();
+  const btn = document.getElementById("decrypt-btn");
+  if (btn instanceof HTMLButtonElement && !btn.disabled) {
+    void runDecrypt();
   }
 });
 
