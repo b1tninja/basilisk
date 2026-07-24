@@ -12,6 +12,7 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
 /** @typedef {"none"|"bytes"|"text"|"key"|"keypair"|"shares"|"artifact"|"bundle"} IoType */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
 /** @typedef {"enum"|"int"|"string"|"bool"|"flag"} ParamType */
+/** @typedef {"webcrypto"|"openpgp"|"sss"|"encoding"|"flow"|"io"} Toolbox */
 /** @typedef {import("./types.js").StepOverload} StepOverload */
 /** @typedef {import("./types.js").RefinedType} RefinedType */
 
@@ -32,23 +33,37 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
  * @typedef {object} StepSpec
  * @property {string} name
  * @property {StepKind} kind
+ * @property {Toolbox} toolbox
+ * @property {string} [label]  optional UI verb (recipe name stays unique)
  * @property {string} doc
  * @property {IoType} input
  * @property {IoType} output
  * @property {ParamSpec[]} [params]
  * @property {boolean} [flowControl]
  * @property {boolean} [unresolvedRecipients]  needs runtime recipient binding
- * @property {"shares"|"gpg"|"text"|"envelope"|null} [unresolvedInputs]  needs runtime input panel
+ * @property {"shares"|"gpg"|"text"|"envelope"|"key"|"peer"|null} [unresolvedInputs]  needs runtime input panel
  * @property {string[]} [aliases]
  * @property {(params: Record<string, *>) => { input: IoType, output: IoType }} [effectiveIo]
  * @property {StepOverload[]} [overloads]  refined-type overloads (compile-time dispatch)
  */
+
+
+/** @type {Record<Toolbox, { label: string, badge: string, order: number }>} */
+export const TOOLBOX_META = {
+  webcrypto: { label: "WebCrypto", badge: "WebCrypto", order: 0 },
+  openpgp: { label: "OpenPGP", badge: "OpenPGP", order: 1 },
+  sss: { label: "SSS / BLIP39", badge: "SSS", order: 2 },
+  encoding: { label: "Encoding", badge: "Encode", order: 3 },
+  io: { label: "Input / output", badge: "I/O", order: 4 },
+  flow: { label: "Flow", badge: "Flow", order: 5 },
+};
 
 /** @type {StepSpec[]} */
 export const STEPS = [
   {
     name: "genkey",
     kind: "source",
+    toolbox: "webcrypto",
     doc: "Generate a cryptographic key with WebCrypto. Common secure algorithms only.",
     input: "none",
     output: "keypair",
@@ -86,6 +101,7 @@ export const STEPS = [
   {
     name: "random",
     kind: "source",
+    toolbox: "io",
     doc: "Cryptographically random bytes from crypto.getRandomValues.",
     input: "none",
     output: "bytes",
@@ -104,6 +120,7 @@ export const STEPS = [
   {
     name: "passphrase",
     kind: "source",
+    toolbox: "io",
     doc: "EFF Large Wordlist diceware passphrase (≈12.9 bits/word).",
     input: "none",
     output: "text",
@@ -120,31 +137,19 @@ export const STEPS = [
     ],
   },
   {
-    name: "recombine",
+    name: "shares",
     kind: "source",
-    doc: "Provide SLIP-39 share mnemonics (and optional envelope) at run time for recombination — data is never stored in the pipeline text.",
+    toolbox: "sss",
+    doc: "Bind BLIP39 share mnemonics at run time (never stored in the recipe). Output type is shares/mnemonic — pipe into blip39 -d then recover for bytes/master, or foreach to map each share. For free-form text use the input step instead.",
     input: "none",
     output: "shares",
     unresolvedInputs: "shares",
-    aliases: ["read"],
-    params: [
-      {
-        name: "kind",
-        type: "enum",
-        positional: true,
-        default: "shares",
-        enum: ["shares", "text"],
-        doc: "shares = mnemonic lines (+ optional envelope); text = free-form paste",
-      },
-    ],
-    effectiveIo(params) {
-      const kind = String(params?.kind || "shares");
-      return { input: "none", output: kind === "text" ? "text" : "shares" };
-    },
+    params: [],
   },
   {
     name: "input",
     kind: "source",
+    toolbox: "io",
     doc: "Free-form text provided at run time via a textarea or loaded from a file (like cat). The data is never stored in the pipeline text.",
     input: "none",
     output: "text",
@@ -155,7 +160,8 @@ export const STEPS = [
   {
     name: "decrypt",
     kind: "source",
-    doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext SLIP-39 mnemonics. Browser vault keys only — OpenPGP smartcards/YubiKey GPG are not available to web pages; decrypt those shares externally and paste the mnemonics.",
+    toolbox: "openpgp",
+    doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext BLIP39 mnemonics. Browser vault keys only — OpenPGP smartcards/YubiKey GPG are not available to web pages; decrypt those shares externally and paste the mnemonics.",
     input: "none",
     output: "shares",
     unresolvedInputs: "gpg",
@@ -174,6 +180,7 @@ export const STEPS = [
   {
     name: "export",
     kind: "transform",
+    toolbox: "webcrypto",
     doc: "Export a key to a binary encoding (PKCS#8 private, SPKI public, JWK, raw, or scalar/d for EC/OKP private keys).",
     input: "keypair",
     output: "bytes",
@@ -184,14 +191,14 @@ export const STEPS = [
         positional: true,
         default: "pkcs8",
         enum: ["pkcs8", "spki", "jwk", "raw", "scalar", "d"],
-        doc: "Export format (scalar/d = private key material as fixed-length bytes for slip39)",
+        doc: "Export format (scalar/d = private key material as fixed-length bytes for sss)",
       },
       {
         name: "which",
         type: "enum",
         default: "private",
-        enum: ["private", "public", "both"],
-        doc: "Which half to export (jwk/raw may differ by algorithm)",
+        enum: ["private", "public"],
+        doc: "Which half to export. Ignored for format=scalar/d (always private). Prefer format=spki for public material.",
       },
     ],
     effectiveIo(params) {
@@ -205,6 +212,7 @@ export const STEPS = [
   {
     name: "import",
     kind: "transform",
+    toolbox: "webcrypto",
     doc: "Import DER/raw/scalar key bytes into a WebCrypto keypair (openssl pkey -in / gpg --import).",
     input: "bytes",
     output: "keypair",
@@ -230,8 +238,10 @@ export const STEPS = [
           "rsa/2048",
           "rsa/3072",
           "rsa/4096",
+          "aes/128",
           "aes/256",
           "hmac/sha256",
+          "hmac/sha512",
         ],
         doc: "Algorithm to import as",
       },
@@ -244,9 +254,210 @@ export const STEPS = [
       },
     ],
   },
+
+  {
+    name: "digest",
+    kind: "transform",
+    toolbox: "webcrypto",
+    doc: "Hash bytes with WebCrypto SubtleCrypto.digest (SHA-256 / SHA-384 / SHA-512).",
+    input: "bytes",
+    output: "bytes",
+    aliases: ["hash", "sha"],
+    params: [
+      {
+        name: "alg",
+        type: "enum",
+        positional: true,
+        default: "sha-256",
+        enum: ["sha-256", "sha-384", "sha-512"],
+        doc: "Hash algorithm",
+      },
+    ],
+  },
+  {
+    name: "sign",
+    kind: "transform",
+    toolbox: "webcrypto",
+    doc: "Sign pipeline bytes with a bound WebCrypto private/HMAC key (JWK panel). OpenPGP signing stays on the Encrypt page.",
+    input: "bytes",
+    output: "bytes",
+    unresolvedInputs: "key",
+    params: [],
+  },
+  {
+    name: "verify",
+    kind: "transform",
+    toolbox: "webcrypto",
+    doc: "Verify a signature over pipeline message bytes. Bind public/HMAC key via the key panel; pass signature as base64url in the signature param or sig binding.",
+    input: "bytes",
+    output: "text",
+    unresolvedInputs: "key",
+    params: [
+      {
+        name: "signature",
+        type: "string",
+        default: "",
+        doc: "Base64url signature (empty = use runtime sig binding)",
+      },
+    ],
+  },
+  {
+    name: "aesgcm",
+    kind: "transform",
+    toolbox: "webcrypto",
+    label: "encrypt",
+    doc: "AES-GCM encrypt (default) or decrypt with -d. Ciphertext is IV(12) then CT/tag. Bind an AES oct JWK in the key panel. Distinct from OpenPGP encrypt.",
+    input: "bytes",
+    output: "bytes",
+    unresolvedInputs: "key",
+    params: [
+      {
+        name: "decode",
+        type: "bool",
+        flag: "-d",
+        default: false,
+        doc: "Decrypt AES-GCM packed ciphertext to plaintext",
+      },
+      {
+        name: "aad",
+        type: "string",
+        default: "",
+        doc: "Optional additional authenticated data (UTF-8)",
+      },
+    ],
+    effectiveIo() {
+      return { input: "bytes", output: "bytes" };
+    },
+  },
+  {
+    name: "hkdf",
+    kind: "transform",
+    toolbox: "webcrypto",
+    doc: "HKDF-Extract/Expand over pipeline IKM bytes to OKM bytes.",
+    input: "bytes",
+    output: "bytes",
+    params: [
+      {
+        name: "length",
+        type: "int",
+        positional: true,
+        default: 32,
+        min: 1,
+        max: 1024,
+        doc: "Output length in bytes",
+      },
+      {
+        name: "salt",
+        type: "string",
+        default: "",
+        doc: "Optional salt (UTF-8; empty = zero-length salt)",
+      },
+      {
+        name: "info",
+        type: "string",
+        default: "",
+        doc: "Optional info/context string (UTF-8)",
+      },
+      {
+        name: "hash",
+        type: "enum",
+        default: "sha-256",
+        enum: ["sha-256", "sha-384", "sha-512"],
+        doc: "HKDF hash",
+      },
+    ],
+  },
+  {
+    name: "pbkdf2",
+    kind: "transform",
+    toolbox: "webcrypto",
+    doc: "PBKDF2-HMAC derive key bytes from pipeline password (text or bytes).",
+    input: "bytes",
+    output: "bytes",
+    params: [
+      {
+        name: "length",
+        type: "int",
+        positional: true,
+        default: 32,
+        min: 1,
+        max: 1024,
+        doc: "Output length in bytes",
+      },
+      {
+        name: "salt",
+        type: "string",
+        default: "basilisk",
+        doc: "Salt (UTF-8)",
+      },
+      {
+        name: "iterations",
+        type: "int",
+        default: 100000,
+        min: 1,
+        max: 10000000,
+        doc: "Iteration count",
+      },
+      {
+        name: "hash",
+        type: "enum",
+        default: "sha-256",
+        enum: ["sha-256", "sha-384", "sha-512"],
+        doc: "PBKDF2 hash",
+      },
+    ],
+  },
+  {
+    name: "ecdh",
+    kind: "transform",
+    toolbox: "webcrypto",
+    doc: "ECDH/X25519 deriveBits using bound local private key and peer public JWK. Output shared secret bytes (pipe into hkdf).",
+    input: "none",
+    output: "bytes",
+    unresolvedInputs: "key",
+    params: [
+      {
+        name: "bits",
+        type: "int",
+        default: 256,
+        min: 128,
+        max: 528,
+        doc: "Shared secret bit length (P-256: 256)",
+      },
+    ],
+  },
+  {
+    name: "wrap",
+    kind: "transform",
+    toolbox: "webcrypto",
+    doc: "AES-KW wrap: wrapping key from key panel; key-to-wrap from wrap panel (oct JWK). Emits wrapped key bytes.",
+    input: "none",
+    output: "bytes",
+    unresolvedInputs: "key",
+    params: [],
+  },
+  {
+    name: "unwrap",
+    kind: "transform",
+    toolbox: "webcrypto",
+    doc: "AES-KW unwrap of pipeline wrapped bytes with bound wrapping key to raw key bytes.",
+    input: "bytes",
+    output: "bytes",
+    unresolvedInputs: "key",
+    params: [
+      {
+        name: "alg",
+        type: "enum",
+        default: "aes/256",
+        enum: ["aes/128", "aes/256"],
+        doc: "Algorithm of the wrapped key",
+      },
+    ],
+  },
   {
     name: "pem",
     kind: "transform",
+    toolbox: "encoding",
     doc: "Wrap DER as PEM (default) or strip PEM armor with -d (like openssl).",
     input: "bytes",
     output: "text",
@@ -274,6 +485,7 @@ export const STEPS = [
   {
     name: "der",
     kind: "transform",
+    toolbox: "encoding",
     doc: "Pass DER/binary bytes through unchanged (identity).",
     input: "bytes",
     output: "bytes",
@@ -282,6 +494,7 @@ export const STEPS = [
   {
     name: "base64",
     kind: "transform",
+    toolbox: "encoding",
     doc: "Encode bytes as Base64, or decode with -d (like base64 / base64 -d).",
     input: "bytes",
     output: "text",
@@ -302,6 +515,7 @@ export const STEPS = [
   {
     name: "base64url",
     kind: "transform",
+    toolbox: "encoding",
     doc: "Encode bytes as URL-safe Base64 without padding (websafe).",
     input: "bytes",
     output: "text",
@@ -310,6 +524,7 @@ export const STEPS = [
   {
     name: "hex",
     kind: "transform",
+    toolbox: "encoding",
     doc: "Encode bytes as lowercase hex, or decode with -d (like xxd -p / xxd -r -p).",
     input: "bytes",
     output: "text",
@@ -330,6 +545,7 @@ export const STEPS = [
   {
     name: "utf8",
     kind: "transform",
+    toolbox: "encoding",
     doc: "Decode UTF-8 bytes to text (or encode text to bytes when input is text).",
     input: "bytes",
     output: "text",
@@ -341,12 +557,13 @@ export const STEPS = [
     },
   },
   {
-    name: "slip39",
+    name: "sss",
     kind: "transform",
-    doc: "Split a 16- or 32-byte master into SLIP-39 mnemonic shares (K-of-N). For EC keys use export scalar first; for PEM/arbitrary data use symencrypt first.",
+    toolbox: "sss",
+    doc: "Split a 16- or 32-byte master into raw Shamir (SSS) shares (K-of-N). Does not encode mnemonics — pipe into blip39 for word phrases. For EC keys use export scalar first; for PEM/arbitrary data use symencrypt first.",
     input: "bytes",
     output: "shares",
-    aliases: ["split"],
+    aliases: ["split", "sss-split"],
     params: [
       {
         name: "threshold",
@@ -374,33 +591,72 @@ export const STEPS = [
     overloads: [
       {
         when: { base: "bytes", kind: "master", length: 16 },
-        output: { base: "shares", kind: "mnemonic" },
+        output: { base: "shares", kind: "raw" },
       },
       {
         when: { base: "bytes", kind: "master", length: 32 },
-        output: { base: "shares", kind: "mnemonic" },
+        output: { base: "shares", kind: "raw" },
       },
       {
         when: { base: "bytes", kind: "master" },
-        output: { base: "shares", kind: "mnemonic" },
+        output: { base: "shares", kind: "raw" },
       },
       {
         when: { base: "bytes", kind: "scalar", length: 32 },
-        output: { base: "shares", kind: "mnemonic" },
+        output: { base: "shares", kind: "raw" },
       },
       {
         when: { base: "bytes", kind: "scalar", length: 16 },
-        output: { base: "shares", kind: "mnemonic" },
+        output: { base: "shares", kind: "raw" },
       },
     ],
   },
   {
-    name: "combine",
+    name: "blip39",
     kind: "transform",
-    doc: "Combine SLIP-39 mnemonic shares to recover the 16/32-byte master (ssss-combine). OpenPGP envelopes are unwrapped separately via symdecrypt.",
+    toolbox: "sss",
+    doc: "Encode raw SSS shares as BLIP39 mnemonics, or decode with -d (mnemonic → raw). Checksum tag basilisk-slip39-v1; uses the official SLIP-39 wordlist.",
+    input: "shares",
+    output: "shares",
+    params: [
+      {
+        name: "decode",
+        type: "bool",
+        flag: "-d",
+        default: false,
+        doc: "Decode BLIP39 mnemonics → raw SSS shares",
+      },
+    ],
+    overloads: [
+      {
+        when: { base: "shares", kind: "raw" },
+        whenParams: { decode: ["false", "undefined", ""] },
+        output: { base: "shares", kind: "mnemonic" },
+      },
+      {
+        when: { base: "shares", kind: "mnemonic" },
+        whenParams: { decode: "true" },
+        output: { base: "shares", kind: "raw" },
+      },
+      {
+        when: { base: "shares" },
+        whenParams: { decode: "true" },
+        output: { base: "shares", kind: "raw" },
+      },
+    ],
+    effectiveIo(params) {
+      void params;
+      return { input: "shares", output: "shares" };
+    },
+  },
+  {
+    name: "recover",
+    kind: "transform",
+    toolbox: "sss",
+    doc: "Combine raw SSS shares into the 16/32-byte master (ssss-combine). Input shares/raw → output bytes/master. Decode mnemonics first with blip39 -d; unwrap OpenPGP envelopes separately with symdecrypt.",
     input: "shares",
     output: "bytes",
-    aliases: ["recover"],
+    aliases: ["sss-combine"],
     params: [
       {
         name: "passphrase",
@@ -411,11 +667,7 @@ export const STEPS = [
     ],
     overloads: [
       {
-        when: { base: "shares", kind: "mnemonic" },
-        output: { base: "bytes", kind: "master" },
-      },
-      {
-        when: { base: "shares" },
+        when: { base: "shares", kind: "raw" },
         output: { base: "bytes", kind: "master" },
       },
     ],
@@ -423,7 +675,8 @@ export const STEPS = [
   {
     name: "symencrypt",
     kind: "transform",
-    doc: "OpenPGP symmetric-encrypt the payload under a fresh 32-byte master (SKESK / SEIPD), emit envelope.asc, and pass the master bytes to slip39. Recover with gpg --decrypt using the hex master as passphrase.",
+    toolbox: "openpgp",
+    doc: "OpenPGP symmetric-encrypt the payload under a fresh 32-byte master (SKESK / SEIPD), emit envelope.asc, and pass the master bytes to sss. Recover with gpg --decrypt using the hex master as passphrase.",
     input: "text",
     output: "bytes",
     aliases: ["pgpenvelop", "skesk"],
@@ -440,6 +693,7 @@ export const STEPS = [
   {
     name: "symdecrypt",
     kind: "transform",
+    toolbox: "openpgp",
     doc: "Decrypt a runtime-bound OpenPGP envelope.asc using the pipeline bytes as the hex passphrase master (inverse of symencrypt).",
     input: "bytes",
     output: "bytes",
@@ -456,6 +710,7 @@ export const STEPS = [
   {
     name: "fanout",
     kind: "transform",
+    toolbox: "webcrypto",
     doc: "Emit a side-stream artifact from the current value (e.g. public SPKI/PEM) and pass the value through unchanged — for multi-pronged outputs beside a private scalar split.",
     input: "keypair",
     output: "keypair",
@@ -467,14 +722,14 @@ export const STEPS = [
         positional: true,
         default: "spki",
         enum: ["spki", "pkcs8", "jwk", "pem", "scalar"],
-        doc: "What to emit as a side artifact",
+        doc: "Side artifact encoding. spki = public DER; pkcs8 = private DER; pem/jwk honor which; scalar always private.",
       },
       {
         name: "which",
         type: "enum",
         default: "public",
         enum: ["private", "public"],
-        doc: "Which half to emit (ignored for scalar)",
+        doc: "Which key half to emit. Locked to public for format=spki; locked to private for format=scalar/pkcs8.",
       },
       {
         name: "name",
@@ -505,6 +760,7 @@ export const STEPS = [
   {
     name: "foreach",
     kind: "flow",
+    toolbox: "flow",
     flowControl: true,
     doc: "Unpack a collection and run every following step once per item until merge (CyberChef Fork / Python *args / functional map).",
     input: "shares",
@@ -515,6 +771,7 @@ export const STEPS = [
   {
     name: "merge",
     kind: "flow",
+    toolbox: "flow",
     flowControl: true,
     doc: "Close a foreach scope and collect per-item results into a bundle.",
     input: "artifact",
@@ -525,6 +782,7 @@ export const STEPS = [
   {
     name: "encrypt",
     kind: "sink",
+    toolbox: "openpgp",
     unresolvedRecipients: true,
     doc: "Encrypt the current value (gpg --encrypt). Recipients are chosen at run time — never stored in the recipe.",
     input: "text",
@@ -551,6 +809,7 @@ export const STEPS = [
   {
     name: "qr",
     kind: "sink",
+    toolbox: "io",
     doc: "Render the current text as a QR code SVG artifact (qrencode).",
     input: "text",
     output: "artifact",
@@ -559,6 +818,7 @@ export const STEPS = [
   {
     name: "text",
     kind: "sink",
+    toolbox: "io",
     doc: "Emit a message tile (no filename). Encrypt opens it in the compose box. Prefer this for PEM, hex, base64, or other printable secrets you want to encrypt as a message body.",
     input: "text",
     output: "text",
@@ -582,6 +842,7 @@ export const STEPS = [
   {
     name: "out",
     kind: "sink",
+    toolbox: "io",
     doc: "Emit a named file tile (set name/ext) and pass the value through. Encrypt attaches the raw bytes as a file — use this when you want a downloadable attachment rather than a compose message.",
     input: "text",
     output: "text",
@@ -624,7 +885,8 @@ export const STEPS = [
   {
     name: "inspect",
     kind: "transform",
-    doc: "Human-readable dump of the current value (openssl … -text / hexdump). Replaces the pipeline value with the dump text. Accepts bytes, text, shares, or keypairs.",
+    toolbox: "flow",
+    doc: "Replace the pipeline value with a human-readable dump (openssl … -text / hexdump). Accepts any type; output is text/opaque. Preferred terminal when you want to see a value instead of emitting a result tile.",
     input: "bytes",
     output: "text",
     aliases: ["dump", "hexdump"],
@@ -642,7 +904,8 @@ export const STEPS = [
   {
     name: "tee",
     kind: "transform",
-    doc: "Pass the value through unchanged while emitting an inspection artifact (Unix tee). Useful mid-pipeline for keypairs before export/slip39.",
+    toolbox: "flow",
+    doc: "Pass the value through unchanged while emitting an inspection artifact (Unix tee). Useful mid-pipeline for keypairs before export/sss.",
     input: "bytes",
     output: "bytes",
     aliases: ["peek"],
@@ -757,7 +1020,7 @@ export function ioCompatible(from, to, stepName) {
   if (from === to) return true;
   if (stepName === "merge") return true;
   if (stepName === "foreach" && from === "shares") return true;
-  if (stepName === "combine" && from === "shares") return true;
+  if (stepName === "recover" && from === "shares") return true;
   if (from === "shares" && to === "text") return false; // need foreach
   if (from === "text" && to === "artifact") return true;
   if (from === "artifact" && to === "bundle") return true;

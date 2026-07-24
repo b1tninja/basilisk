@@ -86,10 +86,10 @@ describe("mnemonic shares", () => {
   });
 });
 
-describe("toolkit slip39 recipe", () => {
+describe("toolkit sss|blip39 recipe", () => {
   it("foreach|out emits N share artifacts", async () => {
     const { ast, validation } = compileRecipe(
-      "random 32 | slip39 threshold=2 shares=3 | foreach | out name=share"
+      "random 32 | sss threshold=2 shares=3 | blip39 | foreach | out name=share"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);

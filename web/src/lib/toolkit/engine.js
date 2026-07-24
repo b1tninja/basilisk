@@ -18,10 +18,11 @@ import {
 } from "../pgp/encrypt.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
 import {
-  combineShares,
-  splitShares,
+  decodeShareSet,
+  encodeShareSet,
   validateShareMnemonic,
-} from "../slip39/slip39.js";
+} from "../slip39/blip39.js";
+import { combineRawShares, splitRawShares } from "../slip39/slip39.js";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -36,6 +37,20 @@ import {
   textToBytes,
   toPem,
 } from "./encode.js";
+import {
+  aesGcmDecrypt,
+  aesGcmEncrypt,
+  aesKwUnwrap,
+  aesKwWrap,
+  ecdhSharedBits,
+  hkdfDerive,
+  importBoundJwk,
+  pbkdf2Derive,
+  resolveBoundKey,
+  subtleSign,
+  subtleVerify,
+  valueToBytes,
+} from "./webcrypto-ops.js";
 import { inspectValue } from "./inspect.js";
 import { getStep } from "./registry.js";
 import {
@@ -93,6 +108,17 @@ import {
  *     envelopeB64?: string,
  *     envelopeArmored?: string,
  *   },
+ *   key?: {
+ *     jwkText?: string,
+ *     jwk?: JsonWebKey,
+ *     privateKey?: CryptoKey,
+ *     publicKey?: CryptoKey,
+ *     secretKey?: CryptoKey,
+ *     alg?: string,
+ *     peerJwkText?: string,
+ *     wrapJwkText?: string,
+ *     signatureB64url?: string,
+ *   },
  * }} [inputs]
  * @property {{
  *   profile?: import("../pgp/types.js").EncryptProfile,
@@ -146,44 +172,83 @@ export async function runRecipe(ast, bindings = {}) {
       if (!value || value.type !== "shares") {
         throw new Error("foreach requires shares");
       }
-      const items = /** @type {string[]} */ (value.data.mnemonics);
       const threshold = Number(value.data.threshold) || 0;
       const body = node.body;
+      const rawItems = value.data.raw;
+      const mnemonicItems = value.data.mnemonics;
+      const useRaw = Array.isArray(rawItems) && rawItems.length > 0;
+      const items = useRaw ? rawItems : mnemonicItems || [];
+      if (!items.length) throw new Error("foreach requires a non-empty share set");
+
       for (let i = 0; i < items.length; i++) {
         /** @type {PipelineValue} */
-        let itemVal = {
-          type: "text",
-          data: items[i],
-          meta: {
-            shareIndex: i + 1,
-            shareCount: items.length,
-            threshold,
-            sensitive: true,
-          },
-        };
+        let itemVal;
+        if (useRaw) {
+          const share = /** @type {{ index: number, data: Uint8Array }} */ (items[i]);
+          itemVal = {
+            type: "bytes",
+            data: share.data,
+            meta: {
+              shareIndex: share.index || i + 1,
+              shareCount: items.length,
+              threshold,
+              sensitive: true,
+            },
+          };
+        } else {
+          itemVal = {
+            type: "text",
+            data: /** @type {string} */ (items[i]),
+            meta: {
+              shareIndex: i + 1,
+              shareCount: items.length,
+              threshold,
+              sensitive: true,
+            },
+          };
+        }
         for (const step of body) {
           const before = artifacts.length;
           itemVal = await execStep(step, itemVal, bindings, artifacts, i);
           stampNew(before, step);
         }
-        if (itemVal && itemVal.type === "text") {
+        if (itemVal && (itemVal.type === "text" || itemVal.type === "bytes")) {
           const last = body[body.length - 1];
           if (last && getStep(last.name)?.kind !== "sink") {
             const before = artifacts.length;
-            artifacts.push({
-              label: `Share ${i + 1}`,
-              filename: `share-${i + 1}.txt`,
-              content: String(itemVal.data),
-              sensitive: true,
-              shareIndex: i + 1,
-              disposition: "file",
-              role: "share",
-              tags: ["mnemonic", "slip39"],
-              traits: {
-                shareOf: i + 1,
-                threshold: threshold || undefined,
-              },
-            });
+            const idx = itemVal.meta?.shareIndex || i + 1;
+            if (itemVal.type === "text") {
+              artifacts.push({
+                label: `Share ${idx}`,
+                filename: `share-${idx}.txt`,
+                content: String(itemVal.data),
+                sensitive: true,
+                shareIndex: idx,
+                disposition: "file",
+                role: "share",
+                tags: ["mnemonic", "blip39"],
+                traits: {
+                  shareOf: idx,
+                  threshold: threshold || undefined,
+                },
+              });
+            } else {
+              artifacts.push({
+                label: `Share ${idx}`,
+                filename: `share-${idx}.bin.b64`,
+                content: bytesToBase64(itemVal.data),
+                bytes: new Uint8Array(itemVal.data),
+                sensitive: true,
+                shareIndex: idx,
+                disposition: "file",
+                role: "share",
+                tags: ["sss", "raw"],
+                traits: {
+                  shareOf: idx,
+                  threshold: threshold || undefined,
+                },
+              });
+            }
             stampNew(before, last);
           }
         }
@@ -289,17 +354,11 @@ async function execStepBody(step, value, bindings, artifacts) {
       }
       return { type: "text", data: text, meta: { sensitive: true } };
     }
-    case "recombine": {
-      const kind = String(step.params.kind || "shares");
+    case "shares": {
       const inp = bindings.inputs?.shares;
-      if (kind === "text") {
-        const text = (inp?.mnemonics || []).join("\n");
-        if (!text.trim()) throw new Error("No input text provided");
-        return { type: "text", data: text, meta: { sensitive: true } };
-      }
       const mnemonics = (inp?.mnemonics || []).map((m) => String(m).trim()).filter(Boolean);
       if (!mnemonics.length) {
-        throw new Error("No SLIP-39 share mnemonics provided — paste shares before running.");
+        throw new Error("No BLIP39 share mnemonics provided — paste shares before running.");
       }
       /** @type {Uint8Array|null} */
       let envelope = null;
@@ -309,6 +368,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       return {
         type: "shares",
         data: {
+          encoding: "mnemonic",
           mnemonics,
           envelope,
           threshold: 0,
@@ -409,12 +469,251 @@ async function execStepBody(step, value, bindings, artifacts) {
       }
       throw new Error("utf8 expects bytes or text");
     }
-    case "slip39": {
+    case "digest": {
+      const bytes = valueToBytes(value);
+      const alg = String(step.params.alg || "sha-256").toUpperCase().replace("SHA-", "SHA-");
+      const name =
+        alg === "SHA-384" || alg === "SHA384"
+          ? "SHA-384"
+          : alg === "SHA-512" || alg === "SHA512"
+            ? "SHA-512"
+            : "SHA-256";
+      const digest = new Uint8Array(await crypto.subtle.digest(name, bytes));
+      return {
+        type: "bytes",
+        data: digest,
+        meta: { sensitive: false, alg: name.toLowerCase() },
+      };
+    }
+    case "sign": {
+      const bytes = valueToBytes(value);
+      const keyInp = bindings.inputs?.key;
+      let signingKey;
+      if (keyInp?.privateKey) signingKey = keyInp.privateKey;
+      else if (keyInp?.secretKey) signingKey = keyInp.secretKey;
+      else {
+        const bound =
+          keyInp?.jwk || keyInp?.jwkText
+            ? await importBoundJwk(keyInp)
+            : null;
+        signingKey = bound?.privateKey || bound?.secretKey;
+      }
+      if (!signingKey) {
+        signingKey = await resolveBoundKey(bindings, "either");
+      }
+      if (!signingKey.usages.includes("sign")) {
+        throw new Error("Bound key cannot sign — need private or HMAC key with sign usage");
+      }
+      const sig = await subtleSign(signingKey, bytes);
+      return {
+        type: "bytes",
+        data: sig,
+        meta: { sensitive: false, kind: "signature" },
+      };
+    }
+    case "verify": {
+      const bytes = valueToBytes(value);
+      const keyInp = bindings.inputs?.key;
+      let verifyKey;
+      if (keyInp?.publicKey) verifyKey = keyInp.publicKey;
+      else if (keyInp?.secretKey) verifyKey = keyInp.secretKey;
+      else {
+        const bound =
+          keyInp?.jwk || keyInp?.jwkText
+            ? await importBoundJwk(keyInp)
+            : null;
+        verifyKey = bound?.publicKey || bound?.secretKey;
+      }
+      if (!verifyKey) verifyKey = await resolveBoundKey(bindings, "either");
+      if (!verifyKey.usages.includes("verify")) {
+        throw new Error("Bound key cannot verify — need public or HMAC key with verify usage");
+      }
+      const sigB64 =
+        String(step.params.signature || "") ||
+        String(bindings.inputs?.key?.signatureB64url || "");
+      if (!sigB64) throw new Error("verify needs signature=… (base64url) or sig binding");
+      const signature = base64ToBytes(sigB64);
+      const ok = await subtleVerify(verifyKey, signature, bytes);
+      if (!ok) throw new Error("Signature verification failed");
+      return {
+        type: "text",
+        data: "verified",
+        meta: { sensitive: false },
+      };
+    }
+    case "aesgcm": {
+      const bytes = valueToBytes(value);
+      const key = await resolveBoundKey(bindings, "secret");
+      const aadStr = String(step.params.aad || "");
+      const aad = aadStr ? textToBytes(aadStr) : undefined;
+      if (step.params.decode) {
+        const plain = await aesGcmDecrypt(key, bytes, aad);
+        try {
+          bytes.fill(0);
+        } catch (_) {
+          /* wipe */
+        }
+        return {
+          type: "bytes",
+          data: plain,
+          meta: { sensitive: true },
+        };
+      }
+      const packed = await aesGcmEncrypt(key, bytes, aad);
+      try {
+        bytes.fill(0);
+      } catch (_) {
+        /* wipe */
+      }
+      return {
+        type: "bytes",
+        data: packed,
+        meta: { sensitive: true },
+      };
+    }
+    case "hkdf": {
+      const ikm = valueToBytes(value);
+      const length = Number(step.params.length) || 32;
+      const hash = String(step.params.hash || "sha-256")
+        .toUpperCase()
+        .replace("SHA-", "SHA-");
+      const hashName =
+        hash === "SHA-384" ? "SHA-384" : hash === "SHA-512" ? "SHA-512" : "SHA-256";
+      const saltStr = String(step.params.salt || "");
+      const infoStr = String(step.params.info || "");
+      const out = await hkdfDerive(ikm, {
+        length,
+        hash: hashName,
+        salt: saltStr ? textToBytes(saltStr) : new Uint8Array(),
+        info: infoStr ? textToBytes(infoStr) : new Uint8Array(),
+      });
+      return {
+        type: "bytes",
+        data: out,
+        meta: { sensitive: true, kind: "master", length },
+      };
+    }
+    case "pbkdf2": {
+      const password = valueToBytes(value);
+      const length = Number(step.params.length) || 32;
+      const iterations = Number(step.params.iterations) || 100000;
+      const hash = String(step.params.hash || "sha-256")
+        .toUpperCase()
+        .replace("SHA-", "SHA-");
+      const hashName =
+        hash === "SHA-384" ? "SHA-384" : hash === "SHA-512" ? "SHA-512" : "SHA-256";
+      const salt = textToBytes(String(step.params.salt || "basilisk"));
+      const out = await pbkdf2Derive(password, {
+        salt,
+        iterations,
+        length,
+        hash: hashName,
+      });
+      return {
+        type: "bytes",
+        data: out,
+        meta: { sensitive: true, kind: "master", length },
+      };
+    }
+    case "ecdh": {
+      const privateKey = await resolveBoundKey(bindings, "private");
+      const peerText = String(bindings.inputs?.key?.peerJwkText || "").trim();
+      if (!peerText) {
+        throw new Error("ecdh needs peer public JWK in the peer key field");
+      }
+      const peer = await importBoundJwk({ jwkText: peerText, alg: "ecdh" });
+      if (!peer.publicKey) throw new Error("Peer JWK must include public key material");
+      const bits = Number(step.params.bits) || 256;
+      const shared = await ecdhSharedBits(privateKey, peer.publicKey, bits);
+      return {
+        type: "bytes",
+        data: shared,
+        meta: { sensitive: true, kind: "opaque", length: shared.length },
+      };
+    }
+    case "wrap": {
+      const wrappingKey = await resolveBoundKey(bindings, "secret");
+      const wrapText = String(bindings.inputs?.key?.wrapJwkText || "").trim();
+      if (!wrapText) throw new Error("wrap needs key-to-wrap JWK in the wrap panel");
+      const toWrap = await importBoundJwk({ jwkText: wrapText });
+      const keyObj = toWrap.secretKey;
+      if (!keyObj) throw new Error("wrap key-to-wrap must be an oct JWK");
+      // Re-import as extractable AES-GCM for wrapKey raw format
+      const raw = await crypto.subtle.exportKey("raw", keyObj);
+      const extractable = await crypto.subtle.importKey(
+        "raw",
+        raw,
+        { name: "AES-GCM", length: raw.byteLength * 8 },
+        true,
+        ["encrypt", "decrypt"]
+      );
+      try {
+        new Uint8Array(raw).fill(0);
+      } catch (_) {
+        /* wipe */
+      }
+      // Wrapping key must support AES-KW — re-import if needed
+      let kw = wrappingKey;
+      if (wrappingKey.algorithm.name !== "AES-KW") {
+        const wraw = await crypto.subtle.exportKey("raw", wrappingKey);
+        kw = await crypto.subtle.importKey(
+          "raw",
+          wraw,
+          { name: "AES-KW", length: wraw.byteLength * 8 },
+          false,
+          ["wrapKey", "unwrapKey"]
+        );
+        try {
+          new Uint8Array(wraw).fill(0);
+        } catch (_) {
+          /* wipe */
+        }
+      }
+      const wrapped = await aesKwWrap(kw, extractable);
+      return {
+        type: "bytes",
+        data: wrapped,
+        meta: { sensitive: true },
+      };
+    }
+    case "unwrap": {
+      const wrapped = valueToBytes(value);
+      let wrappingKey = await resolveBoundKey(bindings, "secret");
+      if (wrappingKey.algorithm.name !== "AES-KW") {
+        const wraw = await crypto.subtle.exportKey("raw", wrappingKey);
+        wrappingKey = await crypto.subtle.importKey(
+          "raw",
+          wraw,
+          { name: "AES-KW", length: wraw.byteLength * 8 },
+          false,
+          ["wrapKey", "unwrapKey"]
+        );
+        try {
+          new Uint8Array(wraw).fill(0);
+        } catch (_) {
+          /* wipe */
+        }
+      }
+      const alg = String(step.params.alg || "aes/256");
+      const length = alg === "aes/128" ? 128 : 256;
+      const unwrapped = await aesKwUnwrap(
+        wrappingKey,
+        wrapped,
+        { name: "AES-GCM", length },
+        ["encrypt", "decrypt"]
+      );
+      const raw = new Uint8Array(await crypto.subtle.exportKey("raw", unwrapped));
+      return {
+        type: "bytes",
+        data: raw,
+        meta: { sensitive: true, kind: "opaque", length: raw.length },
+      };
+    }
+    case "sss": {
       let bytes;
       if (value?.type === "bytes") bytes = value.data;
       else if (value?.type === "text") bytes = textToBytes(value.data);
-      else throw new Error("slip39 expects bytes or text");
-      // Refined type is enforced at compile time; runtime still guards length.
+      else throw new Error("sss expects bytes or text");
       const pipeKind = value?.meta?.type?.kind;
       if (
         pipeKind &&
@@ -422,11 +721,11 @@ async function execStepBody(step, value, bindings, artifacts) {
         pipeKind !== "scalar"
       ) {
         throw new Error(
-          `slip39 expects bytes/master or bytes/scalar (got ${pipeKind}). ` +
+          `sss expects bytes/master or bytes/scalar (got ${pipeKind}). ` +
             `For EC keys use "export scalar"; for PEM/arbitrary data use "symencrypt" first.`
         );
       }
-      const result = await splitShares(bytes, {
+      const result = await splitRawShares(bytes, {
         threshold: Number(step.params.threshold) || 2,
         shares: Number(step.params.shares) || 3,
         passphrase: String(step.params.passphrase || ""),
@@ -437,18 +736,59 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: true },
       };
     }
-    case "combine": {
-      if (!value || value.type !== "shares") throw new Error("combine expects shares");
-      const mnemonics = value.data.mnemonics || [];
+    case "blip39": {
+      if (!value || value.type !== "shares") throw new Error("blip39 expects shares");
+      const decode = !!step.params.decode;
+      if (decode) {
+        const mnemonics = value.data.mnemonics || [];
+        if (!mnemonics.length) {
+          throw new Error("blip39 -d expects mnemonic shares");
+        }
+        const rawSet = decodeShareSet(mnemonics);
+        return {
+          type: "shares",
+          data: {
+            ...rawSet,
+            envelope: value.data.envelope || null,
+          },
+          meta: {
+            sensitive: true,
+            envelope: value.meta?.envelope || value.data.envelope || null,
+            passphrase: value.meta?.passphrase || "",
+          },
+        };
+      }
+      const raw = value.data.raw || [];
+      if (!raw.length) {
+        throw new Error("blip39 encode expects raw SSS shares (from sss)");
+      }
+      const encoded = encodeShareSet({
+        raw,
+        threshold: Number(value.data.threshold) || 0,
+        shares: Number(value.data.shares) || raw.length,
+        flags: Number(value.data.flags) || 0,
+      });
+      return {
+        type: "shares",
+        data: encoded,
+        meta: { sensitive: true },
+      };
+    }
+    case "recover": {
+      if (!value || value.type !== "shares") throw new Error("recover expects shares");
+      if (value.data.mnemonics?.length && !value.data.raw?.length) {
+        throw new Error(
+          'recover expects raw SSS shares — add "blip39 -d" before recover'
+        );
+      }
       const passphrase =
         String(step.params.passphrase || "") ||
         String(value.meta?.passphrase || "") ||
         "";
-      // Legacy AES-GCM envelope only (new OpenPGP envelopes use symdecrypt).
       const envelope = value.data.envelope || value.meta?.envelope || null;
       let secret;
       try {
-        secret = await combineShares(mnemonics, {
+        secret = await combineRawShares(value.data, {
           passphrase: passphrase || undefined,
           envelope,
         });
@@ -515,7 +855,7 @@ async function execStepBody(step, value, bindings, artifacts) {
     }
     case "symdecrypt": {
       if (!value || value.type !== "bytes") {
-        throw new Error("symdecrypt expects master bytes from combine");
+        throw new Error("symdecrypt expects master bytes from recover");
       }
       const master = value.data;
       if (!(master instanceof Uint8Array) || (master.length !== 16 && master.length !== 32)) {
@@ -600,7 +940,7 @@ async function execStepBody(step, value, bindings, artifacts) {
           disposition: "file",
           role: isShare ? "share" : "ciphertext",
           tags: isShare
-            ? ["encrypted", "openpgp", "slip39"]
+            ? ["encrypted", "openpgp", "blip39"]
             : ["encrypted", "openpgp"],
           traits: isShare
             ? {
@@ -641,7 +981,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         if (!a.role) {
           if (a.shareIndex) {
             a.role = "share";
-            a.tags = a.tags || ["mnemonic", "slip39"];
+            a.tags = a.tags || ["mnemonic", "blip39"];
             a.traits = a.traits || {
               shareOf: a.shareIndex,
               threshold: value.meta?.threshold,
@@ -837,7 +1177,8 @@ async function emitFanoutArtifact(value, params, artifacts) {
   }
 
   const derFmt = format === "pkcs8" ? "pkcs8" : "spki";
-  const exportWhich = derFmt === "spki" ? "public" : which;
+  // format locks which: SPKI is public-only; PKCS#8 is private-only.
+  const exportWhich = derFmt === "spki" ? "public" : "private";
   const exported = await exportKey(value, derFmt, exportWhich);
   artifacts.push(
     attachPipeMeta(
@@ -874,7 +1215,7 @@ function looksLikePgpMessage(text) {
 }
 
 /**
- * Normalize and accept a SLIP-39 mnemonic if the checksum validates.
+ * Normalize and accept a BLIP39 mnemonic if the checksum validates.
  * @param {string} text
  * @returns {string|null}
  */
@@ -923,13 +1264,13 @@ async function decryptGpgSource(bindings, _artifacts) {
       continue;
     }
     problems.push(
-      "A pasted block was neither an OpenPGP message nor a valid SLIP-39 mnemonic"
+      "A pasted block was neither an OpenPGP message nor a valid BLIP39 mnemonic"
     );
   }
 
   if (!ciphertexts.length && !mnemonics.length) {
     throw new Error(
-      "Paste OpenPGP-encrypted shares and/or already-decrypted SLIP-39 mnemonics (share rows)."
+      "Paste OpenPGP-encrypted shares and/or already-decrypted BLIP39 mnemonics (share rows)."
     );
   }
 
@@ -998,6 +1339,7 @@ async function decryptGpgSource(bindings, _artifacts) {
     return {
       type: "shares",
       data: {
+        encoding: "mnemonic",
         mnemonics: unique,
         envelope,
         threshold: 0,
@@ -1566,7 +1908,7 @@ async function materializeOutArtifacts(value, params) {
           encoding: encodingUsed,
           shareIndex: value.meta?.shareIndex,
           role: value.meta?.shareIndex ? "share" : value.meta?.sensitive ? "secret" : "text",
-          tags: value.meta?.shareIndex ? ["mnemonic", "slip39"] : [],
+          tags: value.meta?.shareIndex ? ["mnemonic", "blip39"] : [],
           traits: value.meta?.shareIndex
             ? { shareOf: value.meta.shareIndex, threshold: value.meta.threshold }
             : undefined,
@@ -1618,6 +1960,30 @@ async function materializeOutArtifacts(value, params) {
   }
 
   if (value.type === "shares") {
+    if (value.data.raw?.length) {
+      return value.data.raw.map((s, i) => {
+        const idx = s.index || i + 1;
+        return attachPipeMeta(
+          {
+            label: `${label} · share ${idx}`,
+            filename: `${stem}-${idx}.${extOverride || "bin.b64"}`,
+            content: bytesToBase64(s.data),
+            bytes: new Uint8Array(s.data),
+            sensitive: true,
+            mime: mimeOverride || "application/octet-stream",
+            encoding: "base64",
+            shareIndex: idx,
+            role: "share",
+            tags: ["sss", "raw"],
+            traits: {
+              shareOf: idx,
+              threshold: value.data.threshold,
+            },
+          },
+          value
+        );
+      });
+    }
     return (value.data.mnemonics || []).map((m, i) =>
       attachPipeMeta(
         {
@@ -1629,7 +1995,7 @@ async function materializeOutArtifacts(value, params) {
           encoding: "text",
           shareIndex: i + 1,
           role: "share",
-          tags: ["mnemonic", "slip39"],
+          tags: ["mnemonic", "blip39"],
           traits: {
             shareOf: i + 1,
             threshold: value.data.threshold,
@@ -1741,7 +2107,32 @@ function valueToArtifacts(value, name = "artifact") {
     ];
   }
   if (value.type === "shares") {
-    return value.data.mnemonics.map((m, i) =>
+    if (value.data.raw?.length) {
+      return value.data.raw.map((s, i) => {
+        const idx = s.index || i + 1;
+        return attachPipeMeta(
+          {
+            label: `Share ${idx}`,
+            filename: `share-${idx}.bin.b64`,
+            content: bytesToBase64(s.data),
+            bytes: new Uint8Array(s.data),
+            sensitive: true,
+            shareIndex: idx,
+            mime: "application/octet-stream",
+            encoding: "base64",
+            disposition: "file",
+            role: "share",
+            tags: ["sss", "raw"],
+            traits: {
+              shareOf: idx,
+              threshold: value.data.threshold,
+            },
+          },
+          value
+        );
+      });
+    }
+    return (value.data.mnemonics || []).map((m, i) =>
       attachPipeMeta(
         {
           label: `Share ${i + 1}`,
@@ -1753,7 +2144,7 @@ function valueToArtifacts(value, name = "artifact") {
           encoding: "text",
           disposition: "file",
           role: "share",
-          tags: ["mnemonic", "slip39"],
+          tags: ["mnemonic", "blip39"],
           traits: {
             shareOf: i + 1,
             threshold: value.data.threshold,

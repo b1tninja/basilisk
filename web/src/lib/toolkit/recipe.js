@@ -2,9 +2,9 @@
  * Toolkit recipe language: pipe-separated steps with key=value params.
  *
  *   genkey ec/p256 | fanout format=spki which=public name=public-key
- *     | export scalar | slip39 threshold=2 shares=3 | foreach | encrypt gpg
- *   recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem
- *   (aliases: input / read / paste for recombine)
+ *     | export scalar | sss threshold=2 shares=3 | blip39 | foreach | encrypt gpg
+ *   shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem
+ *   (free-form text source: input / paste / cat)
  *
  * Flow control (CyberChef Fork/Merge):
  *   foreach (aliases: map, each, fork) opens a per-item scope
@@ -21,6 +21,7 @@ import {
 } from "./registry.js";
 import {
   formatType,
+  isTerminalSink,
   resolveStepType,
   tNone,
   typeOf,
@@ -55,7 +56,7 @@ import {
  * @property {string[]} warnings
  * @property {number} [recipientSlots]  how many GPG recipient slots Run needs
  * @property {boolean} [foreachGpg]  encrypt gpg is inside foreach
- * @property {("shares"|"gpg"|"text"|"envelope")[]} [inputNeeds]  runtime input panels required
+ * @property {("shares"|"gpg"|"text"|"envelope"|"key")[]} [inputNeeds]  runtime input panels required
  */
 
 /**
@@ -363,7 +364,7 @@ export function validateRecipe(ast) {
   let sharesCount = 0;
   let gpgSlots = 0;
   let foreachGpg = false;
-  /** @type {("shares"|"gpg"|"text"|"envelope")[]} */
+  /** @type {("shares"|"gpg"|"text"|"envelope"|"key")[]} */
   const inputNeeds = [];
   let sawInputShares = false;
   let sawInputText = false;
@@ -424,12 +425,12 @@ export function validateRecipe(ast) {
       }
     }
 
-    if (step.name === "slip39") {
+    if (step.name === "sss") {
       const t = Number(step.params.threshold);
       const n = Number(step.params.shares);
       if (t > n) {
         errors.push({
-          message: `slip39: threshold (${t}) cannot exceed shares (${n})`,
+          message: `sss: threshold (${t}) cannot exceed shares (${n})`,
           start: step.start,
           end: step.end,
           stepIndex: i,
@@ -438,19 +439,17 @@ export function validateRecipe(ast) {
       sharesCount = n;
     }
 
-    if (step.name === "recombine") {
+    if (step.name === "shares") {
       if (sawInputShares) {
         errors.push({
-          message: "Only one recombine step is supported per pipeline",
+          message: "Only one shares step is supported per pipeline",
           start: step.start,
           end: step.end,
           stepIndex: i,
         });
       }
       sawInputShares = true;
-      if (spec.unresolvedInputs === "shares" || String(step.params.kind || "shares") === "shares") {
-        if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
-      }
+      if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
     }
 
     if (step.name === "input") {
@@ -486,6 +485,18 @@ export function validateRecipe(ast) {
       if (!inputNeeds.includes("envelope")) inputNeeds.push("envelope");
     }
 
+    if (
+      (step.name === "sign" ||
+        step.name === "verify" ||
+        step.name === "aesgcm" ||
+        step.name === "ecdh" ||
+        step.name === "wrap" ||
+        step.name === "unwrap") &&
+      !inputNeeds.includes("key")
+    ) {
+      inputNeeds.push("key");
+    }
+
     if (step.name === "foreach") {
       if (foreachDepth > 0) {
         errors.push({
@@ -497,15 +508,18 @@ export function validateRecipe(ast) {
       }
       if (current.base !== "shares") {
         errors.push({
-          message: `foreach requires a collection (shares) — got ${formatType(current)}. Add slip39 or recombine before foreach.`,
+          message: `foreach requires a collection (shares) — got ${formatType(current)}. Add sss, blip39, or shares before foreach.`,
           start: step.start,
           end: step.end,
           stepIndex: i,
         });
       }
       foreachDepth++;
-      // Per-item mnemonic text inside foreach
-      current = typeOf("text", { kind: "mnemonic" });
+      // Per-item value inside foreach: mnemonic text or raw share bytes
+      current =
+        current.kind === "raw"
+          ? typeOf("bytes", { kind: "opaque" })
+          : typeOf("text", { kind: "mnemonic" });
       continue;
     }
 
@@ -524,17 +538,18 @@ export function validateRecipe(ast) {
       continue;
     }
 
-    // Collection into non-foreach / non-combine / pass-through
+    // Collection into non-foreach / non-recover / non-blip39 / pass-through
     if (
       current.base === "shares" &&
-      step.name !== "combine" &&
+      step.name !== "recover" &&
+      step.name !== "blip39" &&
       step.name !== "tee" &&
       step.name !== "inspect" &&
       step.name !== "out" &&
       step.name !== "fanout"
     ) {
       errors.push({
-        message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, or combine to recover.`,
+        message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, blip39 to encode/decode, or recover (on raw shares) for bytes/master.`,
         start: step.start,
         end: step.end,
         stepIndex: i,
@@ -572,7 +587,7 @@ export function validateRecipe(ast) {
       current = typeOf("text", { kind: "mnemonic" });
     }
 
-    // Reject slip39 on scalars that are not 16/32 (e.g. P-384)
+    // Reject sss on scalars that are not 16/32 (e.g. P-384)
     if (
       step.name === "export" &&
       (String(step.params.format || "") === "scalar" ||
@@ -582,7 +597,7 @@ export function validateRecipe(ast) {
       current.length !== 32
     ) {
       warnings.push(
-        `export scalar produced ${current.length}-byte material — slip39 only accepts 16/32; use symencrypt for larger scalars`
+        `export scalar produced ${current.length}-byte material — sss only accepts 16/32; use symencrypt for larger scalars`
       );
     }
 
@@ -608,6 +623,26 @@ export function validateRecipe(ast) {
       end: steps[0].end,
       stepIndex: 0,
     });
+  }
+
+  // Dangling typed value: engine auto-emits a result tile — prefer inspect/out.
+  const last = steps[steps.length - 1];
+  if (
+    errors.length === 0 &&
+    last &&
+    current.base !== "none" &&
+    current.base !== "artifact" &&
+    current.base !== "bundle" &&
+    !isTerminalSink(last.name) &&
+    last.name !== "inspect"
+  ) {
+    const tip =
+      current.base === "shares"
+        ? "append recover (→ bytes/master) or foreach, or inspect to dump"
+        : "append inspect to dump, or out/text to emit a named tile";
+    warnings.push(
+      `Trailing ${formatType(current)} is unhandled — ${tip}.`
+    );
   }
 
   return {
@@ -665,6 +700,7 @@ export function registryIssues() {
   for (const s of listSteps()) {
     if (!s.name) issues.push("step missing name");
     if (!s.kind) issues.push(`${s.name}: missing kind`);
+    if (!s.toolbox) issues.push(`${s.name}: missing toolbox`);
     if (!s.doc) issues.push(`${s.name}: missing doc`);
     if (!s.input) issues.push(`${s.name}: missing input`);
     if (!s.output) issues.push(`${s.name}: missing output`);
@@ -720,20 +756,27 @@ export const PRESETS = [
     recipe: "passphrase 6",
   },
   {
+    id: "digest-sha256",
+    group: "WebCrypto",
+    title: "SHA-256 digest",
+    blurb: "Hash 32 random bytes and show hex.",
+    recipe: "random 32 | digest | hex",
+  },
+  {
     id: "slip39-split",
     group: "Split & recover",
     pair: "slip39-secret",
-    title: "SLIP-39 split a secret",
-    blurb: "Generate 32 random bytes and split 2-of-3 mnemonic shares.",
-    recipe: "random 32 | slip39 threshold=2 shares=3 | foreach | out name=share",
+    title: "SSS + BLIP39 split a secret",
+    blurb: "Generate 32 random bytes, Shamir-split 2-of-3, encode as BLIP39 mnemonics.",
+    recipe: "random 32 | sss threshold=2 shares=3 | blip39 | foreach | out name=share",
   },
   {
     id: "recover-shares",
     group: "Split & recover",
     pair: "slip39-secret",
-    title: "Recover secret from SLIP-39 shares",
-    blurb: "Paste K-of-N mnemonics and reconstruct the 16/32-byte master as Base64.",
-    recipe: "recombine | combine | base64",
+    title: "Recover secret from BLIP39 shares",
+    blurb: "Paste K-of-N mnemonics, decode to raw SSS, reconstruct the 16/32-byte master as Base64.",
+    recipe: "shares | blip39 -d | recover | base64",
   },
   {
     id: "out-mid-pipeline",
@@ -741,18 +784,18 @@ export const PRESETS = [
     pair: "slip39-scalar",
     title: "Split P-256 scalar into shares",
     blurb:
-      "Emit the public SPKI beside a direct 32-byte scalar split (no envelope) — preferred for P-256 keys.",
+      "Emit the public SPKI beside a direct 32-byte scalar SSS + BLIP39 split (no envelope) — preferred for P-256 keys.",
     recipe:
-      "genkey ec/p256 | fanout format=spki which=public name=public-key ext=spki | export scalar | slip39 threshold=2 shares=3 | foreach | out name=share",
+      "genkey ec/p256 | fanout format=spki which=public name=public-key ext=spki | export scalar | sss threshold=2 shares=3 | blip39 | foreach | out name=share",
   },
   {
     id: "rebuild-p256",
     group: "Split & recover",
     pair: "slip39-scalar",
     title: "Rebuild P-256 key from scalar shares",
-    blurb: "Combine SLIP-39 shares of a P-256 private scalar and re-import as WebCrypto.",
+    blurb: "Decode BLIP39 shares of a P-256 private scalar, recover SSS, and re-import as WebCrypto.",
     recipe:
-      "recombine | combine | import scalar alg=ec/p256 | export pkcs8 | pem",
+      "shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem",
   },
   {
     id: "quorum-gpg",
@@ -760,9 +803,9 @@ export const PRESETS = [
     pair: "quorum-gpg",
     title: "P-256 scalar + quorum-share to GPG",
     blurb:
-      "Fan out public key, split the 32-byte scalar 2-of-3, encrypt each share to a different recipient.",
+      "Fan out public key, SSS-split the 32-byte scalar 2-of-3, BLIP39-encode, encrypt each share to a different recipient.",
     recipe:
-      "genkey ec/p256 | fanout format=spki which=public name=public-key | export scalar | slip39 threshold=2 shares=3 | foreach | encrypt gpg",
+      "genkey ec/p256 | fanout format=spki which=public name=public-key | export scalar | sss threshold=2 shares=3 | blip39 | foreach | encrypt gpg",
   },
   {
     id: "decrypt-rebuild-p256",
@@ -770,9 +813,9 @@ export const PRESETS = [
     pair: "quorum-gpg",
     title: "Decrypt GPG shares → rebuild key",
     blurb:
-      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then combine and rebuild the P-256 PEM from the scalar.",
+      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then blip39 -d | recover and rebuild the P-256 PEM from the scalar.",
     recipe:
-      "decrypt gpg | combine | import scalar alg=ec/p256 | export pkcs8 | pem",
+      "decrypt gpg | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem",
   },
   {
     id: "pem-envelope-split",
@@ -780,9 +823,9 @@ export const PRESETS = [
     pair: "slip39-pem-envelope",
     title: "Split PEM via OpenPGP envelope",
     blurb:
-      "For PKCS#8 PEM (or any large payload): OpenPGP-encrypt under a random 32-byte master, then SLIP-39-split the master. Keep envelope.asc with the shares.",
+      "For PKCS#8 PEM (or any large payload): OpenPGP-encrypt under a random 32-byte master, then SSS + BLIP39-split the master. Keep envelope.asc with the shares.",
     recipe:
-      "genkey ec/p256 | export pkcs8 | pem | symencrypt | slip39 threshold=2 shares=3 | foreach | out name=share",
+      "genkey ec/p256 | export pkcs8 | pem | symencrypt | sss threshold=2 shares=3 | blip39 | foreach | out name=share",
   },
   {
     id: "pem-envelope-rebuild",
@@ -790,7 +833,7 @@ export const PRESETS = [
     pair: "slip39-pem-envelope",
     title: "Recover PEM from envelope + shares",
     blurb:
-      "Combine shares to the hex master, then symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
-    recipe: "recombine | combine | symdecrypt | utf8",
+      "Decode + recover shares to the hex master, then symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
+    recipe: "shares | blip39 -d | recover | symdecrypt | utf8",
   },
 ];

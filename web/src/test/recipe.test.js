@@ -38,12 +38,12 @@ describe("parse / serialize", () => {
 
   it("canonicalizes foreach aliases", () => {
     const { ast, errors } = parseRecipe(
-      "random 32 | slip39 threshold=2 shares=3 | map | out"
+      "random 32 | sss threshold=2 shares=3 | map | out"
     );
     expect(errors).toEqual([]);
     expect(ast.steps.map((s) => s.name)).toEqual([
       "random",
-      "slip39",
+      "sss",
       "foreach",
       "out",
     ]);
@@ -53,7 +53,7 @@ describe("parse / serialize", () => {
 
   it("canonicalizes fork and each to foreach", () => {
     for (const alias of ["fork", "each", "map"]) {
-      const { ast } = parseRecipe(`random 16 | slip39 shares=2 threshold=2 | ${alias} | out`);
+      const { ast } = parseRecipe(`random 16 | sss shares=2 threshold=2 | ${alias} | out`);
       expect(ast.steps.some((s) => s.name === "foreach")).toBe(true);
     }
   });
@@ -75,7 +75,7 @@ describe("validation", () => {
   });
 
   it("suggests foreach when piping shares into a non-collection step", () => {
-    const { ast } = parseRecipe("random 32 | slip39 threshold=2 shares=3 | pem");
+    const { ast } = parseRecipe("random 32 | sss threshold=2 shares=3 | pem");
     const v = validateRecipe(ast);
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /foreach/i.test(e.message))).toBe(true);
@@ -90,7 +90,7 @@ describe("validation", () => {
 
   it("rejects nested foreach", () => {
     const { ast } = parseRecipe(
-      "random 32 | slip39 threshold=2 shares=3 | foreach | foreach | out"
+      "random 32 | sss threshold=2 shares=3 | foreach | foreach | out"
     );
     const v = validateRecipe(ast);
     expect(v.ok).toBe(false);
@@ -98,14 +98,14 @@ describe("validation", () => {
   });
 
   it("rejects threshold > shares", () => {
-    const { ast } = parseRecipe("random 32 | slip39 threshold=5 shares=2");
+    const { ast } = parseRecipe("random 32 | sss threshold=5 shares=2");
     const v = validateRecipe(ast);
     expect(v.ok).toBe(false);
   });
 
   it("never serializes recipient identities", () => {
     const recipe =
-      "genkey ec/p256 | export scalar | slip39 threshold=2 shares=3 | foreach | gpg";
+      "genkey ec/p256 | export scalar | sss threshold=2 shares=3 | foreach | gpg";
     const { ast } = parseRecipe(recipe);
     const out = serializeRecipe(ast);
     expect(out).not.toMatch(/@/);
@@ -121,7 +121,7 @@ describe("validation", () => {
   });
 
   it("parses and serializes -d decode flags", () => {
-    const src = "recombine | combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem";
+    const src = "shares | blip39 -d | recover | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem";
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     expect(ast.steps.find((s) => s.name === "pem" && s.params.decode === true)).toBeTruthy();
@@ -129,8 +129,16 @@ describe("validation", () => {
     expect(serializeRecipe(ast)).not.toContain("decode=true");
   });
 
-  it("allows shares | combine and reports inputNeeds", () => {
-    const { validation } = compileRecipe("recombine | combine | base64");
+  it("rejects shares | recover without blip39 -d", () => {
+    const { validation } = compileRecipe("shares | recover | base64");
+    expect(validation.ok).toBe(false);
+    expect(
+      validation.errors.some((e) => /blip39 -d|shares\/raw/i.test(e.message))
+    ).toBe(true);
+  });
+
+  it("allows shares | blip39 -d | recover and reports inputNeeds", () => {
+    const { validation } = compileRecipe("shares | blip39 -d | recover | base64");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("shares");
   });
@@ -154,7 +162,7 @@ describe("validation", () => {
   });
 
   it("canonicalizes gpgdecrypt to decrypt gpg", () => {
-    const { ast, errors } = parseRecipe("gpgdecrypt | combine | hex");
+    const { ast, errors } = parseRecipe("gpgdecrypt | recover | hex");
     expect(errors).toEqual([]);
     expect(ast.steps[0].name).toBe("decrypt");
     expect(ast.steps[0].params.with).toBe("gpg");
@@ -162,7 +170,7 @@ describe("validation", () => {
   });
 
   it("decrypt recipes request gpg + shares panels for hybrid recovery", () => {
-    const { validation } = compileRecipe("decrypt gpg | combine | hex");
+    const { validation } = compileRecipe("decrypt gpg | blip39 -d | recover | hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toEqual(
       expect.arrayContaining(["gpg", "shares"])
@@ -177,26 +185,26 @@ describe("validation", () => {
     expect(validation.inputNeeds).toContain("shares");
   });
 
-  it("rejects pem | slip39 at compile time", () => {
+  it("rejects pem | sss at compile time", () => {
     const { validation } = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | slip39 threshold=2 shares=3"
+      "genkey ec/p256 | export pkcs8 | pem | sss threshold=2 shares=3"
     );
     expect(validation.ok).toBe(false);
     expect(
-      validation.errors.some((e) => /slip39|export scalar|symencrypt/i.test(e.message))
+      validation.errors.some((e) => /sss|export scalar|symencrypt/i.test(e.message))
     ).toBe(true);
   });
 
-  it("accepts export scalar | slip39", () => {
+  it("accepts export scalar | sss", () => {
     const { validation } = compileRecipe(
-      "genkey ec/p256 | export scalar | slip39 threshold=2 shares=3"
+      "genkey ec/p256 | export scalar | sss threshold=2 shares=3"
     );
     expect(validation.ok).toBe(true);
   });
 
-  it("accepts pem | symencrypt | slip39", () => {
+  it("accepts pem | symencrypt | sss", () => {
     const { validation } = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | symencrypt | slip39 threshold=2 shares=3"
+      "genkey ec/p256 | export pkcs8 | pem | symencrypt | sss threshold=2 shares=3"
     );
     expect(validation.ok).toBe(true);
   });
@@ -207,9 +215,9 @@ describe("validation", () => {
     expect(validation.errors.some((e) => /symencrypt/i.test(e.message))).toBe(true);
   });
 
-  it("rejects P-384 scalar | slip39 (not 16/32)", () => {
+  it("rejects P-384 scalar | sss (not 16/32)", () => {
     const { validation } = compileRecipe(
-      "genkey ec/p384 | export scalar | slip39 threshold=2 shares=3"
+      "genkey ec/p384 | export scalar | sss threshold=2 shares=3"
     );
     expect(validation.ok).toBe(false);
   });

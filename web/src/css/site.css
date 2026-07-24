@@ -2239,6 +2239,50 @@ pre {
 .ops-item-io {
   font-size: 0.68rem;
 }
+.toolbox-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  padding: 0.2rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised, var(--surface));
+  color: var(--muted, inherit);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.toolbox-webcrypto {
+  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 45%, var(--border));
+  color: var(--accent, #7aa2f7);
+}
+.toolbox-openpgp {
+  border-color: color-mix(in srgb, var(--ok, #3d9a6a) 45%, var(--border));
+  color: color-mix(in srgb, var(--ok, #3d9a6a) 85%, var(--text));
+}
+.toolbox-sss {
+  border-color: color-mix(in srgb, var(--warn, #c47d2b) 45%, var(--border));
+  color: color-mix(in srgb, var(--warn, #c47d2b) 90%, var(--text));
+}
+.toolbox-encoding,
+.toolbox-io,
+.toolbox-flow {
+  border-color: var(--border);
+}
+.ops-category-toggle .toolbox-badge {
+  margin-right: 0.25rem;
+}
+.builder-card-head .toolbox-badge {
+  margin-left: 0.15rem;
+}
+.suggest-chip .toolbox-badge {
+  margin-right: 0.15rem;
+}
+.ref-step summary .toolbox-badge {
+  margin-right: 0.35rem;
+}
+}
 
 .builder-steps {
   display: flex;
@@ -2457,6 +2501,121 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+.builder-param-name {
+  display: block;
+  margin-bottom: 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+.builder-param-bool {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: auto;
+}
+.builder-param-bool .builder-param-name {
+  margin: 0;
+}
+.builder-param-bool input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+.builder-type-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 8%, transparent);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+.builder-type-error {
+  border-color: color-mix(in srgb, var(--danger, #c44) 55%, var(--border));
+}
+.builder-type-hint code {
+  font-size: 0.85em;
+}
+.builder-dangling {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.35rem 0 0.5rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn, #c47d2b) 8%, transparent);
+}
+.suggest-next {
+  margin: 0.55rem 0 0.25rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 6%, transparent);
+}
+.suggest-next-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  margin-bottom: 0.55rem;
+}
+.suggest-next-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.suggest-next-title code {
+  font-weight: 500;
+  font-size: 0.9em;
+}
+.suggest-next-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.suggest-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised, var(--surface));
+  color: inherit;
+  cursor: grab;
+  text-align: left;
+  line-height: 1.25;
+}
+.suggest-chip:hover,
+.suggest-chip:focus-visible {
+  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 55%, var(--border));
+  outline: none;
+}
+.suggest-chip-primary {
+  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 12%, var(--surface-raised, var(--surface)));
+}
+.suggest-chip-name {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.82rem;
+}
+.suggest-chip-out {
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 11rem;
 }
 .crypto-params-details > summary {
   cursor: pointer;

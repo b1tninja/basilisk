@@ -10,7 +10,9 @@ import {
   resolveStepType,
   typeOf,
   typeSatisfies,
+  walkPipelineTypes,
 } from "../lib/toolkit/types.js";
+import { compileRecipe } from "../lib/toolkit/recipe.js";
 
 describe("refined types", () => {
   it("formats refinements", () => {
@@ -34,8 +36,8 @@ describe("refined types", () => {
     ).toBe(false);
   });
 
-  it("slip39 overloads match master/scalar only", () => {
-    const spec = getStep("slip39");
+  it("sss overloads match master/scalar only", () => {
+    const spec = getStep("sss");
     expect(
       matchOverload(spec.overloads, typeOf("bytes", { kind: "master", length: 32 }), {})
     ).toBeTruthy();
@@ -61,21 +63,21 @@ describe("refined types", () => {
     }
   });
 
-  it("stepsAccepting hides slip39 after pem", () => {
+  it("stepsAccepting hides sss after pem", () => {
     const afterPem = typeOf("text", { kind: "pem" });
     const names = stepsAccepting(afterPem).map((s) => s.name);
-    expect(names).not.toContain("slip39");
+    expect(names).not.toContain("sss");
     expect(names).toContain("symencrypt");
   });
 
-  it("stepsAccepting offers slip39 after scalar export", () => {
+  it("stepsAccepting offers sss after scalar export", () => {
     const afterScalar = typeOf("bytes", {
       kind: "scalar",
       alg: "ec/p256",
       length: 32,
     });
     const names = stepsAccepting(afterScalar).map((s) => s.name);
-    expect(names).toContain("slip39");
+    expect(names).toContain("sss");
     expect(names).not.toContain("symencrypt");
   });
 
@@ -117,6 +119,36 @@ describe("refined types", () => {
         encoding: "text",
         content: "academic …",
       })
+    ).toBe(false);
+  });
+
+  it("walkPipelineTypes: shares | blip39 -d | recover → shares then master", () => {
+    const { edges, final } = walkPipelineTypes(
+      [
+        { name: "shares", params: {} },
+        { name: "blip39", params: { decode: true } },
+        { name: "recover", params: {} },
+      ],
+      { getStep }
+    );
+    expect(edges).toHaveLength(3);
+    expect(formatType(edges[0].output)).toBe("shares/mnemonic");
+    expect(formatType(edges[1].output)).toBe("shares/raw");
+    expect(formatType(edges[2].output)).toBe("bytes/master");
+    expect(formatType(final)).toBe("bytes/master");
+  });
+
+  it("warns on trailing unhandled typed value", () => {
+    const dangling = compileRecipe("genkey ec/p256 | export scalar");
+    expect(dangling.validation.ok).toBe(true);
+    expect(
+      dangling.validation.warnings.some((w) => /Trailing bytes\/scalar/i.test(w))
+    ).toBe(true);
+
+    const handled = compileRecipe("genkey ec/p256 | export scalar | inspect");
+    expect(handled.validation.ok).toBe(true);
+    expect(
+      handled.validation.warnings.some((w) => /Trailing /i.test(w))
     ).toBe(false);
   });
 });

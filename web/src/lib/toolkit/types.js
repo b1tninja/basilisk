@@ -176,9 +176,7 @@ export function inferSourceType(name, params = {}) {
       return typeOf("text", { kind: "opaque" });
     case "input":
       return typeOf("text", { kind: "opaque" });
-    case "recombine": {
-      const kind = String(params.kind || "shares");
-      if (kind === "text") return typeOf("text", { kind: "opaque" });
+    case "shares": {
       return typeOf("shares", { kind: "mnemonic" });
     }
     case "decrypt":
@@ -266,8 +264,8 @@ export function inferParamDrivenType(name, current, params = {}) {
         return {
           ok: false,
           error:
-            `"import scalar" expects bytes/scalar or bytes/master (from combine), got ${formatType(current)}. ` +
-            `Use export scalar before slip39, or combine shares of a scalar split.`,
+            `"import scalar" expects bytes/scalar or bytes/master (from recover), got ${formatType(current)}. ` +
+            `Use export scalar before sss, or recover shares of a scalar split.`,
         };
       }
       return {
@@ -385,11 +383,18 @@ export function inferParamDrivenType(name, current, params = {}) {
     };
   }
 
-  if (name === "combine") {
+  if (name === "recover") {
     if (current.base !== "shares") {
       return {
         ok: false,
-        error: `"combine" expects shares, got ${formatType(current)}`,
+        error: `"recover" expects shares, got ${formatType(current)}`,
+      };
+    }
+    if (current.kind === "mnemonic") {
+      return {
+        ok: false,
+        error:
+          `"recover" expects shares/raw — decode mnemonics first with "blip39 -d"`,
       };
     }
     // Recovered secret is always 16/32-byte master-sized material (scalar or random).
@@ -397,6 +402,32 @@ export function inferParamDrivenType(name, current, params = {}) {
       ok: true,
       output: typeOf("bytes", { kind: "master" }),
     };
+  }
+
+  if (name === "blip39") {
+    if (current.base !== "shares") {
+      return {
+        ok: false,
+        error: `"blip39" expects shares, got ${formatType(current)}`,
+      };
+    }
+    const decode = !!params.decode;
+    if (decode) {
+      if (current.kind === "raw") {
+        return {
+          ok: false,
+          error: `"blip39 -d" expects shares/mnemonic, got shares/raw`,
+        };
+      }
+      return { ok: true, output: typeOf("shares", { kind: "raw" }) };
+    }
+    if (current.kind === "mnemonic") {
+      return {
+        ok: false,
+        error: `"blip39" encode expects shares/raw, got shares/mnemonic (use -d to decode)`,
+      };
+    }
+    return { ok: true, output: typeOf("shares", { kind: "mnemonic" }) };
   }
 
   if (name === "symencrypt") {
@@ -411,7 +442,7 @@ export function inferParamDrivenType(name, current, params = {}) {
         ok: false,
         error:
           `"symencrypt" is for PEM/arbitrary payloads — got ${formatType(current)}. ` +
-          `Pipe that to slip39 directly (already 16/32 bytes).`,
+          `Pipe that to sss directly (already 16/32 bytes).`,
       };
     }
     return {
@@ -425,7 +456,7 @@ export function inferParamDrivenType(name, current, params = {}) {
       return {
         ok: false,
         error:
-          `"symdecrypt" expects bytes/master from combine, got ${formatType(current)}`,
+          `"symdecrypt" expects bytes/master from recover, got ${formatType(current)}`,
       };
     }
     return {
@@ -474,6 +505,52 @@ export function inferParamDrivenType(name, current, params = {}) {
     return { ok: true, output: typeOf("text", { kind: "opaque" }) };
   }
 
+  if (name === "digest") {
+    if (current.base !== "bytes" && current.base !== "text") {
+      return {
+        ok: false,
+        error: `"digest" expects bytes or text, got ${formatType(current)}`,
+      };
+    }
+    const alg = String(params.alg || "sha-256").toLowerCase();
+    const length = alg === "sha-512" ? 64 : alg === "sha-384" ? 48 : 32;
+    return { ok: true, output: typeOf("bytes", { kind: "opaque", length }) };
+  }
+
+  if (name === "sign" || name === "aesgcm" || name === "hkdf" || name === "pbkdf2") {
+    if (current.base !== "bytes" && current.base !== "text") {
+      return {
+        ok: false,
+        error: `"${name}" expects bytes or text, got ${formatType(current)}`,
+      };
+    }
+    return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+  }
+
+  if (name === "verify") {
+    if (current.base !== "bytes" && current.base !== "text") {
+      return {
+        ok: false,
+        error: `"verify" expects bytes or text, got ${formatType(current)}`,
+      };
+    }
+    return { ok: true, output: typeOf("text", { kind: "opaque" }) };
+  }
+
+  if (name === "ecdh" || name === "wrap") {
+    return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+  }
+
+  if (name === "unwrap") {
+    if (current.base !== "bytes" && current.base !== "text") {
+      return {
+        ok: false,
+        error: `"unwrap" expects bytes, got ${formatType(current)}`,
+      };
+    }
+    return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+  }
+
   return null;
 }
 
@@ -503,7 +580,7 @@ export function resolveStepType(spec, current, params = {}) {
       const uniq = [...new Set(accepted)];
       let error = `"${name}" does not accept ${formatType(current)}`;
       if (uniq.length) error += ` (accepted: ${uniq.join(" | ")})`;
-      if (name === "slip39") {
+      if (name === "sss") {
         error +=
           '. For EC keys use "export scalar"; for PEM/arbitrary data use "symencrypt" first.';
       }
@@ -564,7 +641,26 @@ export function stepAcceptsRefined(spec, from) {
   if (spec.name === "fanout") return current.base === "keypair";
   if (spec.name === "foreach") return current.base === "shares";
   if (spec.name === "merge") return true;
-  if (spec.name === "combine") return current.base === "shares";
+  if (spec.name === "recover") {
+    return current.base === "shares" && current.kind !== "mnemonic";
+  }
+  if (spec.name === "blip39") {
+    return current.base === "shares";
+  }
+  if (
+    spec.name === "digest" ||
+    spec.name === "sign" ||
+    spec.name === "verify" ||
+    spec.name === "aesgcm" ||
+    spec.name === "hkdf" ||
+    spec.name === "pbkdf2" ||
+    spec.name === "unwrap"
+  ) {
+    return current.base === "bytes" || current.base === "text";
+  }
+  if (spec.name === "ecdh" || spec.name === "wrap") {
+    return true;
+  }
 
   if (spec.overloads?.length) {
     return !!matchOverload(spec.overloads, current, {});
@@ -596,8 +692,11 @@ export function stepAcceptsRefined(spec, from) {
  */
 export function artifactMetaFromType(t) {
   if (!t) return { role: "text", tags: [] };
+  if (t.base === "shares" && t.kind === "raw") {
+    return { role: "share", tags: ["sss", "raw"] };
+  }
   if (t.base === "shares" || t.kind === "mnemonic") {
-    return { role: "share", tags: ["mnemonic", "slip39"] };
+    return { role: "share", tags: ["mnemonic", "blip39"] };
   }
   if (t.kind === "scalar") {
     return { role: "secret", tags: ["private", "scalar"] };
@@ -644,4 +743,97 @@ export function artifactIsTextualForEncrypt(a) {
   if (a.role === "qr" || a.mime === "image/svg+xml") return false;
   if (a.role === "envelope" || a.role === "ciphertext") return false;
   return a.role === "text";
+}
+
+/**
+ * Walk recipe steps and compute refined input→output types per step.
+ * Mirrors builder / validation foreach·merge specials.
+ *
+ * @param {{ name: string, params?: Record<string, *> }[]} steps
+ * @param {{ getStep: (name: string) => { name: string, kind?: string, overloads?: StepOverload[], input?: IoType, output?: IoType } | null }} deps
+ * @returns {{
+ *   edges: { index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string }[],
+ *   final: RefinedType,
+ * }}
+ */
+export function walkPipelineTypes(steps, deps) {
+  /** @type {RefinedType} */
+  let current = tNone();
+  /** @type {{ index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string }[]} */
+  const edges = [];
+
+  for (let i = 0; i < (steps || []).length; i++) {
+    const step = steps[i];
+    const input = { ...current };
+    const spec = deps.getStep(step.name);
+    if (!spec) {
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: null,
+        ok: false,
+        error: `Unknown step "${step.name}"`,
+      });
+      continue;
+    }
+    if (step.name === "foreach") {
+      current =
+        input.kind === "raw"
+          ? typeOf("bytes", { kind: "opaque" })
+          : typeOf("text", { kind: "mnemonic" });
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: { ...current },
+        ok: true,
+      });
+      continue;
+    }
+    if (step.name === "merge") {
+      current = typeOf("bundle");
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: { ...current },
+        ok: true,
+      });
+      continue;
+    }
+    const resolved = resolveStepType(spec, current, step.params || {});
+    if (!resolved.ok) {
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: null,
+        ok: false,
+        error: resolved.error,
+      });
+      break;
+    }
+    current = resolved.output;
+    edges.push({
+      index: i,
+      name: step.name,
+      input,
+      output: { ...current },
+      ok: true,
+    });
+  }
+
+  return { edges, final: current };
+}
+
+/**
+ * Terminal sinks that handle the pipeline value (no auto-emitted dangling tile).
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isTerminalSink(name) {
+  return (
+    name === "out" || name === "text" || name === "encrypt" || name === "qr"
+  );
 }

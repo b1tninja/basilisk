@@ -15,7 +15,7 @@ import {
   splitArmoredMessages,
   stripArmoredMessages,
 } from "../lib/pgp/armor.js";
-import { validateShareMnemonic } from "../lib/slip39/slip39.js";
+import { validateShareMnemonic } from "../lib/slip39/blip39.js";
 import { base64ToBytes, hexToBytes } from "../lib/toolkit/encode.js";
 import {
   PRESETS,
@@ -25,11 +25,13 @@ import {
   unresolvedInputs,
   unresolvedRecipients,
 } from "../lib/toolkit/recipe.js";
-import { getStep, listSteps, stepsAccepting } from "../lib/toolkit/registry.js";
+import { getStep, listSteps, stepsAccepting, TOOLBOX_META } from "../lib/toolkit/registry.js";
 import {
   artifactIsTextualForEncrypt,
+  formatType,
+  isTerminalSink,
   resolveStepType,
-  tNone,
+  walkPipelineTypes,
 } from "../lib/toolkit/types.js";
 import {
   PROFILE_AUTO,
@@ -74,7 +76,7 @@ let boundRecipients = [];
 let binder = null;
 /** @type {import("../lib/vault.js").VaultKeyMeta[]} */
 let vaultKeys = [];
-/** @type {("shares"|"gpg"|"text")[]} */
+/** @type {("shares"|"gpg"|"text"|"envelope"|"key")[]} */
 let currentInputNeeds = [];
 /** Per-share mnemonic rows for the modular inputs UI (survives panel re-renders). */
 /** @type {string[]} */
@@ -85,6 +87,11 @@ let envelopeDraft = "";
 let sharePassDraft = "";
 /** Free-form input text retained across re-renders. */
 let inputTextDraft = "";
+/** WebCrypto JWK drafts for key-bound ops. */
+let keyJwkDraft = "";
+let peerJwkDraft = "";
+let wrapJwkDraft = "";
+let signatureDraft = "";
 /** Ops drawer search query. */
 let opsFilter = "";
 /** Collapsed category keys in the ops drawer. */
@@ -208,6 +215,26 @@ const KIND_META = {
   flow: { label: "Flow control", order: 3 },
 };
 
+/**
+ * @param {string|undefined|null} toolbox
+ * @returns {string}
+ */
+function toolboxBadgeHtml(toolbox) {
+  const tb = toolbox || "io";
+  const meta = TOOLBOX_META[tb] || { badge: tb, label: tb };
+  return `<span class="toolbox-badge toolbox-${escapeHtml(tb)}" title="${escapeHtml(meta.label)}">${escapeHtml(meta.badge)}</span>`;
+}
+
+/**
+ * Display name for a step (optional UI label, else recipe name).
+ * @param {{ name: string, label?: string }|null|undefined} spec
+ * @returns {string}
+ */
+function stepDisplayName(spec) {
+  if (!spec) return "";
+  return spec.label || spec.name;
+}
+
 app.innerHTML = `
   <div class="app-toolbar">
     <details class="toolbar-menu" id="preset-gallery">
@@ -261,6 +288,7 @@ app.innerHTML = `
         <p class="muted fs-sm mb-md">Drop operations here. Reorder by dragging cards. Recipients are chosen at run time — never stored in the pipeline text.</p>
         <div id="pgp-mode-host" class="pgp-mode-host hidden"></div>
         <div id="builder-steps" class="builder-steps"></div>
+        <div id="suggest-next" class="suggest-next" hidden></div>
         <details class="recipe-text-details mt-md">
           <summary class="muted fs-sm">Pipeline source (text)</summary>
           <textarea id="recipe-text" class="compose-message mt-sm" rows="3" spellcheck="false"
@@ -487,6 +515,7 @@ function setRecipeFromSteps() {
   }
   validateAndBind();
   renderBuilder();
+  renderSuggestDrawer();
   renderCryptoPanel();
   renderOpsDrawer();
 }
@@ -507,13 +536,14 @@ function defaultParams(spec) {
 /**
  * @param {string} name
  * @param {number} [index]
+ * @param {Record<string, string|number|boolean>} [paramOverrides]
  */
-function addStepAt(name, index) {
+function addStepAt(name, index, paramOverrides) {
   const spec = getStep(name);
   if (!spec) return;
   const step = {
     name: spec.name,
-    params: defaultParams(spec),
+    params: { ...defaultParams(spec), ...(paramOverrides || {}) },
     start: 0,
     end: 0,
   };
@@ -530,24 +560,49 @@ function addStepAt(name, index) {
  * @returns {import("../lib/toolkit/types.js").RefinedType}
  */
 function currentPipelineOutput() {
-  /** @type {import("../lib/toolkit/types.js").RefinedType} */
-  let current = tNone();
-  for (const step of steps) {
-    const spec = getStep(step.name);
-    if (!spec) continue;
-    if (step.name === "foreach") {
-      current = { base: "text", kind: "mnemonic" };
-      continue;
-    }
-    if (step.name === "merge") {
-      current = { base: "bundle" };
-      continue;
-    }
-    const resolved = resolveStepType(spec, current, step.params || {});
-    if (!resolved.ok) break;
-    current = resolved.output;
+  return walkPipelineTypes(steps, { getStep }).final;
+}
+
+/**
+ * Per-step refined type edges for the builder.
+ * @returns {ReturnType<typeof walkPipelineTypes>["edges"]}
+ */
+function builderTypeEdges() {
+  return walkPipelineTypes(steps, { getStep }).edges;
+}
+
+/**
+ * Sync fanout/export `which` when format locks the key half.
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
+ */
+function syncWhichWithFormat(step) {
+  if (step.name !== "fanout" && step.name !== "export") return;
+  const format = String(step.params.format || "");
+  if (format === "spki") step.params.which = "public";
+  else if (format === "pkcs8" || format === "scalar" || format === "d") {
+    step.params.which = "private";
   }
-  return current;
+}
+
+/**
+ * Whether a param should be shown/locked for the current step params.
+ * @param {string} stepName
+ * @param {{ name: string }} param
+ * @param {Record<string, *>} params
+ * @returns {{ show: boolean, locked?: boolean, forced?: string }}
+ */
+function paramVisibility(stepName, param, params) {
+  if (param.name !== "which") return { show: true };
+  const format = String(params.format || "");
+  if (stepName === "fanout" || stepName === "export") {
+    if (format === "spki") {
+      return { show: true, locked: true, forced: "public" };
+    }
+    if (format === "pkcs8" || format === "scalar" || format === "d") {
+      return { show: true, locked: true, forced: "private" };
+    }
+  }
+  return { show: true };
 }
 
 /**
@@ -574,6 +629,7 @@ function loadRecipeText(text, opts = {}) {
   if (errEl) errEl.classList.add("hidden");
   validateAndBind();
   renderBuilder();
+  renderSuggestDrawer();
   renderCryptoPanel();
   renderOpsDrawer();
 }
@@ -674,7 +730,7 @@ function splitSharePaste(text) {
 }
 
 /**
- * @param {("shares"|"gpg"|"text"|"envelope")[]} needs
+ * @param {("shares"|"gpg"|"text"|"envelope"|"key")[]} needs
  */
 function renderInputsPanel(needs) {
   const host = document.getElementById("inputs-host");
@@ -686,14 +742,38 @@ function renderInputsPanel(needs) {
   if (!shareRows.length) shareRows = [""];
 
   const title = needs.includes("shares")
-    ? "Recombine"
+    ? "Share mnemonics"
     : needs.includes("gpg")
       ? "Decrypt"
-      : needs.includes("envelope")
-        ? "Envelope"
-        : "Input";
+      : needs.includes("key")
+        ? "WebCrypto key"
+        : needs.includes("envelope")
+          ? "Envelope"
+          : "Input";
   /** @type {string[]} */
   const parts = [`<p class="card-title">${title}</p>`];
+  if (needs.includes("shares")) {
+    parts.push(
+      `<p class="muted fs-sm mb-sm">Runtime binding for the <code>shares</code> source → type <code>shares/mnemonic</code>. Pipe into <code>blip39 -d</code> then <code>recover</code> to get <code>bytes/master</code>.</p>`
+    );
+  }
+  if (needs.includes("key")) {
+    parts.push(`
+      <p class="muted fs-sm mb-sm">Bound WebCrypto key for <code>sign</code> / <code>verify</code> / <code>aesgcm</code> / <code>ecdh</code> / <code>wrap</code>. Paste a JWK from <code>genkey | export jwk</code>. Recipe tokens stay unique — OpenPGP <code>encrypt</code> is a different toolbox.</p>
+      <label class="field-label" for="input-wc-jwk">Key JWK</label>
+      <textarea id="input-wc-jwk" class="compose-message" rows="4" spellcheck="false"
+        placeholder='{"kty":"EC","crv":"P-256",…} or oct AES/HMAC'>${escapeHtml(keyJwkDraft)}</textarea>
+      <label class="field-label mt-sm" for="input-wc-peer">Peer public JWK (ecdh)</label>
+      <textarea id="input-wc-peer" class="compose-message" rows="3" spellcheck="false"
+        placeholder="Peer public JWK for ecdh">${escapeHtml(peerJwkDraft)}</textarea>
+      <label class="field-label mt-sm" for="input-wc-wrap">Key-to-wrap JWK (wrap)</label>
+      <textarea id="input-wc-wrap" class="compose-message" rows="3" spellcheck="false"
+        placeholder="oct JWK to wrap">${escapeHtml(wrapJwkDraft)}</textarea>
+      <label class="field-label mt-sm" for="input-wc-sig">Signature base64url (verify)</label>
+      <input type="text" id="input-wc-sig" class="text-input" spellcheck="false"
+        value="${escapeHtml(signatureDraft)}" placeholder="base64url signature">
+    `);
+  }
   if (needs.includes("text")) {
     parts.push(`
       <div class="btn-row wrap mb-xs">
@@ -724,14 +804,14 @@ function renderInputsPanel(needs) {
     parts.push(`
       <div class="share-inputs">
         <div class="btn-row wrap mb-sm">
-          <span class="field-label m-0">SLIP-39 share mnemonics</span>
+          <span class="field-label m-0">BLIP39 share mnemonics</span>
           <button type="button" class="btn btn-ghost btn-compact" id="add-share-btn">+ Add share</button>
           <button type="button" class="btn btn-ghost btn-compact" id="load-shares-btn">Load from file…</button>
           <input type="file" id="load-shares-file" class="hidden" multiple accept=".txt,text/plain,*/*">
         </div>
         <p class="muted fs-sm mb-sm">${
           needs.includes("gpg")
-            ? "Use these rows for mnemonics already decrypted outside the browser (Kleopatra/gpg/YubiKey). Mix with OpenPGP ciphertext below — the pipeline merges both before combine."
+            ? "Use these rows for mnemonics already decrypted outside the browser (Kleopatra/gpg/YubiKey). Mix with OpenPGP ciphertext below — the pipeline merges both before blip39 -d | recover."
             : "One share per row. Paste multiple lines into a row to auto-split. K-of-N required to recover. Direct 16/32-byte splits need no envelope."
         }</p>
         <div id="share-rows">${rowsHtml}</div>
@@ -750,7 +830,7 @@ function renderInputsPanel(needs) {
         </div>
         <textarea id="input-envelope" class="compose-message" rows="6" spellcheck="false"
           placeholder="-----BEGIN PGP MESSAGE-----&#10;…&#10;-----END PGP MESSAGE-----&#10;Required for symdecrypt (PEM / large-payload path). Not used for direct scalar splits.">${escapeHtml(envelopeDraft)}</textarea>
-        <p class="muted fs-sm mt-xs">This is the OpenPGP symmetric ciphertext from <code>symencrypt</code> — distinct from SLIP-39 share mnemonics. External recovery: combine → hex master → <code>gpg --decrypt envelope.asc</code>.</p>
+        <p class="muted fs-sm mt-xs">This is the OpenPGP symmetric ciphertext from <code>symencrypt</code> — distinct from BLIP39 share mnemonics. External recovery: <code>blip39 -d | recover</code> → hex master → <code>gpg --decrypt envelope.asc</code>.</p>
       </div>
     `);
   }
@@ -896,6 +976,25 @@ function wireInputsPanel(host, needs) {
         : joined;
     });
   }
+
+  if (needs.includes("key")) {
+    const jwkEl = host.querySelector("#input-wc-jwk");
+    jwkEl?.addEventListener("input", () => {
+      if (jwkEl instanceof HTMLTextAreaElement) keyJwkDraft = jwkEl.value;
+    });
+    const peerEl = host.querySelector("#input-wc-peer");
+    peerEl?.addEventListener("input", () => {
+      if (peerEl instanceof HTMLTextAreaElement) peerJwkDraft = peerEl.value;
+    });
+    const wrapEl = host.querySelector("#input-wc-wrap");
+    wrapEl?.addEventListener("input", () => {
+      if (wrapEl instanceof HTMLTextAreaElement) wrapJwkDraft = wrapEl.value;
+    });
+    const sigEl = host.querySelector("#input-wc-sig");
+    sigEl?.addEventListener("input", () => {
+      if (sigEl instanceof HTMLInputElement) signatureDraft = sigEl.value;
+    });
+  }
 }
 
 /**
@@ -956,6 +1055,23 @@ async function collectRuntimeInputs() {
     const textEl = document.getElementById("input-text");
     if (textEl instanceof HTMLTextAreaElement) inputTextDraft = textEl.value;
     inputs.text = { value: inputTextDraft };
+  }
+
+  if (currentInputNeeds.includes("key")) {
+    const jwkEl = document.getElementById("input-wc-jwk");
+    const peerEl = document.getElementById("input-wc-peer");
+    const wrapEl = document.getElementById("input-wc-wrap");
+    const sigEl = document.getElementById("input-wc-sig");
+    if (jwkEl instanceof HTMLTextAreaElement) keyJwkDraft = jwkEl.value;
+    if (peerEl instanceof HTMLTextAreaElement) peerJwkDraft = peerEl.value;
+    if (wrapEl instanceof HTMLTextAreaElement) wrapJwkDraft = wrapEl.value;
+    if (sigEl instanceof HTMLInputElement) signatureDraft = sigEl.value;
+    inputs.key = {
+      jwkText: keyJwkDraft.trim(),
+      peerJwkText: peerJwkDraft.trim(),
+      wrapJwkText: wrapJwkDraft.trim(),
+      signatureB64url: signatureDraft.trim(),
+    };
   }
 
   if (currentInputNeeds.includes("shares")) {
@@ -1108,7 +1224,229 @@ function renderPresets() {
 }
 
 /**
- * CyberChef-style operations drawer grouped by kind.
+ * Preferred next-step order for the current pipeline tip type.
+ * Unknown names sort after these, by kind then name.
+ * @param {import("../lib/toolkit/types.js").RefinedType} from
+ * @returns {string[]}
+ */
+function preferredNextOrder(from) {
+  if (!from || from.base === "none") {
+    return ["genkey", "random", "shares", "input", "decrypt", "passphrase", "ecdh", "wrap"];
+  }
+  if (from.base === "shares") {
+    if (from.kind === "raw") {
+      return ["blip39", "recover", "foreach", "inspect", "out", "encrypt", "tee", "text", "qr"];
+    }
+    return ["blip39", "foreach", "inspect", "out", "encrypt", "tee", "text", "qr"];
+  }
+  if (from.base === "keypair") {
+    return ["export", "fanout", "inspect", "tee", "out", "text", "encrypt"];
+  }
+  if (from.base === "key") {
+    return ["export", "inspect", "tee", "out", "text"];
+  }
+  if (from.base === "bytes" && from.kind === "scalar") {
+    return [
+      "import",
+      "sss",
+      "hex",
+      "base64",
+      "base64url",
+      "inspect",
+      "out",
+      "tee",
+      "text",
+      "encrypt",
+    ];
+  }
+  if (from.base === "bytes" && from.kind === "master") {
+    return [
+      "sss",
+      "symdecrypt",
+      "digest",
+      "hkdf",
+      "aesgcm",
+      "hex",
+      "base64",
+      "base64url",
+      "inspect",
+      "out",
+      "tee",
+      "text",
+      "encrypt",
+    ];
+  }
+  if (from.base === "bytes") {
+    return [
+      "digest",
+      "sign",
+      "aesgcm",
+      "hkdf",
+      "pbkdf2",
+      "symencrypt",
+      "sss",
+      "hex",
+      "base64",
+      "base64url",
+      "utf8",
+      "pem",
+      "import",
+      "inspect",
+      "out",
+      "tee",
+      "text",
+      "encrypt",
+      "qr",
+    ];
+  }
+  if (from.base === "text") {
+    return [
+      "digest",
+      "sign",
+      "aesgcm",
+      "pbkdf2",
+      "pem",
+      "base64",
+      "hex",
+      "utf8",
+      "encrypt",
+      "qr",
+      "out",
+      "text",
+      "inspect",
+      "tee",
+      "symencrypt",
+      "import",
+    ];
+  }
+  return ["inspect", "out", "tee", "text", "encrypt", "ecdh", "wrap"];
+}
+
+/**
+ * Compatible next steps for the builder suggest drawer, ranked for the tip type.
+ * @param {import("../lib/toolkit/types.js").RefinedType} from
+ * @param {{ hasForeach?: boolean, terminal?: boolean }} [opts]
+ * @returns {import("../lib/toolkit/registry.js").StepSpec[]}
+ */
+function suggestedNextSteps(from, opts = {}) {
+  const hasForeach = !!opts.hasForeach;
+  const terminal = !!opts.terminal;
+  let list = stepsAccepting(from).filter((s) => {
+    if (s.kind === "flow") {
+      if (s.name === "foreach") return true;
+      if (s.name === "merge") return hasForeach;
+      return false;
+    }
+    return true;
+  });
+  if (terminal) {
+    list = list.filter((s) =>
+      s.name === "inspect" || s.name === "tee" || s.name === "out" || s.name === "text"
+    );
+  }
+  const preferred = preferredNextOrder(from);
+  const kindOrder = (k) => KIND_META[k]?.order ?? 9;
+  return list.slice().sort((a, b) => {
+    const ia = preferred.indexOf(a.name);
+    const ib = preferred.indexOf(b.name);
+    const ra = ia === -1 ? 500 + kindOrder(a.kind) : ia;
+    const rb = ib === -1 ? 500 + kindOrder(b.kind) : ib;
+    return ra - rb || a.name.localeCompare(b.name);
+  });
+}
+
+/**
+ * Contextual next-block drawer under the pipeline cards.
+ */
+function renderSuggestDrawer() {
+  const host = document.getElementById("suggest-next");
+  if (!host) return;
+
+  const from = currentPipelineOutput();
+  const last = steps[steps.length - 1];
+  const terminal = !!(last && (isTerminalSink(last.name) || last.name === "inspect"));
+  const hasForeach = steps.some((s) => s.name === "foreach");
+  const next = suggestedNextSteps(from, { hasForeach, terminal });
+
+  if (!next.length) {
+    host.hidden = true;
+    host.innerHTML = "";
+    return;
+  }
+
+  const fromType = formatType(from);
+  const heading = !steps.length
+    ? "Start with"
+    : terminal
+      ? "Optional next"
+      : `Next for <code>${escapeHtml(fromType)}</code>`;
+  const blurb = !steps.length
+    ? "Sources that begin a pipeline."
+    : terminal
+      ? "Pipeline already has a sink — these still accept the tip."
+      : "Compatible blocks for the current tip type.";
+
+  const primaryCount = !steps.length ? 3 : from.base === "shares" ? 2 : 3;
+
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="suggest-next-head">
+      <p class="suggest-next-title mb-0">${heading}</p>
+      <p class="muted fs-xs mb-0">${escapeHtml(blurb)}</p>
+    </div>
+    <div class="suggest-next-chips" role="list">
+      ${next
+        .map((s, i) => {
+          const decode =
+            s.name === "blip39" && from.base === "shares" && from.kind === "mnemonic";
+          const params = { ...defaultParams(s), ...(decode ? { decode: true } : {}) };
+          const resolved = resolveStepType(s, from, params);
+          const outLabel =
+            resolved.ok && resolved.output.base !== "none"
+              ? formatType(resolved.output)
+              : s.output || "";
+          const primary = i < primaryCount ? " suggest-chip-primary" : "";
+          const label = decode
+            ? `${stepDisplayName(s) || s.name} -d`
+            : stepDisplayName(s) || s.name;
+          return `
+            <button type="button" class="suggest-chip${primary}" role="listitem"
+              data-suggest-op="${escapeHtml(s.name)}"
+              data-suggest-decode="${decode ? "1" : "0"}"
+              draggable="true"
+              title="${escapeHtml(s.doc)}">
+              ${toolboxBadgeHtml(s.toolbox)}
+              <span class="suggest-chip-name">${escapeHtml(label)}</span>
+              ${
+                outLabel
+                  ? `<span class="suggest-chip-out muted">→ ${escapeHtml(outLabel)}</span>`
+                  : ""
+              }
+            </button>`;
+        })
+        .join("")}
+    </div>`;
+
+  host.querySelectorAll("[data-suggest-op]").forEach((el) => {
+    const name = el.getAttribute("data-suggest-op") || "";
+    const decode = el.getAttribute("data-suggest-decode") === "1";
+    const overrides = decode ? { decode: true } : undefined;
+    el.addEventListener("dragstart", (e) => {
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      dt.setData(STEP_MIME, name);
+      dt.setData("text/plain", name);
+      if (decode) dt.setData("application/x-basilisk-decode", "1");
+      dt.effectAllowed = "copy";
+      el.classList.add("ops-dragging");
+    });
+    el.addEventListener("dragend", () => el.classList.remove("ops-dragging"));
+    el.addEventListener("click", () => addStepAt(name, undefined, overrides));
+  });
+}
+
+/**
+ * CyberChef-style operations drawer grouped by toolbox.
  */
 function renderOpsDrawer() {
   const host = document.getElementById("ops-drawer");
@@ -1123,42 +1461,56 @@ function renderOpsDrawer() {
   );
 
   /** @type {Map<string, typeof all>} */
-  const byKind = new Map();
+  const byToolbox = new Map();
   for (const s of all) {
     if (q) {
-      const hay = `${s.name} ${s.kind} ${s.doc} ${(s.aliases || []).join(" ")}`.toLowerCase();
+      const hay =
+        `${s.name} ${s.label || ""} ${s.toolbox} ${s.kind} ${s.doc} ${(s.aliases || []).join(" ")}`.toLowerCase();
       if (!hay.includes(q)) continue;
     }
-    const list = byKind.get(s.kind) || [];
+    const tb = s.toolbox || "io";
+    const list = byToolbox.get(tb) || [];
     list.push(s);
-    byKind.set(s.kind, list);
+    byToolbox.set(tb, list);
   }
 
-  const kinds = [...byKind.keys()].sort(
-    (a, b) => (KIND_META[a]?.order ?? 9) - (KIND_META[b]?.order ?? 9)
+  const toolboxes = [...byToolbox.keys()].sort(
+    (a, b) => (TOOLBOX_META[a]?.order ?? 9) - (TOOLBOX_META[b]?.order ?? 9)
   );
 
-  if (!kinds.length) {
+  if (!toolboxes.length) {
     host.innerHTML = `<p class="muted fs-sm">No operations match “${escapeHtml(opsFilter)}”.</p>`;
     return;
   }
 
   if (hint) {
-    hint.textContent = steps.length
-      ? `Suggested next (from ${from}): highlighted. Drag or click to add.`
-      : "Drag onto the pipeline, or click to append.";
+    const fromType = formatType(from);
+    if (!steps.length) {
+      hint.textContent =
+        "Drag onto the pipeline, or click to append. Badges show toolbox (WebCrypto, OpenPGP, SSS, …).";
+    } else if (from.base === "shares" && from.kind === "raw") {
+      hint.textContent = `Pipe type ${fromType} — suggested: blip39 (mnemonics) or recover (→ bytes/master). Highlighted ops accept this type.`;
+    } else if (from.base === "shares") {
+      hint.textContent = `Pipe type ${fromType} — suggested: blip39 -d → recover, or foreach. Highlighted ops accept this type.`;
+    } else {
+      hint.textContent = `Pipe type ${fromType} — highlighted ops accept it. Drag or click to add.`;
+    }
   }
 
-  host.innerHTML = kinds
-    .map((kind) => {
-      const meta = KIND_META[kind] || { label: kind };
-      const collapsed = opsCollapsed.has(kind) && !q;
-      const items = byKind.get(kind) || [];
+  host.innerHTML = toolboxes
+    .map((tb) => {
+      const meta = TOOLBOX_META[tb] || { label: tb };
+      const collapsed = opsCollapsed.has(tb) && !q;
+      const items = (byToolbox.get(tb) || []).slice().sort((a, b) => {
+        const ka = KIND_META[a.kind]?.order ?? 9;
+        const kb = KIND_META[b.kind]?.order ?? 9;
+        return ka - kb || a.name.localeCompare(b.name);
+      });
       return `
-        <div class="ops-category" data-kind="${escapeHtml(kind)}">
-          <button type="button" class="ops-category-toggle" data-toggle-kind="${escapeHtml(kind)}"
+        <div class="ops-category" data-toolbox="${escapeHtml(tb)}">
+          <button type="button" class="ops-category-toggle" data-toggle-toolbox="${escapeHtml(tb)}"
             aria-expanded="${collapsed ? "false" : "true"}">
-            <span>${escapeHtml(meta.label)}</span>
+            <span>${toolboxBadgeHtml(tb)} ${escapeHtml(meta.label)}</span>
             <span class="muted fs-xs">${items.length}</span>
           </button>
           <div class="ops-category-body ${collapsed ? "hidden" : ""}">
@@ -1167,12 +1519,19 @@ function renderOpsDrawer() {
                 const fit = !steps.length
                   ? s.kind === "source" || s.input === "none"
                   : suggested.has(s.name);
+                const ioLabel = `${s.input} → ${s.output}`;
+                const display = stepDisplayName(s);
                 return `
                 <button type="button" class="ops-item ${fit ? "ops-item-fit" : "ops-item-dim"}"
                   draggable="true" data-op="${escapeHtml(s.name)}"
-                  title="${escapeHtml(s.doc)}">
-                  <span class="ops-item-name">${escapeHtml(s.name)}</span>
-                  <span class="muted fs-xs ops-item-io">${escapeHtml(s.input)} → ${escapeHtml(s.output)}</span>
+                  title="${escapeHtml(s.doc)}&#10;&#10;Recipe: ${escapeHtml(s.name)} · ${escapeHtml(ioLabel)}">
+                  <span class="ops-item-name">${escapeHtml(display)}</span>
+                  ${
+                    display !== s.name
+                      ? `<span class="muted fs-xs ops-item-recipe">${escapeHtml(s.name)}</span>`
+                      : ""
+                  }
+                  <span class="muted fs-xs ops-item-io">${escapeHtml(ioLabel)}</span>
                 </button>`;
               })
               .join("")}
@@ -1181,11 +1540,11 @@ function renderOpsDrawer() {
     })
     .join("");
 
-  host.querySelectorAll("[data-toggle-kind]").forEach((btn) => {
+  host.querySelectorAll("[data-toggle-toolbox]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const kind = btn.getAttribute("data-toggle-kind") || "";
-      if (opsCollapsed.has(kind)) opsCollapsed.delete(kind);
-      else opsCollapsed.add(kind);
+      const tb = btn.getAttribute("data-toggle-toolbox") || "";
+      if (opsCollapsed.has(tb)) opsCollapsed.delete(tb);
+      else opsCollapsed.add(tb);
       renderOpsDrawer();
     });
   });
@@ -1225,7 +1584,7 @@ function renderBuilder() {
     host.innerHTML = `
       <div class="builder-dropzone builder-empty" data-insert="0">
         <p class="muted mb-0">Drop an operation here to start the pipeline</p>
-        <p class="muted fs-xs mb-0">Sources like <code>genkey</code>, <code>random</code>, or <code>recombine</code> work well first.</p>
+        <p class="muted fs-xs mb-0">Sources like <code>genkey</code>, <code>random</code>, or <code>shares</code> work well first.</p>
       </div>`;
     wireDropZones(host);
     return;
@@ -1234,30 +1593,56 @@ function renderBuilder() {
   let foreachOpen = false;
   /** @type {string[]} */
   const parts = [];
+  const typeEdges = builderTypeEdges();
   parts.push(`<div class="builder-dropzone" data-insert="0" aria-label="Insert at start"></div>`);
 
   steps.forEach((step, i) => {
+    syncWhichWithFormat(step);
     const spec = getStep(step.name);
     if (step.name === "foreach") foreachOpen = true;
     const inForeach =
       foreachOpen && step.name !== "foreach" && step.name !== "merge";
     if (step.name === "merge") foreachOpen = false;
 
+    const edge = typeEdges[i];
+    const inType = edge ? formatType(edge.input) : "—";
+    const outType = edge?.output ? formatType(edge.output) : edge?.error ? "∅" : "—";
+    const typeTitle = edge?.error
+      ? edge.error
+      : `${inType} → ${outType}`;
+
     const paramFields = (spec?.params || [])
       .map((p) => {
-        const val = step.params[p.name] ?? p.default ?? "";
+        const vis = paramVisibility(step.name, p, step.params || {});
+        if (!vis.show) return "";
+        const val =
+          vis.forced != null
+            ? vis.forced
+            : step.params[p.name] ?? p.default ?? "";
+        const title = p.doc ? ` title="${escapeHtml(p.doc)}"` : "";
+        if (p.type === "bool") {
+          const checked = val === true || val === "true";
+          return `<label class="builder-param builder-param-bool"${title}>
+            <span class="builder-param-name">${escapeHtml(p.name)}${p.flag ? ` <code>${escapeHtml(p.flag)}</code>` : ""}</span>
+            <input type="checkbox" data-step="${i}" data-param="${escapeHtml(p.name)}"
+              ${checked ? "checked" : ""}></label>`;
+        }
         if (p.type === "enum") {
-          return `<label class="builder-param">${escapeHtml(p.name)}
-            <select data-step="${i}" data-param="${escapeHtml(p.name)}" class="text-input">
+          const locked = !!vis.locked;
+          return `<label class="builder-param"${title}>
+            <span class="builder-param-name">${escapeHtml(p.name)}</span>
+            <select data-step="${i}" data-param="${escapeHtml(p.name)}" class="text-input"
+              ${locked ? "disabled" : ""}>
               ${(p.enum || [])
                 .map(
                   (e) =>
                     `<option value="${escapeHtml(e)}" ${String(val) === e ? "selected" : ""}>${escapeHtml(e)}</option>`
                 )
                 .join("")}
-            </select></label>`;
+            </select>${locked ? `<span class="muted fs-xs">locked by format</span>` : ""}</label>`;
         }
-        return `<label class="builder-param">${escapeHtml(p.name)}
+        return `<label class="builder-param"${title}>
+          <span class="builder-param-name">${escapeHtml(p.name)}</span>
           <input class="text-input" data-step="${i}" data-param="${escapeHtml(p.name)}"
                  value="${escapeHtml(String(val))}" ${p.type === "int" ? 'type="number"' : 'type="text"'}></label>`;
       })
@@ -1284,13 +1669,26 @@ function renderBuilder() {
       ? renderPgpModeToggle(`toolkit-pgp-mode-step-${i}`, { compact: true })
       : "";
 
+    const typeHint =
+      edge?.output?.base === "shares" && edge.output.kind === "raw"
+        ? `<p class="builder-type-hint muted fs-xs mb-sm">Next usually <code>blip39</code> → mnemonics, or <code>recover</code> → <code>bytes/master</code>.</p>`
+        : edge?.output?.base === "shares"
+        ? `<p class="builder-type-hint muted fs-xs mb-sm">Next usually <code>blip39 -d</code> → raw shares, then <code>recover</code>; or <code>foreach</code> to map each mnemonic.</p>`
+        : step.name === "recover"
+          ? `<p class="builder-type-hint muted fs-xs mb-sm">Combines raw SSS shares into <code>bytes/master</code>. Decode mnemonics with <code>blip39 -d</code> first.</p>`
+          : step.name === "sss"
+            ? `<p class="builder-type-hint muted fs-xs mb-sm">Produces <code>shares/raw</code>. Pipe into <code>blip39</code> for word phrases.</p>`
+            : "";
+
     parts.push(`
-      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""}"
+      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""} ${edge && !edge.ok ? "builder-type-error" : ""}"
            draggable="true" data-index="${i}" data-step-card="${i}">
         <div class="builder-card-head">
           <span class="builder-drag" title="Drag to reorder">⠿</span>
           <span class="builder-step-num" aria-hidden="true">${i + 1}</span>
-          <strong>${escapeHtml(step.name)}</strong>
+          <strong title="${escapeHtml(spec?.doc || "")}">${escapeHtml(stepDisplayName(spec) || step.name)}</strong>
+          ${toolboxBadgeHtml(spec?.toolbox)}
+          <code class="builder-type-chip" title="${escapeHtml(typeTitle)}">${escapeHtml(inType)} → ${escapeHtml(outType)}</code>
           ${
             isOut
               ? `<span class="badge pending" title="Named file — Encrypt attaches bytes">file · Encrypt as file</span>`
@@ -1301,12 +1699,44 @@ function renderBuilder() {
           ${outSummary ? `<span class="muted fs-xs">${escapeHtml(outSummary)}</span>` : ""}
           <button type="button" class="btn btn-ghost btn-compact text-error" data-remove="${i}">Remove</button>
         </div>
-        <p class="muted mt-xs mb-sm fs-xs">${escapeHtml(spec?.doc || "")}</p>
+        <p class="muted mt-xs mb-sm fs-xs" title="${escapeHtml(spec?.doc || "")}">${escapeHtml(spec?.doc || "")}</p>
+        ${typeHint}
         ${pgpModeBlock}
         <div class="builder-params">${paramFields}</div>
       </div>
       <div class="builder-dropzone" data-insert="${i + 1}" aria-label="Insert after ${escapeHtml(step.name)}"></div>`);
   });
+
+  const finalType = currentPipelineOutput();
+  const lastStep = steps[steps.length - 1];
+  const dangling =
+    steps.length &&
+    finalType.base !== "none" &&
+    finalType.base !== "artifact" &&
+    finalType.base !== "bundle" &&
+    lastStep &&
+    !isTerminalSink(lastStep.name) &&
+    lastStep.name !== "inspect";
+  if (dangling) {
+    parts.push(`
+      <div class="builder-dangling" role="status">
+        <div>
+          <p class="mb-xs"><strong>Unhandled</strong> <code>${escapeHtml(formatType(finalType))}</code></p>
+          <p class="muted fs-xs mb-0">Execute would auto-emit a result tile. Prefer an explicit sink.</p>
+        </div>
+        <div class="btn-row wrap">
+          <button type="button" class="btn btn-compact" id="add-inspect-btn" title="Dump the value as text (default)">Add inspect</button>
+          ${
+            finalType.base === "shares" && finalType.kind === "raw"
+              ? `<button type="button" class="btn btn-ghost btn-compact" id="add-recover-btn" title="Recover bytes/master">Add recover</button>
+                 <button type="button" class="btn btn-ghost btn-compact" id="add-blip39-btn" title="Encode BLIP39 mnemonics">Add blip39</button>`
+              : finalType.base === "shares"
+              ? `<button type="button" class="btn btn-ghost btn-compact" id="add-blip39-decode-btn" title="Decode BLIP39 → raw SSS">Add blip39 -d</button>`
+              : `<button type="button" class="btn btn-ghost btn-compact" id="add-out-btn" title="Named file tile">Add out</button>`
+          }
+        </div>
+      </div>`);
+  }
 
   host.innerHTML = parts.join("");
 
@@ -1315,15 +1745,36 @@ function renderBuilder() {
       const i = Number(el.getAttribute("data-step"));
       const name = el.getAttribute("data-param");
       if (!name || !steps[i]) return;
-      const v =
-        el instanceof HTMLInputElement || el instanceof HTMLSelectElement
-          ? el.value
-          : "";
       const spec = getStep(steps[i].name);
       const p = (spec?.params || []).find((x) => x.name === name);
-      steps[i].params[name] = p?.type === "int" ? Number(v) : v;
+      if (el instanceof HTMLInputElement && el.type === "checkbox") {
+        steps[i].params[name] = el.checked;
+      } else {
+        const v =
+          el instanceof HTMLInputElement || el instanceof HTMLSelectElement
+            ? el.value
+            : "";
+        steps[i].params[name] = p?.type === "int" ? Number(v) : v;
+      }
+      if (name === "format") syncWhichWithFormat(steps[i]);
       setRecipeFromSteps();
     });
+  });
+
+  host.querySelector("#add-inspect-btn")?.addEventListener("click", () => {
+    addStepAt("inspect");
+  });
+  host.querySelector("#add-recover-btn")?.addEventListener("click", () => {
+    addStepAt("recover");
+  });
+  host.querySelector("#add-blip39-btn")?.addEventListener("click", () => {
+    addStepAt("blip39");
+  });
+  host.querySelector("#add-blip39-decode-btn")?.addEventListener("click", () => {
+    addStepAt("blip39", undefined, { decode: true });
+  });
+  host.querySelector("#add-out-btn")?.addEventListener("click", () => {
+    addStepAt("out");
   });
 
   host.querySelectorAll("[data-remove]").forEach((btn) => {
@@ -1362,7 +1813,9 @@ function renderCryptoPanel() {
       const usage = String(step.params.usage || "auto");
       return `<code>${escapeHtml(alg)}</code> <span class="muted">(${escapeHtml(usage)})</span>`;
     });
-  const usesSlip39 = steps.some((step) => step.name === "slip39");
+  const usesSss = steps.some(
+    (step) => step.name === "sss" || step.name === "blip39" || step.name === "recover"
+  );
   const usesSymEnvelope = steps.some(
     (step) => step.name === "symencrypt" || step.name === "symdecrypt"
   );
@@ -1386,13 +1839,13 @@ function renderCryptoPanel() {
         Runtime settings — not written into pipeline text. Artifact metadata reports what was actually emitted.
       </p>
 
-      <details class="expert-crypto-section" ${usesSlip39 ? "open" : ""}>
-        <summary><strong>Direct SSS (16/32-byte masters)</strong>${usesSlip39 ? "" : ' <span class="muted">(no slip39 step)</span>'}</summary>
+      <details class="expert-crypto-section" ${usesSss ? "open" : ""}>
+        <summary><strong>SSS + BLIP39 (16/32-byte masters)</strong>${usesSss ? "" : ' <span class="muted">(no sss/blip39 step)</span>'}</summary>
         <dl class="crypto-param-list fs-sm">
           <div><dt>Master size</dt><dd>Exactly 16 or 32 bytes — random secrets, AES-256 keys, P-256 / Ed25519 / X25519 scalars via <code>export scalar</code></dd></div>
-          <div><dt>Share protection</dt><dd>GF(256) Shamir threshold; optional passphrase mask uses PBKDF2-SHA-256 (20,000 iterations)</dd></div>
-          <div><dt>Mnemonic format</dt><dd>Basilisk SLIP-39-inspired v1 + RS1024 checksum (tag <code>basilisk-slip39-v1</code>)</dd></div>
-          <div><dt>No auto-envelope</dt><dd>PEM / PKCS#8 / larger payloads must use <code>symencrypt</code> first — slip39 never invents a custom ciphertext</dd></div>
+          <div><dt>SSS (<code>sss</code>)</dt><dd>GF(256) Shamir threshold → <code>shares/raw</code>; optional passphrase mask uses PBKDF2-SHA-256 (20,000 iterations)</dd></div>
+          <div><dt>BLIP39 (<code>blip39</code>)</dt><dd>Mnemonic encode/decode of raw shares; official SLIP-39 wordlist + RS1024 (tag <code>basilisk-slip39-v1</code>)</dd></div>
+          <div><dt>No auto-envelope</dt><dd>PEM / PKCS#8 / larger payloads must use <code>symencrypt</code> first — sss never invents a custom ciphertext</dd></div>
         </dl>
       </details>
 
@@ -1400,9 +1853,9 @@ function renderCryptoPanel() {
         <summary><strong>OpenPGP symmetric envelope</strong>${usesSymEnvelope ? "" : ' <span class="muted">(no symencrypt/symdecrypt)</span>'}</summary>
         <dl class="crypto-param-list fs-sm">
           <div><dt>When</dt><dd>PEM, PKCS#8 DER, or any payload that is not already 16/32 bytes</dd></div>
-          <div><dt>Master</dt><dd>32-byte CSPRNG secret — this is what slip39 splits; passphrase for stock gpg is lowercase hex of that master</dd></div>
+          <div><dt>Master</dt><dd>32-byte CSPRNG secret — this is what <code>sss</code> splits; passphrase for stock gpg is lowercase hex of that master</dd></div>
           <div><dt>Ciphertext</dt><dd>Standard OpenPGP SKESK + SEIPD (<code>envelope.asc</code>) — profile below; no custom AES-GCM padding</dd></div>
-          <div><dt>External recovery</dt><dd>combine shares → hex master → <code>gpg --decrypt envelope.asc</code></dd></div>
+          <div><dt>External recovery</dt><dd><code>blip39 -d | recover</code> → hex master → <code>gpg --decrypt envelope.asc</code></dd></div>
         </dl>
         <p class="status-row warn fs-sm">
           The OpenPGP envelope is not a share mnemonic. Keep <code>envelope.asc</code> with the share set; without it the master alone cannot unwrap the payload.
@@ -1532,7 +1985,10 @@ function wireDropZones(host) {
       }
 
       const name = dt.getData(STEP_MIME) || dt.getData("text/plain");
-      if (name && getStep(name)) addStepAt(name, insertAt);
+      if (name && getStep(name)) {
+        const decode = dt.getData("application/x-basilisk-decode") === "1";
+        addStepAt(name, insertAt, decode ? { decode: true } : undefined);
+      }
     });
   });
 }
@@ -1540,7 +1996,12 @@ function wireDropZones(host) {
 function renderReference() {
   const body = document.getElementById("reference-body");
   if (!body) return;
-  body.innerHTML = listSteps()
+  const steps = listSteps().slice().sort((a, b) => {
+    const ta = TOOLBOX_META[a.toolbox]?.order ?? 9;
+    const tb = TOOLBOX_META[b.toolbox]?.order ?? 9;
+    return ta - tb || a.name.localeCompare(b.name);
+  });
+  body.innerHTML = steps
     .map((s) => {
       const params = (s.params || [])
         .map(
@@ -1553,10 +2014,16 @@ function renderReference() {
       const aliases = (s.aliases || []).length
         ? `<p class="muted fs-xs">Aliases: ${(s.aliases || []).map(escapeHtml).join(", ")}</p>`
         : "";
+      const labelNote =
+        s.label && s.label !== s.name
+          ? `<p class="muted fs-xs">UI label: ${escapeHtml(s.label)} (recipe token: <code>${escapeHtml(s.name)}</code>)</p>`
+          : "";
       return `<details class="ref-step">
-        <summary><code>${escapeHtml(s.name)}</code> <span class="muted">${escapeHtml(s.kind)}</span>
+        <summary>${toolboxBadgeHtml(s.toolbox)} <code>${escapeHtml(s.name)}</code>
+          <span class="muted">${escapeHtml(s.kind)}</span>
           · ${escapeHtml(s.input)} → ${escapeHtml(s.output)}</summary>
         <p class="fs-md">${escapeHtml(s.doc)}</p>
+        ${labelNote}
         ${aliases}
         ${params ? `<ul class="fs-sm">${params}</ul>` : "<p class='muted'>No parameters.</p>"}
       </details>`;
@@ -1729,12 +2196,12 @@ function renderResults() {
           <p class="muted fs-sm mb-0">${
             hasEnvelope
               ? "OpenPGP envelope path — keep <code>envelope.asc</code> with the mnemonics (envelope ≠ shares)."
-              : "Direct secret / scalar — no envelope; combine recovers the 16/32-byte master."
+              : "Direct secret / scalar — no envelope; recover yields the 16/32-byte master."
           }</p>
         </div>
         ${
           hasEnvelope
-            ? `<p class="status-row warn mb-sm" role="status">The OpenPGP envelope unwraps the payload after combine; share mnemonics alone are not enough for PEM / large-payload recovery.</p>`
+            ? `<p class="status-row warn mb-sm" role="status">The OpenPGP envelope unwraps the payload after recover; share mnemonics alone are not enough for PEM / large-payload recovery.</p>`
             : ""
         }
         ${envelopeIdxs.map((i) => renderArtifactCard(artifacts[i], i)).join("")}
@@ -2335,7 +2802,7 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
       !currentInputNeeds.includes("gpg") &&
       !shareMnemonics.length
     ) {
-      throw new Error("Paste at least one SLIP-39 share mnemonic.");
+      throw new Error("Paste at least one BLIP39 share mnemonic.");
     }
     if (
       currentInputNeeds.includes("gpg") &&

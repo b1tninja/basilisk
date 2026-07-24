@@ -45,6 +45,10 @@ gpg --keyserver http://localhost:8080 --recv-keys YOURKEYID
 - **Approve:** Claim (Entra) → `key.approved` on `key-approved` queue → `approve_fn` updates Table; Logic App sends verification email on `key.pending`
 - **Lookup:** Table gate → blob read → SHA-256 verify → filter-at-read for email
 
+## Portal cryptography
+
+The browser portal combines OpenPGP.js (messaging), WebCrypto (vault, quorum, toolkit keygen), and custom SSS/BLIP39. See [docs/CRYPTOGRAPHY.md](docs/CRYPTOGRAPHY.md) for the module inventory and WebCrypto toolkit gap tracker.
+
 ## Ingest security
 
 Basilisk rejects invalid uploads **before** any blob or Table write:
