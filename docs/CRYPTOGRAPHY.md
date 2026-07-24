@@ -116,10 +116,28 @@ Product split (intentional today):
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `crypto-self-test.js` | Done | POST/CAST latch; refuses crypto on failure |
+| `crypto-self-test.js` | Done | POST/CAST latch; suite status; refuses crypto on module ERROR |
+| `fips-mode.js` | Done | Toolkit “FIPS mode” preference (verified suites only; **not** a FIPS 140 cert) |
+| `toolkit/suite-gate.js` | Done | Toolbox → suite map; FIPS recipe assert |
 | `module-integrity.js` | Done | SHA-256 Merkle of loaded module SRI digests |
 | `memory-safety.js` | Done | **Docs only** — wipe rules (no shared `zeroBuffer`) |
 | CSP + WASM | Done | `script-src 'self' 'wasm-unsafe-eval'` for Argon2; Compatible profile avoids WASM |
+
+### POST / CAST suites
+
+Eager startup self-tests (`runCryptoSelfTests`) cover:
+
+| Suite | CAST IDs | Status |
+|-------|----------|--------|
+| **OpenPGP** | CAST-1…5 (keygen, encrypt/decrypt, sign/verify, signed+encrypted, Argon2) | Verified after POST |
+| **WebCrypto** | CAST-6…11 (SHA-256 KAT, AES-GCM, Ed25519, ECDH P-256, HKDF KAT, AES-KW) | Verified after POST |
+| **SSS** | CAST-12 (GF(256) split/combine + BLIP39 encode/decode) | Verified after POST |
+
+Toolkit UI always shows **verified** / **⚠ unverified** chips per crypto toolbox. **FIPS mode** (persisted `basilisk.fipsMode`) hard-blocks adding/running ops whose suite is unverified; the worker enforces the same gate via `executeToolkitRun` (`toolkit-run.js`). Disclaimer: FIPS-*inspired* posture only — not a NIST FIPS 140 certificate.
+
+Encrypt / Decrypt banners say **OpenPGP verified** (CAST-1…5). Quorum session ECDH/HKDF/AES-GCM is **not** CAST-gated today.
+
+`genkey` can create **RSA-OAEP** keys, but there is no asymmetric WebCrypto encrypt toolkit op yet (only `aesgcm`).
 
 ---
 
@@ -264,7 +282,7 @@ Display maps in `algos.js` also name historical algorithms for **inspection** of
 | Sign + encrypt | ✓ | | | signaling |
 | Decrypt / verify | | ✓ | `decrypt` / `symdecrypt` | session AES-GCM |
 | Profiles Auto/Modern/Compatible | ✓ | | ✓ | default seal |
-| Crypto self-test gate | ✓ | ✓ | worker path | separate |
+| Crypto self-test gate | ✓ OpenPGP | ✓ OpenPGP | suites + FIPS mode | separate (ungated) |
 | WebCrypto keygen | | | ✓ | ECDH only |
 | SSS + BLIP39 | | | ✓ | |
 | Vault unlock | signing pick | ✓ | decrypt unlock | audience keys |
@@ -312,6 +330,7 @@ When adding an op: registry entry + refined types + engine case + `tests/` + upd
 | OpenPGP privateParams wipe | `web/src/lib/pgp/memory.js` |
 | CSP + `wasm-unsafe-eval` for Argon2 | `basilisk/serve.py`, HTML CSP metas |
 | SRI / module Merkle pin | `crypto-self-test.js`, `module-integrity.js` |
+| FIPS mode / suite badges | `fips-mode.js`, `toolkit/suite-gate.js`, toolkit UI |
 | Vault: no secrets in localStorage | `vault.js` header |
 | Quorum: signaling ≠ PFS; session keys discarded on leave | `quorum/crypto.js` |
 | Smartcards / YubiKey GPG unavailable in browser | Toolkit `decrypt` docs / UI |
@@ -320,6 +339,7 @@ When adding an op: registry entry + refined types + engine case + `tests/` + upd
 
 ## Related docs
 
+- [CAST-AND-TEST-GAPS.md](CAST-AND-TEST-GAPS.md) — CAST / FIPS-mode / test gap plan
 - [TESTING.md](TESTING.md) — server/pytest and e2e
 - [DEPLOYMENT.md](DEPLOYMENT.md) — CSP / Front Door tunables
 - Portal UI: `/toolkit`, `/encrypt`, `/decrypt`, `/quorum`, My Keys

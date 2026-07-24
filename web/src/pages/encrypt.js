@@ -4,7 +4,7 @@ import {
   CryptoModuleError,
   SELF_TEST_LABELS,
   assertCryptoReady,
-  formatCryptoVerifiedMessage,
+  formatOpenPgpVerifiedMessage,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
 import { keyHitHtml, keyPillExtrasHtml } from "../lib/key-hit.js";
@@ -1634,7 +1634,7 @@ async function startEncryptPage() {
     cryptoReady = true;
 
     // Brief confirmation flash before handing off to the composer.
-    const verifiedMsg = formatCryptoVerifiedMessage(result);
+    const verifiedMsg = formatOpenPgpVerifiedMessage(result);
     const fullRoot = result.moduleIntegrity?.root || "";
     app.innerHTML = `
       <div class="status-row ok" role="status"${fullRoot ? ` title="Module Merkle root (SHA-256): ${fullRoot}"` : ""}>

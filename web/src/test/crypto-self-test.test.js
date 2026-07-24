@@ -4,32 +4,30 @@
  * These tests run in Node.js (OpenPGP.js is isomorphic) and serve as CI
  * verification that the library is importable, functional, and produces
  * correct outputs for all CAST operations:
- *   CAST-1  Key generation (Curve25519 / Ed25519)
- *   CAST-2  Asymmetric encrypt + decrypt
- *   CAST-3  Detached signature + verification
- *   CAST-4  Signed + encrypted combined
- *   CAST-5  Password encrypt + decrypt (Argon2)
+ *   CAST-1…5   OpenPGP
+ *   CAST-6…11  WebCrypto
  *
- * Also verifies the module-state management (READY/ERROR) and the
- * assertCryptoReady() / getModuleStatus() public API.
+ * Also verifies module-state management, suite status, and assertCryptoReady().
  *
  * Run with: npm test   (from the web/ directory)
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// NOTE: vitest re-uses module instances across tests in the same file.
-// We import the module once; the singleton _postPromise persists between
-// test cases (by design — simulating a real page lifecycle).  The "already
-// READY" tests below rely on that caching behaviour.
 import {
   CryptoModuleError,
   SELF_TEST_LABELS,
   assertCryptoReady,
+  assertSuiteReady,
   formatCryptoVerifiedMessage,
+  formatOpenPgpVerifiedMessage,
+  formatSuiteStatusMessage,
   getModuleStatus,
+  getSuiteStatus,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
+import { assertRecipeAllowedUnderFips } from "../lib/toolkit/suite-gate.js";
+import { compileRecipe } from "../lib/toolkit/recipe.js";
 
 describe("crypto-self-test — SELF_TEST_LABELS", () => {
   it("exports labels for all CAST checks", () => {
@@ -39,6 +37,13 @@ describe("crypto-self-test — SELF_TEST_LABELS", () => {
     expect(keys).toContain("signVerify");
     expect(keys).toContain("signedEncrypt");
     expect(keys).toContain("passwordArgon2");
+    expect(keys).toContain("digestKat");
+    expect(keys).toContain("aesGcmRoundtrip");
+    expect(keys).toContain("subtleSignVerify");
+    expect(keys).toContain("ecdhAgree");
+    expect(keys).toContain("hkdfKat");
+    expect(keys).toContain("aesKwRoundtrip");
+    expect(keys).toContain("sssRoundtrip");
   });
 
   it("labels include CAST identifiers", () => {
@@ -47,6 +52,13 @@ describe("crypto-self-test — SELF_TEST_LABELS", () => {
     expect(SELF_TEST_LABELS.signVerify).toMatch(/CAST-3/);
     expect(SELF_TEST_LABELS.signedEncrypt).toMatch(/CAST-4/);
     expect(SELF_TEST_LABELS.passwordArgon2).toMatch(/CAST-5/);
+    expect(SELF_TEST_LABELS.digestKat).toMatch(/CAST-6/);
+    expect(SELF_TEST_LABELS.aesGcmRoundtrip).toMatch(/CAST-7/);
+    expect(SELF_TEST_LABELS.subtleSignVerify).toMatch(/CAST-8/);
+    expect(SELF_TEST_LABELS.ecdhAgree).toMatch(/CAST-9/);
+    expect(SELF_TEST_LABELS.hkdfKat).toMatch(/CAST-10/);
+    expect(SELF_TEST_LABELS.aesKwRoundtrip).toMatch(/CAST-11/);
+    expect(SELF_TEST_LABELS.sssRoundtrip).toMatch(/CAST-12/);
   });
 });
 
@@ -64,8 +76,14 @@ describe("crypto-self-test — runCryptoSelfTests", () => {
     expect(result.results.signVerify, "CAST-3 signVerify").toBe(true);
     expect(result.results.signedEncrypt, "CAST-4 signedEncrypt").toBe(true);
     expect(result.results.passwordArgon2, "CAST-5 passwordArgon2").toBe(true);
+    expect(result.results.digestKat, "CAST-6 digestKat").toBe(true);
+    expect(result.results.aesGcmRoundtrip, "CAST-7 aesGcmRoundtrip").toBe(true);
+    expect(result.results.subtleSignVerify, "CAST-8 subtleSignVerify").toBe(true);
+    expect(result.results.ecdhAgree, "CAST-9 ecdhAgree").toBe(true);
+    expect(result.results.hkdfKat, "CAST-10 hkdfKat").toBe(true);
+    expect(result.results.aesKwRoundtrip, "CAST-11 aesKwRoundtrip").toBe(true);
+    expect(result.results.sssRoundtrip, "CAST-12 sssRoundtrip").toBe(true);
 
-    // Argon2 + WASM can be slower; stay within vitest's default budget
     expect(result.elapsed).toBeLessThan(20_000);
     expect(result.error).toBeUndefined();
     expect(result.moduleIntegrity).toBeTruthy();
@@ -75,18 +93,63 @@ describe("crypto-self-test — runCryptoSelfTests", () => {
   it("is idempotent — subsequent calls return the same cached result", async () => {
     const first = await runCryptoSelfTests();
     const second = await runCryptoSelfTests();
-    // Strict equality: same object reference from the cached promise
     expect(first).toBe(second);
   });
 
-  it("formatCryptoVerifiedMessage includes module root when present", async () => {
+  it("formatSuiteStatusMessage is suite-aware", async () => {
     const result = await runCryptoSelfTests();
-    const msg = formatCryptoVerifiedMessage(result);
-    expect(msg).toMatch(/Crypto module verified/);
-    expect(msg).toMatch(/checks passed/);
+    const msg = formatSuiteStatusMessage(result);
+    expect(msg).toMatch(/OpenPGP ✓/);
+    expect(msg).toMatch(/WebCrypto ✓/);
+    expect(msg).toMatch(/SSS ✓/);
     if (result.moduleIntegrity?.root) {
       expect(msg).toMatch(/modules [0-9a-f]{16}/);
     }
+  });
+
+  it("formatOpenPgpVerifiedMessage mentions OpenPGP CAST-1…5", async () => {
+    const result = await runCryptoSelfTests();
+    const msg = formatOpenPgpVerifiedMessage(result);
+    expect(msg).toMatch(/OpenPGP verified/);
+    expect(msg).toMatch(/CAST-1/);
+  });
+
+  it("formatCryptoVerifiedMessage aliases suite message", async () => {
+    const result = await runCryptoSelfTests();
+    expect(formatCryptoVerifiedMessage(result)).toBe(formatSuiteStatusMessage(result));
+  });
+});
+
+describe("crypto-self-test — suite status", () => {
+  it("reports openpgp + webcrypto + sss verified after POST", async () => {
+    await runCryptoSelfTests();
+    const status = getSuiteStatus();
+    expect(status.openpgp).toBe("verified");
+    expect(status.webcrypto).toBe("verified");
+    expect(status.sss).toBe("verified");
+  });
+
+  it("assertSuiteReady allows openpgp, webcrypto, and sss", async () => {
+    await runCryptoSelfTests();
+    await expect(assertSuiteReady("openpgp")).resolves.toBeUndefined();
+    await expect(assertSuiteReady("webcrypto")).resolves.toBeUndefined();
+    await expect(assertSuiteReady("sss")).resolves.toBeUndefined();
+  });
+
+  it("FIPS gate allows SSS after CAST-12", async () => {
+    await runCryptoSelfTests();
+    const { ast } = compileRecipe("random 32 | sss threshold=2 shares=3 | hex");
+    expect(() =>
+      assertRecipeAllowedUnderFips(ast, getSuiteStatus(), true)
+    ).not.toThrow();
+  });
+
+  it("FIPS gate allows WebCrypto after CAST-6…11", async () => {
+    await runCryptoSelfTests();
+    const { ast } = compileRecipe("random 16 | digest | hex");
+    expect(() =>
+      assertRecipeAllowedUnderFips(ast, getSuiteStatus(), true)
+    ).not.toThrow();
   });
 });
 

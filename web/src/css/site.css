@@ -2282,6 +2282,62 @@ pre {
 .ref-step summary .toolbox-badge {
   margin-right: 0.35rem;
 }
+
+.suite-chip {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  padding: 0.18rem 0.32rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.suite-verified {
+  border-color: color-mix(in srgb, var(--success, #3d9a6a) 50%, var(--border));
+  color: var(--success, #3d9a6a);
+  background: color-mix(in srgb, var(--success, #3d9a6a) 12%, transparent);
+}
+.suite-unverified {
+  border-color: color-mix(in srgb, var(--warn, #c47d2b) 55%, var(--border));
+  color: color-mix(in srgb, var(--warn, #c47d2b) 95%, var(--text));
+  background: color-mix(in srgb, var(--warn, #c47d2b) 12%, transparent);
+}
+.suite-error {
+  border-color: color-mix(in srgb, var(--error) 50%, var(--border));
+  color: var(--error);
+}
+
+.fips-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.fips-mode-toggle input {
+  accent-color: var(--brand, var(--accent));
+}
+.fips-mode-hint {
+  margin: 0 0 0.65rem;
+  padding: 0 0.15rem;
+}
+
+.ops-item-fips-blocked,
+.suggest-chip-fips-blocked {
+  opacity: 0.45;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+.builder-fips-blocked {
+  border-color: color-mix(in srgb, var(--warn, #c47d2b) 55%, var(--border));
+  outline: 1px dashed color-mix(in srgb, var(--warn, #c47d2b) 60%, transparent);
+}
 }
 
 .builder-steps {

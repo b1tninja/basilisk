@@ -19,7 +19,7 @@ import {
 import { encryptArtifacts } from "./pgp/encrypt.js";
 import { intendedRecipientsFromSigPacket } from "./pgp/intended-recipient.js";
 import { zeroKeyMaterial } from "./pgp/memory.js";
-import { runRecipe } from "./toolkit/engine.js";
+import { executeToolkitRun } from "./toolkit-run.js";
 
 /**
  * Unlock an armored private key for signing (worker-local; wiped after use).
@@ -177,36 +177,12 @@ self.onmessage = async (ev) => {
       }
     } else if (msg.type === "toolkit-run") {
       // Execute a toolkit recipe AST; return encoded artifacts only.
-      // Recipient keys and optional decrypt private key arrive as armored strings.
-      /** @type {import("openpgp").Key[]} */
-      const recipients = [];
-      for (const armored of msg.recipientKeysArmored || []) {
-        recipients.push(await readKey({ armoredKey: armored }));
-      }
-      /** @type {import("./toolkit/engine.js").RuntimeBindings["inputs"]} */
-      const inputs = msg.inputs || {};
-      // Prefer a top-level private key field so the worker finally-block can zero it.
-      if (msg.privateKeyArmored && inputs.gpg) {
-        inputs.gpg = {
-          ...inputs.gpg,
-          privateKeyArmored: String(msg.privateKeyArmored),
-          passphrase: msg.passphrase || inputs.gpg.passphrase || "",
-        };
-        privateKey = await readPrivateKey({
-          armoredKey: String(msg.privateKeyArmored),
-        });
-      }
       try {
-        const artifacts = await runRecipe(msg.ast, {
-          recipients,
-          recipientFingerprints: msg.recipientFingerprints || [],
-          inputs,
-          encryption: msg.encryption,
-        });
+        const { artifacts, privateKey: pk } = await executeToolkitRun(msg);
+        privateKey = pk;
         self.postMessage({ id, ok: true, artifacts });
       } finally {
-        // Drop armored private key string from the inputs binding.
-        if (inputs.gpg) inputs.gpg.privateKeyArmored = "";
+        /* privateKey wiped in outer finally */
       }
     } else if (msg.type === "generate") {
       const email = String(msg.email || "").trim();

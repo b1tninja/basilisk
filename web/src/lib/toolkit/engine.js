@@ -124,6 +124,8 @@ import {
  *   profile?: import("../pgp/types.js").EncryptProfile,
  *   hideRecipients?: boolean,
  * }} [encryption]
+ * @property {boolean} [fipsMode]  when true, refuse unverified CAST suites
+ * @property {import("./suite-gate.js").SuiteStatusMap} [suiteStatus]
  */
 
 /**
@@ -142,6 +144,16 @@ import {
 export async function runRecipe(ast, bindings = {}) {
   const steps = ast?.steps || [];
   if (!steps.length) throw new Error("Empty recipe");
+
+  if (bindings.fipsMode) {
+    const { assertRecipeAllowedUnderFips } = await import("./suite-gate.js");
+    const status = bindings.suiteStatus || {
+      openpgp: "unverified",
+      webcrypto: "unverified",
+      sss: "unverified",
+    };
+    assertRecipeAllowedUnderFips(ast, status, true);
+  }
 
   /** @type {ToolkitArtifact[]} */
   const artifacts = [];

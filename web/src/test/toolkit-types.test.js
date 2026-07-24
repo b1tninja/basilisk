@@ -151,4 +151,27 @@ describe("refined types", () => {
       handled.validation.warnings.some((w) => /Trailing /i.test(w))
     ).toBe(false);
   });
+
+  it("webcrypto ops accept bytes/text; ecdh/wrap from none", () => {
+    expect(
+      resolveStepType(getStep("digest"), typeOf("bytes"), { alg: "sha-256" }).ok
+    ).toBe(true);
+    expect(
+      resolveStepType(getStep("digest"), typeOf("text"), { alg: "sha-256" }).ok
+    ).toBe(true);
+    expect(
+      resolveStepType(getStep("sign"), typeOf("bytes"), {}).ok
+    ).toBe(true);
+    expect(
+      resolveStepType(getStep("aesgcm"), typeOf("bytes"), {}).ok
+    ).toBe(true);
+    expect(
+      resolveStepType(getStep("hkdf"), typeOf("bytes"), { length: 16 }).ok
+    ).toBe(true);
+    expect(resolveStepType(getStep("ecdh"), typeOf("none"), {}).ok).toBe(true);
+    expect(resolveStepType(getStep("wrap"), typeOf("none"), {}).ok).toBe(true);
+    expect(
+      resolveStepType(getStep("unwrap"), typeOf("bytes"), {}).ok
+    ).toBe(true);
+  });
 });

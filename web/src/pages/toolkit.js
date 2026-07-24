@@ -7,9 +7,15 @@ import { Auth } from "../lib/auth.js";
 import {
   CryptoModuleError,
   assertCryptoReady,
-  formatCryptoVerifiedMessage,
+  formatSuiteStatusMessage,
+  getSuiteStatus,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
+import {
+  FIPS_MODE_DISCLAIMER,
+  getFipsMode,
+  setFipsMode,
+} from "../lib/fips-mode.js";
 import { mountRecipientBinder } from "../lib/recipient-picker.js";
 import {
   splitArmoredMessages,
@@ -26,6 +32,13 @@ import {
   unresolvedRecipients,
 } from "../lib/toolkit/recipe.js";
 import { getStep, listSteps, stepsAccepting, TOOLBOX_META } from "../lib/toolkit/registry.js";
+import {
+  assertRecipeAllowedUnderFips,
+  stepNameToSuite,
+  suitesUsedBySteps,
+  toolboxVerification,
+  unverifiedSuitesAmong,
+} from "../lib/toolkit/suite-gate.js";
 import {
   artifactIsTextualForEncrypt,
   formatType,
@@ -63,6 +76,14 @@ const errorEl = document.getElementById("error");
 const app = document.getElementById("toolkit-app");
 
 let cryptoReady = false;
+/** FIPS-inspired verified-suites-only posture (persisted). */
+let fipsMode = getFipsMode();
+/** @type {import("../lib/toolkit/suite-gate.js").SuiteStatusMap} */
+let suiteStatus = {
+  openpgp: "unverified",
+  webcrypto: "unverified",
+  sss: "unverified",
+};
 /** @type {import("../lib/toolkit/recipe.js").RecipeStep[]} */
 let steps = [];
 /** Display title for the current pipeline (from preset or user edit). */
@@ -226,6 +247,41 @@ function toolboxBadgeHtml(toolbox) {
 }
 
 /**
+ * CAST suite chip for crypto toolboxes (always shown when applicable).
+ * @param {string|undefined|null} toolbox
+ * @returns {string}
+ */
+function suiteChipHtml(toolbox) {
+  const ver = toolboxVerification(toolbox, suiteStatus);
+  if (ver === "none") return "";
+  if (ver === "verified") {
+    return `<span class="suite-chip suite-verified" title="POST/CAST verified for this toolbox">verified</span>`;
+  }
+  if (ver === "error") {
+    return `<span class="suite-chip suite-error" title="Crypto module error">error</span>`;
+  }
+  return `<span class="suite-chip suite-unverified" title="No CAST for this toolbox yet. ${escapeHtml(FIPS_MODE_DISCLAIMER)}">⚠ unverified</span>`;
+}
+
+/**
+ * @param {string} stepName
+ * @returns {boolean} true if FIPS mode blocks adding/running this step
+ */
+function stepBlockedByFips(stepName) {
+  if (!fipsMode) return false;
+  const suite = stepNameToSuite(stepName);
+  if (!suite) return false;
+  return suiteStatus[suite] !== "verified";
+}
+
+/**
+ * @returns {string[]} unverified suite names used by current pipeline
+ */
+function currentUnverifiedSuites() {
+  return unverifiedSuitesAmong(suiteStatus, suitesUsedBySteps(steps));
+}
+
+/**
  * Display name for a step (optional UI label, else recipe name).
  * @param {{ name: string, label?: string }|null|undefined} spec
  * @returns {string}
@@ -244,12 +300,17 @@ app.innerHTML = `
         <div class="preset-grid" id="preset-grid"></div>
       </div>
     </details>
-    <span id="crypto-status" class="app-status" role="status">Verifying crypto module…</span>
+    <label class="fips-mode-toggle" title="${escapeHtml(FIPS_MODE_DISCLAIMER)}">
+      <input type="checkbox" id="fips-mode" ${fipsMode ? "checked" : ""}>
+      <span>FIPS mode</span>
+    </label>
+    <span id="crypto-status" class="app-status" role="status">Verifying crypto suites…</span>
     <span class="app-toolbar-note muted fs-xs">Advanced tool — everyday messaging belongs on <a class="text-link" href="/encrypt">Encrypt</a>.</span>
     <button type="button" class="btn btn-ghost btn-compact" id="toggle-reference" title="Full step docs">Docs</button>
     <button type="button" class="btn btn-ghost btn-compact text-error" id="destroy-btn"
       title="Zeroize all in-memory secrets, inputs, and outputs (best-effort)">Destroy</button>
   </div>
+  <p id="fips-hint" class="muted fs-xs fips-mode-hint ${fipsMode ? "" : "hidden"}" role="note">${escapeHtml(FIPS_MODE_DISCLAIMER)}</p>
 
   <div class="chef-workspace" id="chef-workspace">
     <aside class="chef-ops chef-pane" aria-label="Operations">
@@ -541,6 +602,13 @@ function defaultParams(spec) {
 function addStepAt(name, index, paramOverrides) {
   const spec = getStep(name);
   if (!spec) return;
+  if (stepBlockedByFips(spec.name)) {
+    showError(
+      errorEl,
+      `FIPS mode: cannot add unverified ${spec.toolbox} op “${spec.name}”.`
+    );
+    return;
+  }
   const step = {
     name: spec.name,
     params: { ...defaultParams(spec), ...(paramOverrides || {}) },
@@ -649,18 +717,42 @@ function validateAndBind() {
   const warnEl = document.getElementById("recipe-warnings");
   const runBtn = document.getElementById("run-btn");
 
+  const unverified = currentUnverifiedSuites();
+  let fipsBlock = false;
+  if (fipsMode && unverified.length && validation.ok) {
+    fipsBlock = true;
+    if (errEl) {
+      try {
+        assertRecipeAllowedUnderFips(ast, suiteStatus, true);
+      } catch (err) {
+        errEl.textContent = err?.message || String(err);
+        errEl.classList.remove("hidden");
+      }
+    }
+  }
+
   if (!validation.ok) {
     if (errEl) {
       errEl.textContent = validation.errors.map((e) => e.message).join(" · ");
       errEl.classList.remove("hidden");
     }
     if (runBtn) runBtn.disabled = true;
+  } else if (fipsBlock) {
+    if (runBtn) runBtn.disabled = true;
   } else {
-    if (errEl) errEl.classList.add("hidden");
+    if (errEl && !fipsBlock) errEl.classList.add("hidden");
     if (runBtn) runBtn.disabled = !cryptoReady;
   }
+
+  /** @type {string[]} */
+  const warnParts = [...(validation.warnings || [])];
+  if (!fipsMode && unverified.length) {
+    warnParts.push(
+      `Uses unverified suites (${unverified.join(", ")}) — enable FIPS mode to block`
+    );
+  }
   if (warnEl) {
-    warnEl.textContent = (validation.warnings || []).join(" · ");
+    warnEl.textContent = warnParts.join(" · ");
   }
 
   // Runtime inputs (shares / GPG ciphertext)
@@ -1409,13 +1501,16 @@ function renderSuggestDrawer() {
           const label = decode
             ? `${stepDisplayName(s) || s.name} -d`
             : stepDisplayName(s) || s.name;
+          const blocked = stepBlockedByFips(s.name);
           return `
-            <button type="button" class="suggest-chip${primary}" role="listitem"
+            <button type="button" class="suggest-chip${primary}${blocked ? " suggest-chip-fips-blocked" : ""}" role="listitem"
               data-suggest-op="${escapeHtml(s.name)}"
               data-suggest-decode="${decode ? "1" : "0"}"
-              draggable="true"
-              title="${escapeHtml(s.doc)}">
+              draggable="${blocked ? "false" : "true"}"
+              ${blocked ? "aria-disabled=\"true\"" : ""}
+              title="${escapeHtml(blocked ? `FIPS mode: blocked — ${s.toolbox} unverified` : s.doc)}">
               ${toolboxBadgeHtml(s.toolbox)}
+              ${suiteChipHtml(s.toolbox)}
               <span class="suggest-chip-name">${escapeHtml(label)}</span>
               ${
                 outLabel
@@ -1432,6 +1527,10 @@ function renderSuggestDrawer() {
     const decode = el.getAttribute("data-suggest-decode") === "1";
     const overrides = decode ? { decode: true } : undefined;
     el.addEventListener("dragstart", (e) => {
+      if (stepBlockedByFips(name)) {
+        e.preventDefault();
+        return;
+      }
       const dt = e.dataTransfer;
       if (!dt) return;
       dt.setData(STEP_MIME, name);
@@ -1510,7 +1609,7 @@ function renderOpsDrawer() {
         <div class="ops-category" data-toolbox="${escapeHtml(tb)}">
           <button type="button" class="ops-category-toggle" data-toggle-toolbox="${escapeHtml(tb)}"
             aria-expanded="${collapsed ? "false" : "true"}">
-            <span>${toolboxBadgeHtml(tb)} ${escapeHtml(meta.label)}</span>
+            <span>${toolboxBadgeHtml(tb)} ${escapeHtml(meta.label)} ${suiteChipHtml(tb)}</span>
             <span class="muted fs-xs">${items.length}</span>
           </button>
           <div class="ops-category-body ${collapsed ? "hidden" : ""}">
@@ -1521,11 +1620,17 @@ function renderOpsDrawer() {
                   : suggested.has(s.name);
                 const ioLabel = `${s.input} → ${s.output}`;
                 const display = stepDisplayName(s);
+                const blocked = stepBlockedByFips(s.name);
+                const title = blocked
+                  ? `FIPS mode: blocked — ${s.toolbox} suite unverified. ${FIPS_MODE_DISCLAIMER}`
+                  : `${s.doc}\n\nRecipe: ${s.name} · ${ioLabel}`;
                 return `
-                <button type="button" class="ops-item ${fit ? "ops-item-fit" : "ops-item-dim"}"
-                  draggable="true" data-op="${escapeHtml(s.name)}"
-                  title="${escapeHtml(s.doc)}&#10;&#10;Recipe: ${escapeHtml(s.name)} · ${escapeHtml(ioLabel)}">
+                <button type="button" class="ops-item ${fit ? "ops-item-fit" : "ops-item-dim"}${blocked ? " ops-item-fips-blocked" : ""}"
+                  draggable="${blocked ? "false" : "true"}" data-op="${escapeHtml(s.name)}"
+                  ${blocked ? "aria-disabled=\"true\"" : ""}
+                  title="${escapeHtml(title)}">
                   <span class="ops-item-name">${escapeHtml(display)}</span>
+                  ${suiteChipHtml(s.toolbox)}
                   ${
                     display !== s.name
                       ? `<span class="muted fs-xs ops-item-recipe">${escapeHtml(s.name)}</span>`
@@ -1552,6 +1657,10 @@ function renderOpsDrawer() {
   host.querySelectorAll("[data-op]").forEach((el) => {
     const name = el.getAttribute("data-op") || "";
     el.addEventListener("dragstart", (e) => {
+      if (stepBlockedByFips(name)) {
+        e.preventDefault();
+        return;
+      }
       const dt = e.dataTransfer;
       if (!dt) return;
       dt.setData(STEP_MIME, name);
@@ -1680,14 +1789,17 @@ function renderBuilder() {
             ? `<p class="builder-type-hint muted fs-xs mb-sm">Produces <code>shares/raw</code>. Pipe into <code>blip39</code> for word phrases.</p>`
             : "";
 
+    const blocked = stepBlockedByFips(step.name);
+
     parts.push(`
-      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""} ${edge && !edge.ok ? "builder-type-error" : ""}"
+      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""} ${edge && !edge.ok ? "builder-type-error" : ""} ${blocked ? "builder-fips-blocked" : ""}"
            draggable="true" data-index="${i}" data-step-card="${i}">
         <div class="builder-card-head">
           <span class="builder-drag" title="Drag to reorder">⠿</span>
           <span class="builder-step-num" aria-hidden="true">${i + 1}</span>
           <strong title="${escapeHtml(spec?.doc || "")}">${escapeHtml(stepDisplayName(spec) || step.name)}</strong>
           ${toolboxBadgeHtml(spec?.toolbox)}
+          ${suiteChipHtml(spec?.toolbox)}
           <code class="builder-type-chip" title="${escapeHtml(typeTitle)}">${escapeHtml(inType)} → ${escapeHtml(outType)}</code>
           ${
             isOut
@@ -2684,6 +2796,8 @@ async function runViaWorker(ast, opts = {}) {
       privateKeyArmored: opts.privateKeyArmored || "",
       passphrase: opts.passphrase || "",
       encryption: opts.encryption,
+      fipsMode,
+      suiteStatus: { ...suiteStatus },
     });
   });
 }
@@ -2739,12 +2853,17 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
   }
   try {
     await assertCryptoReady();
+    assertRecipeAllowedUnderFips(
+      compileRecipe(serializeRecipe(steps)).ast,
+      suiteStatus,
+      fipsMode
+    );
   } catch (err) {
     showError(
       errorEl,
       err instanceof CryptoModuleError
         ? `Refusing to run — crypto self-test failed: ${err.message}`
-        : String(err)
+        : String(err?.message || err)
     );
     return;
   }
@@ -2856,19 +2975,22 @@ async function startPage() {
       throw new CryptoModuleError(result.error || "POST failed");
     }
     cryptoReady = true;
+    suiteStatus = getSuiteStatus();
     await refreshVaultKeys();
     if (status) {
       status.className = "app-status ok";
-      status.textContent = formatCryptoVerifiedMessage(result);
+      status.textContent = formatSuiteStatusMessage(result);
       const fullRoot = result.moduleIntegrity?.root || "";
       if (fullRoot) status.title = `Module Merkle root (SHA-256): ${fullRoot}`;
     }
-    const runBtn = document.getElementById("run-btn");
-    if (runBtn) runBtn.disabled = false;
+    validateAndBind();
+    renderOpsDrawer();
+    renderBuilder();
     // Re-render inputs so vault dropdown is populated.
     if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
   } catch (err) {
     cryptoReady = false;
+    suiteStatus = getSuiteStatus();
     if (status) {
       status.className = "app-status err";
       status.innerHTML =
@@ -2877,6 +2999,17 @@ async function startPage() {
     }
   }
 }
+
+document.getElementById("fips-mode")?.addEventListener("change", (e) => {
+  const t = e.target;
+  fipsMode = t instanceof HTMLInputElement && t.checked;
+  setFipsMode(fipsMode);
+  document.getElementById("fips-hint")?.classList.toggle("hidden", !fipsMode);
+  validateAndBind();
+  renderOpsDrawer();
+  renderBuilder();
+  renderSuggestDrawer();
+});
 
 renderPresets();
 renderOpsDrawer();
