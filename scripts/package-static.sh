@@ -21,7 +21,10 @@ fi
 #   - Entry scripts/styles/modulepreloads carry integrity= from vite-plugin-sri-gen.
 #   - Module-graph / worker SRI lives in an *external* importmap JSON under
 #     /importmaps/ (see web/scripts/externalize-importmaps.js). CSP is
-#     script-src 'self' — never strip those maps; browsers refuse to load a
+#     script-src 'self' 'wasm-unsafe-eval' (no unsafe-eval / unsafe-inline).
+#     The wasm keyword is only for OpenPGP.js Argon2; the WASM bytes are
+#     embedded in an SRI-pinned JS chunk (see basilisk/serve.py _CSP comment).
+#     Never strip those maps; browsers refuse to load a
 #     module whose bytes ≠ the hash (CDN cache skew or tampering). Mixing old
 #     and new chunks must fail closed.
 python - "$OUT" >&2 <<'PY'
@@ -50,6 +53,15 @@ importmaps = list((dist / "importmaps").glob("importmap-*.json")) if (dist / "im
 if not importmaps:
     errors.append("no /importmaps/importmap-*.json files written")
 
+pin = dist / "integrity" / "module-roots.json"
+if not pin.is_file():
+    errors.append("missing /integrity/module-roots.json (Merkle pin)")
+else:
+    for html in html_files:
+        text = html.read_text(encoding="utf-8")
+        if 'name="basilisk-integrity-pins"' not in text:
+            errors.append(f"{html.name}: missing basilisk-integrity-pins meta")
+
 if errors:
     print("Integrity packaging checks FAILED:", file=sys.stderr)
     for e in errors:
@@ -58,7 +70,8 @@ if errors:
 
 print(
     f"integrity OK: {len(html_files)} HTML page(s), "
-    f"{len(importmaps)} external importmap(s)"
+    f"{len(importmaps)} external importmap(s), "
+    f"module-roots pin={'yes' if pin.is_file() else 'no'}"
 )
 PY
 

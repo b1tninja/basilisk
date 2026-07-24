@@ -33,6 +33,7 @@ export default defineConfig({
       crossorigin: "anonymous",
     }),
     // Must run after sri-gen writes the inline integrity importmap.
+    // Also writes /integrity/module-roots.json Merkle pins for CDN cross-checks.
     basiliskExternalizeImportMaps(),
   ],
 });

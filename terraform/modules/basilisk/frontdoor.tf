@@ -162,10 +162,13 @@ resource "azurerm_cdn_frontdoor_rule" "security_headers" {
   behavior_on_match         = "Continue"
 
   actions {
+    # CSP must match basilisk/serve.py. 'wasm-unsafe-eval' is required for
+    # OpenPGP.js Argon2 WASM only — not JS eval. Integrity of that WASM is via
+    # SRI on the embedding JS chunk (see comment on _CSP in serve.py).
     response_header_action {
       header_action = "Overwrite"
       header_name   = "Content-Security-Policy"
-      value         = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+      value         = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
     }
     response_header_action {
       header_action = "Overwrite"
@@ -265,10 +268,11 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
       compression_enabled           = true
     }
     # AFD allows max 5 actions/rule; headers here ensure CSP applies to cached HTML.
+    # CSP must match basilisk/serve.py ('wasm-unsafe-eval' = OpenPGP Argon2 only; SRI pins embedding JS).
     response_header_action {
       header_action = "Overwrite"
       header_name   = "Content-Security-Policy"
-      value         = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+      value         = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
     }
     response_header_action {
       header_action = "Overwrite"

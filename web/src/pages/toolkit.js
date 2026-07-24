@@ -7,6 +7,7 @@ import { Auth } from "../lib/auth.js";
 import {
   CryptoModuleError,
   assertCryptoReady,
+  formatCryptoVerifiedMessage,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
 import { mountRecipientBinder } from "../lib/recipient-picker.js";
@@ -35,6 +36,7 @@ import {
   PROFILE_COMPATIBLE,
   PROFILE_MODERN,
 } from "../lib/pgp/encrypt.js";
+import { formatProfileSpec } from "../lib/pgp/encrypt-intent.js";
 import {
   copyTextTransient,
   escapeHtml,
@@ -61,6 +63,8 @@ const app = document.getElementById("toolkit-app");
 let cryptoReady = false;
 /** @type {import("../lib/toolkit/recipe.js").RecipeStep[]} */
 let steps = [];
+/** Display title for the current pipeline (from preset or user edit). */
+let recipeTitle = "";
 let referenceOpen = false;
 /** @type {import("../lib/toolkit/engine.js").ToolkitArtifact[]} */
 let artifacts = [];
@@ -93,6 +97,99 @@ let toolkitEncryptPreset = "auto";
 /** @type {import("../lib/pgp/types.js").EncryptProfile} */
 let toolkitEncryptProfile = { ...PROFILE_AUTO };
 let toolkitHideRecipients = false;
+
+/** Steps that emit OpenPGP ciphertext and honor the encrypt profile. */
+const PGP_PROFILE_STEPS = new Set(["symencrypt", "encrypt", "gpg"]);
+
+/**
+ * @param {"auto"|"compatible"|"modern"|"custom"} value
+ * @param {{ render?: boolean }} [opts]
+ */
+function applyToolkitEncryptPreset(value, opts = {}) {
+  if (value === "compatible") {
+    toolkitEncryptPreset = "compatible";
+    toolkitEncryptProfile = { ...PROFILE_COMPATIBLE };
+  } else if (value === "modern") {
+    toolkitEncryptPreset = "modern";
+    toolkitEncryptProfile = { ...PROFILE_MODERN };
+  } else if (value === "auto") {
+    toolkitEncryptPreset = "auto";
+    toolkitEncryptProfile = { ...PROFILE_AUTO };
+  } else {
+    toolkitEncryptPreset = "custom";
+  }
+  if (opts.render !== false) {
+    renderBuilder();
+    renderCryptoPanel();
+  }
+}
+
+function toolkitPgpModeHint() {
+  if (toolkitEncryptPreset === "compatible") {
+    return `Compatible: ${formatProfileSpec(PROFILE_COMPATIBLE)} — no WASM (iterated S2K).`;
+  }
+  if (toolkitEncryptPreset === "modern") {
+    return `Modern: ${formatProfileSpec(PROFILE_MODERN)} — Argon2 uses WASM.`;
+  }
+  if (toolkitEncryptPreset === "custom") {
+    return `Custom: ${formatProfileSpec(toolkitEncryptProfile)}.`;
+  }
+  return `Auto: prefers ${formatProfileSpec(PROFILE_MODERN)}; falls back to compatible for legacy recipient keys. Password envelopes (symencrypt) always follow the selected profile.`;
+}
+
+/**
+ * Segmented Modern / Compatible / Auto control (shared by recipe bar + blocks).
+ * @param {string} radioName  unique name= for this radio group
+ * @param {{ compact?: boolean }} [opts]
+ */
+function renderPgpModeToggle(radioName, opts = {}) {
+  const modes = [
+    { value: "auto", label: "Auto" },
+    { value: "modern", label: "Modern" },
+    { value: "compatible", label: "Compatible" },
+  ];
+  const active =
+    toolkitEncryptPreset === "custom" ? "" : toolkitEncryptPreset;
+  return `
+    <div class="pgp-mode ${opts.compact ? "pgp-mode-compact" : ""}">
+      <fieldset class="pgp-mode-toggle">
+        <legend class="pgp-mode-legend">OpenPGP mode</legend>
+        <div class="pgp-mode-options" role="presentation">
+          ${modes
+            .map(
+              (m) => `<label class="pgp-mode-option${active === m.value ? " is-active" : ""}">
+            <input type="radio" name="${escapeHtml(radioName)}" value="${m.value}"
+              ${active === m.value ? "checked" : ""}>
+            <span>${m.label}</span>
+          </label>`
+            )
+            .join("")}
+          ${
+            toolkitEncryptPreset === "custom"
+              ? `<span class="pgp-mode-custom" title="${escapeHtml(formatProfileSpec(toolkitEncryptProfile))}">Custom</span>`
+              : ""
+          }
+        </div>
+      </fieldset>
+      ${opts.compact ? "" : `<p class="muted fs-xs pgp-mode-hint mb-0">${escapeHtml(toolkitPgpModeHint())}</p>`}
+    </div>`;
+}
+
+/** @param {ParentNode} root */
+function wirePgpModeToggles(root) {
+  root.querySelectorAll(".pgp-mode-toggle input[type=radio]").forEach((el) => {
+    el.addEventListener("change", () => {
+      if (!(el instanceof HTMLInputElement) || !el.checked) return;
+      applyToolkitEncryptPreset(
+        /** @type {"auto"|"compatible"|"modern"} */ (el.value)
+      );
+    });
+  });
+}
+
+function pipelineUsesOpenPgpEncrypt() {
+  return steps.some((s) => PGP_PROFILE_STEPS.has(s.name));
+}
 
 const IDLE_CLEAR_MS = 5 * 60 * 1000;
 let idleTimer = null;
@@ -156,7 +253,13 @@ app.innerHTML = `
         </div>
       </div>
       <div class="pane-body">
+        <label class="recipe-heading">
+          <span class="sr-only">Recipe title</span>
+          <input type="text" id="recipe-title" class="recipe-title-input" maxlength="120"
+            placeholder="Untitled recipe" autocomplete="off" spellcheck="false">
+        </label>
         <p class="muted fs-sm mb-md">Drop operations here. Reorder by dragging cards. Recipients are chosen at run time — never stored in the pipeline text.</p>
+        <div id="pgp-mode-host" class="pgp-mode-host hidden"></div>
         <div id="builder-steps" class="builder-steps"></div>
         <details class="recipe-text-details mt-md">
           <summary class="muted fs-sm">Pipeline source (text)</summary>
@@ -447,7 +550,11 @@ function currentPipelineOutput() {
   return current;
 }
 
-function loadRecipeText(text) {
+/**
+ * @param {string} text
+ * @param {{ title?: string }} [opts]
+ */
+function loadRecipeText(text, opts = {}) {
   const { ast, errors } = parseRecipe(text);
   const errEl = document.getElementById("recipe-errors");
   if (errors.length || !ast) {
@@ -463,11 +570,21 @@ function loadRecipeText(text) {
     start: s.start,
     end: s.end,
   }));
+  if (opts.title != null) setRecipeTitle(opts.title);
   if (errEl) errEl.classList.add("hidden");
   validateAndBind();
   renderBuilder();
   renderCryptoPanel();
   renderOpsDrawer();
+}
+
+/** @param {string} title */
+function setRecipeTitle(title) {
+  recipeTitle = String(title || "").trim();
+  const el = document.getElementById("recipe-title");
+  if (el instanceof HTMLInputElement && el.value !== recipeTitle) {
+    el.value = recipeTitle;
+  }
 }
 
 function validateAndBind() {
@@ -984,7 +1101,7 @@ function renderPresets() {
       const id = btn.getAttribute("data-preset");
       const preset = PRESETS.find((p) => p.id === id);
       if (!preset) return;
-      loadRecipeText(preset.recipe);
+      loadRecipeText(preset.recipe, { title: preset.title });
       document.getElementById("preset-gallery")?.removeAttribute("open");
     });
   });
@@ -1092,6 +1209,18 @@ function renderBuilder() {
   const host = document.getElementById("builder-steps");
   if (!host) return;
 
+  const modeHost = document.getElementById("pgp-mode-host");
+  if (modeHost) {
+    if (pipelineUsesOpenPgpEncrypt()) {
+      modeHost.classList.remove("hidden");
+      modeHost.innerHTML = renderPgpModeToggle("toolkit-pgp-mode-recipe");
+      wirePgpModeToggles(modeHost);
+    } else {
+      modeHost.classList.add("hidden");
+      modeHost.innerHTML = "";
+    }
+  }
+
   if (!steps.length) {
     host.innerHTML = `
       <div class="builder-dropzone builder-empty" data-insert="0">
@@ -1136,6 +1265,7 @@ function renderBuilder() {
 
     const isOut = step.name === "out";
     const isText = step.name === "text";
+    const usesPgpProfile = PGP_PROFILE_STEPS.has(step.name);
     const outSummary = isOut
       ? [
           step.params.name || "output",
@@ -1150,8 +1280,12 @@ function renderBuilder() {
         ? String(step.params.label || step.params.name || "text")
         : "";
 
+    const pgpModeBlock = usesPgpProfile
+      ? renderPgpModeToggle(`toolkit-pgp-mode-step-${i}`, { compact: true })
+      : "";
+
     parts.push(`
-      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""}"
+      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""}"
            draggable="true" data-index="${i}" data-step-card="${i}">
         <div class="builder-card-head">
           <span class="builder-drag" title="Drag to reorder">⠿</span>
@@ -1168,6 +1302,7 @@ function renderBuilder() {
           <button type="button" class="btn btn-ghost btn-compact text-error" data-remove="${i}">Remove</button>
         </div>
         <p class="muted mt-xs mb-sm fs-xs">${escapeHtml(spec?.doc || "")}</p>
+        ${pgpModeBlock}
         <div class="builder-params">${paramFields}</div>
       </div>
       <div class="builder-dropzone" data-insert="${i + 1}" aria-label="Insert after ${escapeHtml(step.name)}"></div>`);
@@ -1212,6 +1347,7 @@ function renderBuilder() {
     card.addEventListener("dragend", () => card.classList.remove("dragging"));
   });
 
+  wirePgpModeToggles(host);
   wireDropZones(host);
 }
 
@@ -1285,15 +1421,8 @@ function renderCryptoPanel() {
 
       <details class="expert-crypto-section" ${usesOpenPgp ? "open" : ""}>
         <summary><strong>OpenPGP wrapping</strong>${usesOpenPgp ? "" : ' <span class="muted">(no encrypt / symencrypt step)</span>'}</summary>
+        ${usesOpenPgp ? renderPgpModeToggle("toolkit-pgp-mode-expert") : ""}
         <div class="expert-crypto-grid mt-sm">
-          <label class="builder-param">Profile
-            <select class="text-input" id="toolkit-pgp-preset">
-              <option value="auto" ${toolkitEncryptPreset === "auto" ? "selected" : ""}>Auto</option>
-              <option value="compatible" ${toolkitEncryptPreset === "compatible" ? "selected" : ""}>Compatible</option>
-              <option value="modern" ${toolkitEncryptPreset === "modern" ? "selected" : ""}>Modern</option>
-              <option value="custom" ${toolkitEncryptPreset === "custom" ? "selected" : ""}>Custom</option>
-            </select>
-          </label>
           <label class="builder-param">Cipher
             <select class="text-input" id="toolkit-pgp-cipher">
               ${["aes128", "aes192", "aes256"].map((v) => `<option value="${v}" ${toolkitEncryptProfile.cipher === v ? "selected" : ""}>${v.toUpperCase()}</option>`).join("")}
@@ -1303,6 +1432,12 @@ function renderCryptoPanel() {
             <select class="text-input" id="toolkit-pgp-aead">
               <option value="" ${!toolkitEncryptProfile.aead ? "selected" : ""}>Off — SEIPD v1</option>
               ${["ocb", "gcm", "eax"].map((v) => `<option value="${v}" ${toolkitEncryptProfile.aead === v ? "selected" : ""}>${v.toUpperCase()} — SEIPD v2</option>`).join("")}
+            </select>
+          </label>
+          <label class="builder-param">S2K (passphrase / symencrypt)
+            <select class="text-input" id="toolkit-pgp-s2k">
+              <option value="argon2" ${toolkitEncryptProfile.s2k === "argon2" ? "selected" : ""}>Argon2 (WASM)</option>
+              <option value="iterated" ${toolkitEncryptProfile.s2k === "iterated" ? "selected" : ""}>Iterated (no WASM)</option>
             </select>
           </label>
           <label class="builder-param">Compression
@@ -1317,7 +1452,7 @@ function renderCryptoPanel() {
           <input type="checkbox" id="toolkit-hide-recipients" ${toolkitHideRecipients ? "checked" : ""}>
           Hide recipient key IDs (anonymous PKESK)
         </label>
-        <p class="muted fs-sm mt-sm">Auto requests AES-256 + OCB and safely falls back when a recipient lacks SEIPD v2 support. Compression can leak length when attacker-controlled and secret data are mixed.</p>
+        <p class="muted fs-sm mt-sm">Auto requests AES-256 + OCB and safely falls back when a recipient lacks SEIPD v2 support. Compatible uses iterated S2K so Argon2 WASM is not required. Compression can leak length when attacker-controlled and secret data are mixed.</p>
       </details>
     </details>`;
 
@@ -1327,27 +1462,12 @@ function renderCryptoPanel() {
     }
   });
 
-  document.getElementById("toolkit-pgp-preset")?.addEventListener("change", (event) => {
-    const value =
-      event.target instanceof HTMLSelectElement ? event.target.value : "auto";
-    if (value === "compatible") {
-      toolkitEncryptPreset = value;
-      toolkitEncryptProfile = { ...PROFILE_COMPATIBLE };
-    } else if (value === "modern") {
-      toolkitEncryptPreset = value;
-      toolkitEncryptProfile = { ...PROFILE_MODERN };
-    } else if (value === "auto") {
-      toolkitEncryptPreset = value;
-      toolkitEncryptProfile = { ...PROFILE_AUTO };
-    } else {
-      toolkitEncryptPreset = "custom";
-    }
-    renderCryptoPanel();
-  });
+  wirePgpModeToggles(host);
 
   for (const [id, key] of [
     ["toolkit-pgp-cipher", "cipher"],
     ["toolkit-pgp-aead", "aead"],
+    ["toolkit-pgp-s2k", "s2k"],
     ["toolkit-pgp-compression", "compression"],
   ]) {
     document.getElementById(id)?.addEventListener("change", (event) => {
@@ -1357,6 +1477,7 @@ function renderCryptoPanel() {
         [key]: key === "aead" ? event.target.value || null : event.target.value,
       };
       toolkitEncryptPreset = "custom";
+      renderBuilder();
       renderCryptoPanel();
     });
   }
@@ -2120,7 +2241,13 @@ document.getElementById("destroy-btn")?.addEventListener("click", () => {
 
 document.getElementById("clear-recipe-btn")?.addEventListener("click", () => {
   steps = [];
+  setRecipeTitle("");
   setRecipeFromSteps();
+});
+
+document.getElementById("recipe-title")?.addEventListener("input", (e) => {
+  const t = e.target;
+  if (t instanceof HTMLInputElement) recipeTitle = t.value;
 });
 
 document.getElementById("ops-filter")?.addEventListener("input", (e) => {
@@ -2265,7 +2392,9 @@ async function startPage() {
     await refreshVaultKeys();
     if (status) {
       status.className = "app-status ok";
-      status.textContent = "Crypto module verified.";
+      status.textContent = formatCryptoVerifiedMessage(result);
+      const fullRoot = result.moduleIntegrity?.root || "";
+      if (fullRoot) status.title = `Module Merkle root (SHA-256): ${fullRoot}`;
     }
     const runBtn = document.getElementById("run-btn");
     if (runBtn) runBtn.disabled = false;
@@ -2284,5 +2413,5 @@ async function startPage() {
 
 renderPresets();
 renderOpsDrawer();
-loadRecipeText(PRESETS[0].recipe);
+loadRecipeText(PRESETS[0].recipe, { title: PRESETS[0].title });
 startPage();

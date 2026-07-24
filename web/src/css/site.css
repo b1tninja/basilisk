@@ -172,6 +172,35 @@ body.layout-app {
   letter-spacing: 0.08em;
   color: var(--text-muted);
 }
+.recipe-heading {
+  display: block;
+  margin: 0 0 0.65rem;
+}
+.recipe-title-input {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.15rem 0;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 1.15rem;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.recipe-title-input::placeholder {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.recipe-title-input:hover,
+.recipe-title-input:focus {
+  border-bottom-color: var(--border);
+  outline: none;
+}
 .pane-actions {
   display: flex;
   align-items: center;
@@ -2327,6 +2356,83 @@ pre {
 .builder-drag {
   cursor: grab;
   opacity: 0.6;
+}
+.builder-pgp {
+  border-left: 3px solid var(--accent, #7aa2f7);
+}
+.pgp-mode-host {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 5%, transparent);
+}
+.pgp-mode-toggle {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+.pgp-mode-legend {
+  padding: 0;
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.pgp-mode-options {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg, #fff);
+}
+.pgp-mode-option {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0.3rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.pgp-mode-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.pgp-mode-option.is-active,
+.pgp-mode-option:has(input:checked) {
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 18%, transparent);
+  color: var(--text);
+}
+.pgp-mode-option:hover {
+  color: var(--text);
+}
+.pgp-mode-custom {
+  margin-left: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+}
+.pgp-mode-hint {
+  margin-top: 0.45rem;
+}
+.pgp-mode-compact {
+  margin: 0 0 0.65rem;
+}
+.pgp-mode-compact .pgp-mode-legend {
+  margin-bottom: 0.25rem;
 }
 .builder-params {
   display: flex;

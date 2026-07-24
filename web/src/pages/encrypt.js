@@ -4,6 +4,7 @@ import {
   CryptoModuleError,
   SELF_TEST_LABELS,
   assertCryptoReady,
+  formatCryptoVerifiedMessage,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
 import { keyHitHtml, keyPillExtrasHtml } from "../lib/key-hit.js";
@@ -1633,9 +1634,11 @@ async function startEncryptPage() {
     cryptoReady = true;
 
     // Brief confirmation flash before handing off to the composer.
+    const verifiedMsg = formatCryptoVerifiedMessage(result);
+    const fullRoot = result.moduleIntegrity?.root || "";
     app.innerHTML = `
-      <div class="status-row ok" role="status">
-        Crypto module verified (${result.elapsed}\u202fms) — ${Object.keys(result.results).length} algorithm checks passed.
+      <div class="status-row ok" role="status"${fullRoot ? ` title="Module Merkle root (SHA-256): ${fullRoot}"` : ""}>
+        ${verifiedMsg}
       </div>
     `;
     await new Promise((r) => setTimeout(r, 700));

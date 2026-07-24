@@ -14,12 +14,13 @@
  *   CASTs are run right before each algorithm category is used for the first
  *   time.  This module runs all CASTs eagerly at startup (POST phase) and also
  *   exposes assertCryptoReady() so that every crypto entry point can call it as
- *   a late gate.  The four CASTs mirror the four distinct algorithm paths:
+ *   a late gate.  The five CASTs mirror the distinct algorithm paths:
  *
  *     CAST-1  Key generation (Curve25519 / X25519 / Ed25519)
  *     CAST-2  Asymmetric encrypt + decrypt (ECDH + AES-OCB or AES-GCM)
  *     CAST-3  Detached digital signature + verification (Ed25519 + SHA-512)
  *     CAST-4  Signed + encrypted combined message
+ *     CAST-5  Password encrypt + decrypt (Argon2 S2K + AES — loads OpenPGP WASM)
  *
  * ── Error state (FIPS 140-3 §4.9.3) ────────────────────────────────────────
  *   Any POST or CAST failure latches the module into ERROR state permanently
@@ -38,18 +39,33 @@
  *   fills after each test round. Wipe with inlined fill(0) at each site
  *   (see `src/lib/memory-safety.js`) — do not reintroduce a shared zeroBuffer.
  *
- * ── Module integrity (SRI) ──────────────────────────────────────────────────
+ * ── Module integrity (SRI + Merkle attestation) ─────────────────────────────
  *   FIPS 140-3 treats startup integrity as code-signing / verified load.
  *   In the browser this is Subresource Integrity enforced by the UA:
  *     · Entry scripts, styles, and modulepreloads carry integrity= (sha384)
  *       from vite-plugin-sri-gen.
  *     · Lazy chunks, dynamic import(), and module workers are covered by an
  *       external import map at /importmaps/importmap-*.json (also SRI’d),
- *       externalized post-build so CSP can stay script-src 'self'.
+ *       externalized post-build so CSP stays script-src 'self' plus the
+ *       narrow 'wasm-unsafe-eval' keyword (never 'unsafe-eval').
+ *     · 'wasm-unsafe-eval' exists solely for OpenPGP.js Argon2id: the library
+ *       base64-embeds WASM and calls WebAssembly.instantiate(). CSP3 cannot
+ *       hash-allowlist that blob; integrity is transitive through SRI on the
+ *       openpgp JS chunk that contains it. Without XSS that already runs
+ *       attacker JS, the keyword does not widen script injection. Compatible
+ *       / iterated S2K avoids loading WASM. Refs: W3C CSP3 §4.5,
+ *       https://www.w3.org/TR/CSP3/#can-compile-wasm-bytes ; MDN script-src
+ *       'wasm-unsafe-eval'; WebAssembly CSP proposal.
  *     · On hash mismatch the browser refuses to execute the module — fail
  *       closed on CDN cache skew (old chunk + new HTML) or tampering.
- *   This file’s algorithm POST does not re-hash CDN bytes; packaging lives in
- *   web/scripts/externalize-importmaps.js and scripts/package-static.sh.
+ *   After CASTs pass, computeLoadedModulesRoot() folds those SRI digests
+ *   into a SHA-256 Merkle root. Production builds also emit
+ *   /integrity/module-roots.json and inject pin <meta> tags; the POST then
+ *   fetches the pin (cache: no-store) and fails closed on mismatch. Optional
+ *   VITE_INTEGRITY_PIN_MIRRORS lists extra pin URLs (other CDN / origin) so a
+ *   single compromised edge cannot rewrite assets and the expected root
+ *   together — mirrors must agree. Packaging: externalize-importmaps.js,
+ *   write-module-integrity-pin.mjs, scripts/package-static.sh.
  *
  * Called at page startup by decrypt.js and encrypt.js; also imported by
  * vitest for CI coverage (src/test/crypto-self-test.test.js).
@@ -66,12 +82,18 @@ import {
   createMessage,
   decrypt,
   encrypt,
+  enums,
   generateKey,
   readMessage,
   readSignature,
   sign,
   verify,
 } from "openpgp";
+import {
+  computeLoadedModulesRoot,
+  shortModuleRoot,
+  verifyModuleRootAgainstPins,
+} from "./module-integrity.js";
 import { zeroKeyMaterial } from "./pgp/memory.js";
 
 // ── Module state ─────────────────────────────────────────────────────────────
@@ -161,6 +183,7 @@ async function _runAllTests() {
     encryptDecrypt: false,
     signVerify: false,
     signedEncrypt: false,
+    passwordArgon2: false,
   };
 
   let privateKey = null;
@@ -233,6 +256,34 @@ async function _runAllTests() {
     await combinedSigs[0].verified;
     results.signedEncrypt = true;
 
+    // ── CAST-5: Password encrypt / decrypt (Argon2) ───────────────────────
+    // Modern SKESK path used by toolkit symencrypt and passphrase encrypt.
+    // OpenPGP.js implements Argon2 via WebAssembly — this CAST also proves
+    // the page CSP permits 'wasm-unsafe-eval' (without allowing JS eval).
+    const password = "basilisk-post-cast5-argon2";
+    /** @type {Partial<import("openpgp").Config>} */
+    const argon2Config = {
+      s2kType: enums.s2k.argon2,
+      aeadProtect: true,
+      preferredAEADAlgorithm: enums.aead.ocb,
+      preferredSymmetricAlgorithm: enums.symmetric.aes256,
+    };
+    const pwCiphertext = await encrypt({
+      message: await createMessage({ text: POST_CANARY }),
+      passwords: [password],
+      config: argon2Config,
+    });
+    const { data: pwPlain } = await decrypt({
+      message: await readMessage({ armoredMessage: pwCiphertext }),
+      passwords: [password],
+      config: argon2Config,
+    });
+    if (pwPlain !== POST_CANARY)
+      throw new Error(
+        `CAST-5: Argon2 password decrypt mismatch (got ${JSON.stringify(pwPlain)})`
+      );
+    results.passwordArgon2 = true;
+
     // ── Zeroization ───────────────────────────────────────────────────────
     // Best-effort: zero ephemeral private-key material as soon as the tests
     // have passed.  This reduces the window during which a GC dump could
@@ -240,8 +291,36 @@ async function _runAllTests() {
     zeroKeyMaterial(privateKey);
     privateKey = null;
 
+    const moduleIntegrity = await computeLoadedModulesRoot({
+      selfModuleUrl: import.meta.url,
+    });
+
+    // Cross-check live Merkle root against pin document(s). Same-origin pin
+    // catches CDN HTML/asset skew; optional mirrors (VITE_INTEGRITY_PIN_MIRRORS)
+    // make a single CDN rewriting HTML+JS+pin fail closed when another copy
+    // still publishes the prior root.
+    if (moduleIntegrity.source === "sri" && moduleIntegrity.root) {
+      const pin = await verifyModuleRootAgainstPins(moduleIntegrity.root);
+      moduleIntegrity.pin = pin;
+      if (pin.required && !pin.ok) {
+        enterErrorState("POST", "INTEGRITY", pin.message);
+        return {
+          passed: false,
+          error: pin.message,
+          results,
+          elapsed: Date.now() - t0,
+          moduleIntegrity,
+        };
+      }
+    }
+
     _state = "READY";
-    return { passed: true, results, elapsed: Date.now() - t0 };
+    return {
+      passed: true,
+      results,
+      elapsed: Date.now() - t0,
+      moduleIntegrity,
+    };
   } catch (err) {
     // Identify which CAST failed for the log entry.
     const castMap = {
@@ -249,6 +328,7 @@ async function _runAllTests() {
       encryptDecrypt: "CAST-2",
       signVerify: "CAST-3",
       signedEncrypt: "CAST-4",
+      passwordArgon2: "CAST-5",
     };
     const failedKey = /** @type {keyof SelfTestResults | undefined} */ (
       Object.keys(results).find((k) => !results[/** @type {any} */ (k)])
@@ -263,7 +343,13 @@ async function _runAllTests() {
     }
 
     enterErrorState("POST", castId, msg);
-    return { passed: false, error: msg, results, elapsed: Date.now() - t0 };
+    return {
+      passed: false,
+      error: msg,
+      results,
+      elapsed: Date.now() - t0,
+      moduleIntegrity: { root: "", leafCount: 0, source: "none" },
+    };
   }
 }
 
@@ -332,11 +418,37 @@ export const SELF_TEST_LABELS = {
   encryptDecrypt: "CAST-2: Asymmetric encrypt + decrypt (ECDH + AES-OCB/GCM)",
   signVerify: "CAST-3: Detached signature + verification (Ed25519 + SHA-512)",
   signedEncrypt: "CAST-4: Signed + encrypted combined",
+  passwordArgon2: "CAST-5: Password encrypt + decrypt (Argon2 + WASM)",
 };
+
+/**
+ * Operator-facing success line for encrypt / decrypt / toolkit banners.
+ * @param {SelfTestResult} result
+ * @returns {string}
+ */
+export function formatCryptoVerifiedMessage(result) {
+  const n = Object.keys(result.results || {}).length;
+  const ms = Number(result.elapsed) || 0;
+  const root = result.moduleIntegrity?.root || "";
+  const short = shortModuleRoot(root, 16);
+  const leafCount = result.moduleIntegrity?.leafCount || 0;
+  const pin = result.moduleIntegrity?.pin;
+  let msg = `Crypto module verified (${ms} ms) — ${n} checks passed`;
+  if (short) {
+    msg += ` · modules ${short}`;
+    if (leafCount > 0) msg += ` (${leafCount} leaf${leafCount === 1 ? "" : "es"})`;
+  }
+  if (pin?.matched) {
+    msg += ` · pin ok`;
+    if (pin.fetched > 1) msg += `×${pin.fetched}`;
+  }
+  return msg + ".";
+}
 
 // ── JSDoc types ───────────────────────────────────────────────────────────────
 
 /**
- * @typedef {{ keyGeneration: boolean, encryptDecrypt: boolean, signVerify: boolean, signedEncrypt: boolean }} SelfTestResults
- * @typedef {{ passed: boolean, results: SelfTestResults, elapsed: number, error?: string }} SelfTestResult
+ * @typedef {{ keyGeneration: boolean, encryptDecrypt: boolean, signVerify: boolean, signedEncrypt: boolean, passwordArgon2: boolean }} SelfTestResults
+ * @typedef {{ root: string, leafCount: number, source: "sri" | "self" | "none" }} ModuleIntegrity
+ * @typedef {{ passed: boolean, results: SelfTestResults, elapsed: number, error?: string, moduleIntegrity?: ModuleIntegrity }} SelfTestResult
  */

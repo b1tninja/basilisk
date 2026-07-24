@@ -44,9 +44,30 @@ def create_app() -> Flask:
     app = Flask(__name__)
     settings = get_settings()
 
+    # CSP: script-src 'self' 'wasm-unsafe-eval' — never 'unsafe-eval' / 'unsafe-inline'.
+    #
+    # Why 'wasm-unsafe-eval' (OpenPGP.js Argon2 only):
+    #   OpenPGP.js implements Argon2id S2K via WebAssembly.instantiate() on a
+    #   base64 blob embedded in the SRI-pinned openpgp chunk. CSP3 gates that
+    #   compile path on HostEnsureCanCompileWasmBytes, which requires either
+    #   'unsafe-eval' or the narrower 'wasm-unsafe-eval' (W3C CSP3 §4.5;
+    #   https://www.w3.org/TR/CSP3/#can-compile-wasm-bytes). The latter does
+    #   NOT permit JS eval / new Function — that is the intentional hardening
+    #   vs legacy 'unsafe-eval' (WebAssembly CSP proposal; MDN script-src).
+    #
+    # Why this remains tight despite allowing WASM compile:
+    #   · No CSP digest exists for instantiate(bytes); integrity is on the JS
+    #     that embeds those bytes (SRI on entry scripts + /importmaps/ + Merkle
+    #     pin). Substituting Argon2 WASM requires changing that chunk → SRI fail.
+    #   · WASM alone is not an XSS primitive the way eval is; an attacker who
+    #     can already run arbitrary same-origin JS does not need this keyword
+    #     (https://github.com/w3c/trusted-types/issues/256#issuecomment-792731437).
+    #   · Password crypto can avoid WASM entirely via Compatible / iterated S2K.
+    #
+    # Keep HTML <meta> CSP in sync with this string and Front Door Overwrite.
     _CSP = (
         "default-src 'none'; "
-        "script-src 'self'; "
+        "script-src 'self' 'wasm-unsafe-eval'; "
         "style-src 'self'; "
         "connect-src 'self'; "
         "img-src 'self' data:; "

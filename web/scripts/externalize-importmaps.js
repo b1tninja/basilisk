@@ -1,7 +1,10 @@
 /**
  * Vite plugin: externalize vite-plugin-sri-gen inline import maps.
  *
- * Why: CSP is `script-src 'self'` (no unsafe-inline). An inline
+ * Why: CSP is `script-src 'self' 'wasm-unsafe-eval'` (no unsafe-inline /
+ * unsafe-eval). 'wasm-unsafe-eval' permits OpenPGP.js Argon2 WASM compile
+ * only; JS eval stays blocked. Integrity of that embedded WASM is via SRI
+ * on the openpgp chunk (see basilisk/serve.py). An inline
  * `<script type="importmap">` is blocked, so production packaging used to
  * *strip* the map — which dropped integrity coverage for lazy chunks,
  * dynamic `import()`, and module workers. An external importmap at
@@ -27,6 +30,7 @@ import {
   existsSync,
 } from "node:fs";
 import { join } from "node:path";
+import { writeModuleIntegrityPins } from "./write-module-integrity-pin.mjs";
 
 const INLINE_IMPORTMAP =
   /<script type="importmap">(\{[\s\S]*?\})<\/script>/;
@@ -86,11 +90,22 @@ export function basiliskExternalizeImportMaps() {
         outDir = join(config.root, outDir);
       }
     },
-    closeBundle() {
+    async closeBundle() {
       const { rewritten, files } = externalizeImportMapsInDist(outDir);
       if (rewritten) {
         console.info(
           `[sri] externalized ${rewritten} importmap(s): ${files.join(", ")}`
+        );
+      }
+      const mirrors = String(process.env.VITE_INTEGRITY_PIN_MIRRORS || "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+      const pin = await writeModuleIntegrityPins(outDir, { mirrors });
+      if (pin.pages) {
+        console.info(
+          `[integrity] wrote module-roots.json (+ module-roots-${pin.digest}.json) for ${pin.pages} page(s)` +
+            (mirrors.length ? `; mirrors: ${mirrors.join(" ")}` : "")
         );
       }
     },

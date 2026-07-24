@@ -13,6 +13,7 @@ import {
   CryptoModuleError,
   SELF_TEST_LABELS,
   assertCryptoReady,
+  formatCryptoVerifiedMessage,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
 import {
@@ -157,7 +158,9 @@ runCryptoSelfTests().then((result) => {
     cryptoReady = true;
     if (banner) {
       banner.className = "status-row ok";
-      banner.textContent = `Crypto module verified (${result.elapsed} ms) — ${Object.keys(result.results).length} checks passed.`;
+      banner.textContent = formatCryptoVerifiedMessage(result);
+      const fullRoot = result.moduleIntegrity?.root || "";
+      if (fullRoot) banner.title = `Module Merkle root (SHA-256): ${fullRoot}`;
       setTimeout(() => {
         banner.classList.add("hidden");
       }, 4000);

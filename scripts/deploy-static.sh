@@ -95,6 +95,21 @@ for imap in "${STAGE}"/importmaps/importmap-*.json; do
     --only-show-errors
 done
 
+# Merkle integrity pins — short TTL so edges cannot keep a stale expected root
+# after HTML/assets rotate (runtime also uses cache: no-store).
+for pin in "${STAGE}"/integrity/module-roots*.json; do
+  [[ -f "$pin" ]] || continue
+  az storage blob upload \
+    "${storage_args[@]}" \
+    --container-name '$web' \
+    --name "integrity/$(basename "$pin")" \
+    --file "$pin" \
+    --content-type "application/json; charset=utf-8" \
+    --content-cache-control "public, max-age=60, must-revalidate" \
+    --overwrite \
+    --only-show-errors
+done
+
 static_host="$(az storage account show -n "$STORAGE_ACCOUNT" ${RESOURCE_GROUP:+-g "$RESOURCE_GROUP"} --query primaryEndpoints.web -o tsv | sed 's#https://##;s#/$##')"
 echo "Static site deployed to https://${static_host}/"
 
