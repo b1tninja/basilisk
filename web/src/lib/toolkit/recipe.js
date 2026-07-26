@@ -20,6 +20,7 @@ import {
   parseRecipeSource,
   slotLabelKey,
 } from "./recipe-parse.js";
+import { migrateRecipe } from "./step-names.js";
 import {
   formatType,
   isTerminalSink,
@@ -27,6 +28,8 @@ import {
   tNone,
   typeOf,
 } from "./types.js";
+
+export { migrateRecipe } from "./step-names.js";
 
 /**
  * @param {RecipeStep} step
@@ -51,9 +54,9 @@ function pushDiscouragedAlgoWarnings(step, warnings) {
       `digest alg=sha-1 is discouraged (collision-prone); prefer sha-256 — outputs tagged legacy/discouraged`
     );
   }
-  if (step.name === "rsapkcs1") {
+  if (step.name === "rsa-pkcs1") {
     warnings.push(
-      `rsapkcs1 (RSAES-PKCS1-v1_5) is discouraged; prefer rsaoaep — outputs tagged legacy/discouraged`
+      `rsa-pkcs1 (RSAES-PKCS1-v1_5) is discouraged; prefer rsa-oaep — outputs tagged legacy/discouraged`
     );
   }
   if (
@@ -96,11 +99,11 @@ function pushUsageHonestyWarnings(step, warnings) {
  */
 export function stepNeedsKeyPanel(step) {
   switch (step.name) {
-    case "aesgcm":
-    case "aescbc":
-    case "aesctr":
-    case "rsaoaep":
-    case "rsapkcs1":
+    case "aes-gcm":
+    case "aes-cbc":
+    case "aes-ctr":
+    case "rsa-oaep":
+    case "rsa-pkcs1":
     case "sign":
     case "verify":
     case "unwrap":
@@ -248,7 +251,7 @@ export function recipeChains(astOrSteps) {
  * @property {RecipeError[]} errors
  * @property {string[]} warnings
  * @property {number} [recipientSlots]  how many GPG recipient slots Run needs
- * @property {boolean} [foreachGpg]  encrypt gpg is inside foreach
+ * @property {boolean} [foreachGpg]  gpg.encrypt is inside foreach
  * @property {("shares"|"gpg"|"text"|"envelope"|"key")[]} [inputNeeds]  runtime input panels required
  */
 
@@ -615,11 +618,25 @@ function validateBodySteps(body, startType, ctx) {
     if (stepNeedsKeyPanel(step) && !inputNeeds.includes("key")) {
       inputNeeds.push("key");
     }
+    if (
+      spec.unresolvedInputs &&
+      spec.unresolvedInputs !== "key" &&
+      !inputNeeds.includes(spec.unresolvedInputs)
+    ) {
+      inputNeeds.push(spec.unresolvedInputs);
+    }
+    if (
+      step.name === "gpg.encrypt" &&
+      step.params?.sign &&
+      !inputNeeds.includes("gpg")
+    ) {
+      inputNeeds.push("gpg");
+    }
     if (ctx.warnings) {
       pushDiscouragedAlgoWarnings(step, ctx.warnings);
       pushUsageHonestyWarnings(step, ctx.warnings);
     }
-    if (step.name === "encrypt") encryptInBody = true;
+    if (step.name === "gpg.encrypt") encryptInBody = true;
 
     const resolved = resolveStepType(spec, current, step.params || {});
     if (!resolved.ok) {
@@ -770,7 +787,7 @@ export function validateRecipe(ast) {
       }
     }
 
-    if (step.name === "sss") {
+    if (step.name === "sss.split") {
       const t = Number(step.params.threshold);
       const n = Number(step.params.shares);
       if (t > n) {
@@ -810,7 +827,7 @@ export function validateRecipe(ast) {
       if (!inputNeeds.includes("text")) inputNeeds.push("text");
     }
 
-    if (step.name === "decrypt") {
+    if (step.name === "gpg.decrypt") {
       if (sawDecryptGpg) {
         errors.push({
           message: "Only one decrypt step is supported per recipe",
@@ -824,6 +841,27 @@ export function validateRecipe(ast) {
       // Share rows for mnemonics already decrypted outside the browser
       // (Kleopatra/gpg/YubiKey — OpenPGP cards are not reachable from JS).
       if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
+    }
+
+    // Spec-declared input panels (gpg.sign / gpg.verify / envelope / …).
+    // Skip "key" — that panel is gated by stepNeedsKeyPanel (honors key=@slot).
+    // gpg.decrypt / input / shares already handled above.
+    if (
+      step.name !== "gpg.decrypt" &&
+      step.name !== "input" &&
+      step.name !== "shares" &&
+      spec.unresolvedInputs &&
+      spec.unresolvedInputs !== "key" &&
+      !inputNeeds.includes(spec.unresolvedInputs)
+    ) {
+      inputNeeds.push(spec.unresolvedInputs);
+    }
+    if (
+      step.name === "gpg.encrypt" &&
+      step.params?.sign &&
+      !inputNeeds.includes("gpg")
+    ) {
+      inputNeeds.push("gpg");
     }
 
     if (step.name === "in") {
@@ -864,7 +902,7 @@ export function validateRecipe(ast) {
       continue;
     }
 
-    if (step.name === "symdecrypt") {
+    if (step.name === "gpg.symdecrypt") {
       if (!inputNeeds.includes("envelope")) inputNeeds.push("envelope");
     }
 
@@ -1042,7 +1080,7 @@ export function validateRecipe(ast) {
     // Collection into non-foreach / non-recover / non-blip39 / pass-through
     if (
       current.base === "shares" &&
-      step.name !== "recover" &&
+      step.name !== "sss.combine" &&
       step.name !== "blip39" &&
       step.name !== "tee" &&
       step.name !== "peek" &&
@@ -1052,7 +1090,7 @@ export function validateRecipe(ast) {
       step.name !== "select"
     ) {
       errors.push({
-        message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, at N / [n] to select, blip39 to encode/decode, or recover (on raw shares) for bytes/master.`,
+        message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, at N / [n] to select, blip39 to encode/decode, or sss.combine (on raw shares) for bytes/master.`,
         start: step.start,
         end: step.end,
         stepIndex,
@@ -1115,11 +1153,11 @@ export function validateRecipe(ast) {
       current.length !== 32
     ) {
       warnings.push(
-        `export scalar produced ${current.length}-byte material — sss only accepts 16/32; use symencrypt for larger scalars`
+        `export scalar produced ${current.length}-byte material — sss only accepts 16/32; use gpg.symencrypt for larger scalars`
       );
     }
 
-    if (step.name === "encrypt") {
+    if (step.name === "gpg.encrypt") {
       gpgSlots = Math.max(gpgSlots, 1);
     }
   }
@@ -1152,7 +1190,7 @@ export function validateRecipe(ast) {
   ) {
     const tip =
       current.base === "shares"
-        ? "append recover (→ bytes/master) or foreach, or inspect to dump"
+        ? "append sss.combine (→ bytes/master) or foreach, or inspect to dump"
         : "append inspect to dump, or out/text to emit a named tile";
     warnings.push(
       `Chain ${ci + 1}: trailing ${formatType(current)} is unhandled — ${tip}.`
@@ -1292,50 +1330,113 @@ in @kp | export pkcs8 | pem | out @private`,
     recipe: "random 32 | digest | hex | out @digest",
   },
   {
-    id: "rsaoaep-roundtrip",
+    id: "rsa-oaep-roundtrip",
     group: "WebCrypto",
     title: "RSA-OAEP encrypt / decrypt",
     blurb:
-      "Generate an RSA-OAEP key, encrypt a message with rsaoaep key=@rk, then decrypt across chains.",
+      "Generate an RSA-OAEP key, encrypt a message with rsa-oaep key=@rk, then decrypt across chains.",
     recipe: `genkey rsa/2048 usage=encrypt | out @rk
 
-input | utf8 | rsaoaep key=@rk | hex | out @ct
+input | utf8 | rsa-oaep key=@rk | hex | out @ct
 
-in @ct | hex -d | rsaoaep -d key=@rk | utf8 | out @plain`,
+in @ct | hex -d | rsa-oaep -d key=@rk | utf8 | out @plain`,
   },
   {
-    id: "hkdf-as-aesgcm",
+    id: "hkdf-as-aes-gcm",
     group: "WebCrypto",
     title: "HKDF → AES key → encrypt",
     blurb:
       "Derive an AES-256 key with `hkdf as=aes/256` (deriveKey), then AES-GCM encrypt with key=@cek.",
     recipe: `random 32 | hkdf 32 as=aes/256 | out @cek
 
-input | utf8 | aesgcm key=@cek | base64url | out @ct`,
+input | utf8 | aes-gcm key=@cek | base64url | out @ct`,
   },
   {
-    id: "aescbc-roundtrip",
+    id: "hkdf-as-aes-kw-wrap",
+    group: "WebCrypto",
+    title: "HKDF → AES-KW → wrap CEK",
+    blurb:
+      "Derive an AES-KW KEK (`as=aes-kw/256`), wrap a CEK with AES-KW, then unwrap.",
+    recipe: `random 32 | hkdf 32 as=aes-kw/256 | out @kek
+
+genkey aes/256 | out @cek
+
+wrap key=@kek target=@cek | hex | out @wrapped
+
+in @wrapped | hex -d | unwrap key=@kek | hex | out @cek-raw`,
+  },
+  {
+    id: "wrap-aes-gcm",
+    group: "WebCrypto",
+    title: "Wrap CEK with AES-GCM",
+    blurb:
+      "SubtleCrypto wrapKey under AES-GCM (IV||wrapped packing). Prefer AES-KW for new key-wrap work.",
+    recipe: `genkey aes/256 | out @kek
+genkey aes/256 | out @cek
+
+wrap mode=aes-gcm key=@kek target=@cek | hex | out @wrapped
+
+in @wrapped | hex -d | unwrap mode=aes-gcm key=@kek | hex | out @cek-raw`,
+  },
+  {
+    id: "x25519-ecdh",
+    group: "WebCrypto",
+    title: "X25519 ECDH → AES key",
+    blurb:
+      "Generate two X25519 keys, ECDH deriveBits, then HKDF to an AES-GCM CEK.",
+    recipe: `genkey x25519 | out @local
+genkey x25519 | out @peer
+
+ecdh private=@local peer=@peer | hkdf 32 as=aes/256 | out @cek
+in @cek | export jwk | out @cek-jwk`,
+  },
+  {
+    id: "hmac-sign-verify",
+    group: "WebCrypto",
+    title: "HMAC sign / verify",
+    blurb:
+      "HMAC-SHA-256 via recipe sugar `hmac` / `hmac.verify` (serialize as sign/verify).",
+    recipe: `genkey hmac/sha256 | out @mac
+
+input | utf8 | out @msg
+
+in @msg | hmac key=@mac | base64url | out @tag
+
+in @msg | hmac.verify key=@mac signature=@tag | out @ok`,
+  },
+  {
+    id: "jwk-thumbprint",
+    group: "WebCrypto",
+    title: "JWK SHA-256 digest",
+    blurb:
+      "Export a public JWK and SHA-256 digest the JSON text (handy fingerprint; not RFC 7638 canonical thumbprint).",
+    recipe: `genkey ec/p256 | .public | export jwk | out @jwk
+
+in @jwk | utf8 | digest | hex | out @thumb`,
+  },
+  {
+    id: "aes-cbc-roundtrip",
     group: "WebCrypto",
     title: "AES-CBC encrypt / decrypt",
     blurb:
-      "Unauthenticated AES-CBC interop (prefer aesgcm for new work). Round-trip with key=@cek.",
+      "Unauthenticated AES-CBC interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
     recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aescbc key=@cek | hex | out @ct
+input | utf8 | aes-cbc key=@cek | hex | out @ct
 
-in @ct | hex -d | aescbc -d key=@cek | utf8 | out @plain`,
+in @ct | hex -d | aes-cbc -d key=@cek | utf8 | out @plain`,
   },
   {
-    id: "aesctr-roundtrip",
+    id: "aes-ctr-roundtrip",
     group: "WebCrypto",
     title: "AES-CTR encrypt / decrypt",
     blurb:
-      "Unauthenticated AES-CTR interop (prefer aesgcm for new work). Round-trip with key=@cek.",
+      "Unauthenticated AES-CTR interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
     recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aesctr key=@cek | hex | out @ct
+input | utf8 | aes-ctr key=@cek | hex | out @ct
 
-in @ct | hex -d | aesctr -d key=@cek | utf8 | out @plain`,
+in @ct | hex -d | aes-ctr -d key=@cek | utf8 | out @plain`,
   },
   {
     id: "verify-soft",
@@ -1353,7 +1454,7 @@ input | utf8 | verify -q key=@pub | out @result`,
     pair: "slip39-secret",
     title: "SSS + BLIP39 split a secret",
     blurb: "Generate 32 random bytes, Shamir-split 2-of-3, encode as BLIP39 mnemonics.",
-    recipe: `random 32 | sss threshold=2 shares=3 | blip39 | foreach
+    recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`,
   },
   {
@@ -1362,7 +1463,7 @@ input | utf8 | verify -q key=@pub | out @result`,
     pair: "slip39-secret",
     title: "Recover secret from BLIP39 shares",
     blurb: "Paste K-of-N mnemonics, decode to raw SSS, reconstruct the 16/32-byte master as Base64.",
-    recipe: "shares | blip39 -d | recover | base64 | out @secret",
+    recipe: "shares | blip39 -d | sss.combine | base64 | out @secret",
   },
   {
     id: "out-mid-pipeline",
@@ -1373,7 +1474,7 @@ input | utf8 | verify -q key=@pub | out @result`,
       "Tee the public PEM, then SSS + BLIP39-split the 32-byte scalar (no envelope) — preferred for P-256 keys.",
     recipe: `genkey ec/p256 | tee
   - .public | export spki | pem | out @public
-| export scalar | sss threshold=2 shares=3 | blip39 | foreach
+| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`,
   },
   {
@@ -1383,7 +1484,7 @@ input | utf8 | verify -q key=@pub | out @result`,
     title: "Rebuild P-256 key from scalar shares",
     blurb: "Decode BLIP39 shares of a P-256 private scalar, recover SSS, and re-import as WebCrypto.",
     recipe:
-      "shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
+      "shares | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
   },
   {
     id: "quorum-gpg",
@@ -1394,8 +1495,8 @@ input | utf8 | verify -q key=@pub | out @result`,
       "Tee the public PEM, SSS-split the 32-byte scalar 2-of-3, BLIP39-encode, encrypt each share to a different recipient.",
     recipe: `genkey ec/p256 | tee
   - .public | export spki | pem | out @public
-| export scalar | sss threshold=2 shares=3 | blip39 | foreach
-  - encrypt gpg`,
+| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
+  - gpg.encrypt`,
   },
   {
     id: "decrypt-rebuild-p256",
@@ -1403,9 +1504,9 @@ input | utf8 | verify -q key=@pub | out @result`,
     pair: "quorum-gpg",
     title: "Decrypt GPG shares → rebuild key",
     blurb:
-      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then blip39 -d | recover and rebuild the P-256 PEM from the scalar.",
+      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then blip39 -d | sss.combine and rebuild the P-256 PEM from the scalar.",
     recipe:
-      "decrypt gpg | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
+      "gpg.decrypt | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
   },
   {
     id: "pem-envelope-split",
@@ -1414,7 +1515,7 @@ input | utf8 | verify -q key=@pub | out @result`,
     title: "Split PEM via OpenPGP envelope",
     blurb:
       "Emit PKCS#8 PEM (@pem), OpenPGP-encrypt under a random 32-byte master, then SSS + BLIP39-split the master. Keep envelope.asc with the shares.",
-    recipe: `genkey ec/p256 | export pkcs8 | pem | out @pem | symencrypt | sss threshold=2 shares=3 | blip39 | foreach
+    recipe: `genkey ec/p256 | export pkcs8 | pem | out @pem | gpg.symencrypt | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`,
   },
   {
@@ -1423,7 +1524,46 @@ input | utf8 | verify -q key=@pub | out @result`,
     pair: "slip39-pem-envelope",
     title: "Recover PEM from envelope + shares",
     blurb:
-      "Decode + recover shares to the hex master, then symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
-    recipe: "shares | blip39 -d | recover | symdecrypt | utf8 | out @pem",
+      "Decode + recover shares to the hex master, then gpg.symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
+    recipe: "shares | blip39 -d | sss.combine | gpg.symdecrypt | utf8 | out @pem",
+  },
+  {
+    id: "gpg-sign-verify",
+    group: "OpenPGP",
+    title: "OpenPGP sign / verify",
+    blurb:
+      "Cleartext-sign with a vault OpenPGP private key (`gpg.sign`), then verify (`gpg.verify`). Distinct from WebCrypto `sign`/`verify`.",
+    recipe: `input | utf8 | gpg.sign | out @signed
+
+in @signed | gpg.verify | out @ok`,
+  },
+  {
+    id: "gpg-genkey",
+    group: "OpenPGP",
+    title: "Generate OpenPGP key",
+    blurb:
+      "Curve25519 keypair (`gpg.genkey`) — private on the pipeline, public as an artifact. Edit the email before running.",
+    recipe: `gpg.genkey email="you@example.com" | out @priv`,
+  },
+  {
+    id: "gpg-inspect",
+    group: "OpenPGP",
+    title: "Inspect OpenPGP armor",
+    blurb: "Summarize armored ciphertext / signatures without decrypting.",
+    recipe: `input | gpg.inspect format=packets | out @report`,
+  },
+  {
+    id: "passphrase-char",
+    group: "Basics",
+    title: "Character passphrase",
+    blurb: "69-char alphabet random passphrase (`passphrase mode=char`).",
+    recipe: `passphrase mode=char length=20 | out @pass`,
+  },
+  {
+    id: "base32-id",
+    group: "Basics",
+    title: "Base32 encode",
+    blurb: "RFC 4648 Base32 (no padding) — same codec as Quorum room ids.",
+    recipe: `random 10 | base32 | out @id`,
   },
 ];

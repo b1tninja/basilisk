@@ -50,9 +50,9 @@ describe("toolbox shelf taxonomy", () => {
     expect(getStep("hkdf")?.shelf).toBe("kdf");
     expect(getStep("pbkdf2")?.shelf).toBe("kdf");
     expect(getStep("ecdh")?.shelf).toBe("agreement");
-    expect(getStep("aesgcm")?.shelf).toBe("aead");
-    expect(getStep("aescbc")?.shelf).toBe("cipher");
-    expect(getStep("rsaoaep")?.shelf).toBe("rsa");
+    expect(getStep("aes-gcm")?.shelf).toBe("aead");
+    expect(getStep("aes-cbc")?.shelf).toBe("cipher");
+    expect(getStep("rsa-oaep")?.shelf).toBe("rsa");
     expect(getStep("wrap")?.shelf).toBe("wrap");
   });
 
@@ -94,7 +94,7 @@ describe("conjugates and decode twins", () => {
     const aeadRows = listDrawerRows(aead);
     expect(aeadRows).toHaveLength(1);
     expect(aeadRows[0].decodeTwin).toBe(true);
-    expect(aeadRows[0].forward?.name).toBe("aesgcm");
+    expect(aeadRows[0].forward?.name).toBe("aes-gcm");
 
     const signShelf = webcrypto.filter((s) => s.shelf === "sign");
     const signRows = listDrawerRows(signShelf);

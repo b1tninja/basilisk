@@ -27,6 +27,7 @@ import {
   PRESETS,
   compileRecipe,
   canonicalizeRecipe,
+  migrateRecipe,
   parseRecipe,
   recipeChains,
   serializeRecipe,
@@ -35,9 +36,14 @@ import {
 } from "../lib/toolkit/recipe.js";
 import { glyphHtml } from "../lib/toolkit/glyphs.js";
 import {
+  CIPHER_PICKER_ALIASES,
   defaultCollapsedShelfKeys,
   getShelfMeta,
   getStep,
+  instantiateCipherPick,
+  instantiateFormatPick,
+  KEY_FORMAT_PICKS,
+  listCipherPickerSteps,
   listDrawerRows,
   listSteps,
   recipeNeedsMainThread,
@@ -141,6 +147,17 @@ let opsFilter = "";
 let opsCollapsed = new Set(["webauthn"]);
 /** Shelf keys `${toolbox}:${shelf}` collapsed in the ops drawer. */
 let opsShelfCollapsed = new Set(defaultCollapsedShelfKeys());
+/**
+ * Open Encrypt/Decrypt meta-picker (`null` = closed).
+ * Instantiates a concrete cipher — never leaves an `encrypt` builder card.
+ * @type {{ decode: boolean } | null}
+ */
+let cipherPickerState = null;
+/**
+ * Open Export/Import format picker (`null` = closed).
+ * @type {{ direction: "export"|"import" } | null}
+ */
+let formatPickerState = null;
 /** Whether the collapsed "Cryptographic parameters" section is expanded. */
 let cryptoPanelOpen = false;
 /** @type {"auto"|"compatible"|"modern"|"custom"} */
@@ -150,7 +167,7 @@ let toolkitEncryptProfile = { ...PROFILE_AUTO };
 let toolkitHideRecipients = false;
 
 /** Steps that emit OpenPGP ciphertext and honor the encrypt profile. */
-const PGP_PROFILE_STEPS = new Set(["symencrypt", "encrypt", "gpg"]);
+const PGP_PROFILE_STEPS = new Set(["gpg.symencrypt", "gpg.encrypt"]);
 
 /**
  * @param {"auto"|"compatible"|"modern"|"custom"} value
@@ -185,7 +202,7 @@ function toolkitPgpModeHint() {
   if (toolkitEncryptPreset === "custom") {
     return `Custom: ${formatProfileSpec(toolkitEncryptProfile)}.`;
   }
-  return `Auto: prefers ${formatProfileSpec(PROFILE_MODERN)}; falls back to compatible for legacy recipient keys. Password envelopes (symencrypt) always follow the selected profile.`;
+  return `Auto: prefers ${formatProfileSpec(PROFILE_MODERN)}; falls back to compatible for legacy recipient keys. Password envelopes (gpg.symencrypt) always follow the selected profile.`;
 }
 
 /**
@@ -240,6 +257,37 @@ function wirePgpModeToggles(root) {
 
 function pipelineUsesOpenPgpEncrypt() {
   return steps.some((s) => PGP_PROFILE_STEPS.has(s.name));
+}
+
+/**
+ * @param {import("../lib/toolkit/recipe.js").RecipeAst|null|undefined} ast
+ * @param {(step: import("../lib/toolkit/recipe.js").RecipeStep) => boolean} pred
+ */
+function recipeSomeStep(ast, pred) {
+  const visit = (stepList) => {
+    for (const s of stepList || []) {
+      if (pred(s)) return true;
+      if (visit(s.body || [])) return true;
+      for (const br of s.branches || []) {
+        if (visit(br.body || [])) return true;
+      }
+    }
+    return false;
+  };
+  return recipeChains(ast).some((c) => visit(c.steps || []));
+}
+
+/** @param {import("../lib/toolkit/recipe.js").RecipeAst|null|undefined} ast */
+function recipeHasStep(ast, name) {
+  return recipeSomeStep(ast, (s) => s.name === name);
+}
+
+/** @param {import("../lib/toolkit/recipe.js").RecipeAst|null|undefined} ast */
+function recipeNeedsGpgSigningKey(ast) {
+  return recipeSomeStep(
+    ast,
+    (s) => s.name === "gpg.sign" || (s.name === "gpg.encrypt" && !!s.params?.sign)
+  );
 }
 
 const IDLE_CLEAR_MS = 5 * 60 * 1000;
@@ -378,6 +426,10 @@ app.innerHTML = `
           <textarea id="recipe-text" class="compose-message mt-sm" rows="3" spellcheck="false"
             placeholder="genkey ec/p256 | export pkcs8 | pem"></textarea>
           <p id="recipe-errors" class="status-row err hidden mt-sm"></p>
+          <p id="recipe-upgrade-host" class="mt-xs hidden">
+            <button type="button" class="btn btn-compact" id="upgrade-recipe-btn">Upgrade recipe</button>
+            <span class="muted fs-sm"> Rewrite removed step names (aesgcm → aes-gcm, encrypt gpg → gpg.encrypt, wa-* → webauthn.*, …).</span>
+          </p>
           <p id="recipe-warnings" class="muted mt-xs fs-sm"></p>
         </details>
         <div id="crypto-params-host"></div>
@@ -830,15 +882,26 @@ function paramVisibility(stepName, param, params) {
  */
 function loadRecipeText(text, opts = {}) {
   const reformat = opts.reformat !== false;
-  const { text: canonical, ast, errors, changed } = canonicalizeRecipe(text);
+  const migrate = opts.migrate === true;
+  let source = String(text ?? "");
+  if (migrate) {
+    source = migrateRecipe(source).recipe;
+  }
+  const { text: canonical, ast, errors, changed } = canonicalizeRecipe(source);
   const errEl = document.getElementById("recipe-errors");
+  const upgradeHost = document.getElementById("recipe-upgrade-host");
+  const legacyPending = migrateRecipe(String(text ?? "")).changes.length > 0;
   if (errors.length || !ast) {
     if (errEl) {
       errEl.textContent = errors.map((e) => e.message).join(" · ");
       errEl.classList.remove("hidden");
     }
+    if (upgradeHost) {
+      upgradeHost.classList.toggle("hidden", !legacyPending);
+    }
     return;
   }
+  if (upgradeHost) upgradeHost.classList.add("hidden");
   const loaded = recipeChains(ast).map((c) => ({
     steps: (c.steps || []).map((s) => cloneBuilderStep(s)),
   }));
@@ -1017,7 +1080,7 @@ function renderInputsPanel(needs) {
   }
   if (needs.includes("key")) {
     parts.push(`
-      <p class="muted fs-sm mb-sm">Bound WebCrypto key for <code>sign</code> / <code>verify</code> / <code>aesgcm</code> / <code>ecdh</code> / <code>wrap</code>. Paste a JWK from <code>genkey | export jwk</code>. Recipe tokens stay unique — OpenPGP <code>encrypt</code> is a different toolbox.</p>
+      <p class="muted fs-sm mb-sm">Bound WebCrypto key for <code>sign</code> / <code>verify</code> / <code>aes-gcm</code> / <code>ecdh</code> / <code>wrap</code>. Paste a JWK from <code>genkey | export jwk</code>. Recipe tokens stay unique — OpenPGP <code>encrypt</code> is a different toolbox.</p>
       <label class="field-label" for="input-wc-jwk">Key JWK</label>
       <textarea id="input-wc-jwk" class="compose-message" rows="4" spellcheck="false"
         placeholder='{"kty":"EC","crv":"P-256",…} or oct AES/HMAC'>${escapeHtml(keyJwkDraft)}</textarea>
@@ -1069,7 +1132,7 @@ function renderInputsPanel(needs) {
         </div>
         <p class="muted fs-sm mb-sm">${
           needs.includes("gpg")
-            ? "Use these rows for mnemonics already decrypted outside the browser (Kleopatra/gpg/YubiKey). Mix with OpenPGP ciphertext below — the pipeline merges both before blip39 -d | recover."
+            ? "Use these rows for mnemonics already decrypted outside the browser (Kleopatra/gpg/YubiKey). Mix with OpenPGP ciphertext below — the pipeline merges both before blip39 -d | sss.combine."
             : "One share per row. Paste multiple lines into a row to auto-split. K-of-N required to recover. Direct 16/32-byte splits need no envelope."
         }</p>
         <div id="share-rows">${rowsHtml}</div>
@@ -1087,8 +1150,8 @@ function renderInputsPanel(needs) {
           <input type="file" id="load-envelope-file" class="hidden" accept=".asc,.pgp,.txt,*/*">
         </div>
         <textarea id="input-envelope" class="compose-message" rows="6" spellcheck="false"
-          placeholder="-----BEGIN PGP MESSAGE-----&#10;…&#10;-----END PGP MESSAGE-----&#10;Required for symdecrypt (PEM / large-payload path). Not used for direct scalar splits.">${escapeHtml(envelopeDraft)}</textarea>
-        <p class="muted fs-sm mt-xs">This is the OpenPGP symmetric ciphertext from <code>symencrypt</code> — distinct from BLIP39 share mnemonics. External recovery: <code>blip39 -d | recover</code> → hex master → <code>gpg --decrypt envelope.asc</code>.</p>
+          placeholder="-----BEGIN PGP MESSAGE-----&#10;…&#10;-----END PGP MESSAGE-----&#10;Required for gpg.symdecrypt (PEM / large-payload path). Not used for direct scalar splits.">${escapeHtml(envelopeDraft)}</textarea>
+        <p class="muted fs-sm mt-xs">This is the OpenPGP symmetric ciphertext from <code>gpg.symencrypt</code> — distinct from BLIP39 share mnemonics. External recovery: <code>blip39 -d | sss.combine</code> → hex master → <code>gpg --decrypt envelope.asc</code>.</p>
       </div>
     `);
   }
@@ -1475,7 +1538,7 @@ function renderPresets() {
       const id = btn.getAttribute("data-preset");
       const preset = PRESETS.find((p) => p.id === id);
       if (!preset) return;
-      loadRecipeText(preset.recipe, { title: preset.title });
+      loadRecipeText(preset.recipe, { title: preset.title, migrate: true });
       document.getElementById("preset-gallery")?.removeAttribute("open");
     });
   });
@@ -1489,18 +1552,18 @@ function renderPresets() {
  */
 function preferredNextOrder(from) {
   if (!from || from.base === "none") {
-    return ["genkey", "random", "shares", "input", "decrypt", "passphrase", "ecdh", "wrap"];
+    return ["genkey", "random", "shares", "input", "gpg.decrypt", "passphrase", "ecdh", "wrap"];
   }
   if (from.base === "shares") {
     if (from.kind === "raw") {
       return [
         "blip39",
-        "recover",
+        "sss.combine",
         "foreach",
         "at",
         "inspect",
         "out",
-        "encrypt",
+        "gpg.encrypt",
         "tee",
         "text",
         "qr",
@@ -1512,14 +1575,14 @@ function preferredNextOrder(from) {
       "at",
       "inspect",
       "out",
-      "encrypt",
+      "gpg.encrypt",
       "tee",
       "text",
       "qr",
     ];
   }
   if (from.base === "keypair") {
-    return ["export", "tee", "out", "peek", "inspect", "text", "encrypt"];
+    return ["export", "tee", "out", "peek", "inspect", "text", "gpg.encrypt"];
   }
   if (from.base === "key") {
     return ["export", "inspect", "tee", "out", "text"];
@@ -1527,7 +1590,7 @@ function preferredNextOrder(from) {
   if (from.base === "bytes" && from.kind === "scalar") {
     return [
       "import",
-      "sss",
+      "sss.split",
       "hex",
       "base64",
       "base64url",
@@ -1535,16 +1598,16 @@ function preferredNextOrder(from) {
       "out",
       "tee",
       "text",
-      "encrypt",
+      "gpg.encrypt",
     ];
   }
   if (from.base === "bytes" && from.kind === "master") {
     return [
-      "sss",
-      "symdecrypt",
+      "sss.split",
+      "gpg.symdecrypt",
       "digest",
       "hkdf",
-      "aesgcm",
+      "aes-gcm",
       "hex",
       "base64",
       "base64url",
@@ -1552,7 +1615,7 @@ function preferredNextOrder(from) {
       "out",
       "tee",
       "text",
-      "encrypt",
+      "gpg.encrypt",
     ];
   }
   if (from.base === "bytes") {
@@ -1560,11 +1623,11 @@ function preferredNextOrder(from) {
       "as",
       "digest",
       "sign",
-      "aesgcm",
+      "aes-gcm",
       "hkdf",
       "pbkdf2",
-      "symencrypt",
-      "sss",
+      "gpg.symencrypt",
+      "sss.split",
       "hex",
       "base64",
       "base64url",
@@ -1575,7 +1638,7 @@ function preferredNextOrder(from) {
       "out",
       "tee",
       "text",
-      "encrypt",
+      "gpg.encrypt",
       "qr",
     ];
   }
@@ -1583,23 +1646,24 @@ function preferredNextOrder(from) {
     return [
       "digest",
       "sign",
-      "aesgcm",
+      "gpg.sign",
+      "aes-gcm",
       "pbkdf2",
       "pem",
       "base64",
       "hex",
       "utf8",
-      "encrypt",
+      "gpg.encrypt",
       "qr",
       "out",
       "text",
       "inspect",
       "tee",
-      "symencrypt",
+      "gpg.symencrypt",
       "import",
     ];
   }
-  return ["inspect", "out", "tee", "text", "encrypt", "ecdh", "wrap"];
+  return ["inspect", "out", "tee", "text", "gpg.encrypt", "ecdh", "wrap"];
 }
 
 /**
@@ -1813,6 +1877,165 @@ function opsDrawerRowHtml(row, suggested) {
 }
 
 /**
+ * Whether the Cipher kit strip should show under the current ops filter.
+ * @param {string} q
+ */
+function cipherKitMatchesFilter(q) {
+  if (!q) return true;
+  return /encrypt|decrypt|cipher|aes|rsa|gcm|cbc|ctr|oaep|pkcs|jce|pick/i.test(
+    q
+  );
+}
+
+function formatKitMatchesFilter(q) {
+  if (!q) return true;
+  return /export|import|format|jwk|pkcs|spki|raw|scalar|key/i.test(q);
+}
+
+function macKitMatchesFilter(q) {
+  if (!q) return true;
+  return /hmac|mac|sign|verify/i.test(q);
+}
+
+/**
+ * Meta Encrypt/Decrypt entry + cipher-subset picker (WebCrypto only).
+ * @param {Set<string>} suggested
+ * @returns {string}
+ */
+function cipherKitHtml(suggested) {
+  const open = cipherPickerState;
+  const encOpen = open && !open.decode;
+  const decOpen = open && open.decode;
+  const picks = listCipherPickerSteps();
+  const panel = open
+    ? `
+      <div class="ops-cipher-picker" role="listbox" aria-label="Choose cipher">
+        <p class="muted fs-xs mb-0">Inserts a concrete op${
+          open.decode ? " with decrypt (-d)" : ""
+        } — not an <code>encrypt</code> card.</p>
+        ${picks
+          .map((s) => {
+            const aliases = CIPHER_PICKER_ALIASES[s.name] || [];
+            const fit = suggested.has(s.name);
+            const blocked = stepBlockedByFips(s.name);
+            return `
+              <button type="button" class="ops-item ops-cipher-pick${
+                fit ? " ops-item-fit" : " ops-item-dim"
+              }${blocked ? " ops-item-fips-blocked" : ""}"
+                data-cipher-pick="${escapeHtml(s.name)}"
+                role="option"
+                ${blocked ? "aria-disabled=\"true\"" : ""}
+                title="${escapeHtml(blocked ? `FIPS mode: blocked — ${s.toolbox} unverified` : s.doc)}">
+                <span class="ops-item-name">${escapeHtml(s.name)}</span>
+                ${
+                  aliases.length
+                    ? `<span class="ops-item-io muted">${escapeHtml(aliases.join(" · "))}</span>`
+                    : ""
+                }
+              </button>`;
+          })
+          .join("")}
+      </div>`
+    : "";
+
+  return `
+    <div class="ops-cipher-kit" data-cipher-kit>
+      <p class="ops-pair-caption">Pick a cipher</p>
+      <div class="ops-pair">
+        <div class="ops-pair-cell">
+          <button type="button" class="ops-item ops-cipher-meta${encOpen ? " ops-cipher-meta-open" : ""}"
+            data-cipher-meta="encrypt"
+            aria-expanded="${encOpen ? "true" : "false"}"
+            title="Choose a WebCrypto cipher to insert (encrypt)">
+            <span class="ops-item-name">Encrypt</span>
+            <span class="ops-item-io muted">meta → aes-gcm / …</span>
+          </button>
+        </div>
+        <div class="ops-pair-cell">
+          <button type="button" class="ops-item ops-cipher-meta${decOpen ? " ops-cipher-meta-open" : ""}"
+            data-cipher-meta="decrypt"
+            aria-expanded="${decOpen ? "true" : "false"}"
+            title="Choose a WebCrypto cipher to insert (decrypt / -d)">
+            <span class="ops-item-name">Decrypt</span>
+            <span class="ops-item-io muted">meta → aes-gcm -d / …</span>
+          </button>
+        </div>
+      </div>
+      ${panel}
+    </div>`;
+}
+
+/**
+ * Key formats meta: Export | Import → pick jwk/pkcs8/… → concrete export/import card.
+ * @returns {string}
+ */
+function formatKitHtml() {
+  const open = formatPickerState;
+  const expOpen = open?.direction === "export";
+  const impOpen = open?.direction === "import";
+  const panel = open
+    ? `
+      <div class="ops-cipher-picker" role="listbox" aria-label="Choose key format">
+        <p class="muted fs-xs mb-0">Inserts <code>${escapeHtml(open.direction)}</code> with format pre-filled.</p>
+        ${KEY_FORMAT_PICKS.map(
+          (fmt) => `
+            <button type="button" class="ops-item ops-cipher-pick"
+              data-format-pick="${escapeHtml(fmt)}"
+              role="option"
+              title="${escapeHtml(`${open.direction} ${fmt}`)}">
+              <span class="ops-item-name">${escapeHtml(fmt)}</span>
+            </button>`
+        ).join("")}
+      </div>`
+    : "";
+  return `
+    <div class="ops-cipher-kit" data-format-kit>
+      <p class="ops-pair-caption">Key formats</p>
+      <div class="ops-pair">
+        <div class="ops-pair-cell">
+          <button type="button" class="ops-item ops-cipher-meta${expOpen ? " ops-cipher-meta-open" : ""}"
+            data-format-meta="export" aria-expanded="${expOpen ? "true" : "false"}">
+            <span class="ops-item-name">Export</span>
+            <span class="ops-item-io muted">meta → export jwk / …</span>
+          </button>
+        </div>
+        <div class="ops-pair-cell">
+          <button type="button" class="ops-item ops-cipher-meta${impOpen ? " ops-cipher-meta-open" : ""}"
+            data-format-meta="import" aria-expanded="${impOpen ? "true" : "false"}">
+            <span class="ops-item-name">Import</span>
+            <span class="ops-item-io muted">meta → import jwk / …</span>
+          </button>
+        </div>
+      </div>
+      ${panel}
+    </div>`;
+}
+
+/** HMAC meta: inserts sign / verify (recipe sugar: hmac / hmac.verify). */
+function macKitHtml() {
+  return `
+    <div class="ops-cipher-kit" data-mac-kit>
+      <p class="ops-pair-caption">HMAC</p>
+      <div class="ops-pair">
+        <div class="ops-pair-cell">
+          <button type="button" class="ops-item" data-mac-meta="sign"
+            title="Insert sign (HMAC keys via genkey hmac/sha256)">
+            <span class="ops-item-name">hmac</span>
+            <span class="ops-item-io muted">→ sign</span>
+          </button>
+        </div>
+        <div class="ops-pair-cell">
+          <button type="button" class="ops-item" data-mac-meta="verify"
+            title="Insert verify (recipe sugar: hmac.verify)">
+            <span class="ops-item-name">hmac.verify</span>
+            <span class="ops-item-io muted">→ verify</span>
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/**
  * Render ops for one toolbox — shelves + conjugate pair rows.
  * @param {string} tb
  * @param {import("../lib/toolkit/registry.js").StepSpec[]} items
@@ -1829,6 +2052,13 @@ function renderToolboxOpsBody(tb, items, suggested, filterActive) {
     return sa - sb || ka - kb || a.name.localeCompare(b.name);
   });
   const usesShelves = sorted.some((s) => s.shelf);
+  const q = opsFilter.trim();
+  let kit = "";
+  if (tb === "webcrypto") {
+    if (formatKitMatchesFilter(q)) kit += formatKitHtml();
+    if (cipherKitMatchesFilter(q)) kit += cipherKitHtml(suggested);
+    if (macKitMatchesFilter(q)) kit += macKitHtml();
+  }
 
   /**
    * @param {typeof sorted} shelfItems
@@ -1839,7 +2069,7 @@ function renderToolboxOpsBody(tb, items, suggested, filterActive) {
       .join("");
 
   if (!usesShelves) {
-    return rowsHtml(sorted);
+    return kit + rowsHtml(sorted);
   }
 
   /** @type {Map<string, typeof sorted>} */
@@ -1854,14 +2084,16 @@ function renderToolboxOpsBody(tb, items, suggested, filterActive) {
     (a, b) => getShelfMeta(a).order - getShelfMeta(b).order
   );
 
-  return shelves
-    .map((shelf) => {
-      const key = `${tb}:${shelf}`;
-      const meta = getShelfMeta(shelf);
-      const collapsed = opsShelfCollapsed.has(key) && !filterActive;
-      const shelfItems = byShelf.get(shelf) || [];
-      const visibleCount = listDrawerRows(shelfItems).length;
-      return `
+  return (
+    kit +
+    shelves
+      .map((shelf) => {
+        const key = `${tb}:${shelf}`;
+        const meta = getShelfMeta(shelf);
+        const collapsed = opsShelfCollapsed.has(key) && !filterActive;
+        const shelfItems = byShelf.get(shelf) || [];
+        const visibleCount = listDrawerRows(shelfItems).length;
+        return `
         <div class="ops-shelf" data-shelf="${escapeHtml(key)}">
           <button type="button" class="ops-shelf-toggle" data-toggle-shelf="${escapeHtml(key)}"
             aria-expanded="${collapsed ? "false" : "true"}">
@@ -1872,8 +2104,9 @@ function renderToolboxOpsBody(tb, items, suggested, filterActive) {
             ${rowsHtml(shelfItems)}
           </div>
         </div>`;
-    })
-    .join("");
+      })
+      .join("")
+  );
 }
 
 /**
@@ -1924,7 +2157,7 @@ function renderOpsDrawer() {
     const fromType = formatType(from);
     if (!steps.length) {
       hint.textContent =
-        "Swiss-army drawer: shelves group tools; conjugates sit side by side (encrypt | decrypt, encode | -d). Drag or click to add.";
+        "Swiss-army drawer: shelves group tools; conjugates sit side by side (gpg.encrypt | gpg.decrypt, encode | -d). Drag or click to add.";
     } else if (from.base === "shares" && from.kind === "raw") {
       hint.textContent = `Pipe type ${fromType} — suggested: blip39 (mnemonics) or recover (→ bytes/master). Highlighted ops accept this type.`;
     } else if (from.base === "shares") {
@@ -1991,6 +2224,99 @@ function renderOpsDrawer() {
     });
     el.addEventListener("dragend", () => el.classList.remove("ops-dragging"));
     el.addEventListener("click", () => addStepAt(name, undefined, overrides));
+  });
+
+  wireCipherKit(host);
+  wireFormatKit(host);
+  wireMacKit(host);
+}
+
+/**
+ * Encrypt/Decrypt meta chips → cipher subset → concrete addStepAt.
+ * @param {HTMLElement} host
+ */
+function wireCipherKit(host) {
+  host.querySelectorAll("[data-cipher-meta]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const mode = btn.getAttribute("data-cipher-meta") || "encrypt";
+      const decode = mode === "decrypt";
+      formatPickerState = null;
+      if (cipherPickerState && cipherPickerState.decode === decode) {
+        cipherPickerState = null;
+      } else {
+        cipherPickerState = { decode };
+      }
+      renderOpsDrawer();
+    });
+  });
+
+  host.querySelectorAll("[data-cipher-pick]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const name = el.getAttribute("data-cipher-pick") || "";
+      if (stepBlockedByFips(name)) return;
+      const decode = !!cipherPickerState?.decode;
+      try {
+        const pick = instantiateCipherPick(name, decode);
+        cipherPickerState = null;
+        addStepAt(pick.name, undefined, pick.params.decode ? { decode: true } : undefined);
+        renderOpsDrawer();
+      } catch (_) {
+        /* ignore unknown */
+      }
+    });
+  });
+}
+
+/**
+ * @param {HTMLElement} host
+ */
+function wireFormatKit(host) {
+  host.querySelectorAll("[data-format-meta]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const direction =
+        btn.getAttribute("data-format-meta") === "import" ? "import" : "export";
+      cipherPickerState = null;
+      if (formatPickerState && formatPickerState.direction === direction) {
+        formatPickerState = null;
+      } else {
+        formatPickerState = { direction };
+      }
+      renderOpsDrawer();
+    });
+  });
+
+  host.querySelectorAll("[data-format-pick]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const fmt = el.getAttribute("data-format-pick") || "";
+      const direction = formatPickerState?.direction || "export";
+      try {
+        const pick = instantiateFormatPick(direction, fmt);
+        formatPickerState = null;
+        addStepAt(pick.name, undefined, pick.params);
+        renderOpsDrawer();
+      } catch (_) {
+        /* ignore */
+      }
+    });
+  });
+}
+
+/**
+ * @param {HTMLElement} host
+ */
+function wireMacKit(host) {
+  host.querySelectorAll("[data-mac-meta]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const kind = btn.getAttribute("data-mac-meta") || "sign";
+      const name = kind === "verify" ? "verify" : "sign";
+      if (stepBlockedByFips(name)) return;
+      addStepAt(name);
+    });
   });
 }
 
@@ -2129,9 +2455,9 @@ function renderBuilder() {
         ? `<p class="builder-type-hint muted fs-xs mb-sm">Next usually <code>blip39</code> → mnemonics, or <code>recover</code> → <code>bytes/master</code>.</p>`
         : edge?.output?.base === "shares"
           ? `<p class="builder-type-hint muted fs-xs mb-sm">Next usually <code>foreach</code> (list body), <code>at N</code>, or <code>blip39 -d</code> → <code>recover</code>.</p>`
-          : step.name === "recover"
+          : step.name === "sss.combine"
             ? `<p class="builder-type-hint muted fs-xs mb-sm">Combines raw SSS shares into <code>bytes/master</code>. Decode mnemonics with <code>blip39 -d</code> first.</p>`
-            : step.name === "sss"
+            : step.name === "sss.split"
               ? `<p class="builder-type-hint muted fs-xs mb-sm">Produces <code>shares/raw</code>. Pipe into <code>blip39</code> for word phrases.</p>`
               : step.name === "foreach"
                 ? `<p class="builder-type-hint muted fs-xs mb-sm">Add child steps as an indented list (<code>- out @share</code>) or brace body. Optional <code>foreach .items</code>.</p>`
@@ -2326,7 +2652,7 @@ function renderBuilder() {
     addStepAt("inspect");
   });
   host.querySelector("#add-recover-btn")?.addEventListener("click", () => {
-    addStepAt("recover");
+    addStepAt("sss.combine");
   });
   host.querySelector("#add-blip39-btn")?.addEventListener("click", () => {
     addStepAt("blip39");
@@ -2382,17 +2708,20 @@ function renderCryptoPanel() {
       return `<code>${escapeHtml(alg)}</code> <span class="muted">(${escapeHtml(usage)})</span>`;
     });
   const usesSss = steps.some(
-    (step) => step.name === "sss" || step.name === "blip39" || step.name === "recover"
+    (step) => step.name === "sss.split" || step.name === "blip39" || step.name === "sss.combine"
   );
   const usesSymEnvelope = steps.some(
-    (step) => step.name === "symencrypt" || step.name === "symdecrypt"
+    (step) => step.name === "gpg.symencrypt" || step.name === "gpg.symdecrypt"
   );
   const usesOpenPgp = steps.some(
     (step) =>
-      step.name === "encrypt" ||
-      step.name === "gpg" ||
-      step.name === "symencrypt" ||
-      step.name === "symdecrypt"
+      step.name === "gpg.encrypt" ||
+      step.name === "gpg.sign" ||
+      step.name === "gpg.verify" ||
+      step.name === "gpg.genkey" ||
+      step.name === "gpg.inspect" ||
+      step.name === "gpg.symencrypt" ||
+      step.name === "gpg.symdecrypt"
   );
 
   const profileHint =
@@ -2413,17 +2742,17 @@ function renderCryptoPanel() {
           <div><dt>Master size</dt><dd>Exactly 16 or 32 bytes — random secrets, AES-256 keys, P-256 / Ed25519 / X25519 scalars via <code>export scalar</code></dd></div>
           <div><dt>SSS (<code>sss</code>)</dt><dd>GF(256) Shamir threshold → <code>shares/raw</code>; optional passphrase mask uses PBKDF2-SHA-256 (20,000 iterations)</dd></div>
           <div><dt>BLIP39 (<code>blip39</code>)</dt><dd>Mnemonic encode/decode of raw shares; official SLIP-39 wordlist + RS1024 (tag <code>basilisk-slip39-v1</code>)</dd></div>
-          <div><dt>No auto-envelope</dt><dd>PEM / PKCS#8 / larger payloads must use <code>symencrypt</code> first — sss never invents a custom ciphertext</dd></div>
+          <div><dt>No auto-envelope</dt><dd>PEM / PKCS#8 / larger payloads must use <code>gpg.symencrypt</code> first — sss never invents a custom ciphertext</dd></div>
         </dl>
       </details>
 
       <details class="expert-crypto-section" ${usesSymEnvelope ? "open" : ""}>
-        <summary><strong>OpenPGP symmetric envelope</strong>${usesSymEnvelope ? "" : ' <span class="muted">(no symencrypt/symdecrypt)</span>'}</summary>
+        <summary><strong>OpenPGP symmetric envelope</strong>${usesSymEnvelope ? "" : ' <span class="muted">(no gpg.symencrypt/gpg.symdecrypt)</span>'}</summary>
         <dl class="crypto-param-list fs-sm">
           <div><dt>When</dt><dd>PEM, PKCS#8 DER, or any payload that is not already 16/32 bytes</dd></div>
-          <div><dt>Master</dt><dd>32-byte CSPRNG secret — this is what <code>sss</code> splits; passphrase for stock gpg is lowercase hex of that master</dd></div>
+          <div><dt>Master</dt><dd>32-byte CSPRNG secret — this is what <code>sss.split</code> splits; passphrase for stock gpg is lowercase hex of that master</dd></div>
           <div><dt>Ciphertext</dt><dd>Standard OpenPGP SKESK + SEIPD (<code>envelope.asc</code>) — profile below; no custom AES-GCM padding</dd></div>
-          <div><dt>External recovery</dt><dd><code>blip39 -d | recover</code> → hex master → <code>gpg --decrypt envelope.asc</code></dd></div>
+          <div><dt>External recovery</dt><dd><code>blip39 -d | sss.combine</code> → hex master → <code>gpg --decrypt envelope.asc</code></dd></div>
         </dl>
         <p class="status-row warn fs-sm">
           The OpenPGP envelope is not a share mnemonic. Keep <code>envelope.asc</code> with the share set; without it the master alone cannot unwrap the payload.
@@ -2441,7 +2770,7 @@ function renderCryptoPanel() {
       </details>
 
       <details class="expert-crypto-section" ${usesOpenPgp ? "open" : ""}>
-        <summary><strong>OpenPGP wrapping</strong>${usesOpenPgp ? "" : ' <span class="muted">(no encrypt / symencrypt step)</span>'}</summary>
+        <summary><strong>OpenPGP wrapping</strong>${usesOpenPgp ? "" : ' <span class="muted">(no encrypt / gpg.symencrypt step)</span>'}</summary>
         ${usesOpenPgp ? renderPgpModeToggle("toolkit-pgp-mode-expert") : ""}
         <div class="expert-crypto-grid mt-sm">
           <label class="builder-param">Cipher
@@ -2455,7 +2784,7 @@ function renderCryptoPanel() {
               ${["ocb", "gcm", "eax"].map((v) => `<option value="${v}" ${toolkitEncryptProfile.aead === v ? "selected" : ""}>${v.toUpperCase()} — SEIPD v2</option>`).join("")}
             </select>
           </label>
-          <label class="builder-param">S2K (passphrase / symencrypt)
+          <label class="builder-param">S2K (passphrase / gpg.symencrypt)
             <select class="text-input" id="toolkit-pgp-s2k">
               <option value="argon2" ${toolkitEncryptProfile.s2k === "argon2" ? "selected" : ""}>Argon2 (WASM)</option>
               <option value="iterated" ${toolkitEncryptProfile.s2k === "iterated" ? "selected" : ""}>Iterated (no WASM)</option>
@@ -3362,6 +3691,27 @@ document.getElementById("ops-filter")?.addEventListener("input", (e) => {
   renderOpsDrawer();
 });
 
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!cipherPickerState && !formatPickerState) return;
+  cipherPickerState = null;
+  formatPickerState = null;
+  renderOpsDrawer();
+});
+
+document.addEventListener("click", (e) => {
+  if (!cipherPickerState && !formatPickerState) return;
+  const t = e.target;
+  if (!(t instanceof Node)) return;
+  const cipherKit = document.querySelector("[data-cipher-kit]");
+  const formatKit = document.querySelector("[data-format-kit]");
+  if (cipherKit && cipherKit.contains(t)) return;
+  if (formatKit && formatKit.contains(t)) return;
+  cipherPickerState = null;
+  formatPickerState = null;
+  renderOpsDrawer();
+});
+
 let recipeTimer = 0;
 const recipeTa = document.getElementById("recipe-text");
 recipeTa?.addEventListener("input", () => {
@@ -3450,20 +3800,22 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
     ) {
       throw new Error("Paste input text or load it from a file before executing.");
     }
-    if (currentInputNeeds.includes("gpg") && hasPgpCipher && !privateKeyArmored) {
+    const needsGpgDecrypt = recipeHasStep(ast, "gpg.decrypt");
+    const needsGpgSigningKey = recipeNeedsGpgSigningKey(ast);
+    if (needsGpgDecrypt && hasPgpCipher && !privateKeyArmored) {
       throw new Error(
         "OpenPGP ciphertext needs a vault/pasted private key, or decrypt those messages externally and paste the mnemonics in the share rows."
       );
     }
     if (
       currentInputNeeds.includes("shares") &&
-      !currentInputNeeds.includes("gpg") &&
+      !needsGpgDecrypt &&
       !shareMnemonics.length
     ) {
       throw new Error("Paste at least one BLIP39 share mnemonic.");
     }
     if (
-      currentInputNeeds.includes("gpg") &&
+      needsGpgDecrypt &&
       !gpgMessages.length &&
       !shareMnemonics.length
     ) {
@@ -3471,7 +3823,12 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
         "Paste OpenPGP ciphertext and/or already-decrypted share mnemonics."
       );
     }
-    if (currentInputNeeds.includes("gpg") && hasPgpCipher) {
+    if (needsGpgSigningKey && !privateKeyArmored) {
+      throw new Error(
+        "OpenPGP sign / sign+encrypt needs a vault or pasted private key."
+      );
+    }
+    if (currentInputNeeds.includes("gpg") && (hasPgpCipher || needsGpgSigningKey)) {
       status.textContent = "Unlocking key & running…";
     }
     const runMsg = {
@@ -3572,5 +3929,13 @@ document.getElementById("fips-mode")?.addEventListener("change", (e) => {
 
 renderPresets();
 renderOpsDrawer();
-loadRecipeText(PRESETS[0].recipe, { title: PRESETS[0].title });
+document.getElementById("upgrade-recipe-btn")?.addEventListener("click", () => {
+  const ta = document.getElementById("recipe-text");
+  if (!(ta instanceof HTMLTextAreaElement)) return;
+  const { recipe, changes } = migrateRecipe(ta.value);
+  if (!changes.length) return;
+  loadRecipeText(recipe, { migrate: false, reformat: true });
+});
+
+loadRecipeText(PRESETS[0].recipe, { title: PRESETS[0].title, migrate: true });
 startPage();

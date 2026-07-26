@@ -29,6 +29,38 @@ export function sigDetailsFromPackets(packets) {
 }
 
 /**
+ * Human-readable summary of an {@link MessageAnalysis}.
+ * @param {import("./types.js").MessageAnalysis} analysis
+ * @returns {string}
+ */
+export function formatAnalysisSummary(analysis) {
+  const lines = [`type: ${analysis.type || "empty"}`];
+  if (analysis.hasPkesk) lines.push("hasPkesk: true");
+  if (analysis.hasSkesk) lines.push("hasSkesk: true");
+  if (analysis.recipientKeyIDs?.length) {
+    lines.push(`recipients: ${analysis.recipientKeyIDs.join(", ")}`);
+  }
+  if (analysis.sigDetails?.length) {
+    for (const s of analysis.sigDetails) {
+      const when =
+        s.created instanceof Date && !Number.isNaN(s.created.getTime())
+          ? s.created.toISOString()
+          : "";
+      lines.push(
+        `signature: keyId=${s.keyId || "?"}${s.fingerprint ? ` fpr=${s.fingerprint}` : ""}${
+          when ? ` created=${when}` : ""
+        }`
+      );
+    }
+  }
+  if (analysis.type === "cleartext" && analysis.cleartext) {
+    const preview = String(analysis.cleartext).slice(0, 200);
+    lines.push(`cleartext: ${preview}${analysis.cleartext.length > 200 ? "…" : ""}`);
+  }
+  return lines.join("\n");
+}
+
+/**
  * Parse armored input into a {@link MessageAnalysis} without decrypting.
  * @param {string} armored
  * @returns {Promise<import("./types.js").MessageAnalysis>}

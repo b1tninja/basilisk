@@ -6,9 +6,10 @@
  * @module lib/quorum/room
  */
 
+import { bytesToBase32 } from "../toolkit/encode.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 
-const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+export { bytesToBase32 };
 
 /**
  * Canonical audience: sorted, deduped, uppercase fingerprints (40 or 64 hex).
@@ -43,29 +44,6 @@ export function quorumRelyingPartyId(override) {
     /* ignore */
   }
   return "localhost";
-}
-
-/**
- * RFC 4648 Base32 (no padding), uppercase.
- * @param {Uint8Array} bytes
- * @returns {string}
- */
-export function bytesToBase32(bytes) {
-  let bits = 0;
-  let value = 0;
-  let out = "";
-  for (const b of bytes) {
-    value = (value << 8) | b;
-    bits += 8;
-    while (bits >= 5) {
-      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) {
-    out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
-  }
-  return out;
 }
 
 /**

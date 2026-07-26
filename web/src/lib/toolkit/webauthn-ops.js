@@ -86,7 +86,7 @@ export async function execWaCreate(params = {}) {
 
 /**
  * Assertion ceremony; returns client extension results (incl. PRF presence) as JSON.
- * Prefer `wa-prf` when you need pipeline PRF IKM bytes.
+ * Prefer `webauthn.prf` when you need pipeline PRF IKM bytes.
  * @returns {Promise<{ type: "text", data: string, meta: object }>}
  */
 export async function execWaGet() {
@@ -140,7 +140,7 @@ export async function execWaPrf() {
  */
 export async function execWaAttest(value) {
   if (!value || value.type !== "bytes") {
-    throw new Error("wa-attest expects attestationObject bytes");
+    throw new Error("webauthn.attest expects attestationObject bytes");
   }
   const parsed = parseAttestationObject(value.data);
   if (!parsed) throw new Error("Could not parse attestationObject");
@@ -173,7 +173,7 @@ export async function execWaMds(value, params = {}) {
     }
   }
   if (!aaguid) {
-    throw new Error("wa-mds needs an aaguid param or prior JSON with an aaguid field");
+    throw new Error("webauthn.mds needs an aaguid param or prior JSON with an aaguid field");
   }
   const result = await lookupAaguidInMds(normalizeAaguid(aaguid));
   return {
@@ -190,7 +190,7 @@ function assertCredentialsApi(op) {
   if (typeof navigator === "undefined" || !navigator.credentials?.[op]) {
     throw new Error(
       `WebAuthn ${op} requires the main browser thread (navigator.credentials). ` +
-        "Recipes with wa-create / wa-get / wa-prf cannot run in a Worker."
+        "Recipes with webauthn.create / webauthn.get / webauthn.prf cannot run in a Worker."
     );
   }
 }

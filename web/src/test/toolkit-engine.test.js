@@ -101,9 +101,9 @@ describe("toolkit engine", () => {
     expect(ast.steps.at(-1)?.name).toBe("text");
   });
 
-  it("validates pem | out | encrypt-style type flow", () => {
+  it("validates pem | out | gpg.encrypt-style type flow", () => {
     const { validation } = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | out name=key ext=pem | encrypt gpg"
+      "genkey ec/p256 | export pkcs8 | pem | out name=key ext=pem | gpg.encrypt"
     );
     expect(validation.ok).toBe(true);
   });

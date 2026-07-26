@@ -2271,6 +2271,31 @@ pre {
   gap: 0.35rem;
   padding: 0 0 0.15rem;
 }
+.ops-cipher-kit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0 0 0.5rem;
+  padding: 0.4rem 0.35rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--border, #444) 80%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-subtle, rgba(127, 127, 127, 0.05)) 70%, transparent);
+}
+.ops-cipher-meta-open {
+  border-color: var(--accent, #7aa2f7);
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 14%, transparent);
+}
+.ops-cipher-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid color-mix(in srgb, var(--border, #444) 70%, transparent);
+}
+.ops-cipher-pick .ops-item-name {
+  font-size: 0.8rem;
+}
 .ops-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;

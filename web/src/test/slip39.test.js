@@ -69,7 +69,7 @@ describe("mnemonic shares", () => {
     const secret = new TextEncoder().encode(pem);
     await expect(
       splitShares(secret, { threshold: 2, shares: 3 })
-    ).rejects.toThrow(/export scalar|symencrypt/i);
+    ).rejects.toThrow(/export scalar|gpg.symencrypt/i);
   });
 
   it("passphrase masks prevent recovery without it", async () => {
@@ -89,7 +89,7 @@ describe("mnemonic shares", () => {
 describe("toolkit sss|blip39 recipe", () => {
   it("foreach|out emits N share artifacts", async () => {
     const { ast, validation } = compileRecipe(
-      "random 32 | sss threshold=2 shares=3 | blip39 | foreach\n  - out @share"
+      "random 32 | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);

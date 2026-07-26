@@ -6,7 +6,7 @@ Extend FIPS-inspired POST/CAST to cover shipped WebCrypto toolkit paths (today o
 
 ## Problem
 
-[`web/src/lib/crypto-self-test.js`](../web/src/lib/crypto-self-test.js) still runs **OpenPGP-only** CAST-1…5 (+ integrity pin). Encrypt / Decrypt / Toolkit UIs show a single “crypto verified” latch, then the toolkit enables **Run** for recipes that call **SubtleCrypto** ops (`digest`, `sign`, `aesgcm`, `hkdf`, `pbkdf2`, `ecdh`, `wrap`) that CAST never exercised. SSS/BLIP39 is similarly ungated.
+[`web/src/lib/crypto-self-test.js`](../web/src/lib/crypto-self-test.js) still runs **OpenPGP-only** CAST-1…5 (+ integrity pin). Encrypt / Decrypt / Toolkit UIs show a single “crypto verified” latch, then the toolkit enables **Run** for recipes that call **SubtleCrypto** ops (`digest`, `sign`, `aes-gcm`, `hkdf`, `pbkdf2`, `ecdh`, `wrap`) that CAST never exercised. SSS/BLIP39 is similarly ungated.
 
 [`web/src/test/toolkit-webcrypto.test.js`](../web/src/test/toolkit-webcrypto.test.js) is a narrow smoke matrix (mostly Ed25519 / AES-256 / P-256). Quorum session crypto is also WebCrypto and remains outside the CAST gate (document explicitly; optional later).
 
@@ -79,7 +79,7 @@ Explicit control on the toolkit header (encrypt/decrypt/settings later if useful
 When FIPS **on**:
 
 - Block append/drag of ops whose toolbox maps to an unverified suite.
-- If recipe already contains them (paste/load/preset): keep visible, blocked cards, disable Run, error like `FIPS mode: recipe uses unverified WebCrypto ops (aesgcm, sign)`.
+- If recipe already contains them (paste/load/preset): keep visible, blocked cards, disable Run, error like `FIPS mode: recipe uses unverified WebCrypto ops (aes-gcm, sign)`.
 - Engine/worker double-check: refuse unverified suites when FIPS is on (pass flag in `toolkit-run` or shared preference) so UI bypass is not enough.
 - Persist preference (`localStorage` e.g. `basilisk.fipsMode`).
 - **Disclaimer:** this is Basilisk’s FIPS-*inspired* posture (POST/CAST + verified-only), **not** a NIST FIPS 140 certificate. Tooltip/subtitle: `Verified suites only (POST/CAST). Not a FIPS 140 certificate.`
@@ -128,14 +128,14 @@ Add cases for shipped but untested paths:
 
 - `digest` SHA-384 / SHA-512 lengths
 - `sign`/`verify`: ECDSA P-256, RSA-PSS (2048), HMAC-SHA-256
-- `aesgcm`: AES-128; `aad=` authenticate-fail on mismatch
+- `aes-gcm`: AES-128; `aad=` authenticate-fail on mismatch
 - `ecdh`: X25519 when `crypto.subtle.generateKey("X25519", …)` works (skip with message if unavailable)
 - `hkdf`/`pbkdf2`: `hash=sha-512`
-- Compile-time: `aesgcm`/`sign` report `inputNeeds` includes `key`
+- Compile-time: `aes-gcm`/`sign` report `inputNeeds` includes `key`
 
 ### B2 — `toolkit-types.test.js`
 
-Refined-type walks for `digest`, `sign`, `aesgcm`, `hkdf`, `ecdh`, `wrap`/`unwrap` (accept bytes/text; ecdh/wrap from `none`).
+Refined-type walks for `digest`, `sign`, `aes-gcm`, `hkdf`, `ecdh`, `wrap`/`unwrap` (accept bytes/text; ecdh/wrap from `none`).
 
 ### B3 — Optional worker smoke
 
@@ -162,7 +162,7 @@ UI copy: suite-aware banners; “crypto module” only when OpenPGP + WebCrypto 
 - OpenPGP padding packets
 - AES-GCM/CBC as wrap algorithms (toolkit wrap stays AES-KW + RSA-OAEP)
 - Quorum-specific CAST suite (separate follow-up if desired)
-- Renaming OpenPGP `encrypt` / toolbox redesign
+- ~~Renaming OpenPGP `encrypt` / toolbox redesign~~ — shipped as `gpg.*` / `sss.*` / `webauthn.*` + hyphen ciphers
 - Claiming NIST FIPS 140 validation via the toggle name
 - Leaving unverified ops fully enabled with only a green banner and no FIPS gate (defeats Phase 0)
 - CAST entries for discouraged/soft paths (`digest sha-1`, `rsapkcs1`, soft verify, `padding=pkcs1`) — unit-tested only

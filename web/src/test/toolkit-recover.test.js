@@ -13,14 +13,14 @@ import { combineShares } from "../lib/slip39/slip39.js";
 describe("toolkit recover / shares", () => {
   it("round-trips random 32 via sss|blip39 then shares|recover|hex", async () => {
     const split = compileRecipe(
-      "random 32 | sss threshold=2 shares=3 | blip39 | foreach\n  - out @share"
+      "random 32 | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share"
     );
     expect(split.validation.ok).toBe(true);
     const arts = await runRecipe(split.ast);
     const shares = arts.filter((a) => a.shareIndex).map((a) => a.content);
     expect(shares.length).toBe(3);
 
-    const recover = compileRecipe("shares | blip39 -d | recover | hex");
+    const recover = compileRecipe("shares | blip39 -d | sss.combine | hex");
     expect(recover.validation.ok).toBe(true);
     const out = await runRecipe(recover.ast, {
       inputs: { shares: { mnemonics: [shares[0], shares[2]] } },
@@ -75,7 +75,7 @@ describe("toolkit recover / shares", () => {
 
   it("direct scalar SSS: tee public → slip39 → recover → import scalar", async () => {
     const split = compileRecipe(
-      "genkey ec/p256 | tee\n  - .public | export spki | pem | out @public\n| export scalar | sss threshold=2 shares=3 | blip39 | foreach\n  - out @share"
+      "genkey ec/p256 | tee\n  - .public | export spki | pem | out @public\n| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share"
     );
     expect(split.validation.ok).toBe(true);
     const arts = await runRecipe(split.ast);
@@ -85,7 +85,7 @@ describe("toolkit recover / shares", () => {
     expect(shares.every((a) => a.role === "share")).toBe(true);
 
     const recover = compileRecipe(
-      "shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem"
+      "shares | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem"
     );
     const out = await runRecipe(recover.ast, {
       inputs: {
@@ -97,17 +97,17 @@ describe("toolkit recover / shares", () => {
 
   it("sss rejects PEM at compile time (refined types)", () => {
     const { validation } = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | sss threshold=2 shares=3"
+      "genkey ec/p256 | export pkcs8 | pem | sss.split threshold=2 shares=3"
     );
     expect(validation.ok).toBe(false);
     expect(
-      validation.errors.some((e) => /export scalar|symencrypt|does not accept/i.test(e.message))
+      validation.errors.some((e) => /export scalar|gpg.symencrypt|does not accept/i.test(e.message))
     ).toBe(true);
   });
 
-  it("OpenPGP envelope path: pem → symencrypt → slip39 → recover → symdecrypt", async () => {
+  it("OpenPGP envelope path: pem → gpg.symencrypt → slip39 → recover → gpg.symdecrypt", async () => {
     const split = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | symencrypt | sss threshold=2 shares=3 | blip39 | foreach\n  - out @share"
+      "genkey ec/p256 | export pkcs8 | pem | gpg.symencrypt | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share"
     );
     expect(split.validation.ok).toBe(true);
     const arts = await runRecipe(split.ast, {
@@ -118,11 +118,11 @@ describe("toolkit recover / shares", () => {
     expect(envelope.filename).toMatch(/\.asc$/i);
     expect(envelope.content).toContain("BEGIN PGP MESSAGE");
     expect(envelope.sensitive).toBe(false);
-    expect(envelope.stepName).toBe("symencrypt");
+    expect(envelope.stepName).toBe("gpg.symencrypt");
     const shares = arts.filter((a) => a.shareIndex).map((a) => a.content);
     expect(shares.length).toBe(3);
 
-    const recover = compileRecipe("shares | blip39 -d | recover | symdecrypt | utf8");
+    const recover = compileRecipe("shares | blip39 -d | sss.combine | gpg.symdecrypt | utf8");
     expect(recover.validation.inputNeeds).toEqual(
       expect.arrayContaining(["shares", "envelope"])
     );
@@ -146,7 +146,7 @@ describe("toolkit recover / shares", () => {
     const fpr = publicKey.getFingerprint().toUpperCase();
 
     const { ast, validation } = compileRecipe(
-      "genkey ec/p256 | tee\n  - .public | export spki | pem | out @public\n| export scalar | sss threshold=2 shares=3 | blip39 | foreach\n  - encrypt gpg"
+      "genkey ec/p256 | tee\n  - .public | export spki | pem | out @public\n| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach\n  - gpg.encrypt"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast, {
@@ -165,7 +165,7 @@ describe("toolkit recover / shares", () => {
     expect(gpgShares.every((a) => /SEIPD v1/.test(a.cryptoSummary))).toBe(true);
   }, 60_000);
 
-  it("full inverse: encrypt gpg scalar shares → decrypt gpg → rebuild PEM", async () => {
+  it("full inverse: gpg.encrypt scalar shares → gpg.decrypt → rebuild PEM", async () => {
     const { privateKey: pgpPriv, publicKey } = await generateKey({
       type: "ecc",
       curve: "curve25519",
@@ -175,7 +175,7 @@ describe("toolkit recover / shares", () => {
     const fpr = publicKey.getFingerprint().toUpperCase();
 
     const split = compileRecipe(
-      "genkey ec/p256 | export scalar | sss threshold=2 shares=3 | blip39 | foreach\n  - encrypt gpg"
+      "genkey ec/p256 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach\n  - gpg.encrypt"
     );
     const arts = await runRecipe(split.ast, {
       recipients: [publicKey],
@@ -187,7 +187,7 @@ describe("toolkit recover / shares", () => {
     expect(ciphertexts.length).toBe(3);
 
     const recover = compileRecipe(
-      "decrypt gpg | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem"
+      "gpg.decrypt | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem"
     );
     expect(recover.validation.ok).toBe(true);
     expect(recover.validation.inputNeeds).toEqual(
@@ -216,7 +216,7 @@ describe("toolkit recover / shares", () => {
     const fpr = publicKey.getFingerprint().toUpperCase();
 
     const split = compileRecipe(
-      "genkey ec/p256 | export scalar | sss threshold=2 shares=3 | blip39 | foreach\n  - encrypt gpg"
+      "genkey ec/p256 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach\n  - gpg.encrypt"
     );
     const arts = await runRecipe(split.ast, {
       recipients: [publicKey],
@@ -236,7 +236,7 @@ describe("toolkit recover / shares", () => {
     expect(validateShareMnemonic(externalMnemonic).ok).toBe(true);
 
     const recover = compileRecipe(
-      "decrypt gpg | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem"
+      "gpg.decrypt | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem"
     );
     const out = await runRecipe(recover.ast, {
       inputs: {
@@ -253,8 +253,8 @@ describe("toolkit recover / shares", () => {
     expect(out[0].content).toContain("BEGIN PRIVATE KEY");
   }, 90_000);
 
-  it("bare random 32 | sss | blip39 has no envelope and recovers", async () => {
-    const split = compileRecipe("random 32 | sss threshold=2 shares=3 | blip39");
+  it("bare random 32 | sss.split | blip39 has no envelope and recovers", async () => {
+    const split = compileRecipe("random 32 | sss.split threshold=2 shares=3 | blip39");
     const arts = await runRecipe(split.ast);
     const mnemonics = arts
       .filter((a) => a.shareIndex || /^Share\s+\d+/i.test(a.label || ""))
@@ -262,7 +262,7 @@ describe("toolkit recover / shares", () => {
     expect(mnemonics.length).toBe(3);
     expect(arts.some((a) => a.role === "envelope")).toBe(false);
 
-    const recover = compileRecipe("shares | blip39 -d | recover | hex");
+    const recover = compileRecipe("shares | blip39 -d | sss.combine | hex");
     const out = await runRecipe(recover.ast, {
       inputs: { shares: { mnemonics: [mnemonics[0], mnemonics[1]] } },
     });
@@ -271,12 +271,12 @@ describe("toolkit recover / shares", () => {
 
   it("passphrase path: wrong passphrase fails to recover secret", async () => {
     const split = compileRecipe(
-      "random 32 | sss threshold=2 shares=3 passphrase=correct-horse | blip39 | foreach\n  - out @share"
+      "random 32 | sss.split threshold=2 shares=3 passphrase=correct-horse | blip39 | foreach\n  - out @share"
     );
     const arts = await runRecipe(split.ast);
     const mnemonics = arts.filter((a) => a.shareIndex).map((a) => a.content);
 
-    const wrong = compileRecipe("shares | blip39 -d | recover | hex");
+    const wrong = compileRecipe("shares | blip39 -d | sss.combine | hex");
     const wrongOut = await runRecipe(wrong.ast, {
       inputs: {
         shares: {
@@ -323,7 +323,7 @@ describe("toolkit recover / shares", () => {
     expect(rebuild).toBeTruthy();
 
     const split = compileRecipe(
-      "genkey ec/p256 | export scalar | sss threshold=2 shares=3 | blip39"
+      "genkey ec/p256 | export scalar | sss.split threshold=2 shares=3 | blip39"
     );
     const arts = await runRecipe(split.ast);
     const mnemonics = arts
@@ -341,7 +341,7 @@ describe("toolkit recover / shares", () => {
     expect(out[0].content).toContain("BEGIN PRIVATE KEY");
   }, 60_000);
 
-  it("preset pem-envelope-rebuild recovers symencrypt split", async () => {
+  it("preset pem-envelope-rebuild recovers gpg.symencrypt split", async () => {
     const rebuild = PRESETS.find((p) => p.id === "pem-envelope-rebuild");
     const splitPreset = PRESETS.find((p) => p.id === "pem-envelope-split");
     expect(rebuild && splitPreset).toBeTruthy();

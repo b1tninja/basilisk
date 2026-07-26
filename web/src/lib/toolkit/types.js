@@ -174,12 +174,14 @@ export function inferSourceType(name, params = {}) {
     }
     case "passphrase":
       return typeOf("text", { kind: "opaque" });
+    case "gpg.genkey":
+      return typeOf("text", { kind: "opaque" });
     case "input":
       return typeOf("text", { kind: "opaque" });
     case "shares": {
       return typeOf("shares", { kind: "mnemonic" });
     }
-    case "decrypt":
+    case "gpg.decrypt":
       return typeOf("shares", { kind: "mnemonic" });
     default:
       return tNone();
@@ -327,7 +329,7 @@ export function inferParamDrivenType(name, current, params = {}) {
     };
   }
 
-  if (name === "base64" || name === "hex") {
+  if (name === "base64" || name === "hex" || name === "base32") {
     if (params.decode) {
       if (current.base !== "text") {
         return {
@@ -347,7 +349,8 @@ export function inferParamDrivenType(name, current, params = {}) {
       ok: true,
       output: typeOf("text", {
         kind: "opaque",
-        encoding: name === "hex" ? "hex" : "base64",
+        encoding:
+          name === "hex" ? "hex" : name === "base32" ? "base32" : "base64",
       }),
     };
   }
@@ -455,18 +458,18 @@ export function inferParamDrivenType(name, current, params = {}) {
     };
   }
 
-  if (name === "recover") {
+  if (name === "sss.combine") {
     if (current.base !== "shares") {
       return {
         ok: false,
-        error: `"recover" expects shares, got ${formatType(current)}`,
+        error: `"sss.combine" expects shares, got ${formatType(current)}`,
       };
     }
     if (current.kind === "mnemonic") {
       return {
         ok: false,
         error:
-          `"recover" expects shares/raw — decode mnemonics first with "blip39 -d"`,
+          `"sss.combine" expects shares/raw — decode mnemonics first with "blip39 -d"`,
       };
     }
     // Recovered secret is always 16/32-byte master-sized material (scalar or random).
@@ -502,18 +505,18 @@ export function inferParamDrivenType(name, current, params = {}) {
     return { ok: true, output: typeOf("shares", { kind: "mnemonic" }) };
   }
 
-  if (name === "symencrypt") {
+  if (name === "gpg.symencrypt") {
     if (current.base !== "text" && current.base !== "bytes") {
       return {
         ok: false,
-        error: `"symencrypt" expects text or bytes, got ${formatType(current)}`,
+        error: `"gpg.symencrypt" expects text or bytes, got ${formatType(current)}`,
       };
     }
     if (current.kind === "master" || current.kind === "scalar") {
       return {
         ok: false,
         error:
-          `"symencrypt" is for PEM/arbitrary payloads — got ${formatType(current)}. ` +
+          `"gpg.symencrypt" is for PEM/arbitrary payloads — got ${formatType(current)}. ` +
           `Pipe that to sss directly (already 16/32 bytes).`,
       };
     }
@@ -523,12 +526,12 @@ export function inferParamDrivenType(name, current, params = {}) {
     };
   }
 
-  if (name === "symdecrypt") {
+  if (name === "gpg.symdecrypt") {
     if (current.base !== "bytes" || current.kind !== "master") {
       return {
         ok: false,
         error:
-          `"symdecrypt" expects bytes/master from recover, got ${formatType(current)}`,
+          `"gpg.symdecrypt" expects bytes/master from sss.combine, got ${formatType(current)}`,
       };
     }
     return {
@@ -673,11 +676,11 @@ export function inferParamDrivenType(name, current, params = {}) {
 
   if (
     name === "sign" ||
-    name === "aesgcm" ||
-    name === "aescbc" ||
-    name === "aesctr" ||
-    name === "rsaoaep" ||
-    name === "rsapkcs1"
+    name === "aes-gcm" ||
+    name === "aes-cbc" ||
+    name === "aes-ctr" ||
+    name === "rsa-oaep" ||
+    name === "rsa-pkcs1"
   ) {
     if (current.base !== "bytes" && current.base !== "text") {
       return {
@@ -773,9 +776,9 @@ export function resolveStepType(spec, current, params = {}) {
       const uniq = [...new Set(accepted)];
       let error = `"${name}" does not accept ${formatType(current)}`;
       if (uniq.length) error += ` (accepted: ${uniq.join(" | ")})`;
-      if (name === "sss") {
+      if (name === "sss.split") {
         error +=
-          '. For EC keys use "export scalar"; for PEM/arbitrary data use "symencrypt" first.';
+          '. For EC keys use "export scalar"; for PEM/arbitrary data use "gpg.symencrypt" first.';
       }
       return { ok: false, error };
     }
@@ -789,7 +792,7 @@ export function resolveStepType(spec, current, params = {}) {
   // Coarse fallback: base IoType only
   const want = spec.input || "none";
   if (want !== "none" && current.base !== want) {
-    if (name === "encrypt" && (current.base === "text" || current.base === "bytes")) {
+    if (name === "gpg.encrypt" && (current.base === "text" || current.base === "bytes")) {
       return { ok: true, output: typeOf("artifact") };
     }
     if (name === "qr" && current.base === "text") {
@@ -834,7 +837,7 @@ export function stepAcceptsRefined(spec, from) {
     return true;
   }
   if (spec.name === "foreach") return current.base === "shares";
-  if (spec.name === "recover") {
+  if (spec.name === "sss.combine") {
     return current.base === "shares" && current.kind !== "mnemonic";
   }
   if (spec.name === "blip39") {
@@ -844,11 +847,11 @@ export function stepAcceptsRefined(spec, from) {
     spec.name === "digest" ||
     spec.name === "sign" ||
     spec.name === "verify" ||
-    spec.name === "aesgcm" ||
-    spec.name === "aescbc" ||
-    spec.name === "aesctr" ||
-    spec.name === "rsaoaep" ||
-    spec.name === "rsapkcs1" ||
+    spec.name === "aes-gcm" ||
+    spec.name === "aes-cbc" ||
+    spec.name === "aes-ctr" ||
+    spec.name === "rsa-oaep" ||
+    spec.name === "rsa-pkcs1" ||
     spec.name === "hkdf" ||
     spec.name === "pbkdf2" ||
     spec.name === "unwrap"
@@ -869,7 +872,7 @@ export function stepAcceptsRefined(spec, from) {
   const want = spec.input;
   if (!want || want === "none") return false;
   if (current.base === want) return true;
-  if (spec.name === "encrypt" && (current.base === "text" || current.base === "bytes")) {
+  if (spec.name === "gpg.encrypt" && (current.base === "text" || current.base === "bytes")) {
     return true;
   }
   if (spec.name === "utf8" && (current.base === "text" || current.base === "bytes")) {
@@ -1129,6 +1132,6 @@ function walkBodyTypes(body, start, deps) {
  */
 export function isTerminalSink(name) {
   return (
-    name === "out" || name === "text" || name === "encrypt" || name === "qr"
+    name === "out" || name === "text" || name === "gpg.encrypt" || name === "qr"
   );
 }

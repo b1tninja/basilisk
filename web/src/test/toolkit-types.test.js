@@ -37,7 +37,7 @@ describe("refined types", () => {
   });
 
   it("sss overloads match master/scalar only", () => {
-    const spec = getStep("sss");
+    const spec = getStep("sss.split");
     expect(
       matchOverload(spec.overloads, typeOf("bytes", { kind: "master", length: 32 }), {})
     ).toBeTruthy();
@@ -67,18 +67,18 @@ describe("refined types", () => {
     const afterPem = typeOf("text", { kind: "pem" });
     const names = stepsAccepting(afterPem).map((s) => s.name);
     expect(names).not.toContain("sss");
-    expect(names).toContain("symencrypt");
+    expect(names).toContain("gpg.symencrypt");
   });
 
-  it("stepsAccepting offers sss after scalar export", () => {
+  it("stepsAccepting offers sss.split after scalar export", () => {
     const afterScalar = typeOf("bytes", {
       kind: "scalar",
       alg: "ec/p256",
       length: 32,
     });
     const names = stepsAccepting(afterScalar).map((s) => s.name);
-    expect(names).toContain("sss");
-    expect(names).not.toContain("symencrypt");
+    expect(names).toContain("sss.split");
+    expect(names).not.toContain("gpg.symencrypt");
   });
 
   it("Encrypt disposition follows recipe sinks (not hex/base64 sniffing)", () => {
@@ -122,12 +122,12 @@ describe("refined types", () => {
     ).toBe(false);
   });
 
-  it("walkPipelineTypes: shares | blip39 -d | recover → shares then master", () => {
+  it("walkPipelineTypes: shares | blip39 -d | sss.combine → shares then master", () => {
     const { edges, final } = walkPipelineTypes(
       [
         { name: "shares", params: {} },
         { name: "blip39", params: { decode: true } },
-        { name: "recover", params: {} },
+        { name: "sss.combine", params: {} },
       ],
       { getStep }
     );
@@ -163,7 +163,7 @@ describe("refined types", () => {
       resolveStepType(getStep("sign"), typeOf("bytes"), {}).ok
     ).toBe(true);
     expect(
-      resolveStepType(getStep("aesgcm"), typeOf("bytes"), {}).ok
+      resolveStepType(getStep("aes-gcm"), typeOf("bytes"), {}).ok
     ).toBe(true);
     expect(
       resolveStepType(getStep("hkdf"), typeOf("bytes"), { length: 16 }).ok

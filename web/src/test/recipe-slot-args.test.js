@@ -13,14 +13,14 @@ import {
 describe("named slot args", () => {
   it("canonicalizes key=cek to key=@cek", () => {
     const { text, errors } = canonicalizeRecipe(
-      "genkey aes/256 | out @cek\n\nrandom 32 | aesgcm key=cek"
+      "genkey aes/256 | out @cek\n\nrandom 32 | aes-gcm key=cek"
     );
     expect(errors).toEqual([]);
-    expect(text).toContain("aesgcm key=@cek");
+    expect(text).toContain("aes-gcm key=@cek");
   });
 
   it("rejects forward key=@slot refs", () => {
-    const { validation } = compileRecipe("random 32 | aesgcm key=@cek");
+    const { validation } = compileRecipe("random 32 | aes-gcm key=@cek");
     expect(validation.ok).toBe(false);
     expect(
       validation.errors.some((e) => /unknown slot|@cek/i.test(e.message))
@@ -29,26 +29,26 @@ describe("named slot args", () => {
 
   it("clears key panel need when key=@slot is bound", () => {
     const { validation } = compileRecipe(
-      "genkey aes/256 | out @cek\n\nrandom 32 | aesgcm key=@cek | out @ct"
+      "genkey aes/256 | out @cek\n\nrandom 32 | aes-gcm key=@cek | out @ct"
     );
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds || []).not.toContain("key");
   });
 
   it("still needs key panel when slot arg omitted", () => {
-    const { validation } = compileRecipe("random 32 | aesgcm | hex");
+    const { validation } = compileRecipe("random 32 | aes-gcm | hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("key");
   });
 
-  it("round-trips aesgcm with key=@cek across chains", async () => {
+  it("round-trips aes-gcm with key=@cek across chains", async () => {
     const split = compileRecipe(`genkey aes/256 | out @cek
 
 random 32 | out @msg
 
-in @msg | aesgcm key=@cek | out @ct
+in @msg | aes-gcm key=@cek | out @ct
 
-in @ct | aesgcm -d key=@cek | hex`);
+in @ct | aes-gcm -d key=@cek | hex`);
     expect(split.validation.ok).toBe(true);
     expect(split.validation.inputNeeds || []).not.toContain("key");
     const arts = await runRecipe(split.ast);
@@ -58,7 +58,7 @@ in @ct | aesgcm -d key=@cek | hex`);
 
   it("serializes slot args with @", () => {
     const { ast, errors } = parseRecipe(
-      "genkey aes/256 | out @cek\n\nrandom 32 | aesgcm key=@cek"
+      "genkey aes/256 | out @cek\n\nrandom 32 | aes-gcm key=@cek"
     );
     expect(errors).toEqual([]);
     expect(serializeRecipe(ast)).toContain("key=@cek");
@@ -68,14 +68,14 @@ in @ct | aesgcm -d key=@cek | hex`);
 describe("as cast", () => {
   it("retags opaque digest bytes as master for sss", () => {
     const { validation } = compileRecipe(
-      "random 32 | digest | as master | sss threshold=2 shares=3"
+      "random 32 | digest | as master | sss.split threshold=2 shares=3"
     );
     expect(validation.ok).toBe(true);
   });
 
   it("rejects as master on wrong length", () => {
     const { validation } = compileRecipe(
-      "random 8 | as master | sss threshold=2 shares=3"
+      "random 8 | as master | sss.split threshold=2 shares=3"
     );
     expect(validation.ok).toBe(false);
     expect(validation.errors.some((e) => /16 or 32/i.test(e.message))).toBe(
@@ -83,9 +83,9 @@ describe("as cast", () => {
     );
   });
 
-  it("runs as master | sss | blip39", async () => {
+  it("runs as master | sss.split | blip39", async () => {
     const { ast, validation } = compileRecipe(
-      "random 32 | digest | as master | sss threshold=2 shares=3 | blip39 | foreach\n  - out @share"
+      "random 32 | digest | as master | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);

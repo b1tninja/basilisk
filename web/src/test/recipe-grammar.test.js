@@ -14,11 +14,11 @@ const EXAMPLES = [
   - .private | inspect
   - .public | export spki | pem | out @public
 | export pkcs8 | pem`,
-  `random 32 | sss threshold=2 shares=3 | blip39 | foreach
+  `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`,
-  `random 32 | sss threshold=2 shares=3 | blip39 | foreach .items
+  `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach .items
   - .value | out @share`,
-  "random 32 | sss threshold=2 shares=3 | blip39 | [1] | out @share-1",
+  "random 32 | sss.split threshold=2 shares=3 | blip39 | [1] | out @share-1",
 ];
 
 describe("RECIPE.md conformance", () => {
@@ -47,7 +47,7 @@ describe("recipe grammar negatives", () => {
   });
 
   it("rejects bare merge", () => {
-    const { errors } = parseRecipe("random 16 | sss threshold=2 shares=2 | merge");
+    const { errors } = parseRecipe("random 16 | sss.split threshold=2 shares=2 | merge");
     expect(errors.some((e) => /not used/i.test(e.message))).toBe(true);
   });
 

@@ -25,7 +25,7 @@ in @kp | .public | export spki | pem | out @public
 in @kp | export pkcs8 | pem | out @private
 
 # Shares collection → foreach body
-random 32 | sss threshold=2 shares=3 | blip39 | foreach
+random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share
 
 # Dict view + per-item projection
@@ -43,7 +43,8 @@ random 32 | sss threshold=2 shares=3 | blip39 | foreach
 - Blocks: `tee` / `foreach` take a **body** (braces `{ … }` or indented `-` lines).
 - Member / dict projection uses **selectors** (`.private`, `.items`, …).
 - Slots: `out @label` registers a live pipeline value; `in @label` / `in 1` loads it.
-- Named slot args pass live values into ops: `aesgcm key=@cek` (stem stays the payload).
+- Named slot args pass live values into ops: `aes-gcm key=@cek` (stem stays the payload).
+- Namespaced product ops use dots (`gpg.encrypt`, `sss.combine`, `webauthn.prf`); cipher ops use hyphens (`aes-gcm`). OpenSSL-sized (`aes-256-gcm`), JCE (`AES/GCM/NoPadding`), and sugar `encrypt`/`decrypt` + transform parse to the same canonical hyphen name.
 - Bare `out kp` / `in kp` / `key=cek` is shorthand for `@` form (canonical always uses `@`).
 - Prefer **positional** args: `out @public`, `export pkcs8`, `genkey ec/p256`.
 - Casts: `as master` / `as scalar` / `as opaque` retag bytes only (not import).
@@ -72,13 +73,13 @@ Each apply stage is `name` then zero or more args:
 | Form | Example | Notes |
 |------|---------|-------|
 | Positional | `genkey ec/p256`, `out @public` | Binds the step’s `positional` param |
-| Named | `sss threshold=2 shares=3` | `ident=value` |
+| Named | `sss.split threshold=2 shares=3` | `ident=value` |
 | Flag | `blip39 -d`, `pem -d` | Sets the param with `flag: "-d"` to `true` |
 
 Canonical serialize omits redundant `name=` for the primary positional when the
 value is not the registry default (slot names always serialize as `@label`).
 
-Aliases resolve at parse time (`paste` → `input`, `gpg` → `encrypt`, `from` → `in`, …).
+Aliases resolve at parse time (`paste` → `input`, `from` → `in`, …). Basilisk-legacy step tokens (`encrypt`, `aesgcm`, `wa-prf`, `recover`, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
 
 ## Slots (`@label`)
 
@@ -109,15 +110,16 @@ not on the stem. The stem stays the payload.
 ```text
 genkey aes/256 | out @cek
 
-input | utf8 | aesgcm key=@cek | out @ct
+input | utf8 | aes-gcm key=@cek | out @ct
 
-in @ct | aesgcm -d key=@cek | utf8 | out @plain
+in @ct | aes-gcm -d key=@cek | utf8 | out @plain
 ```
 
 | Op | Slot args |
 |----|-----------|
-| `aesgcm` / `aescbc` / `aesctr` / `rsaoaep` / `rsapkcs1` / `sign` / `unwrap` | `key=@…` |
+| `aes-gcm` / `aes-cbc` / `aes-ctr` / `rsa-oaep` / `rsa-pkcs1` / `sign` / `unwrap` | `key=@…` |
 | `verify` | `key=@…` `signature=@…` (or bare base64url for `signature=`) |
+| `gpg.verify` | `signature=@…` (detached; cleartext uses stem) |
 | `ecdh` | `private=@…` `peer=@…` |
 | `wrap` | `key=@…` (wrapping) `target=@…` (CEK) |
 
@@ -137,18 +139,47 @@ in @msg | sign key=@kp | base64url | out @sig
 in @msg | verify key=@kp signature=@sig | out @ok
 ```
 
-### Encrypt name collision
+### Namespaces and cipher spellings
 
-Several ops share the UI label `encrypt` but keep distinct recipe tokens:
+| Kind | Canonical | Also parses | Serialize |
+|------|-----------|-------------|-----------|
+| OpenPGP | `gpg.genkey` / `gpg.inspect` / `gpg.encrypt` / `gpg.decrypt` / `gpg.sign` / `gpg.verify` / `gpg.symencrypt` / `gpg.symdecrypt` | `gpg.encrypt -s` sign+encrypt | dotted |
+| WebCrypto AEAD/cipher/RSA | `aes-gcm`, `aes-cbc`, `aes-ctr`, `rsa-oaep`, `rsa-pkcs1` | `aes-256-gcm`, `AES/GCM/NoPadding`, `encrypt AES/GCM/NoPadding`, `decrypt …` | hyphen |
+| SSS | `sss.split` / `sss.combine` | — | dotted |
+| WebAuthn | `webauthn.caps` … `webauthn.mds` | — | dotted |
+| WebCrypto sign | `sign` / `verify` | `hmac`, `hmac.verify` | bare (SubtleCrypto) |
+| Key wrap | `wrap` / `unwrap` | `mode=aes-kw` (default), `aes-gcm`, `aes-cbc`, `aes-ctr`, `rsa-oaep` | hyphen modes |
 
-| Recipe name | Toolbox | UI label |
-|-------------|---------|----------|
-| `encrypt` / `gpg` | openpgp | encrypt |
-| `aesgcm` / `aescbc` / `aesctr` / `rsaoaep` / `rsapkcs1` | webcrypto | encrypt |
+Bare `encrypt` / `decrypt` are **WebCrypto sugar** (not OpenPGP): they require a cipher transform and rewrite to the concrete op on parse.
 
-`verify` is fail-loud by default; `verify -q` / `soft=true` emits text `verified` or `invalid` (setup errors still throw). Prefer fail-loud for auth decisions. `aescbc` / `aesctr` are **unauthenticated** — prefer `aesgcm` for new work.
+```text
+input | utf8 | encrypt AES/GCM/NoPadding key=@cek | out @ct
+in @ct | decrypt aes-gcm key=@cek | utf8 | out @plain
+# serialize → aes-gcm / aes-gcm -d
+```
 
-RSA sign keys: `genkey rsa/2048 padding=pss` (default) or `padding=pkcs1` (discouraged RSASSA-PKCS1-v1_5). Content encrypt stays `rsaoaep`; key wrap uses `wrap mode=rsa-oaep` (distinct from AES-KW default).
+**Builder UX:** the ops drawer’s **Pick a cipher** strip (Encrypt | Decrypt) is a meta entry — it opens a subset of AEAD/cipher/RSA ops and inserts a **concrete** card (`aes-gcm`, …) with decode pre-filled for Decrypt. There is never a builder block named `encrypt` / `decrypt`. Recipe-text sugar and the picker land on the same AST.
+
+OpenPGP signatures are **`gpg.sign` / `gpg.verify` only** — never bare `sign`/`verify`. OpenPGP encrypt stays **`gpg.encrypt`** (`-s` / `sign=true` = sign-then-encrypt with the vault private key). `gpg.genkey` emits Curve25519 keys; `gpg.inspect` summarizes armor without decrypting.
+
+```text
+input | utf8 | gpg.sign | out @signed
+in @signed | gpg.verify | out @ok
+
+input | utf8 | out @msg
+in @msg | gpg.sign format=detached | out @sig
+in @msg | gpg.verify signature=@sig | out @ok
+
+input | gpg.encrypt -s
+gpg.genkey email="you@example.com" | out @priv
+input | gpg.inspect format=packets | out @report
+passphrase mode=char length=20 | out @pass
+random 10 | base32 | out @id
+```
+
+WebCrypto `verify` is fail-loud by default; `verify -q` / `soft=true` emits text `verified` or `invalid` (setup errors still throw). Same soft mode on `gpg.verify`. Prefer fail-loud for auth decisions. `aes-cbc` / `aes-ctr` are **unauthenticated** — prefer `aes-gcm` for new work.
+
+RSA sign keys: `genkey rsa/2048 padding=pss` (default) or `padding=pkcs1` (discouraged RSASSA-PKCS1-v1_5); optional `hash=sha-256|384|512`. Content encrypt stays `rsa-oaep` (optional `label=`); key wrap uses `wrap mode=rsa-oaep`. SubtleCrypto knobs: `aes-gcm tagLength=`, `aes-ctr length=` (counter bits; IV packing stays 16 bytes), `sign`/`verify` `saltLength=` (RSA-PSS) and `hash=` (ECDSA override; `auto` = curve default). Symmetric sizes include `aes/192` and `hmac/sha384`.
 
 `ecdh` defaults `bits=0` (curve-aware: P-256/X25519 → 256, P-384 → 384, P-521 → 528) and accepts `as=aes/256` etc. like `hkdf`.
 
@@ -159,7 +190,7 @@ Supported for interop, but compile warns and result tiles are tagged `legacy` / 
 | Op | Prefer instead |
 |----|----------------|
 | `digest sha-1` | `digest` / `sha-256` |
-| `rsapkcs1` (RSAES-PKCS1-v1_5; pure-JS) | `rsaoaep` |
+| `rsa-pkcs1` (RSAES-PKCS1-v1_5; pure-JS) | `rsa-oaep` |
 | `genkey`/`import` `padding=pkcs1` (RSASSA-PKCS1-v1_5) | `padding=pss` |
 
 On `genkey`/`import` for ed25519, x25519, aes/*, hmac/*: non-`auto` `usage=` is ignored and emits a compile warning.
@@ -169,7 +200,7 @@ On `genkey`/`import` for ed25519, x25519, aes/*, hmac/*: non-`auto` `usage=` is 
 `as` **retags** refined type only — no crypto conversion. Not an import.
 
 ```text
-random 16 | digest | as master | sss threshold=2 shares=3 | blip39 | foreach
+random 16 | digest | as master | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share
 ```
 
@@ -215,7 +246,7 @@ Map a body over a shares collection. Optional selector before the body:
 
 ```text
 … | blip39 | foreach
-  - encrypt gpg
+  - gpg.encrypt
 
 … | blip39 | foreach .items
   - .value | out @share
@@ -270,7 +301,10 @@ pipeline     = stage , { space , "|" , space , stage } ;
 stage        = block | apply | selector ;
 
 apply        = name , { space , arg } ;
-name         = ident ;
+name         = ident | dotted_name | hyphen_name | jce_name ;
+dotted_name  = ident , "." , ident , { "." , ident } ;
+hyphen_name  = ident , "-" , ident , { "-" , ident } ;
+jce_name     = letter , { letter | digit | "/" | "-" } ; (* allowlisted JCE transforms only *)
 arg          = flag | binding | positional ;
 flag         = "-" , ident ;
 binding      = ident , "=" , value ;
@@ -334,6 +368,14 @@ Paste / blur canonicalize via `canonicalizeRecipe`:
 | Trailing `merge` / `collect` | Omit — body closes by dedent or `}` |
 | Side-export / mid-stem fork | `tee` with `- .public \| …` (or multi-chain `out @kp` + `in @kp`) |
 | Side inspect without a body | `peek @label` |
+| `encrypt gpg` / `gpg` / `decrypt gpg` | `gpg.encrypt` / `gpg.decrypt` (bare `encrypt`/`decrypt` are WebCrypto sugar now) |
+| `symencrypt` / `symdecrypt` | `gpg.symencrypt` / `gpg.symdecrypt` |
+| `aesgcm` / `aescbc` / `aesctr` | `aes-gcm` / `aes-cbc` / `aes-ctr` |
+| `rsaoaep` / `rsapkcs1` | `rsa-oaep` / `rsa-pkcs1` |
+| `sss` / `recover` | `sss.split` / `sss.combine` |
+| `wa-*` | `webauthn.*` |
+
+Use `migrateRecipe(text)` (or the toolkit **Upgrade recipe** button) for a one-shot rewrite. The parser does not accept legacy tokens.
 
 ## See also
 

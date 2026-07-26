@@ -1,8 +1,99 @@
 /**
- * WebCrypto helpers for toolkit ops (digest, sign, verify, aesgcm, hkdf, pbkdf2, ecdh, wrap).
+ * WebCrypto helpers for toolkit ops (digest, sign, verify, aes-gcm, hkdf, pbkdf2, ecdh, wrap).
  */
 
 import { textToBytes } from "./encode.js";
+
+/**
+ * Normalize recipe hash token → SubtleCrypto hash name.
+ * @param {string|undefined|null} h
+ * @returns {"SHA-1"|"SHA-256"|"SHA-384"|"SHA-512"}
+ */
+export function normalizeHashName(h) {
+  const s = String(h || "sha-256")
+    .toLowerCase()
+    .replace(/_/g, "-");
+  if (s === "sha-1" || s === "sha1") return "SHA-1";
+  if (s === "sha-384" || s === "sha384") return "SHA-384";
+  if (s === "sha-512" || s === "sha512") return "SHA-512";
+  return "SHA-256";
+}
+
+/**
+ * @param {string} alg  aes/128 | aes/192 | aes/256
+ * @returns {128|192|256}
+ */
+export function aesLengthFromAlg(alg) {
+  const a = String(alg || "").toLowerCase();
+  if (a === "aes/128") return 128;
+  if (a === "aes/192") return 192;
+  return 256;
+}
+
+/**
+ * @param {string} alg  hmac/sha256 | hmac/sha384 | hmac/sha512
+ * @returns {"SHA-256"|"SHA-384"|"SHA-512"}
+ */
+export function hmacHashFromAlg(alg) {
+  const a = String(alg || "").toLowerCase();
+  if (a === "hmac/sha512") return "SHA-512";
+  if (a === "hmac/sha384") return "SHA-384";
+  return "SHA-256";
+}
+
+/** @param {"SHA-256"|"SHA-384"|"SHA-512"} hash */
+export function hmacLengthBits(hash) {
+  if (hash === "SHA-512") return 512;
+  if (hash === "SHA-384") return 384;
+  return 256;
+}
+
+/**
+ * @param {unknown} n
+ * @returns {96|104|112|120|128}
+ */
+export function parseGcmTagLength(n) {
+  const t = Number(n);
+  if (!t || t === 128) return 128;
+  if (t === 96 || t === 104 || t === 112 || t === 120) return /** @type {96|104|112|120} */ (t);
+  throw new Error(`aes-gcm tagLength must be 96|104|112|120|128, got ${n}`);
+}
+
+/**
+ * @param {unknown} n
+ * @returns {number}
+ */
+export function parseCtrLength(n) {
+  const t = Number(n);
+  if (!t) return 64;
+  if (!Number.isInteger(t) || t < 1 || t > 128) {
+    throw new Error(`aes-ctr length must be an integer 1–128, got ${n}`);
+  }
+  return t;
+}
+
+/**
+ * Optional OAEP label → bytes (undefined when empty).
+ * @param {unknown} label
+ * @returns {Uint8Array|undefined}
+ */
+export function oaepLabelBytes(label) {
+  const s = String(label ?? "");
+  if (!s) return undefined;
+  return textToBytes(s);
+}
+
+/**
+ * @param {unknown} label
+ * @returns {RsaOaepParams}
+ */
+export function rsaOaepParams(label) {
+  /** @type {RsaOaepParams} */
+  const params = { name: "RSA-OAEP" };
+  const lab = oaepLabelBytes(label);
+  if (lab) params.label = lab;
+  return params;
+}
 
 /**
  * @param {import("./engine.js").PipelineValue|null|undefined} value
@@ -57,6 +148,9 @@ function pickBoundCryptoKey(bound, need) {
   }
   if (need === "public") {
     if (bound.publicKey) return bound.publicKey;
+    // HMAC verifies with the same oct key (stored as secretKey or privateKey).
+    if (bound.secretKey?.algorithm?.name === "HMAC") return bound.secretKey;
+    if (bound.privateKey?.algorithm?.name === "HMAC") return bound.privateKey;
     throw new Error("Bound key has no public key (need public JWK for verify / encrypt / ECDH peer)");
   }
   if (need === "secret") {
@@ -358,18 +452,35 @@ function inferOctAlg(jwk, hint) {
   if (hint === "hmac/sha512" || jwk.alg === "HS512") {
     return { name: "HMAC", hash: "SHA-512" };
   }
+  if (hint === "hmac/sha384" || jwk.alg === "HS384") {
+    return { name: "HMAC", hash: "SHA-384" };
+  }
   if (hint === "hmac/sha256" || jwk.alg === "HS256") {
     return { name: "HMAC", hash: "SHA-256" };
   }
-  if (hint === "aes/128" || hint === "aes/256" || jwk.alg === "A256GCM" || jwk.alg === "A128GCM") {
-    return { name: "AES-GCM", length: hint === "aes/128" || jwk.alg === "A128GCM" ? 128 : 256 };
+  if (
+    hint === "aes/128" ||
+    hint === "aes/192" ||
+    hint === "aes/256" ||
+    jwk.alg === "A256GCM" ||
+    jwk.alg === "A192GCM" ||
+    jwk.alg === "A128GCM"
+  ) {
+    const length =
+      hint === "aes/128" || jwk.alg === "A128GCM"
+        ? 128
+        : hint === "aes/192" || jwk.alg === "A192GCM"
+          ? 192
+          : 256;
+    return { name: "AES-GCM", length };
   }
   if (hint === "aes-kw" || jwk.alg === "A256KW" || jwk.alg === "A128KW") {
     return { name: "AES-KW", length: jwk.alg === "A128KW" ? 128 : 256 };
   }
-  // Default: AES-GCM 256 when k length suggests 32 bytes
+  // Default: AES-GCM sized from k length
   const kLen = jwk.k ? Math.floor((String(jwk.k).length * 3) / 4) : 32;
   if (kLen <= 16) return { name: "AES-GCM", length: 128 };
+  if (kLen <= 24) return { name: "AES-GCM", length: 192 };
   return { name: "AES-GCM", length: 256 };
 }
 
@@ -384,10 +495,11 @@ function octUsages(alg) {
 /**
  * @param {CryptoKey} key
  * @param {Uint8Array} data
+ * @param {{ saltLength?: number, hash?: string }} [opts]
  * @returns {Promise<Uint8Array>}
  */
-export async function subtleSign(key, data) {
-  const algo = signAlgorithmForKey(key);
+export async function subtleSign(key, data, opts = {}) {
+  const algo = signAlgorithmForKey(key, opts);
   const sig = await crypto.subtle.sign(algo, key, data);
   return new Uint8Array(sig);
 }
@@ -396,23 +508,30 @@ export async function subtleSign(key, data) {
  * @param {CryptoKey} key
  * @param {Uint8Array} signature
  * @param {Uint8Array} data
+ * @param {{ saltLength?: number, hash?: string }} [opts]
  */
-export async function subtleVerify(key, signature, data) {
-  const algo = signAlgorithmForKey(key);
+export async function subtleVerify(key, signature, data, opts = {}) {
+  const algo = signAlgorithmForKey(key, opts);
   return crypto.subtle.verify(algo, key, signature, data);
 }
 
-/** @param {CryptoKey} key */
-function signAlgorithmForKey(key) {
+/**
+ * @param {CryptoKey} key
+ * @param {{ saltLength?: number, hash?: string }} [opts]
+ */
+function signAlgorithmForKey(key, opts = {}) {
   const name = key.algorithm.name;
   if (name === "ECDSA") {
     const curve = /** @type {EcKeyAlgorithm} */ (key.algorithm).namedCurve;
-    const hash =
+    const defaultHash =
       curve === "P-384" ? "SHA-384" : curve === "P-521" ? "SHA-512" : "SHA-256";
+    const hash = opts.hash ? normalizeHashName(opts.hash) : defaultHash;
     return { name: "ECDSA", hash };
   }
   if (name === "RSA-PSS") {
-    return { name: "RSA-PSS", saltLength: 32 };
+    const saltLength =
+      Number(opts.saltLength) > 0 ? Number(opts.saltLength) : 32;
+    return { name: "RSA-PSS", saltLength };
   }
   if (name === "RSASSA-PKCS1-v1_5") {
     return "RSASSA-PKCS1-v1_5";
@@ -479,8 +598,9 @@ export async function ecdhDerive(privateKey, publicKey, opts = {}) {
  * RSA-OAEP wrapKey of an extractable CEK.
  * @param {CryptoKey} wrappingKey  RSA-OAEP public
  * @param {CryptoKey} keyToWrap
+ * @param {unknown} [label]
  */
-export async function rsaOaepWrap(wrappingKey, keyToWrap) {
+export async function rsaOaepWrap(wrappingKey, keyToWrap, label) {
   if (wrappingKey.algorithm?.name !== "RSA-OAEP") {
     throw new Error(
       `wrap mode=rsa-oaep requires an RSA-OAEP public key, got ${wrappingKey.algorithm?.name || "unknown"}`
@@ -490,7 +610,7 @@ export async function rsaOaepWrap(wrappingKey, keyToWrap) {
     "raw",
     keyToWrap,
     wrappingKey,
-    { name: "RSA-OAEP" }
+    rsaOaepParams(label)
   );
   return new Uint8Array(wrapped);
 }
@@ -500,8 +620,9 @@ export async function rsaOaepWrap(wrappingKey, keyToWrap) {
  * @param {Uint8Array} wrapped
  * @param {AlgorithmIdentifier|AesKeyAlgorithm|HmacImportParams} importAlg
  * @param {KeyUsage[]} usages
+ * @param {unknown} [label]
  */
-export async function rsaOaepUnwrap(wrappingKey, wrapped, importAlg, usages) {
+export async function rsaOaepUnwrap(wrappingKey, wrapped, importAlg, usages, label) {
   if (wrappingKey.algorithm?.name !== "RSA-OAEP") {
     throw new Error(
       `unwrap mode=rsa-oaep requires an RSA-OAEP private key, got ${wrappingKey.algorithm?.name || "unknown"}`
@@ -511,7 +632,7 @@ export async function rsaOaepUnwrap(wrappingKey, wrapped, importAlg, usages) {
     "raw",
     wrapped,
     wrappingKey,
-    { name: "RSA-OAEP" },
+    rsaOaepParams(label),
     importAlg,
     true,
     usages
@@ -528,8 +649,8 @@ export async function ensureAesAlgorithm(key, name) {
   if (key.algorithm?.name === name) return key;
   const raw = await crypto.subtle.exportKey("raw", key);
   const length = raw.byteLength * 8;
-  if (length !== 128 && length !== 256) {
-    throw new Error(`AES key must be 128 or 256 bits, got ${length}`);
+  if (length !== 128 && length !== 192 && length !== 256) {
+    throw new Error(`AES key must be 128, 192, or 256 bits, got ${length}`);
   }
   try {
     return await crypto.subtle.importKey(
@@ -549,20 +670,146 @@ export async function ensureAesAlgorithm(key, name) {
 }
 
 /**
+ * Re-import an AES key for wrapKey/unwrapKey under AES-GCM / CBC / CTR / KW.
+ * @param {CryptoKey} key
+ * @param {"AES-GCM"|"AES-CBC"|"AES-CTR"|"AES-KW"} name
+ * @returns {Promise<CryptoKey>}
+ */
+export async function ensureAesWrapKey(key, name) {
+  if (
+    key.algorithm?.name === name &&
+    key.usages.includes("wrapKey") &&
+    key.usages.includes("unwrapKey")
+  ) {
+    return key;
+  }
+  const raw = await crypto.subtle.exportKey("raw", key);
+  const length = raw.byteLength * 8;
+  if (length !== 128 && length !== 192 && length !== 256) {
+    throw new Error(`AES wrap key must be 128, 192, or 256 bits, got ${length}`);
+  }
+  try {
+    return await crypto.subtle.importKey(
+      "raw",
+      raw,
+      { name, length },
+      false,
+      ["wrapKey", "unwrapKey"]
+    );
+  } finally {
+    try {
+      new Uint8Array(raw).fill(0);
+    } catch (_) {
+      /* wipe */
+    }
+  }
+}
+
+/**
+ * Pack IV/counter with wrapped key bytes for content-mode AES wrap.
+ * @param {"aes-gcm"|"aes-cbc"|"aes-ctr"} mode
+ * @param {CryptoKey} wrappingKey
+ * @param {CryptoKey} keyToWrap
+ * @param {{ tagLength?: number, length?: number }} [opts]
+ * @returns {Promise<Uint8Array>}
+ */
+export async function aesContentWrap(mode, wrappingKey, keyToWrap, opts = {}) {
+  const m = String(mode || "").toLowerCase();
+  const algName =
+    m === "aes-gcm" ? "AES-GCM" : m === "aes-cbc" ? "AES-CBC" : m === "aes-ctr" ? "AES-CTR" : "";
+  if (!algName) throw new Error(`Unsupported AES wrap mode=${mode}`);
+  const kw = await ensureAesWrapKey(wrappingKey, algName);
+  const ivLen = m === "aes-gcm" ? 12 : 16;
+  const iv = crypto.getRandomValues(new Uint8Array(ivLen));
+  /** @type {AesGcmParams|AesCbcParams|AesCtrParams} */
+  let algorithm;
+  if (m === "aes-gcm") {
+    const tagLength = parseGcmTagLength(opts.tagLength);
+    algorithm = { name: "AES-GCM", iv, tagLength };
+  } else if (m === "aes-cbc") {
+    algorithm = { name: "AES-CBC", iv };
+  } else {
+    algorithm = {
+      name: "AES-CTR",
+      counter: iv,
+      length: parseCtrLength(opts.length),
+    };
+  }
+  const wrapped = new Uint8Array(
+    await crypto.subtle.wrapKey("raw", keyToWrap, kw, algorithm)
+  );
+  const out = new Uint8Array(iv.length + wrapped.length);
+  out.set(iv, 0);
+  out.set(wrapped, iv.length);
+  return out;
+}
+
+/**
+ * @param {"aes-gcm"|"aes-cbc"|"aes-ctr"} mode
+ * @param {CryptoKey} wrappingKey
+ * @param {Uint8Array} packed
+ * @param {AlgorithmIdentifier|AesKeyAlgorithm|HmacImportParams} importAlg
+ * @param {KeyUsage[]} usages
+ * @param {{ tagLength?: number, length?: number }} [opts]
+ */
+export async function aesContentUnwrap(
+  mode,
+  wrappingKey,
+  packed,
+  importAlg,
+  usages,
+  opts = {}
+) {
+  const m = String(mode || "").toLowerCase();
+  const algName =
+    m === "aes-gcm" ? "AES-GCM" : m === "aes-cbc" ? "AES-CBC" : m === "aes-ctr" ? "AES-CTR" : "";
+  if (!algName) throw new Error(`Unsupported AES unwrap mode=${mode}`);
+  const ivLen = m === "aes-gcm" ? 12 : 16;
+  if (packed.length <= ivLen) {
+    throw new Error(`${m} wrapped key too short`);
+  }
+  const iv = packed.subarray(0, ivLen);
+  const wrapped = packed.subarray(ivLen);
+  const kw = await ensureAesWrapKey(wrappingKey, algName);
+  /** @type {AesGcmParams|AesCbcParams|AesCtrParams} */
+  let algorithm;
+  if (m === "aes-gcm") {
+    const tagLength = parseGcmTagLength(opts.tagLength);
+    algorithm = { name: "AES-GCM", iv, tagLength };
+  } else if (m === "aes-cbc") {
+    algorithm = { name: "AES-CBC", iv };
+  } else {
+    algorithm = {
+      name: "AES-CTR",
+      counter: iv,
+      length: parseCtrLength(opts.length),
+    };
+  }
+  return crypto.subtle.unwrapKey(
+    "raw",
+    wrapped,
+    kw,
+    algorithm,
+    importAlg,
+    true,
+    usages
+  );
+}
+
+/**
  * AES-GCM encrypt; returns IV(12) || ciphertext||tag
  * @param {CryptoKey} key
  * @param {Uint8Array} plain
  * @param {Uint8Array} [aad]
+ * @param {number} [tagLength]
  */
-export async function aesGcmEncrypt(key, plain, aad) {
+export async function aesGcmEncrypt(key, plain, aad, tagLength) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = new Uint8Array(
-    await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv, additionalData: aad },
-      key,
-      plain
-    )
-  );
+  const tag = parseGcmTagLength(tagLength);
+  /** @type {AesGcmParams} */
+  const params = { name: "AES-GCM", iv, tagLength: tag };
+  if (aad) params.additionalData = aad;
+  const ct = new Uint8Array(await crypto.subtle.encrypt(params, key, plain));
   const out = new Uint8Array(iv.length + ct.length);
   out.set(iv, 0);
   out.set(ct, iv.length);
@@ -573,18 +820,17 @@ export async function aesGcmEncrypt(key, plain, aad) {
  * @param {CryptoKey} key
  * @param {Uint8Array} packed  IV(12) || ciphertext||tag
  * @param {Uint8Array} [aad]
+ * @param {number} [tagLength]
  */
-export async function aesGcmDecrypt(key, packed, aad) {
-  if (packed.length < 13) throw new Error("aesgcm ciphertext too short");
+export async function aesGcmDecrypt(key, packed, aad, tagLength) {
+  if (packed.length < 13) throw new Error("aes-gcm ciphertext too short");
   const iv = packed.subarray(0, 12);
   const ct = packed.subarray(12);
-  return new Uint8Array(
-    await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv, additionalData: aad },
-      key,
-      ct
-    )
-  );
+  const tag = parseGcmTagLength(tagLength);
+  /** @type {AesGcmParams} */
+  const params = { name: "AES-GCM", iv, tagLength: tag };
+  if (aad) params.additionalData = aad;
+  return new Uint8Array(await crypto.subtle.decrypt(params, key, ct));
 }
 
 /**
@@ -609,7 +855,7 @@ export async function aesCbcEncrypt(key, plain) {
  * @param {Uint8Array} packed  IV(16) || ciphertext
  */
 export async function aesCbcDecrypt(key, packed) {
-  if (packed.length < 17) throw new Error("aescbc ciphertext too short");
+  if (packed.length < 17) throw new Error("aes-cbc ciphertext too short");
   const aes = await ensureAesAlgorithm(key, "AES-CBC");
   const iv = packed.subarray(0, 16);
   const ct = packed.subarray(16);
@@ -622,13 +868,15 @@ export async function aesCbcDecrypt(key, packed) {
  * AES-CTR encrypt; returns IV(16) || ciphertext (IV is the 128-bit counter block).
  * @param {CryptoKey} key
  * @param {Uint8Array} plain
+ * @param {number} [counterLength]  AesCtrParams.length (default 64)
  */
-export async function aesCtrEncrypt(key, plain) {
+export async function aesCtrEncrypt(key, plain, counterLength) {
   const aes = await ensureAesAlgorithm(key, "AES-CTR");
   const counter = crypto.getRandomValues(new Uint8Array(16));
+  const length = parseCtrLength(counterLength);
   const ct = new Uint8Array(
     await crypto.subtle.encrypt(
-      { name: "AES-CTR", counter, length: 64 },
+      { name: "AES-CTR", counter, length },
       aes,
       plain
     )
@@ -642,15 +890,17 @@ export async function aesCtrEncrypt(key, plain) {
 /**
  * @param {CryptoKey} key
  * @param {Uint8Array} packed  IV(16) || ciphertext
+ * @param {number} [counterLength]
  */
-export async function aesCtrDecrypt(key, packed) {
-  if (packed.length < 17) throw new Error("aesctr ciphertext too short");
+export async function aesCtrDecrypt(key, packed, counterLength) {
+  if (packed.length < 17) throw new Error("aes-ctr ciphertext too short");
   const aes = await ensureAesAlgorithm(key, "AES-CTR");
   const counter = packed.subarray(0, 16);
   const ct = packed.subarray(16);
+  const length = parseCtrLength(counterLength);
   return new Uint8Array(
     await crypto.subtle.decrypt(
-      { name: "AES-CTR", counter, length: 64 },
+      { name: "AES-CTR", counter, length },
       aes,
       ct
     )
@@ -658,42 +908,45 @@ export async function aesCtrDecrypt(key, packed) {
 }
 
 /**
- * @param {string} as  bytes | aes/128 | aes/256 | hmac/sha256 | hmac/sha512
+ * @param {string} as  bytes | aes/128|192|256 | aes-kw/128|256 | hmac/sha256|384|512
  * @returns {{ derived: AlgorithmIdentifier|AesDerivedKeyParams|HmacImportParams, usages: KeyUsage[], alg: string, lengthBits: number }|null}
  */
 export function deriveAsTarget(as) {
   const t = String(as || "bytes").toLowerCase();
   if (t === "bytes" || !t) return null;
-  if (t === "aes/128") {
+  if (t === "aes/128" || t === "aes/192" || t === "aes/256") {
+    const length = aesLengthFromAlg(t);
     return {
-      derived: { name: "AES-GCM", length: 128 },
+      derived: { name: "AES-GCM", length },
       usages: ["encrypt", "decrypt", "wrapKey", "unwrapKey"],
-      alg: "aes/128",
+      alg: t,
+      lengthBits: length,
+    };
+  }
+  if (t === "aes-kw/128") {
+    return {
+      derived: { name: "AES-KW", length: 128 },
+      usages: ["wrapKey", "unwrapKey"],
+      alg: "aes-kw/128",
       lengthBits: 128,
     };
   }
-  if (t === "aes/256") {
+  if (t === "aes-kw/256") {
     return {
-      derived: { name: "AES-GCM", length: 256 },
-      usages: ["encrypt", "decrypt", "wrapKey", "unwrapKey"],
-      alg: "aes/256",
+      derived: { name: "AES-KW", length: 256 },
+      usages: ["wrapKey", "unwrapKey"],
+      alg: "aes-kw/256",
       lengthBits: 256,
     };
   }
-  if (t === "hmac/sha256") {
+  if (t === "hmac/sha256" || t === "hmac/sha384" || t === "hmac/sha512") {
+    const hash = hmacHashFromAlg(t);
+    const lengthBits = hmacLengthBits(hash);
     return {
-      derived: { name: "HMAC", hash: "SHA-256", length: 256 },
+      derived: { name: "HMAC", hash, length: lengthBits },
       usages: ["sign", "verify"],
-      alg: "hmac/sha256",
-      lengthBits: 256,
-    };
-  }
-  if (t === "hmac/sha512") {
-    return {
-      derived: { name: "HMAC", hash: "SHA-512", length: 512 },
-      usages: ["sign", "verify"],
-      alg: "hmac/sha512",
-      lengthBits: 512,
+      alg: t,
+      lengthBits,
     };
   }
   throw new Error(`Unsupported derive as=${as}`);
@@ -815,28 +1068,44 @@ export async function extractableWrapTarget(keyObj) {
 }
 
 /**
- * @param {string} alg  aes/128 | aes/256 | hmac/sha256 | hmac/sha512
+ * @param {string} alg  aes/128|192|256 | aes-kw/128|256 | hmac/sha256|384|512
  */
 export function unwrapImportParams(alg) {
   const a = String(alg || "aes/256").toLowerCase();
-  if (a === "aes/128") {
-    return { importAlg: { name: "AES-GCM", length: 128 }, usages: ["encrypt", "decrypt"], metaAlg: "aes/128" };
-  }
-  if (a === "hmac/sha256") {
+  if (a === "aes/128" || a === "aes/192" || a === "aes/256") {
+    const length = aesLengthFromAlg(a);
     return {
-      importAlg: { name: "HMAC", hash: "SHA-256" },
-      usages: ["sign", "verify"],
-      metaAlg: "hmac/sha256",
+      importAlg: { name: "AES-GCM", length },
+      usages: /** @type {KeyUsage[]} */ (["encrypt", "decrypt", "wrapKey", "unwrapKey"]),
+      metaAlg: a,
     };
   }
-  if (a === "hmac/sha512") {
+  if (a === "aes-kw/128") {
     return {
-      importAlg: { name: "HMAC", hash: "SHA-512" },
-      usages: ["sign", "verify"],
-      metaAlg: "hmac/sha512",
+      importAlg: { name: "AES-KW", length: 128 },
+      usages: /** @type {KeyUsage[]} */ (["wrapKey", "unwrapKey"]),
+      metaAlg: "aes-kw/128",
     };
   }
-  return { importAlg: { name: "AES-GCM", length: 256 }, usages: ["encrypt", "decrypt"], metaAlg: "aes/256" };
+  if (a === "aes-kw/256") {
+    return {
+      importAlg: { name: "AES-KW", length: 256 },
+      usages: /** @type {KeyUsage[]} */ (["wrapKey", "unwrapKey"]),
+      metaAlg: "aes-kw/256",
+    };
+  }
+  if (a === "hmac/sha256" || a === "hmac/sha384" || a === "hmac/sha512") {
+    return {
+      importAlg: { name: "HMAC", hash: hmacHashFromAlg(a) },
+      usages: /** @type {KeyUsage[]} */ (["sign", "verify"]),
+      metaAlg: a,
+    };
+  }
+  return {
+    importAlg: { name: "AES-GCM", length: 256 },
+    usages: /** @type {KeyUsage[]} */ (["encrypt", "decrypt", "wrapKey", "unwrapKey"]),
+    metaAlg: "aes/256",
+  };
 }
 
 /**

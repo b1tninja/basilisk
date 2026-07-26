@@ -49,34 +49,34 @@ describe("webauthn toolbox shelves", () => {
     expect(getShelfMeta("attestation").label).toMatch(/Attestation/);
   });
 
-  it("places wa-* ops on essentials vs attestation shelves", () => {
+  it("places webauthn.* ops on essentials vs attestation shelves", () => {
     const byName = Object.fromEntries(listSteps().map((s) => [s.name, s]));
-    expect(byName["wa-caps"].toolbox).toBe("webauthn");
-    expect(byName["wa-caps"].shelf).toBe("essentials");
-    expect(byName["wa-create"].shelf).toBe("essentials");
-    expect(byName["wa-prf"].shelf).toBe("essentials");
-    expect(byName["wa-attest"].shelf).toBe("attestation");
-    expect(byName["wa-mds"].shelf).toBe("attestation");
+    expect(byName["webauthn.caps"].toolbox).toBe("webauthn");
+    expect(byName["webauthn.caps"].shelf).toBe("essentials");
+    expect(byName["webauthn.create"].shelf).toBe("essentials");
+    expect(byName["webauthn.prf"].shelf).toBe("essentials");
+    expect(byName["webauthn.attest"].shelf).toBe("attestation");
+    expect(byName["webauthn.mds"].shelf).toBe("attestation");
   });
 
   it("recipeNeedsMainThread detects webauthn steps", () => {
     const { ast: plain } = compileRecipe("random 16 | hex");
     expect(recipeNeedsMainThread(plain)).toBe(false);
-    const { ast: wa } = compileRecipe("wa-caps");
+    const { ast: wa } = compileRecipe("webauthn.caps");
     expect(recipeNeedsMainThread(wa)).toBe(true);
-    expect(getStep("wa-prf")?.toolbox).toBe("webauthn");
+    expect(getStep("webauthn.prf")?.toolbox).toBe("webauthn");
   });
 });
 
 describe("webauthn ops (offline)", () => {
-  it("wa-caps returns JSON without throwing when WebAuthn is absent", async () => {
+  it("webauthn.caps returns JSON without throwing when WebAuthn is absent", async () => {
     const out = await execWaCaps();
     expect(out.type).toBe("text");
     const caps = JSON.parse(out.data);
     expect(typeof caps.publicKeyCredential).toBe("boolean");
   });
 
-  it("wa-attest parses attestationObject bytes", async () => {
+  it("webauthn.attest parses attestationObject bytes", async () => {
     const withAaguid = new Uint8Array(55);
     withAaguid[32] = 0x41; // flags: AT
     for (let i = 0; i < 16; i++) withAaguid[37 + i] = i;
@@ -87,7 +87,7 @@ describe("webauthn ops (offline)", () => {
     expect(body.aaguid).toMatch(/^[0-9a-f-]{36}$/);
   });
 
-  it("wa-mds returns unverified for zero AAGUID without network", async () => {
+  it("webauthn.mds returns unverified for zero AAGUID without network", async () => {
     const out = await execWaMds(null, { aaguid: ZERO_AAGUID });
     const body = JSON.parse(out.data);
     expect(body.status).toBe("unverified");

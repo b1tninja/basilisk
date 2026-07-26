@@ -11,7 +11,7 @@ import { runRecipe } from "../lib/toolkit/engine.js";
 
 describe("nested list recipe syntax", () => {
   it("parses foreach indented list body", () => {
-    const src = `random 16 | sss threshold=2 shares=3 | blip39 | foreach
+    const src = `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
@@ -54,7 +54,7 @@ describe("nested list recipe syntax", () => {
   });
 
   it("round-trips nested foreach via serialize", () => {
-    const src = `random 16 | sss threshold=2 shares=3 | blip39 | foreach
+    const src = `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
@@ -70,7 +70,7 @@ describe("nested list recipe syntax", () => {
 
   it("rejects flat foreach without body", () => {
     const { validation } = compileRecipe(
-      "random 16 | sss threshold=2 shares=3 | blip39 | foreach | out @share"
+      "random 16 | sss.split threshold=2 shares=3 | blip39 | foreach | out @share"
     );
     expect(validation.ok).toBe(false);
     expect(
@@ -80,14 +80,14 @@ describe("nested list recipe syntax", () => {
 
   it("parses at and [n] alias", () => {
     const a = parseRecipe(
-      "random 16 | sss threshold=2 shares=3 | blip39 | at 1 | out @s"
+      "random 16 | sss.split threshold=2 shares=3 | blip39 | at 1 | out @s"
     );
     expect(a.errors).toEqual([]);
     expect(a.ast.steps.some((s) => s.name === "at")).toBe(true);
     expect(a.ast.steps.find((s) => s.name === "at")?.params.selector).toBe("1");
 
     const b = parseRecipe(
-      "random 16 | sss threshold=2 shares=3 | blip39 | [2] | out @s"
+      "random 16 | sss.split threshold=2 shares=3 | blip39 | [2] | out @s"
     );
     expect(b.errors).toEqual([]);
     expect(b.ast.steps.find((s) => s.name === "at")?.params.selector).toBe("2");
@@ -107,14 +107,14 @@ describe("nested list recipe syntax", () => {
 
   it("rejects bare merge", () => {
     const { errors } = parseRecipe(
-      "random 16 | sss threshold=2 shares=3 | blip39 | merge"
+      "random 16 | sss.split threshold=2 shares=3 | blip39 | merge"
     );
     expect(errors.some((e) => /not used|dedent/i.test(e.message))).toBe(true);
   });
 
   it("runs nested foreach body", async () => {
     const { ast, validation } = compileRecipe(
-      `random 16 | sss threshold=2 shares=3 | blip39 | foreach
+      `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`
     );
     expect(validation.ok).toBe(true);
@@ -124,7 +124,7 @@ describe("nested list recipe syntax", () => {
 
   it("foreach .items projects .value", async () => {
     const { ast, validation } = compileRecipe(
-      `random 16 | sss threshold=2 shares=3 | blip39 | foreach .items
+      `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach .items
   - .value | out @share`
     );
     expect(validation.ok).toBe(true);
@@ -134,7 +134,7 @@ describe("nested list recipe syntax", () => {
 
   it("at 1 selects a single share", async () => {
     const { ast, validation } = compileRecipe(
-      "random 16 | sss threshold=2 shares=3 | blip39 | at 1 | out @one"
+      "random 16 | sss.split threshold=2 shares=3 | blip39 | at 1 | out @one"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);

@@ -7,16 +7,31 @@
 import {
   decrypt as openpgpDecrypt,
   decryptKey,
+  generateKey as openpgpGenerateKey,
+  readKey,
   readMessage,
   readPrivateKey,
 } from "openpgp";
-import { generateWordPassphrase } from "../passphrase-gen.js";
+import {
+  generateCharPassphrase,
+  generateWordPassphrase,
+} from "../passphrase-gen.js";
+import {
+  dearmorToBytes,
+  enrichSpansWithPackets,
+  mapPacketSpans,
+} from "../packet-map.js";
 import { qrSvg } from "../qr.js";
 import {
   PROFILE_AUTO,
   encryptArtifacts,
   summarizeEncryption,
 } from "../pgp/encrypt.js";
+import {
+  analyzeArmored,
+  formatAnalysisSummary,
+} from "../pgp/inspect.js";
+import { signOpenPgp, verifyOpenPgp } from "../pgp/sign.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
 import {
   decodeShareSet,
@@ -25,7 +40,9 @@ import {
 } from "../slip39/blip39.js";
 import { combineRawShares, splitRawShares } from "../slip39/slip39.js";
 import {
+  base32ToBytes,
   base64ToBytes,
+  bytesToBase32,
   bytesToBase64,
   bytesToBase64Url,
   bytesToHex,
@@ -41,19 +58,27 @@ import {
 import {
   aesCbcDecrypt,
   aesCbcEncrypt,
+  aesContentUnwrap,
+  aesContentWrap,
   aesCtrDecrypt,
   aesCtrEncrypt,
   aesGcmDecrypt,
   aesGcmEncrypt,
   aesKwUnwrap,
   aesKwWrap,
+  aesLengthFromAlg,
   ecdhDerive,
+  ensureAesWrapKey,
   extractableWrapTarget,
   hkdfDerive,
+  hmacHashFromAlg,
+  hmacLengthBits,
   importBoundJwk,
+  normalizeHashName,
   pbkdf2Derive,
   resolveBoundKey,
   resolveSlotKey,
+  rsaOaepParams,
   rsaOaepUnwrap,
   rsaOaepWrap,
   subtleSign,
@@ -662,7 +687,8 @@ async function execStepBody(step, value, bindings, artifacts) {
       return generateKeyValue(
         String(step.params.alg || "ec/p256"),
         String(step.params.usage || "auto"),
-        String(step.params.padding || "pss")
+        String(step.params.padding || "pss"),
+        String(step.params.hash || "sha-256")
       );
     case "random": {
       const n = Number(step.params.length) || 32;
@@ -670,9 +696,58 @@ async function execStepBody(step, value, bindings, artifacts) {
       return { type: "bytes", data: buf, meta: { sensitive: true } };
     }
     case "passphrase": {
+      const mode = String(step.params.mode || "diceware").toLowerCase();
+      if (mode === "char") {
+        const length = Number(step.params.length) || 20;
+        const { passphrase } = generateCharPassphrase(length);
+        return { type: "text", data: passphrase, meta: { sensitive: true } };
+      }
       const words = Number(step.params.words) || 6;
       const { passphrase } = generateWordPassphrase(words);
       return { type: "text", data: passphrase, meta: { sensitive: true } };
+    }
+    case "gpg.genkey": {
+      const email = String(step.params.email || "").trim();
+      if (!email) {
+        throw new Error("gpg.genkey requires email=… (OpenPGP user ID)");
+      }
+      const name = String(step.params.name || "").trim();
+      const passphrase = String(step.params.passphrase || "");
+      const expiry = Number(step.params.expiry) || 0;
+      /** @type {Parameters<typeof openpgpGenerateKey>[0]} */
+      const genOpts = {
+        type: "ecc",
+        curve: "curve25519",
+        userIDs: [{ name: name || email, email }],
+        format: "armored",
+      };
+      if (passphrase) genOpts.passphrase = passphrase;
+      if (expiry > 0) genOpts.keyExpirationTime = expiry;
+      const { privateKey: armoredPrivate, publicKey: armoredPublic } =
+        await openpgpGenerateKey(genOpts);
+      const pub = await readKey({ armoredKey: String(armoredPublic) });
+      const fingerprint = pub.getFingerprint().toUpperCase();
+      artifacts.push({
+        label: "OpenPGP public key",
+        filename: "public.asc",
+        content: String(armoredPublic),
+        sensitive: false,
+        mime: "application/pgp-keys",
+        disposition: "file",
+        role: "public-key",
+        tags: ["openpgp", "public-key"],
+        traits: { fingerprint },
+      });
+      return {
+        type: "text",
+        data: String(armoredPrivate),
+        meta: {
+          sensitive: true,
+          openPgpPrivate: true,
+          fingerprint,
+          armoredPublic: String(armoredPublic),
+        },
+      };
     }
     case "input": {
       const text = String(bindings.inputs?.text?.value ?? "");
@@ -709,7 +784,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         },
       };
     }
-    case "decrypt":
+    case "gpg.decrypt":
       return decryptGpgSource(bindings, artifacts);
     case "export": {
       const whichDefault =
@@ -728,7 +803,8 @@ async function execStepBody(step, value, bindings, artifacts) {
         String(step.params.format || "pkcs8"),
         String(step.params.alg || "ec/p256"),
         String(step.params.usage || "auto"),
-        String(step.params.padding || "pss")
+        String(step.params.padding || "pss"),
+        String(step.params.hash || "sha-256")
       );
     case "pem": {
       if (step.params.decode) {
@@ -803,6 +879,21 @@ async function execStepBody(step, value, bindings, artifacts) {
         data: bytesToHex(value.data),
         meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
       };
+    case "base32":
+      if (step.params.decode) {
+        if (!value || value.type !== "text") throw new Error("base32 -d expects text");
+        return {
+          type: "bytes",
+          data: base32ToBytes(String(value.data)),
+          meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
+        };
+      }
+      if (!value || value.type !== "bytes") throw new Error("base32 expects bytes");
+      return {
+        type: "text",
+        data: bytesToBase32(value.data),
+        meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
+      };
     case "utf8": {
       if (!value) throw new Error("utf8 expects a value");
       if (value.type === "bytes") {
@@ -869,7 +960,11 @@ async function execStepBody(step, value, bindings, artifacts) {
       if (!signingKey.usages.includes("sign")) {
         throw new Error("Bound key cannot sign — need private or HMAC key with sign usage");
       }
-      const sig = await subtleSign(signingKey, bytes);
+      const hashParam = String(step.params.hash || "auto");
+      const sig = await subtleSign(signingKey, bytes, {
+        saltLength: Number(step.params.saltLength) || 32,
+        hash: hashParam === "auto" || !hashParam ? undefined : hashParam,
+      });
       const pkcs1 = signingKey.algorithm?.name === "RSASSA-PKCS1-v1_5";
       return {
         type: "bytes",
@@ -912,7 +1007,11 @@ async function execStepBody(step, value, bindings, artifacts) {
         throw new Error("Bound key cannot verify — need public or HMAC key with verify usage");
       }
       const signature = await resolveVerifySignature(bindings, step.params?.signature);
-      const ok = await subtleVerify(verifyKey, signature, bytes);
+      const hashParam = String(step.params.hash || "auto");
+      const ok = await subtleVerify(verifyKey, signature, bytes, {
+        saltLength: Number(step.params.saltLength) || 32,
+        hash: hashParam === "auto" || !hashParam ? undefined : hashParam,
+      });
       const soft = !!step.params.soft;
       const pkcs1 = verifyKey.algorithm?.name === "RSASSA-PKCS1-v1_5";
       const tags = pkcs1
@@ -934,15 +1033,17 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: false, tags },
       };
     }
-    case "aesgcm": {
+    case "aes-gcm": {
       const bytes = valueToBytes(value);
       const key =
         (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
         (await resolveBoundKey(bindings, "secret"));
+      assertExpectedAesKeyBits(key, step.params?.expectedKeyBits, "aes-gcm");
       const aadStr = String(step.params.aad || "");
       const aad = aadStr ? textToBytes(aadStr) : undefined;
+      const tagLength = Number(step.params.tagLength) || 128;
       if (step.params.decode) {
-        const plain = await aesGcmDecrypt(key, bytes, aad);
+        const plain = await aesGcmDecrypt(key, bytes, aad, tagLength);
         try {
           bytes.fill(0);
         } catch (_) {
@@ -954,7 +1055,7 @@ async function execStepBody(step, value, bindings, artifacts) {
           meta: { sensitive: true },
         };
       }
-      const packed = await aesGcmEncrypt(key, bytes, aad);
+      const packed = await aesGcmEncrypt(key, bytes, aad, tagLength);
       try {
         bytes.fill(0);
       } catch (_) {
@@ -966,11 +1067,12 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: true },
       };
     }
-    case "aescbc": {
+    case "aes-cbc": {
       const bytes = valueToBytes(value);
       const key =
         (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
         (await resolveBoundKey(bindings, "secret"));
+      assertExpectedAesKeyBits(key, step.params?.expectedKeyBits, "aes-cbc");
       if (step.params.decode) {
         const plain = await aesCbcDecrypt(key, bytes);
         try {
@@ -988,13 +1090,15 @@ async function execStepBody(step, value, bindings, artifacts) {
       }
       return { type: "bytes", data: packed, meta: { sensitive: true } };
     }
-    case "aesctr": {
+    case "aes-ctr": {
       const bytes = valueToBytes(value);
       const key =
         (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
         (await resolveBoundKey(bindings, "secret"));
+      assertExpectedAesKeyBits(key, step.params?.expectedKeyBits, "aes-ctr");
+      const ctrLength = Number(step.params.length) || 64;
       if (step.params.decode) {
-        const plain = await aesCtrDecrypt(key, bytes);
+        const plain = await aesCtrDecrypt(key, bytes, ctrLength);
         try {
           bytes.fill(0);
         } catch (_) {
@@ -1002,7 +1106,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         }
         return { type: "bytes", data: plain, meta: { sensitive: true } };
       }
-      const packed = await aesCtrEncrypt(key, bytes);
+      const packed = await aesCtrEncrypt(key, bytes, ctrLength);
       try {
         bytes.fill(0);
       } catch (_) {
@@ -1010,7 +1114,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       }
       return { type: "bytes", data: packed, meta: { sensitive: true } };
     }
-    case "rsaoaep": {
+    case "rsa-oaep": {
       const bytes = valueToBytes(value);
       const decrypt = !!step.params.decode;
       const need = decrypt ? "private" : "public";
@@ -1019,12 +1123,13 @@ async function execStepBody(step, value, bindings, artifacts) {
         (await resolveBoundKey(bindings, need));
       if (key.algorithm?.name !== "RSA-OAEP") {
         throw new Error(
-          `rsaoaep requires an RSA-OAEP key, got ${key.algorithm?.name || "unknown"}`
+          `rsa-oaep requires an RSA-OAEP key, got ${key.algorithm?.name || "unknown"}`
         );
       }
+      const oaep = rsaOaepParams(step.params.label);
       if (decrypt) {
         const plain = new Uint8Array(
-          await crypto.subtle.decrypt({ name: "RSA-OAEP" }, key, bytes)
+          await crypto.subtle.decrypt(oaep, key, bytes)
         );
         try {
           bytes.fill(0);
@@ -1034,7 +1139,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         return { type: "bytes", data: plain, meta: { sensitive: true } };
       }
       const ct = new Uint8Array(
-        await crypto.subtle.encrypt({ name: "RSA-OAEP" }, key, bytes)
+        await crypto.subtle.encrypt(oaep, key, bytes)
       );
       try {
         bytes.fill(0);
@@ -1043,7 +1148,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       }
       return { type: "bytes", data: ct, meta: { sensitive: true } };
     }
-    case "rsapkcs1": {
+    case "rsa-pkcs1": {
       const bytes = valueToBytes(value);
       const decrypt = !!step.params.decode;
       const need = decrypt ? "private" : "public";
@@ -1053,7 +1158,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       const algoName = key.algorithm?.name || "";
       if (!String(algoName).startsWith("RSA")) {
         throw new Error(
-          `rsapkcs1 requires an RSA key, got ${algoName || "unknown"}`
+          `rsa-pkcs1 requires an RSA key, got ${algoName || "unknown"}`
         );
       }
       const jwk = await crypto.subtle.exportKey("jwk", key);
@@ -1182,28 +1287,24 @@ async function execStepBody(step, value, bindings, artifacts) {
         const wrappingKey =
           (await resolveSlotKey(bindings, step.params?.key, "public", "rsa-oaep")) ||
           (await resolveBoundKey(bindings, "public"));
-        const wrapped = await rsaOaepWrap(wrappingKey, extractable);
+        const wrapped = await rsaOaepWrap(
+          wrappingKey,
+          extractable,
+          step.params.label
+        );
         return { type: "bytes", data: wrapped, meta: { sensitive: true, mode } };
       }
       const wrappingKey =
         (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
         (await resolveBoundKey(bindings, "secret"));
-      let kw = wrappingKey;
-      if (wrappingKey.algorithm.name !== "AES-KW") {
-        const wraw = await crypto.subtle.exportKey("raw", wrappingKey);
-        kw = await crypto.subtle.importKey(
-          "raw",
-          wraw,
-          { name: "AES-KW", length: wraw.byteLength * 8 },
-          false,
-          ["wrapKey", "unwrapKey"]
-        );
-        try {
-          new Uint8Array(wraw).fill(0);
-        } catch (_) {
-          /* wipe */
-        }
+      if (mode === "aes-gcm" || mode === "aes-cbc" || mode === "aes-ctr") {
+        const packed = await aesContentWrap(mode, wrappingKey, extractable, {
+          tagLength: Number(step.params.tagLength) || 128,
+          length: Number(step.params.length) || 64,
+        });
+        return { type: "bytes", data: packed, meta: { sensitive: true, mode } };
       }
+      const kw = await ensureAesWrapKey(wrappingKey, "AES-KW");
       const wrapped = await aesKwWrap(kw, extractable);
       return {
         type: "bytes",
@@ -1225,33 +1326,30 @@ async function execStepBody(step, value, bindings, artifacts) {
           wrappingKey,
           wrapped,
           importAlg,
-          usages
+          usages,
+          step.params.label
         );
-      } else {
-        let wrappingKey =
+      } else if (mode === "aes-gcm" || mode === "aes-cbc" || mode === "aes-ctr") {
+        const wrappingKey =
           (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
           (await resolveBoundKey(bindings, "secret"));
-        if (wrappingKey.algorithm.name !== "AES-KW") {
-          const wraw = await crypto.subtle.exportKey("raw", wrappingKey);
-          wrappingKey = await crypto.subtle.importKey(
-            "raw",
-            wraw,
-            { name: "AES-KW", length: wraw.byteLength * 8 },
-            false,
-            ["wrapKey", "unwrapKey"]
-          );
-          try {
-            new Uint8Array(wraw).fill(0);
-          } catch (_) {
-            /* wipe */
-          }
-        }
-        unwrapped = await aesKwUnwrap(
+        unwrapped = await aesContentUnwrap(
+          mode,
           wrappingKey,
           wrapped,
           importAlg,
-          usages
+          usages,
+          {
+            tagLength: Number(step.params.tagLength) || 128,
+            length: Number(step.params.length) || 64,
+          }
         );
+      } else {
+        const wrappingKey =
+          (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
+          (await resolveBoundKey(bindings, "secret"));
+        const kw = await ensureAesWrapKey(wrappingKey, "AES-KW");
+        unwrapped = await aesKwUnwrap(kw, wrapped, importAlg, usages);
       }
       const raw = new Uint8Array(await crypto.subtle.exportKey("raw", unwrapped));
       return {
@@ -1266,7 +1364,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         },
       };
     }
-    case "sss": {
+    case "sss.split": {
       let bytes;
       if (value?.type === "bytes") bytes = value.data;
       else if (value?.type === "text") bytes = textToBytes(value.data);
@@ -1279,7 +1377,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       ) {
         throw new Error(
           `sss expects bytes/master or bytes/scalar (got ${pipeKind}). ` +
-            `For EC keys use "export scalar"; for PEM/arbitrary data use "symencrypt" first.`
+            `For EC keys use "export scalar"; for PEM/arbitrary data use "gpg.symencrypt" first.`
         );
       }
       const result = await splitRawShares(bytes, {
@@ -1331,11 +1429,13 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: true },
       };
     }
-    case "recover": {
-      if (!value || value.type !== "shares") throw new Error("recover expects shares");
+    case "sss.combine": {
+      if (!value || value.type !== "shares") {
+        throw new Error("sss.combine expects shares");
+      }
       if (value.data.mnemonics?.length && !value.data.raw?.length) {
         throw new Error(
-          'recover expects raw SSS shares — add "blip39 -d" before recover'
+          'sss.combine expects raw SSS shares — add "blip39 -d" before sss.combine'
         );
       }
       const passphrase =
@@ -1364,9 +1464,9 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: true },
       };
     }
-    case "symencrypt": {
+    case "gpg.symencrypt": {
       if (!value || (value.type !== "text" && value.type !== "bytes")) {
-        throw new Error("symencrypt expects text or bytes");
+        throw new Error("gpg.symencrypt expects text or bytes");
       }
       /** @type {{ kind: "text", text: string } | { kind: "file", bytes: Uint8Array, filename: string }} */
       let payload;
@@ -1389,7 +1489,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         profile: bindings.encryption?.profile || PROFILE_AUTO,
         hideRecipients: false,
       });
-      if (!arts.length) throw new Error("symencrypt produced no ciphertext");
+      if (!arts.length) throw new Error("gpg.symencrypt produced no ciphertext");
       const armored = arts[0].armored;
       const cryptoSummary = await summarizeEncryption(armored);
       const stem = safeOutputStem(step.params.name || "envelope");
@@ -1410,14 +1510,14 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { ...value.meta, sensitive: true, openPgpEnvelope: true },
       };
     }
-    case "symdecrypt": {
+    case "gpg.symdecrypt": {
       if (!value || value.type !== "bytes") {
-        throw new Error("symdecrypt expects master bytes from recover");
+        throw new Error("gpg.symdecrypt expects master bytes from recover");
       }
       const master = value.data;
       if (!(master instanceof Uint8Array) || (master.length !== 16 && master.length !== 32)) {
         throw new Error(
-          `symdecrypt expects a 16- or 32-byte master (got ${master?.length ?? 0})`
+          `gpg.symdecrypt expects a 16- or 32-byte master (got ${master?.length ?? 0})`
         );
       }
       const armored = resolveEnvelopeArmored(bindings);
@@ -1445,9 +1545,137 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: true },
       };
     }
-    case "encrypt": {
+    case "gpg.sign": {
       if (!value || (value.type !== "text" && value.type !== "bytes")) {
-        throw new Error("encrypt expects text");
+        throw new Error("gpg.sign expects text or bytes");
+      }
+      const format =
+        String(step.params?.format || "cleartext").toLowerCase() === "detached"
+          ? "detached"
+          : "cleartext";
+      const privateKey = await resolveGpgPrivateKey(bindings);
+      const data =
+        value.type === "text"
+          ? String(value.data)
+          : value.data instanceof Uint8Array
+            ? value.data
+            : textToBytes(String(value.data));
+      if (format === "cleartext" && typeof data !== "string") {
+        throw new Error("gpg.sign format=cleartext expects text (use utf8 first, or format=detached)");
+      }
+      const { armored } = await signOpenPgp(data, [privateKey], format);
+      return {
+        type: "text",
+        data: armored,
+        meta: {
+          ...value.meta,
+          sensitive: false,
+          openPgpSigned: true,
+          detached: format === "detached",
+        },
+      };
+    }
+    case "gpg.verify": {
+      if (!value || value.type !== "text") {
+        throw new Error(
+          "gpg.verify expects text (cleartext signed message or original for detached)"
+        );
+      }
+      const soft = !!step.params?.soft;
+      const detached = await resolveGpgDetachedSignature(
+        bindings,
+        step.params?.signature
+      );
+      const keys = await resolveGpgVerificationKeys(bindings);
+      try {
+        const ok = await verifyOpenPgp(String(value.data), keys, detached);
+        if (!ok) {
+          if (soft) {
+            return { type: "text", data: "invalid", meta: { sensitive: false } };
+          }
+          throw new Error("gpg.verify: signature invalid");
+        }
+        return { type: "text", data: "verified", meta: { sensitive: false } };
+      } catch (err) {
+        if (soft) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/invalid|verification|signature/i.test(msg)) {
+            return { type: "text", data: "invalid", meta: { sensitive: false } };
+          }
+        }
+        throw err;
+      }
+    }
+    case "gpg.inspect": {
+      if (!value || value.type !== "text") {
+        throw new Error("gpg.inspect expects armored OpenPGP text");
+      }
+      const armored = String(value.data);
+      const analysis = await analyzeArmored(armored);
+      const format = String(step.params.format || "summary").toLowerCase();
+      if (format === "json") {
+        return {
+          type: "text",
+          data: JSON.stringify(
+            {
+              type: analysis.type,
+              recipientKeyIDs: analysis.recipientKeyIDs,
+              sigDetails: (analysis.sigDetails || []).map((s) => ({
+                keyId: s.keyId,
+                fingerprint: s.fingerprint,
+                created:
+                  s.created instanceof Date && !Number.isNaN(s.created.getTime())
+                    ? s.created.toISOString()
+                    : null,
+              })),
+              hasSkesk: analysis.hasSkesk,
+              hasPkesk: analysis.hasPkesk,
+            },
+            null,
+            2
+          ),
+          meta: { ...value.meta, sensitive: false, openPgpInspect: true },
+        };
+      }
+      /** @type {string[]} */
+      const parts = [formatAnalysisSummary(analysis)];
+      if (format === "packets") {
+        try {
+          const binary = dearmorToBytes(analysis.armored || armored);
+          const spans = mapPacketSpans(binary);
+          const packets =
+            analysis.message &&
+            analysis.type !== "cleartext" &&
+            analysis.type !== "detached"
+              ? analysis.message.packets
+              : analysis.message?.packets ||
+                analysis.message?.signature?.packets ||
+                null;
+          const enriched = enrichSpansWithPackets(spans, packets);
+          parts.push("", "packets:");
+          for (const s of enriched) {
+            parts.push(`- ${s.name} @ ${s.headerStart}–${s.end}`);
+            for (const line of s.detail?.lines || []) {
+              parts.push(`    ${line}`);
+            }
+            for (const w of s.detail?.warnings || []) {
+              parts.push(`    ! ${w}`);
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          parts.push("", `packets: (unavailable — ${msg})`);
+        }
+      }
+      return {
+        type: "text",
+        data: parts.join("\n"),
+        meta: { ...value.meta, sensitive: false, openPgpInspect: true },
+      };
+    }
+    case "gpg.encrypt": {
+      if (!value || (value.type !== "text" && value.type !== "bytes")) {
+        throw new Error("gpg.encrypt expects text");
       }
       const text =
         value.type === "text" ? String(value.data) : bytesToBase64(value.data);
@@ -1462,43 +1690,56 @@ async function execStepBody(step, value, bindings, artifacts) {
         key = recipients[Math.min(idx, recipients.length - 1)];
         fpr = bindings.recipientFingerprints?.[idx] || fpr;
       }
-      const arts = await encryptArtifacts({
-        recipients: [key],
-        passwords: [],
-        payloads: [{ kind: "text", text }],
-        profile: bindings.encryption?.profile || PROFILE_AUTO,
-        hideRecipients: !!bindings.encryption?.hideRecipients,
-      });
-      for (const a of arts) {
-        const cryptoSummary = await summarizeEncryption(a.armored);
-        const isShare = !!value.meta?.shareIndex;
-        artifacts.push({
-          label: isShare
-            ? `Share ${value.meta.shareIndex} (GPG)`
-            : a.label || "GPG ciphertext",
-          filename: isShare
-            ? `share-${value.meta.shareIndex}.asc`
-            : a.filename || "encrypted.asc",
-          content: a.armored,
-          sensitive: false,
-          shareIndex: value.meta?.shareIndex,
-          recipientFingerprint: fpr,
-          mime: "application/pgp-encrypted",
-          cryptoSummary,
-          disposition: "file",
-          role: isShare ? "share" : "ciphertext",
-          tags: isShare
-            ? ["encrypted", "openpgp", "blip39"]
-            : ["encrypted", "openpgp"],
-          traits: isShare
-            ? {
-                shareOf: value.meta.shareIndex,
-                threshold: value.meta.threshold,
-              }
-            : undefined,
+      const wantSign = !!step.params.sign;
+      /** @type {import("openpgp").PrivateKey|null} */
+      let signingKey = null;
+      try {
+        if (wantSign) {
+          signingKey = await resolveGpgPrivateKey(bindings);
+        }
+        const arts = await encryptArtifacts({
+          recipients: [key],
+          passwords: [],
+          payloads: [{ kind: "text", text }],
+          profile: bindings.encryption?.profile || PROFILE_AUTO,
+          hideRecipients: !!bindings.encryption?.hideRecipients,
+          signingKeys: signingKey ? [signingKey] : undefined,
         });
+        for (const a of arts) {
+          const cryptoSummary = await summarizeEncryption(a.armored);
+          const isShare = !!value.meta?.shareIndex;
+          artifacts.push({
+            label: isShare
+              ? `Share ${value.meta.shareIndex} (GPG)`
+              : a.label || "GPG ciphertext",
+            filename: isShare
+              ? `share-${value.meta.shareIndex}.asc`
+              : a.filename || "encrypted.asc",
+            content: a.armored,
+            sensitive: false,
+            shareIndex: value.meta?.shareIndex,
+            recipientFingerprint: fpr,
+            mime: "application/pgp-encrypted",
+            cryptoSummary,
+            disposition: "file",
+            role: isShare ? "share" : "ciphertext",
+            tags: isShare
+              ? ["encrypted", "openpgp", "blip39"]
+              : wantSign
+                ? ["encrypted", "openpgp", "signed"]
+                : ["encrypted", "openpgp"],
+            traits: isShare
+              ? {
+                  shareOf: value.meta.shareIndex,
+                  threshold: value.meta.threshold,
+                }
+              : undefined,
+          });
+        }
+        return { type: "artifact", data: null, meta: value.meta };
+      } finally {
+        zeroKeyMaterial(signingKey);
       }
-      return { type: "artifact", data: null, meta: value.meta };
     }
     case "qr": {
       if (!value || value.type !== "text") throw new Error("qr expects text");
@@ -1542,7 +1783,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         }
         artifacts.push(a);
       }
-      // Pass through so the recipe can continue (e.g. out | encrypt gpg).
+      // Pass through so the recipe can continue (e.g. out | gpg.encrypt).
       return value;
     }
     case "text": {
@@ -1755,19 +1996,19 @@ async function execStepBody(step, value, bindings, artifacts) {
         },
       };
     }
-    case "wa-caps":
-    case "wa-create":
-    case "wa-get":
-    case "wa-prf":
-    case "wa-attest":
-    case "wa-mds": {
+    case "webauthn.caps":
+    case "webauthn.create":
+    case "webauthn.get":
+    case "webauthn.prf":
+    case "webauthn.attest":
+    case "webauthn.mds": {
       // Lazy: keep vault/MDS out of the worker bundle unless these steps run.
       const wa = await import("./webauthn-ops.js");
-      if (step.name === "wa-caps") return wa.execWaCaps();
-      if (step.name === "wa-create") return wa.execWaCreate(step.params || {});
-      if (step.name === "wa-get") return wa.execWaGet();
-      if (step.name === "wa-prf") return wa.execWaPrf();
-      if (step.name === "wa-attest") return wa.execWaAttest(value);
+      if (step.name === "webauthn.caps") return wa.execWaCaps();
+      if (step.name === "webauthn.create") return wa.execWaCreate(step.params || {});
+      if (step.name === "webauthn.get") return wa.execWaGet();
+      if (step.name === "webauthn.prf") return wa.execWaPrf();
+      if (step.name === "webauthn.attest") return wa.execWaAttest(value);
       return wa.execWaMds(value, step.params || {});
     }
     default:
@@ -1812,6 +2053,91 @@ function asShareMnemonic(text) {
     .trim();
   if (!normalized) return null;
   return validateShareMnemonic(normalized).ok ? normalized : null;
+}
+
+/**
+ * @param {CryptoKey} key
+ * @param {unknown} expectedBits
+ * @param {string} op
+ */
+function assertExpectedAesKeyBits(key, expectedBits, op) {
+  const want = Number(expectedBits);
+  if (!want) return;
+  const len = key?.algorithm?.length;
+  if (len != null && len !== want) {
+    throw new Error(
+      `${op}: key is ${len}-bit but recipe requested ${want}-bit (e.g. aes-${want}-gcm)`
+    );
+  }
+}
+
+/**
+ * @param {RuntimeBindings} bindings
+ * @returns {Promise<import("openpgp").PrivateKey>}
+ */
+async function resolveGpgPrivateKey(bindings) {
+  const gpg = bindings.inputs?.gpg;
+  if (!gpg?.privateKeyArmored) {
+    throw new Error(
+      "OpenPGP private key required (vault / key panel) — used by gpg.sign and gpg.encrypt -s"
+    );
+  }
+  let privateKey = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
+  if (!privateKey.isDecrypted()) {
+    privateKey = await decryptKey({
+      privateKey,
+      passphrase: gpg.passphrase || "",
+    });
+  }
+  return privateKey;
+}
+
+/**
+ * @param {RuntimeBindings} bindings
+ * @returns {Promise<import("openpgp").Key[]>}
+ */
+async function resolveGpgVerificationKeys(bindings) {
+  const gpg = bindings.inputs?.gpg;
+  if (gpg?.privateKeyArmored) {
+    const priv = await resolveGpgPrivateKey(bindings);
+    return [priv.toPublic()];
+  }
+  if (gpg?.publicKeyArmored) {
+    const { readKey } = await import("openpgp");
+    const pub = await readKey({ armoredKey: gpg.publicKeyArmored });
+    return [pub];
+  }
+  const recipients = bindings.recipients || [];
+  if (recipients.length) return recipients;
+  throw new Error(
+    "gpg.verify needs an OpenPGP public key (vault key panel or recipients)"
+  );
+}
+
+/**
+ * @param {RuntimeBindings} bindings
+ * @param {string|undefined|null} refOrText
+ * @returns {Promise<string>}
+ */
+async function resolveGpgDetachedSignature(bindings, refOrText) {
+  const raw = String(refOrText || "").trim();
+  if (!raw) {
+    return String(
+      bindings.inputs?.key?.signatureB64url || bindings.inputs?.signature || ""
+    ).trim();
+  }
+  if (raw.startsWith("@")) {
+    const resolve = bindings?.resolveSlot;
+    if (typeof resolve !== "function") {
+      throw new Error(`gpg.verify signature=${raw}: runtime slot resolver missing`);
+    }
+    const value = resolve(raw);
+    if (!value) throw new Error(`gpg.verify signature=${raw}: unknown slot`);
+    if (value.type === "text") return String(value.data);
+    if (value.type === "bytes") return bytesToText(value.data);
+    throw new Error(`gpg.verify signature=${raw}: slot must be text or bytes`);
+  }
+  return raw;
 }
 
 /**
@@ -1980,9 +2306,10 @@ async function resolveVerifySignature(bindings, refOrB64) {
  * @param {string} alg
  * @param {string} usage
  * @param {string} [padding]
+ * @param {string} [hash]
  * @returns {Promise<PipelineValue>}
  */
-async function generateKeyValue(alg, usage, padding = "pss") {
+async function generateKeyValue(alg, usage, padding = "pss", hash = "sha-256") {
   if (alg.startsWith("ec/")) {
     const curve =
       alg === "ec/p384" ? "P-384" : alg === "ec/p521" ? "P-521" : "P-256";
@@ -2046,12 +2373,13 @@ async function generateKeyValue(alg, usage, padding = "pss") {
       : usePkcs1
         ? "RSASSA-PKCS1-v1_5"
         : "RSA-PSS";
+    const hashName = normalizeHashName(hash);
     const keyPair = await crypto.subtle.generateKey(
       {
         name,
         modulusLength: modulus,
         publicExponent: new Uint8Array([1, 0, 1]),
-        hash: "SHA-256",
+        hash: hashName,
       },
       true,
       useEncrypt
@@ -2064,6 +2392,7 @@ async function generateKeyValue(alg, usage, padding = "pss") {
       meta: {
         alg,
         algorithm: name,
+        hash: hashName,
         sensitive: true,
         padding: useEncrypt ? undefined : usePkcs1 ? "pkcs1" : "pss",
         tags: usePkcs1
@@ -2073,7 +2402,7 @@ async function generateKeyValue(alg, usage, padding = "pss") {
     };
   }
   if (alg.startsWith("aes/")) {
-    const length = alg === "aes/128" ? 128 : 256;
+    const length = aesLengthFromAlg(alg);
     const key = await crypto.subtle.generateKey(
       { name: "AES-GCM", length },
       true,
@@ -2086,9 +2415,9 @@ async function generateKeyValue(alg, usage, padding = "pss") {
     };
   }
   if (alg.startsWith("hmac/")) {
-    const hash = alg === "hmac/sha512" ? "SHA-512" : "SHA-256";
+    const hmacHash = hmacHashFromAlg(alg);
     const key = await crypto.subtle.generateKey(
-      { name: "HMAC", hash, length: hash === "SHA-512" ? 512 : 256 },
+      { name: "HMAC", hash: hmacHash, length: hmacLengthBits(hmacHash) },
       true,
       ["sign", "verify"]
     );
@@ -2199,13 +2528,15 @@ async function exportKey(value, format, which) {
  * @param {string} alg
  * @param {string} usage
  * @param {string} [padding]
+ * @param {string} [hash]
  */
-async function importKey(value, format, alg, usage, padding = "pss") {
+async function importKey(value, format, alg, usage, padding = "pss", hash = "sha-256") {
   const useDerive = usage === "derive";
   const useEncrypt = usage === "encrypt";
   const fmt = String(format || "pkcs8").toLowerCase();
   const usePkcs1Sign =
     !useEncrypt && String(padding || "pss").toLowerCase() === "pkcs1";
+  const hashName = normalizeHashName(hash);
 
   if (fmt === "jwk") {
     if (!value || value.type !== "text") throw new Error("import jwk expects text");
@@ -2354,7 +2685,7 @@ async function importKey(value, format, alg, usage, padding = "pss") {
       const publicKey = await crypto.subtle.importKey(
         "spki",
         der,
-        { name, hash: "SHA-256" },
+        { name, hash: hashName },
         true,
         useEncrypt ? ["encrypt", "wrapKey"] : ["verify"]
       );
@@ -2364,6 +2695,7 @@ async function importKey(value, format, alg, usage, padding = "pss") {
         meta: {
           alg,
           algorithm: name,
+          hash: hashName,
           sensitive: false,
           padding: useEncrypt ? undefined : usePkcs1 ? "pkcs1" : "pss",
           tags: legacyTags,
@@ -2373,7 +2705,7 @@ async function importKey(value, format, alg, usage, padding = "pss") {
     const privateKey = await crypto.subtle.importKey(
       "pkcs8",
       der,
-      { name, hash: "SHA-256" },
+      { name, hash: hashName },
       true,
       useEncrypt ? ["decrypt", "unwrapKey"] : ["sign"]
     );
@@ -2383,6 +2715,7 @@ async function importKey(value, format, alg, usage, padding = "pss") {
       meta: {
         alg,
         algorithm: name,
+        hash: hashName,
         sensitive: true,
         padding: useEncrypt ? undefined : usePkcs1 ? "pkcs1" : "pss",
         tags: legacyTags,
@@ -2391,10 +2724,14 @@ async function importKey(value, format, alg, usage, padding = "pss") {
   }
 
   if (alg.startsWith("aes/")) {
-    const key = await crypto.subtle.importKey("raw", der, "AES-GCM", true, [
-      "encrypt",
-      "decrypt",
-    ]);
+    const length = aesLengthFromAlg(alg);
+    const key = await crypto.subtle.importKey(
+      "raw",
+      der,
+      { name: "AES-GCM", length },
+      true,
+      ["encrypt", "decrypt"]
+    );
     return {
       type: "keypair",
       data: { privateKey: key, publicKey: null },
@@ -2403,11 +2740,11 @@ async function importKey(value, format, alg, usage, padding = "pss") {
   }
 
   if (alg.startsWith("hmac/")) {
-    const hash = alg === "hmac/sha512" ? "SHA-512" : "SHA-256";
+    const hmacHash = hmacHashFromAlg(alg);
     const key = await crypto.subtle.importKey(
       "raw",
       der,
-      { name: "HMAC", hash },
+      { name: "HMAC", hash: hmacHash },
       true,
       ["sign", "verify"]
     );

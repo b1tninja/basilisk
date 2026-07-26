@@ -14,6 +14,11 @@
  */
 
 import { canonicalName, getStep } from "./registry.js";
+import {
+  legacyRemovalHint,
+  resolveAlternateForm,
+  resolveCipherTransform,
+} from "./step-names.js";
 
 /**
  * @typedef {import("./recipe.js").RecipeStep} RecipeStep
@@ -317,7 +322,7 @@ class Parser {
     }
 
     const nameStart = this.pos;
-    const name = this.readIdent();
+    const name = this.readStepName();
     if (!name) {
       this.errors.push({
         message: "Expected a step name",
@@ -348,10 +353,33 @@ class Parser {
       };
     }
 
-    const canon = canonicalName(name);
+    // HMAC sugar → SubtleCrypto sign/verify (serialize as sign/verify).
+    if (lower === "hmac") {
+      return this.parseApply("sign", name, nameStart);
+    }
+    if (lower === "hmac.verify") {
+      return this.parseApply("verify", name, nameStart);
+    }
+
+    // WebCrypto sugar: encrypt|decrypt <transform> → concrete aes-* / rsa-* 
+    if (lower === "encrypt" || lower === "decrypt") {
+      return this.parseCipherDispatcher(lower, nameStart);
+    }
+
+    const alt = resolveAlternateForm(name);
+    const lookup = alt?.canonical || name;
+    const canon = canonicalName(lookup);
     if (!canon) {
+      const legacy = legacyRemovalHint(name);
+      const jceHint =
+        name.includes("/") && !legacy
+          ? `Unknown JCE transform "${name}"; try aes-gcm (or AES/GCM/NoPadding)`
+          : null;
       this.errors.push({
-        message: `Unknown step "${name}". See the Reference panel for available steps.`,
+        message:
+          legacy ||
+          jceHint ||
+          `Unknown step "${name}". See the Reference panel for available steps.`,
         start: nameStart,
         end: this.pos,
       });
@@ -370,7 +398,14 @@ class Parser {
       return this.parseForeachBlock(nameStart, parentIndent);
     }
 
-    return this.parseApply(canon, name, nameStart);
+    const step = this.parseApply(canon, name, nameStart);
+    if (alt?.expectedKeyBits) {
+      step.params = { ...step.params, expectedKeyBits: alt.expectedKeyBits };
+    }
+    if (alt?.oaepHash) {
+      step.params = { ...step.params, oaepHash: alt.oaepHash };
+    }
+    return step;
   }
 
   /**
@@ -812,6 +847,84 @@ class Parser {
   }
 
   /**
+   * Parse `encrypt` / `decrypt` + cipher transform into a concrete WebCrypto op.
+   * @param {"encrypt"|"decrypt"} verb
+   * @param {number} nameStart
+   * @returns {RecipeStep}
+   */
+  parseCipherDispatcher(verb, nameStart) {
+    let decode = verb === "decrypt";
+    this.skipSpaces();
+
+    // Optional `-d` before the transform (`encrypt -d aes-gcm …`).
+    if (
+      this.peek() === "-" &&
+      /[A-Za-z]/.test(this.src[this.pos + 1] || "")
+    ) {
+      const flagStart = this.pos;
+      this.pos++;
+      const flagName = this.readIdent();
+      if (flagName.toLowerCase() === "d") {
+        decode = true;
+      } else {
+        this.errors.push({
+          message: `Unknown flag "-${flagName}" for ${verb}`,
+          start: flagStart,
+          end: this.pos,
+        });
+      }
+      this.skipSpaces();
+    }
+
+    const transformStart = this.pos;
+    const transform = this.readStepName();
+    if (!transform) {
+      this.errors.push({
+        message: `${verb} requires a cipher transform (e.g. AES/GCM/NoPadding or aes-gcm)`,
+        start: nameStart,
+        end: this.pos,
+      });
+      return {
+        name: "aes-gcm",
+        params: { decode },
+        start: nameStart,
+        end: this.pos,
+      };
+    }
+
+    const resolved = resolveCipherTransform(transform);
+    if (!resolved) {
+      const jceHint = transform.includes("/")
+        ? `Unknown JCE transform "${transform}"; try aes-gcm (or AES/GCM/NoPadding)`
+        : `Unknown cipher transform "${transform}" for ${verb}; try aes-gcm or AES/GCM/NoPadding`;
+      this.errors.push({
+        message: jceHint,
+        start: transformStart,
+        end: this.pos,
+      });
+      return {
+        name: "aes-gcm",
+        params: { decode },
+        start: nameStart,
+        end: this.pos,
+      };
+    }
+
+    const step = this.parseApply(resolved.canonical, verb, nameStart);
+    if (decode) step.params = { ...step.params, decode: true };
+    if (resolved.expectedKeyBits) {
+      step.params = {
+        ...step.params,
+        expectedKeyBits: resolved.expectedKeyBits,
+      };
+    }
+    if (resolved.oaepHash) {
+      step.params = { ...step.params, oaepHash: resolved.oaepHash };
+    }
+    return step;
+  }
+
+  /**
    * @param {string} canon
    * @param {string} rawName
    * @param {number} start
@@ -1139,6 +1252,19 @@ class Parser {
     const start = this.pos;
     this.pos++;
     while (/[A-Za-z0-9_-]/.test(this.peek())) this.pos++;
+    return this.src.slice(start, this.pos);
+  }
+
+  /**
+   * Step head: dotted namespaces (`gpg.encrypt`), hyphen ciphers (`aes-gcm`),
+   * or JCE transforms (`AES/GCM/NoPadding`). Not used for param names.
+   * @returns {string}
+   */
+  readStepName() {
+    if (!/[A-Za-z]/.test(this.peek())) return "";
+    const start = this.pos;
+    this.pos++;
+    while (/[A-Za-z0-9_.+/-]/.test(this.peek())) this.pos++;
     return this.src.slice(start, this.pos);
   }
 

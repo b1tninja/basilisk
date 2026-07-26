@@ -1,7 +1,9 @@
 /**
  * Encoding helpers for the toolkit pipeline.
- * Single place for PEM / Base64 / Base64url / hex — kills openssl|tr chains.
+ * Single place for PEM / Base64 / Base64url / Base32 / hex — kills openssl|tr chains.
  */
+
+const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 /**
  * @param {Uint8Array} bytes
@@ -42,6 +44,58 @@ export function bytesToHex(bytes) {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/**
+ * RFC 4648 Base32 (no padding), uppercase.
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+export function bytesToBase32(bytes) {
+  let bits = 0;
+  let value = 0;
+  let out = "";
+  for (const b of bytes) {
+    value = (value << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  }
+  return out;
+}
+
+/**
+ * Decode RFC 4648 Base32 (padding optional; case-insensitive).
+ * @param {string} text
+ * @returns {Uint8Array}
+ */
+export function base32ToBytes(text) {
+  const clean = String(text || "")
+    .replace(/\s+/g, "")
+    .replace(/=+$/g, "")
+    .toUpperCase();
+  if (!clean.length) return new Uint8Array(0);
+  if (/[^A-Z2-7]/.test(clean)) throw new Error("Invalid Base32");
+  /** @type {number[]} */
+  const out = [];
+  let bits = 0;
+  let value = 0;
+  for (const ch of clean) {
+    const idx = BASE32_ALPHABET.indexOf(ch);
+    if (idx < 0) throw new Error("Invalid Base32");
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(out);
 }
 
 /**

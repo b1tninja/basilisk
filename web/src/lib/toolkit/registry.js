@@ -10,6 +10,7 @@
  * Prefer positional short form in docs (`genkey ec/p256`, `out @public`, `in @kp`).
  */
 
+import { CIPHER_DISPATCH_TARGETS } from "./step-names.js";
 import { stepAcceptsRefined, typeOf } from "./types.js";
 
 /** @typedef {"none"|"bytes"|"text"|"key"|"keypair"|"shares"|"artifact"|"bundle"|"item"} IoType */
@@ -86,7 +87,7 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
 /** @type {Record<Toolbox, ToolboxMeta>} */
 export const TOOLBOX_META = {
   webcrypto: { label: "WebCrypto", badge: "WebCrypto", order: 0, glyph: "webcrypto" },
-  encoding: { label: "Encoding", badge: "Encode", order: 1, glyph: "encoding" },
+  encoding: { label: "Encoding", badge: "Encode", order: 1, glyph: "encoding" }, // pem, base64, base64url, base32, hex, utf8
   io: { label: "Input / output", badge: "I/O", order: 2, glyph: "io" },
   flow: { label: "Flow", badge: "Flow", order: 3, glyph: "flow" },
   openpgp: { label: "OpenPGP", badge: "OpenPGP", order: 4, glyph: "openpgp" },
@@ -98,6 +99,27 @@ export const TOOLBOX_META = {
  * Shelves (taxonomy sub-groups) inside a toolbox for the ops drawer.
  * @type {Record<string, ShelfMeta>}
  */
+/** Symmetric / HMAC / KW targets for genkey, import, unwrap, and KDF `as=`. */
+const AES_HMAC_ALGS = [
+  "aes/128",
+  "aes/192",
+  "aes/256",
+  "hmac/sha256",
+  "hmac/sha384",
+  "hmac/sha512",
+];
+
+const DERIVE_AS_ENUM = [
+  "bytes",
+  ...AES_HMAC_ALGS,
+  "aes-kw/128",
+  "aes-kw/256",
+];
+
+const UNWRAP_ALG_ENUM = [...AES_HMAC_ALGS, "aes-kw/128", "aes-kw/256"];
+
+const RSA_HASH_ENUM = ["sha-256", "sha-384", "sha-512"];
+
 export const SHELF_META = {
   keys: { label: "Keys", order: 0, glyph: "keys" },
   digest: { label: "Digest", order: 1, glyph: "digest" },
@@ -109,9 +131,10 @@ export const SHELF_META = {
   agreement: { label: "Agreement", order: 7, glyph: "agreement" },
   wrap: { label: "Wrap", order: 8, defaultCollapsed: true, glyph: "wrap" },
   pubkey: { label: "Public key", order: 0, glyph: "pubkey" },
-  password: { label: "Password", order: 1, glyph: "password" },
+  gpgsign: { label: "Sign", order: 1, glyph: "sign" },
+  password: { label: "Password", order: 2, glyph: "password" },
   split: { label: "Split", order: 0, glyph: "split" },
-  recover: { label: "Recover", order: 1, glyph: "recover" },
+  recover: { label: "Combine", order: 1, glyph: "recover" },
   binary: { label: "Binary", order: 0, glyph: "binary" },
   text: { label: "Text", order: 1, glyph: "text" },
   ports: { label: "Ports", order: 0, glyph: "ports" },
@@ -127,7 +150,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "webcrypto",
     shelf: "keys",
-    doc: "Generate a WebCrypto keypair/key. Example: `genkey ec/p256 | tee` then `- .public | export spki | pem | out @public`, stem `export pkcs8 | pem | out @private`.",
+    doc: "Generate a WebCrypto keypair/key. Curves: `ec/p256`…`p521`, `ed25519`, `x25519` (ECDH). Symmetric: `aes/128|192|256`, `hmac/sha256|384|512`. RSA `hash=` for hashed RSA. Example: `genkey x25519 | out @local` then `ecdh private=@local peer=@peer`.",
     input: "none",
     output: "keypair",
     params: [
@@ -145,10 +168,7 @@ export const STEPS = [
           "rsa/2048",
           "rsa/3072",
           "rsa/4096",
-          "aes/128",
-          "aes/256",
-          "hmac/sha256",
-          "hmac/sha512",
+          ...AES_HMAC_ALGS,
         ],
         doc: "Algorithm family and size/curve",
       },
@@ -165,6 +185,13 @@ export const STEPS = [
         default: "pss",
         enum: ["pss", "pkcs1"],
         doc: "RSA signature padding when usage=sign (pss default; pkcs1 = RSASSA-PKCS1-v1_5, discouraged)",
+      },
+      {
+        name: "hash",
+        type: "enum",
+        default: "sha-256",
+        enum: RSA_HASH_ENUM,
+        doc: "Hash for RSA-OAEP / RSA-PSS / RSASSA (ignored for EC/OKP/AES/HMAC)",
       },
     ],
   },
@@ -193,10 +220,17 @@ export const STEPS = [
     kind: "source",
     toolbox: "io",
     shelf: "ports",
-    doc: "EFF Large Wordlist diceware passphrase (≈12.9 bits/word). Example: `passphrase 6 | out @passphrase`.",
+    doc: "Generate a passphrase. Default EFF diceware (`mode=diceware`, ≈12.9 bits/word); `mode=char` uses a 69-char alphabet. Example: `passphrase 6 | out @passphrase` or `passphrase mode=char length=20`.",
     input: "none",
     output: "text",
     params: [
+      {
+        name: "mode",
+        type: "enum",
+        default: "diceware",
+        enum: ["diceware", "char"],
+        doc: "diceware = EFF wordlist; char = random characters",
+      },
       {
         name: "words",
         type: "int",
@@ -204,7 +238,15 @@ export const STEPS = [
         default: 6,
         min: 4,
         max: 12,
-        doc: "Word count (EFF recommends ≥6)",
+        doc: "Word count for diceware (EFF recommends ≥6)",
+      },
+      {
+        name: "length",
+        type: "int",
+        default: 20,
+        min: 12,
+        max: 64,
+        doc: "Character count when mode=char",
       },
     ],
   },
@@ -213,7 +255,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "sss",
     shelf: "split",
-    doc: "Bind BLIP39 share mnemonics at run time (never stored in the recipe). Typical recover: `shares | blip39 -d | recover | …`. Map each share with `foreach` / `- out @share`. For free-form text use `input`.",
+    doc: "Bind BLIP39 share mnemonics at run time (never stored in the recipe). Typical recover: `shares | blip39 -d | sss.combine | …`. Map each share with `foreach` / `- out @share`. For free-form text use `input`.",
     input: "none",
     output: "shares",
     unresolvedInputs: "shares",
@@ -234,25 +276,16 @@ export const STEPS = [
     params: [],
   },
   {
-    name: "decrypt",
+    name: "gpg.decrypt",
     kind: "source",
     toolbox: "openpgp",
     shelf: "pubkey",
-    conjugateOf: "encrypt",
-    doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext BLIP39 mnemonics. Browser vault keys only (no smartcard/YubiKey in-page). Example: `decrypt gpg | blip39 -d | recover | …`.",
+    conjugateOf: "gpg.encrypt",
+    doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext BLIP39 mnemonics. Browser vault keys only (no smartcard/YubiKey in-page). Example: `gpg.decrypt | blip39 -d | sss.combine | …`.",
     input: "none",
     output: "shares",
     unresolvedInputs: "gpg",
-    params: [
-      {
-        name: "with",
-        type: "enum",
-        positional: true,
-        default: "gpg",
-        enum: ["gpg"],
-        doc: "Decryption backend (gpg = OpenPGP)",
-      },
-    ],
+    params: [],
   },
   {
     name: "export",
@@ -320,10 +353,7 @@ export const STEPS = [
           "rsa/2048",
           "rsa/3072",
           "rsa/4096",
-          "aes/128",
-          "aes/256",
-          "hmac/sha256",
-          "hmac/sha512",
+          ...AES_HMAC_ALGS,
         ],
         doc: "Algorithm to import as",
       },
@@ -340,6 +370,13 @@ export const STEPS = [
         default: "pss",
         enum: ["pss", "pkcs1"],
         doc: "RSA signature padding when usage=sign (pkcs1 discouraged)",
+      },
+      {
+        name: "hash",
+        type: "enum",
+        default: "sha-256",
+        enum: RSA_HASH_ENUM,
+        doc: "Hash for RSA import (ignored for other algs)",
       },
     ],
     effectiveIo(params) {
@@ -374,8 +411,8 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "sign",
     conjugate: "verify",
-    pairCaption: "Sign / verify",
-    doc: "Sign pipeline bytes with a WebCrypto private/HMAC key. Prefer `sign key=@kp` (slot from `out`); else key panel. Example: `input | utf8 | sign key=@kp | base64url`.",
+    pairCaption: "Sign / verify (HMAC via hmac sugar)",
+    doc: "Sign pipeline bytes with a WebCrypto private/HMAC key. Prefer `sign key=@kp` (slot from `out`); else key panel. RSA-PSS `saltLength=` (default 32); ECDSA optional `hash=` override. Example: `input | utf8 | sign key=@kp | base64url`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -386,6 +423,21 @@ export const STEPS = [
         default: "",
         doc: "Live key slot (`@kp`); omit to use the key panel",
       },
+      {
+        name: "saltLength",
+        type: "int",
+        default: 32,
+        min: 0,
+        max: 512,
+        doc: "RSA-PSS salt length in bytes (ignored for other algs; 0 = default 32)",
+      },
+      {
+        name: "hash",
+        type: "enum",
+        default: "auto",
+        enum: ["auto", ...RSA_HASH_ENUM],
+        doc: "ECDSA hash override (`auto` = curve default: P-256→SHA-256, P-384→SHA-384, P-521→SHA-512)",
+      },
     ],
   },
   {
@@ -394,7 +446,7 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "sign",
     conjugateOf: "sign",
-    doc: "Verify a signature over pipeline message bytes. Prefer `verify key=@pub`; else key panel. Default fail-loud; `soft` / `-q` emits `verified` or `invalid` instead of throwing on bad sig. Signature via `signature=` or runtime binding.",
+    doc: "Verify a signature over pipeline message bytes. Prefer `verify key=@pub`; else key panel. Default fail-loud; `soft` / `-q` emits `verified` or `invalid` instead of throwing on bad sig. Signature via `signature=` or runtime binding. Same `saltLength=` / `hash=` as sign.",
     input: "bytes",
     output: "text",
     unresolvedInputs: "key",
@@ -418,17 +470,31 @@ export const STEPS = [
         default: false,
         doc: "Soft mode: emit verified|invalid text (never throw on bad signature). Prefer fail-loud for auth decisions.",
       },
+      {
+        name: "saltLength",
+        type: "int",
+        default: 32,
+        min: 0,
+        max: 512,
+        doc: "RSA-PSS salt length (must match sign)",
+      },
+      {
+        name: "hash",
+        type: "enum",
+        default: "auto",
+        enum: ["auto", ...RSA_HASH_ENUM],
+        doc: "ECDSA hash override (`auto` = curve default; must match sign)",
+      },
     ],
   },
   {
-    name: "aesgcm",
+    name: "aes-gcm",
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "aead",
     decodeTwin: true,
     pairCaption: "AES-GCM",
-    label: "encrypt",
-    doc: "AES-GCM encrypt (default) or decrypt with `-d`. Prefer `aesgcm key=@cek`; else key panel. Distinct from OpenPGP `encrypt`.",
+    doc: "AES-GCM encrypt (default) or decrypt with `-d`. Prefer `aes-gcm key=@cek`; else key panel. Optional `tagLength=` (default 128). Also accepts `aes-256-gcm` / `AES/GCM/NoPadding`, and sugar `encrypt AES/GCM/NoPadding` / `decrypt …`. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -452,20 +518,26 @@ export const STEPS = [
         default: "",
         doc: "Optional additional authenticated data (UTF-8)",
       },
+      {
+        name: "tagLength",
+        type: "enum",
+        default: "128",
+        enum: ["96", "104", "112", "120", "128"],
+        doc: "Authentication tag length in bits (default 128)",
+      },
     ],
     effectiveIo() {
       return { input: "bytes", output: "bytes" };
     },
   },
   {
-    name: "aescbc",
+    name: "aes-cbc",
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "cipher",
     decodeTwin: true,
     pairCaption: "AES-CBC",
-    label: "encrypt",
-    doc: "AES-CBC encrypt/decrypt (`-d`). Unauthenticated — prefer `aesgcm` for new work. Packing IV(16)||CT. Prefer `aescbc key=@cek`. Distinct from OpenPGP `encrypt`.",
+    doc: "AES-CBC encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT. Prefer `aes-cbc key=@cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -489,14 +561,13 @@ export const STEPS = [
     },
   },
   {
-    name: "aesctr",
+    name: "aes-ctr",
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "cipher",
     decodeTwin: true,
     pairCaption: "AES-CTR",
-    label: "encrypt",
-    doc: "AES-CTR encrypt/decrypt (`-d`). Unauthenticated — prefer `aesgcm` for new work. Packing IV(16)||CT (128-bit counter block). Prefer `aesctr key=@cek`. Distinct from OpenPGP `encrypt`.",
+    doc: "AES-CTR encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT (128-bit counter block); `length=` is AesCtrParams.length (default 64), not IV size. Prefer `aes-ctr key=@cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -514,20 +585,27 @@ export const STEPS = [
         default: "",
         doc: "Live AES key slot (`@cek`); omit to use the key panel",
       },
+      {
+        name: "length",
+        type: "int",
+        default: 64,
+        min: 1,
+        max: 128,
+        doc: "Counter bits in AesCtrParams.length (IV packing stays 16 bytes)",
+      },
     ],
     effectiveIo() {
       return { input: "bytes", output: "bytes" };
     },
   },
   {
-    name: "rsaoaep",
+    name: "rsa-oaep",
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "rsa",
     decodeTwin: true,
     pairCaption: "RSA-OAEP",
-    label: "encrypt",
-    doc: "RSA-OAEP encrypt (default) or decrypt with `-d`. Prefer `rsaoaep key=@rk`; else key panel. Distinct from OpenPGP `encrypt` and AES `aesgcm`.",
+    doc: "RSA-OAEP encrypt (default) or decrypt with `-d`. Prefer `rsa-oaep key=@rk`; else key panel. Optional `label=` (must match on decrypt). Also accepts JCE `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`. Distinct from OpenPGP `gpg.encrypt` and AES `aes-gcm`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -545,20 +623,25 @@ export const STEPS = [
         default: "",
         doc: "Live RSA-OAEP key slot (`@rk`); omit to use the key panel",
       },
+      {
+        name: "label",
+        type: "string",
+        default: "",
+        doc: "Optional OAEP label (UTF-8; empty = omit)",
+      },
     ],
     effectiveIo() {
       return { input: "bytes", output: "bytes" };
     },
   },
   {
-    name: "rsapkcs1",
+    name: "rsa-pkcs1",
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "rsa",
     decodeTwin: true,
     pairCaption: "RSAES-PKCS1",
-    label: "encrypt",
-    doc: "RSAES-PKCS1-v1_5 encrypt/decrypt (`-d`). Discouraged — prefer `rsaoaep`. Pure-JS (not SubtleCrypto). Uses any RSA key (OAEP/PSS JWK) via `key=@rk`. Outputs tagged legacy/discouraged.",
+    doc: "RSAES-PKCS1-v1_5 encrypt/decrypt (`-d`). Discouraged — prefer `rsa-oaep`. Pure-JS (not SubtleCrypto). Uses any RSA key (OAEP/PSS JWK) via `key=@rk`. Also accepts `RSA/ECB/PKCS1Padding`. Outputs tagged legacy/discouraged.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -586,7 +669,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "kdf",
-    doc: "HKDF-Extract/Expand. Default emits OKM bytes; `as=aes/256` (etc.) uses deriveKey → keypair. Distinct from the `as master` cast stage. Example: `wa-prf | hkdf 32 as=aes/256 | export jwk | out @cek`.",
+    doc: "HKDF-Extract/Expand. Default emits OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → keypair. Distinct from the `as master` cast stage. Example: `webauthn.prf | hkdf 32 as=aes/256 | export jwk | out @cek`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -603,8 +686,8 @@ export const STEPS = [
         name: "as",
         type: "enum",
         default: "bytes",
-        enum: ["bytes", "aes/128", "aes/256", "hmac/sha256", "hmac/sha512"],
-        doc: "bytes = deriveBits OKM; else deriveKey to a symmetric keypair",
+        enum: DERIVE_AS_ENUM,
+        doc: "bytes = deriveBits OKM; else deriveKey (AES-GCM, AES-KW, or HMAC)",
       },
       {
         name: "salt",
@@ -637,7 +720,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "kdf",
-    doc: "PBKDF2-HMAC derive. Default OKM bytes; `as=aes/256` uses deriveKey → keypair. Example: `passphrase 6 | pbkdf2 32 as=aes/256 | export jwk | out @cek`.",
+    doc: "PBKDF2-HMAC derive. Default OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → keypair. Example: `passphrase 6 | pbkdf2 32 as=aes/256 | export jwk | out @cek`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -654,8 +737,8 @@ export const STEPS = [
         name: "as",
         type: "enum",
         default: "bytes",
-        enum: ["bytes", "aes/128", "aes/256", "hmac/sha256", "hmac/sha512"],
-        doc: "bytes = deriveBits OKM; else deriveKey to a symmetric keypair",
+        enum: DERIVE_AS_ENUM,
+        doc: "bytes = deriveBits OKM; else deriveKey (AES-GCM, AES-KW, or HMAC)",
       },
       {
         name: "salt",
@@ -690,7 +773,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "agreement",
-    doc: "ECDH/X25519 deriveBits (default) or deriveKey via `as=aes/256`. Prefer `ecdh private=@local peer=@peer`. bits=0 auto-sizes from curve.",
+    doc: "ECDH/X25519 deriveBits (default) or deriveKey via `as=aes/256` / `as=aes-kw/256`. Prefer `genkey x25519` then `ecdh private=@local peer=@peer`. bits=0 auto-sizes from curve.",
     input: "none",
     output: "bytes",
     unresolvedInputs: "key",
@@ -719,8 +802,8 @@ export const STEPS = [
         name: "as",
         type: "enum",
         default: "bytes",
-        enum: ["bytes", "aes/128", "aes/256", "hmac/sha256", "hmac/sha512"],
-        doc: "bytes = deriveBits; else deriveKey to a symmetric keypair",
+        enum: DERIVE_AS_ENUM,
+        doc: "bytes = deriveBits; else deriveKey (AES-GCM, AES-KW, or HMAC)",
       },
     ],
     effectiveIo(params) {
@@ -736,7 +819,7 @@ export const STEPS = [
     shelf: "wrap",
     conjugate: "unwrap",
     pairCaption: "Wrap / unwrap",
-    doc: "Wrap a CEK. Default AES-KW (`mode=aes-kw`); `mode=rsa-oaep` uses RSA-OAEP wrapKey. Prefer `wrap key=@kek target=@cek`.",
+    doc: "Wrap a CEK. Default AES-KW; also `mode=aes-gcm|aes-cbc|aes-ctr` (IV||wrapped) or `mode=rsa-oaep`. Optional `label=` (RSA-OAEP), `tagLength=` (AES-GCM), `length=` (AES-CTR). Prefer `wrap key=@kek target=@cek`.",
     input: "none",
     output: "bytes",
     unresolvedInputs: "key",
@@ -757,8 +840,29 @@ export const STEPS = [
         name: "mode",
         type: "enum",
         default: "aes-kw",
-        enum: ["aes-kw", "rsa-oaep"],
-        doc: "Wrapping algorithm (AES-KW or RSA-OAEP)",
+        enum: ["aes-kw", "aes-gcm", "aes-cbc", "aes-ctr", "rsa-oaep"],
+        doc: "Wrapping algorithm (AES-KW, AES content modes, or RSA-OAEP)",
+      },
+      {
+        name: "label",
+        type: "string",
+        default: "",
+        doc: "OAEP label when mode=rsa-oaep (UTF-8; empty = omit)",
+      },
+      {
+        name: "tagLength",
+        type: "enum",
+        default: "128",
+        enum: ["96", "104", "112", "120", "128"],
+        doc: "GCM tag bits when mode=aes-gcm",
+      },
+      {
+        name: "length",
+        type: "int",
+        default: 64,
+        min: 1,
+        max: 128,
+        doc: "CTR counter bits when mode=aes-ctr",
       },
     ],
   },
@@ -768,7 +872,7 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "wrap",
     conjugateOf: "wrap",
-    doc: "Unwrap pipeline wrapped bytes. Default AES-KW; `mode=rsa-oaep` uses RSA-OAEP unwrapKey. Prefer `unwrap key=@kek`.",
+    doc: "Unwrap pipeline wrapped bytes. Modes match `wrap`. Prefer `unwrap key=@kek`. Content modes expect IV||wrapped packing.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -783,15 +887,36 @@ export const STEPS = [
         name: "alg",
         type: "enum",
         default: "aes/256",
-        enum: ["aes/128", "aes/256", "hmac/sha256", "hmac/sha512"],
-        doc: "Algorithm of the wrapped key (AES-GCM or HMAC)",
+        enum: UNWRAP_ALG_ENUM,
+        doc: "Algorithm of the wrapped key (AES-GCM, AES-KW, or HMAC)",
       },
       {
         name: "mode",
         type: "enum",
         default: "aes-kw",
-        enum: ["aes-kw", "rsa-oaep"],
-        doc: "Unwrapping algorithm (AES-KW or RSA-OAEP)",
+        enum: ["aes-kw", "aes-gcm", "aes-cbc", "aes-ctr", "rsa-oaep"],
+        doc: "Unwrapping algorithm (must match wrap mode)",
+      },
+      {
+        name: "label",
+        type: "string",
+        default: "",
+        doc: "OAEP label when mode=rsa-oaep (must match wrap)",
+      },
+      {
+        name: "tagLength",
+        type: "enum",
+        default: "128",
+        enum: ["96", "104", "112", "120", "128"],
+        doc: "GCM tag bits when mode=aes-gcm",
+      },
+      {
+        name: "length",
+        type: "int",
+        default: 64,
+        min: 1,
+        max: 128,
+        doc: "CTR counter bits when mode=aes-ctr",
       },
     ],
   },
@@ -909,11 +1034,35 @@ export const STEPS = [
     },
   },
   {
+    name: "base32",
+    kind: "transform",
+    toolbox: "encoding",
+    shelf: "binary",
+    decodeTwin: true,
+    pairCaption: "Base32",
+    doc: "Encode bytes as RFC 4648 Base32 (no padding, uppercase), or decode with `-d`. Example: `random 10 | base32 | out @id`.",
+    input: "bytes",
+    output: "text",
+    params: [
+      {
+        name: "decode",
+        type: "bool",
+        flag: "-d",
+        default: false,
+        doc: "Decode Base32 text → bytes",
+      },
+    ],
+    effectiveIo(params) {
+      if (params?.decode) return { input: "text", output: "bytes" };
+      return { input: "bytes", output: "text" };
+    },
+  },
+  {
     name: "utf8",
     kind: "transform",
     toolbox: "encoding",
     shelf: "text",
-    doc: "Decode UTF-8 bytes → text (or encode text → bytes when holding text). Example: `… | symdecrypt | utf8 | out @pem`.",
+    doc: "Decode UTF-8 bytes → text (or encode text → bytes when holding text). Example: `… | gpg.symdecrypt | utf8 | out @pem`.",
     input: "bytes",
     output: "text",
     params: [],
@@ -924,11 +1073,13 @@ export const STEPS = [
     },
   },
   {
-    name: "sss",
+    name: "sss.split",
     kind: "transform",
     toolbox: "sss",
     shelf: "split",
-    doc: "Split a 16/32-byte master into raw SSS shares (K-of-N). Pipe into `blip39` for mnemonics. EC: `export scalar | sss …`. Large PEM: `… | pem | out @pem | symencrypt | sss …`.",
+    conjugate: "sss.combine",
+    pairCaption: "Split / combine",
+    doc: "Split a 16/32-byte master into raw SSS shares (K-of-N). Pipe into `blip39` for mnemonics. EC: `export scalar | sss.split …`. Large PEM: `… | pem | out @pem | gpg.symencrypt | sss.split …`.",
     input: "bytes",
     output: "shares",
     params: [
@@ -985,7 +1136,7 @@ export const STEPS = [
     shelf: "split",
     decodeTwin: true,
     pairCaption: "BLIP39",
-    doc: "Encode raw SSS shares as BLIP39 mnemonics, or decode with `-d`. Example: `… | sss threshold=2 shares=3 | blip39 | foreach` / `- out @share`. Recover: `shares | blip39 -d | recover`.",
+    doc: "Encode raw SSS shares as BLIP39 mnemonics, or decode with `-d`. Example: `… | sss.split threshold=2 shares=3 | blip39 | foreach` / `- out @share`. Recover: `shares | blip39 -d | sss.combine`.",
     input: "shares",
     output: "shares",
     params: [
@@ -1020,11 +1171,12 @@ export const STEPS = [
     },
   },
   {
-    name: "recover",
+    name: "sss.combine",
     kind: "transform",
     toolbox: "sss",
-    shelf: "recover",
-    doc: "Combine raw SSS shares into the 16/32-byte master. Decode mnemonics first: `shares | blip39 -d | recover`. Unwrap envelopes with `symdecrypt` after recover.",
+    shelf: "split",
+    conjugateOf: "sss.split",
+    doc: "Combine raw SSS shares into the 16/32-byte master. Decode mnemonics first: `shares | blip39 -d | sss.combine`. Unwrap envelopes with `gpg.symdecrypt` after combine.",
     input: "shares",
     output: "bytes",
     params: [
@@ -1043,13 +1195,13 @@ export const STEPS = [
     ],
   },
   {
-    name: "symencrypt",
+    name: "gpg.symencrypt",
     kind: "transform",
     toolbox: "openpgp",
     shelf: "password",
-    conjugate: "symdecrypt",
+    conjugate: "gpg.symdecrypt",
     pairCaption: "Symmetric",
-    doc: "OpenPGP-symmetric-encrypt the payload under a fresh 32-byte master (SKESK/SEIPD), emit `envelope.asc`, pass master bytes to `sss`. Example: `… | pem | out @pem | symencrypt | sss threshold=2 shares=3 | blip39 | foreach` / `- out @share`.",
+    doc: "OpenPGP-symmetric-encrypt the payload under a fresh 32-byte master (SKESK/SEIPD), emit `envelope.asc`, pass master bytes to `sss.split`. Example: `… | pem | out @pem | gpg.symencrypt | sss.split threshold=2 shares=3 | blip39 | foreach` / `- out @share`.",
     input: "text",
     output: "bytes",
     params: [
@@ -1063,12 +1215,12 @@ export const STEPS = [
     // Type flow via inferParamDrivenType (rejects master/scalar; accepts pem/der/opaque).
   },
   {
-    name: "symdecrypt",
+    name: "gpg.symdecrypt",
     kind: "transform",
     toolbox: "openpgp",
     shelf: "password",
-    conjugateOf: "symencrypt",
-    doc: "Decrypt a bound `envelope.asc` using pipeline master bytes as the hex passphrase (inverse of `symencrypt`). Example: `shares | blip39 -d | recover | symdecrypt | utf8 | out @pem`.",
+    conjugateOf: "gpg.symencrypt",
+    doc: "Decrypt a bound `envelope.asc` using pipeline master bytes as the hex passphrase (inverse of `gpg.symencrypt`). Example: `shares | blip39 -d | sss.combine | gpg.symdecrypt | utf8 | out @pem`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "envelope",
@@ -1164,26 +1316,73 @@ export const STEPS = [
     ],
   },
   {
-    name: "encrypt",
+    name: "gpg.genkey",
+    kind: "source",
+    toolbox: "openpgp",
+    shelf: "pubkey",
+    doc: "Generate an OpenPGP Curve25519 keypair (same as My Keys). Pipeline emits armored private key; public key is also written as an artifact. Quote emails (`@` is slot syntax): `gpg.genkey email=\"alice@example.com\" | out @priv`.",
+    input: "none",
+    output: "text",
+    params: [
+      {
+        name: "email",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "User ID email (required)",
+      },
+      {
+        name: "name",
+        type: "string",
+        default: "",
+        doc: "User ID display name (defaults to email)",
+      },
+      {
+        name: "passphrase",
+        type: "string",
+        default: "",
+        doc: "Optional S2K passphrase protecting the private key",
+      },
+      {
+        name: "expiry",
+        type: "int",
+        default: 0,
+        min: 0,
+        max: 630720000,
+        doc: "Key expiration in seconds from now (0 = none)",
+      },
+    ],
+  },
+  {
+    name: "gpg.inspect",
+    kind: "transform",
+    toolbox: "openpgp",
+    shelf: "pubkey",
+    doc: "Inspect armored OpenPGP without decrypting (type, recipients, signatures, optional packet map). Example: `input | gpg.inspect | out @report`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "format",
+        type: "enum",
+        default: "summary",
+        enum: ["summary", "packets", "json"],
+        doc: "summary = human report; packets = packet map; json = MessageAnalysis fields",
+      },
+    ],
+  },
+  {
+    name: "gpg.encrypt",
     kind: "sink",
     toolbox: "openpgp",
     shelf: "pubkey",
-    conjugate: "decrypt",
+    conjugate: "gpg.decrypt",
     pairCaption: "Encrypt / decrypt",
     unresolvedRecipients: true,
-    doc: "OpenPGP-encrypt the current value (`gpg --encrypt`). Recipients bound at run time. Alias: `gpg`. Common in foreach: `… | blip39 | foreach` / `- encrypt gpg`.",
+    doc: "OpenPGP-encrypt the current value (`gpg --encrypt`). Recipients bound at run time. `sign` / `-s` adds sign-then-encrypt with the vault private key. Common in foreach: `… | blip39 | foreach` / `- gpg.encrypt`.",
     input: "text",
     output: "artifact",
-    aliases: ["gpg"],
     params: [
-      {
-        name: "with",
-        type: "enum",
-        positional: true,
-        default: "gpg",
-        enum: ["gpg"],
-        doc: "Encryption backend (gpg = OpenPGP)",
-      },
       {
         name: "mode",
         type: "enum",
@@ -1191,7 +1390,70 @@ export const STEPS = [
         enum: ["separate", "combined"],
         doc: "separate = one ciphertext per share; combined = single bundle",
       },
+      {
+        name: "sign",
+        type: "bool",
+        flag: "-s",
+        default: false,
+        doc: "Sign-then-encrypt with vault OpenPGP private key (same as Encrypt page)",
+      },
     ],
+  },
+  {
+    name: "gpg.sign",
+    kind: "transform",
+    toolbox: "openpgp",
+    shelf: "gpgsign",
+    conjugate: "gpg.verify",
+    pairCaption: "Sign / verify",
+    doc: "OpenPGP-sign pipeline text/bytes with a vault private key. Default cleartext armored (text stem); `format=detached` emits a detached signature (text or bytes). Distinct from WebCrypto `sign`.",
+    input: "text",
+    output: "text",
+    unresolvedInputs: "gpg",
+    params: [
+      {
+        name: "format",
+        type: "enum",
+        default: "cleartext",
+        enum: ["cleartext", "detached"],
+        doc: "cleartext = signed message; detached = signature only",
+      },
+    ],
+    overloads: [
+      { when: { base: "text" }, output: { base: "text" } },
+      { when: { base: "bytes" }, output: { base: "text" } },
+    ],
+    effectiveIo(params) {
+      void params;
+      return { input: "text", output: "text" };
+    },
+  },
+  {
+    name: "gpg.verify",
+    kind: "transform",
+    toolbox: "openpgp",
+    shelf: "gpgsign",
+    conjugateOf: "gpg.sign",
+    doc: "Verify an OpenPGP cleartext or detached signature. Detached: `signature=@slot` or runtime binding. Fail-loud by default; `soft`/`-q` → verified|invalid. Distinct from WebCrypto `verify`.",
+    input: "text",
+    output: "text",
+    unresolvedInputs: "gpg",
+    params: [
+      {
+        name: "signature",
+        type: "string",
+        default: "",
+        doc: "Detached armored signature or `@slot` (empty = cleartext on stem, or runtime sig binding)",
+      },
+      {
+        name: "soft",
+        type: "bool",
+        flag: "-q",
+        default: false,
+        doc: "Soft mode: emit verified|invalid text",
+      },
+    ],
+    overloads: [{ when: { base: "text" }, output: { base: "text" } }],
   },
   {
     name: "qr",
@@ -1273,23 +1535,21 @@ export const STEPS = [
     ],
   },
   {
-    name: "wa-caps",
+    name: "webauthn.caps",
     kind: "source",
     toolbox: "webauthn",
     shelf: "essentials",
-    label: "caps",
     doc: "Probe WebAuthn / PublicKeyCredential capabilities (platform UVPA, conditional UI, clientCapabilities). Output JSON text. No CAST — discovery only.",
     input: "none",
     output: "text",
     params: [],
   },
   {
-    name: "wa-create",
+    name: "webauthn.create",
     kind: "source",
     toolbox: "webauthn",
     shelf: "essentials",
-    label: "create",
-    doc: "Create a WebAuthn credential with PRF (platform or roaming). Returns PRF IKM bytes for HKDF/aesgcm. Soft MDS on attestation; does not block. Main-thread only.",
+    doc: "Create a WebAuthn credential with PRF (platform or roaming). Returns PRF IKM bytes for HKDF/`aes-gcm`. Soft MDS on attestation; does not block. Main-thread only.",
     input: "none",
     output: "bytes",
     params: [
@@ -1303,45 +1563,41 @@ export const STEPS = [
     ],
   },
   {
-    name: "wa-get",
+    name: "webauthn.get",
     kind: "source",
     toolbox: "webauthn",
     shelf: "essentials",
-    label: "get",
-    doc: "WebAuthn assertion ceremony; emits clientExtensionResults JSON (inspect PRF support). For pipeline PRF IKM bytes use wa-prf. Main-thread only.",
+    doc: "WebAuthn assertion ceremony; emits clientExtensionResults JSON (inspect PRF support). For pipeline PRF IKM bytes use `webauthn.prf`. Main-thread only.",
     input: "none",
     output: "text",
     params: [],
   },
   {
-    name: "wa-prf",
+    name: "webauthn.prf",
     kind: "source",
     toolbox: "webauthn",
     shelf: "essentials",
-    label: "prf",
-    doc: "Unlock PRF IKM from the vault passkey (same ceremony as My Keys unlock). Pipe into `hkdf` / `aesgcm`. Main-thread only. Example: `wa-prf | hkdf length=32 | …`.",
+    doc: "Unlock PRF IKM from the vault passkey (same ceremony as My Keys unlock). Pipe into `hkdf` / `aes-gcm`. Main-thread only. Example: `webauthn.prf | hkdf length=32 | …`.",
     input: "none",
     output: "bytes",
     params: [],
   },
   {
-    name: "wa-attest",
+    name: "webauthn.attest",
     kind: "transform",
     toolbox: "webauthn",
     shelf: "attestation",
-    label: "attest",
     doc: "Parse WebAuthn attestationObject bytes → JSON (fmt, aaguid). Soft / informational — not a CAST gate.",
     input: "bytes",
     output: "text",
     params: [],
   },
   {
-    name: "wa-mds",
+    name: "webauthn.mds",
     kind: "transform",
     toolbox: "webauthn",
     shelf: "attestation",
-    label: "mds",
-    doc: "Soft FIDO MDS lookup for an AAGUID (param or prior JSON aaguid from wa-attest). verified/unverified/unavailable — never blocks crypto. Same-origin MDS proxy.",
+    doc: "Soft FIDO MDS lookup for an AAGUID (param or prior JSON aaguid from `webauthn.attest`). verified/unverified/unavailable — never blocks crypto. Same-origin MDS proxy.",
     input: "text",
     output: "text",
     params: [
@@ -1449,6 +1705,68 @@ export function canonicalName(name) {
  */
 export function listSteps() {
   return STEPS.slice();
+}
+
+/**
+ * Familiar alias hints shown in the cipher meta-picker (not parse forms themselves).
+ * @type {Record<string, string[]>}
+ */
+export const CIPHER_PICKER_ALIASES = {
+  "aes-gcm": ["AES/GCM/NoPadding", "aes-256-gcm"],
+  "aes-cbc": ["AES/CBC/PKCS5Padding", "aes-256-cbc"],
+  "aes-ctr": ["AES/CTR/NoPadding", "aes-256-ctr"],
+  "rsa-oaep": ["RSA/ECB/OAEPWithSHA-256AndMGF1Padding"],
+  "rsa-pkcs1": ["RSA/ECB/PKCS1Padding"],
+};
+
+/**
+ * WebCrypto cipher steps offered by the Encrypt/Decrypt meta-picker.
+ * Order: AEAD → Cipher → RSA (matches shelf taxonomy).
+ * @returns {StepSpec[]}
+ */
+export function listCipherPickerSteps() {
+  const order = ["aes-gcm", "aes-cbc", "aes-ctr", "rsa-oaep", "rsa-pkcs1"];
+  /** @type {StepSpec[]} */
+  const out = [];
+  for (const name of order) {
+    if (!CIPHER_DISPATCH_TARGETS.has(name)) continue;
+    const spec = getStep(name);
+    if (spec) out.push(spec);
+  }
+  return out;
+}
+
+/**
+ * Builder payload when instantiating a cipher from the meta-picker.
+ * Never returns name "encrypt" / "decrypt".
+ * @param {string} concreteName
+ * @param {boolean} [decode]
+ * @returns {{ name: string, params: { decode?: boolean } }}
+ */
+export function instantiateCipherPick(concreteName, decode = false) {
+  const name = String(concreteName || "").toLowerCase();
+  if (!CIPHER_DISPATCH_TARGETS.has(name) || !getStep(name)) {
+    throw new Error(`Unknown cipher pick "${concreteName}"`);
+  }
+  return decode ? { name, params: { decode: true } } : { name, params: {} };
+}
+
+/** Export/import formats offered by the Key formats meta-picker. */
+export const KEY_FORMAT_PICKS = ["jwk", "pkcs8", "spki", "raw", "scalar"];
+
+/**
+ * @param {"export"|"import"} direction
+ * @param {string} format
+ * @returns {{ name: string, params: { format: string } }}
+ */
+export function instantiateFormatPick(direction, format) {
+  const dir = direction === "import" ? "import" : "export";
+  const fmt = String(format || "").toLowerCase();
+  if (!KEY_FORMAT_PICKS.includes(fmt)) {
+    throw new Error(`Unknown key format "${format}"`);
+  }
+  if (!getStep(dir)) throw new Error(`Missing step ${dir}`);
+  return { name: dir, params: { format: fmt } };
 }
 
 /**
