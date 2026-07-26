@@ -1,10 +1,46 @@
 /**
  * Human-readable inspection of toolkit pipeline values
  * (openssl … -text / hexdump style).
+ *
+ * Snapshots let the UI switch formats on an inspect/tee tile without
+ * re-running the recipe (CryptoKeys are exported once into the snapshot).
  * @module lib/toolkit/inspect
  */
 
 import { bytesToHex } from "./encode.js";
+
+/** @typedef {"auto"|"text"|"hex"|"hexdump"|"jwk"|"meta"} InspectFormat */
+
+/** Formats offered by the inspect / tee result tile. */
+export const INSPECT_FORMATS = /** @type {InspectFormat[]} */ ([
+  "auto",
+  "text",
+  "hex",
+  "hexdump",
+  "jwk",
+  "meta",
+]);
+
+/**
+ * @typedef {object} InspectSnapshot
+ * @property {string} type
+ * @property {Record<string, *>} meta  JSON-cloneable subset
+ * @property {Uint8Array} [bytes]
+ * @property {string} [text]
+ * @property {{
+ *   mnemonics: string[],
+ *   threshold?: number,
+ *   enveloped?: boolean,
+ *   envelopeBytes?: number,
+ * }} [shares]
+ * @property {{
+ *   privateJwk?: JsonWebKey,
+ *   publicJwk?: JsonWebKey,
+ *   raw?: Uint8Array,
+ *   hasPrivate?: boolean,
+ *   hasPublic?: boolean,
+ * }} [keypair]
+ */
 
 /**
  * @param {number} n
@@ -58,30 +94,141 @@ function isMostlyPrintable(text) {
 }
 
 /**
- * @param {import("./engine.js").PipelineValue} value
- * @param {string} [format] auto | text | hex | hexdump | jwk | meta
- * @returns {Promise<string>}
+ * Drop non-cloneable / non-JSON fields from pipeline meta for snapshots.
+ * @param {Record<string, *>|undefined|null} meta
+ * @returns {Record<string, *>}
  */
-export async function inspectValue(value, format = "auto") {
-  if (!value) return "(empty)\n";
-  const fmt = String(format || "auto").toLowerCase();
-  const lines = [
-    `type: ${value.type}`,
-    `sensitive: ${value.meta?.sensitive ? "yes" : "no"}`,
-  ];
+function cloneableMeta(meta) {
+  if (!meta || typeof meta !== "object") return {};
+  /** @type {Record<string, *>} */
+  const out = {};
+  for (const [k, v] of Object.entries(meta)) {
+    if (k === "inspectSnapshot" || k === "inspectFormat") continue;
+    if (v instanceof Uint8Array) {
+      out[k] = `<${v.length} bytes>`;
+      continue;
+    }
+    if (typeof v === "function") continue;
+    if (typeof CryptoKey !== "undefined" && v instanceof CryptoKey) continue;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      try {
+        out[k] = JSON.parse(JSON.stringify(v));
+      } catch {
+        /* skip */
+      }
+      continue;
+    }
+    if (
+      v === null ||
+      typeof v === "string" ||
+      typeof v === "number" ||
+      typeof v === "boolean" ||
+      Array.isArray(v)
+    ) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Build a structured-clone-safe snapshot for live format switching in the UI.
+ * @param {import("./engine.js").PipelineValue|null|undefined} value
+ * @returns {Promise<InspectSnapshot|null>}
+ */
+export async function buildInspectSnapshot(value) {
+  if (!value) return null;
+  const meta = cloneableMeta(value.meta);
 
   if (value.type === "bytes") {
-    const bytes = value.data;
+    const bytes =
+      value.data instanceof Uint8Array
+        ? new Uint8Array(value.data)
+        : new Uint8Array(0);
+    return { type: "bytes", meta, bytes };
+  }
+
+  if (value.type === "text") {
+    return { type: "text", meta, text: String(value.data ?? "") };
+  }
+
+  if (value.type === "shares") {
+    const d = value.data || {};
+    const env = d.envelope || value.meta?.envelope;
+    return {
+      type: "shares",
+      meta,
+      shares: {
+        mnemonics: (d.mnemonics || []).map((m) => String(m)),
+        threshold: d.threshold ? Number(d.threshold) : undefined,
+        enveloped: d.enveloped != null ? !!d.enveloped : undefined,
+        envelopeBytes: env instanceof Uint8Array ? env.length : undefined,
+      },
+    };
+  }
+
+  if (value.type === "keypair") {
+    const priv = value.data?.privateKey;
+    const pub = value.data?.publicKey;
+    /** @type {InspectSnapshot["keypair"]} */
+    const keypair = {
+      hasPrivate: !!priv,
+      hasPublic: !!pub,
+    };
+    if (priv) {
+      try {
+        keypair.privateJwk = await crypto.subtle.exportKey("jwk", priv);
+      } catch {
+        /* keep hasPrivate */
+      }
+    }
+    if (pub) {
+      try {
+        keypair.publicJwk = await crypto.subtle.exportKey("jwk", pub);
+      } catch {
+        /* keep hasPublic */
+      }
+    }
+    try {
+      const key = priv || pub;
+      if (key) {
+        keypair.raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+      }
+    } catch {
+      /* raw not extractable for many algs */
+    }
+    return { type: "keypair", meta, keypair };
+  }
+
+  return { type: value.type || "other", meta };
+}
+
+/**
+ * Render a dump from an inspect snapshot (no CryptoKey / no re-run).
+ * @param {InspectSnapshot|null|undefined} snap
+ * @param {string} [format]
+ * @returns {string}
+ */
+export function inspectFromSnapshot(snap, format = "auto") {
+  if (!snap) return "(empty)\n";
+  const fmt = String(format || "auto").toLowerCase();
+  const meta = snap.meta || {};
+  const lines = [
+    `type: ${snap.type}`,
+    `sensitive: ${meta.sensitive ? "yes" : "no"}`,
+  ];
+
+  if (snap.type === "bytes") {
+    const bytes = snap.bytes instanceof Uint8Array ? snap.bytes : new Uint8Array(0);
     lines.push(`length: ${bytes.length} bytes`);
-    if (value.meta?.format) lines.push(`format: ${value.meta.format}`);
-    if (value.meta?.which) lines.push(`which: ${value.meta.which}`);
+    if (meta.format) lines.push(`format: ${meta.format}`);
+    if (meta.which) lines.push(`which: ${meta.which}`);
     lines.push("");
     if (fmt === "hex") {
       lines.push(bytesToHex(bytes));
     } else if (fmt === "meta") {
-      lines.push(JSON.stringify(value.meta || {}, null, 2));
+      lines.push(JSON.stringify(meta, null, 2));
     } else {
-      // auto / text / hexdump
       const dumpLimit = 4096;
       lines.push(formatHexdump(bytes, { limit: dumpLimit }));
       if (fmt === "auto" || fmt === "text") {
@@ -103,36 +250,31 @@ export async function inspectValue(value, format = "auto") {
     return `${lines.join("\n")}\n`;
   }
 
-  if (value.type === "text") {
-    const text = String(value.data);
+  if (snap.type === "text") {
+    const text = String(snap.text ?? "");
     lines.push(`length: ${text.length} chars`);
     lines.push("");
     if (fmt === "hex" || fmt === "hexdump") {
       const bytes = new TextEncoder().encode(text);
       lines.push(
-        fmt === "hex"
-          ? bytesToHex(bytes)
-          : formatHexdump(bytes, { limit: 4096 })
+        fmt === "hex" ? bytesToHex(bytes) : formatHexdump(bytes, { limit: 4096 })
       );
     } else if (fmt === "meta") {
-      lines.push(JSON.stringify(value.meta || {}, null, 2));
+      lines.push(JSON.stringify(meta, null, 2));
     } else {
       lines.push(text);
     }
     return `${lines.join("\n")}\n`;
   }
 
-  if (value.type === "shares") {
-    const d = value.data || {};
+  if (snap.type === "shares") {
+    const d = snap.shares || { mnemonics: [] };
     const mnemonics = d.mnemonics || [];
     lines.push(`shares: ${mnemonics.length}`);
     if (d.threshold) lines.push(`threshold: ${d.threshold}`);
     if (d.enveloped != null) lines.push(`enveloped: ${d.enveloped}`);
-    if (d.envelope || value.meta?.envelope) {
-      const env = d.envelope || value.meta.envelope;
-      lines.push(
-        `envelope: ${env instanceof Uint8Array ? `${env.length} bytes` : "present"}`
-      );
+    if (d.envelopeBytes != null) {
+      lines.push(`envelope: ${d.envelopeBytes} bytes`);
     }
     lines.push("");
     mnemonics.forEach((m, i) => {
@@ -149,16 +291,14 @@ export async function inspectValue(value, format = "auto") {
     return `${lines.join("\n")}\n`;
   }
 
-  if (value.type === "keypair") {
-    const meta = value.meta || {};
+  if (snap.type === "keypair") {
+    const kp = snap.keypair || {};
     lines.push(`alg: ${meta.alg || "?"}`);
     lines.push(`algorithm: ${meta.algorithm || "?"}`);
     if (meta.curve) lines.push(`curve: ${meta.curve}`);
     if (meta.symmetric) lines.push(`symmetric: yes`);
-    const priv = value.data?.privateKey;
-    const pub = value.data?.publicKey;
-    lines.push(`private: ${priv ? "yes" : "no"}`);
-    lines.push(`public: ${pub ? "yes" : "no"}`);
+    lines.push(`private: ${kp.hasPrivate || kp.privateJwk ? "yes" : "no"}`);
+    lines.push(`public: ${kp.hasPublic || kp.publicJwk ? "yes" : "no"}`);
     lines.push("");
 
     if (fmt === "meta") {
@@ -166,50 +306,48 @@ export async function inspectValue(value, format = "auto") {
       return `${lines.join("\n")}\n`;
     }
 
-    // openssl-ish JWK dump (WebCrypto's portable "text" form)
-    if (priv && (fmt === "auto" || fmt === "jwk" || fmt === "text")) {
-      try {
-        const jwk = await crypto.subtle.exportKey("jwk", priv);
-        lines.push("--- private JWK ---");
-        lines.push(JSON.stringify(jwk, null, 2));
-        lines.push("");
-      } catch (err) {
-        lines.push(`private JWK: export failed (${err?.message || err})`);
-      }
+    if (kp.privateJwk && (fmt === "auto" || fmt === "jwk" || fmt === "text")) {
+      lines.push("--- private JWK ---");
+      lines.push(JSON.stringify(kp.privateJwk, null, 2));
+      lines.push("");
+    } else if (kp.hasPrivate && (fmt === "auto" || fmt === "jwk" || fmt === "text")) {
+      lines.push("private JWK: export failed");
     }
-    if (pub && (fmt === "auto" || fmt === "jwk" || fmt === "text")) {
-      try {
-        const jwk = await crypto.subtle.exportKey("jwk", pub);
-        lines.push("--- public JWK ---");
-        lines.push(JSON.stringify(jwk, null, 2));
-        lines.push("");
-      } catch (err) {
-        lines.push(`public JWK: export failed (${err?.message || err})`);
-      }
+
+    if (kp.publicJwk && (fmt === "auto" || fmt === "jwk" || fmt === "text")) {
+      lines.push("--- public JWK ---");
+      lines.push(JSON.stringify(kp.publicJwk, null, 2));
+      lines.push("");
+    } else if (kp.hasPublic && (fmt === "auto" || fmt === "jwk" || fmt === "text")) {
+      lines.push("public JWK: export failed");
     }
 
     if (fmt === "hex" || fmt === "hexdump") {
-      try {
-        const key = priv || pub;
-        if (key) {
-          const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
-          lines.push("--- raw ---");
-          lines.push(
-            fmt === "hex" ? bytesToHex(raw) : formatHexdump(raw)
-          );
-        }
-      } catch (err) {
-        lines.push(`raw export: ${err?.message || err}`);
+      if (kp.raw instanceof Uint8Array) {
+        lines.push("--- raw ---");
+        lines.push(fmt === "hex" ? bytesToHex(kp.raw) : formatHexdump(kp.raw));
+      } else {
+        lines.push("raw export: not available in snapshot");
       }
     }
     return `${lines.join("\n")}\n`;
   }
 
-  if (value.type === "artifact" || value.type === "bundle") {
+  if (snap.type === "artifact" || snap.type === "bundle") {
     lines.push("(sink / bundle — no further dump)");
     return `${lines.join("\n")}\n`;
   }
 
-  lines.push(JSON.stringify(value.meta || {}, null, 2));
+  lines.push(JSON.stringify(meta, null, 2));
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * @param {import("./engine.js").PipelineValue} value
+ * @param {string} [format] auto | text | hex | hexdump | jwk | meta
+ * @returns {Promise<string>}
+ */
+export async function inspectValue(value, format = "auto") {
+  const snap = await buildInspectSnapshot(value);
+  return inspectFromSnapshot(snap, format);
 }

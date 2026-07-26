@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatHexdump, inspectValue } from "../lib/toolkit/inspect.js";
+import {
+  buildInspectSnapshot,
+  formatHexdump,
+  inspectFromSnapshot,
+  inspectValue,
+} from "../lib/toolkit/inspect.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 
@@ -52,5 +57,33 @@ describe("inspect / tee", () => {
       "meta"
     );
     expect(dump).toMatch(/"note": "x"/);
+  });
+
+  it("snapshot lets formats switch without re-running", async () => {
+    const bytes = new Uint8Array([0x48, 0x69]); // Hi
+    const snap = await buildInspectSnapshot({
+      type: "bytes",
+      data: bytes,
+      meta: { sensitive: false },
+    });
+    expect(snap?.type).toBe("bytes");
+    const hex = inspectFromSnapshot(snap, "hex");
+    expect(hex).toMatch(/4869/);
+    const dump = inspectFromSnapshot(snap, "hexdump");
+    expect(dump).toMatch(/\|Hi\|/);
+    const meta = inspectFromSnapshot(snap, "meta");
+    expect(meta).toMatch(/"sensitive": false/);
+  });
+
+  it("inspect artifact carries snapshot for live format UI", async () => {
+    const { ast, validation } = compileRecipe("random 8 | inspect hex");
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    expect(arts[0].role).toBe("inspect");
+    expect(arts[0].inspectSnapshot?.type).toBe("bytes");
+    expect(arts[0].inspectFormat).toBe("hex");
+    const switched = inspectFromSnapshot(arts[0].inspectSnapshot, "hexdump");
+    expect(switched).toMatch(/00000000/);
+    expect(switched).not.toBe(arts[0].content);
   });
 });

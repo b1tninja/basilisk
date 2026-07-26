@@ -2205,6 +2205,41 @@ pre {
   gap: 0.2rem;
   padding: 0 0 0.35rem;
 }
+.ops-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0.15rem 0 0.25rem 0.15rem;
+  padding-left: 0.35rem;
+  border-left: 2px solid color-mix(in srgb, var(--border, #444) 80%, transparent);
+}
+.ops-shelf-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0.35rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted, inherit);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+.ops-shelf-toggle:hover {
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.08));
+  color: inherit;
+}
+.ops-shelf-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0 0 0.15rem;
+}
 .ops-item {
   display: flex;
   flex-direction: column;
@@ -2264,6 +2299,10 @@ pre {
 .toolbox-sss {
   border-color: color-mix(in srgb, var(--warn, #c47d2b) 45%, var(--border));
   color: color-mix(in srgb, var(--warn, #c47d2b) 90%, var(--text));
+}
+.toolbox-webauthn {
+  border-color: color-mix(in srgb, #2a9d8f 45%, var(--border));
+  color: color-mix(in srgb, #2a9d8f 85%, var(--text));
 }
 .toolbox-encoding,
 .toolbox-io,
@@ -2465,6 +2504,30 @@ pre {
 .artifact-filename-input:focus {
   border-color: var(--brand);
   outline: 2px solid color-mix(in srgb, var(--brand) 20%, transparent);
+}
+.artifact-inspect-format {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.artifact-inspect-select {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised, var(--surface));
+  color: inherit;
+  font: inherit;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  padding: 0.15rem 0.35rem;
+  cursor: pointer;
+}
+.artifact-inspect-select:focus {
+  border-color: var(--brand);
+  outline: 2px solid color-mix(in srgb, var(--brand) 20%, transparent);
+}
+.artifact-card-inspect .artifact-body {
+  max-height: min(28rem, 60vh);
+  overflow: auto;
 }
 .artifact-meta {
   display: flex;

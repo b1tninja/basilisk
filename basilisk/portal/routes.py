@@ -10,6 +10,7 @@ from basilisk.auth.errors import AuthError
 from basilisk.config import get_settings
 from basilisk.hkp.handlers import get_store
 from basilisk.openpgp.canonical import emails_from_uids, structure_uids
+from basilisk.portal.mds_cache import get_mds_blob
 from basilisk.portal.me import my_keys
 from basilisk.portal.search import search_keys
 from basilisk.portal.serializers import key_summary
@@ -35,6 +36,31 @@ def register_portal_api(app: Flask) -> None:
         return Response(
             json.dumps({"providers": list(settings.auth_providers)}),
             mimetype="application/json",
+        )
+
+    @app.get("/api/v1/mds/blob")
+    def api_mds_blob() -> Response:
+        """Proxy/cache FIDO MDS3 JWT for same-origin WebAuthn UX (device labels)."""
+        ip = client_ip(dict(request.headers), request.remote_addr)
+        try:
+            check_lookup_rate(ip)
+        except RateLimitError as exc:
+            return Response(str(exc), status=exc.status, mimetype="text/plain")
+        try:
+            jwt = get_mds_blob()
+        except Exception as exc:
+            logger.warning("MDS blob unavailable: %s", exc)
+            return Response(
+                json.dumps({"error": "MDS blob unavailable"}),
+                status=502,
+                mimetype="application/json",
+            )
+        return Response(
+            jwt,
+            mimetype="application/jwt",
+            headers={
+                "Cache-Control": "public, max-age=86400",
+            },
         )
 
     @app.get("/api/v1/search")

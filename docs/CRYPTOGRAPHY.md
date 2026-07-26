@@ -16,13 +16,14 @@ Server-side OpenPGP **parsing/policy** (`basilisk/openpgp/`) is out of scope her
 
 ### Toolkit toolboxes
 
-Every recipe step declares a `toolbox` in `registry.js`. The ops drawer groups by toolbox; builder cards and suggest chips show a badge so similar verbs (e.g. UI label “encrypt” for `aesgcm` vs OpenPGP `encrypt`) stay distinct.
+Every recipe step declares a `toolbox` in `registry.js`. The ops drawer groups by toolbox; builder cards and suggest chips show a badge so similar verbs (e.g. UI label “encrypt” for `aesgcm` vs OpenPGP `encrypt`) stay distinct. Optional `shelf` sub-groups (used by WebAuthn) nest inside a toolbox so secondary ops stay collapsed until needed.
 
 | Toolbox | Examples |
 |---------|----------|
 | `webcrypto` | `genkey`, `export`, `import`, `digest`, `sign`, `aesgcm`, … |
 | `openpgp` | `encrypt`, `decrypt`, `symencrypt`, `symdecrypt` |
 | `sss` | `sss`, `blip39`, `recover`, `shares` |
+| `webauthn` | `wa-caps`, `wa-create`, `wa-prf`, `wa-attest`, `wa-mds` (shelves: Essentials / Attestation·MDS) |
 | `encoding` | `pem`, `base64`, `hex`, `utf8` |
 | `io` | `random`, `input`, `out`, `qr` |
 | `flow` | `foreach`, `merge`, `tee`, `inspect` |
@@ -83,6 +84,7 @@ Product split (intentional today):
 | Device KEK | Done | Non-extractable AES-GCM-256 in IndexedDB |
 | Passphrase wrap | Done | OpenPGP S2K / Argon2 on armored key |
 | Passkey wrap | Done | WebAuthn PRF → HKDF-SHA-256 → AES-GCM |
+| Passkey attestation / MDS | Done | Soft only: `attestation: "direct"` at PRF create; AAGUID lookup via same-origin `/api/v1/mds/blob` (cached MDS3 JWT). **MDS verified / unverified** badge + device-label prefill; **does not block** enroll/unlock; not a CAST |
 | Protection modes | Done | `device` \| `passphrase` \| `passkey` |
 
 ### Quorum (`web/src/lib/quorum/`)
@@ -165,7 +167,7 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js`.
 | `fanout` | Done | Side-export without consuming keypair |
 | `pem` / `der` | Done | Armor / identity |
 | `base64` / `base64url` / `hex` / `utf8` | Done | Encoding (`-d` decode where applicable) |
-| `inspect` / `tee` | Done | Dump / peek |
+| `inspect` / `tee` | Done | Dump / peek; result tile keeps a snapshot for live format switching (no re-run) |
 
 ### Transforms — WebCrypto ops
 
@@ -193,6 +195,21 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js`.
 |----|--------|--------|
 | `symencrypt` / `skesk` | Done | SKESK + SEIPD under fresh 32 B master |
 | `symdecrypt` / `pgpunwrap` | Done | Unwrap with master-as-passphrase |
+
+### WebAuthn (toolbox `webauthn`, no CAST suite)
+
+Shelves keep attestation/MDS out of the main Essentials list. Ceremonies (`wa-create` / `wa-get` / `wa-prf`) run on the **main thread** (not the crypto worker). Soft MDS never blocks crypto and is **not** a CAST.
+
+| Op | Shelf | Status | Notes |
+|----|-------|--------|-------|
+| `wa-caps` | Essentials | Done | Capability probe → JSON |
+| `wa-create` | Essentials | Done | Create + PRF IKM bytes (vault meta); soft MDS |
+| `wa-get` | Essentials | Done | Assertion → extension-results JSON |
+| `wa-prf` | Essentials | Done | Vault passkey PRF unlock → IKM bytes |
+| `wa-attest` | Attestation / MDS | Done | Parse attestationObject → fmt/aaguid JSON |
+| `wa-mds` | Attestation / MDS | Done | Soft FIDO MDS lookup (same-origin proxy) |
+
+Compose with WebCrypto: `wa-prf \| hkdf 32 \| …` / `aesgcm`.
 
 ### Flow & sinks
 
@@ -310,7 +327,7 @@ shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem
 
 ## Roadmap sketch (complete WebCrypto toolkit)
 
-**Shipped (see toolkit ops above):** toolbox UX; `digest`; `sign`/`verify`; `aesgcm`; `hkdf`/`pbkdf2`; `ecdh`; `wrap`/`unwrap`; import/genkey enum alignment.
+**Shipped (see toolkit ops above):** toolbox UX; `digest`; `sign`/`verify`; `aesgcm`; `hkdf`/`pbkdf2`; `ecdh`; `wrap`/`unwrap`; import/genkey enum alignment; WebAuthn toolbox with shelves (`wa-*`).
 
 Still deferred:
 
@@ -331,6 +348,7 @@ When adding an op: registry entry + refined types + engine case + `tests/` + upd
 | CSP + `wasm-unsafe-eval` for Argon2 | `basilisk/serve.py`, HTML CSP metas |
 | SRI / module Merkle pin | `crypto-self-test.js`, `module-integrity.js` |
 | FIPS mode / suite badges | `fips-mode.js`, `toolkit/suite-gate.js`, toolkit UI |
+| WebAuthn PRF + soft MDS | `vault.js`, `webauthn/attestation.js`, `webauthn/mds.js`, `portal/mds_cache.py`, toolkit `wa-*` |
 | Vault: no secrets in localStorage | `vault.js` header |
 | Quorum: signaling ≠ PFS; session keys discarded on leave | `quorum/crypto.js` |
 | Smartcards / YubiKey GPG unavailable in browser | Toolkit `decrypt` docs / UI |

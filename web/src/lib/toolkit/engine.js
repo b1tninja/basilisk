@@ -51,7 +51,7 @@ import {
   subtleVerify,
   valueToBytes,
 } from "./webcrypto-ops.js";
-import { inspectValue } from "./inspect.js";
+import { buildInspectSnapshot, inspectFromSnapshot } from "./inspect.js";
 import { getStep } from "./registry.js";
 import {
   resolveStepType,
@@ -86,6 +86,8 @@ import {
  * }} [traits]
  * @property {import("./types.js").RefinedType} [pipeType]  refined pipeline type at emit time
  * @property {Uint8Array} [bytes]  raw octets when content is a textual encoding of binary
+ * @property {import("./inspect.js").InspectSnapshot} [inspectSnapshot]  for live format switching
+ * @property {string} [inspectFormat]  current inspect dump format
  */
 
 /**
@@ -1041,7 +1043,8 @@ async function execStepBody(step, value, bindings, artifacts) {
     case "inspect": {
       if (!value) throw new Error("inspect expects a value");
       const format = String(step.params.format || "auto");
-      const dump = await inspectValue(value, format);
+      const snapshot = await buildInspectSnapshot(value);
+      const dump = inspectFromSnapshot(snapshot, format);
       return {
         type: "text",
         data: dump,
@@ -1052,6 +1055,8 @@ async function execStepBody(step, value, bindings, artifacts) {
             value.type === "keypair" ||
             value.type === "shares",
           inspect: true,
+          inspectSnapshot: snapshot,
+          inspectFormat: format,
         },
       };
     }
@@ -1061,7 +1066,8 @@ async function execStepBody(step, value, bindings, artifacts) {
         .replace(/[^\w.-]+/g, "_")
         .slice(0, 64) || "tee";
       const format = String(step.params.format || "auto");
-      const dump = await inspectValue(value, format);
+      const snapshot = await buildInspectSnapshot(value);
+      const dump = inspectFromSnapshot(snapshot, format);
       artifacts.push({
         label: `tee:${name}`,
         filename: `${name}.inspect.txt`,
@@ -1073,8 +1079,25 @@ async function execStepBody(step, value, bindings, artifacts) {
         disposition: "file",
         role: "inspect",
         tags: ["inspect"],
+        inspectSnapshot: snapshot || undefined,
+        inspectFormat: format,
       });
       return value;
+    }
+    case "wa-caps":
+    case "wa-create":
+    case "wa-get":
+    case "wa-prf":
+    case "wa-attest":
+    case "wa-mds": {
+      // Lazy: keep vault/MDS out of the worker bundle unless these steps run.
+      const wa = await import("./webauthn-ops.js");
+      if (step.name === "wa-caps") return wa.execWaCaps();
+      if (step.name === "wa-create") return wa.execWaCreate(step.params || {});
+      if (step.name === "wa-get") return wa.execWaGet();
+      if (step.name === "wa-prf") return wa.execWaPrf();
+      if (step.name === "wa-attest") return wa.execWaAttest(value);
+      return wa.execWaMds(value, step.params || {});
     }
     default:
       throw new Error(`Unsupported step: ${step.name}`);
@@ -2082,19 +2105,28 @@ async function materializeOutArtifacts(value, params) {
  */
 function valueToArtifacts(value, name = "artifact") {
   if (value.type === "text") {
+    const isInspect = !!value.meta?.inspect && value.meta?.inspectSnapshot;
     return [
       attachPipeMeta(
         {
-          label: name,
-          filename: `${name}.txt`,
+          label: isInspect ? "inspect" : name,
+          filename: isInspect ? "inspect.txt" : `${name}.txt`,
           content: String(value.data),
           sensitive: !!value.meta?.sensitive,
           mime: "text/plain; charset=utf-8",
           encoding: "text",
           // Bare pipeline text prints as a message (use `out` for a named file).
-          disposition: "message",
-          role: "text",
-          tags: value.meta?.sensitive ? ["sensitive"] : [],
+          disposition: isInspect ? "file" : "message",
+          role: isInspect ? "inspect" : "text",
+          tags: isInspect
+            ? ["inspect"]
+            : value.meta?.sensitive
+              ? ["sensitive"]
+              : [],
+          inspectSnapshot: isInspect ? value.meta.inspectSnapshot : undefined,
+          inspectFormat: isInspect
+            ? String(value.meta.inspectFormat || "auto")
+            : undefined,
         },
         value
       ),

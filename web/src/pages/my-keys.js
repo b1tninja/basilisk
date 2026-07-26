@@ -60,6 +60,7 @@ import {
   saveKey as vaultSaveKey,
   unlockKey as vaultUnlockKey,
 } from "../lib/vault.js";
+import { mdsStatusBadgeHtml } from "../lib/webauthn/mds.js";
 import "../css/site.css";
 
 const content = document.getElementById("content");
@@ -118,6 +119,11 @@ function renderKeyLabelsSection(keys) {
       const fpr = item.fingerprint || "";
       const fpDisplay = formatFingerprint(fpr);
       const deviceLabel = getDeviceLabel(fpr);
+      const vaultMeta =
+        vaultMetaByFpr[String(fpr).toUpperCase().replace(/[^0-9A-F]/g, "")] ||
+        null;
+      const mdsStatus = vaultMeta?.mdsStatus;
+      const mdsDescription = vaultMeta?.mdsDescription || "";
 
       return `
         <details class="key-label-details">
@@ -125,6 +131,7 @@ function renderKeyLabelsSection(keys) {
             <code class="fpr">${escapeHtml(fpDisplay)}</code>
             ${copyButtonHtml("Copy", fpr, { title: "Copy fingerprint" })}
             ${item.label ? `<span class="key-label">🏷 ${escapeHtml(item.label)}</span>` : ""}
+            ${mdsStatus ? mdsStatusBadgeHtml(mdsStatus, mdsDescription) : ""}
           </summary>
           <div class="key-label-body">
             <div class="key-label-row">
@@ -149,7 +156,9 @@ function renderKeyLabelsSection(keys) {
                 id: `device-label-${fpr}`,
                 currentValue: deviceLabel,
                 placeholder: "e.g. Blue YubiKey 5C",
-                note: "",
+                note: mdsStatus
+                  ? `${mdsStatusBadgeHtml(mdsStatus, mdsDescription)} Soft check at PRF enroll — does not block unlock.`
+                  : "",
               })}
             </div>
           </div>
@@ -168,7 +177,7 @@ function renderKeyLabelsSection(keys) {
 
 function renderGenerateCard(userEmail) {
   const passkeyOpt = passkeyAvailable
-    ? `<label class="radio-row"><input type="radio" name="vault-protection" value="passkey"> Passkey (WebAuthn PRF) — hardware-gated unlock</label>`
+    ? `<label class="radio-row"><input type="radio" name="vault-protection" value="passkey"> Passkey / security key (WebAuthn PRF) — platform or YubiKey; soft MDS badge for labels</label>`
     : `<p class="muted fs-sm">Passkey (PRF) protection is not available in this browser.</p>`;
 
   return `
@@ -229,9 +238,19 @@ function renderGenerateCard(userEmail) {
     </div>`;
 }
 
-function protectionBadge(mode) {
+/**
+ * @param {import("../lib/vault.js").VaultProtection} mode
+ * @param {import("../lib/vault.js").VaultKeyMeta} [meta]
+ */
+function protectionBadge(mode, meta) {
   if (mode === "passphrase") return `<span class="badge approved">passphrase</span>`;
-  if (mode === "passkey") return `<span class="badge approved">passkey</span>`;
+  if (mode === "passkey") {
+    const mds =
+      meta?.mdsStatus
+        ? ` ${mdsStatusBadgeHtml(meta.mdsStatus, meta.mdsDescription || meta.aaguid || "")}`
+        : "";
+    return `<span class="badge approved">passkey</span>${mds}`;
+  }
   return `<span class="badge pending">device-only</span>`;
 }
 
@@ -310,7 +329,7 @@ function renderVaultSection(vaultKeys) {
         <tr>
           <td><code class="fpr">${escapeHtml(fpr)}</code></td>
           <td>${escapeHtml(k.uid || k.email || "")}</td>
-          <td>${protectionBadge(k.protection)}</td>
+          <td>${protectionBadge(k.protection, k)}</td>
           <td class="muted">${formatExpiryCountdown(k.expires)}</td>
           <td class="btn-row">
             <button type="button" class="btn btn-ghost btn-compact" data-vault-export-toggle="${escapeHtml(k.fingerprint)}">Export</button>
@@ -637,6 +656,8 @@ function wireGenerateForm(user) {
     let armoredPrivate = "";
     /** @type {Uint8Array|undefined} */
     let prfIkm;
+    /** @type {import("../lib/webauthn/mds.js").MdsLookupResult|undefined} */
+    let mds;
     try {
       const keyExpirationTime = EXPIRY_PRESETS[expiryPreset] ?? null;
       const gen = await generateKeyViaWorker({
@@ -648,8 +669,10 @@ function wireGenerateForm(user) {
       armoredPrivate = gen.armoredPrivate;
 
       if (mode === "passkey") {
-        if (status) status.textContent = "Create or confirm passkey…";
-        prfIkm = await createPasskeyPrf(email);
+        if (status) status.textContent = "Create or confirm passkey / security key…";
+        const prf = await createPasskeyPrf(email);
+        prfIkm = prf.prfIkm;
+        mds = prf.mds;
       }
 
       if (status) status.textContent = "Storing in browser vault…";
@@ -663,7 +686,13 @@ function wireGenerateForm(user) {
         expires: expiryIsoFromPreset(expiryPreset),
         protection: /** @type {"passphrase"|"passkey"|"device"} */ (mode),
         prfIkm,
+        mds,
       });
+
+      // Prefill private device label from MDS description when empty.
+      if (mds?.description && !getDeviceLabel(gen.fingerprint)) {
+        setDeviceLabel(gen.fingerprint, "", mds.description);
+      }
 
       // Best-effort wipe of the in-memory armored private string reference
       armoredPrivate = "";
@@ -677,10 +706,14 @@ function wireGenerateForm(user) {
 
       if (status) {
         status.className = "status-row ok";
+        const mdsHtml = mds
+          ? ` ${mdsStatusBadgeHtml(mds.status, mds.detail || mds.description || "")}`
+          : "";
         status.innerHTML =
           `Key generated and published — fingerprint ` +
           `<code>${escapeHtml(formatFingerprint(gen.fingerprint))}</code>` +
-          (result.claimed ? ", ownership claimed." : ".");
+          (result.claimed ? ", ownership claimed." : ".") +
+          mdsHtml;
       }
       document.dispatchEvent(
         new CustomEvent("basilisk:key-submitted", { detail: result })

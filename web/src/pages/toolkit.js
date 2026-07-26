@@ -31,7 +31,20 @@ import {
   unresolvedInputs,
   unresolvedRecipients,
 } from "../lib/toolkit/recipe.js";
-import { getStep, listSteps, stepsAccepting, TOOLBOX_META } from "../lib/toolkit/registry.js";
+import {
+  getShelfMeta,
+  getStep,
+  listSteps,
+  recipeNeedsMainThread,
+  stepsAccepting,
+  SHELF_META,
+  TOOLBOX_META,
+} from "../lib/toolkit/registry.js";
+import { executeToolkitRun } from "../lib/toolkit-run.js";
+import {
+  INSPECT_FORMATS,
+  inspectFromSnapshot,
+} from "../lib/toolkit/inspect.js";
 import {
   assertRecipeAllowedUnderFips,
   stepNameToSuite,
@@ -117,7 +130,14 @@ let signatureDraft = "";
 let opsFilter = "";
 /** Collapsed category keys in the ops drawer. */
 /** @type {Set<string>} */
-let opsCollapsed = new Set();
+/** Toolbox sections collapsed in the ops drawer (WebAuthn starts closed). */
+let opsCollapsed = new Set(["webauthn"]);
+/** Shelf keys `${toolbox}:${shelf}` collapsed in the ops drawer. */
+let opsShelfCollapsed = new Set(
+  Object.entries(SHELF_META)
+    .filter(([, meta]) => meta.defaultCollapsed)
+    .flatMap(([shelf]) => [`webauthn:${shelf}`])
+);
 /** Whether the collapsed "Cryptographic parameters" section is expanded. */
 let cryptoPanelOpen = false;
 /** @type {"auto"|"compatible"|"modern"|"custom"} */
@@ -1545,7 +1565,92 @@ function renderSuggestDrawer() {
 }
 
 /**
- * CyberChef-style operations drawer grouped by toolbox.
+ * @param {import("../lib/toolkit/registry.js").StepSpec} s
+ * @param {Set<string>} suggested
+ * @returns {string}
+ */
+function opsItemHtml(s, suggested) {
+  const fit = !steps.length
+    ? s.kind === "source" || s.input === "none"
+    : suggested.has(s.name);
+  const ioLabel = `${s.input} → ${s.output}`;
+  const display = stepDisplayName(s);
+  const blocked = stepBlockedByFips(s.name);
+  const title = blocked
+    ? `FIPS mode: blocked — ${s.toolbox} suite unverified. ${FIPS_MODE_DISCLAIMER}`
+    : `${s.doc}\n\nRecipe: ${s.name} · ${ioLabel}`;
+  return `
+    <button type="button" class="ops-item ${fit ? "ops-item-fit" : "ops-item-dim"}${blocked ? " ops-item-fips-blocked" : ""}"
+      draggable="${blocked ? "false" : "true"}" data-op="${escapeHtml(s.name)}"
+      ${blocked ? "aria-disabled=\"true\"" : ""}
+      title="${escapeHtml(title)}">
+      <span class="ops-item-name">${escapeHtml(display)}</span>
+      ${suiteChipHtml(s.toolbox)}
+      ${
+        display !== s.name
+          ? `<span class="muted fs-xs ops-item-recipe">${escapeHtml(s.name)}</span>`
+          : ""
+      }
+      <span class="muted fs-xs ops-item-io">${escapeHtml(ioLabel)}</span>
+    </button>`;
+}
+
+/**
+ * Render ops for one toolbox — flat list, or shelves when any step declares one.
+ * @param {string} tb
+ * @param {import("../lib/toolkit/registry.js").StepSpec[]} items
+ * @param {Set<string>} suggested
+ * @param {boolean} filterActive
+ * @returns {string}
+ */
+function renderToolboxOpsBody(tb, items, suggested, filterActive) {
+  const sorted = items.slice().sort((a, b) => {
+    const sa = getShelfMeta(a.shelf).order;
+    const sb = getShelfMeta(b.shelf).order;
+    const ka = KIND_META[a.kind]?.order ?? 9;
+    const kb = KIND_META[b.kind]?.order ?? 9;
+    return sa - sb || ka - kb || a.name.localeCompare(b.name);
+  });
+  const usesShelves = sorted.some((s) => s.shelf);
+  if (!usesShelves) {
+    return sorted.map((s) => opsItemHtml(s, suggested)).join("");
+  }
+
+  /** @type {Map<string, typeof sorted>} */
+  const byShelf = new Map();
+  for (const s of sorted) {
+    const shelf = s.shelf || "other";
+    const list = byShelf.get(shelf) || [];
+    list.push(s);
+    byShelf.set(shelf, list);
+  }
+  const shelves = [...byShelf.keys()].sort(
+    (a, b) => getShelfMeta(a).order - getShelfMeta(b).order
+  );
+
+  return shelves
+    .map((shelf) => {
+      const key = `${tb}:${shelf}`;
+      const meta = getShelfMeta(shelf);
+      const collapsed = opsShelfCollapsed.has(key) && !filterActive;
+      const shelfItems = byShelf.get(shelf) || [];
+      return `
+        <div class="ops-shelf" data-shelf="${escapeHtml(key)}">
+          <button type="button" class="ops-shelf-toggle" data-toggle-shelf="${escapeHtml(key)}"
+            aria-expanded="${collapsed ? "false" : "true"}">
+            <span>${escapeHtml(meta.label)}</span>
+            <span class="muted fs-xs">${shelfItems.length}</span>
+          </button>
+          <div class="ops-shelf-body ${collapsed ? "hidden" : ""}">
+            ${shelfItems.map((s) => opsItemHtml(s, suggested)).join("")}
+          </div>
+        </div>`;
+    })
+    .join("");
+}
+
+/**
+ * CyberChef-style operations drawer grouped by toolbox (and shelves within).
  */
 function renderOpsDrawer() {
   const host = document.getElementById("ops-drawer");
@@ -1563,8 +1668,9 @@ function renderOpsDrawer() {
   const byToolbox = new Map();
   for (const s of all) {
     if (q) {
+      const shelfLabel = s.shelf ? getShelfMeta(s.shelf).label : "";
       const hay =
-        `${s.name} ${s.label || ""} ${s.toolbox} ${s.kind} ${s.doc} ${(s.aliases || []).join(" ")}`.toLowerCase();
+        `${s.name} ${s.label || ""} ${s.toolbox} ${s.shelf || ""} ${shelfLabel} ${s.kind} ${s.doc} ${(s.aliases || []).join(" ")}`.toLowerCase();
       if (!hay.includes(q)) continue;
     }
     const tb = s.toolbox || "io";
@@ -1586,7 +1692,7 @@ function renderOpsDrawer() {
     const fromType = formatType(from);
     if (!steps.length) {
       hint.textContent =
-        "Drag onto the pipeline, or click to append. Badges show toolbox (WebCrypto, OpenPGP, SSS, …).";
+        "Drag onto the pipeline, or click to append. Badges show toolbox (WebCrypto, OpenPGP, SSS, WebAuthn, …).";
     } else if (from.base === "shares" && from.kind === "raw") {
       hint.textContent = `Pipe type ${fromType} — suggested: blip39 (mnemonics) or recover (→ bytes/master). Highlighted ops accept this type.`;
     } else if (from.base === "shares") {
@@ -1600,11 +1706,7 @@ function renderOpsDrawer() {
     .map((tb) => {
       const meta = TOOLBOX_META[tb] || { label: tb };
       const collapsed = opsCollapsed.has(tb) && !q;
-      const items = (byToolbox.get(tb) || []).slice().sort((a, b) => {
-        const ka = KIND_META[a.kind]?.order ?? 9;
-        const kb = KIND_META[b.kind]?.order ?? 9;
-        return ka - kb || a.name.localeCompare(b.name);
-      });
+      const items = byToolbox.get(tb) || [];
       return `
         <div class="ops-category" data-toolbox="${escapeHtml(tb)}">
           <button type="button" class="ops-category-toggle" data-toggle-toolbox="${escapeHtml(tb)}"
@@ -1613,33 +1715,7 @@ function renderOpsDrawer() {
             <span class="muted fs-xs">${items.length}</span>
           </button>
           <div class="ops-category-body ${collapsed ? "hidden" : ""}">
-            ${items
-              .map((s) => {
-                const fit = !steps.length
-                  ? s.kind === "source" || s.input === "none"
-                  : suggested.has(s.name);
-                const ioLabel = `${s.input} → ${s.output}`;
-                const display = stepDisplayName(s);
-                const blocked = stepBlockedByFips(s.name);
-                const title = blocked
-                  ? `FIPS mode: blocked — ${s.toolbox} suite unverified. ${FIPS_MODE_DISCLAIMER}`
-                  : `${s.doc}\n\nRecipe: ${s.name} · ${ioLabel}`;
-                return `
-                <button type="button" class="ops-item ${fit ? "ops-item-fit" : "ops-item-dim"}${blocked ? " ops-item-fips-blocked" : ""}"
-                  draggable="${blocked ? "false" : "true"}" data-op="${escapeHtml(s.name)}"
-                  ${blocked ? "aria-disabled=\"true\"" : ""}
-                  title="${escapeHtml(title)}">
-                  <span class="ops-item-name">${escapeHtml(display)}</span>
-                  ${suiteChipHtml(s.toolbox)}
-                  ${
-                    display !== s.name
-                      ? `<span class="muted fs-xs ops-item-recipe">${escapeHtml(s.name)}</span>`
-                      : ""
-                  }
-                  <span class="muted fs-xs ops-item-io">${escapeHtml(ioLabel)}</span>
-                </button>`;
-              })
-              .join("")}
+            ${renderToolboxOpsBody(tb, items, suggested, !!q)}
           </div>
         </div>`;
     })
@@ -1650,6 +1726,16 @@ function renderOpsDrawer() {
       const tb = btn.getAttribute("data-toggle-toolbox") || "";
       if (opsCollapsed.has(tb)) opsCollapsed.delete(tb);
       else opsCollapsed.add(tb);
+      renderOpsDrawer();
+    });
+  });
+
+  host.querySelectorAll("[data-toggle-shelf]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const key = btn.getAttribute("data-toggle-shelf") || "";
+      if (opsShelfCollapsed.has(key)) opsShelfCollapsed.delete(key);
+      else opsShelfCollapsed.add(key);
       renderOpsDrawer();
     });
   });
@@ -2111,7 +2197,9 @@ function renderReference() {
   const steps = listSteps().slice().sort((a, b) => {
     const ta = TOOLBOX_META[a.toolbox]?.order ?? 9;
     const tb = TOOLBOX_META[b.toolbox]?.order ?? 9;
-    return ta - tb || a.name.localeCompare(b.name);
+    const sa = getShelfMeta(a.shelf).order;
+    const sb = getShelfMeta(b.shelf).order;
+    return ta - tb || sa - sb || a.name.localeCompare(b.name);
   });
   body.innerHTML = steps
     .map((s) => {
@@ -2130,12 +2218,16 @@ function renderReference() {
         s.label && s.label !== s.name
           ? `<p class="muted fs-xs">UI label: ${escapeHtml(s.label)} (recipe token: <code>${escapeHtml(s.name)}</code>)</p>`
           : "";
+      const shelfNote = s.shelf
+        ? `<p class="muted fs-xs">Shelf: ${escapeHtml(getShelfMeta(s.shelf).label)}</p>`
+        : "";
       return `<details class="ref-step">
         <summary>${toolboxBadgeHtml(s.toolbox)} <code>${escapeHtml(s.name)}</code>
           <span class="muted">${escapeHtml(s.kind)}</span>
           · ${escapeHtml(s.input)} → ${escapeHtml(s.output)}</summary>
         <p class="fs-md">${escapeHtml(s.doc)}</p>
         ${labelNote}
+        ${shelfNote}
         ${aliases}
         ${params ? `<ul class="fs-sm">${params}</ul>` : "<p class='muted'>No parameters.</p>"}
       </details>`;
@@ -2148,6 +2240,35 @@ function renderReference() {
  * @param {number} i
  * @returns {string}
  */
+/**
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ * @returns {boolean}
+ */
+function artifactHasLiveInspect(a) {
+  return !!(a?.inspectSnapshot && (a.role === "inspect" || a.inspectFormat));
+}
+
+/**
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ * @param {number} i
+ * @returns {string}
+ */
+function inspectFormatSelectHtml(a, i) {
+  if (!artifactHasLiveInspect(a)) return "";
+  const current = String(a.inspectFormat || "auto");
+  const options = INSPECT_FORMATS.map(
+    (f) =>
+      `<option value="${escapeHtml(f)}"${f === current ? " selected" : ""}>${escapeHtml(f)}</option>`
+  ).join("");
+  return `
+    <label class="artifact-inspect-format" title="Change dump format without re-running the recipe">
+      <span class="muted fs-xs">Format</span>
+      <select class="artifact-inspect-select" data-inspect-format="${i}" aria-label="Inspect format">
+        ${options}
+      </select>
+    </label>`;
+}
+
 function renderArtifactCard(a, i) {
   const masked = a.sensitive;
   const preview = masked
@@ -2187,8 +2308,9 @@ function renderArtifactCard(a, i) {
         title="Produced by pipeline step ${a.stepIndex} (${escapeHtml(a.stepName || "")}) — click to jump to it">
         ${a.stepIndex}&#8202;·&#8202;${escapeHtml(a.stepName || "step")}</button>`
     : "";
+  const liveInspect = artifactHasLiveInspect(a);
   return `
-        <div class="card artifact-card" data-art="${i}">
+        <div class="card artifact-card${liveInspect ? " artifact-card-inspect" : ""}" data-art="${i}">
           <div class="artifact-card-head">
             <div class="artifact-title-row">
               ${stepBadge}
@@ -2201,6 +2323,7 @@ function renderArtifactCard(a, i) {
                   value="${escapeHtml(suggestedFilename)}" aria-label="Suggested download filename"
                   spellcheck="false">
               </label>
+              ${inspectFormatSelectHtml(a, i)}
               ${metaBits}
             </div>
           </div>
@@ -2359,6 +2482,27 @@ function renderResults() {
       const filename = sanitizeFilename(input.value, `artifact-${i + 1}.txt`);
       artifacts[i].filename = filename;
       input.value = filename;
+    });
+  });
+  panel.querySelectorAll("[data-inspect-format]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      if (!(sel instanceof HTMLSelectElement)) return;
+      const i = Number(sel.getAttribute("data-inspect-format"));
+      const a = artifacts[i];
+      if (!a?.inspectSnapshot) return;
+      const format = sel.value || "auto";
+      a.inspectFormat = format;
+      a.content = inspectFromSnapshot(a.inspectSnapshot, format);
+      const card = panel.querySelector(`.artifact-card[data-art="${i}"]`);
+      const pre = card?.querySelector(`.artifact-body[data-art="${i}"]`);
+      const revealBtn = card?.querySelector(`[data-reveal="${i}"]`);
+      if (pre instanceof HTMLElement) {
+        // Keep mask until revealed; otherwise show the new dump immediately.
+        if (!revealBtn) {
+          pre.textContent = a.content;
+        }
+      }
+      touchActivity();
     });
   });
   panel.querySelectorAll("[data-reveal]").forEach((btn) => {
@@ -2935,7 +3079,10 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
     if (currentInputNeeds.includes("gpg") && hasPgpCipher) {
       status.textContent = "Unlocking key & running…";
     }
-    artifacts = await runViaWorker(ast, {
+    const runMsg = {
+      ast,
+      recipientKeysArmored: boundRecipients.map((r) => r.armoredKey),
+      recipientFingerprints: boundRecipients.map((r) => r.fingerprint),
       inputs: collected.inputs,
       privateKeyArmored,
       passphrase: collected.passphrase,
@@ -2943,7 +3090,24 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
         profile: { ...toolkitEncryptProfile },
         hideRecipients: toolkitHideRecipients,
       },
-    });
+      fipsMode,
+      suiteStatus: { ...suiteStatus },
+    };
+    if (recipeNeedsMainThread(ast)) {
+      // WebAuthn ceremonies + MDS localStorage need the window thread.
+      if (status) status.textContent = "Running (main thread — WebAuthn)…";
+      const result = await executeToolkitRun(runMsg);
+      artifacts = result.artifacts;
+    } else {
+      artifacts = await runViaWorker(ast, {
+        inputs: runMsg.inputs,
+        privateKeyArmored: runMsg.privateKeyArmored,
+        passphrase: runMsg.passphrase,
+        encryption: runMsg.encryption,
+        fipsMode: runMsg.fipsMode,
+        suiteStatus: runMsg.suiteStatus,
+      });
+    }
     renderResults();
     touchActivity();
     if (status) {

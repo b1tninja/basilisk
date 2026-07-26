@@ -12,7 +12,8 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
 /** @typedef {"none"|"bytes"|"text"|"key"|"keypair"|"shares"|"artifact"|"bundle"} IoType */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
 /** @typedef {"enum"|"int"|"string"|"bool"|"flag"} ParamType */
-/** @typedef {"webcrypto"|"openpgp"|"sss"|"encoding"|"flow"|"io"} Toolbox */
+/** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"} Toolbox */
+/** @typedef {"essentials"|"attestation"|string} Shelf */
 /** @typedef {import("./types.js").StepOverload} StepOverload */
 /** @typedef {import("./types.js").RefinedType} RefinedType */
 
@@ -34,6 +35,7 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
  * @property {string} name
  * @property {StepKind} kind
  * @property {Toolbox} toolbox
+ * @property {Shelf} [shelf]  optional sub-group within a toolbox (ops drawer)
  * @property {string} [label]  optional UI verb (recipe name stays unique)
  * @property {string} doc
  * @property {IoType} input
@@ -53,9 +55,20 @@ export const TOOLBOX_META = {
   webcrypto: { label: "WebCrypto", badge: "WebCrypto", order: 0 },
   openpgp: { label: "OpenPGP", badge: "OpenPGP", order: 1 },
   sss: { label: "SSS / BLIP39", badge: "SSS", order: 2 },
-  encoding: { label: "Encoding", badge: "Encode", order: 3 },
-  io: { label: "Input / output", badge: "I/O", order: 4 },
-  flow: { label: "Flow", badge: "Flow", order: 5 },
+  webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 3 },
+  encoding: { label: "Encoding", badge: "Encode", order: 4 },
+  io: { label: "Input / output", badge: "I/O", order: 5 },
+  flow: { label: "Flow", badge: "Flow", order: 6 },
+};
+
+/**
+ * Shelves (sub-groups) inside a toolbox. Used by WebAuthn so attestation/MDS
+ * stay out of the way until needed.
+ * @type {Record<string, { label: string, order: number, defaultCollapsed?: boolean }>}
+ */
+export const SHELF_META = {
+  essentials: { label: "Essentials", order: 0, defaultCollapsed: false },
+  attestation: { label: "Attestation / MDS", order: 1, defaultCollapsed: true },
 };
 
 /** @type {StepSpec[]} */
@@ -883,10 +896,98 @@ export const STEPS = [
     ],
   },
   {
+    name: "wa-caps",
+    kind: "source",
+    toolbox: "webauthn",
+    shelf: "essentials",
+    label: "caps",
+    doc: "Probe WebAuthn / PublicKeyCredential capabilities (platform UVPA, conditional UI, clientCapabilities). Output JSON text. No CAST — discovery only.",
+    input: "none",
+    output: "text",
+    aliases: ["webauthn-caps"],
+    params: [],
+  },
+  {
+    name: "wa-create",
+    kind: "source",
+    toolbox: "webauthn",
+    shelf: "essentials",
+    label: "create",
+    doc: "Create a WebAuthn credential with PRF (platform or roaming). Returns PRF IKM bytes for HKDF/aesgcm. Soft MDS on attestation; does not block. Main-thread only.",
+    input: "none",
+    output: "bytes",
+    aliases: ["webauthn-create"],
+    params: [
+      {
+        name: "user",
+        type: "string",
+        positional: true,
+        default: "basilisk-toolkit",
+        doc: "User name shown on the authenticator prompt",
+      },
+    ],
+  },
+  {
+    name: "wa-get",
+    kind: "source",
+    toolbox: "webauthn",
+    shelf: "essentials",
+    label: "get",
+    doc: "WebAuthn assertion ceremony; emits clientExtensionResults JSON (inspect PRF support). For pipeline PRF IKM bytes use wa-prf. Main-thread only.",
+    input: "none",
+    output: "text",
+    aliases: ["webauthn-get"],
+    params: [],
+  },
+  {
+    name: "wa-prf",
+    kind: "source",
+    toolbox: "webauthn",
+    shelf: "essentials",
+    label: "prf",
+    doc: "Unlock PRF IKM from the vault passkey (same ceremony as My Keys passkey unlock). Pipe into hkdf / aesgcm. Main-thread only.",
+    input: "none",
+    output: "bytes",
+    aliases: ["webauthn-prf"],
+    params: [],
+  },
+  {
+    name: "wa-attest",
+    kind: "transform",
+    toolbox: "webauthn",
+    shelf: "attestation",
+    label: "attest",
+    doc: "Parse WebAuthn attestationObject bytes → JSON (fmt, aaguid). Soft / informational — not a CAST gate.",
+    input: "bytes",
+    output: "text",
+    aliases: ["webauthn-attest"],
+    params: [],
+  },
+  {
+    name: "wa-mds",
+    kind: "transform",
+    toolbox: "webauthn",
+    shelf: "attestation",
+    label: "mds",
+    doc: "Soft FIDO MDS lookup for an AAGUID (param or prior JSON aaguid from wa-attest). verified/unverified/unavailable — never blocks crypto. Same-origin MDS proxy.",
+    input: "text",
+    output: "text",
+    aliases: ["webauthn-mds"],
+    params: [
+      {
+        name: "aaguid",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "AAGUID UUID (empty = read from prior JSON text)",
+      },
+    ],
+  },
+  {
     name: "inspect",
     kind: "transform",
     toolbox: "flow",
-    doc: "Replace the pipeline value with a human-readable dump (openssl … -text / hexdump). Accepts any type; output is text/opaque. Preferred terminal when you want to see a value instead of emitting a result tile.",
+    doc: "Replace the pipeline value with a human-readable dump (openssl … -text / hexdump). Accepts any type; output is text/opaque. The result tile keeps a snapshot so you can switch formats without re-running. Preferred terminal when you want to see a value instead of emitting a result tile.",
     input: "bytes",
     output: "text",
     aliases: ["dump", "hexdump"],
@@ -897,7 +998,7 @@ export const STEPS = [
         positional: true,
         default: "auto",
         enum: ["auto", "text", "hex", "hexdump", "jwk", "meta"],
-        doc: "Dump style (hexdump forced when the step is named hexdump)",
+        doc: "Initial dump style (hexdump forced when the step is named hexdump). Changeable on the result tile without re-run.",
       },
     ],
   },
@@ -905,7 +1006,7 @@ export const STEPS = [
     name: "tee",
     kind: "transform",
     toolbox: "flow",
-    doc: "Pass the value through unchanged while emitting an inspection artifact (Unix tee). Useful mid-pipeline for keypairs before export/sss.",
+    doc: "Pass the value through unchanged while emitting an inspection artifact (Unix tee). The tee tile supports live format switching like inspect. Useful mid-pipeline for keypairs before export/sss.",
     input: "bytes",
     output: "bytes",
     aliases: ["peek"],
@@ -922,7 +1023,7 @@ export const STEPS = [
         type: "enum",
         default: "auto",
         enum: ["auto", "text", "hex", "hexdump", "jwk", "meta"],
-        doc: "Inspection format for the side artifact",
+        doc: "Initial inspection format for the side artifact (changeable on the tile)",
       },
     ],
   },
@@ -966,6 +1067,39 @@ export function canonicalName(name) {
  */
 export function listSteps() {
   return STEPS.slice();
+}
+
+/**
+ * @param {string|undefined|null} shelf
+ * @returns {{ label: string, order: number, defaultCollapsed?: boolean }}
+ */
+export function getShelfMeta(shelf) {
+  const key = String(shelf || "");
+  return (
+    SHELF_META[key] || {
+      label: key || "Other",
+      order: 99,
+      defaultCollapsed: false,
+    }
+  );
+}
+
+/**
+ * Whether a compiled recipe needs the window thread (WebAuthn ceremonies /
+ * localStorage MDS cache).
+ * @param {{ steps?: { name: string, body?: { name: string }[] }[] } | null | undefined} ast
+ * @returns {boolean}
+ */
+export function recipeNeedsMainThread(ast) {
+  const visit = (steps) => {
+    for (const step of steps || []) {
+      const spec = getStep(step.name);
+      if (spec?.toolbox === "webauthn") return true;
+      if (step.name === "foreach" && visit(step.body || [])) return true;
+    }
+    return false;
+  };
+  return visit(ast?.steps);
 }
 
 /**

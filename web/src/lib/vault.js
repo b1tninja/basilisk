@@ -12,6 +12,8 @@
  */
 
 import { readPrivateKey } from "openpgp";
+import { parseAttestationObject } from "./webauthn/attestation.js";
+import { lookupAaguidInMds } from "./webauthn/mds.js";
 
 const DB_NAME = "basilisk-vault";
 const DB_VERSION = 1;
@@ -22,6 +24,7 @@ const PRF_META_ID = "prf-meta";
 const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
 
 /** @typedef {"passphrase"|"passkey"|"device"} VaultProtection */
+/** @typedef {"verified"|"unverified"|"unavailable"} MdsStatus */
 
 /**
  * @typedef {object} VaultKeyMeta
@@ -33,6 +36,9 @@ const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
  * @property {VaultProtection} protection
  * @property {string} [name]
  * @property {string[]} [keyIds]  Primary + subkey key IDs (uppercase hex), for PKESK matching
+ * @property {MdsStatus} [mdsStatus]  Soft FIDO MDS badge (passkey only); never blocks unlock
+ * @property {string} [mdsDescription]
+ * @property {string} [aaguid]
  */
 
 /**
@@ -43,6 +49,12 @@ const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
  *   outerIv?: ArrayBuffer,
  *   keyIds?: string[],
  * }} VaultKeyRecord
+ */
+
+/**
+ * @typedef {object} PasskeyPrfCreateResult
+ * @property {Uint8Array} prfIkm
+ * @property {import("./webauthn/mds.js").MdsLookupResult} mds
  */
 
 /**
@@ -186,7 +198,7 @@ export async function isPasskeyPrfAvailable() {
 }
 
 /**
- * @returns {Promise<{ credentialId: ArrayBuffer, firstSalt: Uint8Array } | null>}
+ * @returns {Promise<{ credentialId: ArrayBuffer, firstSalt: Uint8Array, mds?: object } | null>}
  */
 async function getPrfMeta() {
   const row = await withStore(STORE_KEK, "readonly", (s) => s.get(PRF_META_ID));
@@ -194,14 +206,16 @@ async function getPrfMeta() {
   return {
     credentialId: row.credentialId,
     firstSalt: new Uint8Array(row.firstSalt),
+    mds: row.mds || null,
   };
 }
 
 /**
  * @param {ArrayBuffer} credentialId
  * @param {Uint8Array} firstSalt
+ * @param {import("./webauthn/mds.js").MdsLookupResult} [mds]
  */
-async function savePrfMeta(credentialId, firstSalt) {
+async function savePrfMeta(credentialId, firstSalt, mds) {
   await withStore(STORE_KEK, "readwrite", (s) =>
     s.put({
       id: PRF_META_ID,
@@ -210,14 +224,24 @@ async function savePrfMeta(credentialId, firstSalt) {
         firstSalt.byteOffset,
         firstSalt.byteOffset + firstSalt.byteLength
       ),
+      mds: mds
+        ? {
+            status: mds.status,
+            aaguid: mds.aaguid,
+            description: mds.description || "",
+            detail: mds.detail || "",
+          }
+        : undefined,
     })
   );
 }
 
 /**
- * Create a platform passkey with PRF enabled (first time).
+ * Create a passkey with PRF (platform or roaming / YubiKey).
+ * Requests direct attestation for soft MDS lookup; never blocks on MDS failure.
+ *
  * @param {string} userEmail
- * @returns {Promise<Uint8Array>} PRF output (32 bytes)
+ * @returns {Promise<PasskeyPrfCreateResult>}
  */
 export async function createPasskeyPrf(userEmail) {
   const firstSalt = crypto.getRandomValues(new Uint8Array(32));
@@ -237,10 +261,12 @@ export async function createPasskeyPrf(userEmail) {
           { type: "public-key", alg: -257 },
         ],
         authenticatorSelection: {
-          authenticatorAttachment: "platform",
+          // Allow platform passkeys and roaming security keys (YubiKey).
           userVerification: "required",
           residentKey: "preferred",
         },
+        // Capture attestation for MDS label/badge; enroll is not gated on verify.
+        attestation: "direct",
         timeout: 120_000,
         extensions: {
           prf: { eval: { first: firstSalt } },
@@ -256,8 +282,29 @@ export async function createPasskeyPrf(userEmail) {
       "This authenticator does not support the WebAuthn PRF extension. Choose passphrase or device-only protection."
     );
   }
-  await savePrfMeta(cred.rawId, firstSalt);
-  return new Uint8Array(prfResults);
+
+  /** @type {import("./webauthn/mds.js").MdsLookupResult} */
+  let mds = {
+    status: "unverified",
+    aaguid: "",
+    detail: "No attestation object on credential",
+  };
+  try {
+    const attResp = /** @type {AuthenticatorAttestationResponse} */ (cred.response);
+    const parsed = attResp?.attestationObject
+      ? parseAttestationObject(attResp.attestationObject)
+      : null;
+    mds = await lookupAaguidInMds(parsed?.aaguid);
+  } catch (err) {
+    mds = {
+      status: "unavailable",
+      aaguid: "",
+      detail: err?.message || "MDS lookup failed",
+    };
+  }
+
+  await savePrfMeta(cred.rawId, firstSalt, mds);
+  return { prfIkm: new Uint8Array(prfResults), mds };
 }
 
 /**
@@ -395,6 +442,9 @@ export async function listKeys() {
       expires: r.expires ?? null,
       protection: r.protection,
       keyIds,
+      mdsStatus: r.mdsStatus,
+      mdsDescription: r.mdsDescription || "",
+      aaguid: r.aaguid || "",
     };
   });
 }
@@ -411,6 +461,7 @@ export async function listKeys() {
  * @param {string|null} [opts.expires]  ISO
  * @param {VaultProtection} opts.protection
  * @param {Uint8Array} [opts.prfIkm]  Required when protection === "passkey"
+ * @param {import("./webauthn/mds.js").MdsLookupResult} [opts.mds]  Soft MDS result from PRF create
  * @param {string[]} [opts.keyIds]  Optional; extracted from armoredPrivate when omitted
  * @returns {Promise<VaultKeyMeta>}
  */
@@ -454,6 +505,12 @@ export async function saveKey(opts) {
     iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength),
   };
 
+  if (opts.mds?.status) {
+    record.mdsStatus = opts.mds.status;
+    record.mdsDescription = opts.mds.description || "";
+    record.aaguid = opts.mds.aaguid || "";
+  }
+
   if (opts.protection === "passkey") {
     if (!opts.prfIkm) throw new Error("PRF IKM required for passkey protection");
     const prfKek = await derivePrfKek(opts.prfIkm);
@@ -484,6 +541,9 @@ export async function saveKey(opts) {
     expires: record.expires,
     protection: record.protection,
     keyIds: record.keyIds || [],
+    mdsStatus: record.mdsStatus,
+    mdsDescription: record.mdsDescription,
+    aaguid: record.aaguid,
   };
 }
 
