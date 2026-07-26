@@ -31,11 +31,11 @@ describe("inspect / tee", () => {
 
   it("tee passes keypair through and emits inspect artifact", async () => {
     const { ast, validation } = compileRecipe(
-      "genkey ec/p256 | tee name=kp | export pkcs8 | pem"
+      "genkey ec/p256 | peek name=kp | export pkcs8 | pem"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
-    const tee = arts.find((a) => /tee:kp/i.test(a.label) || /kp\.inspect/i.test(a.filename));
+    const tee = arts.find((a) => /peek:kp|tee:kp/i.test(a.label) || /kp\.inspect/i.test(a.filename));
     expect(tee).toBeTruthy();
     expect(tee.content).toMatch(/type: keypair/);
     expect(tee.content).toMatch(/private JWK|alg: ec\/p256/i);

@@ -465,17 +465,12 @@ export function inferParamDrivenType(name, current, params = {}) {
     };
   }
 
-  if (name === "fanout") {
-    if (current.base !== "keypair") {
-      return {
-        ok: false,
-        error: `"fanout" expects keypair, got ${formatType(current)}`,
-      };
-    }
-    return { ok: true, output: { ...current } };
+  if (name === "in") {
+    // Concrete type is resolved in validateRecipe / engine from the slot registry.
+    return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
   }
 
-  if (name === "tee" || name === "out") {
+  if (name === "tee" || name === "peek" || name === "out") {
     if (!current || current.base === "none") {
       return {
         ok: false,
@@ -483,6 +478,86 @@ export function inferParamDrivenType(name, current, params = {}) {
       };
     }
     return { ok: true, output: { ...current } };
+  }
+
+  if (name === "select") {
+    if (!current || current.base === "none") {
+      return { ok: false, error: `"select" needs a pipeline value` };
+    }
+    const sel = String(params.selector || "");
+    const m = sel.replace(/^\./, "").toLowerCase();
+    if (m === "private" || m === "public") {
+      if (current.base !== "keypair") {
+        return {
+          ok: false,
+          error: `selector ".${m}" requires keypair, got ${formatType(current)}`,
+        };
+      }
+      return {
+        ok: true,
+        output: typeOf("keypair", { ...current, which: m }),
+      };
+    }
+    if (m === "key") {
+      if (current.base !== "item") {
+        return {
+          ok: false,
+          error: `selector ".key" requires item, got ${formatType(current)}`,
+        };
+      }
+      return { ok: true, output: typeOf("text", { kind: "opaque" }) };
+    }
+    if (m === "value") {
+      if (current.base !== "item") {
+        return {
+          ok: false,
+          error: `selector ".value" requires item, got ${formatType(current)}`,
+        };
+      }
+      if (current.kind === "raw") {
+        return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+      }
+      return { ok: true, output: typeOf("text", { kind: "mnemonic" }) };
+    }
+    return {
+      ok: false,
+      error: `Unknown or unsupported stem selector "${sel}"`,
+    };
+  }
+
+  if (name === "at") {
+    if (current.base !== "shares") {
+      return {
+        ok: false,
+        error: `"at" expects shares, got ${formatType(current)}`,
+      };
+    }
+    const sel = String(params.selector || "1").trim();
+    const range = sel.match(/^(\d+):(\d+)$/);
+    const single = sel.match(/^(\d+)$/);
+    if (range) {
+      const a = Number(range[1]);
+      const b = Number(range[2]);
+      if (a < 1 || b < a) {
+        return { ok: false, error: `"at" slice must be 1-based with start ≤ end` };
+      }
+      return { ok: true, output: { ...current } };
+    }
+    if (single) {
+      const n = Number(single[1]);
+      if (n < 1) {
+        return { ok: false, error: `"at" index must be ≥ 1` };
+      }
+      // One share: mnemonic text or raw bytes
+      if (current.kind === "raw") {
+        return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+      }
+      return { ok: true, output: typeOf("text", { kind: "mnemonic" }) };
+    }
+    return {
+      ok: false,
+      error: `"at" selector must be N or N:M (got "${sel}")`,
+    };
   }
 
   if (name === "text") {
@@ -596,7 +671,6 @@ export function resolveStepType(spec, current, params = {}) {
   // Coarse fallback: base IoType only
   const want = spec.input || "none";
   if (want !== "none" && current.base !== want) {
-    // Special-cases previously in ioCompatible
     if (name === "encrypt" && (current.base === "text" || current.base === "bytes")) {
       return { ok: true, output: typeOf("artifact") };
     }
@@ -632,15 +706,16 @@ export function stepAcceptsRefined(spec, from) {
 
   if (
     spec.name === "tee" ||
+    spec.name === "peek" ||
     spec.name === "inspect" ||
     spec.name === "out" ||
-    spec.name === "text"
+    spec.name === "text" ||
+    spec.name === "select" ||
+    spec.name === "in"
   ) {
     return true;
   }
-  if (spec.name === "fanout") return current.base === "keypair";
   if (spec.name === "foreach") return current.base === "shares";
-  if (spec.name === "merge") return true;
   if (spec.name === "recover") {
     return current.base === "shares" && current.kind !== "mnemonic";
   }
@@ -721,7 +796,7 @@ export function artifactMetaFromType(t) {
  *
  * Recipe sinks decide this explicitly (memory-safety.js rule 4 — do not regress):
  *   - `text` / `print` → disposition "message" (compose; string unavoidable)
- *   - `out name=…` → disposition "file" (attachment; keep wipeable `artifact.bytes`)
+ *   - `out @label` → disposition "file" (attachment; keep wipeable `artifact.bytes`)
  *
  * Do NOT reintroduce content sniffing (hex / base64 / armor → “message”). That
  * encouraged treating secrets as display strings, which cannot be zeroed in JS.
@@ -747,9 +822,8 @@ export function artifactIsTextualForEncrypt(a) {
 
 /**
  * Walk recipe steps and compute refined input→output types per step.
- * Mirrors builder / validation foreach·merge specials.
  *
- * @param {{ name: string, params?: Record<string, *> }[]} steps
+ * @param {{ name: string, params?: Record<string, *>, body?: *, branches?: *, foreachSelector?: string }[]} steps
  * @param {{ getStep: (name: string) => { name: string, kind?: string, overloads?: StepOverload[], input?: IoType, output?: IoType } | null }} deps
  * @returns {{
  *   edges: { index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string }[],
@@ -759,7 +833,7 @@ export function artifactIsTextualForEncrypt(a) {
 export function walkPipelineTypes(steps, deps) {
   /** @type {RefinedType} */
   let current = tNone();
-  /** @type {{ index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string }[]} */
+  /** @type {{ index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string, body?: { index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string }[] }[]} */
   const edges = [];
 
   for (let i = 0; i < (steps || []).length; i++) {
@@ -778,27 +852,77 @@ export function walkPipelineTypes(steps, deps) {
       continue;
     }
     if (step.name === "foreach") {
-      current =
-        input.kind === "raw"
-          ? typeOf("bytes", { kind: "opaque" })
-          : typeOf("text", { kind: "mnemonic" });
-      edges.push({
-        index: i,
-        name: step.name,
-        input,
-        output: { ...current },
-        ok: true,
-      });
-      continue;
-    }
-    if (step.name === "merge") {
+      const mode = String(step.foreachSelector || ".values").replace(/^\./, "");
+      /** @type {RefinedType} */
+      let itemType;
+      if (mode === "items") {
+        itemType = typeOf("item", { kind: input.kind || "mnemonic" });
+      } else if (mode === "keys") {
+        itemType = typeOf("text", { kind: "opaque" });
+      } else {
+        itemType =
+          input.kind === "raw"
+            ? typeOf("bytes", { kind: "opaque" })
+            : typeOf("text", { kind: "mnemonic" });
+      }
+      const bodyEdges = step.body?.length
+        ? walkBodyTypes(step.body, itemType, deps)
+        : [];
       current = typeOf("bundle");
       edges.push({
         index: i,
         name: step.name,
         input,
         output: { ...current },
-        ok: true,
+        ok: input.base === "shares" && !!step.body?.length,
+        error:
+          input.base !== "shares"
+            ? `"foreach" expects shares, got ${formatType(input)}`
+            : step.body?.length
+              ? undefined
+              : "foreach requires a body",
+        body: bodyEdges,
+      });
+      continue;
+    }
+    if (
+      step.name === "tee" &&
+      (step.body?.length || step.branches?.length)
+    ) {
+      const bodyEdges = step.body?.length
+        ? walkBodyTypes(step.body, current, deps)
+        : [];
+      /** @type {{ member: string, edges: ReturnType<typeof walkBodyTypes> }[]} */
+      const branchEdges = [];
+      for (const br of step.branches || []) {
+        const m = String(br.member || br.selector || "")
+          .replace(/^\./, "")
+          .toLowerCase();
+        const which =
+          m === "private" || m === "priv" || m === "secret"
+            ? "private"
+            : m === "public" || m === "pub"
+              ? "public"
+              : null;
+        const projected =
+          current.base === "keypair" && which
+            ? typeOf("keypair", { ...current, which })
+            : current;
+        branchEdges.push({
+          member: which || m,
+          edges: walkBodyTypes(br.body || [], projected, deps),
+        });
+      }
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: { ...current },
+        ok: current.base !== "none",
+        error:
+          current.base !== "none" ? undefined : `"tee" needs a pipeline value`,
+        body: bodyEdges,
+        branches: branchEdges,
       });
       continue;
     }
@@ -825,6 +949,55 @@ export function walkPipelineTypes(steps, deps) {
   }
 
   return { edges, final: current };
+}
+
+/**
+ * @param {{ name: string, params?: Record<string, *> }[]} body
+ * @param {RefinedType} start
+ * @param {{ getStep: (name: string) => { name: string, kind?: string, overloads?: StepOverload[], input?: IoType, output?: IoType } | null }} deps
+ */
+function walkBodyTypes(body, start, deps) {
+  /** @type {RefinedType} */
+  let current = start;
+  /** @type {{ index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string }[]} */
+  const edges = [];
+  for (let i = 0; i < (body || []).length; i++) {
+    const step = body[i];
+    const input = { ...current };
+    const spec = deps.getStep(step.name);
+    if (!spec) {
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: null,
+        ok: false,
+        error: `Unknown step "${step.name}"`,
+      });
+      continue;
+    }
+    const resolved = resolveStepType(spec, current, step.params || {});
+    if (!resolved.ok) {
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: null,
+        ok: false,
+        error: resolved.error,
+      });
+      break;
+    }
+    current = resolved.output;
+    edges.push({
+      index: i,
+      name: step.name,
+      input,
+      output: { ...current },
+      ok: true,
+    });
+  }
+  return edges;
 }
 
 /**

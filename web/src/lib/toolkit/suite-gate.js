@@ -51,7 +51,8 @@ export function suitesUsedBySteps(steps) {
  * @returns {CryptoSuite[]}
  */
 export function suitesUsedByAst(ast) {
-  return suitesUsedBySteps(ast?.steps);
+  const steps = (ast?.chains || []).flatMap((c) => c.steps || []);
+  return suitesUsedBySteps(steps.length ? steps : ast?.steps);
 }
 
 /**
@@ -94,7 +95,8 @@ export function assertRecipeAllowedUnderFips(ast, status, fipsMode) {
   const used = suitesUsedByAst(ast);
   const bad = unverifiedSuitesAmong(status, used);
   if (!bad.length) return;
-  const ops = stepNamesInSuites(ast?.steps || [], bad);
+  const allSteps = (ast?.chains || []).flatMap((c) => c.steps || []);
+  const ops = stepNamesInSuites(allSteps.length ? allSteps : ast?.steps || [], bad);
   const suiteList = bad.join(", ");
   const opList = ops.length ? ops.join(", ") : "(unknown)";
   throw new Error(

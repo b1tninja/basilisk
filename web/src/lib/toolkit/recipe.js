@@ -1,24 +1,25 @@
 /**
- * Toolkit recipe language: pipe-separated steps with key=value params.
+ * Toolkit recipe language — validate / serialize / presets.
+ * Normative grammar: docs/RECIPE.md
  *
- *   genkey ec/p256 | fanout format=spki which=public name=public-key
- *     | export scalar | sss threshold=2 shares=3 | blip39 | foreach | encrypt gpg
- *   shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem
- *   (free-form text source: input / paste / cat)
+ *   genkey ec/p256 | out @kp
  *
- * Flow control (CyberChef Fork/Merge):
- *   foreach (aliases: map, each, fork) opens a per-item scope
- *   merge   (aliases: collect) closes it (implicit at end of pipeline)
+ *   in @kp | .public | export spki | pem | out @public
+ *   in @kp | export pkcs8 | pem | out @private
  *
- * Decode flags (shell-style):
- *   base64 -d | hex -d | pem -d   → params.decode = true
+ * Decode flags (shell-style): base64 -d | hex -d | pem -d → params.decode = true
+ * Slot sugar: bare `out kp` / `in kp` canonicalize to `@kp`; `from` → `in`.
  */
 
 import {
-  canonicalName,
   getStep,
   listSteps,
 } from "./registry.js";
+import {
+  canonicalSelectorMember,
+  parseRecipeSource,
+  slotLabelKey,
+} from "./recipe-parse.js";
 import {
   formatType,
   isTerminalSink,
@@ -28,18 +29,60 @@ import {
 } from "./types.js";
 
 /**
+ * Labeled tee branch (selector style: `- .private | …`).
+ * @typedef {object} TeeBranch
+ * @property {string} member  e.g. private | public | key | value
+ * @property {string} [selector]  e.g. ".private"
+ * @property {RecipeStep[]} body
+ * @property {number} [start]
+ * @property {number} [end]
+ */
+
+/**
  * @typedef {object} RecipeStep
  * @property {string} name  canonical name
  * @property {Record<string, string|number|boolean>} params
  * @property {number} start  char offset in source
  * @property {number} end
+ * @property {RecipeStep[]} [body]  nested `-` list body for tee / foreach
+ * @property {TeeBranch[]} [branches]  tee selector branches
+ * @property {string} [foreachSelector]  e.g. ".items"
+ * @property {"brace"|"indent"} [bodyForm]
+ */
+
+/**
+ * @typedef {object} RecipeChain
+ * @property {RecipeStep[]} steps
  */
 
 /**
  * @typedef {object} RecipeAst
- * @property {RecipeStep[]} steps
+ * @property {RecipeChain[]} chains
+ * @property {RecipeStep[]} steps  first chain (compat)
  * @property {string} source
  */
+
+/**
+ * @param {RecipeAst|RecipeChain[]|RecipeStep[]|null|undefined} astOrSteps
+ * @returns {RecipeChain[]}
+ */
+export function recipeChains(astOrSteps) {
+  if (!astOrSteps) return [];
+  if (Array.isArray(astOrSteps)) {
+    if (!astOrSteps.length) return [];
+    if (astOrSteps[0] && Array.isArray(astOrSteps[0].steps)) {
+      return /** @type {RecipeChain[]} */ (astOrSteps);
+    }
+    return [{ steps: /** @type {RecipeStep[]} */ (astOrSteps) }];
+  }
+  if (Array.isArray(astOrSteps.chains) && astOrSteps.chains.length) {
+    return astOrSteps.chains;
+  }
+  if (Array.isArray(astOrSteps.steps)) {
+    return astOrSteps.steps.length ? [{ steps: astOrSteps.steps }] : [];
+  }
+  return [];
+}
 
 /**
  * @typedef {object} RecipeError
@@ -65,277 +108,403 @@ import {
  * @returns {{ ast: RecipeAst|null, errors: RecipeError[] }}
  */
 export function parseRecipe(source) {
-  const text = String(source || "").trim();
-  /** @type {RecipeError[]} */
-  const errors = [];
-  if (!text) {
-    return {
-      ast: { steps: [], source: text },
-      errors: [{ message: "Empty recipe — start with a source step like genkey, random, or input." }],
-    };
-  }
-
-  const segments = splitPipes(text);
-  /** @type {RecipeStep[]} */
-  const steps = [];
-
-  for (const seg of segments) {
-    const parsed = parseSegment(seg.text, seg.start);
-    if (parsed.error) {
-      errors.push(parsed.error);
-      continue;
-    }
-    steps.push(parsed.step);
-  }
-
-  if (errors.length) return { ast: null, errors };
-  return { ast: { steps, source: text }, errors: [] };
+  return parseRecipeSource(source);
 }
 
 /**
- * Split on `|` that are not inside quotes or brackets.
- * @param {string} text
- * @returns {{ text: string, start: number, end: number }[]}
+ * Parse then re-serialize to canonical form (names, spacing, indent, enums).
+ * On parse failure, returns the original source unchanged with errors.
+ * @param {string} source
+ * @returns {{ text: string, ast: RecipeAst|null, errors: RecipeError[], changed: boolean }}
  */
-function splitPipes(text) {
-  /** @type {{ text: string, start: number, end: number }[]} */
-  const out = [];
-  let start = 0;
-  let depth = 0;
-  let quote = null;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (quote) {
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      quote = c;
-      continue;
-    }
-    if (c === "[" || c === "(") {
-      depth++;
-      continue;
-    }
-    if (c === "]" || c === ")") {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-    if (c === "|" && depth === 0) {
-      const slice = text.slice(start, i);
-      out.push({ text: slice, start, end: i });
-      start = i + 1;
-    }
+export function canonicalizeRecipe(source) {
+  const raw = String(source ?? "");
+  const { ast, errors } = parseRecipe(raw);
+  if (!ast || errors.length) {
+    return { text: raw, ast, errors, changed: false };
   }
-  out.push({ text: text.slice(start), start, end: text.length });
-  return out
-    .map((s) => {
-      const trimmed = s.text.trim();
-      const lead = s.text.length - s.text.trimStart().length;
-      return {
-        text: trimmed,
-        start: s.start + lead,
-        end: s.start + lead + trimmed.length,
-      };
-    })
-    .filter((s) => s.text.length > 0);
-}
-
-/**
- * @param {string} segment
- * @param {number} offset
- * @returns {{ step: RecipeStep, error?: undefined } | { step?: undefined, error: RecipeError }}
- */
-function parseSegment(segment, offset) {
-  const tokens = tokenize(segment);
-  if (!tokens.length) {
-    return {
-      error: { message: "Empty step", start: offset, end: offset },
-    };
-  }
-  const nameTok = tokens[0];
-  const canon = canonicalName(nameTok.value);
-  if (!canon) {
-    return {
-      error: {
-        message: `Unknown step "${nameTok.value}". See the Reference panel for available steps.`,
-        start: offset + nameTok.start,
-        end: offset + nameTok.end,
-      },
-    };
-  }
-  const spec = getStep(canon);
-  /** @type {Record<string, string|number|boolean>} */
-  const params = {};
-  let positionalUsed = false;
-
-  for (let i = 1; i < tokens.length; i++) {
-    const t = tokens[i];
-    // Bare CLI flags (e.g. -d)
-    if (t.value.startsWith("-") && !t.value.includes("=")) {
-      const flagParam = (spec?.params || []).find((p) => p.flag === t.value);
-      if (!flagParam) {
-        return {
-          error: {
-            message: `Unknown flag "${t.value}" for ${canon}`,
-            start: offset + t.start,
-            end: offset + t.end,
-          },
-        };
-      }
-      params[flagParam.name] = true;
-      continue;
-    }
-    if (t.value.includes("=")) {
-      const eq = t.value.indexOf("=");
-      const key = t.value.slice(0, eq).trim();
-      const raw = t.value.slice(eq + 1).trim();
-      if (!key) {
-        return {
-          error: {
-            message: "Empty parameter name",
-            start: offset + t.start,
-            end: offset + t.end,
-          },
-        };
-      }
-      params[key] = coerceParam(spec, key, unquote(raw));
-    } else if (!positionalUsed) {
-      const pos = (spec?.params || []).find((p) => p.positional);
-      if (!pos) {
-        return {
-          error: {
-            message: `Unexpected token "${t.value}" (no positional parameter for ${canon})`,
-            start: offset + t.start,
-            end: offset + t.end,
-          },
-        };
-      }
-      params[pos.name] = coerceParam(spec, pos.name, unquote(t.value));
-      positionalUsed = true;
-    } else {
-      return {
-        error: {
-          message: `Unexpected token "${t.value}"`,
-          start: offset + t.start,
-          end: offset + t.end,
-        },
-      };
-    }
-  }
-
-  // Apply defaults
-  for (const p of spec?.params || []) {
-    if (params[p.name] === undefined && p.default !== undefined) {
-      params[p.name] = p.default;
-    }
-  }
-
-  // Alias `hexdump` forces classic dump layout (canonical step is still inspect).
-  if (String(nameTok.value || "").toLowerCase() === "hexdump") {
-    params.format = "hexdump";
-  }
-
+  const text = serializeRecipe(ast);
   return {
-    step: {
-      name: canon,
-      params,
-      start: offset,
-      end: offset + segment.length,
-    },
+    text,
+    ast: { ...ast, source: text },
+    errors: [],
+    changed: text !== raw,
   };
 }
 
 /**
- * @param {string} s
- * @returns {{ value: string, start: number, end: number }[]}
+ * Serialize one step (no body) to recipe text.
+ * @param {RecipeStep} step
+ * @returns {string}
  */
-function tokenize(s) {
-  /** @type {{ value: string, start: number, end: number }[]} */
-  const out = [];
-  let i = 0;
-  while (i < s.length) {
-    while (i < s.length && /\s/.test(s[i])) i++;
-    if (i >= s.length) break;
-    const start = i;
-    if (s[i] === '"' || s[i] === "'") {
-      const q = s[i];
-      i++;
-      while (i < s.length && s[i] !== q) i++;
-      i++;
-      out.push({ value: s.slice(start, i), start, end: i });
+export function serializeStep(step) {
+  const spec = getStep(step.name);
+  const parts = [step.name];
+  for (const p of spec?.params || []) {
+    const v = step.params?.[p.name];
+    if (v === undefined || v === "") continue;
+    if (p.flag && p.type === "bool") {
+      if (v === true) parts.push(p.flag);
       continue;
     }
-    while (i < s.length && !/\s/.test(s[i])) i++;
-    out.push({ value: s.slice(start, i), start, end: i });
+    // Omit default *named* params, and default out/text/peek names only.
+    if (v === p.default) {
+      const omitName =
+        p.positional &&
+        p.name === "name" &&
+        (step.name === "out" || step.name === "text" || step.name === "peek");
+      if (omitName || !p.positional) continue;
+    }
+    if (p.positional && parts.length === 1) {
+      parts.push(String(v));
+      continue;
+    }
+    const needsQuote = /[\s|=]/.test(String(v));
+    parts.push(
+      `${p.name}=${needsQuote ? JSON.stringify(String(v)) : String(v)}`
+    );
   }
-  return out;
-}
-
-function unquote(s) {
-  if (
-    (s.startsWith('"') && s.endsWith('"')) ||
-    (s.startsWith("'") && s.endsWith("'"))
-  ) {
-    return s.slice(1, -1);
-  }
-  return s;
+  return parts.join(" ");
 }
 
 /**
- * @param {import("./registry.js").StepSpec|null} spec
- * @param {string} key
- * @param {string} raw
- * @returns {string|number|boolean}
+ * Serialize one pipeline of steps (no block wrappers).
+ * @param {RecipeStep[]} steps
+ * @returns {string}
  */
-function coerceParam(spec, key, raw) {
-  const p = (spec?.params || []).find((x) => x.name === key);
-  if (!p) return raw;
-  if (p.type === "int") {
-    const n = Number(raw);
-    return Number.isFinite(n) ? Math.floor(n) : raw;
-  }
-  if (p.type === "bool") {
-    return raw === "true" || raw === "1" || raw === "yes";
-  }
-  return raw;
+function serializePipeline(steps) {
+  return steps
+    .map((s) => {
+      if (s.name === "select" && s.params?.selector) {
+        return String(s.params.selector);
+      }
+      if (s.name === "at" && s.params?.selector != null) {
+        const sel = String(s.params.selector);
+        if (/^\d+(:\d+)?$/.test(sel)) return `[${sel}]`;
+      }
+      return serializeStep(s);
+    })
+    .join(" | ");
 }
 
 /**
- * Serialize an AST back to recipe text (canonical names, no aliases).
- * Recipients are never included. Decode flags emit as `-d`.
- * @param {RecipeAst|RecipeStep[]} astOrSteps
+ * Serialize one chain's steps to recipe text.
+ * @param {RecipeStep[]} steps
+ * @returns {string}
+ */
+function serializeChainSteps(steps) {
+  /** @type {string[]} */
+  const chunks = [];
+
+  /**
+   * @param {string} head
+   */
+  function pushStemPiece(head) {
+    if (chunks.length && chunks[chunks.length - 1]?.endsWith("\n")) {
+      chunks.push(`| ${head}`);
+    } else if (chunks.length) {
+      chunks.push(` | ${head}`);
+    } else {
+      chunks.push(head);
+    }
+  }
+
+  for (const step of steps) {
+    const hasListBody =
+      (step.name === "tee" || step.name === "foreach") &&
+      Array.isArray(step.body) &&
+      step.body.length > 0;
+    const hasBranches =
+      step.name === "tee" &&
+      Array.isArray(step.branches) &&
+      step.branches.length > 0;
+    const isBlock = hasListBody || hasBranches;
+
+    let head = serializeStep(step);
+    if (step.name === "foreach" && step.foreachSelector) {
+      head = `foreach ${step.foreachSelector}`;
+    } else if (step.name === "select" && step.params?.selector) {
+      head = String(step.params.selector);
+    } else if (step.name === "at" && step.params?.selector != null) {
+      const sel = String(step.params.selector);
+      if (/^\d+(:\d+)?$/.test(sel)) head = `[${sel}]`;
+    }
+
+    if (!isBlock) {
+      pushStemPiece(head);
+      continue;
+    }
+
+    if (chunks.length) chunks.push(" | ");
+    const useBrace = step.bodyForm === "brace";
+    chunks.push(useBrace ? `${head} {\n` : `${head}\n`);
+
+    // Body may contain select+follow steps from `- .value | out` flatten — regroup.
+    {
+      const body = step.body || [];
+      let bi = 0;
+      while (bi < body.length) {
+        const b = body[bi];
+        if (b.name === "select" && b.params?.selector) {
+          const group = [b];
+          bi++;
+          while (
+            bi < body.length &&
+            body[bi].name !== "select" &&
+            !(body[bi].name === "tee" || body[bi].name === "foreach")
+          ) {
+            group.push(body[bi]);
+            bi++;
+          }
+          const sel = String(b.params.selector);
+          const rest = serializePipeline(group.slice(1));
+          chunks.push(
+            rest ? `  - ${sel} | ${rest}\n` : `  - ${sel} | inspect\n`
+          );
+        } else {
+          chunks.push(`  - ${serializePipeline([b])}\n`);
+          bi++;
+        }
+      }
+    }
+    for (const br of step.branches || []) {
+      const sel = br.selector || `.${br.member}`;
+      const pipe = serializePipeline(br.body || []);
+      chunks.push(`  - ${sel} | ${pipe}\n`);
+    }
+    if (useBrace) chunks.push("}");
+  }
+  return chunks.join("").replace(/\n+$/, "");
+}
+
+/**
+ * Serialize an AST (or steps / chains) back to recipe text.
+ * Chains are joined with a blank line. Canonical names; `@` slot sugar.
+ * @param {RecipeAst|RecipeStep[]|RecipeChain[]} astOrSteps
  * @returns {string}
  */
 export function serializeRecipe(astOrSteps) {
-  const steps = Array.isArray(astOrSteps) ? astOrSteps : astOrSteps?.steps || [];
-  return steps
-    .map((step) => {
-      const spec = getStep(step.name);
-      const parts = [step.name];
-      for (const p of spec?.params || []) {
-        const v = step.params?.[p.name];
-        if (v === undefined || v === "") continue;
-        // CLI flags: emit -d instead of decode=true
-        if (p.flag && p.type === "bool") {
-          if (v === true) parts.push(p.flag);
-          continue;
-        }
-        // Always emit positional params (even when equal to default) so
-        // recipes stay explicit and round-trip cleanly.
-        if (p.positional && parts.length === 1) {
-          parts.push(String(v));
-          continue;
-        }
-        if (v === p.default) continue;
-        const needsQuote = /[\s|=]/.test(String(v));
-        parts.push(
-          `${p.name}=${needsQuote ? JSON.stringify(String(v)) : String(v)}`
-        );
+  const chains = recipeChains(astOrSteps);
+  return chains
+    .map((c) => serializeChainSteps(c.steps || []))
+    .filter((t) => t.length)
+    .join("\n\n");
+}
+
+/**
+ * Refined type after a selector projection (`.private`, `.items`, …).
+ * @param {import("./types.js").RefinedType} current
+ * @param {string} memberOrSelector
+ * @returns {{ ok: true, type: import("./types.js").RefinedType } | { ok: false, error: string }}
+ */
+export function projectTypeForMember(current, memberOrSelector) {
+  const sel = String(memberOrSelector || "");
+  if (/^\[\d/.test(sel)) {
+    // Index selectors use `at` typing.
+    return {
+      ok: false,
+      error: `Use \`at\` / ${sel} as a stem stage, not a tee member`,
+    };
+  }
+  const m = canonicalSelectorMember(sel);
+
+  if (m === "private" || m === "public") {
+    if (current.base !== "keypair") {
+      return {
+        ok: false,
+        error: `selector ".${m}" requires keypair, got ${formatType(current)}`,
+      };
+    }
+    if (m === "private") {
+      return {
+        ok: true,
+        type: typeOf("keypair", { ...current, which: "private" }),
+      };
+    }
+    return {
+      ok: true,
+      type: typeOf("keypair", {
+        alg: current.alg,
+        which: "public",
+      }),
+    };
+  }
+
+  if (m === "keys" || m === "values" || m === "items") {
+    if (current.base !== "shares") {
+      return {
+        ok: false,
+        error: `selector ".${m}" requires shares, got ${formatType(current)}`,
+      };
+    }
+    if (m === "keys") {
+      return { ok: true, type: typeOf("text", { kind: "opaque" }) };
+    }
+    if (m === "items") {
+      return { ok: true, type: typeOf("item", { kind: current.kind || "mnemonic" }) };
+    }
+    // .values — same per-element type as foreach default
+    if (current.kind === "raw") {
+      return { ok: true, type: typeOf("bytes", { kind: "opaque" }) };
+    }
+    return { ok: true, type: typeOf("text", { kind: "mnemonic" }) };
+  }
+
+  if (m === "key" || m === "value") {
+    if (current.base !== "item") {
+      return {
+        ok: false,
+        error: `selector ".${m}" requires an item ({key,value}), got ${formatType(current)}`,
+      };
+    }
+    if (m === "key") {
+      return { ok: true, type: typeOf("text", { kind: "opaque" }) };
+    }
+    if (current.kind === "raw") {
+      return { ok: true, type: typeOf("bytes", { kind: "opaque" }) };
+    }
+    return { ok: true, type: typeOf("text", { kind: "mnemonic" }) };
+  }
+
+  return { ok: false, error: `Unknown selector ".${m}"` };
+}
+
+/**
+ * Validate steps inside a tee/foreach list body.
+ * @param {RecipeStep[]} body
+ * @param {import("./types.js").RefinedType} startType
+ * @param {{
+ *   errors: RecipeError[],
+ *   warnings: string[],
+ *   stepIndex: number,
+ *   inForeach: boolean,
+ * }} ctx
+ * @returns {{
+ *   final: import("./types.js").RefinedType,
+ *   encryptInBody: boolean,
+ *   inputNeeds: ("shares"|"gpg"|"text"|"envelope"|"key")[],
+ * }}
+ */
+function validateBodySteps(body, startType, ctx) {
+  /** @type {import("./types.js").RefinedType} */
+  let current = startType;
+  let encryptInBody = false;
+  /** @type {("shares"|"gpg"|"text"|"envelope"|"key")[]} */
+  const inputNeeds = [];
+  /** @type {Map<string, import("./types.js").RefinedType>|undefined} */
+  const slotTypes = ctx.slotTypes;
+  /** @type {import("./types.js").RefinedType[]|undefined} */
+  const slotTypesByIndex = ctx.slotTypesByIndex;
+
+  if (!body.length) {
+    ctx.errors.push({
+      message: "tee/foreach list body is empty — add at least one `- step`",
+      stepIndex: ctx.stepIndex,
+    });
+    return { final: current, encryptInBody, inputNeeds };
+  }
+
+  for (const step of body) {
+    const spec = getStep(step.name);
+    if (!spec) {
+      ctx.errors.push({
+        message: `Unknown step "${step.name}"`,
+        start: step.start,
+        end: step.end,
+        stepIndex: ctx.stepIndex,
+      });
+      continue;
+    }
+    if (
+      step.name === "foreach" ||
+      step.name === "tee" ||
+      step.name === "merge"
+    ) {
+      ctx.errors.push({
+        message: `Cannot use "${step.name}" inside a nested list body`,
+        start: step.start,
+        end: step.end,
+        stepIndex: ctx.stepIndex,
+      });
+      continue;
+    }
+    if (step.name === "select") {
+      const projected = projectTypeForMember(
+        current,
+        String(step.params?.selector || "")
+      );
+      if (!projected.ok) {
+        ctx.errors.push({
+          message: projected.error,
+          start: step.start,
+          end: step.end,
+          stepIndex: ctx.stepIndex,
+        });
+        continue;
       }
-      return parts.join(" ");
-    })
-    .join(" | ");
+      current = projected.type;
+      continue;
+    }
+    if (step.body?.length) {
+      ctx.errors.push({
+        message: "Nested lists inside tee/foreach bodies are not supported in v1",
+        start: step.start,
+        end: step.end,
+        stepIndex: ctx.stepIndex,
+      });
+    }
+    if (
+      (step.name === "sign" ||
+        step.name === "verify" ||
+        step.name === "aesgcm" ||
+        step.name === "ecdh" ||
+        step.name === "wrap" ||
+        step.name === "unwrap") &&
+      !inputNeeds.includes("key")
+    ) {
+      inputNeeds.push("key");
+    }
+    if (step.name === "encrypt") encryptInBody = true;
+
+    const resolved = resolveStepType(spec, current, step.params || {});
+    if (!resolved.ok) {
+      ctx.errors.push({
+        message: resolved.error,
+        start: step.start,
+        end: step.end,
+        stepIndex: ctx.stepIndex,
+      });
+      continue;
+    }
+    current = resolved.output;
+    if (
+      step.name === "out" &&
+      slotTypes &&
+      slotTypesByIndex &&
+      !ctx.inForeach
+    ) {
+      const ref = String(step.params?.name || "@output");
+      const key = slotLabelKey(ref);
+      if (key) {
+        if (slotTypes.has(key)) {
+          ctx.errors.push({
+            message: `Duplicate out slot @${key}`,
+            start: step.start,
+            end: step.end,
+            stepIndex: ctx.stepIndex,
+          });
+        } else {
+          slotTypes.set(key, { ...current });
+        }
+      }
+      slotTypesByIndex.push({ ...current });
+    }
+    if (ctx.inForeach && spec.kind === "sink") {
+      current = typeOf("text", { kind: "mnemonic" });
+    }
+  }
+
+  return { final: current, encryptInBody, inputNeeds };
 }
 
 /**
@@ -348,8 +517,8 @@ export function validateRecipe(ast) {
   const errors = [];
   /** @type {string[]} */
   const warnings = [];
-  const steps = ast?.steps || [];
-  if (!steps.length) {
+  const chains = recipeChains(ast);
+  if (!chains.length || !chains.some((c) => c.steps?.length)) {
     return {
       ok: false,
       errors: [{ message: "Empty recipe" }],
@@ -358,9 +527,11 @@ export function validateRecipe(ast) {
     };
   }
 
-  /** @type {import("./types.js").RefinedType} */
-  let current = tNone();
-  let foreachDepth = 0;
+  /** @type {Map<string, import("./types.js").RefinedType>} */
+  const slotTypes = new Map();
+  /** @type {import("./types.js").RefinedType[]} */
+  const slotTypesByIndex = []; // 0-based; recipe indexes are 1-based
+
   let sharesCount = 0;
   let gpgSlots = 0;
   let foreachGpg = false;
@@ -369,16 +540,35 @@ export function validateRecipe(ast) {
   let sawInputShares = false;
   let sawInputText = false;
   let sawDecryptGpg = false;
+  let globalStepIndex = 0;
+
+  for (let ci = 0; ci < chains.length; ci++) {
+    const steps = chains[ci].steps || [];
+    if (!steps.length) continue;
+
+    /** @type {import("./types.js").RefinedType} */
+    let current = tNone();
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
+    const stepIndex = globalStepIndex++;
+    if (step.name === "merge" || step.name === "collect") {
+      errors.push({
+        message:
+          `"${step.name}" is not used — foreach bodies close by dedent or \`}\` (see docs/RECIPE.md)`,
+        start: step.start,
+        end: step.end,
+          stepIndex,
+        });
+      continue;
+    }
     const spec = getStep(step.name);
     if (!spec) {
       errors.push({
         message: `Unknown step "${step.name}"`,
         start: step.start,
         end: step.end,
-        stepIndex: i,
+        stepIndex,
       });
       continue;
     }
@@ -392,7 +582,7 @@ export function validateRecipe(ast) {
           message: `${step.name}: invalid ${p.name}="${v}" (allowed: ${p.enum.join(", ")})`,
           start: step.start,
           end: step.end,
-          stepIndex: i,
+          stepIndex,
         });
       }
       if (p.type === "int") {
@@ -402,7 +592,7 @@ export function validateRecipe(ast) {
             message: `${step.name}: ${p.name} must be an integer`,
             start: step.start,
             end: step.end,
-            stepIndex: i,
+            stepIndex,
           });
         } else {
           if (p.min != null && n < p.min) {
@@ -410,7 +600,7 @@ export function validateRecipe(ast) {
               message: `${step.name}: ${p.name} must be ≥ ${p.min}`,
               start: step.start,
               end: step.end,
-              stepIndex: i,
+              stepIndex,
             });
           }
           if (p.max != null && n > p.max) {
@@ -418,7 +608,7 @@ export function validateRecipe(ast) {
               message: `${step.name}: ${p.name} must be ≤ ${p.max}`,
               start: step.start,
               end: step.end,
-              stepIndex: i,
+              stepIndex,
             });
           }
         }
@@ -433,7 +623,7 @@ export function validateRecipe(ast) {
           message: `sss: threshold (${t}) cannot exceed shares (${n})`,
           start: step.start,
           end: step.end,
-          stepIndex: i,
+          stepIndex,
         });
       }
       sharesCount = n;
@@ -445,7 +635,7 @@ export function validateRecipe(ast) {
           message: "Only one shares step is supported per pipeline",
           start: step.start,
           end: step.end,
-          stepIndex: i,
+          stepIndex,
         });
       }
       sawInputShares = true;
@@ -458,7 +648,7 @@ export function validateRecipe(ast) {
           message: "Only one input step is supported per pipeline",
           start: step.start,
           end: step.end,
-          stepIndex: i,
+          stepIndex,
         });
       }
       sawInputText = true;
@@ -471,7 +661,7 @@ export function validateRecipe(ast) {
           message: "Only one decrypt step is supported per recipe",
           start: step.start,
           end: step.end,
-          stepIndex: i,
+          stepIndex,
         });
       }
       sawDecryptGpg = true;
@@ -479,6 +669,44 @@ export function validateRecipe(ast) {
       // Share rows for mnemonics already decrypted outside the browser
       // (Kleopatra/gpg/YubiKey — OpenPGP cards are not reachable from JS).
       if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
+    }
+
+    if (step.name === "in") {
+      const ref = String(step.params?.ref || "");
+      /** @type {import("./types.js").RefinedType|undefined} */
+      let loaded;
+      if (/^\d+$/.test(ref)) {
+        const n = Number(ref);
+        loaded = slotTypesByIndex[n - 1];
+        if (!loaded) {
+          errors.push({
+            message: `in ${ref}: no slot registered at index ${ref}`,
+            start: step.start,
+            end: step.end,
+            stepIndex,
+          });
+          continue;
+        }
+      } else {
+        const key = slotLabelKey(ref);
+        loaded = key ? slotTypes.get(key) : undefined;
+        if (!loaded) {
+          errors.push({
+            message: `in ${ref}: unknown slot (register it earlier with out ${ref.startsWith("@") ? ref : `@${ref}`})`,
+            start: step.start,
+            end: step.end,
+            stepIndex,
+          });
+          continue;
+        }
+      }
+      if (i > 0 && current.base !== "none") {
+        warnings.push(
+          `Source step "in" in chain ${ci + 1} discards prior pipeline value`
+        );
+      }
+      current = { ...loaded };
+      continue;
     }
 
     if (step.name === "symdecrypt") {
@@ -498,43 +726,137 @@ export function validateRecipe(ast) {
     }
 
     if (step.name === "foreach") {
-      if (foreachDepth > 0) {
-        errors.push({
-          message: "Nested foreach is not supported in v1",
-          start: step.start,
-          end: step.end,
-          stepIndex: i,
-        });
-      }
       if (current.base !== "shares") {
         errors.push({
           message: `foreach requires a collection (shares) — got ${formatType(current)}. Add sss, blip39, or shares before foreach.`,
           start: step.start,
           end: step.end,
-          stepIndex: i,
+          stepIndex,
         });
       }
-      foreachDepth++;
-      // Per-item value inside foreach: mnemonic text or raw share bytes
-      current =
-        current.kind === "raw"
-          ? typeOf("bytes", { kind: "opaque" })
-          : typeOf("text", { kind: "mnemonic" });
+      if (!step.body?.length) {
+        errors.push({
+          message:
+            "foreach requires a body — use indented `- out @share` or `foreach { - out @share }`",
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+        current = typeOf("bundle");
+        continue;
+      }
+      const mode = String(step.foreachSelector || ".values").replace(/^\./, "");
+      /** @type {import("./types.js").RefinedType} */
+      let itemType;
+      if (mode === "items") {
+        itemType = typeOf("item", { kind: current.kind || "mnemonic" });
+      } else if (mode === "keys") {
+        itemType = typeOf("text", { kind: "opaque" });
+      } else {
+        itemType =
+          current.kind === "raw"
+            ? typeOf("bytes", { kind: "opaque" })
+            : typeOf("text", { kind: "mnemonic" });
+      }
+      const bodyVal = validateBodySteps(step.body, itemType, {
+        errors,
+        warnings,
+        stepIndex,
+        inForeach: true,
+        slotTypes,
+        slotTypesByIndex,
+      });
+      if (bodyVal.encryptInBody) {
+        foreachGpg = true;
+        gpgSlots = Math.max(gpgSlots, sharesCount || 1);
+      }
+      for (const need of bodyVal.inputNeeds) {
+        if (!inputNeeds.includes(need)) inputNeeds.push(need);
+      }
+      current = typeOf("bundle");
       continue;
     }
 
-    if (step.name === "merge") {
-      if (foreachDepth === 0) {
+    if (step.name === "tee") {
+      if (current.base === "none") {
         errors.push({
-          message: "merge without an open foreach",
+          message: `"tee" needs a pipeline value`,
           start: step.start,
           end: step.end,
-          stepIndex: i,
+          stepIndex,
         });
-      } else {
-        foreachDepth--;
+        continue;
       }
-      current = typeOf("bundle");
+      if (!step.body?.length && !step.branches?.length) {
+        errors.push({
+          message:
+            "tee requires a body — use `{ - .public | … }` or indented `-` lines (use `peek` for a side inspect)",
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+        continue;
+      }
+      if (step.body?.length) {
+        const bodyVal = validateBodySteps(step.body, current, {
+          errors,
+          warnings,
+          stepIndex,
+          inForeach: false,
+          slotTypes,
+          slotTypesByIndex,
+        });
+        for (const need of bodyVal.inputNeeds) {
+          if (!inputNeeds.includes(need)) inputNeeds.push(need);
+        }
+        if (bodyVal.encryptInBody) gpgSlots = Math.max(gpgSlots, 1);
+      }
+      for (const br of step.branches || []) {
+        const projected = projectTypeForMember(
+          current,
+          br.selector || br.member
+        );
+        if (!projected.ok) {
+          errors.push({
+            message: projected.error || `tee selector "${br.member}" invalid`,
+            start: br.start ?? step.start,
+            end: br.end ?? step.end,
+            stepIndex,
+          });
+          continue;
+        }
+        const bodyVal = validateBodySteps(br.body, projected.type, {
+          errors,
+          warnings,
+          stepIndex,
+          inForeach: false,
+          slotTypes,
+          slotTypesByIndex,
+        });
+        for (const need of bodyVal.inputNeeds) {
+          if (!inputNeeds.includes(need)) inputNeeds.push(need);
+        }
+        if (bodyVal.encryptInBody) gpgSlots = Math.max(gpgSlots, 1);
+      }
+      // Stem type unchanged after tee body.
+      continue;
+    }
+
+    if (step.name === "select") {
+      const projected = projectTypeForMember(
+        current,
+        String(step.params?.selector || "")
+      );
+      if (!projected.ok) {
+        errors.push({
+          message: projected.error,
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+        continue;
+      }
+      current = projected.type;
       continue;
     }
 
@@ -544,21 +866,23 @@ export function validateRecipe(ast) {
       step.name !== "recover" &&
       step.name !== "blip39" &&
       step.name !== "tee" &&
+      step.name !== "peek" &&
       step.name !== "inspect" &&
       step.name !== "out" &&
-      step.name !== "fanout"
+      step.name !== "at" &&
+      step.name !== "select"
     ) {
       errors.push({
-        message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, blip39 to encode/decode, or recover (on raw shares) for bytes/master.`,
+        message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, at N / [n] to select, blip39 to encode/decode, or recover (on raw shares) for bytes/master.`,
         start: step.start,
         end: step.end,
-        stepIndex: i,
+        stepIndex,
       });
       continue;
     }
 
     if (spec.kind === "source") {
-      if (i > 0 && current.base !== "none" && foreachDepth === 0) {
+      if (i > 0 && current.base !== "none") {
         warnings.push(
           `Source step "${step.name}" at position ${i + 1} discards prior pipeline value`
         );
@@ -571,20 +895,35 @@ export function validateRecipe(ast) {
       if (current.base === "keypair" && /expects bytes/i.test(message)) {
         message = `"${step.name}" expects DER bytes — add export pkcs8, export scalar, or spki first.`;
       } else if (current.base === "none") {
-        message = `"${step.name}" needs an input — start with genkey, random, passphrase, input, or decrypt.`;
+        message = `"${step.name}" needs an input — start with genkey, random, passphrase, input, in, or decrypt.`;
       }
       errors.push({
         message,
         start: step.start,
         end: step.end,
-        stepIndex: i,
+        stepIndex,
       });
       continue;
     }
 
     current = resolved.output;
-    if (foreachDepth > 0 && spec.kind === "sink") {
-      current = typeOf("text", { kind: "mnemonic" });
+
+    if (step.name === "out") {
+      const ref = String(step.params?.name || "@output");
+      const key = slotLabelKey(ref);
+      if (key) {
+        if (slotTypes.has(key)) {
+          errors.push({
+            message: `Duplicate out slot @${key}`,
+            start: step.start,
+            end: step.end,
+            stepIndex,
+          });
+        } else {
+          slotTypes.set(key, { ...current });
+        }
+      }
+      slotTypesByIndex.push({ ...current });
     }
 
     // Reject sss on scalars that are not 16/32 (e.g. P-384)
@@ -602,33 +941,23 @@ export function validateRecipe(ast) {
     }
 
     if (step.name === "encrypt") {
-      if (foreachDepth > 0) {
-        foreachGpg = true;
-        gpgSlots = Math.max(gpgSlots, sharesCount || 1);
-      } else {
-        gpgSlots = Math.max(gpgSlots, 1);
-      }
+      gpgSlots = Math.max(gpgSlots, 1);
     }
-  }
-
-  if (foreachDepth > 0) {
-    warnings.push("foreach scope closed implicitly at end of pipeline");
   }
 
   const first = getStep(steps[0].name);
   if (first && first.kind !== "source" && first.kind !== "flow") {
     errors.push({
-      message: `Pipeline should start with a source (genkey, random, passphrase, input, decrypt), not "${steps[0].name}".`,
+      message: `Chain ${ci + 1} should start with a source (genkey, random, passphrase, input, in, decrypt), not "${steps[0].name}".`,
       start: steps[0].start,
       end: steps[0].end,
-      stepIndex: 0,
+      stepIndex: globalStepIndex - steps.length,
     });
   }
 
   // Dangling typed value: engine auto-emits a result tile — prefer inspect/out.
   const last = steps[steps.length - 1];
   if (
-    errors.length === 0 &&
     last &&
     current.base !== "none" &&
     current.base !== "artifact" &&
@@ -641,9 +970,10 @@ export function validateRecipe(ast) {
         ? "append recover (→ bytes/master) or foreach, or inspect to dump"
         : "append inspect to dump, or out/text to emit a named tile";
     warnings.push(
-      `Trailing ${formatType(current)} is unhandled — ${tip}.`
+      `Chain ${ci + 1}: trailing ${formatType(current)} is unhandled — ${tip}.`
     );
   }
+  } // end chains
 
   return {
     ok: errors.length === 0,
@@ -723,44 +1053,58 @@ export const PRESETS = [
   {
     id: "p256-pem",
     group: "Generate keys",
-    title: "P-256 private key (PEM)",
-    blurb: "secp256r1 PKCS#8 PEM — drop-in for TLS / JWT / WebCrypto import.",
-    recipe: "genkey ec/p256 | export pkcs8 | pem",
+    title: "P-256 public + private (PEM)",
+    blurb:
+      "Tee the public SPKI PEM, then export PKCS#8 — mid-stem fork keeps the keypair on the stem.",
+    recipe: `genkey ec/p256 | tee
+  - .public | export spki | pem | out @public
+| export pkcs8 | pem | out @private`,
   },
   {
     id: "p256-tee-inspect",
     group: "Generate keys",
-    title: "P-256 with mid-pipeline tee",
-    blurb: "Generate a key, tee an openssl-style dump, then export PEM (keypair still flows through).",
-    recipe: "genkey ec/p256 | tee name=keypair | export pkcs8 | pem",
+    title: "P-256 with mid-pipeline peek",
+    blurb: "Generate a key, peek an openssl-style dump, then export PEM (keypair still flows through).",
+    recipe: "genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private",
+  },
+  {
+    id: "p256-multichain",
+    group: "Generate keys",
+    title: "P-256 via @slot reuse",
+    blurb:
+      "Register the live keypair with out @kp, then reuse it across blank-line chains with in @kp.",
+    recipe: `genkey ec/p256 | out @kp
+
+in @kp | .public | export spki | pem | out @public
+in @kp | export pkcs8 | pem | out @private`,
   },
   {
     id: "ed25519-jwk",
     group: "Generate keys",
     title: "Ed25519 key (JWK)",
     blurb: "Signing key as JSON Web Key.",
-    recipe: "genkey ed25519 | export jwk",
+    recipe: "genkey ed25519 | export jwk | out @jwk",
   },
   {
     id: "secret-b64url",
     group: "Secrets & passphrases",
     title: "256-bit secret (base64url)",
     blurb: "Websafe random secret — no +/ or padding.",
-    recipe: "random 32 | base64url",
+    recipe: "random 32 | base64url | out @secret",
   },
   {
     id: "diceware",
     group: "Secrets & passphrases",
     title: "Diceware passphrase",
     blurb: "EFF Large Wordlist, 6 words (~77 bits).",
-    recipe: "passphrase 6",
+    recipe: "passphrase 6 | out @passphrase",
   },
   {
     id: "digest-sha256",
     group: "WebCrypto",
     title: "SHA-256 digest",
     blurb: "Hash 32 random bytes and show hex.",
-    recipe: "random 32 | digest | hex",
+    recipe: "random 32 | digest | hex | out @digest",
   },
   {
     id: "slip39-split",
@@ -768,7 +1112,8 @@ export const PRESETS = [
     pair: "slip39-secret",
     title: "SSS + BLIP39 split a secret",
     blurb: "Generate 32 random bytes, Shamir-split 2-of-3, encode as BLIP39 mnemonics.",
-    recipe: "random 32 | sss threshold=2 shares=3 | blip39 | foreach | out name=share",
+    recipe: `random 32 | sss threshold=2 shares=3 | blip39 | foreach
+  - out @share`,
   },
   {
     id: "recover-shares",
@@ -776,7 +1121,7 @@ export const PRESETS = [
     pair: "slip39-secret",
     title: "Recover secret from BLIP39 shares",
     blurb: "Paste K-of-N mnemonics, decode to raw SSS, reconstruct the 16/32-byte master as Base64.",
-    recipe: "shares | blip39 -d | recover | base64",
+    recipe: "shares | blip39 -d | recover | base64 | out @secret",
   },
   {
     id: "out-mid-pipeline",
@@ -784,9 +1129,11 @@ export const PRESETS = [
     pair: "slip39-scalar",
     title: "Split P-256 scalar into shares",
     blurb:
-      "Emit the public SPKI beside a direct 32-byte scalar SSS + BLIP39 split (no envelope) — preferred for P-256 keys.",
-    recipe:
-      "genkey ec/p256 | fanout format=spki which=public name=public-key ext=spki | export scalar | sss threshold=2 shares=3 | blip39 | foreach | out name=share",
+      "Tee the public PEM, then SSS + BLIP39-split the 32-byte scalar (no envelope) — preferred for P-256 keys.",
+    recipe: `genkey ec/p256 | tee
+  - .public | export spki | pem | out @public
+| export scalar | sss threshold=2 shares=3 | blip39 | foreach
+  - out @share`,
   },
   {
     id: "rebuild-p256",
@@ -795,7 +1142,7 @@ export const PRESETS = [
     title: "Rebuild P-256 key from scalar shares",
     blurb: "Decode BLIP39 shares of a P-256 private scalar, recover SSS, and re-import as WebCrypto.",
     recipe:
-      "shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem",
+      "shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
   },
   {
     id: "quorum-gpg",
@@ -803,9 +1150,11 @@ export const PRESETS = [
     pair: "quorum-gpg",
     title: "P-256 scalar + quorum-share to GPG",
     blurb:
-      "Fan out public key, SSS-split the 32-byte scalar 2-of-3, BLIP39-encode, encrypt each share to a different recipient.",
-    recipe:
-      "genkey ec/p256 | fanout format=spki which=public name=public-key | export scalar | sss threshold=2 shares=3 | blip39 | foreach | encrypt gpg",
+      "Tee the public PEM, SSS-split the 32-byte scalar 2-of-3, BLIP39-encode, encrypt each share to a different recipient.",
+    recipe: `genkey ec/p256 | tee
+  - .public | export spki | pem | out @public
+| export scalar | sss threshold=2 shares=3 | blip39 | foreach
+  - encrypt gpg`,
   },
   {
     id: "decrypt-rebuild-p256",
@@ -815,7 +1164,7 @@ export const PRESETS = [
     blurb:
       "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then blip39 -d | recover and rebuild the P-256 PEM from the scalar.",
     recipe:
-      "decrypt gpg | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem",
+      "decrypt gpg | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
   },
   {
     id: "pem-envelope-split",
@@ -823,9 +1172,9 @@ export const PRESETS = [
     pair: "slip39-pem-envelope",
     title: "Split PEM via OpenPGP envelope",
     blurb:
-      "For PKCS#8 PEM (or any large payload): OpenPGP-encrypt under a random 32-byte master, then SSS + BLIP39-split the master. Keep envelope.asc with the shares.",
-    recipe:
-      "genkey ec/p256 | export pkcs8 | pem | symencrypt | sss threshold=2 shares=3 | blip39 | foreach | out name=share",
+      "Emit PKCS#8 PEM (@pem), OpenPGP-encrypt under a random 32-byte master, then SSS + BLIP39-split the master. Keep envelope.asc with the shares.",
+    recipe: `genkey ec/p256 | export pkcs8 | pem | out @pem | symencrypt | sss threshold=2 shares=3 | blip39 | foreach
+  - out @share`,
   },
   {
     id: "pem-envelope-rebuild",
@@ -834,6 +1183,6 @@ export const PRESETS = [
     title: "Recover PEM from envelope + shares",
     blurb:
       "Decode + recover shares to the hex master, then symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
-    recipe: "shares | blip39 -d | recover | symdecrypt | utf8",
+    recipe: "shares | blip39 -d | recover | symdecrypt | utf8 | out @pem",
   },
 ];

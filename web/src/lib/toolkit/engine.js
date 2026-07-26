@@ -1,5 +1,6 @@
 /**
- * Execute a compiled toolkit recipe AST.
+ * Execute a compiled toolkit recipe AST (multi-chain + @slot registry).
+ * Normative language: docs/RECIPE.md
  * Returns encoded artifacts only (never CryptoKey handles).
  */
 
@@ -53,6 +54,8 @@ import {
 } from "./webcrypto-ops.js";
 import { buildInspectSnapshot, inspectFromSnapshot } from "./inspect.js";
 import { getStep } from "./registry.js";
+import { recipeChains } from "./recipe.js";
+import { slotLabelKey } from "./recipe-parse.js";
 import {
   resolveStepType,
   typeOf,
@@ -144,8 +147,10 @@ import {
  * @returns {Promise<ToolkitArtifact[]>}
  */
 export async function runRecipe(ast, bindings = {}) {
-  const steps = ast?.steps || [];
-  if (!steps.length) throw new Error("Empty recipe");
+  const chains = recipeChains(ast);
+  if (!chains.length || !chains.some((c) => c.steps?.length)) {
+    throw new Error("Empty recipe");
+  }
 
   if (bindings.fipsMode) {
     const { assertRecipeAllowedUnderFips } = await import("./suite-gate.js");
@@ -159,28 +164,132 @@ export async function runRecipe(ast, bindings = {}) {
 
   /** @type {ToolkitArtifact[]} */
   const artifacts = [];
-  /** @type {PipelineValue|null} */
-  let value = null;
-  /** True when the last top-level step already materialized tiles (`out` / `text`). */
-  let lastStepEmitted = false;
+  /** @type {Map<string, PipelineValue>} */
+  const slotsByLabel = new Map();
+  /** @type {PipelineValue[]} */
+  const slotsByIndex = [];
 
-  const plan = expandPlan(steps);
-
-  // Stamp artifacts pushed since `before` with the pipeline step that produced
-  // them, so the UI can point each output tile back at its builder card.
-  /** @param {number} before @param {import("./recipe.js").RecipeStep|undefined} step */
-  const stampNew = (before, step) => {
-    if (!step) return;
-    const idx = steps.indexOf(step);
-    for (let i = before; i < artifacts.length; i++) {
-      if (artifacts[i].stepIndex == null) {
-        if (idx >= 0) artifacts[i].stepIndex = idx + 1;
-        artifacts[i].stepName = step.name;
-      }
+  /**
+   * @param {string} nameRef
+   * @param {PipelineValue} value
+   */
+  const registerSlot = (nameRef, value) => {
+    const cloned = clonePipelineValue(value);
+    // Foreach per-share outs: keep index list only (avoid duplicate @labels).
+    if (value.meta?.shareIndex) {
+      slotsByIndex.push(cloned);
+      return;
     }
+    const key = slotLabelKey(nameRef);
+    if (key) {
+      if (slotsByLabel.has(key)) {
+        throw new Error(`Duplicate out slot @${key}`);
+      }
+      slotsByLabel.set(key, cloned);
+    }
+    slotsByIndex.push(cloned);
   };
 
+  /**
+   * @param {string} ref
+   * @returns {PipelineValue}
+   */
+  const resolveSlot = (ref) => {
+    const r = String(ref || "");
+    if (/^\d+$/.test(r)) {
+      const n = Number(r);
+      const v = slotsByIndex[n - 1];
+      if (!v) throw new Error(`in ${r}: no slot at index ${r}`);
+      return clonePipelineValue(v);
+    }
+    const key = slotLabelKey(r);
+    const v = key ? slotsByLabel.get(key) : undefined;
+    if (!v) {
+      throw new Error(
+        `in ${r}: unknown slot (register earlier with out ${r.startsWith("@") ? r : `@${key}`})`
+      );
+    }
+    return clonePipelineValue(v);
+  };
+
+  let stepOrdinal = 0;
+
+  for (const chain of chains) {
+    const steps = chain.steps || [];
+    if (!steps.length) continue;
+
+    /** @type {PipelineValue|null} */
+    let value = null;
+    /** True when the last top-level step already materialized tiles (`out` / `text`). */
+    let lastStepEmitted = false;
+
+    const plan = expandPlan(steps);
+
+    // Stamp artifacts pushed since `before` with the pipeline step that produced
+    // them, so the UI can point each output tile back at its builder card.
+    /** @param {number} before @param {import("./recipe.js").RecipeStep|undefined} step */
+    const stampNew = (before, step) => {
+      if (!step) return;
+      const idx = steps.indexOf(step);
+      for (let i = before; i < artifacts.length; i++) {
+        if (artifacts[i].stepIndex == null) {
+          if (idx >= 0) artifacts[i].stepIndex = stepOrdinal + idx + 1;
+          artifacts[i].stepName = step.name;
+        }
+      }
+    };
+
   for (const node of plan) {
+    if (node.kind === "tee") {
+      lastStepEmitted = false;
+      if (!value) throw new Error("tee requires a pipeline value");
+
+      /**
+       * Run a side chain; auto-emit dangling values (e.g. bare `inspect`).
+       * @param {PipelineValue} start
+       * @param {import("./recipe.js").RecipeStep[]} body
+       */
+      const runTeeSide = async (start, body) => {
+        let sideVal = start;
+        let emitted = false;
+        for (const step of body) {
+          const before = artifacts.length;
+          sideVal = await execStep(step, sideVal, bindings, artifacts, 0);
+          stampNew(before, node.step);
+          for (let ai = before; ai < artifacts.length; ai++) {
+            artifacts[ai].stepName = step.name;
+          }
+          if (step.name === "out" && sideVal) {
+            registerSlot(String(step.params?.name || "@output"), sideVal);
+          }
+          if (step.name === "out" || step.name === "text") emitted = true;
+          if (artifacts.length > before) emitted = true;
+        }
+        if (
+          sideVal &&
+          !emitted &&
+          sideVal.type !== "bundle" &&
+          sideVal.type !== "artifact"
+        ) {
+          const before = artifacts.length;
+          artifacts.push(...valueToArtifacts(sideVal));
+          stampNew(before, node.step);
+        }
+      };
+
+      if (node.body?.length) {
+        await runTeeSide(clonePipelineValue(value), node.body);
+      }
+      for (const br of node.branches || []) {
+        await runTeeSide(
+          projectSelector(value, br.selector || `.${br.member}`),
+          br.body
+        );
+      }
+      // Stem value unchanged.
+      continue;
+    }
+
     if (node.kind === "foreach") {
       lastStepEmitted = false;
       if (!value || value.type !== "shares") {
@@ -188,6 +297,9 @@ export async function runRecipe(ast, bindings = {}) {
       }
       const threshold = Number(value.data.threshold) || 0;
       const body = node.body;
+      const mode = String(node.step.foreachSelector || ".values")
+        .replace(/^\./, "")
+        .toLowerCase();
       const rawItems = value.data.raw;
       const mnemonicItems = value.data.mnemonics;
       const useRaw = Array.isArray(rawItems) && rawItems.length > 0;
@@ -197,34 +309,68 @@ export async function runRecipe(ast, bindings = {}) {
       for (let i = 0; i < items.length; i++) {
         /** @type {PipelineValue} */
         let itemVal;
-        if (useRaw) {
-          const share = /** @type {{ index: number, data: Uint8Array }} */ (items[i]);
+        const shareIndex = useRaw
+          ? /** @type {{ index: number, data: Uint8Array }} */ (items[i]).index ||
+            i + 1
+          : i + 1;
+        const valuePayload = useRaw
+          ? {
+              type: "bytes",
+              data: /** @type {{ index: number, data: Uint8Array }} */ (items[i])
+                .data,
+              meta: {
+                shareIndex,
+                shareCount: items.length,
+                threshold,
+                sensitive: true,
+              },
+            }
+          : {
+              type: "text",
+              data: /** @type {string} */ (items[i]),
+              meta: {
+                shareIndex,
+                shareCount: items.length,
+                threshold,
+                sensitive: true,
+              },
+            };
+
+        if (mode === "keys") {
           itemVal = {
-            type: "bytes",
-            data: share.data,
+            type: "text",
+            data: String(shareIndex),
             meta: {
-              shareIndex: share.index || i + 1,
+              shareIndex,
+              shareCount: items.length,
+              threshold,
+              sensitive: false,
+            },
+          };
+        } else if (mode === "items") {
+          itemVal = {
+            type: "item",
+            data: { key: shareIndex, value: valuePayload },
+            meta: {
+              shareIndex,
               shareCount: items.length,
               threshold,
               sensitive: true,
             },
           };
         } else {
-          itemVal = {
-            type: "text",
-            data: /** @type {string} */ (items[i]),
-            meta: {
-              shareIndex: i + 1,
-              shareCount: items.length,
-              threshold,
-              sensitive: true,
-            },
-          };
+          itemVal = valuePayload;
         }
         for (const step of body) {
           const before = artifacts.length;
           itemVal = await execStep(step, itemVal, bindings, artifacts, i);
-          stampNew(before, step);
+          stampNew(before, node.step);
+          for (let ai = before; ai < artifacts.length; ai++) {
+            artifacts[ai].stepName = step.name;
+          }
+          if (step.name === "out" && itemVal) {
+            registerSlot(String(step.params?.name || "@output"), itemVal);
+          }
         }
         if (itemVal && (itemVal.type === "text" || itemVal.type === "bytes")) {
           const last = body[body.length - 1];
@@ -263,7 +409,10 @@ export async function runRecipe(ast, bindings = {}) {
                 },
               });
             }
-            stampNew(before, last);
+            stampNew(before, node.step);
+            for (let ai = before; ai < artifacts.length; ai++) {
+              artifacts[ai].stepName = last.name;
+            }
           }
         }
       }
@@ -271,10 +420,19 @@ export async function runRecipe(ast, bindings = {}) {
       continue;
     }
 
+    if (node.step.name === "in") {
+      lastStepEmitted = false;
+      value = resolveSlot(String(node.step.params?.ref || ""));
+      continue;
+    }
+
     const before = artifacts.length;
     value = await execStep(node.step, value, bindings, artifacts, 0);
     stampNew(before, node.step);
     lastStepEmitted = node.step.name === "out" || node.step.name === "text";
+    if (node.step.name === "out" && value) {
+      registerSlot(String(node.step.params?.name || "@output"), value);
+    }
   }
 
   if (value && value.type !== "bundle" && value.type !== "artifact") {
@@ -286,6 +444,9 @@ export async function runRecipe(ast, bindings = {}) {
     }
   }
 
+  stepOrdinal += steps.length;
+  } // end chains
+
   return artifacts;
 }
 
@@ -293,27 +454,158 @@ export async function runRecipe(ast, bindings = {}) {
  * @param {import("./recipe.js").RecipeStep[]} steps
  */
 function expandPlan(steps) {
-  /** @type {Array<{ kind: "step", step: import("./recipe.js").RecipeStep } | { kind: "foreach", body: import("./recipe.js").RecipeStep[] }>} */
+  /** @type {Array<
+   *   | { kind: "step", step: import("./recipe.js").RecipeStep }
+   *   | { kind: "foreach", body: import("./recipe.js").RecipeStep[], step: import("./recipe.js").RecipeStep }
+   *   | { kind: "tee", body: import("./recipe.js").RecipeStep[], branches?: *, step: import("./recipe.js").RecipeStep }
+   * >} */
   const plan = [];
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i];
     if (s.name === "foreach") {
-      const body = [];
-      i++;
-      while (i < steps.length && steps[i].name !== "merge") {
-        if (steps[i].name === "foreach") {
-          throw new Error("Nested foreach is not supported");
-        }
-        body.push(steps[i]);
-        i++;
+      if (!s.body?.length) {
+        throw new Error(
+          "foreach requires a body — use indented `-` lines or `{ … }`"
+        );
       }
-      plan.push({ kind: "foreach", body });
+      plan.push({ kind: "foreach", body: s.body, step: s });
       continue;
     }
-    if (s.name === "merge") continue;
+    if (
+      s.name === "tee" &&
+      (s.body?.length || s.branches?.length)
+    ) {
+      plan.push({
+        kind: "tee",
+        body: s.body || [],
+        branches: s.branches || [],
+        step: s,
+      });
+      continue;
+    }
     plan.push({ kind: "step", step: s });
   }
   return plan;
+}
+
+/**
+ * Project a selector (`.private`, `.items`, `.key`, …) from a pipeline value.
+ * @param {PipelineValue} value
+ * @param {string} selector
+ * @returns {PipelineValue}
+ */
+export function projectSelector(value, selector) {
+  const raw = String(selector || "").trim();
+  if (/^\[\d/.test(raw)) {
+    throw new Error(
+      `selector ${raw}: use as a stem stage ([n] / at), not projectSelector`
+    );
+  }
+  const m = raw.replace(/^\./, "").toLowerCase();
+  if (m === "private" || m === "priv" || m === "secret") {
+    if (value.type !== "keypair") {
+      throw new Error(`selector .private requires a keypair`);
+    }
+    const priv = value.data?.privateKey;
+    const pub = value.data?.publicKey;
+    if (!priv) throw new Error("selector .private: no private key on keypair");
+    return {
+      type: "keypair",
+      data: { privateKey: priv, publicKey: pub },
+      meta: { ...value.meta, which: "private", sensitive: true },
+    };
+  }
+  if (m === "public" || m === "pub") {
+    if (value.type !== "keypair") {
+      throw new Error(`selector .public requires a keypair`);
+    }
+    const pub = value.data?.publicKey;
+    if (!pub) throw new Error("selector .public: no public key on keypair");
+    return {
+      type: "keypair",
+      data: { publicKey: pub },
+      meta: { ...value.meta, which: "public", sensitive: false },
+    };
+  }
+  if (m === "key") {
+    if (value.type !== "item") {
+      throw new Error(`selector .key requires an item ({key, value})`);
+    }
+    return {
+      type: "text",
+      data: String(value.data?.key ?? ""),
+      meta: { ...value.meta, sensitive: false },
+    };
+  }
+  if (m === "value") {
+    if (value.type !== "item") {
+      throw new Error(`selector .value requires an item ({key, value})`);
+    }
+    const inner = value.data?.value;
+    if (!inner || typeof inner !== "object") {
+      throw new Error("selector .value: missing item value");
+    }
+    return /** @type {PipelineValue} */ (inner);
+  }
+  if (m === "keys" || m === "values" || m === "items") {
+    throw new Error(
+      `selector .${m}: use as foreach .${m} (stem projection of whole collections is not supported)`
+    );
+  }
+  throw new Error(`Unknown selector ".${m}"`);
+}
+
+/**
+ * @param {PipelineValue} value
+ * @returns {PipelineValue}
+ */
+function clonePipelineValue(value) {
+  if (value.type === "bytes" && value.data instanceof Uint8Array) {
+    return {
+      type: "bytes",
+      data: new Uint8Array(value.data),
+      meta: { ...value.meta },
+    };
+  }
+  if (value.type === "text") {
+    return { type: "text", data: String(value.data), meta: { ...value.meta } };
+  }
+  if (value.type === "item") {
+    const inner = value.data?.value;
+    return {
+      type: "item",
+      data: {
+        key: value.data?.key,
+        value: inner ? clonePipelineValue(inner) : inner,
+      },
+      meta: { ...value.meta },
+    };
+  }
+  if (value.type === "shares") {
+    const d = value.data || {};
+    return {
+      type: "shares",
+      data: {
+        ...d,
+        mnemonics: d.mnemonics ? d.mnemonics.map((m) => String(m)) : d.mnemonics,
+        raw: d.raw
+          ? d.raw.map((s) => ({
+              index: s.index,
+              data: s.data instanceof Uint8Array ? new Uint8Array(s.data) : s.data,
+            }))
+          : d.raw,
+      },
+      meta: { ...value.meta },
+    };
+  }
+  if (value.type === "keypair") {
+    return {
+      type: "keypair",
+      data: value.data,
+      meta: { ...value.meta },
+    };
+  }
+  return { type: value.type, data: value.data, meta: { ...value.meta } };
 }
 
 /**
@@ -398,8 +690,17 @@ async function execStepBody(step, value, bindings, artifacts) {
     }
     case "decrypt":
       return decryptGpgSource(bindings, artifacts);
-    case "export":
-      return exportKey(value, String(step.params.format || "pkcs8"), String(step.params.which || "private"));
+    case "export": {
+      const whichDefault =
+        value?.meta?.which === "public" || value?.meta?.which === "private"
+          ? value.meta.which
+          : "private";
+      return exportKey(
+        value,
+        String(step.params.format || "pkcs8"),
+        String(step.params.which || whichDefault)
+      );
+    }
     case "import":
       return importKey(
         value,
@@ -423,7 +724,12 @@ async function execStepBody(step, value, bindings, artifacts) {
         label = pemLabelFor(value.meta?.format || "pkcs8", value.meta?.which || "private");
       }
       const text = toPem(value.data, label);
-      return { type: "text", data: text, meta: { ...value.meta, sensitive: true } };
+      // Preserve export/selector sensitivity (public SPKI stays non-sensitive).
+      return {
+        type: "text",
+        data: text,
+        meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
+      };
     }
     case "der":
       if (!value || value.type !== "bytes") throw new Error("der expects bytes");
@@ -902,16 +1208,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: true },
       };
     }
-    case "fanout": {
-      if (!value || value.type !== "keypair") {
-        throw new Error("fanout expects a keypair");
-      }
-      await emitFanoutArtifact(value, step.params || {}, artifacts);
-      return value;
-    }
-    case "encrypt":
-    case "gpg": {
-      // "gpg" alias resolves to encrypt at parse time; keep case for safety.
+    case "encrypt": {
       if (!value || (value.type !== "text" && value.type !== "bytes")) {
         throw new Error("encrypt expects text");
       }
@@ -1061,15 +1358,21 @@ async function execStepBody(step, value, bindings, artifacts) {
       };
     }
     case "tee": {
-      if (!value) throw new Error("tee expects a value");
-      const name = String(step.params.name || "tee")
-        .replace(/[^\w.-]+/g, "_")
-        .slice(0, 64) || "tee";
+      throw new Error(
+        "tee requires a body — use `{ - .public | … }` or indented `-` lines (use `peek` for a side inspect)"
+      );
+    }
+    case "peek": {
+      if (!value) throw new Error("peek expects a value");
+      const name =
+        String(step.params.name || "peek")
+          .replace(/[^\w.-]+/g, "_")
+          .slice(0, 64) || "peek";
       const format = String(step.params.format || "auto");
       const snapshot = await buildInspectSnapshot(value);
       const dump = inspectFromSnapshot(snapshot, format);
       artifacts.push({
-        label: `tee:${name}`,
+        label: `peek:${name}`,
         filename: `${name}.inspect.txt`,
         content: dump,
         sensitive:
@@ -1083,6 +1386,89 @@ async function execStepBody(step, value, bindings, artifacts) {
         inspectFormat: format,
       });
       return value;
+    }
+    case "select": {
+      if (!value) throw new Error("select expects a value");
+      return projectSelector(value, String(step.params.selector || ""));
+    }
+    case "at": {
+      if (!value || value.type !== "shares") {
+        throw new Error("at expects shares");
+      }
+      const sel = String(step.params.selector || "1").trim();
+      const range = sel.match(/^(\d+):(\d+)$/);
+      const single = sel.match(/^(\d+)$/);
+      const d = value.data || {};
+      const rawItems = Array.isArray(d.raw) ? d.raw : [];
+      const mnemonics = Array.isArray(d.mnemonics) ? d.mnemonics : [];
+      const useRaw = rawItems.length > 0;
+      const count = useRaw ? rawItems.length : mnemonics.length;
+      if (!count) throw new Error("at: empty share set");
+
+      if (range) {
+        const a = Number(range[1]);
+        const b = Number(range[2]);
+        if (a < 1 || b < a || b > count) {
+          throw new Error(`at ${sel}: out of range (1–${count})`);
+        }
+        if (useRaw) {
+          const sliced = rawItems.slice(a - 1, b).map((s, i) => ({
+            index: s.index || a + i,
+            data: new Uint8Array(s.data),
+          }));
+          return {
+            type: "shares",
+            data: {
+              ...d,
+              raw: sliced,
+              mnemonics: undefined,
+              shares: sliced.length,
+            },
+            meta: { ...value.meta, sensitive: true },
+          };
+        }
+        const sliced = mnemonics.slice(a - 1, b).map(String);
+        return {
+          type: "shares",
+          data: {
+            ...d,
+            mnemonics: sliced,
+            raw: undefined,
+            shares: sliced.length,
+          },
+          meta: { ...value.meta, sensitive: true },
+        };
+      }
+
+      if (!single) throw new Error(`at: invalid selector "${sel}"`);
+      const n = Number(single[1]);
+      if (n < 1 || n > count) {
+        throw new Error(`at ${n}: out of range (1–${count})`);
+      }
+      if (useRaw) {
+        const share = rawItems[n - 1];
+        return {
+          type: "bytes",
+          data: new Uint8Array(share.data),
+          meta: {
+            sensitive: true,
+            shareIndex: share.index || n,
+            shareCount: count,
+            threshold: d.threshold,
+          },
+        };
+      }
+      return {
+        type: "text",
+        data: String(mnemonics[n - 1]),
+        meta: {
+          sensitive: true,
+          shareIndex: n,
+          shareCount: count,
+          threshold: d.threshold,
+          kind: "mnemonic",
+        },
+      };
     }
     case "wa-caps":
     case "wa-create":
@@ -1120,125 +1506,6 @@ function resolveEnvelopeArmored(bindings) {
     if (t) return t;
   }
   return "";
-}
-
-/**
- * Emit a typed side-stream artifact from a keypair without consuming it.
- * @param {PipelineValue} value
- * @param {Record<string, *>} params
- * @param {ToolkitArtifact[]} artifacts
- */
-async function emitFanoutArtifact(value, params, artifacts) {
-  const format = String(params.format || "spki").toLowerCase();
-  const which = String(params.which || "public");
-  const stem = safeOutputStem(params.name || "fanout");
-  const label = String(params.label || stem).trim() || stem;
-  const extOverride = String(params.ext || "")
-    .replace(/^\./, "")
-    .replace(/[^\w.-]+/g, "");
-  const alg = String(value.meta?.alg || "");
-
-  if (format === "jwk") {
-    const exported = await exportKey(value, "jwk", which);
-    artifacts.push(
-      attachPipeMeta(
-        {
-          label,
-          filename: `${stem}.${extOverride || "jwk.json"}`,
-          content: String(exported.data),
-          sensitive: which !== "public",
-          mime: "application/json",
-          encoding: "jwk",
-          disposition: "file",
-          role: "key",
-          tags: which === "public" ? ["public", "jwk"] : ["private", "jwk"],
-          traits: {
-            which: /** @type {"public"|"private"} */ (which === "public" ? "public" : "private"),
-            alg,
-          },
-        },
-        value
-      )
-    );
-    return;
-  }
-
-  if (format === "pem") {
-    const derFmt = which === "public" ? "spki" : "pkcs8";
-    const exported = await exportKey(value, derFmt, which);
-    const pemLabel = pemLabelFor(derFmt, which);
-    const pem = toPem(exported.data, pemLabel);
-    artifacts.push(
-      attachPipeMeta(
-        {
-          label,
-          filename: `${stem}.${extOverride || "pem"}`,
-          content: pem,
-          sensitive: which !== "public",
-          mime: "application/x-pem-file",
-          encoding: "pem",
-          disposition: "file",
-          role: "key",
-          tags: which === "public" ? ["public", "pem"] : ["private", "pem"],
-          traits: { which: which === "public" ? "public" : "private", alg },
-        },
-        value
-      )
-    );
-    return;
-  }
-
-  if (format === "scalar" || format === "d") {
-    const exported = await exportKey(value, "scalar", "private");
-    artifacts.push(
-      attachPipeMeta(
-        {
-          label,
-          filename: `${stem}.${extOverride || "bin.b64"}`,
-          content: bytesToBase64(exported.data),
-          sensitive: true,
-          mime: "application/octet-stream",
-          encoding: "base64",
-          disposition: "file",
-          role: "secret",
-          tags: ["private", "scalar"],
-          traits: { which: "private", alg },
-          bytes: new Uint8Array(exported.data),
-        },
-        value
-      )
-    );
-    return;
-  }
-
-  const derFmt = format === "pkcs8" ? "pkcs8" : "spki";
-  // format locks which: SPKI is public-only; PKCS#8 is private-only.
-  const exportWhich = derFmt === "spki" ? "public" : "private";
-  const exported = await exportKey(value, derFmt, exportWhich);
-  artifacts.push(
-    attachPipeMeta(
-      {
-        label,
-        filename: `${stem}.${extOverride || derFmt}`,
-        content: bytesToBase64(exported.data),
-        sensitive: exportWhich !== "public",
-        mime: "application/octet-stream",
-        encoding: "base64",
-        disposition: "file",
-        role: "key",
-        tags:
-          exportWhich === "public"
-            ? ["public", derFmt]
-            : ["private", derFmt],
-        traits: {
-          which: exportWhich === "public" ? "public" : "private",
-          alg,
-        },
-        bytes: new Uint8Array(exported.data),
-      },
-      value
-    )
-  );
 }
 
 /**
@@ -1859,6 +2126,7 @@ async function importScalarKey(scalar, alg, usage) {
 function safeOutputStem(raw) {
   const s = String(raw || "output")
     .trim()
+    .replace(/^@+/, "")
     .replace(/[^\w.-]+/g, "_")
     .replace(/^\.+/, "")
     .slice(0, 64);

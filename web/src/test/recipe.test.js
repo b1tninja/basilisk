@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PRESETS,
   compileRecipe,
+  canonicalizeRecipe,
   parseRecipe,
   registryIssues,
   serializeRecipe,
@@ -36,25 +37,29 @@ describe("parse / serialize", () => {
     expect(serializeRecipe(ast)).toBe(src);
   });
 
-  it("canonicalizes foreach aliases", () => {
-    const { ast, errors } = parseRecipe(
-      "random 32 | sss threshold=2 shares=3 | map | out"
+  it("canonicalizeRecipe normalizes case, aliases, and spacing", () => {
+    const { text, errors, changed } = canonicalizeRecipe(
+      "  GENKEY  EC/P256  |  EXPORT   pkcs8|PEM  "
     );
     expect(errors).toEqual([]);
-    expect(ast.steps.map((s) => s.name)).toEqual([
-      "random",
-      "sss",
-      "foreach",
-      "out",
-    ]);
-    expect(serializeRecipe(ast)).toContain("foreach");
-    expect(serializeRecipe(ast)).not.toContain("| map");
+    expect(changed).toBe(true);
+    expect(text).toBe("genkey ec/p256 | export pkcs8 | pem");
   });
 
-  it("canonicalizes fork and each to foreach", () => {
+  it("canonicalizeRecipe formats foreach bodies and spacing", () => {
+    const { text, errors } = canonicalizeRecipe(
+      "random 16|sss threshold=2 shares=2|foreach\n  - out @share"
+    );
+    expect(errors).toEqual([]);
+    expect(text).toBe("random 16 | sss shares=2 | foreach\n  - out @share");
+  });
+
+  it("rejects retired foreach aliases", () => {
     for (const alias of ["fork", "each", "map"]) {
-      const { ast } = parseRecipe(`random 16 | sss shares=2 threshold=2 | ${alias} | out`);
-      expect(ast.steps.some((s) => s.name === "foreach")).toBe(true);
+      const { errors } = parseRecipe(
+        `random 16 | sss shares=2 threshold=2 | ${alias}\n  - out`
+      );
+      expect(errors.some((e) => /Unknown step/i.test(e.message))).toBe(true);
     }
   });
 
@@ -82,19 +87,19 @@ describe("validation", () => {
   });
 
   it("rejects foreach without shares", () => {
-    const { ast } = parseRecipe("genkey ec/p256 | foreach | out");
-    const v = validateRecipe(ast);
-    expect(v.ok).toBe(false);
-    expect(v.errors.some((e) => /collection|shares/i.test(e.message))).toBe(true);
+    const { ast, errors } = parseRecipe("genkey ec/p256 | foreach\n  - out");
+    const msgs = [...errors, ...(ast ? validateRecipe(ast).errors : [])];
+    expect(msgs.some((e) => /collection|shares/i.test(e.message))).toBe(true);
   });
 
   it("rejects nested foreach", () => {
-    const { ast } = parseRecipe(
-      "random 32 | sss threshold=2 shares=3 | foreach | foreach | out"
+    const { ast, errors } = parseRecipe(
+      "random 32 | sss threshold=2 shares=3 | foreach\n  - foreach\n    - out"
     );
-    const v = validateRecipe(ast);
-    expect(v.ok).toBe(false);
-    expect(v.errors.some((e) => /Nested foreach/i.test(e.message))).toBe(true);
+    const msgs = [...errors, ...(ast ? validateRecipe(ast).errors : [])];
+    expect(
+      msgs.some((e) => /Nested|nested list|Cannot use "foreach"/i.test(e.message))
+    ).toBe(true);
   });
 
   it("rejects threshold > shares", () => {
@@ -105,10 +110,9 @@ describe("validation", () => {
 
   it("never serializes recipient identities", () => {
     const recipe =
-      "genkey ec/p256 | export scalar | sss threshold=2 shares=3 | foreach | gpg";
+      "genkey ec/p256 | export scalar | sss threshold=2 shares=3 | foreach\n  - encrypt gpg";
     const { ast } = parseRecipe(recipe);
     const out = serializeRecipe(ast);
-    expect(out).not.toMatch(/@/);
     expect(out).not.toMatch(/to=/);
     expect(out).toContain("encrypt gpg");
     expect(unresolvedRecipients(ast).slots).toBe(3);
@@ -161,8 +165,13 @@ describe("validation", () => {
     expect(dup.validation.ok).toBe(false);
   });
 
-  it("canonicalizes gpgdecrypt to decrypt gpg", () => {
-    const { ast, errors } = parseRecipe("gpgdecrypt | recover | hex");
+  it("rejects retired gpgdecrypt alias", () => {
+    const { errors } = parseRecipe("gpgdecrypt | recover | hex");
+    expect(errors.some((e) => /Unknown step/i.test(e.message))).toBe(true);
+  });
+
+  it("parses decrypt gpg", () => {
+    const { ast, errors } = parseRecipe("decrypt gpg | blip39 -d | recover | hex");
     expect(errors).toEqual([]);
     expect(ast.steps[0].name).toBe("decrypt");
     expect(ast.steps[0].params.with).toBe("gpg");

@@ -2481,6 +2481,39 @@ pre {
   border-color: var(--brand);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 35%, transparent);
 }
+.builder-card-focused {
+  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 55%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #7aa2f7) 25%, transparent);
+}
+.builder-nest {
+  margin: 0.15rem 0 0.35rem 0.85rem;
+  padding: 0.35rem 0.45rem 0.45rem;
+  border-left: 2px solid color-mix(in srgb, var(--border, #444) 85%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.builder-nest-label {
+  margin: 0 0 0.15rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.builder-nest-child {
+  margin-left: 0;
+}
+.builder-tee {
+  border-left: 3px solid color-mix(in srgb, #2a9d8f 50%, var(--border));
+}
+.builder-tee-branch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.06));
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
 .artifact-filename-field {
   display: flex;
   align-items: center;

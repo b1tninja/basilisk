@@ -22,11 +22,11 @@ Every recipe step declares a `toolbox` in `registry.js`. The ops drawer groups b
 |---------|----------|
 | `webcrypto` | `genkey`, `export`, `import`, `digest`, `sign`, `aesgcm`, … |
 | `openpgp` | `encrypt`, `decrypt`, `symencrypt`, `symdecrypt` |
-| `sss` | `sss`, `blip39`, `recover`, `shares` |
+| `sss` | `sss`, `blip39`, `recover`, `shares`, `at` |
 | `webauthn` | `wa-caps`, `wa-create`, `wa-prf`, `wa-attest`, `wa-mds` (shelves: Essentials / Attestation·MDS) |
 | `encoding` | `pem`, `base64`, `hex`, `utf8` |
 | `io` | `random`, `input`, `out`, `qr` |
-| `flow` | `foreach`, `merge`, `tee`, `inspect` |
+| `flow` | `foreach` / `tee` / `peek` / `in` / `select` (see [RECIPE.md](./RECIPE.md)), `inspect` |
 
 **Recipe name vs UI label:** the parser token is always unique (`encrypt` = OpenPGP). Optional `label` is display-only (e.g. `aesgcm` may show as “encrypt” under the WebCrypto badge).
 
@@ -155,8 +155,8 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js`.
 | `random` | Done | `getRandomValues` (1–1024 B) |
 | `passphrase` | Done | EFF diceware |
 | `shares` | Done | Runtime BLIP39 mnemonic binding (no crypto) |
-| `input` / `paste` / `cat` | Done | Free-form text binding |
-| `decrypt` / `gpgdecrypt` | Done | OpenPGP.js decrypt → share set |
+| `input` (`paste` / `cat`) | Done | Free-form text binding |
+| `decrypt` | Done | OpenPGP.js decrypt → share set |
 
 ### Transforms — keys & encoding
 
@@ -164,10 +164,9 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js`.
 |----|--------|--------|
 | `export` | Done | `exportKey`: pkcs8 / spki / jwk / raw / scalar |
 | `import` | Done | `importKey` (+ scalar → PKCS#8 for EC/OKP) |
-| `fanout` | Done | Side-export without consuming keypair |
 | `pem` / `der` | Done | Armor / identity |
 | `base64` / `base64url` / `hex` / `utf8` | Done | Encoding (`-d` decode where applicable) |
-| `inspect` / `tee` | Done | Dump / peek; result tile keeps a snapshot for live format switching (no re-run) |
+| `inspect` (`dump` / `hexdump`) | Done | Dump; result tile keeps a snapshot for live format switching (no re-run) |
 
 ### Transforms — WebCrypto ops
 
@@ -184,17 +183,17 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js`.
 
 | Op | Status | Crypto |
 |----|--------|--------|
-| `sss` / `split` / `sss-split` | Done | GF(256) Shamir → `shares/raw` |
+| `sss` | Done | GF(256) Shamir → `shares/raw` |
 | `blip39` | Done | Encode `shares/raw` → `shares/mnemonic` |
 | `blip39 -d` | Done | Decode mnemonics → raw |
-| `recover` / `sss-combine` | Done | Combine raw SSS → `bytes/master` |
+| `recover` | Done | Combine raw SSS → `bytes/master` |
 
 ### Transforms — OpenPGP envelope
 
 | Op | Status | Crypto |
 |----|--------|--------|
-| `symencrypt` / `skesk` | Done | SKESK + SEIPD under fresh 32 B master |
-| `symdecrypt` / `pgpunwrap` | Done | Unwrap with master-as-passphrase |
+| `symencrypt` | Done | SKESK + SEIPD under fresh 32 B master |
+| `symdecrypt` | Done | Unwrap with master-as-passphrase |
 
 ### WebAuthn (toolbox `webauthn`, no CAST suite)
 
@@ -215,7 +214,9 @@ Compose with WebCrypto: `wa-prf \| hkdf 32 \| …` / `aesgcm`.
 
 | Op | Status | Crypto |
 |----|--------|--------|
-| `foreach` / `merge` | Done | Collection map / collect |
+| `foreach` | Done | Map via required body (`-` list or `{ … }`); optional `.items` / `.values` / `.keys` |
+| `tee` / `peek` / `in` | Done | tee = mid-stem forks; `out @x` + blank-line chains + `in @x` for reuse; `peek` = side inspect |
+| `at` / `[n]` | Done | 1-based share index / slice |
 | `encrypt` / `gpg` | Done | OpenPGP.js public-key encrypt |
 | `qr` / `text` / `out` | Done | Presentation sinks |
 
@@ -309,18 +310,41 @@ Display maps in `algos.js` also name historical algorithms for **inspection** of
 
 ## Example recipes (current)
 
+Normative grammar and slots/chains semantics: [RECIPE.md](./RECIPE.md).
+Stem stays a flat `|` pipeline; `tee` / `foreach` take brace or indented `-` bodies;
+blank lines separate chains; `out @label` / `in @label` reuse live values.
+
 ```text
 # WebCrypto key → PEM
 genkey ec/p256 | export pkcs8 | pem
 
-# Scalar SSS + BLIP39
-genkey ec/p256 | export scalar | sss threshold=2 shares=3 | blip39 | foreach | out name=share
+# Tee selector branches
+genkey ec/p256 | tee
+  - .private | inspect
+  - .public | export spki | pem | out @public
+| export pkcs8 | pem | out @private
+
+# Multi-chain reuse (blank line + in @slot)
+genkey ec/p256 | out @kp
+
+in @kp | .public | export spki | pem | out @public
+in @kp | export pkcs8 | pem | out @private
+
+# Scalar SSS + BLIP39 (tee public, foreach shares)
+genkey ec/p256 | tee
+  - .public | export spki | pem | out @public
+| export scalar | sss threshold=2 shares=3 | blip39 | foreach
+  - out @share
+
+# One share (1-based)
+… | blip39 | [1] | out @share-1
 
 # Recover
 shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem
 
 # Large payload via OpenPGP envelope then SSS
-… | pem | symencrypt | sss threshold=2 shares=3 | blip39 | foreach | out
+… | pem | symencrypt | sss threshold=2 shares=3 | blip39 | foreach
+  - out @share
 ```
 
 ---

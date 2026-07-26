@@ -2,14 +2,17 @@
  * Toolkit step registry — single source of truth for steps, params, docs, and
  * input/output types. Drives the parser, builder, autocomplete, and Reference panel.
  *
- * Modeled on CyberChef's Operation metadata (name / description / inputType /
+ * Normative recipe grammar: docs/RECIPE.md
+ * Modeled on CyberChef Operation metadata (name / description / inputType /
  * outputType / typed args / flowControl). Verbs mirror shell commands they replace
  * (gpg --encrypt/--decrypt, base64 -d, ssss-split/combine, openssl pkey).
+ *
+ * Prefer positional short form in docs (`genkey ec/p256`, `out @public`, `in @kp`).
  */
 
 import { stepAcceptsRefined, typeOf } from "./types.js";
 
-/** @typedef {"none"|"bytes"|"text"|"key"|"keypair"|"shares"|"artifact"|"bundle"} IoType */
+/** @typedef {"none"|"bytes"|"text"|"key"|"keypair"|"shares"|"artifact"|"bundle"|"item"} IoType */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
 /** @typedef {"enum"|"int"|"string"|"bool"|"flag"} ParamType */
 /** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"} Toolbox */
@@ -77,7 +80,7 @@ export const STEPS = [
     name: "genkey",
     kind: "source",
     toolbox: "webcrypto",
-    doc: "Generate a cryptographic key with WebCrypto. Common secure algorithms only.",
+    doc: "Generate a WebCrypto keypair/key. Example: `genkey ec/p256 | tee` then `- .public | export spki | pem | out @public`, stem `export pkcs8 | pem | out @private`.",
     input: "none",
     output: "keypair",
     params: [
@@ -115,7 +118,7 @@ export const STEPS = [
     name: "random",
     kind: "source",
     toolbox: "io",
-    doc: "Cryptographically random bytes from crypto.getRandomValues.",
+    doc: "Cryptographically random bytes (`crypto.getRandomValues`). Example: `random 32 | base64url | out @secret`.",
     input: "none",
     output: "bytes",
     params: [
@@ -134,7 +137,7 @@ export const STEPS = [
     name: "passphrase",
     kind: "source",
     toolbox: "io",
-    doc: "EFF Large Wordlist diceware passphrase (≈12.9 bits/word).",
+    doc: "EFF Large Wordlist diceware passphrase (≈12.9 bits/word). Example: `passphrase 6 | out @passphrase`.",
     input: "none",
     output: "text",
     params: [
@@ -153,7 +156,7 @@ export const STEPS = [
     name: "shares",
     kind: "source",
     toolbox: "sss",
-    doc: "Bind BLIP39 share mnemonics at run time (never stored in the recipe). Output type is shares/mnemonic — pipe into blip39 -d then recover for bytes/master, or foreach to map each share. For free-form text use the input step instead.",
+    doc: "Bind BLIP39 share mnemonics at run time (never stored in the recipe). Typical recover: `shares | blip39 -d | recover | …`. Map each share with `foreach` / `- out @share`. For free-form text use `input`.",
     input: "none",
     output: "shares",
     unresolvedInputs: "shares",
@@ -163,7 +166,7 @@ export const STEPS = [
     name: "input",
     kind: "source",
     toolbox: "io",
-    doc: "Free-form text provided at run time via a textarea or loaded from a file (like cat). The data is never stored in the pipeline text.",
+    doc: "Free-form text at run time (textarea / file). Never stored in the recipe. Aliases: `paste`, `cat`. Example: `input | utf8 | hex`.",
     input: "none",
     output: "text",
     unresolvedInputs: "text",
@@ -174,11 +177,10 @@ export const STEPS = [
     name: "decrypt",
     kind: "source",
     toolbox: "openpgp",
-    doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext BLIP39 mnemonics. Browser vault keys only — OpenPGP smartcards/YubiKey GPG are not available to web pages; decrypt those shares externally and paste the mnemonics.",
+    doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext BLIP39 mnemonics. Browser vault keys only (no smartcard/YubiKey in-page). Example: `decrypt gpg | blip39 -d | recover | …`.",
     input: "none",
     output: "shares",
     unresolvedInputs: "gpg",
-    aliases: ["gpgdecrypt"],
     params: [
       {
         name: "with",
@@ -194,7 +196,7 @@ export const STEPS = [
     name: "export",
     kind: "transform",
     toolbox: "webcrypto",
-    doc: "Export a key to a binary encoding (PKCS#8 private, SPKI public, JWK, raw, or scalar/d for EC/OKP private keys).",
+    doc: "Export a key (pkcs8 / spki / jwk / raw / scalar). Prefer `export spki` after `.public`, or `export pkcs8` / `export scalar` on the stem. Example: `.public | export spki | pem | out @public`.",
     input: "keypair",
     output: "bytes",
     params: [
@@ -226,7 +228,7 @@ export const STEPS = [
     name: "import",
     kind: "transform",
     toolbox: "webcrypto",
-    doc: "Import DER/raw/scalar key bytes into a WebCrypto keypair (openssl pkey -in / gpg --import).",
+    doc: "Import DER/raw/scalar bytes into a WebCrypto keypair. Example: `… | recover | import scalar alg=ec/p256 | export pkcs8 | pem | out @private`.",
     input: "bytes",
     output: "keypair",
     params: [
@@ -272,10 +274,9 @@ export const STEPS = [
     name: "digest",
     kind: "transform",
     toolbox: "webcrypto",
-    doc: "Hash bytes with WebCrypto SubtleCrypto.digest (SHA-256 / SHA-384 / SHA-512).",
+    doc: "Hash bytes with SubtleCrypto.digest (SHA-256 / 384 / 512). Example: `random 32 | digest | hex | out @digest`.",
     input: "bytes",
     output: "bytes",
-    aliases: ["hash", "sha"],
     params: [
       {
         name: "alg",
@@ -291,7 +292,7 @@ export const STEPS = [
     name: "sign",
     kind: "transform",
     toolbox: "webcrypto",
-    doc: "Sign pipeline bytes with a bound WebCrypto private/HMAC key (JWK panel). OpenPGP signing stays on the Encrypt page.",
+    doc: "Sign pipeline bytes with a bound WebCrypto private/HMAC JWK (key panel). OpenPGP signing stays on the Encrypt page. Example: `input | utf8 | sign | base64url`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -301,7 +302,7 @@ export const STEPS = [
     name: "verify",
     kind: "transform",
     toolbox: "webcrypto",
-    doc: "Verify a signature over pipeline message bytes. Bind public/HMAC key via the key panel; pass signature as base64url in the signature param or sig binding.",
+    doc: "Verify a signature over pipeline message bytes. Bind public/HMAC JWK via the key panel; signature as base64url param or runtime binding.",
     input: "bytes",
     output: "text",
     unresolvedInputs: "key",
@@ -319,7 +320,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     label: "encrypt",
-    doc: "AES-GCM encrypt (default) or decrypt with -d. Ciphertext is IV(12) then CT/tag. Bind an AES oct JWK in the key panel. Distinct from OpenPGP encrypt.",
+    doc: "AES-GCM encrypt (default) or decrypt with `-d`. Ciphertext is IV(12)+CT/tag. Bind an AES oct JWK in the key panel. Distinct from OpenPGP `encrypt`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -346,7 +347,7 @@ export const STEPS = [
     name: "hkdf",
     kind: "transform",
     toolbox: "webcrypto",
-    doc: "HKDF-Extract/Expand over pipeline IKM bytes to OKM bytes.",
+    doc: "HKDF-Extract/Expand over pipeline IKM bytes to OKM. Example: `wa-prf | hkdf length=32 info=basilisk | …`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -384,7 +385,7 @@ export const STEPS = [
     name: "pbkdf2",
     kind: "transform",
     toolbox: "webcrypto",
-    doc: "PBKDF2-HMAC derive key bytes from pipeline password (text or bytes).",
+    doc: "PBKDF2-HMAC derive key bytes from pipeline password (text or bytes). Example: `passphrase 6 | pbkdf2 length=32 salt=… | …`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -424,7 +425,7 @@ export const STEPS = [
     name: "ecdh",
     kind: "transform",
     toolbox: "webcrypto",
-    doc: "ECDH/X25519 deriveBits using bound local private key and peer public JWK. Output shared secret bytes (pipe into hkdf).",
+    doc: "ECDH/X25519 `deriveBits` with bound local private + peer public JWK. Output shared-secret bytes — usually pipe into `hkdf`.",
     input: "none",
     output: "bytes",
     unresolvedInputs: "key",
@@ -471,7 +472,7 @@ export const STEPS = [
     name: "pem",
     kind: "transform",
     toolbox: "encoding",
-    doc: "Wrap DER as PEM (default) or strip PEM armor with -d (like openssl).",
+    doc: "Wrap DER as PEM, or strip armor with `-d`. Example: `export pkcs8 | pem | out @private`.",
     input: "bytes",
     output: "text",
     params: [
@@ -508,7 +509,7 @@ export const STEPS = [
     name: "base64",
     kind: "transform",
     toolbox: "encoding",
-    doc: "Encode bytes as Base64, or decode with -d (like base64 / base64 -d).",
+    doc: "Encode bytes as Base64, or decode with `-d`. Example: `random 32 | base64 | out @secret`.",
     input: "bytes",
     output: "text",
     params: [
@@ -529,7 +530,7 @@ export const STEPS = [
     name: "base64url",
     kind: "transform",
     toolbox: "encoding",
-    doc: "Encode bytes as URL-safe Base64 without padding (websafe).",
+    doc: "Encode bytes as URL-safe Base64 without padding. Example: `random 32 | base64url | out @secret`.",
     input: "bytes",
     output: "text",
     params: [],
@@ -538,7 +539,7 @@ export const STEPS = [
     name: "hex",
     kind: "transform",
     toolbox: "encoding",
-    doc: "Encode bytes as lowercase hex, or decode with -d (like xxd -p / xxd -r -p).",
+    doc: "Encode bytes as lowercase hex, or decode with `-d`. Example: `… | digest | hex | out @digest`.",
     input: "bytes",
     output: "text",
     params: [
@@ -559,7 +560,7 @@ export const STEPS = [
     name: "utf8",
     kind: "transform",
     toolbox: "encoding",
-    doc: "Decode UTF-8 bytes to text (or encode text to bytes when input is text).",
+    doc: "Decode UTF-8 bytes → text (or encode text → bytes when holding text). Example: `… | symdecrypt | utf8 | out @pem`.",
     input: "bytes",
     output: "text",
     params: [],
@@ -573,10 +574,9 @@ export const STEPS = [
     name: "sss",
     kind: "transform",
     toolbox: "sss",
-    doc: "Split a 16- or 32-byte master into raw Shamir (SSS) shares (K-of-N). Does not encode mnemonics — pipe into blip39 for word phrases. For EC keys use export scalar first; for PEM/arbitrary data use symencrypt first.",
+    doc: "Split a 16/32-byte master into raw SSS shares (K-of-N). Pipe into `blip39` for mnemonics. EC: `export scalar | sss …`. Large PEM: `… | pem | out @pem | symencrypt | sss …`.",
     input: "bytes",
     output: "shares",
-    aliases: ["split", "sss-split"],
     params: [
       {
         name: "threshold",
@@ -628,7 +628,7 @@ export const STEPS = [
     name: "blip39",
     kind: "transform",
     toolbox: "sss",
-    doc: "Encode raw SSS shares as BLIP39 mnemonics, or decode with -d (mnemonic → raw). Checksum tag basilisk-slip39-v1; uses the official SLIP-39 wordlist.",
+    doc: "Encode raw SSS shares as BLIP39 mnemonics, or decode with `-d`. Example: `… | sss threshold=2 shares=3 | blip39 | foreach` / `- out @share`. Recover: `shares | blip39 -d | recover`.",
     input: "shares",
     output: "shares",
     params: [
@@ -666,10 +666,9 @@ export const STEPS = [
     name: "recover",
     kind: "transform",
     toolbox: "sss",
-    doc: "Combine raw SSS shares into the 16/32-byte master (ssss-combine). Input shares/raw → output bytes/master. Decode mnemonics first with blip39 -d; unwrap OpenPGP envelopes separately with symdecrypt.",
+    doc: "Combine raw SSS shares into the 16/32-byte master. Decode mnemonics first: `shares | blip39 -d | recover`. Unwrap envelopes with `symdecrypt` after recover.",
     input: "shares",
     output: "bytes",
-    aliases: ["sss-combine"],
     params: [
       {
         name: "passphrase",
@@ -689,10 +688,9 @@ export const STEPS = [
     name: "symencrypt",
     kind: "transform",
     toolbox: "openpgp",
-    doc: "OpenPGP symmetric-encrypt the payload under a fresh 32-byte master (SKESK / SEIPD), emit envelope.asc, and pass the master bytes to sss. Recover with gpg --decrypt using the hex master as passphrase.",
+    doc: "OpenPGP-symmetric-encrypt the payload under a fresh 32-byte master (SKESK/SEIPD), emit `envelope.asc`, pass master bytes to `sss`. Example: `… | pem | out @pem | symencrypt | sss threshold=2 shares=3 | blip39 | foreach` / `- out @share`.",
     input: "text",
     output: "bytes",
-    aliases: ["pgpenvelop", "skesk"],
     params: [
       {
         name: "name",
@@ -707,10 +705,9 @@ export const STEPS = [
     name: "symdecrypt",
     kind: "transform",
     toolbox: "openpgp",
-    doc: "Decrypt a runtime-bound OpenPGP envelope.asc using the pipeline bytes as the hex passphrase master (inverse of symencrypt).",
+    doc: "Decrypt a bound `envelope.asc` using pipeline master bytes as the hex passphrase (inverse of `symencrypt`). Example: `shares | blip39 -d | recover | symdecrypt | utf8 | out @pem`.",
     input: "bytes",
     output: "bytes",
-    aliases: ["pgpunwrap"],
     unresolvedInputs: "envelope",
     params: [],
     overloads: [
@@ -721,83 +718,71 @@ export const STEPS = [
     ],
   },
   {
-    name: "fanout",
-    kind: "transform",
-    toolbox: "webcrypto",
-    doc: "Emit a side-stream artifact from the current value (e.g. public SPKI/PEM) and pass the value through unchanged — for multi-pronged outputs beside a private scalar split.",
-    input: "keypair",
-    output: "keypair",
-    aliases: ["side", "redirect"],
-    params: [
-      {
-        name: "format",
-        type: "enum",
-        positional: true,
-        default: "spki",
-        enum: ["spki", "pkcs8", "jwk", "pem", "scalar"],
-        doc: "Side artifact encoding. spki = public DER; pkcs8 = private DER; pem/jwk honor which; scalar always private.",
-      },
-      {
-        name: "which",
-        type: "enum",
-        default: "public",
-        enum: ["private", "public"],
-        doc: "Which key half to emit. Locked to public for format=spki; locked to private for format=scalar/pkcs8.",
-      },
-      {
-        name: "name",
-        type: "string",
-        default: "fanout",
-        doc: "Artifact filename stem",
-      },
-      {
-        name: "ext",
-        type: "string",
-        default: "",
-        doc: "File extension override",
-      },
-      {
-        name: "label",
-        type: "string",
-        default: "",
-        doc: "Display label",
-      },
-    ],
-    overloads: [
-      {
-        when: { base: "keypair" },
-        output: (current) => ({ ...current }),
-      },
-    ],
-  },
-  {
     name: "foreach",
     kind: "flow",
     toolbox: "flow",
     flowControl: true,
-    doc: "Unpack a collection and run every following step once per item until merge (CyberChef Fork / Python *args / functional map).",
+    doc: "Map a required body over a shares collection. Indent `-` lines or `{ … }`. Optional `foreach .items` / `.values` / `.keys`. Example: `… | blip39 | foreach` / `- out @share` or `- encrypt gpg`.",
     input: "shares",
-    output: "shares",
-    params: [],
-    aliases: ["map", "each", "fork"],
-  },
-  {
-    name: "merge",
-    kind: "flow",
-    toolbox: "flow",
-    flowControl: true,
-    doc: "Close a foreach scope and collect per-item results into a bundle.",
-    input: "artifact",
     output: "bundle",
     params: [],
-    aliases: ["collect"],
+  },
+  {
+    name: "at",
+    kind: "transform",
+    toolbox: "sss",
+    doc: "Select from a shares collection (1-based). Same as `[1]` / `[1:2]`. Example: `… | blip39 | [1] | out @share-1`.",
+    input: "shares",
+    output: "shares",
+    params: [
+      {
+        name: "selector",
+        type: "string",
+        positional: true,
+        default: "1",
+        doc: "Share index N or slice N:M (1-based, inclusive)",
+      },
+    ],
+  },
+  {
+    name: "in",
+    kind: "source",
+    toolbox: "flow",
+    doc: "Source a prior `out` slot (live typed value). Chains are blank-line separated. Forms: `in @kp`, `in kp`, `in 1`. Alias: `from`. See docs/RECIPE.md.",
+    input: "none",
+    output: "bytes",
+    aliases: ["from"],
+    params: [
+      {
+        name: "ref",
+        type: "string",
+        positional: true,
+        doc: "Slot `@label` or 1-based index (`@kp`, `kp`, or `1`)",
+      },
+    ],
+  },
+  {
+    name: "select",
+    kind: "transform",
+    toolbox: "flow",
+    doc: "Project a member via selector. Usually written bare: `.public | export spki | pem`. Also as a tee/foreach branch prefix: `- .public | …`.",
+    input: "bytes",
+    output: "bytes",
+    params: [
+      {
+        name: "selector",
+        type: "string",
+        positional: true,
+        doc: "Selector text, e.g. .private or .value",
+      },
+    ],
   },
   {
     name: "encrypt",
     kind: "sink",
     toolbox: "openpgp",
     unresolvedRecipients: true,
-    doc: "Encrypt the current value (gpg --encrypt). Recipients are chosen at run time — never stored in the recipe.",
+    doc: "OpenPGP-encrypt the current value (`gpg --encrypt`). Recipients bound at run time. Alias: `gpg`. Common in foreach: `… | blip39 | foreach` / `- encrypt gpg`.",
     input: "text",
     output: "artifact",
     aliases: ["gpg"],
@@ -823,7 +808,7 @@ export const STEPS = [
     name: "qr",
     kind: "sink",
     toolbox: "io",
-    doc: "Render the current text as a QR code SVG artifact (qrencode).",
+    doc: "Render the current text as a QR code SVG artifact. Example: `… | blip39 | [1] | qr`.",
     input: "text",
     output: "artifact",
     params: [],
@@ -832,7 +817,7 @@ export const STEPS = [
     name: "text",
     kind: "sink",
     toolbox: "io",
-    doc: "Emit a message tile (no filename). Encrypt opens it in the compose box. Prefer this for PEM, hex, base64, or other printable secrets you want to encrypt as a message body.",
+    doc: "Emit a message tile (no filename; Encrypt compose). Aliases: `print`, `echo`. Prefer `out @label` when you need a file tile + reusable slot.",
     input: "text",
     output: "text",
     aliases: ["print", "echo"],
@@ -856,17 +841,16 @@ export const STEPS = [
     name: "out",
     kind: "sink",
     toolbox: "io",
-    doc: "Emit a named file tile (set name/ext) and pass the value through. Encrypt attaches the raw bytes as a file — use this when you want a downloadable attachment rather than a compose message.",
+    doc: "Emit a file tile, register a live `@slot` for later `in`, and pass through. Prefer `out @public` (bare `out public` rewrites to `@`). File paths reserved — not supported yet.",
     input: "text",
     output: "text",
-    aliases: ["output", "save", "emit"],
     params: [
       {
         name: "name",
         type: "string",
         positional: true,
-        default: "output",
-        doc: "Filename stem (required intent for file disposition)",
+        default: "@output",
+        doc: "Slot / filename stem — `@label` (canonical); bare ident rewrites to `@ident`",
       },
       {
         name: "encoding",
@@ -904,7 +888,6 @@ export const STEPS = [
     doc: "Probe WebAuthn / PublicKeyCredential capabilities (platform UVPA, conditional UI, clientCapabilities). Output JSON text. No CAST — discovery only.",
     input: "none",
     output: "text",
-    aliases: ["webauthn-caps"],
     params: [],
   },
   {
@@ -916,7 +899,6 @@ export const STEPS = [
     doc: "Create a WebAuthn credential with PRF (platform or roaming). Returns PRF IKM bytes for HKDF/aesgcm. Soft MDS on attestation; does not block. Main-thread only.",
     input: "none",
     output: "bytes",
-    aliases: ["webauthn-create"],
     params: [
       {
         name: "user",
@@ -936,7 +918,6 @@ export const STEPS = [
     doc: "WebAuthn assertion ceremony; emits clientExtensionResults JSON (inspect PRF support). For pipeline PRF IKM bytes use wa-prf. Main-thread only.",
     input: "none",
     output: "text",
-    aliases: ["webauthn-get"],
     params: [],
   },
   {
@@ -945,10 +926,9 @@ export const STEPS = [
     toolbox: "webauthn",
     shelf: "essentials",
     label: "prf",
-    doc: "Unlock PRF IKM from the vault passkey (same ceremony as My Keys passkey unlock). Pipe into hkdf / aesgcm. Main-thread only.",
+    doc: "Unlock PRF IKM from the vault passkey (same ceremony as My Keys unlock). Pipe into `hkdf` / `aesgcm`. Main-thread only. Example: `wa-prf | hkdf length=32 | …`.",
     input: "none",
     output: "bytes",
-    aliases: ["webauthn-prf"],
     params: [],
   },
   {
@@ -960,7 +940,6 @@ export const STEPS = [
     doc: "Parse WebAuthn attestationObject bytes → JSON (fmt, aaguid). Soft / informational — not a CAST gate.",
     input: "bytes",
     output: "text",
-    aliases: ["webauthn-attest"],
     params: [],
   },
   {
@@ -972,7 +951,6 @@ export const STEPS = [
     doc: "Soft FIDO MDS lookup for an AAGUID (param or prior JSON aaguid from wa-attest). verified/unverified/unavailable — never blocks crypto. Same-origin MDS proxy.",
     input: "text",
     output: "text",
-    aliases: ["webauthn-mds"],
     params: [
       {
         name: "aaguid",
@@ -987,7 +965,7 @@ export const STEPS = [
     name: "inspect",
     kind: "transform",
     toolbox: "flow",
-    doc: "Replace the pipeline value with a human-readable dump (openssl … -text / hexdump). Accepts any type; output is text/opaque. The result tile keeps a snapshot so you can switch formats without re-running. Preferred terminal when you want to see a value instead of emitting a result tile.",
+    doc: "Human-readable dump of the current value (openssl-style / hexdump). Tile keeps a snapshot for live format switching. Aliases: `dump`, `hexdump`. Example: `genkey ec/p256 | tee` / `- .private | inspect`.",
     input: "bytes",
     output: "text",
     aliases: ["dump", "hexdump"],
@@ -998,7 +976,7 @@ export const STEPS = [
         positional: true,
         default: "auto",
         enum: ["auto", "text", "hex", "hexdump", "jwk", "meta"],
-        doc: "Initial dump style (hexdump forced when the step is named hexdump). Changeable on the result tile without re-run.",
+        doc: "Initial dump style (`hexdump` alias forces hexdump). Changeable on the result tile without re-run.",
       },
     ],
   },
@@ -1006,24 +984,32 @@ export const STEPS = [
     name: "tee",
     kind: "transform",
     toolbox: "flow",
-    doc: "Pass the value through unchanged while emitting an inspection artifact (Unix tee). The tee tile supports live format switching like inspect. Useful mid-pipeline for keypairs before export/sss.",
+    doc: "Mid-stem fork: indented `-` body (or `{ … }`) on a clone; `- .public | …` projects members. Stem unchanged. Requires a body — use `peek` for side inspect. Prefer over multi-chain when forking mid-pipeline.",
     input: "bytes",
     output: "bytes",
-    aliases: ["peek"],
+    params: [],
+  },
+  {
+    name: "peek",
+    kind: "transform",
+    toolbox: "flow",
+    doc: "Side inspect snapshot; stem unchanged. Use instead of an empty `tee`. Example: `genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private`.",
+    input: "bytes",
+    output: "bytes",
     params: [
       {
         name: "name",
         type: "string",
         positional: true,
-        default: "tee",
-        doc: "Artifact label / filename stem",
+        default: "peek",
+        doc: "Artifact label / filename stem (e.g. `keypair`)",
       },
       {
         name: "format",
         type: "enum",
         default: "auto",
         enum: ["auto", "text", "hex", "hexdump", "jwk", "meta"],
-        doc: "Initial inspection format for the side artifact (changeable on the tile)",
+        doc: "Initial inspection format (changeable on the tile)",
       },
     ],
   },
@@ -1096,9 +1082,19 @@ export function recipeNeedsMainThread(ast) {
       const spec = getStep(step.name);
       if (spec?.toolbox === "webauthn") return true;
       if (step.name === "foreach" && visit(step.body || [])) return true;
+      if (step.name === "tee") {
+        if (visit(step.body || [])) return true;
+        for (const br of step.branches || []) {
+          if (visit(br.body || [])) return true;
+        }
+      }
     }
     return false;
   };
+  const chains = ast?.chains || [];
+  if (chains.length) {
+    return chains.some((c) => visit(c.steps || []));
+  }
   return visit(ast?.steps);
 }
 
@@ -1132,33 +1128,3 @@ export function stepsAccepting(from) {
   return STEPS.filter((s) => stepAcceptsRefined(s, refined));
 }
 
-/**
- * Whether a value type can feed a step's declared input (coarse legacy helper).
- * Prefer resolveStepType / stepAcceptsRefined for refined checks.
- * @param {IoType} from
- * @param {IoType} to
- * @param {string} [stepName]
- * @returns {boolean}
- */
-export function ioCompatible(from, to, stepName) {
-  if (
-    stepName === "tee" ||
-    stepName === "inspect" ||
-    stepName === "out" ||
-    stepName === "text" ||
-    stepName === "fanout"
-  ) {
-    return !!from && from !== "none";
-  }
-  if (to === "none") return from === "none" || !from;
-  if (from === to) return true;
-  if (stepName === "merge") return true;
-  if (stepName === "foreach" && from === "shares") return true;
-  if (stepName === "recover" && from === "shares") return true;
-  if (from === "shares" && to === "text") return false; // need foreach
-  if (from === "text" && to === "artifact") return true;
-  if (from === "artifact" && to === "bundle") return true;
-  if (stepName === "utf8" && (from === "bytes" || from === "text")) return true;
-  if (stepName === "symencrypt" && (from === "text" || from === "bytes")) return true;
-  return false;
-}

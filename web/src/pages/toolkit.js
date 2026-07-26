@@ -26,7 +26,9 @@ import { base64ToBytes, hexToBytes } from "../lib/toolkit/encode.js";
 import {
   PRESETS,
   compileRecipe,
+  canonicalizeRecipe,
   parseRecipe,
+  recipeChains,
   serializeRecipe,
   unresolvedInputs,
   unresolvedRecipients,
@@ -98,7 +100,10 @@ let suiteStatus = {
   sss: "unverified",
 };
 /** @type {import("../lib/toolkit/recipe.js").RecipeStep[]} */
-let steps = [];
+/** @type {{ steps: import("../lib/toolkit/recipe.js").RecipeStep[] }[]} */
+let chains = [{ steps: [] }];
+/** Primary (editable) chain steps — same array as chains[0].steps */
+let steps = chains[0].steps;
 /** Display title for the current pipeline (from preset or user edit). */
 let recipeTitle = "";
 let referenceOpen = false;
@@ -590,9 +595,11 @@ function secureDestroy(opts = {}) {
 }
 
 function setRecipeFromSteps() {
+  if (!chains.length) chains = [{ steps }];
+  else chains[0] = { steps };
   const ta = document.getElementById("recipe-text");
   if (ta instanceof HTMLTextAreaElement) {
-    ta.value = serializeRecipe(steps);
+    ta.value = serializeRecipe({ chains });
   }
   validateAndBind();
   renderBuilder();
@@ -615,6 +622,39 @@ function defaultParams(spec) {
 }
 
 /**
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep} s
+ * @returns {import("../lib/toolkit/recipe.js").RecipeStep}
+ */
+function cloneBuilderStep(s) {
+  /** @type {import("../lib/toolkit/recipe.js").RecipeStep} */
+  const out = {
+    name: s.name,
+    params: { ...s.params },
+    start: s.start || 0,
+    end: s.end || 0,
+  };
+  if (s.body?.length) {
+    out.body = s.body.map((b) => cloneBuilderStep(b));
+  }
+  if (s.branches?.length) {
+    out.branches = s.branches.map((br) => ({
+      member: br.member,
+      start: br.start,
+      end: br.end,
+      body: (br.body || []).map((b) => cloneBuilderStep(b)),
+    }));
+  }
+  return out;
+}
+
+/**
+ * Focus for suggest-next / insert: stem index, optional body index under tee/foreach.
+ * `null` body means “append to that block’s body” when the stem step is tee/foreach.
+ * @type {{ stem: number, body?: number | null } | null}
+ */
+let insertFocus = null;
+
+/**
  * @param {string} name
  * @param {number} [index]
  * @param {Record<string, string|number|boolean>} [paramOverrides]
@@ -635,20 +675,112 @@ function addStepAt(name, index, paramOverrides) {
     start: 0,
     end: 0,
   };
+
+  // Prefer inserting into a focused tee/foreach body.
+  if (
+    insertFocus &&
+    index == null &&
+    steps[insertFocus.stem] &&
+    (steps[insertFocus.stem].name === "tee" ||
+      steps[insertFocus.stem].name === "foreach")
+  ) {
+    const parent = steps[insertFocus.stem];
+    if (!parent.body) parent.body = [];
+    const at =
+      insertFocus.body == null || Number.isNaN(insertFocus.body)
+        ? parent.body.length
+        : Math.max(0, Math.min(parent.body.length, insertFocus.body + 1));
+    parent.body.splice(at, 0, step);
+    insertFocus = { stem: insertFocus.stem, body: at };
+    setRecipeFromSteps();
+    return;
+  }
+
   const at =
     index == null || Number.isNaN(index)
       ? steps.length
       : Math.max(0, Math.min(steps.length, index));
   steps.splice(at, 0, step);
+  // Focus tee/foreach so the next suggested add goes into the list body.
+  if (step.name === "foreach") {
+    if (!step.body) step.body = [];
+    insertFocus = { stem: at, body: null };
+  } else if (step.name === "tee") {
+    if (!step.body) step.body = [];
+    // Seed selector branches when teeing a keypair.
+    const prefix = walkPipelineTypes(steps.slice(0, at), { getStep });
+    if (prefix.final?.base === "keypair" && !step.branches?.length) {
+      step.branches = [
+        {
+          member: "private",
+          selector: ".private",
+          body: [
+            { name: "inspect", params: { format: "auto" }, start: 0, end: 0 },
+          ],
+        },
+        {
+          member: "public",
+          selector: ".public",
+          body: [
+            {
+              name: "export",
+              params: { format: "spki", which: "public" },
+              start: 0,
+              end: 0,
+            },
+            { name: "pem", params: {}, start: 0, end: 0 },
+            { name: "out", params: { name: "@public" }, start: 0, end: 0 },
+          ],
+        },
+      ];
+    }
+    insertFocus = { stem: at, body: null };
+  } else {
+    insertFocus = { stem: at };
+  }
   setRecipeFromSteps();
 }
 
 /**
  * Refined output type after walking the builder pipeline (for suggesting ops).
+ * Respects insertFocus so tee/foreach body lanes suggest against the nest type.
  * @returns {import("../lib/toolkit/types.js").RefinedType}
  */
 function currentPipelineOutput() {
-  return walkPipelineTypes(steps, { getStep }).final;
+  const walked = walkPipelineTypes(steps, { getStep });
+  if (
+    insertFocus &&
+    steps[insertFocus.stem] &&
+    (steps[insertFocus.stem].name === "tee" ||
+      steps[insertFocus.stem].name === "foreach")
+  ) {
+    const edge = walked.edges[insertFocus.stem];
+    const parent = steps[insertFocus.stem];
+    if (parent.name === "foreach") {
+      const item =
+        edge?.input?.kind === "raw"
+          ? { base: /** @type {const} */ ("bytes"), kind: "opaque" }
+          : { base: /** @type {const} */ ("text"), kind: "mnemonic" };
+      if (edge?.body?.length) {
+        const bi =
+          insertFocus.body == null
+            ? edge.body.length - 1
+            : insertFocus.body;
+        const be = edge.body[Math.max(0, bi)];
+        return be?.output || item;
+      }
+      return item;
+    }
+    // tee body: start from stem type at tee
+    if (edge?.body?.length) {
+      const bi =
+        insertFocus.body == null ? edge.body.length - 1 : insertFocus.body;
+      const be = edge.body[Math.max(0, bi)];
+      return be?.output || edge.input;
+    }
+    return edge?.input || walked.final;
+  }
+  return walked.final;
 }
 
 /**
@@ -660,11 +792,11 @@ function builderTypeEdges() {
 }
 
 /**
- * Sync fanout/export `which` when format locks the key half.
+ * Sync export `which` when format locks the key half.
  * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
  */
 function syncWhichWithFormat(step) {
-  if (step.name !== "fanout" && step.name !== "export") return;
+  if (step.name !== "export") return;
   const format = String(step.params.format || "");
   if (format === "spki") step.params.which = "public";
   else if (format === "pkcs8" || format === "scalar" || format === "d") {
@@ -682,7 +814,7 @@ function syncWhichWithFormat(step) {
 function paramVisibility(stepName, param, params) {
   if (param.name !== "which") return { show: true };
   const format = String(params.format || "");
-  if (stepName === "fanout" || stepName === "export") {
+  if (stepName === "export") {
     if (format === "spki") {
       return { show: true, locked: true, forced: "public" };
     }
@@ -695,10 +827,12 @@ function paramVisibility(stepName, param, params) {
 
 /**
  * @param {string} text
- * @param {{ title?: string }} [opts]
+ * @param {{ title?: string, reformat?: boolean }} [opts]
+ *   reformat (default true): rewrite the textarea to canonical recipe text
  */
 function loadRecipeText(text, opts = {}) {
-  const { ast, errors } = parseRecipe(text);
+  const reformat = opts.reformat !== false;
+  const { text: canonical, ast, errors, changed } = canonicalizeRecipe(text);
   const errEl = document.getElementById("recipe-errors");
   if (errors.length || !ast) {
     if (errEl) {
@@ -707,14 +841,26 @@ function loadRecipeText(text, opts = {}) {
     }
     return;
   }
-  steps = ast.steps.map((s) => ({
-    name: s.name,
-    params: { ...s.params },
-    start: s.start,
-    end: s.end,
+  const loaded = recipeChains(ast).map((c) => ({
+    steps: (c.steps || []).map((s) => cloneBuilderStep(s)),
   }));
+  chains = loaded.length ? loaded : [{ steps: [] }];
+  steps = chains[0].steps;
   if (opts.title != null) setRecipeTitle(opts.title);
   if (errEl) errEl.classList.add("hidden");
+
+  const ta = document.getElementById("recipe-text");
+  if (reformat && ta instanceof HTMLTextAreaElement && (changed || ta.value !== canonical)) {
+    const focused = document.activeElement === ta;
+    const sel = focused ? ta.selectionStart : null;
+    ta.value = canonical;
+    if (focused && sel != null) {
+      // Keep caret near end of edit when length shrinks from whitespace cleanup.
+      const pos = Math.min(sel, canonical.length);
+      ta.setSelectionRange(pos, pos);
+    }
+  }
+
   validateAndBind();
   renderBuilder();
   renderSuggestDrawer();
@@ -732,7 +878,9 @@ function setRecipeTitle(title) {
 }
 
 function validateAndBind() {
-  const { ast, validation } = compileRecipe(serializeRecipe(steps));
+  if (!chains.length) chains = [{ steps }];
+  else chains[0] = { steps };
+  const { ast, validation } = compileRecipe(serializeRecipe({ chains }));
   const errEl = document.getElementById("recipe-errors");
   const warnEl = document.getElementById("recipe-warnings");
   const runBtn = document.getElementById("run-btn");
@@ -1347,12 +1495,33 @@ function preferredNextOrder(from) {
   }
   if (from.base === "shares") {
     if (from.kind === "raw") {
-      return ["blip39", "recover", "foreach", "inspect", "out", "encrypt", "tee", "text", "qr"];
+      return [
+        "blip39",
+        "recover",
+        "foreach",
+        "at",
+        "inspect",
+        "out",
+        "encrypt",
+        "tee",
+        "text",
+        "qr",
+      ];
     }
-    return ["blip39", "foreach", "inspect", "out", "encrypt", "tee", "text", "qr"];
+    return [
+      "blip39",
+      "foreach",
+      "at",
+      "inspect",
+      "out",
+      "encrypt",
+      "tee",
+      "text",
+      "qr",
+    ];
   }
   if (from.base === "keypair") {
-    return ["export", "fanout", "inspect", "tee", "out", "text", "encrypt"];
+    return ["export", "tee", "out", "peek", "inspect", "text", "encrypt"];
   }
   if (from.base === "key") {
     return ["export", "inspect", "tee", "out", "text"];
@@ -1443,17 +1612,20 @@ function preferredNextOrder(from) {
 function suggestedNextSteps(from, opts = {}) {
   const hasForeach = !!opts.hasForeach;
   const terminal = !!opts.terminal;
+  void hasForeach;
   let list = stepsAccepting(from).filter((s) => {
     if (s.kind === "flow") {
-      if (s.name === "foreach") return true;
-      if (s.name === "merge") return hasForeach;
-      return false;
+      return s.name === "foreach";
     }
     return true;
   });
   if (terminal) {
     list = list.filter((s) =>
-      s.name === "inspect" || s.name === "tee" || s.name === "out" || s.name === "text"
+      s.name === "inspect" ||
+      s.name === "tee" ||
+      s.name === "peek" ||
+      s.name === "out" ||
+      s.name === "text"
     );
   }
   const preferred = preferredNextOrder(from);
@@ -1661,7 +1833,11 @@ function renderOpsDrawer() {
   const from = currentPipelineOutput();
   const suggested = new Set(stepsAccepting(from).map((s) => s.name));
   const all = listSteps().filter(
-    (s) => s.kind !== "flow" || s.name === "foreach" || s.name === "merge"
+    (s) =>
+      s.kind !== "flow" ||
+      s.name === "foreach" ||
+      s.name === "tee" ||
+      s.name === "in"
   );
 
   /** @type {Map<string, typeof all>} */
@@ -1785,26 +1961,42 @@ function renderBuilder() {
     return;
   }
 
-  let foreachOpen = false;
   /** @type {string[]} */
   const parts = [];
   const typeEdges = builderTypeEdges();
   parts.push(`<div class="builder-dropzone" data-insert="0" aria-label="Insert at start"></div>`);
 
-  steps.forEach((step, i) => {
+  /**
+   * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
+   * @param {number} i
+   * @param {{ bodyIndex?: number, parentStem?: number }} [nest]
+   */
+  const renderOneCard = (step, i, nest = {}) => {
     syncWhichWithFormat(step);
     const spec = getStep(step.name);
-    if (step.name === "foreach") foreachOpen = true;
-    const inForeach =
-      foreachOpen && step.name !== "foreach" && step.name !== "merge";
-    if (step.name === "merge") foreachOpen = false;
+    const inFlatForeach = false;
 
-    const edge = typeEdges[i];
+    const edge =
+      nest.parentStem != null
+        ? typeEdges[nest.parentStem]?.body?.[nest.bodyIndex ?? -1]
+        : typeEdges[i];
     const inType = edge ? formatType(edge.input) : "—";
     const outType = edge?.output ? formatType(edge.output) : edge?.error ? "∅" : "—";
-    const typeTitle = edge?.error
-      ? edge.error
-      : `${inType} → ${outType}`;
+    const typeTitle = edge?.error ? edge.error : `${inType} → ${outType}`;
+
+    const stepAttr =
+      nest.parentStem != null
+        ? `data-stem="${nest.parentStem}" data-body="${nest.bodyIndex}"`
+        : `data-step="${i}"`;
+    const focusStem = nest.parentStem != null ? nest.parentStem : i;
+    const focusBody = nest.bodyIndex;
+    const focused =
+      insertFocus &&
+      insertFocus.stem === focusStem &&
+      (focusBody == null
+        ? insertFocus.body == null &&
+          (step.name === "tee" || step.name === "foreach")
+        : insertFocus.body === focusBody);
 
     const paramFields = (spec?.params || [])
       .map((p) => {
@@ -1815,18 +2007,22 @@ function renderBuilder() {
             ? vis.forced
             : step.params[p.name] ?? p.default ?? "";
         const title = p.doc ? ` title="${escapeHtml(p.doc)}"` : "";
+        const dataAttrs =
+          nest.parentStem != null
+            ? `data-stem="${nest.parentStem}" data-body="${nest.bodyIndex}" data-param="${escapeHtml(p.name)}"`
+            : `data-step="${i}" data-param="${escapeHtml(p.name)}"`;
         if (p.type === "bool") {
           const checked = val === true || val === "true";
           return `<label class="builder-param builder-param-bool"${title}>
             <span class="builder-param-name">${escapeHtml(p.name)}${p.flag ? ` <code>${escapeHtml(p.flag)}</code>` : ""}</span>
-            <input type="checkbox" data-step="${i}" data-param="${escapeHtml(p.name)}"
+            <input type="checkbox" ${dataAttrs}
               ${checked ? "checked" : ""}></label>`;
         }
         if (p.type === "enum") {
           const locked = !!vis.locked;
           return `<label class="builder-param"${title}>
             <span class="builder-param-name">${escapeHtml(p.name)}</span>
-            <select data-step="${i}" data-param="${escapeHtml(p.name)}" class="text-input"
+            <select ${dataAttrs} class="text-input"
               ${locked ? "disabled" : ""}>
               ${(p.enum || [])
                 .map(
@@ -1838,7 +2034,7 @@ function renderBuilder() {
         }
         return `<label class="builder-param"${title}>
           <span class="builder-param-name">${escapeHtml(p.name)}</span>
-          <input class="text-input" data-step="${i}" data-param="${escapeHtml(p.name)}"
+          <input class="text-input" ${dataAttrs}
                  value="${escapeHtml(String(val))}" ${p.type === "int" ? 'type="number"' : 'type="text"'}></label>`;
       })
       .join("");
@@ -1861,28 +2057,46 @@ function renderBuilder() {
         : "";
 
     const pgpModeBlock = usesPgpProfile
-      ? renderPgpModeToggle(`toolkit-pgp-mode-step-${i}`, { compact: true })
+      ? renderPgpModeToggle(
+          nest.parentStem != null
+            ? `toolkit-pgp-mode-step-${nest.parentStem}-${nest.bodyIndex}`
+            : `toolkit-pgp-mode-step-${i}`,
+          { compact: true }
+        )
       : "";
 
     const typeHint =
       edge?.output?.base === "shares" && edge.output.kind === "raw"
         ? `<p class="builder-type-hint muted fs-xs mb-sm">Next usually <code>blip39</code> → mnemonics, or <code>recover</code> → <code>bytes/master</code>.</p>`
         : edge?.output?.base === "shares"
-        ? `<p class="builder-type-hint muted fs-xs mb-sm">Next usually <code>blip39 -d</code> → raw shares, then <code>recover</code>; or <code>foreach</code> to map each mnemonic.</p>`
-        : step.name === "recover"
-          ? `<p class="builder-type-hint muted fs-xs mb-sm">Combines raw SSS shares into <code>bytes/master</code>. Decode mnemonics with <code>blip39 -d</code> first.</p>`
-          : step.name === "sss"
-            ? `<p class="builder-type-hint muted fs-xs mb-sm">Produces <code>shares/raw</code>. Pipe into <code>blip39</code> for word phrases.</p>`
-            : "";
+          ? `<p class="builder-type-hint muted fs-xs mb-sm">Next usually <code>foreach</code> (list body), <code>at N</code>, or <code>blip39 -d</code> → <code>recover</code>.</p>`
+          : step.name === "recover"
+            ? `<p class="builder-type-hint muted fs-xs mb-sm">Combines raw SSS shares into <code>bytes/master</code>. Decode mnemonics with <code>blip39 -d</code> first.</p>`
+            : step.name === "sss"
+              ? `<p class="builder-type-hint muted fs-xs mb-sm">Produces <code>shares/raw</code>. Pipe into <code>blip39</code> for word phrases.</p>`
+              : step.name === "foreach"
+                ? `<p class="builder-type-hint muted fs-xs mb-sm">Add child steps as an indented list (<code>- out @share</code>) or brace body. Optional <code>foreach .items</code>.</p>`
+                : step.name === "tee"
+                  ? `<p class="builder-type-hint muted fs-xs mb-sm">Body runs on a copy; use <code>- .public | …</code> for selector branches. Stem unchanged. Use <code>peek</code> for a side inspect.</p>`
+                  : "";
 
     const blocked = stepBlockedByFips(step.name);
+    const nestClass =
+      nest.bodyIndex != null
+        ? "builder-foreach-child builder-nest-child"
+        : inFlatForeach
+          ? "builder-foreach-child"
+          : "";
 
-    parts.push(`
-      <div class="builder-card ${inForeach ? "builder-foreach-child" : ""} ${step.name === "foreach" ? "builder-foreach" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""} ${edge && !edge.ok ? "builder-type-error" : ""} ${blocked ? "builder-fips-blocked" : ""}"
-           draggable="true" data-index="${i}" data-step-card="${i}">
+    return `
+      <div class="builder-card ${nestClass} ${step.name === "foreach" ? "builder-foreach" : ""} ${step.name === "tee" && step.body?.length ? "builder-tee" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""} ${edge && !edge.ok ? "builder-type-error" : ""} ${blocked ? "builder-fips-blocked" : ""} ${focused ? "builder-card-focused" : ""}"
+           draggable="${nest.bodyIndex == null ? "true" : "false"}" data-index="${i}" data-step-card="${i}"
+           data-focus-stem="${focusStem}" ${focusBody != null ? `data-focus-body="${focusBody}"` : ""}>
         <div class="builder-card-head">
           <span class="builder-drag" title="Drag to reorder">⠿</span>
-          <span class="builder-step-num" aria-hidden="true">${i + 1}</span>
+          <span class="builder-step-num" aria-hidden="true">${
+            nest.bodyIndex != null ? `${focusStem + 1}.${focusBody + 1}` : i + 1
+          }</span>
           <strong title="${escapeHtml(spec?.doc || "")}">${escapeHtml(stepDisplayName(spec) || step.name)}</strong>
           ${toolboxBadgeHtml(spec?.toolbox)}
           ${suiteChipHtml(spec?.toolbox)}
@@ -1895,15 +2109,63 @@ function renderBuilder() {
                 : `<span class="muted fs-xs">${escapeHtml(spec?.kind || "")}</span>`
           }
           ${outSummary ? `<span class="muted fs-xs">${escapeHtml(outSummary)}</span>` : ""}
-          <button type="button" class="btn btn-ghost btn-compact text-error" data-remove="${i}">Remove</button>
+          <button type="button" class="btn btn-ghost btn-compact text-error" data-remove-stem="${focusStem}" ${
+            focusBody != null ? `data-remove-body="${focusBody}"` : ""
+          }>Remove</button>
         </div>
         <p class="muted mt-xs mb-sm fs-xs" title="${escapeHtml(spec?.doc || "")}">${escapeHtml(spec?.doc || "")}</p>
         ${typeHint}
         ${pgpModeBlock}
         <div class="builder-params">${paramFields}</div>
-      </div>
-      <div class="builder-dropzone" data-insert="${i + 1}" aria-label="Insert after ${escapeHtml(step.name)}"></div>`);
+      </div>`;
+  };
+
+  steps.forEach((step, i) => {
+    parts.push(renderOneCard(step, i));
+    if (
+      (step.name === "tee" || step.name === "foreach") &&
+      (step.body?.length ||
+        step.branches?.length ||
+        (insertFocus?.stem === i && insertFocus.body == null))
+    ) {
+      if (!step.body) step.body = [];
+      parts.push(`<div class="builder-nest" data-nest-stem="${i}">`);
+      parts.push(
+        `<p class="builder-nest-label muted fs-xs">${
+          step.name === "tee" ? "tee body (side chain)" : "foreach body (per share)"
+        }</p>`
+      );
+      step.body.forEach((b, bi) => {
+        parts.push(renderOneCard(b, i, { bodyIndex: bi, parentStem: i }));
+      });
+      for (const br of step.branches || []) {
+        const sel = br.selector || `.${br.member}`;
+        const chain = (br.body || []).map((s) => s.name).join(" | ");
+        parts.push(`
+          <div class="builder-tee-branch" title="Selector branch">
+            <code class="fs-xs">${escapeHtml(sel)}</code>
+            <span class="muted fs-xs">|</span>
+            <code class="fs-xs">${escapeHtml(chain)}</code>
+          </div>`);
+      }
+      parts.push(
+        `<div class="builder-dropzone builder-nest-drop" data-body-insert-stem="${i}" aria-label="Add step to ${escapeHtml(step.name)} body"></div>`
+      );
+      parts.push(`</div>`);
+    }
+    parts.push(
+      `<div class="builder-dropzone" data-insert="${i + 1}" aria-label="Insert after ${escapeHtml(step.name)}"></div>`
+    );
   });
+
+  for (let ci = 1; ci < chains.length; ci++) {
+    const chainText = serializeRecipe({ chains: [chains[ci]] });
+    parts.push(`
+      <div class="builder-chain-sep muted fs-xs" role="separator">
+        Chain ${ci + 1} (edit in recipe text)
+      </div>
+      <pre class="builder-chain-preview fs-xs">${escapeHtml(chainText)}</pre>`);
+  }
 
   const finalType = currentPipelineOutput();
   const lastStep = steps[steps.length - 1];
@@ -1940,22 +2202,64 @@ function renderBuilder() {
 
   host.querySelectorAll("[data-param]").forEach((el) => {
     el.addEventListener("change", () => {
-      const i = Number(el.getAttribute("data-step"));
       const name = el.getAttribute("data-param");
-      if (!name || !steps[i]) return;
-      const spec = getStep(steps[i].name);
+      if (!name) return;
+      const stemAttr = el.getAttribute("data-stem");
+      /** @type {import("../lib/toolkit/recipe.js").RecipeStep|undefined} */
+      let target;
+      if (stemAttr != null) {
+        const stem = Number(stemAttr);
+        const body = Number(el.getAttribute("data-body"));
+        target = steps[stem]?.body?.[body];
+      } else {
+        const i = Number(el.getAttribute("data-step"));
+        target = steps[i];
+      }
+      if (!target) return;
+      const spec = getStep(target.name);
       const p = (spec?.params || []).find((x) => x.name === name);
       if (el instanceof HTMLInputElement && el.type === "checkbox") {
-        steps[i].params[name] = el.checked;
+        target.params[name] = el.checked;
       } else {
         const v =
           el instanceof HTMLInputElement || el instanceof HTMLSelectElement
             ? el.value
             : "";
-        steps[i].params[name] = p?.type === "int" ? Number(v) : v;
+        target.params[name] = p?.type === "int" ? Number(v) : v;
       }
-      if (name === "format") syncWhichWithFormat(steps[i]);
+      if (name === "format") syncWhichWithFormat(target);
       setRecipeFromSteps();
+    });
+  });
+
+  host.querySelectorAll("[data-focus-stem]").forEach((card) => {
+    card.addEventListener("click", (e) => {
+      if (
+        e.target instanceof HTMLElement &&
+        (e.target.closest("button") ||
+          e.target.closest("input") ||
+          e.target.closest("select") ||
+          e.target.closest("label"))
+      ) {
+        return;
+      }
+      const stem = Number(card.getAttribute("data-focus-stem"));
+      const bodyAttr = card.getAttribute("data-focus-body");
+      insertFocus =
+        bodyAttr != null
+          ? { stem, body: Number(bodyAttr) }
+          : { stem, body: null };
+      renderBuilder();
+      renderSuggestDrawer();
+    });
+  });
+
+  host.querySelectorAll("[data-body-insert-stem]").forEach((zone) => {
+    zone.addEventListener("click", () => {
+      const stem = Number(zone.getAttribute("data-body-insert-stem"));
+      insertFocus = { stem, body: null };
+      renderSuggestDrawer();
+      renderBuilder();
     });
   });
 
@@ -1975,10 +2279,17 @@ function renderBuilder() {
     addStepAt("out");
   });
 
-  host.querySelectorAll("[data-remove]").forEach((btn) => {
+  host.querySelectorAll("[data-remove-stem]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const i = Number(btn.getAttribute("data-remove"));
-      steps.splice(i, 1);
+      const stem = Number(btn.getAttribute("data-remove-stem"));
+      const bodyAttr = btn.getAttribute("data-remove-body");
+      if (bodyAttr != null) {
+        const body = Number(bodyAttr);
+        steps[stem]?.body?.splice(body, 1);
+      } else {
+        steps.splice(stem, 1);
+      }
+      insertFocus = null;
       setRecipeFromSteps();
     });
   });
@@ -2965,7 +3276,8 @@ document.getElementById("destroy-btn")?.addEventListener("click", () => {
 });
 
 document.getElementById("clear-recipe-btn")?.addEventListener("click", () => {
-  steps = [];
+  chains = [{ steps: [] }];
+  steps = chains[0].steps;
   setRecipeTitle("");
   setRecipeFromSteps();
 });
@@ -2982,12 +3294,26 @@ document.getElementById("ops-filter")?.addEventListener("input", (e) => {
 });
 
 let recipeTimer = 0;
-document.getElementById("recipe-text")?.addEventListener("input", () => {
+const recipeTa = document.getElementById("recipe-text");
+recipeTa?.addEventListener("input", () => {
   clearTimeout(recipeTimer);
   recipeTimer = window.setTimeout(() => {
     const ta = document.getElementById("recipe-text");
     if (ta instanceof HTMLTextAreaElement) loadRecipeText(ta.value);
   }, 300);
+});
+recipeTa?.addEventListener("paste", () => {
+  // Value updates after paste; canonicalize on the next tick.
+  clearTimeout(recipeTimer);
+  recipeTimer = window.setTimeout(() => {
+    const ta = document.getElementById("recipe-text");
+    if (ta instanceof HTMLTextAreaElement) loadRecipeText(ta.value);
+  }, 0);
+});
+recipeTa?.addEventListener("blur", () => {
+  clearTimeout(recipeTimer);
+  const ta = document.getElementById("recipe-text");
+  if (ta instanceof HTMLTextAreaElement) loadRecipeText(ta.value);
 });
 
 document.getElementById("run-btn")?.addEventListener("click", async () => {
