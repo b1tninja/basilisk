@@ -33,13 +33,15 @@ import {
   unresolvedInputs,
   unresolvedRecipients,
 } from "../lib/toolkit/recipe.js";
+import { glyphHtml } from "../lib/toolkit/glyphs.js";
 import {
+  defaultCollapsedShelfKeys,
   getShelfMeta,
   getStep,
+  listDrawerRows,
   listSteps,
   recipeNeedsMainThread,
   stepsAccepting,
-  SHELF_META,
   TOOLBOX_META,
 } from "../lib/toolkit/registry.js";
 import { executeToolkitRun } from "../lib/toolkit-run.js";
@@ -138,11 +140,7 @@ let opsFilter = "";
 /** Toolbox sections collapsed in the ops drawer (WebAuthn starts closed). */
 let opsCollapsed = new Set(["webauthn"]);
 /** Shelf keys `${toolbox}:${shelf}` collapsed in the ops drawer. */
-let opsShelfCollapsed = new Set(
-  Object.entries(SHELF_META)
-    .filter(([, meta]) => meta.defaultCollapsed)
-    .flatMap(([shelf]) => [`webauthn:${shelf}`])
-);
+let opsShelfCollapsed = new Set(defaultCollapsedShelfKeys());
 /** Whether the collapsed "Cryptographic parameters" section is expanded. */
 let cryptoPanelOpen = false;
 /** @type {"auto"|"compatible"|"modern"|"custom"} */
@@ -1559,6 +1557,7 @@ function preferredNextOrder(from) {
   }
   if (from.base === "bytes") {
     return [
+      "as",
       "digest",
       "sign",
       "aesgcm",
@@ -1739,28 +1738,42 @@ function renderSuggestDrawer() {
 /**
  * @param {import("../lib/toolkit/registry.js").StepSpec} s
  * @param {Set<string>} suggested
+ * @param {{ decode?: boolean, cellClass?: string }} [opts]
  * @returns {string}
  */
-function opsItemHtml(s, suggested) {
-  const fit = !steps.length
-    ? s.kind === "source" || s.input === "none"
-    : suggested.has(s.name);
-  const ioLabel = `${s.input} → ${s.output}`;
+function opsItemHtml(s, suggested, opts = {}) {
+  const decode = !!opts.decode;
+  const from = currentPipelineOutput();
+  let fit;
+  if (!steps.length) {
+    fit = s.kind === "source" || s.input === "none";
+  } else if (decode) {
+    const resolved = resolveStepType(s, from, { ...defaultParams(s), decode: true });
+    fit = !!(resolved && resolved.ok);
+  } else {
+    fit = suggested.has(s.name);
+  }
+  const io = s.effectiveIo
+    ? s.effectiveIo({ ...defaultParams(s), ...(decode ? { decode: true } : {}) })
+    : { input: s.input, output: s.output };
+  const ioLabel = `${io.input} → ${io.output}`;
   const display = stepDisplayName(s);
+  const nameLabel = decode ? `${display} -d` : display;
   const blocked = stepBlockedByFips(s.name);
   const title = blocked
     ? `FIPS mode: blocked — ${s.toolbox} suite unverified. ${FIPS_MODE_DISCLAIMER}`
-    : `${s.doc}\n\nRecipe: ${s.name} · ${ioLabel}`;
+    : `${s.doc}\n\nRecipe: ${s.name}${decode ? " -d" : ""} · ${ioLabel}`;
+  const cellClass = opts.cellClass || "";
   return `
-    <button type="button" class="ops-item ${fit ? "ops-item-fit" : "ops-item-dim"}${blocked ? " ops-item-fips-blocked" : ""}"
+    <button type="button" class="ops-item ${cellClass} ${fit ? "ops-item-fit" : "ops-item-dim"}${blocked ? " ops-item-fips-blocked" : ""}"
       draggable="${blocked ? "false" : "true"}" data-op="${escapeHtml(s.name)}"
+      data-op-decode="${decode ? "1" : "0"}"
       ${blocked ? "aria-disabled=\"true\"" : ""}
       title="${escapeHtml(title)}">
-      <span class="ops-item-name">${escapeHtml(display)}</span>
-      ${suiteChipHtml(s.toolbox)}
+      <span class="ops-item-name">${escapeHtml(nameLabel)}</span>
       ${
-        display !== s.name
-          ? `<span class="muted fs-xs ops-item-recipe">${escapeHtml(s.name)}</span>`
+        display !== s.name || decode
+          ? `<span class="muted fs-xs ops-item-recipe">${escapeHtml(s.name)}${decode ? " -d" : ""}</span>`
           : ""
       }
       <span class="muted fs-xs ops-item-io">${escapeHtml(ioLabel)}</span>
@@ -1768,7 +1781,39 @@ function opsItemHtml(s, suggested) {
 }
 
 /**
- * Render ops for one toolbox — flat list, or shelves when any step declares one.
+ * @param {import("../lib/toolkit/registry.js").DrawerRow} row
+ * @param {Set<string>} suggested
+ * @returns {string}
+ */
+function opsDrawerRowHtml(row, suggested) {
+  if (row.type === "solo" && row.step) {
+    return `<div class="ops-pair ops-pair-solo">${opsItemHtml(row.step, suggested, { cellClass: "ops-pair-cell" })}</div>`;
+  }
+  if (row.type !== "pair" || !row.forward) return "";
+  const caption = row.caption
+    ? `<div class="ops-pair-caption muted fs-xs">${escapeHtml(row.caption)}</div>`
+    : "";
+  if (row.decodeTwin) {
+    return `
+      <div class="ops-pair">
+        ${caption}
+        ${opsItemHtml(row.forward, suggested, { cellClass: "ops-pair-cell" })}
+        ${opsItemHtml(row.forward, suggested, { decode: true, cellClass: "ops-pair-cell" })}
+      </div>`;
+  }
+  if (!row.reverse) {
+    return `<div class="ops-pair ops-pair-solo">${caption}${opsItemHtml(row.forward, suggested, { cellClass: "ops-pair-cell" })}</div>`;
+  }
+  return `
+    <div class="ops-pair">
+      ${caption}
+      ${opsItemHtml(row.forward, suggested, { cellClass: "ops-pair-cell" })}
+      ${opsItemHtml(row.reverse, suggested, { cellClass: "ops-pair-cell" })}
+    </div>`;
+}
+
+/**
+ * Render ops for one toolbox — shelves + conjugate pair rows.
  * @param {string} tb
  * @param {import("../lib/toolkit/registry.js").StepSpec[]} items
  * @param {Set<string>} suggested
@@ -1784,8 +1829,17 @@ function renderToolboxOpsBody(tb, items, suggested, filterActive) {
     return sa - sb || ka - kb || a.name.localeCompare(b.name);
   });
   const usesShelves = sorted.some((s) => s.shelf);
+
+  /**
+   * @param {typeof sorted} shelfItems
+   */
+  const rowsHtml = (shelfItems) =>
+    listDrawerRows(shelfItems)
+      .map((row) => opsDrawerRowHtml(row, suggested))
+      .join("");
+
   if (!usesShelves) {
-    return sorted.map((s) => opsItemHtml(s, suggested)).join("");
+    return rowsHtml(sorted);
   }
 
   /** @type {Map<string, typeof sorted>} */
@@ -1806,15 +1860,16 @@ function renderToolboxOpsBody(tb, items, suggested, filterActive) {
       const meta = getShelfMeta(shelf);
       const collapsed = opsShelfCollapsed.has(key) && !filterActive;
       const shelfItems = byShelf.get(shelf) || [];
+      const visibleCount = listDrawerRows(shelfItems).length;
       return `
         <div class="ops-shelf" data-shelf="${escapeHtml(key)}">
           <button type="button" class="ops-shelf-toggle" data-toggle-shelf="${escapeHtml(key)}"
             aria-expanded="${collapsed ? "false" : "true"}">
-            <span>${escapeHtml(meta.label)}</span>
-            <span class="muted fs-xs">${shelfItems.length}</span>
+            <span class="ops-shelf-label">${glyphHtml(meta.glyph, "ops-glyph ops-glyph-shelf")}<span>${escapeHtml(meta.label)}</span></span>
+            <span class="muted fs-xs">${visibleCount}</span>
           </button>
           <div class="ops-shelf-body ${collapsed ? "hidden" : ""}">
-            ${shelfItems.map((s) => opsItemHtml(s, suggested)).join("")}
+            ${rowsHtml(shelfItems)}
           </div>
         </div>`;
     })
@@ -1837,7 +1892,8 @@ function renderOpsDrawer() {
       s.kind !== "flow" ||
       s.name === "foreach" ||
       s.name === "tee" ||
-      s.name === "in"
+      s.name === "in" ||
+      s.name === "as"
   );
 
   /** @type {Map<string, typeof all>} */
@@ -1868,7 +1924,7 @@ function renderOpsDrawer() {
     const fromType = formatType(from);
     if (!steps.length) {
       hint.textContent =
-        "Drag onto the pipeline, or click to append. Badges show toolbox (WebCrypto, OpenPGP, SSS, WebAuthn, …).";
+        "Swiss-army drawer: shelves group tools; conjugates sit side by side (encrypt | decrypt, encode | -d). Drag or click to add.";
     } else if (from.base === "shares" && from.kind === "raw") {
       hint.textContent = `Pipe type ${fromType} — suggested: blip39 (mnemonics) or recover (→ bytes/master). Highlighted ops accept this type.`;
     } else if (from.base === "shares") {
@@ -1887,7 +1943,7 @@ function renderOpsDrawer() {
         <div class="ops-category" data-toolbox="${escapeHtml(tb)}">
           <button type="button" class="ops-category-toggle" data-toggle-toolbox="${escapeHtml(tb)}"
             aria-expanded="${collapsed ? "false" : "true"}">
-            <span>${toolboxBadgeHtml(tb)} ${escapeHtml(meta.label)} ${suiteChipHtml(tb)}</span>
+            <span class="ops-category-label">${glyphHtml(meta.glyph, "ops-glyph ops-glyph-toolbox")} ${toolboxBadgeHtml(tb)} ${escapeHtml(meta.label)} ${suiteChipHtml(tb)}</span>
             <span class="muted fs-xs">${items.length}</span>
           </button>
           <div class="ops-category-body ${collapsed ? "hidden" : ""}">
@@ -1918,6 +1974,8 @@ function renderOpsDrawer() {
 
   host.querySelectorAll("[data-op]").forEach((el) => {
     const name = el.getAttribute("data-op") || "";
+    const decode = el.getAttribute("data-op-decode") === "1";
+    const overrides = decode ? { decode: true } : undefined;
     el.addEventListener("dragstart", (e) => {
       if (stepBlockedByFips(name)) {
         e.preventDefault();
@@ -1927,11 +1985,12 @@ function renderOpsDrawer() {
       if (!dt) return;
       dt.setData(STEP_MIME, name);
       dt.setData("text/plain", name);
+      if (decode) dt.setData("application/x-basilisk-decode", "1");
       dt.effectAllowed = "copy";
       el.classList.add("ops-dragging");
     });
     el.addEventListener("dragend", () => el.classList.remove("ops-dragging"));
-    el.addEventListener("click", () => addStepAt(name));
+    el.addEventListener("click", () => addStepAt(name, undefined, overrides));
   });
 }
 
@@ -2593,9 +2652,19 @@ function renderArtifactCard(a, i) {
   const tags = Array.isArray(a.tags) ? a.tags : [];
   const metaBits = [
     role ? `<span class="badge approved" title="Artifact role">${escapeHtml(role)}</span>` : "",
-    ...tags.map(
-      (t) => `<span class="badge pending" title="Tag">${escapeHtml(String(t))}</span>`
-    ),
+    ...tags.map((t) => {
+      const label = String(t);
+      const discouraged =
+        label === "discouraged" ||
+        label === "legacy" ||
+        label === "sha-1" ||
+        label === "rsaes-pkcs1-v1_5";
+      const cls = discouraged ? "badge discouraged" : "badge pending";
+      const title = discouraged
+        ? "Discouraged / legacy algorithm — prefer modern alternatives"
+        : "Tag";
+      return `<span class="${cls}" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+    }),
     a.encoding ? `<span class="badge pending">${escapeHtml(a.encoding)}</span>` : "",
     a.mime && a.mime !== "text/plain; charset=utf-8" && a.mime !== "text/plain"
       ? `<span class="muted fs-xs">${escapeHtml(a.mime)}</span>`

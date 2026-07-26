@@ -16,17 +16,21 @@ Server-side OpenPGP **parsing/policy** (`basilisk/openpgp/`) is out of scope her
 
 ### Toolkit toolboxes
 
-Every recipe step declares a `toolbox` in `registry.js`. The ops drawer groups by toolbox; builder cards and suggest chips show a badge so similar verbs (e.g. UI label “encrypt” for `aesgcm` vs OpenPGP `encrypt`) stay distinct. Optional `shelf` sub-groups (used by WebAuthn) nest inside a toolbox so secondary ops stay collapsed until needed.
+Every recipe step declares a `toolbox` in `registry.js`. The ops drawer is a Swiss-army layout: toolboxes (with SVG glyphs) → taxonomy **shelves** → **conjugate rows** (encrypt | decrypt, encode | `-d`). Badges on builder/suggest chips keep similar verbs distinct. Shelves and conjugates are UX-only — recipe tokens are unchanged.
 
-| Toolbox | Examples |
-|---------|----------|
-| `webcrypto` | `genkey`, `export`, `import`, `digest`, `sign`, `aesgcm`, … |
-| `openpgp` | `encrypt`, `decrypt`, `symencrypt`, `symdecrypt` |
-| `sss` | `sss`, `blip39`, `recover`, `shares`, `at` |
-| `webauthn` | `wa-caps`, `wa-create`, `wa-prf`, `wa-attest`, `wa-mds` (shelves: Essentials / Attestation·MDS) |
-| `encoding` | `pem`, `base64`, `hex`, `utf8` |
-| `io` | `random`, `input`, `out`, `qr` |
-| `flow` | `foreach` / `tee` / `peek` / `in` / `select` (see [RECIPE.md](./RECIPE.md)), `inspect` |
+Drawer order: WebCrypto → Encoding → I/O → Flow → OpenPGP → SSS → WebAuthn.
+
+| Toolbox | Shelves | Examples |
+|---------|---------|----------|
+| `webcrypto` | Keys · Digest · Sign · AEAD · Cipher · RSA · KDF · Agreement · Wrap | `genkey`, `digest`, `sign`/`verify`, `aesgcm`/`-d`, `hkdf`, `ecdh`, `wrap`/`unwrap` |
+| `encoding` | Binary · Text | `pem`/`-d`, `base64`/`-d`, `hex`/`-d`, `utf8` |
+| `io` | Ports | `input`/`out`, `random`, `qr` |
+| `flow` | Control | `foreach`, `tee`, `in`, `as` (see [RECIPE.md](./RECIPE.md)) |
+| `openpgp` | Public key · Password | `encrypt`/`decrypt`, `symencrypt`/`symdecrypt` |
+| `sss` | Split · Recover | `sss`, `blip39`/`-d`, `recover` |
+| `webauthn` | Essentials · Attestation/MDS | `wa-caps`, `wa-create`, `wa-prf`, `wa-attest`, `wa-mds` |
+
+Cipher (unauthenticated AES) and Wrap shelves default collapsed; WebAuthn toolbox + Attestation shelf start collapsed.
 
 **Recipe name vs UI label:** the parser token is always unique (`encrypt` = OpenPGP). Optional `label` is display-only (e.g. `aesgcm` may show as “encrypt” under the WebCrypto badge).
 
@@ -132,14 +136,14 @@ Eager startup self-tests (`runCryptoSelfTests`) cover:
 | Suite | CAST IDs | Status |
 |-------|----------|--------|
 | **OpenPGP** | CAST-1…5 (keygen, encrypt/decrypt, sign/verify, signed+encrypted, Argon2) | Verified after POST |
-| **WebCrypto** | CAST-6…11 (SHA-256 KAT, AES-GCM, Ed25519, ECDH P-256, HKDF KAT, AES-KW) | Verified after POST |
+| **WebCrypto** | CAST-6…11, 13–14 (SHA-256 KAT, AES-GCM, Ed25519, ECDH P-256, HKDF KAT, AES-KW, AES-CBC, AES-CTR) | Verified after POST |
 | **SSS** | CAST-12 (GF(256) split/combine + BLIP39 encode/decode) | Verified after POST |
 
 Toolkit UI always shows **verified** / **⚠ unverified** chips per crypto toolbox. **FIPS mode** (persisted `basilisk.fipsMode`) hard-blocks adding/running ops whose suite is unverified; the worker enforces the same gate via `executeToolkitRun` (`toolkit-run.js`). Disclaimer: FIPS-*inspired* posture only — not a NIST FIPS 140 certificate.
 
 Encrypt / Decrypt banners say **OpenPGP verified** (CAST-1…5). Quorum session ECDH/HKDF/AES-GCM is **not** CAST-gated today.
 
-`genkey` can create **RSA-OAEP** keys, but there is no asymmetric WebCrypto encrypt toolkit op yet (only `aesgcm`).
+RSA-OAEP encrypt/decrypt is available as toolkit op **`rsaoaep`** (UI label `encrypt` under WebCrypto — distinct from OpenPGP `encrypt` and AES `aesgcm`).
 
 ---
 
@@ -163,21 +167,24 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js`.
 | Op | Status | Crypto |
 |----|--------|--------|
 | `export` | Done | `exportKey`: pkcs8 / spki / jwk / raw / scalar |
-| `import` | Done | `importKey` (+ scalar → PKCS#8 for EC/OKP) |
+| `import` | Done | `importKey` (+ scalar → PKCS#8 for EC/OKP; `import jwk` text; RSA/X25519 SPKI) |
 | `pem` / `der` | Done | Armor / identity |
-| `base64` / `base64url` / `hex` / `utf8` | Done | Encoding (`-d` decode where applicable) |
+| `base64` / `base64url` / `hex` / `utf8` | Done | Encoding (`-d` decode where applicable, including `base64url -d`) |
 | `inspect` (`dump` / `hexdump`) | Done | Dump; result tile keeps a snapshot for live format switching (no re-run) |
 
 ### Transforms — WebCrypto ops
 
 | Op | Status | Crypto |
 |----|--------|--------|
-| `digest` | Done | `subtle.digest` SHA-256/384/512 |
-| `sign` / `verify` | Done | Bound JWK; fail-loud verify |
-| `aesgcm` / `aesgcm -d` | Done | AES-GCM (UI label `encrypt`) |
-| `hkdf` / `pbkdf2` | Done | SubtleCrypto KDFs |
-| `ecdh` | Done | ECDH/X25519 `deriveBits` |
-| `wrap` / `unwrap` | Done | AES-KW |
+| `digest` | Done | `subtle.digest` SHA-256/384/512; SHA-1 **discouraged** (warn + `legacy` tags) |
+| `sign` / `verify` | Done | Bound JWK / `key=@slot`; `signature=@slot` or bare base64url; fail-loud default; `soft`/`-q` → `verified`\|`invalid` |
+| `aesgcm` / `aesgcm -d` | Done | AES-GCM (UI label `encrypt`); `key=@slot` |
+| `aescbc` / `aesctr` | Done | Unauthenticated AES-CBC/CTR interop; IV(16)\|\|CT; prefer `aesgcm` |
+| `rsaoaep` / `rsaoaep -d` | Done | RSA-OAEP content encrypt (UI label `encrypt`); `key=@slot` |
+| `rsapkcs1` / `-d` | Done | RSAES-PKCS1-v1_5 (pure-JS; **discouraged**; warn + tags); prefer `rsaoaep` |
+| `hkdf` / `pbkdf2` | Done | `deriveBits` (default) or `deriveKey` via `as=aes/256` etc. |
+| `ecdh` | Done | ECDH/X25519; `bits=0` curve-aware; `as=` → `deriveKey` like hkdf |
+| `wrap` / `unwrap` | Done | `mode=aes-kw` (default) or `mode=rsa-oaep`; AES/HMAC CEKs for AES-KW |
 
 ### Transforms — secret sharing
 
@@ -215,7 +222,7 @@ Compose with WebCrypto: `wa-prf \| hkdf 32 \| …` / `aesgcm`.
 | Op | Status | Crypto |
 |----|--------|--------|
 | `foreach` | Done | Map via required body (`-` list or `{ … }`); optional `.items` / `.values` / `.keys` |
-| `tee` / `peek` / `in` | Done | tee = mid-stem forks; `out @x` + blank-line chains + `in @x` for reuse; `peek` = side inspect |
+| `tee` / `peek` / `in` / `as` | Done | tee = mid-stem forks; `out @x` + chains + `in @x`; named args `key=@x`; cast `as master` (retag) distinct from KDF param `as=aes/256`; `peek` = side inspect |
 | `at` / `[n]` | Done | 1-based share index / slice |
 | `encrypt` / `gpg` | Done | OpenPGP.js public-key encrypt |
 | `qr` / `text` / `out` | Done | Presentation sinks |
@@ -225,15 +232,19 @@ Compose with WebCrypto: `wa-prf \| hkdf 32 \| …` / `aesgcm`.
 | Op | Status | Notes |
 |----|--------|-------|
 | `digest` | Done | SHA-256 / 384 / 512 |
-| `sign` / `verify` | Done | Bound WebCrypto JWK (`inputs.key`); fail-loud verify |
+| `sign` / `verify` | Done | Bound JWK or `key=@slot`; `signature=@slot`; soft `-q` text artifact |
 | `aesgcm` / `aesgcm -d` | Done | UI label `encrypt`; IV\|\|CT\|\|tag; distinct from OpenPGP `encrypt` |
-| `hkdf` / `pbkdf2` | Done | First-class SubtleCrypto KDFs |
-| `ecdh` | Done | P-256 / X25519 via bound local + peer JWK |
-| `wrap` / `unwrap` | Done | AES-KW |
-| AES-CBC / AES-CTR | Deferred | Not required yet |
-| RSAES-PKCS1-v1_5 | Deferred | Prefer OAEP |
+| `aescbc` / `aesctr` | Done | Unauthenticated interop; IV(16)\|\|CT; prefer `aesgcm` for new work |
+| `rsaoaep` / `rsaoaep -d` | Done | RSA-OAEP content encrypt/decrypt; `key=@slot` |
+| `rsapkcs1` / `-d` | Done | RSAES-PKCS1-v1_5 pure-JS interop; discouraged (warn + tags) |
+| `hkdf` / `pbkdf2` | Done | `deriveBits` or `as=` → `deriveKey` (AES / HMAC keypair) |
+| `ecdh` | Done | Curve-aware bits; `as=` → deriveKey; slots `private=@` `peer=@` |
+| `wrap` / `unwrap` | Done | `mode=aes-kw`\|`rsa-oaep`; AES-KW unwrap `alg=` aes/hmac |
+| SHA-1 digest | **Discouraged** | Supported via `digest sha-1`; prefer SHA-256/384/512 |
+| RSAES-PKCS1-v1_5 | **Discouraged** | Supported via `rsapkcs1` (not SubtleCrypto); prefer `rsaoaep` |
+| RSASSA-PKCS1-v1_5 | **Discouraged** | `genkey`/`import` `padding=pkcs1` (default `pss`); prefer RSA-PSS |
 
-`import` alg enum aligned with `genkey` (`aes/128`, `hmac/sha512`, …).
+`import` alg enum aligned with `genkey` (`aes/128`, `hmac/sha512`, …); formats include `jwk` (text) and SPKI for RSA / X25519 public keys. RSA sign keys: `padding=pss|pkcs1` (default `pss`).
 
 ---
 
@@ -246,19 +257,20 @@ Compose with WebCrypto: `wa-prf \| hkdf 32 \| …` / `aesgcm`.
 | `getRandomValues` | Toolkit, SSS, vault, quorum, diceware, BLIP39 ids |
 | `subtle.generateKey` | Toolkit genkey; vault AES-GCM; quorum ECDH P-256 |
 | `subtle.importKey` / `exportKey` | Toolkit; vault HKDF; quorum ECDH JWK; inspect |
-| `subtle.encrypt` / `decrypt` | **AES-GCM only** — vault, quorum, legacy SSS envelope |
-| `subtle.deriveBits` | Quorum ECDH; SSS PBKDF2 mask; room channel HKDF |
-| `subtle.deriveKey` | Vault PRF KEK; quorum session AES-GCM |
+| `subtle.encrypt` / `decrypt` | AES-GCM / AES-CBC / AES-CTR (toolkit); RSA-OAEP (`rsaoaep`); vault/quorum AES-GCM |
+| `subtle.deriveBits` | Quorum ECDH; SSS PBKDF2 mask; room channel HKDF; toolkit `hkdf`/`pbkdf2`/`ecdh` default |
+| `subtle.deriveKey` | Vault PRF KEK; quorum session AES-GCM; toolkit `hkdf`/`pbkdf2`/`ecdh` with `as=` |
 | `subtle.digest` | SHA-256 — room id, JWK thumbprints, quorum transcript, module integrity |
+| `subtle.sign` / `verify` | Toolkit `sign`/`verify` (RSA-PSS or RSASSA-PKCS1-v1_5; optional soft mode) |
+| `subtle.wrapKey` / `unwrapKey` | Toolkit `wrap`/`unwrap` (`mode=aes-kw` or `mode=rsa-oaep`) |
 
-### Not used (app crypto)
+### Discouraged (supported with warning + tags)
 
 | API | Status |
 |-----|--------|
-| `subtle.sign` / `verify` | Done via toolkit `sign`/`verify` |
-| `subtle.wrapKey` / `unwrapKey` | Done via toolkit `wrap`/`unwrap` (AES-KW) |
-| AES-CBC, AES-CTR, AES-KW as general modes | AES-KW done; CBC/CTR deferred |
-| SHA-1 / SHA-384 / SHA-512 digests | SHA-384/512 via `digest`; SHA-1 not exposed |
+| SHA-1 digests | `digest sha-1` — compile warning; artifact tags `legacy` / `discouraged` / `sha-1` |
+| RSAES-PKCS1-v1_5 | `rsapkcs1` — pure-JS (SubtleCrypto removed this alg); prefer `rsaoaep` |
+| RSASSA-PKCS1-v1_5 | `genkey`/`import` `padding=pkcs1` — prefer `padding=pss` (default) |
 
 ---
 
@@ -270,9 +282,9 @@ Compose with WebCrypto: `wa-prf \| hkdf 32 \| …` / `aesgcm`.
 |--------|----------|---------------|
 | ECDSA / ECDH | P-256, P-384, P-521 | `sign` or `derive` |
 | OKP | Ed25519, X25519 | sign / derive |
-| RSA | OAEP or PSS @ 2048 / 3072 / 4096, SHA-256, e=65537 | encrypt / sign |
-| AES-GCM | 128, 256 | encrypt |
-| HMAC | SHA-256, SHA-512 | sign |
+| RSA | OAEP or sign @ 2048 / 3072 / 4096, SHA-256, e=65537; sign `padding=pss` (default) or `pkcs1` | encrypt / sign |
+| AES-GCM | 128, 256 | encrypt (fixed; `usage=` ignored with warn) |
+| HMAC | SHA-256, SHA-512 | sign (fixed; `usage=` ignored with warn) |
 
 Export formats: PKCS#8, SPKI, JWK, raw, scalar/`d`.
 
@@ -351,13 +363,11 @@ shares | blip39 -d | recover | import scalar alg=ec/p256 | export pkcs8 | pem
 
 ## Roadmap sketch (complete WebCrypto toolkit)
 
-**Shipped (see toolkit ops above):** toolbox UX; `digest`; `sign`/`verify`; `aesgcm`; `hkdf`/`pbkdf2`; `ecdh`; `wrap`/`unwrap`; import/genkey enum alignment; WebAuthn toolbox with shelves (`wa-*`).
+**Shipped (see toolkit ops above):** toolbox UX; `digest` (incl. discouraged SHA-1); `sign`/`verify` (soft `-q`, `signature=@slot`); `aesgcm` / `aescbc` / `aesctr`; `rsaoaep` / discouraged `rsapkcs1`; RSA sign `padding=pss|pkcs1` (pkcs1 discouraged); `hkdf`/`pbkdf2`/`ecdh` (`as=` → deriveKey; ecdh curve-aware bits); `wrap`/`unwrap` `mode=aes-kw|rsa-oaep`; import jwk + RSA/X25519 SPKI; WebAuthn `wa-*`; CAST-13/14 AES-CBC/CTR.
 
-Still deferred:
+Out of scope / separate track: OpenPGP padding packets (RFC 9580 tag 21); AES-GCM/CBC as wrap algorithms; PQ algorithms.
 
-1. AES-CTR/CBC — only if an interop requirement appears
-2. OpenPGP padding packets (RFC 9580 tag 21)
-3. Soft `verify` (boolean artifact instead of throw)
+Discouraged but available: SHA-1 (`digest sha-1`); RSAES-PKCS1-v1_5 (`rsapkcs1`); RSASSA-PKCS1-v1_5 (`padding=pkcs1`).
 
 When adding an op: registry entry + refined types + engine case + `tests/` + update **this document**.
 

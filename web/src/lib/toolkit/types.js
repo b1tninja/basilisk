@@ -251,14 +251,26 @@ export function inferParamDrivenType(name, current, params = {}) {
   }
 
   if (name === "import") {
+    const format = String(params.format || "pkcs8").toLowerCase();
+    const alg = String(params.alg || "ec/p256");
+    if (format === "jwk") {
+      if (current.base !== "text") {
+        return {
+          ok: false,
+          error: `"import jwk" expects text, got ${formatType(current)}`,
+        };
+      }
+      return {
+        ok: true,
+        output: typeOf("keypair", { alg }),
+      };
+    }
     if (current.base !== "bytes") {
       return {
         ok: false,
         error: `"import" expects bytes, got ${formatType(current)}`,
       };
     }
-    const format = String(params.format || "pkcs8").toLowerCase();
-    const alg = String(params.alg || "ec/p256");
     if (format === "scalar" || format === "d") {
       if (current.kind && current.kind !== "scalar" && current.kind !== "master") {
         return {
@@ -341,6 +353,15 @@ export function inferParamDrivenType(name, current, params = {}) {
   }
 
   if (name === "base64url") {
+    if (params.decode) {
+      if (current.base !== "text") {
+        return {
+          ok: false,
+          error: `"base64url -d" expects text, got ${formatType(current)}`,
+        };
+      }
+      return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+    }
     if (current.base !== "bytes") {
       return {
         ok: false,
@@ -350,6 +371,57 @@ export function inferParamDrivenType(name, current, params = {}) {
     return {
       ok: true,
       output: typeOf("text", { kind: "opaque", encoding: "base64url" }),
+    };
+  }
+
+  if (name === "as") {
+    if (current.base !== "bytes") {
+      return {
+        ok: false,
+        error: `"as" expects bytes, got ${formatType(current)}`,
+      };
+    }
+    const t = String(params.type || "opaque").toLowerCase();
+    if (t === "master") {
+      const len = current.length;
+      if (len != null && len !== 16 && len !== 32) {
+        return {
+          ok: false,
+          error: `"as master" requires 16 or 32 bytes, got ${len}B`,
+        };
+      }
+      return {
+        ok: true,
+        output: typeOf("bytes", {
+          kind: "master",
+          length: len,
+          alg: current.alg,
+        }),
+      };
+    }
+    if (t === "scalar") {
+      return {
+        ok: true,
+        output: typeOf("bytes", {
+          kind: "scalar",
+          length: current.length,
+          alg: current.alg,
+        }),
+      };
+    }
+    if (t === "opaque") {
+      return {
+        ok: true,
+        output: typeOf("bytes", {
+          kind: "opaque",
+          length: current.length,
+          alg: current.alg,
+        }),
+      };
+    }
+    return {
+      ok: false,
+      error: `"as" type must be master, scalar, or opaque — got "${t}"`,
     };
   }
 
@@ -588,11 +660,25 @@ export function inferParamDrivenType(name, current, params = {}) {
       };
     }
     const alg = String(params.alg || "sha-256").toLowerCase();
-    const length = alg === "sha-512" ? 64 : alg === "sha-384" ? 48 : 32;
+    const length =
+      alg === "sha-512"
+        ? 64
+        : alg === "sha-384"
+          ? 48
+          : alg === "sha-1"
+            ? 20
+            : 32;
     return { ok: true, output: typeOf("bytes", { kind: "opaque", length }) };
   }
 
-  if (name === "sign" || name === "aesgcm" || name === "hkdf" || name === "pbkdf2") {
+  if (
+    name === "sign" ||
+    name === "aesgcm" ||
+    name === "aescbc" ||
+    name === "aesctr" ||
+    name === "rsaoaep" ||
+    name === "rsapkcs1"
+  ) {
     if (current.base !== "bytes" && current.base !== "text") {
       return {
         ok: false,
@@ -600,6 +686,27 @@ export function inferParamDrivenType(name, current, params = {}) {
       };
     }
     return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+  }
+
+  if (name === "hkdf" || name === "pbkdf2") {
+    if (current.base !== "bytes" && current.base !== "text") {
+      return {
+        ok: false,
+        error: `"${name}" expects bytes or text, got ${formatType(current)}`,
+      };
+    }
+    const as = String(params.as || "bytes");
+    if (as !== "bytes") {
+      return {
+        ok: true,
+        output: typeOf("keypair", { alg: as, which: "private" }),
+      };
+    }
+    const length = Number(params.length) || 32;
+    return {
+      ok: true,
+      output: typeOf("bytes", { kind: "opaque", length }),
+    };
   }
 
   if (name === "verify") {
@@ -612,7 +719,18 @@ export function inferParamDrivenType(name, current, params = {}) {
     return { ok: true, output: typeOf("text", { kind: "opaque" }) };
   }
 
-  if (name === "ecdh" || name === "wrap") {
+  if (name === "ecdh") {
+    const as = String(params.as || "bytes");
+    if (as !== "bytes") {
+      return {
+        ok: true,
+        output: typeOf("keypair", { alg: as, which: "private" }),
+      };
+    }
+    return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+  }
+
+  if (name === "wrap") {
     return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
   }
 
@@ -727,6 +845,10 @@ export function stepAcceptsRefined(spec, from) {
     spec.name === "sign" ||
     spec.name === "verify" ||
     spec.name === "aesgcm" ||
+    spec.name === "aescbc" ||
+    spec.name === "aesctr" ||
+    spec.name === "rsaoaep" ||
+    spec.name === "rsapkcs1" ||
     spec.name === "hkdf" ||
     spec.name === "pbkdf2" ||
     spec.name === "unwrap"

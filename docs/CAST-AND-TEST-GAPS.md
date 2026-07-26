@@ -1,6 +1,6 @@
 # Plan: CAST coverage + remaining test gaps
 
-> **Status (2026-07-24):** Implemented — suite badges + FIPS mode (Phase 0), CAST-6…11 WebCrypto + CAST-12 SSS/BLIP39 (Phase A + SSS), expanded unit/type tests (Phase B), toolkit-run worker smoke (B3), CRYPTOGRAPHY.md updates (Phase C). Quorum CAST suite and product non-goals remain deferred.
+> **Status (2026-07-26):** Implemented — suite badges + FIPS mode (Phase 0), CAST-6…11 + CAST-13/14 WebCrypto + CAST-12 SSS/BLIP39, expanded unit/type tests, toolkit-run worker smoke, CRYPTOGRAPHY.md updates. Quorum CAST suite and OpenPGP padding remain deferred.
 
 Extend FIPS-inspired POST/CAST to cover shipped WebCrypto toolkit paths (today only OpenPGP CAST-1…5 run), make the **UI refuse to imply verification it does not have**, then fill unit/type/worker test gaps and document remaining deferred product items.
 
@@ -104,6 +104,8 @@ Extend `_runAllTests()` in [`web/src/lib/crypto-self-test.js`](../web/src/lib/cr
 | **CAST-9** | ECDH agree | Two P-256 ECDH pairs; shared bits equal (quorum-shaped) |
 | **CAST-10** | HKDF KAT | Fixed IKM/salt/info → fixed-length OKM (document vector in comment) |
 | **CAST-11** | AES-KW wrap/unwrap | `aesKwWrap`/`aesKwUnwrap` roundtrip on AES-GCM CEK |
+| **CAST-13** | AES-CBC roundtrip | `aesCbcEncrypt`/`aesCbcDecrypt` canary (IV\|\|CT) |
+| **CAST-14** | AES-CTR roundtrip | `aesCtrEncrypt`/`aesCtrDecrypt` canary (IV\|\|CT) |
 
 Also:
 
@@ -147,8 +149,8 @@ Update [`docs/CRYPTOGRAPHY.md`](CRYPTOGRAPHY.md):
 
 - CAST section: OpenPGP CAST-1…5 **and** WebCrypto CAST-6…11; toolkit/quorum relationship
 - FIPS mode: warning badges always; hard gate when on; disclaimer (not a FIPS 140 cert)
-- Note: `genkey` can create RSA-OAEP keys but **no** asymmetric WebCrypto encrypt op yet (only `aesgcm`) — gap or future `rsaoaep`
-- Keep deferred: AES-CBC/CTR, PKCS1-v1_5, soft verify, OpenPGP padding tag 21
+- Note: WebCrypto toolkit now includes `rsaoaep`, `aescbc`/`aesctr`, soft verify, discouraged PKCS1 paths — CAST covers CBC/CTR as CAST-13/14; soft verify / sha-1 / rsapkcs1 / RSASSA-PKCS1 remain behavioral (non-CAST)
+- Keep deferred: OpenPGP padding tag 21; AES-GCM/CBC as wrap algorithms; Quorum CAST suite
 - Clarify Quorum ECDH/HKDF/AES-GCM is **not** gated by CAST today (same as today; call out residual risk)
 
 UI copy: suite-aware banners; “crypto module” only when OpenPGP + WebCrypto suites both pass.
@@ -157,13 +159,13 @@ UI copy: suite-aware banners; “crypto module” only when OpenPGP + WebCrypto 
 
 ## Phase D — Explicit non-goals (this plan)
 
-- Soft `verify` boolean mode
-- AES-CBC/CTR / RSAES-PKCS1-v1_5
 - OpenPGP padding packets
+- AES-GCM/CBC as wrap algorithms (toolkit wrap stays AES-KW + RSA-OAEP)
 - Quorum-specific CAST suite (separate follow-up if desired)
 - Renaming OpenPGP `encrypt` / toolbox redesign
 - Claiming NIST FIPS 140 validation via the toggle name
 - Leaving unverified ops fully enabled with only a green banner and no FIPS gate (defeats Phase 0)
+- CAST entries for discouraged/soft paths (`digest sha-1`, `rsapkcs1`, soft verify, `padding=pkcs1`) — unit-tested only
 
 ---
 
@@ -179,7 +181,8 @@ UI copy: suite-aware banners; “crypto module” only when OpenPGP + WebCrypto 
 ## Remaining deferred (non-goals / later)
 
 - Quorum-specific CAST suite
-- Soft `verify`, AES-CBC/CTR, OpenPGP padding, RSA-OAEP encrypt op
+- OpenPGP padding packets
+- AES wrap formats beyond KW / RSA-OAEP
 
 ## Success criteria
 

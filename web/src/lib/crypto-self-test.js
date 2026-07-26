@@ -31,6 +31,8 @@
  *     CAST-9  ECDH P-256 agree
  *     CAST-10 HKDF-SHA-256 KAT
  *     CAST-11 AES-KW wrap / unwrap
+ *     CAST-13 AES-CBC roundtrip
+ *     CAST-14 AES-CTR roundtrip
  *
  *     SSS suite
  *     CAST-12 GF(256) SSS split/combine + BLIP39 encode/decode roundtrip
@@ -110,6 +112,10 @@ import {
 import { zeroKeyMaterial } from "./pgp/memory.js";
 import { textToBytes } from "./toolkit/encode.js";
 import {
+  aesCbcDecrypt,
+  aesCbcEncrypt,
+  aesCtrDecrypt,
+  aesCtrEncrypt,
   aesGcmDecrypt,
   aesGcmEncrypt,
   aesKwUnwrap,
@@ -233,6 +239,8 @@ async function _runAllTests() {
     ecdhAgree: false,
     hkdfKat: false,
     aesKwRoundtrip: false,
+    aesCbcRoundtrip: false,
+    aesCtrRoundtrip: false,
     sssRoundtrip: false,
   };
 
@@ -460,6 +468,46 @@ async function _runAllTests() {
       results.aesKwRoundtrip = true;
     }
 
+    // ── CAST-13: AES-CBC roundtrip ────────────────────────────────────────
+    {
+      const key = await crypto.subtle.generateKey(
+        { name: "AES-CBC", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+      );
+      const plain = textToBytes(POST_CANARY);
+      const packed = await aesCbcEncrypt(key, plain);
+      const recovered = await aesCbcDecrypt(key, packed);
+      const ok =
+        recovered.length === plain.length &&
+        recovered.every((b, i) => b === plain[i]);
+      plain.fill(0);
+      packed.fill(0);
+      recovered.fill(0);
+      if (!ok) throw new Error("CAST-13: AES-CBC decrypt mismatch");
+      results.aesCbcRoundtrip = true;
+    }
+
+    // ── CAST-14: AES-CTR roundtrip ────────────────────────────────────────
+    {
+      const key = await crypto.subtle.generateKey(
+        { name: "AES-CTR", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+      );
+      const plain = textToBytes(POST_CANARY);
+      const packed = await aesCtrEncrypt(key, plain);
+      const recovered = await aesCtrDecrypt(key, packed);
+      const ok =
+        recovered.length === plain.length &&
+        recovered.every((b, i) => b === plain[i]);
+      plain.fill(0);
+      packed.fill(0);
+      recovered.fill(0);
+      if (!ok) throw new Error("CAST-14: AES-CTR decrypt mismatch");
+      results.aesCtrRoundtrip = true;
+    }
+
     // ── CAST-12: SSS split/combine + BLIP39 roundtrip ──────────────────────
     {
       /** Fixed 32-byte master (toolkit SSS length constraint). */
@@ -545,6 +593,8 @@ async function _runAllTests() {
       hkdfKat: "CAST-10",
       aesKwRoundtrip: "CAST-11",
       sssRoundtrip: "CAST-12",
+      aesCbcRoundtrip: "CAST-13",
+      aesCtrRoundtrip: "CAST-14",
     };
     const failedKey = /** @type {keyof SelfTestResults | undefined} */ (
       Object.keys(results).find((k) => !results[/** @type {any} */ (k)])
@@ -657,7 +707,9 @@ export function getSuiteStatus() {
     r?.subtleSignVerify &&
     r?.ecdhAgree &&
     r?.hkdfKat &&
-    r?.aesKwRoundtrip
+    r?.aesKwRoundtrip &&
+    r?.aesCbcRoundtrip &&
+    r?.aesCtrRoundtrip
   );
   const sssOk = !!r?.sssRoundtrip;
   return {
@@ -699,6 +751,8 @@ export const SELF_TEST_LABELS = {
   hkdfKat: "CAST-10: HKDF-SHA-256 KAT",
   aesKwRoundtrip: "CAST-11: AES-KW wrap + unwrap",
   sssRoundtrip: "CAST-12: SSS split/combine + BLIP39 roundtrip",
+  aesCbcRoundtrip: "CAST-13: AES-CBC roundtrip",
+  aesCtrRoundtrip: "CAST-14: AES-CTR roundtrip",
 };
 
 /**
@@ -778,6 +832,8 @@ export function formatCryptoVerifiedMessage(result) {
  *   ecdhAgree: boolean,
  *   hkdfKat: boolean,
  *   aesKwRoundtrip: boolean,
+ *   aesCbcRoundtrip: boolean,
+ *   aesCtrRoundtrip: boolean,
  *   sssRoundtrip: boolean,
  * }} SelfTestResults
  * @typedef {{ root: string, leafCount: number, source: "sri" | "self" | "none", pin?: * }} ModuleIntegrity

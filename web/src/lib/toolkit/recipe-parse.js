@@ -977,7 +977,9 @@ class Parser {
         if (this.peek() === "=") {
           this.pos++;
           this.skipSpaces();
-          const rawVal = this.readArgValue();
+          // Named values may be base64url (can start with a digit) — don't use
+          // readArgValue's number shortcut.
+          const rawVal = this.readNamedArgValue();
           params[word] = coerceParam(spec, word, rawVal);
         } else {
           // Positional: allow alg ids like ec/p256 (slash beyond bare ident).
@@ -1049,6 +1051,42 @@ class Parser {
       }
     }
 
+    // Normalize typed slot params (key=@cek, peer=@pub, …).
+    for (const p of spec?.params || []) {
+      if (p.type !== "slot") continue;
+      const rawSlot = params[p.name];
+      if (rawSlot == null || rawSlot === "") continue;
+      const norm = normalizeSlotRef(String(rawSlot), {
+        allowIndex: !!p.allowIndex,
+      });
+      if (!norm.ok) {
+        this.errors.push({
+          message: `${canon} ${p.name}=: ${norm.error}`,
+          start,
+          end: this.pos,
+        });
+      } else {
+        params[p.name] = norm.ref;
+      }
+    }
+
+    // verify signature=@slot (bare base64url strings stay as-is).
+    if (canon === "verify") {
+      const sig = params.signature;
+      if (sig != null && String(sig).trim().startsWith("@")) {
+        const norm = normalizeSlotRef(String(sig), { allowIndex: false });
+        if (!norm.ok) {
+          this.errors.push({
+            message: `verify signature=: ${norm.error}`,
+            start,
+            end: this.pos,
+          });
+        } else {
+          params.signature = norm.ref;
+        }
+      }
+    }
+
     return {
       name: canon,
       params,
@@ -1074,6 +1112,25 @@ class Parser {
     const start = this.pos;
     this.pos++;
     while (/[A-Za-z0-9_./-]/.test(this.peek())) this.pos++;
+    return this.src.slice(start, this.pos);
+  }
+
+  /**
+   * Value after `name=` — allows base64url (may start with a digit).
+   * @returns {string}
+   */
+  readNamedArgValue() {
+    if (this.peek() === '"' || this.peek() === "'") return this.readString();
+    if (this.peek() === "@") {
+      const start = this.pos;
+      this.pos++;
+      const id = this.readIdent();
+      return id ? `@${id}` : this.src.slice(start, this.pos);
+    }
+    if (!/[A-Za-z0-9_+./-]/.test(this.peek())) return "";
+    const start = this.pos;
+    this.pos++;
+    while (/[A-Za-z0-9_+./-]/.test(this.peek())) this.pos++;
     return this.src.slice(start, this.pos);
   }
 

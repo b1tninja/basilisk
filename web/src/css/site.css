@@ -587,8 +587,18 @@ code {
 .badge.approved { background: var(--badge-approved-bg); color: var(--badge-approved-fg); }
 .badge.pending  { background: var(--badge-pending-bg);  color: var(--badge-pending-fg); }
 .badge.revoked  { background: #fff0f0; color: var(--error); }
+.badge.discouraged {
+  background: #fff4e5;
+  color: #9a5b00;
+  border: 1px solid rgba(154, 91, 0, 0.35);
+}
 @media (prefers-color-scheme: dark) {
   .badge.revoked { background: rgba(255,123,114,.12); }
+  .badge.discouraged {
+    background: rgba(255, 196, 90, 0.14);
+    color: #ffc45a;
+    border-color: rgba(255, 196, 90, 0.35);
+  }
 }
 
 /* ===== Code block (key display) ===== */
@@ -2199,19 +2209,40 @@ pre {
 .ops-category-toggle:hover {
   background: var(--bg-subtle, rgba(127, 127, 127, 0.08));
 }
+.ops-category-label,
+.ops-shelf-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.ops-glyph {
+  flex-shrink: 0;
+  display: block;
+  opacity: 0.9;
+}
+.ops-glyph-toolbox {
+  width: 16px;
+  height: 16px;
+}
+.ops-glyph-shelf {
+  width: 14px;
+  height: 14px;
+  opacity: 0.75;
+}
 .ops-category-body {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.35rem;
   padding: 0 0 0.35rem;
 }
 .ops-shelf {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  margin: 0.15rem 0 0.25rem 0.15rem;
-  padding-left: 0.35rem;
-  border-left: 2px solid color-mix(in srgb, var(--border, #444) 80%, transparent);
+  gap: 0.2rem;
+  margin: 0.15rem 0 0.3rem 0.1rem;
+  padding-left: 0.45rem;
+  border-left: 2px solid color-mix(in srgb, var(--accent, #7aa2f7) 28%, var(--border, #444));
 }
 .ops-shelf-toggle {
   display: flex;
@@ -2237,8 +2268,31 @@ pre {
 .ops-shelf-body {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.35rem;
   padding: 0 0 0.15rem;
+}
+.ops-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem 0.3rem;
+  align-items: stretch;
+}
+.ops-pair-solo {
+  grid-template-columns: 1fr;
+}
+.ops-pair-caption {
+  grid-column: 1 / -1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0 0.1rem;
+}
+.ops-pair-cell {
+  min-width: 0;
+}
+@media (max-width: 420px) {
+  .ops-pair:not(.ops-pair-solo) {
+    grid-template-columns: 1fr;
+  }
 }
 .ops-item {
   display: flex;

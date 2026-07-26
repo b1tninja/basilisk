@@ -42,6 +42,15 @@ export async function resolveBoundKey(bindings, need) {
     bound = await importBoundJwk(raw);
   }
 
+  return pickBoundCryptoKey(bound, need);
+}
+
+/**
+ * @param {BoundWebCryptoKey} bound
+ * @param {"private"|"public"|"secret"|"either"} need
+ * @returns {CryptoKey}
+ */
+function pickBoundCryptoKey(bound, need) {
   if (need === "private") {
     if (bound.privateKey) return bound.privateKey;
     throw new Error("Bound key has no private key (need private JWK for sign / decrypt / unwrap)");
@@ -52,13 +61,111 @@ export async function resolveBoundKey(bindings, need) {
   }
   if (need === "secret") {
     if (bound.secretKey) return bound.secretKey;
+    // Symmetric AES often lives on privateKey after genkey aes/*
+    if (bound.privateKey) {
+      const n = bound.privateKey.algorithm?.name || "";
+      if (n.startsWith("AES") || n === "HMAC") return bound.privateKey;
+    }
     throw new Error("Bound key has no secret key (need oct JWK for AES-GCM / HMAC / wrap)");
   }
-  // either
   if (bound.secretKey) return bound.secretKey;
   if (bound.privateKey) return bound.privateKey;
   if (bound.publicKey) return bound.publicKey;
   throw new Error("Bound key is empty");
+}
+
+/**
+ * Turn a live pipeline slot value into a CryptoKey.
+ * @param {import("./engine.js").PipelineValue} value
+ * @param {"private"|"public"|"secret"|"either"} need
+ * @param {string} [algHint]
+ * @returns {Promise<CryptoKey>}
+ */
+export async function pipelineValueToCryptoKey(value, need, algHint) {
+  if (!value) throw new Error("Empty slot value");
+  if (value.type === "keypair") {
+    /** @type {BoundWebCryptoKey} */
+    const bound = {
+      privateKey: value.data?.privateKey,
+      publicKey: value.data?.publicKey,
+      secretKey: value.data?.secretKey,
+      alg: value.meta?.alg || algHint,
+    };
+    return pickBoundCryptoKey(bound, need);
+  }
+  if (value.type === "text") {
+    const bound = await importBoundJwk({
+      jwkText: String(value.data),
+      alg: algHint || value.meta?.alg,
+    });
+    return pickBoundCryptoKey(bound, need);
+  }
+  if (value.type === "bytes") {
+    const raw = value.data;
+    if (!(raw instanceof Uint8Array)) {
+      throw new Error("Slot bytes are not a Uint8Array");
+    }
+    const bits = raw.length * 8;
+    if (need === "secret" || need === "either") {
+      if (bits === 128 || bits === 256) {
+        return crypto.subtle.importKey(
+          "raw",
+          raw,
+          { name: "AES-GCM", length: bits },
+          true,
+          ["encrypt", "decrypt", "wrapKey", "unwrapKey"]
+        );
+      }
+      if (bits === 256 || bits === 512) {
+        // Prefer AES when 256; HMAC-SHA256 also 256 — use alg hint
+        const hint = String(algHint || value.meta?.alg || "");
+        if (hint.startsWith("hmac")) {
+          return crypto.subtle.importKey(
+            "raw",
+            raw,
+            {
+              name: "HMAC",
+              hash: hint.includes("512") ? "SHA-512" : "SHA-256",
+            },
+            true,
+            ["sign", "verify"]
+          );
+        }
+        if (bits === 256) {
+          return crypto.subtle.importKey(
+            "raw",
+            raw,
+            { name: "AES-GCM", length: 256 },
+            true,
+            ["encrypt", "decrypt", "wrapKey", "unwrapKey"]
+          );
+        }
+      }
+    }
+    throw new Error(
+      `Cannot import ${raw.length}B slot as ${need} CryptoKey — export jwk or use a keypair slot`
+    );
+  }
+  throw new Error(`Slot type ${value.type} cannot supply a CryptoKey`);
+}
+
+/**
+ * Resolve `key=@slot` (etc.) via bindings.resolveSlot, or null if unset.
+ * @param {object} bindings
+ * @param {string|undefined|null} ref
+ * @param {"private"|"public"|"secret"|"either"} need
+ * @param {string} [algHint]
+ * @returns {Promise<CryptoKey|null>}
+ */
+export async function resolveSlotKey(bindings, ref, need, algHint) {
+  const r = String(ref || "").trim();
+  if (!r) return null;
+  const resolve = bindings?.resolveSlot;
+  if (typeof resolve !== "function") {
+    throw new Error(`Slot ${r}: runtime slot resolver missing`);
+  }
+  const value = resolve(r);
+  return pipelineValueToCryptoKey(value, need, algHint);
 }
 
 /**
@@ -93,18 +200,29 @@ export async function importBoundJwk(raw) {
   if (kty === "OKP" && jwk.crv === "Ed25519") {
     const hasD = !!jwk.d;
     if (hasD) {
-      out.privateKey = await crypto.subtle.importKey("jwk", jwk, "Ed25519", true, [
-        "sign",
-      ]);
-      const pub = { ...jwk };
-      delete pub.d;
+      const privJwk = { ...jwk };
+      delete privJwk.key_ops;
+      out.privateKey = await crypto.subtle.importKey(
+        "jwk",
+        privJwk,
+        "Ed25519",
+        true,
+        ["sign"]
+      );
+      const pub = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, ext: true };
       out.publicKey = await crypto.subtle.importKey("jwk", pub, "Ed25519", true, [
         "verify",
       ]);
     } else {
-      out.publicKey = await crypto.subtle.importKey("jwk", jwk, "Ed25519", true, [
-        "verify",
-      ]);
+      const pubJwk = { ...jwk };
+      delete pubJwk.key_ops;
+      out.publicKey = await crypto.subtle.importKey(
+        "jwk",
+        pubJwk,
+        "Ed25519",
+        true,
+        ["verify"]
+      );
     }
     out.alg = "ed25519";
     return out;
@@ -113,15 +231,21 @@ export async function importBoundJwk(raw) {
   if (kty === "OKP" && jwk.crv === "X25519") {
     const hasD = !!jwk.d;
     if (hasD) {
-      out.privateKey = await crypto.subtle.importKey("jwk", jwk, "X25519", true, [
-        "deriveBits",
-        "deriveKey",
-      ]);
-      const pub = { ...jwk };
-      delete pub.d;
+      const privJwk = { ...jwk };
+      delete privJwk.key_ops;
+      out.privateKey = await crypto.subtle.importKey(
+        "jwk",
+        privJwk,
+        "X25519",
+        true,
+        ["deriveBits", "deriveKey"]
+      );
+      const pub = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, ext: true };
       out.publicKey = await crypto.subtle.importKey("jwk", pub, "X25519", true, []);
     } else {
-      out.publicKey = await crypto.subtle.importKey("jwk", jwk, "X25519", true, []);
+      const pubJwk = { ...jwk };
+      delete pubJwk.key_ops;
+      out.publicKey = await crypto.subtle.importKey("jwk", pubJwk, "X25519", true, []);
     }
     out.alg = "x25519";
     return out;
@@ -166,10 +290,25 @@ export async function importBoundJwk(raw) {
   }
 
   if (kty === "RSA") {
-    const isOaep = raw.alg === "rsa-oaep" || (jwk.alg || "").includes("OAEP");
+    const jwkAlg = String(jwk.alg || "");
+    const isOaep =
+      raw.alg === "rsa-oaep" ||
+      jwkAlg.includes("OAEP") ||
+      String(raw.padding || "").toLowerCase() === "oaep";
+    const isPkcs1 =
+      !isOaep &&
+      (raw.alg === "rsassa-pkcs1" ||
+        String(raw.padding || "").toLowerCase() === "pkcs1" ||
+        /^RS(256|384|512)$/i.test(jwkAlg));
+    const hash =
+      /512/i.test(jwkAlg) ? "SHA-512" : /384/i.test(jwkAlg) ? "SHA-384" : "SHA-256";
     const algo = {
-      name: isOaep ? "RSA-OAEP" : "RSA-PSS",
-      hash: "SHA-256",
+      name: isOaep
+        ? "RSA-OAEP"
+        : isPkcs1
+          ? "RSASSA-PKCS1-v1_5"
+          : "RSA-PSS",
+      hash,
     };
     const hasD = !!jwk.d;
     if (hasD) {
@@ -178,7 +317,7 @@ export async function importBoundJwk(raw) {
         jwk,
         algo,
         true,
-        isOaep ? ["decrypt"] : ["sign"]
+        isOaep ? ["decrypt", "unwrapKey"] : ["sign"]
       );
       const pub = {
         kty: jwk.kty,
@@ -186,14 +325,14 @@ export async function importBoundJwk(raw) {
         e: jwk.e,
         alg: jwk.alg,
         ext: true,
-        key_ops: isOaep ? ["encrypt"] : ["verify"],
+        key_ops: isOaep ? ["encrypt", "wrapKey"] : ["verify"],
       };
       out.publicKey = await crypto.subtle.importKey(
         "jwk",
         pub,
         algo,
         true,
-        isOaep ? ["encrypt"] : ["verify"]
+        isOaep ? ["encrypt", "wrapKey"] : ["verify"]
       );
     } else {
       out.publicKey = await crypto.subtle.importKey(
@@ -201,10 +340,10 @@ export async function importBoundJwk(raw) {
         jwk,
         algo,
         true,
-        isOaep ? ["encrypt"] : ["verify"]
+        isOaep ? ["encrypt", "wrapKey"] : ["verify"]
       );
     }
-    out.alg = isOaep ? "rsa-oaep" : "rsa-pss";
+    out.alg = isOaep ? "rsa-oaep" : isPkcs1 ? "rsassa-pkcs1-v1_5" : "rsa-pss";
     return out;
   }
 
@@ -275,8 +414,138 @@ function signAlgorithmForKey(key) {
   if (name === "RSA-PSS") {
     return { name: "RSA-PSS", saltLength: 32 };
   }
+  if (name === "RSASSA-PKCS1-v1_5") {
+    return "RSASSA-PKCS1-v1_5";
+  }
   if (name === "Ed25519" || name === "HMAC") return name;
   throw new Error(`sign/verify does not support algorithm ${name}`);
+}
+
+/**
+ * Default ECDH deriveBits length from a private key algorithm.
+ * @param {CryptoKey} privateKey
+ * @returns {number}
+ */
+export function ecdhDefaultBits(privateKey) {
+  const name = privateKey.algorithm?.name || "";
+  if (name === "X25519") return 256;
+  const curve = /** @type {EcKeyAlgorithm} */ (privateKey.algorithm).namedCurve;
+  if (curve === "P-384") return 384;
+  if (curve === "P-521") return 528;
+  return 256;
+}
+
+/**
+ * ECDH/X25519 deriveBits or deriveKey (when as≠bytes).
+ * @param {CryptoKey} privateKey
+ * @param {CryptoKey} publicKey
+ * @param {{ bits?: number, as?: string }} [opts]
+ * @returns {Promise<Uint8Array|{ type: "keypair", data: object, meta: object }>}
+ */
+export async function ecdhDerive(privateKey, publicKey, opts = {}) {
+  const as = String(opts.as || "bytes");
+  const target = deriveAsTarget(as);
+  const bits =
+    Number(opts.bits) > 0 ? Number(opts.bits) : ecdhDefaultBits(privateKey);
+  const params = {
+    name: privateKey.algorithm.name,
+    public: publicKey,
+  };
+  if (!target) {
+    const shared = await crypto.subtle.deriveBits(params, privateKey, bits);
+    return new Uint8Array(shared);
+  }
+  const key = await crypto.subtle.deriveKey(
+    params,
+    privateKey,
+    target.derived,
+    true,
+    target.usages
+  );
+  return {
+    type: "keypair",
+    data: { privateKey: key, publicKey: null, secretKey: key },
+    meta: {
+      alg: target.alg,
+      algorithm:
+        typeof target.derived === "string" ? target.derived : target.derived.name,
+      symmetric: true,
+      sensitive: true,
+    },
+  };
+}
+
+/**
+ * RSA-OAEP wrapKey of an extractable CEK.
+ * @param {CryptoKey} wrappingKey  RSA-OAEP public
+ * @param {CryptoKey} keyToWrap
+ */
+export async function rsaOaepWrap(wrappingKey, keyToWrap) {
+  if (wrappingKey.algorithm?.name !== "RSA-OAEP") {
+    throw new Error(
+      `wrap mode=rsa-oaep requires an RSA-OAEP public key, got ${wrappingKey.algorithm?.name || "unknown"}`
+    );
+  }
+  const wrapped = await crypto.subtle.wrapKey(
+    "raw",
+    keyToWrap,
+    wrappingKey,
+    { name: "RSA-OAEP" }
+  );
+  return new Uint8Array(wrapped);
+}
+
+/**
+ * @param {CryptoKey} wrappingKey  RSA-OAEP private
+ * @param {Uint8Array} wrapped
+ * @param {AlgorithmIdentifier|AesKeyAlgorithm|HmacImportParams} importAlg
+ * @param {KeyUsage[]} usages
+ */
+export async function rsaOaepUnwrap(wrappingKey, wrapped, importAlg, usages) {
+  if (wrappingKey.algorithm?.name !== "RSA-OAEP") {
+    throw new Error(
+      `unwrap mode=rsa-oaep requires an RSA-OAEP private key, got ${wrappingKey.algorithm?.name || "unknown"}`
+    );
+  }
+  return crypto.subtle.unwrapKey(
+    "raw",
+    wrapped,
+    wrappingKey,
+    { name: "RSA-OAEP" },
+    importAlg,
+    true,
+    usages
+  );
+}
+
+/**
+ * Re-import an AES key under a target algorithm (AES-GCM / AES-CBC / AES-CTR).
+ * @param {CryptoKey} key
+ * @param {"AES-GCM"|"AES-CBC"|"AES-CTR"} name
+ * @returns {Promise<CryptoKey>}
+ */
+export async function ensureAesAlgorithm(key, name) {
+  if (key.algorithm?.name === name) return key;
+  const raw = await crypto.subtle.exportKey("raw", key);
+  const length = raw.byteLength * 8;
+  if (length !== 128 && length !== 256) {
+    throw new Error(`AES key must be 128 or 256 bits, got ${length}`);
+  }
+  try {
+    return await crypto.subtle.importKey(
+      "raw",
+      raw,
+      { name, length },
+      true,
+      ["encrypt", "decrypt"]
+    );
+  } finally {
+    try {
+      new Uint8Array(raw).fill(0);
+    } catch (_) {
+      /* wipe */
+    }
+  }
 }
 
 /**
@@ -319,47 +588,255 @@ export async function aesGcmDecrypt(key, packed, aad) {
 }
 
 /**
+ * AES-CBC encrypt; returns IV(16) || ciphertext
+ * @param {CryptoKey} key
+ * @param {Uint8Array} plain
+ */
+export async function aesCbcEncrypt(key, plain) {
+  const aes = await ensureAesAlgorithm(key, "AES-CBC");
+  const iv = crypto.getRandomValues(new Uint8Array(16));
+  const ct = new Uint8Array(
+    await crypto.subtle.encrypt({ name: "AES-CBC", iv }, aes, plain)
+  );
+  const out = new Uint8Array(iv.length + ct.length);
+  out.set(iv, 0);
+  out.set(ct, iv.length);
+  return out;
+}
+
+/**
+ * @param {CryptoKey} key
+ * @param {Uint8Array} packed  IV(16) || ciphertext
+ */
+export async function aesCbcDecrypt(key, packed) {
+  if (packed.length < 17) throw new Error("aescbc ciphertext too short");
+  const aes = await ensureAesAlgorithm(key, "AES-CBC");
+  const iv = packed.subarray(0, 16);
+  const ct = packed.subarray(16);
+  return new Uint8Array(
+    await crypto.subtle.decrypt({ name: "AES-CBC", iv }, aes, ct)
+  );
+}
+
+/**
+ * AES-CTR encrypt; returns IV(16) || ciphertext (IV is the 128-bit counter block).
+ * @param {CryptoKey} key
+ * @param {Uint8Array} plain
+ */
+export async function aesCtrEncrypt(key, plain) {
+  const aes = await ensureAesAlgorithm(key, "AES-CTR");
+  const counter = crypto.getRandomValues(new Uint8Array(16));
+  const ct = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-CTR", counter, length: 64 },
+      aes,
+      plain
+    )
+  );
+  const out = new Uint8Array(counter.length + ct.length);
+  out.set(counter, 0);
+  out.set(ct, counter.length);
+  return out;
+}
+
+/**
+ * @param {CryptoKey} key
+ * @param {Uint8Array} packed  IV(16) || ciphertext
+ */
+export async function aesCtrDecrypt(key, packed) {
+  if (packed.length < 17) throw new Error("aesctr ciphertext too short");
+  const aes = await ensureAesAlgorithm(key, "AES-CTR");
+  const counter = packed.subarray(0, 16);
+  const ct = packed.subarray(16);
+  return new Uint8Array(
+    await crypto.subtle.decrypt(
+      { name: "AES-CTR", counter, length: 64 },
+      aes,
+      ct
+    )
+  );
+}
+
+/**
+ * @param {string} as  bytes | aes/128 | aes/256 | hmac/sha256 | hmac/sha512
+ * @returns {{ derived: AlgorithmIdentifier|AesDerivedKeyParams|HmacImportParams, usages: KeyUsage[], alg: string, lengthBits: number }|null}
+ */
+export function deriveAsTarget(as) {
+  const t = String(as || "bytes").toLowerCase();
+  if (t === "bytes" || !t) return null;
+  if (t === "aes/128") {
+    return {
+      derived: { name: "AES-GCM", length: 128 },
+      usages: ["encrypt", "decrypt", "wrapKey", "unwrapKey"],
+      alg: "aes/128",
+      lengthBits: 128,
+    };
+  }
+  if (t === "aes/256") {
+    return {
+      derived: { name: "AES-GCM", length: 256 },
+      usages: ["encrypt", "decrypt", "wrapKey", "unwrapKey"],
+      alg: "aes/256",
+      lengthBits: 256,
+    };
+  }
+  if (t === "hmac/sha256") {
+    return {
+      derived: { name: "HMAC", hash: "SHA-256", length: 256 },
+      usages: ["sign", "verify"],
+      alg: "hmac/sha256",
+      lengthBits: 256,
+    };
+  }
+  if (t === "hmac/sha512") {
+    return {
+      derived: { name: "HMAC", hash: "SHA-512", length: 512 },
+      usages: ["sign", "verify"],
+      alg: "hmac/sha512",
+      lengthBits: 512,
+    };
+  }
+  throw new Error(`Unsupported derive as=${as}`);
+}
+
+/**
  * @param {Uint8Array} ikm
- * @param {{ salt?: Uint8Array, info?: Uint8Array, length: number, hash?: string }} opts
+ * @param {{ salt?: Uint8Array, info?: Uint8Array, length: number, hash?: string, as?: string }} opts
+ * @returns {Promise<Uint8Array|{ type: "keypair", data: object, meta: object }>}
  */
 export async function hkdfDerive(ikm, opts) {
   const hash = opts.hash || "SHA-256";
+  const target = deriveAsTarget(opts.as);
   const baseKey = await crypto.subtle.importKey("raw", ikm, "HKDF", false, [
-    "deriveBits",
+    target ? "deriveKey" : "deriveBits",
   ]);
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "HKDF",
-      hash,
-      salt: opts.salt || new Uint8Array(),
-      info: opts.info || new Uint8Array(),
-    },
+  const params = {
+    name: "HKDF",
+    hash,
+    salt: opts.salt || new Uint8Array(),
+    info: opts.info || new Uint8Array(),
+  };
+  if (!target) {
+    const bits = await crypto.subtle.deriveBits(params, baseKey, opts.length * 8);
+    return new Uint8Array(bits);
+  }
+  const key = await crypto.subtle.deriveKey(
+    params,
     baseKey,
-    opts.length * 8
+    target.derived,
+    true,
+    target.usages
   );
-  return new Uint8Array(bits);
+  return {
+    type: "keypair",
+    data: { privateKey: key, publicKey: null, secretKey: key },
+    meta: {
+      alg: target.alg,
+      algorithm: typeof target.derived === "string" ? target.derived : target.derived.name,
+      symmetric: true,
+      sensitive: true,
+    },
+  };
 }
 
 /**
  * @param {Uint8Array} password
- * @param {{ salt: Uint8Array, iterations: number, length: number, hash?: string }} opts
+ * @param {{ salt: Uint8Array, iterations: number, length: number, hash?: string, as?: string }} opts
+ * @returns {Promise<Uint8Array|{ type: "keypair", data: object, meta: object }>}
  */
 export async function pbkdf2Derive(password, opts) {
   const hash = opts.hash || "SHA-256";
+  const target = deriveAsTarget(opts.as);
   const baseKey = await crypto.subtle.importKey("raw", password, "PBKDF2", false, [
-    "deriveBits",
+    target ? "deriveKey" : "deriveBits",
   ]);
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      hash,
-      salt: opts.salt,
-      iterations: opts.iterations,
-    },
+  const params = {
+    name: "PBKDF2",
+    hash,
+    salt: opts.salt,
+    iterations: opts.iterations,
+  };
+  if (!target) {
+    const bits = await crypto.subtle.deriveBits(params, baseKey, opts.length * 8);
+    return new Uint8Array(bits);
+  }
+  const key = await crypto.subtle.deriveKey(
+    params,
     baseKey,
-    opts.length * 8
+    target.derived,
+    true,
+    target.usages
   );
-  return new Uint8Array(bits);
+  return {
+    type: "keypair",
+    data: { privateKey: key, publicKey: null, secretKey: key },
+    meta: {
+      alg: target.alg,
+      algorithm: typeof target.derived === "string" ? target.derived : target.derived.name,
+      symmetric: true,
+      sensitive: true,
+    },
+  };
+}
+
+/**
+ * Re-import an oct key for AES-KW wrapKey (AES-GCM or HMAC).
+ * @param {CryptoKey} keyObj
+ */
+export async function extractableWrapTarget(keyObj) {
+  const raw = await crypto.subtle.exportKey("raw", keyObj);
+  const name = keyObj.algorithm?.name || "AES-GCM";
+  try {
+    if (name === "HMAC") {
+      const hash = /** @type {HmacKeyAlgorithm} */ (keyObj.algorithm).hash;
+      const hashName = typeof hash === "string" ? hash : hash.name;
+      return await crypto.subtle.importKey(
+        "raw",
+        raw,
+        { name: "HMAC", hash: hashName },
+        true,
+        ["sign", "verify"]
+      );
+    }
+    return await crypto.subtle.importKey(
+      "raw",
+      raw,
+      { name: "AES-GCM", length: raw.byteLength * 8 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+  } finally {
+    try {
+      new Uint8Array(raw).fill(0);
+    } catch (_) {
+      /* wipe */
+    }
+  }
+}
+
+/**
+ * @param {string} alg  aes/128 | aes/256 | hmac/sha256 | hmac/sha512
+ */
+export function unwrapImportParams(alg) {
+  const a = String(alg || "aes/256").toLowerCase();
+  if (a === "aes/128") {
+    return { importAlg: { name: "AES-GCM", length: 128 }, usages: ["encrypt", "decrypt"], metaAlg: "aes/128" };
+  }
+  if (a === "hmac/sha256") {
+    return {
+      importAlg: { name: "HMAC", hash: "SHA-256" },
+      usages: ["sign", "verify"],
+      metaAlg: "hmac/sha256",
+    };
+  }
+  if (a === "hmac/sha512") {
+    return {
+      importAlg: { name: "HMAC", hash: "SHA-512" },
+      usages: ["sign", "verify"],
+      metaAlg: "hmac/sha512",
+    };
+  }
+  return { importAlg: { name: "AES-GCM", length: 256 }, usages: ["encrypt", "decrypt"], metaAlg: "aes/256" };
 }
 
 /**

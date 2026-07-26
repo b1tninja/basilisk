@@ -39,23 +39,37 @@ import {
   toPem,
 } from "./encode.js";
 import {
+  aesCbcDecrypt,
+  aesCbcEncrypt,
+  aesCtrDecrypt,
+  aesCtrEncrypt,
   aesGcmDecrypt,
   aesGcmEncrypt,
   aesKwUnwrap,
   aesKwWrap,
-  ecdhSharedBits,
+  ecdhDerive,
+  extractableWrapTarget,
   hkdfDerive,
   importBoundJwk,
   pbkdf2Derive,
   resolveBoundKey,
+  resolveSlotKey,
+  rsaOaepUnwrap,
+  rsaOaepWrap,
   subtleSign,
   subtleVerify,
+  unwrapImportParams,
   valueToBytes,
 } from "./webcrypto-ops.js";
 import { buildInspectSnapshot, inspectFromSnapshot } from "./inspect.js";
 import { getStep } from "./registry.js";
 import { recipeChains } from "./recipe.js";
 import { slotLabelKey } from "./recipe-parse.js";
+import {
+  LEGACY_CRYPTO_TAGS,
+  rsaesPkcs1Decrypt,
+  rsaesPkcs1Encrypt,
+} from "./rsaes-pkcs1.js";
 import {
   resolveStepType,
   typeOf,
@@ -211,6 +225,9 @@ export async function runRecipe(ast, bindings = {}) {
     }
     return clonePipelineValue(v);
   };
+
+  // Named slot args (`key=@cek`) resolve through the same registry as `in`.
+  bindings = { ...bindings, resolveSlot };
 
   let stepOrdinal = 0;
 
@@ -642,7 +659,11 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
 async function execStepBody(step, value, bindings, artifacts) {
   switch (step.name) {
     case "genkey":
-      return generateKeyValue(String(step.params.alg || "ec/p256"), String(step.params.usage || "auto"));
+      return generateKeyValue(
+        String(step.params.alg || "ec/p256"),
+        String(step.params.usage || "auto"),
+        String(step.params.padding || "pss")
+      );
     case "random": {
       const n = Number(step.params.length) || 32;
       const buf = crypto.getRandomValues(new Uint8Array(n));
@@ -706,7 +727,8 @@ async function execStepBody(step, value, bindings, artifacts) {
         value,
         String(step.params.format || "pkcs8"),
         String(step.params.alg || "ec/p256"),
-        String(step.params.usage || "auto")
+        String(step.params.usage || "auto"),
+        String(step.params.padding || "pss")
       );
     case "pem": {
       if (step.params.decode) {
@@ -750,6 +772,16 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
       };
     case "base64url":
+      if (step.params.decode) {
+        if (!value || value.type !== "text") {
+          throw new Error("base64url -d expects text");
+        }
+        return {
+          type: "bytes",
+          data: base64ToBytes(String(value.data).replace(/\s+/g, "")),
+          meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
+        };
+      }
       if (!value || value.type !== "bytes") throw new Error("base64url expects bytes");
       return {
         type: "text",
@@ -791,79 +823,122 @@ async function execStepBody(step, value, bindings, artifacts) {
     }
     case "digest": {
       const bytes = valueToBytes(value);
-      const alg = String(step.params.alg || "sha-256").toUpperCase().replace("SHA-", "SHA-");
+      const algRaw = String(step.params.alg || "sha-256").toLowerCase();
       const name =
-        alg === "SHA-384" || alg === "SHA384"
-          ? "SHA-384"
-          : alg === "SHA-512" || alg === "SHA512"
-            ? "SHA-512"
-            : "SHA-256";
+        algRaw === "sha-1" || algRaw === "sha1"
+          ? "SHA-1"
+          : algRaw === "sha-384" || algRaw === "sha384"
+            ? "SHA-384"
+            : algRaw === "sha-512" || algRaw === "sha512"
+              ? "SHA-512"
+              : "SHA-256";
       const digest = new Uint8Array(await crypto.subtle.digest(name, bytes));
+      const legacy = name === "SHA-1";
       return {
         type: "bytes",
         data: digest,
-        meta: { sensitive: false, alg: name.toLowerCase() },
+        meta: {
+          sensitive: false,
+          alg: name.toLowerCase(),
+          tags: legacy ? [...LEGACY_CRYPTO_TAGS, "sha-1"] : undefined,
+        },
       };
     }
     case "sign": {
       const bytes = valueToBytes(value);
-      const keyInp = bindings.inputs?.key;
-      let signingKey;
-      if (keyInp?.privateKey) signingKey = keyInp.privateKey;
-      else if (keyInp?.secretKey) signingKey = keyInp.secretKey;
-      else {
-        const bound =
-          keyInp?.jwk || keyInp?.jwkText
-            ? await importBoundJwk(keyInp)
-            : null;
-        signingKey = bound?.privateKey || bound?.secretKey;
-      }
+      let signingKey = await resolveSlotKey(
+        bindings,
+        step.params?.key,
+        "either"
+      );
       if (!signingKey) {
-        signingKey = await resolveBoundKey(bindings, "either");
+        const keyInp = bindings.inputs?.key;
+        if (keyInp?.privateKey) signingKey = keyInp.privateKey;
+        else if (keyInp?.secretKey) signingKey = keyInp.secretKey;
+        else {
+          const bound =
+            keyInp?.jwk || keyInp?.jwkText
+              ? await importBoundJwk(keyInp)
+              : null;
+          signingKey = bound?.privateKey || bound?.secretKey;
+        }
+        if (!signingKey) {
+          signingKey = await resolveBoundKey(bindings, "either");
+        }
       }
       if (!signingKey.usages.includes("sign")) {
         throw new Error("Bound key cannot sign — need private or HMAC key with sign usage");
       }
       const sig = await subtleSign(signingKey, bytes);
+      const pkcs1 = signingKey.algorithm?.name === "RSASSA-PKCS1-v1_5";
       return {
         type: "bytes",
         data: sig,
-        meta: { sensitive: false, kind: "signature" },
+        meta: {
+          sensitive: false,
+          kind: "signature",
+          tags: pkcs1
+            ? [...LEGACY_CRYPTO_TAGS, "rsassa-pkcs1-v1_5"]
+            : undefined,
+        },
       };
     }
     case "verify": {
       const bytes = valueToBytes(value);
-      const keyInp = bindings.inputs?.key;
-      let verifyKey;
-      if (keyInp?.publicKey) verifyKey = keyInp.publicKey;
-      else if (keyInp?.secretKey) verifyKey = keyInp.secretKey;
-      else {
-        const bound =
-          keyInp?.jwk || keyInp?.jwkText
-            ? await importBoundJwk(keyInp)
-            : null;
-        verifyKey = bound?.publicKey || bound?.secretKey;
+      // Prefer public (asymmetric) then secret (HMAC); avoid private-only handles.
+      let verifyKey =
+        (await resolveSlotKey(bindings, step.params?.key, "public")) ||
+        (await resolveSlotKey(bindings, step.params?.key, "secret"));
+      if (!verifyKey) {
+        const keyInp = bindings.inputs?.key;
+        if (keyInp?.publicKey) verifyKey = keyInp.publicKey;
+        else if (keyInp?.secretKey) verifyKey = keyInp.secretKey;
+        else {
+          const bound =
+            keyInp?.jwk || keyInp?.jwkText
+              ? await importBoundJwk(keyInp)
+              : null;
+          verifyKey = bound?.publicKey || bound?.secretKey;
+        }
+        if (!verifyKey) {
+          try {
+            verifyKey = await resolveBoundKey(bindings, "public");
+          } catch (_) {
+            verifyKey = await resolveBoundKey(bindings, "secret");
+          }
+        }
       }
-      if (!verifyKey) verifyKey = await resolveBoundKey(bindings, "either");
       if (!verifyKey.usages.includes("verify")) {
         throw new Error("Bound key cannot verify — need public or HMAC key with verify usage");
       }
-      const sigB64 =
-        String(step.params.signature || "") ||
-        String(bindings.inputs?.key?.signatureB64url || "");
-      if (!sigB64) throw new Error("verify needs signature=… (base64url) or sig binding");
-      const signature = base64ToBytes(sigB64);
+      const signature = await resolveVerifySignature(bindings, step.params?.signature);
       const ok = await subtleVerify(verifyKey, signature, bytes);
-      if (!ok) throw new Error("Signature verification failed");
+      const soft = !!step.params.soft;
+      const pkcs1 = verifyKey.algorithm?.name === "RSASSA-PKCS1-v1_5";
+      const tags = pkcs1
+        ? [...LEGACY_CRYPTO_TAGS, "rsassa-pkcs1-v1_5"]
+        : undefined;
+      if (!ok) {
+        if (soft) {
+          return {
+            type: "text",
+            data: "invalid",
+            meta: { sensitive: false, tags },
+          };
+        }
+        throw new Error("Signature verification failed");
+      }
       return {
         type: "text",
         data: "verified",
-        meta: { sensitive: false },
+        meta: { sensitive: false, tags },
       };
     }
     case "aesgcm": {
       const bytes = valueToBytes(value);
-      const key = await resolveBoundKey(bindings, "secret");
+      const key =
+        (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
+        (await resolveBoundKey(bindings, "secret"));
       const aadStr = String(step.params.aad || "");
       const aad = aadStr ? textToBytes(aadStr) : undefined;
       if (step.params.decode) {
@@ -891,9 +966,122 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: true },
       };
     }
+    case "aescbc": {
+      const bytes = valueToBytes(value);
+      const key =
+        (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
+        (await resolveBoundKey(bindings, "secret"));
+      if (step.params.decode) {
+        const plain = await aesCbcDecrypt(key, bytes);
+        try {
+          bytes.fill(0);
+        } catch (_) {
+          /* wipe */
+        }
+        return { type: "bytes", data: plain, meta: { sensitive: true } };
+      }
+      const packed = await aesCbcEncrypt(key, bytes);
+      try {
+        bytes.fill(0);
+      } catch (_) {
+        /* wipe */
+      }
+      return { type: "bytes", data: packed, meta: { sensitive: true } };
+    }
+    case "aesctr": {
+      const bytes = valueToBytes(value);
+      const key =
+        (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
+        (await resolveBoundKey(bindings, "secret"));
+      if (step.params.decode) {
+        const plain = await aesCtrDecrypt(key, bytes);
+        try {
+          bytes.fill(0);
+        } catch (_) {
+          /* wipe */
+        }
+        return { type: "bytes", data: plain, meta: { sensitive: true } };
+      }
+      const packed = await aesCtrEncrypt(key, bytes);
+      try {
+        bytes.fill(0);
+      } catch (_) {
+        /* wipe */
+      }
+      return { type: "bytes", data: packed, meta: { sensitive: true } };
+    }
+    case "rsaoaep": {
+      const bytes = valueToBytes(value);
+      const decrypt = !!step.params.decode;
+      const need = decrypt ? "private" : "public";
+      const key =
+        (await resolveSlotKey(bindings, step.params?.key, need, "rsa-oaep")) ||
+        (await resolveBoundKey(bindings, need));
+      if (key.algorithm?.name !== "RSA-OAEP") {
+        throw new Error(
+          `rsaoaep requires an RSA-OAEP key, got ${key.algorithm?.name || "unknown"}`
+        );
+      }
+      if (decrypt) {
+        const plain = new Uint8Array(
+          await crypto.subtle.decrypt({ name: "RSA-OAEP" }, key, bytes)
+        );
+        try {
+          bytes.fill(0);
+        } catch (_) {
+          /* wipe */
+        }
+        return { type: "bytes", data: plain, meta: { sensitive: true } };
+      }
+      const ct = new Uint8Array(
+        await crypto.subtle.encrypt({ name: "RSA-OAEP" }, key, bytes)
+      );
+      try {
+        bytes.fill(0);
+      } catch (_) {
+        /* wipe */
+      }
+      return { type: "bytes", data: ct, meta: { sensitive: true } };
+    }
+    case "rsapkcs1": {
+      const bytes = valueToBytes(value);
+      const decrypt = !!step.params.decode;
+      const need = decrypt ? "private" : "public";
+      const key =
+        (await resolveSlotKey(bindings, step.params?.key, need)) ||
+        (await resolveBoundKey(bindings, need));
+      const algoName = key.algorithm?.name || "";
+      if (!String(algoName).startsWith("RSA")) {
+        throw new Error(
+          `rsapkcs1 requires an RSA key, got ${algoName || "unknown"}`
+        );
+      }
+      const jwk = await crypto.subtle.exportKey("jwk", key);
+      let out;
+      if (decrypt) {
+        out = rsaesPkcs1Decrypt(jwk, bytes);
+      } else {
+        out = rsaesPkcs1Encrypt(jwk, bytes);
+      }
+      try {
+        bytes.fill(0);
+      } catch (_) {
+        /* wipe */
+      }
+      return {
+        type: "bytes",
+        data: out,
+        meta: {
+          sensitive: true,
+          alg: "rsaes-pkcs1-v1_5",
+          tags: [...LEGACY_CRYPTO_TAGS, "rsaes-pkcs1-v1_5"],
+        },
+      };
+    }
     case "hkdf": {
       const ikm = valueToBytes(value);
       const length = Number(step.params.length) || 32;
+      const as = String(step.params.as || "bytes");
       const hash = String(step.params.hash || "sha-256")
         .toUpperCase()
         .replace("SHA-", "SHA-");
@@ -903,10 +1091,12 @@ async function execStepBody(step, value, bindings, artifacts) {
       const infoStr = String(step.params.info || "");
       const out = await hkdfDerive(ikm, {
         length,
+        as,
         hash: hashName,
         salt: saltStr ? textToBytes(saltStr) : new Uint8Array(),
         info: infoStr ? textToBytes(infoStr) : new Uint8Array(),
       });
+      if (out && typeof out === "object" && out.type === "keypair") return out;
       return {
         type: "bytes",
         data: out,
@@ -916,6 +1106,7 @@ async function execStepBody(step, value, bindings, artifacts) {
     case "pbkdf2": {
       const password = valueToBytes(value);
       const length = Number(step.params.length) || 32;
+      const as = String(step.params.as || "bytes");
       const iterations = Number(step.params.iterations) || 100000;
       const hash = String(step.params.hash || "sha-256")
         .toUpperCase()
@@ -927,8 +1118,10 @@ async function execStepBody(step, value, bindings, artifacts) {
         salt,
         iterations,
         length,
+        as,
         hash: hashName,
       });
+      if (out && typeof out === "object" && out.type === "keypair") return out;
       return {
         type: "bytes",
         data: out,
@@ -936,43 +1129,65 @@ async function execStepBody(step, value, bindings, artifacts) {
       };
     }
     case "ecdh": {
-      const privateKey = await resolveBoundKey(bindings, "private");
-      const peerText = String(bindings.inputs?.key?.peerJwkText || "").trim();
-      if (!peerText) {
-        throw new Error("ecdh needs peer public JWK in the peer key field");
+      const privateKey =
+        (await resolveSlotKey(bindings, step.params?.private, "private")) ||
+        (await resolveBoundKey(bindings, "private"));
+      let peerPublic = null;
+      if (step.params?.peer) {
+        peerPublic = await resolveSlotKey(bindings, step.params.peer, "public");
       }
-      const peer = await importBoundJwk({ jwkText: peerText, alg: "ecdh" });
-      if (!peer.publicKey) throw new Error("Peer JWK must include public key material");
-      const bits = Number(step.params.bits) || 256;
-      const shared = await ecdhSharedBits(privateKey, peer.publicKey, bits);
+      if (!peerPublic) {
+        const peerText = String(bindings.inputs?.key?.peerJwkText || "").trim();
+        if (!peerText) {
+          throw new Error(
+            "ecdh needs peer=@slot or peer public JWK in the peer key field"
+          );
+        }
+        const peer = await importBoundJwk({ jwkText: peerText, alg: "ecdh" });
+        if (!peer.publicKey) {
+          throw new Error("Peer JWK must include public key material");
+        }
+        peerPublic = peer.publicKey;
+      }
+      const out = await ecdhDerive(privateKey, peerPublic, {
+        bits: Number(step.params.bits) || 0,
+        as: String(step.params.as || "bytes"),
+      });
+      if (out && typeof out === "object" && out.type === "keypair") return out;
       return {
         type: "bytes",
-        data: shared,
-        meta: { sensitive: true, kind: "opaque", length: shared.length },
+        data: out,
+        meta: { sensitive: true, kind: "opaque", length: out.length },
       };
     }
     case "wrap": {
-      const wrappingKey = await resolveBoundKey(bindings, "secret");
-      const wrapText = String(bindings.inputs?.key?.wrapJwkText || "").trim();
-      if (!wrapText) throw new Error("wrap needs key-to-wrap JWK in the wrap panel");
-      const toWrap = await importBoundJwk({ jwkText: wrapText });
-      const keyObj = toWrap.secretKey;
-      if (!keyObj) throw new Error("wrap key-to-wrap must be an oct JWK");
-      // Re-import as extractable AES-GCM for wrapKey raw format
-      const raw = await crypto.subtle.exportKey("raw", keyObj);
-      const extractable = await crypto.subtle.importKey(
-        "raw",
-        raw,
-        { name: "AES-GCM", length: raw.byteLength * 8 },
-        true,
-        ["encrypt", "decrypt"]
-      );
-      try {
-        new Uint8Array(raw).fill(0);
-      } catch (_) {
-        /* wipe */
+      const mode = String(step.params?.mode || "aes-kw").toLowerCase();
+      let keyObj = null;
+      if (step.params?.target) {
+        keyObj = await resolveSlotKey(bindings, step.params.target, "secret");
       }
-      // Wrapping key must support AES-KW — re-import if needed
+      if (!keyObj) {
+        const wrapText = String(bindings.inputs?.key?.wrapJwkText || "").trim();
+        if (!wrapText) {
+          throw new Error(
+            "wrap needs target=@slot or key-to-wrap JWK in the wrap panel"
+          );
+        }
+        const toWrap = await importBoundJwk({ jwkText: wrapText });
+        keyObj = toWrap.secretKey || toWrap.privateKey;
+        if (!keyObj) throw new Error("wrap key-to-wrap must be an oct JWK");
+      }
+      const extractable = await extractableWrapTarget(keyObj);
+      if (mode === "rsa-oaep") {
+        const wrappingKey =
+          (await resolveSlotKey(bindings, step.params?.key, "public", "rsa-oaep")) ||
+          (await resolveBoundKey(bindings, "public"));
+        const wrapped = await rsaOaepWrap(wrappingKey, extractable);
+        return { type: "bytes", data: wrapped, meta: { sensitive: true, mode } };
+      }
+      const wrappingKey =
+        (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
+        (await resolveBoundKey(bindings, "secret"));
       let kw = wrappingKey;
       if (wrappingKey.algorithm.name !== "AES-KW") {
         const wraw = await crypto.subtle.exportKey("raw", wrappingKey);
@@ -993,40 +1208,62 @@ async function execStepBody(step, value, bindings, artifacts) {
       return {
         type: "bytes",
         data: wrapped,
-        meta: { sensitive: true },
+        meta: { sensitive: true, mode: "aes-kw" },
       };
     }
     case "unwrap": {
       const wrapped = valueToBytes(value);
-      let wrappingKey = await resolveBoundKey(bindings, "secret");
-      if (wrappingKey.algorithm.name !== "AES-KW") {
-        const wraw = await crypto.subtle.exportKey("raw", wrappingKey);
-        wrappingKey = await crypto.subtle.importKey(
-          "raw",
-          wraw,
-          { name: "AES-KW", length: wraw.byteLength * 8 },
-          false,
-          ["wrapKey", "unwrapKey"]
-        );
-        try {
-          new Uint8Array(wraw).fill(0);
-        } catch (_) {
-          /* wipe */
-        }
-      }
+      const mode = String(step.params?.mode || "aes-kw").toLowerCase();
       const alg = String(step.params.alg || "aes/256");
-      const length = alg === "aes/128" ? 128 : 256;
-      const unwrapped = await aesKwUnwrap(
-        wrappingKey,
-        wrapped,
-        { name: "AES-GCM", length },
-        ["encrypt", "decrypt"]
-      );
+      const { importAlg, usages, metaAlg } = unwrapImportParams(alg);
+      let unwrapped;
+      if (mode === "rsa-oaep") {
+        const wrappingKey =
+          (await resolveSlotKey(bindings, step.params?.key, "private", "rsa-oaep")) ||
+          (await resolveBoundKey(bindings, "private"));
+        unwrapped = await rsaOaepUnwrap(
+          wrappingKey,
+          wrapped,
+          importAlg,
+          usages
+        );
+      } else {
+        let wrappingKey =
+          (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
+          (await resolveBoundKey(bindings, "secret"));
+        if (wrappingKey.algorithm.name !== "AES-KW") {
+          const wraw = await crypto.subtle.exportKey("raw", wrappingKey);
+          wrappingKey = await crypto.subtle.importKey(
+            "raw",
+            wraw,
+            { name: "AES-KW", length: wraw.byteLength * 8 },
+            false,
+            ["wrapKey", "unwrapKey"]
+          );
+          try {
+            new Uint8Array(wraw).fill(0);
+          } catch (_) {
+            /* wipe */
+          }
+        }
+        unwrapped = await aesKwUnwrap(
+          wrappingKey,
+          wrapped,
+          importAlg,
+          usages
+        );
+      }
       const raw = new Uint8Array(await crypto.subtle.exportKey("raw", unwrapped));
       return {
         type: "bytes",
         data: raw,
-        meta: { sensitive: true, kind: "opaque", length: raw.length },
+        meta: {
+          sensitive: true,
+          kind: "opaque",
+          alg: metaAlg,
+          mode,
+          length: raw.length,
+        },
       };
     }
     case "sss": {
@@ -1387,6 +1624,54 @@ async function execStepBody(step, value, bindings, artifacts) {
       });
       return value;
     }
+    case "as": {
+      if (!value || value.type !== "bytes") {
+        throw new Error("as expects bytes");
+      }
+      const kind = String(step.params.type || "opaque").toLowerCase();
+      const data = value.data;
+      const len = data instanceof Uint8Array ? data.length : undefined;
+      if (kind === "master") {
+        if (len !== 16 && len !== 32) {
+          throw new Error(`as master requires 16 or 32 bytes, got ${len ?? "?"}B`);
+        }
+        return {
+          type: "bytes",
+          data,
+          meta: {
+            ...value.meta,
+            kind: "master",
+            length: len,
+            sensitive: true,
+          },
+        };
+      }
+      if (kind === "scalar") {
+        return {
+          type: "bytes",
+          data,
+          meta: {
+            ...value.meta,
+            kind: "scalar",
+            length: len,
+            sensitive: true,
+          },
+        };
+      }
+      if (kind === "opaque") {
+        return {
+          type: "bytes",
+          data,
+          meta: {
+            ...value.meta,
+            kind: "opaque",
+            length: len,
+            sensitive: !!value.meta?.sensitive,
+          },
+        };
+      }
+      throw new Error(`as type must be master, scalar, or opaque — got "${kind}"`);
+    }
     case "select": {
       if (!value) throw new Error("select expects a value");
       return projectSelector(value, String(step.params.selector || ""));
@@ -1661,11 +1946,43 @@ async function decryptGpgSource(bindings, _artifacts) {
 }
 
 /**
+ * Resolve verify signature= from @slot, base64url string, or panel binding.
+ * @param {object} bindings
+ * @param {string|undefined|null} refOrB64
+ * @returns {Promise<Uint8Array>}
+ */
+async function resolveVerifySignature(bindings, refOrB64) {
+  const raw = String(refOrB64 || "").trim();
+  if (raw.startsWith("@")) {
+    const resolve = bindings?.resolveSlot;
+    if (typeof resolve !== "function") {
+      throw new Error(`verify signature=${raw}: runtime slot resolver missing`);
+    }
+    const value = resolve(raw);
+    if (!value) throw new Error(`verify signature=${raw}: unknown slot`);
+    if (value.type === "bytes") return value.data;
+    if (value.type === "text") {
+      return base64ToBytes(String(value.data).replace(/\s+/g, ""));
+    }
+    throw new Error(
+      `verify signature=${raw}: slot must be bytes or base64url text`
+    );
+  }
+  const sigB64 =
+    raw || String(bindings.inputs?.key?.signatureB64url || "").trim();
+  if (!sigB64) {
+    throw new Error("verify needs signature=… (base64url or @slot) or sig binding");
+  }
+  return base64ToBytes(sigB64);
+}
+
+/**
  * @param {string} alg
  * @param {string} usage
+ * @param {string} [padding]
  * @returns {Promise<PipelineValue>}
  */
-async function generateKeyValue(alg, usage) {
+async function generateKeyValue(alg, usage, padding = "pss") {
   if (alg.startsWith("ec/")) {
     const curve =
       alg === "ec/p384" ? "P-384" : alg === "ec/p521" ? "P-521" : "P-256";
@@ -1722,23 +2039,36 @@ async function generateKeyValue(alg, usage) {
   if (alg.startsWith("rsa/")) {
     const modulus = Number(alg.split("/")[1]) || 3072;
     const useEncrypt = usage === "encrypt";
+    const usePkcs1 =
+      !useEncrypt && String(padding || "pss").toLowerCase() === "pkcs1";
+    const name = useEncrypt
+      ? "RSA-OAEP"
+      : usePkcs1
+        ? "RSASSA-PKCS1-v1_5"
+        : "RSA-PSS";
     const keyPair = await crypto.subtle.generateKey(
       {
-        name: useEncrypt ? "RSA-OAEP" : "RSA-PSS",
+        name,
         modulusLength: modulus,
         publicExponent: new Uint8Array([1, 0, 1]),
         hash: "SHA-256",
       },
       true,
-      useEncrypt ? ["encrypt", "decrypt"] : ["sign", "verify"]
+      useEncrypt
+        ? ["encrypt", "decrypt", "wrapKey", "unwrapKey"]
+        : ["sign", "verify"]
     );
     return {
       type: "keypair",
       data: keyPair,
       meta: {
         alg,
-        algorithm: useEncrypt ? "RSA-OAEP" : "RSA-PSS",
+        algorithm: name,
         sensitive: true,
+        padding: useEncrypt ? undefined : usePkcs1 ? "pkcs1" : "pss",
+        tags: usePkcs1
+          ? [...LEGACY_CRYPTO_TAGS, "rsassa-pkcs1-v1_5"]
+          : undefined,
       },
     };
   }
@@ -1868,13 +2198,49 @@ async function exportKey(value, format, which) {
  * @param {string} format
  * @param {string} alg
  * @param {string} usage
+ * @param {string} [padding]
  */
-async function importKey(value, format, alg, usage) {
-  if (!value || value.type !== "bytes") throw new Error("import expects bytes");
-  const der = value.data;
+async function importKey(value, format, alg, usage, padding = "pss") {
   const useDerive = usage === "derive";
   const useEncrypt = usage === "encrypt";
   const fmt = String(format || "pkcs8").toLowerCase();
+  const usePkcs1Sign =
+    !useEncrypt && String(padding || "pss").toLowerCase() === "pkcs1";
+
+  if (fmt === "jwk") {
+    if (!value || value.type !== "text") throw new Error("import jwk expects text");
+    const hint =
+      useEncrypt && String(alg).startsWith("rsa/")
+        ? "rsa-oaep"
+        : usePkcs1Sign && String(alg).startsWith("rsa/")
+          ? "rsassa-pkcs1"
+          : useDerive
+            ? "ecdh"
+            : alg;
+    const bound = await importBoundJwk({
+      jwkText: String(value.data),
+      alg: hint,
+      padding: usePkcs1Sign ? "pkcs1" : undefined,
+    });
+    const sensitive = !!(bound.privateKey || bound.secretKey);
+    return {
+      type: "keypair",
+      data: {
+        privateKey: bound.privateKey || bound.secretKey || null,
+        publicKey: bound.publicKey || null,
+        secretKey: bound.secretKey || null,
+      },
+      meta: {
+        alg: bound.alg || alg,
+        algorithm: bound.alg || alg,
+        symmetric: !!bound.secretKey,
+        sensitive,
+      },
+    };
+  }
+
+  if (!value || value.type !== "bytes") throw new Error("import expects bytes");
+  const der = value.data;
 
   if (fmt === "scalar" || fmt === "d") {
     return importScalarKey(der, alg, usage);
@@ -1945,6 +2311,20 @@ async function importKey(value, format, alg, usage) {
   }
 
   if (alg === "x25519") {
+    if (fmt === "spki") {
+      const publicKey = await crypto.subtle.importKey(
+        "spki",
+        der,
+        "X25519",
+        true,
+        []
+      );
+      return {
+        type: "keypair",
+        data: { privateKey: null, publicKey },
+        meta: { alg, algorithm: "X25519", sensitive: false },
+      };
+    }
     const privateKey = await crypto.subtle.importKey(
       fmt === "raw" ? "raw" : "pkcs8",
       der,
@@ -1960,18 +2340,53 @@ async function importKey(value, format, alg, usage) {
   }
 
   if (alg.startsWith("rsa/")) {
-    const name = useEncrypt ? "RSA-OAEP" : "RSA-PSS";
+    const usePkcs1 =
+      !useEncrypt && String(padding || "pss").toLowerCase() === "pkcs1";
+    const name = useEncrypt
+      ? "RSA-OAEP"
+      : usePkcs1
+        ? "RSASSA-PKCS1-v1_5"
+        : "RSA-PSS";
+    const legacyTags = usePkcs1
+      ? [...LEGACY_CRYPTO_TAGS, "rsassa-pkcs1-v1_5"]
+      : undefined;
+    if (fmt === "spki") {
+      const publicKey = await crypto.subtle.importKey(
+        "spki",
+        der,
+        { name, hash: "SHA-256" },
+        true,
+        useEncrypt ? ["encrypt", "wrapKey"] : ["verify"]
+      );
+      return {
+        type: "keypair",
+        data: { privateKey: null, publicKey },
+        meta: {
+          alg,
+          algorithm: name,
+          sensitive: false,
+          padding: useEncrypt ? undefined : usePkcs1 ? "pkcs1" : "pss",
+          tags: legacyTags,
+        },
+      };
+    }
     const privateKey = await crypto.subtle.importKey(
       "pkcs8",
       der,
       { name, hash: "SHA-256" },
       true,
-      useEncrypt ? ["decrypt"] : ["sign"]
+      useEncrypt ? ["decrypt", "unwrapKey"] : ["sign"]
     );
     return {
       type: "keypair",
       data: { privateKey, publicKey: null },
-      meta: { alg, algorithm: name, sensitive: true },
+      meta: {
+        alg,
+        algorithm: name,
+        sensitive: true,
+        padding: useEncrypt ? undefined : usePkcs1 ? "pkcs1" : "pss",
+        tags: legacyTags,
+      },
     };
   }
 
@@ -2148,6 +2563,20 @@ function safeOutputStem(raw) {
 function attachPipeMeta(artifact, value) {
   if (value?.meta?.type) {
     artifact.pipeType = value.meta.type;
+  }
+  const metaTags = Array.isArray(value?.meta?.tags) ? value.meta.tags : [];
+  if (metaTags.length) {
+    const prev = Array.isArray(artifact.tags) ? artifact.tags : [];
+    const seen = new Set(prev.map(String));
+    const merged = [...prev];
+    for (const t of metaTags) {
+      const s = String(t);
+      if (!seen.has(s)) {
+        seen.add(s);
+        merged.push(s);
+      }
+    }
+    artifact.tags = merged;
   }
   if (
     value?.type === "bytes" &&

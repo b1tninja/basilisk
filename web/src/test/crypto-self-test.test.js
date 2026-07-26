@@ -43,6 +43,8 @@ describe("crypto-self-test — SELF_TEST_LABELS", () => {
     expect(keys).toContain("ecdhAgree");
     expect(keys).toContain("hkdfKat");
     expect(keys).toContain("aesKwRoundtrip");
+    expect(keys).toContain("aesCbcRoundtrip");
+    expect(keys).toContain("aesCtrRoundtrip");
     expect(keys).toContain("sssRoundtrip");
   });
 
@@ -59,6 +61,8 @@ describe("crypto-self-test — SELF_TEST_LABELS", () => {
     expect(SELF_TEST_LABELS.hkdfKat).toMatch(/CAST-10/);
     expect(SELF_TEST_LABELS.aesKwRoundtrip).toMatch(/CAST-11/);
     expect(SELF_TEST_LABELS.sssRoundtrip).toMatch(/CAST-12/);
+    expect(SELF_TEST_LABELS.aesCbcRoundtrip).toMatch(/CAST-13/);
+    expect(SELF_TEST_LABELS.aesCtrRoundtrip).toMatch(/CAST-14/);
   });
 });
 
@@ -83,6 +87,8 @@ describe("crypto-self-test — runCryptoSelfTests", () => {
     expect(result.results.hkdfKat, "CAST-10 hkdfKat").toBe(true);
     expect(result.results.aesKwRoundtrip, "CAST-11 aesKwRoundtrip").toBe(true);
     expect(result.results.sssRoundtrip, "CAST-12 sssRoundtrip").toBe(true);
+    expect(result.results.aesCbcRoundtrip, "CAST-13 aesCbcRoundtrip").toBe(true);
+    expect(result.results.aesCtrRoundtrip, "CAST-14 aesCtrRoundtrip").toBe(true);
 
     expect(result.elapsed).toBeLessThan(20_000);
     expect(result.error).toBeUndefined();

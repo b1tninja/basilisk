@@ -29,6 +29,156 @@ import {
 } from "./types.js";
 
 /**
+ * @param {RecipeStep} step
+ * @param {string} name
+ */
+function hasSlotParam(step, name) {
+  const v = step.params?.[name];
+  return v != null && String(v).trim() !== "";
+}
+
+/**
+ * Compile-time warnings for discouraged algorithms (still allowed).
+ * @param {RecipeStep} step
+ * @param {string[]} warnings
+ */
+function pushDiscouragedAlgoWarnings(step, warnings) {
+  if (
+    step.name === "digest" &&
+    String(step.params?.alg || "sha-256").toLowerCase() === "sha-1"
+  ) {
+    warnings.push(
+      `digest alg=sha-1 is discouraged (collision-prone); prefer sha-256 — outputs tagged legacy/discouraged`
+    );
+  }
+  if (step.name === "rsapkcs1") {
+    warnings.push(
+      `rsapkcs1 (RSAES-PKCS1-v1_5) is discouraged; prefer rsaoaep — outputs tagged legacy/discouraged`
+    );
+  }
+  if (
+    (step.name === "genkey" || step.name === "import") &&
+    String(step.params?.alg || "").startsWith("rsa/") &&
+    String(step.params?.usage || "auto") !== "encrypt" &&
+    String(step.params?.padding || "pss").toLowerCase() === "pkcs1"
+  ) {
+    warnings.push(
+      `${step.name} padding=pkcs1 (RSASSA-PKCS1-v1_5) is discouraged; prefer padding=pss — outputs tagged legacy/discouraged`
+    );
+  }
+}
+
+/**
+ * Warn when usage= is set but ignored for fixed-usage algorithms.
+ * @param {RecipeStep} step
+ * @param {string[]} warnings
+ */
+function pushUsageHonestyWarnings(step, warnings) {
+  if (step.name !== "genkey" && step.name !== "import") return;
+  const usage = String(step.params?.usage || "auto");
+  if (usage === "auto" || usage === "") return;
+  const alg = String(step.params?.alg || "").toLowerCase();
+  const fixed =
+    alg === "ed25519" ||
+    alg === "x25519" ||
+    alg.startsWith("aes/") ||
+    alg.startsWith("hmac/");
+  if (fixed) {
+    warnings.push(
+      `${step.name} usage=${usage} is ignored for ${alg || "this algorithm"} (usage is fixed)`
+    );
+  }
+}
+
+/**
+ * Whether a WebCrypto op still needs the key/peer/wrap panels.
+ * @param {RecipeStep} step
+ */
+export function stepNeedsKeyPanel(step) {
+  switch (step.name) {
+    case "aesgcm":
+    case "aescbc":
+    case "aesctr":
+    case "rsaoaep":
+    case "rsapkcs1":
+    case "sign":
+    case "verify":
+    case "unwrap":
+      return !hasSlotParam(step, "key");
+    case "ecdh":
+      return !(hasSlotParam(step, "private") && hasSlotParam(step, "peer"));
+    case "wrap":
+      return !(hasSlotParam(step, "key") && hasSlotParam(step, "target"));
+    default:
+      return false;
+  }
+}
+
+/**
+ * Resolve a slot ref against compile-time slot type maps.
+ * @param {string} ref
+ * @param {Map<string, import("./types.js").RefinedType>} slotTypes
+ * @param {import("./types.js").RefinedType[]} slotTypesByIndex
+ * @returns {import("./types.js").RefinedType|null}
+ */
+function lookupSlotType(ref, slotTypes, slotTypesByIndex) {
+  const r = String(ref || "");
+  if (/^\d+$/.test(r)) {
+    const n = Number(r);
+    return slotTypesByIndex[n - 1] || null;
+  }
+  const key = slotLabelKey(r);
+  return key ? slotTypes.get(key) || null : null;
+}
+
+/**
+ * Validate slot-typed params on a step (existence + coarse type).
+ * @param {RecipeStep} step
+ * @param {Map<string, import("./types.js").RefinedType>} slotTypes
+ * @param {import("./types.js").RefinedType[]} slotTypesByIndex
+ * @param {RecipeError[]} errors
+ * @param {number} stepIndex
+ */
+function validateStepSlotParams(
+  step,
+  slotTypes,
+  slotTypesByIndex,
+  errors,
+  stepIndex
+) {
+  const spec = getStep(step.name);
+  for (const p of spec?.params || []) {
+    if (p.type !== "slot") continue;
+    const ref = step.params?.[p.name];
+    if (ref == null || String(ref).trim() === "") continue;
+    const loaded = lookupSlotType(String(ref), slotTypes, slotTypesByIndex);
+    if (!loaded) {
+      errors.push({
+        message: `${step.name} ${p.name}=${ref}: unknown slot (register earlier with out ${String(ref).startsWith("@") || /^\d+$/.test(String(ref)) ? ref : `@${ref}`})`,
+        start: step.start,
+        end: step.end,
+        stepIndex,
+      });
+      continue;
+    }
+    const base = loaded.base;
+    const okBase =
+      base === "keypair" ||
+      base === "bytes" ||
+      base === "text" ||
+      base === "key";
+    if (!okBase) {
+      errors.push({
+        message: `${step.name} ${p.name}=${ref}: slot type ${formatType(loaded)} cannot supply a key`,
+        start: step.start,
+        end: step.end,
+        stepIndex,
+      });
+    }
+  }
+}
+
+/**
  * Labeled tee branch (selector style: `- .private | …`).
  * @typedef {object} TeeBranch
  * @property {string} member  e.g. private | public | key | value
@@ -453,16 +603,21 @@ function validateBodySteps(body, startType, ctx) {
         stepIndex: ctx.stepIndex,
       });
     }
-    if (
-      (step.name === "sign" ||
-        step.name === "verify" ||
-        step.name === "aesgcm" ||
-        step.name === "ecdh" ||
-        step.name === "wrap" ||
-        step.name === "unwrap") &&
-      !inputNeeds.includes("key")
-    ) {
+    if (slotTypes && slotTypesByIndex) {
+      validateStepSlotParams(
+        step,
+        slotTypes,
+        slotTypesByIndex,
+        ctx.errors,
+        ctx.stepIndex
+      );
+    }
+    if (stepNeedsKeyPanel(step) && !inputNeeds.includes("key")) {
       inputNeeds.push("key");
+    }
+    if (ctx.warnings) {
+      pushDiscouragedAlgoWarnings(step, ctx.warnings);
+      pushUsageHonestyWarnings(step, ctx.warnings);
     }
     if (step.name === "encrypt") encryptInBody = true;
 
@@ -713,16 +868,40 @@ export function validateRecipe(ast) {
       if (!inputNeeds.includes("envelope")) inputNeeds.push("envelope");
     }
 
-    if (
-      (step.name === "sign" ||
-        step.name === "verify" ||
-        step.name === "aesgcm" ||
-        step.name === "ecdh" ||
-        step.name === "wrap" ||
-        step.name === "unwrap") &&
-      !inputNeeds.includes("key")
-    ) {
+    validateStepSlotParams(step, slotTypes, slotTypesByIndex, errors, stepIndex);
+
+    if (stepNeedsKeyPanel(step) && !inputNeeds.includes("key")) {
       inputNeeds.push("key");
+    }
+
+    pushDiscouragedAlgoWarnings(step, warnings);
+    pushUsageHonestyWarnings(step, warnings);
+
+    // verify signature=@slot: forward-ref check like other slot params
+    if (step.name === "verify") {
+      const sig = String(step.params?.signature || "").trim();
+      if (sig.startsWith("@")) {
+        const loaded = lookupSlotType(sig, slotTypes, slotTypesByIndex);
+        if (!loaded) {
+          errors.push({
+            message: `verify signature=${sig}: unknown slot (register earlier with out ${sig})`,
+            start: step.start,
+            end: step.end,
+            stepIndex,
+          });
+        } else if (
+          loaded.base !== "bytes" &&
+          loaded.base !== "text" &&
+          loaded.base !== "none"
+        ) {
+          errors.push({
+            message: `verify signature=${sig}: slot type ${formatType(loaded)} cannot supply a signature`,
+            start: step.start,
+            end: step.end,
+            stepIndex,
+          });
+        }
+      }
     }
 
     if (step.name === "foreach") {
@@ -946,9 +1125,15 @@ export function validateRecipe(ast) {
   }
 
   const first = getStep(steps[0].name);
-  if (first && first.kind !== "source" && first.kind !== "flow") {
+  // Sources, flow, and transforms with input "none" (ecdh / wrap with slot args) may start a chain.
+  const firstOk =
+    first &&
+    (first.kind === "source" ||
+      first.kind === "flow" ||
+      first.input === "none");
+  if (first && !firstOk) {
     errors.push({
-      message: `Chain ${ci + 1} should start with a source (genkey, random, passphrase, input, in, decrypt), not "${steps[0].name}".`,
+      message: `Chain ${ci + 1} should start with a source (genkey, random, passphrase, input, in, decrypt) or an input-none op (ecdh, wrap), not "${steps[0].name}".`,
       start: steps[0].start,
       end: steps[0].end,
       stepIndex: globalStepIndex - steps.length,
@@ -1105,6 +1290,62 @@ in @kp | export pkcs8 | pem | out @private`,
     title: "SHA-256 digest",
     blurb: "Hash 32 random bytes and show hex.",
     recipe: "random 32 | digest | hex | out @digest",
+  },
+  {
+    id: "rsaoaep-roundtrip",
+    group: "WebCrypto",
+    title: "RSA-OAEP encrypt / decrypt",
+    blurb:
+      "Generate an RSA-OAEP key, encrypt a message with rsaoaep key=@rk, then decrypt across chains.",
+    recipe: `genkey rsa/2048 usage=encrypt | out @rk
+
+input | utf8 | rsaoaep key=@rk | hex | out @ct
+
+in @ct | hex -d | rsaoaep -d key=@rk | utf8 | out @plain`,
+  },
+  {
+    id: "hkdf-as-aesgcm",
+    group: "WebCrypto",
+    title: "HKDF → AES key → encrypt",
+    blurb:
+      "Derive an AES-256 key with `hkdf as=aes/256` (deriveKey), then AES-GCM encrypt with key=@cek.",
+    recipe: `random 32 | hkdf 32 as=aes/256 | out @cek
+
+input | utf8 | aesgcm key=@cek | base64url | out @ct`,
+  },
+  {
+    id: "aescbc-roundtrip",
+    group: "WebCrypto",
+    title: "AES-CBC encrypt / decrypt",
+    blurb:
+      "Unauthenticated AES-CBC interop (prefer aesgcm for new work). Round-trip with key=@cek.",
+    recipe: `genkey aes/256 | out @cek
+
+input | utf8 | aescbc key=@cek | hex | out @ct
+
+in @ct | hex -d | aescbc -d key=@cek | utf8 | out @plain`,
+  },
+  {
+    id: "aesctr-roundtrip",
+    group: "WebCrypto",
+    title: "AES-CTR encrypt / decrypt",
+    blurb:
+      "Unauthenticated AES-CTR interop (prefer aesgcm for new work). Round-trip with key=@cek.",
+    recipe: `genkey aes/256 | out @cek
+
+input | utf8 | aesctr key=@cek | hex | out @ct
+
+in @ct | hex -d | aesctr -d key=@cek | utf8 | out @plain`,
+  },
+  {
+    id: "verify-soft",
+    group: "WebCrypto",
+    title: "Soft signature verify",
+    blurb:
+      "Fail-soft verify (`-q`): emits text `verified` or `invalid` instead of throwing. Bind signature= (or the sig panel) at run time; prefer fail-loud for auth.",
+    recipe: `genkey ed25519 | .public | export jwk | out @pub
+
+input | utf8 | verify -q key=@pub | out @result`,
   },
   {
     id: "slip39-split",

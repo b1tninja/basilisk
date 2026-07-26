@@ -43,12 +43,15 @@ random 32 | sss threshold=2 shares=3 | blip39 | foreach
 - Blocks: `tee` / `foreach` take a **body** (braces `{ … }` or indented `-` lines).
 - Member / dict projection uses **selectors** (`.private`, `.items`, …).
 - Slots: `out @label` registers a live pipeline value; `in @label` / `in 1` loads it.
-- Bare `out kp` / `in kp` is shorthand for `@kp` (canonical form always uses `@`).
+- Named slot args pass live values into ops: `aesgcm key=@cek` (stem stays the payload).
+- Bare `out kp` / `in kp` / `key=cek` is shorthand for `@` form (canonical always uses `@`).
 - Prefer **positional** args: `out @public`, `export pkcs8`, `genkey ec/p256`.
+- Casts: `as master` / `as scalar` / `as opaque` retag bytes only (not import).
 - Empty `tee` is invalid; use `peek` for a side inspect snapshot.
 - List marker is only `-`. Leading tabs are errors.
 - File paths (`./x.pem`, quoted paths, `file:…`) are reserved — not supported yet.
 - Comments: full-line `# …` (kept inside the current chain).
+- Ops-drawer **shelves** and **conjugate rows** (encode | `-d`, sign | verify) are UI only — they do not change recipe tokens or grammar.
 
 ## Chains
 
@@ -97,6 +100,88 @@ Rules:
 - Forward / missing refs → error.
 - Only explicit `out` registers slots (dangling auto-emit does not).
 - Default stem when omitted: `@output`.
+
+## Named slot args
+
+Secondary live values (keys, peers) are passed as **slot-typed named args**,
+not on the stem. The stem stays the payload.
+
+```text
+genkey aes/256 | out @cek
+
+input | utf8 | aesgcm key=@cek | out @ct
+
+in @ct | aesgcm -d key=@cek | utf8 | out @plain
+```
+
+| Op | Slot args |
+|----|-----------|
+| `aesgcm` / `aescbc` / `aesctr` / `rsaoaep` / `rsapkcs1` / `sign` / `unwrap` | `key=@…` |
+| `verify` | `key=@…` `signature=@…` (or bare base64url for `signature=`) |
+| `ecdh` | `private=@…` `peer=@…` |
+| `wrap` | `key=@…` (wrapping) `target=@…` (CEK) |
+
+Rules:
+
+- Refs use the same `@label` sugar as `out` / `in` (bare `key=cek` → `key=@cek`).
+- Forward / missing refs error at validate (same as `in`).
+- When required slot args are present, the key/peer/wrap/signature panels are not required.
+- Panels remain as fallback when slot args are omitted.
+- Do not embed JWK JSON secrets in the recipe — only `@` refs (or panels).
+
+```text
+input | utf8 | out @msg
+genkey ed25519 | out @kp
+
+in @msg | sign key=@kp | base64url | out @sig
+in @msg | verify key=@kp signature=@sig | out @ok
+```
+
+### Encrypt name collision
+
+Several ops share the UI label `encrypt` but keep distinct recipe tokens:
+
+| Recipe name | Toolbox | UI label |
+|-------------|---------|----------|
+| `encrypt` / `gpg` | openpgp | encrypt |
+| `aesgcm` / `aescbc` / `aesctr` / `rsaoaep` / `rsapkcs1` | webcrypto | encrypt |
+
+`verify` is fail-loud by default; `verify -q` / `soft=true` emits text `verified` or `invalid` (setup errors still throw). Prefer fail-loud for auth decisions. `aescbc` / `aesctr` are **unauthenticated** — prefer `aesgcm` for new work.
+
+RSA sign keys: `genkey rsa/2048 padding=pss` (default) or `padding=pkcs1` (discouraged RSASSA-PKCS1-v1_5). Content encrypt stays `rsaoaep`; key wrap uses `wrap mode=rsa-oaep` (distinct from AES-KW default).
+
+`ecdh` defaults `bits=0` (curve-aware: P-256/X25519 → 256, P-384 → 384, P-521 → 528) and accepts `as=aes/256` etc. like `hkdf`.
+
+### Discouraged algorithms
+
+Supported for interop, but compile warns and result tiles are tagged `legacy` / `discouraged`:
+
+| Op | Prefer instead |
+|----|----------------|
+| `digest sha-1` | `digest` / `sha-256` |
+| `rsapkcs1` (RSAES-PKCS1-v1_5; pure-JS) | `rsaoaep` |
+| `genkey`/`import` `padding=pkcs1` (RSASSA-PKCS1-v1_5) | `padding=pss` |
+
+On `genkey`/`import` for ed25519, x25519, aes/*, hmac/*: non-`auto` `usage=` is ignored and emits a compile warning.
+
+## Casts (`as`)
+
+`as` **retags** refined type only — no crypto conversion. Not an import.
+
+```text
+random 16 | digest | as master | sss threshold=2 shares=3 | blip39 | foreach
+  - out @share
+```
+
+| Form | Meaning |
+|------|---------|
+| `as master` | Tag as `bytes/master` (must be 16 or 32 bytes) |
+| `as scalar` | Tag as `bytes/scalar` |
+| `as opaque` | Tag as `bytes/opaque` |
+
+Never: `as keypair` / `as jwk` — use `import` / `export`.
+
+Homonym: the stage `as master` is distinct from KDF/ECDH params `hkdf … as=aes/256` / `pbkdf2 … as=aes/256` / `ecdh … as=aes/256` (`deriveKey` → keypair when not `bytes`).
 
 ## Selectors
 
@@ -156,6 +241,7 @@ genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private
 | `at` | Same as `[n]` / `[n:m]` — share index or slice. |
 | `in` / `from` | Source: load a prior `out` slot by `@label` or 1-based index. |
 | `out` | Emit a tile, register a slot, pass the value through. |
+| `as` | Retag refined bytes kind (`master` / `scalar` / `opaque`). |
 | `input` | Free-form text at run time (not a slot). Aliases: `paste`, `cat`. |
 | `select` | Internal name for a bare selector stage (usually written as `.public`). |
 
@@ -189,11 +275,11 @@ arg          = flag | binding | positional ;
 flag         = "-" , ident ;
 binding      = ident , "=" , value ;
 positional   = value | slot_ref ;
-value        = string | number | bare_value | "true" | "false" ;
+value        = string | number | bare_value | slot_ref | "true" | "false" ;
 bare_value   = letter , { letter | digit | "_" | "-" | "/" | "." } ;
 
 slot_ref     = "@" , ident | ident | number ;
-(* bare ident ≡ @ident for out/in slot names; number = 1-based slot index for in *)
+(* bare ident ≡ @ident for out/in names and type=slot params; number = 1-based index for in *)
 
 selector     = "." , ident
              | "[" , number , [ ":" , number ] , "]" ;
@@ -220,6 +306,8 @@ chains       blank-line separated; run in order; share a slot registry
 pipeline     left-to-right within a chain
 out @x       emit tile + register cloned pipeline value as slot x
 in @x / in N load cloned slot (typed); must refer to an earlier out
+key=@x       named slot arg — resolve live value into the op (not the stem)
+as kind      retag bytes refined type (allowlisted)
 tee body     side branches on projection/clone; stem unchanged
 foreach      over values (default) or .items / .keys / .values
 peek         side inspect; stem unchanged
