@@ -1,0 +1,71 @@
+@import "tailwindcss";
+@import "./site.css";
+
+/*
+ * Basilisk → shadcn token bridge (no purple defaults).
+ * CSS file emit only — keeps toolkit.html style-src 'self'.
+ */
+@theme {
+  --color-background: var(--surface);
+  --color-foreground: var(--text);
+  --color-card: var(--surface-raised);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface-raised);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--brand);
+  --color-primary-foreground: #0b1a10;
+  --color-secondary: var(--surface-raised);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--surface-raised);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: color-mix(in srgb, var(--brand) 14%, var(--surface-raised));
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--error);
+  --color-destructive-foreground: #fff;
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--brand);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-primary-foreground: #0b1a10;
+  }
+}
+
+/* Toolkit React shell lives full-bleed under site nav */
+body.layout-app:has(#toolkit-root) {
+  max-width: none;
+}
+
+#toolkit-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.toolkit-shell {
+  --background: var(--surface);
+  --foreground: var(--text);
+  --card: var(--surface-raised);
+  --card-foreground: var(--text);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--text);
+  --primary: var(--brand);
+  --primary-foreground: #0b1a10;
+  --secondary: var(--surface-raised);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-raised);
+  --muted-foreground: var(--text-muted);
+  --accent: color-mix(in srgb, var(--brand) 14%, var(--surface-raised));
+  --accent-foreground: var(--text);
+  --destructive: var(--error);
+  --border: var(--border);
+  --input: var(--border);
+  --ring: var(--brand);
+  --radius: 10px;
+}

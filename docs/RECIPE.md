@@ -81,7 +81,9 @@ In the browser toolkit, each blank-line **chain** is one notebook **cell**. A se
 
 Idle auto-scrub uses the same path as **Clear sensitive data**. The whole notebook still serializes to multi-chain recipe source (shareable / Templates). Slot-side params (`to=@`, `key=@`) resolve from the kernel when present. Duplicate `out @label` within one cell still errors; re-running a later cell may replace a kernel binding written earlier.
 
-OpenPGP **Modern / Compatible / Auto** lives once in the notebook header (with **Advanced OpenPGP…** for cipher/AEAD/S2K). Messaging **Encrypt** cells use the recipient binder only when the recipe has no `to=` — look-up chrome stays quiet until that panel is focused.
+OpenPGP **Modern / Compatible / Auto** lives once in the notebook header (with **Advanced OpenPGP…** for profile details). Messaging **Encrypt** cells use the recipient binder only when the recipe has no `to=` — look-up chrome stays quiet until that panel is focused.
+
+**Keyring** and **Variables** open as right-side Sheets (pull-outs) from the command strip / More menu — not an inline header `<details>`. Full vault management remains on **My Keys**. The Toolkit page UI is React + Tailwind + shadcn primitives; recipe/engine libs stay shared JS.
 
 ### Companion templates (forward ⇄ inverse)
 
