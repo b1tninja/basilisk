@@ -11,6 +11,7 @@ import {
   listSteps,
   recipeNeedsMainThread,
 } from "../lib/toolkit/registry.js";
+import { formatType, inferSourceType } from "../lib/toolkit/types.js";
 import { execWaAttest, execWaCaps, execWaMds } from "../lib/toolkit/webauthn-ops.js";
 import { ZERO_AAGUID } from "../lib/webauthn/attestation.js";
 
@@ -65,6 +66,15 @@ describe("webauthn toolbox shelves", () => {
     const { ast: wa } = compileRecipe("webauthn.caps");
     expect(recipeNeedsMainThread(wa)).toBe(true);
     expect(getStep("webauthn.prf")?.toolbox).toBe("webauthn");
+  });
+
+  it("inferSourceType types webauthn sources for piping", () => {
+    expect(formatType(inferSourceType("webauthn.caps"))).toBe("text/opaque");
+    expect(formatType(inferSourceType("webauthn.get"))).toBe("text/opaque");
+    expect(formatType(inferSourceType("webauthn.create"))).toBe("bytes/opaque");
+    expect(formatType(inferSourceType("webauthn.prf"))).toBe("bytes/opaque");
+    expect(compileRecipe("webauthn.create | hex").validation.ok).toBe(true);
+    expect(compileRecipe("webauthn.get | out @a").validation.ok).toBe(true);
   });
 });
 

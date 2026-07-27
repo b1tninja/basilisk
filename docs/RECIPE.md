@@ -94,7 +94,7 @@ Inter-cell feed stays **explicit `@slots`** — there is no implicit “trailing
 
 **Add both** may rewrite a reverse `input` head to `in @bridge` when a slot bridge applies; SSS/GPG-share inverses are left unchanged (inputs bridge). If the inverse reuses an `out @label` already emitted by the forward cell, Add both renames the inverse tip (e.g. `@pem` → `@pem_rev`) so the joined notebook validates. Trailing auto-emitted tiles alone never become slots — only `out` does.
 
-**Exhaustive verb smoke** (Vitest, not CAST): `web/src/lib/toolkit/verb-smoke.js` + `web/src/test/recipe-verbs.test.js` require every `listSteps()` op and every enum/bool param value to appear in a compiling recipe, then run CI-safe cases (`skip` only for live WebAuthn ceremonies / passkey vault wrap).
+**Exhaustive verb smoke** (Vitest, not CAST): `web/src/lib/toolkit/verb-smoke.js` + `web/src/test/recipe-verbs.test.js` require every `listSteps()` op and every enum/bool param value to appear in a compiling recipe, then **run** every case. WebAuthn create/get/prf and `agent.save protection=passkey` use `installWebAuthnPrfStub` (fake `navigator.credentials` + fixed PRF IKM) — no live authenticator.
 
 ### Sharing via URL fragment
 

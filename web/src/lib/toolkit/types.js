@@ -185,6 +185,14 @@ export function inferSourceType(name, params = {}) {
       return typeOf("text", { kind: "opaque" });
     case "hkp.search":
       return typeOf("recipients");
+    case "hkp.cache": {
+      const action = String(params.action || "list").toLowerCase();
+      const format = String(params.format || "recipients").toLowerCase();
+      if (action === "clear" || format === "json") {
+        return typeOf("text", { kind: "opaque" });
+      }
+      return typeOf("recipients");
+    }
     case "input":
       return typeOf("text", { kind: "opaque" });
     case "shares": {
@@ -192,6 +200,12 @@ export function inferSourceType(name, params = {}) {
     }
     case "gpg.decrypt":
       return typeOf("shares", { kind: "mnemonic" });
+    case "webauthn.caps":
+    case "webauthn.get":
+      return typeOf("text", { kind: "opaque" });
+    case "webauthn.create":
+    case "webauthn.prf":
+      return typeOf("bytes", { kind: "opaque" });
     default:
       return tNone();
   }

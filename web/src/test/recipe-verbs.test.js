@@ -1,5 +1,6 @@
 /**
  * Exhaustive registry verb / param smoke (Vitest — not CAST).
+ * WebAuthn ceremonies + passkey wrap use installWebAuthnPrfStub (no live authenticator).
  */
 import "fake-indexeddb/auto";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,9 +8,11 @@ import { readKey } from "openpgp";
 import {
   ensureGpgKey,
   installHkpFetchMock,
+  installWebAuthnPrfStub,
   listAllVerbSmokeCases,
   listVerbSmokeCases,
   runVerbCase,
+  skippedVerbCases,
   uncoveredEnumParams,
   uncoveredOps,
 } from "../lib/toolkit/verb-smoke.js";
@@ -20,7 +23,12 @@ import { sessionClear } from "../lib/vault-session.js";
 /** @type {Awaited<ReturnType<typeof listAllVerbSmokeCases>>} */
 let cases = [];
 
+/** Fixed PRF IKM so create → prf → passkey wrap share one key. */
+const FIXED_IKM = new Uint8Array(32);
+for (let i = 0; i < 32; i++) FIXED_IKM[i] = (i * 7 + 3) & 0xff;
+
 async function installMocks() {
+  installWebAuthnPrfStub(vi.stubGlobal.bind(vi), FIXED_IKM);
   const k = await ensureGpgKey();
   const pub = await readKey({ armoredKey: k.publicKey });
   installHkpFetchMock(
@@ -34,6 +42,7 @@ async function installMocks() {
 }
 
 beforeAll(async () => {
+  await installMocks();
   const k = await ensureGpgKey();
   const pub = await readKey({ armoredKey: k.publicKey });
   const fpr = pub.getFingerprint().toUpperCase();
@@ -60,6 +69,11 @@ describe("verb smoke coverage gates", () => {
     expect(listVerbSmokeCases().length).toBeGreaterThanOrEqual(60);
   });
 
+  it("catalog has no skip modes", () => {
+    const skipped = skippedVerbCases(cases);
+    expect(skipped, `still skipped: ${skipped.join(", ")}`).toEqual([]);
+  });
+
   it("every listSteps() op appears in the catalog", () => {
     const gaps = uncoveredOps(cases);
     expect(gaps, `uncovered ops: ${gaps.join(", ")}`).toEqual([]);
@@ -72,9 +86,6 @@ describe("verb smoke coverage gates", () => {
 });
 
 describe("verb smoke run", () => {
-  // Individual cases registered after beforeAll via a second describe block pattern:
-  // Vitest collects tests eagerly, so we expand from the static catalog + dynamic
-  // ids, and resolve the live case object at run time.
   const staticIds = listVerbSmokeCases().map((c) => c.id);
   const dynamicIds = ["agent.unlock", "agent.pub"];
 
@@ -84,7 +95,7 @@ describe("verb smoke run", () => {
       async () => {
         const c = cases.find((x) => x.id === id);
         expect(c, `missing case ${id}`).toBeTruthy();
-        if (c.mode === "skip") return;
+        expect(c.mode, `${id} should not be skip`).not.toBe("skip");
         await runVerbCase(c);
       },
       120_000

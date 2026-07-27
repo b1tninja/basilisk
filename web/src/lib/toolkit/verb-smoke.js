@@ -31,18 +31,6 @@ import { ZERO_AAGUID } from "../webauthn/attestation.js";
  * @property {number} [timeoutMs]
  */
 
-/** Enum values that cannot be exercised in CI without a live authenticator / user. */
-export const ENUM_SKIP = new Set([
-  "agent.save.protection=passkey",
-]);
-
-/** Ops that only compile-check in CI (ceremony / live authenticator). */
-export const OP_SKIP = new Map([
-  ["webauthn.create", "live WebAuthn create ceremony"],
-  ["webauthn.get", "live WebAuthn get ceremony"],
-  ["webauthn.prf", "live WebAuthn PRF ceremony"],
-]);
-
 /**
  * Tiny CBOR attestationObject { fmt: "none", authData }.
  * @param {Uint8Array} authData
@@ -815,8 +803,13 @@ in @msg | gpg.verify -q signature=@sig | out @ok`,
       id: "agent.save.passkey",
       recipe:
         'gpg.genkey email="save-pk@example.com" | agent.save protection=passkey | out @priv',
-      mode: "skip",
-      skipReason: "live WebAuthn passkey wrap",
+      mode: "run",
+      timeoutMs: 60_000,
+      assert: (arts) => {
+        if (!arts.some((a) => /PRIVATE KEY/.test(String(a.content || "")))) {
+          throw new Error("expected armored private after passkey save");
+        }
+      },
     },
 
     // —— HKP (mocked in test setup; fpr filled by listAllVerbSmokeCases) ——
@@ -871,21 +864,42 @@ in @a | recipients.merge with=@b | out @merged`,
     },
     {
       id: "webauthn.create",
-      recipe: "webauthn.create user=verb-smoke | hex | out @ikm",
-      mode: "skip",
-      skipReason: OP_SKIP.get("webauthn.create"),
+      // Tip without `out` so the engine auto-emits a tile for asserts.
+      recipe: "webauthn.create user=verb-smoke | hex",
+      mode: "run",
+      assert: (arts) => {
+        if (!arts.some((a) => /^[0-9a-f]{64}$/.test(String(a.content || "")))) {
+          throw new Error("expected 32-byte PRF IKM hex from webauthn.create");
+        }
+      },
     },
     {
       id: "webauthn.get",
-      recipe: "webauthn.get | out @assert",
-      mode: "skip",
-      skipReason: OP_SKIP.get("webauthn.get"),
+      recipe: "webauthn.get",
+      mode: "run",
+      assert: (arts) => {
+        const body = arts.map((a) => String(a.content || "")).join("\n");
+        const start = body.indexOf("{");
+        const json = JSON.parse(start >= 0 ? body.slice(start) : body);
+        if (!json.id || json.clientExtensionResults == null) {
+          throw new Error("expected assertion JSON from webauthn.get");
+        }
+      },
     },
     {
       id: "webauthn.prf",
-      recipe: "webauthn.prf | hex | out @ikm",
-      mode: "skip",
-      skipReason: OP_SKIP.get("webauthn.prf"),
+      recipe: "webauthn.prf | hex",
+      mode: "run",
+      setup: async () => {
+        // Ensure prf-meta exists (create may not have run yet if tests reorder).
+        const { createPasskeyPrf } = await import("../vault.js");
+        await createPasskeyPrf("verb-smoke-prf-setup");
+      },
+      assert: (arts) => {
+        if (!arts.some((a) => /^[0-9a-f]{64}$/.test(String(a.content || "")))) {
+          throw new Error("expected 32-byte PRF IKM hex from webauthn.prf");
+        }
+      },
     },
     {
       id: "webauthn.attest.mds",
@@ -1391,23 +1405,25 @@ export function uncoveredOps(cases = listVerbSmokeCases()) {
   /** @type {Set<string>} */
   const covered = new Set();
   for (const c of cases) {
-    if (c.mode === "skip") {
-      const m = c.recipe.match(
-        /\b(agent\.save|webauthn\.(?:create|get|prf))\b/
-      );
-      if (m) covered.add(m[1]);
-      continue;
-    }
+    if (c.mode === "skip") continue;
     const { ast, validation } = compileVerbCase(c);
     if (!validation.ok || !ast) continue;
     for (const k of coversFromAst(ast)) {
       if (k.startsWith("op:")) covered.add(k.slice(3));
     }
   }
-  for (const name of OP_SKIP.keys()) covered.add(name);
   return listSteps()
     .map((s) => s.name)
     .filter((n) => !covered.has(n));
+}
+
+/**
+ * Cases that still use mode=skip (should be empty for exhaustive CI).
+ * @param {VerbSmokeCase[]} [cases]
+ * @returns {string[]}
+ */
+export function skippedVerbCases(cases = listVerbSmokeCases()) {
+  return cases.filter((c) => c.mode === "skip").map((c) => c.id);
 }
 
 /**
@@ -1419,19 +1435,13 @@ export function uncoveredEnumParams(cases = listVerbSmokeCases()) {
   /** @type {Set<string>} */
   const covered = new Set();
   for (const c of cases) {
-    if (c.mode === "skip") {
-      if (/protection=passkey/.test(c.recipe)) {
-        covered.add("agent.save.protection=passkey");
-      }
-      continue;
-    }
+    if (c.mode === "skip") continue;
     const { ast, validation } = compileVerbCase(c);
     if (!validation.ok || !ast) continue;
     for (const k of coversFromAst(ast)) {
       if (!k.startsWith("op:")) covered.add(k);
     }
   }
-  for (const k of ENUM_SKIP) covered.add(k);
 
   /** @type {string[]} */
   const gaps = [];
@@ -1446,7 +1456,6 @@ export function uncoveredEnumParams(cases = listVerbSmokeCases()) {
       if (p.type === "bool" || p.type === "flag") {
         for (const v of ["true", "false"]) {
           const key = `${step.name}.${p.name}=${v}`;
-          // Only require bool coverage if the op itself is covered by a non-skip run/compile
           const opUsed = [...covered].some((x) =>
             x.startsWith(`${step.name}.`)
           );
@@ -1463,6 +1472,64 @@ export function uncoveredEnumParams(cases = listVerbSmokeCases()) {
  * @param {{ fingerprint: string, armoredPublic: string, email?: string }} key
  * @param {(name: string, value: unknown) => void} stubGlobal  vitest `vi.stubGlobal`
  */
+/**
+ * Stub `navigator.credentials` + `location` so WebAuthn create/get/prf and
+ * `agent.save protection=passkey` run under Vitest (Node) without an authenticator.
+ * Returns the fixed PRF IKM used by create/get.
+ *
+ * @param {(name: string, value: unknown) => void} stubGlobal  vitest `vi.stubGlobal`
+ * @param {Uint8Array} [fixedIkm]
+ * @returns {Uint8Array}
+ */
+export function installWebAuthnPrfStub(stubGlobal, fixedIkm) {
+  const ikm =
+    fixedIkm && fixedIkm.byteLength
+      ? fixedIkm
+      : crypto.getRandomValues(new Uint8Array(32));
+  const rawId = new Uint8Array(16);
+  for (let i = 0; i < rawId.length; i++) rawId[i] = i + 1;
+
+  const makeCred = () => ({
+    id: "basilisk-verb-smoke-cred",
+    rawId: rawId.buffer,
+    type: "public-key",
+    authenticatorAttachment: "platform",
+    response: {},
+    getClientExtensionResults: () => ({
+      prf: { results: { first: ikm.buffer.slice(ikm.byteOffset, ikm.byteOffset + ikm.byteLength) } },
+    }),
+  });
+
+  stubGlobal("location", {
+    hostname: "localhost",
+    origin: "http://localhost",
+    href: "http://localhost/",
+    protocol: "http:",
+    host: "localhost",
+  });
+
+  const prevNav =
+    typeof globalThis.navigator === "object" && globalThis.navigator
+      ? { ...globalThis.navigator }
+      : {};
+  stubGlobal("navigator", {
+    ...prevNav,
+    credentials: {
+      create: async () => makeCred(),
+      get: async () => makeCred(),
+    },
+  });
+
+  // Optional caps probes
+  stubGlobal("PublicKeyCredential", {
+    isUserVerifyingPlatformAuthenticatorAvailable: async () => true,
+    isConditionalMediationAvailable: async () => false,
+    getClientCapabilities: async () => ({ extension: { prf: true } }),
+  });
+
+  return ikm;
+}
+
 export function installHkpFetchMock(key, stubGlobal) {
   const fpr = key.fingerprint.toUpperCase();
   const armored = key.armoredPublic;
