@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "glyphs": "node scripts/build-glyphs.mjs",
+    "predev": "npm run glyphs",
+    "prebuild": "npm run glyphs",
+    "pretest": "npm run glyphs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",

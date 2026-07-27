@@ -2,7 +2,8 @@
  * Shared recipient loading + lightweight picker UI for Encrypt and Toolkit.
  * Identities are never serialized into toolkit recipes — only bound at run time.
  *
- * Resolve order: IndexedDB pubkey cache → Basilisk → (signed-in) upstream HKP.
+ * Resolve order: IndexedDB pubkey cache → This site HKP (/pks/lookup) →
+ * optional explicit allowlisted upstream (never silent preferred fallback).
  */
 
 import { readKey } from "openpgp";
@@ -24,15 +25,16 @@ import {
   trustBadgeHtml,
 } from "./trust.js";
 import {
-  keyserverSelectHtml,
-  readKeyserverSelection,
+  toolkitKeyserverSelectHtml,
+  readKeyserverSelectValue,
 } from "./keyserver-select.js";
 import {
   canUseUpstream,
   getUpstreamConfig,
-  resolveUpstreamHost,
+  isKeyserverAllowed,
+  normalizeKeyserverHost,
 } from "./upstream-config.js";
-import { upstreamFetchKey } from "./upstream-hkp.js";
+import { hkpLookupUrl, pageKeyserverOrigin, upstreamFetchKey } from "./upstream-hkp.js";
 import {
   escapeHtml,
   fetchJson,
@@ -40,6 +42,31 @@ import {
   formatFingerprint,
   uidEmail,
 } from "./utils.js";
+
+/**
+ * Explicit upstream host only — empty/undefined means This site (no preferred fallback).
+ * @param {string|undefined|null} keyserver
+ * @returns {string}
+ */
+function explicitUpstreamHost(keyserver) {
+  return normalizeKeyserverHost(keyserver) || "";
+}
+
+/**
+ * Same-origin HKP get URL (wire-compatible with well-known keyservers).
+ * @param {string} search
+ * @returns {string}
+ */
+function thisSiteLookupGetUrl(search) {
+  const origin = pageKeyserverOrigin();
+  if (origin) return hkpLookupUrl(origin, search, { op: "get" });
+  const q = new URLSearchParams({
+    op: "get",
+    options: "mr",
+    search: String(search || "").trim(),
+  });
+  return `/pks/lookup?${q}`;
+}
 
 const ENCRYPT_FLAG = 0x04 | 0x08;
 
@@ -257,7 +284,7 @@ export async function loadRecipientKey(fingerprint, opts = {}) {
   try {
     const [meta, armored] = await Promise.all([
       fetchJson(`/api/v1/key/${encodeURIComponent(clean)}`),
-      fetchText(`/pks/lookup?op=get&search=${encodeURIComponent(`0x${clean}`)}`),
+      fetchText(thisSiteLookupGetUrl(`0x${clean}`)),
     ]);
     if (!String(armored).includes("BEGIN PGP")) {
       throw new Error("Could not fetch public key");
@@ -271,12 +298,13 @@ export async function loadRecipientKey(fingerprint, opts = {}) {
     await putRecipientInCache(recipient, armored);
     return recipient;
   } catch (basiliskErr) {
-    const allowUpstream = opts.allowUpstream !== false && (await canUseUpstream());
+    const host = explicitUpstreamHost(opts.keyserver);
+    const allowUpstream =
+      opts.allowUpstream !== false && !!host && (await canUseUpstream());
     if (!allowUpstream) throw basiliskErr;
 
     const cfg = await getUpstreamConfig();
-    const host = await resolveUpstreamHost(opts.keyserver, cfg);
-    if (!host) throw basiliskErr;
+    if (!isKeyserverAllowed(host, cfg.allowlist)) throw basiliskErr;
     const fetched = await upstreamFetchKey(host, `0x${clean}`, {
       allowlist: cfg.allowlist,
     });
@@ -404,12 +432,13 @@ export async function searchRecipientsPayload(q, opts = {}) {
 
   /** @type {object[]} */
   let upstreamHits = [];
-  const allowUpstream = opts.allowUpstream !== false && (await canUseUpstream());
+  const host = explicitUpstreamHost(opts.keyserver);
+  const allowUpstream =
+    opts.allowUpstream !== false && !!host && (await canUseUpstream());
   if (allowUpstream && !basiliskHits.length) {
     try {
       const cfg = await getUpstreamConfig();
-      const host = await resolveUpstreamHost(opts.keyserver, cfg);
-      if (host) {
+      if (isKeyserverAllowed(host, cfg.allowlist)) {
         const fetched = await upstreamFetchKey(host, query, {
           allowlist: cfg.allowlist,
         });
@@ -522,29 +551,24 @@ export function mountRecipientBinder(host, opts) {
   /** @type {(Recipient|null)[]} */
   const bound = Array.from({ length: slots }, () => null);
   let sameForAll = false;
-  /** Session override for the binder select ("" = preferred / server default). */
+  /** Session override for the binder select ("" = This site). */
   let sessionKeyserver = "";
 
-  async function currentKeyserver() {
-    return readKeyserverSelection("binder-keyserver");
+  function currentKeyserver() {
+    return readKeyserverSelectValue("binder-keyserver") || sessionKeyserver || "";
   }
 
   async function binderKeyserverRowHtml() {
-    const cfg = await getUpstreamConfig();
-    if (!cfg.enabled) return "";
-    const select = await keyserverSelectHtml({
+    const select = await toolkitKeyserverSelectHtml({
       id: "binder-keyserver",
-      includeEmpty: true,
       selected: sessionKeyserver,
-      config: cfg,
     });
-    if (!select) return "";
     const ok = await canUseUpstream();
     const hint = ok
-      ? "Used when this directory has no match."
-      : "Sign in to search upstream keyservers.";
+      ? "This site by default; pick an upstream only to override on miss."
+      : "This site keyserver. Sign in to search allowlisted upstreams.";
     return `<div class="keyserver-control mb-md" data-upstream-ready="${ok ? "1" : "0"}">
-      <label class="field-label" for="binder-keyserver">Upstream keyserver</label>
+      <label class="field-label" for="binder-keyserver">Keyserver</label>
       <div class="btn-row wrap items-center gap-sm">
         ${select}
         <a class="text-link fs-sm" href="/preferences">Preferences</a>
@@ -632,7 +656,7 @@ export function mountRecipientBinder(host, opts) {
 
     host.querySelector("#binder-keyserver")?.addEventListener("change", (e) => {
       const el = /** @type {HTMLSelectElement} */ (e.target);
-      sessionKeyserver = el.value || "";
+      sessionKeyserver = normalizeKeyserverHost(el.value) || "";
     });
 
     host.querySelectorAll(".binder-search").forEach((input) => {

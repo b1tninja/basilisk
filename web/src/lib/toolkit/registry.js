@@ -63,7 +63,7 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
  * @property {string} label
  * @property {string} badge
  * @property {number} order
- * @property {string} [glyph]  key into glyphs.js
+ * @property {string} [glyph]  key into generated glyphs.js (web/glyphs/)
  */
 
 /**
@@ -1580,7 +1580,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "hkp",
     shelf: "lookup",
-    doc: "Fetch a public key by fingerprint (device cache → portal → optional upstream). Example: `hkp.get AABB… | out @bob`.",
+    doc: "Fetch a public key by fingerprint (device cache → This site `/pks/lookup` → optional explicit upstream). Example: `hkp.get AABB… | out @bob`.",
     input: "none",
     output: "openpgp-key",
     params: [
@@ -1595,7 +1595,7 @@ export const STEPS = [
         name: "keyserver",
         type: "string",
         default: "",
-        doc: "Allowlisted upstream host (signed-in + BASILISK_UPSTREAM_ENABLED)",
+        doc: "Empty = This site (page origin `/pks/lookup`). Set to an allowlisted host to override on miss (signed-in + upstream enabled).",
       },
       {
         name: "refresh",
@@ -1610,7 +1610,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "hkp",
     shelf: "directory",
-    doc: "Search local cache + org directory; optional upstream when signed in. Filter with `hkp.filter`.",
+    doc: "Search local cache + This site directory; optional explicit upstream on miss. Filter with `hkp.filter`.",
     input: "none",
     output: "recipients",
     params: [
@@ -1632,7 +1632,7 @@ export const STEPS = [
         name: "keyserver",
         type: "string",
         default: "",
-        doc: "Allowlisted upstream host on local miss",
+        doc: "Empty = This site only (no silent upstream). Set to an allowlisted host to search upstream on miss.",
       },
     ],
     effectiveIo(params) {

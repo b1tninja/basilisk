@@ -6,12 +6,19 @@
 import { readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
 import {
+  buildKeyserverOptions,
+  keyserverSelectFromOptionsHtml,
+} from "../lib/keyserver-select.js";
+import { getPreferredKeyserver } from "../lib/prefs.js";
+import {
   CryptoModuleError,
   assertCryptoReady,
   formatSuiteStatusMessage,
   getSuiteStatus,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
+import { getUpstreamConfig } from "../lib/upstream-config.js";
+import { pageKeyserverOrigin } from "../lib/upstream-hkp.js";
 import {
   FIPS_MODE_DISCLAIMER,
   getFipsMode,
@@ -43,6 +50,15 @@ import {
   writeToolkitHash,
 } from "../lib/toolkit/fragment.js";
 import {
+  deleteWorkspace,
+  exportWorkspaceBlob,
+  getWorkspace,
+  listWorkspaces,
+  parseWorkspaceFile,
+  saveWorkspace,
+  workspaceFingerprint,
+} from "../lib/toolkit/workspace-store.js";
+import {
   PRESETS,
   compileRecipe,
   canonicalizeRecipe,
@@ -54,6 +70,10 @@ import {
   unresolvedRecipients,
   validateRecipe,
 } from "../lib/toolkit/recipe.js";
+import {
+  resolvePresetPair,
+  stitchPresetPair,
+} from "../lib/toolkit/conjugate-stitch.js";
 import {
   parseEncryptToToken,
   recipientResolutionKey,
@@ -167,11 +187,16 @@ let kernel = createKernel();
 let artifacts = [];
 /** @type {import("../lib/recipient-picker.js").Recipient[]} */
 let boundRecipients = [];
-/** @type {ReturnType<typeof mountRecipientBinder>|null} */
-let binder = null;
+/** @type {Map<number, ReturnType<typeof mountRecipientBinder>>} */
+let cellBinders = new Map();
 /** Email/query → chosen fingerprints for gpg.encrypt to= */
 /** @type {Record<string, string[]>} */
 let recipientResolutions = {};
+/** Prefetched keyserver dropdown options for hkp.search / hkp.get */
+/** @type {{ value: string, label: string }[]} */
+let keyserverOptionsCache = buildKeyserverOptions({
+  pageOrigin: pageKeyserverOrigin(),
+});
 /** Lookup field errors: step index → message */
 /** @type {Map<string, string>} */
 let lookupFieldErrors = new Map();
@@ -197,6 +222,10 @@ let ciphertextDraft = "";
 let fragmentWriteLock = false;
 /** Last preset id loaded (for short `#t=` fragment form). */
 let lastPresetId = /** @type {string|null} */ (null);
+/** Last library workspace id (Save updates this entry). */
+let lastWorkspaceId = /** @type {string|null} */ (null);
+/** Fingerprint of title+recipe after last load/save (dirty tracking). */
+let lastLoadedFingerprint = "";
 /** @type {ReturnType<typeof setTimeout>|null} */
 let fragmentSyncTimer = null;
 /** WebCrypto JWK drafts for key-bound ops. */
@@ -443,14 +472,6 @@ app.innerHTML = `
         <div class="preset-grid" id="preset-grid"></div>
       </div>
     </details>
-    <details class="toolbar-menu" id="prefs-menu">
-      <summary class="btn btn-ghost btn-compact" title="Toolkit preferences">
-        ${glyphHtml("gear", "ops-glyph toolbar-glyph")} Preferences
-      </summary>
-      <div class="toolbar-popover toolbar-popover-narrow" id="prefs-popover">
-        <!-- filled by renderPrefsForm -->
-      </div>
-    </details>
     <details class="toolbar-menu" id="more-menu">
       <summary class="btn btn-ghost btn-compact" title="More actions">
         ${glyphHtml("more", "ops-glyph toolbar-glyph")} More
@@ -462,12 +483,40 @@ app.innerHTML = `
           ${glyphHtml("shortcuts", "ops-glyph toolbar-glyph")} Keyboard shortcuts
         </button>
         <hr class="toolbar-menu-sep">
+        <button type="button" class="toolbar-menu-item" id="workspace-library-btn"
+          title="Open saved notebooks from this browser">Library…</button>
+        <button type="button" class="toolbar-menu-item" id="workspace-export-btn"
+          title="Download title + recipe as .basilisk.json">Export file</button>
+        <button type="button" class="toolbar-menu-item" id="workspace-import-btn"
+          title="Load a .basilisk.json or plain recipe file">Import file…</button>
+        <hr class="toolbar-menu-sep">
         <button type="button" class="toolbar-menu-item text-error" id="destroy-btn"
           title="Zeroize all in-memory secrets, inputs, and outputs (best-effort)">Destroy</button>
       </div>
     </details>
-    <span id="crypto-status" class="app-status" role="status">Verifying crypto suites…</span>
-    <span class="app-toolbar-note muted fs-xs">Notebook recipes are shareable via the URL fragment — secrets stay in Inputs.</span>
+    <input type="file" id="workspace-import-file" class="hidden"
+      accept=".json,.txt,.recipe,.basilisk.json,application/json,text/plain">
+    <dialog id="workspace-library-dialog" class="toolkit-dialog">
+      <form method="dialog" class="toolkit-dialog-body">
+        <header class="toolkit-dialog-head">
+          <strong>Notebook library</strong>
+          <button type="submit" class="btn btn-ghost btn-compact" aria-label="Close">✕</button>
+        </header>
+        <p class="muted fs-xs mt-0">Saved in this browser only (title + recipe). Inputs and keys are never stored here.</p>
+        <div id="workspace-library-list" class="workspace-library-list"></div>
+      </form>
+    </dialog>
+    <div class="app-toolbar-end">
+      <span id="crypto-status" class="app-status" role="status">Verifying crypto suites…</span>
+      <details class="toolbar-menu" id="prefs-menu">
+        <summary class="btn btn-ghost btn-compact" title="Toolkit preferences">
+          ${glyphHtml("gear", "ops-glyph toolbar-glyph")} Preferences
+        </summary>
+        <div class="toolbar-popover toolbar-popover-narrow" id="prefs-popover">
+          <!-- filled by renderPrefsForm -->
+        </div>
+      </details>
+    </div>
   </div>
   <p id="fips-hint" class="muted fs-xs fips-mode-hint ${fipsMode ? "" : "hidden"}" role="note">${escapeHtml(FIPS_MODE_DISCLAIMER)}</p>
   <dialog id="shortcuts-dialog" class="toolkit-dialog">
@@ -535,8 +584,12 @@ app.innerHTML = `
                 title="Wipe kernel slots, outputs, and inputs — keep cell recipes">Clear sensitive</button>
               <button type="button" class="btn btn-ghost btn-compact" id="reset-notebook-btn"
                 title="Clear sensitive and reset to one empty cell">Reset</button>
+              <button type="button" class="btn btn-ghost btn-compact" id="workspace-save-btn"
+                title="Save title + recipe to this browser’s library">Save</button>
               <button type="button" class="btn btn-ghost btn-compact" id="copy-share-link"
                 title="Copy shareable toolkit link (recipe in URL fragment)">Copy link</button>
+              <button type="button" class="btn btn-ghost btn-compact" id="copy-recipe-btn"
+                title="Copy canonical recipe text to the clipboard">Copy recipe</button>
             </div>
             <button type="button" class="kernel-chip btn btn-ghost btn-compact" id="kernel-chip"
               aria-expanded="false" aria-controls="variables-drawer"
@@ -552,8 +605,6 @@ app.innerHTML = `
             <div id="keyring-body" class="keyring-body mt-sm"></div>
           </details>
           <div id="pgp-mode-host" class="pgp-mode-host hidden"></div>
-          <div id="inputs-host"></div>
-          <div id="recipient-bind-host"></div>
           <p id="run-status" class="status-row hidden mt-sm"></p>
         </div>
         <div id="variables-drawer" class="variables-drawer hidden" hidden></div>
@@ -760,7 +811,11 @@ function cellNeedBadges(chain) {
   const ast = { chains: [chain], steps: chain.steps, source: "" };
   try {
     const v = validateRecipe(ast);
-    if (v.inputNeeds?.includes("text") || v.inputNeeds?.includes("shares")) {
+    if (
+      v.inputNeeds?.some((n) =>
+        ["text", "shares", "gpg", "gpgPass", "envelope", "key"].includes(n)
+      )
+    ) {
       badges.push("needs input");
     }
     if ((v.recipientSlots || 0) > 0) badges.push("needs recipients");
@@ -1247,10 +1302,7 @@ function clearSensitiveData(opts = {}) {
     clearInterval(kernelChipTimer);
     kernelChipTimer = null;
   }
-  if (binder) {
-    binder.destroy();
-    binder = null;
-  }
+  destroyCellBinders();
   shareRows = [""];
   envelopeDraft = "";
   sharePassDraft = "";
@@ -1261,23 +1313,13 @@ function clearSensitiveData(opts = {}) {
   wrapJwkDraft = "";
   signatureDraft = "";
 
-  for (const id of [
-    "input-text",
-    "input-envelope",
-    "input-share-pass",
-    "input-ciphertext",
-    "input-privkey",
-    "input-key-pass",
-    "input-wc-jwk",
-    "input-wc-peer",
-    "input-wc-wrap",
-    "input-wc-sig",
-  ]) {
-    const el = document.getElementById(id);
+  document.querySelectorAll("[data-rt]").forEach((el) => {
     if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
       el.value = "";
+    } else if (el instanceof HTMLSelectElement) {
+      el.selectedIndex = 0;
     }
-  }
+  });
   document.querySelectorAll(".share-mnemonic").forEach((el) => {
     if (el instanceof HTMLTextAreaElement) el.value = "";
   });
@@ -1313,6 +1355,8 @@ function resetNotebook() {
   focusCell(0);
   setRecipeTitle("");
   lastPresetId = null;
+  lastWorkspaceId = null;
+  lastLoadedFingerprint = "";
   setRecipeFromSteps();
   const status = document.getElementById("run-status");
   if (status) {
@@ -1469,8 +1513,7 @@ function applyInputSeeds(action) {
     return;
   }
   ciphertextDraft = armored;
-  if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
-  else validateAndBind();
+  validateAndBind();
   setFragmentStatus("Ciphertext loaded from link — private key stays local.");
 }
 
@@ -1599,6 +1642,241 @@ async function copyShareLink() {
   }
 }
 
+/** @returns {{ title: string, recipe: string }} */
+function currentNotebookSnapshot() {
+  return {
+    title: recipeTitle || "",
+    recipe: serializeRecipe({ chains }),
+  };
+}
+
+function markWorkspaceClean(workspaceId = lastWorkspaceId) {
+  const { title, recipe } = currentNotebookSnapshot();
+  lastLoadedFingerprint = workspaceFingerprint(title, recipe);
+  if (workspaceId != null) lastWorkspaceId = workspaceId;
+}
+
+function notebookIsDirty() {
+  if (!lastLoadedFingerprint) return false;
+  const { title, recipe } = currentNotebookSnapshot();
+  return workspaceFingerprint(title, recipe) !== lastLoadedFingerprint;
+}
+
+/**
+ * @param {{ title?: string, recipe: string, id?: string|null }} ws
+ */
+function applyWorkspaceToNotebook(ws) {
+  lastPresetId = null;
+  loadRecipeText(ws.recipe, {
+    title: ws.title != null ? ws.title : recipeTitle,
+    migrate: true,
+  });
+  if (ws.title != null) setRecipeTitle(ws.title);
+  lastWorkspaceId = ws.id || null;
+  markWorkspaceClean(lastWorkspaceId);
+  scrollFocusedCellIntoView();
+}
+
+async function copyRecipeText() {
+  const recipe = serializeRecipe({ chains }).trim();
+  if (!recipe) {
+    setFragmentStatus("Notebook is empty.");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(recipe);
+    setFragmentStatus("Recipe copied.");
+    setTimeout(() => setFragmentStatus(""), 2000);
+  } catch {
+    setFragmentStatus("Could not copy — use Notebook source (text) instead.");
+  }
+}
+
+function saveCurrentWorkspace() {
+  const { title, recipe } = currentNotebookSnapshot();
+  const name = window.prompt(
+    "Save notebook as:",
+    title || "Untitled notebook"
+  );
+  if (name === null) {
+    setFragmentStatus("Save cancelled.");
+    return;
+  }
+  const result = saveWorkspace({
+    id: lastWorkspaceId || undefined,
+    title: name.trim() || title || "Untitled notebook",
+    recipe,
+  });
+  if (!result.ok) {
+    setFragmentStatus(result.reason || "Save failed.");
+    return;
+  }
+  setRecipeTitle(result.workspace.title);
+  markWorkspaceClean(result.workspace.id);
+  setFragmentStatus(`Saved “${result.workspace.title}” to library.`);
+  setTimeout(() => setFragmentStatus(""), 2500);
+}
+
+function downloadWorkspaceFile(ws) {
+  const blob = new Blob([exportWorkspaceBlob(ws)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = sanitizeFilename(
+    `${ws.title || "notebook"}.basilisk.json`,
+    "notebook.basilisk.json"
+  );
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function exportCurrentWorkspaceFile() {
+  const { title, recipe } = currentNotebookSnapshot();
+  if (!recipe.trim()) {
+    setFragmentStatus("Nothing to export — notebook is empty.");
+    return;
+  }
+  try {
+    downloadWorkspaceFile({
+      v: 1,
+      id: lastWorkspaceId || "export",
+      title: title || "Untitled notebook",
+      recipe,
+      updatedAt: new Date().toISOString(),
+    });
+    setFragmentStatus("Workspace file downloaded.");
+    setTimeout(() => setFragmentStatus(""), 2000);
+  } catch (err) {
+    setFragmentStatus(err?.message || "Export failed.");
+  }
+}
+
+function formatWorkspaceDate(iso) {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function renderWorkspaceLibrary() {
+  const host = document.getElementById("workspace-library-list");
+  if (!host) return;
+  const list = listWorkspaces();
+  if (!list.length) {
+    host.innerHTML = `<p class="muted fs-sm">No saved notebooks yet. Use <strong>Save</strong> in the notebook header.</p>`;
+    return;
+  }
+  host.innerHTML = list
+    .map((w) => {
+      const when = formatWorkspaceDate(w.updatedAt);
+      return `
+      <article class="workspace-library-item" data-ws-id="${escapeHtml(w.id)}">
+        <div class="workspace-library-meta">
+          <strong class="workspace-library-title">${escapeHtml(w.title)}</strong>
+          ${when ? `<span class="muted fs-xs">${escapeHtml(when)}</span>` : ""}
+        </div>
+        <div class="btn-row wrap">
+          <button type="button" class="btn btn-compact" data-ws-open="${escapeHtml(w.id)}">Open</button>
+          <button type="button" class="btn btn-ghost btn-compact" data-ws-export="${escapeHtml(w.id)}">Export</button>
+          <button type="button" class="btn btn-ghost btn-compact text-error" data-ws-delete="${escapeHtml(w.id)}">Delete</button>
+        </div>
+      </article>`;
+    })
+    .join("");
+
+  host.querySelectorAll("[data-ws-open]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const id = btn.getAttribute("data-ws-open");
+      const ws = id ? getWorkspace(id) : null;
+      if (!ws) return;
+      if (
+        notebookIsDirty() &&
+        !window.confirm(
+          `Replace the current notebook with “${ws.title}”?\n\nUnsaved changes to the recipe will be lost. Inputs and kernel are cleared.`
+        )
+      ) {
+        return;
+      }
+      applyWorkspaceToNotebook(ws);
+      const dlg = document.getElementById("workspace-library-dialog");
+      if (dlg instanceof HTMLDialogElement) dlg.close();
+      setFragmentStatus(`Opened “${ws.title}”.`);
+      setTimeout(() => setFragmentStatus(""), 2000);
+    });
+  });
+  host.querySelectorAll("[data-ws-export]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const id = btn.getAttribute("data-ws-export");
+      const ws = id ? getWorkspace(id) : null;
+      if (!ws) return;
+      downloadWorkspaceFile(ws);
+    });
+  });
+  host.querySelectorAll("[data-ws-delete]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const id = btn.getAttribute("data-ws-delete");
+      const ws = id ? getWorkspace(id) : null;
+      if (!ws) return;
+      if (!window.confirm(`Delete “${ws.title}” from this browser’s library?`)) {
+        return;
+      }
+      const result = deleteWorkspace(ws.id);
+      if (!result.ok) {
+        setFragmentStatus(result.reason || "Delete failed.");
+        return;
+      }
+      if (lastWorkspaceId === ws.id) lastWorkspaceId = null;
+      renderWorkspaceLibrary();
+    });
+  });
+}
+
+function openWorkspaceLibrary() {
+  renderWorkspaceLibrary();
+  const dlg = document.getElementById("workspace-library-dialog");
+  if (dlg instanceof HTMLDialogElement) dlg.showModal();
+}
+
+/**
+ * @param {File} file
+ */
+async function importWorkspaceFile(file) {
+  const text = await file.text();
+  const parsed = parseWorkspaceFile(text, { filename: file.name });
+  if (!parsed.ok) {
+    setFragmentStatus(parsed.reason || "Import failed.");
+    return;
+  }
+  if (
+    notebookIsDirty() &&
+    !window.confirm(
+      `Replace the current notebook with “${parsed.workspace.title}”?\n\nUnsaved recipe changes will be lost. Inputs and kernel are cleared.`
+    )
+  ) {
+    return;
+  }
+  applyWorkspaceToNotebook({
+    title: parsed.workspace.title,
+    recipe: parsed.workspace.recipe,
+    id: parsed.workspace.id || null,
+  });
+  setFragmentStatus(`Imported “${parsed.workspace.title}”.`);
+  setTimeout(() => setFragmentStatus(""), 2000);
+}
+
 function secureDestroy(opts = {}) {
   // Destroy = Clear sensitive (keep recipes), matching prior Destroy semantics.
   clearSensitiveData(opts);
@@ -1649,7 +1927,23 @@ function defaultParams(spec) {
     params.mode = prefs.defaultEncryptMode;
     params.policy = prefs.defaultEncryptPolicy;
   }
+  // hkp.* keyserver defaults to "" (This site) — never silent preferred upstream.
   return params;
+}
+
+async function prefetchKeyserverOptions() {
+  try {
+    const cfg = await getUpstreamConfig();
+    keyserverOptionsCache = buildKeyserverOptions({
+      allowlist: cfg.enabled ? cfg.allowlist || [] : [],
+      preferred: cfg.enabled ? getPreferredKeyserver() : "",
+      pageOrigin: pageKeyserverOrigin(),
+    });
+  } catch (_) {
+    keyserverOptionsCache = buildKeyserverOptions({
+      pageOrigin: pageKeyserverOrigin(),
+    });
+  }
 }
 
 /**
@@ -2005,30 +2299,93 @@ function validateAndBind() {
     warnEl.textContent = warnParts.join(" · ");
   }
 
-  // Runtime inputs (shares / GPG ciphertext)
+  // Runtime inputs / binders live inside the cells that need them.
+  // Painted from renderNotebook (and explicit refresh) so hosts exist.
   currentInputNeeds = validation.inputNeeds || (ast ? unresolvedInputs(ast) : []);
-  renderInputsPanel(currentInputNeeds);
-
-  // Recipient binder
-  const host = document.getElementById("recipient-bind-host");
-  if (!host) return;
-  const slots = validation.recipientSlots || 0;
-  if (binder) {
-    binder.destroy();
-    binder = null;
+  if (document.getElementById("cell-inputs-0") || document.querySelector(".cell-inputs")) {
+    renderAllCellRuntimePanels();
   }
-  boundRecipients = [];
-  if (slots > 0 && ast) {
-    const info = unresolvedRecipients(ast);
-    binder = mountRecipientBinder(host, {
-      slots: info.slots || slots,
-      foreach: info.foreach,
-      onChange: (recs) => {
-        boundRecipients = recs;
-      },
+}
+
+/**
+ * Destroy per-cell recipient binders.
+ */
+function destroyCellBinders() {
+  for (const b of cellBinders.values()) {
+    try {
+      b.destroy();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  cellBinders.clear();
+}
+
+/**
+ * Input needs for a single notebook cell.
+ * @param {import("../lib/toolkit/recipe.js").RecipeChain} chain
+ * @returns {("shares"|"gpg"|"gpgPass"|"text"|"envelope"|"key")[]}
+ */
+function cellRuntimeNeeds(chain) {
+  if (!chain?.steps?.length) return [];
+  try {
+    const v = validateRecipe({
+      chains: [chain],
+      steps: chain.steps,
+      source: "",
     });
-  } else {
-    host.innerHTML = "";
+    return /** @type {("shares"|"gpg"|"gpgPass"|"text"|"envelope"|"key")[]} */ (
+      v.inputNeeds || []
+    );
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Recipient binder slots for a single cell.
+ * @param {import("../lib/toolkit/recipe.js").RecipeChain} chain
+ * @returns {{ slots: number, foreach: boolean }}
+ */
+function cellRecipientInfo(chain) {
+  if (!chain?.steps?.length) return { slots: 0, foreach: false };
+  try {
+    return unresolvedRecipients({
+      chains: [chain],
+      steps: chain.steps,
+      source: "",
+    });
+  } catch (_) {
+    return { slots: 0, foreach: false };
+  }
+}
+
+/**
+ * Paint Share mnemonics / Decrypt / Input / binder UI into each owning cell.
+ */
+function renderAllCellRuntimePanels() {
+  destroyCellBinders();
+  for (let i = 0; i < chains.length; i++) {
+    const needs = cellRuntimeNeeds(chains[i]);
+    const inputsHost = document.getElementById(`cell-inputs-${i}`);
+    if (inputsHost) {
+      renderInputsPanel(needs, inputsHost, i);
+    }
+    const bindHost = document.getElementById(`cell-bind-${i}`);
+    if (!bindHost) continue;
+    const info = cellRecipientInfo(chains[i]);
+    if (info.slots > 0) {
+      const binder = mountRecipientBinder(bindHost, {
+        slots: info.slots,
+        foreach: info.foreach,
+        onChange: (recs) => {
+          boundRecipients = recs;
+        },
+      });
+      cellBinders.set(i, binder);
+    } else {
+      bindHost.innerHTML = "";
+    }
   }
 }
 
@@ -2072,16 +2429,20 @@ function splitSharePaste(text) {
 }
 
 /**
- * @param {("shares"|"gpg"|"text"|"envelope"|"key")[]} needs
+ * @param {("shares"|"gpg"|"gpgPass"|"text"|"envelope"|"key")[]} needs
+ * @param {HTMLElement} [host]
+ * @param {number} [cellIndex]
  */
-function renderInputsPanel(needs) {
-  const host = document.getElementById("inputs-host");
+function renderInputsPanel(needs, host, cellIndex = 0) {
   if (!host) return;
   if (!needs.length) {
     host.innerHTML = "";
+    host.hidden = true;
     return;
   }
+  host.hidden = false;
   if (!shareRows.length) shareRows = [""];
+  const p = `c${cellIndex}-`;
 
   const title = needs.includes("shares")
     ? "Share mnemonics"
@@ -2093,38 +2454,41 @@ function renderInputsPanel(needs) {
           ? "Envelope"
           : "Input";
   /** @type {string[]} */
-  const parts = [`<p class="card-title">${title}</p>`];
+  const parts = [
+    `<div class="cell-runtime-panel" data-cell-runtime="${cellIndex}">`,
+    `<p class="card-title">${title}</p>`,
+  ];
   if (needs.includes("shares")) {
     parts.push(
-      `<p class="muted fs-sm mb-sm">Runtime binding for the <code>shares</code> source → type <code>shares/mnemonic</code>. Pipe into <code>blip39 -d</code> then <code>recover</code> to get <code>bytes/master</code>.</p>`
+      `<p class="muted fs-sm mb-sm">Runtime binding for this cell’s <code>shares</code> source → <code>shares/mnemonic</code>. Pipe into <code>blip39 -d</code> then <code>recover</code>.</p>`
     );
   }
   if (needs.includes("key")) {
     parts.push(`
-      <p class="muted fs-sm mb-sm">Bound WebCrypto key for <code>sign</code> / <code>verify</code> / <code>aes-gcm</code> / <code>ecdh</code> / <code>wrap</code>. Paste a JWK from <code>genkey | export jwk</code>. Recipe tokens stay unique — OpenPGP <code>encrypt</code> is a different toolbox.</p>
-      <label class="field-label" for="input-wc-jwk">Key JWK</label>
-      <textarea id="input-wc-jwk" class="compose-message" rows="4" spellcheck="false"
+      <p class="muted fs-sm mb-sm">Bound WebCrypto key for <code>sign</code> / <code>verify</code> / <code>aes-gcm</code> / <code>ecdh</code> / <code>wrap</code>. Paste a JWK from <code>genkey | export jwk</code>.</p>
+      <label class="field-label" for="${p}input-wc-jwk">Key JWK</label>
+      <textarea id="${p}input-wc-jwk" data-rt="wc-jwk" class="compose-message" rows="4" spellcheck="false"
         placeholder='{"kty":"EC","crv":"P-256",…} or oct AES/HMAC'>${escapeHtml(keyJwkDraft)}</textarea>
-      <label class="field-label mt-sm" for="input-wc-peer">Peer public JWK (ecdh)</label>
-      <textarea id="input-wc-peer" class="compose-message" rows="3" spellcheck="false"
+      <label class="field-label mt-sm" for="${p}input-wc-peer">Peer public JWK (ecdh)</label>
+      <textarea id="${p}input-wc-peer" data-rt="wc-peer" class="compose-message" rows="3" spellcheck="false"
         placeholder="Peer public JWK for ecdh">${escapeHtml(peerJwkDraft)}</textarea>
-      <label class="field-label mt-sm" for="input-wc-wrap">Key-to-wrap JWK (wrap)</label>
-      <textarea id="input-wc-wrap" class="compose-message" rows="3" spellcheck="false"
+      <label class="field-label mt-sm" for="${p}input-wc-wrap">Key-to-wrap JWK (wrap)</label>
+      <textarea id="${p}input-wc-wrap" data-rt="wc-wrap" class="compose-message" rows="3" spellcheck="false"
         placeholder="oct JWK to wrap">${escapeHtml(wrapJwkDraft)}</textarea>
-      <label class="field-label mt-sm" for="input-wc-sig">Signature base64url (verify)</label>
-      <input type="text" id="input-wc-sig" class="text-input" spellcheck="false"
+      <label class="field-label mt-sm" for="${p}input-wc-sig">Signature base64url (verify)</label>
+      <input type="text" id="${p}input-wc-sig" data-rt="wc-sig" class="text-input" spellcheck="false"
         value="${escapeHtml(signatureDraft)}" placeholder="base64url signature">
     `);
   }
   if (needs.includes("text")) {
     parts.push(`
       <div class="btn-row wrap mb-xs">
-        <label class="field-label m-0" for="input-text">Input text</label>
-        <button type="button" class="btn btn-ghost btn-compact" id="load-input-text-btn">Load from file…</button>
-        <input type="file" id="load-input-text-file" class="hidden" multiple accept="*/*">
+        <label class="field-label m-0" for="${p}input-text">Input text</label>
+        <button type="button" class="btn btn-ghost btn-compact" data-rt-btn="load-text">Load from file…</button>
+        <input type="file" data-rt-file="load-text" class="hidden" multiple accept="*/*">
       </div>
-      <textarea id="input-text" class="compose-message" rows="6" spellcheck="false"
-        placeholder="Paste text here, or load it from a file — it feeds the input step at run time and is never stored in the pipeline.">${escapeHtml(inputTextDraft)}</textarea>
+      <textarea id="${p}input-text" data-rt="text" class="compose-message" rows="6" spellcheck="false"
+        placeholder="Paste text here, or load it from a file — feeds this cell’s input step at run time.">${escapeHtml(inputTextDraft)}</textarea>
     `);
   }
   if (needs.includes("shares")) {
@@ -2147,18 +2511,18 @@ function renderInputsPanel(needs) {
       <div class="share-inputs">
         <div class="btn-row wrap mb-sm">
           <span class="field-label m-0">BLIP39 share mnemonics</span>
-          <button type="button" class="btn btn-ghost btn-compact" id="add-share-btn">+ Add share</button>
-          <button type="button" class="btn btn-ghost btn-compact" id="load-shares-btn">Load from file…</button>
-          <input type="file" id="load-shares-file" class="hidden" multiple accept=".txt,text/plain,*/*">
+          <button type="button" class="btn btn-ghost btn-compact" data-rt-btn="add-share">+ Add share</button>
+          <button type="button" class="btn btn-ghost btn-compact" data-rt-btn="load-shares">Load from file…</button>
+          <input type="file" data-rt-file="load-shares" class="hidden" multiple accept=".txt,text/plain,*/*">
         </div>
         <p class="muted fs-sm mb-sm">${
           needs.includes("gpg")
             ? "Use these rows for mnemonics already decrypted outside the browser (Kleopatra/gpg/YubiKey). Mix with OpenPGP ciphertext below — the pipeline merges both before blip39 -d | sss.combine."
             : "One share per row. Paste multiple lines into a row to auto-split. K-of-N required to recover. Direct 16/32-byte splits need no envelope."
         }</p>
-        <div id="share-rows">${rowsHtml}</div>
-        <label class="field-label mt-md" for="input-share-pass">Share passphrase (optional)</label>
-        <input type="password" id="input-share-pass" class="text-input" autocomplete="off" value="${escapeHtml(sharePassDraft)}">
+        <div data-rt="share-rows">${rowsHtml}</div>
+        <label class="field-label mt-md" for="${p}input-share-pass">Share passphrase (optional)</label>
+        <input type="password" id="${p}input-share-pass" data-rt="share-pass" class="text-input" autocomplete="off" value="${escapeHtml(sharePassDraft)}">
       </div>
     `);
   }
@@ -2166,13 +2530,13 @@ function renderInputsPanel(needs) {
     parts.push(`
       <div class="envelope-inputs mt-md">
         <div class="btn-row wrap mb-xs">
-          <label class="field-label m-0" for="input-envelope">OpenPGP envelope (armored)</label>
-          <button type="button" class="btn btn-ghost btn-compact" id="load-envelope-btn">Load envelope.asc…</button>
-          <input type="file" id="load-envelope-file" class="hidden" accept=".asc,.pgp,.txt,*/*">
+          <label class="field-label m-0" for="${p}input-envelope">OpenPGP envelope (armored)</label>
+          <button type="button" class="btn btn-ghost btn-compact" data-rt-btn="load-envelope">Load envelope.asc…</button>
+          <input type="file" data-rt-file="load-envelope" class="hidden" accept=".asc,.pgp,.txt,*/*">
         </div>
-        <textarea id="input-envelope" class="compose-message" rows="6" spellcheck="false"
+        <textarea id="${p}input-envelope" data-rt="envelope" class="compose-message" rows="6" spellcheck="false"
           placeholder="-----BEGIN PGP MESSAGE-----&#10;…&#10;-----END PGP MESSAGE-----&#10;Required for gpg.symdecrypt (PEM / large-payload path). Not used for direct scalar splits.">${escapeHtml(envelopeDraft)}</textarea>
-        <p class="muted fs-sm mt-xs">This is the OpenPGP symmetric ciphertext from <code>gpg.symencrypt</code> — distinct from BLIP39 share mnemonics. External recovery: <code>blip39 -d | sss.combine</code> → hex master → <code>gpg --decrypt envelope.asc</code>.</p>
+        <p class="muted fs-sm mt-xs">OpenPGP symmetric ciphertext from <code>gpg.symencrypt</code> — distinct from BLIP39 share mnemonics.</p>
       </div>
     `);
   }
@@ -2191,49 +2555,55 @@ function renderInputsPanel(needs) {
       : "";
     parts.push(`
       <div class="btn-row wrap mt-md mb-xs">
-        <label class="field-label m-0" for="input-ciphertext">OpenPGP ciphertext</label>
-        <button type="button" class="btn btn-ghost btn-compact" id="load-ciphertext-btn">Load from file…</button>
-        <input type="file" id="load-ciphertext-file" class="hidden" multiple accept=".asc,.pgp,.txt,*/*">
+        <label class="field-label m-0" for="${p}input-ciphertext">OpenPGP ciphertext</label>
+        <button type="button" class="btn btn-ghost btn-compact" data-rt-btn="load-ciphertext">Load from file…</button>
+        <input type="file" data-rt-file="load-ciphertext" class="hidden" multiple accept=".asc,.pgp,.txt,*/*">
       </div>
-      <textarea id="input-ciphertext" class="compose-message" rows="8" spellcheck="false"
-        placeholder="Paste -----BEGIN PGP MESSAGE----- blocks (and/or already-decrypted mnemonics). Smartcard/YubiKey OpenPGP keys cannot be used in the browser — decrypt those externally and paste mnemonics in the share rows above.">${escapeHtml(ciphertextDraft)}</textarea>
-      <label class="field-label mt-md" for="input-vault-key">Vault private key (only for ciphertext you can decrypt here)</label>
-      <select id="input-vault-key" class="text-input">
+      <textarea id="${p}input-ciphertext" data-rt="ciphertext" class="compose-message" rows="8" spellcheck="false"
+        placeholder="Paste -----BEGIN PGP MESSAGE----- blocks (and/or already-decrypted mnemonics).">${escapeHtml(ciphertextDraft)}</textarea>
+      <label class="field-label mt-md" for="${p}input-vault-key">Vault private key (only for ciphertext you can decrypt here)</label>
+      <select id="${p}input-vault-key" data-rt="vault-key" class="text-input">
         <option value="">— paste key below / not needed if all shares are plaintext —</option>
         ${vaultOpts}
       </select>
-      <label class="field-label mt-md" for="input-privkey">Armored private key (optional if using vault)</label>
-      <textarea id="input-privkey" class="compose-message" rows="4" spellcheck="false"
+      <label class="field-label mt-md" for="${p}input-privkey">Armored private key (optional if using vault)</label>
+      <textarea id="${p}input-privkey" data-rt="privkey" class="compose-message" rows="4" spellcheck="false"
         placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"></textarea>
-      <label class="field-label mt-md" for="input-key-pass">Key passphrase</label>
-      <input type="password" id="input-key-pass" class="text-input" autocomplete="off"
+      <label class="field-label mt-md" for="${p}input-key-pass">Key passphrase</label>
+      <input type="password" id="${p}input-key-pass" data-rt="key-pass" class="text-input" autocomplete="off"
         placeholder="If the OpenPGP key is locked">
-      <p class="muted mt-xs fs-sm">Software/vault keys unlock only for this run. OpenPGP smartcards are not accessible from the browser — leave the key blank and paste externally decrypted mnemonics above.</p>
+      <p class="muted mt-xs fs-sm">Software/vault keys unlock only for this run. OpenPGP smartcards are not accessible from the browser.</p>
     `);
   } else if (needs.includes("gpgPass")) {
     parts.push(`
-      <label class="field-label mt-md" for="input-key-pass">OpenPGP key passphrase</label>
-      <input type="password" id="input-key-pass" class="text-input" autocomplete="off"
+      <label class="field-label mt-md" for="${p}input-key-pass">OpenPGP key passphrase</label>
+      <input type="password" id="${p}input-key-pass" data-rt="key-pass" class="text-input" autocomplete="off"
         placeholder="If the key slot / vault key is S2K-locked">
       <p class="muted mt-xs fs-sm">Needed when <code>key=@slot</code> armor is still passphrase-locked, or for <code>agent.save protection=passphrase</code>.</p>
     `);
   }
+  parts.push(`</div>`);
   host.innerHTML = parts.join("\n");
-  wireInputsPanel(host, needs);
+  wireInputsPanel(host, needs, cellIndex);
 }
 
 /**
  * @param {HTMLElement} host
- * @param {("shares"|"gpg"|"text"|"envelope")[]} needs
+ * @param {("shares"|"gpg"|"gpgPass"|"text"|"envelope"|"key")[]} needs
+ * @param {number} cellIndex
  */
-function wireInputsPanel(host, needs) {
+function wireInputsPanel(host, needs, cellIndex) {
+  const rerender = () => {
+    const h = document.getElementById(`cell-inputs-${cellIndex}`);
+    if (h) renderInputsPanel(needs, h, cellIndex);
+  };
+
   if (needs.includes("text")) {
-    const textEl = host.querySelector("#input-text");
+    const textEl = host.querySelector("[data-rt=text]");
     textEl?.addEventListener("input", () => {
       if (textEl instanceof HTMLTextAreaElement) inputTextDraft = textEl.value;
     });
-
-    wireFileButton(host, "#load-input-text-btn", "#load-input-text-file", async (files) => {
+    wireFileButton(host, "[data-rt-btn=load-text]", "[data-rt-file=load-text]", async (files) => {
       /** @type {string[]} */
       const chunks = [];
       for (const f of files) chunks.push(await f.text());
@@ -2247,9 +2617,9 @@ function wireInputsPanel(host, needs) {
   }
 
   if (needs.includes("shares")) {
-    host.querySelector("#add-share-btn")?.addEventListener("click", () => {
+    host.querySelector("[data-rt-btn=add-share]")?.addEventListener("click", () => {
       shareRows.push("");
-      renderInputsPanel(currentInputNeeds);
+      rerender();
     });
 
     host.querySelectorAll("[data-remove-share]").forEach((btn) => {
@@ -2257,7 +2627,7 @@ function wireInputsPanel(host, needs) {
         const i = Number(btn.getAttribute("data-remove-share"));
         if (shareRows.length <= 1) return;
         shareRows.splice(i, 1);
-        renderInputsPanel(currentInputNeeds);
+        rerender();
       });
     });
 
@@ -2268,7 +2638,7 @@ function wireInputsPanel(host, needs) {
         const parts = splitSharePaste(el.value);
         if (parts.length > 1) {
           shareRows.splice(i, 1, ...parts);
-          renderInputsPanel(currentInputNeeds);
+          rerender();
           return;
         }
         shareRows[i] = el.value;
@@ -2280,12 +2650,12 @@ function wireInputsPanel(host, needs) {
       });
     });
 
-    const passEl = host.querySelector("#input-share-pass");
+    const passEl = host.querySelector("[data-rt=share-pass]");
     passEl?.addEventListener("input", () => {
       if (passEl instanceof HTMLInputElement) sharePassDraft = passEl.value;
     });
 
-    wireFileButton(host, "#load-shares-btn", "#load-shares-file", async (files) => {
+    wireFileButton(host, "[data-rt-btn=load-shares]", "[data-rt-file=load-shares]", async (files) => {
       /** @type {string[]} */
       const loaded = [];
       for (const f of files) {
@@ -2295,30 +2665,30 @@ function wireInputsPanel(host, needs) {
       if (!loaded.length) return;
       const nonempty = shareRows.filter((s) => s.trim());
       shareRows = nonempty.length ? [...nonempty, ...loaded] : loaded;
-      renderInputsPanel(currentInputNeeds);
+      rerender();
     });
   }
 
   if (needs.includes("envelope")) {
-    const envEl = host.querySelector("#input-envelope");
+    const envEl = host.querySelector("[data-rt=envelope]");
     envEl?.addEventListener("input", () => {
       if (envEl instanceof HTMLTextAreaElement) envelopeDraft = envEl.value;
     });
-    wireFileButton(host, "#load-envelope-btn", "#load-envelope-file", async (files) => {
+    wireFileButton(host, "[data-rt-btn=load-envelope]", "[data-rt-file=load-envelope]", async (files) => {
       const f = files[0];
       if (!f) return;
       envelopeDraft = await readEnvelopeAscFile(f);
-      renderInputsPanel(currentInputNeeds);
+      rerender();
     });
   }
 
   if (needs.includes("gpg")) {
-    const ctEl = host.querySelector("#input-ciphertext");
+    const ctEl = host.querySelector("[data-rt=ciphertext]");
     ctEl?.addEventListener("input", () => {
       if (ctEl instanceof HTMLTextAreaElement) ciphertextDraft = ctEl.value;
     });
-    wireFileButton(host, "#load-ciphertext-btn", "#load-ciphertext-file", async (files) => {
-      const box = host.querySelector("#input-ciphertext");
+    wireFileButton(host, "[data-rt-btn=load-ciphertext]", "[data-rt-file=load-ciphertext]", async (files) => {
+      const box = host.querySelector("[data-rt=ciphertext]");
       if (!(box instanceof HTMLTextAreaElement)) return;
       /** @type {string[]} */
       const chunks = [];
@@ -2332,19 +2702,19 @@ function wireInputsPanel(host, needs) {
   }
 
   if (needs.includes("key")) {
-    const jwkEl = host.querySelector("#input-wc-jwk");
+    const jwkEl = host.querySelector("[data-rt=wc-jwk]");
     jwkEl?.addEventListener("input", () => {
       if (jwkEl instanceof HTMLTextAreaElement) keyJwkDraft = jwkEl.value;
     });
-    const peerEl = host.querySelector("#input-wc-peer");
+    const peerEl = host.querySelector("[data-rt=wc-peer]");
     peerEl?.addEventListener("input", () => {
       if (peerEl instanceof HTMLTextAreaElement) peerJwkDraft = peerEl.value;
     });
-    const wrapEl = host.querySelector("#input-wc-wrap");
+    const wrapEl = host.querySelector("[data-rt=wc-wrap]");
     wrapEl?.addEventListener("input", () => {
       if (wrapEl instanceof HTMLTextAreaElement) wrapJwkDraft = wrapEl.value;
     });
-    const sigEl = host.querySelector("#input-wc-sig");
+    const sigEl = host.querySelector("[data-rt=wc-sig]");
     sigEl?.addEventListener("input", () => {
       if (sigEl instanceof HTMLInputElement) signatureDraft = sigEl.value;
     });
@@ -2404,18 +2774,20 @@ async function collectRuntimeInputs() {
   let privateKeyArmored = "";
   let passphrase = "";
 
+  /** @param {string} name @returns {Element|null} */
+  const rt = (name) => document.querySelector(`[data-rt="${name}"]`);
+
   if (currentInputNeeds.includes("text")) {
-    // Sync from live DOM in case the last keystroke wasn't flushed to the draft.
-    const textEl = document.getElementById("input-text");
+    const textEl = rt("text");
     if (textEl instanceof HTMLTextAreaElement) inputTextDraft = textEl.value;
     inputs.text = { value: inputTextDraft };
   }
 
   if (currentInputNeeds.includes("key")) {
-    const jwkEl = document.getElementById("input-wc-jwk");
-    const peerEl = document.getElementById("input-wc-peer");
-    const wrapEl = document.getElementById("input-wc-wrap");
-    const sigEl = document.getElementById("input-wc-sig");
+    const jwkEl = rt("wc-jwk");
+    const peerEl = rt("wc-peer");
+    const wrapEl = rt("wc-wrap");
+    const sigEl = rt("wc-sig");
     if (jwkEl instanceof HTMLTextAreaElement) keyJwkDraft = jwkEl.value;
     if (peerEl instanceof HTMLTextAreaElement) peerJwkDraft = peerEl.value;
     if (wrapEl instanceof HTMLTextAreaElement) wrapJwkDraft = wrapEl.value;
@@ -2429,12 +2801,11 @@ async function collectRuntimeInputs() {
   }
 
   if (currentInputNeeds.includes("shares")) {
-    // Sync from live DOM in case last keystroke wasn't flushed to shareRows.
     document.querySelectorAll("[data-share-input]").forEach((el) => {
       const i = Number(el.getAttribute("data-share-input"));
       if (el instanceof HTMLTextAreaElement && i >= 0) shareRows[i] = el.value;
     });
-    const passEl = document.getElementById("input-share-pass");
+    const passEl = rt("share-pass");
     if (passEl instanceof HTMLInputElement) sharePassDraft = passEl.value;
     const mnemonics = shareRows.map((m) => m.trim()).filter(Boolean);
     inputs.shares = {
@@ -2444,7 +2815,7 @@ async function collectRuntimeInputs() {
   }
 
   if (currentInputNeeds.includes("envelope")) {
-    const envEl = document.getElementById("input-envelope");
+    const envEl = rt("envelope");
     if (envEl instanceof HTMLTextAreaElement) envelopeDraft = envEl.value;
     const armored = envelopeDraft.trim();
     if (armored) {
@@ -2454,14 +2825,13 @@ async function collectRuntimeInputs() {
   }
 
   if (currentInputNeeds.includes("gpg") || currentInputNeeds.includes("gpgPass")) {
-    const ctEl = document.getElementById("input-ciphertext");
-    const vaultEl = document.getElementById("input-vault-key");
-    const privEl = document.getElementById("input-privkey");
-    const passEl = document.getElementById("input-key-pass");
+    const ctEl = rt("ciphertext");
+    const vaultEl = rt("vault-key");
+    const privEl = rt("privkey");
+    const passEl = rt("key-pass");
     if (ctEl instanceof HTMLTextAreaElement) ciphertextDraft = ctEl.value;
     const armored = ciphertextDraft.trim();
     const messages = splitArmoredMessages(armored);
-    // Mnemonics interleaved with ciphertext (or a ciphertext-box-only paste).
     const remainder = stripArmoredMessages(armored);
     /** @type {string[]} */
     const plainFromCt = [];
@@ -2472,7 +2842,6 @@ async function collectRuntimeInputs() {
       }
     }
     if (!messages.length && !plainFromCt.length && armored) {
-      // Single blob without armor markers — try as one message/mnemonic
       messages.push(armored);
     }
     passphrase = passEl instanceof HTMLInputElement ? passEl.value : "";
@@ -2499,7 +2868,6 @@ async function collectRuntimeInputs() {
       passphrase,
       envelopeArmored: inputs.envelope?.armored || "",
     };
-    // Merge ciphertext-box mnemonics + share rows for decrypt hybrid path
     if (plainFromCt.length) {
       inputs.shares = inputs.shares || { mnemonics: [] };
       inputs.shares.mnemonics = [
@@ -2549,6 +2917,11 @@ function renderPresets() {
             ${card(p)}
             <span class="preset-pair-link" aria-hidden="true" title="Companion pipelines">⇄</span>
             ${card(next)}
+            <div class="preset-pair-actions">
+              <button type="button" class="btn btn-compact preset-pair-both-btn"
+                data-preset-pair="${escapeHtml(p.pair)}"
+                title="Append forward then inverse as new cells (slots / Inputs bridge)">Add both ⇄</button>
+            </div>
           </div>`;
         i++;
       } else {
@@ -2598,18 +2971,37 @@ function renderPresets() {
       scrollFocusedCellIntoView();
     });
   });
+  grid.querySelectorAll("[data-preset-pair]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const pairId = btn.getAttribute("data-preset-pair") || "";
+      const pair = resolvePresetPair(pairId);
+      if (!pair) return;
+      lastPresetId = null;
+      appendPresetPairAsCells(pair.forward, pair.reverse);
+      document.getElementById("preset-gallery")?.removeAttribute("open");
+      scrollFocusedCellIntoView();
+      const status = document.getElementById("run-status");
+      if (status) {
+        status.className = "status-row ok";
+        status.textContent =
+          "Added companion cells — Run all (top→bottom) so slots / share tiles feed the inverse cell.";
+        status.classList.remove("hidden");
+      }
+    });
+  });
 }
 
 /**
- * Append a preset’s chains as new notebook cells (keep current cells + kernel).
- * @param {typeof PRESETS[number]} preset
+ * Append recipe chains as new notebook cells (keep current cells + kernel).
+ * @param {string} source
+ * @param {{ title?: string }} [opts]
  */
-function appendPresetAsCells(preset) {
-  let source = String(preset.recipe || "");
-  source = migrateRecipe(source).recipe;
-  const { ast, errors } = canonicalizeRecipe(source);
+function appendRecipeAsCells(source, opts = {}) {
+  let text = migrateRecipe(String(source || "")).recipe;
+  const { ast, errors } = canonicalizeRecipe(text);
   if (errors.length || !ast) {
-    showError(errorEl, errors.map((e) => e.message).join(" · ") || "Preset parse failed");
+    showError(errorEl, errors.map((e) => e.message).join(" · ") || "Recipe parse failed");
     return;
   }
   const loaded = recipeChains(ast).map((c) => ({
@@ -2625,8 +3017,34 @@ function appendPresetAsCells(preset) {
     chains.push(...loaded);
     focusCell(start);
   }
-  if (!recipeTitle && preset.title) setRecipeTitle(preset.title);
+  if (!recipeTitle && opts.title) setRecipeTitle(opts.title);
   setRecipeFromSteps();
+}
+
+/**
+ * Append a preset’s chains as new notebook cells (keep current cells + kernel).
+ * @param {typeof PRESETS[number]} preset
+ */
+function appendPresetAsCells(preset) {
+  appendRecipeAsCells(preset.recipe, { title: preset.title });
+}
+
+/**
+ * Append companion presets (forward then inverse), stitched for slot/inputs bridge.
+ * @param {typeof PRESETS[number]} forward
+ * @param {typeof PRESETS[number]} reverse
+ */
+function appendPresetPairAsCells(forward, reverse) {
+  const st = stitchPresetPair(forward, reverse);
+  if (st.errors?.length) {
+    showError(errorEl, st.errors.join(" · "));
+    return;
+  }
+  const title =
+    forward.pair || forward.title
+      ? `${forward.title} ⇄ ${reverse.title}`
+      : undefined;
+  appendRecipeAsCells(st.recipe, { title });
 }
 
 /**
@@ -3882,17 +4300,32 @@ function renderAgentChrome() {
         .map((k) => {
           const fpr = k.fingerprint || "";
           const unlocked = sessionList().some((e) => e.fingerprint === fpr);
+          const slotHint = unusedOutSlotName("@me", fpr);
           return `<li class="keyring-item">
             <div class="keyring-meta">
               <strong>${escapeHtml(k.uid || k.email || "Key")}</strong>
               <a class="text-link mono fs-xs" href="/key?fpr=${escapeHtml(fpr)}" target="_blank" rel="noopener">${escapeHtml(formatFingerprint(fpr))}</a>
               <span class="muted fs-xs">${escapeHtml(k.protection || "device")}${unlocked ? " · unlocked" : ""}</span>
             </div>
-            <div class="btn-row wrap">
-              <button type="button" class="btn btn-ghost btn-compact" data-kr-unlock="${escapeHtml(fpr)}">Unlock</button>
-              <button type="button" class="btn btn-ghost btn-compact" data-kr-insert="${escapeHtml(fpr)}">Insert unlock</button>
-              <button type="button" class="btn btn-ghost btn-compact" data-kr-copy="${escapeHtml(fpr)}">Copy fpr</button>
-              <button type="button" class="btn btn-ghost btn-compact" data-kr-pub="${escapeHtml(fpr)}">Pub→slot</button>
+            <div class="keyring-actions">
+              ${
+                unlocked
+                  ? `<button type="button" class="btn btn-ghost btn-compact btn-icon" data-kr-lock="${escapeHtml(fpr)}"
+                      title="Lock session — clear this key from the agent cache"
+                      aria-label="Lock session">${glyphHtml("lock", "ops-glyph")}</button>`
+                  : `<button type="button" class="btn btn-ghost btn-compact btn-icon" data-kr-unlock="${escapeHtml(fpr)}"
+                      title="Unlock into session — cache the private key for decrypt/sign without a recipe step"
+                      aria-label="Unlock into session">${glyphHtml("unlock", "ops-glyph")}</button>`
+              }
+              <button type="button" class="btn btn-ghost btn-compact btn-icon" data-kr-insert="${escapeHtml(fpr)}"
+                title="Add notebook cell: agent.unlock … | out ${slotHint}"
+                aria-label="Add unlock cell to ${slotHint}">${glyphHtml("unlock", "ops-glyph")} <span class="fs-xs">→ ${escapeHtml(slotHint)}</span></button>
+              <button type="button" class="btn btn-ghost btn-compact btn-icon" data-kr-copy="${escapeHtml(fpr)}"
+                title="Copy fingerprint"
+                aria-label="Copy fingerprint">${glyphHtml("fingerprint", "ops-glyph")}</button>
+              <button type="button" class="btn btn-ghost btn-compact btn-icon" data-kr-pub="${escapeHtml(fpr)}"
+                title="Add notebook cell: agent.pub … | out @… (public only, no unlock)"
+                aria-label="Add public key cell">Pub→slot</button>
             </div>
           </li>`;
         })
@@ -3914,10 +4347,17 @@ function renderAgentChrome() {
       }
     });
   });
+  body.querySelectorAll("[data-kr-lock]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      sessionEvict(btn.getAttribute("data-kr-lock") || "");
+      renderAgentChrome();
+    });
+  });
   body.querySelectorAll("[data-kr-insert]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const fpr = btn.getAttribute("data-kr-insert") || "";
-      addStepAt("agent.unlock", undefined, { fpr });
+      const slot = unusedOutSlotName("@me", fpr);
+      addVaultSourceCell("agent.unlock", fpr, slot);
     });
   });
   body.querySelectorAll("[data-kr-copy]").forEach((btn) => {
@@ -3928,32 +4368,94 @@ function renderAgentChrome() {
   body.querySelectorAll("[data-kr-pub]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const fpr = btn.getAttribute("data-kr-pub") || "";
-      const short = fpr.slice(-8).toLowerCase() || "pub";
-      chains = [
-        {
-          steps: [
-            {
-              name: "agent.pub",
-              params: { ...defaultParams(getStep("agent.pub") || { params: [] }), fpr },
-              start: 0,
-              end: 0,
-            },
-            {
-              name: "out",
-              params: {
-                ...defaultParams(getStep("out") || { params: [] }),
-                name: `@${short}`,
-              },
-              start: 0,
-              end: 0,
-            },
-          ],
-        },
-      ];
-      steps = chains[0].steps;
-      setRecipeFromSteps();
+      const short = `@${(fpr.slice(-8) || "pub").toLowerCase()}`;
+      addVaultSourceCell("agent.pub", fpr, short);
     });
   });
+}
+
+/**
+ * Collect `out` slot names already used across notebook cells.
+ * @returns {Set<string>}
+ */
+function usedOutSlotNames() {
+  /** @type {Set<string>} */
+  const used = new Set();
+  for (const c of chains) {
+    for (const s of c.steps || []) {
+      if (s.name !== "out") continue;
+      const n = String(s.params?.name || "").trim();
+      if (!n) continue;
+      used.add(n.startsWith("@") ? n : `@${n}`);
+    }
+  }
+  return used;
+}
+
+/**
+ * Prefer preferred slot (`@me`); fall back to `@` + last 8 of fpr.
+ * @param {string} preferred
+ * @param {string} fpr
+ * @returns {string}
+ */
+function unusedOutSlotName(preferred, fpr) {
+  const used = usedOutSlotNames();
+  const pref = preferred.startsWith("@") ? preferred : `@${preferred}`;
+  if (!used.has(pref)) return pref;
+  const short = `@${String(fpr || "key")
+    .replace(/[^0-9A-Fa-f]/g, "")
+    .slice(-8)
+    .toLowerCase() || "key"}`;
+  if (!used.has(short)) return short;
+  let i = 2;
+  while (used.has(`${short}${i}`)) i += 1;
+  return `${short}${i}`;
+}
+
+/**
+ * Append (or fill empty focused cell with) `source fpr | out @slot`.
+ * Avoids splicing a source into the middle of an existing pipeline.
+ * @param {"agent.unlock"|"agent.pub"} stepName
+ * @param {string} fpr
+ * @param {string} outName
+ */
+function addVaultSourceCell(stepName, fpr, outName) {
+  const sourceSpec = getStep(stepName);
+  const outSpec = getStep("out");
+  if (!sourceSpec || !outSpec) return;
+  const chain = {
+    steps: [
+      {
+        name: stepName,
+        params: { ...defaultParams(sourceSpec), fpr },
+        start: 0,
+        end: 0,
+      },
+      {
+        name: "out",
+        params: {
+          ...defaultParams(outSpec),
+          name: outName.startsWith("@") ? outName : `@${outName}`,
+        },
+        start: 0,
+        end: 0,
+      },
+    ],
+  };
+  chains[focusedCell] = { steps };
+  const emptyFocus =
+    chains.length === 1 &&
+    focusedCell === 0 &&
+    !(chains[0].steps?.length);
+  if (emptyFocus) {
+    chains = [chain];
+    focusedCell = 0;
+  } else {
+    chains = [...chains, chain];
+    focusedCell = chains.length - 1;
+  }
+  steps = chains[focusedCell].steps;
+  setRecipeFromSteps();
 }
 
 /**
@@ -3997,6 +4499,7 @@ function renderNotebook() {
   }
 
   if (!chains.length) chains = [{ steps: [] }];
+  destroyCellBinders();
   const savedFocus = focusedCell;
   /** @type {string[]} */
   const parts = [];
@@ -4045,6 +4548,8 @@ function renderNotebook() {
           </div>
         </header>
         <div class="notebook-cell-body ${collapsed ? "hidden" : ""}">
+          <div class="cell-inputs" id="cell-inputs-${i}" data-cell="${i}" hidden></div>
+          <div class="cell-bind" id="cell-bind-${i}" data-cell="${i}"></div>
           <div class="builder-steps cell-builder" id="cell-builder-${i}" data-cell="${i}"></div>
         </div>
         <div class="cell-output" id="cell-output-${i}" data-cell="${i}"></div>
@@ -4059,6 +4564,7 @@ function renderNotebook() {
     renderCellOutputs(i);
   }
   focusCell(savedFocus);
+  renderAllCellRuntimePanels();
 
   host.querySelectorAll("[data-focus-cell]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -4264,6 +4770,19 @@ function renderBuilderInto(host, cellIndex) {
         }
         if (step.name === "gpg.encrypt" && p.name === "to") {
           return encryptToParamHtml(step, val, dataAttrs, nest, i);
+        }
+        if (
+          (step.name === "hkp.search" || step.name === "hkp.get") &&
+          p.name === "keyserver"
+        ) {
+          const select = keyserverSelectFromOptionsHtml({
+            options: keyserverOptionsCache,
+            selected: String(val ?? ""),
+            dataAttrs,
+          });
+          return `<label class="builder-param"${title}>
+            <span class="builder-param-name">${escapeHtml(p.name)}</span>
+            ${select}</label>`;
         }
         return `<label class="builder-param"${title}>
           <span class="builder-param-name">${escapeHtml(p.name)}</span>
@@ -5355,8 +5874,7 @@ function openArtifactInEncrypt(artifact, button) {
   const seed = plaintextSeedFromArtifact(artifact);
   insertMessagingCell("encrypt");
   inputTextDraft = seed;
-  if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
-  else validateAndBind();
+  validateAndBind();
   setPopoutButtonLabel(button, "Cell added");
   setTimeout(() => {
     setPopoutButtonLabel(button, idleLabel);
@@ -5373,8 +5891,7 @@ function openArtifactInDecrypt(artifact, button) {
   const seed = String(artifact.content ?? "");
   insertMessagingCell("decrypt");
   ciphertextDraft = seed;
-  if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
-  else validateAndBind();
+  validateAndBind();
   setPopoutButtonLabel(button, "Cell added");
   setTimeout(() => {
     setPopoutButtonLabel(button, idleLabel);
@@ -5541,6 +6058,31 @@ document.getElementById("qs-symencrypt")?.addEventListener("click", () => {
 });
 document.getElementById("copy-share-link")?.addEventListener("click", () => {
   void copyShareLink();
+});
+document.getElementById("copy-recipe-btn")?.addEventListener("click", () => {
+  void copyRecipeText();
+});
+document.getElementById("workspace-save-btn")?.addEventListener("click", () => {
+  saveCurrentWorkspace();
+});
+document.getElementById("workspace-library-btn")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
+  openWorkspaceLibrary();
+});
+document.getElementById("workspace-export-btn")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
+  exportCurrentWorkspaceFile();
+});
+document.getElementById("workspace-import-btn")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
+  document.getElementById("workspace-import-file")?.click();
+});
+document.getElementById("workspace-import-file")?.addEventListener("change", (e) => {
+  const input = e.target;
+  if (!(input instanceof HTMLInputElement) || !input.files?.length) return;
+  const file = input.files[0];
+  input.value = "";
+  if (file) void importWorkspaceFile(file);
 });
 document.getElementById("kernel-chip")?.addEventListener("click", () => {
   variablesOpen = !variablesOpen;
@@ -5739,8 +6281,9 @@ async function runNotebookCell(cellIndex) {
     }
     showError(errorEl, err?.message || "Run failed");
   } finally {
-    const passEl = document.getElementById("input-key-pass");
-    if (passEl instanceof HTMLInputElement) passEl.value = "";
+    document.querySelectorAll("[data-rt=key-pass]").forEach((el) => {
+      if (el instanceof HTMLInputElement) el.value = "";
+    });
     if (btn) btn.disabled = false;
   }
 }
@@ -5805,8 +6348,9 @@ async function runNotebookFrom(from) {
     }
     showError(errorEl, err?.message || "Run failed");
   } finally {
-    const passEl = document.getElementById("input-key-pass");
-    if (passEl instanceof HTMLInputElement) passEl.value = "";
+    document.querySelectorAll("[data-rt=key-pass]").forEach((el) => {
+      if (el instanceof HTMLInputElement) el.value = "";
+    });
     if (btn) btn.disabled = false;
   }
 }
@@ -5830,7 +6374,7 @@ async function startPage() {
     }
     cryptoReady = true;
     suiteStatus = getSuiteStatus();
-    await refreshVaultKeys();
+    await Promise.all([refreshVaultKeys(), prefetchKeyserverOptions()]);
     if (status) {
       status.className = "app-status ok";
       status.textContent = formatSuiteStatusMessage(result);
@@ -5841,8 +6385,8 @@ async function startPage() {
     renderOpsDrawer();
     renderBuilder();
     renderAgentChrome();
-    // Re-render inputs so vault dropdown is populated.
-    if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
+    // Re-render cell runtime panels so vault dropdown is populated.
+    renderAllCellRuntimePanels();
   } catch (err) {
     cryptoReady = false;
     suiteStatus = getSuiteStatus();

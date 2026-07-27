@@ -4,7 +4,10 @@ import httpx
 
 
 def lookup_get(client: httpx.Client, search: str) -> httpx.Response:
-    return client.get("/pks/lookup", params={"op": "get", "search": search})
+    return client.get(
+        "/pks/lookup",
+        params={"op": "get", "options": "mr", "search": search},
+    )
 
 
 def dev_approve(client: httpx.Client, fingerprint: str, uids: list[str]) -> httpx.Response:

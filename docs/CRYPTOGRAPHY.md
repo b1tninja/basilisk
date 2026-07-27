@@ -16,7 +16,7 @@ Server-side OpenPGP **parsing/policy** (`basilisk/openpgp/`) is out of scope her
 
 ### Toolkit toolboxes
 
-Every recipe step declares a `toolbox` in `registry.js`. The ops drawer is a Swiss-army layout: toolboxes (with SVG glyphs) → taxonomy **shelves** → **conjugate rows** (encrypt | decrypt, encode | `-d`). Badges on builder/suggest chips keep similar verbs distinct. Shelves and conjugates are UX-only — recipe tokens are unchanged.
+Every recipe step declares a `toolbox` in `registry.js`. The ops drawer is a Swiss-army layout: toolboxes (with SVG glyphs) → taxonomy **shelves** → **conjugate rows** (encrypt | decrypt, encode | `-d`). Badges on builder/suggest chips keep similar verbs distinct. Shelves and conjugates are UX-only — recipe tokens are unchanged. Glyph metaphors, exported SVG assets, and the build-time `glyphs.js` pipeline are documented in [GLYPHS.md](./GLYPHS.md).
 
 Drawer order: WebCrypto → Encoding → I/O → Flow → OpenPGP → SSS → WebAuthn.
 

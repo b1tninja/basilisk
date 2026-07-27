@@ -1,0 +1,300 @@
+{
+  "viewBox": "0 0 20 20",
+  "strokeWidth": 1.6,
+  "strokeLinecap": "round",
+  "strokeLinejoin": "round",
+  "fill": "none",
+  "stroke": "currentColor",
+  "glyphs": [
+    {
+      "id": "webcrypto",
+      "group": "toolbox",
+      "label": "WebCrypto",
+      "metaphor": "Browser window with key",
+      "description": "SubtleCrypto lives in the browser — a chrome window with a small key signals Web API crypto (genkey, digest, AEAD, KDF, …).",
+      "refs": [
+        "W3C Web Cryptography API"
+      ]
+    },
+    {
+      "id": "openpgp",
+      "group": "toolbox",
+      "label": "OpenPGP",
+      "metaphor": "Locked envelope",
+      "description": "ModernPGP convention for encrypted mail/messages — flap envelope with lock-shackle (gpg.encrypt, gpg.sign, …).",
+      "refs": [
+        "ModernPGP icons"
+      ]
+    },
+    {
+      "id": "encoding",
+      "group": "toolbox",
+      "label": "Encoding",
+      "metaphor": "Bidirectional transform arrows",
+      "description": "Bytes ↔ text transforms (pem, base64, hex, …) — folded rails with encode/decode arrowheads."
+    },
+    {
+      "id": "io",
+      "group": "toolbox",
+      "label": "Input / output",
+      "metaphor": "Panel with header and body",
+      "description": "Runtime ports and tiles (input, out, random, qr) — a simple content panel."
+    },
+    {
+      "id": "flow",
+      "group": "toolbox",
+      "label": "Flow",
+      "metaphor": "Branching corner forks",
+      "description": "Pipeline control (foreach, tee, in, as) — two L-shaped forks suggesting stem/branch flow."
+    },
+    {
+      "id": "agent",
+      "group": "toolbox",
+      "label": "Agent",
+      "metaphor": "Vault key with TTL arc",
+      "description": "My Keys vault agent (unlock, save, list) — classic key plus a circular timer/TTL arc, distinct from bare Keys."
+    },
+    {
+      "id": "hkp",
+      "group": "toolbox",
+      "label": "HKP",
+      "metaphor": "Keyserver hub with radiating spokes",
+      "description": "HTTP Keyserver Protocol lookup/search — a central node with compass spokes (directory + fetch).",
+      "refs": [
+        "OpenPGP HKP"
+      ]
+    },
+    {
+      "id": "sss",
+      "group": "toolbox",
+      "label": "SSS / BLIP39",
+      "metaphor": "Stacked share cards",
+      "description": "Shamir secret sharing / BLIP39 — offset stacked cards as K-of-N fragments (any threshold recovers; a single share is useless alone).",
+      "refs": [
+        "Shamir 1979",
+        "puzzle/share UX metaphor"
+      ]
+    },
+    {
+      "id": "webauthn",
+      "group": "toolbox",
+      "label": "WebAuthn",
+      "metaphor": "FIDO passkey (person + overlapping key)",
+      "description": "Official passkey layout: person on the left, simplified key on the right slightly overlapping (create, prf, caps).",
+      "refs": [
+        "FIDO Alliance Passkey Icon Usage Guidelines"
+      ]
+    },
+    {
+      "id": "keys",
+      "group": "shelf",
+      "label": "Keys",
+      "metaphor": "Key",
+      "description": "WebCrypto key material — genkey, export, import."
+    },
+    {
+      "id": "digest",
+      "group": "shelf",
+      "label": "Digest",
+      "metaphor": "Input lines collapsing into hash bars",
+      "description": "Cryptographic hash — long input lines beside a “#”-like pair of bars (digest)."
+    },
+    {
+      "id": "sign",
+      "group": "shelf",
+      "label": "Sign",
+      "metaphor": "Quill / pen stroke",
+      "description": "Digital signature — a pen tip stroke (WebCrypto sign/verify or OpenPGP gpgsign shelf)."
+    },
+    {
+      "id": "aead",
+      "group": "shelf",
+      "label": "AEAD",
+      "metaphor": "Shield",
+      "description": "Authenticated encryption (AES-GCM) — protective shield."
+    },
+    {
+      "id": "cipher",
+      "group": "shelf",
+      "label": "Cipher",
+      "metaphor": "Swapped block grid",
+      "description": "Unauthenticated block/stream ciphers (AES-CBC/CTR) — four cells with a swap diagonal (not an “eye”)."
+    },
+    {
+      "id": "rsa",
+      "group": "shelf",
+      "label": "RSA",
+      "metaphor": "Certificate document with key",
+      "description": "RSA-OAEP / PKCS1 ops — document lines plus a small key."
+    },
+    {
+      "id": "kdf",
+      "group": "shelf",
+      "label": "KDF",
+      "metaphor": "Extract funnel → expand fan",
+      "description": "HKDF/PBKDF2 — narrow extract phase then widen expand (RFC 5869 extract-then-expand).",
+      "refs": [
+        "RFC 5869 HKDF"
+      ]
+    },
+    {
+      "id": "agreement",
+      "group": "shelf",
+      "label": "Agreement",
+      "metaphor": "Two keys joining",
+      "description": "ECDH / X25519 — two key heads meeting at a shared vertical (shared secret)."
+    },
+    {
+      "id": "wrap",
+      "group": "shelf",
+      "label": "Wrap",
+      "metaphor": "Package / parcel",
+      "description": "Key wrap / unwrap — 3D parcel with ribbon crease."
+    },
+    {
+      "id": "pubkey",
+      "group": "shelf",
+      "label": "Public key",
+      "metaphor": "Envelope with person mark",
+      "description": "OpenPGP public-key ops (genkey, encrypt, inspect) — message envelope under a head."
+    },
+    {
+      "id": "password",
+      "group": "shelf",
+      "label": "Password",
+      "metaphor": "Key with bit shank",
+      "description": "Symmetric OpenPGP password/SKESK shelf — key bow and bit."
+    },
+    {
+      "id": "split",
+      "group": "shelf",
+      "label": "Split",
+      "metaphor": "Diverging bolts",
+      "description": "SSS split / BLIP39 encode — energy splitting into branches."
+    },
+    {
+      "id": "recover",
+      "group": "shelf",
+      "label": "Combine",
+      "metaphor": "Waveform converging with refresh",
+      "description": "SSS combine — signal converging toward recovery, with a small refresh corner."
+    },
+    {
+      "id": "binary",
+      "group": "shelf",
+      "label": "Binary",
+      "metaphor": "Four bit cells",
+      "description": "Binary encodings (pem, base64, hex, …) — a 2×2 bit grid."
+    },
+    {
+      "id": "text",
+      "group": "shelf",
+      "label": "Text",
+      "metaphor": "Typography “T”",
+      "description": "Text encodings (utf8) — a capital T with baseline marks."
+    },
+    {
+      "id": "ports",
+      "group": "shelf",
+      "label": "Ports",
+      "metaphor": "Two linked ports",
+      "description": "I/O ports — two sockets with a bridge (input/out/random)."
+    },
+    {
+      "id": "control",
+      "group": "shelf",
+      "label": "Control",
+      "metaphor": "Flow graph nodes",
+      "description": "Flow control shelf — three nodes linked by a U-shaped bus."
+    },
+    {
+      "id": "essentials",
+      "group": "shelf",
+      "label": "Essentials",
+      "metaphor": "Passkey person with check",
+      "description": "WebAuthn essentials (caps, create, prf) — passkey person plus a readiness checkmark.",
+      "refs": [
+        "FIDO passkey"
+      ]
+    },
+    {
+      "id": "attestation",
+      "group": "shelf",
+      "label": "Attestation / MDS",
+      "metaphor": "Shield with check",
+      "description": "Soft attestation / FIDO MDS — shield containing a checkmark."
+    },
+    {
+      "id": "directory",
+      "group": "shelf",
+      "label": "Directory",
+      "metaphor": "People / contacts",
+      "description": "HKP directory search — two contact silhouettes (alias of recipients)."
+    },
+    {
+      "id": "recipients",
+      "group": "shelf",
+      "label": "Recipients",
+      "metaphor": "People / contacts",
+      "description": "Recipients list / merge — two contact silhouettes."
+    },
+    {
+      "id": "variables",
+      "group": "ui",
+      "label": "Variables / slots",
+      "metaphor": "Slot grid with plus",
+      "description": "Kernel @slots chip — three cells and a plus for binding live values."
+    },
+    {
+      "id": "gear",
+      "group": "ui",
+      "label": "Preferences",
+      "metaphor": "Gear / cog",
+      "description": "Settings / preferences control."
+    },
+    {
+      "id": "more",
+      "group": "ui",
+      "label": "More",
+      "metaphor": "Three dots",
+      "description": "Overflow / more menu."
+    },
+    {
+      "id": "shortcuts",
+      "group": "ui",
+      "label": "Keyboard shortcuts",
+      "metaphor": "Keyboard",
+      "description": "Keyboard shortcuts help — simple keyboard outline with keys."
+    },
+    {
+      "id": "fingerprint",
+      "group": "keyring",
+      "label": "Fingerprint",
+      "metaphor": "Fingerprint ridges",
+      "description": "OpenPGP key fingerprint — ridge arcs (ModernPGP fingerprint icon).",
+      "refs": [
+        "ModernPGP fingerprint"
+      ]
+    },
+    {
+      "id": "unlock",
+      "group": "keyring",
+      "label": "Unlock",
+      "metaphor": "Open padlock",
+      "description": "Unlock vault key into session — shackle open.",
+      "refs": [
+        "ModernPGP open lock"
+      ]
+    },
+    {
+      "id": "lock",
+      "group": "keyring",
+      "label": "Lock",
+      "metaphor": "Closed padlock",
+      "description": "Lock / clear session material — shackle closed.",
+      "refs": [
+        "ModernPGP closed lock"
+      ]
+    }
+  ]
+}

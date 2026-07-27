@@ -64,11 +64,17 @@ describe("allowlist + lookup", () => {
     expect(isKeyserverAllowed("evil.example", allow)).toBe(false);
   });
 
-  it("builds HKP URL", () => {
+  it("builds HKP URL for host and origin", () => {
     expect(hkpLookupUrl("keys.openpgp.org", "a@b.c")).toContain(
       "https://keys.openpgp.org/pks/lookup?"
     );
     expect(hkpLookupUrl("keys.openpgp.org", "a@b.c")).toContain("op=get");
+    expect(hkpLookupUrl("keys.openpgp.org", "a@b.c")).toContain("options=mr");
+    const local = hkpLookupUrl("https://keys.example.com:8443", "a@b.c");
+    expect(local.startsWith("https://keys.example.com:8443/pks/lookup?")).toBe(
+      true
+    );
+    expect(local).toContain("options=mr");
   });
 
   it("upstreamLookupGet returns armor and rejects off-allowlist", async () => {

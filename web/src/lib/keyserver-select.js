@@ -1,5 +1,5 @@
 /**
- * Shared upstream keyserver <select> markup + wiring (Encrypt / Toolkit / Preferences).
+ * Shared keyserver <select> markup + wiring (Encrypt / Toolkit / Preferences).
  */
 
 import { getPreferredKeyserver, setPreferredKeyserver } from "./prefs.js";
@@ -10,9 +10,114 @@ import {
   normalizeKeyserverHost,
   resolveUpstreamHost,
 } from "./upstream-config.js";
+import { pageKeyserverOrigin } from "./upstream-hkp.js";
 import { escapeHtml } from "./utils.js";
 
 /**
+ * Option list for Toolkit / binder: This site (page origin) + preferred + allowlist.
+ * Empty value = This site HKP on `location.origin` (no silent upstream).
+ *
+ * @param {object} [opts]
+ * @param {string[]} [opts.allowlist]
+ * @param {string} [opts.preferred]
+ * @param {string} [opts.current]  ensure current host appears even if not allowlisted
+ * @param {string|null} [opts.pageOrigin]
+ * @returns {{ value: string, label: string }[]}
+ */
+export function buildKeyserverOptions(opts = {}) {
+  const pageOrigin =
+    opts.pageOrigin !== undefined ? opts.pageOrigin : pageKeyserverOrigin();
+  /** @type {{ value: string, label: string }[]} */
+  const options = [
+    {
+      value: "",
+      label: pageOrigin ? `This site (${pageOrigin})` : "This site",
+    },
+  ];
+  const seen = new Set([""]);
+  const pref = normalizeKeyserverHost(opts.preferred);
+  if (pref && !seen.has(pref)) {
+    options.push({ value: pref, label: `Preferred upstream (${pref})` });
+    seen.add(pref);
+  }
+  for (const host of opts.allowlist || []) {
+    const h = normalizeKeyserverHost(host);
+    if (!h || seen.has(h)) continue;
+    seen.add(h);
+    options.push({ value: h, label: h });
+  }
+  const cur = normalizeKeyserverHost(opts.current);
+  if (cur && !seen.has(cur)) {
+    options.push({ value: cur, label: cur });
+  }
+  return options;
+}
+
+/**
+ * HTML <select> for This site + allowlisted upstreams (Toolkit HKP steps).
+ * Always returns a select (at least This site).
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.id]
+ * @param {string} [opts.className]
+ * @param {string} [opts.selected]
+ * @param {string} [opts.dataAttrs]  extra attributes on <select>
+ * @param {import("./upstream-config.js").UpstreamConfig} [opts.config]
+ * @param {string|null} [opts.pageOrigin]
+ * @returns {Promise<string>}
+ */
+export async function toolkitKeyserverSelectHtml(opts = {}) {
+  const cfg = opts.config || (await getUpstreamConfig());
+  const preferred = getPreferredKeyserver();
+  const options = buildKeyserverOptions({
+    allowlist: cfg.enabled ? cfg.allowlist || [] : [],
+    preferred: cfg.enabled ? preferred : "",
+    current: opts.selected,
+    pageOrigin: opts.pageOrigin,
+  });
+  const id = opts.id || "keyserver-select";
+  const cls = opts.className || "text-input keyserver-select";
+  const selectedRaw = opts.selected == null ? "" : String(opts.selected);
+  const selected =
+    selectedRaw === "" ? "" : normalizeKeyserverHost(selectedRaw) || "";
+  const dataAttrs = opts.dataAttrs ? ` ${opts.dataAttrs}` : "";
+  const optsHtml = options
+    .map((o) => {
+      const sel = selected === o.value ? " selected" : "";
+      return `<option value="${escapeHtml(o.value)}"${sel}>${escapeHtml(o.label)}</option>`;
+    })
+    .join("");
+  return `<select id="${escapeHtml(id)}" class="${escapeHtml(cls)}" aria-label="Keyserver"${dataAttrs}>${optsHtml}</select>`;
+}
+
+/**
+ * Sync HTML for builder cells (options prefetched).
+ *
+ * @param {object} opts
+ * @param {{ value: string, label: string }[]} opts.options
+ * @param {string} [opts.selected]
+ * @param {string} [opts.dataAttrs]
+ * @param {string} [opts.className]
+ * @returns {string}
+ */
+export function keyserverSelectFromOptionsHtml(opts) {
+  const options = opts.options || buildKeyserverOptions();
+  const cls = opts.className || "text-input keyserver-select";
+  const selectedRaw = opts.selected == null ? "" : String(opts.selected);
+  const selected =
+    selectedRaw === "" ? "" : normalizeKeyserverHost(selectedRaw) || "";
+  const dataAttrs = opts.dataAttrs ? ` ${opts.dataAttrs}` : "";
+  const optsHtml = options
+    .map((o) => {
+      const sel = selected === o.value ? " selected" : "";
+      return `<option value="${escapeHtml(o.value)}"${sel}>${escapeHtml(o.label)}</option>`;
+    })
+    .join("");
+  return `<select class="${escapeHtml(cls)}" aria-label="Keyserver"${dataAttrs}>${optsHtml}</select>`;
+}
+
+/**
+ * Preferences / Encrypt: upstream-only select (empty = server default).
  * @param {object} [opts]
  * @param {string} [opts.id]
  * @param {string} [opts.className]
@@ -48,7 +153,7 @@ export async function keyserverSelectHtml(opts = {}) {
 }
 
 /**
- * Compact control row for recipient search UIs.
+ * Compact control row for recipient search UIs (Encrypt).
  * @param {object} [opts]
  * @param {string} [opts.id]
  * @returns {Promise<string>}
@@ -77,7 +182,23 @@ export async function keyserverControlRowHtml(opts = {}) {
 }
 
 /**
- * Read current selection from a select element (or preferred/default).
+ * Raw select value: "" = This site; host = explicit upstream. No preferred fallback.
+ * @param {string|HTMLSelectElement|null} [elOrId]
+ * @returns {string}
+ */
+export function readKeyserverSelectValue(elOrId) {
+  let el = elOrId;
+  if (typeof elOrId === "string") {
+    el = document.getElementById(elOrId);
+  }
+  if (el instanceof HTMLSelectElement) {
+    return normalizeKeyserverHost(el.value) || "";
+  }
+  return "";
+}
+
+/**
+ * Read selection from Encrypt-style select (empty → preferred/server default).
  * @param {string|HTMLSelectElement|null} [elOrId]
  * @returns {Promise<string>}
  */

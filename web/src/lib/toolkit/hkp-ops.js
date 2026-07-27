@@ -1,5 +1,5 @@
 /**
- * Toolkit HKP ops — public key fetch via portal, device cache, and optional upstream.
+ * Toolkit HKP ops — device cache → This site `/pks/lookup` → optional explicit upstream.
  */
 
 import {

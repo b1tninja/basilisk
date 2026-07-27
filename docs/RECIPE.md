@@ -81,6 +81,21 @@ In the browser toolkit, each blank-line **chain** is one notebook **cell**. A se
 
 Idle auto-scrub uses the same path as **Clear sensitive data**. The whole notebook still serializes to multi-chain recipe source (shareable / Templates). Slot-side params (`to=@`, `key=@`) resolve from the kernel when present. Duplicate `out @label` within one cell still errors; re-running a later cell may replace a kernel binding written earlier.
 
+### Companion templates (forward ⇄ inverse)
+
+Templates with a shared `pair` id (e.g. SSS split ⇄ recover) appear as a linked row in the gallery. **Add both ⇄** appends forward then inverse as new cells.
+
+Inter-cell feed stays **explicit `@slots`** — there is no implicit “trailing tile → next cell stem” and no new chain operator:
+
+| Bridge | When | How |
+|--------|------|-----|
+| **Slot** | Inverse already uses `in @x` / `key=@x`, or starts with `input` while forward ends with `out @x` | Kernel: run top→bottom so `@x` is registered before the inverse cell |
+| **Inputs** | Inverse starts with `shares` / `gpg.decrypt` | Paste share mnemonics / ciphertext into that cell’s runtime Inputs (smoke tests feed forward tiles → `inputs`) |
+
+**Add both** may rewrite a reverse `input` head to `in @bridge` when a slot bridge applies; SSS/GPG-share inverses are left unchanged (inputs bridge). If the inverse reuses an `out @label` already emitted by the forward cell, Add both renames the inverse tip (e.g. `@pem` → `@pem_rev`) so the joined notebook validates. Trailing auto-emitted tiles alone never become slots — only `out` does.
+
+**Exhaustive verb smoke** (Vitest, not CAST): `web/src/lib/toolkit/verb-smoke.js` + `web/src/test/recipe-verbs.test.js` require every `listSteps()` op and every enum/bool param value to appear in a compiling recipe, then run CI-safe cases (`skip` only for live WebAuthn ceremonies / passkey vault wrap).
+
 ### Sharing via URL fragment
 
 Toolkit recipes are addressable in the **URL fragment** (never sent to the server):
@@ -116,6 +131,21 @@ On load, the compact payload is expanded and **beautified** back to canonical mu
 Ciphertext in a URL may appear in **browser history**, screenshots, and chat logs (like emailing an `.asc`). The recipient still needs the matching private key. The fragment is not sent to Basilisk servers. Idle / Clear sensitive wipes Inputs; reload the link to re-seed.
 
 Use **Copy link** in the notebook header for recipe-only shares. Private-key armor and passphrases are never written into the fragment. If the encoded recipe exceeds ~6k characters, auto-hash updates stop — share via **Copy recipe** instead.
+
+### Notebook library and files
+
+Besides the URL fragment, the toolkit can keep **named notebooks** in this browser and on disk:
+
+| Action | What it stores |
+|--------|----------------|
+| **Save** / **Library…** | Title + recipe source in `localStorage` (`basilisk.toolkit.workspaces`) |
+| **Export file** | Same fields as `.basilisk.json` |
+| **Import file…** | `.basilisk.json` or plain recipe text (`.txt` / `.recipe`) |
+| **Copy recipe** | Canonical recipe text to the clipboard (no URL length limit) |
+
+Workspace JSON shape (v1): `{ "v": 1, "id", "title", "recipe", "updatedAt" }`.
+
+**Never persisted in the library or export file:** Inputs (plaintext, ciphertext, JWKs, shares, passphrases), kernel slots/outputs, vault keys, or agent session. XSS can read `localStorage` — recipes that look like private-key material are refused on save/import. Prefer **Copy link** / `#decrypt&ct=` for short public ciphertext shares; use Export / Library for larger notebooks that exceed the fragment cap.
 
 ## Arguments
 

@@ -265,8 +265,13 @@ class Parser {
       current.push(...pipeSteps);
 
       this.skipSpacesAndCommentsOnLine();
-      if (this.peek() === "\n") this.pos++;
-      else if (!this.eof()) {
+      if (this.peek() === "\n") {
+        // Indent bodies may leave pos on a blank line (chain separator). That
+        // newline is not stem EOL — flush before the next chain.
+        const blankLine = this.isBlankLineEndingAt(this.pos);
+        this.pos++;
+        if (blankLine) flush();
+      } else if (!this.eof()) {
         this.errors.push({
           message: `Unexpected "${this.peek()}"`,
           start: this.pos,
@@ -668,6 +673,50 @@ class Parser {
    * @param {number} parentIndent
    * @returns {{ listBody: RecipeStep[], branches: TeeBranch[], brace: boolean }}
    */
+  /**
+   * True when `newlinePos` points at `\n` that ends an empty/whitespace-only line
+   * (or a full-line comment). Used to detect chain separators left by indent bodies.
+   * @param {number} newlinePos
+   * @returns {boolean}
+   */
+  isBlankLineEndingAt(newlinePos) {
+    if (this.src[newlinePos] !== "\n") return false;
+    let i = newlinePos - 1;
+    while (i >= 0 && this.src[i] !== "\n") i--;
+    const lineStart = i + 1;
+    let p = lineStart;
+    while (p < newlinePos && this.src[p] === " ") p++;
+    if (p >= newlinePos) return true;
+    if (this.src[p] === "#") return true;
+    return false;
+  }
+
+  /**
+   * Indent of the next non-blank, non-comment line at or after `from`, or -1 at EOF.
+   * @param {number} from
+   * @returns {number}
+   */
+  peekNextContentIndent(from) {
+    let p = from;
+    while (p < this.src.length) {
+      let i = 0;
+      while (this.src[p + i] === " ") i++;
+      const j = p + i;
+      if (j >= this.src.length) return -1;
+      if (this.src[j] === "\n") {
+        p = j + 1;
+        continue;
+      }
+      if (this.src[j] === "#") {
+        while (p < this.src.length && this.src[p] !== "\n") p++;
+        if (this.src[p] === "\n") p++;
+        continue;
+      }
+      return i;
+    }
+    return -1;
+  }
+
   parseIndentBody(parentIndent) {
     /** @type {RecipeStep[]} */
     const listBody = [];
@@ -687,6 +736,18 @@ class Parser {
       // blank / comment
       let j = lineStart + i;
       if (j >= this.src.length || this.src[j] === "\n") {
+        // Blank line after body items ends the body when the next content is
+        // dedented (chain separator or stem continuation). Leave the blank so
+        // parseRecipe can flush chains. Blanks between list items still skip.
+        if (bodyIndent) {
+          const nextIndent = this.peekNextContentIndent(
+            j < this.src.length ? j + 1 : j
+          );
+          if (nextIndent < 0 || nextIndent <= parentIndent) {
+            this.pos = lineStart;
+            break;
+          }
+        }
         this.pos = j < this.src.length ? j + 1 : j;
         continue;
       }

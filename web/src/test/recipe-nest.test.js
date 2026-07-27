@@ -68,6 +68,18 @@ describe("nested list recipe syntax", () => {
     );
   });
 
+  it("blank line after indented foreach starts a new chain", () => {
+    const src = `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach
+  - out @share
+
+shares | blip39 -d | sss.combine | base64 | out @secret`;
+    const { ast, errors } = parseRecipe(src);
+    expect(errors).toEqual([]);
+    expect(ast.chains.length).toBe(2);
+    expect(ast.chains[1].steps[0].name).toBe("shares");
+    expect(compileRecipe(src).validation.ok).toBe(true);
+  });
+
   it("rejects flat foreach without body", () => {
     const { validation } = compileRecipe(
       "random 16 | sss.split threshold=2 shares=3 | blip39 | foreach | out @share"
