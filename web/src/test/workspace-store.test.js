@@ -75,7 +75,7 @@ describe("workspace-store", () => {
       v: 1,
       id: "abc",
       title: "Pipe",
-      recipe: "random 8 | hex | out @x",
+      recipe: "random 8 | to hex | out @x",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     expect(blob).toContain('"title": "Pipe"');

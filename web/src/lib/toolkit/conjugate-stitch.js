@@ -158,7 +158,7 @@ export function collectConsumedSlots(ast) {
   const refs = new Set();
   for (const c of recipeChains(ast)) {
     walkSteps(c.steps, (s) => {
-      if (s.name === "in" || s.name === "from") {
+      if (s.name === "in") {
         const n = normalizeSlotRef(String(s.params?.ref || ""), {
           allowIndex: true,
         });

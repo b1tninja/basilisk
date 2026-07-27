@@ -220,13 +220,14 @@ export function useNotebook() {
   }, []);
 
   const appendOp = useCallback(
-    (opName: string) => {
+    (opName: string, opts?: { decode?: boolean }) => {
       const spec = getStep(opName);
       if (!spec) return;
       const step: RecipeStep = { name: opName, params: {} };
       for (const p of spec.params || []) {
         if (p.default !== undefined) step.params![p.name] = p.default;
       }
+      if (opts?.decode) step.params!.decode = true;
       const next = [...steps, step];
       setCellSteps(focusedCell, next);
     },

@@ -14,31 +14,41 @@ const page = await browser.newPage({
 });
 
 await page.goto(`${base}/toolkit`, { waitUntil: "networkidle", timeout: 60000 });
-await page.waitForSelector("[data-ops-open-toolbox]", { timeout: 20000 });
+await page.locator(".chef-workspace").waitFor({ state: "attached", timeout: 20000 });
+const ws = page.locator(".chef-workspace");
+if (await ws.evaluate((el) => el.classList.contains("ops-collapsed"))) {
+  const toggle = page.locator('[data-collapse="ops"]').first();
+  if (await toggle.count()) await toggle.click({ force: true });
+  else await ws.evaluate((el) => el.classList.remove("ops-collapsed"));
+  await page.waitForTimeout(300);
+}
+await page.locator("[data-ops-open-toolbox]").first().waitFor({ state: "visible", timeout: 20000 });
 await page.locator(".chef-ops").screenshot({ path: resolve(out, "11-ops-drill-root.png") });
 
-await page.locator('[data-ops-open-toolbox="webcrypto"]').click();
-await page.waitForTimeout(250);
+await page.locator('[data-ops-open-toolbox="webcrypto"]').first().click();
+await page.waitForTimeout(350);
 await page.locator(".chef-ops").screenshot({ path: resolve(out, "12-ops-drill-shelves.png") });
 
 const keys = page.locator('[data-ops-open-shelf="keys"]');
-if (await keys.count()) await keys.click();
+if (await keys.count()) await keys.first().click();
 else {
   const shelf = page.locator("[data-ops-open-shelf]").first();
   if (await shelf.count()) await shelf.click();
 }
-await page.waitForTimeout(250);
+await page.waitForTimeout(350);
 await page.locator(".chef-ops").screenshot({ path: resolve(out, "13-ops-drill-tools.png") });
 
-const tip = await page.locator("#ops-hint").innerText();
+const tip = await page.locator("#ops-hint").innerText().catch(() => "");
 const crumb = await page
   .locator(".ops-drill-crumb")
   .innerText()
   .catch(() => "");
-const tool = page.locator("[data-op]").first();
+const tool = page.locator(".chef-ops [data-op]:visible").first();
 if (await tool.count()) {
-  await tool.hover();
-  await page.waitForSelector("#ops-tool-card .tool-card", { timeout: 5000 });
+  await tool.hover({ force: true });
+  await page.waitForSelector("#ops-tool-card .tool-card", { timeout: 5000 }).catch(() => {});
+  await page.screenshot({ path: resolve(out, "14-ops-drill-toolcard.png") });
+} else {
   await page.screenshot({ path: resolve(out, "14-ops-drill-toolcard.png") });
 }
 console.log({

@@ -7,7 +7,8 @@
  *   in @kp | .public | export spki | pem | out @public
  *   in @kp | export pkcs8 | pem | out @private
  *
- * Decode: encoding twins prefer `pem.encode` / `pem.decode` (also accept `pem -d`).
+ * Decode: encoding twins prefer `base64.encode` / `base64.decode` (also accept `-d`).
+ * pem ↔ der and to ↔ from (encoding) are conjugate pairs (bare verbs, not decodeTwin).
  * Cipher twins still use `-d` (`aes-gcm -d`). Slot sugar: bare `out kp` → `@kp`.
  */
 
@@ -1390,16 +1391,47 @@ export function registryIssues() {
 }
 
 /**
- * Preset recipes for the gallery.
+ * Stable Templates menu category order (see PRESETS `group`).
+ * @type {readonly string[]}
+ */
+export const PRESET_GROUP_ORDER = Object.freeze([
+  "Keys",
+  "Secrets",
+  "Digest & MAC",
+  "Encrypt",
+  "Keys wrap / agree",
+  "Split & recover",
+  "OpenPGP",
+  "Directory",
+  "WebAuthn",
+  "Encoding",
+]);
+
+/**
+ * Ordered group names for the Templates menu (known order first, then any extras).
+ * @param {typeof PRESETS} [presets]
+ * @returns {string[]}
+ */
+export function listPresetGroups(presets = PRESETS) {
+  const seen = new Set(presets.map((p) => p.group || "Pipelines"));
+  const ordered = PRESET_GROUP_ORDER.filter((g) => seen.has(g));
+  for (const g of seen) {
+    if (!ordered.includes(g)) ordered.push(g);
+  }
+  return ordered;
+}
+
+/**
+ * Preset recipes for the Templates menu.
  *
- * `group` clusters presets under a heading. Presets sharing a `pair` value are
+ * `group` clusters presets under a category. Presets sharing a `pair` value are
  * companion pipelines (forward ⇄ inverse, e.g. split/recover or encrypt/decrypt)
  * and render side by side; the one listed first appears on the left.
  */
 export const PRESETS = [
   {
     id: "p256-pem",
-    group: "Generate keys",
+    group: "Keys",
     title: "P-256 public + private (PEM)",
     blurb:
       "Tee the public SPKI PEM, then export PKCS#8 — mid-stem fork keeps the keypair on the stem.",
@@ -1409,14 +1441,14 @@ export const PRESETS = [
   },
   {
     id: "p256-tee-inspect",
-    group: "Generate keys",
+    group: "Keys",
     title: "P-256 with mid-pipeline peek",
     blurb: "Generate a key, peek an openssl-style dump, then export PEM (keypair still flows through).",
     recipe: "genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private",
   },
   {
     id: "p256-multichain",
-    group: "Generate keys",
+    group: "Keys",
     title: "P-256 via @slot reuse",
     blurb:
       "Register the live keypair with out @kp, then reuse it across blank-line chains with in @kp.",
@@ -1427,132 +1459,42 @@ in @kp | export pkcs8 | pem | out @private`,
   },
   {
     id: "ed25519-jwk",
-    group: "Generate keys",
+    group: "Keys",
     title: "Ed25519 key (JWK)",
     blurb: "Signing key as JSON Web Key.",
     recipe: "genkey ed25519 | export jwk | out @jwk",
   },
   {
     id: "secret-b64url",
-    group: "Secrets & passphrases",
+    group: "Secrets",
     title: "256-bit secret (base64url)",
     blurb: "Websafe random secret — no +/ or padding.",
     recipe: "random 32 | base64url | out @secret",
   },
   {
     id: "diceware",
-    group: "Secrets & passphrases",
+    group: "Secrets",
     title: "Diceware passphrase",
     blurb: "EFF Large Wordlist, 6 words (~77 bits).",
     recipe: "passphrase 6 | out @passphrase",
   },
   {
+    id: "passphrase-char",
+    group: "Secrets",
+    title: "Character passphrase",
+    blurb: "69-char alphabet random passphrase (`passphrase mode=char`).",
+    recipe: `passphrase mode=char length=20 | out @pass`,
+  },
+  {
     id: "digest-sha256",
-    group: "WebCrypto",
+    group: "Digest & MAC",
     title: "SHA-256 digest",
     blurb: "Hash 32 random bytes and show hex.",
-    recipe: "random 32 | digest | hex | out @digest",
-  },
-  {
-    id: "rsa-oaep-roundtrip",
-    group: "WebCrypto",
-    title: "RSA-OAEP encrypt / decrypt",
-    blurb:
-      "Generate an RSA-OAEP key, encrypt a message with rsa-oaep key=@rk, then decrypt across chains.",
-    recipe: `genkey rsa/2048 usage=encrypt | out @rk
-
-input | utf8 | rsa-oaep key=@rk | hex | out @ct
-
-in @ct | hex -d | rsa-oaep -d key=@rk | utf8 | out @plain`,
-  },
-  {
-    id: "aes-gcm-roundtrip",
-    group: "WebCrypto",
-    title: "AES-GCM encrypt / decrypt",
-    blurb:
-      "Generate an AES-256 key, encrypt with `aes-gcm key=@cek`, then decrypt across chains (preferred AEAD).",
-    recipe: `genkey aes/256 | out @cek
-
-input | utf8 | aes-gcm key=@cek | hex | out @ct
-
-in @ct | hex -d | aes-gcm -d key=@cek | utf8 | out @plain`,
-  },
-  {
-    id: "pbkdf2-aes-gcm",
-    group: "WebCrypto",
-    title: "Passphrase → PBKDF2 → AES-GCM",
-    blurb:
-      "Derive an AES-GCM CEK from a generated passphrase (`pbkdf2 as=aes/256`), encrypt plaintext, then decrypt. Swap `passphrase` for `input | utf8` to use your own password.",
-    recipe: `passphrase mode=char length=20 | pbkdf2 32 as=aes/256 | out @cek
-
-input | utf8 | aes-gcm key=@cek | base64url | out @ct
-
-in @ct | base64url -d | aes-gcm -d key=@cek | utf8 | out @plain`,
-  },
-  {
-    id: "hkdf-as-aes-gcm",
-    group: "WebCrypto",
-    title: "HKDF → AES key → encrypt",
-    blurb:
-      "Derive an AES-256 key with `hkdf as=aes/256` (deriveKey), then AES-GCM encrypt with key=@cek.",
-    recipe: `random 32 | hkdf 32 as=aes/256 | out @cek
-
-input | utf8 | aes-gcm key=@cek | base64url | out @ct`,
-  },
-  {
-    id: "webauthn-prf-aes-gcm",
-    group: "WebCrypto",
-    title: "WebAuthn PRF → HKDF → AES-GCM",
-    blurb:
-      "Unlock vault passkey PRF IKM (`webauthn.prf`), HKDF to an AES-GCM CEK, encrypt plaintext, then decrypt. Main-thread ceremony.",
-    recipe: `webauthn.prf | hkdf 32 as=aes/256 | out @cek
-
-input | utf8 | aes-gcm key=@cek | base64url | out @ct
-
-in @ct | base64url -d | aes-gcm -d key=@cek | utf8 | out @plain`,
-  },
-  {
-    id: "hkdf-as-aes-kw-wrap",
-    group: "WebCrypto",
-    title: "HKDF → AES-KW → wrap CEK",
-    blurb:
-      "Derive an AES-KW KEK (`as=aes-kw/256`), wrap a CEK with AES-KW, then unwrap.",
-    recipe: `random 32 | hkdf 32 as=aes-kw/256 | out @kek
-
-genkey aes/256 | out @cek
-
-wrap key=@kek target=@cek | hex | out @wrapped
-
-in @wrapped | hex -d | unwrap key=@kek | hex | out @cek-raw`,
-  },
-  {
-    id: "wrap-aes-gcm",
-    group: "WebCrypto",
-    title: "Wrap CEK with AES-GCM",
-    blurb:
-      "SubtleCrypto wrapKey under AES-GCM (IV||wrapped packing). Prefer AES-KW for new key-wrap work.",
-    recipe: `genkey aes/256 | out @kek
-genkey aes/256 | out @cek
-
-wrap mode=aes-gcm key=@kek target=@cek | hex | out @wrapped
-
-in @wrapped | hex -d | unwrap mode=aes-gcm key=@kek | hex | out @cek-raw`,
-  },
-  {
-    id: "x25519-ecdh",
-    group: "WebCrypto",
-    title: "X25519 ECDH → AES key",
-    blurb:
-      "Generate two X25519 keys, ECDH deriveBits, then HKDF to an AES-GCM CEK.",
-    recipe: `genkey x25519 | out @local
-genkey x25519 | out @peer
-
-ecdh private=@local peer=@peer | hkdf 32 as=aes/256 | out @cek
-in @cek | export jwk | out @cek-jwk`,
+    recipe: "random 32 | digest | to hex | out @digest",
   },
   {
     id: "hmac-sign-verify",
-    group: "WebCrypto",
+    group: "Digest & MAC",
     title: "HMAC sign / verify",
     blurb:
       "HMAC-SHA-256 via recipe sugar `hmac` / `hmac.verify` (serialize as sign/verify).",
@@ -1566,47 +1508,132 @@ in @msg | hmac.verify key=@mac signature=@tag | out @ok`,
   },
   {
     id: "jwk-thumbprint",
-    group: "WebCrypto",
+    group: "Digest & MAC",
     title: "JWK SHA-256 digest",
     blurb:
       "Export a public JWK and SHA-256 digest the JSON text (handy fingerprint; not RFC 7638 canonical thumbprint).",
     recipe: `genkey ec/p256 | .public | export jwk | out @jwk
 
-in @jwk | utf8 | digest | hex | out @thumb`,
-  },
-  {
-    id: "aes-cbc-roundtrip",
-    group: "WebCrypto",
-    title: "AES-CBC encrypt / decrypt",
-    blurb:
-      "Unauthenticated AES-CBC interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
-    recipe: `genkey aes/256 | out @cek
-
-input | utf8 | aes-cbc key=@cek | hex | out @ct
-
-in @ct | hex -d | aes-cbc -d key=@cek | utf8 | out @plain`,
-  },
-  {
-    id: "aes-ctr-roundtrip",
-    group: "WebCrypto",
-    title: "AES-CTR encrypt / decrypt",
-    blurb:
-      "Unauthenticated AES-CTR interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
-    recipe: `genkey aes/256 | out @cek
-
-input | utf8 | aes-ctr key=@cek | hex | out @ct
-
-in @ct | hex -d | aes-ctr -d key=@cek | utf8 | out @plain`,
+in @jwk | utf8 | digest | to hex | out @thumb`,
   },
   {
     id: "verify-soft",
-    group: "WebCrypto",
+    group: "Digest & MAC",
     title: "Soft signature verify",
     blurb:
       "Fail-soft verify (`-q`): emits text `verified` or `invalid` instead of throwing. Bind signature= (or the sig panel) at run time; prefer fail-loud for auth.",
     recipe: `genkey ed25519 | .public | export jwk | out @pub
 
 input | utf8 | verify -q key=@pub | out @result`,
+  },
+  {
+    id: "rsa-oaep-roundtrip",
+    group: "Encrypt",
+    title: "RSA-OAEP encrypt / decrypt",
+    blurb:
+      "Generate an RSA-OAEP key, encrypt a message with rsa-oaep key=@rk, then decrypt across chains.",
+    recipe: `genkey rsa/2048 usage=encrypt | out @rk
+
+input | utf8 | rsa-oaep key=@rk | to hex | out @ct
+
+in @ct | from hex | rsa-oaep -d key=@rk | utf8 | out @plain`,
+  },
+  {
+    id: "aes-gcm-roundtrip",
+    group: "Encrypt",
+    title: "AES-GCM encrypt / decrypt",
+    blurb:
+      "Generate an AES-256 key, encrypt with `aes-gcm key=@cek`, then decrypt across chains (preferred AEAD).",
+    recipe: `genkey aes/256 | out @cek
+
+input | utf8 | aes-gcm key=@cek | to hex | out @ct
+
+in @ct | from hex | aes-gcm -d key=@cek | utf8 | out @plain`,
+  },
+  {
+    id: "pbkdf2-aes-gcm",
+    group: "Encrypt",
+    title: "Passphrase → PBKDF2 → AES-GCM",
+    blurb:
+      "Derive an AES-GCM CEK from a generated passphrase (`pbkdf2 as=aes/256`), encrypt plaintext, then decrypt. Swap `passphrase` for `input | utf8` to use your own password.",
+    recipe: `passphrase mode=char length=20 | pbkdf2 32 as=aes/256 | out @cek
+
+input | utf8 | aes-gcm key=@cek | base64url | out @ct
+
+in @ct | base64url -d | aes-gcm -d key=@cek | utf8 | out @plain`,
+  },
+  {
+    id: "hkdf-as-aes-gcm",
+    group: "Encrypt",
+    title: "HKDF → AES key → encrypt",
+    blurb:
+      "Derive an AES-256 key with `hkdf as=aes/256` (deriveKey), then AES-GCM encrypt with key=@cek.",
+    recipe: `random 32 | hkdf 32 as=aes/256 | out @cek
+
+input | utf8 | aes-gcm key=@cek | base64url | out @ct`,
+  },
+  {
+    id: "aes-cbc-roundtrip",
+    group: "Encrypt",
+    title: "AES-CBC encrypt / decrypt",
+    blurb:
+      "Unauthenticated AES-CBC interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
+    recipe: `genkey aes/256 | out @cek
+
+input | utf8 | aes-cbc key=@cek | to hex | out @ct
+
+in @ct | from hex | aes-cbc -d key=@cek | utf8 | out @plain`,
+  },
+  {
+    id: "aes-ctr-roundtrip",
+    group: "Encrypt",
+    title: "AES-CTR encrypt / decrypt",
+    blurb:
+      "Unauthenticated AES-CTR interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
+    recipe: `genkey aes/256 | out @cek
+
+input | utf8 | aes-ctr key=@cek | to hex | out @ct
+
+in @ct | from hex | aes-ctr -d key=@cek | utf8 | out @plain`,
+  },
+  {
+    id: "hkdf-as-aes-kw-wrap",
+    group: "Keys wrap / agree",
+    title: "HKDF → AES-KW → wrap CEK",
+    blurb:
+      "Derive an AES-KW KEK (`as=aes-kw/256`), wrap a CEK with AES-KW, then unwrap.",
+    recipe: `random 32 | hkdf 32 as=aes-kw/256 | out @kek
+
+genkey aes/256 | out @cek
+
+wrap key=@kek target=@cek | to hex | out @wrapped
+
+in @wrapped | from hex | unwrap key=@kek | to hex | out @cek-raw`,
+  },
+  {
+    id: "wrap-aes-gcm",
+    group: "Keys wrap / agree",
+    title: "Wrap CEK with AES-GCM",
+    blurb:
+      "SubtleCrypto wrapKey under AES-GCM (IV||wrapped packing). Prefer AES-KW for new key-wrap work.",
+    recipe: `genkey aes/256 | out @kek
+genkey aes/256 | out @cek
+
+wrap mode=aes-gcm key=@kek target=@cek | to hex | out @wrapped
+
+in @wrapped | from hex | unwrap mode=aes-gcm key=@kek | to hex | out @cek-raw`,
+  },
+  {
+    id: "x25519-ecdh",
+    group: "Keys wrap / agree",
+    title: "X25519 ECDH → AES key",
+    blurb:
+      "Generate two X25519 keys, ECDH deriveBits, then HKDF to an AES-GCM CEK.",
+    recipe: `genkey x25519 | out @local
+genkey x25519 | out @peer
+
+ecdh private=@local peer=@peer | hkdf 32 as=aes/256 | out @cek
+in @cek | export jwk | out @cek-jwk`,
   },
   {
     id: "slip39-split",
@@ -1725,32 +1752,6 @@ in @signed | gpg.verify key=@me | out @ok`,
     recipe: `gpg.genkey email="you@example.com" | agent.save protection=device | out @priv`,
   },
   {
-    id: "hkp-fetch-pub",
-    group: "OpenPGP",
-    title: "Fetch public key",
-    blurb: "Pull armored public key from the keyserver (`hkp.get`). Edit the fingerprint before running.",
-    recipe: `hkp.get AABBCCDDEEFF00112233445566778899AABBCCDD | out @bob`,
-  },
-  {
-    id: "hkp-search-encrypt",
-    group: "OpenPGP",
-    title: "Search → encrypt (separate)",
-    blurb:
-      "Directory search → filter approved/encrypt → `gpg.encrypt to=@alices` (one ciphertext per recipient).",
-    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
-
-input | gpg.encrypt to=@alices`,
-  },
-  {
-    id: "hkp-encrypt-combined",
-    group: "OpenPGP",
-    title: "Group encrypt (combined)",
-    blurb: "One OpenPGP message with N PKESKs (`mode=combined`).",
-    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
-
-input | gpg.encrypt to=@alices mode=combined`,
-  },
-  {
     id: "agent-sign-encrypt-to",
     group: "OpenPGP",
     title: "Vault sign + encrypt to @alices",
@@ -1785,15 +1786,56 @@ input | gpg.encrypt to=@alices -s key=@me mode=combined`,
     recipe: `input | gpg.inspect format=packets | out @report`,
   },
   {
-    id: "passphrase-char",
-    group: "Basics",
-    title: "Character passphrase",
-    blurb: "69-char alphabet random passphrase (`passphrase mode=char`).",
-    recipe: `passphrase mode=char length=20 | out @pass`,
+    id: "hkp-fetch-pub",
+    group: "Directory",
+    title: "Fetch public key",
+    blurb: "Pull armored public key from the keyserver (`hkp.get`). Edit the fingerprint before running.",
+    recipe: `hkp.get AABBCCDDEEFF00112233445566778899AABBCCDD | out @bob`,
+  },
+  {
+    id: "hkp-search-encrypt",
+    group: "Directory",
+    title: "Search → encrypt (separate)",
+    blurb:
+      "Directory search → filter approved/encrypt → `gpg.encrypt to=@alices` (one ciphertext per recipient).",
+    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
+
+input | gpg.encrypt to=@alices`,
+  },
+  {
+    id: "hkp-encrypt-combined",
+    group: "Directory",
+    title: "Group encrypt (combined)",
+    blurb: "One OpenPGP message with N PKESKs (`mode=combined`).",
+    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
+
+input | gpg.encrypt to=@alices mode=combined`,
+  },
+  {
+    id: "webauthn-prf-aes-gcm",
+    group: "WebAuthn",
+    title: "WebAuthn PRF → HKDF → AES-GCM",
+    blurb:
+      "Unlock vault passkey PRF IKM (`webauthn.prf`), HKDF to an AES-GCM CEK, encrypt plaintext, then decrypt. Main-thread ceremony.",
+    recipe: `webauthn.prf | hkdf 32 as=aes/256 | out @cek
+
+input | utf8 | aes-gcm key=@cek | base64url | out @ct
+
+in @ct | base64url -d | aes-gcm -d key=@cek | utf8 | out @plain`,
+  },
+  {
+    id: "webauthn-attest-mds",
+    group: "WebAuthn",
+    title: "Attestation → MDS",
+    blurb:
+      "Paste a base64 or hex attestationObject in Inputs, parse fmt/AAGUID (`webauthn.attest`), then soft FIDO MDS lookup. Soft / informational — not a CAST gate.",
+    recipe: `input | webauthn.attest | out @att
+
+in @att | webauthn.mds | out @mds`,
   },
   {
     id: "base32-id",
-    group: "Basics",
+    group: "Encoding",
     title: "Base32 encode",
     blurb: "RFC 4648 Base32 (no padding) — same codec as Quorum room ids.",
     recipe: `random 10 | base32 | out @id`,

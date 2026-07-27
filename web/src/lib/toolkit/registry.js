@@ -46,6 +46,7 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
  * @property {string} [conjugateOf]  forward partner — omitted from solo drawer list
  * @property {boolean} [decodeTwin]  drawer shows encode | encode -d pair
  * @property {string} [pairCaption]  optional family label above a conjugate row
+ * @property {string} [glyph]  key into generated glyphs.js (overrides shelf/toolbox)
  * @property {string} doc
  * @property {IoType} input
  * @property {IoType} output
@@ -274,7 +275,7 @@ export const STEPS = [
     shelf: "ports",
     conjugate: "out",
     pairCaption: "In / out",
-    doc: "Free-form text at run time (textarea / file). Never stored in the recipe. Aliases: `paste`, `cat`. Example: `input | utf8 | hex`.",
+    doc: "Free-form text at run time (textarea / file). Never stored in the recipe. Aliases: `paste`, `cat`. Example: `input | utf8 | to hex`.",
     input: "none",
     output: "text",
     unresolvedInputs: "text",
@@ -398,7 +399,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "digest",
-    doc: "Hash bytes with SubtleCrypto.digest (SHA-256 / 384 / 512; SHA-1 available but discouraged). Example: `random 32 | digest | hex | out @digest`.",
+    doc: "Hash bytes with SubtleCrypto.digest (SHA-256 / 384 / 512; SHA-1 available but discouraged). Example: `random 32 | digest | to hex | out @digest`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -932,19 +933,13 @@ export const STEPS = [
     kind: "transform",
     toolbox: "encoding",
     shelf: "binary",
-    decodeTwin: true,
-    pairCaption: "PEM",
-    doc: "Wrap DER as PEM (`pem.encode`) or strip armor (`pem.decode`). Label auto: SPKI/`which=public` → PUBLIC KEY, PKCS#8 → PRIVATE KEY. Decode sets format/which from the BEGIN line. Example: `.public | export spki | pem.encode | out @public`. Also accepts `pem -d`.",
+    glyph: "pem",
+    conjugate: "der",
+    pairCaption: "PEM / DER",
+    doc: "Wrap DER bytes as PEM armor. Label auto: SPKI/`which=public` → PUBLIC KEY, PKCS#8 → PRIVATE KEY. Conjugate: `der` strips armor. Example: `.public | export spki | pem | out @public`.",
     input: "bytes",
     output: "text",
     params: [
-      {
-        name: "decode",
-        type: "bool",
-        flag: "-d",
-        default: false,
-        doc: "Decode (dearmor) PEM → DER bytes",
-      },
       {
         name: "label",
         type: "enum",
@@ -953,18 +948,16 @@ export const STEPS = [
         doc: "PEM label when encoding (auto infers from prior export format)",
       },
     ],
-    effectiveIo(params) {
-      if (params?.decode) return { input: "text", output: "bytes" };
-      return { input: "bytes", output: "text" };
-    },
   },
   {
     name: "der",
     kind: "transform",
     toolbox: "encoding",
     shelf: "binary",
-    doc: "Pass DER/binary bytes through unchanged (identity).",
-    input: "bytes",
+    glyph: "pem",
+    conjugateOf: "pem",
+    doc: "Strip PEM armor → DER bytes. Sets format/which from the BEGIN label when known. Example: `in @pub | der | import spki` or `in @pub | der | as key`.",
+    input: "text",
     output: "bytes",
     params: [],
   },
@@ -973,6 +966,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "encoding",
     shelf: "binary",
+    glyph: "base64",
     decodeTwin: true,
     pairCaption: "Base64",
     doc: "Encode bytes as Base64 (`base64.encode`) or decode (`base64.decode`). Example: `random 32 | base64.encode | out @secret`. Also accepts `base64 -d`.",
@@ -997,6 +991,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "encoding",
     shelf: "binary",
+    glyph: "base64",
     decodeTwin: true,
     pairCaption: "Base64url",
     doc: "Encode bytes as URL-safe Base64 without padding (`base64url.encode`) or decode (`base64url.decode`). Also accepts `base64url -d`.",
@@ -1017,27 +1012,54 @@ export const STEPS = [
     },
   },
   {
-    name: "hex",
+    name: "to",
     kind: "transform",
     toolbox: "encoding",
     shelf: "binary",
-    decodeTwin: true,
-    pairCaption: "Hex",
-    doc: "Encode bytes as lowercase hex (`hex.encode`) or decode (`hex.decode`). Example: `… | digest | hex.encode | out @digest`.",
+    glyph: "hex",
+    conjugate: "from",
+    pairCaption: "To / From",
+    doc: "Encode bytes to text. Today: `to hex` (lowercase hex). Example: `… | digest | to hex | out @digest`.",
     input: "bytes",
     output: "text",
     params: [
       {
-        name: "decode",
-        type: "bool",
-        flag: "-d",
-        default: false,
-        doc: "Decode hex text → bytes",
+        name: "encoding",
+        type: "enum",
+        positional: true,
+        default: "hex",
+        enum: ["hex"],
+        doc: "Target encoding (hex for now; more encodings later)",
       },
     ],
     effectiveIo(params) {
-      if (params?.decode) return { input: "text", output: "bytes" };
+      void params;
       return { input: "bytes", output: "text" };
+    },
+  },
+  {
+    name: "from",
+    kind: "transform",
+    toolbox: "encoding",
+    shelf: "binary",
+    glyph: "hex",
+    conjugateOf: "to",
+    doc: "Decode encoded text → bytes. Today: `from hex`. Example: `in @digest | from hex | …`.",
+    input: "text",
+    output: "bytes",
+    params: [
+      {
+        name: "encoding",
+        type: "enum",
+        positional: true,
+        default: "hex",
+        enum: ["hex"],
+        doc: "Source encoding (hex for now)",
+      },
+    ],
+    effectiveIo(params) {
+      void params;
+      return { input: "text", output: "bytes" };
     },
   },
   {
@@ -1045,6 +1067,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "encoding",
     shelf: "binary",
+    glyph: "base32",
     decodeTwin: true,
     pairCaption: "Base32",
     doc: "Encode bytes as RFC 4648 Base32 (`base32.encode`) or decode (`base32.decode`). Example: `random 10 | base32.encode | out @id`.",
@@ -1069,6 +1092,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "encoding",
     shelf: "text",
+    glyph: "text",
     doc: "Decode UTF-8 bytes → text (or encode text → bytes when holding text). Example: `… | gpg.symdecrypt | utf8 | out @pem`.",
     input: "bytes",
     output: "text",
@@ -1273,10 +1297,9 @@ export const STEPS = [
     kind: "source",
     toolbox: "flow",
     shelf: "control",
-    doc: "Source a prior `out` slot (live typed value). Chains are blank-line separated. Forms: `in @kp`, `in kp`, `in 1`. Alias: `from`. See docs/RECIPE.md.",
+    doc: "Source a prior `out` slot (live typed value). Chains are blank-line separated. Forms: `in @kp`, `in kp`, `in 1`. (`from` is the encoding verb — use `from hex`, not slot load.) See docs/RECIPE.md.",
     input: "none",
     output: "bytes",
-    aliases: ["from"],
     params: [
       {
         name: "ref",
@@ -1291,7 +1314,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "flow",
     shelf: "control",
-    doc: "Project a member via selector. `.public` / `.private` turn a keypair tip into a `key` tip (that half). Usually written bare: `.public | export spki | pem.encode`. Also as a tee/foreach branch prefix: `- .public | …`.",
+    doc: "Project a member via selector. `.public` / `.private` turn a keypair tip into a `key` tip (CryptoKey half). Usually written bare: `.public | export spki | pem`. Also as a tee/foreach branch prefix: `- .public | …`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -1308,7 +1331,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "flow",
     shelf: "control",
-    doc: "Retag refined type only (no crypto). Allowlisted: `as master` (16/32 B), `as scalar`, `as opaque`. Not an import — use `import` for keys. Distinct from hkdf/pbkdf2 param `as=` (future).",
+    doc: "Cast the tip. Retag (no crypto): `as master` / `as scalar` / `as opaque` / `as public` / `as private`. Materialize (WebCrypto): `as key` / `as keypair` from DER or PEM. Distinct from hkdf/pbkdf2/ecdh param `as=aes/256`. Literal casts (`1234 as int`) are not shipped yet.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -1317,10 +1340,49 @@ export const STEPS = [
         type: "enum",
         positional: true,
         default: "opaque",
-        enum: ["master", "scalar", "opaque"],
-        doc: "Refined kind to apply to current bytes",
+        enum: [
+          "master",
+          "scalar",
+          "opaque",
+          "public",
+          "private",
+          "key",
+          "keypair",
+        ],
+        doc: "Cast target (retag or materialize — see docs)",
+      },
+      {
+        name: "alg",
+        type: "string",
+        default: "ec/p256",
+        doc: "Algorithm for `as key` / `as keypair` (same tokens as import; ignored for retags)",
+      },
+      {
+        name: "usage",
+        type: "string",
+        default: "auto",
+        doc: "Key usages hint for materializing casts (auto|sign|encrypt|derive)",
+      },
+      {
+        name: "padding",
+        type: "string",
+        default: "pss",
+        doc: "RSA sign padding for materializing casts (pss|pkcs1)",
+      },
+      {
+        name: "hash",
+        type: "string",
+        default: "sha-256",
+        doc: "Hash for RSA materializing casts",
       },
     ],
+    effectiveIo(params) {
+      const t = String(params?.type || "opaque").toLowerCase();
+      if (t === "key") return { input: "bytes", output: "key" };
+      if (t === "keypair") return { input: "bytes", output: "keypair" };
+      if (t === "public" || t === "private") return { input: "bytes", output: "bytes" };
+      return { input: "bytes", output: "bytes" };
+    },
   },
   {
     name: "gpg.genkey",
@@ -1855,9 +1917,13 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webauthn",
     shelf: "attestation",
-    doc: "Parse WebAuthn attestationObject bytes → JSON (fmt, aaguid). Soft / informational — not a CAST gate.",
+    doc: "Parse WebAuthn attestationObject (bytes, or base64/hex text from Inputs) → JSON (fmt, aaguid). Soft / informational — not a CAST gate. Template: Templates → WebAuthn → Attestation → MDS.",
     input: "bytes",
     output: "text",
+    overloads: [
+      { when: { base: "bytes" }, output: { base: "text", kind: "opaque" } },
+      { when: { base: "text" }, output: { base: "text", kind: "opaque" } },
+    ],
     params: [],
   },
   {
@@ -1903,7 +1969,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "flow",
     shelf: "control",
-    doc: "Mid-stem fork: indented `-` body (or `{ … }`) on a clone; `- .public | …` projects members. Stem unchanged. Requires a body — use `peek` for side inspect. Prefer over multi-chain when forking mid-pipeline.",
+    doc: "Fork side chains on a clone (`- .public | …`); stem continues unchanged. Use `peek` for a side inspect only.",
     input: "bytes",
     output: "bytes",
     params: [],
@@ -1940,7 +2006,89 @@ const BY_NAME = new Map();
 /** @type {Map<string, string>} */
 const ALIAS_TO_CANONICAL = new Map();
 
+/**
+ * Explicit per-verb glyph ids. Conjugates / decodeTwins share one asset;
+ * direction is shown by encode/decode tile tint in the ops drawer.
+ * @type {Record<string, string>}
+ */
+export const STEP_GLYPHS = {
+  genkey: "genkey",
+  export: "export",
+  import: "import",
+  digest: "digest",
+  sign: "sign",
+  verify: "sign",
+  "aes-gcm": "aead",
+  "aes-cbc": "cipher",
+  "aes-ctr": "cipher",
+  "rsa-oaep": "rsa",
+  "rsa-pkcs1": "rsa",
+  hkdf: "hkdf",
+  pbkdf2: "pbkdf2",
+  ecdh: "agreement",
+  wrap: "wrap",
+  unwrap: "wrap",
+  pem: "pem",
+  der: "pem",
+  base64: "base64",
+  base64url: "base64",
+  to: "hex",
+  from: "hex",
+  base32: "base32",
+  utf8: "text",
+  random: "random",
+  passphrase: "passphrase",
+  input: "input",
+  out: "out",
+  qr: "qr",
+  text: "text-sink",
+  shares: "shares",
+  "sss.split": "split",
+  "sss.combine": "recover",
+  blip39: "blip39",
+  at: "at",
+  foreach: "foreach",
+  tee: "tee",
+  in: "in",
+  select: "select",
+  as: "as",
+  inspect: "inspect",
+  peek: "peek",
+  "gpg.encrypt": "gpg-encrypt",
+  "gpg.decrypt": "gpg-encrypt",
+  "gpg.sign": "gpg-sign",
+  "gpg.verify": "gpg-sign",
+  "gpg.genkey": "gpg-genkey",
+  "gpg.inspect": "gpg-inspect",
+  "gpg.symencrypt": "gpg-sym",
+  "gpg.symdecrypt": "gpg-sym",
+  "agent.unlock": "unlock",
+  "agent.pub": "pubkey",
+  "agent.list": "agent-list",
+  "agent.save": "agent-save",
+  "hkp.search": "hkp-search",
+  "hkp.get": "hkp-get",
+  "hkp.filter": "hkp-filter",
+  "hkp.cache": "hkp-cache",
+  "recipients.merge": "recipients",
+  "webauthn.create": "wa-create",
+  "webauthn.get": "wa-get",
+  "webauthn.prf": "wa-prf",
+  "webauthn.caps": "wa-caps",
+  "webauthn.attest": "wa-attest",
+  "webauthn.mds": "wa-mds",
+};
+
 for (const step of STEPS) {
+  const assigned = STEP_GLYPHS[step.name] || step.glyph;
+  if (assigned) step.glyph = assigned;
+  else if (step.shelf && SHELF_META[step.shelf]?.glyph) {
+    step.glyph = SHELF_META[step.shelf].glyph;
+  } else if (TOOLBOX_META[step.toolbox]?.glyph) {
+    step.glyph = TOOLBOX_META[step.toolbox].glyph;
+  } else {
+    step.glyph = "gear";
+  }
   BY_NAME.set(step.name, step);
   ALIAS_TO_CANONICAL.set(step.name, step.name);
   for (const a of step.aliases || []) {
@@ -2087,7 +2235,7 @@ export function listDrawerRows(items) {
     if (s.decodeTwin) {
       rows.push({
         type: "pair",
-        caption: s.pairCaption || undefined,
+        caption: s.pairCaption || s.name,
         forward: s,
         decodeTwin: true,
       });
@@ -2100,7 +2248,9 @@ export function listDrawerRows(items) {
         seen.add(reverse.name);
         rows.push({
           type: "pair",
-          caption: s.pairCaption || undefined,
+          caption:
+            s.pairCaption ||
+            `${s.label || s.name} / ${reverse.label || reverse.name}`,
           forward: s,
           reverse,
         });
@@ -2110,7 +2260,49 @@ export function listDrawerRows(items) {
 
     rows.push({ type: "solo", step: s });
   }
+
   return rows;
+}
+
+/** Reverse partners that are decode / inbound shaped (accent tint). */
+const DECODE_CONJUGATE_REVERSES = new Set([
+  "from",
+  "der",
+  "import",
+  "unwrap",
+  "verify",
+  "out",
+  "sss.combine",
+  "gpg.decrypt",
+  "gpg.verify",
+  "gpg.symdecrypt",
+]);
+
+/**
+ * Encode / decode / neutral direction for ops-tile tinting
+ * (brand ≈ out/encode, accent ≈ in/decode).
+ * @param {StepSpec} step
+ * @param {{ decode?: boolean, pairRole?: "forward"|"reverse"|"solo" }} [opts]
+ * @returns {"encode"|"decode"|"neutral"}
+ */
+export function pairDirection(step, opts = {}) {
+  if (!step) return "neutral";
+  if (opts.decode || (step.decodeTwin && opts.decode)) return "decode";
+  if (opts.decode) return "decode";
+  if (step.decodeTwin) {
+    return opts.decode ? "decode" : "encode";
+  }
+  if (opts.pairRole === "reverse" || DECODE_CONJUGATE_REVERSES.has(step.name)) {
+    return "decode";
+  }
+  if (opts.pairRole === "forward" && step.conjugate) return "encode";
+  if (step.kind === "source" || step.kind === "flow") return "neutral";
+  if (step.kind === "sink") return "encode";
+  // Transforms: bytes→text tends encode; text→bytes tends decode
+  const io = step.effectiveIo ? step.effectiveIo({}) : { input: step.input, output: step.output };
+  if (io.input === "bytes" && io.output === "text") return "encode";
+  if (io.input === "text" && io.output === "bytes") return "decode";
+  return "neutral";
 }
 
 /**

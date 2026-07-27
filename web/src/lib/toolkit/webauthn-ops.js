@@ -8,6 +8,10 @@
 import { parseAttestationObject } from "../webauthn/attestation.js";
 import { lookupAaguidInMds, normalizeAaguid } from "../webauthn/mds.js";
 import { createPasskeyPrf, getPasskeyPrf } from "../vault.js";
+import { base64ToBytes, hexToBytes } from "./encode.js";
+
+const ATTEST_HINT =
+  "Pipe attestationObject bytes, or paste base64/hex in Inputs (Templates → WebAuthn → Attestation → MDS).";
 
 /**
  * @returns {Promise<{ type: "text", data: string, meta: object }>}
@@ -134,16 +138,51 @@ export async function execWaPrf() {
 }
 
 /**
- * Parse attestationObject bytes → AAGUID / fmt JSON.
+ * Decode pasted attestationObject from base64 / base64url / hex text.
+ * @param {string} raw
+ * @returns {Uint8Array|null}
+ */
+function decodeAttestationText(raw) {
+  const s = String(raw || "").replace(/\s+/g, "");
+  if (!s) return null;
+  if (/^[0-9a-fA-F]+$/.test(s) && s.length % 2 === 0 && s.length >= 8) {
+    try {
+      return hexToBytes(s);
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    return base64ToBytes(s);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse attestationObject bytes (or base64/hex text) → AAGUID / fmt JSON.
  * @param {{ type: string, data: * } | null} value
  * @returns {Promise<{ type: "text", data: string, meta: object }>}
  */
 export async function execWaAttest(value) {
-  if (!value || value.type !== "bytes") {
-    throw new Error("webauthn.attest expects attestationObject bytes");
+  /** @type {Uint8Array|null} */
+  let bytes = null;
+  if (value?.type === "bytes" && value.data) {
+    bytes =
+      value.data instanceof Uint8Array
+        ? value.data
+        : new Uint8Array(/** @type {ArrayBuffer} */ (value.data));
+  } else if (value?.type === "text") {
+    bytes = decodeAttestationText(String(value.data || ""));
+    if (!bytes) {
+      throw new Error(`Could not decode attestationObject text. ${ATTEST_HINT}`);
+    }
+  } else {
+    throw new Error(`webauthn.attest expects attestationObject bytes. ${ATTEST_HINT}`);
   }
-  const parsed = parseAttestationObject(value.data);
-  if (!parsed) throw new Error("Could not parse attestationObject");
+
+  const parsed = parseAttestationObject(bytes);
+  if (!parsed) throw new Error(`Could not parse attestationObject. ${ATTEST_HINT}`);
   const payload = {
     fmt: parsed.fmt,
     aaguid: parsed.aaguid,

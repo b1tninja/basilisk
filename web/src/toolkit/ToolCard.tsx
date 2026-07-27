@@ -1,23 +1,30 @@
 import { TOOLBOX_META, SHELF_META, getShelfMeta } from "../lib/toolkit/registry.js";
 import { GLYPH_PATHS } from "../lib/toolkit/glyphs.js";
+import { decodeTwinToken } from "../lib/toolkit/step-names.js";
 import { cn } from "@/lib/cn";
 
 export type ToolCardOp = {
   name: string;
   toolbox?: string;
   shelf?: string;
+  glyph?: string;
   doc?: string;
   kind?: string;
   input?: string;
   output?: string;
   label?: string;
   aliases?: string[];
+  decodeTwin?: boolean;
+  conjugate?: string;
+  conjugateOf?: string;
+  pairCaption?: string;
   params?: Array<{
     name: string;
     type: string;
     doc?: string;
     enum?: string[];
     default?: unknown;
+    flag?: string;
   }>;
   unresolvedInputs?: string | null;
   unresolvedRecipients?: boolean;
@@ -62,6 +69,7 @@ function Glyph({ id }: { id: string }) {
 }
 
 function glyphFor(op: ToolCardOp): string {
+  if (op.glyph) return op.glyph;
   if (op.shelf) {
     const fromShelf = (SHELF_META as Record<string, { glyph?: string }>)[op.shelf]?.glyph;
     if (fromShelf) return fromShelf;
@@ -84,8 +92,11 @@ export function ToolCard({
     ? op.effectiveIo(decode ? { decode: true } : {})
     : { input: op.input || "?", output: op.output || "?" };
   const display = op.label || op.name;
-  const nameLabel = decode ? `${display} -d` : display;
-  const recipeTok = `${op.name}${decode ? " -d" : ""}`;
+  const nameLabel =
+    op.decodeTwin ? decodeTwinToken(op, decode) : decode ? `${display} -d` : display;
+  const recipeTok = op.decodeTwin
+    ? decodeTwinToken(op, decode)
+    : `${op.name}${decode ? " -d" : ""}`;
   const tb = op.toolbox || "io";
   const tbMeta = (TOOLBOX_META as Record<string, { badge?: string; label?: string }>)[tb] || {
     badge: tb,
@@ -97,7 +108,7 @@ export function ToolCard({
   const shown = params.slice(0, 8);
 
   return (
-    <div className={cn("tool-card", className)}>
+    <div className={cn("tool-card", className)} data-dir={decode ? "decode" : "encode"}>
       <header className="tool-card-head">
         <Glyph id={glyphFor(op)} />
         <div className="tool-card-titles">

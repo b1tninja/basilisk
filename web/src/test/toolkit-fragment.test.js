@@ -243,7 +243,7 @@ describe("hash writers", () => {
   });
 
   it("encodes full recipes under the size cap", () => {
-    const r = hashForRecipe("random 8 | hex | out @x");
+    const r = hashForRecipe("random 8 | to hex | out @x");
     expect(r.ok).toBe(true);
     expect(r.hash.startsWith("#r=")).toBe(true);
     expect(parseToolkitHash(r.hash)).toEqual({

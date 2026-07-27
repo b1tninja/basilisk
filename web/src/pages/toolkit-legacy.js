@@ -60,6 +60,7 @@ import {
 } from "../lib/toolkit/workspace-store.js";
 import {
   PRESETS,
+  listPresetGroups,
   compileRecipe,
   canonicalizeRecipe,
   migrateRecipe,
@@ -98,6 +99,7 @@ import {
   listCipherPickerSteps,
   listDrawerRows,
   listSteps,
+  pairDirection,
   stepsAccepting,
   TOOLBOX_META,
 } from "../lib/toolkit/registry.js";
@@ -263,6 +265,10 @@ let ciphertextDraft = "";
 let fragmentWriteLock = false;
 /** Last preset id loaded (for short `#t=` fragment form). */
 let lastPresetId = /** @type {string|null} */ (null);
+/** Templates menu: active category (null = first group). */
+let presetMenuGroup = /** @type {string|null} */ (null);
+/** Templates menu search query. */
+let presetMenuFilter = "";
 /** Last library workspace id (Save updates this entry). */
 let lastWorkspaceId = /** @type {string|null} */ (null);
 /** Fingerprint of title+recipe after last load/save (dirty tracking). */
@@ -280,6 +286,8 @@ let opsFilter = "";
 let opsCollapsed = new Set(["webauthn"]);
 /** Shelf keys `${toolbox}:${shelf}` the user has opened (drawers start closed). */
 let opsShelfExpanded = new Set();
+/** Last tip seed that auto-expanded Encode/Formats shelves (`pem` | `der` | ""). */
+let tipShelfSeed = "";
 /**
  * Suggest pull-out state — cell stem rail or a tee/foreach nest/branch rail.
  * @type {null | { scope: "cell" | "nest", tb: string, stem?: number, branch?: number | null }}
@@ -588,16 +596,16 @@ function friendlyTypeLabel(t) {
     return t.which ? `JWK ${t.which}` : "JWK";
   }
   if (t.base === "keypair") {
-    return t.alg ? `${t.alg} keypair` : "keypair";
+    return t.alg ? `${t.alg} CryptoKeyPair` : "CryptoKeyPair";
   }
   if (t.base === "key") {
     if (t.which === "public") {
-      return t.alg ? `${t.alg} public key` : "public key";
+      return t.alg ? `${t.alg} CryptoKey (public)` : "CryptoKey (public)";
     }
     if (t.which === "private") {
-      return t.alg ? `${t.alg} private key` : "private key";
+      return t.alg ? `${t.alg} CryptoKey (private)` : "CryptoKey (private)";
     }
-    return t.alg ? `${t.alg} key` : "key";
+    return t.alg ? `${t.alg} CryptoKey` : "CryptoKey";
   }
   if (t.base === "shares") {
     return t.kind === "raw" ? "raw shares" : "share mnemonics";
@@ -643,8 +651,9 @@ function toolCardHtml(s, opts = {}) {
         .map((a) => `<code>${escapeHtml(a)}</code>`)
         .join(", ")}</p>`
     : "";
+  const tip = currentPipelineOutput();
   const paramList = (s.params || []).filter(
-    (p) => paramVisibility(s.name, p, params).show
+    (p) => paramVisibility(s.name, p, params, tip).show
   );
   const shown = paramList.slice(0, 8);
   const paramsHtml = shown.length
@@ -832,9 +841,9 @@ app.innerHTML = `
   <div class="app-toolbar">
     <details class="toolbar-menu" id="preset-gallery">
       <summary class="btn btn-ghost btn-compact toolkit-presets-summary">Templates <span aria-hidden="true">▾</span></summary>
-      <div class="toolbar-popover">
-        <p class="muted m-0-b-md fs-sm">One-click notebooks. Companion rows (⇄) can add forward and inverse together.</p>
-        <div class="preset-grid" id="preset-grid"></div>
+      <div class="toolbar-popover preset-menu-popover">
+        <p class="muted m-0-b-md fs-sm">Pick a category, then a notebook. Companion rows (⇄) can add forward and inverse together.</p>
+        <div class="preset-menu" id="preset-grid"></div>
       </div>
     </details>
     <details class="toolbar-menu" id="more-menu">
@@ -858,6 +867,11 @@ app.innerHTML = `
           title="Download title + recipe as .basilisk.json">Export file</button>
         <button type="button" class="toolbar-menu-item" id="workspace-import-btn"
           title="Load a .basilisk.json or plain recipe file">Import file…</button>
+        <hr class="toolbar-menu-sep">
+        <button type="button" class="toolbar-menu-item" id="clear-sensitive-btn"
+          title="Wipe kernel slots, outputs, and inputs — keep cell recipes">Clear sensitive</button>
+        <button type="button" class="toolbar-menu-item" id="copy-share-link"
+          title="Copy shareable toolkit link (recipe in URL fragment)">Copy link</button>
         <hr class="toolbar-menu-sep">
         <button type="button" class="toolbar-menu-item" id="reset-notebook-btn"
           title="Clear sensitive and reset to one empty cell">Reset notebook</button>
@@ -955,44 +969,48 @@ app.innerHTML = `
             </div>
             <div class="notebook-header-actions btn-row wrap">
               <button type="button" class="btn btn-compact notebook-run-primary" id="run-btn" disabled title="Run all cells">Run all</button>
-              <button type="button" class="btn btn-ghost btn-compact" id="clear-sensitive-btn"
-                title="Wipe kernel slots, outputs, and inputs — keep cell recipes">Clear sensitive</button>
-              <button type="button" class="btn btn-ghost btn-compact" id="copy-share-link"
-                title="Copy shareable toolkit link (recipe in URL fragment)">Copy link</button>
               <button type="button" class="kernel-chip btn btn-ghost btn-compact" id="kernel-chip"
                 aria-expanded="false" aria-controls="variables-drawer"
                 title="Session variables (kernel slots)">
                 ${glyphHtml("variables", "ops-glyph kernel-chip-glyph")}<span id="kernel-chip-label">0 slots</span>
               </button>
+              <details class="toolbar-menu session-tray-menu" id="session-tray">
+                <summary class="btn btn-ghost btn-compact session-tray-summary" title="Agent, keychain, and trust">
+                  ${glyphHtml("agent", "ops-glyph toolbar-glyph")}
+                  Session
+                  <span class="session-tray-summary-counts muted fs-xs" id="session-tray-summary-counts"></span>
+                  <span aria-hidden="true">▾</span>
+                </summary>
+                <div class="toolbar-popover toolbar-popover-menu session-tray-popover">
+                  <div class="session-tray-rail" id="session-tray-rail" role="toolbar" aria-label="Session tray">
+                    <button type="button" class="session-tray-chip toolbar-menu-item" data-tray="agent"
+                      aria-expanded="false" aria-controls="session-tray-panel"
+                      title="Agent session — unlocked private keys">
+                      ${glyphHtml("agent", "ops-glyph toolbar-glyph")}
+                      <span class="session-tray-chip-label">Agent</span>
+                      <span class="session-tray-count" data-tray-count="agent">0</span>
+                    </button>
+                    <button type="button" class="session-tray-chip toolbar-menu-item" data-tray="keychain"
+                      aria-expanded="false" aria-controls="session-tray-panel"
+                      title="Local keychain — My Keys vault">
+                      ${glyphHtml("keys", "ops-glyph toolbar-glyph")}
+                      <span class="session-tray-chip-label">Keychain</span>
+                      <span class="session-tray-count" data-tray-count="keychain">0</span>
+                    </button>
+                    <button type="button" class="session-tray-chip toolbar-menu-item" data-tray="trust"
+                      aria-expanded="false" aria-controls="session-tray-panel"
+                      title="Trust store — cached public keys">
+                      ${glyphHtml("attestation", "ops-glyph toolbar-glyph")}
+                      <span class="session-tray-chip-label">Trust</span>
+                      <span class="session-tray-count" data-tray-count="trust">0</span>
+                    </button>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
           <div class="notebook-header-context">
-            <div class="session-tray" id="session-tray">
-              <div class="session-tray-rail" id="session-tray-rail" role="toolbar" aria-label="Session tray">
-                <button type="button" class="session-tray-chip" data-tray="agent"
-                  aria-expanded="false" aria-controls="session-tray-panel"
-                  title="Agent session — unlocked private keys">
-                  ${glyphHtml("agent", "ops-glyph toolbar-glyph")}
-                  <span class="session-tray-chip-label">Agent</span>
-                  <span class="session-tray-count" data-tray-count="agent">0</span>
-                </button>
-                <button type="button" class="session-tray-chip" data-tray="keychain"
-                  aria-expanded="false" aria-controls="session-tray-panel"
-                  title="Local keychain — My Keys vault">
-                  ${glyphHtml("keys", "ops-glyph toolbar-glyph")}
-                  <span class="session-tray-chip-label">Keychain</span>
-                  <span class="session-tray-count" data-tray-count="keychain">0</span>
-                </button>
-                <button type="button" class="session-tray-chip" data-tray="trust"
-                  aria-expanded="false" aria-controls="session-tray-panel"
-                  title="Trust store — cached public keys">
-                  ${glyphHtml("attestation", "ops-glyph toolbar-glyph")}
-                  <span class="session-tray-chip-label">Trust</span>
-                  <span class="session-tray-count" data-tray-count="trust">0</span>
-                </button>
-              </div>
-              <div class="session-tray-panel hidden" id="session-tray-panel" hidden></div>
-            </div>
+            <div class="session-tray-panel hidden" id="session-tray-panel" hidden></div>
             <div id="pgp-mode-host" class="pgp-mode-host hidden"></div>
           </div>
           <p id="fragment-status" class="muted fs-xs mb-0 hidden" role="status"></p>
@@ -1075,9 +1093,9 @@ function initWorkspaceLayout() {
   if (Number.isFinite(w) && w >= PANE_LIMITS.ops.min) {
     ws.style.setProperty("--ops-w", `${w}px`);
   }
-  // Default collapsed; only expand when the user has explicitly opened it.
+  // Default expanded; honor an explicit saved preference if present.
   const opsCollapsedPane =
-    typeof layout.opsCollapsed === "boolean" ? layout.opsCollapsed : true;
+    typeof layout.opsCollapsed === "boolean" ? layout.opsCollapsed : false;
   ws.classList.toggle("ops-collapsed", opsCollapsedPane);
   // Drop legacy run-pane collapse class if present
   ws.classList.remove("run-collapsed");
@@ -2440,6 +2458,47 @@ function isNestInsertFocus(focus) {
 }
 
 /**
+ * Jump from Preview nest chips into the SIDE CHAINS / nest editor.
+ * @param {number} cellIndex
+ * @param {number} stem
+ * @param {number|null|undefined} branch
+ */
+function focusBuilderNestFromPreview(cellIndex, stem, branch) {
+  if (!Number.isFinite(cellIndex) || !Number.isFinite(stem)) return;
+  if (cellIndex !== focusedCell) focusCell(cellIndex);
+  const chain = chains[cellIndex];
+  const parent = chain?.steps?.[stem];
+  if (!parent || (parent.name !== "tee" && parent.name !== "foreach")) return;
+  if (branch != null && Number.isFinite(branch) && parent.branches?.[branch]) {
+    insertFocus = { stem, branch, body: null };
+  } else {
+    insertFocus = { stem, body: null };
+  }
+  renderBuilderInto(
+    document.getElementById(`cell-builder-${cellIndex}`),
+    cellIndex
+  );
+  renderSuggestDrawer();
+  requestAnimationFrame(() => {
+    const cell = document.querySelector(`.notebook-cell[data-cell="${cellIndex}"]`);
+    const target =
+      (branch != null &&
+        cell?.querySelector(
+          `[data-flow-stem="${stem}"] .builder-branch-list > .builder-branch-row:nth-child(${
+            branch + 1
+          })`
+        )) ||
+      cell?.querySelector(`[data-flow-stem="${stem}"]`) ||
+      cell?.querySelector(`[data-nest-stem="${stem}"]`);
+    if (target instanceof HTMLElement) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.add("builder-nest-flash");
+      setTimeout(() => target.classList.remove("builder-nest-flash"), 1200);
+    }
+  });
+}
+
+/**
  * @param {string} name
  * @param {number} [index]
  * @param {Record<string, string|number|boolean>} [paramOverrides]
@@ -2638,10 +2697,12 @@ function syncWhichWithFormat(step) {
  * @param {string} stepName
  * @param {{ name: string }} param
  * @param {Record<string, *>} params
+ * @param {import("../lib/toolkit/types.js").RefinedType|null|undefined} [tip]
  * @returns {{ show: boolean, locked?: boolean, forced?: string }}
  */
-function paramVisibility(stepName, param, params) {
-  // Direction is the verb (pem.encode / pem.decode), not a conjugate checkbox.
+function paramVisibility(stepName, param, params, tip) {
+  // Direction for encoding twins is the verb (base64.encode / base64.decode), not a checkbox.
+  // pem ↔ der is a conjugate pair (no decode param on pem).
   if (param.name === "decode") {
     const spec = getStep(stepName);
     if (spec?.decodeTwin && decodeTwinToken(spec, false).endsWith(".encode")) {
@@ -2651,9 +2712,28 @@ function paramVisibility(stepName, param, params) {
   if (stepName === "pem" && param.name === "label" && params?.decode) {
     return { show: false };
   }
+  if (
+    stepName === "as" &&
+    (param.name === "alg" ||
+      param.name === "usage" ||
+      param.name === "padding" ||
+      param.name === "hash")
+  ) {
+    const t = String(params?.type || "opaque").toLowerCase();
+    if (t !== "key" && t !== "keypair") return { show: false };
+  }
   if (param.name !== "which") return { show: true };
   const format = String(params.format || "");
   if (stepName === "export") {
+    // Projected key tip already owns the half — hide which= (still set via syncWhichWithFormat).
+    if (
+      tip &&
+      typeof tip === "object" &&
+      tip.base === "key" &&
+      (tip.which === "public" || tip.which === "private")
+    ) {
+      return { show: false };
+    }
     if (format === "spki") {
       return { show: true, locked: true, forced: "public" };
     }
@@ -3052,15 +3132,40 @@ function findRecipientAnchorStep(steps) {
 
 /**
  * Paint Share mnemonics / Decrypt / Input / binder UI into the owning step cards.
+ * Reuses recipient binders when slots/foreach and host are unchanged.
  */
 function renderAllCellRuntimePanels() {
-  destroyCellBinders();
+  /** @type {Set<number>} */
+  const keepBinders = new Set();
+
   for (let i = 0; i < chains.length; i++) {
     const chainSteps = chains[i].steps || [];
     const needs = cellRuntimeNeeds(chains[i]);
     const builder = document.getElementById(`cell-builder-${i}`);
     const fallbackInputs = document.getElementById(`cell-inputs-${i}`);
     const fallbackBind = document.getElementById(`cell-bind-${i}`);
+
+    const info = cellRecipientInfo(chains[i]);
+    const encIdx = info.slots > 0 ? findRecipientAnchorStep(chainSteps) : -1;
+    const reuseBindHost =
+      info.slots > 0
+        ? (() => {
+            const slot = builder?.querySelector(`[data-bind-slot="${encIdx}"]`);
+            return slot instanceof HTMLElement
+              ? slot
+              : fallbackBind instanceof HTMLElement
+                ? fallbackBind
+                : null;
+          })()
+        : null;
+    const existingBinder = cellBinders.get(i);
+    const reuseBinder =
+      !!reuseBindHost &&
+      !!existingBinder &&
+      typeof existingBinder.matches === "function" &&
+      existingBinder.matches({ slots: info.slots, foreach: info.foreach }) &&
+      existingBinder.host === reuseBindHost &&
+      !!reuseBindHost.querySelector(".recipient-binder");
 
     builder?.querySelectorAll("[data-runtime-slot]").forEach((el) => {
       if (!(el instanceof HTMLElement)) return;
@@ -3077,6 +3182,7 @@ function renderAllCellRuntimePanels() {
     });
     builder?.querySelectorAll("[data-bind-slot]").forEach((el) => {
       if (!(el instanceof HTMLElement)) return;
+      if (reuseBinder && el === reuseBindHost) return;
       el.innerHTML = "";
       el.hidden = true;
       el.classList.remove(
@@ -3096,7 +3202,7 @@ function renderAllCellRuntimePanels() {
         "cell-runtime-ready"
       );
     }
-    if (fallbackBind) {
+    if (fallbackBind && !(reuseBinder && fallbackBind === reuseBindHost)) {
       fallbackBind.innerHTML = "";
       fallbackBind.classList.remove(
         "cell-bind-messaging",
@@ -3134,24 +3240,26 @@ function renderAllCellRuntimePanels() {
       }
     }
 
-    const info = cellRecipientInfo(chains[i]);
-    if (info.slots > 0) {
-      const encIdx = findRecipientAnchorStep(chainSteps);
-      const slot = builder?.querySelector(`[data-bind-slot="${encIdx}"]`);
-      const bindHost =
-        slot instanceof HTMLElement
-          ? slot
-          : fallbackBind instanceof HTMLElement
-            ? fallbackBind
-            : null;
-      if (bindHost) {
-        bindHost.hidden = false;
-        bindHost.classList.add(
-          "cell-bind-messaging",
-          "cell-runtime-zone",
-          "builder-inline-runtime"
-        );
-        const binder = mountRecipientBinder(bindHost, {
+    if (info.slots > 0 && reuseBindHost) {
+      reuseBindHost.hidden = false;
+      reuseBindHost.classList.add(
+        "cell-bind-messaging",
+        "cell-runtime-zone",
+        "builder-inline-runtime"
+      );
+      if (reuseBinder && existingBinder) {
+        keepBinders.add(i);
+      } else {
+        if (existingBinder) {
+          try {
+            existingBinder.destroy();
+          } catch (_) {
+            /* ignore */
+          }
+          cellBinders.delete(i);
+        }
+        reuseBindHost.innerHTML = "";
+        const binder = mountRecipientBinder(reuseBindHost, {
           slots: info.slots,
           foreach: info.foreach,
           onChange: (recs) => {
@@ -3161,9 +3269,20 @@ function renderAllCellRuntimePanels() {
           },
         });
         cellBinders.set(i, binder);
+        keepBinders.add(i);
       }
     }
     syncCellRuntimeChrome(i);
+  }
+
+  for (const [idx, binder] of [...cellBinders.entries()]) {
+    if (keepBinders.has(idx)) continue;
+    try {
+      binder.destroy();
+    } catch (_) {
+      /* ignore */
+    }
+    cellBinders.delete(idx);
   }
 }
 
@@ -3726,28 +3845,56 @@ function renderPresets() {
   const grid = document.getElementById("preset-grid");
   if (!grid) return;
 
+  const groups = listPresetGroups();
+  if (!presetMenuGroup || !groups.includes(presetMenuGroup)) {
+    presetMenuGroup = groups[0] || null;
+  }
+
+  const q = presetMenuFilter.trim().toLowerCase();
+  /** @param {typeof PRESETS[number]} p */
+  const matches = (p) => {
+    if (!q) return true;
+    return (
+      p.id.toLowerCase().includes(q) ||
+      p.title.toLowerCase().includes(q) ||
+      (p.blurb || "").toLowerCase().includes(q) ||
+      (p.recipe || "").toLowerCase().includes(q) ||
+      (p.group || "").toLowerCase().includes(q)
+    );
+  };
+
+  /** @type {Map<string, typeof PRESETS>} */
+  const byGroup = new Map();
+  for (const g of groups) byGroup.set(g, []);
+  for (const p of PRESETS) {
+    if (!matches(p)) continue;
+    const g = p.group || "Pipelines";
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(p);
+  }
+
   /** @param {typeof PRESETS[number]} p */
   const card = (p) => `
     <div class="preset-card-wrap">
       <button type="button" class="preset-card" data-preset="${escapeHtml(p.id)}" title="Replace notebook with this template">
         <strong>${escapeHtml(p.title)}</strong>
         <span class="muted">${escapeHtml(p.blurb)}</span>
-        <code class="preset-recipe">${escapeHtml(p.recipe)}</code>
       </button>
-      <button type="button" class="btn btn-ghost btn-compact preset-append-btn" data-preset-append="${escapeHtml(p.id)}"
-        title="Append this template’s chains as new cells">Append</button>
+      <div class="preset-card-actions">
+        <button type="button" class="btn btn-ghost btn-compact preset-append-btn" data-preset-append="${escapeHtml(p.id)}"
+          title="Append this template’s chains as new cells">Append</button>
+        <details class="preset-recipe-details">
+          <summary class="muted fs-xs">Show recipe</summary>
+          <code class="preset-recipe">${escapeHtml(p.recipe)}</code>
+        </details>
+      </div>
     </div>`;
 
-  /** @type {Map<string, typeof PRESETS>} */
-  const groups = new Map();
-  for (const p of PRESETS) {
-    const g = p.group || "Pipelines";
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g).push(p);
-  }
-
-  let html = "";
-  for (const [name, presets] of groups) {
+  /**
+   * @param {typeof PRESETS} presets
+   * @returns {string}
+   */
+  const renderItems = (presets) => {
     let items = "";
     for (let i = 0; i < presets.length; i++) {
       const p = presets[i];
@@ -3779,11 +3926,74 @@ function renderPresets() {
         items += card(p);
       }
     }
-    html += `
-      <p class="preset-group-title">${escapeHtml(name)}</p>
-      <div class="preset-grid-items">${items}</div>`;
+    return items || `<p class="muted fs-sm preset-menu-empty">No templates in this category.</p>`;
+  };
+
+  const searching = !!q;
+  let bodyHtml = "";
+  if (searching) {
+    for (const g of groups) {
+      const presets = byGroup.get(g) || [];
+      if (!presets.length) continue;
+      bodyHtml += `
+        <p class="preset-group-title">${escapeHtml(g)}</p>
+        <div class="preset-menu-items">${renderItems(presets)}</div>`;
+    }
+    if (!bodyHtml) {
+      bodyHtml = `<p class="muted fs-sm preset-menu-empty">No templates match “${escapeHtml(presetMenuFilter.trim())}”.</p>`;
+    }
+  } else {
+    const active = presetMenuGroup || groups[0];
+    const presets = byGroup.get(active) || [];
+    bodyHtml = `<div class="preset-menu-items">${renderItems(presets)}</div>`;
   }
-  grid.innerHTML = html;
+
+  const catsHtml = groups
+    .map((g) => {
+      const n = (byGroup.get(g) || []).length;
+      const active = !searching && g === presetMenuGroup;
+      const dim = searching && n === 0;
+      return `<button type="button" class="preset-cat-btn${active ? " is-active" : ""}${dim ? " is-dim" : ""}"
+        data-preset-cat="${escapeHtml(g)}" ${searching ? "disabled" : ""}>
+        <span>${escapeHtml(g)}</span>
+        <span class="preset-cat-count">${n}</span>
+      </button>`;
+    })
+    .join("");
+
+  grid.innerHTML = `
+    <div class="preset-menu-toolbar">
+      <input type="search" class="preset-menu-search" id="preset-menu-search"
+        placeholder="Search templates…" value="${escapeHtml(presetMenuFilter)}"
+        autocomplete="off" spellcheck="false" aria-label="Search templates">
+    </div>
+    <div class="preset-menu-body">
+      <nav class="preset-cats" aria-label="Template categories">${catsHtml}</nav>
+      <div class="preset-menu-panel">${bodyHtml}</div>
+    </div>`;
+
+  const searchEl = grid.querySelector("#preset-menu-search");
+  if (searchEl instanceof HTMLInputElement) {
+    searchEl.addEventListener("input", () => {
+      presetMenuFilter = searchEl.value;
+      renderPresets();
+      const again = document.getElementById("preset-menu-search");
+      if (again instanceof HTMLInputElement) {
+        again.focus();
+        const len = again.value.length;
+        again.setSelectionRange(len, len);
+      }
+    });
+  }
+
+  grid.querySelectorAll("[data-preset-cat]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      presetMenuGroup = btn.getAttribute("data-preset-cat");
+      presetMenuFilter = "";
+      renderPresets();
+    });
+  });
+
   grid.querySelectorAll("[data-preset]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-preset");
@@ -3843,11 +4053,6 @@ function renderPresets() {
   });
 }
 
-/**
- * Append recipe chains as new notebook cells (keep current cells + kernel).
- * @param {string} source
- * @param {{ title?: string }} [opts]
- */
 function appendRecipeAsCells(source, opts = {}) {
   let text = migrateRecipe(String(source || "")).recipe;
   const { ast, errors } = canonicalizeRecipe(text);
@@ -3973,11 +4178,53 @@ function preferredNextOrder(from) {
   if (from.base === "key") {
     return ["export", "inspect", "tee", "out", "text"];
   }
+  if (from.base === "bytes" && from.kind === "der") {
+    return [
+      "as",
+      "import",
+      "pem",
+      "to",
+      "base64",
+      "base64url",
+      "inspect",
+      "out",
+      "tee",
+      "text",
+      "gpg.encrypt",
+    ];
+  }
+  if (from.base === "text" && (from.kind === "pem" || from.encoding === "pem")) {
+    return [
+      "der",
+      "as",
+      "out",
+      "inspect",
+      "text",
+      "tee",
+      "import",
+      "from",
+      "base64",
+      "utf8",
+      "gpg.encrypt",
+    ];
+  }
+  if (from.base === "text" && from.encoding === "hex") {
+    return [
+      "from",
+      "out",
+      "inspect",
+      "text",
+      "tee",
+      "base64",
+      "utf8",
+      "gpg.encrypt",
+    ];
+  }
   if (from.base === "bytes" && from.kind === "scalar") {
     return [
       "import",
       "sss.split",
-      "hex",
+      "to",
       "base64",
       "base64url",
       "inspect",
@@ -3994,7 +4241,7 @@ function preferredNextOrder(from) {
       "digest",
       "hkdf",
       "aes-gcm",
-      "hex",
+      "to",
       "base64",
       "base64url",
       "inspect",
@@ -4014,7 +4261,7 @@ function preferredNextOrder(from) {
       "pbkdf2",
       "gpg.symencrypt",
       "sss.split",
-      "hex",
+      "to",
       "base64",
       "base64url",
       "utf8",
@@ -4037,7 +4284,7 @@ function preferredNextOrder(from) {
       "pbkdf2",
       "pem",
       "base64",
-      "hex",
+      "from",
       "utf8",
       "gpg.encrypt",
       "qr",
@@ -4734,6 +4981,7 @@ function applyCompositionChip(kind) {
  * @param {import("../lib/toolkit/registry.js").StepSpec} s
  */
 function opsGlyphForStep(s) {
+  if (s?.glyph) return s.glyph;
   if (s.shelf) {
     const g = getShelfMeta(s.shelf)?.glyph;
     if (g) return g;
@@ -4758,15 +5006,20 @@ function opsItemHtml(s, suggested, opts = {}) {
     : { input: s.input, output: s.output };
   const ioLabel = `${io.input} → ${io.output}`;
   const nameLabel = stepDisplayName(s, { decode });
-  const shortName =
-    nameLabel.length > 10 ? `${nameLabel.slice(0, 9)}…` : nameLabel;
+  const shortName = nameLabel;
   const blocked = stepBlockedByFips(s.name);
   const cellClass = opts.cellClass || "";
   const glyph = opsGlyphForStep(s);
+  const dir = pairDirection(s, {
+    decode,
+    pairRole: opts.pairRole || "solo",
+  });
+  const pairRole = opts.pairRole ? ` data-pair-role="${escapeHtml(opts.pairRole)}"` : "";
   return `
     <button type="button" class="ops-item ops-item-icon ${cellClass} ${fit ? "ops-item-fit" : "ops-item-dim"}${blocked ? " ops-item-fips-blocked" : ""}"
       draggable="${blocked ? "false" : "true"}" data-op="${escapeHtml(s.name)}"
       data-op-decode="${decode ? "1" : "0"}"
+      data-dir="${escapeHtml(dir)}"${pairRole}
       ${blocked ? "aria-disabled=\"true\"" : ""}
       aria-label="${escapeHtml(nameLabel)} — ${escapeHtml(ioLabel)}">
       ${glyphHtml(glyph, "ops-glyph ops-glyph-tile")}
@@ -4781,7 +5034,7 @@ function opsItemHtml(s, suggested, opts = {}) {
  */
 function opsDrawerRowHtml(row, suggested) {
   if (row.type === "solo" && row.step) {
-    return `<div class="ops-pair ops-pair-solo">${opsItemHtml(row.step, suggested, { cellClass: "ops-pair-cell" })}</div>`;
+    return `<div class="ops-pair ops-pair-solo">${opsItemHtml(row.step, suggested, { cellClass: "ops-pair-cell", pairRole: "solo" })}</div>`;
   }
   if (row.type !== "pair" || !row.forward) return "";
   const caption = row.caption
@@ -4791,18 +5044,18 @@ function opsDrawerRowHtml(row, suggested) {
     return `
       <div class="ops-pair">
         ${caption}
-        ${opsItemHtml(row.forward, suggested, { cellClass: "ops-pair-cell" })}
-        ${opsItemHtml(row.forward, suggested, { decode: true, cellClass: "ops-pair-cell" })}
+        ${opsItemHtml(row.forward, suggested, { cellClass: "ops-pair-cell", pairRole: "forward" })}
+        ${opsItemHtml(row.forward, suggested, { decode: true, cellClass: "ops-pair-cell", pairRole: "reverse" })}
       </div>`;
   }
   if (!row.reverse) {
-    return `<div class="ops-pair ops-pair-solo">${caption}${opsItemHtml(row.forward, suggested, { cellClass: "ops-pair-cell" })}</div>`;
+    return `<div class="ops-pair ops-pair-solo">${caption}${opsItemHtml(row.forward, suggested, { cellClass: "ops-pair-cell", pairRole: "solo" })}</div>`;
   }
   return `
     <div class="ops-pair">
       ${caption}
-      ${opsItemHtml(row.forward, suggested, { cellClass: "ops-pair-cell" })}
-      ${opsItemHtml(row.reverse, suggested, { cellClass: "ops-pair-cell" })}
+      ${opsItemHtml(row.forward, suggested, { cellClass: "ops-pair-cell", pairRole: "forward" })}
+      ${opsItemHtml(row.reverse, suggested, { cellClass: "ops-pair-cell", pairRole: "reverse" })}
     </div>`;
 }
 
@@ -5150,7 +5403,7 @@ function listOpsShelfEntries(tb, items, suggested, q) {
         glyph: "ports",
         kind: "kit",
         kit: "format",
-        fitCount: 0,
+        fitCount: ["export", "import"].filter((n) => suggested.has(n)).length,
       });
     }
     if (cipherKitMatchesFilter(q)) {
@@ -5195,6 +5448,32 @@ function renderOpsShelfLeaf(entry, suggested) {
  * Accordion Toolkit panel — full toolbox list, drawers closed by default.
  * Suggest-next toolbox squares call openOpsToolbox() to focus a section.
  */
+/**
+ * Auto-expand Encode (PEM) / Formats (DER) shelves when the tip changes.
+ * @param {import("../lib/toolkit/types.js").RefinedType} from
+ */
+function seedTipPreferredShelves(from) {
+  const seed =
+    from?.base === "text" && (from.kind === "pem" || from.encoding === "pem")
+      ? "pem"
+      : from?.base === "text" && from.encoding === "hex"
+        ? "hex"
+        : from?.base === "bytes" && from.kind === "der"
+          ? "der"
+          : "";
+  if (seed === tipShelfSeed) return;
+  tipShelfSeed = seed;
+  if (seed === "pem" || seed === "hex") {
+    opsCollapsed.delete("encoding");
+    opsShelfExpanded.add("encoding:binary");
+  } else if (seed === "der") {
+    opsCollapsed.delete("webcrypto");
+    opsCollapsed.delete("flow");
+    opsShelfExpanded.add("webcrypto:kit-formats");
+    opsShelfExpanded.add("flow:control");
+  }
+}
+
 function renderOpsDrawer() {
   const host = document.getElementById("ops-drawer");
   const hint = document.getElementById("ops-hint");
@@ -5204,6 +5483,7 @@ function renderOpsDrawer() {
   const q = opsFilter.trim().toLowerCase();
   const filterActive = !!q;
   const from = currentPipelineOutput();
+  seedTipPreferredShelves(from);
   const suggested = new Set(stepsAccepting(from).map((s) => s.name));
   const all = listSteps().filter(
     (s) =>
@@ -5747,6 +6027,12 @@ function renderSessionTray() {
   setCount("keychain", keyN);
   setCount("trust", trustN);
 
+  const summaryCounts = document.getElementById("session-tray-summary-counts");
+  if (summaryCounts) {
+    const total = agentN + keyN + trustN;
+    summaryCounts.textContent = total > 0 ? String(total) : "";
+  }
+
   rail.querySelectorAll("[data-tray]").forEach((btn) => {
     const id = btn.getAttribute("data-tray");
     const open = sessionTrayOpen === id;
@@ -6207,7 +6493,7 @@ function cellRecipeSummaryHtml(cellSteps, cellIndex) {
       <textarea class="cell-recipe-ta compose-message" data-cell-recipe-ta="${cellIndex}"
         rows="${Math.min(12, Math.max(3, source.split("\n").length + 1))}"
         spellcheck="false"
-        placeholder="genkey ec/p256 | export pkcs8 | pem.encode | out @private"
+        placeholder="genkey ec/p256 | export pkcs8 | pem | out @private"
         aria-label="Cell recipe text">${escapeHtml(source)}</textarea>
       <p class="cell-recipe-err status-row err hidden mt-xs mb-0" data-cell-recipe-err="${cellIndex}" hidden></p>
       <p class="muted fs-xs mb-0 mt-xs">Beautifies on paste and when you leave the field or switch to Preview.</p>`;
@@ -6229,65 +6515,116 @@ function cellRecipeSummaryHtml(cellSteps, cellIndex) {
       const out = edge.output ? friendlyTypeLabel(edge.output) : "∅";
       return `${inn} → ${out}`;
     };
-    const stem = stepsList
-      .map((s, i) => {
-        const edge = edges[i];
-        const flow = edgeLabel(edge);
-        return `${i ? pipe : ""}${builderIngredientChipHtml(s, {
-          typeEdge: flow || "— → —",
-          typeError: !!(edge && !edge.ok),
-          hoverCard: true,
-        })}`;
-      })
-      .join("");
+    /**
+     * @param {import("../lib/toolkit/recipe.js").RecipeStep} s
+     * @param {*} edge
+     * @param {{ leadingPipe?: boolean, previewFocus?: { stem: number, branch?: number|null } }} [opts]
+     */
+    const chip = (s, edge, opts = {}) =>
+      `${opts.leadingPipe ? pipe : ""}${builderIngredientChipHtml(s, {
+        typeEdge: edgeLabel(edge) || "— → —",
+        typeError: !!(edge && !edge.ok),
+        hoverCard: true,
+        previewFocus: opts.previewFocus,
+      })}`;
+    /**
+     * Chip row for a branch/body pipeline (no nest expand).
+     * @param {import("../lib/toolkit/recipe.js").RecipeStep[]} list
+     * @param {*[]} listEdges
+     * @param {{ stem: number, branch?: number|null }} [previewFocus]
+     */
+    const chipRow = (list, listEdges, previewFocus) =>
+      (list || [])
+        .map((s, i) =>
+          chip(s, listEdges?.[i], {
+            leadingPipe: i > 0,
+            previewFocus,
+          })
+        )
+        .join("");
+
     /** @type {string[]} */
-    const sideRows = [];
-    stepsList.forEach((s, si) => {
-      const nestEdge = edges[si];
+    const flowParts = [];
+    /** @type {string[]} */
+    const rowBuf = [];
+    /** After an indented nest, next stem chip is prefixed with `|` (new row). */
+    let stemContinue = false;
+    const flushRow = () => {
+      if (!rowBuf.length) return;
+      flowParts.push(
+        `<div class="cell-recipe-flow-row suggest-next-chips" role="list">${rowBuf.join("")}</div>`
+      );
+      rowBuf.length = 0;
+    };
+
+    stepsList.forEach((s, i) => {
+      const nestEdge = edges[i];
+      const hasNest =
+        (s.name === "tee" || s.name === "foreach") &&
+        ((s.branches || []).length > 0 || (s.body || []).length > 0);
+
+      rowBuf.push(
+        chip(s, nestEdge, {
+          leadingPipe: stemContinue || rowBuf.length > 0,
+          previewFocus: hasNest ? { stem: i, branch: null } : undefined,
+        })
+      );
+      stemContinue = false;
+
+      if (!hasNest) return;
+
+      // Indented list form (canonical): `tee` / `foreach` then `- …` lines;
+      // stem continues on a following `| …` row — same as serializeRecipe.
+      // Preview is a read-only map — clicks jump to SIDE CHAINS / nest editor.
+      flushRow();
+
       const branchMeta = nestEdge?.branches || [];
       (s.branches || []).forEach((br, bi) => {
-        sideRows.push(
-          builderTeeBranchHtml(br, undefined, undefined, {
-            bodyEdges: branchMeta[bi]?.edges || [],
-          })
-        );
-      });
-      if (
-        (s.name === "tee" || s.name === "foreach") &&
-        (s.body || []).length
-      ) {
-        const label = s.name === "foreach" ? "each" : "body";
-        const bodyEdges = nestEdge?.body || [];
-        const bodyChips = (s.body || [])
-          .map(
-            (b, i) =>
-              `${i ? pipe : ""}${builderIngredientChipHtml(b, {
-                hoverCard: true,
-                typeEdge: edgeLabel(bodyEdges[i]) || `${s.name} body`,
-                typeError: !!(bodyEdges[i] && !bodyEdges[i].ok),
-              })}`
-          )
-          .join("");
-        sideRows.push(`
-          <div class="builder-branch-row cell-recipe-body-row" role="listitem"
-            title="${escapeHtml(s.name)} body">
+        const rawSel = String(br.selector || br.member || "").trim();
+        const sel =
+          !rawSel
+            ? ".?"
+            : rawSel.startsWith(".") || rawSel.startsWith("[")
+              ? rawSel
+              : `.${rawSel}`;
+        const bodyEdges = branchMeta[bi]?.edges || [];
+        const nestFocus = { stem: i, branch: bi };
+        flowParts.push(`
+          <div class="cell-recipe-indent-line cell-recipe-indent-jump" role="listitem"
+            data-preview-nest="${i}" data-preview-branch="${bi}" data-cell="${cellIndex}"
+            tabindex="0" title="Edit this side chain in the builder">
+            <span class="cell-recipe-indent-dash" aria-hidden="true">-</span>
             <span class="suggest-chip suggest-chip-primary builder-branch-selector">
-              <span class="suggest-chip-name">${escapeHtml(label)}</span>
+              <span class="suggest-chip-name">${escapeHtml(sel)}</span>
             </span>
-            ${pipe}
-            <div class="suggest-next-chips builder-branch-chips" role="list">
-              ${bodyChips}
+            ${br.body?.length ? pipe : ""}
+            <div class="suggest-next-chips cell-recipe-indent-chips" role="list">
+              ${chipRow(br.body || [], bodyEdges, nestFocus)}
+            </div>
+          </div>`);
+      });
+      if ((s.body || []).length) {
+        const bodyEdges = nestEdge?.body || [];
+        const nestFocus = { stem: i, branch: null };
+        flowParts.push(`
+          <div class="cell-recipe-indent-line cell-recipe-indent-jump" role="listitem"
+            data-preview-nest="${i}" data-cell="${cellIndex}"
+            tabindex="0" title="Edit this nest in the builder">
+            <span class="cell-recipe-indent-dash" aria-hidden="true">-</span>
+            <div class="suggest-next-chips cell-recipe-indent-chips" role="list">
+              ${chipRow(s.body || [], bodyEdges, nestFocus)}
             </div>
           </div>`);
       }
+
+      stemContinue = true;
     });
+    flushRow();
+
     body = `
-      <div class="cell-recipe-stem suggest-next-chips" role="list">${stem}</div>
-      ${
-        sideRows.length
-          ? `<div class="builder-branch-list cell-recipe-branches" role="list">${sideRows.join("")}</div>`
-          : ""
-      }`;
+      <div class="cell-recipe-flow" role="group" aria-label="Recipe preview (read-only map)">
+        ${flowParts.join("")}
+      </div>`;
   }
 
   return `
@@ -6484,6 +6821,34 @@ function renderNotebook() {
         cellRecipeRawMode.add(i);
         renderNotebook();
       }
+    });
+  });
+  const jumpPreviewNest = (el) => {
+    const jump =
+      el.closest("[data-preview-nest]") ||
+      (el.hasAttribute?.("data-preview-nest") ? el : null);
+    if (!(jump instanceof HTMLElement)) return;
+    const cellIndex = Number(
+      jump.getAttribute("data-cell") ||
+        jump.closest(".notebook-cell")?.getAttribute("data-cell") ||
+        focusedCell
+    );
+    const stem = Number(jump.getAttribute("data-preview-nest"));
+    const branchAttr = jump.getAttribute("data-preview-branch");
+    const branch =
+      branchAttr != null && branchAttr !== "" ? Number(branchAttr) : null;
+    focusBuilderNestFromPreview(cellIndex, stem, branch);
+  };
+  host.querySelectorAll("[data-preview-nest]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      jumpPreviewNest(/** @type {HTMLElement} */ (el));
+    });
+    el.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      jumpPreviewNest(/** @type {HTMLElement} */ (el));
     });
   });
   host.querySelectorAll("[data-cell-recipe-ta]").forEach((el) => {
@@ -6727,6 +7092,13 @@ function builderIngredientChipHtml(step, opts = {}) {
   }
   const typeEdge = opts.typeEdge || "";
   const hoverCard = !!opts.hoverCard;
+  const pf = opts.previewFocus;
+  const previewAttrs =
+    pf && Number.isFinite(pf.stem)
+      ? ` data-preview-nest="${pf.stem}"${
+          pf.branch != null ? ` data-preview-branch="${pf.branch}"` : ""
+        } tabindex="0" title="Edit in builder nest"`
+      : "";
   const pop = hoverCard
     ? `<span class="cell-recipe-chip-pop${
         opts.typeError ? " cell-recipe-chip-pop-error" : ""
@@ -6737,8 +7109,10 @@ function builderIngredientChipHtml(step, opts = {}) {
   return `
     <span class="suggest-chip builder-ingredient-chip${
       hoverCard ? " builder-ingredient-chip-hot" : ""
-    }${opts.typeError ? " builder-ingredient-chip-error" : ""}" role="listitem"
-      ${hoverCard ? "" : `title="${escapeHtml(spec?.doc || step.name)}"`}>
+    }${opts.typeError ? " builder-ingredient-chip-error" : ""}${
+      pf ? " builder-ingredient-chip-jump" : ""
+    }" role="listitem"${previewAttrs}
+      ${hoverCard || pf ? "" : `title="${escapeHtml(spec?.doc || step.name)}"`}>
       ${toolboxBadgeHtml(spec?.toolbox, { glyphOnly: true })}
       <span class="suggest-chip-name">${escapeHtml(label)}</span>
       ${
@@ -6869,7 +7243,9 @@ function renderBuilderInto(host, cellIndex) {
 
     const paramFields = (spec?.params || [])
       .map((p) => {
-        const vis = paramVisibility(step.name, p, step.params || {});
+        const tip =
+          edge && typeof edge.input === "object" ? edge.input : null;
+        const vis = paramVisibility(step.name, p, step.params || {}, tip);
         if (!vis.show) return "";
         const val =
           vis.forced != null
@@ -6890,7 +7266,11 @@ function renderBuilderInto(host, cellIndex) {
         if (p.type === "enum") {
           const locked = !!vis.locked;
           return `<label class="builder-param"${title}>
-            <span class="builder-param-name">${escapeHtml(p.name)}</span>
+            <span class="builder-param-name"><span>${escapeHtml(p.name)}</span>${
+              locked
+                ? `<span class="muted fs-xs builder-param-lock-tag">locked by format</span>`
+                : ""
+            }</span>
             <select ${dataAttrs} class="text-input"
               ${locked ? "disabled" : ""}>
               ${(p.enum || [])
@@ -6899,7 +7279,7 @@ function renderBuilderInto(host, cellIndex) {
                     `<option value="${escapeHtml(e)}" ${String(val) === e ? "selected" : ""}>${escapeHtml(e)}</option>`
                 )
                 .join("")}
-            </select>${locked ? `<span class="muted fs-xs">locked by format</span>` : ""}</label>`;
+            </select></label>`;
         }
         if (step.name === "gpg.encrypt" && p.name === "to") {
           return encryptToParamHtml(step, val, dataAttrs, nest, i);
@@ -6966,6 +7346,9 @@ function renderBuilderInto(host, cellIndex) {
         ? String(step.params.label || step.params.name || "text")
         : "";
 
+    const nestHasPreview =
+      ((step.branches || []).length > 0 || (step.body || []).length > 0) &&
+      !cellRecipeRawMode.has(cellIndex);
     const typeHint =
       edge?.output?.base === "shares" && edge.output.kind === "raw"
         ? `<p class="builder-type-hint muted fs-xs mb-sm">Next usually <code>blip39</code> → mnemonics, or <code>recover</code> → <code>bytes/master</code>.</p>`
@@ -6975,10 +7358,10 @@ function renderBuilderInto(host, cellIndex) {
             ? `<p class="builder-type-hint muted fs-xs mb-sm">Combines raw SSS shares into <code>bytes/master</code>. Decode mnemonics with <code>blip39 -d</code> first.</p>`
             : step.name === "sss.split"
               ? `<p class="builder-type-hint muted fs-xs mb-sm">Produces <code>shares/raw</code>. Pipe into <code>blip39</code> for word phrases.</p>`
-              : step.name === "foreach"
+              : step.name === "foreach" && !nestHasPreview
                 ? `<p class="builder-type-hint muted fs-xs mb-sm">Add child steps as an indented list (<code>- out @share</code>) or brace body. Optional <code>foreach .items</code>.</p>`
-                : step.name === "tee"
-                  ? `<p class="builder-type-hint muted fs-xs mb-sm">Body runs on a copy; use <code>- .public | …</code> for selector branches. Stem unchanged. Use <code>peek</code> for a side inspect.</p>`
+                : step.name === "tee" && !nestHasPreview
+                  ? `<p class="builder-type-hint muted fs-xs mb-sm">Side chains below fork a clone; stem continues after the nest. Prefer <code>peek</code> for inspect-only.</p>`
                   : "";
 
     const blocked = stepBlockedByFips(step.name);
@@ -6991,10 +7374,11 @@ function renderBuilderInto(host, cellIndex) {
 
     return `
       <div class="builder-card ${nestClass} ${step.name === "foreach" ? "builder-foreach" : ""} ${step.name === "tee" ? "builder-tee" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""} ${edge && !edge.ok ? "builder-type-error" : ""} ${blocked ? "builder-fips-blocked" : ""} ${focused ? "builder-card-focused" : ""}"
-           draggable="${nest.bodyIndex == null ? "true" : "false"}" data-index="${i}" data-step-card="${i}"
+           draggable="false" data-index="${i}" data-step-card="${i}"
            data-focus-stem="${focusStem}" ${focusBody != null ? `data-focus-body="${focusBody}"` : ""}>
         <div class="builder-card-head">
-          <span class="builder-drag" title="Drag to reorder">⠿</span>
+          <span class="builder-drag" draggable="${nest.bodyIndex == null ? "true" : "false"}"
+            data-drag-index="${i}" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>
           <span class="builder-step-num" aria-hidden="true">${
             nest.bodyIndex != null ? `${focusStem + 1}.${focusBody + 1}` : i + 1
           }</span>
@@ -7022,7 +7406,7 @@ function renderBuilderInto(host, cellIndex) {
         <div class="builder-card-runtime" data-runtime-slot="${i}" data-cell="${cellIndex}" hidden></div>
         <div class="builder-card-bind" data-bind-slot="${i}" data-cell="${cellIndex}" hidden></div>
         ${
-          usesPgpProfile
+          usesPgpProfile || typeHint
             ? ""
             : `<p class="muted mt-xs mb-sm fs-xs builder-card-doc" title="${escapeHtml(spec?.doc || "")}">${escapeHtml(spec?.doc || "")}</p>`
         }
@@ -7035,9 +7419,19 @@ function renderBuilderInto(host, cellIndex) {
     const isFlowNest = step.name === "tee" || step.name === "foreach";
     if (isFlowNest) {
       if (!step.body) step.body = [];
-      const nestTitle = step.name === "foreach" ? "Each item" : "Side chains";
-      const nestHint =
-        step.name === "foreach"
+      const nestPopulated =
+        (step.branches || []).length > 0 || (step.body || []).length > 0;
+      // Preview already maps the fork — keep nest chrome short (edit surface).
+      const nestTitle = nestPopulated
+        ? step.name === "foreach"
+          ? "Each item · edit here"
+          : "Side chains · edit here"
+        : step.name === "foreach"
+          ? "Each item"
+          : "Side chains";
+      const nestHint = nestPopulated
+        ? ""
+        : step.name === "foreach"
           ? "runs once per list element · stem continues below"
           : "copies of tee input · stem continues below";
       // Card + nest share one frame so branches read as part of tee/foreach.
@@ -7050,7 +7444,11 @@ function renderBuilderInto(host, cellIndex) {
         <div class="builder-nest-head">
           <span class="builder-nest-kicker" aria-hidden="true">↳</span>
           <span class="builder-nest-title">${escapeHtml(nestTitle)}</span>
-          <span class="builder-nest-hint muted fs-xs">${escapeHtml(nestHint)}</span>
+          ${
+            nestHint
+              ? `<span class="builder-nest-hint muted fs-xs">${escapeHtml(nestHint)}</span>`
+              : ""
+          }
         </div>`);
       if (step.branches?.length) {
         parts.push(`<div class="builder-branch-list" role="list">`);
@@ -7182,7 +7580,13 @@ function renderBuilderInto(host, cellIndex) {
         (e.target.closest("button") ||
           e.target.closest("input") ||
           e.target.closest("select") ||
-          e.target.closest("label"))
+          e.target.closest("textarea") ||
+          e.target.closest("label") ||
+          e.target.closest("a") ||
+          e.target.closest(".recipient-binder") ||
+          e.target.closest(".builder-card-bind") ||
+          e.target.closest(".builder-card-runtime") ||
+          e.target.closest(".builder-drag"))
       ) {
         return;
       }
@@ -7243,17 +7647,24 @@ function renderBuilderInto(host, cellIndex) {
     });
   });
 
-  host.querySelectorAll(".builder-card").forEach((card) => {
-    card.addEventListener("dragstart", (e) => {
-      const i = Number(card.getAttribute("data-index"));
+  // Drag only from the ⠿ handle — whole-card draggable steals clicks from
+  // recipient binder inputs / keyserver <select> (hold-to-type symptom).
+  host.querySelectorAll(".builder-drag[data-drag-index]").forEach((handle) => {
+    if (!(handle instanceof HTMLElement)) return;
+    const card = handle.closest(".builder-card");
+    handle.addEventListener("dragstart", (e) => {
+      const i = Number(handle.getAttribute("data-drag-index"));
       const dt = e.dataTransfer;
-      if (!dt) return;
+      if (!dt || !Number.isFinite(i)) {
+        e.preventDefault();
+        return;
+      }
       dt.setData(REORDER_MIME, String(i));
       dt.setData("text/plain", steps[i]?.name || "");
       dt.effectAllowed = "move";
-      card.classList.add("dragging");
+      card?.classList.add("dragging");
     });
-    card.addEventListener("dragend", () => card.classList.remove("dragging"));
+    handle.addEventListener("dragend", () => card?.classList.remove("dragging"));
   });
 
   wirePgpModeToggles(host);
@@ -7314,9 +7725,9 @@ function renderCryptoPanel() {
         <summary><strong>OpenPGP symmetric envelope</strong>${usesSymEnvelope ? "" : ' <span class="muted">(no gpg.symencrypt/gpg.symdecrypt)</span>'}</summary>
         <dl class="crypto-param-list fs-sm">
           <div><dt>When</dt><dd>PEM, PKCS#8 DER, or any payload that is not already 16/32 bytes</dd></div>
-          <div><dt>Master</dt><dd>32-byte CSPRNG secret — this is what <code>sss.split</code> splits; passphrase for stock gpg is lowercase hex of that master</dd></div>
+          <div><dt>Master</dt><dd>32-byte CSPRNG secret — this is what <code>sss.split</code> splits; passphrase for stock gpg is lowercase to hex of that master</dd></div>
           <div><dt>Ciphertext</dt><dd>Standard OpenPGP SKESK + SEIPD (<code>envelope.asc</code>) — profile below; no custom AES-GCM padding</dd></div>
-          <div><dt>External recovery</dt><dd><code>blip39 -d | sss.combine</code> → hex master → <code>gpg --decrypt envelope.asc</code></dd></div>
+          <div><dt>External recovery</dt><dd><code>blip39 -d | sss.combine</code> → to hex master → <code>gpg --decrypt envelope.asc</code></dd></div>
         </dl>
         <p class="status-row warn fs-sm">
           The OpenPGP envelope is not a share mnemonic. Keep <code>envelope.asc</code> with the share set; without it the master alone cannot unwrap the payload.
@@ -7497,7 +7908,7 @@ function artifactHasLiveInspect(a) {
 }
 
 /**
- * OpenPGP armor that can use the SEIPD-aware packet hex view.
+ * OpenPGP armor that can use the SEIPD-aware packet to hex view.
  * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
  */
 function artifactLooksLikeOpenPgpArmor(a) {

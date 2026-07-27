@@ -73,13 +73,13 @@ describe("stitchPresetPair", () => {
       id: "fwd",
       pair: "demo",
       title: "fwd",
-      recipe: "random 16 | hex | out @ct",
+      recipe: "random 16 | to hex | out @ct",
     };
     const reverse = {
       id: "rev",
       pair: "demo",
       title: "rev",
-      recipe: "in @ct | hex -d | base64url | out @plain",
+      recipe: "in @ct | from hex | base64url | out @plain",
     };
     const st = stitchPresetPair(forward, reverse);
     expect(st.mode).toBe("as-is");
@@ -92,7 +92,7 @@ describe("stitchPresetPair", () => {
       id: "fwd",
       pair: "slot-demo",
       title: "fwd",
-      recipe: "random 16 | hex | out @payload",
+      recipe: "random 16 | to hex | out @payload",
     };
     const reverse = {
       id: "rev",
@@ -105,7 +105,7 @@ describe("stitchPresetPair", () => {
     expect(st.bridge).toBe("@payload");
     expect(st.recipe).toContain("in @payload");
     expect(st.recipe).not.toMatch(/^input\b/m);
-    // hex text → utf8 encodes to bytes → base64url is valid after stitch
+    // to hex text → utf8 encodes to bytes → base64url is valid after stitch
     const { validation } = compileRecipe(st.recipe);
     expect(validation.ok, validation.errors?.[0]?.message).toBe(true);
   });
@@ -125,7 +125,7 @@ describe("stitchPresetPair", () => {
       id: "fwd",
       pair: "need-out",
       title: "fwd",
-      recipe: "random 16 | hex",
+      recipe: "random 16 | to hex",
     };
     const reverse = {
       id: "rev",

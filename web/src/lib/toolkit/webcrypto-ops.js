@@ -137,6 +137,42 @@ export async function resolveBoundKey(bindings, need) {
 }
 
 /**
+ * @param {unknown} v
+ * @returns {v is CryptoKey}
+ */
+export function isCryptoKey(v) {
+  return typeof CryptoKey !== "undefined" && v instanceof CryptoKey;
+}
+
+/**
+ * Unwrap key/keypair pipeline data (bare CryptoKey or { privateKey, publicKey, secretKey } bag).
+ * @param {import("./engine.js").PipelineValue|null|undefined} value
+ * @returns {{ privateKey: CryptoKey|null, publicKey: CryptoKey|null, secretKey: CryptoKey|null }}
+ */
+export function pipelineKeyHandles(value) {
+  if (!value || (value.type !== "key" && value.type !== "keypair")) {
+    return { privateKey: null, publicKey: null, secretKey: null };
+  }
+  const d = value.data;
+  if (isCryptoKey(d)) {
+    const which = String(value.meta?.which || "");
+    if (which === "public") {
+      return { privateKey: null, publicKey: d, secretKey: null };
+    }
+    if (which === "secret") {
+      return { privateKey: null, publicKey: null, secretKey: d };
+    }
+    // Projected private key tip (or unmarked single handle).
+    return { privateKey: d, publicKey: null, secretKey: null };
+  }
+  return {
+    privateKey: d?.privateKey || null,
+    publicKey: d?.publicKey || null,
+    secretKey: d?.secretKey || null,
+  };
+}
+
+/**
  * @param {BoundWebCryptoKey} bound
  * @param {"private"|"public"|"secret"|"either"} need
  * @returns {CryptoKey}
@@ -178,11 +214,12 @@ function pickBoundCryptoKey(bound, need) {
 export async function pipelineValueToCryptoKey(value, need, algHint) {
   if (!value) throw new Error("Empty slot value");
   if (value.type === "keypair" || value.type === "key") {
+    const handles = pipelineKeyHandles(value);
     /** @type {BoundWebCryptoKey} */
     const bound = {
-      privateKey: value.data?.privateKey,
-      publicKey: value.data?.publicKey,
-      secretKey: value.data?.secretKey,
+      privateKey: handles.privateKey || undefined,
+      publicKey: handles.publicKey || undefined,
+      secretKey: handles.secretKey || undefined,
       alg: value.meta?.alg || algHint,
     };
     return pickBoundCryptoKey(bound, need);

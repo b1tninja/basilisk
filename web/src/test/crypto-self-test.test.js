@@ -144,7 +144,7 @@ describe("crypto-self-test — suite status", () => {
 
   it("FIPS gate allows SSS after CAST-12", async () => {
     await runCryptoSelfTests();
-    const { ast } = compileRecipe("random 32 | sss.split threshold=2 shares=3 | hex");
+    const { ast } = compileRecipe("random 32 | sss.split threshold=2 shares=3 | to hex");
     expect(() =>
       assertRecipeAllowedUnderFips(ast, getSuiteStatus(), true)
     ).not.toThrow();
@@ -152,7 +152,7 @@ describe("crypto-self-test — suite status", () => {
 
   it("FIPS gate allows WebCrypto after CAST-6…11", async () => {
     await runCryptoSelfTests();
-    const { ast } = compileRecipe("random 16 | digest | hex");
+    const { ast } = compileRecipe("random 16 | digest | to hex");
     expect(() =>
       assertRecipeAllowedUnderFips(ast, getSuiteStatus(), true)
     ).not.toThrow();

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   KeyRound,
   Braces,
@@ -31,10 +31,14 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { listPresetGroups } from "../lib/toolkit/recipe.js";
 import { useNotebook } from "./useNotebook";
 import { RecipientBinderHost } from "./RecipientBinderHost";
 import { OutputCarousel } from "./OutputCarousel";
@@ -42,16 +46,32 @@ import { OpsIconGrid, STEP_MIME } from "./OpsIconGrid";
 
 export function ToolkitShell() {
   const nb = useNotebook();
+  const [presetFilter, setPresetFilter] = useState("");
 
   const presetsByGroup = useMemo(() => {
+    const q = presetFilter.trim().toLowerCase();
     const map = new Map<string, typeof nb.presets>();
+    for (const g of listPresetGroups(nb.presets)) map.set(g, []);
     for (const p of nb.presets) {
+      if (
+        q &&
+        !(
+          p.id.toLowerCase().includes(q) ||
+          p.title.toLowerCase().includes(q) ||
+          (p.blurb || "").toLowerCase().includes(q) ||
+          (p.group || "").toLowerCase().includes(q)
+        )
+      ) {
+        continue;
+      }
       const g = p.group || "Other";
       if (!map.has(g)) map.set(g, []);
       map.get(g)!.push(p);
     }
-    return [...map.entries()];
-  }, [nb.presets]);
+    return listPresetGroups(nb.presets)
+      .map((g) => [g, map.get(g) || []] as const)
+      .filter(([, items]) => items.length > 0 || !q);
+  }, [nb.presets, presetFilter]);
 
   const focusedNeeds = nb.cellInputNeeds(nb.chains[nb.focusedCell] || { steps: [] });
   const recipSlots = nb.cellRecipientSlots(nb.chains[nb.focusedCell] || { steps: [] });
@@ -59,37 +79,90 @@ export function ToolkitShell() {
   const inputNeedsAttention = unmet.some((u) =>
     ["needs input", "needs ciphertext"].includes(u)
   );
+  const searching = !!presetFilter.trim();
 
   return (
     <TooltipProvider delayDuration={300}>
       <div className="toolkit-shell flex min-h-0 flex-1 flex-col bg-[var(--background)] text-[var(--foreground)]">
         {/* App toolbar */}
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-2">
-          <DropdownMenu>
+          <DropdownMenu
+            onOpenChange={(open) => {
+              if (!open) setPresetFilter("");
+            }}
+          >
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm">
                 <BookTemplate className="opacity-80" />
                 Templates
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="max-h-[70vh] w-80 overflow-auto">
-              <DropdownMenuLabel>One-click notebooks</DropdownMenuLabel>
-              {presetsByGroup.map(([group, items]) => (
-                <div key={group}>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel>{group}</DropdownMenuLabel>
-                  {items.map((p) => (
-                    <DropdownMenuItem key={p.id} onSelect={() => nb.loadPreset(p.id)}>
-                      <div className="flex flex-col gap-0.5">
-                        <span>{p.title}</span>
-                        <span className="text-[0.7rem] text-[var(--muted-foreground)] line-clamp-2">
-                          {p.blurb}
-                        </span>
+            <DropdownMenuContent className="w-72 p-0" align="start">
+              <div className="border-b border-[var(--border)] p-2">
+                <DropdownMenuLabel className="px-1 pb-1.5 pt-0">Templates by category</DropdownMenuLabel>
+                <Input
+                  className="h-8 text-xs"
+                  placeholder="Search templates…"
+                  value={presetFilter}
+                  onChange={(e) => setPresetFilter(e.target.value)}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+              </div>
+              <div className="max-h-[min(70vh,28rem)] overflow-auto p-1">
+                {searching ? (
+                  presetsByGroup.length ? (
+                    presetsByGroup.map(([group, items]) => (
+                      <div key={group}>
+                        <DropdownMenuLabel>{group}</DropdownMenuLabel>
+                        {items.map((p) => (
+                          <DropdownMenuItem
+                            key={p.id}
+                            onSelect={() => nb.loadPreset(p.id)}
+                          >
+                            <div className="flex flex-col gap-0.5">
+                              <span>{p.title}</span>
+                              <span className="line-clamp-2 text-[0.7rem] text-[var(--muted-foreground)]">
+                                {p.blurb}
+                              </span>
+                            </div>
+                          </DropdownMenuItem>
+                        ))}
+                        <DropdownMenuSeparator />
                       </div>
-                    </DropdownMenuItem>
-                  ))}
-                </div>
-              ))}
+                    ))
+                  ) : (
+                    <p className="px-2 py-3 text-xs text-[var(--muted-foreground)]">
+                      No templates match.
+                    </p>
+                  )
+                ) : (
+                  presetsByGroup.map(([group, items]) => (
+                    <DropdownMenuSub key={group}>
+                      <DropdownMenuSubTrigger>
+                        <span className="flex-1 truncate">{group}</span>
+                        <span className="mr-1 text-[0.65rem] text-[var(--muted-foreground)]">
+                          {items.length}
+                        </span>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-72">
+                        {items.map((p) => (
+                          <DropdownMenuItem
+                            key={p.id}
+                            onSelect={() => nb.loadPreset(p.id)}
+                          >
+                            <div className="flex flex-col gap-0.5">
+                              <span>{p.title}</span>
+                              <span className="line-clamp-2 text-[0.7rem] text-[var(--muted-foreground)]">
+                                {p.blurb}
+                              </span>
+                            </div>
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  ))
+                )}
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -141,11 +214,22 @@ export function ToolkitShell() {
               }
             }}
             onDrop={(e) => {
-              const name =
+              const raw =
                 e.dataTransfer.getData(STEP_MIME) || e.dataTransfer.getData("text/plain");
-              if (!name) return;
+              if (!raw) return;
               e.preventDefault();
-              nb.appendOp(name);
+              let name = raw;
+              let decode = false;
+              try {
+                const parsed = JSON.parse(raw) as { name?: string; decode?: boolean };
+                if (parsed && typeof parsed.name === "string") {
+                  name = parsed.name;
+                  decode = !!parsed.decode;
+                }
+              } catch {
+                /* plain step name */
+              }
+              nb.appendOp(name, decode ? { decode: true } : undefined);
             }}
           >
             <header className="sticky top-0 z-10 space-y-2 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,transparent)] px-4 py-3 backdrop-blur">

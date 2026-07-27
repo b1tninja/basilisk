@@ -98,7 +98,7 @@ Extend `_runAllTests()` in [`web/src/lib/crypto-self-test.js`](../web/src/lib/cr
 
 | ID | Name | Concrete check |
 |----|------|----------------|
-| **CAST-6** | Digest KAT | `subtle.digest("SHA-256", "basilisk")` equals known hex (same vector as unit test) |
+| **CAST-6** | Digest KAT | `subtle.digest("SHA-256", "basilisk")` equals known to hex (same vector as unit test) |
 | **CAST-7** | AES-GCM roundtrip | Random 32 B key; encrypt/decrypt canary via `aesGcmEncrypt`/`aesGcmDecrypt`; wipe buffers |
 | **CAST-8** | Sign / verify | Ed25519 (and optionally ECDSA P-256) via `subtleSign`/`subtleVerify` |
 | **CAST-9** | ECDH agree | Two P-256 ECDH pairs; shared bits equal (quorum-shaped) |
@@ -139,7 +139,7 @@ Refined-type walks for `digest`, `sign`, `aes-gcm`, `hkdf`, `ecdh`, `wrap`/`unwr
 
 ### B3 — Optional worker smoke
 
-One test or small harness: post `toolkit-run` with `random 16 | digest | hex` through [`crypto-worker.js`](../web/src/lib/crypto-worker.js) (or extract a testable `runToolkitInWorker` helper). Confirms worker SubtleCrypto path, not only main-thread `runRecipe`.
+One test or small harness: post `toolkit-run` with `random 16 | digest | to hex` through [`crypto-worker.js`](../web/src/lib/crypto-worker.js) (or extract a testable `runToolkitInWorker` helper). Confirms worker SubtleCrypto path, not only main-thread `runRecipe`.
 
 ---
 

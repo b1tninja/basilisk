@@ -47,12 +47,12 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - Namespaced product ops use dots (`gpg.encrypt`, `sss.combine`, `webauthn.prf`); cipher ops use hyphens (`aes-gcm`). OpenSSL-sized (`aes-256-gcm`), JCE (`AES/GCM/NoPadding`), and sugar `encrypt`/`decrypt` + transform parse to the same canonical hyphen name.
 - Bare `out kp` / `in kp` / `key=cek` is shorthand for `@` form (canonical always uses `@`).
 - Prefer **positional** args: `out @public`, `export pkcs8`, `genkey ec/p256`.
-- Casts: `as master` / `as scalar` / `as opaque` retag bytes only (not import).
+- Casts: retag (`as master` / `as public` / …) or materialize (`as key` / `as keypair` → WebCrypto handles). Literal casts (`1234 as int`) are not shipped yet.
 - Empty `tee` is invalid; use `peek` for a side inspect snapshot.
 - List marker is only `-`. Leading tabs are errors.
 - File paths (`./x.pem`, quoted paths, `file:…`) are reserved — not supported yet.
 - Comments: full-line `# …` (kept inside the current chain).
-- Ops-drawer **shelves** and **conjugate rows** (encode | decode, sign | verify) are UI only for layout — encoding recipes use `pem.encode` / `pem.decode` (also accept `pem -d`).
+- Ops-drawer **shelves** and **conjugate rows** (encode | decode, sign | verify, `pem` | `der`, `to` | `from`) are UI only for layout — encoding twins use `base64.encode` / `base64.decode` (also accept `-d`); PEM armor uses `pem` ↔ `der`; hex uses CyberChef-style `to hex` / `from hex`.
 
 ## Chains
 
@@ -87,7 +87,9 @@ OpenPGP **Modern / Compatible / Auto** lives once in the notebook header (with *
 
 ### Companion templates (forward ⇄ inverse)
 
-Templates with a shared `pair` id (e.g. SSS split ⇄ recover) appear as a linked row in the gallery with a bridge badge (**Slot bridge** / **Shares panel** / **Linked slots**). **Add both ⇄** appends forward then inverse as new cells and shows a mode-specific status hint.
+The **Templates** menu is organized by category (Keys, Encrypt, WebAuthn, …) with search; recipe text is hidden behind “Show recipe” until expanded. Templates with a shared `pair` id (e.g. SSS split ⇄ recover) appear as a linked row with a bridge badge (**Slot bridge** / **Shares panel** / **Linked slots**). **Add both ⇄** appends forward then inverse as new cells and shows a mode-specific status hint.
+
+**WebAuthn starters:** Templates → WebAuthn includes PRF → AES-GCM and **Attestation → MDS** (`input | webauthn.attest` — paste base64/hex attestationObject in Inputs).
 
 Inter-cell feed stays **explicit `@slots`** — there is no implicit “trailing tile → next cell stem” and no new chain operator:
 
@@ -159,26 +161,29 @@ Each apply stage is `name` then zero or more args:
 |------|---------|-------|
 | Positional | `genkey ec/p256`, `out @public` | Binds the step’s `positional` param |
 | Named | `sss.split threshold=2 shares=3` | `ident=value` |
-| Flag | `aes-gcm -d`, `pem -d` | Sets the param with `flag: "-d"` to `true` (ciphers; encodings also accept this) |
-| Encode / decode verb | `pem.encode`, `pem.decode`, `base64.decode` | Encoding `decodeTwin` steps — serialize as `.encode` / `.decode` (AST still `{ decode }`) |
+| Flag | `aes-gcm -d`, `base64 -d` | Sets the param with `flag: "-d"` to `true` (ciphers + encoding twins) |
+| Encode / decode verb | `base64.encode`, `base64.decode` | Encoding `decodeTwin` steps — serialize as `.encode` / `.decode` (AST still `{ decode }`) |
+| Armor conjugate | `pem`, `der` | Armor / dearmor — not `.encode`/`.decode` twins |
+| Hex conjugate | `to hex`, `from hex` | Bytes ↔ hex text (`to` / `from` + encoding; hex only for now) |
 
 Canonical serialize omits redundant `name=` for the primary positional when the
 value is not the registry default (slot names always serialize as `@label`).
 Encoding twins canonicalize to `name.encode` / `name.decode` (not `-d`).
+PEM armor serializes as bare `pem` / `der`; hex as `to hex` / `from hex`.
 
-Aliases resolve at parse time (`paste` → `input`, `from` → `in`, …). Basilisk-legacy step tokens (`encrypt`, `aesgcm`, `wa-prf`, `recover`, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
+Aliases resolve at parse time (`paste` → `input`, …). Slot load is **`in @label` only** — `from` is the encoding verb (`from hex`). Basilisk-legacy step tokens (`encrypt`, `aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
 
 ## Slots (`@label`)
 
 `out` emits a result tile **and** registers a cloned live pipeline value.
-`in` / `from` sources that value (typed keypair / bytes / shares / …) — not
+`in` sources that value (typed keypair / bytes / shares / …) — not
 re-parsed artifact text.
 
 | Form | Meaning |
 |------|---------|
 | `out @kp` | Emit + register memory slot `kp` (+ next 1-based index) |
 | `out kp` | Same (rewrites to `out @kp`) |
-| `in @kp` / `from @kp` | Load slot `kp` |
+| `in @kp` | Load slot `kp` |
 | `in 1` | Load first registered slot by registration order |
 | `./x.pem`, `"…"`, `file:…` | Reserved for future file I/O — rejected today |
 
@@ -321,11 +326,22 @@ On `genkey`/`import` for ed25519, x25519, aes/*, hmac/*: non-`auto` `usage=` is 
 
 ## Casts (`as`)
 
-`as` **retags** refined type only — no crypto conversion. Not an import.
+Stage form only: `… | as TYPE`. Three kinds:
+
+| Kind | Crypto? | Forms | Behavior |
+|------|---------|-------|----------|
+| **Retag** | No | `as master`, `as scalar`, `as opaque`, `as public`, `as private` | Same payload; change refined tip / `which` |
+| **Materialize** | Yes | `as key`, `as keypair` | Import DER/PEM/JWK into WebCrypto **CryptoKey** / keypair tips |
+| **Coerce** | Later | `as int`, `as bool`, … | Not shipped — needs tip bases + consuming ops; literal postfix (`1234 as int`) deferred |
 
 ```text
 random 16 | digest | as master | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share
+
+.public | export spki | pem | out @pub
+in @pub | der | as key
+# or: in @pub | as key
+# or: in @priv | as keypair
 ```
 
 | Form | Meaning |
@@ -333,11 +349,13 @@ random 16 | digest | as master | sss.split threshold=2 shares=3 | blip39 | forea
 | `as master` | Tag as `bytes/master` (must be 16 or 32 bytes) |
 | `as scalar` | Tag as `bytes/scalar` |
 | `as opaque` | Tag as `bytes/opaque` |
+| `as public` / `as private` | Set `which` on `bytes/der` or `text/pem` (no SubtleCrypto) |
+| `as key` | Materialize a single **CryptoKey** tip (`which` from tip/PEM label or prior retag) |
+| `as keypair` | Materialize a **keypair** tip from private material (pkcs8 / private PEM / JWK-with-`d`) |
 
-Never: `as keypair` / `as jwk` — use `import` / `export`.
+Live `key` / `keypair` tips are backed by WebCrypto `CryptoKey` handles (artifacts still export JWK/PEM/DER — handles are never persisted). Explicit `import` / `export` remain for spelled-out formats. Never: `as jwk` (use `export jwk` / `import jwk`).
 
 Homonym: the stage `as master` is distinct from KDF/ECDH params `hkdf … as=aes/256` / `pbkdf2 … as=aes/256` / `ecdh … as=aes/256` (`deriveKey` → keypair when not `bytes`).
-
 ## Selectors
 
 Bare selector stages become `select` under the hood; under `tee` / `foreach`
@@ -349,8 +367,8 @@ These change the tip type:
 
 | Selector | Tip before | Tip after |
 |----------|------------|-----------|
-| `.public` / `.pub` | `keypair` | `key` + `which=public` |
-| `.private` / `.priv` / `.secret` | `keypair` | `key` + `which=private` |
+| `.public` / `.pub` | `keypair` | `key` (CryptoKey) + `which=public` |
+| `.private` / `.priv` / `.secret` | `keypair` | `key` (CryptoKey) + `which=private` |
 | `.key` | `item` | `text/opaque` |
 | `.value` | `item` | `text/mnemonic` or `bytes/opaque` |
 | `[n]` / `at n` | `shares` | one share (`text/mnemonic` or `bytes`) |
@@ -360,15 +378,17 @@ After `.public`, use `export spki` (not `export pkcs8`). After `.private` or on 
 full keypair stem, use `export pkcs8` / `export scalar`. The projected `key` tip
 selects the half — you do not need `export which=…` there.
 
-ASCII-armored round-trips keep the half through `pem.encode` / `pem.decode`
+ASCII-armored round-trips keep the half through `pem` / `der`
 (`BEGIN PUBLIC KEY` ↔ SPKI, `BEGIN PRIVATE KEY` ↔ PKCS#8):
 
 ```text
-.public | export spki | pem.encode | out @pub
-in @pub | pem.decode | import spki
+.public | export spki | pem | out @pub
+in @pub | der | import spki
+# or: in @pub | as key
 
-export pkcs8 | pem.encode | out @priv
-in @priv | pem.decode | import pkcs8
+export pkcs8 | pem | out @priv
+in @priv | der | import pkcs8
+# or: in @priv | as keypair
 ```
 
 ### Iteration views (`foreach` only)
@@ -381,11 +401,11 @@ in @priv | pem.decode | import pkcs8
 
 Stem `.items` / `.keys` / `.values` are rejected — use `foreach`.
 
-### Casts (not selectors)
+### Casts vs selectors
 
-`as master` / `as scalar` / `as opaque` only retag **bytes**. They do not project
-keypair halves (`as public` is not valid).
-
+Selectors project live keypair halves (`.public`). Retag casts set `which` on
+serialized material (`as public`). Materializing casts (`as key`) import into
+CryptoKey tips. They are not interchangeable with selectors.
 ## Blocks
 
 ### `tee`
@@ -430,7 +450,8 @@ genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private
 | `foreach` | Map body over a sequence. Optional `.items` / `.values` / `.keys`. |
 | `peek` | Side inspect snapshot; stem unchanged. |
 | `at` | Same as `[n]` / `[n:m]` — share index or slice. |
-| `in` / `from` | Source: load a prior `out` slot by `@label` or 1-based index. |
+| `in` | Source: load a prior `out` slot by `@label` or 1-based index. |
+| `to` / `from` | Encoding conjugate (`to hex` / `from hex`). |
 | `out` | Emit a tile, register a slot, pass the value through. |
 | `as` | Retag refined bytes kind (`master` / `scalar` / `opaque`). |
 | `input` | Free-form text at run time (not a slot). Aliases: `paste`, `cat`. |
@@ -516,7 +537,7 @@ Paste / blur canonicalize via `canonicalizeRecipe`:
 
 - lowercases step names and expands aliases
 - rewrites bare slot idents to `@label`
-- `from` → `in`
+- migrator (Upgrade recipe): bare `hex` → `to hex`, `unhex` → `from hex`, slot `from @…` → `in @…`
 - joins chains with a blank line
 - formats `tee` / `foreach` bodies with indented `-` lines
 
@@ -535,6 +556,8 @@ Paste / blur canonicalize via `canonicalizeRecipe`:
 | `sss` / `recover` | `sss.split` / `sss.combine` |
 | `wa-*` | `webauthn.*` |
 | `gpg.vault` / `gpg.vault.pub` | `agent.unlock` / `agent.pub` |
+| `hex` / `unhex` | `to hex` / `from hex` |
+| `from @slot` (slot alias) | `in @slot` (`from` is encoding only) |
 
 Use `migrateRecipe(text)` (or the toolkit **Upgrade recipe** button) for a one-shot rewrite. The parser does not accept legacy tokens.
 

@@ -80,7 +80,7 @@ describe("kernel cell runs", () => {
 
   it("marks downstream stale after re-run", async () => {
     const kernel = createKernel();
-    const cell0 = compileRecipe(`random 16 | hex | out @x`);
+    const cell0 = compileRecipe(`random 16 | to hex | out @x`);
     await kernel.runCell(0, cell0.ast.chains[0]);
     const cell1 = compileRecipe(`in @x | out @y`);
     await kernel.runCell(1, cell1.ast.chains[0]);
@@ -93,7 +93,7 @@ describe("kernel cell runs", () => {
 
   it("clearSensitive wipes slots and outputs but leave API ready", async () => {
     const kernel = createKernel();
-    const cell0 = compileRecipe(`random 8 | hex | out @x`);
+    const cell0 = compileRecipe(`random 8 | to hex | out @x`);
     await kernel.runCell(0, cell0.ast.chains[0]);
     expect(kernel.slotCount()).toBe(1);
     expect(kernel.getCellOutputs(0).length).toBeGreaterThan(0);
@@ -105,7 +105,7 @@ describe("kernel cell runs", () => {
 
   it("runChain helper returns registry", async () => {
     const { artifacts, slots } = await runChain(
-      compileRecipe(`random 8 | hex | out @n`).ast.chains[0]
+      compileRecipe(`random 8 | to hex | out @n`).ast.chains[0]
     );
     expect(artifacts.length).toBeGreaterThan(0);
     expect(slots.has("@n")).toBe(true);
@@ -113,7 +113,7 @@ describe("kernel cell runs", () => {
 
   it("remapCells + markAllWithOutputsStale after reorder", async () => {
     const kernel = createKernel();
-    await kernel.runCell(0, compileRecipe(`random 8 | hex | out @a`).ast.chains[0]);
+    await kernel.runCell(0, compileRecipe(`random 8 | to hex | out @a`).ast.chains[0]);
     await kernel.runCell(1, compileRecipe(`in @a | out @b`).ast.chains[0]);
     expect(kernel.getCellStatus(1)).toBe("ok");
     // Swap 0 ↔ 1
@@ -154,7 +154,7 @@ describe("kernel cell runs", () => {
       data: alice.privateKey,
       meta: { which: "private", sensitive: true, fingerprint: fpr },
     });
-    await kernel.runCell(0, compileRecipe(`random 8 | hex | out @x`).ast.chains[0]);
+    await kernel.runCell(0, compileRecipe(`random 8 | to hex | out @x`).ast.chains[0]);
     expect(kernel.slotCount()).toBe(3);
     kernel.lockSensitive();
     expect(kernel.slots.has("@alices")).toBe(true);

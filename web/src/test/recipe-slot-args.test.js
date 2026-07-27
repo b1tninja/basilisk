@@ -36,7 +36,7 @@ describe("named slot args", () => {
   });
 
   it("still needs key panel when slot arg omitted", () => {
-    const { validation } = compileRecipe("random 32 | aes-gcm | hex");
+    const { validation } = compileRecipe("random 32 | aes-gcm | to hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("key");
   });
@@ -48,7 +48,7 @@ random 32 | out @msg
 
 in @msg | aes-gcm key=@cek | out @ct
 
-in @ct | aes-gcm -d key=@cek | hex`);
+in @ct | aes-gcm -d key=@cek | to hex`);
     expect(split.validation.ok).toBe(true);
     expect(split.validation.inputNeeds || []).not.toContain("key");
     const arts = await runRecipe(split.ast);
@@ -106,7 +106,7 @@ describe("ecdh / wrap slot args (validate)", () => {
 
 genkey ec/p256 usage=derive | .public | export jwk | out @peer
 
-ecdh private=@local peer=@peer | hex`;
+ecdh private=@local peer=@peer | to hex`;
     const { validation } = compileRecipe(src);
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds || []).not.toContain("key");
@@ -114,7 +114,7 @@ ecdh private=@local peer=@peer | hex`;
 
   it("wrap needs both key and target slots to clear panel", () => {
     const partial = compileRecipe(
-      "genkey aes/256 | out @kek\n\nwrap key=@kek | hex"
+      "genkey aes/256 | out @kek\n\nwrap key=@kek | to hex"
     );
     expect(partial.validation.inputNeeds).toContain("key");
 
@@ -122,7 +122,7 @@ ecdh private=@local peer=@peer | hex`;
 
 genkey aes/256 | out @cek
 
-wrap key=@kek target=@cek | hex`);
+wrap key=@kek target=@cek | to hex`);
     expect(full.validation.ok).toBe(true);
     expect(full.validation.inputNeeds || []).not.toContain("key");
   });

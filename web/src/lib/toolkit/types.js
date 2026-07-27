@@ -337,7 +337,7 @@ export function inferParamDrivenType(name, current, params = {}) {
       if (current.which === "private") {
         return {
           ok: false,
-          error: `"import spki" expects public DER (e.g. pem.decode of PUBLIC KEY), got ${formatType(current)}`,
+          error: `"import spki" expects public DER (e.g. der of PUBLIC KEY), got ${formatType(current)}`,
         };
       }
       // Public-only import — a projected key tip, not a full keypair.
@@ -359,23 +359,6 @@ export function inferParamDrivenType(name, current, params = {}) {
   }
 
   if (name === "pem") {
-    if (params.decode) {
-      if (current.base !== "text") {
-        return {
-          ok: false,
-          error: `"pem.decode" expects text/pem, got ${formatType(current)}`,
-        };
-      }
-      // Carry half from prior pem.encode tip when known (armor label is runtime).
-      return {
-        ok: true,
-        output: typeOf("bytes", {
-          kind: "der",
-          which: current.which,
-          alg: current.alg,
-        }),
-      };
-    }
     if (current.base !== "bytes") {
       return {
         ok: false,
@@ -393,7 +376,24 @@ export function inferParamDrivenType(name, current, params = {}) {
     };
   }
 
-  if (name === "base64" || name === "hex" || name === "base32") {
+  if (name === "der") {
+    if (current.base !== "text") {
+      return {
+        ok: false,
+        error: `"der" expects text/pem, got ${formatType(current)}`,
+      };
+    }
+    return {
+      ok: true,
+      output: typeOf("bytes", {
+        kind: "der",
+        which: current.which,
+        alg: current.alg,
+      }),
+    };
+  }
+
+  if (name === "base64" || name === "base32") {
     if (params.decode) {
       if (current.base !== "text") {
         return {
@@ -413,10 +413,40 @@ export function inferParamDrivenType(name, current, params = {}) {
       ok: true,
       output: typeOf("text", {
         kind: "opaque",
-        encoding:
-          name === "hex" ? "hex" : name === "base32" ? "base32" : "base64",
+        encoding: name === "base32" ? "base32" : "base64",
       }),
     };
+  }
+
+  if (name === "to") {
+    const enc = String(params.encoding || "hex").toLowerCase();
+    if (enc !== "hex") {
+      return { ok: false, error: `"to ${enc}" is not supported yet` };
+    }
+    if (current.base !== "bytes") {
+      return {
+        ok: false,
+        error: `"to hex" expects bytes, got ${formatType(current)}`,
+      };
+    }
+    return {
+      ok: true,
+      output: typeOf("text", { kind: "opaque", encoding: "hex" }),
+    };
+  }
+
+  if (name === "from") {
+    const enc = String(params.encoding || "hex").toLowerCase();
+    if (enc !== "hex") {
+      return { ok: false, error: `"from ${enc}" is not supported yet` };
+    }
+    if (current.base !== "text") {
+      return {
+        ok: false,
+        error: `"from hex" expects hex text, got ${formatType(current)}`,
+      };
+    }
+    return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
   }
 
   if (name === "base64url") {
@@ -442,13 +472,101 @@ export function inferParamDrivenType(name, current, params = {}) {
   }
 
   if (name === "as") {
+    const t = String(params.type || "opaque").toLowerCase();
+    const alg = String(params.alg || current.alg || "ec/p256");
+
+    // Materialize → CryptoKey tips
+    if (t === "key" || t === "keypair") {
+      const fromPem = current.base === "text";
+      const fromDer = current.base === "bytes";
+      if (!fromPem && !fromDer) {
+        return {
+          ok: false,
+          error: `"as ${t}" expects bytes/der or text/pem, got ${formatType(current)}`,
+        };
+      }
+      const which = current.which;
+      if (t === "keypair") {
+        if (which === "public") {
+          return {
+            ok: false,
+            error: `"as keypair" needs private material — tip is ${formatType(current)}; use as key`,
+          };
+        }
+        return {
+          ok: true,
+          output: typeOf("keypair", { alg, which: "private" }),
+        };
+      }
+      // as key
+      if (which !== "public" && which !== "private") {
+        return {
+          ok: false,
+          error: `"as key" needs which (as public / as private, or PEM label) — tip is ${formatType(current)}`,
+        };
+      }
+      return {
+        ok: true,
+        output: typeOf("key", { alg, which }),
+      };
+    }
+
+    // Retag which on der/pem
+    if (t === "public" || t === "private") {
+      if (current.base === "text") {
+        const kind = current.kind || current.encoding || "";
+        if (kind && kind !== "pem" && kind !== "opaque") {
+          return {
+            ok: false,
+            error: `"as ${t}" expects text/pem, got ${formatType(current)}`,
+          };
+        }
+        if (current.which && current.which !== t) {
+          return {
+            ok: false,
+            error: `"as ${t}" conflicts with tip which=${current.which}`,
+          };
+        }
+        return {
+          ok: true,
+          output: typeOf("text", {
+            kind: current.kind || "pem",
+            encoding: current.encoding || "pem",
+            which: t,
+            alg: current.alg,
+          }),
+        };
+      }
+      if (current.base === "bytes") {
+        if (current.which && current.which !== t) {
+          return {
+            ok: false,
+            error: `"as ${t}" conflicts with tip which=${current.which}`,
+          };
+        }
+        return {
+          ok: true,
+          output: typeOf("bytes", {
+            kind: current.kind || "der",
+            which: t,
+            alg: current.alg,
+            length: current.length,
+          }),
+        };
+      }
+      return {
+        ok: false,
+        error: `"as ${t}" expects bytes/der or text/pem, got ${formatType(current)}`,
+      };
+    }
+
+    // Byte kind retags
     if (current.base !== "bytes") {
       return {
         ok: false,
         error: `"as" expects bytes, got ${formatType(current)}`,
       };
     }
-    const t = String(params.type || "opaque").toLowerCase();
     if (t === "master") {
       const len = current.length;
       if (len != null && len !== 16 && len !== 32) {
@@ -488,7 +606,7 @@ export function inferParamDrivenType(name, current, params = {}) {
     }
     return {
       ok: false,
-      error: `"as" type must be master, scalar, or opaque — got "${t}"`,
+      error: `"as" type must be master, scalar, opaque, public, private, key, or keypair — got "${t}"`,
     };
   }
 
@@ -502,23 +620,6 @@ export function inferParamDrivenType(name, current, params = {}) {
     return {
       ok: false,
       error: `"utf8" expects bytes or text, got ${formatType(current)}`,
-    };
-  }
-
-  if (name === "der") {
-    if (current.base !== "bytes") {
-      return {
-        ok: false,
-        error: `"der" expects bytes, got ${formatType(current)}`,
-      };
-    }
-    return {
-      ok: true,
-      output: typeOf("bytes", {
-        kind: current.kind || "der",
-        alg: current.alg,
-        which: current.which,
-      }),
     };
   }
 
@@ -963,10 +1064,22 @@ export function stepAcceptsRefined(spec, from) {
     spec.name === "pbkdf2" ||
     spec.name === "unwrap"
   ) {
-    return current.base === "bytes" || current.base === "text";
+    if (current.base === "bytes") return true;
+    // PEM / JWK tips want decode (or import) first — not crypto-as-payload.
+    if (current.base === "text") {
+      const kind = String(current.kind || current.encoding || "");
+      if (kind === "pem" || kind === "jwk") return false;
+      return true;
+    }
+    return false;
   }
   if (spec.name === "ecdh" || spec.name === "wrap") {
-    return true;
+    return (
+      !current ||
+      current.base === "none" ||
+      current.base === "keypair" ||
+      current.base === "key"
+    );
   }
 
   // Recipients / OpenPGP keys are side inputs for encrypt — not stem payload.
@@ -982,7 +1095,48 @@ export function stepAcceptsRefined(spec, from) {
   }
 
   const driven = inferParamDrivenType(spec.name, current, {});
-  if (driven) return driven.ok;
+  if (driven?.ok) return true;
+  // Encode direction failed — try decode twin before giving up (base64/…).
+  // Note: pem↔der and to↔from are conjugate pairs, not decodeTwin.
+  if (
+    driven &&
+    !driven.ok &&
+    (spec.decodeTwin || spec.params?.some((p) => p.flag === "-d"))
+  ) {
+    const decoded = inferParamDrivenType(spec.name, current, { decode: true });
+    if (decoded?.ok) return true;
+  }
+  // `import` defaults to pkcs8 — try tip-driven format when DER half is known.
+  if (spec.name === "import" && current.base === "bytes") {
+    /** @type {string[]} */
+    const formats =
+      current.which === "public"
+        ? ["spki"]
+        : current.which === "private"
+          ? ["pkcs8", "scalar"]
+          : current.kind === "der"
+            ? ["spki", "pkcs8"]
+            : [];
+    for (const format of formats) {
+      const alt = inferParamDrivenType("import", current, { format });
+      if (alt?.ok) return true;
+    }
+  }
+  // `as` defaults to opaque — try retag / materialize targets for the tip.
+  if (spec.name === "as") {
+    for (const type of [
+      "key",
+      "keypair",
+      "public",
+      "private",
+      "master",
+      "scalar",
+      "opaque",
+    ]) {
+      const alt = inferParamDrivenType("as", current, { type });
+      if (alt?.ok) return true;
+    }
+  }
 
   const want = spec.input;
   if (!want || want === "none") return false;
@@ -993,7 +1147,7 @@ export function stepAcceptsRefined(spec, from) {
   if (spec.name === "utf8" && (current.base === "text" || current.base === "bytes")) {
     return true;
   }
-  // Decode variants suggested when holding text
+  // Decode variants suggested when holding opaque text
   if (current.base === "text" && spec.params?.some((p) => p.flag === "-d")) {
     return true;
   }

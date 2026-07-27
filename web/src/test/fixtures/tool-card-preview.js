@@ -33,6 +33,7 @@ function toolboxBadgeHtml(toolbox) {
 }
 
 function opsGlyphForStep(s) {
+  if (s?.glyph) return s.glyph;
   if (s.shelf) {
     const g = getShelfMeta(s.shelf)?.glyph;
     if (g) return g;

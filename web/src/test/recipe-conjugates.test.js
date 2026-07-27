@@ -89,7 +89,7 @@ describe("slot-bridge synthetic pair via kernel", () => {
       id: "fwd",
       pair: "hex-bridge",
       title: "fwd",
-      recipe: "random 16 | hex | out @payload",
+      recipe: "random 16 | to hex | out @payload",
     };
     const reverse = {
       id: "rev",
@@ -169,6 +169,11 @@ describe("self-contained roundtrip presets", () => {
 
   it("webauthn-prf-aes-gcm compiles", () => {
     const p = PRESETS.find((x) => x.id === "webauthn-prf-aes-gcm");
+    assertPresetCompiles(p);
+  });
+
+  it("webauthn-attest-mds compiles", () => {
+    const p = PRESETS.find((x) => x.id === "webauthn-attest-mds");
     assertPresetCompiles(p);
   });
 

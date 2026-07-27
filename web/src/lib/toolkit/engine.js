@@ -74,8 +74,10 @@ import {
   hmacHashFromAlg,
   hmacLengthBits,
   importBoundJwk,
+  isCryptoKey,
   normalizeHashName,
   pbkdf2Derive,
+  pipelineKeyHandles,
   resolveBoundKey,
   resolveSlotKey,
   rsaOaepParams,
@@ -551,12 +553,12 @@ export function projectSelector(value, selector) {
     if (value.type !== "keypair") {
       throw new Error(`selector .private requires a keypair`);
     }
-    const priv = value.data?.privateKey;
-    const pub = value.data?.publicKey;
+    const handles = pipelineKeyHandles(value);
+    const priv = handles.privateKey;
     if (!priv) throw new Error("selector .private: no private key on keypair");
     return {
       type: "key",
-      data: { privateKey: priv, publicKey: pub },
+      data: priv,
       meta: { ...value.meta, which: "private", sensitive: true },
     };
   }
@@ -564,11 +566,12 @@ export function projectSelector(value, selector) {
     if (value.type !== "keypair") {
       throw new Error(`selector .public requires a keypair`);
     }
-    const pub = value.data?.publicKey;
+    const handles = pipelineKeyHandles(value);
+    const pub = handles.publicKey;
     if (!pub) throw new Error("selector .public: no public key on keypair");
     return {
       type: "key",
-      data: { publicKey: pub },
+      data: pub,
       meta: { ...value.meta, which: "public", sensitive: false },
     };
   }
@@ -759,22 +762,6 @@ async function execStepBody(step, value, bindings, artifacts) {
         String(step.params.hash || "sha-256")
       );
     case "pem": {
-      if (step.params.decode) {
-        if (!value || value.type !== "text") throw new Error("pem -d expects PEM text");
-        const block = parsePem(String(value.data));
-        return {
-          type: "bytes",
-          data: block.der,
-          meta: {
-            ...value.meta,
-            format: block.format === "opaque" ? value.meta?.format : block.format,
-            which: block.which,
-            pemLabel: block.label,
-            kind: "der",
-            sensitive: block.which !== "public",
-          },
-        };
-      }
       if (!value || value.type !== "bytes") throw new Error("pem expects bytes");
       let label = String(step.params.label || "auto");
       if (label === "auto") {
@@ -785,12 +772,31 @@ async function execStepBody(step, value, bindings, artifacts) {
       return {
         type: "text",
         data: text,
-        meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
+        meta: {
+          ...value.meta,
+          kind: "pem",
+          encoding: "pem",
+          which: value.meta?.which,
+          sensitive: !!value.meta?.sensitive,
+        },
       };
     }
-    case "der":
-      if (!value || value.type !== "bytes") throw new Error("der expects bytes");
-      return value;
+    case "der": {
+      if (!value || value.type !== "text") throw new Error("der expects PEM text");
+      const block = parsePem(String(value.data));
+      return {
+        type: "bytes",
+        data: block.der,
+        meta: {
+          ...value.meta,
+          format: block.format === "opaque" ? value.meta?.format : block.format,
+          which: block.which ?? value.meta?.which,
+          pemLabel: block.label,
+          kind: "der",
+          sensitive: (block.which ?? value.meta?.which) !== "public",
+        },
+      };
+    }
     case "base64":
       if (step.params.decode) {
         if (!value || value.type !== "text") throw new Error("base64 -d expects text");
@@ -823,21 +829,31 @@ async function execStepBody(step, value, bindings, artifacts) {
         data: bytesToBase64Url(value.data),
         meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
       };
-    case "hex":
-      if (step.params.decode) {
-        if (!value || value.type !== "text") throw new Error("hex -d expects text");
-        return {
-          type: "bytes",
-          data: hexToBytes(String(value.data)),
-          meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
-        };
-      }
-      if (!value || value.type !== "bytes") throw new Error("hex expects bytes");
+    case "to": {
+      const enc = String(step.params?.encoding || "hex").toLowerCase();
+      if (enc !== "hex") throw new Error(`to: unsupported encoding "${enc}"`);
+      if (!value || value.type !== "bytes") throw new Error("to hex expects bytes");
       return {
         type: "text",
         data: bytesToHex(value.data),
+        meta: {
+          ...value.meta,
+          kind: "opaque",
+          encoding: "hex",
+          sensitive: !!value.meta?.sensitive,
+        },
+      };
+    }
+    case "from": {
+      const enc = String(step.params?.encoding || "hex").toLowerCase();
+      if (enc !== "hex") throw new Error(`from: unsupported encoding "${enc}"`);
+      if (!value || value.type !== "text") throw new Error("from hex expects hex text");
+      return {
+        type: "bytes",
+        data: hexToBytes(String(value.data)),
         meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
       };
+    }
     case "base32":
       if (step.params.decode) {
         if (!value || value.type !== "text") throw new Error("base32 -d expects text");
@@ -1854,10 +1870,149 @@ async function execStepBody(step, value, bindings, artifacts) {
       return value;
     }
     case "as": {
+      const kind = String(step.params.type || "opaque").toLowerCase();
+      const alg = String(step.params.alg || value?.meta?.alg || "ec/p256");
+      const usage = String(step.params.usage || "auto");
+      const padding = String(step.params.padding || "pss");
+      const hash = String(step.params.hash || "sha-256");
+
+      // Materialize: DER/PEM/JWK → CryptoKey tip(s)
+      if (kind === "key" || kind === "keypair") {
+        // JWK text
+        if (
+          value?.type === "text" &&
+          (value.meta?.encoding === "jwk" ||
+            value.meta?.kind === "jwk" ||
+            /^\s*\{/.test(String(value.data || "")))
+        ) {
+          const imported = await importKey(value, "jwk", alg, usage, padding, hash);
+          if (kind === "keypair") {
+            if (imported.type === "key") {
+              throw new Error("as keypair: JWK is public-only — need a private JWK");
+            }
+            return imported;
+          }
+          const handles = pipelineKeyHandles(imported);
+          if (handles.privateKey) {
+            return {
+              type: "key",
+              data: handles.privateKey,
+              meta: { ...imported.meta, which: "private", sensitive: true },
+            };
+          }
+          if (handles.publicKey) {
+            return {
+              type: "key",
+              data: handles.publicKey,
+              meta: { ...imported.meta, which: "public", sensitive: false },
+            };
+          }
+          if (handles.secretKey) {
+            return {
+              type: "key",
+              data: handles.secretKey,
+              meta: { ...imported.meta, which: "secret", sensitive: true },
+            };
+          }
+          throw new Error("as key: empty JWK import");
+        }
+        let material = value;
+        if (value?.type === "text") {
+          const block = parsePem(String(value.data));
+          material = {
+            type: "bytes",
+            data: block.der,
+            meta: {
+              ...value.meta,
+              format: block.format === "opaque" ? value.meta?.format : block.format,
+              which: block.which ?? value.meta?.which,
+              kind: "der",
+              pemLabel: block.label,
+            },
+          };
+        }
+        if (!material || material.type !== "bytes") {
+          throw new Error(`as ${kind} expects bytes/der or text/pem`);
+        }
+        const which = material.meta?.which;
+        if (kind === "keypair") {
+          if (which === "public") {
+            throw new Error("as keypair needs private material — tip is public; use as key");
+          }
+          const format =
+            material.meta?.format === "scalar" || material.meta?.kind === "scalar"
+              ? "scalar"
+              : "pkcs8";
+          const imported = await importKey(material, format, alg, usage, padding, hash);
+          if (imported.type === "key") {
+            throw new Error("as keypair: import produced a public-only key");
+          }
+          return imported;
+        }
+        // as key
+        if (which !== "public" && which !== "private") {
+          throw new Error(
+            "as key needs which — use as public / as private first, or PEM with a known BEGIN label"
+          );
+        }
+        const format = which === "public" ? "spki" : "pkcs8";
+        const imported = await importKey(material, format, alg, usage, padding, hash);
+        if (imported.type === "key") {
+          if (isCryptoKey(imported.data)) return imported;
+          const handles = pipelineKeyHandles(imported);
+          const ck = which === "public" ? handles.publicKey : handles.privateKey;
+          if (!ck) throw new Error("as key: import produced empty key");
+          return {
+            type: "key",
+            data: ck,
+            meta: { ...imported.meta, which, sensitive: which !== "public" },
+          };
+        }
+        // Private pkcs8 import yields keypair — project to private CryptoKey tip
+        const handles = pipelineKeyHandles(imported);
+        if (!handles.privateKey) throw new Error("as key: no private key after import");
+        return {
+          type: "key",
+          data: handles.privateKey,
+          meta: {
+            ...imported.meta,
+            which: "private",
+            sensitive: true,
+          },
+        };
+      }
+
+      // Retag which on der/pem
+      if (kind === "public" || kind === "private") {
+        if (!value || (value.type !== "bytes" && value.type !== "text")) {
+          throw new Error(`as ${kind} expects bytes/der or text/pem`);
+        }
+        const prev = value.meta?.which;
+        if (prev && prev !== kind) {
+          throw new Error(`as ${kind} conflicts with tip which=${prev}`);
+        }
+        return {
+          type: value.type,
+          data: value.data,
+          meta: {
+            ...value.meta,
+            which: kind,
+            kind:
+              value.type === "text"
+                ? value.meta?.kind || "pem"
+                : value.meta?.kind || "der",
+            encoding:
+              value.type === "text"
+                ? value.meta?.encoding || "pem"
+                : value.meta?.encoding,
+            sensitive: kind !== "public",
+          },
+        };
+      }
+
       if (!value || value.type !== "bytes") {
         throw new Error("as expects bytes");
       }
-      const kind = String(step.params.type || "opaque").toLowerCase();
       const data = value.data;
       const len = data instanceof Uint8Array ? data.length : undefined;
       if (kind === "master") {
@@ -1899,7 +2054,9 @@ async function execStepBody(step, value, bindings, artifacts) {
           },
         };
       }
-      throw new Error(`as type must be master, scalar, or opaque — got "${kind}"`);
+      throw new Error(
+        `as type must be master, scalar, opaque, public, private, key, or keypair — got "${kind}"`
+      );
     }
     case "select": {
       if (!value) throw new Error("select expects a value");
@@ -2626,9 +2783,10 @@ async function exportKey(value, format, which) {
   if (!value || (value.type !== "keypair" && value.type !== "key")) {
     throw new Error("export expects a keypair or key");
   }
-  const { data, meta } = value;
-  const priv = data.privateKey;
-  const pub = data.publicKey;
+  const { meta } = value;
+  const handles = pipelineKeyHandles(value);
+  const priv = handles.privateKey;
+  const pub = handles.publicKey;
   const fmt = String(format || "pkcs8").toLowerCase();
 
   if (fmt === "scalar" || fmt === "d") {
@@ -2783,7 +2941,7 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
       );
       return {
         type: "key",
-        data: { publicKey },
+        data: publicKey,
         meta: { alg, curve, algorithm: name, which: "public", sensitive: false },
       };
     }
@@ -2812,7 +2970,7 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
       );
       return {
         type: "key",
-        data: { publicKey },
+        data: publicKey,
         meta: { alg, algorithm: "Ed25519", which: "public", sensitive: false },
       };
     }
@@ -2841,7 +2999,7 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
       );
       return {
         type: "key",
-        data: { publicKey },
+        data: publicKey,
         meta: { alg, algorithm: "X25519", which: "public", sensitive: false },
       };
     }
@@ -2880,7 +3038,7 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
       );
       return {
         type: "key",
-        data: { publicKey },
+        data: publicKey,
         meta: {
           alg,
           algorithm: name,
@@ -3321,8 +3479,9 @@ async function materializeOutArtifacts(value, params) {
 
   if (value.type === "keypair" || value.type === "key") {
     const parts = [];
-    const priv = value.data?.privateKey;
-    const pub = value.data?.publicKey;
+    const handles = pipelineKeyHandles(value);
+    const priv = handles.privateKey;
+    const pub = handles.publicKey;
     if (priv) {
       try {
         const jwk = await crypto.subtle.exportKey("jwk", priv);

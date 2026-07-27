@@ -130,7 +130,7 @@ describe("refined types", () => {
     ).toBe(false);
   });
 
-  it("pem.encode/decode preserve which on the tip", () => {
+  it("pem / der preserve which on the tip", () => {
     const derPub = typeOf("bytes", {
       kind: "der",
       which: "public",
@@ -142,9 +142,7 @@ describe("refined types", () => {
       expect(enc.output.kind).toBe("pem");
       expect(enc.output.which).toBe("public");
     }
-    const dec = resolveStepType(getStep("pem"), enc.ok ? enc.output : derPub, {
-      decode: true,
-    });
+    const dec = resolveStepType(getStep("der"), enc.ok ? enc.output : derPub, {});
     expect(dec.ok).toBe(true);
     if (dec.ok) {
       expect(dec.output.kind).toBe("der");
@@ -170,6 +168,95 @@ describe("refined types", () => {
     const names = stepsAccepting(afterPem).map((s) => s.name);
     expect(names).not.toContain("sss");
     expect(names).toContain("gpg.symencrypt");
+  });
+
+  it("stepsAccepting does not tip-fit digest/AEAD on PEM text", () => {
+    const afterPem = typeOf("text", {
+      kind: "pem",
+      which: "private",
+      alg: "ec/p256",
+    });
+    const names = stepsAccepting(afterPem).map((s) => s.name);
+    expect(names).not.toContain("digest");
+    expect(names).not.toContain("aes-gcm");
+    expect(names).not.toContain("sign");
+    expect(names).not.toContain("ecdh");
+    expect(names).toContain("der");
+    expect(names).toContain("out");
+  });
+
+  it("tip chain: PEM → der → as key / import", () => {
+    const pemPriv = typeOf("text", {
+      kind: "pem",
+      which: "private",
+      alg: "ec/p256",
+    });
+    expect(stepsAccepting(pemPriv).map((s) => s.name)).toContain("der");
+    expect(stepsAccepting(pemPriv).map((s) => s.name)).toContain("as");
+    const afterDer = resolveStepType(getStep("der"), pemPriv, {});
+    expect(afterDer.ok).toBe(true);
+    if (!afterDer.ok) return;
+    expect(afterDer.output.kind).toBe("der");
+    expect(afterDer.output.which).toBe("private");
+    const derNames = stepsAccepting(afterDer.output).map((s) => s.name);
+    expect(derNames).toContain("import");
+    expect(derNames).toContain("as");
+    expect(derNames).toContain("pem");
+
+    const asKey = resolveStepType(getStep("as"), afterDer.output, {
+      type: "key",
+      alg: "ec/p256",
+    });
+    expect(asKey.ok).toBe(true);
+    if (asKey.ok) {
+      expect(asKey.output.base).toBe("key");
+      expect(asKey.output.which).toBe("private");
+    }
+    const asPair = resolveStepType(getStep("as"), afterDer.output, {
+      type: "keypair",
+      alg: "ec/p256",
+    });
+    expect(asPair.ok).toBe(true);
+    if (asPair.ok) {
+      expect(asPair.output.base).toBe("keypair");
+    }
+
+    const pemPub = typeOf("text", {
+      kind: "pem",
+      which: "public",
+      alg: "ec/p256",
+    });
+    const derPub = resolveStepType(getStep("der"), pemPub, {});
+    expect(derPub.ok).toBe(true);
+    if (!derPub.ok) return;
+    expect(stepsAccepting(derPub.output).map((s) => s.name)).toContain("import");
+    expect(
+      resolveStepType(getStep("as"), derPub.output, { type: "keypair" }).ok
+    ).toBe(false);
+    const imported = resolveStepType(getStep("import"), derPub.output, {
+      format: "spki",
+      alg: "ec/p256",
+    });
+    expect(imported.ok).toBe(true);
+    if (imported.ok) {
+      expect(imported.output.base).toBe("key");
+      expect(imported.output.which).toBe("public");
+    }
+  });
+
+  it("as public / as private retag which on der/pem", () => {
+    const der = typeOf("bytes", { kind: "der", alg: "ec/p256" });
+    const pub = resolveStepType(getStep("as"), der, { type: "public" });
+    expect(pub.ok).toBe(true);
+    if (pub.ok) {
+      expect(pub.output.which).toBe("public");
+      expect(pub.output.kind).toBe("der");
+    }
+    expect(
+      resolveStepType(getStep("as"), pub.ok ? pub.output : der, {
+        type: "private",
+      }).ok
+    ).toBe(false);
   });
 
   it("stepsAccepting offers sss.split after scalar export", () => {

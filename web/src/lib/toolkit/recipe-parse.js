@@ -90,7 +90,7 @@ export function normalizeSlotRef(raw, opts = {}) {
   }
   if (/^\d+$/.test(s)) {
     if (!allowIndex) {
-      return { ok: false, error: `Slot index "${s}" is only valid on in/from` };
+      return { ok: false, error: `Slot index "${s}" is only valid on in` };
     }
     const n = Number(s);
     if (n < 1) return { ok: false, error: "Slot index must be ≥ 1" };
@@ -367,12 +367,13 @@ class Parser {
       return this.parseApply("verify", name, nameStart);
     }
 
+    // CyberChef encoding: `to` / `from` are normal registry steps (positional encoding).
     // WebCrypto sugar: encrypt|decrypt <transform> → concrete aes-* / rsa-* 
     if (lower === "encrypt" || lower === "decrypt") {
       return this.parseCipherDispatcher(lower, nameStart);
     }
 
-    // Encoding conjugates: pem.encode / pem.decode → pem / pem -d (AST decode flag).
+    // Encoding twins: base64.encode / base64.decode → base64 / base64 -d.
     const twinVerb = resolveDecodeTwinVerb(name, getStep);
     if (twinVerb) {
       const step = this.parseApply(twinVerb.canonical, name, nameStart);

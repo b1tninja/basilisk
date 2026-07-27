@@ -57,7 +57,7 @@ cd web && npm run glyphs
 | `password` | Password | Key with bit shank | Symmetric OpenPGP password/SKESK shelf — key bow and bit. |
 | `split` | Split | Diverging bolts | SSS split / BLIP39 encode — energy splitting into branches. |
 | `recover` | Combine | Waveform converging with refresh | SSS combine — signal converging toward recovery, with a small refresh corner. |
-| `binary` | Binary | Four bit cells | Binary encodings (pem, base64, hex, …) — a 2×2 bit grid. |
+| `binary` | Binary | Four bit cells | Binary encodings shelf — a 2×2 bit grid (fallback when a tool has no dedicated glyph). |
 | `text` | Text | Typography “T” | Text encodings (utf8) — a capital T with baseline marks. |
 | `ports` | Ports | Two linked ports | I/O ports — two sockets with a bridge (input/out/random). |
 | `control` | Control | Flow graph nodes | Flow control shelf — three nodes linked by a U-shaped bus. |
@@ -82,6 +82,53 @@ cd web && npm run glyphs
 | `fingerprint` | Fingerprint | Fingerprint ridges | OpenPGP key fingerprint — ridge arcs (ModernPGP fingerprint icon). <br><small>ModernPGP fingerprint</small> |
 | `unlock` | Unlock | Open padlock | Unlock vault key into session — shackle open. <br><small>ModernPGP open lock</small> |
 | `lock` | Lock | Closed padlock | Lock / clear session material — shackle closed. <br><small>ModernPGP closed lock</small> |
+
+## tool
+
+| Id | Label | Metaphor | Description |
+|----|-------|----------|-------------|
+| `hex` | Hex | Hexagon with crosshair | `to hex` / `from hex` — hexagon (hex) with a center cross (byte grid). |
+| `base64` | Base64 | Stacked encoded rows with 64 marks | Base64 / Base64url — two full code rows and a truncated third with twin hash marks. |
+| `base32` | Base32 | Stacked rows with downward chevron | Base32 — three encoding rows with a small expand chevron (5-bit alphabet). |
+| `pem` | PEM | Armored document | PEM / DER armor — framed document with BEGIN/END-style text lines. |
+| `genkey` | Generate key | Key with spark rays | WebCrypto genkey — classic key with creation rays. |
+| `export` | Export | Arrow up out of tray | Export key material — upload arrow from tray. |
+| `import` | Import | Arrow down into tray | Import key material — download arrow into tray. |
+| `random` | Random | Dice / bit cells | CSPRNG random bytes — irregular bit cells. |
+| `input` | Input | Panel with inbound rail | Runtime input — content panel with left inbound mark. |
+| `out` | Out | Panel with outbound rail | Emit / slot out — content panel with right outbound mark. |
+| `passphrase` | Passphrase | Key over baseline | Passphrase source — key above a text baseline. |
+| `qr` | QR | QR finder squares | QR code sink — three finder patterns plus modules. |
+| `inspect` | Inspect | Magnifier with crosshair | Inspect / dump — magnifying glass with focus cross. |
+| `peek` | Peek | Eye | Peek side snapshot — eye outline. |
+| `text-sink` | Text sink | T with outbound mark | text / print sink — typography T with outbound tick. |
+| `foreach` | Foreach | Mapped tiles | foreach — three tiles suggesting map-over-items. |
+| `tee` | Tee | T junction forks | tee — stem with left/right branch forks. |
+| `in` | In | Arrow into slot rail | in @slot — arrow into a vertical slot rail. |
+| `as` | As | Cast chevron A | as cast — A-shaped chevron over a baseline. |
+| `select` | Select | Document with fold | select / .public — folded document page. |
+| `at` | At | @ spiral | at / [n] index — @-like spiral. |
+| `gpg-encrypt` | OpenPGP encrypt | Locked envelope | gpg.encrypt / gpg.decrypt — flap envelope with lock. |
+| `gpg-sign` | OpenPGP sign | Quill stroke | gpg.sign / gpg.verify — pen tip stroke. |
+| `gpg-genkey` | OpenPGP genkey | Key with OpenPGP bar | gpg.genkey — key plus a small header bar. |
+| `gpg-inspect` | OpenPGP inspect | Message with magnifier | gpg.inspect — message panel with lens. |
+| `gpg-sym` | OpenPGP symmetric | Password key under panel | gpg.symencrypt / gpg.symdecrypt — passphrase key under a panel. |
+| `blip39` | BLIP39 | Mnemonic word rows | blip39 — stacked word rows for share mnemonics. |
+| `shares` | Shares | Offset share cards | shares input — stacked offset cards. |
+| `agent-list` | Agent list | List with plus | agent.list — list lines with a plus mark. |
+| `agent-save` | Agent save | Diskette / save card | agent.save — save card with top flap. |
+| `hkp-search` | HKP search | Magnifier with plus | hkp.search — lens with focus cross. |
+| `hkp-get` | HKP get | Download arrow | hkp.get — arrow down to baseline. |
+| `hkp-filter` | HKP filter | Funnel | hkp.filter — funnel / filter shape. |
+| `hkp-cache` | HKP cache | Drawer stack | hkp.cache — stacked cache drawers. |
+| `hkdf` | HKDF | Extract box then expand | hkdf — extract rectangle feeding an expand fan. |
+| `pbkdf2` | PBKDF2 | Passphrase into KDF box | pbkdf2 — password key under an extract panel. |
+| `wa-create` | WebAuthn create | Passkey with key | webauthn.create — person plus overlapping key. |
+| `wa-get` | WebAuthn get | Passkey with download | webauthn.get — person plus downward arrow. |
+| `wa-prf` | WebAuthn PRF | Passkey with hash bars | webauthn.prf — person plus digest bars. |
+| `wa-caps` | WebAuthn caps | Passkey with check | webauthn.caps — person plus readiness check. |
+| `wa-attest` | WebAuthn attest | Shield with check | webauthn.attest — attestation shield. |
+| `wa-mds` | WebAuthn MDS | Directory document | webauthn.mds — MDS document with lens. |
 
 ## Asset format
 

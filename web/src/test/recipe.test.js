@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   PRESETS,
+  PRESET_GROUP_ORDER,
+  listPresetGroups,
   compileRecipe,
   canonicalizeRecipe,
+  migrateRecipe,
   parseRecipe,
   registryIssues,
   serializeRecipe,
@@ -27,9 +30,39 @@ describe("registry completeness", () => {
   });
 });
 
+describe("preset groups", () => {
+  it("assigns every preset a known Templates category", () => {
+    const known = new Set(PRESET_GROUP_ORDER);
+    for (const p of PRESETS) {
+      expect(known.has(p.group), `${p.id} group ${p.group}`).toBe(true);
+    }
+    expect(listPresetGroups()).toEqual([...PRESET_GROUP_ORDER]);
+  });
+
+  it("keeps WebAuthn starters under WebAuthn", () => {
+    const wa = PRESETS.filter((p) => p.group === "WebAuthn");
+    expect(wa.map((p) => p.id).sort()).toEqual([
+      "webauthn-attest-mds",
+      "webauthn-prf-aes-gcm",
+    ]);
+    const attest = PRESETS.find((p) => p.id === "webauthn-attest-mds");
+    expect(compileRecipe(attest.recipe).validation.ok).toBe(true);
+  });
+
+  it("keeps no category larger than 8 presets", () => {
+    const counts = new Map();
+    for (const p of PRESETS) {
+      counts.set(p.group, (counts.get(p.group) || 0) + 1);
+    }
+    for (const [g, n] of counts) {
+      expect(n, g).toBeLessThanOrEqual(8);
+    }
+  });
+});
+
 describe("parse / serialize", () => {
   it("round-trips a simple recipe", () => {
-    const src = "genkey ec/p256 | export pkcs8 | pem.encode";
+    const src = "genkey ec/p256 | export pkcs8 | pem";
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     expect(ast.steps.map((s) => s.name)).toEqual(["genkey", "export", "pem"]);
@@ -43,7 +76,7 @@ describe("parse / serialize", () => {
     );
     expect(errors).toEqual([]);
     expect(changed).toBe(true);
-    expect(text).toBe("genkey ec/p256 | export pkcs8 | pem.encode");
+    expect(text).toBe("genkey ec/p256 | export pkcs8 | pem");
   });
 
   it("canonicalizeRecipe formats foreach bodies and spacing", () => {
@@ -124,29 +157,85 @@ describe("validation", () => {
     expect(validation.errors.some((e) => /export/i.test(e.message))).toBe(true);
   });
 
-  it("parses -d and serializes encoding twins as .encode/.decode", () => {
+  it("parses -d and serializes encoding twins as .encode/.decode; pem/der conjugate", () => {
     const src =
-      "shares | blip39 -d | sss.combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem";
+      "shares | blip39 -d | sss.combine | utf8 | der | import pkcs8 alg=ec/p256 | export pkcs8 | pem";
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
-    expect(ast.steps.find((s) => s.name === "pem" && s.params.decode === true)).toBeTruthy();
+    expect(ast.steps.find((s) => s.name === "der")).toBeTruthy();
+    expect(ast.steps.filter((s) => s.name === "pem").every((s) => !s.params?.decode)).toBe(
+      true
+    );
     const text = serializeRecipe(ast);
-    expect(text).toContain("pem.decode");
-    expect(text).toContain("pem.encode");
+    expect(text).toContain("der");
+    expect(text).toMatch(/\bpem\b/);
     expect(text).toContain("blip39.decode");
-    expect(text).not.toContain("pem -d");
     expect(text).not.toContain("decode=true");
   });
 
-  it("accepts pem.encode / pem.decode convenience verbs", () => {
+  it("rejects legacy pem.encode / pem.decode / pem -d", () => {
+    expect(
+      parseRecipe("export spki | pem.encode | out @pub").errors.some((e) =>
+        /Unknown step|pem\.encode/i.test(e.message)
+      )
+    ).toBe(true);
+    expect(
+      parseRecipe("in @pub | pem.decode | import spki").errors.some((e) =>
+        /Unknown step|pem\.decode/i.test(e.message)
+      )
+    ).toBe(true);
+    expect(
+      parseRecipe("in @pub | pem -d | import spki").errors.some((e) =>
+        /Unknown flag|-d/i.test(e.message)
+      )
+    ).toBe(true);
     const { ast, errors } = parseRecipe(
-      "export spki | pem.encode | out @pub\n\nin @pub | pem.decode | import spki"
+      "export spki | pem | out @pub\n\nin @pub | der | import spki"
     );
     expect(errors).toEqual([]);
-    expect(ast.chains[0].steps.find((s) => s.name === "pem")?.params?.decode).toBeFalsy();
-    expect(ast.chains[1].steps.find((s) => s.name === "pem")?.params?.decode).toBe(true);
-    expect(serializeRecipe(ast)).toContain("pem.encode");
-    expect(serializeRecipe(ast)).toContain("pem.decode");
+    expect(ast.chains[0].steps.find((s) => s.name === "pem")).toBeTruthy();
+    expect(ast.chains[1].steps.find((s) => s.name === "der")).toBeTruthy();
+    expect(serializeRecipe(ast)).toContain("pem");
+    expect(serializeRecipe(ast)).toContain("der");
+  });
+
+  it("rejects bare hex / unhex; accepts to hex / from hex", () => {
+    expect(
+      parseRecipe("random 8 | hex | out @h").errors.some((e) =>
+        /hex.*removed|Unknown step|to hex/i.test(e.message)
+      )
+    ).toBe(true);
+    expect(
+      parseRecipe("in @h | unhex").errors.some((e) =>
+        /unhex.*removed|Unknown step|from hex/i.test(e.message)
+      )
+    ).toBe(true);
+    expect(
+      parseRecipe("in @h | to hex -d").errors.some((e) =>
+        /Unknown flag|-d/i.test(e.message)
+      )
+    ).toBe(true);
+    const { ast, errors } = parseRecipe("random 8 | to hex | out @h\n\nin @h | from hex");
+    expect(errors).toEqual([]);
+    expect(ast.chains[0].steps.find((s) => s.name === "to")?.params?.encoding).toBe(
+      "hex"
+    );
+    expect(ast.chains[1].steps.find((s) => s.name === "from")?.params?.encoding).toBe(
+      "hex"
+    );
+    expect(serializeRecipe(ast)).toBe("random 8 | to hex | out @h\n\nin @h | from hex");
+  });
+
+  it("migrateRecipe rewrites hex/unhex and slot from", () => {
+    const { recipe, changes } = migrateRecipe(
+      "random 8 | hex | out @h\n\nfrom @h | unhex"
+    );
+    expect(recipe).toBe("random 8 | to hex | out @h\n\nin @h | from hex");
+    expect(changes.some((c) => c.from === "hex")).toBe(true);
+    expect(changes.some((c) => c.from === "unhex")).toBe(true);
+    expect(changes.some((c) => c.from === "from (slot)")).toBe(true);
+    expect(migrateRecipe("random 8 | to hex").recipe).toBe("random 8 | to hex");
+    expect(compileRecipe("random 8 | to base64").validation.ok).toBe(false);
   });
 
   it("rejects shares | sss.combine without blip39 -d", () => {
@@ -164,14 +253,14 @@ describe("validation", () => {
   });
 
   it("input step reports text inputNeeds and canonicalizes paste/cat aliases", () => {
-    const { validation } = compileRecipe("input | utf8 | hex");
+    const { validation } = compileRecipe("input | utf8 | to hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("text");
 
-    const { ast, errors } = parseRecipe("paste | utf8 | hex");
+    const { ast, errors } = parseRecipe("paste | utf8 | to hex");
     expect(errors).toEqual([]);
     expect(ast.steps[0].name).toBe("input");
-    expect(parseRecipe("cat | utf8 | hex").ast.steps[0].name).toBe("input");
+    expect(parseRecipe("cat | utf8 | to hex").ast.steps[0].name).toBe("input");
   });
 
   it("rejects more than one input step per pipeline", () => {
@@ -182,19 +271,19 @@ describe("validation", () => {
   });
 
   it("rejects retired gpgdecrypt alias", () => {
-    const { errors } = parseRecipe("gpgdecrypt | sss.combine | hex");
+    const { errors } = parseRecipe("gpgdecrypt | sss.combine | to hex");
     expect(errors.some((e) => /Unknown step/i.test(e.message))).toBe(true);
   });
 
   it("parses gpg.decrypt", () => {
-    const { ast, errors } = parseRecipe("gpg.decrypt | blip39 -d | sss.combine | hex");
+    const { ast, errors } = parseRecipe("gpg.decrypt | blip39 -d | sss.combine | to hex");
     expect(errors).toEqual([]);
     expect(ast.steps[0].name).toBe("gpg.decrypt");
     expect(serializeRecipe(ast)).toContain("gpg.decrypt");
   });
 
   it("decrypt recipes request gpg + shares panels for hybrid recovery", () => {
-    const { validation } = compileRecipe("gpg.decrypt | blip39 -d | sss.combine | hex");
+    const { validation } = compileRecipe("gpg.decrypt | blip39 -d | sss.combine | to hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toEqual(
       expect.arrayContaining(["gpg", "shares"])

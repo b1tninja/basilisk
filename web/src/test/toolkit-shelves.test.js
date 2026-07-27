@@ -39,6 +39,13 @@ describe("toolbox shelf taxonomy", () => {
     }
   });
 
+  it("gives every step an explicit glyph present in GLYPH_PATHS", () => {
+    for (const s of listSteps()) {
+      expect(s.glyph, s.name).toBeTruthy();
+      expect(GLYPH_PATHS[s.glyph], `${s.name} glyph ${s.glyph}`).toBeTruthy();
+    }
+  });
+
   it("gives every toolbox a glyph", () => {
     for (const [tb, meta] of Object.entries(TOOLBOX_META)) {
       expect(meta.glyph, tb).toBeTruthy();

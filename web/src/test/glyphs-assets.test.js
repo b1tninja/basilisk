@@ -30,8 +30,11 @@ describe("glyph assets", () => {
       expect(glyphHtml(g.id)).toContain("<svg");
     }
 
-    const svgFiles = readdirSync(SVG_DIR).filter((f) => f.endsWith(".svg"));
-    expect(svgFiles.sort()).toEqual(ids.map((id) => `${id}.svg`));
+    const svgFiles = readdirSync(SVG_DIR)
+      .filter((f) => f.endsWith(".svg"))
+      .map((f) => f.slice(0, -4))
+      .sort();
+    expect(svgFiles).toEqual(ids);
   });
 
   it("marks glyphs.js as generated", () => {

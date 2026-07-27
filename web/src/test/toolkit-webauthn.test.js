@@ -61,7 +61,7 @@ describe("webauthn toolbox shelves", () => {
   });
 
   it("recipeNeedsMainThread detects webauthn steps", () => {
-    const { ast: plain } = compileRecipe("random 16 | hex");
+    const { ast: plain } = compileRecipe("random 16 | to hex");
     expect(recipeNeedsMainThread(plain)).toBe(false);
     const { ast: wa } = compileRecipe("webauthn.caps");
     expect(recipeNeedsMainThread(wa)).toBe(true);
@@ -73,7 +73,7 @@ describe("webauthn toolbox shelves", () => {
     expect(formatType(inferSourceType("webauthn.get"))).toBe("text/opaque");
     expect(formatType(inferSourceType("webauthn.create"))).toBe("bytes/opaque");
     expect(formatType(inferSourceType("webauthn.prf"))).toBe("bytes/opaque");
-    expect(compileRecipe("webauthn.create | hex").validation.ok).toBe(true);
+    expect(compileRecipe("webauthn.create | to hex").validation.ok).toBe(true);
     expect(compileRecipe("webauthn.get | out @a").validation.ok).toBe(true);
   });
 });
@@ -95,6 +95,31 @@ describe("webauthn ops (offline)", () => {
     const body = JSON.parse(out.data);
     expect(body.fmt).toBe("none");
     expect(body.aaguid).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("webauthn.attest accepts base64 text from Inputs", async () => {
+    const withAaguid = new Uint8Array(55);
+    withAaguid[32] = 0x41;
+    for (let i = 0; i < 16; i++) withAaguid[37 + i] = i;
+    const att = encodeAttestation(withAaguid);
+    let b64 = "";
+    for (let i = 0; i < att.length; i++) b64 += String.fromCharCode(att[i]);
+    b64 = btoa(b64);
+    const out = await execWaAttest({ type: "text", data: b64 });
+    expect(JSON.parse(out.data).fmt).toBe("none");
+  });
+
+  it("webauthn.attest empty input hints at Templates → WebAuthn", async () => {
+    await expect(execWaAttest(null)).rejects.toThrow(/Templates → WebAuthn/);
+  });
+
+  it("input | webauthn.attest | webauthn.mds typechecks (Attestation → MDS template)", () => {
+    const { validation } = compileRecipe(
+      `input | webauthn.attest | out @att
+
+in @att | webauthn.mds | out @mds`
+    );
+    expect(validation.ok, validation.errors?.[0]?.message).toBe(true);
   });
 
   it("webauthn.mds returns unverified for zero AAGUID without network", async () => {

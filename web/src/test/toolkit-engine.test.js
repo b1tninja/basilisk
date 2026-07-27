@@ -69,7 +69,7 @@ describe("toolkit engine", () => {
 
   it("out passes the value through for later steps", async () => {
     const { ast, validation } = compileRecipe(
-      "random 8 | out name=raw encoding=base64 | hex"
+      "random 8 | out name=raw encoding=base64 | to hex"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -109,7 +109,7 @@ describe("toolkit engine", () => {
   });
 
   it("input step feeds runtime text through the pipeline", async () => {
-    const { ast, validation } = compileRecipe("input | utf8 | hex");
+    const { ast, validation } = compileRecipe("input | utf8 | to hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("text");
     const arts = await runRecipe(ast, {
@@ -120,7 +120,7 @@ describe("toolkit engine", () => {
   });
 
   it("input step fails without runtime text", async () => {
-    const { ast } = compileRecipe("input | utf8 | hex");
+    const { ast } = compileRecipe("input | utf8 | to hex");
     await expect(runRecipe(ast, { inputs: {} })).rejects.toThrow(/input text/i);
   });
 });

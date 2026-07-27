@@ -34,7 +34,7 @@ from kp | export pkcs8 | pem`);
     expect(errors).toEqual([]);
     expect(text).toBe(`genkey ec/p256 | out @kp
 
-in @kp | export pkcs8 | pem.encode`);
+in @kp | export pkcs8 | pem`);
   });
 
   it("canonicalizes out name=public to out @public", () => {
@@ -42,7 +42,7 @@ in @kp | export pkcs8 | pem.encode`);
       "genkey ec/p256 | export pkcs8 | pem | out name=public"
     );
     expect(errors).toEqual([]);
-    expect(text).toBe("genkey ec/p256 | export pkcs8 | pem.encode | out @public");
+    expect(text).toBe("genkey ec/p256 | export pkcs8 | pem | out @public");
   });
 
   it("rejects path-like out refs", () => {

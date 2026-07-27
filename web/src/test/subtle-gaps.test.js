@@ -50,8 +50,8 @@ describe("wrap mode=aes-gcm", () => {
   it("round-trips a CEK", async () => {
     const { ast, validation } = compileRecipe(`genkey aes/256 | out @kek
 genkey aes/256 | out @cek
-wrap mode=aes-gcm key=@kek target=@cek | hex | out @wrapped
-in @wrapped | hex -d | unwrap mode=aes-gcm key=@kek | hex`);
+wrap mode=aes-gcm key=@kek target=@cek | to hex | out @wrapped
+in @wrapped | from hex | unwrap mode=aes-gcm key=@kek | to hex`);
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
     const wrapped = out.find((a) => /wrapped/i.test(a.filename || a.label || ""));
@@ -65,8 +65,8 @@ describe("hkdf as=aes-kw/256 wrap", () => {
   it("derives KEK and wraps", async () => {
     const { ast, validation } = compileRecipe(`random 32 | hkdf 32 as=aes-kw/256 | out @kek
 genkey aes/256 | out @cek
-wrap key=@kek target=@cek | hex | out @wrapped
-in @wrapped | hex -d | unwrap key=@kek | hex`);
+wrap key=@kek target=@cek | to hex | out @wrapped
+in @wrapped | from hex | unwrap key=@kek | to hex`);
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
     expect(out.some((a) => /^[0-9a-f]{64}$/.test(a.content || ""))).toBe(true);

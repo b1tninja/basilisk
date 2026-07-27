@@ -257,10 +257,12 @@ Shelves keep attestation/MDS out of the main Essentials list. Ceremonies (`webau
 | `webauthn.create` | Essentials | Done | Create + PRF IKM bytes (vault meta); soft MDS |
 | `webauthn.get` | Essentials | Done | Assertion → extension-results JSON |
 | `webauthn.prf` | Essentials | Done | Vault passkey PRF unlock → IKM bytes |
-| `webauthn.attest` | Attestation / MDS | Done | Parse attestationObject → fmt/aaguid JSON |
+| `webauthn.attest` | Attestation / MDS | Done | Parse attestationObject (bytes or base64/hex text) → fmt/aaguid JSON |
 | `webauthn.mds` | Attestation / MDS | Done | Soft FIDO MDS lookup (same-origin proxy) |
 
 Compose with WebCrypto: `webauthn.prf \| hkdf 32 \| …` / `aes-gcm`.
+
+**Templates → WebAuthn:** `webauthn-prf-aes-gcm` (PRF → HKDF → AES-GCM) and `webauthn-attest-mds` (paste attestationObject in Inputs → `webauthn.attest` → `webauthn.mds`).
 
 ### Flow & sinks
 

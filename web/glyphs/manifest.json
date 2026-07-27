@@ -184,7 +184,35 @@
       "group": "shelf",
       "label": "Binary",
       "metaphor": "Four bit cells",
-      "description": "Binary encodings (pem, base64, hex, …) — a 2×2 bit grid."
+      "description": "Binary encodings shelf — a 2×2 bit grid (fallback when a tool has no dedicated glyph)."
+    },
+    {
+      "id": "hex",
+      "group": "tool",
+      "label": "Hex",
+      "metaphor": "Hexagon with crosshair",
+      "description": "`to hex` / `from hex` — hexagon (hex) with a center cross (byte grid)."
+    },
+    {
+      "id": "base64",
+      "group": "tool",
+      "label": "Base64",
+      "metaphor": "Stacked encoded rows with 64 marks",
+      "description": "Base64 / Base64url — two full code rows and a truncated third with twin hash marks."
+    },
+    {
+      "id": "base32",
+      "group": "tool",
+      "label": "Base32",
+      "metaphor": "Stacked rows with downward chevron",
+      "description": "Base32 — three encoding rows with a small expand chevron (5-bit alphabet)."
+    },
+    {
+      "id": "pem",
+      "group": "tool",
+      "label": "PEM",
+      "metaphor": "Armored document",
+      "description": "PEM / DER armor — framed document with BEGIN/END-style text lines."
     },
     {
       "id": "text",
@@ -295,6 +323,272 @@
       "refs": [
         "ModernPGP closed lock"
       ]
+    },
+    {
+      "id": "genkey",
+      "group": "tool",
+      "label": "Generate key",
+      "metaphor": "Key with spark rays",
+      "description": "WebCrypto genkey — classic key with creation rays."
+    },
+    {
+      "id": "export",
+      "group": "tool",
+      "label": "Export",
+      "metaphor": "Arrow up out of tray",
+      "description": "Export key material — upload arrow from tray."
+    },
+    {
+      "id": "import",
+      "group": "tool",
+      "label": "Import",
+      "metaphor": "Arrow down into tray",
+      "description": "Import key material — download arrow into tray."
+    },
+    {
+      "id": "random",
+      "group": "tool",
+      "label": "Random",
+      "metaphor": "Dice / bit cells",
+      "description": "CSPRNG random bytes — irregular bit cells."
+    },
+    {
+      "id": "input",
+      "group": "tool",
+      "label": "Input",
+      "metaphor": "Panel with inbound rail",
+      "description": "Runtime input — content panel with left inbound mark."
+    },
+    {
+      "id": "out",
+      "group": "tool",
+      "label": "Out",
+      "metaphor": "Panel with outbound rail",
+      "description": "Emit / slot out — content panel with right outbound mark."
+    },
+    {
+      "id": "passphrase",
+      "group": "tool",
+      "label": "Passphrase",
+      "metaphor": "Key over baseline",
+      "description": "Passphrase source — key above a text baseline."
+    },
+    {
+      "id": "qr",
+      "group": "tool",
+      "label": "QR",
+      "metaphor": "QR finder squares",
+      "description": "QR code sink — three finder patterns plus modules."
+    },
+    {
+      "id": "inspect",
+      "group": "tool",
+      "label": "Inspect",
+      "metaphor": "Magnifier with crosshair",
+      "description": "Inspect / dump — magnifying glass with focus cross."
+    },
+    {
+      "id": "peek",
+      "group": "tool",
+      "label": "Peek",
+      "metaphor": "Eye",
+      "description": "Peek side snapshot — eye outline."
+    },
+    {
+      "id": "text-sink",
+      "group": "tool",
+      "label": "Text sink",
+      "metaphor": "T with outbound mark",
+      "description": "text / print sink — typography T with outbound tick."
+    },
+    {
+      "id": "foreach",
+      "group": "tool",
+      "label": "Foreach",
+      "metaphor": "Mapped tiles",
+      "description": "foreach — three tiles suggesting map-over-items."
+    },
+    {
+      "id": "tee",
+      "group": "tool",
+      "label": "Tee",
+      "metaphor": "T junction forks",
+      "description": "tee — stem with left/right branch forks."
+    },
+    {
+      "id": "in",
+      "group": "tool",
+      "label": "In",
+      "metaphor": "Arrow into slot rail",
+      "description": "in @slot — arrow into a vertical slot rail."
+    },
+    {
+      "id": "as",
+      "group": "tool",
+      "label": "As",
+      "metaphor": "Cast chevron A",
+      "description": "as cast — A-shaped chevron over a baseline."
+    },
+    {
+      "id": "select",
+      "group": "tool",
+      "label": "Select",
+      "metaphor": "Document with fold",
+      "description": "select / .public — folded document page."
+    },
+    {
+      "id": "at",
+      "group": "tool",
+      "label": "At",
+      "metaphor": "@ spiral",
+      "description": "at / [n] index — @-like spiral."
+    },
+    {
+      "id": "gpg-encrypt",
+      "group": "tool",
+      "label": "OpenPGP encrypt",
+      "metaphor": "Locked envelope",
+      "description": "gpg.encrypt / gpg.decrypt — flap envelope with lock."
+    },
+    {
+      "id": "gpg-sign",
+      "group": "tool",
+      "label": "OpenPGP sign",
+      "metaphor": "Quill stroke",
+      "description": "gpg.sign / gpg.verify — pen tip stroke."
+    },
+    {
+      "id": "gpg-genkey",
+      "group": "tool",
+      "label": "OpenPGP genkey",
+      "metaphor": "Key with OpenPGP bar",
+      "description": "gpg.genkey — key plus a small header bar."
+    },
+    {
+      "id": "gpg-inspect",
+      "group": "tool",
+      "label": "OpenPGP inspect",
+      "metaphor": "Message with magnifier",
+      "description": "gpg.inspect — message panel with lens."
+    },
+    {
+      "id": "gpg-sym",
+      "group": "tool",
+      "label": "OpenPGP symmetric",
+      "metaphor": "Password key under panel",
+      "description": "gpg.symencrypt / gpg.symdecrypt — passphrase key under a panel."
+    },
+    {
+      "id": "blip39",
+      "group": "tool",
+      "label": "BLIP39",
+      "metaphor": "Mnemonic word rows",
+      "description": "blip39 — stacked word rows for share mnemonics."
+    },
+    {
+      "id": "shares",
+      "group": "tool",
+      "label": "Shares",
+      "metaphor": "Offset share cards",
+      "description": "shares input — stacked offset cards."
+    },
+    {
+      "id": "agent-list",
+      "group": "tool",
+      "label": "Agent list",
+      "metaphor": "List with plus",
+      "description": "agent.list — list lines with a plus mark."
+    },
+    {
+      "id": "agent-save",
+      "group": "tool",
+      "label": "Agent save",
+      "metaphor": "Diskette / save card",
+      "description": "agent.save — save card with top flap."
+    },
+    {
+      "id": "hkp-search",
+      "group": "tool",
+      "label": "HKP search",
+      "metaphor": "Magnifier with plus",
+      "description": "hkp.search — lens with focus cross."
+    },
+    {
+      "id": "hkp-get",
+      "group": "tool",
+      "label": "HKP get",
+      "metaphor": "Download arrow",
+      "description": "hkp.get — arrow down to baseline."
+    },
+    {
+      "id": "hkp-filter",
+      "group": "tool",
+      "label": "HKP filter",
+      "metaphor": "Funnel",
+      "description": "hkp.filter — funnel / filter shape."
+    },
+    {
+      "id": "hkp-cache",
+      "group": "tool",
+      "label": "HKP cache",
+      "metaphor": "Drawer stack",
+      "description": "hkp.cache — stacked cache drawers."
+    },
+    {
+      "id": "hkdf",
+      "group": "tool",
+      "label": "HKDF",
+      "metaphor": "Extract box then expand",
+      "description": "hkdf — extract rectangle feeding an expand fan."
+    },
+    {
+      "id": "pbkdf2",
+      "group": "tool",
+      "label": "PBKDF2",
+      "metaphor": "Passphrase into KDF box",
+      "description": "pbkdf2 — password key under an extract panel."
+    },
+    {
+      "id": "wa-create",
+      "group": "tool",
+      "label": "WebAuthn create",
+      "metaphor": "Passkey with key",
+      "description": "webauthn.create — person plus overlapping key."
+    },
+    {
+      "id": "wa-get",
+      "group": "tool",
+      "label": "WebAuthn get",
+      "metaphor": "Passkey with download",
+      "description": "webauthn.get — person plus downward arrow."
+    },
+    {
+      "id": "wa-prf",
+      "group": "tool",
+      "label": "WebAuthn PRF",
+      "metaphor": "Passkey with hash bars",
+      "description": "webauthn.prf — person plus digest bars."
+    },
+    {
+      "id": "wa-caps",
+      "group": "tool",
+      "label": "WebAuthn caps",
+      "metaphor": "Passkey with check",
+      "description": "webauthn.caps — person plus readiness check."
+    },
+    {
+      "id": "wa-attest",
+      "group": "tool",
+      "label": "WebAuthn attest",
+      "metaphor": "Shield with check",
+      "description": "webauthn.attest — attestation shield."
+    },
+    {
+      "id": "wa-mds",
+      "group": "tool",
+      "label": "WebAuthn MDS",
+      "metaphor": "Directory document",
+      "description": "webauthn.mds — MDS document with lens."
     }
   ]
 }

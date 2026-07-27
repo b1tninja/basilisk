@@ -102,7 +102,7 @@ describe("base32", () => {
     const raw = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(base32ToBytes(bytesToBase32(raw))).toEqual(raw);
     const { ast, validation } = compileRecipe(
-      "random 10 | base32 | out @b32\n\nin @b32 | base32 -d | hex | out @hex"
+      "random 10 | base32 | out @b32\n\nin @b32 | base32 -d | to hex | out @hex"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);

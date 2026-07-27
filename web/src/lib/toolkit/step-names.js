@@ -99,8 +99,24 @@ export function resolveCipherTransform(raw) {
 }
 
 /**
- * Encoding (and other non-cipher) decodeTwin verbs: `pem.encode` / `pem.decode`.
- * Canonical AST stays `{ name: "pem", params: { decode } }`; `-d` remains accepted.
+ * Encodings accepted by `to` / `from` (positional). First pass: hex only.
+ * @type {Set<string>}
+ */
+export const TO_FROM_ENCODINGS = new Set(["hex"]);
+
+/**
+ * Whether a token is a known `to` / `from` encoding name.
+ * @param {string} raw
+ * @returns {boolean}
+ */
+export function isToFromEncoding(raw) {
+  return TO_FROM_ENCODINGS.has(normalizeStepToken(raw));
+}
+
+/**
+ * Encoding (and other non-cipher) decodeTwin verbs: `base64.encode` / `base64.decode`.
+ * Canonical AST stays `{ name, params: { decode } }`; `-d` remains accepted.
+ * Note: `pem` ↔ `der` and `to` ↔ `from` are conjugate pairs (not decodeTwin).
  * @param {string} raw
  * @param {(name: string) => { decodeTwin?: boolean, toolbox?: string } | null | undefined} getStep
  * @returns {{ canonical: string, decode: boolean } | null}
@@ -113,6 +129,17 @@ export function resolveDecodeTwinVerb(raw, getStep) {
   const mode = m[2];
   const alt = resolveAlternateForm(base);
   const canonical = alt?.canonical || base;
+  // Conjugate pairs — not decodeTwin.
+  if (
+    canonical === "pem" ||
+    canonical === "der" ||
+    canonical === "to" ||
+    canonical === "from" ||
+    canonical === "hex" ||
+    canonical === "unhex"
+  ) {
+    return null;
+  }
   const spec = getStep?.(canonical);
   if (!spec?.decodeTwin) return null;
   // Cipher ops keep encrypt/decrypt + `-d`; dotted verbs are for encodings etc.
@@ -122,7 +149,8 @@ export function resolveDecodeTwinVerb(raw, getStep) {
 
 /**
  * Recipe / UI token for a decodeTwin step direction.
- * Encoding twins prefer `pem.encode` / `pem.decode`; ciphers stay `aes-gcm` / `aes-gcm -d`.
+ * Encoding twins prefer `base64.encode` / `base64.decode`; ciphers stay `aes-gcm` / `aes-gcm -d`.
+ * pem/der and to/from serialize as bare conjugate verbs (not `.encode`/`.decode`).
  * @param {{ name: string, decodeTwin?: boolean, toolbox?: string } | null | undefined} spec
  * @param {boolean} decode
  * @returns {string}
@@ -142,6 +170,12 @@ export function decodeTwinToken(spec, decode) {
  */
 export function legacyRemovalHint(raw) {
   const key = normalizeStepToken(raw);
+  if (key === "hex") {
+    return `"hex" was removed — use to hex (or Upgrade recipe to migrate)`;
+  }
+  if (key === "unhex") {
+    return `"unhex" was removed — use from hex (or Upgrade recipe to migrate)`;
+  }
   const to = LEGACY_STEP_MIGRATE[key];
   if (!to) return null;
   return `"${raw}" was removed — use ${to} (or Upgrade recipe to migrate)`;
@@ -184,6 +218,40 @@ export function migrateRecipe(text) {
     /(^|[\s|;{]|-(?:\s+))decrypt\s+gpg(?=[\s|;}\-]|$)/gi
   );
 
+  // Hex conjugate → CyberChef to/from (do not double-rewrite `to hex` / `from hex`).
+  apply(
+    "unhex",
+    "from hex",
+    /(^|[\s|;{]|-(?:\s+))unhex(?=[\s|;}\-]|$)/gi
+  );
+  {
+    let n = 0;
+    recipe = recipe.replace(
+      /(^|[\s|;{]|-(?:\s+))hex(?=[\s|;}\-]|$)/gi,
+      (m, pre, offset, full) => {
+        const head = full.slice(0, offset + pre.length);
+        if (/\bto\s*$/i.test(head) || /\bfrom\s*$/i.test(head)) return m;
+        n += 1;
+        return `${pre}to hex`;
+      }
+    );
+    if (n) counts.set("hex", (counts.get("hex") || 0) + n);
+  }
+
+  // Slot-load alias `from` → `in` when not already `from <encoding>`.
+  // Keep `from hex` (and future encodings); rewrite `from @x` / `from 1` / `from label`.
+  {
+    let n = 0;
+    recipe = recipe.replace(
+      /(^|[\s|;{]|-(?:\s+))from(?=\s+(?:@|\d|(?!hex\b)[A-Za-z][\w-]*))/gi,
+      (m, pre) => {
+        n += 1;
+        return `${pre}in`;
+      }
+    );
+    if (n) counts.set("from (slot)", (counts.get("from (slot)") || 0) + n);
+  }
+
   // Longer keys first so wa-create beats nothing overlapping; sort by length desc.
   const keys = Object.keys(LEGACY_STEP_MIGRATE).sort((a, b) => b.length - a.length);
   for (const from of keys) {
@@ -196,14 +264,17 @@ export function migrateRecipe(text) {
     apply(from, to, re);
   }
 
+  /** @type {Record<string, string>} */
+  const EXTRA_MIGRATE_TO = {
+    hex: "to hex",
+    unhex: "from hex",
+    "from (slot)": "in",
+    "encrypt gpg": "gpg.encrypt",
+    "decrypt gpg": "gpg.decrypt",
+  };
   const changes = [...counts.entries()].map(([from, count]) => ({
     from,
-    to:
-      from === "encrypt gpg"
-        ? "gpg.encrypt"
-        : from === "decrypt gpg"
-          ? "gpg.decrypt"
-          : LEGACY_STEP_MIGRATE[from],
+    to: EXTRA_MIGRATE_TO[from] || LEGACY_STEP_MIGRATE[from],
     count,
   }));
   return { recipe, changes };
