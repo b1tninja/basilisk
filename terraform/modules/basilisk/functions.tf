@@ -90,6 +90,9 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
       BASILISK_CACHE_MODE               = "redirect"
       BASILISK_DEV_APPROVE              = "0"
       BASILISK_REQUIRE_MANAGER_APPROVAL = var.require_manager_approval ? "1" : "0"
+      BASILISK_UPSTREAM_ENABLED         = var.upstream_enabled ? "1" : "0"
+      BASILISK_UPSTREAM_ALLOWLIST       = var.upstream_allowlist
+      BASILISK_UPSTREAM_DEFAULT         = var.upstream_default
       # Key Vault reference — secret value is not stored in app settings plaintext.
       BASILISK_TOKEN_SECRET   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.token_secret.versionless_id})"
       BASILISK_AUTH_PROVIDERS = local.auth_providers

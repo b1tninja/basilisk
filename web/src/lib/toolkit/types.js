@@ -175,7 +175,16 @@ export function inferSourceType(name, params = {}) {
     case "passphrase":
       return typeOf("text", { kind: "opaque" });
     case "gpg.genkey":
+      return typeOf("openpgp-key", { which: "private" });
+    case "agent.unlock":
+      return typeOf("openpgp-key", { which: "private" });
+    case "agent.pub":
+    case "hkp.get":
+      return typeOf("openpgp-key", { which: "public" });
+    case "agent.list":
       return typeOf("text", { kind: "opaque" });
+    case "hkp.search":
+      return typeOf("recipients");
     case "input":
       return typeOf("text", { kind: "opaque" });
     case "shares": {
@@ -503,6 +512,29 @@ export function inferParamDrivenType(name, current, params = {}) {
       };
     }
     return { ok: true, output: typeOf("shares", { kind: "mnemonic" }) };
+  }
+
+  if (name === "hkp.filter" || name === "recipients.merge") {
+    if (current.base !== "recipients" && current.base !== "text") {
+      return {
+        ok: false,
+        error: `"${name}" expects recipients, got ${formatType(current)}`,
+      };
+    }
+    return { ok: true, output: typeOf("recipients") };
+  }
+
+  if (name === "agent.save") {
+    if (
+      current.base !== "openpgp-key" &&
+      current.base !== "text"
+    ) {
+      return {
+        ok: false,
+        error: `"agent.save" expects openpgp-key/private, got ${formatType(current)}`,
+      };
+    }
+    return { ok: true, output: typeOf("openpgp-key", { which: "private" }) };
   }
 
   if (name === "gpg.symencrypt") {
@@ -843,6 +875,14 @@ export function stepAcceptsRefined(spec, from) {
   if (spec.name === "blip39") {
     return current.base === "shares";
   }
+  if (spec.name === "hkp.filter" || spec.name === "recipients.merge") {
+    return current.base === "recipients";
+  }
+  if (spec.name === "agent.save") {
+    return (
+      current.base === "openpgp-key" && current.which === "private"
+    ) || (current.base === "text" && !!current);
+  }
   if (
     spec.name === "digest" ||
     spec.name === "sign" ||
@@ -860,6 +900,14 @@ export function stepAcceptsRefined(spec, from) {
   }
   if (spec.name === "ecdh" || spec.name === "wrap") {
     return true;
+  }
+
+  // Recipients / OpenPGP keys are side inputs for encrypt — not stem payload.
+  if (
+    (current.base === "recipients" || current.base === "openpgp-key") &&
+    spec.name === "gpg.encrypt"
+  ) {
+    return false;
   }
 
   if (spec.overloads?.length) {
@@ -912,6 +960,15 @@ export function artifactMetaFromType(t) {
   }
   if (t.base === "keypair") {
     return { role: "key", tags: ["keypair"] };
+  }
+  if (t.base === "recipients") {
+    return { role: "recipients", tags: ["openpgp", "directory"] };
+  }
+  if (t.base === "openpgp-key") {
+    return {
+      role: "key",
+      tags: ["openpgp", t.which === "public" ? "public" : "private"],
+    };
   }
   return { role: "text", tags: t.kind ? [t.kind] : [] };
 }

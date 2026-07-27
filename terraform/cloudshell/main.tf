@@ -11,6 +11,7 @@ module "basilisk" {
   entra_tenant_id          = local.entra_tenant_id
   mail_provider            = var.mail_provider
   require_manager_approval = var.require_manager_approval
+  upstream_enabled         = var.upstream_enabled
   tags                     = var.tags
   existing_token_secret    = var.existing_token_secret
   google_client_id         = var.google_client_id

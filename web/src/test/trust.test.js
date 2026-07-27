@@ -3,8 +3,10 @@ import {
   clearTrust,
   getTrust,
   listTrusted,
+  originSortKey,
   setTrust,
   sortByTrust,
+  sortByTrustAndOrigin,
   trustBadgeHtml,
   trustSortKey,
 } from "../lib/trust.js";
@@ -74,5 +76,19 @@ describe("trust store", () => {
     expect(() => setTrust("AA".repeat(20), /** @type {any} */ ("full"))).toThrow(
       /Invalid trust level/
     );
+  });
+
+  it("sortByTrustAndOrigin prefers basilisk within same trust tier", () => {
+    const a = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const b = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+    setTrust(a, "trusted");
+    setTrust(b, "trusted");
+    expect(originSortKey("basilisk")).toBeLessThan(originSortKey("upstream"));
+    const sorted = sortByTrustAndOrigin([
+      { fingerprint: b, origin: "upstream", fetchedAt: "2020-01-01T00:00:00Z" },
+      { fingerprint: a, origin: "basilisk", fetchedAt: "2020-01-01T00:00:00Z" },
+    ]);
+    expect(sorted[0].fingerprint).toBe(a);
+    expect(sorted[0].origin).toBe("basilisk");
   });
 });

@@ -29,13 +29,27 @@ import { zeroKeyMaterial } from "../lib/pgp/memory.js";
 import { estimatePassphraseStrength } from "../lib/pgp/passphrase.js";
 import { normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
 import { getExpertMode, setExpertMode } from "../lib/prefs.js";
-import { loadRecipientKey } from "../lib/recipient-picker.js";
-import { getTrust, sortByTrust, trustBadgeHtml } from "../lib/trust.js";
 import {
-  getPasskeyPrf,
+  keyserverControlRowHtml,
+  readKeyserverSelection,
+} from "../lib/keyserver-select.js";
+import {
+  listTrustedRecipientSuggestions,
+  loadRecipientKey,
+  searchRecipientsPayload,
+} from "../lib/recipient-picker.js";
+import {
+  getTrust,
+  sortByTrust,
+  sortByTrustAndOrigin,
+  trustBadgeHtml,
+} from "../lib/trust.js";
+import {
   listKeys as vaultListKeys,
-  unlockKey as vaultUnlockKey,
+  sortKeysByLastUsed,
 } from "../lib/vault.js";
+import { sessionClear } from "../lib/vault-session.js";
+import { unlockVaultForUse } from "../lib/vault-unlock.js";
 import {
   copyButtonHtml,
   copyText,
@@ -211,8 +225,12 @@ function renderPills() {
         label: r.userLabel,
         keyExpiration: r.keyExpiration,
         key_id: r.keyId,
+        origin: r.origin,
+        source_keyserver: r.sourceKeyserver,
       });
-      return `<span class="recipient-pill${r.valid ? "" : " invalid"}" title="${escapeHtml(title)}" data-fpr="${escapeHtml(r.fingerprint)}">
+      const trustedCls =
+        getTrust(r.fingerprint)?.level === "trusted" ? " recipient-pill-trusted" : "";
+      return `<span class="recipient-pill${r.valid ? "" : " invalid"}${trustedCls}" title="${escapeHtml(title)}" data-fpr="${escapeHtml(r.fingerprint)}">
         <span class="pill-avatar">${escapeHtml(initial)}</span>
         <span class="pill-body">
           <span class="pill-label">${escapeHtml(r.label)}</span>
@@ -346,7 +364,7 @@ function renderDropdown(results, warning = "") {
     : "";
   el.innerHTML =
     caution +
-    sortByTrust(results)
+    sortByTrustAndOrigin(results)
       .map((item) => {
         const fp = String(item.fingerprint || "").toUpperCase();
         const already = recipients.has(fp);
@@ -608,7 +626,8 @@ async function addRecipient(fingerprint) {
   renderPills();
   updateEncryptButton();
   try {
-    const recipient = await loadRecipientKey(clean);
+    const ks = await readKeyserverSelection("recipient-keyserver");
+    const recipient = await loadRecipientKey(clean, { keyserver: ks });
     recipients.set(clean, recipient);
   } catch (err) {
     recipients.set(clean, {
@@ -818,10 +837,15 @@ async function runEncrypt() {
     }
     signingArmored = "";
     signingPassphrase = "";
+    sessionClear();
     encrypting = false;
     updateEncryptButton();
   }
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) sessionClear();
+});
 
 /**
  * @returns {Promise<{ armored: string, passphrase: string, fingerprint: string }>}
@@ -837,24 +861,15 @@ async function prepareSigningKeyMaterial() {
   if (vaultFpr && !pasted) {
     const meta = vaultKeys.find((k) => k.fingerprint === vaultFpr);
     if (!meta) throw new Error("Signing key not found in vault");
-    /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
-    const opts = {};
-    try {
-      if (meta.protection === "passkey") {
-        opts.prfIkm = await getPasskeyPrf();
-      } else if (meta.protection === "passphrase") {
-        opts.passphrase = passphrase;
-      }
-      const armored = await vaultUnlockKey(vaultFpr, opts);
-      return { armored, passphrase: "", fingerprint: vaultFpr.toUpperCase() };
-    } finally {
-      // PRF IKM is secret key material — wipe even if unlock throws.
-      try {
-        opts.prfIkm?.fill?.(0);
-      } catch (_) {
-        /* wipe */
-      }
-    }
+    const unlocked = await unlockVaultForUse(vaultFpr, {
+      meta,
+      openPgpPassphrase: passphrase,
+    });
+    return {
+      armored: unlocked.armored,
+      passphrase: unlocked.openPgpPassphrase,
+      fingerprint: unlocked.fingerprint,
+    };
   }
 
   if (!pasted) {
@@ -894,7 +909,7 @@ async function refreshSignVaultSelect() {
   const select = document.getElementById("sign-vault-select");
   if (!row || !select) return;
   try {
-    vaultKeys = await vaultListKeys();
+    vaultKeys = sortKeysByLastUsed(await vaultListKeys());
   } catch (_) {
     vaultKeys = [];
   }
@@ -1074,6 +1089,7 @@ function renderApp() {
         <input type="search" id="recipient-search" placeholder="Add recipient by email, fingerprint, or key ID…" autocomplete="off">
         <div id="recipient-dropdown" class="recipient-dropdown" hidden></div>
       </div>
+      <div id="recipient-keyserver-slot" class="mt-sm"></div>
     </div>
 
     <div class="card">
@@ -1244,6 +1260,19 @@ function renderApp() {
 }
 
 function wireEvents() {
+  app.addEventListener("focusin", async (e) => {
+    if (e.target && e.target.id === "recipient-search") {
+      const input = /** @type {HTMLInputElement} */ (e.target);
+      if (input.value.trim()) return;
+      try {
+        const suggestions = await listTrustedRecipientSuggestions();
+        renderDropdown(suggestions);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  });
+
   app.addEventListener("input", (e) => {
     if (e.target && e.target.id === "compose-message") updateEncryptButton();
     if (e.target && (e.target.id === "msg-passphrase" || e.target.id === "msg-passphrase-confirm")) {
@@ -1254,13 +1283,21 @@ function wireEvents() {
       const raw = e.target.value.trim();
       clearTimeout(searchTimer);
       if (!raw) {
-        renderDropdown([]);
+        searchTimer = setTimeout(async () => {
+          try {
+            const suggestions = await listTrustedRecipientSuggestions();
+            renderDropdown(suggestions);
+          } catch (_) {
+            renderDropdown([]);
+          }
+        }, 50);
         return;
       }
       searchTimer = setTimeout(async () => {
         try {
           const q = normalizeSearchQuery(raw);
-          const payload = await fetchJson(`/api/v1/search?q=${encodeURIComponent(q)}`);
+          const ks = await readKeyserverSelection("recipient-keyserver");
+          const payload = await searchRecipientsPayload(q, { keyserver: ks });
           renderDropdown(payload.results || [], payload.warning || "");
         } catch (_) {
           renderDropdown([]);
@@ -1477,8 +1514,15 @@ function wireEvents() {
   });
 }
 
+async function mountRecipientKeyserverControl() {
+  const slot = document.getElementById("recipient-keyserver-slot");
+  if (!slot) return;
+  slot.innerHTML = await keyserverControlRowHtml({ id: "recipient-keyserver" });
+}
+
 async function init() {
   renderApp();
+  await mountRecipientKeyserverControl();
   wireEvents();
   const fpr = queryParam("fpr");
   if (fpr) {

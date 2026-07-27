@@ -4,6 +4,7 @@ import json
 
 from flask import Flask, Response, request
 
+from basilisk.hkp.cors import flask_cors, options_get_only
 from basilisk.hkp.lookup import lookup_get
 from basilisk.hkp_v2.submit import canonical_put, certs_post, sendtoken_response
 from basilisk.observability.metrics import inc
@@ -27,17 +28,30 @@ def _lookup_with_rate_limit(search: str) -> Response:
         return _to_flask(lookup_get(search))
     except RateLimitError as exc:
         inc("rate_limited")
-        return Response(str(exc), status=exc.status)
+        return flask_cors(exc.status, str(exc))
 
 
 def register_v2(app: Flask) -> None:
     @app.route("/pks/v2/certs", methods=["OPTIONS"])
     def v2_certs_options() -> Response:
+        # Upload path — no Access-Control-Allow-Origin (mutate stays same-origin).
         headers = {
             "Allow": "POST",
             "Accept": "application/pgp-keys, application/pgp-keys;proof=tokens",
         }
         return Response("", status=200, headers=headers)
+
+    @app.route("/pks/v2/canonical/<path:identity>", methods=["OPTIONS"])
+    @app.route("/pks/v2/certs/by-fingerprint/<fingerprint>", methods=["OPTIONS"])
+    @app.route("/pks/v2/certs/by-keyid/<keyid>", methods=["OPTIONS"])
+    @app.route("/pks/v2/certs/by-identity/<path:email>", methods=["OPTIONS"])
+    def v2_lookup_options(
+        identity: str | None = None,
+        fingerprint: str | None = None,
+        keyid: str | None = None,
+        email: str | None = None,
+    ) -> Response:
+        return options_get_only()
 
     @app.get("/pks/v2/challenge")
     def v2_challenge() -> Response:

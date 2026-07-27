@@ -12,6 +12,8 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TOKEN_SECRET = "dev-secret"
+_DEFAULT_UPSTREAM_ALLOWLIST = ("keys.openpgp.org", "keys.mailvelope.com")
+_DEFAULT_UPSTREAM_DEFAULT = "keys.openpgp.org"
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -57,6 +59,9 @@ class Settings:
     auth_providers: tuple[str, ...]
     pending_ttl_days: int
     expired_grace_days: int
+    upstream_enabled: bool
+    upstream_allowlist: tuple[str, ...]
+    upstream_default: str
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -108,7 +113,86 @@ class Settings:
             ),
             pending_ttl_days=int(os.environ.get("BASILISK_PENDING_TTL_DAYS", "30")),
             expired_grace_days=int(os.environ.get("BASILISK_EXPIRED_GRACE_DAYS", "30")),
+            upstream_enabled=_env_bool("BASILISK_UPSTREAM_ENABLED"),
+            upstream_allowlist=_parse_upstream_allowlist(
+                os.environ.get("BASILISK_UPSTREAM_ALLOWLIST")
+            ),
+            upstream_default=_normalize_keyserver_host(
+                os.environ.get("BASILISK_UPSTREAM_DEFAULT", _DEFAULT_UPSTREAM_DEFAULT)
+            )
+            or _DEFAULT_UPSTREAM_DEFAULT,
         )
+
+    def upstream_public(self) -> dict:
+        """Non-secret upstream config for the portal (client-direct HKP)."""
+        allow = list(self.upstream_allowlist)
+        default = self.upstream_default
+        if default not in allow and allow:
+            default = allow[0]
+        elif default not in allow:
+            default = _DEFAULT_UPSTREAM_DEFAULT
+        return {
+            "enabled": self.upstream_enabled,
+            "allowlist": allow,
+            "default": default,
+        }
+
+    def csp_connect_src(self) -> str:
+        """connect-src sources: self + allowlisted HTTPS keyserver hosts."""
+        parts = ["'self'"]
+        for host in self.upstream_allowlist:
+            parts.append(f"https://{host}")
+        return " ".join(parts)
+
+
+def _normalize_keyserver_host(value: str | None) -> str | None:
+    """Return a bare lowercase hostname, or None if invalid."""
+    raw = (value or "").strip().lower()
+    if not raw:
+        return None
+    if "://" in raw:
+        # hkps://host[/path] → host
+        raw = raw.split("://", 1)[1]
+    raw = raw.split("/", 1)[0]
+    raw = raw.split("?", 1)[0]
+    raw = raw.split("#", 1)[0]
+    if "@" in raw or raw.startswith("["):
+        # Reject userinfo / IPv6 literals.
+        return None
+    if ":" in raw:
+        host_only, _, port = raw.rpartition(":")
+        if not port.isdigit():
+            return None
+        raw = host_only
+    if not raw or raw.startswith(".") or ".." in raw:
+        return None
+    if any(c in raw for c in " /\\\"'<>"):
+        return None
+    # Reject IPv4 literals; require a DNS hostname with a dot.
+    labels = raw.split(".")
+    if len(labels) < 2:
+        return None
+    if all(label.isdigit() for label in labels):
+        return None
+    for label in labels:
+        if not label or label.startswith("-") or label.endswith("-"):
+            return None
+        if not all(c.isalnum() or c == "-" for c in label):
+            return None
+    return raw
+
+
+def _parse_upstream_allowlist(raw: str | None) -> tuple[str, ...]:
+    if raw is None or not str(raw).strip():
+        return _DEFAULT_UPSTREAM_ALLOWLIST
+    hosts: list[str] = []
+    seen: set[str] = set()
+    for part in str(raw).split(","):
+        host = _normalize_keyserver_host(part)
+        if host and host not in seen:
+            seen.add(host)
+            hosts.append(host)
+    return tuple(hosts) if hosts else _DEFAULT_UPSTREAM_ALLOWLIST
 
 
 @lru_cache(maxsize=1)

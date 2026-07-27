@@ -3,6 +3,7 @@
  * Separate from /encrypt novice UX.
  */
 
+import { readKey } from "openpgp";
 import { Auth } from "../lib/auth.js";
 import {
   CryptoModuleError,
@@ -23,6 +24,13 @@ import {
 } from "../lib/pgp/armor.js";
 import { validateShareMnemonic } from "../lib/slip39/blip39.js";
 import { base64ToBytes, hexToBytes } from "../lib/toolkit/encode.js";
+import { glyphHtml } from "../lib/toolkit/glyphs.js";
+import {
+  DEFAULT_TOOLKIT_PREFS,
+  getIdleClearMs,
+  getToolkitPrefs,
+  setToolkitPrefs,
+} from "../lib/toolkit/prefs.js";
 import {
   PRESETS,
   compileRecipe,
@@ -33,8 +41,19 @@ import {
   serializeRecipe,
   unresolvedInputs,
   unresolvedRecipients,
+  validateRecipe,
 } from "../lib/toolkit/recipe.js";
-import { glyphHtml } from "../lib/toolkit/glyphs.js";
+import {
+  parseEncryptToToken,
+  recipientResolutionKey,
+} from "../lib/toolkit/recipients-ops.js";
+import {
+  lookupGlyphHtml,
+  lookupRecipientsForPolicy,
+  openRecipientResolveModal,
+  resolutionForQuery,
+  resolutionPillText,
+} from "../lib/toolkit/recipient-resolve-ui.js";
 import {
   CIPHER_PICKER_ALIASES,
   defaultCollapsedShelfKeys,
@@ -46,11 +65,9 @@ import {
   listCipherPickerSteps,
   listDrawerRows,
   listSteps,
-  recipeNeedsMainThread,
   stepsAccepting,
   TOOLBOX_META,
 } from "../lib/toolkit/registry.js";
-import { executeToolkitRun } from "../lib/toolkit-run.js";
 import {
   INSPECT_FORMATS,
   inspectFromSnapshot,
@@ -87,10 +104,17 @@ import {
   uniquifyFilenames,
 } from "../lib/zip-store.js";
 import {
-  getPasskeyPrf,
   listKeys as vaultListKeys,
-  unlockKey as vaultUnlockKey,
+  sortKeysByLastUsed,
 } from "../lib/vault.js";
+import {
+  sessionClear,
+  sessionEarliestExpiry,
+  sessionEvict,
+  sessionList,
+} from "../lib/vault-session.js";
+import { unlockVaultForUse } from "../lib/vault-unlock.js";
+import { createKernel } from "../lib/toolkit/kernel.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"), "/toolkit");
@@ -110,17 +134,39 @@ let suiteStatus = {
 /** @type {import("../lib/toolkit/recipe.js").RecipeStep[]} */
 /** @type {{ steps: import("../lib/toolkit/recipe.js").RecipeStep[] }[]} */
 let chains = [{ steps: [] }];
-/** Primary (editable) chain steps — same array as chains[0].steps */
+/** Focused notebook cell index (ops drawer / suggest-next apply here). */
+let focusedCell = 0;
+/** Collapsed cell indices */
+/** @type {Set<number>} */
+let cellCollapsed = new Set();
+/** Variables drawer open */
+let variablesOpen = false;
+/** Expanded artifact previews: `${cellIndex}:${artIndex}` */
+/** @type {Set<string>} */
+let expandedArtifactKeys = new Set();
+/** Focused cell steps — same array as chains[focusedCell].steps */
 let steps = chains[0].steps;
 /** Display title for the current pipeline (from preset or user edit). */
 let recipeTitle = "";
 let referenceOpen = false;
+/** @type {ReturnType<typeof createKernel>} */
+let kernel = createKernel();
+/** Flat artifacts for legacy helpers (zip all / last run) — union of cell outputs */
 /** @type {import("../lib/toolkit/engine.js").ToolkitArtifact[]} */
 let artifacts = [];
 /** @type {import("../lib/recipient-picker.js").Recipient[]} */
 let boundRecipients = [];
 /** @type {ReturnType<typeof mountRecipientBinder>|null} */
 let binder = null;
+/** Email/query → chosen fingerprints for gpg.encrypt to= */
+/** @type {Record<string, string[]>} */
+let recipientResolutions = {};
+/** Lookup field errors: step index → message */
+/** @type {Map<string, string>} */
+let lookupFieldErrors = new Map();
+/** Agent strip countdown timer */
+/** @type {ReturnType<typeof setInterval>|null} */
+let agentStripTimer = null;
 /** @type {import("../lib/vault.js").VaultKeyMeta[]} */
 let vaultKeys = [];
 /** @type {("shares"|"gpg"|"text"|"envelope"|"key")[]} */
@@ -290,7 +336,11 @@ function recipeNeedsGpgSigningKey(ast) {
   );
 }
 
-const IDLE_CLEAR_MS = 5 * 60 * 1000;
+/** @type {number} */
+let lastActivityAt = Date.now();
+/** @type {ReturnType<typeof setInterval>|null} */
+let kernelChipTimer = null;
+/** @type {ReturnType<typeof setTimeout>|null} */
 let idleTimer = null;
 
 /** Worker for the in-flight run, so a secure-destroy can terminate it. */
@@ -371,17 +421,47 @@ app.innerHTML = `
         <div class="preset-grid" id="preset-grid"></div>
       </div>
     </details>
-    <label class="fips-mode-toggle" title="${escapeHtml(FIPS_MODE_DISCLAIMER)}">
-      <input type="checkbox" id="fips-mode" ${fipsMode ? "checked" : ""}>
-      <span>FIPS mode</span>
-    </label>
+    <details class="toolbar-menu" id="prefs-menu">
+      <summary class="btn btn-ghost btn-compact" title="Toolkit preferences">
+        ${glyphHtml("gear", "ops-glyph toolbar-glyph")} Preferences
+      </summary>
+      <div class="toolbar-popover toolbar-popover-narrow" id="prefs-popover">
+        <!-- filled by renderPrefsForm -->
+      </div>
+    </details>
+    <details class="toolbar-menu" id="more-menu">
+      <summary class="btn btn-ghost btn-compact" title="More actions">
+        ${glyphHtml("more", "ops-glyph toolbar-glyph")} More
+      </summary>
+      <div class="toolbar-popover toolbar-popover-menu">
+        <button type="button" class="toolbar-menu-item" id="toggle-reference" title="Full step docs">Docs</button>
+        <button type="button" class="toolbar-menu-item" id="focus-keyring-btn">Keyring</button>
+        <button type="button" class="toolbar-menu-item" id="shortcuts-btn">
+          ${glyphHtml("shortcuts", "ops-glyph toolbar-glyph")} Keyboard shortcuts
+        </button>
+        <hr class="toolbar-menu-sep">
+        <button type="button" class="toolbar-menu-item text-error" id="destroy-btn"
+          title="Zeroize all in-memory secrets, inputs, and outputs (best-effort)">Destroy</button>
+      </div>
+    </details>
     <span id="crypto-status" class="app-status" role="status">Verifying crypto suites…</span>
     <span class="app-toolbar-note muted fs-xs">Advanced tool — everyday messaging belongs on <a class="text-link" href="/encrypt">Encrypt</a>.</span>
-    <button type="button" class="btn btn-ghost btn-compact" id="toggle-reference" title="Full step docs">Docs</button>
-    <button type="button" class="btn btn-ghost btn-compact text-error" id="destroy-btn"
-      title="Zeroize all in-memory secrets, inputs, and outputs (best-effort)">Destroy</button>
   </div>
   <p id="fips-hint" class="muted fs-xs fips-mode-hint ${fipsMode ? "" : "hidden"}" role="note">${escapeHtml(FIPS_MODE_DISCLAIMER)}</p>
+  <dialog id="shortcuts-dialog" class="toolkit-dialog">
+    <form method="dialog" class="toolkit-dialog-body">
+      <header class="toolkit-dialog-head">
+        <strong>Keyboard shortcuts</strong>
+        <button type="submit" class="btn btn-ghost btn-compact" aria-label="Close">✕</button>
+      </header>
+      <dl class="shortcuts-list">
+        <div><dt>Shift+Enter</dt><dd>Run focused cell</dd></div>
+        <div><dt>Alt+Enter</dt><dd>Run from focused cell</dd></div>
+        <div><dt>A / B</dt><dd>Insert cell above / below (when not typing)</dd></div>
+        <div><dt>Escape</dt><dd>Close pickers / Variables</dd></div>
+      </dl>
+    </form>
+  </dialog>
 
   <div class="chef-workspace" id="chef-workspace">
     <aside class="chef-ops chef-pane" aria-label="Operations">
@@ -395,7 +475,7 @@ app.innerHTML = `
       </div>
       <div class="pane-body">
         <input type="search" id="ops-filter" class="text-input" placeholder="Search operations…" autocomplete="off">
-        <p class="muted fs-xs mt-xs mb-sm" id="ops-hint">Drag onto the pipeline, or click to append.</p>
+        <p class="muted fs-xs mt-xs mb-sm" id="ops-hint">Drag onto the focused cell, or click to append.</p>
         <div id="ops-drawer" class="ops-drawer"></div>
       </div>
     </aside>
@@ -403,28 +483,55 @@ app.innerHTML = `
     <div class="pane-splitter" data-resize="ops" role="separator" aria-orientation="vertical"
       aria-label="Resize Operations panel" title="Drag to resize · double-click to reset"></div>
 
-    <section class="chef-recipe chef-pane" aria-label="Pipeline">
+    <section class="chef-recipe chef-pane chef-notebook" aria-label="Notebook">
       <div class="pane-head">
-        <p class="pane-title">Pipeline</p>
-        <div class="pane-actions">
-          <button type="button" class="btn btn-ghost btn-compact" id="clear-recipe-btn">Clear</button>
-          <button type="button" class="btn btn-compact" id="run-btn" disabled>Execute</button>
-        </div>
+        <p class="pane-title">Notebook</p>
       </div>
-      <div class="pane-body">
-        <label class="recipe-heading">
-          <span class="sr-only">Recipe title</span>
-          <input type="text" id="recipe-title" class="recipe-title-input" maxlength="120"
-            placeholder="Untitled recipe" autocomplete="off" spellcheck="false">
-        </label>
-        <p class="muted fs-sm mb-md">Drop operations here. Reorder by dragging cards. Recipients are chosen at run time — never stored in the pipeline text.</p>
-        <div id="pgp-mode-host" class="pgp-mode-host hidden"></div>
-        <div id="builder-steps" class="builder-steps"></div>
-        <div id="suggest-next" class="suggest-next" hidden></div>
+      <div class="pane-body notebook-body">
+        <div class="notebook-header" id="notebook-header">
+          <div class="notebook-header-top">
+            <label class="recipe-heading notebook-title-wrap">
+              <span class="sr-only">Notebook title</span>
+              <input type="text" id="recipe-title" class="recipe-title-input" maxlength="120"
+                placeholder="Untitled notebook" autocomplete="off" spellcheck="false">
+            </label>
+            <div class="notebook-header-actions btn-row wrap">
+              <button type="button" class="btn btn-compact" id="run-btn" disabled title="Run all cells">Run all</button>
+              <button type="button" class="btn btn-ghost btn-compact" id="clear-sensitive-btn"
+                title="Wipe kernel slots, outputs, and inputs — keep cell recipes">Clear sensitive</button>
+              <button type="button" class="btn btn-ghost btn-compact" id="reset-notebook-btn"
+                title="Clear sensitive and reset to one empty cell">Reset</button>
+            </div>
+            <button type="button" class="kernel-chip btn btn-ghost btn-compact" id="kernel-chip"
+              aria-expanded="false" aria-controls="variables-drawer"
+              title="Session variables (kernel slots)">
+              ${glyphHtml("variables", "ops-glyph kernel-chip-glyph")}<span id="kernel-chip-label">0 slots</span>
+            </button>
+          </div>
+          <div id="stale-banner" class="stale-banner hidden" role="status"></div>
+          <div id="agent-session-host" class="agent-session-host"></div>
+          <details id="keyring-panel" class="keyring-panel">
+            <summary class="muted fs-sm">${glyphHtml("agent", "ops-glyph toolbar-glyph")} Keyring (My Keys)</summary>
+            <div id="keyring-body" class="keyring-body mt-sm"></div>
+          </details>
+          <div id="pgp-mode-host" class="pgp-mode-host hidden"></div>
+          <div id="inputs-host"></div>
+          <div id="recipient-bind-host"></div>
+          <p id="run-status" class="status-row hidden mt-sm"></p>
+        </div>
+        <div id="variables-drawer" class="variables-drawer hidden" hidden></div>
+        <div id="suggest-next" class="suggest-next suggest-next-notebook" hidden></div>
+        <div id="notebook-cells" class="notebook-cells"></div>
+        <div class="notebook-add-row">
+          <button type="button" class="btn btn-ghost btn-compact" id="add-cell-btn">+ Cell</button>
+          <span class="muted fs-xs notebook-kbd-hint">Shift+Enter run · Alt+Enter from here · A/B insert cell</span>
+        </div>
         <details class="recipe-text-details mt-md">
-          <summary class="muted fs-sm">Pipeline source (text)</summary>
+          <summary class="muted fs-sm">Notebook source (text)</summary>
           <textarea id="recipe-text" class="compose-message mt-sm" rows="3" spellcheck="false"
-            placeholder="genkey ec/p256 | export pkcs8 | pem"></textarea>
+            placeholder="hkp.search alice@example.org | out @alices
+
+input | gpg.encrypt to=@alices"></textarea>
           <p id="recipe-errors" class="status-row err hidden mt-sm"></p>
           <p id="recipe-upgrade-host" class="mt-xs hidden">
             <button type="button" class="btn btn-compact" id="upgrade-recipe-btn">Upgrade recipe</button>
@@ -433,27 +540,9 @@ app.innerHTML = `
           <p id="recipe-warnings" class="muted mt-xs fs-sm"></p>
         </details>
         <div id="crypto-params-host"></div>
-        <div id="inputs-host"></div>
-        <div id="recipient-bind-host"></div>
-        <p id="run-status" class="status-row hidden mt-sm"></p>
-      </div>
-    </section>
-
-    <div class="pane-splitter" data-resize="run" role="separator" aria-orientation="vertical"
-      aria-label="Resize Output panel" title="Drag to resize · double-click to reset"></div>
-
-    <section class="chef-run chef-pane" aria-label="Output">
-      <button type="button" class="pane-rail" data-collapse="run" title="Expand Output panel">
-        <span>Output</span>
-      </button>
-      <div class="pane-head">
-        <p class="pane-title">Output</p>
-        <button type="button" class="btn btn-ghost btn-compact pane-collapse" data-collapse="run"
-          aria-label="Collapse Output panel" title="Collapse panel">›</button>
-      </div>
-      <div class="pane-body">
-        <p id="output-empty" class="muted fs-sm">Execute a pipeline to see results here.</p>
-        <div id="results-panel" class="hidden"></div>
+        <!-- Legacy single-builder host kept for transitional wiring; notebook renders into #notebook-cells -->
+        <div id="builder-steps" class="builder-steps hidden" hidden aria-hidden="true"></div>
+        <div id="results-panel" class="hidden" hidden aria-hidden="true"></div>
       </div>
     </section>
   </div>
@@ -472,7 +561,6 @@ app.innerHTML = `
 const LAYOUT_KEY = "basilisk.toolkit.layout";
 const PANE_LIMITS = {
   ops: { min: 180, max: 520, def: 280 },
-  run: { min: 260, max: 720, def: 380 },
 };
 
 function loadLayout() {
@@ -499,38 +587,37 @@ function saveLayout(patch) {
 function initWorkspaceLayout() {
   const ws = document.getElementById("chef-workspace");
   if (!ws) return;
+  ws.classList.add("notebook-workspace");
 
   const layout = loadLayout();
-  for (const side of /** @type {("ops"|"run")[]} */ (["ops", "run"])) {
-    const w = Number(layout[`${side}W`]);
-    if (Number.isFinite(w) && w >= PANE_LIMITS[side].min) {
-      ws.style.setProperty(`--${side}-w`, `${w}px`);
-    }
-    ws.classList.toggle(`${side}-collapsed`, !!layout[`${side}Collapsed`]);
+  const w = Number(layout.opsW);
+  if (Number.isFinite(w) && w >= PANE_LIMITS.ops.min) {
+    ws.style.setProperty("--ops-w", `${w}px`);
   }
+  ws.classList.toggle("ops-collapsed", !!layout.opsCollapsed);
+  // Drop legacy run-pane collapse class if present
+  ws.classList.remove("run-collapsed");
 
-  // Collapse buttons and expand rails share the data-collapse attribute.
   ws.querySelectorAll("[data-collapse]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const side = btn.getAttribute("data-collapse");
-      if (side !== "ops" && side !== "run") return;
-      const collapsed = ws.classList.toggle(`${side}-collapsed`);
-      saveLayout({ [`${side}Collapsed`]: collapsed || null });
+      if (side !== "ops") return;
+      const collapsed = ws.classList.toggle("ops-collapsed");
+      saveLayout({ opsCollapsed: collapsed || null });
     });
   });
 
-  ws.querySelectorAll(".pane-splitter").forEach((split) => {
-    const side = split.getAttribute("data-resize");
-    if ((side !== "ops" && side !== "run") || !(split instanceof HTMLElement)) return;
-    const limits = PANE_LIMITS[side];
+  ws.querySelectorAll('.pane-splitter[data-resize="ops"]').forEach((split) => {
+    if (!(split instanceof HTMLElement)) return;
+    const limits = PANE_LIMITS.ops;
 
     split.addEventListener("dblclick", () => {
-      ws.style.removeProperty(`--${side}-w`);
-      saveLayout({ [`${side}W`]: null });
+      ws.style.removeProperty("--ops-w");
+      saveLayout({ opsW: null });
     });
 
     split.addEventListener("pointerdown", (e) => {
-      if (ws.classList.contains(`${side}-collapsed`)) return;
+      if (ws.classList.contains("ops-collapsed")) return;
       e.preventDefault();
       split.setPointerCapture(e.pointerId);
       split.classList.add("dragging");
@@ -538,15 +625,15 @@ function initWorkspaceLayout() {
 
       const onMove = (ev) => {
         const rect = ws.getBoundingClientRect();
-        width =
-          side === "ops" ? ev.clientX - rect.left : rect.right - ev.clientX;
-        width = Math.round(Math.max(limits.min, Math.min(limits.max, width)));
-        ws.style.setProperty(`--${side}-w`, `${width}px`);
+        width = Math.round(
+          Math.max(limits.min, Math.min(limits.max, ev.clientX - rect.left))
+        );
+        ws.style.setProperty("--ops-w", `${width}px`);
       };
       const onUp = () => {
         split.classList.remove("dragging");
         split.removeEventListener("pointermove", onMove);
-        if (Number.isFinite(width)) saveLayout({ [`${side}W`]: width });
+        if (Number.isFinite(width)) saveLayout({ opsW: width });
       };
       split.addEventListener("pointermove", onMove);
       split.addEventListener("pointerup", onUp, { once: true });
@@ -557,13 +644,457 @@ function initWorkspaceLayout() {
 
 initWorkspaceLayout();
 
+/**
+ * Keep `steps` aliased to the focused cell.
+ * @param {number} [index]
+ */
+function focusCell(index) {
+  if (!chains.length) chains = [{ steps: [] }];
+  focusedCell = Math.max(0, Math.min(Number(index) || 0, chains.length - 1));
+  if (!chains[focusedCell]) chains[focusedCell] = { steps: [] };
+  if (!chains[focusedCell].steps) chains[focusedCell].steps = [];
+  steps = chains[focusedCell].steps;
+}
+
+/**
+ * @param {number} [at]
+ */
+function insertCell(at) {
+  const idx = at == null ? chains.length : Math.max(0, Math.min(at, chains.length));
+  chains.splice(idx, 0, { steps: [] });
+  kernel.remapCells((i) => (i >= idx ? i + 1 : i));
+  focusCell(idx);
+  setRecipeFromSteps();
+}
+
+/**
+ * @param {number} index
+ */
+function deleteCell(index) {
+  if (chains.length <= 1) {
+    chains = [{ steps: [] }];
+    focusCell(0);
+    kernel.clearCellOutputs(0);
+    setRecipeFromSteps();
+    return;
+  }
+  chains.splice(index, 1);
+  kernel.remapCells((i) => (i === index ? null : i > index ? i - 1 : i));
+  focusCell(Math.min(focusedCell, chains.length - 1));
+  setRecipeFromSteps();
+}
+
+/**
+ * Move cell `from` to index `to` (0-based). Marks all cells with outputs stale.
+ * @param {number} from
+ * @param {number} to
+ */
+function moveCell(from, to) {
+  if (from === to || from < 0 || to < 0 || from >= chains.length || to >= chains.length) {
+    return;
+  }
+  const [cell] = chains.splice(from, 1);
+  chains.splice(to, 0, cell);
+  kernel.remapCells((i) => {
+    if (i === from) return to;
+    if (from < to) {
+      // [from+1..to] shift left
+      if (i > from && i <= to) return i - 1;
+    } else {
+      // [to..from-1] shift right
+      if (i >= to && i < from) return i + 1;
+    }
+    return i;
+  });
+  kernel.markAllWithOutputsStale();
+  focusCell(to);
+  setRecipeFromSteps();
+}
+
+/**
+ * Badges for cells that still need runtime inputs / binder before Run.
+ * @param {import("../lib/toolkit/recipe.js").RecipeChain} chain
+ * @returns {string[]}
+ */
+function cellNeedBadges(chain) {
+  /** @type {string[]} */
+  const badges = [];
+  if (!chain?.steps?.length) return badges;
+  const ast = { chains: [chain], steps: chain.steps, source: "" };
+  try {
+    const v = validateRecipe(ast);
+    if (v.inputNeeds?.includes("text") || v.inputNeeds?.includes("shares")) {
+      badges.push("needs input");
+    }
+    if ((v.recipientSlots || 0) > 0) badges.push("needs recipients");
+    for (const err of v.errors || []) {
+      const m = String(err.message || "").match(/unknown slot.*?(@[\w-]+)/i);
+      if (m) {
+        const ref = m[1].startsWith("@") ? m[1] : `@${m[1]}`;
+        if (!kernel.slots.has(ref)) badges.push("needs slot");
+      }
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return [...new Set(badges)];
+}
+
+function syncArtifactsFromKernel() {
+  artifacts = [];
+  for (let i = 0; i < chains.length; i++) {
+    artifacts.push(...kernel.getCellOutputs(i));
+  }
+}
+
+/**
+ * @returns {string}
+ */
+function formatMsCountdown(ms) {
+  const left = Math.max(0, ms);
+  const mins = Math.floor(left / 60000);
+  const secs = Math.floor((left % 60000) / 1000);
+  return `${mins}m ${String(secs).padStart(2, "0")}s`;
+}
+
+function updateKernelChip() {
+  const el = document.getElementById("kernel-chip");
+  const labelEl = document.getElementById("kernel-chip-label");
+  if (!el) return;
+  const n = kernel.slotCount();
+  const stale = kernel.staleCellIndices().length;
+  const unlocked = sessionList().length;
+  const cellsRun = chains.reduce(
+    (acc, _, i) => acc + (kernel.getCellStatus(i) === "ok" || kernel.getCellStatus(i) === "stale" ? 1 : 0),
+    0
+  );
+  const parts = [`${n} slot${n === 1 ? "" : "s"}`];
+  if (cellsRun) parts.push(`${cellsRun} run`);
+  if (stale) parts.push(`${stale} stale`);
+  if (unlocked) parts.push(`agent ${unlocked}`);
+  const idleMs = getIdleClearMs();
+  if (idleMs > 0 && (n || unlocked || artifacts.length)) {
+    const idleLeft = idleMs - (Date.now() - lastActivityAt);
+    parts.push(`clears ${formatMsCountdown(idleLeft)}`);
+  }
+  const text = parts.join(" · ");
+  if (labelEl) labelEl.textContent = text;
+  else el.textContent = text;
+  el.classList.toggle("kernel-chip-active", variablesOpen);
+  el.classList.toggle("kernel-chip-has-slots", n > 0);
+  el.setAttribute("aria-expanded", variablesOpen ? "true" : "false");
+
+  const needTick = n > 0 || unlocked > 0 || artifacts.length > 0;
+  if (needTick && !kernelChipTimer) {
+    kernelChipTimer = setInterval(updateKernelChip, 1000);
+  } else if (!needTick && kernelChipTimer) {
+    clearInterval(kernelChipTimer);
+    kernelChipTimer = null;
+  }
+}
+
+function updateStaleBanner() {
+  const el = document.getElementById("stale-banner");
+  if (!el) return;
+  const stale = kernel.staleCellIndices();
+  if (!stale.length) {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+  el.classList.remove("hidden");
+  el.innerHTML = `
+    <span>Upstream changed — ${stale.length} cell${stale.length === 1 ? "" : "s"} stale.</span>
+    <button type="button" class="btn btn-compact" id="rerun-stale-btn">Re-run stale</button>`;
+  document.getElementById("rerun-stale-btn")?.addEventListener("click", () => {
+    void runStaleCells();
+  });
+}
+
+/**
+ * @param {import("../lib/toolkit/slot-registry.js").SlotMeta} m
+ * @returns {"recipients"|"openpgp-private"|"openpgp-public"|"other"}
+ */
+function slotMetaKind(m) {
+  const t = String(m?.type || "").toLowerCase();
+  if (t.startsWith("recipients") || t === "recipients") return "recipients";
+  if (t.includes("openpgp-key") && (t.includes("private") || m.sensitive)) {
+    return "openpgp-private";
+  }
+  if (t.includes("openpgp-key")) return "openpgp-public";
+  return "other";
+}
+
+function renderVariablesDrawer() {
+  const el = document.getElementById("variables-drawer");
+  if (!el) return;
+  if (!variablesOpen) {
+    el.hidden = true;
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    updateKernelChip();
+    return;
+  }
+  el.hidden = false;
+  el.classList.remove("hidden");
+  const metas = kernel.listSlots();
+  el.innerHTML = `
+    <div class="variables-drawer-inner">
+      <div class="variables-drawer-head">
+        <div>
+          <strong>Kernel variables</strong>
+          <p class="muted fs-xs mb-0">Live <code>@slots</code> for this session — metas only, no private armor.</p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-compact" id="close-variables" aria-label="Close variables">✕</button>
+      </div>
+      ${
+        metas.length
+          ? `<ul class="variables-list">${metas
+              .map((m) => {
+                const kind = slotMetaKind(m);
+                const bits = [
+                  m.fingerprint
+                    ? `<span class="mono fs-xs" title="Fingerprint">…${escapeHtml(m.fingerprint.slice(-8))}</span>`
+                    : "",
+                  m.recipients != null
+                    ? `<span class="muted fs-xs">${m.recipients} key${m.recipients === 1 ? "" : "s"}</span>`
+                    : "",
+                  m.length != null && m.recipients == null
+                    ? `<span class="muted fs-xs">${m.length} B</span>`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join("");
+                /** @type {string[]} */
+                const actions = [];
+                if (kind === "recipients") {
+                  actions.push(
+                    `<button type="button" class="btn btn-compact" data-slot-action="encrypt" data-use-slot="${escapeHtml(m.label)}">Encrypt to…</button>`
+                  );
+                }
+                if (kind === "openpgp-private") {
+                  actions.push(
+                    `<button type="button" class="btn btn-compact" data-slot-action="sign" data-use-slot="${escapeHtml(m.label)}">Sign with…</button>`
+                  );
+                }
+                if (kind === "openpgp-public" || kind === "recipients") {
+                  actions.push(
+                    `<button type="button" class="btn btn-ghost btn-compact" data-slot-action="to" data-use-slot="${escapeHtml(m.label)}" title="Set to=@ on focused encrypt step">to=@</button>`
+                  );
+                }
+                if (kind === "openpgp-private" || kind === "openpgp-public") {
+                  actions.push(
+                    `<button type="button" class="btn btn-ghost btn-compact" data-slot-action="key" data-use-slot="${escapeHtml(m.label)}" title="Set key=@ on focused sign/encrypt step">key=@</button>`
+                  );
+                }
+                actions.push(
+                  `<button type="button" class="btn btn-ghost btn-compact" data-slot-action="in" data-use-slot="${escapeHtml(m.label)}" title="Insert in @${escapeHtml(m.label)} at cell start">in @</button>`
+                );
+                return `<li class="variables-item">
+                  <div class="variables-item-main">
+                    <code class="variables-slot">@${escapeHtml(m.label)}</code>
+                    <span class="variables-type badge pending">${escapeHtml(m.type)}</span>
+                    ${bits}
+                  </div>
+                  <div class="btn-row wrap variables-item-actions">${actions.join("")}</div>
+                </li>`;
+              })
+              .join("")}</ul>`
+          : `<p class="muted fs-sm mb-0">No slots yet — run a cell that ends with <code>out @label</code> (e.g. HKP search).</p>`
+      }
+    </div>`;
+  document.getElementById("close-variables")?.addEventListener("click", () => {
+    variablesOpen = false;
+    renderVariablesDrawer();
+  });
+  el.querySelectorAll("[data-use-slot]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const label = btn.getAttribute("data-use-slot") || "";
+      const action = btn.getAttribute("data-slot-action") || "in";
+      insertKernelSlotIntoFocused(label, action);
+    });
+  });
+  updateKernelChip();
+}
+
+/**
+ * @param {string} label
+ * @param {"encrypt"|"sign"|"to"|"key"|"in"} [action]
+ */
+function insertKernelSlotIntoFocused(label, action = "in") {
+  const clean = String(label || "").replace(/^@/, "");
+  if (!clean) return;
+  focusCell(focusedCell);
+
+  if (action === "encrypt") {
+    applyCompositionChip(`encrypt-to:${clean}`);
+    variablesOpen = false;
+    renderVariablesDrawer();
+    return;
+  }
+  if (action === "sign") {
+    applyCompositionChip(`sign-with:${clean}`);
+    variablesOpen = false;
+    renderVariablesDrawer();
+    return;
+  }
+  if (action === "to") {
+    const enc = steps.find((s) => s.name === "gpg.encrypt");
+    if (enc) {
+      enc.params.to = `@${clean}`;
+      setRecipeFromSteps();
+      return;
+    }
+    applyCompositionChip(`encrypt-to:${clean}`);
+    return;
+  }
+  if (action === "key") {
+    const sign = steps.find(
+      (s) => s.name === "gpg.sign" || s.name === "gpg.verify" || s.name === "gpg.encrypt"
+    );
+    if (sign) {
+      sign.params.key = `@${clean}`;
+      if (sign.name === "gpg.encrypt") sign.params.sign = true;
+      setRecipeFromSteps();
+      return;
+    }
+    applyCompositionChip(`sign-with:${clean}`);
+    return;
+  }
+  // in @label
+  if (!steps.length || steps[0]?.name !== "in") {
+    steps.unshift({
+      name: "in",
+      params: { ref: `@${clean}` },
+      start: 0,
+      end: 0,
+    });
+  } else {
+    steps[0].params.ref = `@${clean}`;
+  }
+  setRecipeFromSteps();
+}
+
 function touchActivity() {
+  lastActivityAt = Date.now();
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    // Idle auto-scrub: wipe secrets, inputs and outputs but keep the pipeline
-    // definition (it is not secret) so the user can re-run after stepping away.
-    secureDestroy({ quiet: true });
-  }, IDLE_CLEAR_MS);
+  idleTimer = null;
+  const ms = getIdleClearMs();
+  if (ms > 0) {
+    idleTimer = setTimeout(() => {
+      // Idle auto-scrub: wipe secrets, inputs and outputs but keep the pipeline
+      // definition (it is not secret) so the user can re-run after stepping away.
+      secureDestroy({ quiet: true });
+    }, ms);
+  }
+  updateKernelChip();
+}
+
+/**
+ * Apply collapse-advanced preference to ops drawer sets.
+ * @param {boolean} [force]
+ */
+function applyCollapsePrefs(force = false) {
+  const p = getToolkitPrefs();
+  if (!p.collapseAdvanced && !force) return;
+  if (p.collapseAdvanced) {
+    opsCollapsed.add("webauthn");
+    for (const key of defaultCollapsedShelfKeys()) {
+      opsShelfCollapsed.add(key);
+    }
+  }
+}
+
+function renderPrefsForm() {
+  const host = document.getElementById("prefs-popover");
+  if (!host) return;
+  const p = getToolkitPrefs();
+  host.innerHTML = `
+    <p class="muted fs-sm m-0-b-md">Session and defaults for this browser. Not written into recipe text.</p>
+    <label class="prefs-field">
+      <span>Idle clear</span>
+      <select id="pref-idle" class="text-input">
+        <option value="0" ${p.idleClearMinutes === 0 ? "selected" : ""}>Never</option>
+        <option value="1" ${p.idleClearMinutes === 1 ? "selected" : ""}>1 minute</option>
+        <option value="5" ${p.idleClearMinutes === 5 ? "selected" : ""}>5 minutes</option>
+        <option value="15" ${p.idleClearMinutes === 15 ? "selected" : ""}>15 minutes</option>
+        <option value="60" ${p.idleClearMinutes === 60 ? "selected" : ""}>60 minutes</option>
+      </select>
+    </label>
+    <label class="prefs-field">
+      <span>Default encrypt mode</span>
+      <select id="pref-mode" class="text-input">
+        <option value="separate" ${p.defaultEncryptMode === "separate" ? "selected" : ""}>separate (N ciphertexts)</option>
+        <option value="combined" ${p.defaultEncryptMode === "combined" ? "selected" : ""}>combined (one message)</option>
+      </select>
+    </label>
+    <label class="prefs-field">
+      <span>Default email policy</span>
+      <select id="pref-policy" class="text-input">
+        <option value="ask" ${p.defaultEncryptPolicy === "ask" ? "selected" : ""}>ask (modal if ambiguous)</option>
+        <option value="one" ${p.defaultEncryptPolicy === "one" ? "selected" : ""}>one (exactly one key)</option>
+        <option value="all" ${p.defaultEncryptPolicy === "all" ? "selected" : ""}>all (every approved)</option>
+      </select>
+    </label>
+    <label class="prefs-check" title="${escapeHtml(FIPS_MODE_DISCLAIMER)}">
+      <input type="checkbox" id="fips-mode" ${fipsMode ? "checked" : ""}>
+      <span>FIPS mode <span class="muted fs-xs">(verified suites only)</span></span>
+    </label>
+    <label class="prefs-check">
+      <input type="checkbox" id="pref-collapse" ${p.collapseAdvanced ? "checked" : ""}>
+      <span>Collapse advanced shelves <span class="muted fs-xs">(Cipher, Wrap, WebAuthn)</span></span>
+    </label>
+    <label class="prefs-check" title="Unlock returns the private key for the run without keeping a 5-minute agent session">
+      <input type="checkbox" id="pref-session-off" ${p.sessionOff ? "checked" : ""}>
+      <span>Session off <span class="muted fs-xs">(no agent TTL; unlock per run)</span></span>
+    </label>
+    <p class="muted fs-xs mt-sm mb-0">Defaults: idle ${DEFAULT_TOOLKIT_PREFS.idleClearMinutes}m · mode ${DEFAULT_TOOLKIT_PREFS.defaultEncryptMode} · policy ${DEFAULT_TOOLKIT_PREFS.defaultEncryptPolicy}.</p>
+  `;
+  wirePrefsForm(host);
+}
+
+/**
+ * @param {HTMLElement} host
+ */
+function wirePrefsForm(host) {
+  const save = () => {
+    const idleEl = host.querySelector("#pref-idle");
+    const modeEl = host.querySelector("#pref-mode");
+    const policyEl = host.querySelector("#pref-policy");
+    const collapseEl = host.querySelector("#pref-collapse");
+    const sessionEl = host.querySelector("#pref-session-off");
+    const fipsEl = host.querySelector("#fips-mode");
+    setToolkitPrefs({
+      idleClearMinutes:
+        idleEl instanceof HTMLSelectElement ? Number(idleEl.value) : 5,
+      defaultEncryptMode:
+        modeEl instanceof HTMLSelectElement && modeEl.value === "combined"
+          ? "combined"
+          : "separate",
+      defaultEncryptPolicy:
+        policyEl instanceof HTMLSelectElement &&
+        ["ask", "one", "all"].includes(policyEl.value)
+          ? /** @type {"ask"|"one"|"all"} */ (policyEl.value)
+          : "ask",
+      collapseAdvanced:
+        collapseEl instanceof HTMLInputElement ? collapseEl.checked : true,
+      sessionOff: sessionEl instanceof HTMLInputElement ? sessionEl.checked : false,
+    });
+    if (fipsEl instanceof HTMLInputElement) {
+      fipsMode = fipsEl.checked;
+      setFipsMode(fipsMode);
+      document.getElementById("fips-hint")?.classList.toggle("hidden", !fipsMode);
+    }
+    applyCollapsePrefs(true);
+    touchActivity();
+    validateAndBind();
+    renderOpsDrawer();
+    renderSuggestDrawer();
+    renderNotebook();
+  };
+  host.querySelectorAll("select, input").forEach((el) => {
+    el.addEventListener("change", save);
+  });
 }
 
 /**
@@ -584,8 +1115,11 @@ function touchActivity() {
  *
  * @param {{ quiet?: boolean }} [opts]
  */
-function secureDestroy(opts = {}) {
-  // 1. Kill any in-flight worker — its heap holds the most sensitive material.
+/**
+ * Wipe kernel + outputs + inputs; keep cell recipes (Clear sensitive / idle).
+ * @param {{ quiet?: boolean }} [opts]
+ */
+function clearSensitiveData(opts = {}) {
   if (activeWorker) {
     try {
       activeWorker.terminate();
@@ -594,10 +1128,17 @@ function secureDestroy(opts = {}) {
     }
     activeWorker = null;
   }
-
-  // 2. Drop references to secret-bearing module state.
+  sessionClear();
+  kernel.clearSensitive();
   artifacts = [];
+  expandedArtifactKeys = new Set();
   boundRecipients = [];
+  recipientResolutions = {};
+  lookupFieldErrors = new Map();
+  if (kernelChipTimer) {
+    clearInterval(kernelChipTimer);
+    kernelChipTimer = null;
+  }
   if (binder) {
     binder.destroy();
     binder = null;
@@ -606,8 +1147,11 @@ function secureDestroy(opts = {}) {
   envelopeDraft = "";
   sharePassDraft = "";
   inputTextDraft = "";
+  keyJwkDraft = "";
+  peerJwkDraft = "";
+  wrapJwkDraft = "";
+  signatureDraft = "";
 
-  // 3. Clear sensitive DOM fields (pasted keys, passphrases, shares, ciphertext).
   for (const id of [
     "input-text",
     "input-envelope",
@@ -625,12 +1169,12 @@ function secureDestroy(opts = {}) {
     if (el instanceof HTMLTextAreaElement) el.value = "";
   });
 
-  // 4. Re-render: rebuilds inputs empty and replaces the output pane (revealed
-  //    secrets in the DOM are dropped with the old markup).
-  renderResults();
   validateAndBind();
-
-  // 5. Idle timer no longer needed until next activity.
+  renderNotebook();
+  renderAgentChrome();
+  updateKernelChip();
+  updateStaleBanner();
+  renderVariablesDrawer();
   clearTimeout(idleTimer);
 
   if (!opts.quiet) {
@@ -638,24 +1182,60 @@ function secureDestroy(opts = {}) {
     if (status) {
       status.className = "status-row ok";
       status.textContent =
-        "Destroyed — in-memory secrets, inputs and outputs cleared (best-effort).";
+        "Cleared sensitive data — recipes kept, kernel and outputs wiped.";
       status.classList.remove("hidden");
     }
   }
 }
 
+/** Clear sensitive + single empty cell. */
+function resetNotebook() {
+  clearSensitiveData({ quiet: true });
+  chains = [{ steps: [] }];
+  cellCollapsed = new Set();
+  focusCell(0);
+  setRecipeTitle("");
+  setRecipeFromSteps();
+  const status = document.getElementById("run-status");
+  if (status) {
+    status.className = "status-row ok";
+    status.textContent = "Notebook reset.";
+    status.classList.remove("hidden");
+  }
+}
+
+function secureDestroy(opts = {}) {
+  // Destroy = Clear sensitive (keep recipes), matching prior Destroy semantics.
+  clearSensitiveData(opts);
+  if (!opts.quiet) {
+    const status = document.getElementById("run-status");
+    if (status) {
+      status.textContent =
+        "Destroyed — in-memory secrets, inputs and outputs cleared (best-effort).";
+    }
+  }
+}
+
 function setRecipeFromSteps() {
-  if (!chains.length) chains = [{ steps }];
-  else chains[0] = { steps };
+  if (!chains.length) {
+    chains = [{ steps: steps || [] }];
+    focusedCell = 0;
+  }
+  chains[focusedCell] = { steps };
+  steps = chains[focusedCell].steps;
   const ta = document.getElementById("recipe-text");
   if (ta instanceof HTMLTextAreaElement) {
     ta.value = serializeRecipe({ chains });
   }
   validateAndBind();
-  renderBuilder();
+  renderNotebook();
   renderSuggestDrawer();
   renderCryptoPanel();
   renderOpsDrawer();
+  renderAgentChrome();
+  updateKernelChip();
+  updateStaleBanner();
+  renderVariablesDrawer();
 }
 
 /**
@@ -667,6 +1247,11 @@ function defaultParams(spec) {
   const params = {};
   for (const p of spec.params || []) {
     if (p.default !== undefined) params[p.name] = p.default;
+  }
+  if (spec?.name === "gpg.encrypt") {
+    const prefs = getToolkitPrefs();
+    params.mode = prefs.defaultEncryptMode;
+    params.policy = prefs.defaultEncryptPolicy;
   }
   return params;
 }
@@ -906,7 +1491,9 @@ function loadRecipeText(text, opts = {}) {
     steps: (c.steps || []).map((s) => cloneBuilderStep(s)),
   }));
   chains = loaded.length ? loaded : [{ steps: [] }];
-  steps = chains[0].steps;
+  kernel.clearSensitive();
+  cellCollapsed = new Set();
+  focusCell(0);
   if (opts.title != null) setRecipeTitle(opts.title);
   if (errEl) errEl.classList.add("hidden");
 
@@ -923,10 +1510,12 @@ function loadRecipeText(text, opts = {}) {
   }
 
   validateAndBind();
-  renderBuilder();
+  renderNotebook();
   renderSuggestDrawer();
   renderCryptoPanel();
   renderOpsDrawer();
+  updateKernelChip();
+  updateStaleBanner();
 }
 
 /** @param {string} title */
@@ -938,10 +1527,44 @@ function setRecipeTitle(title) {
   }
 }
 
+/**
+ * Soften compile errors for slots that already exist in the live kernel.
+ * @param {import("../lib/toolkit/recipe.js").ValidationResult} validation
+ */
+function softenValidationWithKernel(validation) {
+  if (!validation || validation.ok) return validation;
+  /** @type {typeof validation.errors} */
+  const hard = [];
+  /** @type {string[]} */
+  const soft = [];
+  for (const err of validation.errors || []) {
+    const msg = String(err.message || "");
+    const m = msg.match(/out (@[\w-]+)|unknown slot.*?(@[\w-]+)/i);
+    const ref = m?.[1] || m?.[2];
+    if (ref && kernel.slots.has(ref)) {
+      soft.push(`${ref} is bound in the kernel session`);
+      continue;
+    }
+    hard.push(err);
+  }
+  return {
+    ...validation,
+    ok: hard.length === 0,
+    errors: hard,
+    warnings: [...(validation.warnings || []), ...soft],
+  };
+}
+
 function validateAndBind() {
-  if (!chains.length) chains = [{ steps }];
-  else chains[0] = { steps };
-  const { ast, validation } = compileRecipe(serializeRecipe({ chains }));
+  if (!chains.length) {
+    chains = [{ steps: steps || [] }];
+    focusedCell = 0;
+  }
+  chains[focusedCell] = { steps };
+  steps = chains[focusedCell].steps;
+  const compiled = compileRecipe(serializeRecipe({ chains }));
+  const ast = compiled.ast;
+  const validation = softenValidationWithKernel(compiled.validation);
   const errEl = document.getElementById("recipe-errors");
   const warnEl = document.getElementById("recipe-warnings");
   const runBtn = document.getElementById("run-btn");
@@ -1189,6 +1812,13 @@ function renderInputsPanel(needs) {
         placeholder="If the OpenPGP key is locked">
       <p class="muted mt-xs fs-sm">Software/vault keys unlock only for this run. OpenPGP smartcards are not accessible from the browser — leave the key blank and paste externally decrypted mnemonics above.</p>
     `);
+  } else if (needs.includes("gpgPass")) {
+    parts.push(`
+      <label class="field-label mt-md" for="input-key-pass">OpenPGP key passphrase</label>
+      <input type="password" id="input-key-pass" class="text-input" autocomplete="off"
+        placeholder="If the key slot / vault key is S2K-locked">
+      <p class="muted mt-xs fs-sm">Needed when <code>key=@slot</code> armor is still passphrase-locked, or for <code>agent.save protection=passphrase</code>.</p>
+    `);
   }
   host.innerHTML = parts.join("\n");
   wireInputsPanel(host, needs);
@@ -1354,7 +1984,7 @@ async function readEnvelopeAscFile(file) {
 
 async function refreshVaultKeys() {
   try {
-    vaultKeys = await vaultListKeys();
+    vaultKeys = sortKeysByLastUsed(await vaultListKeys());
   } catch (_) {
     vaultKeys = [];
   }
@@ -1420,7 +2050,7 @@ async function collectRuntimeInputs() {
     }
   }
 
-  if (currentInputNeeds.includes("gpg")) {
+  if (currentInputNeeds.includes("gpg") || currentInputNeeds.includes("gpgPass")) {
     const ctEl = document.getElementById("input-ciphertext");
     const vaultEl = document.getElementById("input-vault-key");
     const privEl = document.getElementById("input-privkey");
@@ -1452,22 +2082,12 @@ async function collectRuntimeInputs() {
       privateKeyArmored = pasted;
     } else if (vaultFpr) {
       const meta = vaultKeys.find((k) => k.fingerprint === vaultFpr);
-      /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
-      const opts = {};
-      try {
-        if (meta?.protection === "passkey") {
-          opts.prfIkm = await getPasskeyPrf();
-        }
-        privateKeyArmored = await vaultUnlockKey(vaultFpr, opts);
-      } finally {
-        // PRF-derived input keying material is a real Uint8Array — zeroize it
-        // as soon as the KEK has been derived (best-effort per FIPS 140-3).
-        try {
-          opts.prfIkm?.fill?.(0);
-        } catch (_) {
-          /* wipe */
-        }
-      }
+      const unlocked = await unlockVaultForUse(vaultFpr, {
+        meta,
+        openPgpPassphrase: passphrase,
+        skipSession: getToolkitPrefs().sessionOff,
+      });
+      privateKeyArmored = unlocked.armored;
     }
 
     inputs.gpg = {
@@ -1495,11 +2115,15 @@ function renderPresets() {
 
   /** @param {typeof PRESETS[number]} p */
   const card = (p) => `
-    <button type="button" class="preset-card" data-preset="${escapeHtml(p.id)}">
-      <strong>${escapeHtml(p.title)}</strong>
-      <span class="muted">${escapeHtml(p.blurb)}</span>
-      <code class="preset-recipe">${escapeHtml(p.recipe)}</code>
-    </button>`;
+    <div class="preset-card-wrap">
+      <button type="button" class="preset-card" data-preset="${escapeHtml(p.id)}" title="Replace notebook">
+        <strong>${escapeHtml(p.title)}</strong>
+        <span class="muted">${escapeHtml(p.blurb)}</span>
+        <code class="preset-recipe">${escapeHtml(p.recipe)}</code>
+      </button>
+      <button type="button" class="btn btn-ghost btn-compact preset-append-btn" data-preset-append="${escapeHtml(p.id)}"
+        title="Append preset chains as new cells">Append</button>
+    </div>`;
 
   /** @type {Map<string, typeof PRESETS>} */
   const groups = new Map();
@@ -1538,10 +2162,59 @@ function renderPresets() {
       const id = btn.getAttribute("data-preset");
       const preset = PRESETS.find((p) => p.id === id);
       if (!preset) return;
+      const hasContent =
+        chains.some((c) => (c.steps || []).length > 0) || kernel.slotCount() > 0;
+      if (
+        hasContent &&
+        !window.confirm(
+          `Replace the notebook with “${preset.title}”?\n\nKernel slots and cell outputs will be cleared. Use Append on the template card to add cells instead.`
+        )
+      ) {
+        return;
+      }
       loadRecipeText(preset.recipe, { title: preset.title, migrate: true });
       document.getElementById("preset-gallery")?.removeAttribute("open");
     });
   });
+  grid.querySelectorAll("[data-preset-append]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute("data-preset-append");
+      const preset = PRESETS.find((p) => p.id === id);
+      if (!preset) return;
+      appendPresetAsCells(preset);
+      document.getElementById("preset-gallery")?.removeAttribute("open");
+    });
+  });
+}
+
+/**
+ * Append a preset’s chains as new notebook cells (keep current cells + kernel).
+ * @param {typeof PRESETS[number]} preset
+ */
+function appendPresetAsCells(preset) {
+  let source = String(preset.recipe || "");
+  source = migrateRecipe(source).recipe;
+  const { ast, errors } = canonicalizeRecipe(source);
+  if (errors.length || !ast) {
+    showError(errorEl, errors.map((e) => e.message).join(" · ") || "Preset parse failed");
+    return;
+  }
+  const loaded = recipeChains(ast).map((c) => ({
+    steps: (c.steps || []).map((s) => cloneBuilderStep(s)),
+  }));
+  if (!loaded.length) return;
+  const start = chains.length;
+  // Drop a trailing empty cell before append
+  if (chains.length === 1 && !(chains[0].steps || []).length) {
+    chains = loaded;
+    focusCell(0);
+  } else {
+    chains.push(...loaded);
+    focusCell(start);
+  }
+  if (!recipeTitle && preset.title) setRecipeTitle(preset.title);
+  setRecipeFromSteps();
 }
 
 /**
@@ -1552,7 +2225,37 @@ function renderPresets() {
  */
 function preferredNextOrder(from) {
   if (!from || from.base === "none") {
-    return ["genkey", "random", "shares", "input", "gpg.decrypt", "passphrase", "ecdh", "wrap"];
+    return [
+      "genkey",
+      "random",
+      "shares",
+      "input",
+      "gpg.decrypt",
+      "passphrase",
+      "agent.list",
+      "agent.unlock",
+      "hkp.search",
+      "hkp.get",
+      "ecdh",
+      "wrap",
+    ];
+  }
+  if (from.base === "recipients") {
+    return ["out", "hkp.filter", "recipients.merge", "inspect", "text", "tee", "peek"];
+  }
+  if (from.base === "openpgp-key") {
+    if (from.which === "private") {
+      return [
+        "out",
+        "agent.save",
+        "gpg.inspect",
+        "inspect",
+        "tee",
+        "peek",
+        "text",
+      ];
+    }
+    return ["out", "inspect", "tee", "peek", "text", "gpg.inspect"];
   }
   if (from.base === "shares") {
     if (from.kind === "raw") {
@@ -1714,8 +2417,9 @@ function renderSuggestDrawer() {
   const terminal = !!(last && (isTerminalSink(last.name) || last.name === "inspect"));
   const hasForeach = steps.some((s) => s.name === "foreach");
   const next = suggestedNextSteps(from, { hasForeach, terminal });
+  const composeChips = compositionSuggestChipsHtml(from);
 
-  if (!next.length) {
+  if (!next.length && !composeChips) {
     host.hidden = true;
     host.innerHTML = "";
     return;
@@ -1723,12 +2427,16 @@ function renderSuggestDrawer() {
 
   const fromType = formatType(from);
   const heading = !steps.length
-    ? "Start with"
+    ? composeChips && !next.length
+      ? `Cell [${focusedCell}] · compose`
+      : "Start with"
     : terminal
       ? "Optional next"
       : `Next for <code>${escapeHtml(fromType)}</code>`;
   const blurb = !steps.length
-    ? "Sources that begin a pipeline."
+    ? composeChips && !next.length
+      ? "Kernel slots ready — add a new cell that uses them."
+      : "Sources that begin a pipeline."
     : terminal
       ? "Pipeline already has a sink — these still accept the tip."
       : "Compatible blocks for the current tip type.";
@@ -1739,9 +2447,12 @@ function renderSuggestDrawer() {
   host.innerHTML = `
     <div class="suggest-next-head">
       <p class="suggest-next-title mb-0">${heading}</p>
-      <p class="muted fs-xs mb-0">${escapeHtml(blurb)}</p>
+      <p class="muted fs-xs mb-0">${blurb}</p>
     </div>
-    <div class="suggest-next-chips" role="list">
+    ${composeChips}
+    ${
+      next.length
+        ? `<div class="suggest-next-chips" role="list">
       ${next
         .map((s, i) => {
           const decode =
@@ -1775,7 +2486,16 @@ function renderSuggestDrawer() {
             </button>`;
         })
         .join("")}
-    </div>`;
+    </div>`
+        : ""
+    }`;
+
+  host.querySelectorAll("[data-suggest-compose]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const kind = el.getAttribute("data-suggest-compose") || "";
+      applyCompositionChip(kind);
+    });
+  });
 
   host.querySelectorAll("[data-suggest-op]").forEach((el) => {
     const name = el.getAttribute("data-suggest-op") || "";
@@ -1797,6 +2517,144 @@ function renderSuggestDrawer() {
     el.addEventListener("dragend", () => el.classList.remove("ops-dragging"));
     el.addEventListener("click", () => addStepAt(name, undefined, overrides));
   });
+}
+
+/**
+ * Tip-type + kernel-slot composition chips (new cells that consume @slots).
+ * @param {import("../lib/toolkit/types.js").RefinedType} from
+ * @returns {string}
+ */
+function compositionSuggestChipsHtml(from) {
+  /** @type {string[]} */
+  const chips = [];
+  /** @type {Set<string>} */
+  const seen = new Set();
+
+  const push = (id, label, primary = false) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    chips.push(`
+      <button type="button" class="suggest-chip suggest-chip-compose${primary ? " suggest-chip-primary" : ""}"
+        data-suggest-compose="${escapeHtml(id)}">
+        <span class="suggest-chip-name">${escapeHtml(label)}</span>
+      </button>`);
+  };
+
+  if (from && steps.length) {
+    if (from.base === "recipients") {
+      push("encrypt-to", "Encrypt message to this set", true);
+    }
+    if (from.base === "openpgp-key" && from.which === "private") {
+      push("sign-with", "Sign with this key", true);
+    }
+  }
+
+  for (const m of kernel.listSlots()) {
+    const kind = slotMetaKind(m);
+    if (kind === "recipients") {
+      push(
+        `encrypt-to:${m.label}`,
+        `Encrypt to @${m.label}${m.recipients != null ? ` (${m.recipients})` : ""}`,
+        !chips.length
+      );
+    } else if (kind === "openpgp-private") {
+      push(`sign-with:${m.label}`, `Sign with @${m.label}`, !chips.length);
+    }
+  }
+
+  if (!chips.length) return "";
+  return `<div class="suggest-next-chips suggest-compose-chips mb-sm" role="list">
+    <span class="suggest-compose-label muted fs-xs">Compose</span>
+    ${chips.join("")}
+  </div>`;
+}
+
+/**
+ * @param {string} kind  encrypt-to | encrypt-to:label | sign-with | sign-with:label
+ */
+function applyCompositionChip(kind) {
+  const raw = String(kind || "");
+  const colon = raw.indexOf(":");
+  const base = colon >= 0 ? raw.slice(0, colon) : raw;
+  const forcedLabel = colon >= 0 ? raw.slice(colon + 1).replace(/^@/, "") : "";
+  const last = steps[steps.length - 1];
+
+  if (base === "encrypt-to") {
+    let label = forcedLabel || "alices";
+    if (!forcedLabel) {
+      if (last?.name === "out") {
+        label = String(last.params?.name || "alices").replace(/^@/, "") || "alices";
+      } else {
+        const outSpec = getStep("out");
+        steps.push({
+          name: "out",
+          params: { ...defaultParams(outSpec || { params: [] }), name: `@${label}` },
+          start: 0,
+          end: 0,
+        });
+      }
+    }
+    const encSpec = getStep("gpg.encrypt");
+    chains.push({
+      steps: [
+        {
+          name: "input",
+          params: { ...defaultParams(getStep("input") || { params: [] }) },
+          start: 0,
+          end: 0,
+        },
+        {
+          name: "gpg.encrypt",
+          params: {
+            ...defaultParams(encSpec || { params: [] }),
+            to: `@${label}`,
+          },
+          start: 0,
+          end: 0,
+        },
+      ],
+    });
+    focusCell(chains.length - 1);
+    setRecipeFromSteps();
+    return;
+  }
+  if (base === "sign-with") {
+    let label = forcedLabel || "me";
+    if (!forcedLabel) {
+      if (last?.name === "out") {
+        label = String(last.params?.name || "me").replace(/^@/, "") || "me";
+      } else {
+        steps.push({
+          name: "out",
+          params: { ...defaultParams(getStep("out") || { params: [] }), name: `@${label}` },
+          start: 0,
+          end: 0,
+        });
+      }
+    }
+    const signSpec = getStep("gpg.sign");
+    chains.push({
+      steps: [
+        {
+          name: "input",
+          params: { ...defaultParams(getStep("input") || { params: [] }) },
+          start: 0,
+          end: 0,
+        },
+        {
+          name: "gpg.sign",
+          params: {
+            ...defaultParams(signSpec || { params: [] }),
+            key: `@${label}`,
+          },
+          start: 0,
+          end: 0,
+        },
+      ],
+    });
+    focusCell(chains.length - 1);
+    setRecipeFromSteps();
+  }
 }
 
 /**
@@ -2155,15 +3013,25 @@ function renderOpsDrawer() {
 
   if (hint) {
     const fromType = formatType(from);
+    const slotN = kernel.slotCount();
+    const recipSlots = kernel.listSlots().filter((m) => slotMetaKind(m) === "recipients");
+    const slotHint = slotN
+      ? ` · ${slotN} slot${slotN === 1 ? "" : "s"} in Variables`
+      : "";
     if (!steps.length) {
       hint.textContent =
-        "Swiss-army drawer: shelves group tools; conjugates sit side by side (gpg.encrypt | gpg.decrypt, encode | -d). Drag or click to add.";
+        recipSlots.length
+          ? `Cell [${focusedCell}] empty — add input, or compose Encrypt to @${recipSlots[0].label} from Suggest.`
+          : "Focused cell is empty — drag a source (genkey, hkp.search, input) or click to append." +
+            slotHint;
     } else if (from.base === "shares" && from.kind === "raw") {
-      hint.textContent = `Pipe type ${fromType} — suggested: blip39 (mnemonics) or recover (→ bytes/master). Highlighted ops accept this type.`;
+      hint.textContent = `Cell [${focusedCell}] tip ${fromType} — blip39 or recover.${slotHint}`;
     } else if (from.base === "shares") {
-      hint.textContent = `Pipe type ${fromType} — suggested: blip39 -d → recover, or foreach. Highlighted ops accept this type.`;
+      hint.textContent = `Cell [${focusedCell}] tip ${fromType} — blip39 -d → recover, or foreach.${slotHint}`;
+    } else if (from.base === "recipients") {
+      hint.textContent = `Cell [${focusedCell}] tip recipients — compose Encrypt in a new cell (stem stays the message).${slotHint}`;
     } else {
-      hint.textContent = `Pipe type ${fromType} — highlighted ops accept it. Drag or click to add.`;
+      hint.textContent = `Cell [${focusedCell}] tip ${fromType} — highlighted ops fit the tip.${slotHint}`;
     }
   }
 
@@ -2320,13 +3188,393 @@ function wireMacKit(host) {
   });
 }
 
-function renderBuilder() {
-  const host = document.getElementById("builder-steps");
+/**
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
+ * @param {*} val
+ * @param {string} dataAttrs
+ * @param {{ bodyIndex?: number, parentStem?: number }} nest
+ * @param {number} i
+ */
+function encryptToParamHtml(step, val, dataAttrs, nest, i) {
+  const raw = String(val || "");
+  const token = parseEncryptToToken(raw);
+  const errKey =
+    nest.parentStem != null
+      ? `${nest.parentStem}:${nest.bodyIndex}:to`
+      : `${i}:to`;
+  const err = lookupFieldErrors.get(errKey) || "";
+  let stateClass = "";
+  let statusHtml = "";
+  if (token.kind === "email") {
+    const fps = resolutionForQuery(token.query, recipientResolutions);
+    if (err) {
+      stateClass = "encrypt-to-failed";
+      statusHtml = `<span class="encrypt-to-status text-error fs-xs">${escapeHtml(err)}</span>`;
+    } else if (fps?.length) {
+      stateClass = "encrypt-to-resolved";
+      const stepRef =
+        nest.parentStem != null
+          ? `data-stem="${nest.parentStem}" data-body="${nest.bodyIndex}"`
+          : `data-step="${i}"`;
+      statusHtml = `<span class="encrypt-to-status encrypt-to-pill fs-xs">
+        ${escapeHtml(resolutionPillText(fps))}
+        <button type="button" class="btn btn-ghost btn-compact" data-to-change="1" ${stepRef}>Change…</button>
+      </span>`;
+    } else if (raw) {
+      stateClass = "encrypt-to-unresolved";
+      statusHtml = `<span class="encrypt-to-status muted fs-xs">Unresolved — look up</span>`;
+    }
+  } else if (token.kind === "slot" || token.kind === "fpr") {
+    stateClass = "encrypt-to-bound";
+  }
+  const stepRef =
+    nest.parentStem != null
+      ? `data-stem="${nest.parentStem}" data-body="${nest.bodyIndex}"`
+      : `data-step="${i}"`;
+  return `<div class="builder-param builder-param-to ${stateClass}">
+    <span class="builder-param-name">to</span>
+    <div class="encrypt-to-row">
+      <input class="text-input encrypt-to-input" ${dataAttrs}
+             value="${escapeHtml(raw)}" type="text"
+             placeholder="@slot, email, or fpr:…"
+             autocomplete="off" spellcheck="false">
+      <button type="button" class="btn btn-ghost btn-compact encrypt-to-lookup" ${stepRef}
+              data-to-lookup="1" aria-label="Look up recipients" title="Look up recipients">
+        ${lookupGlyphHtml()}
+      </button>
+    </div>
+    ${statusHtml}
+  </div>`;
+}
+
+/**
+ * @param {HTMLElement} host
+ */
+function wireEncryptToControls(host) {
+  const resolveTarget = (el) => {
+    const stemAttr = el.getAttribute("data-stem");
+    if (stemAttr != null) {
+      const stem = Number(stemAttr);
+      const body = Number(el.getAttribute("data-body"));
+      return steps[stem]?.body?.[body] || null;
+    }
+    const i = Number(el.getAttribute("data-step"));
+    return steps[i] || null;
+  };
+  const errKeyFor = (el) => {
+    const stemAttr = el.getAttribute("data-stem");
+    if (stemAttr != null) {
+      return `${stemAttr}:${el.getAttribute("data-body")}:to`;
+    }
+    return `${el.getAttribute("data-step")}:to`;
+  };
+
+  host.querySelectorAll("[data-to-lookup], [data-to-change]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const target = resolveTarget(btn);
+      if (!target || target.name !== "gpg.encrypt") return;
+      const forceModal = btn.hasAttribute("data-to-change");
+      if (forceModal) {
+        const token = parseEncryptToToken(target.params?.to);
+        if (token.kind === "email") {
+          delete recipientResolutions[recipientResolutionKey(token.query)];
+        }
+      }
+      await runEncryptToLookup(target, errKeyFor(btn), { forceModal });
+    });
+  });
+
+  host.querySelectorAll(".encrypt-to-input").forEach((input) => {
+    input.addEventListener("keydown", async (e) => {
+      if (!(e instanceof KeyboardEvent)) return;
+      if (e.key === "Enter" || (e.key === "k" && (e.ctrlKey || e.metaKey))) {
+        e.preventDefault();
+        const target = resolveTarget(input);
+        if (!target) return;
+        // Sync value first
+        target.params.to = /** @type {HTMLInputElement} */ (input).value;
+        setRecipeFromSteps();
+        await runEncryptToLookup(target, errKeyFor(input));
+      }
+    });
+  });
+}
+
+/**
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
+ * @param {string} errKey
+ * @param {{ forceModal?: boolean }} [opts]
+ */
+async function runEncryptToLookup(step, errKey, opts = {}) {
+  const raw = String(step.params?.to || "").trim();
+  const token = parseEncryptToToken(raw);
+  const policy = String(step.params?.policy || "ask").toLowerCase();
+
+  if (token.kind === "empty") {
+    lookupFieldErrors.set(errKey, "Enter an email or name first");
+    renderBuilder();
+    return;
+  }
+  if (token.kind === "slot" || token.kind === "fpr") {
+    lookupFieldErrors.delete(errKey);
+    renderBuilder();
+    return;
+  }
+  if (token.kind !== "email") return;
+
+  const query = token.query;
+  try {
+    const result = await lookupRecipientsForPolicy({ query, policy });
+    if (result.status === "none" || result.status === "fail") {
+      lookupFieldErrors.set(errKey, result.message || "Lookup failed");
+      delete recipientResolutions[recipientResolutionKey(query)];
+      renderBuilder();
+      return;
+    }
+    if (
+      !opts.forceModal &&
+      result.status === "bound" &&
+      result.fingerprints?.length
+    ) {
+      recipientResolutions[recipientResolutionKey(query)] = result.fingerprints;
+      lookupFieldErrors.delete(errKey);
+      renderBuilder();
+      return;
+    }
+    // ask / all with 2+ (or Change…) → modal
+    const picked = await openRecipientResolveModal({ query, policy });
+    if (!picked?.fingerprints?.length) {
+      lookupFieldErrors.set(errKey, "Select recipients to continue");
+      renderBuilder();
+      return;
+    }
+    recipientResolutions[recipientResolutionKey(query)] = picked.fingerprints;
+    lookupFieldErrors.delete(errKey);
+    renderBuilder();
+  } catch (err) {
+    lookupFieldErrors.set(
+      errKey,
+      err instanceof Error ? err.message : String(err)
+    );
+    renderBuilder();
+  }
+}
+
+/**
+ * Soft-block: unresolved email to= on encrypt steps.
+ * @param {import("../lib/toolkit/recipe.js").RecipeAst} ast
+ * @returns {{ ok: boolean, message?: string }}
+ */
+function checkEncryptToResolutions(ast) {
+  const walk = (list) => {
+    for (const step of list || []) {
+      if (step.name === "gpg.encrypt") {
+        const token = parseEncryptToToken(step.params?.to);
+        if (token.kind === "email") {
+          const fps = resolutionForQuery(token.query, recipientResolutions);
+          if (!fps?.length) {
+            return {
+              ok: false,
+              message: `Look up recipients for to=${token.query} before running`,
+            };
+          }
+        }
+      }
+      if (step.body?.length) {
+        const inner = walk(step.body);
+        if (!inner.ok) return inner;
+      }
+      for (const br of step.branches || []) {
+        const inner = walk(br.body);
+        if (!inner.ok) return inner;
+      }
+    }
+    return { ok: true };
+  };
+  for (const chain of recipeChains(ast)) {
+    const r = walk(chain.steps);
+    if (!r.ok) return r;
+  }
+  return { ok: true };
+}
+
+function renderAgentChrome() {
+  const host = document.getElementById("agent-session-host");
+  if (host) {
+    const unlocked = sessionList();
+    if (!unlocked.length) {
+      host.innerHTML = "";
+      if (agentStripTimer) {
+        clearInterval(agentStripTimer);
+        agentStripTimer = null;
+      }
+    } else {
+      const paint = () => {
+        const list = sessionList();
+        if (!list.length) {
+          host.innerHTML = "";
+          if (agentStripTimer) {
+            clearInterval(agentStripTimer);
+            agentStripTimer = null;
+          }
+          return;
+        }
+        const earliest = sessionEarliestExpiry();
+        const msLeft = earliest ? Math.max(0, earliest - Date.now()) : 0;
+        const mins = Math.floor(msLeft / 60000);
+        const secs = Math.floor((msLeft % 60000) / 1000);
+        const ttl = `${mins}m ${String(secs).padStart(2, "0")}s`;
+        host.innerHTML = `
+          <div class="agent-session-strip" role="status">
+            <span>Unlocked: <strong>${list.length}</strong> · clears in ${escapeHtml(ttl)}</span>
+            <div class="btn-row wrap">
+              ${list
+                .map(
+                  (e) =>
+                    `<button type="button" class="btn btn-ghost btn-compact" data-agent-lock="${escapeHtml(e.fingerprint)}" title="${escapeHtml(formatFingerprint(e.fingerprint))}">Lock …${escapeHtml(e.fingerprint.slice(-8))}</button>`
+                )
+                .join("")}
+              <button type="button" class="btn btn-compact" data-agent-lock-all>Lock all</button>
+            </div>
+          </div>`;
+        host.querySelector("[data-agent-lock-all]")?.addEventListener("click", () => {
+          sessionClear();
+          renderAgentChrome();
+        });
+        host.querySelectorAll("[data-agent-lock]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            sessionEvict(btn.getAttribute("data-agent-lock") || "");
+            renderAgentChrome();
+          });
+        });
+        updateKernelChip();
+      };
+      paint();
+      if (!agentStripTimer) {
+        agentStripTimer = setInterval(paint, 1000);
+      }
+    }
+  }
+
+  const body = document.getElementById("keyring-body");
+  if (!body) return;
+  if (!vaultKeys.length) {
+    body.innerHTML = `<p class="muted fs-sm mb-0">No keys in My Keys yet. Generate one or use <code>agent.save</code>.</p>`;
+    return;
+  }
+  body.innerHTML = `
+    <ul class="keyring-list">
+      ${vaultKeys
+        .map((k) => {
+          const fpr = k.fingerprint || "";
+          const unlocked = sessionList().some((e) => e.fingerprint === fpr);
+          return `<li class="keyring-item">
+            <div class="keyring-meta">
+              <strong>${escapeHtml(k.uid || k.email || "Key")}</strong>
+              <a class="text-link mono fs-xs" href="/key?fpr=${escapeHtml(fpr)}" target="_blank" rel="noopener">${escapeHtml(formatFingerprint(fpr))}</a>
+              <span class="muted fs-xs">${escapeHtml(k.protection || "device")}${unlocked ? " · unlocked" : ""}</span>
+            </div>
+            <div class="btn-row wrap">
+              <button type="button" class="btn btn-ghost btn-compact" data-kr-unlock="${escapeHtml(fpr)}">Unlock</button>
+              <button type="button" class="btn btn-ghost btn-compact" data-kr-insert="${escapeHtml(fpr)}">Insert unlock</button>
+              <button type="button" class="btn btn-ghost btn-compact" data-kr-copy="${escapeHtml(fpr)}">Copy fpr</button>
+              <button type="button" class="btn btn-ghost btn-compact" data-kr-pub="${escapeHtml(fpr)}">Pub→slot</button>
+            </div>
+          </li>`;
+        })
+        .join("")}
+    </ul>`;
+
+  body.querySelectorAll("[data-kr-unlock]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const fpr = btn.getAttribute("data-kr-unlock") || "";
+      try {
+        await unlockVaultForUse(fpr, {
+          openPgpPassphrase: "",
+          skipSession: getToolkitPrefs().sessionOff,
+        });
+        renderAgentChrome();
+        touchActivity();
+      } catch (err) {
+        showError(errorEl, err?.message || "Unlock failed");
+      }
+    });
+  });
+  body.querySelectorAll("[data-kr-insert]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const fpr = btn.getAttribute("data-kr-insert") || "";
+      addStepAt("agent.unlock", undefined, { fpr });
+    });
+  });
+  body.querySelectorAll("[data-kr-copy]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      void copyTextTransient(btn.getAttribute("data-kr-copy") || "");
+    });
+  });
+  body.querySelectorAll("[data-kr-pub]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const fpr = btn.getAttribute("data-kr-pub") || "";
+      const short = fpr.slice(-8).toLowerCase() || "pub";
+      chains = [
+        {
+          steps: [
+            {
+              name: "agent.pub",
+              params: { ...defaultParams(getStep("agent.pub") || { params: [] }), fpr },
+              start: 0,
+              end: 0,
+            },
+            {
+              name: "out",
+              params: {
+                ...defaultParams(getStep("out") || { params: [] }),
+                name: `@${short}`,
+              },
+              start: 0,
+              end: 0,
+            },
+          ],
+        },
+      ];
+      steps = chains[0].steps;
+      setRecipeFromSteps();
+    });
+  });
+}
+
+/**
+ * One-line summary for a collapsed cell.
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep[]} cellSteps
+ */
+function cellSummary(cellSteps) {
+  if (!cellSteps?.length) return "(empty)";
+  const names = cellSteps.map((s) => s.name);
+  const outs = cellSteps
+    .filter((s) => s.name === "out")
+    .map((s) => String(s.params?.name || "@out"));
+  const head = names.slice(0, 4).join(" → ");
+  const more = names.length > 4 ? "…" : "";
+  const out = outs.length ? ` → ${outs.join(", ")}` : "";
+  return `${head}${more}${out}`;
+}
+
+function renderNotebook() {
+  const host = document.getElementById("notebook-cells");
   if (!host) return;
 
   const modeHost = document.getElementById("pgp-mode-host");
   if (modeHost) {
-    if (pipelineUsesOpenPgpEncrypt()) {
+    const anyPgp = chains.some((c) =>
+      (c.steps || []).some(
+        (s) =>
+          s.name === "gpg.encrypt" ||
+          s.name === "gpg.symencrypt" ||
+          s.name === "gpg.decrypt"
+      )
+    );
+    if (anyPgp) {
       modeHost.classList.remove("hidden");
       modeHost.innerHTML = renderPgpModeToggle("toolkit-pgp-mode-recipe");
       wirePgpModeToggles(modeHost);
@@ -2336,11 +3584,194 @@ function renderBuilder() {
     }
   }
 
+  if (!chains.length) chains = [{ steps: [] }];
+  const savedFocus = focusedCell;
+  /** @type {string[]} */
+  const parts = [];
+  chains.forEach((chain, i) => {
+    if (i > 0) {
+      parts.push(`
+        <div class="notebook-cell-gutter" aria-hidden="false">
+          <button type="button" class="notebook-insert-btn" data-insert-at="${i}" title="Insert cell here">+</button>
+        </div>`);
+    }
+    const status = kernel.getCellStatus(i);
+    const collapsed = cellCollapsed.has(i);
+    const focused = i === savedFocus;
+    const nSteps = (chain.steps || []).length;
+    const needBadges = cellNeedBadges(chain)
+      .map(
+        (b) =>
+          `<span class="cell-need-badge" title="${escapeHtml(b)}">${escapeHtml(b)}</span>`
+      )
+      .join("");
+    const statusTitle =
+      status === "stale"
+        ? "Upstream changed — re-run this cell"
+        : status === "ok"
+          ? "Last run succeeded"
+          : status === "error"
+            ? "Last run failed"
+            : status === "running"
+              ? "Running…"
+              : "Not run yet";
+    parts.push(`
+      <article class="notebook-cell ${focused ? "notebook-cell-focused" : ""} ${status === "stale" ? "notebook-cell-stale" : ""} ${collapsed ? "notebook-cell-collapsed" : ""}"
+        data-cell="${i}" tabindex="0">
+        <header class="notebook-cell-chrome">
+          <span class="cell-drag" draggable="true" data-cell-drag="${i}" title="Drag to reorder">⠿</span>
+          <button type="button" class="btn btn-ghost btn-compact cell-focus-btn" data-focus-cell="${i}" title="Focus cell">[${i}]</button>
+          <span class="cell-status cell-status-${escapeHtml(status)}" title="${escapeHtml(statusTitle)}">${escapeHtml(status)}</span>
+          ${needBadges}
+          <span class="cell-summary muted fs-xs ${collapsed ? "" : "hidden"}">${escapeHtml(cellSummary(chain.steps || []))}</span>
+          <div class="btn-row wrap cell-chrome-actions">
+            <button type="button" class="btn btn-compact" data-run-cell="${i}" ${!nSteps ? "disabled" : ""}>Run</button>
+            <button type="button" class="btn btn-ghost btn-compact" data-run-from="${i}" title="Run this cell and all below">From here</button>
+            <button type="button" class="btn btn-ghost btn-compact" data-toggle-cell="${i}" title="${collapsed ? "Expand" : "Collapse"}">${collapsed ? "Expand" : "▾"}</button>
+            <button type="button" class="btn btn-ghost btn-compact" data-add-below="${i}" title="Add cell below">+</button>
+            <button type="button" class="btn btn-ghost btn-compact text-error" data-del-cell="${i}" ${chains.length <= 1 ? "disabled" : ""} title="Delete cell">✕</button>
+          </div>
+        </header>
+        <div class="notebook-cell-body ${collapsed ? "hidden" : ""}">
+          <div class="builder-steps cell-builder" id="cell-builder-${i}" data-cell="${i}"></div>
+        </div>
+        <div class="cell-output" id="cell-output-${i}" data-cell="${i}"></div>
+      </article>`);
+  });
+  host.innerHTML = parts.join("");
+
+  for (let i = 0; i < chains.length; i++) {
+    focusCell(i);
+    const builderHost = document.getElementById(`cell-builder-${i}`);
+    if (builderHost) renderBuilderInto(builderHost, i);
+    renderCellOutputs(i);
+  }
+  focusCell(savedFocus);
+
+  host.querySelectorAll("[data-focus-cell]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      focusCell(Number(btn.getAttribute("data-focus-cell")));
+      renderNotebook();
+      renderSuggestDrawer();
+      renderOpsDrawer();
+    });
+  });
+  host.querySelectorAll(".notebook-cell").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      if (
+        e.target instanceof HTMLElement &&
+        (e.target.closest("button") ||
+          e.target.closest("input") ||
+          e.target.closest("select") ||
+          e.target.closest("textarea"))
+      ) {
+        return;
+      }
+      const i = Number(el.getAttribute("data-cell"));
+      if (i !== focusedCell) {
+        focusCell(i);
+        renderNotebook();
+        renderSuggestDrawer();
+        renderOpsDrawer();
+      }
+    });
+  });
+  host.querySelectorAll("[data-run-cell]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      void runNotebookCell(Number(btn.getAttribute("data-run-cell")));
+    });
+  });
+  host.querySelectorAll("[data-run-from]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      void runNotebookFrom(Number(btn.getAttribute("data-run-from")));
+    });
+  });
+  host.querySelectorAll("[data-toggle-cell]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-toggle-cell"));
+      if (cellCollapsed.has(i)) cellCollapsed.delete(i);
+      else cellCollapsed.add(i);
+      renderNotebook();
+    });
+  });
+  host.querySelectorAll("[data-add-below]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      insertCell(Number(btn.getAttribute("data-add-below")) + 1);
+    });
+  });
+  host.querySelectorAll("[data-insert-at]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      insertCell(Number(btn.getAttribute("data-insert-at")));
+    });
+  });
+  host.querySelectorAll("[data-del-cell]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      deleteCell(Number(btn.getAttribute("data-del-cell")));
+    });
+  });
+
+  /** Cell drag-reorder */
+  host.querySelectorAll("[data-cell-drag]").forEach((handle) => {
+    handle.addEventListener("dragstart", (e) => {
+      const i = Number(handle.getAttribute("data-cell-drag"));
+      e.dataTransfer?.setData("text/cell-index", String(i));
+      e.dataTransfer?.setData("text/plain", `cell:${i}`);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+      handle.closest(".notebook-cell")?.classList.add("notebook-cell-dragging");
+    });
+    handle.addEventListener("dragend", () => {
+      host
+        .querySelectorAll(".notebook-cell-dragging, .notebook-cell-drop-target")
+        .forEach((el) => {
+          el.classList.remove("notebook-cell-dragging", "notebook-cell-drop-target");
+        });
+    });
+  });
+  host.querySelectorAll(".notebook-cell").forEach((el) => {
+    el.addEventListener("dragover", (e) => {
+      if (![...(e.dataTransfer?.types || [])].includes("text/cell-index")) return;
+      e.preventDefault();
+      el.classList.add("notebook-cell-drop-target");
+    });
+    el.addEventListener("dragleave", () => {
+      el.classList.remove("notebook-cell-drop-target");
+    });
+    el.addEventListener("drop", (e) => {
+      el.classList.remove("notebook-cell-drop-target");
+      const raw = e.dataTransfer?.getData("text/cell-index");
+      if (raw == null || raw === "") return;
+      e.preventDefault();
+      const from = Number(raw);
+      const to = Number(el.getAttribute("data-cell"));
+      if (Number.isFinite(from) && Number.isFinite(to) && from !== to) {
+        moveCell(from, to);
+      }
+    });
+  });
+
+  updateKernelChip();
+  updateStaleBanner();
+}
+
+/** @deprecated use renderNotebook — kept as alias for stray callers */
+function renderBuilder() {
+  renderNotebook();
+}
+
+/**
+ * @param {HTMLElement} host
+ * @param {number} cellIndex
+ */
+function renderBuilderInto(host, cellIndex) {
+  if (!host) return;
+  void cellIndex;
+
   if (!steps.length) {
     host.innerHTML = `
-      <div class="builder-dropzone builder-empty" data-insert="0">
-        <p class="muted mb-0">Drop an operation here to start the pipeline</p>
-        <p class="muted fs-xs mb-0">Sources like <code>genkey</code>, <code>random</code>, or <code>shares</code> work well first.</p>
+      <div class="builder-dropzone builder-empty" data-insert="0" data-cell="${cellIndex}">
+        <p class="muted mb-0">Drop an operation here to start this cell</p>
+        <p class="muted fs-xs mb-0">Sources like <code>genkey</code>, <code>hkp.search</code>, or <code>input</code>.</p>
       </div>`;
     wireDropZones(host);
     return;
@@ -2349,7 +3780,9 @@ function renderBuilder() {
   /** @type {string[]} */
   const parts = [];
   const typeEdges = builderTypeEdges();
-  parts.push(`<div class="builder-dropzone" data-insert="0" aria-label="Insert at start"></div>`);
+  parts.push(
+    `<div class="builder-dropzone" data-insert="0" data-cell="${cellIndex}" aria-label="Insert at start"></div>`
+  );
 
   /**
    * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
@@ -2417,12 +3850,40 @@ function renderBuilder() {
                 .join("")}
             </select>${locked ? `<span class="muted fs-xs">locked by format</span>` : ""}</label>`;
         }
+        if (step.name === "gpg.encrypt" && p.name === "to") {
+          return encryptToParamHtml(step, val, dataAttrs, nest, i);
+        }
         return `<label class="builder-param"${title}>
           <span class="builder-param-name">${escapeHtml(p.name)}</span>
           <input class="text-input" ${dataAttrs}
                  value="${escapeHtml(String(val))}" ${p.type === "int" ? 'type="number"' : 'type="text"'}></label>`;
       })
       .join("");
+
+    const needsVaultFprPick =
+      (step.name === "agent.unlock" || step.name === "agent.pub") &&
+      !String(step.params?.fpr || "").trim() &&
+      vaultKeys.length;
+    const vaultFprPick = needsVaultFprPick
+      ? `<label class="builder-param" title="Write fingerprint into this step">
+          <span class="builder-param-name">vault key</span>
+          <select class="text-input" ${
+            nest.parentStem != null
+              ? `data-stem="${nest.parentStem}" data-body="${nest.bodyIndex}" data-vault-fpr="1"`
+              : `data-step="${i}" data-vault-fpr="1"`
+          }>
+            <option value="">— pick My Keys fingerprint —</option>
+            ${vaultKeys
+              .map(
+                (k) =>
+                  `<option value="${escapeHtml(k.fingerprint)}">${escapeHtml(
+                    formatFingerprint(k.fingerprint)
+                  )}${k.email ? ` · ${escapeHtml(k.email)}` : ""}</option>`
+              )
+              .join("")}
+          </select>
+        </label>`
+      : "";
 
     const isOut = step.name === "out";
     const isText = step.name === "text";
@@ -2501,7 +3962,7 @@ function renderBuilder() {
         <p class="muted mt-xs mb-sm fs-xs" title="${escapeHtml(spec?.doc || "")}">${escapeHtml(spec?.doc || "")}</p>
         ${typeHint}
         ${pgpModeBlock}
-        <div class="builder-params">${paramFields}</div>
+        <div class="builder-params">${paramFields}${vaultFprPick}</div>
       </div>`;
   };
 
@@ -2584,6 +4045,29 @@ function renderBuilder() {
   }
 
   host.innerHTML = parts.join("");
+  wireEncryptToControls(host);
+
+  host.querySelectorAll("[data-vault-fpr]").forEach((el) => {
+    el.addEventListener("change", () => {
+      if (!(el instanceof HTMLSelectElement) || !el.value) return;
+      const stemAttr = el.getAttribute("data-stem");
+      /** @type {import("../lib/toolkit/recipe.js").RecipeStep|undefined} */
+      let target;
+      if (stemAttr != null) {
+        const stem = Number(stemAttr);
+        const body = Number(el.getAttribute("data-body"));
+        target = steps[stem]?.body?.[body];
+      } else {
+        const i = Number(el.getAttribute("data-step"));
+        target = steps[i];
+      }
+      if (!target) return;
+      target.params.fpr = el.value;
+      setRecipeFromSteps();
+      renderBuilder();
+      validateAndBind();
+    });
+  });
 
   host.querySelectorAll("[data-param]").forEach((el) => {
     el.addEventListener("change", () => {
@@ -2864,6 +4348,13 @@ function wireDropZones(host) {
     zone.addEventListener("drop", (e) => {
       e.preventDefault();
       clearHi();
+      const cellAttr =
+        zone.getAttribute("data-cell") ||
+        host.getAttribute("data-cell") ||
+        host.closest?.("[data-cell]")?.getAttribute("data-cell");
+      if (cellAttr != null && cellAttr !== "") {
+        focusCell(Number(cellAttr));
+      }
       const insertAt = Number(zone.getAttribute("data-insert"));
       const dt = e.dataTransfer;
       if (!dt) return;
@@ -2968,12 +4459,22 @@ function inspectFormatSelectHtml(a, i) {
     </label>`;
 }
 
-function renderArtifactCard(a, i) {
+/**
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ * @param {number} i
+ * @param {{ cellIndex?: number }} [opts]
+ */
+function renderArtifactCard(a, i, opts = {}) {
+  const cellIndex = opts.cellIndex ?? focusedCell;
+  const artKey = `${cellIndex}:${i}`;
   const masked = a.sensitive;
+  const COLLAPSE_AT = 400;
+  const long = !masked && typeof a.content === "string" && a.content.length > COLLAPSE_AT;
+  const expanded = expandedArtifactKeys.has(artKey);
   const preview = masked
     ? "•••••••• (click Reveal)"
-    : a.content.length > 400
-      ? escapeHtml(a.content.slice(0, 400)) + "…"
+    : long && !expanded
+      ? escapeHtml(a.content.slice(0, COLLAPSE_AT)) + "…"
       : escapeHtml(a.content);
   const isSvg = a.mime === "image/svg+xml";
   const suggestedFilename = a.filename || `artifact-${i + 1}.txt`;
@@ -3018,6 +4519,12 @@ function renderArtifactCard(a, i) {
         ${a.stepIndex}&#8202;·&#8202;${escapeHtml(a.stepName || "step")}</button>`
     : "";
   const liveInspect = artifactHasLiveInspect(a);
+  const showMoreBtn =
+    long && !masked
+      ? `<button type="button" class="btn btn-ghost btn-compact" data-toggle-art-expand="${escapeHtml(artKey)}">${
+          expanded ? "Show less" : "Show more"
+        }</button>`
+      : "";
   return `
         <div class="card artifact-card${liveInspect ? " artifact-card-inspect" : ""}" data-art="${i}">
           <div class="artifact-card-head">
@@ -3039,8 +4546,9 @@ function renderArtifactCard(a, i) {
           ${
             isSvg && !masked
               ? `<div class="qr-preview">${a.content}</div>`
-              : `<pre class="output-pre artifact-body" data-art="${i}">${preview}</pre>`
+              : `<pre class="output-pre artifact-body${long && !expanded ? " artifact-body-collapsed" : ""}" data-art="${i}">${preview}</pre>`
           }
+          ${showMoreBtn ? `<div class="artifact-expand-row">${showMoreBtn}</div>` : ""}
           <div class="btn-row mt-sm wrap">
             ${masked ? `<button type="button" class="btn btn-ghost btn-compact" data-reveal="${i}">Reveal</button>` : ""}
             <button type="button" class="btn btn-ghost btn-compact" data-copy="${i}">Copy</button>
@@ -3084,84 +4592,77 @@ function isEnvelopeArtifact(a) {
   );
 }
 
-function renderResults() {
-  const panel = document.getElementById("results-panel");
-  const empty = document.getElementById("output-empty");
+/**
+ * @param {number} cellIndex
+ */
+function renderCellOutputs(cellIndex) {
+  const panel = document.getElementById(`cell-output-${cellIndex}`);
   if (!panel) return;
-  if (!artifacts.length) {
-    panel.classList.add("hidden");
-    panel.innerHTML = "";
-    empty?.classList.remove("hidden");
+  const cellArts = kernel.getCellOutputs(cellIndex);
+  const status = kernel.getCellStatus(cellIndex);
+  if (!cellArts.length) {
+    panel.innerHTML =
+      status === "error"
+        ? `<p class="status-row err fs-sm mb-0">Cell failed — see status above.</p>`
+        : status === "stale"
+          ? `<p class="muted fs-sm mb-0">Stale — re-run this cell.</p>`
+          : "";
     return;
   }
-  empty?.classList.add("hidden");
-  panel.classList.remove("hidden");
-
-  /** @type {number[]} */
-  const shareIdxs = [];
-  /** @type {number[]} */
-  const envelopeIdxs = [];
-  /** @type {number[]} */
-  const otherIdxs = [];
-  artifacts.forEach((a, i) => {
-    if (isShareArtifact(a)) shareIdxs.push(i);
-    else if (isEnvelopeArtifact(a)) envelopeIdxs.push(i);
-    else otherIdxs.push(i);
-  });
-
-  const threshold =
-    artifacts.find((a) => a.traits?.threshold)?.traits?.threshold ||
-    shareIdxs.length ||
-    0;
-  const hasShareSet = shareIdxs.length > 0;
-  const hasEnvelope = envelopeIdxs.length > 0;
 
   /** @type {string[]} */
   const blocks = [];
   blocks.push(`
-    <div class="btn-row wrap mb-md items-center">
-      <p class="muted mb-0 flex-1">Sensitive outputs are masked until revealed. Cleared after ${IDLE_CLEAR_MS / 60000} minutes of inactivity.</p>
-      ${
-        artifacts.length > 1
-          ? `<button type="button" class="btn btn-ghost btn-compact" id="download-all-btn">Download all (${artifacts.length})</button>`
-          : ""
-      }
+    <div class="cell-output-toolbar btn-row wrap mb-sm items-center">
+      <span class="muted fs-xs flex-1">${cellArts.length} output${cellArts.length === 1 ? "" : "s"}${status === "stale" ? " · stale" : ""}</span>
+      <button type="button" class="btn btn-ghost btn-compact" data-clear-cell-out="${cellIndex}">Clear outputs</button>
     </div>`);
-
-  if (hasShareSet) {
-    const kOfN =
-      threshold && shareIdxs.length
-        ? `${threshold}-of-${shareIdxs.length}`
-        : `${shareIdxs.length} shares`;
-    blocks.push(`
-      <section class="share-set-group mb-md" aria-label="Share set">
-        <div class="share-set-head mb-sm">
-          <p class="card-title m-0">Share set (${escapeHtml(kOfN)})</p>
-          <p class="muted fs-sm mb-0">${
-            hasEnvelope
-              ? "OpenPGP envelope path — keep <code>envelope.asc</code> with the mnemonics (envelope ≠ shares)."
-              : "Direct secret / scalar — no envelope; recover yields the 16/32-byte master."
-          }</p>
-        </div>
-        ${
-          hasEnvelope
-            ? `<p class="status-row warn mb-sm" role="status">The OpenPGP envelope unwraps the payload after recover; share mnemonics alone are not enough for PEM / large-payload recovery.</p>`
-            : ""
-        }
-        ${envelopeIdxs.map((i) => renderArtifactCard(artifacts[i], i)).join("")}
-        ${shareIdxs.map((i) => renderArtifactCard(artifacts[i], i)).join("")}
-      </section>`);
-  } else if (hasEnvelope) {
-    blocks.push(envelopeIdxs.map((i) => renderArtifactCard(artifacts[i], i)).join(""));
-  }
-
-  blocks.push(otherIdxs.map((i) => renderArtifactCard(artifacts[i], i)).join(""));
-
+  blocks.push(
+    cellArts.map((a, i) => renderArtifactCard(a, i, { cellIndex })).join("")
+  );
   panel.innerHTML = blocks.join("");
+  panel.classList.toggle("cell-output-stale", status === "stale");
 
+  panel.querySelector(`[data-clear-cell-out="${cellIndex}"]`)?.addEventListener(
+    "click",
+    () => {
+      kernel.clearCellOutputs(cellIndex);
+      syncArtifactsFromKernel();
+      renderCellOutputs(cellIndex);
+      updateKernelChip();
+    }
+  );
+  panel.querySelectorAll("[data-toggle-art-expand]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-toggle-art-expand") || "";
+      if (expandedArtifactKeys.has(key)) expandedArtifactKeys.delete(key);
+      else expandedArtifactKeys.add(key);
+      renderCellOutputs(cellIndex);
+    });
+  });
+
+  wireArtifactPanel(panel, cellArts);
+}
+
+/** Alias — notebook uses per-cell outputs */
+function renderResults() {
+  syncArtifactsFromKernel();
+  for (let i = 0; i < chains.length; i++) renderCellOutputs(i);
+}
+
+/**
+ * @param {HTMLElement} panel
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact[]} arts
+ */
+function wireArtifactPanel(panel, arts) {
+  /** @type {import("../lib/toolkit/engine.js").ToolkitArtifact[]} */
+  const list = arts;
   panel.querySelectorAll("[data-step-link]").forEach((badge) => {
     const stepIndex = Number(badge.getAttribute("data-step-link"));
     const cardFor = () =>
+      panel
+        .closest(".notebook-cell")
+        ?.querySelector(`.builder-card[data-step-card="${stepIndex - 1}"]`) ||
       document.querySelector(`.builder-card[data-step-card="${stepIndex - 1}"]`);
     badge.addEventListener("mouseenter", () => {
       cardFor()?.classList.add("builder-card-linked");
@@ -3180,16 +4681,16 @@ function renderResults() {
   panel.querySelectorAll("[data-art-filename]").forEach((input) => {
     input.addEventListener("input", () => {
       const i = Number(input.getAttribute("data-art-filename"));
-      if (artifacts[i] && input instanceof HTMLInputElement) {
-        artifacts[i].filename = input.value;
+      if (list[i] && input instanceof HTMLInputElement) {
+        list[i].filename = input.value;
         touchActivity();
       }
     });
     input.addEventListener("change", () => {
       const i = Number(input.getAttribute("data-art-filename"));
-      if (!artifacts[i] || !(input instanceof HTMLInputElement)) return;
+      if (!list[i] || !(input instanceof HTMLInputElement)) return;
       const filename = sanitizeFilename(input.value, `artifact-${i + 1}.txt`);
-      artifacts[i].filename = filename;
+      list[i].filename = filename;
       input.value = filename;
     });
   });
@@ -3197,7 +4698,7 @@ function renderResults() {
     sel.addEventListener("change", () => {
       if (!(sel instanceof HTMLSelectElement)) return;
       const i = Number(sel.getAttribute("data-inspect-format"));
-      const a = artifacts[i];
+      const a = list[i];
       if (!a?.inspectSnapshot) return;
       const format = sel.value || "auto";
       a.inspectFormat = format;
@@ -3206,10 +4707,7 @@ function renderResults() {
       const pre = card?.querySelector(`.artifact-body[data-art="${i}"]`);
       const revealBtn = card?.querySelector(`[data-reveal="${i}"]`);
       if (pre instanceof HTMLElement) {
-        // Keep mask until revealed; otherwise show the new dump immediately.
-        if (!revealBtn) {
-          pre.textContent = a.content;
-        }
+        if (!revealBtn) pre.textContent = a.content;
       }
       touchActivity();
     });
@@ -3217,12 +4715,10 @@ function renderResults() {
   panel.querySelectorAll("[data-reveal]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const i = Number(btn.getAttribute("data-reveal"));
-      const a = artifacts[i];
+      const a = list[i];
       const pre = panel.querySelector(`.artifact-body[data-art="${i}"]`);
       if (a && pre) {
         if (a.mime === "image/svg+xml") {
-          // Render the QR image, same as the unmasked path (SVG is generated
-          // locally by qrSvg, never from user input).
           const preview = document.createElement("div");
           preview.className = "qr-preview";
           preview.innerHTML = a.content;
@@ -3238,7 +4734,7 @@ function renderResults() {
   panel.querySelectorAll("[data-copy]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const i = Number(btn.getAttribute("data-copy"));
-      await copyTextTransient(artifacts[i].content);
+      await copyTextTransient(list[i].content);
       btn.textContent = "Copied";
       setTimeout(() => {
         btn.textContent = "Copy";
@@ -3249,15 +4745,15 @@ function renderResults() {
   panel.querySelectorAll("[data-download]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const i = Number(btn.getAttribute("data-download"));
-      downloadArtifact(artifacts[i]);
+      downloadArtifact(list[i]);
       touchActivity();
     });
   });
   panel.querySelectorAll("[data-encrypt]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const i = Number(btn.getAttribute("data-encrypt"));
-      if (artifacts[i] && btn instanceof HTMLButtonElement) {
-        openArtifactInEncrypt(artifacts[i], btn);
+      if (list[i] && btn instanceof HTMLButtonElement) {
+        openArtifactInEncrypt(list[i], btn);
       }
       touchActivity();
     });
@@ -3265,15 +4761,11 @@ function renderResults() {
   panel.querySelectorAll("[data-decrypt]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const i = Number(btn.getAttribute("data-decrypt"));
-      if (artifacts[i] && btn instanceof HTMLButtonElement) {
-        openArtifactInDecrypt(artifacts[i], btn);
+      if (list[i] && btn instanceof HTMLButtonElement) {
+        openArtifactInDecrypt(list[i], btn);
       }
       touchActivity();
     });
-  });
-  panel.querySelector("#download-all-btn")?.addEventListener("click", () => {
-    downloadAllArtifacts();
-    touchActivity();
   });
 }
 
@@ -3645,6 +5137,7 @@ async function runViaWorker(ast, opts = {}) {
       ast,
       recipientKeysArmored: boundRecipients.map((r) => r.armoredKey),
       recipientFingerprints: boundRecipients.map((r) => r.fingerprint),
+      recipientResolutions: opts.recipientResolutions || {},
       inputs: opts.inputs || {},
       privateKeyArmored: opts.privateKeyArmored || "",
       passphrase: opts.passphrase || "",
@@ -3662,6 +5155,7 @@ function setReferenceOpen(open) {
 }
 
 document.getElementById("toggle-reference")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
   setReferenceOpen(!referenceOpen);
 });
 
@@ -3670,14 +5164,50 @@ document.getElementById("close-reference")?.addEventListener("click", () => {
 });
 
 document.getElementById("destroy-btn")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
   secureDestroy();
 });
-
-document.getElementById("clear-recipe-btn")?.addEventListener("click", () => {
-  chains = [{ steps: [] }];
-  steps = chains[0].steps;
-  setRecipeTitle("");
-  setRecipeFromSteps();
+document.getElementById("focus-keyring-btn")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
+  const panel = document.getElementById("keyring-panel");
+  if (panel instanceof HTMLDetailsElement) {
+    panel.open = true;
+    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  renderAgentChrome();
+});
+document.getElementById("shortcuts-btn")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
+  const dlg = document.getElementById("shortcuts-dialog");
+  if (dlg instanceof HTMLDialogElement) dlg.showModal();
+});
+document.getElementById("clear-sensitive-btn")?.addEventListener("click", () => {
+  clearSensitiveData();
+});
+document.getElementById("reset-notebook-btn")?.addEventListener("click", () => {
+  resetNotebook();
+});
+document.getElementById("add-cell-btn")?.addEventListener("click", () => {
+  insertCell(chains.length);
+});
+document.getElementById("kernel-chip")?.addEventListener("click", () => {
+  variablesOpen = !variablesOpen;
+  renderVariablesDrawer();
+});
+document.getElementById("prefs-menu")?.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (d instanceof HTMLDetailsElement && d.open) {
+    renderPrefsForm();
+    document.getElementById("more-menu")?.removeAttribute("open");
+    document.getElementById("preset-gallery")?.removeAttribute("open");
+  }
+});
+document.getElementById("more-menu")?.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (d instanceof HTMLDetailsElement && d.open) {
+    document.getElementById("prefs-menu")?.removeAttribute("open");
+    document.getElementById("preset-gallery")?.removeAttribute("open");
+  }
 });
 
 document.getElementById("recipe-title")?.addEventListener("input", (e) => {
@@ -3692,11 +5222,40 @@ document.getElementById("ops-filter")?.addEventListener("input", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
-  if (!cipherPickerState && !formatPickerState) return;
-  cipherPickerState = null;
-  formatPickerState = null;
-  renderOpsDrawer();
+  if (e.key === "Escape") {
+    if (cipherPickerState || formatPickerState) {
+      cipherPickerState = null;
+      formatPickerState = null;
+      renderOpsDrawer();
+      return;
+    }
+    if (variablesOpen) {
+      variablesOpen = false;
+      renderVariablesDrawer();
+    }
+    return;
+  }
+  // Notebook shortcuts when not typing in an input
+  const t = e.target;
+  const typing =
+    t instanceof HTMLInputElement ||
+    t instanceof HTMLTextAreaElement ||
+    t instanceof HTMLSelectElement ||
+    (t instanceof HTMLElement && t.isContentEditable);
+  if (typing) return;
+  if (e.key === "Enter" && e.shiftKey) {
+    e.preventDefault();
+    void runNotebookCell(focusedCell);
+  } else if (e.key === "Enter" && e.altKey) {
+    e.preventDefault();
+    void runNotebookFrom(focusedCell);
+  } else if (e.key === "a" || e.key === "A") {
+    e.preventDefault();
+    insertCell(focusedCell);
+  } else if (e.key === "b" || e.key === "B") {
+    e.preventDefault();
+    insertCell(focusedCell + 1);
+  }
 });
 
 document.addEventListener("click", (e) => {
@@ -3735,45 +5294,113 @@ recipeTa?.addEventListener("blur", () => {
   if (ta instanceof HTMLTextAreaElement) loadRecipeText(ta.value);
 });
 
-document.getElementById("run-btn")?.addEventListener("click", async () => {
+/**
+ * @returns {Promise<import("../lib/toolkit/engine.js").RuntimeBindings>}
+ */
+async function buildNotebookBindings() {
+  const collected = await collectRuntimeInputs();
+  /** @type {import("openpgp").Key[]} */
+  const recipients = [];
+  for (const armored of boundRecipients.map((r) => r.armoredKey).filter(Boolean)) {
+    recipients.push(await readKey({ armoredKey: armored }));
+  }
+  /** @type {import("../lib/toolkit/engine.js").RuntimeBindings["inputs"]} */
+  const inputs = collected.inputs ? { ...collected.inputs } : {};
+  if (collected.privateKeyArmored && inputs.gpg) {
+    inputs.gpg = {
+      ...inputs.gpg,
+      privateKeyArmored: String(collected.privateKeyArmored),
+      passphrase: collected.passphrase || inputs.gpg.passphrase || "",
+    };
+  }
+  return {
+    recipients,
+    recipientFingerprints: boundRecipients.map((r) => r.fingerprint),
+    recipientResolutions: { ...recipientResolutions },
+    inputs,
+    encryption: {
+      profile: { ...toolkitEncryptProfile },
+      hideRecipients: toolkitHideRecipients,
+    },
+    fipsMode,
+    suiteStatus: { ...suiteStatus },
+  };
+}
+
+/**
+ * @param {number} cellIndex
+ */
+async function runNotebookCell(cellIndex) {
   if (!cryptoReady) {
     showError(errorEl, "Crypto self-test has not passed.");
     return;
   }
+  focusCell(cellIndex);
+  const chain = chains[cellIndex];
+  if (!chain?.steps?.length) {
+    showError(errorEl, "Cell is empty");
+    return;
+  }
+  const status = document.getElementById("run-status");
+  const btn = document.getElementById("run-btn");
+  if (status) {
+    status.className = "status-row";
+    status.textContent = `Running cell ${cellIndex}…`;
+    status.classList.remove("hidden");
+  }
+  if (btn) btn.disabled = true;
+  errorEl.classList.add("hidden");
   try {
     await assertCryptoReady();
-    assertRecipeAllowedUnderFips(
-      compileRecipe(serializeRecipe(steps)).ast,
-      suiteStatus,
-      fipsMode
-    );
-  } catch (err) {
-    showError(
-      errorEl,
-      err instanceof CryptoModuleError
-        ? `Refusing to run — crypto self-test failed: ${err.message}`
-        : String(err?.message || err)
-    );
-    return;
-  }
-
-  const source = serializeRecipe(steps);
-  const { ast, validation } = compileRecipe(source);
-  if (!ast || !validation.ok) {
-    showError(errorEl, validation.errors.map((e) => e.message).join(" · "));
-    return;
-  }
-  const need = unresolvedRecipients(ast);
-  if (need.slots > 0) {
-    if (boundRecipients.length < need.slots) {
-      showError(
-        errorEl,
-        `Select ${need.slots} recipient${need.slots === 1 ? "" : "s"} and confirm fingerprints before running.`
-      );
-      return;
+    const cellAst = {
+      chains: [chain],
+      steps: chain.steps,
+      source: "",
+    };
+    assertRecipeAllowedUnderFips(cellAst, suiteStatus, fipsMode);
+    const lookupAst = compileRecipe(serializeRecipe({ chains })).ast;
+    if (lookupAst) {
+      const lookup = checkEncryptToResolutions(lookupAst);
+      if (!lookup.ok) {
+        throw new Error(lookup.message || "Look up recipients before running");
+      }
     }
+    const bindings = await buildNotebookBindings();
+    // Notebook v1: main thread (kernel holds live slots).
+    await kernel.runCell(cellIndex, chain, bindings);
+    syncArtifactsFromKernel();
+    renderNotebook();
+    renderSuggestDrawer();
+    renderOpsDrawer();
+    renderAgentChrome();
+    touchActivity();
+    if (status) {
+      const n = kernel.getCellOutputs(cellIndex).length;
+      status.className = "status-row ok";
+      status.textContent = `Cell ${cellIndex} done — ${n} output${n === 1 ? "" : "s"}.`;
+    }
+  } catch (err) {
+    renderNotebook();
+    if (status) {
+      status.className = "status-row err";
+      status.textContent = err?.message || "Run failed";
+    }
+    showError(errorEl, err?.message || "Run failed");
+  } finally {
+    const passEl = document.getElementById("input-key-pass");
+    if (passEl instanceof HTMLInputElement) passEl.value = "";
+    if (btn) btn.disabled = false;
   }
+}
 
+/**
+ * @param {number} from
+ */
+async function runNotebookFrom(from) {
+  if (!cryptoReady) {
+    showError(errorEl, "Crypto self-test has not passed.");
+    return;
+  }
   const status = document.getElementById("run-status");
   const btn = document.getElementById("run-btn");
   if (status) {
@@ -3783,104 +5410,63 @@ document.getElementById("run-btn")?.addEventListener("click", async () => {
   }
   if (btn) btn.disabled = true;
   errorEl.classList.add("hidden");
-
-  /** Ephemeral vault key — scrubbed after postMessage. */
-  let privateKeyArmored = "";
   try {
-    const collected = await collectRuntimeInputs();
-    privateKeyArmored = collected.privateKeyArmored;
-    const gpgMessages = collected.inputs.gpg?.armoredMessages || [];
-    const hasPgpCipher = gpgMessages.some((m) =>
-      /-----BEGIN PGP MESSAGE-----/i.test(String(m || ""))
-    );
-    const shareMnemonics = collected.inputs.shares?.mnemonics || [];
-    if (
-      currentInputNeeds.includes("text") &&
-      !(collected.inputs.text?.value || "").trim()
-    ) {
-      throw new Error("Paste input text or load it from a file before executing.");
+    await assertCryptoReady();
+    const source = serializeRecipe({ chains });
+    const { ast, validation } = compileRecipe(source);
+    if (!ast || !validation.ok) {
+      throw new Error(validation.errors.map((e) => e.message).join(" · "));
     }
-    const needsGpgDecrypt = recipeHasStep(ast, "gpg.decrypt");
-    const needsGpgSigningKey = recipeNeedsGpgSigningKey(ast);
-    if (needsGpgDecrypt && hasPgpCipher && !privateKeyArmored) {
+    assertRecipeAllowedUnderFips(ast, suiteStatus, fipsMode);
+    const lookup = checkEncryptToResolutions(ast);
+    if (!lookup.ok) {
+      throw new Error(lookup.message || "Look up recipients before running");
+    }
+    const need = unresolvedRecipients(ast);
+    if (need.slots > 0 && boundRecipients.length < need.slots) {
       throw new Error(
-        "OpenPGP ciphertext needs a vault/pasted private key, or decrypt those messages externally and paste the mnemonics in the share rows."
+        `Select ${need.slots} recipient${need.slots === 1 ? "" : "s"} before running.`
       );
     }
-    if (
-      currentInputNeeds.includes("shares") &&
-      !needsGpgDecrypt &&
-      !shareMnemonics.length
-    ) {
-      throw new Error("Paste at least one BLIP39 share mnemonic.");
+    const bindings = await buildNotebookBindings();
+    for (let i = from; i < chains.length; i++) {
+      if (!chains[i]?.steps?.length) continue;
+      if (status) status.textContent = `Running cell ${i}…`;
+      await kernel.runCell(i, chains[i], bindings);
     }
-    if (
-      needsGpgDecrypt &&
-      !gpgMessages.length &&
-      !shareMnemonics.length
-    ) {
-      throw new Error(
-        "Paste OpenPGP ciphertext and/or already-decrypted share mnemonics."
-      );
-    }
-    if (needsGpgSigningKey && !privateKeyArmored) {
-      throw new Error(
-        "OpenPGP sign / sign+encrypt needs a vault or pasted private key."
-      );
-    }
-    if (currentInputNeeds.includes("gpg") && (hasPgpCipher || needsGpgSigningKey)) {
-      status.textContent = "Unlocking key & running…";
-    }
-    const runMsg = {
-      ast,
-      recipientKeysArmored: boundRecipients.map((r) => r.armoredKey),
-      recipientFingerprints: boundRecipients.map((r) => r.fingerprint),
-      inputs: collected.inputs,
-      privateKeyArmored,
-      passphrase: collected.passphrase,
-      encryption: {
-        profile: { ...toolkitEncryptProfile },
-        hideRecipients: toolkitHideRecipients,
-      },
-      fipsMode,
-      suiteStatus: { ...suiteStatus },
-    };
-    if (recipeNeedsMainThread(ast)) {
-      // WebAuthn ceremonies + MDS localStorage need the window thread.
-      if (status) status.textContent = "Running (main thread — WebAuthn)…";
-      const result = await executeToolkitRun(runMsg);
-      artifacts = result.artifacts;
-    } else {
-      artifacts = await runViaWorker(ast, {
-        inputs: runMsg.inputs,
-        privateKeyArmored: runMsg.privateKeyArmored,
-        passphrase: runMsg.passphrase,
-        encryption: runMsg.encryption,
-        fipsMode: runMsg.fipsMode,
-        suiteStatus: runMsg.suiteStatus,
-      });
-    }
-    renderResults();
+    syncArtifactsFromKernel();
+    renderNotebook();
+    renderSuggestDrawer();
+    renderOpsDrawer();
+    renderAgentChrome();
     touchActivity();
     if (status) {
       status.className = "status-row ok";
       status.textContent = `Done — ${artifacts.length} artifact${artifacts.length === 1 ? "" : "s"}.`;
     }
   } catch (err) {
+    renderNotebook();
+    renderSuggestDrawer();
     if (status) {
       status.className = "status-row err";
       status.textContent = err?.message || "Run failed";
     }
     showError(errorEl, err?.message || "Run failed");
   } finally {
-    privateKeyArmored = "";
-    const privEl = document.getElementById("input-privkey");
-    // Do not clear pasted key unless from vault path — user may retry.
     const passEl = document.getElementById("input-key-pass");
     if (passEl instanceof HTMLInputElement) passEl.value = "";
-    void privEl;
     if (btn) btn.disabled = false;
   }
+}
+
+async function runStaleCells() {
+  const stale = kernel.staleCellIndices();
+  if (!stale.length) return;
+  await runNotebookFrom(stale[0]);
+}
+
+document.getElementById("run-btn")?.addEventListener("click", () => {
+  void runNotebookFrom(0);
 });
 
 async function startPage() {
@@ -3902,6 +5488,7 @@ async function startPage() {
     validateAndBind();
     renderOpsDrawer();
     renderBuilder();
+    renderAgentChrome();
     // Re-render inputs so vault dropdown is populated.
     if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
   } catch (err) {
@@ -3916,17 +5503,8 @@ async function startPage() {
   }
 }
 
-document.getElementById("fips-mode")?.addEventListener("change", (e) => {
-  const t = e.target;
-  fipsMode = t instanceof HTMLInputElement && t.checked;
-  setFipsMode(fipsMode);
-  document.getElementById("fips-hint")?.classList.toggle("hidden", !fipsMode);
-  validateAndBind();
-  renderOpsDrawer();
-  renderBuilder();
-  renderSuggestDrawer();
-});
-
+applyCollapsePrefs();
+renderPrefsForm();
 renderPresets();
 renderOpsDrawer();
 document.getElementById("upgrade-recipe-btn")?.addEventListener("click", () => {
@@ -3938,4 +5516,5 @@ document.getElementById("upgrade-recipe-btn")?.addEventListener("click", () => {
 });
 
 loadRecipeText(PRESETS[0].recipe, { title: PRESETS[0].title, migrate: true });
+touchActivity();
 startPage();

@@ -12,9 +12,13 @@ import {
   listKeys,
   purgeExpired,
   saveKey,
+  sortKeysByLastUsed,
+  touchKeyUsed,
   unlockKey,
   vaultKeyMatchesRecipients,
 } from "../lib/vault.js";
+import { unlockVaultForUse } from "../lib/vault-unlock.js";
+import { sessionClear, sessionGet } from "../lib/vault-session.js";
 
 const SAMPLE_ARMORED = `-----BEGIN PGP PRIVATE KEY BLOCK-----
 Version: Basilisk Test
@@ -165,6 +169,66 @@ describe("vault — purge and delete", () => {
     });
     await deleteKey(FPR_A);
     expect(await listKeys()).toHaveLength(0);
+  });
+});
+
+describe("vault — schema v2 publicArmored / lastUsedAt", () => {
+  it("stores publicArmored and updates lastUsedAt on unlock", async () => {
+    const { privateKey: armoredPrivate, publicKey: armoredPublic } =
+      await generateKey({
+        type: "ecc",
+        curve: "curve25519",
+        userIDs: [{ email: "v2@example.com" }],
+        format: "armored",
+      });
+    const { readKey } = await import("openpgp");
+    const pub = await readKey({ armoredKey: armoredPublic });
+    const fpr = pub.getFingerprint().toUpperCase();
+
+    await saveKey({
+      fingerprint: fpr,
+      armoredPrivate,
+      publicArmored: armoredPublic,
+      uid: "v2@example.com",
+      email: "v2@example.com",
+      protection: "device",
+    });
+    let meta = (await listKeys())[0];
+    expect(meta.publicArmored).toContain("PUBLIC KEY");
+    expect(meta.lastUsedAt).toBeNull();
+
+    await touchKeyUsed(fpr);
+    meta = (await listKeys())[0];
+    expect(meta.lastUsedAt).toBeTruthy();
+
+    sessionClear();
+    const unlocked = await unlockVaultForUse(fpr);
+    expect(unlocked.armored).toContain("PRIVATE KEY");
+    expect(sessionGet(fpr)).toBeTruthy();
+  }, 30_000);
+
+  it("sortKeysByLastUsed orders newest first", () => {
+    const sorted = sortKeysByLastUsed([
+      {
+        fingerprint: "A",
+        uid: "",
+        email: "",
+        created: "2020-01-01T00:00:00.000Z",
+        expires: null,
+        protection: "device",
+        lastUsedAt: "2020-01-01T00:00:00.000Z",
+      },
+      {
+        fingerprint: "B",
+        uid: "",
+        email: "",
+        created: "2020-01-01T00:00:00.000Z",
+        expires: null,
+        protection: "device",
+        lastUsedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(sorted[0].fingerprint).toBe("B");
   });
 });
 

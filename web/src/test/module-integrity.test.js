@@ -73,6 +73,7 @@ describe("module-integrity", () => {
     const { pageKeyFromPath } = await import("../lib/module-integrity.js");
     expect(pageKeyFromPath("/")).toBe("index.html");
     expect(pageKeyFromPath("/encrypt")).toBe("encrypt.html");
+    expect(pageKeyFromPath("/preferences")).toBe("preferences.html");
     expect(pageKeyFromPath("/decrypt.html")).toBe("decrypt.html");
   });
 

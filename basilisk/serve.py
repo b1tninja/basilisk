@@ -65,11 +65,13 @@ def create_app() -> Flask:
     #   · Password crypto can avoid WASM entirely via Compatible / iterated S2K.
     #
     # Keep HTML <meta> CSP in sync with this string and Front Door Overwrite.
+    # connect-src includes allowlisted keyserver hosts for client-direct HKP.
+    _settings = get_settings()
     _CSP = (
         "default-src 'none'; "
         "script-src 'self' 'wasm-unsafe-eval'; "
         "style-src 'self'; "
-        "connect-src 'self'; "
+        f"connect-src {_settings.csp_connect_src()}; "
         "img-src 'self' data:; "
         "font-src 'self'; "
         "frame-ancestors 'none'; "
@@ -103,8 +105,16 @@ def create_app() -> Flask:
     def health() -> Response:
         return Response("ok", status=200, mimetype="text/plain")
 
+    @app.route("/pks/lookup", methods=["OPTIONS"])
+    def hkp_lookup_options() -> Response:
+        from basilisk.hkp.cors import options_get_only
+
+        return options_get_only()
+
     @app.get("/pks/lookup")
     def hkp_lookup() -> Response:
+        from basilisk.hkp.cors import flask_cors, http_cors
+
         op = request.args.get("op", "get")
         search = request.args.get("search", "")
         if op == "stats":
@@ -114,13 +124,13 @@ def create_app() -> Flask:
             check_lookup_rate(ip)
         except RateLimitError as exc:
             inc("rate_limited")
-            return Response(str(exc), status=exc.status, mimetype="text/plain")
+            return flask_cors(exc.status, str(exc))
         if op == "index":
             return _to_flask(lookup_index(search))
         if op == "get":
             etag = request.headers.get("If-None-Match")
             return _to_flask(lookup_get(search, if_none_match=etag))
-        return _to_flask(HttpResponse(501, "Unsupported operation", {}, "text/plain"))
+        return _to_flask(http_cors(501, "Unsupported operation"))
 
     @app.post("/pks/add")
     def hkp_add() -> Response:

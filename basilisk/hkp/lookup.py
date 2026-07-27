@@ -9,6 +9,7 @@ from basilisk.db.factory import get_blob_store as _factory_blob
 from basilisk.db.factory import get_cert_store
 from basilisk.db.sqlite_store import sha256_hex
 from basilisk.db.store import CertStore
+from basilisk.hkp.cors import cors_get_headers, http_cors
 from basilisk.hkp.response import HttpResponse
 from basilisk.openpgp.canonical import emails_from_uids, filter_armored_by_uids
 from basilisk.openpgp.ingest import IngestError, parse_search, strip_uids_for_pending
@@ -45,11 +46,12 @@ def _read_blob(
         _get_lru(settings).put(record.sha256, data)
     else:
         data = cached
-    headers = {
-        "ETag": f'"{record.sha256}"',
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "Access-Control-Allow-Origin": "*",
-    }
+    headers = cors_get_headers(
+        {
+            "ETag": f'"{record.sha256}"',
+            "Cache-Control": "public, max-age=31536000, immutable",
+        }
+    )
     if if_none_match and if_none_match.strip('"') == record.sha256:
         return b"", {**headers, "X-Not-Modified": "1"}
     return data, headers
@@ -68,12 +70,12 @@ def lookup_get(
     try:
         kind, ident = parse_search(search)
     except IngestError as exc:
-        return HttpResponse(exc.status, str(exc), {}, "text/plain")
+        return http_cors(exc.status, str(exc))
 
     if kind == "email":
         record = store.get_by_email(ident)
         if not record or record.approval_state != "approved":
-            return HttpResponse(404, "Not found", {}, "text/plain")
+            return http_cors(404, "Not found")
         data, headers = _read_blob(record, blobs, settings, if_none_match)
         if headers.get("X-Not-Modified"):
             return HttpResponse(304, "", headers, "application/pgp-keys")
@@ -81,7 +83,7 @@ def lookup_get(
         return HttpResponse(200, filtered, headers, "application/pgp-keys")
 
     if kind == "name":
-        return HttpResponse(404, "Not found", {}, "text/plain")
+        return http_cors(404, "Not found")
 
     if kind == "fingerprint_partial" or kind == "short_keyid":
         matches = [
@@ -90,21 +92,21 @@ def lookup_get(
             if r.approval_state in ("approved", "pending")
         ]
         if len(matches) != 1:
-            return HttpResponse(404, "Not found", {}, "text/plain")
+            return http_cors(404, "Not found")
         record = matches[0]
     elif kind == "fingerprint":
         record = store.get_by_fingerprint(ident)
     else:
         record = store.get_by_identifier(ident)
     if not record:
-        return HttpResponse(404, "Not found", {}, "text/plain")
+        return http_cors(404, "Not found")
 
     # Expired keys are hidden from HKP (search already excludes them).
     # Pending keys remain fetchable with UIDs stripped for the claim flow.
     if record.approval_state == "expired":
-        return HttpResponse(404, "Not found", {}, "text/plain")
+        return http_cors(404, "Not found")
     if record.approval_state == "rejected":
-        return HttpResponse(404, "Not found", {}, "text/plain")
+        return http_cors(404, "Not found")
 
     data, headers = _read_blob(record, blobs, settings, if_none_match)
     if headers.get("X-Not-Modified"):
@@ -115,7 +117,10 @@ def lookup_get(
 
     if settings.cache_mode == "redirect" and settings.fd_base_url:
         url = f"{settings.fd_base_url.rstrip('/')}/{record.blob_uri}"
-        return HttpResponse(302, "", {**headers, "Location": url}, "application/pgp-keys")
+        # CORS on the redirect response; blob/CDN should also send ACAO for follow.
+        return HttpResponse(
+            302, "", {**headers, "Location": url}, "application/pgp-keys"
+        )
 
     return HttpResponse(200, data, headers, "application/pgp-keys")
 
@@ -125,7 +130,7 @@ def lookup_index(search: str, store: CertStore | None = None) -> HttpResponse:
     try:
         kind, ident = parse_search(search)
     except IngestError as exc:
-        return HttpResponse(exc.status, str(exc), {}, "text/plain")
+        return http_cors(exc.status, str(exc))
 
     if kind == "email":
         record = store.get_by_email(ident)
@@ -138,21 +143,20 @@ def lookup_index(search: str, store: CertStore | None = None) -> HttpResponse:
             if r.approval_state == "approved"
         ]
         if len(matches) != 1:
-            return HttpResponse(404, "Not found", {}, "text/plain")
+            return http_cors(404, "Not found")
         record = matches[0]
     elif kind == "name":
-        return HttpResponse(404, "Not found", {}, "text/plain")
+        return http_cors(404, "Not found")
     else:
         record = store.get_by_identifier(ident)
 
     if not record or record.approval_state != "approved":
-        return HttpResponse(404, "Not found", {}, "text/plain")
+        return http_cors(404, "Not found")
 
     fpr = record.fingerprint
     uid = record.approved_uids[0] if record.approved_uids else "unknown"
     body = f"info:1:1\npub:255:0::::::{len(fpr)//2}:{fpr.lower()}\nuid:{len(uid)}:{uid}\n"
-    headers = {"Access-Control-Allow-Origin": "*"}
-    return HttpResponse(200, body, headers, "text/plain")
+    return http_cors(200, body, mimetype="text/plain")
 
 
 def lookup_stats(store: CertStore | None = None) -> HttpResponse:
@@ -162,4 +166,5 @@ def lookup_stats(store: CertStore | None = None) -> HttpResponse:
     stats = store.stats()
     stats.update(snapshot())
     body = json.dumps({"stats": stats})
-    return HttpResponse(200, body, {"Content-Type": "application/json"}, "application/json")
+    # Stats are public operational data; GET CORS is fine (no credentials).
+    return http_cors(200, body, mimetype="application/json")

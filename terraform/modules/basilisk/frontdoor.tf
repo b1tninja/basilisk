@@ -168,7 +168,7 @@ resource "azurerm_cdn_frontdoor_rule" "security_headers" {
     response_header_action {
       header_action = "Overwrite"
       header_name   = "Content-Security-Policy"
-      value         = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+      value         = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https://keys.openpgp.org https://keys.mailvelope.com; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
     }
     response_header_action {
       header_action = "Overwrite"
@@ -272,7 +272,7 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
     response_header_action {
       header_action = "Overwrite"
       header_name   = "Content-Security-Policy"
-      value         = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+      value         = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https://keys.openpgp.org https://keys.mailvelope.com; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
     }
     response_header_action {
       header_action = "Overwrite"

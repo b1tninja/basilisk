@@ -47,11 +47,12 @@ import {
 } from "../lib/utils.js";
 import { getExpertMode, setExpertMode } from "../lib/prefs.js";
 import {
-  getPasskeyPrf,
   listKeys as vaultListKeys,
-  unlockKey as vaultUnlockKey,
+  sortKeysByLastUsed,
   vaultKeyMatchesRecipients,
 } from "../lib/vault.js";
+import { sessionClear } from "../lib/vault-session.js";
+import { unlockVaultForUse } from "../lib/vault-unlock.js";
 import "../css/site.css";
 
 Auth.initWidget(document.getElementById("auth-widget"), "/decrypt");
@@ -252,6 +253,7 @@ function signalToolkitDecryptReady() {
 
 /** Clear all sensitive DOM fields and the decrypt output. */
 function clearSensitiveFields() {
+  sessionClear();
   const keyEl = document.getElementById("private-key");
   const passEl = document.getElementById("passphrase");
   const msgPass = document.getElementById("msg-passphrase");
@@ -1437,22 +1439,18 @@ async function autoSelectVaultKey(analysis) {
 async function unlockVaultArmoredEphemeral(fpr, statusEl) {
   const meta = vaultKeys.find((k) => k.fingerprint === fpr);
   if (!meta) throw new Error("Key not found in vault");
-
-  /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
-  const opts = {};
-  try {
-    if (meta.protection === "passkey") {
-      if (statusEl) statusEl.textContent = "Confirm passkey…";
-      opts.prfIkm = await getPasskeyPrf();
-    }
-    return await vaultUnlockKey(fpr, opts);
-  } finally {
-    try {
-      opts.prfIkm?.fill?.(0);
-    } catch (_) {
-      /* wipe */
-    }
+  if (meta.protection === "passkey" && statusEl) {
+    statusEl.textContent = "Confirm passkey…";
   }
+  const passphrase =
+    document.getElementById("passphrase") instanceof HTMLInputElement
+      ? /** @type {HTMLInputElement} */ (document.getElementById("passphrase")).value
+      : "";
+  const unlocked = await unlockVaultForUse(fpr, {
+    meta,
+    openPgpPassphrase: passphrase,
+  });
+  return unlocked.armored;
 }
 
 function updateDecryptButtonLabel() {
@@ -1478,7 +1476,7 @@ async function refreshVaultKeySelect() {
   const select = document.getElementById("vault-key-select");
   if (!row || !select) return;
   try {
-    vaultKeys = await vaultListKeys();
+    vaultKeys = sortKeysByLastUsed(await vaultListKeys());
   } catch (_) {
     vaultKeys = [];
   }

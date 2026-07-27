@@ -11,6 +11,7 @@ import { runRecipe } from "./toolkit/engine.js";
  *   ast: import("./toolkit/recipe.js").RecipeAst,
  *   recipientKeysArmored?: string[],
  *   recipientFingerprints?: string[],
+ *   recipientResolutions?: Record<string, string[]>,
  *   inputs?: import("./toolkit/engine.js").RuntimeBindings["inputs"],
  *   privateKeyArmored?: string,
  *   passphrase?: string,
@@ -47,6 +48,7 @@ export async function executeToolkitRun(msg) {
     const artifacts = await runRecipe(msg.ast, {
       recipients,
       recipientFingerprints: msg.recipientFingerprints || [],
+      recipientResolutions: msg.recipientResolutions || {},
       inputs,
       encryption: msg.encryption,
       fipsMode: !!msg.fipsMode,

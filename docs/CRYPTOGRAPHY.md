@@ -37,7 +37,7 @@ Cipher (unauthenticated AES) and Wrap shelves default collapsed; WebAuthn toolbo
 Product split (intentional today):
 
 - **Encrypt / Decrypt pages** — OpenPGP messaging for humans
-- **Toolkit** — keygen, encoding, SSS/BLIP39, OpenPGP encrypt *sinks*
+- **Toolkit** — notebook of recipe cells (blank-line chains) with a session kernel for `@slots`; keygen, encoding, SSS/BLIP39, OpenPGP encrypt *sinks* (see [RECIPE.md](./RECIPE.md#notebook-execution-toolkit-ui))
 - **Quorum** — ephemeral P-256 ECDH → HKDF → AES-GCM session crypto over WebRTC
 
 ---
@@ -85,11 +85,30 @@ Product split (intentional today):
 
 | Capability | Status | Notes |
 |------------|--------|-------|
-| Device KEK | Done | Non-extractable AES-GCM-256 in IndexedDB |
+| Device KEK | Done | Non-extractable AES-GCM-256 in IndexedDB (`basilisk-vault` schema v3) |
 | Passphrase wrap | Done | OpenPGP S2K / Argon2 on armored key |
 | Passkey wrap | Done | WebAuthn PRF → HKDF-SHA-256 → AES-GCM |
 | Passkey attestation / MDS | Done | Soft only: `attestation: "direct"` at PRF create; AAGUID lookup via same-origin `/api/v1/mds/blob` (cached MDS3 JWT). **MDS verified / unverified** badge + device-label prefill; **does not block** enroll/unlock; not a CAST |
 | Protection modes | Done | `device` \| `passphrase` \| `passkey` |
+| `publicArmored` / `lastUsedAt` | Done | Stored on save; public backfilled on unlock; Encrypt/Decrypt selects ordered by last use |
+| Shared unlock | Done | `vault-unlock.js` — Encrypt / Decrypt / Toolkit / `agent.unlock` |
+| Agent session | Done | `vault-session.js` — in-memory unlocked armor, 5 min TTL; cleared on idle / secure-destroy / hide |
+| Pubkey cache store | Done | Same DB, object store `pubkeys` (see below) — **public armor only** |
+
+### Browser trust stack (recipients)
+
+| Layer | Storage | Holds |
+|-------|---------|--------|
+| **Vault** | IndexedDB `keys` + `kek` | *Your* private keys (+ own `publicArmored`) |
+| **Pubkey cache** | IndexedDB `pubkeys` (`pubkey-cache.js`) | Third-party public keys discovered via Basilisk or upstream HKP; `origin` = `basilisk` \| `upstream` \| `import` |
+| **Ownertrust** | localStorage `basilisk.keyTrust.v1` (`trust.js`) | `trusted` / `marginal` / `never` by fingerprint (this browser only) |
+| **UI prefs** | localStorage (`prefs.js`) | Expert mode; **preferred upstream keyserver** (`basilisk.preferredKeyserver`) — allowlisted host or empty for server default; Preferences page at `/preferences` |
+
+Resolve order for Encrypt / Toolkit recipients: in-memory → pubkey cache → Basilisk portal/`/pks/lookup` → (signed-in + `BASILISK_UPSTREAM_ENABLED`) browser-direct HKP to an allowlisted host. Upstream results are **never** written as server `approved`; they stay device-local with an origin chip. Recipient picker ranks by ownertrust, then origin (Basilisk before upstream), and shows `.trust-badge` / `.key-hit-trusted` styles for locally trusted keys.
+
+**GET-only CORS:** Public key fetch (`/pks/lookup`, HKP v2 GET certs, WKD, `GET /api/v1/key/<fpr>`) sends `Access-Control-Allow-Origin: *` on success and error responses (including 404), plus OPTIONS preflight for `GET, HEAD, OPTIONS` only. Mutate paths (`POST /pks/add`, HKP v2 upload, claim/auth APIs) do **not**. Never combine `*` with credentials. If `cache_mode=redirect`, the CDN/blob host must also send ACAO for the follow-up GET.
+
+**Toolkit Agent** (`agent.*`) is the local My Keys keyring surface (gpg-agent metaphor). **HKP** (`hkp.*`) uses the same recipient stack as Encrypt (`hkp.get` / `hkp.search` / `hkp.filter` / `hkp.cache`). OpenPGP crypto stays on `gpg.*`.
 
 ### Quorum (`web/src/lib/quorum/`)
 
@@ -201,10 +220,32 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js` + `step-names.j
 |----|--------|--------|
 | `gpg.genkey` | Done | Curve25519 keygen; private on stem, public artifact |
 | `gpg.inspect` | Done | Armored summary / packet map / JSON (no decrypt) |
-| `gpg.encrypt` / `gpg.decrypt` | Done | Public-key encrypt / decrypt; `sign`/`-s` = sign-then-encrypt |
-| `gpg.sign` / `gpg.verify` | Done | Cleartext (default) or detached; vault private key; soft `-q` |
+| `gpg.encrypt` / `gpg.decrypt` | Done | Public-key encrypt / decrypt; `to=@\|email\|fpr`; `mode=separate\|combined`; `sign`/`-s` |
+| `gpg.sign` / `gpg.verify` | Done | Cleartext (default) or detached; `key=@slot` or vault panel; soft `-q` |
 | `gpg.symencrypt` | Done | SKESK + SEIPD under fresh 32 B master |
 | `gpg.symdecrypt` | Done | Unwrap with master-as-passphrase |
+
+### Agent (toolbox `agent`, no CAST suite)
+
+Local My Keys IndexedDB — unlock/list/save; never put unlocked private armor into recipe text (use fingerprints / `@` slots). Pipeline type `openpgp-key/private` (or `/public` for `agent.pub`). Toolkit **keyring panel** + **agent TTL strip** show metas / countdown only — Lock all calls `sessionClear()` (same 5m idle TTL). Session holds armored strings (unwipeable); visible chrome does not put private armor in the DOM.
+
+| Op | Status | Notes |
+|----|--------|-------|
+| `agent.unlock` | Done | Unlock by `fpr=` → `openpgp-key/private`; main-thread; session-cached |
+| `agent.pub` | Done | Emit stored `publicArmored` as `openpgp-key/public` |
+| `agent.list` | Done | JSON metas (no secrets) |
+| `agent.save` | Done | Save pipeline private into vault; `protection=device\|passphrase\|passkey` |
+
+### HKP (toolbox `hkp`, no CAST suite)
+
+Typed `recipients` lists for encrypt `to=@…`. Email `to=` uses deferred lookup (search glyph → picker); not silent auto-all.
+
+| Op | Status | Notes |
+|----|--------|-------|
+| `hkp.get` | Done | Public key by fingerprint → `openpgp-key/public` |
+| `hkp.search` | Done | Directory search → `recipients` (`format=json` → text) |
+| `hkp.filter` | Done | Keep approved + encrypt-capable (defaults on) |
+| `recipients.merge` | Done | Dedupe by fingerprint (`with=@slot`) |
 
 ### WebAuthn (toolbox `webauthn`, no CAST suite)
 

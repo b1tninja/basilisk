@@ -26,6 +26,12 @@ variable "require_manager_approval" {
   default = false
 }
 
+variable "upstream_enabled" {
+  type        = bool
+  description = "Offer client-direct upstream HKP in the portal."
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

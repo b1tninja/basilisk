@@ -89,7 +89,6 @@ import {
 import { buildInspectSnapshot, inspectFromSnapshot } from "./inspect.js";
 import { getStep } from "./registry.js";
 import { recipeChains } from "./recipe.js";
-import { slotLabelKey } from "./recipe-parse.js";
 import {
   LEGACY_CRYPTO_TAGS,
   rsaesPkcs1Decrypt,
@@ -99,6 +98,10 @@ import {
   resolveStepType,
   typeOf,
 } from "./types.js";
+import {
+  clonePipelineValue,
+  createSlotRegistry,
+} from "./slot-registry.js";
 
 /**
  * @typedef {"share"|"envelope"|"ciphertext"|"key"|"secret"|"inspect"|"qr"|"text"} ArtifactRole
@@ -136,6 +139,8 @@ import {
  * @typedef {object} RuntimeBindings
  * @property {import("openpgp").Key[]} [recipients]  ordered; for foreach encrypt, one per share
  * @property {string[]} [recipientFingerprints]
+ * @property {Record<string, string[]>} [recipientResolutions]  email/query → chosen fingerprints
+ * @property {(ref: string) => PipelineValue|null|undefined} [resolveSlot]
  * @property {{
  *   shares?: {
  *     mnemonics: string[],
@@ -181,13 +186,22 @@ import {
 
 /**
  * Run a recipe AST.
- * @param {import("./recipe.js").RecipeAst} ast
+ * @param {import("./recipe.js").RecipeAst|import("./recipe.js").RecipeChain[]|import("./recipe.js").RecipeStep[]} ast
  * @param {RuntimeBindings} [bindings]
+ * @param {{
+ *   slotRegistry?: ReturnType<typeof createSlotRegistry>,
+ *   allowReplaceSlots?: boolean,
+ *   chainStart?: number,
+ *   chainEnd?: number,
+ * }} [opts]
  * @returns {Promise<ToolkitArtifact[]>}
  */
-export async function runRecipe(ast, bindings = {}) {
+export async function runRecipe(ast, bindings = {}, opts = {}) {
   const chains = recipeChains(ast);
-  if (!chains.length || !chains.some((c) => c.steps?.length)) {
+  const chainStart = Math.max(0, opts.chainStart ?? 0);
+  const chainEnd = Math.min(chains.length, opts.chainEnd ?? chains.length);
+  const slice = chains.slice(chainStart, chainEnd);
+  if (!slice.length || !slice.some((c) => c.steps?.length)) {
     throw new Error("Empty recipe");
   }
 
@@ -198,67 +212,42 @@ export async function runRecipe(ast, bindings = {}) {
       webcrypto: "unverified",
       sss: "unverified",
     };
-    assertRecipeAllowedUnderFips(ast, status, true);
+    // Validate the full AST when provided; otherwise the slice alone.
+    const forFips =
+      ast && typeof ast === "object" && !Array.isArray(ast) && ast.chains
+        ? ast
+        : { chains: slice, steps: slice[0]?.steps || [], source: "" };
+    assertRecipeAllowedUnderFips(forFips, status, true);
   }
 
   /** @type {ToolkitArtifact[]} */
   const artifacts = [];
-  /** @type {Map<string, PipelineValue>} */
-  const slotsByLabel = new Map();
-  /** @type {PipelineValue[]} */
-  const slotsByIndex = [];
+  const registry = opts.slotRegistry || createSlotRegistry();
+  const allowReplaceSlots = !!opts.allowReplaceSlots;
 
   /**
    * @param {string} nameRef
    * @param {PipelineValue} value
+   * @param {Set<string>} preexisting
    */
-  const registerSlot = (nameRef, value) => {
-    const cloned = clonePipelineValue(value);
-    // Foreach per-share outs: keep index list only (avoid duplicate @labels).
-    if (value.meta?.shareIndex) {
-      slotsByIndex.push(cloned);
-      return;
-    }
-    const key = slotLabelKey(nameRef);
-    if (key) {
-      if (slotsByLabel.has(key)) {
-        throw new Error(`Duplicate out slot @${key}`);
-      }
-      slotsByLabel.set(key, cloned);
-    }
-    slotsByIndex.push(cloned);
+  const registerSlot = (nameRef, value, preexisting) => {
+    registry.register(nameRef, value, {
+      allowReplace: allowReplaceSlots,
+      preexisting,
+    });
   };
 
-  /**
-   * @param {string} ref
-   * @returns {PipelineValue}
-   */
-  const resolveSlot = (ref) => {
-    const r = String(ref || "");
-    if (/^\d+$/.test(r)) {
-      const n = Number(r);
-      const v = slotsByIndex[n - 1];
-      if (!v) throw new Error(`in ${r}: no slot at index ${r}`);
-      return clonePipelineValue(v);
-    }
-    const key = slotLabelKey(r);
-    const v = key ? slotsByLabel.get(key) : undefined;
-    if (!v) {
-      throw new Error(
-        `in ${r}: unknown slot (register earlier with out ${r.startsWith("@") ? r : `@${key}`})`
-      );
-    }
-    return clonePipelineValue(v);
-  };
+  const resolveSlot = (ref) => registry.resolve(ref);
 
   // Named slot args (`key=@cek`) resolve through the same registry as `in`.
   bindings = { ...bindings, resolveSlot };
 
   let stepOrdinal = 0;
 
-  for (const chain of chains) {
+  for (const chain of slice) {
     const steps = chain.steps || [];
     if (!steps.length) continue;
+    const preexisting = registry.snapshotKeys();
 
     /** @type {PipelineValue|null} */
     let value = null;
@@ -302,7 +291,7 @@ export async function runRecipe(ast, bindings = {}) {
             artifacts[ai].stepName = step.name;
           }
           if (step.name === "out" && sideVal) {
-            registerSlot(String(step.params?.name || "@output"), sideVal);
+            registerSlot(String(step.params?.name || "@output"), sideVal, preexisting);
           }
           if (step.name === "out" || step.name === "text") emitted = true;
           if (artifacts.length > before) emitted = true;
@@ -411,7 +400,7 @@ export async function runRecipe(ast, bindings = {}) {
             artifacts[ai].stepName = step.name;
           }
           if (step.name === "out" && itemVal) {
-            registerSlot(String(step.params?.name || "@output"), itemVal);
+            registerSlot(String(step.params?.name || "@output"), itemVal, preexisting);
           }
         }
         if (itemVal && (itemVal.type === "text" || itemVal.type === "bytes")) {
@@ -473,7 +462,7 @@ export async function runRecipe(ast, bindings = {}) {
     stampNew(before, node.step);
     lastStepEmitted = node.step.name === "out" || node.step.name === "text";
     if (node.step.name === "out" && value) {
-      registerSlot(String(node.step.params?.name || "@output"), value);
+      registerSlot(String(node.step.params?.name || "@output"), value, preexisting);
     }
   }
 
@@ -598,59 +587,6 @@ export function projectSelector(value, selector) {
 }
 
 /**
- * @param {PipelineValue} value
- * @returns {PipelineValue}
- */
-function clonePipelineValue(value) {
-  if (value.type === "bytes" && value.data instanceof Uint8Array) {
-    return {
-      type: "bytes",
-      data: new Uint8Array(value.data),
-      meta: { ...value.meta },
-    };
-  }
-  if (value.type === "text") {
-    return { type: "text", data: String(value.data), meta: { ...value.meta } };
-  }
-  if (value.type === "item") {
-    const inner = value.data?.value;
-    return {
-      type: "item",
-      data: {
-        key: value.data?.key,
-        value: inner ? clonePipelineValue(inner) : inner,
-      },
-      meta: { ...value.meta },
-    };
-  }
-  if (value.type === "shares") {
-    const d = value.data || {};
-    return {
-      type: "shares",
-      data: {
-        ...d,
-        mnemonics: d.mnemonics ? d.mnemonics.map((m) => String(m)) : d.mnemonics,
-        raw: d.raw
-          ? d.raw.map((s) => ({
-              index: s.index,
-              data: s.data instanceof Uint8Array ? new Uint8Array(s.data) : s.data,
-            }))
-          : d.raw,
-      },
-      meta: { ...value.meta },
-    };
-  }
-  if (value.type === "keypair") {
-    return {
-      type: "keypair",
-      data: value.data,
-      meta: { ...value.meta },
-    };
-  }
-  return { type: value.type, data: value.data, meta: { ...value.meta } };
-}
-
-/**
  * @param {import("./recipe.js").RecipeStep} step
  * @param {PipelineValue|null} value
  * @param {RuntimeBindings} bindings
@@ -739,11 +675,11 @@ async function execStepBody(step, value, bindings, artifacts) {
         traits: { fingerprint },
       });
       return {
-        type: "text",
+        type: "openpgp-key",
         data: String(armoredPrivate),
         meta: {
+          which: "private",
           sensitive: true,
-          openPgpPrivate: true,
           fingerprint,
           armoredPublic: String(armoredPublic),
         },
@@ -1553,7 +1489,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         String(step.params?.format || "cleartext").toLowerCase() === "detached"
           ? "detached"
           : "cleartext";
-      const privateKey = await resolveGpgPrivateKey(bindings);
+      const privateKey = await resolveGpgPrivateKey(bindings, step.params?.key);
       const data =
         value.type === "text"
           ? String(value.data)
@@ -1586,7 +1522,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         bindings,
         step.params?.signature
       );
-      const keys = await resolveGpgVerificationKeys(bindings);
+      const keys = await resolveGpgVerificationKeys(bindings, step.params?.key);
       try {
         const ok = await verifyOpenPgp(String(value.data), keys, detached);
         if (!ok) {
@@ -1679,62 +1615,93 @@ async function execStepBody(step, value, bindings, artifacts) {
       }
       const text =
         value.type === "text" ? String(value.data) : bytesToBase64(value.data);
-      const recipients = bindings.recipients || [];
-      if (!recipients.length) {
-        throw new Error("GPG recipients not bound — choose recipients before running.");
+      const mode = String(step.params?.mode || "separate").toLowerCase();
+      const policy = String(step.params?.policy || "ask").toLowerCase();
+      const resolved = await resolveEncryptRecipients(
+        bindings,
+        step.params?.to,
+        policy
+      );
+      let keys = resolved.keys;
+      let fps = resolved.fingerprints;
+      if (!keys.length) {
+        throw new Error(
+          "GPG recipients not bound — set to=@slot / look up to=email, or choose binder recipients."
+        );
       }
-      let key = recipients[0];
-      let fpr = bindings.recipientFingerprints?.[0] || "";
-      if (value.meta?.shareIndex) {
+      // Foreach + binder: one recipient per share index (legacy SSS fan-out).
+      if (
+        value.meta?.shareIndex &&
+        !String(step.params?.to || "").trim() &&
+        keys.length > 1
+      ) {
         const idx = value.meta.shareIndex - 1;
-        key = recipients[Math.min(idx, recipients.length - 1)];
-        fpr = bindings.recipientFingerprints?.[idx] || fpr;
+        const i = Math.min(idx, keys.length - 1);
+        keys = [keys[i]];
+        fps = [fps[i] || ""];
       }
       const wantSign = !!step.params.sign;
       /** @type {import("openpgp").PrivateKey|null} */
       let signingKey = null;
       try {
         if (wantSign) {
-          signingKey = await resolveGpgPrivateKey(bindings);
+          signingKey = await resolveGpgPrivateKey(bindings, step.params?.key);
         }
-        const arts = await encryptArtifacts({
-          recipients: [key],
-          passwords: [],
-          payloads: [{ kind: "text", text }],
-          profile: bindings.encryption?.profile || PROFILE_AUTO,
-          hideRecipients: !!bindings.encryption?.hideRecipients,
-          signingKeys: signingKey ? [signingKey] : undefined,
-        });
-        for (const a of arts) {
-          const cryptoSummary = await summarizeEncryption(a.armored);
-          const isShare = !!value.meta?.shareIndex;
-          artifacts.push({
-            label: isShare
-              ? `Share ${value.meta.shareIndex} (GPG)`
-              : a.label || "GPG ciphertext",
-            filename: isShare
-              ? `share-${value.meta.shareIndex}.asc`
-              : a.filename || "encrypted.asc",
-            content: a.armored,
-            sensitive: false,
-            shareIndex: value.meta?.shareIndex,
-            recipientFingerprint: fpr,
-            mime: "application/pgp-encrypted",
-            cryptoSummary,
-            disposition: "file",
-            role: isShare ? "share" : "ciphertext",
-            tags: isShare
-              ? ["encrypted", "openpgp", "blip39"]
-              : wantSign
-                ? ["encrypted", "openpgp", "signed"]
-                : ["encrypted", "openpgp"],
-            traits: isShare
-              ? {
-                  shareOf: value.meta.shareIndex,
-                  threshold: value.meta.threshold,
-                }
-              : undefined,
+        /** @type {{ keys: import("openpgp").Key[], fpr: string }[]} */
+        const batches =
+          mode === "combined"
+            ? [{ keys, fpr: fps[0] || "" }]
+            : keys.map((k, i) => ({ keys: [k], fpr: fps[i] || "" }));
+        for (let bi = 0; bi < batches.length; bi++) {
+          const batch = batches[bi];
+          const arts = await encryptArtifacts({
+            recipients: batch.keys,
+            passwords: [],
+            payloads: [{ kind: "text", text }],
+            profile: bindings.encryption?.profile || PROFILE_AUTO,
+            hideRecipients: !!bindings.encryption?.hideRecipients,
+            signingKeys: signingKey ? [signingKey] : undefined,
           });
+          for (const a of arts) {
+            const cryptoSummary = await summarizeEncryption(a.armored);
+            const isShare = !!value.meta?.shareIndex;
+            const short =
+              batch.fpr && batch.fpr.length >= 8
+                ? batch.fpr.slice(-8).toLowerCase()
+                : String(bi + 1);
+            const multi = mode !== "combined" && batches.length > 1;
+            artifacts.push({
+              label: isShare
+                ? `Share ${value.meta.shareIndex} (GPG)`
+                : multi
+                  ? `GPG ciphertext (${short})`
+                  : a.label || "GPG ciphertext",
+              filename: isShare
+                ? `share-${value.meta.shareIndex}.asc`
+                : multi
+                  ? `encrypted-${short}.asc`
+                  : a.filename || "encrypted.asc",
+              content: a.armored,
+              sensitive: false,
+              shareIndex: value.meta?.shareIndex,
+              recipientFingerprint: batch.fpr,
+              mime: "application/pgp-encrypted",
+              cryptoSummary,
+              disposition: "file",
+              role: isShare ? "share" : "ciphertext",
+              tags: isShare
+                ? ["encrypted", "openpgp", "blip39"]
+                : wantSign
+                  ? ["encrypted", "openpgp", "signed"]
+                  : ["encrypted", "openpgp"],
+              traits: isShare
+                ? {
+                    shareOf: value.meta.shareIndex,
+                    threshold: value.meta.threshold,
+                  }
+                : undefined,
+            });
+          }
         }
         return { type: "artifact", data: null, meta: value.meta };
       } finally {
@@ -2011,6 +1978,51 @@ async function execStepBody(step, value, bindings, artifacts) {
       if (step.name === "webauthn.attest") return wa.execWaAttest(value);
       return wa.execWaMds(value, step.params || {});
     }
+    case "agent.unlock":
+    case "agent.pub":
+    case "agent.list":
+    case "agent.save": {
+      const agent = await import("./agent-ops.js");
+      if (step.name === "agent.unlock") {
+        return agent.execAgentUnlock(step.params || {}, bindings);
+      }
+      if (step.name === "agent.pub") return agent.execAgentPub(step.params || {});
+      if (step.name === "agent.list") return agent.execAgentList();
+      return agent.execAgentSave(value, step.params || {}, bindings);
+    }
+    case "hkp.get":
+    case "hkp.search":
+    case "hkp.filter":
+    case "hkp.cache": {
+      const hkp = await import("./hkp-ops.js");
+      if (step.name === "hkp.get") return hkp.execHkpGet(step.params || {});
+      if (step.name === "hkp.search") return hkp.execHkpSearch(step.params || {});
+      if (step.name === "hkp.cache") return hkp.execHkpCache(step.params || {});
+      return hkp.execHkpFilter(value, step.params || {});
+    }
+    case "recipients.merge": {
+      const {
+        mergeRecipients,
+        pipelineValueToRecipients,
+        recipientsPipelineValue,
+      } = await import("./recipients-ops.js");
+      const primary = pipelineValueToRecipients(value);
+      let secondary = [];
+      const withRef = String(step.params?.with || "").trim();
+      if (withRef) {
+        const resolve = bindings?.resolveSlot;
+        if (typeof resolve !== "function") {
+          throw new Error("recipients.merge with=: runtime slot resolver missing");
+        }
+        const other = resolve(withRef);
+        if (!other) throw new Error(`recipients.merge with=${withRef}: unknown slot`);
+        secondary = pipelineValueToRecipients(other);
+      }
+      return recipientsPipelineValue(mergeRecipients(primary, secondary), {
+        ...(value?.meta || {}),
+        merged: true,
+      });
+    }
     default:
       throw new Error(`Unsupported step: ${step.name}`);
   }
@@ -2073,13 +2085,26 @@ function assertExpectedAesKeyBits(key, expectedBits, op) {
 
 /**
  * @param {RuntimeBindings} bindings
+ * @param {string|undefined|null} [keyRef]  `key=@slot` armored private
  * @returns {Promise<import("openpgp").PrivateKey>}
  */
-async function resolveGpgPrivateKey(bindings) {
+async function resolveGpgPrivateKey(bindings, keyRef) {
+  const ref = String(keyRef || "").trim();
+  if (ref) {
+    const armored = resolveGpgArmoredFromSlot(bindings, ref, "gpg private key");
+    let privateKey = await readPrivateKey({ armoredKey: armored });
+    if (!privateKey.isDecrypted()) {
+      privateKey = await decryptKey({
+        privateKey,
+        passphrase: bindings.inputs?.gpg?.passphrase || "",
+      });
+    }
+    return privateKey;
+  }
   const gpg = bindings.inputs?.gpg;
   if (!gpg?.privateKeyArmored) {
     throw new Error(
-      "OpenPGP private key required (vault / key panel) — used by gpg.sign and gpg.encrypt -s"
+      "OpenPGP private key required (vault / key panel / key=@slot) — used by gpg.sign and gpg.encrypt -s"
     );
   }
   let privateKey = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
@@ -2094,23 +2119,164 @@ async function resolveGpgPrivateKey(bindings) {
 
 /**
  * @param {RuntimeBindings} bindings
+ * @param {string} ref
+ * @param {string} label
+ * @returns {string}
+ */
+function resolveGpgArmoredFromSlot(bindings, ref, label) {
+  const resolve = bindings?.resolveSlot;
+  if (typeof resolve !== "function") {
+    throw new Error(`${label} ${ref}: runtime slot resolver missing`);
+  }
+  const value = resolve(ref);
+  if (!value) throw new Error(`${label} ${ref}: unknown slot`);
+  if (value.type === "openpgp-key") return String(value.data);
+  if (value.type === "text") return String(value.data);
+  if (value.type === "bytes") return bytesToText(value.data);
+  if (value.type === "recipients") {
+    const first = Array.isArray(value.data) ? value.data[0] : null;
+    const armored = String(first?.armoredPublic || "");
+    if (armored.includes("BEGIN PGP")) return armored;
+  }
+  throw new Error(
+    `${label} ${ref}: slot must be openpgp-key, recipients, text, or bytes`
+  );
+}
+
+/**
+ * Resolve OpenPGP public keys for gpg.encrypt from to= / binder.
+ * @param {RuntimeBindings} bindings
+ * @param {string|undefined|null} toParam
+ * @param {string} [policy]
+ * @returns {Promise<{ keys: import("openpgp").Key[], fingerprints: string[] }>}
+ */
+async function resolveEncryptRecipients(bindings, toParam, policy = "ask") {
+  const {
+    parseEncryptToToken,
+    pipelineValueToRecipients,
+    recipientResolutionKey,
+  } = await import("./recipients-ops.js");
+  const token = parseEncryptToToken(toParam);
+
+  /** @type {import("./recipients-ops.js").ToolkitRecipient[]} */
+  let list = [];
+
+  if (token.kind === "empty") {
+    const binderKeys = bindings.recipients || [];
+    const fps = bindings.recipientFingerprints || [];
+    if (!binderKeys.length) {
+      return { keys: [], fingerprints: [] };
+    }
+    return {
+      keys: binderKeys,
+      fingerprints: fps.length
+        ? fps
+        : binderKeys.map((k) => {
+            try {
+              return k.getFingerprint().toUpperCase();
+            } catch {
+              return "";
+            }
+          }),
+    };
+  }
+
+  if (token.kind === "slot") {
+    const resolve = bindings?.resolveSlot;
+    if (typeof resolve !== "function") {
+      throw new Error(`gpg.encrypt to=${token.ref}: runtime slot resolver missing`);
+    }
+    const value = resolve(token.ref);
+    if (!value) throw new Error(`gpg.encrypt to=${token.ref}: unknown slot`);
+    list = pipelineValueToRecipients(value);
+  } else if (token.kind === "fpr") {
+    list = [{ fingerprint: token.fingerprint, armoredPublic: "", valid: true, encryptCapable: true }];
+  } else if (token.kind === "email") {
+    const key = recipientResolutionKey(token.query);
+    const chosen = bindings.recipientResolutions?.[key] ||
+      bindings.recipientResolutions?.[token.query] ||
+      [];
+    if (!chosen.length) {
+      throw new Error(
+        `gpg.encrypt to=${token.query}: look up recipients first (search glyph beside to=)`
+      );
+    }
+    if (policy === "one" && chosen.length !== 1) {
+      throw new Error(
+        `gpg.encrypt policy=one expects exactly one key, got ${chosen.length}`
+      );
+    }
+    list = chosen.map((fpr) => ({
+      fingerprint: String(fpr).toUpperCase().replace(/[^0-9A-F]/g, ""),
+      armoredPublic: "",
+      valid: true,
+      encryptCapable: true,
+    }));
+  }
+
+  if (!list.length) {
+    throw new Error("gpg.encrypt: empty recipients after resolve");
+  }
+
+  const { loadRecipientKey } = await import("../recipient-picker.js");
+  /** @type {import("openpgp").Key[]} */
+  const keys = [];
+  /** @type {string[]} */
+  const fingerprints = [];
+  for (const r of list) {
+    let armored = String(r.armoredPublic || "").trim();
+    const fpr = String(r.fingerprint || "")
+      .toUpperCase()
+      .replace(/[^0-9A-F]/g, "");
+    if (!armored.includes("BEGIN PGP")) {
+      if (fpr.length < 40) {
+        throw new Error("gpg.encrypt: recipient missing armor and fingerprint");
+      }
+      const loaded = await loadRecipientKey(fpr);
+      armored = String(loaded?.armoredKey || "").trim();
+      if (!armored.includes("BEGIN PGP")) {
+        throw new Error(
+          loaded?.error || `Could not load public key for ${fpr.slice(-8)}`
+        );
+      }
+    }
+    const key = await readKey({ armoredKey: armored });
+    keys.push(key);
+    fingerprints.push(fpr || key.getFingerprint().toUpperCase());
+  }
+  return { keys, fingerprints };
+}
+
+/**
+ * @param {RuntimeBindings} bindings
+ * @param {string|undefined|null} [keyRef]  `key=@slot` armored public or private
  * @returns {Promise<import("openpgp").Key[]>}
  */
-async function resolveGpgVerificationKeys(bindings) {
+async function resolveGpgVerificationKeys(bindings, keyRef) {
+  const ref = String(keyRef || "").trim();
+  if (ref) {
+    const armored = resolveGpgArmoredFromSlot(bindings, ref, "gpg.verify key");
+    try {
+      const pub = await readKey({ armoredKey: armored });
+      return [pub];
+    } catch (_) {
+      const priv = await resolveGpgPrivateKey(bindings, ref);
+      return [priv.toPublic()];
+    }
+  }
   const gpg = bindings.inputs?.gpg;
   if (gpg?.privateKeyArmored) {
     const priv = await resolveGpgPrivateKey(bindings);
     return [priv.toPublic()];
   }
   if (gpg?.publicKeyArmored) {
-    const { readKey } = await import("openpgp");
     const pub = await readKey({ armoredKey: gpg.publicKeyArmored });
     return [pub];
   }
   const recipients = bindings.recipients || [];
   if (recipients.length) return recipients;
   throw new Error(
-    "gpg.verify needs an OpenPGP public key (vault key panel or recipients)"
+    "gpg.verify needs an OpenPGP public key (key=@slot, vault key panel, or recipients)"
   );
 }
 
@@ -2987,6 +3153,60 @@ async function materializeOutArtifacts(value, params) {
     ];
   }
 
+  if (value.type === "openpgp-key") {
+    const which = value.meta?.which === "public" ? "public" : "private";
+    const content = String(value.data || "");
+    return [
+      attachPipeMeta(
+        {
+          label,
+          filename: `${stem}${shareSuffix}.asc`,
+          content,
+          sensitive: which === "private" || !!value.meta?.sensitive,
+          mime: "application/pgp-keys",
+          encoding: "text",
+          role: "key",
+          tags: ["openpgp", which],
+          traits: {
+            which,
+            fingerprint: value.meta?.fingerprint,
+          },
+        },
+        value
+      ),
+    ];
+  }
+
+  if (value.type === "recipients") {
+    const rows = Array.isArray(value.data) ? value.data : [];
+    const content = JSON.stringify(
+      rows.map((r) => ({
+        fingerprint: r.fingerprint,
+        label: r.label || "",
+        email: r.email || "",
+        approvalState: r.approvalState || "",
+        encryptCapable: r.encryptCapable !== false,
+      })),
+      null,
+      2
+    );
+    return [
+      attachPipeMeta(
+        {
+          label,
+          filename: `${stem}${shareSuffix}.json`,
+          content,
+          sensitive: false,
+          mime: "application/json",
+          encoding: "text",
+          role: "text",
+          tags: ["openpgp", "recipients"],
+        },
+        value
+      ),
+    ];
+  }
+
   if (value.type === "bytes") {
     let content;
     let encodingUsed;
@@ -3245,6 +3465,44 @@ function valueToArtifacts(value, name = "artifact") {
           disposition: "file",
           role: "key",
           tags: ["keypair"],
+        },
+        value
+      ),
+    ];
+  }
+  if (value.type === "openpgp-key") {
+    const which = value.meta?.which === "public" ? "public" : "private";
+    return [
+      attachPipeMeta(
+        {
+          label: name,
+          filename: `${name}.asc`,
+          content: String(value.data || ""),
+          sensitive: which === "private" || !!value.meta?.sensitive,
+          mime: "application/pgp-keys",
+          encoding: "text",
+          disposition: "file",
+          role: "key",
+          tags: ["openpgp", which],
+        },
+        value
+      ),
+    ];
+  }
+  if (value.type === "recipients") {
+    const rows = Array.isArray(value.data) ? value.data : [];
+    return [
+      attachPipeMeta(
+        {
+          label: name,
+          filename: `${name}.json`,
+          content: JSON.stringify(rows, null, 2),
+          sensitive: false,
+          mime: "application/json",
+          encoding: "text",
+          disposition: "file",
+          role: "text",
+          tags: ["openpgp", "recipients"],
         },
         value
       ),

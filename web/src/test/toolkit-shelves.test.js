@@ -13,7 +13,7 @@ import {
 } from "../lib/toolkit/registry.js";
 
 describe("toolbox shelf taxonomy", () => {
-  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → SSS → WebAuthn", () => {
+  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → Agent → HKP → SSS → WebAuthn", () => {
     const ordered = Object.entries(TOOLBOX_META)
       .sort((a, b) => a[1].order - b[1].order)
       .map(([k]) => k);
@@ -23,6 +23,8 @@ describe("toolbox shelf taxonomy", () => {
       "io",
       "flow",
       "openpgp",
+      "agent",
+      "hkp",
       "sss",
       "webauthn",
     ]);

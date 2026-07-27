@@ -139,6 +139,40 @@ export function sortByTrust(items) {
 }
 
 /**
+ * Within the same trust tier: basilisk → import → upstream → other; then recency.
+ * @param {string} [origin]
+ * @returns {number}
+ */
+export function originSortKey(origin) {
+  const o = String(origin || "").toLowerCase();
+  if (o === "basilisk") return 0;
+  if (o === "import") return 1;
+  if (o === "upstream") return 2;
+  if (o === "local" || o === "cached") return 3;
+  return 4;
+}
+
+/**
+ * @template {{ fingerprint?: string, origin?: string, lastUsedAt?: string, fetchedAt?: string, source_keyserver?: string }} T
+ * @param {T[]} items
+ * @returns {T[]}
+ */
+export function sortByTrustAndOrigin(items) {
+  return [...(items || [])].sort((a, b) => {
+    const da = trustSortKey(a?.fingerprint || "");
+    const db = trustSortKey(b?.fingerprint || "");
+    if (da !== db) return da - db;
+    const oa = originSortKey(a?.origin);
+    const ob = originSortKey(b?.origin);
+    if (oa !== ob) return oa - ob;
+    const ta = Date.parse(a?.lastUsedAt || a?.fetchedAt || "") || 0;
+    const tb = Date.parse(b?.lastUsedAt || b?.fetchedAt || "") || 0;
+    if (ta !== tb) return tb - ta;
+    return String(a?.fingerprint || "").localeCompare(String(b?.fingerprint || ""));
+  });
+}
+
+/**
  * Compact badge HTML for a trust level (escapeHtml not applied — levels are fixed).
  * @param {string} fingerprint
  * @returns {string} empty string when unknown

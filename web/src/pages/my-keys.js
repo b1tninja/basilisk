@@ -680,6 +680,7 @@ function wireGenerateForm(user) {
       await vaultSaveKey({
         fingerprint: gen.fingerprint,
         armoredPrivate,
+        publicArmored: gen.armoredPublic,
         uid,
         email,
         name,

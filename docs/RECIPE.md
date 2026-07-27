@@ -66,6 +66,21 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 Use **tee** when you need a mid-stem projection fork (public beside private export).
 Use **blank-line chains + `in`** when a later pipeline should reuse an earlier `out`.
 
+## Notebook execution (toolkit UI)
+
+In the browser toolkit, each blank-line **chain** is one notebook **cell**. A session **kernel** holds live `@slot` values across cell runs (Jupyter-like), so you can run an HKP cell, then an encrypt cell that consumes `to=@alices` without re-searching.
+
+| Action | Effect |
+|--------|--------|
+| **Run cell** | Executes that chain against the kernel’s slot map; updates that cell’s output tiles; marks **downstream** cells stale (no auto-cascade) |
+| **Run all** / **Run from here** | Sequential cell runs top-to-bottom |
+| **Clear sensitive data** | Wipes kernel slots, all cell outputs, runtime inputs, and the agent session; **keeps** cell recipes and title |
+| **Reset notebook** | Clear sensitive **plus** collapse to a single empty cell |
+| **Destroy** | Same wipe as Clear sensitive for secrets/outputs; recipe text retained (v1) |
+| **Clear outputs** (per cell) | Surgical cleanup of that cell’s tiles only |
+
+Idle auto-scrub uses the same path as **Clear sensitive data**. The whole notebook still serializes to multi-chain recipe source (shareable / Templates). Slot-side params (`to=@`, `key=@`) resolve from the kernel when present. Duplicate `out @label` within one cell still errors; re-running a later cell may replace a kernel binding written earlier.
+
 ## Arguments
 
 Each apply stage is `name` then zero or more args:
@@ -143,7 +158,9 @@ in @msg | verify key=@kp signature=@sig | out @ok
 
 | Kind | Canonical | Also parses | Serialize |
 |------|-----------|-------------|-----------|
-| OpenPGP | `gpg.genkey` / `gpg.inspect` / `gpg.encrypt` / `gpg.decrypt` / `gpg.sign` / `gpg.verify` / `gpg.symencrypt` / `gpg.symdecrypt` | `gpg.encrypt -s` sign+encrypt | dotted |
+| OpenPGP | `gpg.genkey` / `gpg.inspect` / `gpg.encrypt` / `gpg.decrypt` / `gpg.sign` / `gpg.verify` / `gpg.symencrypt` / `gpg.symdecrypt` | `gpg.encrypt -s` sign+encrypt; `key=@slot` on sign/verify/`-s` | dotted |
+| Agent (My Keys) | `agent.unlock` / `agent.pub` / `agent.list` / `agent.save` | migrate `gpg.vault` → `agent.unlock`; emit `openpgp-key` | dotted |
+| HKP (keyserver) | `hkp.get` / `hkp.search` / `hkp.filter` / `recipients.merge` | search → `recipients`; get → `openpgp-key/public` | dotted |
 | WebCrypto AEAD/cipher/RSA | `aes-gcm`, `aes-cbc`, `aes-ctr`, `rsa-oaep`, `rsa-pkcs1` | `aes-256-gcm`, `AES/GCM/NoPadding`, `encrypt AES/GCM/NoPadding`, `decrypt …` | hyphen |
 | SSS | `sss.split` / `sss.combine` | — | dotted |
 | WebAuthn | `webauthn.caps` … `webauthn.mds` | — | dotted |
@@ -160,18 +177,53 @@ in @ct | decrypt aes-gcm key=@cek | utf8 | out @plain
 
 **Builder UX:** the ops drawer’s **Pick a cipher** strip (Encrypt | Decrypt) is a meta entry — it opens a subset of AEAD/cipher/RSA ops and inserts a **concrete** card (`aes-gcm`, …) with decode pre-filled for Decrypt. There is never a builder block named `encrypt` / `decrypt`. Recipe-text sugar and the picker land on the same AST.
 
-OpenPGP signatures are **`gpg.sign` / `gpg.verify` only** — never bare `sign`/`verify`. OpenPGP encrypt stays **`gpg.encrypt`** (`-s` / `sign=true` = sign-then-encrypt with the vault private key). `gpg.genkey` emits Curve25519 keys; `gpg.inspect` summarizes armor without decrypting.
+OpenPGP signatures are **`gpg.sign` / `gpg.verify` only** — never bare `sign`/`verify`. OpenPGP encrypt stays **`gpg.encrypt`** (`-s` / `sign=true` = sign-then-encrypt). Prefer **`agent.unlock`** + `key=@slot` so recipes address My Keys by fingerprint/slot (not pasted armor). `hkp.get` loads remote public keys for verify. `gpg.genkey` emits `openpgp-key/private`; `gpg.inspect` summarizes armor without decrypting.
+
+### Pipeline types: `recipients` / `openpgp-key`
+
+| Type | Meaning | Secrets? | Typical producers |
+|------|---------|----------|-------------------|
+| `recipients` | Ordered directory picks (pub armor + metas) | No | `hkp.search`, `hkp.filter`, `recipients.merge` |
+| `openpgp-key/public` | Single OpenPGP public key | No | `hkp.get`, `agent.pub` |
+| `openpgp-key/private` | Single OpenPGP private key | Yes | `agent.unlock`, `gpg.genkey`, `agent.save` |
+
+Do **not** overload WebCrypto `key` / `keypair`. Recipients and vault keys are usually **side inputs** (`to=@…`, `key=@…`), not the encrypt/sign stem tip — the suggest drawer offers composition chips (“Encrypt message to this set”) that insert a blank-line chain.
+
+### `gpg.encrypt to=`
+
+| Token | Kind |
+|-------|------|
+| `to=@alices` | Slot (`recipients` / `openpgp-key/public` / armored text) |
+| `to=fpr:AABB…` / `to=0xAABB…` / bare 40-hex | Exact fingerprint |
+| `to=alice@example.org` / `to=email:…` | Unresolved until **Look up recipients** (search glyph); binds fingerprints in UI state |
+| `policy=ask\|one\|all` | Multi-match (default `ask`) |
+| `mode=separate\|combined` | Default `separate` = one ciphertext per recipient; `combined` = one message, N PKESKs |
+
+When `to=` is set, the Run recipient binder is skipped. Recipe text holds emails / fingerprints / `@slots` only — never armor.
 
 ```text
 input | utf8 | gpg.sign | out @signed
 in @signed | gpg.verify | out @ok
+
+agent.unlock AABBCCDDEEFF00112233445566778899AABBCCDD | out @me
+input | gpg.sign key=@me | out @signed
+in @signed | gpg.verify key=@me | out @ok
+
+hkp.get AABBCCDDEEFF00112233445566778899AABBCCDD | out @bob
+in @signed | gpg.verify key=@bob | out @ok
+
+hkp.search alice@example.org | hkp.filter | out @alices
+input | gpg.encrypt to=@alices
+input | gpg.encrypt to=alice@example.org policy=one
+input | gpg.encrypt to=fpr:AABBCCDDEEFF00112233445566778899AABBCCDD
+
+gpg.genkey email="you@example.com" | agent.save protection=device | out @priv
 
 input | utf8 | out @msg
 in @msg | gpg.sign format=detached | out @sig
 in @msg | gpg.verify signature=@sig | out @ok
 
 input | gpg.encrypt -s
-gpg.genkey email="you@example.com" | out @priv
 input | gpg.inspect format=packets | out @report
 passphrase mode=char length=20 | out @pass
 random 10 | base32 | out @id
@@ -374,6 +426,7 @@ Paste / blur canonicalize via `canonicalizeRecipe`:
 | `rsaoaep` / `rsapkcs1` | `rsa-oaep` / `rsa-pkcs1` |
 | `sss` / `recover` | `sss.split` / `sss.combine` |
 | `wa-*` | `webauthn.*` |
+| `gpg.vault` / `gpg.vault.pub` | `agent.unlock` / `agent.pub` |
 
 Use `migrateRecipe(text)` (or the toolkit **Upgrade recipe** button) for a one-shot rewrite. The parser does not accept legacy tokens.
 

@@ -9,6 +9,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root: ".",
   publicDir: "public",
+  // crypto-worker → toolkit/engine uses dynamic import(); IIFE cannot code-split.
+  // All Worker() call sites already pass { type: "module" }.
+  worker: {
+    format: "es",
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -24,6 +29,7 @@ export default defineConfig({
         verify: resolve(__dirname, "verify.html"),
         toolkit: resolve(__dirname, "toolkit.html"),
         quorum: resolve(__dirname, "quorum.html"),
+        preferences: resolve(__dirname, "preferences.html"),
       },
     },
   },

@@ -27,6 +27,8 @@ Configure under **Settings → Secrets and variables → Actions**.
 | `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` | `deploy.yml` | Federated OIDC login when `USE_AZURE_OIDC=true`. |
 | `BASILISK_TOKEN_SECRET` | `ci.yml`, `e2e.yml` | HMAC secret for HKP v2 tokens in tests. Production value lives in Key Vault — use `export-github-secrets.sh`. |
 
+CI/e2e leave **`BASILISK_UPSTREAM_ENABLED=0`** (no live keyserver egress). Production enables client-direct upstream via Terraform `upstream_enabled` / Function App `BASILISK_UPSTREAM_*` (see [DEPLOYMENT.md](DEPLOYMENT.md)).
+
 Optional repository secrets (workflow reads Terraform state when these are omitted):
 
 | Secret | Purpose |

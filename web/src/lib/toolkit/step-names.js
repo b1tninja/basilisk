@@ -62,6 +62,8 @@ export const LEGACY_STEP_MIGRATE = {
   "wa-prf": "webauthn.prf",
   "wa-attest": "webauthn.attest",
   "wa-mds": "webauthn.mds",
+  "gpg.vault": "agent.unlock",
+  "gpg.vault.pub": "agent.pub",
 };
 
 /**

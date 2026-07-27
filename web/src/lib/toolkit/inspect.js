@@ -200,6 +200,36 @@ export async function buildInspectSnapshot(value) {
     return { type: "keypair", meta, keypair };
   }
 
+  if (value.type === "openpgp-key") {
+    const armored = String(value.data || "");
+    return {
+      type: "openpgp-key",
+      meta,
+      text: armored,
+      openpgpKey: {
+        which: value.meta?.which || "private",
+        fingerprint: value.meta?.fingerprint || "",
+        length: armored.length,
+      },
+    };
+  }
+
+  if (value.type === "recipients") {
+    const rows = Array.isArray(value.data) ? value.data : [];
+    return {
+      type: "recipients",
+      meta,
+      recipients: rows.map((r) => ({
+        fingerprint: r.fingerprint,
+        label: r.label || "",
+        email: r.email || "",
+        approvalState: r.approvalState || "",
+        encryptCapable: r.encryptCapable !== false,
+        hasArmor: String(r.armoredPublic || "").includes("BEGIN PGP"),
+      })),
+    };
+  }
+
   return { type: value.type || "other", meta };
 }
 
@@ -328,6 +358,38 @@ export function inspectFromSnapshot(snap, format = "auto") {
         lines.push(fmt === "hex" ? bytesToHex(kp.raw) : formatHexdump(kp.raw));
       } else {
         lines.push("raw export: not available in snapshot");
+      }
+    }
+    return `${lines.join("\n")}\n`;
+  }
+
+  if (snap.type === "openpgp-key") {
+    const info = snap.openpgpKey || {};
+    lines.push(`which: ${info.which || meta.which || "?"}`);
+    if (info.fingerprint || meta.fingerprint) {
+      lines.push(`fingerprint: ${info.fingerprint || meta.fingerprint}`);
+    }
+    lines.push(`length: ${info.length ?? String(snap.text || "").length} chars`);
+    lines.push("");
+    if (fmt === "meta") {
+      lines.push(JSON.stringify(meta, null, 2));
+    } else {
+      lines.push(String(snap.text || ""));
+    }
+    return `${lines.join("\n")}\n`;
+  }
+
+  if (snap.type === "recipients") {
+    const rows = snap.recipients || [];
+    lines.push(`count: ${rows.length}`);
+    lines.push("");
+    if (fmt === "meta") {
+      lines.push(JSON.stringify(rows, null, 2));
+    } else {
+      for (const r of rows) {
+        lines.push(
+          `${r.fingerprint || "?"}  ${r.label || r.email || ""}  ${r.approvalState || ""}  armor=${r.hasArmor ? "yes" : "no"}`
+        );
       }
     }
     return `${lines.join("\n")}\n`;

@@ -16,9 +16,11 @@ import { parseAttestationObject } from "./webauthn/attestation.js";
 import { lookupAaguidInMds } from "./webauthn/mds.js";
 
 const DB_NAME = "basilisk-vault";
-const DB_VERSION = 1;
+/** Schema v3 adds `pubkeys` (third-party public key cache; see pubkey-cache.js). */
+const DB_VERSION = 3;
 const STORE_KEYS = "keys";
 const STORE_KEK = "kek";
+const STORE_PUBKEYS = "pubkeys";
 const DEVICE_KEK_ID = "device-aes-gcm";
 const PRF_META_ID = "prf-meta";
 const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
@@ -39,6 +41,8 @@ const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
  * @property {MdsStatus} [mdsStatus]  Soft FIDO MDS badge (passkey only); never blocks unlock
  * @property {string} [mdsDescription]
  * @property {string} [aaguid]
+ * @property {string} [publicArmored]  Armored public key (no secrets)
+ * @property {string|null} [lastUsedAt]  ISO timestamp of last successful unlock
  */
 
 /**
@@ -72,10 +76,29 @@ function openDb() {
       if (!db.objectStoreNames.contains(STORE_KEK)) {
         db.createObjectStore(STORE_KEK, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(STORE_PUBKEYS)) {
+        db.createObjectStore(STORE_PUBKEYS, { keyPath: "fingerprint" });
+      }
     };
     req.onsuccess = () => resolve(req.result);
   });
 }
+
+/**
+ * Run a transaction against a vault IndexedDB object store.
+ * Used by pubkey-cache.js for the `pubkeys` store (no secrets).
+ *
+ * @template T
+ * @param {string} storeName
+ * @param {IDBTransactionMode} mode
+ * @param {(store: IDBObjectStore) => IDBRequest<T> | Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export async function withVaultStore(storeName, mode, fn) {
+  return withStore(storeName, mode, fn);
+}
+
+export const VAULT_PUBKEYS_STORE = STORE_PUBKEYS;
 
 /**
  * @template T
@@ -445,8 +468,60 @@ export async function listKeys() {
       mdsStatus: r.mdsStatus,
       mdsDescription: r.mdsDescription || "",
       aaguid: r.aaguid || "",
+      publicArmored: r.publicArmored || "",
+      lastUsedAt: r.lastUsedAt || null,
     };
   });
+}
+
+/**
+ * Sort vault metas by lastUsedAt (newest first), then created.
+ * @param {VaultKeyMeta[]} keys
+ * @returns {VaultKeyMeta[]}
+ */
+export function sortKeysByLastUsed(keys) {
+  return [...(keys || [])].sort((a, b) => {
+    const ta = Date.parse(a.lastUsedAt || "") || 0;
+    const tb = Date.parse(b.lastUsedAt || "") || 0;
+    if (tb !== ta) return tb - ta;
+    const ca = Date.parse(a.created || "") || 0;
+    const cb = Date.parse(b.created || "") || 0;
+    return cb - ca;
+  });
+}
+
+/**
+ * Record a successful unlock timestamp.
+ * @param {string} fingerprint
+ */
+export async function touchKeyUsed(fingerprint) {
+  const fpr = String(fingerprint || "")
+    .toUpperCase()
+    .replace(/[^0-9A-F]/g, "");
+  if (!fpr) return;
+  const record = await withStore(STORE_KEYS, "readonly", (s) => s.get(fpr));
+  if (!record) return;
+  await withStore(STORE_KEYS, "readwrite", (s) =>
+    s.put({ ...record, lastUsedAt: new Date().toISOString() })
+  );
+}
+
+/**
+ * Persist publicArmored (and optional keyIds) without changing wrapped private blob.
+ * @param {string} fingerprint
+ * @param {{ publicArmored?: string, keyIds?: string[] }} patch
+ */
+export async function patchKeyMeta(fingerprint, patch) {
+  const fpr = String(fingerprint || "")
+    .toUpperCase()
+    .replace(/[^0-9A-F]/g, "");
+  const record = await withStore(STORE_KEYS, "readonly", (s) => s.get(fpr));
+  if (!record) return;
+  /** @type {VaultKeyRecord} */
+  const next = { ...record };
+  if (patch.publicArmored != null) next.publicArmored = patch.publicArmored;
+  if (Array.isArray(patch.keyIds) && patch.keyIds.length) next.keyIds = [...patch.keyIds];
+  await withStore(STORE_KEYS, "readwrite", (s) => s.put(next));
 }
 
 /**
@@ -463,6 +538,7 @@ export async function listKeys() {
  * @param {Uint8Array} [opts.prfIkm]  Required when protection === "passkey"
  * @param {import("./webauthn/mds.js").MdsLookupResult} [opts.mds]  Soft MDS result from PRF create
  * @param {string[]} [opts.keyIds]  Optional; extracted from armoredPrivate when omitted
+ * @param {string} [opts.publicArmored]  Optional armored public; derived from private when omitted
  * @returns {Promise<VaultKeyMeta>}
  */
 export async function saveKey(opts) {
@@ -478,6 +554,15 @@ export async function saveKey(opts) {
       keyIds = await collectKeyIds(opts.armoredPrivate);
     } catch (_) {
       keyIds = fpr.length >= 16 ? [fpr.slice(-16)] : [];
+    }
+  }
+
+  let publicArmored = String(opts.publicArmored || "").trim();
+  if (!publicArmored && opts.armoredPrivate) {
+    try {
+      publicArmored = await derivePublicArmored(opts.armoredPrivate);
+    } catch (_) {
+      publicArmored = "";
     }
   }
 
@@ -501,6 +586,8 @@ export async function saveKey(opts) {
     expires: opts.expires || null,
     protection: opts.protection,
     keyIds,
+    publicArmored,
+    lastUsedAt: null,
     wrapped: ciphertext,
     iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength),
   };
@@ -544,6 +631,8 @@ export async function saveKey(opts) {
     mdsStatus: record.mdsStatus,
     mdsDescription: record.mdsDescription,
     aaguid: record.aaguid,
+    publicArmored: record.publicArmored || "",
+    lastUsedAt: record.lastUsedAt || null,
   };
 }
 
@@ -586,21 +675,46 @@ export async function unlockKey(fingerprint, opts = {}) {
     }
   }
 
-  // Backfill key IDs for legacy vault entries (needed for recipient matching).
+  // Backfill key IDs / publicArmored for legacy vault entries.
+  /** @type {Partial<VaultKeyRecord>} */
+  const patch = {};
   if (!Array.isArray(record.keyIds) || !record.keyIds.length) {
     try {
       const keyIds = await collectKeyIds(armored);
-      if (keyIds.length) {
-        await withStore(STORE_KEYS, "readwrite", (s) =>
-          s.put({ ...record, keyIds })
-        );
-      }
+      if (keyIds.length) patch.keyIds = keyIds;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  if (!record.publicArmored) {
+    try {
+      const pub = await derivePublicArmored(armored);
+      if (pub) patch.publicArmored = pub;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  if (Object.keys(patch).length) {
+    try {
+      await withStore(STORE_KEYS, "readwrite", (s) =>
+        s.put({ ...record, ...patch })
+      );
     } catch (_) {
       /* ignore — unlock still succeeds */
     }
   }
 
   return armored;
+}
+
+/**
+ * @param {string} armoredPrivate
+ * @returns {Promise<string>}
+ */
+async function derivePublicArmored(armoredPrivate) {
+  const key = await readPrivateKey({ armoredKey: armoredPrivate });
+  const pub = key.toPublic();
+  return pub.armor();
 }
 
 /**

@@ -4,7 +4,7 @@
  * @module lib/key-hit
  */
 
-import { trustBadgeHtml } from "./trust.js";
+import { getTrust, trustBadgeHtml } from "./trust.js";
 import {
   describeExpiry,
   escapeHtml,
@@ -28,8 +28,34 @@ import {
  *   pending_uids?: unknown[],
  *   uids?: unknown[],
  *   email?: string,
+ *   origin?: string,
+ *   source_keyserver?: string,
+ *   sourceKeyserver?: string,
+ *   cached?: boolean,
  * }} KeyHitItem
  */
+
+/**
+ * Origin chip when the key is not from the org Basilisk directory alone.
+ * @param {KeyHitItem} item
+ * @returns {string}
+ */
+export function originChipHtml(item) {
+  const origin = String(item.origin || "").toLowerCase();
+  const host = String(
+    item.source_keyserver || item.sourceKeyserver || ""
+  ).toLowerCase();
+  if (origin === "upstream" || (host && origin !== "basilisk")) {
+    const label = host || "upstream";
+    return `<span class="key-chip key-chip-origin" title="Fetched from external keyserver (not org-approved)">${escapeHtml(
+      label
+    )}</span>`;
+  }
+  if (origin === "import") {
+    return `<span class="key-chip key-chip-origin" title="Imported locally">local import</span>`;
+  }
+  return "";
+}
 
 /**
  * Primary display label from UIDs (name <email> or email or fingerprint).
@@ -120,6 +146,9 @@ export function keyMetaChipsHtml(item) {
   const trust = trustBadgeHtml(fp);
   if (trust) chips.push(trust);
 
+  const origin = originChipHtml(item);
+  if (origin) chips.push(origin);
+
   if (item.revoked) {
     chips.push(
       `<span class="key-chip key-chip-revoked" title="Key is revoked">revoked</span>`
@@ -196,7 +225,11 @@ export function keyHitHtml(item, opts = {}) {
   const dataStr = Object.entries(data)
     .map(([k, v]) => `${k}="${escapeHtml(v)}"`)
     .join(" ");
-  const cls = ["recipient-hit", opts.className || ""].filter(Boolean).join(" ");
+  const trustLevel = getTrust(fp)?.level;
+  const trustedCls = trustLevel === "trusted" ? "key-hit-trusted" : "";
+  const cls = ["recipient-hit", trustedCls, opts.className || ""]
+    .filter(Boolean)
+    .join(" ");
 
   let approvalBadge = "";
   if (showApproval && state) {
@@ -238,6 +271,8 @@ export function keyPillExtrasHtml(item) {
       )}</span>`
     );
   }
+  const origin = originChipHtml(item);
+  if (origin) parts.push(origin);
   const exp = describeExpiry(expirationOf(item) || null);
   if (exp.tone === "expired" || exp.tone === "warn") {
     parts.push(

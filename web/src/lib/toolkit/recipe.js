@@ -118,6 +118,48 @@ export function stepNeedsKeyPanel(step) {
 }
 
 /**
+ * Whether an OpenPGP op still needs the vault / paste private-key panel.
+ * When `key=@slot` is bound, only the passphrase field may still be needed.
+ * @param {RecipeStep} step
+ */
+export function stepNeedsGpgPrivatePanel(step) {
+  switch (step.name) {
+    case "gpg.sign":
+    case "gpg.verify":
+      return !hasSlotParam(step, "key");
+    case "gpg.encrypt":
+      return !!step.params?.sign && !hasSlotParam(step, "key");
+    case "gpg.decrypt":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * OpenPGP passphrase field after `key=@slot` (S2K) or agent.save passphrase wrap.
+ * @param {RecipeStep} step
+ */
+export function stepNeedsGpgPassphrasePanel(step) {
+  if (
+    (step.name === "gpg.sign" || step.name === "gpg.verify") &&
+    hasSlotParam(step, "key")
+  ) {
+    return true;
+  }
+  if (step.name === "gpg.encrypt" && step.params?.sign && hasSlotParam(step, "key")) {
+    return true;
+  }
+  if (
+    step.name === "agent.save" &&
+    String(step.params?.protection || "device") === "passphrase"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Resolve a slot ref against compile-time slot type maps.
  * @param {string} ref
  * @param {Map<string, import("./types.js").RefinedType>} slotTypes
@@ -165,11 +207,25 @@ function validateStepSlotParams(
       continue;
     }
     const base = loaded.base;
-    const okBase =
+    let okBase =
       base === "keypair" ||
       base === "bytes" ||
       base === "text" ||
       base === "key";
+    if (
+      step.name === "gpg.sign" ||
+      step.name === "gpg.verify" ||
+      (step.name === "gpg.encrypt" && p.name === "key") ||
+      step.name === "agent.save"
+    ) {
+      okBase = okBase || base === "openpgp-key";
+    }
+    if (step.name === "recipients.merge" && p.name === "with") {
+      okBase =
+        base === "recipients" ||
+        base === "openpgp-key" ||
+        base === "text";
+    }
     if (!okBase) {
       errors.push({
         message: `${step.name} ${p.name}=${ref}: slot type ${formatType(loaded)} cannot supply a key`,
@@ -177,6 +233,41 @@ function validateStepSlotParams(
         end: step.end,
         stepIndex,
       });
+    }
+  }
+
+  // gpg.encrypt to=@slot — string param that may reference a slot
+  if (step.name === "gpg.encrypt") {
+    const toRaw = String(step.params?.to || "").trim();
+    if (toRaw) {
+      const looksEmail =
+        (/^email:/i.test(toRaw) || (toRaw.includes("@") && !toRaw.startsWith("@")));
+      const looksFpr =
+        /^(?:fpr:|0x)/i.test(toRaw) ||
+        /^[0-9A-Fa-f]{40,}$/i.test(toRaw.replace(/\s+/g, ""));
+      if (!looksEmail && !looksFpr) {
+        const ref = toRaw.startsWith("@") ? toRaw : `@${toRaw}`;
+        const loaded = lookupSlotType(ref, slotTypes, slotTypesByIndex);
+        if (!loaded) {
+          errors.push({
+            message: `${step.name} to=${toRaw}: unknown slot (register earlier with out ${ref})`,
+            start: step.start,
+            end: step.end,
+            stepIndex,
+          });
+        } else if (
+          loaded.base !== "recipients" &&
+          loaded.base !== "openpgp-key" &&
+          loaded.base !== "text"
+        ) {
+          errors.push({
+            message: `${step.name} to=${toRaw}: slot type ${formatType(loaded)} cannot supply recipients`,
+            start: step.start,
+            end: step.end,
+            stepIndex,
+          });
+        }
+      }
     }
   }
 }
@@ -621,22 +712,27 @@ function validateBodySteps(body, startType, ctx) {
     if (
       spec.unresolvedInputs &&
       spec.unresolvedInputs !== "key" &&
+      spec.unresolvedInputs !== "gpg" &&
       !inputNeeds.includes(spec.unresolvedInputs)
     ) {
       inputNeeds.push(spec.unresolvedInputs);
     }
-    if (
-      step.name === "gpg.encrypt" &&
-      step.params?.sign &&
-      !inputNeeds.includes("gpg")
-    ) {
+    if (stepNeedsGpgPrivatePanel(step) && !inputNeeds.includes("gpg")) {
       inputNeeds.push("gpg");
+    } else if (
+      stepNeedsGpgPassphrasePanel(step) &&
+      !inputNeeds.includes("gpg") &&
+      !inputNeeds.includes("gpgPass")
+    ) {
+      inputNeeds.push("gpgPass");
     }
     if (ctx.warnings) {
       pushDiscouragedAlgoWarnings(step, ctx.warnings);
       pushUsageHonestyWarnings(step, ctx.warnings);
     }
-    if (step.name === "gpg.encrypt") encryptInBody = true;
+    if (step.name === "gpg.encrypt" && !String(step.params?.to || "").trim()) {
+      encryptInBody = true;
+    }
 
     const resolved = resolveStepType(spec, current, step.params || {});
     if (!resolved.ok) {
@@ -843,8 +939,9 @@ export function validateRecipe(ast) {
       if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
     }
 
-    // Spec-declared input panels (gpg.sign / gpg.verify / envelope / …).
-    // Skip "key" — that panel is gated by stepNeedsKeyPanel (honors key=@slot).
+    // Spec-declared input panels (envelope / …).
+    // Skip "key" — gated by stepNeedsKeyPanel (honors key=@slot).
+    // Skip "gpg" — gated by stepNeedsGpgPrivatePanel / stepNeedsGpgPassphrasePanel.
     // gpg.decrypt / input / shares already handled above.
     if (
       step.name !== "gpg.decrypt" &&
@@ -852,16 +949,19 @@ export function validateRecipe(ast) {
       step.name !== "shares" &&
       spec.unresolvedInputs &&
       spec.unresolvedInputs !== "key" &&
+      spec.unresolvedInputs !== "gpg" &&
       !inputNeeds.includes(spec.unresolvedInputs)
     ) {
       inputNeeds.push(spec.unresolvedInputs);
     }
-    if (
-      step.name === "gpg.encrypt" &&
-      step.params?.sign &&
-      !inputNeeds.includes("gpg")
-    ) {
+    if (stepNeedsGpgPrivatePanel(step) && !inputNeeds.includes("gpg")) {
       inputNeeds.push("gpg");
+    } else if (
+      stepNeedsGpgPassphrasePanel(step) &&
+      !inputNeeds.includes("gpg") &&
+      !inputNeeds.includes("gpgPass")
+    ) {
+      inputNeeds.push("gpgPass");
     }
 
     if (step.name === "in") {
@@ -1158,7 +1258,10 @@ export function validateRecipe(ast) {
     }
 
     if (step.name === "gpg.encrypt") {
-      gpgSlots = Math.max(gpgSlots, 1);
+      // Explicit to=@ / to=email / to=fpr skips the Run recipient binder.
+      if (!String(step.params?.to || "").trim()) {
+        gpgSlots = Math.max(gpgSlots, 1);
+      }
     }
   }
 
@@ -1536,6 +1639,70 @@ input | utf8 | verify -q key=@pub | out @result`,
     recipe: `input | utf8 | gpg.sign | out @signed
 
 in @signed | gpg.verify | out @ok`,
+  },
+  {
+    id: "agent-sign-verify",
+    group: "OpenPGP",
+    title: "Vault sign / verify",
+    blurb:
+      "Unlock My Keys (`agent.unlock`), sign with `gpg.sign key=@me`, verify. Edit the fingerprint before running.",
+    recipe: `agent.unlock AABBCCDDEEFF00112233445566778899AABBCCDD | out @me
+input | gpg.sign key=@me | out @signed
+
+in @signed | gpg.verify key=@me | out @ok`,
+  },
+  {
+    id: "agent-gen-save",
+    group: "OpenPGP",
+    title: "Generate & save to My Keys",
+    blurb:
+      "`gpg.genkey` then `agent.save protection=device` into the browser vault.",
+    recipe: `gpg.genkey email="you@example.com" | agent.save protection=device | out @priv`,
+  },
+  {
+    id: "hkp-fetch-pub",
+    group: "OpenPGP",
+    title: "Fetch public key",
+    blurb: "Pull armored public key from the keyserver (`hkp.get`). Edit the fingerprint before running.",
+    recipe: `hkp.get AABBCCDDEEFF00112233445566778899AABBCCDD | out @bob`,
+  },
+  {
+    id: "hkp-search-encrypt",
+    group: "OpenPGP",
+    title: "Search → encrypt (separate)",
+    blurb:
+      "Directory search → filter approved/encrypt → `gpg.encrypt to=@alices` (one ciphertext per recipient).",
+    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
+
+input | gpg.encrypt to=@alices`,
+  },
+  {
+    id: "hkp-encrypt-combined",
+    group: "OpenPGP",
+    title: "Group encrypt (combined)",
+    blurb: "One OpenPGP message with N PKESKs (`mode=combined`).",
+    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
+
+input | gpg.encrypt to=@alices mode=combined`,
+  },
+  {
+    id: "agent-sign-encrypt-to",
+    group: "OpenPGP",
+    title: "Vault sign + encrypt to @alices",
+    blurb:
+      "Unlock My Keys, search recipients, sign-then-encrypt with `to=@alices` and `key=@me`.",
+    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
+agent.unlock AABBCCDDEEFF00112233445566778899AABBCCDD | out @me
+
+input | gpg.encrypt to=@alices -s key=@me mode=combined`,
+  },
+  {
+    id: "encrypt-to-email-one",
+    group: "OpenPGP",
+    title: "Encrypt to email (policy=one)",
+    blurb:
+      "Deferred email in `to=` — look up with the search glyph; `policy=one` requires exactly one approved key.",
+    recipe: `input | gpg.encrypt to=alice@example.org policy=one`,
   },
   {
     id: "gpg-genkey",

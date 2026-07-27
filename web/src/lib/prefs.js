@@ -11,6 +11,8 @@
 
 const EXPERT_KEY = "basilisk.expertMode";
 const DEVICE_LABEL_PREFIX = "basilisk.deviceLabel.";
+/** Preferred upstream HKP host (bare hostname). Empty / missing = use server default. */
+const PREFERRED_KEYSERVER_KEY = "basilisk.preferredKeyserver";
 
 /**
  * @returns {boolean}
@@ -29,6 +31,42 @@ export function getExpertMode() {
 export function setExpertMode(on) {
   try {
     localStorage.setItem(EXPERT_KEY, on ? "1" : "0");
+  } catch (_) {
+    /* private mode / quota — ignore */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Preferred upstream keyserver — client-side only (localStorage).
+// ---------------------------------------------------------------------------
+
+/**
+ * Bare hostname preferred for client-direct upstream HKP, or "" for server default.
+ * @returns {string}
+ */
+export function getPreferredKeyserver() {
+  try {
+    return String(localStorage.getItem(PREFERRED_KEYSERVER_KEY) || "").trim().toLowerCase();
+  } catch (_) {
+    return "";
+  }
+}
+
+/**
+ * Persist preferred upstream keyserver hostname.
+ * Pass empty/null to clear (fall back to server-advertised default).
+ * @param {string|null|undefined} host
+ */
+export function setPreferredKeyserver(host) {
+  try {
+    const h = String(host || "")
+      .trim()
+      .toLowerCase();
+    if (!h) {
+      localStorage.removeItem(PREFERRED_KEYSERVER_KEY);
+      return;
+    }
+    localStorage.setItem(PREFERRED_KEYSERVER_KEY, h.slice(0, 253));
   } catch (_) {
     /* private mode / quota — ignore */
   }

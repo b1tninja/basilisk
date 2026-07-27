@@ -108,6 +108,25 @@ describe("keyMetaChipsHtml", () => {
     });
     expect(html).toContain("no expiry");
   });
+
+  it("shows upstream origin chip and trusted row class", () => {
+    setTrust(FPR, "trusted");
+    const chips = keyMetaChipsHtml({
+      fingerprint: FPR,
+      approval_state: "",
+      origin: "upstream",
+      source_keyserver: "keys.openpgp.org",
+    });
+    expect(chips).toContain("keys.openpgp.org");
+    expect(chips).toContain("key-chip-origin");
+    const hit = keyHitHtml({
+      fingerprint: FPR,
+      approved_uids: [{ email: "a@b.c", name: "A" }],
+      origin: "upstream",
+      source_keyserver: "keys.openpgp.org",
+    });
+    expect(hit).toContain("key-hit-trusted");
+  });
 });
 
 describe("keyHitHtml / keyPillExtrasHtml / expiryCellText", () => {

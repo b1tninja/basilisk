@@ -1059,23 +1059,31 @@ class Parser {
 
       // ident or ident=value or number
       if (/[0-9]/.test(ch)) {
-        const num = this.readNumber();
-        const raw = String(num);
         if (!positionalUsed) {
           const pos = (spec?.params || []).find((p) => p.positional);
           if (!pos) {
+            const num = this.readNumber();
             this.errors.push({
-              message: `Unexpected token "${raw}" (no positional parameter for ${canon})`,
+              message: `Unexpected token "${num}" (no positional parameter for ${canon})`,
               start: tokStart,
               end: this.pos,
             });
+          } else if (pos.type === "string") {
+            // Fingerprints / opaque hex often start with a digit — don't stop at
+            // the first non-digit (e.g. `8F…` must not become `8` + junk).
+            const raw = this.readNamedArgValue();
+            params[pos.name] = coerceParam(spec, pos.name, raw);
+            positionalUsed = true;
           } else {
+            const num = this.readNumber();
+            const raw = String(num);
             params[pos.name] = coerceParam(spec, pos.name, raw);
             positionalUsed = true;
           }
         } else {
+          const num = this.readNumber();
           this.errors.push({
-            message: `Unexpected token "${raw}"`,
+            message: `Unexpected token "${num}"`,
             start: tokStart,
             end: this.pos,
           });
@@ -1240,10 +1248,12 @@ class Parser {
       const id = this.readIdent();
       return id ? `@${id}` : this.src.slice(start, this.pos);
     }
+    // Unquoted values: allow `@` / `:` so `to=alice@example.org` and `to=email:…` /
+    // `to=fpr:…` parse as one token (leading `@slot` handled above).
     if (!/[A-Za-z0-9_+./-]/.test(this.peek())) return "";
     const start = this.pos;
     this.pos++;
-    while (/[A-Za-z0-9_+./-]/.test(this.peek())) this.pos++;
+    while (/[A-Za-z0-9_+./:@-]/.test(this.peek())) this.pos++;
     return this.src.slice(start, this.pos);
   }
 

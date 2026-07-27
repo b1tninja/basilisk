@@ -13,10 +13,10 @@
 import { CIPHER_DISPATCH_TARGETS } from "./step-names.js";
 import { stepAcceptsRefined, typeOf } from "./types.js";
 
-/** @typedef {"none"|"bytes"|"text"|"key"|"keypair"|"shares"|"artifact"|"bundle"|"item"} IoType */
+/** @typedef {"none"|"bytes"|"text"|"key"|"keypair"|"shares"|"artifact"|"bundle"|"item"|"recipients"|"openpgp-key"} IoType */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
 /** @typedef {"enum"|"int"|"string"|"bool"|"flag"|"slot"} ParamType */
-/** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"} Toolbox */
+/** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"|"agent"|"hkp"} Toolbox */
 /** @typedef {string} Shelf */
 /** @typedef {import("./types.js").StepOverload} StepOverload */
 /** @typedef {import("./types.js").RefinedType} RefinedType */
@@ -91,8 +91,10 @@ export const TOOLBOX_META = {
   io: { label: "Input / output", badge: "I/O", order: 2, glyph: "io" },
   flow: { label: "Flow", badge: "Flow", order: 3, glyph: "flow" },
   openpgp: { label: "OpenPGP", badge: "OpenPGP", order: 4, glyph: "openpgp" },
-  sss: { label: "SSS / BLIP39", badge: "SSS", order: 5, glyph: "sss" },
-  webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 6, glyph: "webauthn" },
+  agent: { label: "Agent", badge: "Agent", order: 5, glyph: "agent" },
+  hkp: { label: "HKP", badge: "HKP", order: 6, glyph: "hkp" },
+  sss: { label: "SSS / BLIP39", badge: "SSS", order: 7, glyph: "sss" },
+  webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 8, glyph: "webauthn" },
 };
 
 /**
@@ -141,6 +143,10 @@ export const SHELF_META = {
   control: { label: "Control", order: 0, glyph: "control" },
   essentials: { label: "Essentials", order: 0, defaultCollapsed: false, glyph: "essentials" },
   attestation: { label: "Attestation / MDS", order: 1, defaultCollapsed: true, glyph: "attestation" },
+  vault: { label: "Vault", order: 0, glyph: "agent" },
+  directory: { label: "Directory", order: 1, glyph: "recipients" },
+  lookup: { label: "Lookup", order: 0, glyph: "hkp" },
+  recipients: { label: "Recipients", order: 2, glyph: "recipients" },
 };
 
 /** @type {StepSpec[]} */
@@ -1320,9 +1326,9 @@ export const STEPS = [
     kind: "source",
     toolbox: "openpgp",
     shelf: "pubkey",
-    doc: "Generate an OpenPGP Curve25519 keypair (same as My Keys). Pipeline emits armored private key; public key is also written as an artifact. Quote emails (`@` is slot syntax): `gpg.genkey email=\"alice@example.com\" | out @priv`.",
+    doc: "Generate an OpenPGP Curve25519 keypair (same as My Keys). Pipeline emits `openpgp-key/private`; public key is also written as an artifact. Quote emails (`@` is slot syntax): `gpg.genkey email=\"alice@example.com\" | out @priv`.",
     input: "none",
-    output: "text",
+    output: "openpgp-key",
     params: [
       {
         name: "email",
@@ -1379,16 +1385,29 @@ export const STEPS = [
     conjugate: "gpg.decrypt",
     pairCaption: "Encrypt / decrypt",
     unresolvedRecipients: true,
-    doc: "OpenPGP-encrypt the current value (`gpg --encrypt`). Recipients bound at run time. `sign` / `-s` adds sign-then-encrypt with the vault private key. Common in foreach: `… | blip39 | foreach` / `- gpg.encrypt`.",
+    doc: "OpenPGP-encrypt the current value. Prefer `to=@alices` (recipients slot) or `to=email` + lookup; else Run binder. `mode=separate|combined`. `-s` / `key=@me` for sign-then-encrypt.",
     input: "text",
     output: "artifact",
     params: [
+      {
+        name: "to",
+        type: "string",
+        default: "",
+        doc: "`@slot`, `fpr:…`, or email (resolve via lookup). Empty = Run binder",
+      },
+      {
+        name: "policy",
+        type: "enum",
+        default: "ask",
+        enum: ["ask", "one", "all"],
+        doc: "Email resolution: ask (modal), one (exactly one), all (every approved)",
+      },
       {
         name: "mode",
         type: "enum",
         default: "separate",
         enum: ["separate", "combined"],
-        doc: "separate = one ciphertext per share; combined = single bundle",
+        doc: "separate = one ciphertext per recipient; combined = one message, N PKESKs",
       },
       {
         name: "sign",
@@ -1396,6 +1415,12 @@ export const STEPS = [
         flag: "-s",
         default: false,
         doc: "Sign-then-encrypt with vault OpenPGP private key (same as Encrypt page)",
+      },
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Signing private-key slot when `-s` (`@me`); omit to use the vault key panel",
       },
     ],
   },
@@ -1406,11 +1431,17 @@ export const STEPS = [
     shelf: "gpgsign",
     conjugate: "gpg.verify",
     pairCaption: "Sign / verify",
-    doc: "OpenPGP-sign pipeline text/bytes with a vault private key. Default cleartext armored (text stem); `format=detached` emits a detached signature (text or bytes). Distinct from WebCrypto `sign`.",
+    doc: "OpenPGP-sign pipeline text/bytes. Prefer `gpg.sign key=@me` (slot from `agent.unlock`); else vault key panel. Default cleartext; `format=detached` for detached sig. Distinct from WebCrypto `sign`.",
     input: "text",
     output: "text",
     unresolvedInputs: "gpg",
     params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Live private-key slot (`@me`); omit to use the vault key panel",
+      },
       {
         name: "format",
         type: "enum",
@@ -1434,11 +1465,17 @@ export const STEPS = [
     toolbox: "openpgp",
     shelf: "gpgsign",
     conjugateOf: "gpg.sign",
-    doc: "Verify an OpenPGP cleartext or detached signature. Detached: `signature=@slot` or runtime binding. Fail-loud by default; `soft`/`-q` → verified|invalid. Distinct from WebCrypto `verify`.",
+    doc: "Verify an OpenPGP cleartext or detached signature. Prefer `gpg.verify key=@pub`. Detached: `signature=@slot`. Fail-loud by default; `soft`/`-q` → verified|invalid. Distinct from WebCrypto `verify`.",
     input: "text",
     output: "text",
     unresolvedInputs: "gpg",
     params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Live public (or private) key slot (`@pub`); omit to use vault key / recipients",
+      },
       {
         name: "signature",
         type: "string",
@@ -1454,6 +1491,236 @@ export const STEPS = [
       },
     ],
     overloads: [{ when: { base: "text" }, output: { base: "text" } }],
+  },
+  {
+    name: "agent.unlock",
+    kind: "source",
+    toolbox: "agent",
+    shelf: "vault",
+    doc: "Unlock a My Keys private key by fingerprint into the pipeline (sensitive). Prefer `agent.unlock AABB… | out @me` then `gpg.sign key=@me`. Main-thread (passkey).",
+    input: "none",
+    output: "openpgp-key",
+    params: [
+      {
+        name: "fpr",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Vault fingerprint (hex; spaces/0x ignored)",
+      },
+    ],
+  },
+  {
+    name: "agent.pub",
+    kind: "source",
+    toolbox: "agent",
+    shelf: "vault",
+    doc: "Emit stored `publicArmored` for a My Keys fingerprint — no unlock. Example: `agent.pub AABB… | out @pub`.",
+    input: "none",
+    output: "openpgp-key",
+    params: [
+      {
+        name: "fpr",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Vault fingerprint (hex)",
+      },
+    ],
+  },
+  {
+    name: "agent.list",
+    kind: "source",
+    toolbox: "agent",
+    shelf: "vault",
+    doc: "List My Keys metadata as JSON (fingerprint, uid, protection, lastUsedAt) — no private material.",
+    input: "none",
+    output: "text",
+    params: [],
+  },
+  {
+    name: "agent.save",
+    kind: "transform",
+    toolbox: "agent",
+    shelf: "vault",
+    doc: "Save pipeline armored private into My Keys. `protection=device|passphrase|passkey`. Passphrase via Inputs when `protection=passphrase`. Example: `gpg.genkey email=\"you@example.com\" | agent.save protection=device | out @priv`.",
+    input: "openpgp-key",
+    output: "openpgp-key",
+    params: [
+      {
+        name: "protection",
+        type: "enum",
+        default: "device",
+        enum: ["device", "passphrase", "passkey"],
+        doc: "Vault wrap mode",
+      },
+      {
+        name: "email",
+        type: "string",
+        default: "",
+        doc: "Override UID email (defaults from key)",
+      },
+      {
+        name: "name",
+        type: "string",
+        default: "",
+        doc: "Override UID display name",
+      },
+      {
+        name: "expiry",
+        type: "enum",
+        default: "none",
+        enum: ["none", "1d", "1w", "1m", "1y"],
+        doc: "Vault expiry preset (metadata)",
+      },
+    ],
+  },
+  {
+    name: "hkp.get",
+    kind: "source",
+    toolbox: "hkp",
+    shelf: "lookup",
+    doc: "Fetch a public key by fingerprint (device cache → portal → optional upstream). Example: `hkp.get AABB… | out @bob`.",
+    input: "none",
+    output: "openpgp-key",
+    params: [
+      {
+        name: "fpr",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Fingerprint (hex)",
+      },
+      {
+        name: "keyserver",
+        type: "string",
+        default: "",
+        doc: "Allowlisted upstream host (signed-in + BASILISK_UPSTREAM_ENABLED)",
+      },
+      {
+        name: "refresh",
+        type: "bool",
+        default: false,
+        doc: "Bypass device cache and re-fetch",
+      },
+    ],
+  },
+  {
+    name: "hkp.search",
+    kind: "source",
+    toolbox: "hkp",
+    shelf: "directory",
+    doc: "Search local cache + org directory; optional upstream when signed in. Filter with `hkp.filter`.",
+    input: "none",
+    output: "recipients",
+    params: [
+      {
+        name: "query",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Email, name, or fingerprint fragment",
+      },
+      {
+        name: "format",
+        type: "enum",
+        default: "recipients",
+        enum: ["recipients", "json"],
+        doc: "recipients = typed list; json = text dump",
+      },
+      {
+        name: "keyserver",
+        type: "string",
+        default: "",
+        doc: "Allowlisted upstream host on local miss",
+      },
+    ],
+    effectiveIo(params) {
+      if (String(params?.format || "recipients") === "json") {
+        return { input: "none", output: "text" };
+      }
+      return { input: "none", output: "recipients" };
+    },
+  },
+  {
+    name: "hkp.filter",
+    kind: "transform",
+    toolbox: "hkp",
+    shelf: "directory",
+    doc: "Filter a `recipients` list. Defaults: approved + encrypt-capable (upstream/import kept when valid).",
+    input: "recipients",
+    output: "recipients",
+    params: [
+      {
+        name: "approved",
+        type: "bool",
+        default: true,
+        doc: "Keep org-approved (and valid upstream/import) keys",
+      },
+      {
+        name: "encrypt",
+        type: "bool",
+        default: true,
+        doc: "Keep only encrypt-capable keys",
+      },
+      {
+        name: "origin",
+        type: "string",
+        default: "",
+        doc: "Optional origin filter: basilisk | upstream | import",
+      },
+    ],
+  },
+  {
+    name: "hkp.cache",
+    kind: "source",
+    toolbox: "hkp",
+    shelf: "lookup",
+    doc: "List or clear the device IndexedDB pubkey cache (`action=list|clear`).",
+    input: "none",
+    output: "recipients",
+    params: [
+      {
+        name: "action",
+        type: "enum",
+        default: "list",
+        enum: ["list", "clear"],
+        doc: "list cached pubkeys or clear the cache",
+      },
+      {
+        name: "format",
+        type: "enum",
+        default: "recipients",
+        enum: ["recipients", "json"],
+        doc: "recipients = typed list; json = text dump",
+      },
+    ],
+    effectiveIo(params) {
+      if (String(params?.action || "list") === "clear") {
+        return { input: "none", output: "text" };
+      }
+      if (String(params?.format || "recipients") === "json") {
+        return { input: "none", output: "text" };
+      }
+      return { input: "none", output: "recipients" };
+    },
+  },
+  {
+    name: "recipients.merge",
+    kind: "transform",
+    toolbox: "hkp",
+    shelf: "recipients",
+    doc: "Merge pipeline recipients with `with=@slot` (dedupe by fingerprint).",
+    input: "recipients",
+    output: "recipients",
+    params: [
+      {
+        name: "with",
+        type: "slot",
+        default: "",
+        doc: "Other recipients / public key slot to merge",
+      },
+    ],
   },
   {
     name: "qr",
@@ -1856,6 +2123,7 @@ export function recipeNeedsMainThread(ast) {
     for (const step of steps || []) {
       const spec = getStep(step.name);
       if (spec?.toolbox === "webauthn") return true;
+      if (step.name === "agent.unlock" || step.name === "agent.save") return true;
       if (step.name === "foreach" && visit(step.body || [])) return true;
       if (step.name === "tee") {
         if (visit(step.body || [])) return true;

@@ -8,6 +8,7 @@ from flask import Flask, Response, request
 from basilisk.auth.azure import require_principal
 from basilisk.auth.errors import AuthError
 from basilisk.config import get_settings
+from basilisk.hkp.cors import flask_cors, options_get_only
 from basilisk.hkp.handlers import get_store
 from basilisk.openpgp.canonical import emails_from_uids, structure_uids
 from basilisk.portal.mds_cache import get_mds_blob
@@ -35,6 +36,19 @@ def register_portal_api(app: Flask) -> None:
     def api_auth_config() -> Response:
         return Response(
             json.dumps({"providers": list(settings.auth_providers)}),
+            mimetype="application/json",
+        )
+
+    @app.get("/api/v1/config")
+    def api_public_config() -> Response:
+        """Public non-secret portal config (upstream HKP allowlist, etc.)."""
+        return Response(
+            json.dumps(
+                {
+                    "auth": {"providers": list(settings.auth_providers)},
+                    "upstream": settings.upstream_public(),
+                }
+            ),
             mimetype="application/json",
         )
 
@@ -74,14 +88,19 @@ def register_portal_api(app: Flask) -> None:
         payload = search_keys(query, get_store(), settings)
         return Response(json.dumps(payload), mimetype="application/json")
 
+    @app.route("/api/v1/key/<fingerprint>", methods=["OPTIONS"])
+    @app.route("/api/v1/key/<fingerprint>/history", methods=["OPTIONS"])
+    def api_key_options(fingerprint: str) -> Response:
+        return options_get_only()
+
     @app.get("/api/v1/key/<fingerprint>")
     def api_key_detail(fingerprint: str) -> Response:
         store = get_store(settings)
         record = store.get_by_fingerprint(fingerprint)
         if not record:
-            return Response(
+            return flask_cors(
+                404,
                 json.dumps({"error": "Not found"}),
-                status=404,
                 mimetype="application/json",
             )
 
@@ -139,7 +158,11 @@ def register_portal_api(app: Flask) -> None:
         elif record.approval_state == "approved":
             payload["pending_uids"] = []
 
-        return Response(json.dumps(payload), mimetype="application/json")
+        return flask_cors(
+            200,
+            json.dumps(payload),
+            mimetype="application/json",
+        )
 
     @app.get("/api/v1/key/<fingerprint>/history")
     def api_key_history(fingerprint: str) -> Response:
@@ -147,9 +170,9 @@ def register_portal_api(app: Flask) -> None:
         store = get_store(settings)
         record = store.get_by_fingerprint(fingerprint)
         if not record:
-            return Response(
+            return flask_cors(
+                404,
                 json.dumps({"error": "Not found"}),
-                status=404,
                 mimetype="application/json",
             )
         list_history = getattr(store, "list_history", None)
@@ -163,7 +186,8 @@ def register_portal_api(app: Flask) -> None:
                     "recorded_at": record.created_at,
                 }
             ]
-        return Response(
+        return flask_cors(
+            200,
             json.dumps(
                 {
                     "fingerprint": record.fingerprint,

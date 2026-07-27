@@ -483,6 +483,14 @@ Set **`BASILISK_REQUIRE_MANAGER_APPROVAL=1`** (Terraform: `require_manager_appro
 
 | `BASILISK_PROOF_DIFFICULTY` | 0 | Leading zero hex digits for PoW hash |
 
+| `BASILISK_UPSTREAM_ENABLED` | 0 | Offer client-direct upstream HKP in the portal (browser fetches; Basilisk does not proxy) |
+
+| `BASILISK_UPSTREAM_ALLOWLIST` | `keys.openpgp.org,keys.mailvelope.com` | Comma-separated HTTPS hostnames the UI may call |
+
+| `BASILISK_UPSTREAM_DEFAULT` | `keys.openpgp.org` | Default host when the client omits `keyserver=` |
+
+Upstream search runs only for **signed-in** users when enabled. CSP `connect-src` includes the allowlisted `https://` hosts (HTML meta, Function App header, Front Door). Terraform: `upstream_enabled` (default `false`). Advertised to the portal via `GET /api/v1/config` → `{ upstream: { enabled, allowlist, default } }`.
+
 
 
 ### Front Door WAF rate limits

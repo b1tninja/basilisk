@@ -2,49 +2,49 @@ from __future__ import annotations
 
 from flask import Flask, Response, request
 
+from basilisk.hkp.cors import flask_cors, options_get_only
 from basilisk.hkp.handlers import get_blob_store, get_store
-from basilisk.openpgp.canonical import emails_from_uids
-from basilisk.openpgp.wkd import parse_email, wkd_local_hash
+from basilisk.openpgp.wkd import wkd_local_hash
 
 
 def _serve_wkd(domain: str, hu: str) -> Response:
     """Return the binary OpenPGP key for an approved email matching domain+hash."""
     store = get_store()
-    # Scan approved keys — email index is the source of truth.
-    # We look up by iterating emails table via list isn't ideal; try common approach:
-    # clients also send ?l=<local> on advanced method.
     local = (request.args.get("l") or "").strip().lower()
     if local:
         email = f"{local}@{domain.lower()}"
         record = store.get_by_email(email)
         if not record or record.approval_state != "approved":
-            return Response("Not found", status=404)
+            return flask_cors(404, "Not found")
         if wkd_local_hash(local) != hu:
-            return Response("Not found", status=404)
+            return flask_cors(404, "Not found")
         data = get_blob_store().read(record.blob_uri)
-        return Response(
+        return flask_cors(
+            200,
             data,
-            status=200,
             mimetype="application/octet-stream",
-            headers={"Access-Control-Allow-Origin": "*"},
         )
 
     # Without ?l=, find any approved email on this domain with matching hash.
-    # Table/sqlite: use list from emails — get_by_email needs exact address.
-    # Fall back: scan stats-sized stores via fingerprint search is too heavy;
-    # require ?l= for advanced method when hash-only (direct method includes domain).
-    return Response("Not found", status=404)
+    # Require ?l= for advanced method when hash-only.
+    return flask_cors(404, "Not found")
 
 
 def register_wkd(app: Flask) -> None:
+    @app.route("/.well-known/openpgpkey/policy", methods=["OPTIONS"])
+    @app.route("/.well-known/openpgpkey/<domain>/policy", methods=["OPTIONS"])
+    @app.route("/.well-known/openpgpkey/hu/<hu>", methods=["OPTIONS"])
+    @app.route("/.well-known/openpgpkey/<domain>/hu/<hu>", methods=["OPTIONS"])
+    def wkd_options(domain: str | None = None, hu: str | None = None) -> Response:
+        return options_get_only()
+
     @app.get("/.well-known/openpgpkey/policy")
     @app.get("/.well-known/openpgpkey/<domain>/policy")
     def wkd_policy(domain: str | None = None) -> Response:
-        return Response(
+        return flask_cors(
+            200,
             "protocol-version: 1\n",
-            status=200,
             mimetype="text/plain",
-            headers={"Access-Control-Allow-Origin": "*"},
         )
 
     # Advanced method: /.well-known/openpgpkey/hu/<hash>?l=<local>
@@ -52,7 +52,7 @@ def register_wkd(app: Flask) -> None:
     def wkd_advanced(hu: str) -> Response:
         local = (request.args.get("l") or "").strip().lower()
         if not local:
-            return Response("Not found", status=404)
+            return flask_cors(404, "Not found")
         # Domain comes from Host header for advanced method.
         host = (request.host or "").split(":")[0].lower()
         # Strip openpgpkey. prefix if present (advanced WKD subdomain).

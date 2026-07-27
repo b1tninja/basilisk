@@ -19,6 +19,7 @@ _STATIC_PAGES = {
     "verify": "verify.html",
     "toolkit": "toolkit.html",
     "quorum": "quorum.html",
+    "preferences": "preferences.html",
 }
 
 # HTML pins SRI hashes for that deploy. Content-hashed /assets/* and

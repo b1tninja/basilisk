@@ -30,6 +30,24 @@ variable "require_manager_approval" {
   default     = false
 }
 
+variable "upstream_enabled" {
+  type        = bool
+  description = "Offer client-direct upstream HKP search in the portal (browser fetches allowlisted hosts)."
+  default     = false
+}
+
+variable "upstream_allowlist" {
+  type        = string
+  description = "Comma-separated HTTPS keyserver hostnames the portal may call from the browser."
+  default     = "keys.openpgp.org,keys.mailvelope.com"
+}
+
+variable "upstream_default" {
+  type        = string
+  description = "Default upstream keyserver hostname when the client omits keyserver=."
+  default     = "keys.openpgp.org"
+}
+
 variable "enable_worm_immutability" {
   type        = bool
   description = "Enable WORM immutability on the certs blob container."
