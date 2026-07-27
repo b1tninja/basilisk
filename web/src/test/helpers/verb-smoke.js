@@ -532,7 +532,7 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
     {
       id: "import.spki",
       recipe:
-        "genkey ec/p256 | .public | export spki | import spki alg=ec/p256 | .public | export spki | pem | out @pub",
+        "genkey ec/p256 | .public | export spki | import spki alg=ec/p256 | export spki | pem | out @pub",
       mode: "run",
     },
 

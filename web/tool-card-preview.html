@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tool card preview — Basilisk</title>
+  <link rel="stylesheet" href="/src/css/site.css">
+  <style>
+    body.preview {
+      margin: 0;
+      padding: 1.25rem 1.5rem 2rem;
+      background: var(--surface);
+      color: var(--text);
+      font-family: var(--font-sans, system-ui, sans-serif);
+    }
+    .preview-title {
+      margin: 0 0 0.35rem;
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+    .preview-sub {
+      margin: 0 0 1.25rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    .preview-row {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 1.25rem;
+      align-items: start;
+      margin-bottom: 2rem;
+    }
+    .preview-ops {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.65rem;
+      background: color-mix(in srgb, var(--surface-raised) 88%, var(--surface));
+    }
+    .preview-ops h2 {
+      margin: 0 0 0.45rem;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .preview-cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+    .preview-cards .tool-card {
+      width: min(320px, 100%);
+      filter: drop-shadow(0 10px 28px rgba(0, 0, 0, 0.28));
+    }
+    .preview-live {
+      position: relative;
+      min-height: 280px;
+      border: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
+      border-radius: 10px;
+      padding: 0.75rem;
+    }
+    .preview-live-label {
+      margin: 0 0 0.5rem;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body class="layout-app preview">
+  <h1 class="preview-title">Ops toolbox + tool card</h1>
+  <p class="preview-sub">Local visual fixture — icon tiles (left) and static standard tool cards (right).</p>
+
+  <div class="preview-row">
+    <div class="preview-ops" id="ops-mock" aria-label="Toolkit mock"></div>
+    <div>
+      <p class="preview-live-label">Static cards (same markup as hover popover)</p>
+      <div class="preview-cards" id="cards"></div>
+    </div>
+  </div>
+
+  <div class="preview-live">
+    <p class="preview-live-label">Interactive: hover a tile — floating card positions like the Toolkit</p>
+    <div class="ops-icon-grid" id="ops-live" role="list"></div>
+    <div id="ops-tool-card" class="ops-tool-card hidden" role="tooltip" hidden></div>
+  </div>
+
+  <script type="module" src="/src/test/fixtures/tool-card-preview.js"></script>
+</body>
+</html>

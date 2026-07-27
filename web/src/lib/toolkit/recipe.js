@@ -7,8 +7,8 @@
  *   in @kp | .public | export spki | pem | out @public
  *   in @kp | export pkcs8 | pem | out @private
  *
- * Decode flags (shell-style): base64 -d | hex -d | pem -d → params.decode = true
- * Slot sugar: bare `out kp` / `in kp` canonicalize to `@kp`; `from` → `in`.
+ * Decode: encoding twins prefer `pem.encode` / `pem.decode` (also accept `pem -d`).
+ * Cipher twins still use `-d` (`aes-gcm -d`). Slot sugar: bare `out kp` → `@kp`.
  */
 
 import {
@@ -20,7 +20,7 @@ import {
   parseRecipeSource,
   slotLabelKey,
 } from "./recipe-parse.js";
-import { migrateRecipe } from "./step-names.js";
+import { decodeTwinToken, migrateRecipe } from "./step-names.js";
 import {
   formatType,
   isTerminalSink,
@@ -383,11 +383,19 @@ export function canonicalizeRecipe(source) {
  */
 export function serializeStep(step) {
   const spec = getStep(step.name);
-  const parts = [step.name];
+  const useEncodeVerb =
+    !!spec?.decodeTwin && decodeTwinToken(spec, false) === `${step.name}.encode`;
+  const parts = [
+    useEncodeVerb
+      ? decodeTwinToken(spec, !!step.params?.decode)
+      : step.name,
+  ];
   for (const p of spec?.params || []) {
     const v = step.params?.[p.name];
     if (v === undefined || v === "") continue;
     if (p.flag && p.type === "bool") {
+      // Encoding twins serialize direction in the verb; skip `-d`.
+      if (useEncodeVerb && p.name === "decode") continue;
       if (v === true) parts.push(p.flag);
       continue;
     }
@@ -581,18 +589,9 @@ export function projectTypeForMember(current, memberOrSelector) {
         error: `selector ".${m}" requires keypair, got ${formatType(current)}`,
       };
     }
-    if (m === "private") {
-      return {
-        ok: true,
-        type: typeOf("keypair", { ...current, which: "private" }),
-      };
-    }
     return {
       ok: true,
-      type: typeOf("keypair", {
-        alg: current.alg,
-        which: "public",
-      }),
+      type: typeOf("key", { alg: current.alg, which: m }),
     };
   }
 

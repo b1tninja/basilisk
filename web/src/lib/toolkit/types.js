@@ -221,15 +221,38 @@ export function inferSourceType(name, params = {}) {
  */
 export function inferParamDrivenType(name, current, params = {}) {
   if (name === "export") {
-    if (current.base !== "keypair") {
+    if (current.base !== "keypair" && current.base !== "key") {
       return {
         ok: false,
-        error: `"export" expects keypair, got ${formatType(current)}`,
+        error: `"export" expects keypair or key, got ${formatType(current)}`,
       };
     }
     const format = String(params.format || "pkcs8").toLowerCase();
-    const which = String(params.which || "private");
     const alg = current.alg || "ec/p256";
+    // Projected `.public` / `.private` tips are `key` — tip which wins over params.
+    const tipWhich =
+      current.base === "key" &&
+      (current.which === "public" || current.which === "private")
+        ? current.which
+        : null;
+    // Projected `key` tip selects the half; `which=` only applies to full keypairs.
+    const which = tipWhich || String(params.which || "private");
+
+    if (tipWhich === "public") {
+      if (format === "pkcs8" || format === "scalar" || format === "d") {
+        return {
+          ok: false,
+          error: `"export ${format}" needs a private key — tip is ${formatType(current)}`,
+        };
+      }
+    }
+    if (tipWhich === "private" && format === "spki") {
+      return {
+        ok: false,
+        error: `"export spki" needs a public key — use .public | export spki (tip is ${formatType(current)})`,
+      };
+    }
+
     if (format === "jwk") {
       return {
         ok: true,
@@ -311,9 +334,22 @@ export function inferParamDrivenType(name, current, params = {}) {
       };
     }
     if (format === "spki") {
+      if (current.which === "private") {
+        return {
+          ok: false,
+          error: `"import spki" expects public DER (e.g. pem.decode of PUBLIC KEY), got ${formatType(current)}`,
+        };
+      }
+      // Public-only import — a projected key tip, not a full keypair.
       return {
         ok: true,
-        output: typeOf("keypair", { alg, which: "public" }),
+        output: typeOf("key", { alg, which: "public" }),
+      };
+    }
+    if (current.which === "public") {
+      return {
+        ok: false,
+        error: `"import ${format}" expects private DER — tip is ${formatType(current)}; use import spki`,
       };
     }
     return {
@@ -327,12 +363,17 @@ export function inferParamDrivenType(name, current, params = {}) {
       if (current.base !== "text") {
         return {
           ok: false,
-          error: `"pem -d" expects text/pem, got ${formatType(current)}`,
+          error: `"pem.decode" expects text/pem, got ${formatType(current)}`,
         };
       }
+      // Carry half from prior pem.encode tip when known (armor label is runtime).
       return {
         ok: true,
-        output: typeOf("bytes", { kind: "der" }),
+        output: typeOf("bytes", {
+          kind: "der",
+          which: current.which,
+          alg: current.alg,
+        }),
       };
     }
     if (current.base !== "bytes") {
@@ -492,7 +533,7 @@ export function inferParamDrivenType(name, current, params = {}) {
       return {
         ok: false,
         error:
-          `"sss.combine" expects shares/raw — decode mnemonics first with "blip39 -d"`,
+          `"sss.combine" expects shares/raw — decode mnemonics first with "blip39.decode"`,
       };
     }
     // Recovered secret is always 16/32-byte master-sized material (scalar or random).
@@ -514,7 +555,7 @@ export function inferParamDrivenType(name, current, params = {}) {
       if (current.kind === "raw") {
         return {
           ok: false,
-          error: `"blip39 -d" expects shares/mnemonic, got shares/raw`,
+          error: `"blip39.decode" expects shares/mnemonic, got shares/raw`,
         };
       }
       return { ok: true, output: typeOf("shares", { kind: "raw" }) };
@@ -607,16 +648,25 @@ export function inferParamDrivenType(name, current, params = {}) {
     }
     const sel = String(params.selector || "");
     const m = sel.replace(/^\./, "").toLowerCase();
-    if (m === "private" || m === "public") {
+    if (
+      m === "private" ||
+      m === "priv" ||
+      m === "secret" ||
+      m === "public" ||
+      m === "pub"
+    ) {
       if (current.base !== "keypair") {
         return {
           ok: false,
           error: `selector ".${m}" requires keypair, got ${formatType(current)}`,
         };
       }
+      const which =
+        m === "public" || m === "pub" ? "public" : "private";
+      // Project to a real `key` tip (half), not keypair+which folklore.
       return {
         ok: true,
-        output: typeOf("keypair", { ...current, which: m }),
+        output: typeOf("key", { alg: current.alg, which }),
       };
     }
     if (m === "key") {
@@ -883,6 +933,9 @@ export function stepAcceptsRefined(spec, from) {
     return true;
   }
   if (spec.name === "foreach") return current.base === "shares";
+  if (spec.name === "export") {
+    return current.base === "keypair" || current.base === "key";
+  }
   if (spec.name === "sss.combine") {
     return current.base === "shares" && current.kind !== "mnemonic";
   }
@@ -974,6 +1027,12 @@ export function artifactMetaFromType(t) {
   }
   if (t.base === "keypair") {
     return { role: "key", tags: ["keypair"] };
+  }
+  if (t.base === "key") {
+    return {
+      role: "key",
+      tags: [t.which === "public" ? "public" : "private"],
+    };
   }
   if (t.base === "recipients") {
     return { role: "recipients", tags: ["openpgp", "directory"] };
@@ -1102,7 +1161,7 @@ export function walkPipelineTypes(steps, deps) {
               : null;
         const projected =
           current.base === "keypair" && which
-            ? typeOf("keypair", { ...current, which })
+            ? typeOf("key", { alg: current.alg, which })
             : current;
         branchEdges.push({
           member: which || m,

@@ -47,9 +47,9 @@ import {
   bytesToBase64Url,
   bytesToHex,
   bytesToText,
-  fromPem,
   hexToBytes,
   jwkFieldToBytes,
+  parsePem,
   pemLabelFor,
   pkcs8FromEcScalar,
   textToBytes,
@@ -204,7 +204,7 @@ function pipelineValueIsSensitive(value) {
   if (!value) return false;
   if (value.meta?.sensitive) return true;
   if (value.type === "keypair" || value.type === "shares") return true;
-  if (value.type === "openpgp-key") {
+  if (value.type === "key" || value.type === "openpgp-key") {
     return String(value.meta?.which || "") !== "public";
   }
   return false;
@@ -555,7 +555,7 @@ export function projectSelector(value, selector) {
     const pub = value.data?.publicKey;
     if (!priv) throw new Error("selector .private: no private key on keypair");
     return {
-      type: "keypair",
+      type: "key",
       data: { privateKey: priv, publicKey: pub },
       meta: { ...value.meta, which: "private", sensitive: true },
     };
@@ -567,7 +567,7 @@ export function projectSelector(value, selector) {
     const pub = value.data?.publicKey;
     if (!pub) throw new Error("selector .public: no public key on keypair");
     return {
-      type: "keypair",
+      type: "key",
       data: { publicKey: pub },
       meta: { ...value.meta, which: "public", sensitive: false },
     };
@@ -737,14 +737,16 @@ async function execStepBody(step, value, bindings, artifacts) {
     case "gpg.decrypt":
       return decryptGpgSource(bindings, artifacts);
     case "export": {
-      const whichDefault =
-        value?.meta?.which === "public" || value?.meta?.which === "private"
+      // Projected `key` tip selects the half; which= only applies to full keypairs.
+      const tipWhich =
+        value?.type === "key" &&
+        (value?.meta?.which === "public" || value?.meta?.which === "private")
           ? value.meta.which
-          : "private";
+          : null;
       return exportKey(
         value,
         String(step.params.format || "pkcs8"),
-        String(step.params.which || whichDefault)
+        tipWhich || String(step.params.which || "private")
       );
     }
     case "import":
@@ -759,11 +761,18 @@ async function execStepBody(step, value, bindings, artifacts) {
     case "pem": {
       if (step.params.decode) {
         if (!value || value.type !== "text") throw new Error("pem -d expects PEM text");
-        const der = fromPem(String(value.data));
+        const block = parsePem(String(value.data));
         return {
           type: "bytes",
-          data: der,
-          meta: { ...value.meta, format: "pkcs8", sensitive: true },
+          data: block.der,
+          meta: {
+            ...value.meta,
+            format: block.format === "opaque" ? value.meta?.format : block.format,
+            which: block.which,
+            pemLabel: block.label,
+            kind: "der",
+            sensitive: block.which !== "public",
+          },
         };
       }
       if (!value || value.type !== "bytes") throw new Error("pem expects bytes");
@@ -2614,7 +2623,9 @@ async function generateKeyValue(alg, usage, padding = "pss", hash = "sha-256") {
  * @param {string} which
  */
 async function exportKey(value, format, which) {
-  if (!value || value.type !== "keypair") throw new Error("export expects a keypair");
+  if (!value || (value.type !== "keypair" && value.type !== "key")) {
+    throw new Error("export expects a keypair or key");
+  }
   const { data, meta } = value;
   const priv = data.privateKey;
   const pub = data.publicKey;
@@ -2771,9 +2782,9 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
         useDerive ? [] : ["verify"]
       );
       return {
-        type: "keypair",
-        data: { privateKey: null, publicKey },
-        meta: { alg, curve, algorithm: name, sensitive: false },
+        type: "key",
+        data: { publicKey },
+        meta: { alg, curve, algorithm: name, which: "public", sensitive: false },
       };
     }
     const privateKey = await crypto.subtle.importKey(
@@ -2800,9 +2811,9 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
         ["verify"]
       );
       return {
-        type: "keypair",
-        data: { privateKey: null, publicKey },
-        meta: { alg, algorithm: "Ed25519", sensitive: false },
+        type: "key",
+        data: { publicKey },
+        meta: { alg, algorithm: "Ed25519", which: "public", sensitive: false },
       };
     }
     const privateKey = await crypto.subtle.importKey(
@@ -2829,9 +2840,9 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
         []
       );
       return {
-        type: "keypair",
-        data: { privateKey: null, publicKey },
-        meta: { alg, algorithm: "X25519", sensitive: false },
+        type: "key",
+        data: { publicKey },
+        meta: { alg, algorithm: "X25519", which: "public", sensitive: false },
       };
     }
     const privateKey = await crypto.subtle.importKey(
@@ -2868,12 +2879,13 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
         useEncrypt ? ["encrypt", "wrapKey"] : ["verify"]
       );
       return {
-        type: "keypair",
-        data: { privateKey: null, publicKey },
+        type: "key",
+        data: { publicKey },
         meta: {
           alg,
           algorithm: name,
           hash: hashName,
+          which: "public",
           sensitive: false,
           padding: useEncrypt ? undefined : usePkcs1 ? "pkcs1" : "pss",
           tags: legacyTags,
@@ -3307,7 +3319,7 @@ async function materializeOutArtifacts(value, params) {
     );
   }
 
-  if (value.type === "keypair") {
+  if (value.type === "keypair" || value.type === "key") {
     const parts = [];
     const priv = value.data?.privateKey;
     const pub = value.data?.publicKey;
@@ -3352,8 +3364,11 @@ async function materializeOutArtifacts(value, params) {
       parts.push({
         label,
         filename: `${stem}.txt`,
-        content: "[keypair — no extractable material]",
-        sensitive: true,
+        content:
+          value.type === "key"
+            ? "[key — no extractable material]"
+            : "[keypair — no extractable material]",
+        sensitive: value.type !== "key" || value.meta?.which !== "public",
         mime: "text/plain",
         encoding: "text",
       });
@@ -3465,19 +3480,23 @@ function valueToArtifacts(value, name = "artifact") {
       )
     );
   }
-  if (value.type === "keypair") {
+  if (value.type === "keypair" || value.type === "key") {
+    const which = value.meta?.which === "public" ? "public" : "private";
     return [
       attachPipeMeta(
         {
           label: name,
           filename: `${name}.txt`,
-          content: "[keypair — use out or export before emitting]",
-          sensitive: true,
+          content:
+            value.type === "key"
+              ? `[${which} key — use out or export before emitting]`
+              : "[keypair — use out or export before emitting]",
+          sensitive: value.type === "keypair" || which !== "public",
           mime: "text/plain",
           encoding: "text",
           disposition: "file",
           role: "key",
-          tags: ["keypair"],
+          tags: value.type === "key" ? [which] : ["keypair"],
         },
         value
       ),

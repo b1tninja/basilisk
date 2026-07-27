@@ -63,6 +63,108 @@ describe("refined types", () => {
     }
   });
 
+  it("select .public/.private projects keypair → key tip", () => {
+    const sel = getStep("select");
+    const pub = resolveStepType(
+      sel,
+      typeOf("keypair", { alg: "ec/p256" }),
+      { selector: ".public" }
+    );
+    expect(pub.ok).toBe(true);
+    if (pub.ok) {
+      expect(pub.output.base).toBe("key");
+      expect(pub.output.which).toBe("public");
+      expect(pub.output.alg).toBe("ec/p256");
+    }
+    const priv = resolveStepType(
+      sel,
+      typeOf("keypair", { alg: "ed25519" }),
+      { selector: ".priv" }
+    );
+    expect(priv.ok).toBe(true);
+    if (priv.ok) {
+      expect(priv.output.base).toBe("key");
+      expect(priv.output.which).toBe("private");
+    }
+  });
+
+  it("export respects projected key tip which", () => {
+    const spec = getStep("export");
+    const publicKey = typeOf("key", { alg: "ec/p256", which: "public" });
+    expect(resolveStepType(spec, publicKey, { format: "spki" }).ok).toBe(true);
+    expect(resolveStepType(spec, publicKey, { format: "pkcs8" }).ok).toBe(false);
+    expect(resolveStepType(spec, publicKey, { format: "scalar" }).ok).toBe(false);
+
+    const privateKey = typeOf("key", { alg: "ec/p256", which: "private" });
+    expect(resolveStepType(spec, privateKey, { format: "pkcs8" }).ok).toBe(true);
+    expect(resolveStepType(spec, privateKey, { format: "spki" }).ok).toBe(false);
+  });
+
+  it("import spki yields public key tip", () => {
+    const r = resolveStepType(
+      getStep("import"),
+      typeOf("bytes", { kind: "der", which: "public" }),
+      { format: "spki", alg: "ec/p256" }
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.output.base).toBe("key");
+      expect(r.output.which).toBe("public");
+    }
+  });
+
+  it("import rejects mismatched DER half", () => {
+    expect(
+      resolveStepType(
+        getStep("import"),
+        typeOf("bytes", { kind: "der", which: "public" }),
+        { format: "pkcs8", alg: "ec/p256" }
+      ).ok
+    ).toBe(false);
+    expect(
+      resolveStepType(
+        getStep("import"),
+        typeOf("bytes", { kind: "der", which: "private" }),
+        { format: "spki", alg: "ec/p256" }
+      ).ok
+    ).toBe(false);
+  });
+
+  it("pem.encode/decode preserve which on the tip", () => {
+    const derPub = typeOf("bytes", {
+      kind: "der",
+      which: "public",
+      alg: "ec/p256",
+    });
+    const enc = resolveStepType(getStep("pem"), derPub, {});
+    expect(enc.ok).toBe(true);
+    if (enc.ok) {
+      expect(enc.output.kind).toBe("pem");
+      expect(enc.output.which).toBe("public");
+    }
+    const dec = resolveStepType(getStep("pem"), enc.ok ? enc.output : derPub, {
+      decode: true,
+    });
+    expect(dec.ok).toBe(true);
+    if (dec.ok) {
+      expect(dec.output.kind).toBe("der");
+      expect(dec.output.which).toBe("public");
+    }
+  });
+
+  it("walkPipelineTypes: tee .public branch is key then DER", () => {
+    const compiled = compileRecipe(
+      "genkey ec/p256 | tee\n  - .public | export spki\n| export pkcs8"
+    );
+    expect(compiled.validation.ok).toBe(true);
+    const { edges } = walkPipelineTypes(compiled.ast.steps, { getStep });
+    const tee = edges.find((e) => e.name === "tee");
+    expect(tee?.branches?.[0]?.member).toBe("public");
+    const br0 = tee?.branches?.[0]?.edges || [];
+    expect(formatType(br0[0]?.input)).toBe("key/ec/p256/public");
+    expect(formatType(br0[0]?.output)).toMatch(/bytes\/der/);
+  });
+
   it("stepsAccepting hides sss after pem", () => {
     const afterPem = typeOf("text", { kind: "pem" });
     const names = stepsAccepting(afterPem).map((s) => s.name);

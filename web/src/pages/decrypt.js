@@ -16,13 +16,12 @@ import {
   formatOpenPgpVerifiedMessage,
   runCryptoSelfTests,
 } from "../lib/crypto-self-test.js";
+import { applySessionKeyDetails } from "../lib/packet-map.js";
 import {
-  applySessionKeyDetails,
-  dearmorToBytes,
-  enrichSpansWithPackets,
-  mapPacketSpans,
-  tagColorClass,
-} from "../lib/packet-map.js";
+  buildPacketMapFromArmored,
+  packetMapViewHtml,
+  wirePacketMapView,
+} from "../lib/packet-hex-view.js";
 import { splitArmoredMessages } from "../lib/pgp/armor.js";
 import { analyzeArmored } from "../lib/pgp/inspect.js";
 import {
@@ -568,118 +567,48 @@ function updateDecryptSection(analysis) {
   }
 }
 
-const HEX_INITIAL = 4096;
+/** @type {{ binary: Uint8Array, spans: * } | null} */
+let packetMapBuilt = null;
 
-function renderPacketMap(analysis) {
+async function renderPacketMap(analysis) {
   const card = document.getElementById("packet-map-card");
   if (!card) return;
   if (!expertMode) {
     card.classList.add("hidden");
     card.innerHTML = "";
     currentPacketMap = null;
+    packetMapBuilt = null;
     return;
   }
   if (!analysis || analysis.type === "empty" || !analysis.armored) {
     card.classList.add("hidden");
     card.innerHTML = "";
     currentPacketMap = null;
+    packetMapBuilt = null;
     return;
   }
-  let binary;
   try {
-    binary = dearmorToBytes(analysis.armored);
+    const built = await buildPacketMapFromArmored(analysis.armored);
+    packetMapBuilt = built;
+    currentPacketMap = built.spans;
+    card.innerHTML = packetMapViewHtml({
+      binary: built.binary,
+      spans: built.spans,
+      expanded: hexExpanded,
+      expandBtnId: "hex-expand-btn",
+    });
+    card.classList.remove("hidden");
+    wirePacketMapView(card, built.spans, {
+      onExpand: () => {
+        hexExpanded = !hexExpanded;
+        if (currentAnalysis) void renderPacketMap(currentAnalysis);
+      },
+    });
   } catch (_) {
     card.classList.add("hidden");
-    return;
+    currentPacketMap = null;
+    packetMapBuilt = null;
   }
-  const spans = mapPacketSpans(binary);
-  const packets =
-    analysis.message && analysis.type !== "cleartext" && analysis.type !== "detached"
-      ? analysis.message.packets
-      : analysis.message?.packets || analysis.message?.signature?.packets || null;
-  currentPacketMap = enrichSpansWithPackets(spans, packets);
-
-  const legend = [...new Set(spans.map((s) => s.name))]
-    .map((name, i) => {
-      const span = spans.find((s) => s.name === name);
-      return `<span class="pkt-legend-chip ${tagColorClass(span?.colorIndex ?? i)}">${escapeHtml(name)}</span>`;
-    })
-    .join("");
-
-  const detailRows = currentPacketMap
-    .map((s, i) => {
-      const lines = (s.detail?.lines || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("");
-      const warns = (s.detail?.warnings || [])
-        .map((w) => `<div class="text-error">${escapeHtml(w)}</div>`)
-        .join("");
-      return `<div class="pkt-detail-row ${tagColorClass(s.colorIndex)}" data-pkt-idx="${i}" tabindex="0">
-        <div class="pkt-detail-title">${escapeHtml(s.name)} <span class="muted">@ ${s.headerStart}–${s.end}</span></div>
-        <div class="pkt-detail-body">${lines}${warns}</div>
-      </div>`;
-    })
-    .join("");
-
-  const limit = hexExpanded ? binary.length : Math.min(binary.length, HEX_INITIAL);
-  card.innerHTML = `
-    <p class="card-title">Packet map</p>
-    <div class="pkt-legend">${legend}</div>
-    <div class="hex-view" id="hex-view" aria-label="Colorized packet bytes">${renderHexGrid(binary, currentPacketMap, limit)}</div>
-    ${
-      binary.length > HEX_INITIAL
-        ? `<button type="button" class="text-link" id="hex-expand-btn">${
-            hexExpanded ? "Show less" : `Show full (${binary.length} bytes)`
-          }</button>`
-        : ""
-    }
-    <p class="card-title mt-lg">Packet details</p>
-    <div class="pkt-detail-list">${detailRows}</div>
-  `;
-  card.classList.remove("hidden");
-}
-
-function renderHexGrid(binary, spans, limit) {
-  const rows = [];
-  for (let off = 0; off < limit; off += 16) {
-    const slice = binary.subarray(off, Math.min(off + 16, limit));
-    const hexParts = [];
-    const asciiParts = [];
-    for (let i = 0; i < slice.length; i++) {
-      const abs = off + i;
-      const span = spans.find((s) => abs >= s.headerStart && abs < s.end);
-      const isHdr = span && abs < span.bodyStart;
-      const cls = span
-        ? `${tagColorClass(span.colorIndex)}${isHdr ? " pkt-hdr" : ""}`
-        : "";
-      const b = slice[i];
-      hexParts.push(
-        `<span class="hex-byte ${cls}" data-off="${abs}" title="${
-          span ? escapeHtml(span.name) : ""
-        }">${b.toString(16).padStart(2, "0")}</span>`
-      );
-      const ch = b >= 32 && b < 127 ? String.fromCharCode(b) : ".";
-      asciiParts.push(`<span class="hex-ascii ${cls}" data-off="${abs}">${escapeHtml(ch)}</span>`);
-    }
-    rows.push(
-      `<div class="hex-row"><span class="hex-off">${off
-        .toString(16)
-        .padStart(4, "0")}</span><span class="hex-bytes">${hexParts.join(
-        " "
-      )}</span><span class="hex-gutter">${asciiParts.join("")}</span></div>`
-    );
-  }
-  return rows.join("");
-}
-
-function highlightPacket(idx) {
-  document.querySelectorAll(".pkt-detail-row").forEach((el) => {
-    el.classList.toggle("pkt-active", Number(el.getAttribute("data-pkt-idx")) === idx);
-  });
-  const span = currentPacketMap?.[idx];
-  document.querySelectorAll(".hex-byte, .hex-ascii").forEach((el) => {
-    const off = Number(el.getAttribute("data-off"));
-    const on = span && off >= span.headerStart && off < span.end;
-    el.classList.toggle("hex-hl", !!on);
-  });
 }
 
 async function runAnalyze() {
@@ -688,7 +617,7 @@ async function runAnalyze() {
   if (!armored) {
     currentAnalysis = null;
     renderInspect(null);
-    renderPacketMap(null);
+    void renderPacketMap(null);
     updateDecryptSection(null);
     return;
   }
@@ -702,14 +631,14 @@ async function runAnalyze() {
     }
     currentAnalysis = analysis;
     renderInspect(analysis);
-    renderPacketMap(blocks.length > 1 ? null : analysis);
+    void renderPacketMap(blocks.length > 1 ? null : analysis);
     updateDecryptSection(analysis);
     await autoSelectVaultKey(analysis);
     await verifySigners(analysis);
   } catch (err) {
     currentAnalysis = null;
     renderInspect(null);
-    renderPacketMap(null);
+    void renderPacketMap(null);
     updateDecryptSection(null);
     showError(errorEl, err.message || "Could not parse message");
   }
@@ -914,7 +843,7 @@ async function fetchVerificationArmored(signerIds) {
 }
 
 function applySessionKeysToMap(sessionKeys) {
-  if (!currentPacketMap || !sessionKeys?.length) return;
+  if (!currentPacketMap || !packetMapBuilt || !sessionKeys?.length) return;
   // Length-only metadata: synthesize a zeroed stand-in so applySessionKeyDetails
   // can show bit length without ever holding real session-key octets.
   const forApply = sessionKeys.map((sk) => ({
@@ -930,20 +859,21 @@ function applySessionKeysToMap(sessionKeys) {
             : undefined,
   }));
   currentPacketMap = applySessionKeyDetails(currentPacketMap, forApply);
-  const list = document.querySelector("#packet-map-card .pkt-detail-list");
-  if (!list) return;
-  list.innerHTML = currentPacketMap
-    .map((s, i) => {
-      const lines = (s.detail?.lines || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("");
-      const warns = (s.detail?.warnings || [])
-        .map((w) => `<div class="text-error">${escapeHtml(w)}</div>`)
-        .join("");
-      return `<div class="pkt-detail-row ${tagColorClass(s.colorIndex)}" data-pkt-idx="${i}" tabindex="0">
-        <div class="pkt-detail-title">${escapeHtml(s.name)} <span class="muted">@ ${s.headerStart}–${s.end}</span></div>
-        <div class="pkt-detail-body">${lines}${warns}</div>
-      </div>`;
-    })
-    .join("");
+  packetMapBuilt = { ...packetMapBuilt, spans: currentPacketMap };
+  const card = document.getElementById("packet-map-card");
+  if (!card) return;
+  card.innerHTML = packetMapViewHtml({
+    binary: packetMapBuilt.binary,
+    spans: currentPacketMap,
+    expanded: hexExpanded,
+    expandBtnId: "hex-expand-btn",
+  });
+  wirePacketMapView(card, currentPacketMap, {
+    onExpand: () => {
+      hexExpanded = !hexExpanded;
+      if (currentAnalysis) void renderPacketMap(currentAnalysis);
+    },
+  });
 }
 
 document.getElementById("ciphertext").addEventListener("input", () => {
@@ -1316,29 +1246,13 @@ document.addEventListener("click", (e) => {
       });
     return;
   }
-  if (t.id === "hex-expand-btn") {
-    hexExpanded = !hexExpanded;
-    if (currentAnalysis) renderPacketMap(currentAnalysis);
-    return;
-  }
-  const row = t.closest("[data-pkt-idx]");
-  if (row) {
-    highlightPacket(Number(row.getAttribute("data-pkt-idx")));
-    return;
-  }
-  const byte = t.closest("[data-off]");
-  if (byte && currentPacketMap) {
-    const off = Number(byte.getAttribute("data-off"));
-    const idx = currentPacketMap.findIndex((s) => off >= s.headerStart && off < s.end);
-    if (idx >= 0) highlightPacket(idx);
-  }
 });
 
 document.addEventListener("change", (e) => {
   if (e.target?.id === "expert-mode-toggle") {
     expertMode = !!e.target.checked;
     setExpertMode(expertMode);
-    if (currentAnalysis) renderPacketMap(currentAnalysis);
+    if (currentAnalysis) void renderPacketMap(currentAnalysis);
   }
 });
 

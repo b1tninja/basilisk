@@ -52,7 +52,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - List marker is only `-`. Leading tabs are errors.
 - File paths (`./x.pem`, quoted paths, `file:…`) are reserved — not supported yet.
 - Comments: full-line `# …` (kept inside the current chain).
-- Ops-drawer **shelves** and **conjugate rows** (encode | `-d`, sign | verify) are UI only — they do not change recipe tokens or grammar.
+- Ops-drawer **shelves** and **conjugate rows** (encode | decode, sign | verify) are UI only for layout — encoding recipes use `pem.encode` / `pem.decode` (also accept `pem -d`).
 
 ## Chains
 
@@ -159,10 +159,12 @@ Each apply stage is `name` then zero or more args:
 |------|---------|-------|
 | Positional | `genkey ec/p256`, `out @public` | Binds the step’s `positional` param |
 | Named | `sss.split threshold=2 shares=3` | `ident=value` |
-| Flag | `blip39 -d`, `pem -d` | Sets the param with `flag: "-d"` to `true` |
+| Flag | `aes-gcm -d`, `pem -d` | Sets the param with `flag: "-d"` to `true` (ciphers; encodings also accept this) |
+| Encode / decode verb | `pem.encode`, `pem.decode`, `base64.decode` | Encoding `decodeTwin` steps — serialize as `.encode` / `.decode` (AST still `{ decode }`) |
 
 Canonical serialize omits redundant `name=` for the primary positional when the
 value is not the registry default (slot names always serialize as `@label`).
+Encoding twins canonicalize to `name.encode` / `name.decode` (not `-d`).
 
 Aliases resolve at parse time (`paste` → `input`, `from` → `in`, …). Basilisk-legacy step tokens (`encrypt`, `aesgcm`, `wa-prf`, `recover`, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
 
@@ -341,12 +343,48 @@ Homonym: the stage `as master` is distinct from KDF/ECDH params `hkdf … as=aes
 Bare selector stages become `select` under the hood; under `tee` / `foreach`
 they also appear as branch prefixes (`- .public | …`).
 
-| Selector | Meaning |
-|----------|---------|
-| `.private` / `.public` | Keypair half (`.priv` / `.pub` / `.secret` accepted) |
-| `.keys` / `.values` / `.items` | Dict views of a shares map |
-| `.key` / `.value` | Fields of one `{ key, value }` item |
-| `[n]` / `[n:m]` | Share index / slice (same as `at`) |
+### Projectors (stem or branch)
+
+These change the tip type:
+
+| Selector | Tip before | Tip after |
+|----------|------------|-----------|
+| `.public` / `.pub` | `keypair` | `key` + `which=public` |
+| `.private` / `.priv` / `.secret` | `keypair` | `key` + `which=private` |
+| `.key` | `item` | `text/opaque` |
+| `.value` | `item` | `text/mnemonic` or `bytes/opaque` |
+| `[n]` / `at n` | `shares` | one share (`text/mnemonic` or `bytes`) |
+| `[n:m]` / `at n:m` | `shares` | `shares` slice |
+
+After `.public`, use `export spki` (not `export pkcs8`). After `.private` or on a
+full keypair stem, use `export pkcs8` / `export scalar`. The projected `key` tip
+selects the half — you do not need `export which=…` there.
+
+ASCII-armored round-trips keep the half through `pem.encode` / `pem.decode`
+(`BEGIN PUBLIC KEY` ↔ SPKI, `BEGIN PRIVATE KEY` ↔ PKCS#8):
+
+```text
+.public | export spki | pem.encode | out @pub
+in @pub | pem.decode | import spki
+
+export pkcs8 | pem.encode | out @priv
+in @priv | pem.decode | import pkcs8
+```
+
+### Iteration views (`foreach` only)
+
+| Form | Meaning |
+|------|---------|
+| `foreach .items` | iterate `{key,value}` items |
+| `foreach .values` | iterate share values |
+| `foreach .keys` | iterate share keys |
+
+Stem `.items` / `.keys` / `.values` are rejected — use `foreach`.
+
+### Casts (not selectors)
+
+`as master` / `as scalar` / `as opaque` only retag **bytes**. They do not project
+keypair halves (`as public` is not valid).
 
 ## Blocks
 

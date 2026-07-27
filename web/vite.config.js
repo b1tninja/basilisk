@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import sri from "vite-plugin-sri-gen";
 import { basiliskExternalizeImportMaps } from "./scripts/externalize-importmaps.js";
+import { basiliskDevServer } from "./scripts/basilisk-dev-server.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -41,6 +42,8 @@ export default defineConfig({
     },
   },
   plugins: [
+    // Dev-only: Flask-parity clean URLs + CSP that allows Vite CSS/HMR.
+    basiliskDevServer(),
     react(),
     tailwindcss(),
     sri({

@@ -29,4 +29,5 @@ export type ArtifactTile = {
   filename?: string;
   content: string;
   sensitive?: boolean;
+  role?: string;
 };

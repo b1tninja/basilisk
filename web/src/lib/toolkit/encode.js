@@ -117,18 +117,64 @@ export function hexToBytes(hex) {
 }
 
 /**
+ * @typedef {{ der: Uint8Array, label: string, which: "public"|"private", format: "spki"|"pkcs8"|"opaque" }} PemBlock
+ */
+
+/**
+ * Map a PEM BEGIN label to WebCrypto import format + half.
+ * @param {string} label
+ * @returns {{ which: "public"|"private", format: "spki"|"pkcs8"|"opaque" }}
+ */
+export function pemMetaFromLabel(label) {
+  const L = String(label || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+  if (
+    L === "PUBLIC KEY" ||
+    L === "RSA PUBLIC KEY" ||
+    L === "EC PUBLIC KEY" ||
+    L.endsWith(" PUBLIC KEY")
+  ) {
+    return { which: "public", format: "spki" };
+  }
+  if (
+    L === "PRIVATE KEY" ||
+    L === "RSA PRIVATE KEY" ||
+    L === "EC PRIVATE KEY" ||
+    L === "ENCRYPTED PRIVATE KEY" ||
+    L.endsWith(" PRIVATE KEY")
+  ) {
+    return { which: "private", format: "pkcs8" };
+  }
+  return { which: "private", format: "opaque" };
+}
+
+/**
+ * Parse the first PEM block: DER + label metadata.
+ * @param {string} pem
+ * @returns {PemBlock}
+ */
+export function parsePem(pem) {
+  const text = String(pem || "");
+  const m = text.match(
+    /-----BEGIN ([^-]+)-----([\s\S]*?)-----END [^-]+-----/
+  );
+  if (!m) throw new Error("No PEM block found");
+  const label = String(m[1] || "").trim();
+  const b64 = m[2].replace(/\s+/g, "");
+  const der = base64ToBytes(b64);
+  const meta = pemMetaFromLabel(label);
+  return { der, label, which: meta.which, format: meta.format };
+}
+
+/**
  * Strip PEM armor and return DER bytes.
  * @param {string} pem
  * @returns {Uint8Array}
  */
 export function fromPem(pem) {
-  const text = String(pem || "");
-  const m = text.match(
-    /-----BEGIN [^-]+-----([\s\S]*?)-----END [^-]+-----/
-  );
-  if (!m) throw new Error("No PEM block found");
-  const b64 = m[1].replace(/\s+/g, "");
-  return base64ToBytes(b64);
+  return parsePem(pem).der;
 }
 
 /**

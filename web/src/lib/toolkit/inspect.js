@@ -8,8 +8,9 @@
  */
 
 import { bytesToHex } from "./encode.js";
+import { buildPacketMapFromArmoredSync } from "../packet-hex-view.js";
 
-/** @typedef {"auto"|"text"|"hex"|"hexdump"|"jwk"|"meta"} InspectFormat */
+/** @typedef {"auto"|"text"|"hex"|"hexdump"|"packets"|"jwk"|"meta"} InspectFormat */
 
 /** Formats offered by the inspect / tee result tile. */
 export const INSPECT_FORMATS = /** @type {InspectFormat[]} */ ([
@@ -17,9 +18,20 @@ export const INSPECT_FORMATS = /** @type {InspectFormat[]} */ ([
   "text",
   "hex",
   "hexdump",
+  "packets",
   "jwk",
   "meta",
 ]);
+
+/**
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function textLooksLikeOpenPgpArmor(text) {
+  return /-----BEGIN PGP (MESSAGE|PUBLIC KEY BLOCK|PRIVATE KEY BLOCK|SIGNATURE)-----/i.test(
+    String(text || "")
+  );
+}
 
 /**
  * @typedef {object} InspectSnapshot
@@ -167,7 +179,7 @@ export async function buildInspectSnapshot(value) {
     };
   }
 
-  if (value.type === "keypair") {
+  if (value.type === "keypair" || value.type === "key") {
     const priv = value.data?.privateKey;
     const pub = value.data?.publicKey;
     /** @type {InspectSnapshot["keypair"]} */
@@ -197,7 +209,7 @@ export async function buildInspectSnapshot(value) {
     } catch {
       /* raw not extractable for many algs */
     }
-    return { type: "keypair", meta, keypair };
+    return { type: value.type, meta, keypair };
   }
 
   if (value.type === "openpgp-key") {
@@ -284,7 +296,19 @@ export function inspectFromSnapshot(snap, format = "auto") {
     const text = String(snap.text ?? "");
     lines.push(`length: ${text.length} chars`);
     lines.push("");
-    if (fmt === "hex" || fmt === "hexdump") {
+    if (fmt === "packets") {
+      if (!textLooksLikeOpenPgpArmor(text)) {
+        lines.push("packets: (not OpenPGP armor)");
+      } else {
+        try {
+          const built = buildPacketMapFromArmoredSync(text);
+          lines.push(built.summary.trimEnd());
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          lines.push(`packets: (unavailable — ${msg})`);
+        }
+      }
+    } else if (fmt === "hex" || fmt === "hexdump") {
       const bytes = new TextEncoder().encode(text);
       lines.push(
         fmt === "hex" ? bytesToHex(bytes) : formatHexdump(bytes, { limit: 4096 })
@@ -321,11 +345,12 @@ export function inspectFromSnapshot(snap, format = "auto") {
     return `${lines.join("\n")}\n`;
   }
 
-  if (snap.type === "keypair") {
+  if (snap.type === "keypair" || snap.type === "key") {
     const kp = snap.keypair || {};
     lines.push(`alg: ${meta.alg || "?"}`);
     lines.push(`algorithm: ${meta.algorithm || "?"}`);
     if (meta.curve) lines.push(`curve: ${meta.curve}`);
+    if (meta.which) lines.push(`which: ${meta.which}`);
     if (meta.symmetric) lines.push(`symmetric: yes`);
     lines.push(`private: ${kp.hasPrivate || kp.privateJwk ? "yes" : "no"}`);
     lines.push(`public: ${kp.hasPublic || kp.publicJwk ? "yes" : "no"}`);
@@ -365,16 +390,25 @@ export function inspectFromSnapshot(snap, format = "auto") {
 
   if (snap.type === "openpgp-key") {
     const info = snap.openpgpKey || {};
+    const text = String(snap.text || "");
     lines.push(`which: ${info.which || meta.which || "?"}`);
     if (info.fingerprint || meta.fingerprint) {
       lines.push(`fingerprint: ${info.fingerprint || meta.fingerprint}`);
     }
-    lines.push(`length: ${info.length ?? String(snap.text || "").length} chars`);
+    lines.push(`length: ${info.length ?? text.length} chars`);
     lines.push("");
     if (fmt === "meta") {
       lines.push(JSON.stringify(meta, null, 2));
+    } else if (fmt === "packets") {
+      try {
+        const built = buildPacketMapFromArmoredSync(text);
+        lines.push(built.summary.trimEnd());
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        lines.push(`packets: (unavailable — ${msg})`);
+      }
     } else {
-      lines.push(String(snap.text || ""));
+      lines.push(text);
     }
     return `${lines.join("\n")}\n`;
   }

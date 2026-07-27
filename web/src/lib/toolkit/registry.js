@@ -300,7 +300,7 @@ export const STEPS = [
     shelf: "keys",
     conjugate: "import",
     pairCaption: "Export / import",
-    doc: "Export a key (pkcs8 / spki / jwk / raw / scalar). Prefer `export spki` after `.public`, or `export pkcs8` / `export scalar` on the stem. Example: `.public | export spki | pem | out @public`.",
+    doc: "Export a keypair or projected `key` tip (pkcs8 / spki / jwk / raw / scalar). After `.public` / `.private` the tip is `key` and selects the half — prefer `export spki` on `.public`, `export pkcs8` / `export scalar` on the stem or `.private`.",
     input: "keypair",
     output: "bytes",
     params: [
@@ -317,13 +317,13 @@ export const STEPS = [
         type: "enum",
         default: "private",
         enum: ["private", "public"],
-        doc: "Which half to export. Ignored for format=scalar/d (always private). Prefer format=spki for public material.",
+        doc: "Which half when the tip is a full keypair. Ignored (and must not conflict) after `.public` / `.private`. Prefer format=spki for public material.",
       },
     ],
     effectiveIo(params) {
       const format = String(params?.format || "pkcs8");
       return {
-        input: "keypair",
+        input: "keypair", // also accepts projected `key` via refined typing
         output: format === "jwk" ? "text" : "bytes",
       };
     },
@@ -334,7 +334,7 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "keys",
     conjugateOf: "export",
-    doc: "Import DER/raw/scalar/JWK into a WebCrypto keypair. Example: `… | export jwk | import jwk alg=ed25519` or `import scalar alg=ec/p256`.",
+    doc: "Import DER/raw/scalar/JWK. `import spki` yields a public `key` tip; other formats yield a full keypair. Example: `… | export jwk | import jwk alg=ed25519` or `import scalar alg=ec/p256`.",
     input: "bytes",
     output: "keypair",
     params: [
@@ -344,7 +344,7 @@ export const STEPS = [
         positional: true,
         default: "pkcs8",
         enum: ["pkcs8", "spki", "raw", "scalar", "d", "jwk"],
-        doc: "Import format (jwk = JSON text; scalar/d = EC/OKP private bytes)",
+        doc: "Import format (jwk = JSON text; spki = public key tip; scalar/d = EC/OKP private bytes)",
       },
       {
         name: "alg",
@@ -388,6 +388,7 @@ export const STEPS = [
     effectiveIo(params) {
       const format = String(params?.format || "pkcs8").toLowerCase();
       if (format === "jwk") return { input: "text", output: "keypair" };
+      if (format === "spki") return { input: "bytes", output: "key" };
       return { input: "bytes", output: "keypair" };
     },
   },
@@ -933,7 +934,7 @@ export const STEPS = [
     shelf: "binary",
     decodeTwin: true,
     pairCaption: "PEM",
-    doc: "Wrap DER as PEM, or strip armor with `-d`. Example: `export pkcs8 | pem | out @private`.",
+    doc: "Wrap DER as PEM (`pem.encode`) or strip armor (`pem.decode`). Label auto: SPKI/`which=public` → PUBLIC KEY, PKCS#8 → PRIVATE KEY. Decode sets format/which from the BEGIN line. Example: `.public | export spki | pem.encode | out @public`. Also accepts `pem -d`.",
     input: "bytes",
     output: "text",
     params: [
@@ -974,7 +975,7 @@ export const STEPS = [
     shelf: "binary",
     decodeTwin: true,
     pairCaption: "Base64",
-    doc: "Encode bytes as Base64, or decode with `-d`. Example: `random 32 | base64 | out @secret`.",
+    doc: "Encode bytes as Base64 (`base64.encode`) or decode (`base64.decode`). Example: `random 32 | base64.encode | out @secret`. Also accepts `base64 -d`.",
     input: "bytes",
     output: "text",
     params: [
@@ -998,7 +999,7 @@ export const STEPS = [
     shelf: "binary",
     decodeTwin: true,
     pairCaption: "Base64url",
-    doc: "Encode bytes as URL-safe Base64 without padding, or decode with `-d`. Example: `random 32 | base64url | out @secret`.",
+    doc: "Encode bytes as URL-safe Base64 without padding (`base64url.encode`) or decode (`base64url.decode`). Also accepts `base64url -d`.",
     input: "bytes",
     output: "text",
     params: [
@@ -1022,7 +1023,7 @@ export const STEPS = [
     shelf: "binary",
     decodeTwin: true,
     pairCaption: "Hex",
-    doc: "Encode bytes as lowercase hex, or decode with `-d`. Example: `… | digest | hex | out @digest`.",
+    doc: "Encode bytes as lowercase hex (`hex.encode`) or decode (`hex.decode`). Example: `… | digest | hex.encode | out @digest`.",
     input: "bytes",
     output: "text",
     params: [
@@ -1046,7 +1047,7 @@ export const STEPS = [
     shelf: "binary",
     decodeTwin: true,
     pairCaption: "Base32",
-    doc: "Encode bytes as RFC 4648 Base32 (no padding, uppercase), or decode with `-d`. Example: `random 10 | base32 | out @id`.",
+    doc: "Encode bytes as RFC 4648 Base32 (`base32.encode`) or decode (`base32.decode`). Example: `random 10 | base32.encode | out @id`.",
     input: "bytes",
     output: "text",
     params: [
@@ -1142,7 +1143,7 @@ export const STEPS = [
     shelf: "split",
     decodeTwin: true,
     pairCaption: "BLIP39",
-    doc: "Encode raw SSS shares as BLIP39 mnemonics, or decode with `-d`. Example: `… | sss.split threshold=2 shares=3 | blip39 | foreach` / `- out @share`. Recover: `shares | blip39 -d | sss.combine`.",
+    doc: "Encode raw SSS shares as BLIP39 mnemonics (`blip39.encode`) or decode (`blip39.decode`). Example: `… | sss.split | blip39.encode | foreach`. Recover: `shares | blip39.decode | sss.combine`. Also accepts `blip39 -d`.",
     input: "shares",
     output: "shares",
     params: [
@@ -1290,7 +1291,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "flow",
     shelf: "control",
-    doc: "Project a member via selector. Usually written bare: `.public | export spki | pem`. Also as a tee/foreach branch prefix: `- .public | …`.",
+    doc: "Project a member via selector. `.public` / `.private` turn a keypair tip into a `key` tip (that half). Usually written bare: `.public | export spki | pem.encode`. Also as a tee/foreach branch prefix: `- .public | …`.",
     input: "bytes",
     output: "bytes",
     params: [

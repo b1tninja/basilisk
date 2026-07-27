@@ -29,7 +29,7 @@ describe("registry completeness", () => {
 
 describe("parse / serialize", () => {
   it("round-trips a simple recipe", () => {
-    const src = "genkey ec/p256 | export pkcs8 | pem";
+    const src = "genkey ec/p256 | export pkcs8 | pem.encode";
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     expect(ast.steps.map((s) => s.name)).toEqual(["genkey", "export", "pem"]);
@@ -43,7 +43,7 @@ describe("parse / serialize", () => {
     );
     expect(errors).toEqual([]);
     expect(changed).toBe(true);
-    expect(text).toBe("genkey ec/p256 | export pkcs8 | pem");
+    expect(text).toBe("genkey ec/p256 | export pkcs8 | pem.encode");
   });
 
   it("canonicalizeRecipe formats foreach bodies and spacing", () => {
@@ -124,20 +124,36 @@ describe("validation", () => {
     expect(validation.errors.some((e) => /export/i.test(e.message))).toBe(true);
   });
 
-  it("parses and serializes -d decode flags", () => {
-    const src = "shares | blip39 -d | sss.combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem";
+  it("parses -d and serializes encoding twins as .encode/.decode", () => {
+    const src =
+      "shares | blip39 -d | sss.combine | utf8 | pem -d | import pkcs8 alg=ec/p256 | export pkcs8 | pem";
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     expect(ast.steps.find((s) => s.name === "pem" && s.params.decode === true)).toBeTruthy();
-    expect(serializeRecipe(ast)).toContain("pem -d");
-    expect(serializeRecipe(ast)).not.toContain("decode=true");
+    const text = serializeRecipe(ast);
+    expect(text).toContain("pem.decode");
+    expect(text).toContain("pem.encode");
+    expect(text).toContain("blip39.decode");
+    expect(text).not.toContain("pem -d");
+    expect(text).not.toContain("decode=true");
+  });
+
+  it("accepts pem.encode / pem.decode convenience verbs", () => {
+    const { ast, errors } = parseRecipe(
+      "export spki | pem.encode | out @pub\n\nin @pub | pem.decode | import spki"
+    );
+    expect(errors).toEqual([]);
+    expect(ast.chains[0].steps.find((s) => s.name === "pem")?.params?.decode).toBeFalsy();
+    expect(ast.chains[1].steps.find((s) => s.name === "pem")?.params?.decode).toBe(true);
+    expect(serializeRecipe(ast)).toContain("pem.encode");
+    expect(serializeRecipe(ast)).toContain("pem.decode");
   });
 
   it("rejects shares | sss.combine without blip39 -d", () => {
     const { validation } = compileRecipe("shares | sss.combine | base64");
     expect(validation.ok).toBe(false);
     expect(
-      validation.errors.some((e) => /blip39 -d|shares\/raw/i.test(e.message))
+      validation.errors.some((e) => /blip39\.decode|blip39 -d|shares\/raw/i.test(e.message))
     ).toBe(true);
   });
 

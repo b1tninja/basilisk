@@ -188,9 +188,9 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
-    expect(arts.some((a) => /type: keypair|private JWK/i.test(a.content))).toBe(
-      true
-    );
+    expect(
+      arts.some((a) => /type: key(?:pair)?|private JWK/i.test(a.content))
+    ).toBe(true);
     expect(arts.some((a) => /BEGIN PRIVATE KEY/i.test(a.content))).toBe(true);
   }, 30_000);
 

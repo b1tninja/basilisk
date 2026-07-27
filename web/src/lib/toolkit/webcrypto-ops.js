@@ -177,7 +177,7 @@ function pickBoundCryptoKey(bound, need) {
  */
 export async function pipelineValueToCryptoKey(value, need, algHint) {
   if (!value) throw new Error("Empty slot value");
-  if (value.type === "keypair") {
+  if (value.type === "keypair" || value.type === "key") {
     /** @type {BoundWebCryptoKey} */
     const bound = {
       privateKey: value.data?.privateKey,

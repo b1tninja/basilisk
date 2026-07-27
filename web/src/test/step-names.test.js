@@ -5,10 +5,13 @@ import {
   parseRecipe,
   serializeRecipe,
 } from "../lib/toolkit/recipe.js";
+import { getStep } from "../lib/toolkit/registry.js";
 import {
+  decodeTwinToken,
   LEGACY_STEP_MIGRATE,
   resolveAlternateForm,
   resolveCipherTransform,
+  resolveDecodeTwinVerb,
 } from "../lib/toolkit/step-names.js";
 
 describe("step name alternates", () => {
@@ -91,6 +94,35 @@ describe("encrypt / decrypt cipher sugar", () => {
     const { ast, errors } = parseRecipe("gpg.encrypt");
     expect(errors).toEqual([]);
     expect(ast?.steps?.[0]?.name).toBe("gpg.encrypt");
+  });
+});
+
+describe("encode / decode twin verbs", () => {
+  it("resolveDecodeTwinVerb maps pem.encode / pem.decode", () => {
+    expect(resolveDecodeTwinVerb("pem.encode", getStep)).toEqual({
+      canonical: "pem",
+      decode: false,
+    });
+    expect(resolveDecodeTwinVerb("PEM.DECODE", getStep)).toEqual({
+      canonical: "pem",
+      decode: true,
+    });
+    expect(resolveDecodeTwinVerb("aes-gcm.decode", getStep)).toBeNull();
+    expect(resolveDecodeTwinVerb("pem", getStep)).toBeNull();
+  });
+
+  it("decodeTwinToken prefers dotted verbs for encodings", () => {
+    expect(decodeTwinToken(getStep("pem"), false)).toBe("pem.encode");
+    expect(decodeTwinToken(getStep("pem"), true)).toBe("pem.decode");
+    expect(decodeTwinToken(getStep("aes-gcm"), true)).toBe("aes-gcm -d");
+  });
+
+  it("parses and serializes encoding verbs", () => {
+    const { ast, errors } = parseRecipe("random 16 | base64.encode | base64.decode");
+    expect(errors).toEqual([]);
+    expect(ast?.steps?.[1]?.params?.decode).toBeFalsy();
+    expect(ast?.steps?.[2]?.params?.decode).toBe(true);
+    expect(serializeRecipe(ast)).toBe("random 16 | base64.encode | base64.decode");
   });
 });
 

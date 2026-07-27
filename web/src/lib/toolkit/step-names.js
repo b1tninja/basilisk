@@ -99,6 +99,43 @@ export function resolveCipherTransform(raw) {
 }
 
 /**
+ * Encoding (and other non-cipher) decodeTwin verbs: `pem.encode` / `pem.decode`.
+ * Canonical AST stays `{ name: "pem", params: { decode } }`; `-d` remains accepted.
+ * @param {string} raw
+ * @param {(name: string) => { decodeTwin?: boolean, toolbox?: string } | null | undefined} getStep
+ * @returns {{ canonical: string, decode: boolean } | null}
+ */
+export function resolveDecodeTwinVerb(raw, getStep) {
+  const key = normalizeStepToken(raw);
+  const m = /^(.*)\.(encode|decode)$/.exec(key);
+  if (!m) return null;
+  const base = m[1];
+  const mode = m[2];
+  const alt = resolveAlternateForm(base);
+  const canonical = alt?.canonical || base;
+  const spec = getStep?.(canonical);
+  if (!spec?.decodeTwin) return null;
+  // Cipher ops keep encrypt/decrypt + `-d`; dotted verbs are for encodings etc.
+  if (CIPHER_DISPATCH_TARGETS.has(canonical)) return null;
+  return { canonical, decode: mode === "decode" };
+}
+
+/**
+ * Recipe / UI token for a decodeTwin step direction.
+ * Encoding twins prefer `pem.encode` / `pem.decode`; ciphers stay `aes-gcm` / `aes-gcm -d`.
+ * @param {{ name: string, decodeTwin?: boolean, toolbox?: string } | null | undefined} spec
+ * @param {boolean} decode
+ * @returns {string}
+ */
+export function decodeTwinToken(spec, decode) {
+  if (!spec?.name) return decode ? "-d" : "";
+  if (spec.decodeTwin && !CIPHER_DISPATCH_TARGETS.has(spec.name)) {
+    return `${spec.name}.${decode ? "decode" : "encode"}`;
+  }
+  return decode ? `${spec.name} -d` : spec.name;
+}
+
+/**
  * Hint when the user typed a removed Basilisk-legacy token.
  * @param {string} raw
  * @returns {string|null}

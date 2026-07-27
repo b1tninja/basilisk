@@ -198,12 +198,15 @@ export function useNotebook() {
   const cellOutputs: ArtifactTile[][] = useMemo(() => {
     void kernelEpoch;
     return chains.map((_, i) =>
-      (kernelRef.current.getCellOutputs(i) || []).map((a: ArtifactTile) => ({
-        label: a.label,
-        filename: a.filename,
-        content: String(a.content ?? ""),
-        sensitive: !!a.sensitive,
-      }))
+      (kernelRef.current.getCellOutputs(i) || []).map(
+        (a: ArtifactTile & { role?: string }) => ({
+          label: a.label,
+          filename: a.filename,
+          content: String(a.content ?? ""),
+          sensitive: !!a.sensitive,
+          role: a.role,
+        })
+      )
     );
   }, [chains, kernelEpoch]);
 

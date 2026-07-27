@@ -478,6 +478,31 @@ describe("import jwk / spki", () => {
     const out = await runRecipe(ast);
     expect(out[0].content).toMatch(/^[0-9a-f]+$/);
   }, 30_000);
+
+  it("round-trips armored public and private PEM", async () => {
+    const { ast, validation } = compileRecipe(`genkey ec/p256 | tee
+  - .public | export spki | pem.encode | out @pub
+| export pkcs8 | pem.encode | out @priv
+
+in @pub | pem.decode | import spki alg=ec/p256 | export spki | pem.encode | out @pub2
+
+in @priv | pem.decode | import pkcs8 alg=ec/p256 | export pkcs8 | pem.encode | out @priv2`);
+    expect(validation.ok).toBe(true);
+    const out = await runRecipe(ast);
+    const pub = out.find((a) => /@pub2|pub2/i.test(a.label || a.filename || ""));
+    const priv = out.find((a) => /@priv2|priv2/i.test(a.label || a.filename || ""));
+    const pubText = String(
+      pub?.content || out.find((a) => /BEGIN PUBLIC KEY/.test(a.content))?.content || ""
+    );
+    const privText = String(
+      priv?.content ||
+        out.find((a) => /BEGIN PRIVATE KEY/.test(a.content))?.content ||
+        ""
+    );
+    expect(pubText).toMatch(/BEGIN PUBLIC KEY/);
+    expect(privText).toMatch(/BEGIN PRIVATE KEY/);
+    expect(pubText).not.toMatch(/BEGIN PRIVATE KEY/);
+  }, 30_000);
 });
 
 describe("aes-cbc / aes-ctr", () => {

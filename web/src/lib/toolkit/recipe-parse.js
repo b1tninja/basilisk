@@ -18,6 +18,7 @@ import {
   legacyRemovalHint,
   resolveAlternateForm,
   resolveCipherTransform,
+  resolveDecodeTwinVerb,
 } from "./step-names.js";
 
 /**
@@ -369,6 +370,14 @@ class Parser {
     // WebCrypto sugar: encrypt|decrypt <transform> → concrete aes-* / rsa-* 
     if (lower === "encrypt" || lower === "decrypt") {
       return this.parseCipherDispatcher(lower, nameStart);
+    }
+
+    // Encoding conjugates: pem.encode / pem.decode → pem / pem -d (AST decode flag).
+    const twinVerb = resolveDecodeTwinVerb(name, getStep);
+    if (twinVerb) {
+      const step = this.parseApply(twinVerb.canonical, name, nameStart);
+      step.params = { ...step.params, decode: twinVerb.decode };
+      return step;
     }
 
     const alt = resolveAlternateForm(name);

@@ -66,6 +66,7 @@ import {
   parseRecipe,
   recipeChains,
   serializeRecipe,
+  serializeStep,
   unresolvedInputs,
   unresolvedRecipients,
   validateRecipe,
@@ -100,14 +101,23 @@ import {
   stepsAccepting,
   TOOLBOX_META,
 } from "../lib/toolkit/registry.js";
+import { decodeTwinToken } from "../lib/toolkit/step-names.js";
 import {
   INSPECT_FORMATS,
+  formatHexdump,
   inspectFromSnapshot,
+  textLooksLikeOpenPgpArmor,
 } from "../lib/toolkit/inspect.js";
+import {
+  buildPacketMapFromArmored,
+  packetMapViewHtml,
+  wirePacketMapView,
+} from "../lib/packet-hex-view.js";
 import {
   assertRecipeAllowedUnderFips,
   stepNameToSuite,
   suitesUsedBySteps,
+  toolboxToSuite,
   toolboxVerification,
   unverifiedSuitesAmong,
 } from "../lib/toolkit/suite-gate.js";
@@ -116,6 +126,7 @@ import {
   formatType,
   isTerminalSink,
   resolveStepType,
+  typeOf,
   walkPipelineTypes,
 } from "../lib/toolkit/types.js";
 import {
@@ -135,6 +146,11 @@ import {
   sanitizeFilename,
   uniquifyFilenames,
 } from "../lib/zip-store.js";
+import {
+  cacheDelete,
+  cacheList,
+  isPubkeyCacheStale,
+} from "../lib/pubkey-cache.js";
 import {
   listKeys as vaultListKeys,
   sortKeysByLastUsed,
@@ -163,6 +179,23 @@ let suiteStatus = {
   webcrypto: "unverified",
   sss: "unverified",
 };
+/** Suites that hit `error` at least once this session (stoplight memory). */
+let suiteEverFailed = {
+  openpgp: false,
+  webcrypto: false,
+  sss: false,
+};
+
+/**
+ * Refresh suiteStatus and remember any error this session.
+ * @param {import("../lib/toolkit/suite-gate.js").SuiteStatusMap} next
+ */
+function setSuiteStatus(next) {
+  suiteStatus = next;
+  for (const k of /** @type {const} */ (["openpgp", "webcrypto", "sss"])) {
+    if (next[k] === "error") suiteEverFailed[k] = true;
+  }
+}
 /** @type {import("../lib/toolkit/recipe.js").RecipeStep[]} */
 /** @type {{ steps: import("../lib/toolkit/recipe.js").RecipeStep[] }[]} */
 let chains = [{ steps: [] }];
@@ -171,6 +204,9 @@ let focusedCell = 0;
 /** Collapsed cell indices */
 /** @type {Set<number>} */
 let cellCollapsed = new Set();
+/** Cells showing raw recipe text instead of the chip preview */
+/** @type {Set<number>} */
+let cellRecipeRawMode = new Set();
 /** Variables drawer open */
 let variablesOpen = false;
 /** Expanded artifact previews: `${cellIndex}:${artIndex}` */
@@ -206,6 +242,10 @@ let lookupFieldErrors = new Map();
 let agentStripTimer = null;
 /** @type {import("../lib/vault.js").VaultKeyMeta[]} */
 let vaultKeys = [];
+/** Cached public keys (trust store). */
+let trustKeys = /** @type {import("../lib/pubkey-cache.js").PubkeyCacheRecord[]} */ ([]);
+/** Open session-tray section (`null` = closed). */
+let sessionTrayOpen = /** @type {null | "agent" | "keychain" | "trust"} */ (null);
 /** @type {("shares"|"gpg"|"text"|"envelope"|"key")[]} */
 let currentInputNeeds = [];
 /** Per-share mnemonic rows for the modular inputs UI (survives panel re-renders). */
@@ -236,12 +276,20 @@ let wrapJwkDraft = "";
 let signatureDraft = "";
 /** Ops drawer search query. */
 let opsFilter = "";
-/** Collapsed category keys in the ops drawer. */
-/** @type {Set<string>} */
-/** Toolbox sections collapsed in the ops drawer (WebAuthn starts closed). */
+/** Toolbox sections collapsed in the ops accordion (WebAuthn starts closed). */
 let opsCollapsed = new Set(["webauthn"]);
-/** Shelf keys `${toolbox}:${shelf}` collapsed in the ops drawer. */
-let opsShelfCollapsed = new Set(defaultCollapsedShelfKeys());
+/** Shelf keys `${toolbox}:${shelf}` the user has opened (drawers start closed). */
+let opsShelfExpanded = new Set();
+/**
+ * Suggest pull-out state — cell stem rail or a tee/foreach nest/branch rail.
+ * @type {null | { scope: "cell" | "nest", tb: string, stem?: number, branch?: number | null }}
+ */
+let suggestPullout = null;
+/**
+ * Which nest + rail is expanded to the toolbox strip (`null` = all collapsed to +).
+ * @type {null | { stem: number, branch: number | null }}
+ */
+let nestSuggestExpanded = null;
 /**
  * Open Encrypt/Decrypt meta-picker (`null` = closed).
  * Instantiates a concrete cipher — never leaves an `encrypt` builder card.
@@ -424,30 +472,67 @@ const KIND_META = {
 };
 
 /**
+ * Toolkit-styled toolbox chip (glyph + short badge), matching ops category marks.
  * @param {string|undefined|null} toolbox
+ * @param {{ glyphOnly?: boolean }} [opts]
  * @returns {string}
  */
-function toolboxBadgeHtml(toolbox) {
+function toolboxBadgeHtml(toolbox, opts = {}) {
   const tb = toolbox || "io";
-  const meta = TOOLBOX_META[tb] || { badge: tb, label: tb };
-  return `<span class="toolbox-badge toolbox-${escapeHtml(tb)}" title="${escapeHtml(meta.label)}">${escapeHtml(meta.badge)}</span>`;
+  const meta = TOOLBOX_META[tb] || { badge: tb, label: tb, glyph: "gear" };
+  const glyph = meta.glyph || "gear";
+  const label = meta.label || tb;
+  const glyphOnly = !!opts.glyphOnly;
+  return `<span class="toolbox-badge toolbox-${escapeHtml(tb)}${
+    glyphOnly ? " toolbox-badge-glyph-only" : ""
+  }" title="${escapeHtml(label)}"${
+    glyphOnly ? ` aria-label="${escapeHtml(label)}"` : ""
+  }>
+    <span class="toolbox-badge-mark" aria-hidden="true">${glyphHtml(
+      glyph,
+      "ops-glyph ops-glyph-toolbox-badge"
+    )}</span>
+    ${
+      glyphOnly
+        ? ""
+        : `<span class="toolbox-badge-label">${escapeHtml(
+            meta.badge || label
+          )}</span>`
+    }
+  </span>`;
 }
 
 /**
- * CAST suite chip for crypto toolboxes (always shown when applicable).
+ * Compact CAST stoplight for crypto toolboxes (detail on hover).
  * @param {string|undefined|null} toolbox
  * @returns {string}
  */
 function suiteChipHtml(toolbox) {
   const ver = toolboxVerification(toolbox, suiteStatus);
   if (ver === "none") return "";
+  const suite = toolboxToSuite(toolbox) || "";
+  const everFail = !!(suite && suiteEverFailed[suite]);
+  /** @type {"ok"|"warn"|"bad"} */
+  let light = "warn";
+  let label = "CAST unverified";
+  let detail = `No CAST for this toolbox yet. ${FIPS_MODE_DISCLAIMER}`;
   if (ver === "verified") {
-    return `<span class="suite-chip suite-verified" title="POST/CAST verified for this toolbox">verified</span>`;
+    light = "ok";
+    label = "CAST verified";
+    detail = "POST/CAST verified for this toolbox";
+  } else if (ver === "error") {
+    light = "bad";
+    label = "CAST failed";
+    detail = "Crypto module error — suite failed self-test";
   }
-  if (ver === "error") {
-    return `<span class="suite-chip suite-error" title="Crypto module error">error</span>`;
+  if (everFail && ver !== "error") {
+    detail += " · failed earlier this session";
+    if (ver === "verified") label = "CAST verified (earlier failure)";
   }
-  return `<span class="suite-chip suite-unverified" title="No CAST for this toolbox yet. ${escapeHtml(FIPS_MODE_DISCLAIMER)}">⚠ unverified</span>`;
+  const wasFailCls = everFail ? " suite-light-was-fail" : "";
+  return `<span class="suite-light suite-light-${light}${wasFailCls}" role="img"
+    aria-label="${escapeHtml(label)}"
+    title="${escapeHtml(detail)}"></span>`;
 }
 
 /**
@@ -470,12 +555,277 @@ function currentUnverifiedSuites() {
 
 /**
  * Display name for a step (optional UI label, else recipe name).
- * @param {{ name: string, label?: string }|null|undefined} spec
+ * @param {{ name: string, label?: string, decodeTwin?: boolean }|null|undefined} spec
+ * @param {{ decode?: boolean } | null} [params]
  * @returns {string}
  */
-function stepDisplayName(spec) {
+function stepDisplayName(spec, params = null) {
   if (!spec) return "";
+  if (spec.decodeTwin && params) {
+    const tok = decodeTwinToken(spec, !!params.decode);
+    if (tok.includes(".")) return tok;
+  }
   return spec.label || spec.name;
+}
+
+/** @type {ReturnType<typeof setTimeout>|null} */
+let toolCardHideTimer = null;
+/** @type {Element|null} */
+let toolCardAnchor = null;
+let toolCardPinned = false;
+
+/**
+ * Short human label for the focused tip (refined type stays secondary).
+ * @param {import("../lib/toolkit/types.js").RefinedType|null|undefined} t
+ * @returns {string}
+ */
+function friendlyTypeLabel(t) {
+  if (!t || t.base === "none") return "empty";
+  if (t.base === "text" && t.kind === "pem") {
+    return t.which ? `PEM ${t.which}` : "PEM text";
+  }
+  if (t.base === "text" && t.kind === "jwk") {
+    return t.which ? `JWK ${t.which}` : "JWK";
+  }
+  if (t.base === "keypair") {
+    return t.alg ? `${t.alg} keypair` : "keypair";
+  }
+  if (t.base === "key") {
+    if (t.which === "public") {
+      return t.alg ? `${t.alg} public key` : "public key";
+    }
+    if (t.which === "private") {
+      return t.alg ? `${t.alg} private key` : "private key";
+    }
+    return t.alg ? `${t.alg} key` : "key";
+  }
+  if (t.base === "shares") {
+    return t.kind === "raw" ? "raw shares" : "share mnemonics";
+  }
+  if (t.base === "bytes" && t.kind === "der") {
+    return t.which ? `DER ${t.which}` : "DER bytes";
+  }
+  /** @type {Record<string, string>} */
+  const bases = {
+    bytes: "bytes",
+    text: "text",
+    artifact: "artifact",
+    bundle: "bundle",
+    item: "item",
+    recipients: "recipients",
+    "openpgp-key": "OpenPGP key",
+  };
+  let label = bases[t.base] || t.base;
+  if (t.alg) label = `${t.alg} ${label}`;
+  if (t.which) label += ` (${t.which})`;
+  return label;
+}
+
+/**
+ * Standard tool card — docs, kind, I/O types, params (shared hover + reference).
+ * @param {import("../lib/toolkit/registry.js").StepSpec} s
+ * @param {{ decode?: boolean, blocked?: boolean, fit?: boolean, hideHint?: boolean }} [opts]
+ * @returns {string}
+ */
+function toolCardHtml(s, opts = {}) {
+  const decode = !!opts.decode;
+  const params = { ...defaultParams(s), ...(decode ? { decode: true } : {}) };
+  const io = s.effectiveIo
+    ? s.effectiveIo(params)
+    : { input: s.input, output: s.output };
+  const nameLabel = stepDisplayName(s, { decode });
+  const glyph = opsGlyphForStep(s);
+  const kindLabel = KIND_META[s.kind]?.label || s.kind;
+  const shelf = s.shelf ? getShelfMeta(s.shelf).label : "";
+  const recipeTok = decodeTwinToken(s, decode);
+  const aliases = (s.aliases || []).length
+    ? `<p class="tool-card-aliases muted fs-xs">Aliases: ${(s.aliases || [])
+        .map((a) => `<code>${escapeHtml(a)}</code>`)
+        .join(", ")}</p>`
+    : "";
+  const paramList = (s.params || []).filter(
+    (p) => paramVisibility(s.name, p, params).show
+  );
+  const shown = paramList.slice(0, 8);
+  const paramsHtml = shown.length
+    ? `<div class="tool-card-params">
+        <p class="tool-card-section">Parameters</p>
+        <ul class="tool-card-param-list">
+          ${shown
+            .map((p) => {
+              const typeBits = [p.type];
+              if (p.enum?.length) {
+                typeBits.push(
+                  p.enum.length > 4
+                    ? `${p.enum.length} options`
+                    : p.enum.join("|")
+                );
+              } else if (p.default !== undefined && p.default !== null) {
+                typeBits.push(`default ${String(p.default)}`);
+              }
+              return `<li>
+                <code>${escapeHtml(p.name)}</code>
+                <span class="tool-card-param-type muted">${escapeHtml(typeBits.join(" · "))}</span>
+                ${p.doc ? `<span class="tool-card-param-doc">${escapeHtml(p.doc)}</span>` : ""}
+              </li>`;
+            })
+            .join("")}
+        </ul>
+        ${
+          paramList.length > shown.length
+            ? `<p class="muted fs-xs">+${paramList.length - shown.length} more in Docs</p>`
+            : ""
+        }
+      </div>`
+    : `<p class="tool-card-noparams muted fs-xs">No parameters.</p>`;
+  const flags = [];
+  if (opts.blocked) flags.push(`<span class="tool-card-flag tool-card-flag-warn">FIPS blocked</span>`);
+  if (opts.fit) flags.push(`<span class="tool-card-flag tool-card-flag-fit">Fits tip</span>`);
+  if (s.unresolvedInputs)
+    flags.push(
+      `<span class="tool-card-flag">Needs ${escapeHtml(String(s.unresolvedInputs))} input</span>`
+    );
+  if (s.unresolvedRecipients)
+    flags.push(`<span class="tool-card-flag">Needs recipients</span>`);
+
+  return `
+    <div class="tool-card">
+      <header class="tool-card-head">
+        ${glyphHtml(glyph, "ops-glyph ops-glyph-tile tool-card-glyph")}
+        <div class="tool-card-titles">
+          <p class="tool-card-name">${escapeHtml(nameLabel)}</p>
+          <p class="tool-card-recipe muted fs-xs">Recipe <code>${escapeHtml(recipeTok)}</code></p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-compact tool-card-pin"
+          data-tool-card-pin aria-pressed="${toolCardPinned ? "true" : "false"}"
+          title="${toolCardPinned ? "Unpin (Esc)" : "Pin card"}">${toolCardPinned ? "Pinned" : "Pin"}</button>
+      </header>
+      <div class="tool-card-meta">
+        ${toolboxBadgeHtml(s.toolbox)}
+        ${shelf ? `<span class="tool-card-chip">${escapeHtml(shelf)}</span>` : ""}
+        <span class="tool-card-chip">${escapeHtml(kindLabel)}</span>
+        ${suiteChipHtml(s.toolbox)}
+        ${flags.join("")}
+      </div>
+      <div class="tool-card-io" aria-label="Input and output types">
+        <div class="tool-card-io-side">
+          <span class="tool-card-io-label muted">In</span>
+          <span class="tool-card-type" data-io="in">${escapeHtml(io.input)}</span>
+        </div>
+        <span class="tool-card-io-arrow" aria-hidden="true">→</span>
+        <div class="tool-card-io-side">
+          <span class="tool-card-io-label muted">Out</span>
+          <span class="tool-card-type" data-io="out">${escapeHtml(io.output)}</span>
+        </div>
+      </div>
+      <p class="tool-card-doc">${escapeHtml(s.doc)}</p>
+      ${aliases}
+      ${paramsHtml}
+      ${
+        opts.hideHint
+          ? ""
+          : `<p class="tool-card-hint muted fs-xs">Drag onto a cell, or click to append. Esc dismisses.</p>`
+      }
+    </div>`;
+}
+
+/**
+ * @param {HTMLElement} host
+ * @param {DOMRect} anchorRect
+ */
+function positionToolCard(host, anchorRect) {
+  const gap = 10;
+  const ops = document.querySelector(".chef-ops");
+  const opsRect = ops?.getBoundingClientRect();
+  const preferLeft = (opsRect?.right ?? anchorRect.right) + gap;
+  const cardW = Math.min(320, window.innerWidth - 24);
+  host.style.width = `${cardW}px`;
+  let left = preferLeft;
+  if (left + cardW > window.innerWidth - 12) {
+    left = Math.max(12, (opsRect?.left ?? anchorRect.left) - cardW - gap);
+  }
+  host.style.left = `${left}px`;
+  host.classList.remove("hidden");
+  host.hidden = false;
+  const h = host.offsetHeight || 240;
+  let top = anchorRect.top + anchorRect.height / 2 - h / 2;
+  top = Math.max(12, Math.min(top, window.innerHeight - h - 12));
+  host.style.top = `${top}px`;
+}
+
+function hideToolCard() {
+  if (toolCardPinned) return;
+  const host = document.getElementById("ops-tool-card");
+  if (!host) return;
+  host.classList.add("hidden");
+  host.hidden = true;
+  host.innerHTML = "";
+  if (toolCardAnchor instanceof HTMLElement) {
+    toolCardAnchor.removeAttribute("aria-describedby");
+  }
+  toolCardAnchor = null;
+}
+
+function forceHideToolCard() {
+  toolCardPinned = false;
+  const host = document.getElementById("ops-tool-card");
+  if (host) host.classList.remove("ops-tool-card-pinned");
+  hideToolCard();
+}
+
+function scheduleHideToolCard() {
+  if (toolCardPinned) return;
+  if (toolCardHideTimer) clearTimeout(toolCardHideTimer);
+  toolCardHideTimer = setTimeout(() => {
+    toolCardHideTimer = null;
+    hideToolCard();
+  }, 160);
+}
+
+/**
+ * @param {Element} anchor
+ * @param {string} name
+ * @param {boolean} decode
+ */
+function showToolCard(anchor, name, decode) {
+  const s = getStep(name);
+  if (!s) return;
+  if (toolCardHideTimer) {
+    clearTimeout(toolCardHideTimer);
+    toolCardHideTimer = null;
+  }
+  const host = document.getElementById("ops-tool-card");
+  if (!host) return;
+  const blocked = stepBlockedByFips(name);
+  const from = currentPipelineOutput();
+  let fit = false;
+  if (!steps.length) {
+    fit = s.kind === "source" || s.input === "none";
+  } else if (decode) {
+    const resolved = resolveStepType(s, from, { ...defaultParams(s), decode: true });
+    fit = !!(resolved && resolved.ok);
+  } else {
+    fit = stepsAccepting(from).some((x) => x.name === name);
+  }
+  toolCardAnchor = anchor;
+  if (anchor instanceof HTMLElement) {
+    anchor.setAttribute("aria-describedby", "ops-tool-card");
+  }
+  host.innerHTML = toolCardHtml(s, { decode, blocked, fit });
+  host.classList.toggle("ops-tool-card-pinned", toolCardPinned);
+  host.querySelector("[data-tool-card-pin]")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toolCardPinned = !toolCardPinned;
+    host.classList.toggle("ops-tool-card-pinned", toolCardPinned);
+    const btn = host.querySelector("[data-tool-card-pin]");
+    if (btn instanceof HTMLElement) {
+      btn.setAttribute("aria-pressed", toolCardPinned ? "true" : "false");
+      btn.textContent = toolCardPinned ? "Pinned" : "Pin";
+      btn.title = toolCardPinned ? "Unpin (Esc)" : "Pin card";
+    }
+  });
+  positionToolCard(host, anchor.getBoundingClientRect());
 }
 
 app.innerHTML = `
@@ -550,30 +900,34 @@ app.innerHTML = `
         <div><dt>Shift+Enter</dt><dd>Run focused cell</dd></div>
         <div><dt>Alt+Enter</dt><dd>Run from focused cell</dd></div>
         <div><dt>A / B</dt><dd>Insert cell above / below (when not typing)</dd></div>
-        <div><dt>Escape</dt><dd>Close pickers / Variables</dd></div>
+        <div><dt>Escape</dt><dd>Back in ops drill / close tool card / Variables</dd></div>
       </dl>
     </form>
   </dialog>
 
   <div class="chef-workspace" id="chef-workspace">
-    <aside class="chef-ops chef-pane" aria-label="Operations">
-      <button type="button" class="pane-rail" data-collapse="ops" title="Expand Operations panel">
-        <span>Operations</span>
+    <aside class="chef-ops chef-pane" aria-label="Toolkit">
+      <button type="button" class="pane-rail" data-collapse="ops" title="Expand Toolkit panel">
+        <span>Toolkit</span>
       </button>
       <div class="pane-head">
-        <p class="pane-title">Operations</p>
-        <button type="button" class="btn btn-ghost btn-compact pane-collapse" data-collapse="ops"
-          aria-label="Collapse Operations panel" title="Collapse panel">‹</button>
+        <p class="pane-title">Toolkit</p>
+        <div class="pane-head-actions btn-row">
+          <button type="button" class="btn btn-ghost btn-compact" id="ops-docs-btn"
+            title="Full step reference">Docs</button>
+          <button type="button" class="btn btn-ghost btn-compact pane-collapse" data-collapse="ops"
+            aria-label="Collapse Toolkit panel" title="Collapse panel">‹</button>
+        </div>
       </div>
       <div class="pane-body">
-        <input type="search" id="ops-filter" class="text-input" placeholder="Search operations…" autocomplete="off">
-        <p class="muted fs-xs mt-xs mb-sm" id="ops-hint">Drag onto the focused cell, or click to append.</p>
+        <input type="search" id="ops-filter" class="text-input" placeholder="Search toolkit…" autocomplete="off">
+        <p class="muted fs-xs mt-xs mb-sm" id="ops-hint">Browse toolboxes below — drawers stay closed until you open them. Dim tiles don’t fit the tip.</p>
         <div id="ops-drawer" class="ops-drawer"></div>
       </div>
     </aside>
 
     <div class="pane-splitter" data-resize="ops" role="separator" aria-orientation="vertical"
-      aria-label="Resize Operations panel" title="Drag to resize · double-click to reset"></div>
+      aria-label="Resize Toolkit panel" title="Drag to resize · double-click to reset"></div>
 
     <section class="chef-recipe chef-pane chef-notebook" aria-label="Notebook">
       <div class="pane-head">
@@ -613,15 +967,36 @@ app.innerHTML = `
             </div>
           </div>
           <div class="notebook-header-context">
-            <details id="keyring-panel" class="keyring-panel">
-              <summary class="muted fs-sm">${glyphHtml("agent", "ops-glyph toolbar-glyph")} Keyring (My Keys)</summary>
-              <div id="keyring-body" class="keyring-body mt-sm"></div>
-            </details>
+            <div class="session-tray" id="session-tray">
+              <div class="session-tray-rail" id="session-tray-rail" role="toolbar" aria-label="Session tray">
+                <button type="button" class="session-tray-chip" data-tray="agent"
+                  aria-expanded="false" aria-controls="session-tray-panel"
+                  title="Agent session — unlocked private keys">
+                  ${glyphHtml("agent", "ops-glyph toolbar-glyph")}
+                  <span class="session-tray-chip-label">Agent</span>
+                  <span class="session-tray-count" data-tray-count="agent">0</span>
+                </button>
+                <button type="button" class="session-tray-chip" data-tray="keychain"
+                  aria-expanded="false" aria-controls="session-tray-panel"
+                  title="Local keychain — My Keys vault">
+                  ${glyphHtml("keys", "ops-glyph toolbar-glyph")}
+                  <span class="session-tray-chip-label">Keychain</span>
+                  <span class="session-tray-count" data-tray-count="keychain">0</span>
+                </button>
+                <button type="button" class="session-tray-chip" data-tray="trust"
+                  aria-expanded="false" aria-controls="session-tray-panel"
+                  title="Trust store — cached public keys">
+                  ${glyphHtml("attestation", "ops-glyph toolbar-glyph")}
+                  <span class="session-tray-chip-label">Trust</span>
+                  <span class="session-tray-count" data-tray-count="trust">0</span>
+                </button>
+              </div>
+              <div class="session-tray-panel hidden" id="session-tray-panel" hidden></div>
+            </div>
             <div id="pgp-mode-host" class="pgp-mode-host hidden"></div>
           </div>
           <p id="fragment-status" class="muted fs-xs mb-0 hidden" role="status"></p>
           <div id="stale-banner" class="stale-banner hidden" role="status"></div>
-          <div id="agent-session-host" class="agent-session-host"></div>
           <p id="run-status" class="status-row hidden mt-sm"></p>
         </div>
         <div id="variables-drawer" class="variables-drawer hidden" hidden></div>
@@ -631,7 +1006,7 @@ app.innerHTML = `
           <span class="muted fs-xs notebook-kbd-hint">Shift+Enter run · Alt+Enter from here · A/B insert cell</span>
         </div>
         <details class="recipe-text-details mt-md">
-          <summary class="muted fs-sm">Notebook source (text)</summary>
+          <summary class="muted fs-sm">Full notebook source</summary>
           <textarea id="recipe-text" class="compose-message mt-sm" rows="3" spellcheck="false"
             placeholder="hkp.search alice@example.org | out @alices
 
@@ -658,13 +1033,15 @@ input | gpg.encrypt to=@alices"></textarea>
     </div>
     <div class="pane-body" id="reference-body"></div>
   </div>
+
+  <div id="ops-tool-card" class="ops-tool-card hidden" role="tooltip" hidden></div>
 `;
 
 /* ===== Workspace layout: resizable + collapsible panes (desktop) ===== */
 
 const LAYOUT_KEY = "basilisk.toolkit.layout";
 const PANE_LIMITS = {
-  ops: { min: 180, max: 520, def: 280 },
+  ops: { min: 160, max: 520, def: 204 },
 };
 
 function loadLayout() {
@@ -698,7 +1075,10 @@ function initWorkspaceLayout() {
   if (Number.isFinite(w) && w >= PANE_LIMITS.ops.min) {
     ws.style.setProperty("--ops-w", `${w}px`);
   }
-  ws.classList.toggle("ops-collapsed", !!layout.opsCollapsed);
+  // Default collapsed; only expand when the user has explicitly opened it.
+  const opsCollapsedPane =
+    typeof layout.opsCollapsed === "boolean" ? layout.opsCollapsed : true;
+  ws.classList.toggle("ops-collapsed", opsCollapsedPane);
   // Drop legacy run-pane collapse class if present
   ws.classList.remove("run-collapsed");
 
@@ -707,7 +1087,7 @@ function initWorkspaceLayout() {
       const side = btn.getAttribute("data-collapse");
       if (side !== "ops") return;
       const collapsed = ws.classList.toggle("ops-collapsed");
-      saveLayout({ opsCollapsed: collapsed || null });
+      saveLayout({ opsCollapsed: collapsed });
     });
   });
 
@@ -767,6 +1147,9 @@ function insertCell(at) {
   const idx = at == null ? chains.length : Math.max(0, Math.min(at, chains.length));
   chains.splice(idx, 0, { steps: [] });
   kernel.remapCells((i) => (i >= idx ? i + 1 : i));
+  cellRecipeRawMode = new Set(
+    [...cellRecipeRawMode].map((i) => (i >= idx ? i + 1 : i))
+  );
   focusCell(idx);
   setRecipeFromSteps();
 }
@@ -777,6 +1160,7 @@ function insertCell(at) {
 function deleteCell(index) {
   if (chains.length <= 1) {
     chains = [{ steps: [] }];
+    cellRecipeRawMode = new Set();
     focusCell(0);
     kernel.clearCellOutputs(0);
     setRecipeFromSteps();
@@ -784,6 +1168,11 @@ function deleteCell(index) {
   }
   chains.splice(index, 1);
   kernel.remapCells((i) => (i === index ? null : i > index ? i - 1 : i));
+  cellRecipeRawMode = new Set(
+    [...cellRecipeRawMode]
+      .filter((i) => i !== index)
+      .map((i) => (i > index ? i - 1 : i))
+  );
   focusCell(Math.min(focusedCell, chains.length - 1));
   setRecipeFromSteps();
 }
@@ -1151,8 +1540,9 @@ function applyCollapsePrefs(force = false) {
   if (!p.collapseAdvanced && !force) return;
   if (p.collapseAdvanced) {
     opsCollapsed.add("webauthn");
+    // Drawers start closed; clear any previously expanded advanced shelves.
     for (const key of defaultCollapsedShelfKeys()) {
-      opsShelfCollapsed.add(key);
+      opsShelfExpanded.delete(key);
     }
   }
 }
@@ -1412,6 +1802,7 @@ function resetNotebook() {
   clearSensitiveData({ quiet: true });
   chains = [{ steps: [] }];
   cellCollapsed = new Set();
+  cellRecipeRawMode = new Set();
   focusCell(0);
   setRecipeTitle("");
   lastPresetId = null;
@@ -2033,11 +2424,20 @@ function cloneBuilderStep(s) {
 }
 
 /**
- * Focus for suggest-next / insert: stem index, optional body index under tee/foreach.
- * `null` body means “append to that block’s body” when the stem step is tee/foreach.
- * @type {{ stem: number, body?: number | null } | null}
+ * Focus for suggest-next / insert: stem index, optional body/branch under tee/foreach.
+ * Presence of `body` (even `null`) means nest-append mode for that stem.
+ * `branch` indexes `step.branches` when continuing a selector side chain.
+ * @type {{ stem: number, body?: number | null, branch?: number | null } | null}
  */
 let insertFocus = null;
+
+/** @param {typeof insertFocus} focus */
+function isNestInsertFocus(focus) {
+  if (!focus || focus.stem == null) return false;
+  const parent = steps[focus.stem];
+  if (!parent || (parent.name !== "tee" && parent.name !== "foreach")) return false;
+  return "body" in focus || focus.branch != null;
+}
 
 /**
  * @param {string} name
@@ -2061,22 +2461,31 @@ function addStepAt(name, index, paramOverrides) {
     end: 0,
   };
 
-  // Prefer inserting into a focused tee/foreach body.
-  if (
-    insertFocus &&
-    index == null &&
-    steps[insertFocus.stem] &&
-    (steps[insertFocus.stem].name === "tee" ||
-      steps[insertFocus.stem].name === "foreach")
-  ) {
+  // Prefer inserting into a focused tee/foreach nest or selector branch.
+  if (insertFocus && index == null && isNestInsertFocus(insertFocus)) {
     const parent = steps[insertFocus.stem];
-    if (!parent.body) parent.body = [];
-    const at =
-      insertFocus.body == null || Number.isNaN(insertFocus.body)
-        ? parent.body.length
-        : Math.max(0, Math.min(parent.body.length, insertFocus.body + 1));
-    parent.body.splice(at, 0, step);
-    insertFocus = { stem: insertFocus.stem, body: at };
+    if (insertFocus.branch != null && parent.branches?.[insertFocus.branch]) {
+      const br = parent.branches[insertFocus.branch];
+      if (!br.body) br.body = [];
+      const at =
+        insertFocus.body == null || Number.isNaN(insertFocus.body)
+          ? br.body.length
+          : Math.max(0, Math.min(br.body.length, insertFocus.body + 1));
+      br.body.splice(at, 0, step);
+      insertFocus = {
+        stem: insertFocus.stem,
+        branch: insertFocus.branch,
+        body: at,
+      };
+    } else {
+      if (!parent.body) parent.body = [];
+      const at =
+        insertFocus.body == null || Number.isNaN(insertFocus.body)
+          ? parent.body.length
+          : Math.max(0, Math.min(parent.body.length, insertFocus.body + 1));
+      parent.body.splice(at, 0, step);
+      insertFocus = { stem: insertFocus.stem, body: at };
+    }
     setRecipeFromSteps();
     return;
   }
@@ -2127,45 +2536,80 @@ function addStepAt(name, index, paramOverrides) {
 }
 
 /**
+ * Tip type for a nest/branch focus (tee body, foreach item, or selector branch).
+ * @param {NonNullable<typeof insertFocus>} focus
+ * @returns {import("../lib/toolkit/types.js").RefinedType}
+ */
+function pipelineOutputAtFocus(focus) {
+  const walked = walkPipelineTypes(steps, { getStep });
+  const parent = steps[focus.stem];
+  const edge = walked.edges[focus.stem];
+  if (!parent || !edge) return walked.final;
+
+  if (focus.branch != null && parent.branches?.[focus.branch]) {
+    const br = parent.branches[focus.branch];
+    const brEdge = edge.branches?.[focus.branch];
+    const bodyEdges = brEdge?.edges || [];
+    if (bodyEdges.length) {
+      const bi =
+        focus.body == null || Number.isNaN(focus.body)
+          ? bodyEdges.length - 1
+          : focus.body;
+      return bodyEdges[Math.max(0, bi)]?.output || bodyEdges[0]?.input || edge.input;
+    }
+    const m = String(br.member || br.selector || "")
+      .replace(/^\./, "")
+      .toLowerCase();
+    const which =
+      m === "private" || m === "priv" || m === "secret"
+        ? "private"
+        : m === "public" || m === "pub"
+          ? "public"
+          : null;
+    const current = edge.input;
+    return current?.base === "keypair" && which
+      ? typeOf("key", { alg: current.alg, which })
+      : current || walked.final;
+  }
+
+  if (parent.name === "foreach") {
+    const item =
+      edge?.input?.kind === "raw"
+        ? { base: /** @type {const} */ ("bytes"), kind: "opaque" }
+        : { base: /** @type {const} */ ("text"), kind: "mnemonic" };
+    if (edge?.body?.length) {
+      const bi =
+        focus.body == null || Number.isNaN(focus.body)
+          ? edge.body.length - 1
+          : focus.body;
+      const be = edge.body[Math.max(0, bi)];
+      return be?.output || item;
+    }
+    return item;
+  }
+
+  // tee body: start from stem type at tee
+  if (edge?.body?.length) {
+    const bi =
+      focus.body == null || Number.isNaN(focus.body)
+        ? edge.body.length - 1
+        : focus.body;
+    const be = edge.body[Math.max(0, bi)];
+    return be?.output || edge.input;
+  }
+  return edge?.input || walked.final;
+}
+
+/**
  * Refined output type after walking the builder pipeline (for suggesting ops).
  * Respects insertFocus so tee/foreach body lanes suggest against the nest type.
  * @returns {import("../lib/toolkit/types.js").RefinedType}
  */
 function currentPipelineOutput() {
-  const walked = walkPipelineTypes(steps, { getStep });
-  if (
-    insertFocus &&
-    steps[insertFocus.stem] &&
-    (steps[insertFocus.stem].name === "tee" ||
-      steps[insertFocus.stem].name === "foreach")
-  ) {
-    const edge = walked.edges[insertFocus.stem];
-    const parent = steps[insertFocus.stem];
-    if (parent.name === "foreach") {
-      const item =
-        edge?.input?.kind === "raw"
-          ? { base: /** @type {const} */ ("bytes"), kind: "opaque" }
-          : { base: /** @type {const} */ ("text"), kind: "mnemonic" };
-      if (edge?.body?.length) {
-        const bi =
-          insertFocus.body == null
-            ? edge.body.length - 1
-            : insertFocus.body;
-        const be = edge.body[Math.max(0, bi)];
-        return be?.output || item;
-      }
-      return item;
-    }
-    // tee body: start from stem type at tee
-    if (edge?.body?.length) {
-      const bi =
-        insertFocus.body == null ? edge.body.length - 1 : insertFocus.body;
-      const be = edge.body[Math.max(0, bi)];
-      return be?.output || edge.input;
-    }
-    return edge?.input || walked.final;
+  if (insertFocus && isNestInsertFocus(insertFocus)) {
+    return pipelineOutputAtFocus(insertFocus);
   }
-  return walked.final;
+  return walkPipelineTypes(steps, { getStep }).final;
 }
 
 /**
@@ -2197,6 +2641,16 @@ function syncWhichWithFormat(step) {
  * @returns {{ show: boolean, locked?: boolean, forced?: string }}
  */
 function paramVisibility(stepName, param, params) {
+  // Direction is the verb (pem.encode / pem.decode), not a conjugate checkbox.
+  if (param.name === "decode") {
+    const spec = getStep(stepName);
+    if (spec?.decodeTwin && decodeTwinToken(spec, false).endsWith(".encode")) {
+      return { show: false };
+    }
+  }
+  if (stepName === "pem" && param.name === "label" && params?.decode) {
+    return { show: false };
+  }
   if (param.name !== "which") return { show: true };
   const format = String(params.format || "");
   if (stepName === "export") {
@@ -2244,6 +2698,7 @@ function loadRecipeText(text, opts = {}) {
   clearSensitiveData({ quiet: true });
   chains = loaded.length ? loaded : [{ steps: [] }];
   cellCollapsed = new Set();
+  cellRecipeRawMode = new Set();
   focusCell(0);
   if (opts.title != null) setRecipeTitle(opts.title);
   if (errEl) errEl.classList.add("hidden");
@@ -2470,13 +2925,23 @@ function syncCellRuntimeChrome(cellIndex, unmet) {
     ["needs input", "needs shares", "needs ciphertext", "needs envelope", "needs key"].includes(n)
   );
   const recipNeedsAttention = needs.includes("needs recipients");
-  const inputsHost = document.getElementById(`cell-inputs-${cellIndex}`);
-  if (inputsHost && !inputsHost.hidden) {
+  const cell = document.querySelector(`.notebook-cell[data-cell="${cellIndex}"]`);
+  const inputHosts = [
+    ...(cell?.querySelectorAll("[data-runtime-slot]") || []),
+    document.getElementById(`cell-inputs-${cellIndex}`),
+  ].filter((el) => el instanceof HTMLElement && !el.hidden);
+  for (const inputsHost of inputHosts) {
     inputsHost.classList.toggle("cell-runtime-needs", inputNeedsAttention);
     inputsHost.classList.toggle("cell-runtime-ready", !inputNeedsAttention);
   }
-  const bindHost = document.getElementById(`cell-bind-${cellIndex}`);
-  if (bindHost && bindHost.childElementCount) {
+  const bindHosts = [
+    ...(cell?.querySelectorAll("[data-bind-slot]") || []),
+    document.getElementById(`cell-bind-${cellIndex}`),
+  ].filter(
+    (el) => el instanceof HTMLElement && (el.childElementCount > 0 || !el.hidden)
+  );
+  for (const bindHost of bindHosts) {
+    if (!bindHost.childElementCount) continue;
     bindHost.classList.toggle("cell-runtime-needs", recipNeedsAttention);
     bindHost.classList.toggle("cell-runtime-ready", !recipNeedsAttention);
   }
@@ -2536,39 +3001,167 @@ function cellRecipientInfo(chain) {
 }
 
 /**
- * Paint Share mnemonics / Decrypt / Input / binder UI into each owning cell.
+ * Step index that should host a runtime need (inline with that recipe card).
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep[]} steps
+ * @param {"shares"|"gpg"|"gpgPass"|"text"|"envelope"|"key"} need
+ * @returns {number} -1 if none
+ */
+function findRuntimeAnchorStep(steps, need) {
+  for (let i = 0; i < steps.length; i++) {
+    const spec = getStep(steps[i].name);
+    if (!spec) continue;
+    const u = spec.unresolvedInputs;
+    if (need === "shares" && u === "shares") return i;
+    if (need === "text" && u === "text") return i;
+    if (need === "envelope" && u === "envelope") return i;
+    if (need === "key" && u === "key") return i;
+    if (need === "gpg" && u === "gpg") return i;
+    if (
+      need === "gpgPass" &&
+      (u === "gpg" ||
+        steps[i].name === "agent.unlock" ||
+        steps[i].name === "agent.save")
+    ) {
+      return i;
+    }
+  }
+  // Name fallbacks
+  for (let i = 0; i < steps.length; i++) {
+    const n = steps[i].name;
+    if (need === "shares" && (n === "shares" || n === "recover")) return i;
+    if (need === "text" && n === "input") return i;
+    if (need === "gpg" && (n === "gpg.decrypt" || n === "gpg.symdecrypt")) return i;
+    if (need === "envelope" && n === "gpg.symdecrypt") return i;
+  }
+  return steps.length ? 0 : -1;
+}
+
+/**
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep[]} steps
+ * @returns {number}
+ */
+function findRecipientAnchorStep(steps) {
+  for (let i = 0; i < steps.length; i++) {
+    if (getStep(steps[i].name)?.unresolvedRecipients) return i;
+  }
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i].name === "gpg.encrypt") return i;
+  }
+  return steps.length ? 0 : -1;
+}
+
+/**
+ * Paint Share mnemonics / Decrypt / Input / binder UI into the owning step cards.
  */
 function renderAllCellRuntimePanels() {
   destroyCellBinders();
   for (let i = 0; i < chains.length; i++) {
+    const chainSteps = chains[i].steps || [];
     const needs = cellRuntimeNeeds(chains[i]);
-    const inputsHost = document.getElementById(`cell-inputs-${i}`);
-    if (inputsHost) {
-      renderInputsPanel(needs, inputsHost, i);
+    const builder = document.getElementById(`cell-builder-${i}`);
+    const fallbackInputs = document.getElementById(`cell-inputs-${i}`);
+    const fallbackBind = document.getElementById(`cell-bind-${i}`);
+
+    builder?.querySelectorAll("[data-runtime-slot]").forEach((el) => {
+      if (!(el instanceof HTMLElement)) return;
+      el.innerHTML = "";
+      el.hidden = true;
+      el.classList.remove(
+        "cell-runtime-zone",
+        "cell-runtime-needs",
+        "cell-runtime-ready",
+        "cell-inputs-compact",
+        "cell-inputs-expanded",
+        "builder-inline-runtime"
+      );
+    });
+    builder?.querySelectorAll("[data-bind-slot]").forEach((el) => {
+      if (!(el instanceof HTMLElement)) return;
+      el.innerHTML = "";
+      el.hidden = true;
+      el.classList.remove(
+        "cell-bind-messaging",
+        "cell-runtime-zone",
+        "cell-runtime-needs",
+        "cell-runtime-ready",
+        "builder-inline-runtime"
+      );
+    });
+    if (fallbackInputs) {
+      fallbackInputs.innerHTML = "";
+      fallbackInputs.hidden = true;
+      fallbackInputs.classList.remove(
+        "cell-runtime-zone",
+        "cell-runtime-needs",
+        "cell-runtime-ready"
+      );
     }
-    const bindHost = document.getElementById(`cell-bind-${i}`);
-    if (!bindHost) continue;
-    const info = cellRecipientInfo(chains[i]);
-    if (info.slots > 0) {
-      bindHost.classList.add("cell-bind-messaging", "cell-runtime-zone");
-      const binder = mountRecipientBinder(bindHost, {
-        slots: info.slots,
-        foreach: info.foreach,
-        onChange: (recs) => {
-          boundRecipients = recs;
-          applyRunReadiness();
-          syncCellNeedBadges(i);
-        },
-      });
-      cellBinders.set(i, binder);
-    } else {
-      bindHost.classList.remove(
+    if (fallbackBind) {
+      fallbackBind.innerHTML = "";
+      fallbackBind.classList.remove(
         "cell-bind-messaging",
         "cell-runtime-zone",
         "cell-runtime-needs",
         "cell-runtime-ready"
       );
-      bindHost.innerHTML = "";
+    }
+
+    /** @type {Map<number, typeof needs>} */
+    const byAnchor = new Map();
+    for (const need of needs) {
+      const idx = findRuntimeAnchorStep(chainSteps, need);
+      if (idx < 0) continue;
+      const list = byAnchor.get(idx) || [];
+      list.push(need);
+      byAnchor.set(idx, list);
+    }
+
+    if (!needs.length && fallbackInputs) {
+      renderInputsPanel([], fallbackInputs, i);
+    } else {
+      for (const [stepIdx, stepNeeds] of byAnchor) {
+        const slot = builder?.querySelector(`[data-runtime-slot="${stepIdx}"]`);
+        const host =
+          slot instanceof HTMLElement
+            ? slot
+            : fallbackInputs instanceof HTMLElement
+              ? fallbackInputs
+              : null;
+        if (!host) continue;
+        host.hidden = false;
+        host.classList.add("builder-inline-runtime");
+        renderInputsPanel(stepNeeds, host, i);
+      }
+    }
+
+    const info = cellRecipientInfo(chains[i]);
+    if (info.slots > 0) {
+      const encIdx = findRecipientAnchorStep(chainSteps);
+      const slot = builder?.querySelector(`[data-bind-slot="${encIdx}"]`);
+      const bindHost =
+        slot instanceof HTMLElement
+          ? slot
+          : fallbackBind instanceof HTMLElement
+            ? fallbackBind
+            : null;
+      if (bindHost) {
+        bindHost.hidden = false;
+        bindHost.classList.add(
+          "cell-bind-messaging",
+          "cell-runtime-zone",
+          "builder-inline-runtime"
+        );
+        const binder = mountRecipientBinder(bindHost, {
+          slots: info.slots,
+          foreach: info.foreach,
+          onChange: (recs) => {
+            boundRecipients = recs;
+            applyRunReadiness();
+            syncCellNeedBadges(i);
+          },
+        });
+        cellBinders.set(i, binder);
+      }
     }
     syncCellRuntimeChrome(i);
   }
@@ -2800,8 +3393,7 @@ function renderInputsPanel(needs, host, cellIndex = 0) {
  */
 function wireInputsPanel(host, needs, cellIndex) {
   const rerender = () => {
-    const h = document.getElementById(`cell-inputs-${cellIndex}`);
-    if (h) renderInputsPanel(needs, h, cellIndex);
+    renderInputsPanel(needs, host, cellIndex);
   };
 
   const refreshReadiness = () => {
@@ -3001,6 +3593,15 @@ async function refreshVaultKeys() {
     vaultKeys = sortKeysByLastUsed(await vaultListKeys());
   } catch (_) {
     vaultKeys = [];
+  }
+  try {
+    trustKeys = (await cacheList()).sort((a, b) =>
+      String(b.lastUsedAt || b.fetchedAt || "").localeCompare(
+        String(a.lastUsedAt || a.fetchedAt || "")
+      )
+    );
+  } catch (_) {
+    trustKeys = [];
   }
 }
 
@@ -3488,89 +4089,402 @@ function suggestedNextSteps(from, opts = {}) {
 }
 
 /**
- * Contextual next-block drawer under the focused cell’s pipeline.
+ * Expand a toolbox in the ops accordion (from suggest-next squares).
+ * @param {string} tb
  */
-function renderSuggestDrawer() {
-  const host = document.getElementById("suggest-next");
-  if (!host) return;
+function openOpsToolbox(tb) {
+  if (!tb || !TOOLBOX_META[tb]) return;
+  // Collapse every toolbox except the chosen one; leave drawers closed.
+  opsCollapsed = new Set(
+    Object.keys(TOOLBOX_META).filter((k) => k !== tb)
+  );
+  const ws = document.getElementById("chef-workspace");
+  if (ws?.classList.contains("ops-collapsed")) {
+    ws.classList.remove("ops-collapsed");
+    saveLayout({ opsCollapsed: false });
+  }
+  renderOpsDrawer();
+  requestAnimationFrame(() => {
+    document
+      .querySelector(`.ops-category[data-toolbox="${CSS.escape(tb)}"]`)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+}
 
-  const from = currentPipelineOutput();
-  const last = steps[steps.length - 1];
-  const terminal = !!(last && (isTerminalSink(last.name) || last.name === "inspect"));
-  const hasForeach = steps.some((s) => s.name === "foreach");
-  const next = suggestedNextSteps(from, { hasForeach, terminal });
-  const composeChips = compositionSuggestChipsHtml(from);
+/**
+ * One suggest-next chip button.
+ * @param {import("../lib/toolkit/registry.js").StepSpec} s
+ * @param {import("../lib/toolkit/types.js").RefinedType} from
+ * @param {{ primary?: boolean, index?: number, showToolbox?: boolean }} [opts]
+ * @returns {string}
+ */
+function suggestNextChipHtml(s, from, opts = {}) {
+  const decode =
+    s.name === "blip39" && from.base === "shares" && from.kind === "mnemonic";
+  const params = { ...defaultParams(s), ...(decode ? { decode: true } : {}) };
+  const resolved = resolveStepType(s, from, params);
+  const outLabel =
+    resolved.ok && resolved.output.base !== "none"
+      ? formatType(resolved.output)
+      : s.output || "";
+  const primary = opts.primary ? " suggest-chip-primary" : "";
+  const label = stepDisplayName(s, { decode }) || s.name;
+  const blocked = stepBlockedByFips(s.name);
+  // Inside a toolbox pull-out the toolbox is already known — skip the badge.
+  const showToolbox = opts.showToolbox === true;
+  return `
+    <button type="button" class="suggest-chip${primary}${blocked ? " suggest-chip-fips-blocked" : ""}" role="listitem"
+      data-suggest-op="${escapeHtml(s.name)}"
+      data-suggest-decode="${decode ? "1" : "0"}"
+      draggable="${blocked ? "false" : "true"}"
+      ${blocked ? 'aria-disabled="true"' : ""}
+      title="${escapeHtml(blocked ? `FIPS mode: blocked — ${s.toolbox} unverified` : s.doc)}">
+      ${showToolbox ? toolboxBadgeHtml(s.toolbox) : ""}
+      ${suiteChipHtml(s.toolbox)}
+      <span class="suggest-chip-name">${escapeHtml(label)}</span>
+      ${
+        outLabel
+          ? `<span class="suggest-chip-out muted">→ ${escapeHtml(outLabel)}</span>`
+          : ""
+      }
+    </button>`;
+}
 
-  if (!next.length && !composeChips) {
-    host.hidden = true;
-    host.innerHTML = "";
-    return;
+/**
+ * Catalog map for suggest toolbox tiles (shared by cell + nest rails).
+ * @returns {Map<string, import("../lib/toolkit/registry.js").StepSpec[]>}
+ */
+function suggestByToolboxMap() {
+  /** @type {Map<string, import("../lib/toolkit/registry.js").StepSpec[]>} */
+  const byToolbox = new Map();
+  for (const s of listSteps()) {
+    if (
+      s.kind === "flow" &&
+      s.name !== "foreach" &&
+      s.name !== "tee" &&
+      s.name !== "in" &&
+      s.name !== "as"
+    ) {
+      continue;
+    }
+    const tb = s.toolbox || "io";
+    const list = byToolbox.get(tb) || [];
+    list.push(s);
+    byToolbox.set(tb, list);
+  }
+  return byToolbox;
+}
+
+/**
+ * Suggest toolbox rail + pull-out menus (chips live in the pull-out, not a flat strip).
+ * @param {import("../lib/toolkit/registry.js").StepSpec[]} next
+ * @param {import("../lib/toolkit/types.js").RefinedType} from
+ * @param {Map<string, import("../lib/toolkit/registry.js").StepSpec[]>} byToolbox
+ * @param {Set<string>} tipFit
+ * @param {number} primaryCount
+ * @param {{ scope?: "cell" | "nest", stem?: number, branch?: number | null }} [ctx]
+ * @returns {string}
+ */
+function suggestToolboxMenusHtml(
+  next,
+  from,
+  byToolbox,
+  tipFit,
+  primaryCount,
+  ctx = {}
+) {
+  const scope = ctx.scope || "cell";
+  const stem = ctx.stem;
+  const branch = ctx.branch;
+  /** @type {Map<string, { spec: import("../lib/toolkit/registry.js").StepSpec, index: number }[]>} */
+  const nextByTb = new Map();
+  next.forEach((s, index) => {
+    const tb = s.toolbox || "io";
+    const list = nextByTb.get(tb) || [];
+    list.push({ spec: s, index });
+    nextByTb.set(tb, list);
+  });
+
+  const keys = Object.keys(TOOLBOX_META).sort(
+    (a, b) => (TOOLBOX_META[a]?.order ?? 9) - (TOOLBOX_META[b]?.order ?? 9)
+  );
+  if (
+    suggestPullout &&
+    suggestPullout.scope === scope &&
+    !keys.includes(suggestPullout.tb)
+  ) {
+    suggestPullout = null;
   }
 
-  const fromType = formatType(from);
-  const heading = !steps.length
-    ? composeChips && !next.length
-      ? `Cell [${focusedCell}] · compose`
-      : `Cell [${focusedCell}] · start with`
-    : terminal
-      ? `Cell [${focusedCell}] · optional next`
-      : `Cell [${focusedCell}] · next for <code>${escapeHtml(fromType)}</code>`;
-  const blurb = !steps.length
-    ? composeChips && !next.length
-      ? "Kernel slots ready — add a new cell that uses them."
-      : "Sources that begin a pipeline."
-    : terminal
-      ? "Pipeline already has a sink — these still accept the tip."
-      : "Compatible blocks for the current tip type.";
+  const pulloutOpen = (tb) =>
+    !!(
+      suggestPullout &&
+      suggestPullout.scope === scope &&
+      suggestPullout.tb === tb &&
+      (scope === "cell" ||
+        (suggestPullout.stem === stem &&
+          (suggestPullout.branch ?? null) === (branch ?? null)))
+    );
 
-  const primaryCount = !steps.length ? 3 : from.base === "shares" ? 2 : 3;
+  const scopeAttrs =
+    scope === "nest"
+      ? `data-suggest-scope="nest" data-suggest-stem="${stem}"${
+          branch != null ? ` data-suggest-branch="${branch}"` : ""
+        }`
+      : `data-suggest-scope="cell"`;
 
-  host.hidden = false;
-  host.innerHTML = `
-    <div class="suggest-next-head">
-      <p class="suggest-next-title mb-0">${heading}</p>
-      <p class="muted fs-xs mb-0">${blurb}</p>
-    </div>
-    ${composeChips}
-    ${
-      next.length
-        ? `<div class="suggest-next-chips" role="list">
-      ${next
-        .map((s, i) => {
-          const decode =
-            s.name === "blip39" && from.base === "shares" && from.kind === "mnemonic";
-          const params = { ...defaultParams(s), ...(decode ? { decode: true } : {}) };
-          const resolved = resolveStepType(s, from, params);
-          const outLabel =
-            resolved.ok && resolved.output.base !== "none"
-              ? formatType(resolved.output)
-              : s.output || "";
-          const primary = i < primaryCount ? " suggest-chip-primary" : "";
-          const label = decode
-            ? `${stepDisplayName(s) || s.name} -d`
-            : stepDisplayName(s) || s.name;
-          const blocked = stepBlockedByFips(s.name);
-          return `
-            <button type="button" class="suggest-chip${primary}${blocked ? " suggest-chip-fips-blocked" : ""}" role="listitem"
-              data-suggest-op="${escapeHtml(s.name)}"
-              data-suggest-decode="${decode ? "1" : "0"}"
-              draggable="${blocked ? "false" : "true"}"
-              ${blocked ? "aria-disabled=\"true\"" : ""}
-              title="${escapeHtml(blocked ? `FIPS mode: blocked — ${s.toolbox} unverified` : s.doc)}">
-              ${toolboxBadgeHtml(s.toolbox)}
-              ${suiteChipHtml(s.toolbox)}
-              <span class="suggest-chip-name">${escapeHtml(label)}</span>
-              ${
-                outLabel
-                  ? `<span class="suggest-chip-out muted">→ ${escapeHtml(outLabel)}</span>`
-                  : ""
-              }
-            </button>`;
-        })
-        .join("")}
-    </div>`
-        : ""
-    }`;
+  const tiles = keys
+    .map((tb) => {
+      const meta = TOOLBOX_META[tb] || { label: tb, glyph: "gear", badge: tb };
+      const catalog = byToolbox.get(tb) || [];
+      const picks = nextByTb.get(tb) || [];
+      const fit = picks.length > 0 || catalog.some((s) => tipFit.has(s.name));
+      const open = pulloutOpen(tb);
+      const tipNote = picks.length
+        ? ` — ${picks.length} quick pick${picks.length === 1 ? "" : "s"}`
+        : fit
+          ? " — tip fits; browse in Toolkit"
+          : catalog.length
+            ? " — no quick picks for tip"
+            : " — empty";
+      return opsDrillTileHtml({
+        glyph: meta.glyph || "gear",
+        label: meta.badge || meta.label || tb,
+        count: picks.length || undefined,
+        fit: picks.length > 0,
+        enabled: catalog.length > 0,
+        muted: !fit,
+        title: `${meta.label || tb}${tipNote}`,
+        attrs: `${scopeAttrs} data-suggest-pullout="${escapeHtml(tb)}" aria-expanded="${
+          open ? "true" : "false"
+        }" aria-label="${escapeHtml(
+          (meta.label || tb) + tipNote
+        )}${open ? " (open)" : ""}"`,
+      });
+    })
+    .join("");
+
+  let pullout = "";
+  const openTb =
+    suggestPullout &&
+    suggestPullout.scope === scope &&
+    (scope === "cell" ||
+      (suggestPullout.stem === stem &&
+        (suggestPullout.branch ?? null) === (branch ?? null)))
+      ? suggestPullout.tb
+      : null;
+  if (openTb) {
+    const tb = openTb;
+    const meta = TOOLBOX_META[tb] || { label: tb };
+    const picks = nextByTb.get(tb) || [];
+    const chips = picks.length
+      ? picks
+          .map(({ spec, index }) =>
+            suggestNextChipHtml(spec, from, {
+              primary: index < primaryCount,
+            })
+          )
+          .join("")
+      : `<p class="muted fs-xs mb-0">No quick picks for this tip — try Toolkit ▸</p>`;
+    pullout = `
+      <div class="suggest-pullout" role="region"
+        aria-label="${escapeHtml(meta.label || tb)} suggestions">
+        <div class="suggest-pullout-head">
+          <p class="suggest-pullout-title mb-0">${escapeHtml(meta.label || tb)}</p>
+          <button type="button" class="btn btn-ghost btn-compact" data-suggest-open-ops="${escapeHtml(tb)}"
+            title="Open this toolbox in Toolkit">Toolkit ▸</button>
+          <button type="button" class="btn btn-ghost btn-compact" data-suggest-pullout-close
+            aria-label="Close menu">✕</button>
+        </div>
+        <div class="suggest-next-chips suggest-pullout-chips" role="list">
+          ${chips}
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="suggest-toolbox-wrap" ${scopeAttrs}>
+      <div class="suggest-toolbox-rail" role="list">
+        <span class="suggest-next-plus" aria-hidden="true" title="Add step">+</span>
+        <span class="sr-only">Add step</span>
+        <div class="ops-icon-grid ops-drill-grid suggest-toolbox-tiles">${tiles}</div>
+      </div>
+      ${pullout}
+    </div>`;
+}
+
+/**
+ * Soft + for a tee/foreach nest or selector branch.
+ * - inline: compact + at end of a branch row → toolbox pop-out
+ * - body: same soft “+ Add step” toolbox strip as the cell `#suggest-next`
+ * @param {number} stem
+ * @param {number | null} [branch]
+ * @param {{ inline?: boolean }} [opts]
+ * @returns {string}
+ */
+function nestSuggestRailHtml(stem, branch = null, opts = {}) {
+  const inline = !!opts.inline;
+  const parent = steps[stem];
+  if (!parent || (parent.name !== "tee" && parent.name !== "foreach")) return "";
+  const focus = {
+    stem,
+    body: /** @type {null} */ (null),
+    ...(branch != null ? { branch } : {}),
+  };
+  const from = pipelineOutputAtFocus(focus);
+  const lastBody =
+    branch != null
+      ? parent.branches?.[branch]?.body || []
+      : parent.body || [];
+  const last = lastBody[lastBody.length - 1];
+  const terminal = !!(last && (isTerminalSink(last.name) || last.name === "inspect"));
+  const br = branch != null ? parent.branches?.[branch] : null;
+  const targetLabel =
+    branch != null
+      ? br?.selector || (br?.member ? `.${br.member}` : "branch")
+      : parent.name === "foreach"
+        ? "foreach body"
+        : "tee body";
+
+  let next = suggestedNextSteps(from, { terminal, hasForeach: true });
+  // Nested tee/foreach rejected in v1 — keep the nest linear.
+  next = next.filter((s) => s.name !== "tee" && s.name !== "foreach");
+  const tipFit = new Set(next.map((s) => s.name));
+  for (const s of stepsAccepting(from)) {
+    if (s.name !== "tee" && s.name !== "foreach") tipFit.add(s.name);
+  }
+  const byToolbox = suggestByToolboxMap();
+  const primaryCount = from.base === "shares" ? 2 : 3;
+  const toolbox = suggestToolboxMenusHtml(
+    next,
+    from,
+    byToolbox,
+    tipFit,
+    primaryCount,
+    { scope: "nest", stem, branch }
+  );
+
+  if (inline) {
+    const expanded =
+      !!nestSuggestExpanded &&
+      nestSuggestExpanded.stem === stem &&
+      (nestSuggestExpanded.branch ?? null) === (branch ?? null);
+    return `
+    <div class="suggest-next suggest-next-nest suggest-next-nest-inline${
+      expanded ? "" : " suggest-next-nest-collapsed"
+    }${terminal ? " suggest-next-optional" : ""}" data-nest-suggest="${stem}"${
+      branch != null ? ` data-nest-branch="${branch}"` : ""
+    }>
+      <button type="button" class="suggest-nest-add${expanded ? " is-open" : ""}"
+        data-nest-expand="${stem}"${
+          branch != null ? ` data-nest-expand-branch="${branch}"` : ""
+        }
+        aria-expanded="${expanded ? "true" : "false"}"
+        aria-label="${escapeHtml(
+          expanded ? `Close picks for ${targetLabel}` : `Add step to ${targetLabel}`
+        )}"
+        title="${escapeHtml(
+          expanded ? `Close picks for ${targetLabel}` : `Add step to ${targetLabel}`
+        )}">
+        <span class="suggest-next-plus" aria-hidden="true">${expanded ? "−" : "+"}</span>
+      </button>
+      ${
+        expanded
+          ? `<div class="suggest-nest-popout" role="region"
+              aria-label="Add step to ${escapeHtml(targetLabel)}">${toolbox}</div>`
+          : ""
+      }
+    </div>`;
+  }
+
+  // Same soft strip as the cell-level suggest drawer.
+  return `
+    <div class="suggest-next suggest-next-cell suggest-next-soft${
+      terminal ? " suggest-next-optional" : ""
+    }" data-nest-suggest="${stem}" aria-label="Add step to ${escapeHtml(targetLabel)}">
+      ${toolbox}
+    </div>`;
+}
+
+/**
+ * Wire suggest toolbox pull-outs + chips inside a host (cell or nest).
+ * @param {ParentNode} host
+ */
+function wireSuggestMenus(host) {
+  const byToolbox = suggestByToolboxMap();
+
+  host.querySelectorAll("[data-nest-expand]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const stem = Number(btn.getAttribute("data-nest-expand"));
+      if (!Number.isFinite(stem)) return;
+      const branchAttr = btn.getAttribute("data-nest-expand-branch");
+      const branch = branchAttr != null ? Number(branchAttr) : null;
+      const same =
+        nestSuggestExpanded &&
+        nestSuggestExpanded.stem === stem &&
+        (nestSuggestExpanded.branch ?? null) === branch;
+      nestSuggestExpanded = same ? null : { stem, branch };
+      if (same) suggestPullout = null;
+      else {
+        insertFocus =
+          branch != null
+            ? { stem, branch, body: null }
+            : { stem, body: null };
+      }
+      renderNotebook();
+    });
+  });
+
+  host.querySelectorAll("[data-suggest-pullout]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tb = btn.getAttribute("data-suggest-pullout") || "";
+      const scope =
+        btn.getAttribute("data-suggest-scope") === "nest" ? "nest" : "cell";
+      if (!tb) return;
+      const catalog = byToolbox.get(tb) || [];
+      if (!catalog.length) return;
+
+      if (scope === "nest") {
+        const stem = Number(btn.getAttribute("data-suggest-stem"));
+        const branchAttr = btn.getAttribute("data-suggest-branch");
+        const branch = branchAttr != null ? Number(branchAttr) : null;
+        insertFocus =
+          branch != null
+            ? { stem, branch, body: null }
+            : { stem, body: null };
+        const same =
+          suggestPullout &&
+          suggestPullout.scope === "nest" &&
+          suggestPullout.tb === tb &&
+          suggestPullout.stem === stem &&
+          (suggestPullout.branch ?? null) === branch;
+        suggestPullout = same ? null : { scope: "nest", tb, stem, branch };
+        renderNotebook();
+        return;
+      }
+
+      const same =
+        suggestPullout &&
+        suggestPullout.scope === "cell" &&
+        suggestPullout.tb === tb;
+      suggestPullout = same ? null : { scope: "cell", tb };
+      renderSuggestDrawer();
+    });
+  });
+
+  host.querySelectorAll("[data-suggest-pullout-close]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      suggestPullout = null;
+      if (btn.closest("[data-nest-suggest]")) renderNotebook();
+      else renderSuggestDrawer();
+    });
+  });
+
+  host.querySelectorAll("[data-suggest-open-ops]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      openOpsToolbox(btn.getAttribute("data-suggest-open-ops") || "");
+    });
+  });
 
   host.querySelectorAll("[data-suggest-compose]").forEach((el) => {
     el.addEventListener("click", () => {
@@ -3583,10 +4497,19 @@ function renderSuggestDrawer() {
     const name = el.getAttribute("data-suggest-op") || "";
     const decode = el.getAttribute("data-suggest-decode") === "1";
     const overrides = decode ? { decode: true } : undefined;
+    const nestHost = el.closest("[data-nest-suggest]");
     el.addEventListener("dragstart", (e) => {
       if (stepBlockedByFips(name)) {
         e.preventDefault();
         return;
+      }
+      if (nestHost) {
+        const stem = Number(nestHost.getAttribute("data-nest-suggest"));
+        const branchAttr = nestHost.getAttribute("data-nest-branch");
+        insertFocus =
+          branchAttr != null
+            ? { stem, branch: Number(branchAttr), body: null }
+            : { stem, body: null };
       }
       const dt = e.dataTransfer;
       if (!dt) return;
@@ -3597,8 +4520,69 @@ function renderSuggestDrawer() {
       el.classList.add("ops-dragging");
     });
     el.addEventListener("dragend", () => el.classList.remove("ops-dragging"));
-    el.addEventListener("click", () => addStepAt(name, undefined, overrides));
+    el.addEventListener("click", () => {
+      if (nestHost) {
+        const stem = Number(nestHost.getAttribute("data-nest-suggest"));
+        const branchAttr = nestHost.getAttribute("data-nest-branch");
+        insertFocus =
+          branchAttr != null
+            ? { stem, branch: Number(branchAttr), body: null }
+            : { stem, body: null };
+        nestSuggestExpanded = null;
+        suggestPullout = null;
+      }
+      addStepAt(name, undefined, overrides);
+    });
   });
+}
+
+/**
+ * Contextual next-block drawer under the focused cell’s pipeline.
+ * Nest/branch continuation uses the soft + rails inside tee/foreach nests.
+ */
+function renderSuggestDrawer() {
+  const host = document.getElementById("suggest-next");
+  if (!host) return;
+
+  // When building inside a nest, the nest + rail owns suggestions.
+  if (isNestInsertFocus(insertFocus)) {
+    host.hidden = true;
+    host.innerHTML = "";
+    host.classList.remove("suggest-next-soft", "suggest-next-optional");
+    if (suggestPullout?.scope === "cell") suggestPullout = null;
+    return;
+  }
+
+  const from = walkPipelineTypes(steps, { getStep }).final;
+  const last = steps[steps.length - 1];
+  const terminal = !!(last && (isTerminalSink(last.name) || last.name === "inspect"));
+  const hasForeach = steps.some((s) => s.name === "foreach");
+  const next = suggestedNextSteps(from, { hasForeach, terminal });
+  const composeChips = compositionSuggestChipsHtml(from);
+  const tipFit = new Set(next.map((s) => s.name));
+  for (const s of stepsAccepting(from)) tipFit.add(s.name);
+  const byToolbox = suggestByToolboxMap();
+
+  if (!next.length && !composeChips && !byToolbox.size) {
+    host.hidden = true;
+    host.innerHTML = "";
+    host.classList.remove("suggest-next-soft", "suggest-next-optional");
+    if (suggestPullout?.scope === "cell") suggestPullout = null;
+    return;
+  }
+
+  const primaryCount = !steps.length ? 3 : from.base === "shares" ? 2 : 3;
+  host.classList.toggle("suggest-next-optional", terminal && !!steps.length);
+  host.classList.toggle("suggest-next-soft", true);
+
+  host.hidden = false;
+  host.innerHTML = `
+    ${suggestToolboxMenusHtml(next, from, byToolbox, tipFit, primaryCount, {
+      scope: "cell",
+    })}
+    ${composeChips}`;
+
+  wireSuggestMenus(host);
 }
 
 /**
@@ -3745,6 +4729,18 @@ function applyCompositionChip(kind) {
  * @param {{ decode?: boolean, cellClass?: string }} [opts]
  * @returns {string}
  */
+/**
+ * Shelf glyph, else toolbox glyph — for compact icon-grid tiles.
+ * @param {import("../lib/toolkit/registry.js").StepSpec} s
+ */
+function opsGlyphForStep(s) {
+  if (s.shelf) {
+    const g = getShelfMeta(s.shelf)?.glyph;
+    if (g) return g;
+  }
+  return TOOLBOX_META[s.toolbox]?.glyph || "gear";
+}
+
 function opsItemHtml(s, suggested, opts = {}) {
   const decode = !!opts.decode;
   const from = currentPipelineOutput();
@@ -3761,26 +4757,20 @@ function opsItemHtml(s, suggested, opts = {}) {
     ? s.effectiveIo({ ...defaultParams(s), ...(decode ? { decode: true } : {}) })
     : { input: s.input, output: s.output };
   const ioLabel = `${io.input} → ${io.output}`;
-  const display = stepDisplayName(s);
-  const nameLabel = decode ? `${display} -d` : display;
+  const nameLabel = stepDisplayName(s, { decode });
+  const shortName =
+    nameLabel.length > 10 ? `${nameLabel.slice(0, 9)}…` : nameLabel;
   const blocked = stepBlockedByFips(s.name);
-  const title = blocked
-    ? `FIPS mode: blocked — ${s.toolbox} suite unverified. ${FIPS_MODE_DISCLAIMER}`
-    : `${s.doc}\n\nRecipe: ${s.name}${decode ? " -d" : ""} · ${ioLabel}`;
   const cellClass = opts.cellClass || "";
+  const glyph = opsGlyphForStep(s);
   return `
-    <button type="button" class="ops-item ${cellClass} ${fit ? "ops-item-fit" : "ops-item-dim"}${blocked ? " ops-item-fips-blocked" : ""}"
+    <button type="button" class="ops-item ops-item-icon ${cellClass} ${fit ? "ops-item-fit" : "ops-item-dim"}${blocked ? " ops-item-fips-blocked" : ""}"
       draggable="${blocked ? "false" : "true"}" data-op="${escapeHtml(s.name)}"
       data-op-decode="${decode ? "1" : "0"}"
       ${blocked ? "aria-disabled=\"true\"" : ""}
-      title="${escapeHtml(title)}">
-      <span class="ops-item-name">${escapeHtml(nameLabel)}</span>
-      ${
-        display !== s.name || decode
-          ? `<span class="muted fs-xs ops-item-recipe">${escapeHtml(s.name)}${decode ? " -d" : ""}</span>`
-          : ""
-      }
-      <span class="muted fs-xs ops-item-io">${escapeHtml(ioLabel)}</span>
+      aria-label="${escapeHtml(nameLabel)} — ${escapeHtml(ioLabel)}">
+      ${glyphHtml(glyph, "ops-glyph ops-glyph-tile")}
+      <span class="ops-item-name">${escapeHtml(shortName)}</span>
     </button>`;
 }
 
@@ -3838,6 +4828,25 @@ function macKitMatchesFilter(q) {
 }
 
 /**
+ * Compact kit meta tile (matches Keys/Digest icon language).
+ * @param {{ glyph: string, shortName: string, title: string, attrs: string, open?: boolean }} opts
+ * @returns {string}
+ */
+function kitMetaTileHtml(opts) {
+  const open = !!opts.open;
+  return `
+    <button type="button" class="ops-item ops-item-icon ops-kit-meta${
+      open ? " ops-cipher-meta-open ops-item-fit" : ""
+    }"
+      ${opts.attrs}
+      aria-label="${escapeHtml(opts.title)}"
+      title="${escapeHtml(opts.title)}">
+      ${glyphHtml(opts.glyph, "ops-glyph ops-glyph-tile")}
+      <span class="ops-item-name">${escapeHtml(opts.shortName)}</span>
+    </button>`;
+}
+
+/**
  * Meta Encrypt/Decrypt entry + cipher-subset picker (WebCrypto only).
  * @param {Set<string>} suggested
  * @returns {string}
@@ -3850,56 +4859,52 @@ function cipherKitHtml(suggested) {
   const panel = open
     ? `
       <div class="ops-cipher-picker" role="listbox" aria-label="Choose cipher">
-        <p class="muted fs-xs mb-0">Inserts a concrete op${
-          open.decode ? " with decrypt (-d)" : ""
-        } — not an <code>encrypt</code> card.</p>
+        <p class="muted fs-xs mb-xs">Concrete cipher${
+          open.decode ? " (−d)" : ""
+        }</p>
+        <div class="ops-icon-grid ops-kit-pick-grid">
         ${picks
           .map((s) => {
-            const aliases = CIPHER_PICKER_ALIASES[s.name] || [];
             const fit = suggested.has(s.name);
             const blocked = stepBlockedByFips(s.name);
+            const short =
+              s.name.length > 9 ? `${s.name.slice(0, 8)}…` : s.name;
             return `
-              <button type="button" class="ops-item ops-cipher-pick${
+              <button type="button" class="ops-item ops-item-icon ops-cipher-pick${
                 fit ? " ops-item-fit" : " ops-item-dim"
               }${blocked ? " ops-item-fips-blocked" : ""}"
                 data-cipher-pick="${escapeHtml(s.name)}"
                 role="option"
                 ${blocked ? "aria-disabled=\"true\"" : ""}
+                aria-label="${escapeHtml(s.name)}"
                 title="${escapeHtml(blocked ? `FIPS mode: blocked — ${s.toolbox} unverified` : s.doc)}">
-                <span class="ops-item-name">${escapeHtml(s.name)}</span>
-                ${
-                  aliases.length
-                    ? `<span class="ops-item-io muted">${escapeHtml(aliases.join(" · "))}</span>`
-                    : ""
-                }
+                ${glyphHtml("aead", "ops-glyph ops-glyph-tile")}
+                <span class="ops-item-name">${escapeHtml(short)}</span>
               </button>`;
           })
           .join("")}
+        </div>
       </div>`
     : "";
 
   return `
     <div class="ops-cipher-kit" data-cipher-kit>
-      <p class="ops-pair-caption">Pick a cipher</p>
-      <div class="ops-pair">
-        <div class="ops-pair-cell">
-          <button type="button" class="ops-item ops-cipher-meta${encOpen ? " ops-cipher-meta-open" : ""}"
-            data-cipher-meta="encrypt"
-            aria-expanded="${encOpen ? "true" : "false"}"
-            title="Choose a WebCrypto cipher to insert (encrypt)">
-            <span class="ops-item-name">Encrypt</span>
-            <span class="ops-item-io muted">meta → aes-gcm / …</span>
-          </button>
-        </div>
-        <div class="ops-pair-cell">
-          <button type="button" class="ops-item ops-cipher-meta${decOpen ? " ops-cipher-meta-open" : ""}"
-            data-cipher-meta="decrypt"
-            aria-expanded="${decOpen ? "true" : "false"}"
-            title="Choose a WebCrypto cipher to insert (decrypt / -d)">
-            <span class="ops-item-name">Decrypt</span>
-            <span class="ops-item-io muted">meta → aes-gcm -d / …</span>
-          </button>
-        </div>
+      <p class="ops-pair-caption muted fs-xs">Cipher kit</p>
+      <div class="ops-icon-grid">
+        ${kitMetaTileHtml({
+          glyph: "aead",
+          shortName: "Encrypt",
+          title: "Choose a WebCrypto cipher to insert (encrypt)",
+          attrs: `data-cipher-meta="encrypt" aria-expanded="${encOpen ? "true" : "false"}"`,
+          open: !!encOpen,
+        })}
+        ${kitMetaTileHtml({
+          glyph: "aead",
+          shortName: "Decrypt",
+          title: "Choose a WebCrypto cipher to insert (decrypt / -d)",
+          attrs: `data-cipher-meta="decrypt" aria-expanded="${decOpen ? "true" : "false"}"`,
+          open: !!decOpen,
+        })}
       </div>
       ${panel}
     </div>`;
@@ -3916,36 +4921,41 @@ function formatKitHtml() {
   const panel = open
     ? `
       <div class="ops-cipher-picker" role="listbox" aria-label="Choose key format">
-        <p class="muted fs-xs mb-0">Inserts <code>${escapeHtml(open.direction)}</code> with format pre-filled.</p>
-        ${KEY_FORMAT_PICKS.map(
-          (fmt) => `
-            <button type="button" class="ops-item ops-cipher-pick"
+        <p class="muted fs-xs mb-xs"><code>${escapeHtml(open.direction)}</code> format</p>
+        <div class="ops-icon-grid ops-kit-pick-grid">
+        ${KEY_FORMAT_PICKS.map((fmt) => {
+          const short = fmt.length > 9 ? `${fmt.slice(0, 8)}…` : fmt;
+          return `
+            <button type="button" class="ops-item ops-item-icon ops-cipher-pick"
               data-format-pick="${escapeHtml(fmt)}"
               role="option"
+              aria-label="${escapeHtml(`${open.direction} ${fmt}`)}"
               title="${escapeHtml(`${open.direction} ${fmt}`)}">
-              <span class="ops-item-name">${escapeHtml(fmt)}</span>
-            </button>`
-        ).join("")}
+              ${glyphHtml("ports", "ops-glyph ops-glyph-tile")}
+              <span class="ops-item-name">${escapeHtml(short)}</span>
+            </button>`;
+        }).join("")}
+        </div>
       </div>`
     : "";
   return `
     <div class="ops-cipher-kit" data-format-kit>
-      <p class="ops-pair-caption">Key formats</p>
-      <div class="ops-pair">
-        <div class="ops-pair-cell">
-          <button type="button" class="ops-item ops-cipher-meta${expOpen ? " ops-cipher-meta-open" : ""}"
-            data-format-meta="export" aria-expanded="${expOpen ? "true" : "false"}">
-            <span class="ops-item-name">Export</span>
-            <span class="ops-item-io muted">meta → export jwk / …</span>
-          </button>
-        </div>
-        <div class="ops-pair-cell">
-          <button type="button" class="ops-item ops-cipher-meta${impOpen ? " ops-cipher-meta-open" : ""}"
-            data-format-meta="import" aria-expanded="${impOpen ? "true" : "false"}">
-            <span class="ops-item-name">Import</span>
-            <span class="ops-item-io muted">meta → import jwk / …</span>
-          </button>
-        </div>
+      <p class="ops-pair-caption muted fs-xs">Key formats</p>
+      <div class="ops-icon-grid">
+        ${kitMetaTileHtml({
+          glyph: "ports",
+          shortName: "Export",
+          title: "Export key — choose format (jwk, pkcs8, …)",
+          attrs: `data-format-meta="export" aria-expanded="${expOpen ? "true" : "false"}"`,
+          open: !!expOpen,
+        })}
+        ${kitMetaTileHtml({
+          glyph: "ports",
+          shortName: "Import",
+          title: "Import key — choose format (jwk, pkcs8, …)",
+          attrs: `data-format-meta="import" aria-expanded="${impOpen ? "true" : "false"}"`,
+          open: !!impOpen,
+        })}
       </div>
       ${panel}
     </div>`;
@@ -3955,109 +4965,244 @@ function formatKitHtml() {
 function macKitHtml() {
   return `
     <div class="ops-cipher-kit" data-mac-kit>
-      <p class="ops-pair-caption">HMAC</p>
-      <div class="ops-pair">
-        <div class="ops-pair-cell">
-          <button type="button" class="ops-item" data-mac-meta="sign"
-            title="Insert sign (HMAC keys via genkey hmac/sha256)">
-            <span class="ops-item-name">hmac</span>
-            <span class="ops-item-io muted">→ sign</span>
-          </button>
-        </div>
-        <div class="ops-pair-cell">
-          <button type="button" class="ops-item" data-mac-meta="verify"
-            title="Insert verify (recipe sugar: hmac.verify)">
-            <span class="ops-item-name">hmac.verify</span>
-            <span class="ops-item-io muted">→ verify</span>
-          </button>
-        </div>
+      <p class="ops-pair-caption muted fs-xs">HMAC</p>
+      <div class="ops-icon-grid">
+        ${kitMetaTileHtml({
+          glyph: "sign",
+          shortName: "hmac",
+          title: "Insert sign (HMAC keys via genkey hmac/sha256)",
+          attrs: `data-mac-meta="sign"`,
+        })}
+        ${kitMetaTileHtml({
+          glyph: "sign",
+          shortName: "verify",
+          title: "Insert verify (recipe sugar: hmac.verify)",
+          attrs: `data-mac-meta="verify"`,
+        })}
       </div>
     </div>`;
 }
 
 /**
- * Render ops for one toolbox — shelves + conjugate pair rows.
- * @param {string} tb
- * @param {import("../lib/toolkit/registry.js").StepSpec[]} items
- * @param {Set<string>} suggested
- * @param {boolean} filterActive
+ * @param {{ glyph: string, label: string, count?: number, attrs: string, fit?: boolean, enabled?: boolean, title?: string }} opts
  * @returns {string}
  */
-function renderToolboxOpsBody(tb, items, suggested, filterActive) {
-  const sorted = items.slice().sort((a, b) => {
+function opsDrillTileHtml(opts) {
+  const enabled = opts.enabled !== false;
+  const fit = !!opts.fit;
+  // Dim when tip doesn't fit (stable grid) — still clickable unless truly empty/disabled.
+  const muted = opts.muted != null ? !!opts.muted : !fit;
+  const title = opts.title || opts.label;
+  return `
+    <button type="button" class="ops-item ops-item-icon ops-drill-tile${
+      fit ? " ops-item-fit" : ""
+    }${muted ? " ops-drill-muted" : ""}${!enabled ? " ops-item-dim" : ""}"
+      ${opts.attrs}
+      ${muted ? 'data-ops-muted="1"' : ""}
+      ${!enabled ? "disabled" : ""}
+      title="${escapeHtml(title)}">
+      ${glyphHtml(opts.glyph, "ops-glyph ops-glyph-tile")}
+      <span class="ops-item-name">${escapeHtml(opts.label)}</span>
+      ${
+        opts.count != null
+          ? `<span class="ops-drill-count">${opts.count}</span>`
+          : ""
+      }
+    </button>`;
+}
+
+/**
+ * Stable toolbox tile grid — always shows every toolbox; tip-fit highlighted, others dimmed.
+ * @param {Set<string>} suggested
+ * @param {Map<string, import("../lib/toolkit/registry.js").StepSpec[]>} byToolbox
+ * @param {{ suggest?: boolean }} [opts]
+ * @returns {string}
+ */
+function opsToolboxGridHtml(suggested, byToolbox, opts = {}) {
+  const openAttr = opts.suggest ? "data-suggest-toolbox" : "data-ops-open-toolbox";
+  const keys = Object.keys(TOOLBOX_META).sort(
+    (a, b) => (TOOLBOX_META[a]?.order ?? 9) - (TOOLBOX_META[b]?.order ?? 9)
+  );
+  return `
+    <div class="ops-icon-grid ops-drill-grid" role="list">
+      ${keys
+        .map((tb) => {
+          const meta = TOOLBOX_META[tb] || { label: tb, glyph: "gear", badge: tb };
+          const items = byToolbox.get(tb) || [];
+          const fit = items.some((s) => suggested.has(s.name));
+          const ver = toolboxVerification(tb, suiteStatus);
+          const verNote =
+            ver === "verified"
+              ? " · CAST verified"
+              : ver === "unverified"
+                ? " · unverified"
+                : "";
+          const tipNote = fit
+            ? " — fits current tip"
+            : items.length
+              ? " — no ops fit tip (still browsable)"
+              : " — empty";
+          return opsDrillTileHtml({
+            glyph: meta.glyph || "gear",
+            label: meta.badge || meta.label || tb,
+            count: items.length,
+            fit,
+            enabled: items.length > 0,
+            muted: !fit,
+            title: `${meta.label || tb}${verNote}${tipNote}`,
+            attrs: `${openAttr}="${escapeHtml(tb)}" aria-label="${escapeHtml(
+              (meta.label || tb) + tipNote
+            )}"`,
+          });
+        })
+        .join("")}
+    </div>`;
+}
+
+/**
+ * @param {import("../lib/toolkit/registry.js").StepSpec[]} items
+ * @returns {import("../lib/toolkit/registry.js").StepSpec[]}
+ */
+function sortOpsItems(items) {
+  return items.slice().sort((a, b) => {
     const sa = getShelfMeta(a.shelf).order;
     const sb = getShelfMeta(b.shelf).order;
     const ka = KIND_META[a.kind]?.order ?? 9;
     const kb = KIND_META[b.kind]?.order ?? 9;
     return sa - sb || ka - kb || a.name.localeCompare(b.name);
   });
-  const usesShelves = sorted.some((s) => s.shelf);
-  const q = opsFilter.trim();
-  let kit = "";
-  if (tb === "webcrypto") {
-    if (formatKitMatchesFilter(q)) kit += formatKitHtml();
-    if (cipherKitMatchesFilter(q)) kit += cipherKitHtml(suggested);
-    if (macKitMatchesFilter(q)) kit += macKitHtml();
-  }
-
-  /**
-   * @param {typeof sorted} shelfItems
-   */
-  const rowsHtml = (shelfItems) =>
-    listDrawerRows(shelfItems)
-      .map((row) => opsDrawerRowHtml(row, suggested))
-      .join("");
-
-  if (!usesShelves) {
-    return kit + rowsHtml(sorted);
-  }
-
-  /** @type {Map<string, typeof sorted>} */
-  const byShelf = new Map();
-  for (const s of sorted) {
-    const shelf = s.shelf || "other";
-    const list = byShelf.get(shelf) || [];
-    list.push(s);
-    byShelf.set(shelf, list);
-  }
-  const shelves = [...byShelf.keys()].sort(
-    (a, b) => getShelfMeta(a).order - getShelfMeta(b).order
-  );
-
-  return (
-    kit +
-    shelves
-      .map((shelf) => {
-        const key = `${tb}:${shelf}`;
-        const meta = getShelfMeta(shelf);
-        const collapsed = opsShelfCollapsed.has(key) && !filterActive;
-        const shelfItems = byShelf.get(shelf) || [];
-        const visibleCount = listDrawerRows(shelfItems).length;
-        return `
-        <div class="ops-shelf" data-shelf="${escapeHtml(key)}">
-          <button type="button" class="ops-shelf-toggle" data-toggle-shelf="${escapeHtml(key)}"
-            aria-expanded="${collapsed ? "false" : "true"}">
-            <span class="ops-shelf-label">${glyphHtml(meta.glyph, "ops-glyph ops-glyph-shelf")}<span>${escapeHtml(meta.label)}</span></span>
-            <span class="muted fs-xs">${visibleCount}</span>
-          </button>
-          <div class="ops-shelf-body ${collapsed ? "hidden" : ""}">
-            ${rowsHtml(shelfItems)}
-          </div>
-        </div>`;
-      })
-      .join("")
-  );
 }
 
 /**
- * CyberChef-style operations drawer grouped by toolbox (and shelves within).
+ * @param {import("../lib/toolkit/registry.js").StepSpec[]} shelfItems
+ * @param {Set<string>} suggested
+ * @returns {string}
+ */
+function opsToolGridHtml(shelfItems, suggested) {
+  return `<div class="ops-icon-grid" role="list">
+    ${listDrawerRows(shelfItems)
+      .map((row) => opsDrawerRowHtml(row, suggested))
+      .join("")}
+  </div>`;
+}
+
+/**
+ * @typedef {{ id: string, label: string, glyph: string, kind: "shelf"|"kit", kit?: "format"|"cipher"|"mac", items?: import("../lib/toolkit/registry.js").StepSpec[], fitCount?: number }} OpsShelfEntry
+ */
+
+/**
+ * Shelves (+ virtual kits) inside a toolbox for drill-down.
+ * @param {string} tb
+ * @param {import("../lib/toolkit/registry.js").StepSpec[]} items
+ * @param {Set<string>} suggested
+ * @param {string} q
+ * @returns {OpsShelfEntry[]}
+ */
+function listOpsShelfEntries(tb, items, suggested, q) {
+  /** @type {OpsShelfEntry[]} */
+  const entries = [];
+  const sorted = sortOpsItems(items);
+  const usesShelves = sorted.some((s) => s.shelf);
+
+  if (!usesShelves) {
+    if (sorted.length) {
+      entries.push({
+        id: "_all",
+        label: "All",
+        glyph: TOOLBOX_META[tb]?.glyph || "gear",
+        kind: "shelf",
+        items: sorted,
+        fitCount: sorted.filter((s) => suggested.has(s.name)).length,
+      });
+    }
+  } else {
+    /** @type {Map<string, typeof sorted>} */
+    const byShelf = new Map();
+    for (const s of sorted) {
+      const shelf = s.shelf || "other";
+      const list = byShelf.get(shelf) || [];
+      list.push(s);
+      byShelf.set(shelf, list);
+    }
+    const shelves = [...byShelf.keys()].sort(
+      (a, b) => getShelfMeta(a).order - getShelfMeta(b).order
+    );
+    for (const shelf of shelves) {
+      const shelfItems = byShelf.get(shelf) || [];
+      const meta = getShelfMeta(shelf);
+      entries.push({
+        id: shelf,
+        label: meta.label,
+        glyph: meta.glyph || "gear",
+        kind: "shelf",
+        items: shelfItems,
+        fitCount: shelfItems.filter((s) => suggested.has(s.name)).length,
+      });
+    }
+  }
+
+  // Kits after shelves — pickers, not primary discovery
+  if (tb === "webcrypto") {
+    if (formatKitMatchesFilter(q)) {
+      entries.push({
+        id: "kit-formats",
+        label: "Formats",
+        glyph: "ports",
+        kind: "kit",
+        kit: "format",
+        fitCount: 0,
+      });
+    }
+    if (cipherKitMatchesFilter(q)) {
+      entries.push({
+        id: "kit-cipher",
+        label: "Pick…",
+        glyph: "aead",
+        kind: "kit",
+        kit: "cipher",
+        fitCount: listCipherPickerSteps().filter((s) => suggested.has(s.name)).length,
+      });
+    }
+    if (macKitMatchesFilter(q)) {
+      entries.push({
+        id: "kit-mac",
+        label: "HMAC",
+        glyph: "sign",
+        kind: "kit",
+        kit: "mac",
+        fitCount: ["sign", "verify"].filter((n) => suggested.has(n)).length,
+      });
+    }
+  }
+  return entries;
+}
+
+/**
+ * @param {OpsShelfEntry} entry
+ * @param {Set<string>} suggested
+ * @returns {string}
+ */
+function renderOpsShelfLeaf(entry, suggested) {
+  if (entry.kind === "kit") {
+    if (entry.kit === "format") return formatKitHtml();
+    if (entry.kit === "cipher") return cipherKitHtml(suggested);
+    if (entry.kit === "mac") return macKitHtml();
+  }
+  return opsToolGridHtml(entry.items || [], suggested);
+}
+
+/**
+ * Accordion Toolkit panel — full toolbox list, drawers closed by default.
+ * Suggest-next toolbox squares call openOpsToolbox() to focus a section.
  */
 function renderOpsDrawer() {
   const host = document.getElementById("ops-drawer");
   const hint = document.getElementById("ops-hint");
   if (!host) return;
+  forceHideToolCard();
 
   const q = opsFilter.trim().toLowerCase();
+  const filterActive = !!q;
   const from = currentPipelineOutput();
   const suggested = new Set(stepsAccepting(from).map((s) => s.name));
   const all = listSteps().filter(
@@ -4084,57 +5229,130 @@ function renderOpsDrawer() {
     byToolbox.set(tb, list);
   }
 
-  const toolboxes = [...byToolbox.keys()].sort(
+  // Stable order — every toolbox stays in the accordion (empty when filtered out)
+  const toolboxes = Object.keys(TOOLBOX_META).sort(
     (a, b) => (TOOLBOX_META[a]?.order ?? 9) - (TOOLBOX_META[b]?.order ?? 9)
   );
 
-  if (!toolboxes.length) {
-    host.innerHTML = `<p class="muted fs-sm">No operations match “${escapeHtml(opsFilter)}”.</p>`;
-    return;
-  }
-
   if (hint) {
     const fromType = formatType(from);
+    const friendly = friendlyTypeLabel(from);
     const slotN = kernel.slotCount();
     const recipSlots = kernel.listSlots().filter((m) => slotMetaKind(m) === "recipients");
     const slotHint = slotN
       ? ` · ${slotN} slot${slotN === 1 ? "" : "s"} in Variables`
       : "";
+    const tipHtml = (lead, guide) =>
+      `Cell [${focusedCell}] tip <strong class="ops-tip-friendly">${escapeHtml(lead)}</strong>` +
+      (fromType && fromType !== "none"
+        ? ` <code class="ops-tip-type muted" title="Refined type">${escapeHtml(fromType)}</code>`
+        : "") +
+      ` — ${guide}${escapeHtml(slotHint)}`;
     if (!steps.length) {
-      hint.textContent =
-        recipSlots.length
-          ? `Cell [${focusedCell}] empty — add input, or compose Encrypt to @${recipSlots[0].label} from Suggest.`
-          : "Focused cell is empty — drag a source (genkey, hkp.search, input) or click to append." +
-            slotHint;
+      hint.innerHTML = recipSlots.length
+        ? tipHtml(
+            "empty",
+            `add input, or compose Encrypt to @${escapeHtml(recipSlots[0].label)} from Suggest.`
+          )
+        : tipHtml("empty", "open a drawer or use Suggest toolbox squares.");
     } else if (from.base === "shares" && from.kind === "raw") {
-      hint.textContent = `Cell [${focusedCell}] tip ${fromType} — blip39 or recover.${slotHint}`;
+      hint.innerHTML = tipHtml(friendly, "blip39 or recover.");
     } else if (from.base === "shares") {
-      hint.textContent = `Cell [${focusedCell}] tip ${fromType} — blip39 -d → recover, or foreach.${slotHint}`;
+      hint.innerHTML = tipHtml(friendly, "blip39 -d → recover, or foreach.");
     } else if (from.base === "recipients") {
-      hint.textContent = `Cell [${focusedCell}] tip recipients — compose Encrypt in a new cell (stem stays the message).${slotHint}`;
+      hint.innerHTML = tipHtml(
+        "recipients",
+        "compose Encrypt in a new cell (stem stays the message)."
+      );
     } else {
-      hint.textContent = `Cell [${focusedCell}] tip ${fromType} — highlighted ops fit the tip.${slotHint}`;
+      hint.innerHTML = tipHtml(friendly, "highlighted ops fit the tip · dimmed still browsable.");
     }
   }
 
-  host.innerHTML = toolboxes
-    .map((tb) => {
-      const meta = TOOLBOX_META[tb] || { label: tb };
-      const collapsed = opsCollapsed.has(tb) && !q;
-      const items = byToolbox.get(tb) || [];
-      return `
-        <div class="ops-category" data-toolbox="${escapeHtml(tb)}">
-          <button type="button" class="ops-category-toggle" data-toggle-toolbox="${escapeHtml(tb)}"
-            aria-expanded="${collapsed ? "false" : "true"}">
-            <span class="ops-category-label">${glyphHtml(meta.glyph, "ops-glyph ops-glyph-toolbox")} ${toolboxBadgeHtml(tb)} ${escapeHtml(meta.label)} ${suiteChipHtml(tb)}</span>
-            <span class="muted fs-xs">${items.length}</span>
+  if (filterActive && ![...byToolbox.values()].flat().length) {
+    host.innerHTML = `<p class="muted fs-sm">Nothing matches “${escapeHtml(opsFilter)}”.</p>`;
+    return;
+  }
+
+  /**
+   * @param {string} tb
+   * @param {typeof all} items
+   */
+  const accordionBody = (tb, items) => {
+    const entries = listOpsShelfEntries(tb, items, suggested, opsFilter.trim());
+    if (!entries.length) {
+      return `<p class="muted fs-xs mb-0">No ops in this toolbox${
+        filterActive ? " for the current search" : ""
+      }.</p>`;
+    }
+    return entries
+      .map((entry) => {
+        const key = `${tb}:${entry.id}`;
+        const collapsed = !filterActive && !opsShelfExpanded.has(key);
+        const count =
+          entry.kind === "kit"
+            ? entry.kit === "cipher"
+              ? listCipherPickerSteps().length
+              : entry.kit === "format"
+                ? KEY_FORMAT_PICKS.length
+                : 2
+            : listDrawerRows(entry.items || []).length;
+        const fit = (entry.fitCount || 0) > 0;
+        return `
+          <div class="ops-shelf${fit ? " ops-shelf-fit" : ""}" data-shelf="${escapeHtml(key)}">
+            <button type="button" class="ops-shelf-toggle${fit ? " ops-shelf-toggle-fit" : ""}"
+              data-toggle-shelf="${escapeHtml(key)}"
+              aria-expanded="${collapsed ? "false" : "true"}">
+              <span class="ops-shelf-label">${glyphHtml(entry.glyph, "ops-glyph ops-glyph-shelf")}<span>${escapeHtml(entry.label)}</span></span>
+              <span class="muted fs-xs">${count}${fit ? " · tip" : ""}</span>
+            </button>
+            <div class="ops-shelf-body ${collapsed ? "hidden" : ""}">
+              ${renderOpsShelfLeaf(entry, suggested)}
+            </div>
+          </div>`;
+      })
+      .join("");
+  };
+
+  host.innerHTML = `
+    <div class="ops-toolbox-strip mb-sm">
+      <p class="muted fs-xs mb-xs">Jump</p>
+      ${opsToolboxGridHtml(suggested, byToolbox)}
+    </div>
+    ${toolboxes
+      .map((tb) => {
+        const meta = TOOLBOX_META[tb] || { label: tb };
+        const items = byToolbox.get(tb) || [];
+        const collapsed = opsCollapsed.has(tb) && !filterActive;
+        const fit = items.some((s) => suggested.has(s.name));
+        const empty = !items.length && !filterActive;
+        return `
+        <div class="ops-category${fit ? " ops-category-fit" : ""}${empty ? " ops-category-empty" : ""}" data-toolbox="${escapeHtml(tb)}">
+          <button type="button" class="ops-category-toggle${fit ? " ops-category-toggle-fit" : ""}"
+            data-toggle-toolbox="${escapeHtml(tb)}"
+            aria-expanded="${collapsed ? "false" : "true"}"
+            title="${escapeHtml(meta.label || tb)}${empty ? " — empty" : fit ? " — tip fit" : ""}">
+            <span class="ops-category-mark" aria-hidden="true">
+              ${suiteChipHtml(tb)}
+              ${glyphHtml(meta.glyph, "ops-glyph ops-glyph-toolbox")}
+            </span>
+            <span class="ops-category-text">
+              <span class="ops-category-name">${escapeHtml(meta.label || tb)}</span>
+              <span class="ops-category-meta muted fs-xs">${items.length}${fit ? " · tip" : ""}</span>
+            </span>
           </button>
           <div class="ops-category-body ${collapsed ? "hidden" : ""}">
-            ${renderToolboxOpsBody(tb, items, suggested, !!q)}
+            ${accordionBody(tb, items)}
           </div>
         </div>`;
-    })
-    .join("");
+      })
+      .join("")}`;
+
+  host.querySelectorAll("[data-ops-open-toolbox]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      openOpsToolbox(btn.getAttribute("data-ops-open-toolbox") || "");
+    });
+  });
 
   host.querySelectorAll("[data-toggle-toolbox]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -4149,8 +5367,8 @@ function renderOpsDrawer() {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const key = btn.getAttribute("data-toggle-shelf") || "";
-      if (opsShelfCollapsed.has(key)) opsShelfCollapsed.delete(key);
-      else opsShelfCollapsed.add(key);
+      if (opsShelfExpanded.has(key)) opsShelfExpanded.delete(key);
+      else opsShelfExpanded.add(key);
       renderOpsDrawer();
     });
   });
@@ -4159,7 +5377,12 @@ function renderOpsDrawer() {
     const name = el.getAttribute("data-op") || "";
     const decode = el.getAttribute("data-op-decode") === "1";
     const overrides = decode ? { decode: true } : undefined;
+    el.addEventListener("pointerenter", () => showToolCard(el, name, decode));
+    el.addEventListener("pointerleave", () => scheduleHideToolCard());
+    el.addEventListener("focus", () => showToolCard(el, name, decode));
+    el.addEventListener("blur", () => scheduleHideToolCard());
     el.addEventListener("dragstart", (e) => {
+      forceHideToolCard();
       if (stepBlockedByFips(name)) {
         e.preventDefault();
         return;
@@ -4175,6 +5398,23 @@ function renderOpsDrawer() {
     el.addEventListener("dragend", () => el.classList.remove("ops-dragging"));
     el.addEventListener("click", () => addStepAt(name, undefined, overrides));
   });
+
+  const cardHost = document.getElementById("ops-tool-card");
+  if (cardHost && !cardHost.dataset.wired) {
+    cardHost.dataset.wired = "1";
+    cardHost.addEventListener("pointerenter", () => {
+      if (toolCardHideTimer) {
+        clearTimeout(toolCardHideTimer);
+        toolCardHideTimer = null;
+      }
+    });
+    cardHost.addEventListener("pointerleave", () => scheduleHideToolCard());
+  }
+  const opsBody = host.closest(".pane-body");
+  if (opsBody && !opsBody.dataset.toolCardScrollWired) {
+    opsBody.dataset.toolCardScrollWired = "1";
+    opsBody.addEventListener("scroll", () => hideToolCard(), { passive: true });
+  }
 
   wireCipherKit(host);
   wireFormatKit(host);
@@ -4482,68 +5722,197 @@ function checkEncryptToResolutions(ast) {
   return { ok: true };
 }
 
+/**
+ * Compact system-tray into agent session, local keychain, and trust store.
+ */
 function renderAgentChrome() {
-  const host = document.getElementById("agent-session-host");
-  if (host) {
-    const unlocked = sessionList();
-    if (!unlocked.length) {
-      host.innerHTML = "";
-      if (agentStripTimer) {
-        clearInterval(agentStripTimer);
-        agentStripTimer = null;
-      }
-    } else {
-      const paint = () => {
-        const list = sessionList();
-        if (!list.length) {
-          host.innerHTML = "";
-          if (agentStripTimer) {
-            clearInterval(agentStripTimer);
-            agentStripTimer = null;
-          }
-          return;
-        }
-        const earliest = sessionEarliestExpiry();
-        const msLeft = earliest ? Math.max(0, earliest - Date.now()) : 0;
-        const mins = Math.floor(msLeft / 60000);
-        const secs = Math.floor((msLeft % 60000) / 1000);
-        const ttl = `${mins}m ${String(secs).padStart(2, "0")}s`;
-        host.innerHTML = `
-          <div class="agent-session-strip" role="status">
-            <span>Unlocked: <strong>${list.length}</strong> · clears in ${escapeHtml(ttl)}</span>
-            <div class="btn-row wrap">
-              ${list
-                .map(
-                  (e) =>
-                    `<button type="button" class="btn btn-ghost btn-compact" data-agent-lock="${escapeHtml(e.fingerprint)}" title="${escapeHtml(formatFingerprint(e.fingerprint))}">Lock …${escapeHtml(e.fingerprint.slice(-8))}</button>`
-                )
-                .join("")}
-              <button type="button" class="btn btn-compact" data-agent-lock-all
-                title="Clear agent session, private @slots, and cell outputs">Lock all</button>
-            </div>
-          </div>`;
-        host.querySelector("[data-agent-lock-all]")?.addEventListener("click", () => {
-          lockAllAgentMaterial();
-        });
-        host.querySelectorAll("[data-agent-lock]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            sessionEvict(btn.getAttribute("data-agent-lock") || "");
-            renderAgentChrome();
-          });
-        });
-        updateKernelChip();
-      };
-      paint();
-      if (!agentStripTimer) {
-        agentStripTimer = setInterval(paint, 1000);
-      }
+  renderSessionTray();
+}
+
+function renderSessionTray() {
+  const rail = document.getElementById("session-tray-rail");
+  const panel = document.getElementById("session-tray-panel");
+  if (!rail || !panel) return;
+
+  const unlocked = sessionList();
+  const agentN = unlocked.length;
+  const keyN = vaultKeys.length;
+  const trustN = trustKeys.length;
+
+  const setCount = (id, n) => {
+    const el = rail.querySelector(`[data-tray-count="${id}"]`);
+    if (el) el.textContent = String(n);
+  };
+  setCount("agent", agentN);
+  setCount("keychain", keyN);
+  setCount("trust", trustN);
+
+  rail.querySelectorAll("[data-tray]").forEach((btn) => {
+    const id = btn.getAttribute("data-tray");
+    const open = sessionTrayOpen === id;
+    btn.classList.toggle("is-open", open);
+    btn.classList.toggle("has-items", id === "agent" ? agentN > 0 : id === "keychain" ? keyN > 0 : trustN > 0);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  // Live TTL while agent panel is open (or any unlock exists).
+  if (agentN > 0) {
+    if (!agentStripTimer) {
+      agentStripTimer = setInterval(() => {
+        if (sessionTrayOpen === "agent") renderSessionTrayPanel();
+        else updateKernelChip();
+      }, 1000);
     }
+  } else if (agentStripTimer) {
+    clearInterval(agentStripTimer);
+    agentStripTimer = null;
   }
 
-  const body = document.getElementById("keyring-body");
+  if (!sessionTrayOpen) {
+    panel.hidden = true;
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    return;
+  }
+  panel.hidden = false;
+  panel.classList.remove("hidden");
+  renderSessionTrayPanel();
+}
+
+function renderSessionTrayPanel() {
+  const panel = document.getElementById("session-tray-panel");
+  if (!panel || !sessionTrayOpen) return;
+
+  if (sessionTrayOpen === "agent") {
+    const list = sessionList();
+    const earliest = sessionEarliestExpiry();
+    const msLeft = earliest ? Math.max(0, earliest - Date.now()) : 0;
+    const mins = Math.floor(msLeft / 60000);
+    const secs = Math.floor((msLeft % 60000) / 1000);
+    const ttl = list.length ? `${mins}m ${String(secs).padStart(2, "0")}s` : "—";
+    panel.innerHTML = `
+      <div class="session-tray-section">
+        <div class="session-tray-section-head">
+          <p class="session-tray-title mb-0">Agent</p>
+          <p class="muted fs-xs mb-0">Unlocked private keys in this browser session</p>
+          <button type="button" class="btn btn-ghost btn-compact session-tray-close" data-tray-close aria-label="Close">✕</button>
+        </div>
+        ${
+          list.length
+            ? `<p class="muted fs-xs mb-sm">Clears in <strong>${escapeHtml(ttl)}</strong></p>
+               <ul class="keyring-list">
+                 ${list
+                   .map(
+                     (e) => `<li class="keyring-item">
+                       <div class="keyring-meta">
+                         <strong>…${escapeHtml(e.fingerprint.slice(-8))}</strong>
+                         <span class="mono fs-xs">${escapeHtml(formatFingerprint(e.fingerprint))}</span>
+                       </div>
+                       <div class="keyring-actions">
+                         <button type="button" class="btn btn-ghost btn-compact" data-agent-lock="${escapeHtml(e.fingerprint)}">Lock</button>
+                       </div>
+                     </li>`
+                   )
+                   .join("")}
+               </ul>
+               <div class="btn-row wrap mt-sm">
+                 <button type="button" class="btn btn-compact" data-agent-lock-all
+                   title="Clear agent session, private @slots, and cell outputs">Lock all</button>
+               </div>`
+            : `<p class="muted fs-sm mb-0">No keys unlocked. Open <strong>Keychain</strong> to unlock My Keys into the agent.</p>`
+        }
+      </div>`;
+    panel.querySelector("[data-agent-lock-all]")?.addEventListener("click", () => {
+      lockAllAgentMaterial();
+    });
+    panel.querySelectorAll("[data-agent-lock]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        sessionEvict(btn.getAttribute("data-agent-lock") || "");
+        renderSessionTray();
+      });
+    });
+  } else if (sessionTrayOpen === "keychain") {
+    panel.innerHTML = `
+      <div class="session-tray-section">
+        <div class="session-tray-section-head">
+          <p class="session-tray-title mb-0">Keychain</p>
+          <p class="muted fs-xs mb-0">My Keys — device vault</p>
+          <a class="btn btn-ghost btn-compact" href="/my-keys" target="_blank" rel="noopener">Manage</a>
+          <button type="button" class="btn btn-ghost btn-compact session-tray-close" data-tray-close aria-label="Close">✕</button>
+        </div>
+        <div id="keyring-body" class="keyring-body"></div>
+      </div>`;
+    renderKeychainBody(panel.querySelector("#keyring-body"));
+  } else if (sessionTrayOpen === "trust") {
+    panel.innerHTML = `
+      <div class="session-tray-section">
+        <div class="session-tray-section-head">
+          <p class="session-tray-title mb-0">Trust</p>
+          <p class="muted fs-xs mb-0">Cached public keys (local trust store)</p>
+          <button type="button" class="btn btn-ghost btn-compact session-tray-close" data-tray-close aria-label="Close">✕</button>
+        </div>
+        ${
+          trustKeys.length
+            ? `<ul class="keyring-list">
+                ${trustKeys
+                  .map((k) => {
+                    const fpr = k.fingerprint || "";
+                    const stale = isPubkeyCacheStale(k);
+                    const label = k.userLabel || k.name || k.email || k.uids?.[0] || "Public key";
+                    return `<li class="keyring-item">
+                      <div class="keyring-meta">
+                        <strong>${escapeHtml(label)}</strong>
+                        <a class="text-link mono fs-xs" href="/key?fpr=${escapeHtml(fpr)}" target="_blank" rel="noopener">${escapeHtml(formatFingerprint(fpr))}</a>
+                        <span class="muted fs-xs">${escapeHtml(k.origin || "cache")}${
+                          k.approvalState ? ` · ${escapeHtml(k.approvalState)}` : ""
+                        }${stale ? " · stale" : ""}${k.revoked ? " · revoked" : ""}</span>
+                      </div>
+                      <div class="keyring-actions">
+                        <button type="button" class="btn btn-ghost btn-compact btn-icon" data-trust-copy="${escapeHtml(fpr)}"
+                          title="Copy fingerprint" aria-label="Copy fingerprint">${glyphHtml("fingerprint", "ops-glyph")}</button>
+                        <button type="button" class="btn btn-ghost btn-compact text-error" data-trust-forget="${escapeHtml(fpr)}"
+                          title="Remove from local trust store">Forget</button>
+                      </div>
+                    </li>`;
+                  })
+                  .join("")}
+              </ul>`
+            : `<p class="muted fs-sm mb-0">Trust store empty. Keys appear here after HKP lookup or encrypt recipient resolve.</p>`
+        }
+      </div>`;
+    panel.querySelectorAll("[data-trust-copy]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        void copyTextTransient(btn.getAttribute("data-trust-copy") || "");
+      });
+    });
+    panel.querySelectorAll("[data-trust-forget]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const fpr = btn.getAttribute("data-trust-forget") || "";
+        try {
+          await cacheDelete(fpr);
+          await refreshVaultKeys();
+          renderSessionTray();
+        } catch (err) {
+          showError(errorEl, err?.message || "Forget failed");
+        }
+      });
+    });
+  }
+
+  panel.querySelector("[data-tray-close]")?.addEventListener("click", () => {
+    sessionTrayOpen = null;
+    renderSessionTray();
+  });
+  updateKernelChip();
+}
+
+/**
+ * @param {HTMLElement | null} body
+ */
+function renderKeychainBody(body) {
   if (!body) return;
   if (!vaultKeys.length) {
-    body.innerHTML = `<p class="muted fs-sm mb-0">No keys in My Keys yet. Generate one or use <code>agent.save</code>.</p>`;
+    body.innerHTML = `<p class="muted fs-sm mb-0">No keys in My Keys yet. Generate one on <a href="/my-keys" target="_blank" rel="noopener">My Keys</a> or use <code>agent.save</code>.</p>`;
     return;
   }
   body.innerHTML = `
@@ -4592,7 +5961,7 @@ function renderAgentChrome() {
           openPgpPassphrase: "",
           skipSession: getToolkitPrefs().sessionOff,
         });
-        renderAgentChrome();
+        renderSessionTray();
         touchActivity();
       } catch (err) {
         showError(errorEl, err?.message || "Unlock failed");
@@ -4602,7 +5971,7 @@ function renderAgentChrome() {
   body.querySelectorAll("[data-kr-lock]").forEach((btn) => {
     btn.addEventListener("click", () => {
       sessionEvict(btn.getAttribute("data-kr-lock") || "");
-      renderAgentChrome();
+      renderSessionTray();
     });
   });
   body.querySelectorAll("[data-kr-insert]").forEach((btn) => {
@@ -4726,6 +6095,219 @@ function cellSummary(cellSteps) {
   return `${head}${more}${out}`;
 }
 
+/**
+ * Serialize one notebook cell (single chain) to recipe text.
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep[]} cellSteps
+ * @returns {string}
+ */
+function cellRecipeSource(cellSteps) {
+  return serializeRecipe({ chains: [{ steps: cellSteps || [] }] });
+}
+
+/**
+ * Beautify + apply raw cell recipe text into `chains[cellIndex]`.
+ * Staying in Raw soft-updates the builder (keeps the textarea). Preview remounts.
+ * @param {number} cellIndex
+ * @param {string} source
+ * @param {{ toPreview?: boolean }} [opts]
+ * @returns {boolean}
+ */
+function applyCellRecipeText(cellIndex, source, opts = {}) {
+  const toPreview = !!opts.toPreview;
+  const { text: canonical, ast, errors } = canonicalizeRecipe(String(source ?? ""));
+  const ta = document.querySelector(`[data-cell-recipe-ta="${cellIndex}"]`);
+  const errEl = document.querySelector(`[data-cell-recipe-err="${cellIndex}"]`);
+
+  if (errors.length || !ast) {
+    if (errEl instanceof HTMLElement) {
+      errEl.textContent = errors.map((e) => e.message).join(" · ") || "Invalid recipe";
+      errEl.classList.remove("hidden");
+      errEl.hidden = false;
+    }
+    return false;
+  }
+
+  if (errEl instanceof HTMLElement) {
+    errEl.textContent = "";
+    errEl.classList.add("hidden");
+    errEl.hidden = true;
+  }
+  if (ta instanceof HTMLTextAreaElement && ta.value !== canonical) {
+    ta.value = canonical;
+  }
+
+  const loaded = recipeChains(ast).map((c) => ({
+    steps: (c.steps || []).map((s) => cloneBuilderStep(s)),
+  }));
+  if (!chains.length) chains = [{ steps: [] }];
+  let remountAll = toPreview;
+  // Sole empty notebook + multi-chain paste → adopt the whole notebook.
+  if (
+    loaded.length > 1 &&
+    cellIndex === 0 &&
+    chains.length === 1 &&
+    !(chains[0].steps || []).length
+  ) {
+    chains = loaded;
+    cellCollapsed = new Set();
+    cellRecipeRawMode = new Set(toPreview ? [] : [0]);
+    remountAll = true;
+  } else {
+    while (chains.length <= cellIndex) chains.push({ steps: [] });
+    chains[cellIndex] = { steps: loaded[0]?.steps || [] };
+    if (toPreview) cellRecipeRawMode.delete(cellIndex);
+  }
+
+  focusCell(Math.min(cellIndex, chains.length - 1));
+  steps = chains[focusedCell].steps;
+  const globalTa = document.getElementById("recipe-text");
+  if (globalTa instanceof HTMLTextAreaElement) {
+    globalTa.value = serializeRecipe({ chains });
+  }
+  validateAndBind();
+  if (remountAll || !cellRecipeRawMode.has(cellIndex)) {
+    renderNotebook();
+  } else {
+    const builderHost = document.getElementById(`cell-builder-${cellIndex}`);
+    if (builderHost) renderBuilderInto(builderHost, cellIndex);
+    renderCellOutputs(cellIndex);
+  }
+  renderSuggestDrawer();
+  renderCryptoPanel();
+  renderOpsDrawer();
+  updateKernelChip();
+  updateStaleBanner();
+  scheduleFragmentSync();
+  return true;
+}
+
+/**
+ * Per-cell recipe editor: chip preview or raw text (beautify on paste / blur / Preview).
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep[]} cellSteps
+ * @param {number} cellIndex
+ * @returns {string}
+ */
+function cellRecipeSummaryHtml(cellSteps, cellIndex) {
+  const stepsList = cellSteps || [];
+  const raw = cellRecipeRawMode.has(cellIndex);
+  const source = cellRecipeSource(stepsList);
+  const modeToggle = `
+    <div class="cell-recipe-mode" role="group" aria-label="Recipe view">
+      <button type="button" class="cell-recipe-mode-btn${!raw ? " is-active" : ""}"
+        data-cell-recipe-view="preview" data-cell="${cellIndex}"
+        aria-pressed="${raw ? "false" : "true"}">Preview</button>
+      <button type="button" class="cell-recipe-mode-btn${raw ? " is-active" : ""}"
+        data-cell-recipe-view="raw" data-cell="${cellIndex}"
+        aria-pressed="${raw ? "true" : "false"}">Raw</button>
+    </div>`;
+
+  let body = "";
+  if (raw) {
+    body = `
+      <textarea class="cell-recipe-ta compose-message" data-cell-recipe-ta="${cellIndex}"
+        rows="${Math.min(12, Math.max(3, source.split("\n").length + 1))}"
+        spellcheck="false"
+        placeholder="genkey ec/p256 | export pkcs8 | pem.encode | out @private"
+        aria-label="Cell recipe text">${escapeHtml(source)}</textarea>
+      <p class="cell-recipe-err status-row err hidden mt-xs mb-0" data-cell-recipe-err="${cellIndex}" hidden></p>
+      <p class="muted fs-xs mb-0 mt-xs">Beautifies on paste and when you leave the field or switch to Preview.</p>`;
+  } else if (!stepsList.length) {
+    body = `
+      <p class="muted fs-sm mb-0 cell-recipe-empty">Empty cell — switch to <strong>Raw</strong> to type a recipe, or drop an op below.</p>`;
+  } else {
+    const pipe = `<span class="builder-branch-pipe muted" aria-hidden="true">|</span>`;
+    const walked = walkPipelineTypes(stepsList, { getStep });
+    const edges = walked.edges || [];
+    /**
+     * @param {*} edge
+     * @returns {string}
+     */
+    const edgeLabel = (edge) => {
+      if (!edge) return "";
+      if (edge.error) return edge.error;
+      const inn = friendlyTypeLabel(edge.input);
+      const out = edge.output ? friendlyTypeLabel(edge.output) : "∅";
+      return `${inn} → ${out}`;
+    };
+    const stem = stepsList
+      .map((s, i) => {
+        const edge = edges[i];
+        const flow = edgeLabel(edge);
+        return `${i ? pipe : ""}${builderIngredientChipHtml(s, {
+          typeEdge: flow || "— → —",
+          typeError: !!(edge && !edge.ok),
+          hoverCard: true,
+        })}`;
+      })
+      .join("");
+    /** @type {string[]} */
+    const sideRows = [];
+    stepsList.forEach((s, si) => {
+      const nestEdge = edges[si];
+      const branchMeta = nestEdge?.branches || [];
+      (s.branches || []).forEach((br, bi) => {
+        sideRows.push(
+          builderTeeBranchHtml(br, undefined, undefined, {
+            bodyEdges: branchMeta[bi]?.edges || [],
+          })
+        );
+      });
+      if (
+        (s.name === "tee" || s.name === "foreach") &&
+        (s.body || []).length
+      ) {
+        const label = s.name === "foreach" ? "each" : "body";
+        const bodyEdges = nestEdge?.body || [];
+        const bodyChips = (s.body || [])
+          .map(
+            (b, i) =>
+              `${i ? pipe : ""}${builderIngredientChipHtml(b, {
+                hoverCard: true,
+                typeEdge: edgeLabel(bodyEdges[i]) || `${s.name} body`,
+                typeError: !!(bodyEdges[i] && !bodyEdges[i].ok),
+              })}`
+          )
+          .join("");
+        sideRows.push(`
+          <div class="builder-branch-row cell-recipe-body-row" role="listitem"
+            title="${escapeHtml(s.name)} body">
+            <span class="suggest-chip suggest-chip-primary builder-branch-selector">
+              <span class="suggest-chip-name">${escapeHtml(label)}</span>
+            </span>
+            ${pipe}
+            <div class="suggest-next-chips builder-branch-chips" role="list">
+              ${bodyChips}
+            </div>
+          </div>`);
+      }
+    });
+    body = `
+      <div class="cell-recipe-stem suggest-next-chips" role="list">${stem}</div>
+      ${
+        sideRows.length
+          ? `<div class="builder-branch-list cell-recipe-branches" role="list">${sideRows.join("")}</div>`
+          : ""
+      }`;
+  }
+
+  return `
+    <div class="cell-recipe-summary${raw ? " cell-recipe-summary-raw" : ""}" aria-label="Cell recipe editor">
+      <div class="cell-recipe-summary-main">
+        <div class="cell-recipe-summary-head">
+          <p class="cell-recipe-summary-title mb-0">Recipe</p>
+          ${modeToggle}
+        </div>
+        ${body}
+      </div>
+      <div class="cell-recipe-summary-actions" role="group" aria-label="Cell actions">
+        <button type="button" class="btn cell-recipe-run" data-run-cell="${cellIndex}"
+          title="Run this cell">Run</button>
+        <button type="button" class="btn btn-ghost cell-recipe-run-from" data-run-from="${cellIndex}"
+          title="Run this cell and all below">From here</button>
+      </div>
+    </div>`;
+}
+
 function renderNotebook() {
   const host = document.getElementById("notebook-cells");
   if (!host) return;
@@ -4797,7 +6379,10 @@ function renderNotebook() {
           ${needBadges}
           <span class="cell-summary muted fs-xs ${collapsed ? "" : "hidden"}">${escapeHtml(cellSummary(chain.steps || []))}</span>
           <div class="btn-row wrap cell-chrome-actions">
-            <button type="button" class="btn btn-compact" data-run-cell="${i}" ${!nSteps ? "disabled" : ""}>Run</button>
+            <button type="button" class="btn ${
+              nSteps && !collapsed ? "btn-ghost btn-compact" : "btn-compact"
+            }" data-run-cell="${i}" ${!nSteps ? "disabled" : ""}
+              title="Run this cell">Run</button>
             <button type="button" class="btn btn-ghost btn-compact" data-run-from="${i}" title="Run this cell and all below">From here</button>
             <button type="button" class="btn btn-ghost btn-compact" data-toggle-cell="${i}" title="${collapsed ? "Expand" : "Collapse"}">${collapsed ? "Expand" : "▾"}</button>
             <button type="button" class="btn btn-ghost btn-compact" data-add-below="${i}" title="Add cell below">+</button>
@@ -4805,9 +6390,11 @@ function renderNotebook() {
           </div>
         </header>
         <div class="notebook-cell-body ${collapsed ? "hidden" : ""}">
-          <div class="cell-inputs" id="cell-inputs-${i}" data-cell="${i}" hidden></div>
-          <div class="cell-bind" id="cell-bind-${i}" data-cell="${i}"></div>
+          ${cellRecipeSummaryHtml(chain.steps || [], i)}
           <div class="builder-steps cell-builder builder-spine" id="cell-builder-${i}" data-cell="${i}"></div>
+          <!-- Fallback hosts when a need has no matching step card yet -->
+          <div class="cell-inputs cell-inputs-fallback" id="cell-inputs-${i}" data-cell="${i}" hidden></div>
+          <div class="cell-bind cell-bind-fallback" id="cell-bind-${i}" data-cell="${i}"></div>
           ${
             focused
               ? `<div id="suggest-next" class="suggest-next suggest-next-cell" hidden></div>`
@@ -4867,6 +6454,59 @@ function renderNotebook() {
   host.querySelectorAll("[data-run-from]").forEach((btn) => {
     btn.addEventListener("click", () => {
       void runNotebookFrom(Number(btn.getAttribute("data-run-from")));
+    });
+  });
+  host.querySelectorAll("[data-cell-recipe-view]").forEach((btn) => {
+    // Keep textarea focused when switching to Preview so blur doesn't race the click.
+    btn.addEventListener("mousedown", (e) => {
+      if (btn.getAttribute("data-cell-recipe-view") === "preview") e.preventDefault();
+    });
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-cell"));
+      const view = btn.getAttribute("data-cell-recipe-view");
+      if (!Number.isFinite(i)) return;
+      if (view === "raw") {
+        cellRecipeRawMode.add(i);
+        renderNotebook();
+        const ta = document.querySelector(`[data-cell-recipe-ta="${i}"]`);
+        if (ta instanceof HTMLTextAreaElement) {
+          ta.focus();
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+        }
+        return;
+      }
+      const ta = document.querySelector(`[data-cell-recipe-ta="${i}"]`);
+      const source =
+        ta instanceof HTMLTextAreaElement
+          ? ta.value
+          : cellRecipeSource(chains[i]?.steps || []);
+      if (!applyCellRecipeText(i, source, { toPreview: true })) {
+        cellRecipeRawMode.add(i);
+        renderNotebook();
+      }
+    });
+  });
+  host.querySelectorAll("[data-cell-recipe-ta]").forEach((el) => {
+    if (!(el instanceof HTMLTextAreaElement)) return;
+    const i = Number(el.getAttribute("data-cell-recipe-ta"));
+    el.addEventListener("paste", () => {
+      queueMicrotask(() => {
+        const { text, errors, ast } = canonicalizeRecipe(el.value);
+        if (!errors.length && ast && el.value !== text) el.value = text;
+      });
+    });
+    el.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (!cellRecipeRawMode.has(i)) return;
+        if (document.activeElement === el) return;
+        applyCellRecipeText(i, el.value, { toPreview: false });
+      }, 0);
+    });
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        applyCellRecipeText(i, el.value, { toPreview: true });
+      }
     });
   });
   host.querySelectorAll("[data-toggle-cell]").forEach((btn) => {
@@ -4939,6 +6579,235 @@ function renderNotebook() {
 /** @deprecated use renderNotebook — kept as alias for stray callers */
 function renderBuilder() {
   renderNotebook();
+}
+
+/**
+ * Hover card for a recipe-summary chip: I/O types, short doc, params table.
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
+ * @param {string} [typeEdge]
+ * @returns {string}
+ */
+function recipeChipDocstringHtml(step, typeEdge = "") {
+  const spec = getStep(step.name);
+  const label = stepDisplayName(spec, step.params) || step.name;
+  const params = step.params || {};
+  const doc = String(spec?.doc || "").trim();
+  const lead = doc
+    ? doc
+        .replace(/\s*Example:[\s\S]*$/i, "")
+        .replace(/\s*Also accepts[\s\S]*$/i, "")
+        .trim()
+    : "";
+  const recipeTok = serializeStep(step);
+
+  /** @type {string} */
+  let inType = "";
+  /** @type {string} */
+  let outType = "";
+  const contextNote =
+    typeEdge.endsWith(" chain") || typeEdge.endsWith(" body") ? typeEdge : "";
+  if (typeEdge.includes("→")) {
+    const [a, b] = typeEdge.split("→").map((s) => s.trim());
+    inType = a || "";
+    outType = b || "";
+  }
+  if (!inType && !outType && spec) {
+    const io = spec.effectiveIo
+      ? spec.effectiveIo(params)
+      : { input: spec.input, output: spec.output };
+    inType = String(io?.input || "—");
+    outType = String(io?.output || "—");
+  }
+
+  /** @type {{ name: string, value: string, note: string }[]} */
+  const rows = [];
+  for (const p of spec?.params || []) {
+    if (!paramVisibility(step.name, p, params).show) continue;
+    let v = params[p.name];
+    let note = "";
+    if (v === undefined || v === "") {
+      if (p.default !== undefined && p.default !== "" && p.default !== false) {
+        v = p.default;
+        note = "default";
+      } else continue;
+    } else if (p.default !== undefined && String(p.default) === String(v)) {
+      note = "default";
+    }
+    if (p.type === "bool") {
+      if (!v) continue;
+      rows.push({
+        name: p.name,
+        value: "true",
+        note: p.flag ? String(p.flag) : note,
+      });
+      continue;
+    }
+    rows.push({ name: p.name, value: String(v), note });
+  }
+
+  const ioHtml =
+    inType || outType
+      ? `<div class="cell-recipe-chip-io" aria-label="Input and output types">
+          <div class="cell-recipe-chip-io-side">
+            <span class="cell-recipe-chip-io-label">In</span>
+            <code class="cell-recipe-chip-io-type">${escapeHtml(inType || "—")}</code>
+          </div>
+          <span class="cell-recipe-chip-io-arrow" aria-hidden="true">→</span>
+          <div class="cell-recipe-chip-io-side">
+            <span class="cell-recipe-chip-io-label">Out</span>
+            <code class="cell-recipe-chip-io-type">${escapeHtml(outType || "—")}</code>
+          </div>
+        </div>`
+      : contextNote
+        ? `<p class="cell-recipe-chip-where muted fs-xs mb-0">${escapeHtml(contextNote)}</p>`
+        : "";
+
+  const paramsHtml = rows.length
+    ? `<table class="cell-recipe-chip-table">
+        <thead><tr><th>Param</th><th>Value</th></tr></thead>
+        <tbody>
+          ${rows
+            .map(
+              (r) => `<tr>
+                <th scope="row"><code>${escapeHtml(r.name)}</code></th>
+                <td><code>${escapeHtml(r.value)}</code>${
+                  r.note
+                    ? ` <span class="cell-recipe-chip-note muted">${escapeHtml(
+                        r.note
+                      )}</span>`
+                    : ""
+                }</td>
+              </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>`
+    : `<p class="muted fs-xs mb-0 cell-recipe-chip-noparams">No parameters</p>`;
+
+  return `
+    <div class="cell-recipe-chip-doc">
+      <header class="cell-recipe-chip-doc-head">
+        <p class="cell-recipe-chip-doc-name mb-0">${escapeHtml(label)}</p>
+        <p class="cell-recipe-chip-doc-recipe muted fs-xs mb-0"><code>${escapeHtml(
+          recipeTok
+        )}</code></p>
+      </header>
+      ${ioHtml}
+      ${
+        lead
+          ? `<p class="cell-recipe-chip-doc-prose mb-0">${escapeHtml(lead)}</p>`
+          : ""
+      }
+      ${paramsHtml}
+    </div>`;
+}
+
+/**
+ * Compact ingredient chip for a nested branch step (matches suggest-next look).
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
+ * @param {{ typeEdge?: string, typeError?: boolean, hoverCard?: boolean }} [opts]
+ * @returns {string}
+ */
+function builderIngredientChipHtml(step, opts = {}) {
+  const spec = getStep(step.name);
+  const label = stepDisplayName(spec, step.params) || step.name;
+  let hint = "";
+  if (step.name === "out") {
+    hint = String(step.params?.name || "output");
+  } else if (step.name === "export" && step.params?.format) {
+    hint = String(step.params.format);
+  } else if (step.name === "text") {
+    hint = String(step.params?.label || step.params?.name || "");
+  } else if (
+    step.name === "inspect" &&
+    step.params?.format &&
+    step.params.format !== "auto"
+  ) {
+    hint = String(step.params.format);
+  }
+  const typeEdge = opts.typeEdge || "";
+  const hoverCard = !!opts.hoverCard;
+  const pop = hoverCard
+    ? `<span class="cell-recipe-chip-pop${
+        opts.typeError ? " cell-recipe-chip-pop-error" : ""
+      }" role="tooltip">
+        ${recipeChipDocstringHtml(step, typeEdge)}
+      </span>`
+    : "";
+  return `
+    <span class="suggest-chip builder-ingredient-chip${
+      hoverCard ? " builder-ingredient-chip-hot" : ""
+    }${opts.typeError ? " builder-ingredient-chip-error" : ""}" role="listitem"
+      ${hoverCard ? "" : `title="${escapeHtml(spec?.doc || step.name)}"`}>
+      ${toolboxBadgeHtml(spec?.toolbox, { glyphOnly: true })}
+      <span class="suggest-chip-name">${escapeHtml(label)}</span>
+      ${
+        hint
+          ? `<span class="suggest-chip-out muted">${escapeHtml(hint)}</span>`
+          : ""
+      }
+      ${pop}
+    </span>`;
+}
+
+/**
+ * Tee/foreach selector branch as a chip strip (selector + ingredient ops).
+ * When stem/branchIndex are set, trailing + opens a tip-fit toolbox pop-out.
+ * @param {{ selector?: string, member?: string, body?: import("../lib/toolkit/recipe.js").RecipeStep[] }} br
+ * @param {number} [stem]
+ * @param {number} [branchIndex]
+ * @param {{ bodyEdges?: { input?: *, output?: *, ok?: boolean, error?: string }[] }} [opts]
+ * @returns {string}
+ */
+function builderTeeBranchHtml(br, stem, branchIndex, opts = {}) {
+  const sel = br.selector || (br.member ? `.${br.member}` : "·");
+  const body = br.body || [];
+  const bodyEdges = opts.bodyEdges || [];
+  // Summary rows (no stem) get per-chip type/param hover cards.
+  const summaryHover = stem == null;
+  const chips = body.length
+    ? body
+        .map((s, i) => {
+          const edge = bodyEdges[i];
+          let typeEdge = `${sel} chain`;
+          let typeError = false;
+          if (edge) {
+            typeError = !edge.ok;
+            if (edge.error) typeEdge = edge.error;
+            else {
+              const inn = friendlyTypeLabel(edge.input);
+              const out = edge.output ? friendlyTypeLabel(edge.output) : "∅";
+              typeEdge = `${inn} → ${out}`;
+            }
+          }
+          return `${
+            i
+              ? `<span class="builder-branch-pipe muted" aria-hidden="true">|</span>`
+              : ""
+          }${builderIngredientChipHtml(
+            s,
+            summaryHover
+              ? { hoverCard: true, typeEdge, typeError }
+              : undefined
+          )}`;
+        })
+        .join("")
+    : `<span class="muted fs-xs builder-branch-empty">empty — drop ops or use +</span>`;
+  const addRail =
+    stem != null && branchIndex != null
+      ? nestSuggestRailHtml(stem, branchIndex, { inline: true })
+      : "";
+  return `
+    <div class="builder-branch-row" role="listitem" title="Selector branch ${escapeHtml(sel)}">
+      <span class="suggest-chip suggest-chip-primary builder-branch-selector">
+        <span class="suggest-chip-name">${escapeHtml(sel)}</span>
+      </span>
+      <span class="builder-branch-pipe muted" aria-hidden="true">|</span>
+      <div class="suggest-next-chips builder-branch-chips" role="list">
+        ${chips}
+      </div>
+      ${addRail}
+    </div>`;
 }
 
 /**
@@ -5121,7 +6990,7 @@ function renderBuilderInto(host, cellIndex) {
           : "";
 
     return `
-      <div class="builder-card ${nestClass} ${step.name === "foreach" ? "builder-foreach" : ""} ${step.name === "tee" && step.body?.length ? "builder-tee" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""} ${edge && !edge.ok ? "builder-type-error" : ""} ${blocked ? "builder-fips-blocked" : ""} ${focused ? "builder-card-focused" : ""}"
+      <div class="builder-card ${nestClass} ${step.name === "foreach" ? "builder-foreach" : ""} ${step.name === "tee" ? "builder-tee" : ""} ${isOut ? "builder-out" : ""} ${isText ? "builder-text" : ""} ${usesPgpProfile ? "builder-pgp" : ""} ${edge && !edge.ok ? "builder-type-error" : ""} ${blocked ? "builder-fips-blocked" : ""} ${focused ? "builder-card-focused" : ""}"
            draggable="${nest.bodyIndex == null ? "true" : "false"}" data-index="${i}" data-step-card="${i}"
            data-focus-stem="${focusStem}" ${focusBody != null ? `data-focus-body="${focusBody}"` : ""}>
         <div class="builder-card-head">
@@ -5129,10 +6998,15 @@ function renderBuilderInto(host, cellIndex) {
           <span class="builder-step-num" aria-hidden="true">${
             nest.bodyIndex != null ? `${focusStem + 1}.${focusBody + 1}` : i + 1
           }</span>
-          <strong title="${escapeHtml(spec?.doc || "")}">${escapeHtml(stepDisplayName(spec) || step.name)}</strong>
+          <strong title="${escapeHtml(
+            typeTitle !== "— → —" && typeTitle
+              ? `${stepDisplayName(spec, step.params) || step.name} · ${typeTitle}`
+              : spec?.doc || ""
+          )}">${escapeHtml(
+            stepDisplayName(spec, step.params) || step.name
+          )}</strong>
           ${toolboxBadgeHtml(spec?.toolbox)}
           ${suiteChipHtml(spec?.toolbox)}
-          <code class="builder-type-chip" title="${escapeHtml(typeTitle)}">${escapeHtml(inType)} → ${escapeHtml(outType)}</code>
           ${
             isOut
               ? `<span class="badge pending" title="Named file — Encrypt attaches bytes">file</span>`
@@ -5145,6 +7019,8 @@ function renderBuilderInto(host, cellIndex) {
             focusBody != null ? `data-remove-body="${focusBody}"` : ""
           }>Remove</button>
         </div>
+        <div class="builder-card-runtime" data-runtime-slot="${i}" data-cell="${cellIndex}" hidden></div>
+        <div class="builder-card-bind" data-bind-slot="${i}" data-cell="${cellIndex}" hidden></div>
         ${
           usesPgpProfile
             ? ""
@@ -5156,37 +7032,45 @@ function renderBuilderInto(host, cellIndex) {
   };
 
   steps.forEach((step, i) => {
-    parts.push(renderOneCard(step, i));
-    if (
-      (step.name === "tee" || step.name === "foreach") &&
-      (step.body?.length ||
-        step.branches?.length ||
-        (insertFocus?.stem === i && insertFocus.body == null))
-    ) {
+    const isFlowNest = step.name === "tee" || step.name === "foreach";
+    if (isFlowNest) {
       if (!step.body) step.body = [];
-      parts.push(`<div class="builder-nest" data-nest-stem="${i}">`);
+      const nestTitle = step.name === "foreach" ? "Each item" : "Side chains";
+      const nestHint =
+        step.name === "foreach"
+          ? "runs once per list element · stem continues below"
+          : "copies of tee input · stem continues below";
+      // Card + nest share one frame so branches read as part of tee/foreach.
       parts.push(
-        `<p class="builder-nest-label muted fs-xs">${
-          step.name === "tee" ? "tee body (side chain)" : "foreach body (per share)"
-        }</p>`
+        `<div class="builder-flow-block builder-flow-${escapeHtml(step.name)}" data-flow-stem="${i}">`
       );
+      parts.push(renderOneCard(step, i));
+      parts.push(`<div class="builder-nest" data-nest-stem="${i}">`);
+      parts.push(`
+        <div class="builder-nest-head">
+          <span class="builder-nest-kicker" aria-hidden="true">↳</span>
+          <span class="builder-nest-title">${escapeHtml(nestTitle)}</span>
+          <span class="builder-nest-hint muted fs-xs">${escapeHtml(nestHint)}</span>
+        </div>`);
+      if (step.branches?.length) {
+        parts.push(`<div class="builder-branch-list" role="list">`);
+        step.branches.forEach((br, bi) => {
+          parts.push(builderTeeBranchHtml(br, i, bi));
+        });
+        parts.push(`</div>`);
+      }
       step.body.forEach((b, bi) => {
         parts.push(renderOneCard(b, i, { bodyIndex: bi, parentStem: i }));
       });
-      for (const br of step.branches || []) {
-        const sel = br.selector || `.${br.member}`;
-        const chain = (br.body || []).map((s) => s.name).join(" | ");
-        parts.push(`
-          <div class="builder-tee-branch" title="Selector branch">
-            <code class="fs-xs">${escapeHtml(sel)}</code>
-            <span class="muted fs-xs">|</span>
-            <code class="fs-xs">${escapeHtml(chain)}</code>
-          </div>`);
-      }
+      // Soft centered CTA under side chains → expands into suggest toolbox panel.
+      parts.push(nestSuggestRailHtml(i, null));
       parts.push(
         `<div class="builder-dropzone builder-nest-drop" data-body-insert-stem="${i}" aria-label="Add step to ${escapeHtml(step.name)} body"></div>`
       );
-      parts.push(`</div>`);
+      parts.push(`</div>`); // nest
+      parts.push(`</div>`); // flow-block
+    } else {
+      parts.push(renderOneCard(step, i));
     }
     parts.push(
       `<div class="builder-dropzone" data-insert="${i + 1}" aria-label="Insert after ${escapeHtml(step.name)}"></div>`
@@ -5235,6 +7119,7 @@ function renderBuilderInto(host, cellIndex) {
 
   host.innerHTML = parts.join("");
   wireEncryptToControls(host);
+  wireSuggestMenus(host);
 
   host.querySelectorAll("[data-vault-fpr]").forEach((el) => {
     el.addEventListener("change", () => {
@@ -5303,10 +7188,15 @@ function renderBuilderInto(host, cellIndex) {
       }
       const stem = Number(card.getAttribute("data-focus-stem"));
       const bodyAttr = card.getAttribute("data-focus-body");
-      insertFocus =
-        bodyAttr != null
-          ? { stem, body: Number(bodyAttr) }
-          : { stem, body: null };
+      const parent = steps[stem];
+      // Nest child cards keep nest insert mode; stem tee/foreach click opens nest append.
+      if (bodyAttr != null) {
+        insertFocus = { stem, body: Number(bodyAttr) };
+      } else if (parent?.name === "tee" || parent?.name === "foreach") {
+        insertFocus = { stem, body: null };
+      } else {
+        insertFocus = { stem };
+      }
       renderBuilder();
       renderSuggestDrawer();
     });
@@ -5316,6 +7206,7 @@ function renderBuilderInto(host, cellIndex) {
     zone.addEventListener("click", () => {
       const stem = Number(zone.getAttribute("data-body-insert-stem"));
       insertFocus = { stem, body: null };
+      suggestPullout = null;
       renderSuggestDrawer();
       renderBuilder();
     });
@@ -5581,36 +7472,14 @@ function renderReference() {
     return ta - tb || sa - sb || a.name.localeCompare(b.name);
   });
   body.innerHTML = steps
-    .map((s) => {
-      const params = (s.params || [])
-        .map(
-          (p) =>
-            `<li><code>${escapeHtml(p.name)}</code> (${escapeHtml(p.type)}${
-              p.enum ? `: ${p.enum.join("|")}` : ""
-            }) — ${escapeHtml(p.doc || "")}</li>`
-        )
-        .join("");
-      const aliases = (s.aliases || []).length
-        ? `<p class="muted fs-xs">Aliases: ${(s.aliases || []).map(escapeHtml).join(", ")}</p>`
-        : "";
-      const labelNote =
-        s.label && s.label !== s.name
-          ? `<p class="muted fs-xs">UI label: ${escapeHtml(s.label)} (recipe token: <code>${escapeHtml(s.name)}</code>)</p>`
-          : "";
-      const shelfNote = s.shelf
-        ? `<p class="muted fs-xs">Shelf: ${escapeHtml(getShelfMeta(s.shelf).label)}</p>`
-        : "";
-      return `<details class="ref-step">
+    .map(
+      (s) => `<details class="ref-step">
         <summary>${toolboxBadgeHtml(s.toolbox)} <code>${escapeHtml(s.name)}</code>
           <span class="muted">${escapeHtml(s.kind)}</span>
           · ${escapeHtml(s.input)} → ${escapeHtml(s.output)}</summary>
-        <p class="fs-md">${escapeHtml(s.doc)}</p>
-        ${labelNote}
-        ${shelfNote}
-        ${aliases}
-        ${params ? `<ul class="fs-sm">${params}</ul>` : "<p class='muted'>No parameters.</p>"}
-      </details>`;
-    })
+        ${toolCardHtml(s, { hideHint: true })}
+      </details>`
+    )
     .join("");
 }
 
@@ -5628,16 +7497,48 @@ function artifactHasLiveInspect(a) {
 }
 
 /**
+ * OpenPGP armor that can use the SEIPD-aware packet hex view.
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ */
+function artifactLooksLikeOpenPgpArmor(a) {
+  if (artifactLooksLikePgpCiphertext(a)) return true;
+  if (a?.role === "openpgp-key" || a?.mime === "application/pgp-keys") return true;
+  return textLooksLikeOpenPgpArmor(String(a?.content || ""));
+}
+
+/**
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ */
+function artifactSupportsFormatSwitch(a) {
+  return artifactHasLiveInspect(a) || artifactLooksLikeOpenPgpArmor(a);
+}
+
+/**
+ * Armored source for packet-map formatting.
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ * @returns {string}
+ */
+function artifactArmorSource(a) {
+  if (a?.inspectSnapshot?.text) return String(a.inspectSnapshot.text);
+  return String(a?.content || "");
+}
+
+/**
  * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
  * @param {number} i
  * @returns {string}
  */
 function inspectFormatSelectHtml(a, i) {
-  if (!artifactHasLiveInspect(a)) return "";
-  const current = String(a.inspectFormat || "auto");
-  const options = INSPECT_FORMATS.map(
+  if (!artifactSupportsFormatSwitch(a)) return "";
+  const current = String(a.inspectFormat || (artifactHasLiveInspect(a) ? "auto" : "text"));
+  const formats = artifactHasLiveInspect(a)
+    ? INSPECT_FORMATS
+    : /** @type {typeof INSPECT_FORMATS} */ (["text", "hexdump", "packets"]);
+  const options = formats.map(
     (f) =>
-      `<option value="${escapeHtml(f)}"${f === current ? " selected" : ""}>${escapeHtml(f)}</option>`
+      `<option value="${escapeHtml(f)}"${f === current ? " selected" : ""}>${escapeHtml(
+        f === "packets" ? "packets (SEIPD map)" : f
+      )}</option>`
   ).join("");
   return `
     <label class="artifact-inspect-format" title="Change dump format without re-running the recipe">
@@ -5721,14 +7622,21 @@ function renderArtifactCard(a, i, opts = {}) {
         ${a.stepIndex}&#8202;·&#8202;${escapeHtml(a.stepName || "step")}</button>`
     : "";
   const liveInspect = artifactHasLiveInspect(a);
+  const packetView =
+    !masked &&
+    String(a.inspectFormat || "") === "packets" &&
+    typeof a.packetMapHtml === "string" &&
+    a.packetMapHtml;
   const showMoreBtn =
-    long && !masked
+    long && !masked && !packetView
       ? `<button type="button" class="btn btn-ghost btn-compact" data-toggle-art-expand="${escapeHtml(artKey)}">${
           expanded ? "Show less" : "Show more"
         }</button>`
       : "";
   return `
-        <div class="card artifact-card${liveInspect ? " artifact-card-inspect" : ""}" data-art="${i}">
+        <div class="card artifact-card${liveInspect ? " artifact-card-inspect" : ""}${
+          packetView ? " artifact-card-packets" : ""
+        }" data-art="${i}">
           <div class="artifact-card-head">
             <div class="artifact-title-row">
               ${stepBadge}
@@ -5746,9 +7654,11 @@ function renderArtifactCard(a, i, opts = {}) {
             </div>
           </div>
           ${
-            isSvg && !masked
-              ? svgPreviewImgHtml(a.content)
-              : `<pre class="output-pre artifact-body${long && !expanded ? " artifact-body-collapsed" : ""}" data-art="${i}">${preview}</pre>`
+            packetView
+              ? `<div class="artifact-packet-map" data-art-packets="${i}">${a.packetMapHtml}</div>`
+              : isSvg && !masked
+                ? svgPreviewImgHtml(a.content)
+                : `<pre class="output-pre artifact-body${long && !expanded ? " artifact-body-collapsed" : ""}" data-art="${i}">${preview}</pre>`
           }
           ${showMoreBtn ? `<div class="artifact-expand-row">${showMoreBtn}</div>` : ""}
           <div class="btn-row mt-sm wrap">
@@ -5797,6 +7707,102 @@ function isEnvelopeArtifact(a) {
 }
 
 /**
+ * Horizontal snap carousel for 2+ cell outputs (shares, multi-artifact).
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact[]} cellArts
+ * @param {number} cellIndex
+ * @returns {string}
+ */
+function renderOutputCarouselHtml(cellArts, cellIndex) {
+  if (cellArts.length < 2) {
+    return cellArts.map((a, i) => renderArtifactCard(a, i, { cellIndex })).join("");
+  }
+  const shareN = cellArts.filter(isShareArtifact).length;
+  const label =
+    shareN >= 2 && shareN === cellArts.length
+      ? `Shares`
+      : `Outputs`;
+  const slides = cellArts
+    .map(
+      (a, i) => `
+      <div class="output-carousel-slide" data-art-slide="${i}">
+        ${renderArtifactCard(a, i, { cellIndex })}
+      </div>`
+    )
+    .join("");
+  const dots = cellArts
+    .map(
+      (_, i) =>
+        `<button type="button" class="output-carousel-dot${
+          i === 0 ? " is-active" : ""
+        }" data-carousel-dot="${i}" aria-label="Go to output ${i + 1}"></button>`
+    )
+    .join("");
+  return `
+    <div class="output-carousel" data-output-carousel>
+      <div class="output-carousel-bar btn-row wrap items-center">
+        <span class="muted fs-xs">${label}</span>
+        <span class="badge pending" data-carousel-idx>1 / ${cellArts.length}</span>
+        <div class="btn-row ml-auto">
+          <button type="button" class="btn btn-ghost btn-compact" data-carousel-prev aria-label="Previous output">‹</button>
+          <button type="button" class="btn btn-ghost btn-compact" data-carousel-next aria-label="Next output">›</button>
+        </div>
+      </div>
+      <div class="output-carousel-track" tabindex="0">${slides}</div>
+      <div class="output-carousel-dots" role="tablist">${dots}</div>
+    </div>`;
+}
+
+/**
+ * @param {HTMLElement} panel
+ */
+function wireOutputCarousel(panel) {
+  const root = panel.querySelector("[data-output-carousel]");
+  if (!(root instanceof HTMLElement)) return;
+  const track = root.querySelector(".output-carousel-track");
+  const idxEl = root.querySelector("[data-carousel-idx]");
+  const dots = [...root.querySelectorAll("[data-carousel-dot]")];
+  if (!(track instanceof HTMLElement)) return;
+  const n = dots.length || track.querySelectorAll(".output-carousel-slide").length;
+  let index = 0;
+
+  const sync = () => {
+    const w = track.clientWidth || 1;
+    index = Math.max(0, Math.min(n - 1, Math.round(track.scrollLeft / w)));
+    if (idxEl) idxEl.textContent = `${index + 1} / ${n}`;
+    dots.forEach((d, i) => d.classList.toggle("is-active", i === index));
+    const prev = root.querySelector("[data-carousel-prev]");
+    const next = root.querySelector("[data-carousel-next]");
+    if (prev instanceof HTMLButtonElement) prev.disabled = index <= 0;
+    if (next instanceof HTMLButtonElement) next.disabled = index >= n - 1;
+  };
+
+  const go = (i) => {
+    const w = track.clientWidth || 1;
+    const next = Math.max(0, Math.min(n - 1, i));
+    track.scrollTo({ left: next * w, behavior: "smooth" });
+    index = next;
+    sync();
+  };
+
+  track.addEventListener("scroll", sync, { passive: true });
+  root.querySelector("[data-carousel-prev]")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    go(index - 1);
+  });
+  root.querySelector("[data-carousel-next]")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    go(index + 1);
+  });
+  dots.forEach((d) => {
+    d.addEventListener("click", (e) => {
+      e.stopPropagation();
+      go(Number(d.getAttribute("data-carousel-dot") || 0));
+    });
+  });
+  sync();
+}
+
+/**
  * @param {number} cellIndex
  */
 function renderCellOutputs(cellIndex) {
@@ -5821,9 +7827,7 @@ function renderCellOutputs(cellIndex) {
       <span class="muted fs-xs flex-1">${cellArts.length} output${cellArts.length === 1 ? "" : "s"}${status === "stale" ? " · stale" : ""}</span>
       <button type="button" class="btn btn-ghost btn-compact" data-clear-cell-out="${cellIndex}">Clear outputs</button>
     </div>`);
-  blocks.push(
-    cellArts.map((a, i) => renderArtifactCard(a, i, { cellIndex })).join("")
-  );
+  blocks.push(renderOutputCarouselHtml(cellArts, cellIndex));
   panel.innerHTML = blocks.join("");
   panel.classList.toggle("cell-output-stale", status === "stale");
 
@@ -5845,13 +7849,89 @@ function renderCellOutputs(cellIndex) {
     });
   });
 
+  wireOutputCarousel(panel);
   wireArtifactPanel(panel, cellArts);
+  wireArtifactPacketMaps(panel, cellArts, cellIndex);
 }
 
 /** Alias — notebook uses per-cell outputs */
 function renderResults() {
   syncArtifactsFromKernel();
   for (let i = 0; i < chains.length; i++) renderCellOutputs(i);
+}
+
+/**
+ * Apply inspect / output format, including rich SEIPD packet map.
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
+ * @param {string} format
+ * @param {number} cellIndex
+ */
+async function applyArtifactInspectFormat(a, format, cellIndex) {
+  if (!a._formatSource) a._formatSource = artifactArmorSource(a);
+  a.inspectFormat = format;
+  if (format === "packets" && artifactLooksLikeOpenPgpArmor(a)) {
+    try {
+      const built = await buildPacketMapFromArmored(a._formatSource || artifactArmorSource(a));
+      a.packetMapSpans = built.spans;
+      a.packetMapBinary = built.binary;
+      a.packetMapExpanded = !!a.packetMapExpanded;
+      a.packetMapHtml = packetMapViewHtml({
+        binary: built.binary,
+        spans: built.spans,
+        expanded: !!a.packetMapExpanded,
+        title: "Packet map",
+        expandBtnId: `hex-expand-${cellIndex}`,
+      });
+      a.content = built.summary;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      a.packetMapHtml = `<p class="muted fs-sm">Packet map unavailable — ${escapeHtml(msg)}</p>`;
+      a.packetMapSpans = null;
+      a.content = `packets: (unavailable — ${msg})\n`;
+    }
+  } else {
+    a.packetMapHtml = undefined;
+    a.packetMapSpans = null;
+    a.packetMapBinary = null;
+    if (a.inspectSnapshot) {
+      a.content = inspectFromSnapshot(a.inspectSnapshot, format);
+    } else if (format === "hexdump") {
+      const bytes = new TextEncoder().encode(String(a._formatSource || ""));
+      a.content = formatHexdump(bytes, { limit: 4096 });
+    } else {
+      a.content = String(a._formatSource || "");
+    }
+  }
+  renderCellOutputs(cellIndex);
+  touchActivity();
+}
+
+/**
+ * @param {HTMLElement} panel
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact[]} arts
+ * @param {number} cellIndex
+ */
+function wireArtifactPacketMaps(panel, arts, cellIndex) {
+  panel.querySelectorAll("[data-art-packets]").forEach((host) => {
+    const i = Number(host.getAttribute("data-art-packets"));
+    const a = arts[i];
+    if (!a?.packetMapSpans) return;
+    wirePacketMapView(host, a.packetMapSpans, {
+      onExpand: () => {
+        a.packetMapExpanded = !a.packetMapExpanded;
+        if (a.packetMapBinary && a.packetMapSpans) {
+          a.packetMapHtml = packetMapViewHtml({
+            binary: a.packetMapBinary,
+            spans: a.packetMapSpans,
+            expanded: !!a.packetMapExpanded,
+            title: "Packet map",
+            expandBtnId: `hex-expand-${cellIndex}-${i}`,
+          });
+          renderCellOutputs(cellIndex);
+        }
+      },
+    });
+  });
 }
 
 /**
@@ -5903,17 +7983,13 @@ function wireArtifactPanel(panel, arts) {
       if (!(sel instanceof HTMLSelectElement)) return;
       const i = Number(sel.getAttribute("data-inspect-format"));
       const a = list[i];
-      if (!a?.inspectSnapshot) return;
-      const format = sel.value || "auto";
-      a.inspectFormat = format;
-      a.content = inspectFromSnapshot(a.inspectSnapshot, format);
-      const card = panel.querySelector(`.artifact-card[data-art="${i}"]`);
-      const pre = card?.querySelector(`.artifact-body[data-art="${i}"]`);
-      const revealBtn = card?.querySelector(`[data-reveal="${i}"]`);
-      if (pre instanceof HTMLElement) {
-        if (!revealBtn) pre.textContent = a.content;
-      }
-      touchActivity();
+      if (!a) return;
+      const cellIndex = Number(
+        panel.getAttribute("data-cell") ||
+          panel.closest(".notebook-cell")?.getAttribute("data-cell") ||
+          focusedCell
+      );
+      void applyArtifactInspectFormat(a, sel.value || "auto", cellIndex);
     });
   });
   panel.querySelectorAll("[data-reveal]").forEach((btn) => {
@@ -6273,6 +8349,9 @@ document.getElementById("toggle-reference")?.addEventListener("click", () => {
   document.getElementById("more-menu")?.removeAttribute("open");
   setReferenceOpen(!referenceOpen);
 });
+document.getElementById("ops-docs-btn")?.addEventListener("click", () => {
+  setReferenceOpen(true);
+});
 
 document.getElementById("close-reference")?.addEventListener("click", () => {
   setReferenceOpen(false);
@@ -6284,12 +8363,19 @@ document.getElementById("destroy-btn")?.addEventListener("click", () => {
 });
 document.getElementById("focus-keyring-btn")?.addEventListener("click", () => {
   document.getElementById("more-menu")?.removeAttribute("open");
-  const panel = document.getElementById("keyring-panel");
-  if (panel instanceof HTMLDetailsElement) {
-    panel.open = true;
-    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }
-  renderAgentChrome();
+  sessionTrayOpen = "keychain";
+  renderSessionTray();
+  document.getElementById("session-tray")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
+
+document.getElementById("session-tray-rail")?.querySelectorAll("[data-tray]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const id = /** @type {"agent"|"keychain"|"trust"|null} */ (
+      btn.getAttribute("data-tray")
+    );
+    sessionTrayOpen = sessionTrayOpen === id ? null : id;
+    renderSessionTray();
+  });
 });
 document.getElementById("shortcuts-btn")?.addEventListener("click", () => {
   document.getElementById("more-menu")?.removeAttribute("open");
@@ -6378,6 +8464,11 @@ document.getElementById("ops-filter")?.addEventListener("input", (e) => {
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    const card = document.getElementById("ops-tool-card");
+    if (card && !card.hidden && !card.classList.contains("hidden")) {
+      forceHideToolCard();
+      return;
+    }
     if (cipherPickerState || formatPickerState) {
       cipherPickerState = null;
       formatPickerState = null;
@@ -6634,7 +8725,7 @@ async function startPage() {
       throw new CryptoModuleError(result.error || "POST failed");
     }
     cryptoReady = true;
-    suiteStatus = getSuiteStatus();
+    setSuiteStatus(getSuiteStatus());
     await Promise.all([refreshVaultKeys(), prefetchKeyserverOptions()]);
     if (status) {
       status.className = "app-status ok";
@@ -6650,7 +8741,7 @@ async function startPage() {
     renderAllCellRuntimePanels();
   } catch (err) {
     cryptoReady = false;
-    suiteStatus = getSuiteStatus();
+    setSuiteStatus(getSuiteStatus());
     if (status) {
       status.className = "app-status err";
       status.innerHTML =

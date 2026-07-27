@@ -96,4 +96,14 @@ describe("inspect / tee", () => {
     const switched = inspectFromSnapshot(snap, "hex");
     expect(switched).toMatch(/4869/);
   });
+
+  it("packets format notes non-armor text", async () => {
+    const snap = await buildInspectSnapshot({
+      type: "text",
+      data: "not pgp",
+      meta: { sensitive: false },
+    });
+    const out = inspectFromSnapshot(snap, "packets");
+    expect(out).toMatch(/not OpenPGP armor/);
+  });
 });

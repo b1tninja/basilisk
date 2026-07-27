@@ -37,6 +37,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/cn";
 import { useNotebook } from "./useNotebook";
 import { RecipientBinderHost } from "./RecipientBinderHost";
+import { OutputCarousel } from "./OutputCarousel";
+import { OpsIconGrid, STEP_MIME } from "./OpsIconGrid";
 
 export function ToolkitShell() {
   const nb = useNotebook();
@@ -122,41 +124,30 @@ export function ToolkitShell() {
         </div>
 
         <div className="flex min-h-0 flex-1">
-          {/* Ops shelf */}
-          <aside className="flex w-[260px] shrink-0 flex-col border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-raised)_88%,var(--surface))]">
-            <div className="border-b border-[var(--border)] px-3 py-2">
-              <p className="text-[0.68rem] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
-                Operations
-              </p>
-              <Input
-                className="mt-2 h-8"
-                placeholder="Search operations…"
-                value={nb.opsFilter}
-                onChange={(e) => nb.setOpsFilter(e.target.value)}
-              />
-            </div>
-            <ScrollArea className="flex-1 px-2 py-2">
-              <div className="flex flex-col gap-0.5 pb-4">
-                {nb.filteredOps.slice(0, 80).map((op: { name: string; toolbox?: string; doc?: string }) => (
-                  <button
-                    key={op.name}
-                    type="button"
-                    className="rounded-md px-2 py-1.5 text-left hover:bg-[color-mix(in_srgb,var(--brand)_10%,transparent)]"
-                    title={op.doc}
-                    onClick={() => nb.appendOp(op.name)}
-                  >
-                    <div className="font-mono text-xs font-semibold">{op.name}</div>
-                    <div className="text-[0.62rem] text-[var(--muted-foreground)]">
-                      {op.toolbox || "op"}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </ScrollArea>
-          </aside>
+          <OpsIconGrid
+            ops={nb.filteredOps}
+            filter={nb.opsFilter}
+            onFilter={nb.setOpsFilter}
+            onAppend={nb.appendOp}
+          />
 
           {/* Notebook */}
-          <section className="flex min-w-0 flex-1 flex-col">
+          <section
+            className="flex min-w-0 flex-1 flex-col"
+            onDragOver={(e) => {
+              if ([...e.dataTransfer.types].includes(STEP_MIME) || [...e.dataTransfer.types].includes("text/plain")) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "copy";
+              }
+            }}
+            onDrop={(e) => {
+              const name =
+                e.dataTransfer.getData(STEP_MIME) || e.dataTransfer.getData("text/plain");
+              if (!name) return;
+              e.preventDefault();
+              nb.appendOp(name);
+            }}
+          >
             <header className="sticky top-0 z-10 space-y-2 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,transparent)] px-4 py-3 backdrop-blur">
               <div className="flex flex-wrap items-center gap-2">
                 <Input
@@ -411,22 +402,7 @@ export function ToolkitShell() {
                         </div>
 
                         {(nb.cellOutputs[i] || []).length > 0 ? (
-                          <div className="space-y-2 border-t border-[var(--border)] pt-3">
-                            {nb.cellOutputs[i].map((a, ai) => (
-                              <div
-                                key={ai}
-                                className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] p-2"
-                              >
-                                <div className="mb-1 text-xs font-semibold">
-                                  {a.label || a.filename || `Output ${ai + 1}`}
-                                </div>
-                                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
-                                  {a.content.slice(0, 4000)}
-                                  {a.content.length > 4000 ? "…" : ""}
-                                </pre>
-                              </div>
-                            ))}
-                          </div>
+                          <OutputCarousel outputs={nb.cellOutputs[i]} />
                         ) : null}
                       </div>
                     </article>
