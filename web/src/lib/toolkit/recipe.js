@@ -1467,6 +1467,30 @@ input | utf8 | rsa-oaep key=@rk | hex | out @ct
 in @ct | hex -d | rsa-oaep -d key=@rk | utf8 | out @plain`,
   },
   {
+    id: "aes-gcm-roundtrip",
+    group: "WebCrypto",
+    title: "AES-GCM encrypt / decrypt",
+    blurb:
+      "Generate an AES-256 key, encrypt with `aes-gcm key=@cek`, then decrypt across chains (preferred AEAD).",
+    recipe: `genkey aes/256 | out @cek
+
+input | utf8 | aes-gcm key=@cek | hex | out @ct
+
+in @ct | hex -d | aes-gcm -d key=@cek | utf8 | out @plain`,
+  },
+  {
+    id: "pbkdf2-aes-gcm",
+    group: "WebCrypto",
+    title: "Passphrase → PBKDF2 → AES-GCM",
+    blurb:
+      "Derive an AES-GCM CEK from a generated passphrase (`pbkdf2 as=aes/256`), encrypt plaintext, then decrypt. Swap `passphrase` for `input | utf8` to use your own password.",
+    recipe: `passphrase mode=char length=20 | pbkdf2 32 as=aes/256 | out @cek
+
+input | utf8 | aes-gcm key=@cek | base64url | out @ct
+
+in @ct | base64url -d | aes-gcm -d key=@cek | utf8 | out @plain`,
+  },
+  {
     id: "hkdf-as-aes-gcm",
     group: "WebCrypto",
     title: "HKDF → AES key → encrypt",
@@ -1475,6 +1499,18 @@ in @ct | hex -d | rsa-oaep -d key=@rk | utf8 | out @plain`,
     recipe: `random 32 | hkdf 32 as=aes/256 | out @cek
 
 input | utf8 | aes-gcm key=@cek | base64url | out @ct`,
+  },
+  {
+    id: "webauthn-prf-aes-gcm",
+    group: "WebCrypto",
+    title: "WebAuthn PRF → HKDF → AES-GCM",
+    blurb:
+      "Unlock vault passkey PRF IKM (`webauthn.prf`), HKDF to an AES-GCM CEK, encrypt plaintext, then decrypt. Main-thread ceremony.",
+    recipe: `webauthn.prf | hkdf 32 as=aes/256 | out @cek
+
+input | utf8 | aes-gcm key=@cek | base64url | out @ct
+
+in @ct | base64url -d | aes-gcm -d key=@cek | utf8 | out @plain`,
   },
   {
     id: "hkdf-as-aes-kw-wrap",
@@ -1651,6 +1687,14 @@ input | utf8 | verify -q key=@pub | out @result`,
     blurb:
       "Decode + recover shares to the hex master, then gpg.symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
     recipe: "shares | blip39 -d | sss.combine | gpg.symdecrypt | utf8 | out @pem",
+  },
+  {
+    id: "gpg-decrypt",
+    group: "OpenPGP",
+    title: "OpenPGP decrypt",
+    blurb:
+      "Decrypt armored ciphertext from the Inputs panel (`gpg.decrypt`) — same recipe as the `#decrypt` messaging starter. Bind a private key or unlock My Keys when prompted.",
+    recipe: "gpg.decrypt",
   },
   {
     id: "gpg-sign-verify",

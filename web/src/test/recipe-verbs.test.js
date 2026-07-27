@@ -6,16 +6,18 @@ import "fake-indexeddb/auto";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readKey } from "openpgp";
 import {
-  ensureGpgKey,
   installHkpFetchMock,
   installWebAuthnPrfStub,
+} from "./helpers/toolkit-smoke-stubs.js";
+import {
+  ensureGpgKey,
   listAllVerbSmokeCases,
   listVerbSmokeCases,
   runVerbCase,
   skippedVerbCases,
   uncoveredEnumParams,
   uncoveredOps,
-} from "../lib/toolkit/verb-smoke.js";
+} from "./helpers/verb-smoke.js";
 import { listSteps } from "../lib/toolkit/registry.js";
 import { saveKey } from "../lib/vault.js";
 import { sessionClear } from "../lib/vault-session.js";
@@ -23,7 +25,7 @@ import { sessionClear } from "../lib/vault-session.js";
 /** @type {Awaited<ReturnType<typeof listAllVerbSmokeCases>>} */
 let cases = [];
 
-/** Fixed PRF IKM so create → prf → passkey wrap share one key. */
+/** Fixed PRF IKM so create → prf → passkey wrap share one key (CI only). */
 const FIXED_IKM = new Uint8Array(32);
 for (let i = 0; i < 32; i++) FIXED_IKM[i] = (i * 7 + 3) & 0xff;
 

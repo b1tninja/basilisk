@@ -72,6 +72,7 @@ import {
 } from "../lib/toolkit/recipe.js";
 import {
   resolvePresetPair,
+  bridgeModeMeta,
   stitchPresetPair,
 } from "../lib/toolkit/conjugate-stitch.js";
 import {
@@ -300,9 +301,9 @@ function toolkitPgpModeHint() {
 }
 
 /**
- * Segmented Modern / Compatible / Auto control (shared by recipe bar + blocks).
+ * Segmented Modern / Compatible / Auto control (notebook header).
  * @param {string} radioName  unique name= for this radio group
- * @param {{ compact?: boolean }} [opts]
+ * @param {{ advancedLink?: boolean }} [opts]
  */
 function renderPgpModeToggle(radioName, opts = {}) {
   const modes = [
@@ -313,7 +314,7 @@ function renderPgpModeToggle(radioName, opts = {}) {
   const active =
     toolkitEncryptPreset === "custom" ? "" : toolkitEncryptPreset;
   return `
-    <div class="pgp-mode ${opts.compact ? "pgp-mode-compact" : ""}">
+    <div class="pgp-mode">
       <fieldset class="pgp-mode-toggle">
         <legend class="pgp-mode-legend">OpenPGP mode</legend>
         <div class="pgp-mode-options" role="presentation">
@@ -333,8 +334,22 @@ function renderPgpModeToggle(radioName, opts = {}) {
           }
         </div>
       </fieldset>
-      ${opts.compact ? "" : `<p class="muted fs-xs pgp-mode-hint mb-0">${escapeHtml(toolkitPgpModeHint())}</p>`}
+      <p class="muted fs-xs pgp-mode-hint mb-0">${escapeHtml(toolkitPgpModeHint())}${
+        opts.advancedLink
+          ? ` <button type="button" class="text-link pgp-advanced-link" id="pgp-advanced-link">Advanced OpenPGP…</button>`
+          : ""
+      }</p>
     </div>`;
+}
+
+/** Open the expert crypto params panel (cipher / AEAD / S2K). */
+function openCryptoParamsPanel() {
+  const details = document.getElementById("crypto-params-details");
+  if (details instanceof HTMLDetailsElement) {
+    details.open = true;
+    cryptoPanelOpen = true;
+    details.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
 }
 
 /** @param {ParentNode} root */
@@ -468,7 +483,7 @@ app.innerHTML = `
     <details class="toolbar-menu" id="preset-gallery">
       <summary class="btn btn-ghost btn-compact toolkit-presets-summary">Templates <span aria-hidden="true">▾</span></summary>
       <div class="toolbar-popover">
-        <p class="muted m-0-b-md fs-sm">One-click pipelines. Drop more operations in afterward.</p>
+        <p class="muted m-0-b-md fs-sm">One-click notebooks. Companion rows (⇄) can add forward and inverse together.</p>
         <div class="preset-grid" id="preset-grid"></div>
       </div>
     </details>
@@ -483,6 +498,10 @@ app.innerHTML = `
           ${glyphHtml("shortcuts", "ops-glyph toolbar-glyph")} Keyboard shortcuts
         </button>
         <hr class="toolbar-menu-sep">
+        <button type="button" class="toolbar-menu-item" id="workspace-save-btn"
+          title="Save title + recipe to this browser’s library">Save notebook</button>
+        <button type="button" class="toolbar-menu-item" id="copy-recipe-btn"
+          title="Copy canonical recipe text to the clipboard">Copy recipe</button>
         <button type="button" class="toolbar-menu-item" id="workspace-library-btn"
           title="Open saved notebooks from this browser">Library…</button>
         <button type="button" class="toolbar-menu-item" id="workspace-export-btn"
@@ -490,6 +509,8 @@ app.innerHTML = `
         <button type="button" class="toolbar-menu-item" id="workspace-import-btn"
           title="Load a .basilisk.json or plain recipe file">Import file…</button>
         <hr class="toolbar-menu-sep">
+        <button type="button" class="toolbar-menu-item" id="reset-notebook-btn"
+          title="Clear sensitive and reset to one empty cell">Reset notebook</button>
         <button type="button" class="toolbar-menu-item text-error" id="destroy-btn"
           title="Zeroize all in-memory secrets, inputs, and outputs (best-effort)">Destroy</button>
       </div>
@@ -579,36 +600,31 @@ app.innerHTML = `
                 title="Password-based encrypt (#symencrypt)">Password</button>
             </div>
             <div class="notebook-header-actions btn-row wrap">
-              <button type="button" class="btn btn-compact" id="run-btn" disabled title="Run all cells">Run all</button>
+              <button type="button" class="btn btn-compact notebook-run-primary" id="run-btn" disabled title="Run all cells">Run all</button>
               <button type="button" class="btn btn-ghost btn-compact" id="clear-sensitive-btn"
                 title="Wipe kernel slots, outputs, and inputs — keep cell recipes">Clear sensitive</button>
-              <button type="button" class="btn btn-ghost btn-compact" id="reset-notebook-btn"
-                title="Clear sensitive and reset to one empty cell">Reset</button>
-              <button type="button" class="btn btn-ghost btn-compact" id="workspace-save-btn"
-                title="Save title + recipe to this browser’s library">Save</button>
               <button type="button" class="btn btn-ghost btn-compact" id="copy-share-link"
                 title="Copy shareable toolkit link (recipe in URL fragment)">Copy link</button>
-              <button type="button" class="btn btn-ghost btn-compact" id="copy-recipe-btn"
-                title="Copy canonical recipe text to the clipboard">Copy recipe</button>
+              <button type="button" class="kernel-chip btn btn-ghost btn-compact" id="kernel-chip"
+                aria-expanded="false" aria-controls="variables-drawer"
+                title="Session variables (kernel slots)">
+                ${glyphHtml("variables", "ops-glyph kernel-chip-glyph")}<span id="kernel-chip-label">0 slots</span>
+              </button>
             </div>
-            <button type="button" class="kernel-chip btn btn-ghost btn-compact" id="kernel-chip"
-              aria-expanded="false" aria-controls="variables-drawer"
-              title="Session variables (kernel slots)">
-              ${glyphHtml("variables", "ops-glyph kernel-chip-glyph")}<span id="kernel-chip-label">0 slots</span>
-            </button>
+          </div>
+          <div class="notebook-header-context">
+            <details id="keyring-panel" class="keyring-panel">
+              <summary class="muted fs-sm">${glyphHtml("agent", "ops-glyph toolbar-glyph")} Keyring (My Keys)</summary>
+              <div id="keyring-body" class="keyring-body mt-sm"></div>
+            </details>
+            <div id="pgp-mode-host" class="pgp-mode-host hidden"></div>
           </div>
           <p id="fragment-status" class="muted fs-xs mb-0 hidden" role="status"></p>
           <div id="stale-banner" class="stale-banner hidden" role="status"></div>
           <div id="agent-session-host" class="agent-session-host"></div>
-          <details id="keyring-panel" class="keyring-panel">
-            <summary class="muted fs-sm">${glyphHtml("agent", "ops-glyph toolbar-glyph")} Keyring (My Keys)</summary>
-            <div id="keyring-body" class="keyring-body mt-sm"></div>
-          </details>
-          <div id="pgp-mode-host" class="pgp-mode-host hidden"></div>
           <p id="run-status" class="status-row hidden mt-sm"></p>
         </div>
         <div id="variables-drawer" class="variables-drawer hidden" hidden></div>
-        <div id="suggest-next" class="suggest-next suggest-next-notebook" hidden></div>
         <div id="notebook-cells" class="notebook-cells"></div>
         <div class="notebook-add-row">
           <button type="button" class="btn btn-ghost btn-compact" id="add-cell-btn">+ Cell</button>
@@ -800,25 +816,37 @@ function moveCell(from, to) {
 }
 
 /**
- * Badges for cells that still need runtime inputs / binder before Run.
+ * Unmet runtime needs for a cell (filled-state aware) — drives badges + Run gating.
  * @param {import("../lib/toolkit/recipe.js").RecipeChain} chain
  * @returns {string[]}
  */
-function cellNeedBadges(chain) {
+function cellUnmetNeeds(chain) {
   /** @type {string[]} */
   const badges = [];
   if (!chain?.steps?.length) return badges;
-  const ast = { chains: [chain], steps: chain.steps, source: "" };
+  const needs = cellRuntimeNeeds(chain);
+  if (needs.includes("text") && !String(inputTextDraft || "").trim()) {
+    badges.push("needs input");
+  }
+  if (needs.includes("shares") && !shareRows.some((m) => String(m || "").trim())) {
+    badges.push("needs shares");
+  }
+  if (needs.includes("gpg") && !String(ciphertextDraft || "").trim()) {
+    badges.push("needs ciphertext");
+  }
+  if (needs.includes("envelope") && !String(envelopeDraft || "").trim()) {
+    badges.push("needs envelope");
+  }
+  if (needs.includes("key") && !String(keyJwkDraft || "").trim()) {
+    badges.push("needs key");
+  }
+  const info = cellRecipientInfo(chain);
+  if (info.slots > 0) {
+    const filled = boundRecipients.filter((r) => r && r.fingerprint).length;
+    if (filled < info.slots) badges.push("needs recipients");
+  }
   try {
-    const v = validateRecipe(ast);
-    if (
-      v.inputNeeds?.some((n) =>
-        ["text", "shares", "gpg", "gpgPass", "envelope", "key"].includes(n)
-      )
-    ) {
-      badges.push("needs input");
-    }
-    if ((v.recipientSlots || 0) > 0) badges.push("needs recipients");
+    const v = validateRecipe({ chains: [chain], steps: chain.steps, source: "" });
     for (const err of v.errors || []) {
       const m = String(err.message || "").match(/unknown slot.*?(@[\w-]+)/i);
       if (m) {
@@ -830,6 +858,38 @@ function cellNeedBadges(chain) {
     /* ignore */
   }
   return [...new Set(badges)];
+}
+
+/**
+ * Badges for cells that still need runtime inputs / binder before Run.
+ * @param {import("../lib/toolkit/recipe.js").RecipeChain} chain
+ * @returns {string[]}
+ */
+function cellNeedBadges(chain) {
+  return cellUnmetNeeds(chain);
+}
+
+/**
+ * Human-readable first readiness blocker across runnable cells, or "".
+ * @returns {string}
+ */
+function notebookReadinessBlocker() {
+  for (let i = 0; i < chains.length; i++) {
+    const chain = chains[i];
+    if (!chain?.steps?.length) continue;
+    const unmet = cellUnmetNeeds(chain);
+    if (!unmet.length) continue;
+    const label = unmet[0];
+    if (label === "needs input") return "Add input text before running";
+    if (label === "needs shares") return "Paste share mnemonics before running";
+    if (label === "needs ciphertext") return "Paste OpenPGP ciphertext before running";
+    if (label === "needs envelope") return "Paste envelope.asc before running";
+    if (label === "needs key") return "Paste a key JWK before running";
+    if (label === "needs recipients") return "Add recipients before running";
+    if (label === "needs slot") return "Resolve missing @slots before running";
+    return label;
+  }
+  return "";
 }
 
 function syncArtifactsFromKernel() {
@@ -2275,18 +2335,32 @@ function validateAndBind() {
     }
   }
 
+  const readiness = notebookReadinessBlocker();
   if (!validation.ok) {
     if (errEl) {
       errEl.textContent = validation.errors.map((e) => e.message).join(" · ");
       errEl.classList.remove("hidden");
     }
-    if (runBtn) runBtn.disabled = true;
+    if (runBtn) {
+      runBtn.disabled = true;
+      runBtn.title = "Fix recipe errors before running";
+    }
   } else if (fipsBlock) {
-    if (runBtn) runBtn.disabled = true;
+    if (runBtn) {
+      runBtn.disabled = true;
+      runBtn.title = "Blocked by FIPS mode";
+    }
   } else {
     if (errEl && !fipsBlock) errEl.classList.add("hidden");
-    if (runBtn) runBtn.disabled = !cryptoReady;
+    if (runBtn) {
+      const blocked = !cryptoReady || !!readiness;
+      runBtn.disabled = blocked;
+      runBtn.title = !cryptoReady
+        ? "Crypto self-test has not passed"
+        : readiness || "Run all cells";
+    }
   }
+  updateCellRunButtons(readiness);
 
   /** @type {string[]} */
   const warnParts = [...(validation.warnings || [])];
@@ -2304,6 +2378,107 @@ function validateAndBind() {
   currentInputNeeds = validation.inputNeeds || (ast ? unresolvedInputs(ast) : []);
   if (document.getElementById("cell-inputs-0") || document.querySelector(".cell-inputs")) {
     renderAllCellRuntimePanels();
+  }
+}
+
+/**
+ * Soft-disable Run all + per-cell Run when readiness unmet (does not re-render panels).
+ */
+function applyRunReadiness() {
+  const runBtn = document.getElementById("run-btn");
+  const readiness = notebookReadinessBlocker();
+  if (runBtn instanceof HTMLButtonElement && !runBtn.dataset.forceDisabled) {
+    // Only adjust when recipe validation left the button manageable — if recipe
+    // is invalid, validateAndBind already disabled with a stronger reason.
+    const recipeErr = document.getElementById("recipe-errors");
+    const recipeBroken =
+      recipeErr && !recipeErr.classList.contains("hidden") && recipeErr.textContent?.trim();
+    if (!recipeBroken) {
+      const blocked = !cryptoReady || !!readiness;
+      runBtn.disabled = blocked;
+      runBtn.title = !cryptoReady
+        ? "Crypto self-test has not passed"
+        : readiness || "Run all cells";
+    }
+  }
+  updateCellRunButtons(readiness);
+  for (let i = 0; i < chains.length; i++) syncCellRuntimeChrome(i);
+}
+
+/**
+ * Soft-disable per-cell Run / From here when that cell (or notebook) is not ready.
+ * @param {string} [notebookBlocker]
+ */
+function updateCellRunButtons(notebookBlocker) {
+  const globalBlock = notebookBlocker ?? notebookReadinessBlocker();
+  document.querySelectorAll("[data-run-cell]").forEach((btn) => {
+    if (!(btn instanceof HTMLButtonElement)) return;
+    const i = Number(btn.getAttribute("data-run-cell"));
+    const chain = chains[i];
+    const nSteps = (chain?.steps || []).length;
+    const unmet = nSteps ? cellUnmetNeeds(chain) : [];
+    const reason = !nSteps
+      ? "Cell is empty"
+      : unmet[0]
+        ? unmet[0] === "needs recipients"
+          ? "Add recipients before running"
+          : unmet[0] === "needs input"
+            ? "Add input text before running"
+            : unmet[0]
+        : "";
+    btn.disabled = !nSteps || !!reason || !cryptoReady;
+    btn.title = reason || (cryptoReady ? "Run this cell" : "Crypto not ready");
+  });
+  document.querySelectorAll("[data-run-from]").forEach((btn) => {
+    if (!(btn instanceof HTMLButtonElement)) return;
+    const blocked = !!globalBlock || !cryptoReady;
+    btn.disabled = blocked;
+    btn.title = globalBlock || (cryptoReady ? "Run this cell and all below" : "Crypto not ready");
+  });
+}
+
+/**
+ * Refresh need badges on a cell chrome without rebuilding the notebook.
+ * @param {number} cellIndex
+ */
+function syncCellNeedBadges(cellIndex) {
+  const chrome = document.querySelector(
+    `.notebook-cell[data-cell="${cellIndex}"] .notebook-cell-chrome`
+  );
+  if (!chrome) return;
+  chrome.querySelectorAll(".cell-need-badge").forEach((el) => el.remove());
+  const statusEl = chrome.querySelector(".cell-status");
+  const unmet = cellNeedBadges(chains[cellIndex] || { steps: [] });
+  const html = unmet
+    .map(
+      (b) =>
+        `<span class="cell-need-badge" title="${escapeHtml(b)}">${escapeHtml(b)}</span>`
+    )
+    .join("");
+  statusEl?.insertAdjacentHTML("afterend", html);
+  syncCellRuntimeChrome(cellIndex, unmet);
+}
+
+/**
+ * Mark runtime input / binder panels as needing attention vs ready.
+ * @param {number} cellIndex
+ * @param {string[]} [unmet]
+ */
+function syncCellRuntimeChrome(cellIndex, unmet) {
+  const needs = unmet ?? cellUnmetNeeds(chains[cellIndex] || { steps: [] });
+  const inputNeedsAttention = needs.some((n) =>
+    ["needs input", "needs shares", "needs ciphertext", "needs envelope", "needs key"].includes(n)
+  );
+  const recipNeedsAttention = needs.includes("needs recipients");
+  const inputsHost = document.getElementById(`cell-inputs-${cellIndex}`);
+  if (inputsHost && !inputsHost.hidden) {
+    inputsHost.classList.toggle("cell-runtime-needs", inputNeedsAttention);
+    inputsHost.classList.toggle("cell-runtime-ready", !inputNeedsAttention);
+  }
+  const bindHost = document.getElementById(`cell-bind-${cellIndex}`);
+  if (bindHost && bindHost.childElementCount) {
+    bindHost.classList.toggle("cell-runtime-needs", recipNeedsAttention);
+    bindHost.classList.toggle("cell-runtime-ready", !recipNeedsAttention);
   }
 }
 
@@ -2375,17 +2550,27 @@ function renderAllCellRuntimePanels() {
     if (!bindHost) continue;
     const info = cellRecipientInfo(chains[i]);
     if (info.slots > 0) {
+      bindHost.classList.add("cell-bind-messaging", "cell-runtime-zone");
       const binder = mountRecipientBinder(bindHost, {
         slots: info.slots,
         foreach: info.foreach,
         onChange: (recs) => {
           boundRecipients = recs;
+          applyRunReadiness();
+          syncCellNeedBadges(i);
         },
       });
       cellBinders.set(i, binder);
     } else {
+      bindHost.classList.remove(
+        "cell-bind-messaging",
+        "cell-runtime-zone",
+        "cell-runtime-needs",
+        "cell-runtime-ready"
+      );
       bindHost.innerHTML = "";
     }
+    syncCellRuntimeChrome(i);
   }
 }
 
@@ -2438,9 +2623,17 @@ function renderInputsPanel(needs, host, cellIndex = 0) {
   if (!needs.length) {
     host.innerHTML = "";
     host.hidden = true;
+    host.classList.remove(
+      "cell-inputs-compact",
+      "cell-inputs-expanded",
+      "cell-runtime-zone",
+      "cell-runtime-needs",
+      "cell-runtime-ready"
+    );
     return;
   }
   host.hidden = false;
+  host.classList.add("cell-runtime-zone");
   if (!shareRows.length) shareRows = [""];
   const p = `c${cellIndex}-`;
 
@@ -2452,11 +2645,23 @@ function renderInputsPanel(needs, host, cellIndex = 0) {
         ? "WebCrypto key"
         : needs.includes("envelope")
           ? "Envelope"
-          : "Input";
+          : "Message";
+  const textEmpty = needs.includes("text") && !String(inputTextDraft || "").trim();
+  const gpgEmpty = needs.includes("gpg") && !String(ciphertextDraft || "").trim();
+  const compactEmpty =
+    (textEmpty || gpgEmpty) &&
+    !needs.includes("shares") &&
+    !needs.includes("key") &&
+    !needs.includes("envelope");
+  host.classList.toggle("cell-inputs-compact", compactEmpty);
+  host.classList.toggle("cell-inputs-expanded", !compactEmpty);
   /** @type {string[]} */
   const parts = [
     `<div class="cell-runtime-panel" data-cell-runtime="${cellIndex}">`,
-    `<p class="card-title">${title}</p>`,
+    `<div class="cell-runtime-head">
+      <span class="cell-runtime-kicker">Required at run</span>
+      <p class="card-title mb-0">${title}</p>
+    </div>`,
   ];
   if (needs.includes("shares")) {
     parts.push(
@@ -2481,14 +2686,15 @@ function renderInputsPanel(needs, host, cellIndex = 0) {
     `);
   }
   if (needs.includes("text")) {
+    const rows = textEmpty ? 2 : 6;
     parts.push(`
       <div class="btn-row wrap mb-xs">
-        <label class="field-label m-0" for="${p}input-text">Input text</label>
+        <label class="field-label m-0" for="${p}input-text">Message</label>
         <button type="button" class="btn btn-ghost btn-compact" data-rt-btn="load-text">Load from file…</button>
         <input type="file" data-rt-file="load-text" class="hidden" multiple accept="*/*">
       </div>
-      <textarea id="${p}input-text" data-rt="text" class="compose-message" rows="6" spellcheck="false"
-        placeholder="Paste text here, or load it from a file — feeds this cell’s input step at run time.">${escapeHtml(inputTextDraft)}</textarea>
+      <textarea id="${p}input-text" data-rt="text" class="compose-message cell-input-expandable" rows="${rows}" spellcheck="false"
+        placeholder="Paste or load the message — not stored in the recipe.">${escapeHtml(inputTextDraft)}</textarea>
     `);
   }
   if (needs.includes("shares")) {
@@ -2559,7 +2765,7 @@ function renderInputsPanel(needs, host, cellIndex = 0) {
         <button type="button" class="btn btn-ghost btn-compact" data-rt-btn="load-ciphertext">Load from file…</button>
         <input type="file" data-rt-file="load-ciphertext" class="hidden" multiple accept=".asc,.pgp,.txt,*/*">
       </div>
-      <textarea id="${p}input-ciphertext" data-rt="ciphertext" class="compose-message" rows="8" spellcheck="false"
+      <textarea id="${p}input-ciphertext" data-rt="ciphertext" class="compose-message cell-input-expandable" rows="${gpgEmpty ? 3 : 8}" spellcheck="false"
         placeholder="Paste -----BEGIN PGP MESSAGE----- blocks (and/or already-decrypted mnemonics).">${escapeHtml(ciphertextDraft)}</textarea>
       <label class="field-label mt-md" for="${p}input-vault-key">Vault private key (only for ciphertext you can decrypt here)</label>
       <select id="${p}input-vault-key" data-rt="vault-key" class="text-input">
@@ -2598,10 +2804,32 @@ function wireInputsPanel(host, needs, cellIndex) {
     if (h) renderInputsPanel(needs, h, cellIndex);
   };
 
+  const refreshReadiness = () => {
+    applyRunReadiness();
+    syncCellNeedBadges(cellIndex);
+  };
+
+  const expandInputsOnFocus = (el) => {
+    el?.addEventListener("focus", () => {
+      host.classList.remove("cell-inputs-compact");
+      host.classList.add("cell-inputs-expanded");
+      if (el instanceof HTMLTextAreaElement && Number(el.rows) < 6) el.rows = 6;
+    });
+  };
+
   if (needs.includes("text")) {
     const textEl = host.querySelector("[data-rt=text]");
+    expandInputsOnFocus(textEl);
     textEl?.addEventListener("input", () => {
-      if (textEl instanceof HTMLTextAreaElement) inputTextDraft = textEl.value;
+      if (textEl instanceof HTMLTextAreaElement) {
+        inputTextDraft = textEl.value;
+        if (inputTextDraft.trim()) {
+          host.classList.remove("cell-inputs-compact");
+          host.classList.add("cell-inputs-expanded");
+          if (Number(textEl.rows) < 6) textEl.rows = 6;
+        }
+      }
+      refreshReadiness();
     });
     wireFileButton(host, "[data-rt-btn=load-text]", "[data-rt-file=load-text]", async (files) => {
       /** @type {string[]} */
@@ -2613,6 +2841,7 @@ function wireInputsPanel(host, needs, cellIndex) {
         ? `${inputTextDraft.replace(/\n+$/, "")}\n${joined}`
         : joined;
       if (textEl instanceof HTMLTextAreaElement) textEl.value = inputTextDraft;
+      refreshReadiness();
     });
   }
 
@@ -2647,6 +2876,7 @@ function wireInputsPanel(host, needs, cellIndex) {
         if (badge) {
           badge.outerHTML = shareChecksumBadge(el.value);
         }
+        refreshReadiness();
       });
     });
 
@@ -2684,8 +2914,17 @@ function wireInputsPanel(host, needs, cellIndex) {
 
   if (needs.includes("gpg")) {
     const ctEl = host.querySelector("[data-rt=ciphertext]");
+    expandInputsOnFocus(ctEl);
     ctEl?.addEventListener("input", () => {
-      if (ctEl instanceof HTMLTextAreaElement) ciphertextDraft = ctEl.value;
+      if (ctEl instanceof HTMLTextAreaElement) {
+        ciphertextDraft = ctEl.value;
+        if (ciphertextDraft.trim()) {
+          host.classList.remove("cell-inputs-compact");
+          host.classList.add("cell-inputs-expanded");
+          if (Number(ctEl.rows) < 8) ctEl.rows = 8;
+        }
+      }
+      refreshReadiness();
     });
     wireFileButton(host, "[data-rt-btn=load-ciphertext]", "[data-rt-file=load-ciphertext]", async (files) => {
       const box = host.querySelector("[data-rt=ciphertext]");
@@ -2698,6 +2937,7 @@ function wireInputsPanel(host, needs, cellIndex) {
         ? `${box.value.trim()}\n\n${joined}`
         : joined;
       box.value = ciphertextDraft;
+      refreshReadiness();
     });
   }
 
@@ -2705,6 +2945,7 @@ function wireInputsPanel(host, needs, cellIndex) {
     const jwkEl = host.querySelector("[data-rt=wc-jwk]");
     jwkEl?.addEventListener("input", () => {
       if (jwkEl instanceof HTMLTextAreaElement) keyJwkDraft = jwkEl.value;
+      refreshReadiness();
     });
     const peerEl = host.querySelector("[data-rt=wc-peer]");
     peerEl?.addEventListener("input", () => {
@@ -2887,13 +3128,13 @@ function renderPresets() {
   /** @param {typeof PRESETS[number]} p */
   const card = (p) => `
     <div class="preset-card-wrap">
-      <button type="button" class="preset-card" data-preset="${escapeHtml(p.id)}" title="Replace notebook">
+      <button type="button" class="preset-card" data-preset="${escapeHtml(p.id)}" title="Replace notebook with this template">
         <strong>${escapeHtml(p.title)}</strong>
         <span class="muted">${escapeHtml(p.blurb)}</span>
         <code class="preset-recipe">${escapeHtml(p.recipe)}</code>
       </button>
       <button type="button" class="btn btn-ghost btn-compact preset-append-btn" data-preset-append="${escapeHtml(p.id)}"
-        title="Append preset chains as new cells">Append</button>
+        title="Append this template’s chains as new cells">Append</button>
     </div>`;
 
   /** @type {Map<string, typeof PRESETS>} */
@@ -2911,17 +3152,26 @@ function renderPresets() {
       const p = presets[i];
       const next = presets[i + 1];
       if (p.pair && next?.pair === p.pair) {
-        // Companion pipelines (forward ⇄ inverse) render as one linked row.
+        const st = stitchPresetPair(p, next);
+        const meta = bridgeModeMeta(st.mode, st.bridge);
+        const labelId = `preset-pair-${escapeHtml(p.pair)}`;
         items += `
-          <div class="preset-pair">
-            ${card(p)}
-            <span class="preset-pair-link" aria-hidden="true" title="Companion pipelines">⇄</span>
-            ${card(next)}
-            <div class="preset-pair-actions">
+          <div class="preset-pair" role="group" aria-labelledby="${labelId}">
+            <div class="preset-pair-head">
+              <div class="preset-pair-head-text">
+                <span class="preset-pair-kicker" id="${labelId}">Companion</span>
+                <span class="badge preset-bridge-badge" data-bridge="${escapeHtml(st.mode)}">${escapeHtml(meta.badge)}</span>
+              </div>
               <button type="button" class="btn btn-compact preset-pair-both-btn"
                 data-preset-pair="${escapeHtml(p.pair)}"
-                title="Append forward then inverse as new cells (slots / Inputs bridge)">Add both ⇄</button>
+                title="${escapeHtml(meta.hint)}">Add both ⇄</button>
             </div>
+            <div class="preset-pair-body">
+              ${card(p)}
+              <span class="preset-pair-link" aria-hidden="true" title="Companion pipelines">⇄</span>
+              ${card(next)}
+            </div>
+            <p class="preset-pair-hint muted">${escapeHtml(meta.hint)}</p>
           </div>`;
         i++;
       } else {
@@ -2978,14 +3228,14 @@ function renderPresets() {
       const pair = resolvePresetPair(pairId);
       if (!pair) return;
       lastPresetId = null;
-      appendPresetPairAsCells(pair.forward, pair.reverse);
+      const st = appendPresetPairAsCells(pair.forward, pair.reverse);
       document.getElementById("preset-gallery")?.removeAttribute("open");
       scrollFocusedCellIntoView();
       const status = document.getElementById("run-status");
-      if (status) {
+      if (status && st) {
+        const meta = bridgeModeMeta(st.mode, st.bridge);
         status.className = "status-row ok";
-        status.textContent =
-          "Added companion cells — Run all (top→bottom) so slots / share tiles feed the inverse cell.";
+        status.textContent = meta.toast;
         status.classList.remove("hidden");
       }
     });
@@ -3033,18 +3283,20 @@ function appendPresetAsCells(preset) {
  * Append companion presets (forward then inverse), stitched for slot/inputs bridge.
  * @param {typeof PRESETS[number]} forward
  * @param {typeof PRESETS[number]} reverse
+ * @returns {import("../lib/toolkit/conjugate-stitch.js").StitchResult|null}
  */
 function appendPresetPairAsCells(forward, reverse) {
   const st = stitchPresetPair(forward, reverse);
   if (st.errors?.length) {
     showError(errorEl, st.errors.join(" · "));
-    return;
+    return null;
   }
   const title =
     forward.pair || forward.title
       ? `${forward.title} ⇄ ${reverse.title}`
       : undefined;
   appendRecipeAsCells(st.recipe, { title });
+  return st;
 }
 
 /**
@@ -3236,7 +3488,7 @@ function suggestedNextSteps(from, opts = {}) {
 }
 
 /**
- * Contextual next-block drawer under the pipeline cards.
+ * Contextual next-block drawer under the focused cell’s pipeline.
  */
 function renderSuggestDrawer() {
   const host = document.getElementById("suggest-next");
@@ -3259,10 +3511,10 @@ function renderSuggestDrawer() {
   const heading = !steps.length
     ? composeChips && !next.length
       ? `Cell [${focusedCell}] · compose`
-      : "Start with"
+      : `Cell [${focusedCell}] · start with`
     : terminal
-      ? "Optional next"
-      : `Next for <code>${escapeHtml(fromType)}</code>`;
+      ? `Cell [${focusedCell}] · optional next`
+      : `Cell [${focusedCell}] · next for <code>${escapeHtml(fromType)}</code>`;
   const blurb = !steps.length
     ? composeChips && !next.length
       ? "Kernel slots ready — add a new cell that uses them."
@@ -4490,8 +4742,13 @@ function renderNotebook() {
     );
     if (anyPgp) {
       modeHost.classList.remove("hidden");
-      modeHost.innerHTML = renderPgpModeToggle("toolkit-pgp-mode-recipe");
+      modeHost.innerHTML = renderPgpModeToggle("toolkit-pgp-mode-recipe", {
+        advancedLink: true,
+      });
       wirePgpModeToggles(modeHost);
+      modeHost.querySelector("#pgp-advanced-link")?.addEventListener("click", () => {
+        openCryptoParamsPanel();
+      });
     } else {
       modeHost.classList.add("hidden");
       modeHost.innerHTML = "";
@@ -4550,7 +4807,12 @@ function renderNotebook() {
         <div class="notebook-cell-body ${collapsed ? "hidden" : ""}">
           <div class="cell-inputs" id="cell-inputs-${i}" data-cell="${i}" hidden></div>
           <div class="cell-bind" id="cell-bind-${i}" data-cell="${i}"></div>
-          <div class="builder-steps cell-builder" id="cell-builder-${i}" data-cell="${i}"></div>
+          <div class="builder-steps cell-builder builder-spine" id="cell-builder-${i}" data-cell="${i}"></div>
+          ${
+            focused
+              ? `<div id="suggest-next" class="suggest-next suggest-next-cell" hidden></div>`
+              : ""
+          }
         </div>
         <div class="cell-output" id="cell-output-${i}" data-cell="${i}"></div>
       </article>`);
@@ -4565,6 +4827,8 @@ function renderNotebook() {
   }
   focusCell(savedFocus);
   renderAllCellRuntimePanels();
+  applyRunReadiness();
+  renderSuggestDrawer();
 
   host.querySelectorAll("[data-focus-cell]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -4833,15 +5097,6 @@ function renderBuilderInto(host, cellIndex) {
         ? String(step.params.label || step.params.name || "text")
         : "";
 
-    const pgpModeBlock = usesPgpProfile
-      ? renderPgpModeToggle(
-          nest.parentStem != null
-            ? `toolkit-pgp-mode-step-${nest.parentStem}-${nest.bodyIndex}`
-            : `toolkit-pgp-mode-step-${i}`,
-          { compact: true }
-        )
-      : "";
-
     const typeHint =
       edge?.output?.base === "shares" && edge.output.kind === "raw"
         ? `<p class="builder-type-hint muted fs-xs mb-sm">Next usually <code>blip39</code> → mnemonics, or <code>recover</code> → <code>bytes/master</code>.</p>`
@@ -4880,19 +5135,22 @@ function renderBuilderInto(host, cellIndex) {
           <code class="builder-type-chip" title="${escapeHtml(typeTitle)}">${escapeHtml(inType)} → ${escapeHtml(outType)}</code>
           ${
             isOut
-              ? `<span class="badge pending" title="Named file — Encrypt attaches bytes">file · Encrypt as file</span>`
+              ? `<span class="badge pending" title="Named file — Encrypt attaches bytes">file</span>`
               : isText
-                ? `<span class="badge pending" title="Message tile — Encrypt opens compose">message · Encrypt as message</span>`
-                : `<span class="muted fs-xs">${escapeHtml(spec?.kind || "")}</span>`
+                ? `<span class="badge pending" title="Message tile">message</span>`
+                : ""
           }
           ${outSummary ? `<span class="muted fs-xs">${escapeHtml(outSummary)}</span>` : ""}
           <button type="button" class="btn btn-ghost btn-compact text-error" data-remove-stem="${focusStem}" ${
             focusBody != null ? `data-remove-body="${focusBody}"` : ""
           }>Remove</button>
         </div>
-        <p class="muted mt-xs mb-sm fs-xs" title="${escapeHtml(spec?.doc || "")}">${escapeHtml(spec?.doc || "")}</p>
+        ${
+          usesPgpProfile
+            ? ""
+            : `<p class="muted mt-xs mb-sm fs-xs builder-card-doc" title="${escapeHtml(spec?.doc || "")}">${escapeHtml(spec?.doc || "")}</p>`
+        }
         ${typeHint}
-        ${pgpModeBlock}
         <div class="builder-params">${paramFields}${vaultFprPick}</div>
       </div>`;
   };
@@ -5186,7 +5444,7 @@ function renderCryptoPanel() {
 
       <details class="expert-crypto-section" ${usesOpenPgp ? "open" : ""}>
         <summary><strong>OpenPGP wrapping</strong>${usesOpenPgp ? "" : ' <span class="muted">(no encrypt / gpg.symencrypt step)</span>'}</summary>
-        ${usesOpenPgp ? renderPgpModeToggle("toolkit-pgp-mode-expert") : ""}
+        <p class="muted fs-xs mt-sm mb-0">Mode is set in the notebook header (Modern / Compatible / Auto). Override cipher, AEAD, and S2K below.</p>
         <div class="expert-crypto-grid mt-sm">
           <label class="builder-param">Cipher
             <select class="text-input" id="toolkit-pgp-cipher">
@@ -6042,6 +6300,7 @@ document.getElementById("clear-sensitive-btn")?.addEventListener("click", () => 
   clearSensitiveData();
 });
 document.getElementById("reset-notebook-btn")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
   resetNotebook();
 });
 document.getElementById("add-cell-btn")?.addEventListener("click", () => {
@@ -6060,9 +6319,11 @@ document.getElementById("copy-share-link")?.addEventListener("click", () => {
   void copyShareLink();
 });
 document.getElementById("copy-recipe-btn")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
   void copyRecipeText();
 });
 document.getElementById("workspace-save-btn")?.addEventListener("click", () => {
+  document.getElementById("more-menu")?.removeAttribute("open");
   saveCurrentWorkspace();
 });
 document.getElementById("workspace-library-btn")?.addEventListener("click", () => {
@@ -6284,7 +6545,7 @@ async function runNotebookCell(cellIndex) {
     document.querySelectorAll("[data-rt=key-pass]").forEach((el) => {
       if (el instanceof HTMLInputElement) el.value = "";
     });
-    if (btn) btn.disabled = false;
+    applyRunReadiness();
   }
 }
 
@@ -6351,7 +6612,7 @@ async function runNotebookFrom(from) {
     document.querySelectorAll("[data-rt=key-pass]").forEach((el) => {
       if (el instanceof HTMLInputElement) el.value = "";
     });
-    if (btn) btn.disabled = false;
+    applyRunReadiness();
   }
 }
 

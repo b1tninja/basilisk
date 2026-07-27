@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  bridgeModeMeta,
   bridgeSlotName,
   collectConsumedSlots,
   collectOutLabels,
@@ -22,6 +23,16 @@ describe("bridgeSlotName", () => {
     expect(bridgeSlotName("slip39-secret")).toBe("@slip39_secret");
     expect(bridgeSlotName("123bad")).toBe("@p_123bad");
     expect(bridgeSlotName("")).toBe("@bridge");
+  });
+});
+
+describe("bridgeModeMeta", () => {
+  it("returns distinct copy for slot vs inputs", () => {
+    expect(bridgeModeMeta("slot", "@payload").badge).toBe("Slot bridge");
+    expect(bridgeModeMeta("slot", "@payload").toast).toContain("@payload");
+    expect(bridgeModeMeta("inputs").badge).toBe("Shares panel");
+    expect(bridgeModeMeta("inputs").hint.toLowerCase()).toContain("shares");
+    expect(bridgeModeMeta("as-is").badge).toBe("Linked slots");
   });
 });
 

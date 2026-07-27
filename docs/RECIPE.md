@@ -73,17 +73,19 @@ In the browser toolkit, each blank-line **chain** is one notebook **cell**. A se
 | Action | Effect |
 |--------|--------|
 | **Run cell** | Executes that chain against the kernel’s slot map; updates that cell’s output tiles; marks **downstream** cells stale (no auto-cascade) |
-| **Run all** / **Run from here** | Sequential cell runs top-to-bottom |
+| **Run all** / **Run from here** | Sequential cell runs top-to-bottom; soft-disabled while a runnable cell still needs input, recipients, or `@slots` |
 | **Clear sensitive data** | Wipes kernel slots, all cell outputs, runtime inputs, and the agent session; **keeps** cell recipes and title |
-| **Reset notebook** | Clear sensitive **plus** collapse to a single empty cell |
+| **Reset notebook** | Clear sensitive **plus** collapse to a single empty cell (More menu) |
 | **Destroy** | Same wipe as Clear sensitive for secrets/outputs; recipe text retained (v1) |
 | **Clear outputs** (per cell) | Surgical cleanup of that cell’s tiles only |
 
 Idle auto-scrub uses the same path as **Clear sensitive data**. The whole notebook still serializes to multi-chain recipe source (shareable / Templates). Slot-side params (`to=@`, `key=@`) resolve from the kernel when present. Duplicate `out @label` within one cell still errors; re-running a later cell may replace a kernel binding written earlier.
 
+OpenPGP **Modern / Compatible / Auto** lives once in the notebook header (with **Advanced OpenPGP…** for cipher/AEAD/S2K). Messaging **Encrypt** cells use the recipient binder only when the recipe has no `to=` — look-up chrome stays quiet until that panel is focused.
+
 ### Companion templates (forward ⇄ inverse)
 
-Templates with a shared `pair` id (e.g. SSS split ⇄ recover) appear as a linked row in the gallery. **Add both ⇄** appends forward then inverse as new cells.
+Templates with a shared `pair` id (e.g. SSS split ⇄ recover) appear as a linked row in the gallery with a bridge badge (**Slot bridge** / **Shares panel** / **Linked slots**). **Add both ⇄** appends forward then inverse as new cells and shows a mode-specific status hint.
 
 Inter-cell feed stays **explicit `@slots`** — there is no implicit “trailing tile → next cell stem” and no new chain operator:
 
@@ -94,7 +96,7 @@ Inter-cell feed stays **explicit `@slots`** — there is no implicit “trailing
 
 **Add both** may rewrite a reverse `input` head to `in @bridge` when a slot bridge applies; SSS/GPG-share inverses are left unchanged (inputs bridge). If the inverse reuses an `out @label` already emitted by the forward cell, Add both renames the inverse tip (e.g. `@pem` → `@pem_rev`) so the joined notebook validates. Trailing auto-emitted tiles alone never become slots — only `out` does.
 
-**Exhaustive verb smoke** (Vitest, not CAST): `web/src/lib/toolkit/verb-smoke.js` + `web/src/test/recipe-verbs.test.js` require every `listSteps()` op and every enum/bool param value to appear in a compiling recipe, then **run** every case. WebAuthn create/get/prf and `agent.save protection=passkey` use `installWebAuthnPrfStub` (fake `navigator.credentials` + fixed PRF IKM) — no live authenticator.
+**Exhaustive verb smoke** (Vitest, not CAST): `web/src/test/helpers/verb-smoke.js` + `web/src/test/recipe-verbs.test.js` require every `listSteps()` op and every enum/bool param value to appear in a compiling recipe, then **run** every case. WebAuthn create/get/prf and `agent.save protection=passkey` use Vitest-only `installWebAuthnPrfStub` in `web/src/test/helpers/toolkit-smoke-stubs.js` (fake `navigator.credentials` + fixed PRF IKM) — never imported by production pages.
 
 ### Sharing via URL fragment
 

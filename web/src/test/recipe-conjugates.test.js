@@ -132,6 +132,26 @@ describe("self-contained roundtrip presets", () => {
     expect(plain).toBeTruthy();
   }, 60_000);
 
+  it("aes-gcm-roundtrip decrypts plaintext", async () => {
+    const p = PRESETS.find((x) => x.id === "aes-gcm-roundtrip");
+    const { ast, validation } = compileRecipe(p.recipe);
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast, {
+      inputs: { text: { value: "gcm-plain" } },
+    });
+    expect(findArtifactContent(arts, /^gcm-plain$/)).toBe("gcm-plain");
+  }, 30_000);
+
+  it("pbkdf2-aes-gcm decrypts plaintext", async () => {
+    const p = PRESETS.find((x) => x.id === "pbkdf2-aes-gcm");
+    const { ast, validation } = compileRecipe(p.recipe);
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast, {
+      inputs: { text: { value: "pbkdf-plain" } },
+    });
+    expect(findArtifactContent(arts, /^pbkdf-plain$/)).toBe("pbkdf-plain");
+  }, 60_000);
+
   it("aes-cbc-roundtrip decrypts plaintext", async () => {
     const p = PRESETS.find((x) => x.id === "aes-cbc-roundtrip");
     const { ast, validation } = compileRecipe(p.recipe);
@@ -141,6 +161,16 @@ describe("self-contained roundtrip presets", () => {
     });
     expect(findArtifactContent(arts, /^cbc-plain$/)).toBe("cbc-plain");
   }, 30_000);
+
+  it("gpg-decrypt compiles", () => {
+    const p = PRESETS.find((x) => x.id === "gpg-decrypt");
+    assertPresetCompiles(p);
+  });
+
+  it("webauthn-prf-aes-gcm compiles", () => {
+    const p = PRESETS.find((x) => x.id === "webauthn-prf-aes-gcm");
+    assertPresetCompiles(p);
+  });
 
   it("aes-ctr-roundtrip decrypts plaintext", async () => {
     const p = PRESETS.find((x) => x.id === "aes-ctr-roundtrip");

@@ -35,6 +35,38 @@ import {
  */
 
 /**
+ * Short UI copy for a stitch mode (Templates gallery + status toast).
+ * @param {StitchMode|string} mode
+ * @param {string|null} [bridge]
+ * @returns {{ badge: string, hint: string, toast: string }}
+ */
+export function bridgeModeMeta(mode, bridge = null) {
+  const slot = bridge && String(bridge).startsWith("@") ? String(bridge) : "@slot";
+  switch (mode) {
+    case "slot":
+      return {
+        badge: "Slot bridge",
+        hint: `Run all top→bottom so ${slot} feeds the inverse cell.`,
+        toast: `Added companion cells (slot bridge ${slot}) — Run all top→bottom.`,
+      };
+    case "inputs":
+      return {
+        badge: "Shares panel",
+        hint: "After the split cell, paste mnemonics into the inverse cell’s Shares Inputs.",
+        toast:
+          "Added companion cells — run the split cell, then paste share tiles into the inverse Inputs.",
+      };
+    case "as-is":
+    default:
+      return {
+        badge: "Linked slots",
+        hint: "Already wired with out / in — Run all top→bottom.",
+        toast: "Added companion cells — Run all top→bottom so slots feed the inverse cell.",
+      };
+  }
+}
+
+/**
  * Stable @slot label from a pair id (must match normalizeSlotRef rules).
  * @param {string} pairId
  * @returns {string}
@@ -182,10 +214,16 @@ export function lastChainFinalOut(ast) {
  * @returns {import("./recipe.js").RecipeStep}
  */
 function cloneStep(s) {
+  /** @type {Record<string, *>} */
+  const params = Object.create(null);
+  for (const [k, v] of Object.entries(s.params || {})) {
+    if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+    params[k] = v;
+  }
   /** @type {import("./recipe.js").RecipeStep} */
   const out = {
     name: s.name,
-    params: { ...(s.params || {}) },
+    params,
     start: s.start || 0,
     end: s.end || 0,
   };

@@ -41,7 +41,10 @@ describe("webcrypto toolkit registry", () => {
     for (const id of [
       "digest-sha256",
       "rsa-oaep-roundtrip",
+      "aes-gcm-roundtrip",
+      "pbkdf2-aes-gcm",
       "hkdf-as-aes-gcm",
+      "webauthn-prf-aes-gcm",
       "aes-cbc-roundtrip",
       "aes-ctr-roundtrip",
       "verify-soft",

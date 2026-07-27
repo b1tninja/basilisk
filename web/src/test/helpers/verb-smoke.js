@@ -1,5 +1,6 @@
 /**
  * Exhaustive toolkit verb / param smoke catalog (Vitest — not CAST).
+ * Lives under `src/test/helpers/` so production bundles never import it.
  *
  * Coverage gates:
  * - every `listSteps()` op appears in ≥1 case
@@ -8,15 +9,22 @@
  */
 
 import { generateKey, readKey } from "openpgp";
-import { runRecipe } from "./engine.js";
-import { bytesToBase64, bytesToHex, textToBytes } from "./encode.js";
+import { runRecipe } from "../../lib/toolkit/engine.js";
+import { bytesToBase64, bytesToHex, textToBytes } from "../../lib/toolkit/encode.js";
 import {
   compileRecipe,
   migrateRecipe,
   recipeChains,
-} from "./recipe.js";
-import { getStep, listSteps } from "./registry.js";
-import { ZERO_AAGUID } from "../webauthn/attestation.js";
+} from "../../lib/toolkit/recipe.js";
+import { getStep, listSteps } from "../../lib/toolkit/registry.js";
+import { ZERO_AAGUID } from "../../lib/webauthn/attestation.js";
+
+if (
+  typeof process === "undefined" ||
+  !(process.env?.VITEST || process.env?.VITEST_WORKER_ID)
+) {
+  throw new Error("verb-smoke.js is Vitest-only");
+}
 
 /**
  * @typedef {object} VerbSmokeCase
@@ -892,7 +900,7 @@ in @a | recipients.merge with=@b | out @merged`,
       mode: "run",
       setup: async () => {
         // Ensure prf-meta exists (create may not have run yet if tests reorder).
-        const { createPasskeyPrf } = await import("../vault.js");
+        const { createPasskeyPrf } = await import("../../lib/vault.js");
         await createPasskeyPrf("verb-smoke-prf-setup");
       },
       assert: (arts) => {
@@ -1465,123 +1473,6 @@ export function uncoveredEnumParams(cases = listVerbSmokeCases()) {
     }
   }
   return gaps;
-}
-
-/**
- * Install fetch mock for This-site HKP used by verb smoke.
- * @param {{ fingerprint: string, armoredPublic: string, email?: string }} key
- * @param {(name: string, value: unknown) => void} stubGlobal  vitest `vi.stubGlobal`
- */
-/**
- * Stub `navigator.credentials` + `location` so WebAuthn create/get/prf and
- * `agent.save protection=passkey` run under Vitest (Node) without an authenticator.
- * Returns the fixed PRF IKM used by create/get.
- *
- * @param {(name: string, value: unknown) => void} stubGlobal  vitest `vi.stubGlobal`
- * @param {Uint8Array} [fixedIkm]
- * @returns {Uint8Array}
- */
-export function installWebAuthnPrfStub(stubGlobal, fixedIkm) {
-  const ikm =
-    fixedIkm && fixedIkm.byteLength
-      ? fixedIkm
-      : crypto.getRandomValues(new Uint8Array(32));
-  const rawId = new Uint8Array(16);
-  for (let i = 0; i < rawId.length; i++) rawId[i] = i + 1;
-
-  const makeCred = () => ({
-    id: "basilisk-verb-smoke-cred",
-    rawId: rawId.buffer,
-    type: "public-key",
-    authenticatorAttachment: "platform",
-    response: {},
-    getClientExtensionResults: () => ({
-      prf: { results: { first: ikm.buffer.slice(ikm.byteOffset, ikm.byteOffset + ikm.byteLength) } },
-    }),
-  });
-
-  stubGlobal("location", {
-    hostname: "localhost",
-    origin: "http://localhost",
-    href: "http://localhost/",
-    protocol: "http:",
-    host: "localhost",
-  });
-
-  const prevNav =
-    typeof globalThis.navigator === "object" && globalThis.navigator
-      ? { ...globalThis.navigator }
-      : {};
-  stubGlobal("navigator", {
-    ...prevNav,
-    credentials: {
-      create: async () => makeCred(),
-      get: async () => makeCred(),
-    },
-  });
-
-  // Optional caps probes
-  stubGlobal("PublicKeyCredential", {
-    isUserVerifyingPlatformAuthenticatorAvailable: async () => true,
-    isConditionalMediationAvailable: async () => false,
-    getClientCapabilities: async () => ({ extension: { prf: true } }),
-  });
-
-  return ikm;
-}
-
-export function installHkpFetchMock(key, stubGlobal) {
-  const fpr = key.fingerprint.toUpperCase();
-  const armored = key.armoredPublic;
-  const email = key.email || "alice@example.com";
-  const bobFpr = (fpr.slice(0, -1) + (fpr.endsWith("0") ? "1" : "0")).toUpperCase();
-  stubGlobal("fetch", async (url) => {
-    const u = String(url);
-    if (u.includes("/api/v1/search")) {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          results: [
-            {
-              fingerprint: fpr,
-              email,
-              uid: `Alice <${email}>`,
-              approval_state: "approved",
-              armoredKey: armored,
-            },
-            {
-              fingerprint: bobFpr,
-              email: "bob@example.com",
-              uid: "Bob <bob@example.com>",
-              approval_state: "approved",
-              armoredKey: armored,
-            },
-          ],
-        }),
-      };
-    }
-    if (u.includes("/api/v1/key/")) {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          approval_state: "approved",
-          approved_uids: [`Alice <${email}>`],
-          key_id: fpr.slice(-16),
-          revoked: false,
-        }),
-      };
-    }
-    if (u.includes("/pks/lookup")) {
-      return {
-        ok: true,
-        status: 200,
-        text: async () => armored,
-      };
-    }
-    throw new Error(`verb-smoke unexpected fetch ${u}`);
-  });
 }
 
 export { ensureGpgKey, sampleAttestationB64 };

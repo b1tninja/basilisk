@@ -25,8 +25,10 @@ import { validateShareMnemonic } from "../slip39/blip39.js";
 /** Presets that already encode encrypt⇄decrypt or sign⇄verify across chains. */
 export const SELF_ROUNDTRIP_IDS = [
   "rsa-oaep-roundtrip",
+  "aes-gcm-roundtrip",
   "aes-cbc-roundtrip",
   "aes-ctr-roundtrip",
+  "pbkdf2-aes-gcm",
   "gpg-sign-verify",
   "hmac-sign-verify",
 ];
