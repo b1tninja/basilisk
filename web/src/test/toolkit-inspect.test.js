@@ -75,15 +75,25 @@ describe("inspect / tee", () => {
     expect(meta).toMatch(/"sensitive": false/);
   });
 
-  it("inspect artifact carries snapshot for live format UI", async () => {
+  it("inspect of sensitive bytes omits live snapshot (no secret retention)", async () => {
     const { ast, validation } = compileRecipe("random 8 | inspect hex");
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
     expect(arts[0].role).toBe("inspect");
-    expect(arts[0].inspectSnapshot?.type).toBe("bytes");
+    expect(arts[0].sensitive).toBe(true);
     expect(arts[0].inspectFormat).toBe("hex");
-    const switched = inspectFromSnapshot(arts[0].inspectSnapshot, "hexdump");
-    expect(switched).toMatch(/00000000/);
-    expect(switched).not.toBe(arts[0].content);
+    // Format switching would re-hold random/key bytes — dropped when sensitive.
+    expect(arts[0].inspectSnapshot).toBeUndefined();
+  });
+
+  it("non-sensitive inspect snapshot still supports live format switch", async () => {
+    const snap = await buildInspectSnapshot({
+      type: "text",
+      data: "Hi",
+      meta: { sensitive: false },
+    });
+    expect(snap?.type).toBe("text");
+    const switched = inspectFromSnapshot(snap, "hex");
+    expect(switched).toMatch(/4869/);
   });
 });

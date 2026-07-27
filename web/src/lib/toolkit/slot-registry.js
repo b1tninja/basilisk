@@ -81,6 +81,89 @@ export function clonePipelineValue(value) {
 }
 
 /**
+ * Best-effort wipe of owned secret buffers in a pipeline value.
+ * Inlines fill(0) per memory-safety.js (no shared zeroBuffer helper).
+ * @param {PipelineValue|null|undefined} value
+ */
+export function wipePipelineValue(value) {
+  if (!value) return;
+  try {
+    if (value.data instanceof Uint8Array && value.data.byteLength > 0) {
+      value.data.fill(0);
+    }
+  } catch (_) {
+    /* never throw from cleanup */
+  }
+  if (value.type === "shares" && value.data) {
+    const raw = value.data.raw;
+    if (Array.isArray(raw)) {
+      for (const s of raw) {
+        try {
+          if (s?.data instanceof Uint8Array && s.data.byteLength > 0) {
+            s.data.fill(0);
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+  }
+  if (value.type === "item" && value.data?.value) {
+    wipePipelineValue(value.data.value);
+  }
+  if (value.type === "keypair" && value.data) {
+    const raw = value.data.raw || value.data.privateRaw;
+    try {
+      if (raw instanceof Uint8Array && raw.byteLength > 0) raw.fill(0);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  // Drop string refs (cannot wipe JS strings — only drop reachability).
+  if (value.type === "openpgp-key" || value.type === "text") {
+    value.data = "";
+  }
+  if (value.meta) {
+    const snap = value.meta.inspectSnapshot;
+    if (snap) wipeInspectSnapshot(snap);
+    value.meta.inspectSnapshot = undefined;
+  }
+}
+
+/**
+ * @param {import("./inspect.js").InspectSnapshot|null|undefined} snap
+ */
+function wipeInspectSnapshot(snap) {
+  if (!snap) return;
+  try {
+    if (snap.bytes instanceof Uint8Array && snap.bytes.byteLength > 0) {
+      snap.bytes.fill(0);
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  if (typeof snap.text === "string") snap.text = "";
+  if (snap.shares?.mnemonics) {
+    snap.shares.mnemonics = snap.shares.mnemonics.map(() => "");
+  }
+  const kp = snap.keypair;
+  if (kp) {
+    try {
+      if (kp.raw instanceof Uint8Array && kp.raw.byteLength > 0) kp.raw.fill(0);
+    } catch (_) {
+      /* ignore */
+    }
+    if (kp.privateJwk && typeof kp.privateJwk === "object") {
+      for (const k of ["d", "p", "q", "dp", "dq", "qi", "k"]) {
+        if (k in kp.privateJwk) kp.privateJwk[k] = "";
+      }
+    }
+    kp.privateJwk = undefined;
+    kp.hasPrivate = false;
+  }
+}
+
+/**
  * @typedef {object} SlotMeta
  * @property {string} label
  * @property {string} type
@@ -96,6 +179,7 @@ export function clonePipelineValue(value) {
  *   resolve: (ref: string) => PipelineValue,
  *   has: (ref: string) => boolean,
  *   clear: () => void,
+ *   evictSensitive: () => void,
  *   labels: () => string[],
  *   listMetas: () => SlotMeta[],
  *   snapshotKeys: () => Set<string>,
@@ -172,8 +256,56 @@ export function createSlotRegistry() {
   };
 
   const clear = () => {
+    for (const value of slotsByLabel.values()) {
+      wipePipelineValue(value);
+    }
+    for (const value of slotsByIndex) {
+      wipePipelineValue(value);
+    }
     slotsByLabel.clear();
     slotsByIndex.length = 0;
+  };
+
+  /**
+   * Wipe + remove private / sensitive slots (agent Lock-all path).
+   * Keeps public recipients / public keys.
+   */
+  const evictSensitive = () => {
+    /** @type {string[]} */
+    const drop = [];
+    for (const [label, value] of slotsByLabel) {
+      const privateKey =
+        value?.type === "openpgp-key" &&
+        String(value?.meta?.which || "") !== "public";
+      const sensitive =
+        !!value?.meta?.sensitive ||
+        value?.type === "keypair" ||
+        value?.type === "shares" ||
+        privateKey;
+      if (sensitive) drop.push(label);
+    }
+    for (const label of drop) {
+      const v = slotsByLabel.get(label);
+      wipePipelineValue(v);
+      slotsByLabel.delete(label);
+    }
+    // Rebuild index without sensitive entries
+    const kept = slotsByIndex.filter((v) => {
+      const privateKey =
+        v?.type === "openpgp-key" && String(v?.meta?.which || "") !== "public";
+      const sensitive =
+        !!v?.meta?.sensitive ||
+        v?.type === "keypair" ||
+        v?.type === "shares" ||
+        privateKey;
+      if (sensitive) {
+        wipePipelineValue(v);
+        return false;
+      }
+      return true;
+    });
+    slotsByIndex.length = 0;
+    slotsByIndex.push(...kept);
   };
 
   const labels = () => [...slotsByLabel.keys()];
@@ -205,7 +337,11 @@ export function createSlotRegistry() {
       if (value?.type === "bytes" && value.data instanceof Uint8Array) {
         meta.length = value.data.length;
       }
-      if (value?.type === "text" || value?.type === "openpgp-key") {
+      // Length of private armor / sensitive text is itself a minor leak — omit.
+      if (
+        (value?.type === "text" || value?.type === "openpgp-key") &&
+        !meta.sensitive
+      ) {
         meta.length = String(value.data || "").length;
       }
       out.push(meta);
@@ -218,6 +354,7 @@ export function createSlotRegistry() {
     resolve,
     has,
     clear,
+    evictSensitive,
     labels,
     listMetas,
     snapshotKeys,

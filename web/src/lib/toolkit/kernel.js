@@ -7,6 +7,59 @@ import { createSlotRegistry } from "./slot-registry.js";
 import { recipeChains } from "./recipe.js";
 
 /**
+ * Best-effort wipe of artifact tiles (owned bytes + inspect snapshots).
+ * @param {import("./engine.js").ToolkitArtifact|null|undefined} art
+ */
+function wipeArtifact(art) {
+  if (!art) return;
+  try {
+    if (art.bytes instanceof Uint8Array && art.bytes.byteLength > 0) {
+      art.bytes.fill(0);
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  if (typeof art.content === "string") art.content = "";
+  const snap = art.inspectSnapshot;
+  if (snap) {
+    try {
+      if (snap.bytes instanceof Uint8Array && snap.bytes.byteLength > 0) {
+        snap.bytes.fill(0);
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    if (typeof snap.text === "string") snap.text = "";
+    if (snap.shares?.mnemonics) {
+      snap.shares.mnemonics = snap.shares.mnemonics.map(() => "");
+    }
+    const kp = snap.keypair;
+    if (kp) {
+      try {
+        if (kp.raw instanceof Uint8Array && kp.raw.byteLength > 0) kp.raw.fill(0);
+      } catch (_) {
+        /* ignore */
+      }
+      if (kp.privateJwk && typeof kp.privateJwk === "object") {
+        for (const k of ["d", "p", "q", "dp", "dq", "qi", "k"]) {
+          if (k in kp.privateJwk) kp.privateJwk[k] = "";
+        }
+      }
+      kp.privateJwk = undefined;
+    }
+  }
+  art.inspectSnapshot = undefined;
+}
+
+/**
+ * @param {import("./engine.js").ToolkitArtifact[]} list
+ */
+function wipeArtifacts(list) {
+  if (!Array.isArray(list)) return;
+  for (const a of list) wipeArtifact(a);
+}
+
+/**
  * @typedef {"idle"|"running"|"ok"|"error"|"stale"} CellStatus
  */
 
@@ -60,6 +113,7 @@ export function createKernel() {
    * @param {number} i
    */
   const clearCellOutputs = (i) => {
+    wipeArtifacts(cellOutputs.get(i) || []);
     cellOutputs.delete(i);
     if (getCellStatus(i) !== "idle") setCellStatus(i, "idle");
   };
@@ -135,9 +189,21 @@ export function createKernel() {
   };
 
   const clearSensitive = () => {
-    slots.clear();
+    for (const arts of cellOutputs.values()) wipeArtifacts(arts);
     cellOutputs.clear();
     cellStatus.clear();
+    slots.clear();
+  };
+
+  /**
+   * Evict private/sensitive slots and wipe all cell outputs (Lock-all).
+   * Keeps public recipients / public-key slots.
+   */
+  const lockSensitive = () => {
+    for (const arts of cellOutputs.values()) wipeArtifacts(arts);
+    cellOutputs.clear();
+    cellStatus.clear();
+    slots.evictSensitive();
   };
 
   const destroy = () => {
@@ -188,6 +254,7 @@ export function createKernel() {
     runCell,
     runAll,
     clearSensitive,
+    lockSensitive,
     destroy,
     remapCells,
     markAllWithOutputsStale,

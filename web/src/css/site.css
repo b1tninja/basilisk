@@ -202,6 +202,21 @@ body.layout-app {
 .prefs-check input {
   margin-top: 0.2rem;
 }
+.prefs-warn {
+  margin: 0 0 0.65rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  background: color-mix(in srgb, var(--warn, #c90) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn, #c90) 35%, var(--border));
+}
+.qr-preview-img {
+  display: block;
+  max-width: min(240px, 100%);
+  height: auto;
+  background: #fff;
+  border-radius: 4px;
+}
 .toolkit-dialog {
   border: 1px solid var(--border);
   border-radius: 10px;

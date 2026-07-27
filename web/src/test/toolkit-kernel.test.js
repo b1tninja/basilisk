@@ -124,4 +124,42 @@ describe("kernel cell runs", () => {
     expect(kernel.getCellOutputs(0).length).toBeGreaterThan(0);
     expect(kernel.getCellOutputs(1).length).toBeGreaterThan(0);
   });
+
+  it("lockSensitive evicts private slots but keeps public recipients", async () => {
+    const alice = await generateKey({
+      type: "ecc",
+      curve: "curve25519",
+      userIDs: [{ email: "alice@example.com" }],
+      format: "armored",
+    });
+    const pub = await readKey({ armoredKey: alice.publicKey });
+    const fpr = pub.getFingerprint().toUpperCase();
+    const kernel = createKernel();
+    kernel.slots.register(
+      "@alices",
+      recipientsPipelineValue([
+        {
+          fingerprint: fpr,
+          armoredPublic: alice.publicKey,
+          label: "Alice",
+          email: "alice@example.com",
+          approvalState: "approved",
+          valid: true,
+          encryptCapable: true,
+        },
+      ])
+    );
+    kernel.slots.register("@me", {
+      type: "openpgp-key",
+      data: alice.privateKey,
+      meta: { which: "private", sensitive: true, fingerprint: fpr },
+    });
+    await kernel.runCell(0, compileRecipe(`random 8 | hex | out @x`).ast.chains[0]);
+    expect(kernel.slotCount()).toBe(3);
+    kernel.lockSensitive();
+    expect(kernel.slots.has("@alices")).toBe(true);
+    expect(kernel.slots.has("@me")).toBe(false);
+    // Non-sensitive @x may remain; outputs are always wiped.
+    expect(kernel.getCellOutputs(0)).toEqual([]);
+  }, 60_000);
 });

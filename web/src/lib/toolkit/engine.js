@@ -196,6 +196,20 @@ import {
  * }} [opts]
  * @returns {Promise<ToolkitArtifact[]>}
  */
+/**
+ * Whether a live pipeline value must be treated as secret in UI / inspect tiles.
+ * @param {PipelineValue|null|undefined} value
+ */
+function pipelineValueIsSensitive(value) {
+  if (!value) return false;
+  if (value.meta?.sensitive) return true;
+  if (value.type === "keypair" || value.type === "shares") return true;
+  if (value.type === "openpgp-key") {
+    return String(value.meta?.which || "") !== "public";
+  }
+  return false;
+}
+
 export async function runRecipe(ast, bindings = {}, opts = {}) {
   const chains = recipeChains(ast);
   const chainStart = Math.max(0, opts.chainStart ?? 0);
@@ -1787,17 +1801,17 @@ async function execStepBody(step, value, bindings, artifacts) {
       const format = String(step.params.format || "auto");
       const snapshot = await buildInspectSnapshot(value);
       const dump = inspectFromSnapshot(snapshot, format);
+      const sensitive = pipelineValueIsSensitive(value);
       return {
         type: "text",
         data: dump,
         meta: {
           ...value.meta,
-          sensitive:
-            !!value.meta?.sensitive ||
-            value.type === "keypair" ||
-            value.type === "shares",
+          sensitive,
           inspect: true,
-          inspectSnapshot: snapshot,
+          // Keep live snapshot only for non-sensitive tips (format switch).
+          // Private openpgp-key / keypair dumps stay masked without retaining armor.
+          inspectSnapshot: sensitive ? undefined : snapshot,
           inspectFormat: format,
         },
       };
@@ -1816,18 +1830,16 @@ async function execStepBody(step, value, bindings, artifacts) {
       const format = String(step.params.format || "auto");
       const snapshot = await buildInspectSnapshot(value);
       const dump = inspectFromSnapshot(snapshot, format);
+      const sensitive = pipelineValueIsSensitive(value);
       artifacts.push({
         label: `peek:${name}`,
         filename: `${name}.inspect.txt`,
         content: dump,
-        sensitive:
-          !!value.meta?.sensitive ||
-          value.type === "keypair" ||
-          value.type === "shares",
+        sensitive,
         disposition: "file",
         role: "inspect",
         tags: ["inspect"],
-        inspectSnapshot: snapshot || undefined,
+        inspectSnapshot: sensitive ? undefined : snapshot || undefined,
         inspectFormat: format,
       });
       return value;
@@ -3359,7 +3371,7 @@ async function materializeOutArtifacts(value, params) {
  */
 function valueToArtifacts(value, name = "artifact") {
   if (value.type === "text") {
-    const isInspect = !!value.meta?.inspect && value.meta?.inspectSnapshot;
+    const isInspect = !!value.meta?.inspect;
     return [
       attachPipeMeta(
         {
@@ -3377,7 +3389,8 @@ function valueToArtifacts(value, name = "artifact") {
             : value.meta?.sensitive
               ? ["sensitive"]
               : [],
-          inspectSnapshot: isInspect ? value.meta.inspectSnapshot : undefined,
+          // Snapshot may be omitted for sensitive tips (no secret retention).
+          inspectSnapshot: value.meta?.inspectSnapshot,
           inspectFormat: isInspect
             ? String(value.meta.inspectFormat || "auto")
             : undefined,

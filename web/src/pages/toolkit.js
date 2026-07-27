@@ -342,6 +342,9 @@ let lastActivityAt = Date.now();
 let kernelChipTimer = null;
 /** @type {ReturnType<typeof setTimeout>|null} */
 let idleTimer = null;
+/** Pending clipboard clear handles from copyTextTransient */
+/** @type {Array<{ clear: () => void }>} */
+let pendingClipboardClears = [];
 
 /** Worker for the in-flight run, so a secure-destroy can terminate it. */
 /** @type {Worker|null} */
@@ -1021,6 +1024,11 @@ function renderPrefsForm() {
         <option value="60" ${p.idleClearMinutes === 60 ? "selected" : ""}>60 minutes</option>
       </select>
     </label>
+    ${
+      p.idleClearMinutes === 0
+        ? `<p class="prefs-warn" role="status">Idle clear is off — kernel slots, artifacts, and Inputs persist until Clear sensitive / Destroy / tab hide.</p>`
+        : ""
+    }
     <label class="prefs-field">
       <span>Default encrypt mode</span>
       <select id="pref-mode" class="text-input">
@@ -1044,11 +1052,16 @@ function renderPrefsForm() {
       <input type="checkbox" id="pref-collapse" ${p.collapseAdvanced ? "checked" : ""}>
       <span>Collapse advanced shelves <span class="muted fs-xs">(Cipher, Wrap, WebAuthn)</span></span>
     </label>
-    <label class="prefs-check" title="Unlock returns the private key for the run without keeping a 5-minute agent session">
+    <label class="prefs-check" title="Skips the 5-minute vault-session cache only. Private keys can still live in kernel @slots until Clear / Lock all / tab hide.">
       <input type="checkbox" id="pref-session-off" ${p.sessionOff ? "checked" : ""}>
-      <span>Session off <span class="muted fs-xs">(no agent TTL; unlock per run)</span></span>
+      <span>Session off <span class="muted fs-xs">(no agent TTL cache)</span></span>
     </label>
-    <p class="muted fs-xs mt-sm mb-0">Defaults: idle ${DEFAULT_TOOLKIT_PREFS.idleClearMinutes}m · mode ${DEFAULT_TOOLKIT_PREFS.defaultEncryptMode} · policy ${DEFAULT_TOOLKIT_PREFS.defaultEncryptPolicy}.</p>
+    ${
+      p.sessionOff
+        ? `<p class="prefs-warn" role="status">Session off ≠ no secrets in memory — unlocked keys in <code>@slots</code> still need Lock all or Clear sensitive.</p>`
+        : ""
+    }
+    <p class="muted fs-xs mt-sm mb-0">Tab hide always scrubs secrets (like Encrypt). Defaults: idle ${DEFAULT_TOOLKIT_PREFS.idleClearMinutes}m · mode ${DEFAULT_TOOLKIT_PREFS.defaultEncryptMode} · policy ${DEFAULT_TOOLKIT_PREFS.defaultEncryptPolicy}.</p>
   `;
   wirePrefsForm(host);
 }
@@ -1064,9 +1077,22 @@ function wirePrefsForm(host) {
     const collapseEl = host.querySelector("#pref-collapse");
     const sessionEl = host.querySelector("#pref-session-off");
     const fipsEl = host.querySelector("#fips-mode");
+    let idleMins =
+      idleEl instanceof HTMLSelectElement ? Number(idleEl.value) : 5;
+    if (
+      idleMins === 0 &&
+      getToolkitPrefs().idleClearMinutes !== 0 &&
+      !window.confirm(
+        "Turn off idle clear?\n\nKernel slots, artifacts, and Inputs will stay in memory until you Clear sensitive, Destroy, or hide this tab."
+      )
+    ) {
+      if (idleEl instanceof HTMLSelectElement) {
+        idleEl.value = String(getToolkitPrefs().idleClearMinutes || 5);
+      }
+      return;
+    }
     setToolkitPrefs({
-      idleClearMinutes:
-        idleEl instanceof HTMLSelectElement ? Number(idleEl.value) : 5,
+      idleClearMinutes: idleMins,
       defaultEncryptMode:
         modeEl instanceof HTMLSelectElement && modeEl.value === "combined"
           ? "combined"
@@ -1091,6 +1117,7 @@ function wirePrefsForm(host) {
     renderOpsDrawer();
     renderSuggestDrawer();
     renderNotebook();
+    renderPrefsForm();
   };
   host.querySelectorAll("select, input").forEach((el) => {
     el.addEventListener("change", save);
@@ -1119,6 +1146,52 @@ function wirePrefsForm(host) {
  * Wipe kernel + outputs + inputs; keep cell recipes (Clear sensitive / idle).
  * @param {{ quiet?: boolean }} [opts]
  */
+function flushPendingClipboardClears() {
+  for (const h of pendingClipboardClears) {
+    try {
+      h.clear();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  pendingClipboardClears = [];
+}
+
+/**
+ * Lock agent session + evict private kernel slots / wipe outputs.
+ * Stronger than sessionClear alone (private @slots would otherwise remain).
+ */
+function lockAllAgentMaterial() {
+  if (activeWorker) {
+    try {
+      activeWorker.terminate();
+    } catch (_) {
+      /* ignore */
+    }
+    activeWorker = null;
+  }
+  sessionClear();
+  kernel.lockSensitive();
+  artifacts = [];
+  expandedArtifactKeys = new Set();
+  flushPendingClipboardClears();
+  syncArtifactsFromKernel();
+  renderNotebook();
+  renderSuggestDrawer();
+  renderOpsDrawer();
+  renderAgentChrome();
+  updateKernelChip();
+  updateStaleBanner();
+  renderVariablesDrawer();
+  const status = document.getElementById("run-status");
+  if (status) {
+    status.className = "status-row ok";
+    status.textContent =
+      "Locked — agent session cleared; private slots and outputs wiped.";
+    status.classList.remove("hidden");
+  }
+}
+
 function clearSensitiveData(opts = {}) {
   if (activeWorker) {
     try {
@@ -1135,6 +1208,7 @@ function clearSensitiveData(opts = {}) {
   boundRecipients = [];
   recipientResolutions = {};
   lookupFieldErrors = new Map();
+  flushPendingClipboardClears();
   if (kernelChipTimer) {
     clearInterval(kernelChipTimer);
     kernelChipTimer = null;
@@ -1159,6 +1233,10 @@ function clearSensitiveData(opts = {}) {
     "input-ciphertext",
     "input-privkey",
     "input-key-pass",
+    "input-wc-jwk",
+    "input-wc-peer",
+    "input-wc-wrap",
+    "input-wc-sig",
   ]) {
     const el = document.getElementById(id);
     if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
@@ -1171,11 +1249,15 @@ function clearSensitiveData(opts = {}) {
 
   validateAndBind();
   renderNotebook();
+  renderSuggestDrawer();
+  renderOpsDrawer();
   renderAgentChrome();
   updateKernelChip();
   updateStaleBanner();
   renderVariablesDrawer();
   clearTimeout(idleTimer);
+  idleTimer = null;
+  if (!opts.skipIdleReschedule) touchActivity();
 
   if (!opts.quiet) {
     const status = document.getElementById("run-status");
@@ -1490,8 +1572,9 @@ function loadRecipeText(text, opts = {}) {
   const loaded = recipeChains(ast).map((c) => ({
     steps: (c.steps || []).map((s) => cloneBuilderStep(s)),
   }));
+  // Full scrub (session, worker, drafts, DOM) — not just kernel slots.
+  clearSensitiveData({ quiet: true });
   chains = loaded.length ? loaded : [{ steps: [] }];
-  kernel.clearSensitive();
   cellCollapsed = new Set();
   focusCell(0);
   if (opts.title != null) setRecipeTitle(opts.title);
@@ -3436,12 +3519,12 @@ function renderAgentChrome() {
                     `<button type="button" class="btn btn-ghost btn-compact" data-agent-lock="${escapeHtml(e.fingerprint)}" title="${escapeHtml(formatFingerprint(e.fingerprint))}">Lock …${escapeHtml(e.fingerprint.slice(-8))}</button>`
                 )
                 .join("")}
-              <button type="button" class="btn btn-compact" data-agent-lock-all>Lock all</button>
+              <button type="button" class="btn btn-compact" data-agent-lock-all
+                title="Clear agent session, private @slots, and cell outputs">Lock all</button>
             </div>
           </div>`;
         host.querySelector("[data-agent-lock-all]")?.addEventListener("click", () => {
-          sessionClear();
-          renderAgentChrome();
+          lockAllAgentMaterial();
         });
         host.querySelectorAll("[data-agent-lock]").forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -4460,6 +4543,18 @@ function inspectFormatSelectHtml(a, i) {
 }
 
 /**
+ * Safe SVG preview — data-URL &lt;img&gt; so script/event handlers never run.
+ * @param {string} svgText
+ * @returns {string}
+ */
+function svgPreviewImgHtml(svgText) {
+  const encoded = encodeURIComponent(String(svgText || ""))
+    .replace(/'/g, "%27")
+    .replace(/"/g, "%22");
+  return `<img class="qr-preview-img" alt="QR code" src="data:image/svg+xml;charset=utf-8,${encoded}">`;
+}
+
+/**
  * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
  * @param {number} i
  * @param {{ cellIndex?: number }} [opts]
@@ -4478,6 +4573,7 @@ function renderArtifactCard(a, i, opts = {}) {
       : escapeHtml(a.content);
   const isSvg = a.mime === "image/svg+xml";
   const suggestedFilename = a.filename || `artifact-${i + 1}.txt`;
+  // SVG never injected as HTML (scriptable). Use img data-URL — scripts do not run.
   const role = a.role || "";
   const tags = Array.isArray(a.tags) ? a.tags : [];
   const metaBits = [
@@ -4545,7 +4641,7 @@ function renderArtifactCard(a, i, opts = {}) {
           </div>
           ${
             isSvg && !masked
-              ? `<div class="qr-preview">${a.content}</div>`
+              ? svgPreviewImgHtml(a.content)
               : `<pre class="output-pre artifact-body${long && !expanded ? " artifact-body-collapsed" : ""}" data-art="${i}">${preview}</pre>`
           }
           ${showMoreBtn ? `<div class="artifact-expand-row">${showMoreBtn}</div>` : ""}
@@ -4719,10 +4815,10 @@ function wireArtifactPanel(panel, arts) {
       const pre = panel.querySelector(`.artifact-body[data-art="${i}"]`);
       if (a && pre) {
         if (a.mime === "image/svg+xml") {
-          const preview = document.createElement("div");
-          preview.className = "qr-preview";
-          preview.innerHTML = a.content;
-          pre.replaceWith(preview);
+          const wrap = document.createElement("div");
+          wrap.className = "qr-preview";
+          wrap.innerHTML = svgPreviewImgHtml(a.content);
+          pre.replaceWith(wrap);
         } else {
           pre.textContent = a.content;
         }
@@ -4734,7 +4830,12 @@ function wireArtifactPanel(panel, arts) {
   panel.querySelectorAll("[data-copy]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const i = Number(btn.getAttribute("data-copy"));
-      await copyTextTransient(list[i].content);
+      try {
+        const handle = await copyTextTransient(list[i].content);
+        pendingClipboardClears.push(handle);
+      } catch (_) {
+        /* ignore */
+      }
       btn.textContent = "Copied";
       setTimeout(() => {
         btn.textContent = "Copy";
@@ -5513,6 +5614,28 @@ document.getElementById("upgrade-recipe-btn")?.addEventListener("click", () => {
   const { recipe, changes } = migrateRecipe(ta.value);
   if (!changes.length) return;
   loadRecipeText(recipe, { migrate: false, reformat: true });
+});
+
+/** Tab hide / pagehide — scrub secrets (Encrypt clears session; toolkit clears kernel too). */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    clearSensitiveData({ quiet: true, skipIdleReschedule: true });
+  }
+});
+window.addEventListener("pagehide", () => {
+  clearSensitiveData({ quiet: true, skipIdleReschedule: true });
+});
+
+/** Close toolbar menus on outside click */
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  if (!(t instanceof Node)) return;
+  for (const id of ["prefs-menu", "more-menu", "preset-gallery"]) {
+    const menu = document.getElementById(id);
+    if (menu instanceof HTMLDetailsElement && menu.open && !menu.contains(t)) {
+      menu.removeAttribute("open");
+    }
+  }
 });
 
 loadRecipeText(PRESETS[0].recipe, { title: PRESETS[0].title, migrate: true });
