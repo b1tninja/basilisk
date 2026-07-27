@@ -414,9 +414,11 @@ export function serializeStep(step) {
 /**
  * Serialize one pipeline of steps (no block wrappers).
  * @param {RecipeStep[]} steps
+ * @param {{ compact?: boolean }} [opts]
  * @returns {string}
  */
-function serializePipeline(steps) {
+function serializePipeline(steps, opts = {}) {
+  const join = opts.compact ? "|" : " | ";
   return steps
     .map((s) => {
       if (s.name === "select" && s.params?.selector) {
@@ -428,15 +430,18 @@ function serializePipeline(steps) {
       }
       return serializeStep(s);
     })
-    .join(" | ");
+    .join(join);
 }
 
 /**
  * Serialize one chain's steps to recipe text.
  * @param {RecipeStep[]} steps
+ * @param {{ compact?: boolean }} [opts]
  * @returns {string}
  */
-function serializeChainSteps(steps) {
+function serializeChainSteps(steps, opts = {}) {
+  const compact = opts.compact === true;
+  const pipeJoin = compact ? "|" : " | ";
   /** @type {string[]} */
   const chunks = [];
 
@@ -445,12 +450,50 @@ function serializeChainSteps(steps) {
    */
   function pushStemPiece(head) {
     if (chunks.length && chunks[chunks.length - 1]?.endsWith("\n")) {
-      chunks.push(`| ${head}`);
+      chunks.push(compact ? `|${head}` : `| ${head}`);
     } else if (chunks.length) {
-      chunks.push(` | ${head}`);
+      chunks.push(`${pipeJoin}${head}`);
     } else {
       chunks.push(head);
     }
+  }
+
+  /**
+   * Collect brace/indent body lines (without leading indent / trailing newline).
+   * @returns {string[]}
+   */
+  function bodyLines(step) {
+    /** @type {string[]} */
+    const lines = [];
+    const body = step.body || [];
+    let bi = 0;
+    while (bi < body.length) {
+      const b = body[bi];
+      if (b.name === "select" && b.params?.selector) {
+        const group = [b];
+        bi++;
+        while (
+          bi < body.length &&
+          body[bi].name !== "select" &&
+          !(body[bi].name === "tee" || body[bi].name === "foreach")
+        ) {
+          group.push(body[bi]);
+          bi++;
+        }
+        const sel = String(b.params.selector);
+        const rest = serializePipeline(group.slice(1), opts);
+        lines.push(rest ? `- ${sel}${pipeJoin}${rest}` : `- ${sel}${pipeJoin}inspect`);
+      } else {
+        lines.push(`- ${serializePipeline([b], opts)}`);
+        bi++;
+      }
+    }
+    for (const br of step.branches || []) {
+      const sel = br.selector || `.${br.member}`;
+      const pipe = serializePipeline(br.body || [], opts);
+      lines.push(`- ${sel}${pipeJoin}${pipe}`);
+    }
+    return lines;
   }
 
   for (const step of steps) {
@@ -479,60 +522,39 @@ function serializeChainSteps(steps) {
       continue;
     }
 
-    if (chunks.length) chunks.push(" | ");
-    const useBrace = step.bodyForm === "brace";
-    chunks.push(useBrace ? `${head} {\n` : `${head}\n`);
-
-    // Body may contain select+follow steps from `- .value | out` flatten — regroup.
-    {
-      const body = step.body || [];
-      let bi = 0;
-      while (bi < body.length) {
-        const b = body[bi];
-        if (b.name === "select" && b.params?.selector) {
-          const group = [b];
-          bi++;
-          while (
-            bi < body.length &&
-            body[bi].name !== "select" &&
-            !(body[bi].name === "tee" || body[bi].name === "foreach")
-          ) {
-            group.push(body[bi]);
-            bi++;
-          }
-          const sel = String(b.params.selector);
-          const rest = serializePipeline(group.slice(1));
-          chunks.push(
-            rest ? `  - ${sel} | ${rest}\n` : `  - ${sel} | inspect\n`
-          );
-        } else {
-          chunks.push(`  - ${serializePipeline([b])}\n`);
-          bi++;
-        }
-      }
+    if (chunks.length) chunks.push(pipeJoin);
+    const lines = bodyLines(step);
+    const useBrace = compact || step.bodyForm === "brace";
+    if (compact) {
+      // One-line brace body: foreach{ - out @share }
+      chunks.push(`${head}{ ${lines.join(" ")} }`);
+    } else if (useBrace) {
+      chunks.push(`${head} {\n`);
+      for (const line of lines) chunks.push(`  ${line}\n`);
+      chunks.push("}");
+    } else {
+      chunks.push(`${head}\n`);
+      for (const line of lines) chunks.push(`  ${line}\n`);
     }
-    for (const br of step.branches || []) {
-      const sel = br.selector || `.${br.member}`;
-      const pipe = serializePipeline(br.body || []);
-      chunks.push(`  - ${sel} | ${pipe}\n`);
-    }
-    if (useBrace) chunks.push("}");
   }
   return chunks.join("").replace(/\n+$/, "");
 }
 
 /**
  * Serialize an AST (or steps / chains) back to recipe text.
- * Chains are joined with a blank line. Canonical names; `@` slot sugar.
+ * Chains are joined with a blank line (or `~` when `compact`).
+ * Canonical names; `@` slot sugar.
  * @param {RecipeAst|RecipeStep[]|RecipeChain[]} astOrSteps
+ * @param {{ compact?: boolean }} [opts]
  * @returns {string}
  */
-export function serializeRecipe(astOrSteps) {
+export function serializeRecipe(astOrSteps, opts = {}) {
+  const compact = opts.compact === true;
   const chains = recipeChains(astOrSteps);
   return chains
-    .map((c) => serializeChainSteps(c.steps || []))
+    .map((c) => serializeChainSteps(c.steps || [], opts))
     .filter((t) => t.length)
-    .join("\n\n");
+    .join(compact ? "~" : "\n\n");
 }
 
 /**

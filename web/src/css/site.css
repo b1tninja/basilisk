@@ -2399,6 +2399,16 @@ pre {
   align-items: center;
   flex: 0 1 auto;
 }
+.notebook-quickstarts {
+  align-items: center;
+  flex: 0 1 auto;
+}
+.notebook-quickstarts .btn {
+  white-space: nowrap;
+}
+#fragment-status:not(.hidden) {
+  color: var(--muted, inherit);
+}
 .notebook-header #agent-session-host:not(:empty),
 .notebook-header #inputs-host:not(:empty),
 .notebook-header #recipient-bind-host:not(:empty) {

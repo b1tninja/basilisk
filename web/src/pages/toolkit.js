@@ -1,6 +1,6 @@
 /**
- * Crypto Toolkit page — presets-first pipeline builder + recipe language.
- * Separate from /encrypt novice UX.
+ * Crypto Toolkit page — notebook recipes, messaging quick-starts, and pipelines.
+ * Everyday encrypt/decrypt lives here (`#encrypt` / `#decrypt`); legacy /encrypt|/decrypt redirect in.
  */
 
 import { readKey } from "openpgp";
@@ -31,6 +31,17 @@ import {
   getToolkitPrefs,
   setToolkitPrefs,
 } from "../lib/toolkit/prefs.js";
+import {
+  MESSAGING_STARTERS,
+  hashForDecryptLink,
+  hashForNotebook,
+  hashForPreset,
+  hashForRecipe,
+  hashForStarter,
+  parseToolkitHash,
+  toolkitShareUrl,
+  writeToolkitHash,
+} from "../lib/toolkit/fragment.js";
 import {
   PRESETS,
   compileRecipe,
@@ -180,6 +191,14 @@ let envelopeDraft = "";
 let sharePassDraft = "";
 /** Free-form input text retained across re-renders. */
 let inputTextDraft = "";
+/** OpenPGP ciphertext for gpg.decrypt Inputs (not stored in recipe / URL). */
+let ciphertextDraft = "";
+/** Suppress hash→notebook feedback while we write the fragment. */
+let fragmentWriteLock = false;
+/** Last preset id loaded (for short `#t=` fragment form). */
+let lastPresetId = /** @type {string|null} */ (null);
+/** @type {ReturnType<typeof setTimeout>|null} */
+let fragmentSyncTimer = null;
 /** WebCrypto JWK drafts for key-bound ops. */
 let keyJwkDraft = "";
 let peerJwkDraft = "";
@@ -448,7 +467,7 @@ app.innerHTML = `
       </div>
     </details>
     <span id="crypto-status" class="app-status" role="status">Verifying crypto suites…</span>
-    <span class="app-toolbar-note muted fs-xs">Advanced tool — everyday messaging belongs on <a class="text-link" href="/encrypt">Encrypt</a>.</span>
+    <span class="app-toolbar-note muted fs-xs">Notebook recipes are shareable via the URL fragment — secrets stay in Inputs.</span>
   </div>
   <p id="fips-hint" class="muted fs-xs fips-mode-hint ${fipsMode ? "" : "hidden"}" role="note">${escapeHtml(FIPS_MODE_DISCLAIMER)}</p>
   <dialog id="shortcuts-dialog" class="toolkit-dialog">
@@ -498,12 +517,26 @@ app.innerHTML = `
               <input type="text" id="recipe-title" class="recipe-title-input" maxlength="120"
                 placeholder="Untitled notebook" autocomplete="off" spellcheck="false">
             </label>
+            <div class="notebook-quickstarts btn-row wrap" role="group" aria-label="Messaging quick starts">
+              <button type="button" class="btn btn-compact" id="qs-encrypt"
+                title="Insert encrypt cell (shareable #encrypt)">
+                ${glyphHtml("openpgp", "ops-glyph toolbar-glyph")} Encrypt
+              </button>
+              <button type="button" class="btn btn-compact" id="qs-decrypt"
+                title="Insert decrypt cell (shareable #decrypt)">
+                ${glyphHtml("openpgp", "ops-glyph toolbar-glyph")} Decrypt
+              </button>
+              <button type="button" class="btn btn-ghost btn-compact" id="qs-symencrypt"
+                title="Password-based encrypt (#symencrypt)">Password</button>
+            </div>
             <div class="notebook-header-actions btn-row wrap">
               <button type="button" class="btn btn-compact" id="run-btn" disabled title="Run all cells">Run all</button>
               <button type="button" class="btn btn-ghost btn-compact" id="clear-sensitive-btn"
                 title="Wipe kernel slots, outputs, and inputs — keep cell recipes">Clear sensitive</button>
               <button type="button" class="btn btn-ghost btn-compact" id="reset-notebook-btn"
                 title="Clear sensitive and reset to one empty cell">Reset</button>
+              <button type="button" class="btn btn-ghost btn-compact" id="copy-share-link"
+                title="Copy shareable toolkit link (recipe in URL fragment)">Copy link</button>
             </div>
             <button type="button" class="kernel-chip btn btn-ghost btn-compact" id="kernel-chip"
               aria-expanded="false" aria-controls="variables-drawer"
@@ -511,6 +544,7 @@ app.innerHTML = `
               ${glyphHtml("variables", "ops-glyph kernel-chip-glyph")}<span id="kernel-chip-label">0 slots</span>
             </button>
           </div>
+          <p id="fragment-status" class="muted fs-xs mb-0 hidden" role="status"></p>
           <div id="stale-banner" class="stale-banner hidden" role="status"></div>
           <div id="agent-session-host" class="agent-session-host"></div>
           <details id="keyring-panel" class="keyring-panel">
@@ -1221,6 +1255,7 @@ function clearSensitiveData(opts = {}) {
   envelopeDraft = "";
   sharePassDraft = "";
   inputTextDraft = "";
+  ciphertextDraft = "";
   keyJwkDraft = "";
   peerJwkDraft = "";
   wrapJwkDraft = "";
@@ -1277,12 +1312,290 @@ function resetNotebook() {
   cellCollapsed = new Set();
   focusCell(0);
   setRecipeTitle("");
+  lastPresetId = null;
   setRecipeFromSteps();
   const status = document.getElementById("run-status");
   if (status) {
     status.className = "status-row ok";
     status.textContent = "Notebook reset.";
     status.classList.remove("hidden");
+  }
+}
+
+/** @returns {boolean} */
+function notebookIsEmpty() {
+  return chains.length === 1 && !(chains[0]?.steps || []).length;
+}
+
+/** @param {string} [msg] */
+function setFragmentStatus(msg) {
+  const el = document.getElementById("fragment-status");
+  if (!el) return;
+  if (!msg) {
+    el.textContent = "";
+    el.classList.add("hidden");
+    return;
+  }
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+
+function scheduleFragmentSync() {
+  if (fragmentWriteLock) return;
+  if (fragmentSyncTimer) clearTimeout(fragmentSyncTimer);
+  fragmentSyncTimer = setTimeout(() => {
+    fragmentSyncTimer = null;
+    syncFragmentFromNotebook();
+  }, 250);
+}
+
+function syncFragmentFromNotebook() {
+  if (fragmentWriteLock) return;
+  const recipe = serializeRecipe({ chains });
+  const preset = lastPresetId
+    ? PRESETS.find((p) => p.id === lastPresetId)
+    : null;
+  const result = hashForNotebook(recipe, {
+    presetId: lastPresetId,
+    presetRecipe: preset?.recipe ?? null,
+  });
+  if (!result.ok) {
+    setFragmentStatus(
+      result.reason || "Recipe too long for URL — use Copy recipe"
+    );
+    return;
+  }
+  setFragmentStatus("");
+  fragmentWriteLock = true;
+  writeToolkitHash(result.hash, { replace: true });
+  queueMicrotask(() => {
+    fragmentWriteLock = false;
+  });
+}
+
+function scrollFocusedCellIntoView() {
+  requestAnimationFrame(() => {
+    const el = document.querySelector(
+      `.notebook-cell[data-cell="${focusedCell}"]`
+    );
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (el instanceof HTMLElement) el.focus({ preventScroll: true });
+  });
+}
+
+/**
+ * Parse starter recipe text into notebook chains.
+ * @param {string} recipe
+ * @returns {{ steps: import("../lib/toolkit/recipe.js").RecipeStep[] }[] | null}
+ */
+function chainsFromRecipeText(recipe) {
+  let source = String(recipe || "");
+  source = migrateRecipe(source).recipe;
+  const { ast, errors } = canonicalizeRecipe(source);
+  if (errors.length || !ast) {
+    showError(
+      errorEl,
+      errors.map((e) => e.message).join(" · ") || "Recipe parse failed"
+    );
+    return null;
+  }
+  return recipeChains(ast).map((c) => ({
+    steps: (c.steps || []).map((s) => cloneBuilderStep(s)),
+  }));
+}
+
+/**
+ * Insert or replace a messaging quick-start cell.
+ * @param {import("../lib/toolkit/fragment.js").MessagingStarter} starter
+ * @param {{ replace?: boolean, skipFragmentWrite?: boolean }} [opts]
+ *   replace=true always replaces (nav / hash boot);
+ *   skipFragmentWrite=true when caller will write a seeded hash
+ */
+function insertMessagingCell(starter, opts = {}) {
+  const spec = MESSAGING_STARTERS[starter];
+  if (!spec) return;
+  const forceReplace = opts.replace === true;
+  const skipFragmentWrite = opts.skipFragmentWrite === true;
+  const loaded = chainsFromRecipeText(spec.recipe);
+  if (!loaded?.length) return;
+
+  lastPresetId = null;
+  if (forceReplace || notebookIsEmpty()) {
+    if (forceReplace) {
+      if (!skipFragmentWrite) fragmentWriteLock = true;
+      loadRecipeText(spec.recipe, { title: spec.title, migrate: true });
+      if (!skipFragmentWrite) {
+        writeToolkitHash(hashForStarter(starter), { replace: true });
+        queueMicrotask(() => {
+          fragmentWriteLock = false;
+        });
+      }
+    } else {
+      chains = loaded;
+      cellCollapsed = new Set();
+      focusCell(0);
+      if (!recipeTitle) setRecipeTitle(spec.title);
+      if (!skipFragmentWrite) fragmentWriteLock = true;
+      setRecipeFromSteps();
+      if (!skipFragmentWrite) {
+        writeToolkitHash(hashForStarter(starter), { replace: true });
+        queueMicrotask(() => {
+          fragmentWriteLock = false;
+        });
+      }
+    }
+  } else {
+    const start = chains.length;
+    chains.push(...loaded);
+    focusCell(start);
+    setRecipeFromSteps();
+  }
+  scrollFocusedCellIntoView();
+}
+
+/**
+ * Seed Inputs from a fragment action (after recipe load / clearSensitive).
+ * @param {import("../lib/toolkit/fragment.js").ToolkitHashAction & { seedError?: string }} action
+ */
+function applyInputSeeds(action) {
+  if (action.seedError) {
+    setFragmentStatus(action.seedError);
+    return;
+  }
+  const armored = action.inputs?.ctArmored;
+  if (armored == null) return;
+  if (!armored) {
+    setFragmentStatus("Could not load ciphertext from link.");
+    return;
+  }
+  ciphertextDraft = armored;
+  if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
+  else validateAndBind();
+  setFragmentStatus("Ciphertext loaded from link — private key stays local.");
+}
+
+/**
+ * Normalize hash string to include leading #.
+ * @param {string} hash
+ */
+function normalizeHashString(hash) {
+  const h = String(hash || "");
+  if (!h || h === "#") return "#";
+  return h.startsWith("#") ? h : `#${h}`;
+}
+
+/**
+ * Apply location.hash to the notebook (replace).
+ * @param {string} [hash]
+ * @param {{ boot?: boolean }} [opts]
+ */
+function applyToolkitHash(hash, opts = {}) {
+  if (fragmentWriteLock) return;
+  const rawHash = hash ?? (typeof location !== "undefined" ? location.hash : "");
+  const action = parseToolkitHash(rawHash);
+  const hasCtSeed =
+    !!action.inputs?.ctArmored ||
+    !!(/** @type {{ seedError?: string }} */ (action).seedError);
+
+  if (action.kind === "empty" || action.kind === "unknown") {
+    if (opts.boot && PRESETS[0]) {
+      // Keep URL hash empty until the user edits or picks a starter/preset.
+      lastPresetId = PRESETS[0].id;
+      fragmentWriteLock = true;
+      loadRecipeText(PRESETS[0].recipe, {
+        title: PRESETS[0].title,
+        migrate: true,
+      });
+      queueMicrotask(() => {
+        fragmentWriteLock = false;
+      });
+    }
+    return;
+  }
+  if (action.kind === "starter") {
+    fragmentWriteLock = true;
+    insertMessagingCell(action.starter, {
+      replace: true,
+      skipFragmentWrite: true,
+    });
+    applyInputSeeds(action);
+    // Keep seeded hash so refresh reloads ciphertext; otherwise short starter form.
+    writeToolkitHash(
+      hasCtSeed ? normalizeHashString(rawHash) : hashForStarter(action.starter),
+      { replace: true }
+    );
+    queueMicrotask(() => {
+      fragmentWriteLock = false;
+    });
+    return;
+  }
+  if (action.kind === "preset") {
+    const preset = PRESETS.find((p) => p.id === action.id);
+    if (!preset) {
+      if (opts.boot && PRESETS[0]) {
+        lastPresetId = PRESETS[0].id;
+        loadRecipeText(PRESETS[0].recipe, {
+          title: PRESETS[0].title,
+          migrate: true,
+        });
+      }
+      return;
+    }
+    lastPresetId = preset.id;
+    fragmentWriteLock = true;
+    loadRecipeText(preset.recipe, { title: preset.title, migrate: true });
+    applyInputSeeds(action);
+    writeToolkitHash(
+      hasCtSeed ? normalizeHashString(rawHash) : hashForPreset(preset.id),
+      { replace: true }
+    );
+    queueMicrotask(() => {
+      fragmentWriteLock = false;
+    });
+    scrollFocusedCellIntoView();
+    return;
+  }
+  if (action.kind === "recipe") {
+    lastPresetId = null;
+    fragmentWriteLock = true;
+    loadRecipeText(action.recipe, { migrate: true });
+    applyInputSeeds(action);
+    if (hasCtSeed) {
+      writeToolkitHash(normalizeHashString(rawHash), { replace: true });
+    } else {
+      const written = hashForRecipe(action.recipe);
+      if (written.ok) writeToolkitHash(written.hash, { replace: true });
+      else setFragmentStatus(written.reason || "");
+    }
+    queueMicrotask(() => {
+      fragmentWriteLock = false;
+    });
+    scrollFocusedCellIntoView();
+  }
+}
+
+async function copyShareLink() {
+  const recipe = serializeRecipe({ chains });
+  const preset = lastPresetId
+    ? PRESETS.find((p) => p.id === lastPresetId)
+    : null;
+  const result = hashForNotebook(recipe, {
+    presetId: lastPresetId,
+    presetRecipe: preset?.recipe ?? null,
+  });
+  if (!result.ok) {
+    setFragmentStatus(
+      result.reason || "Recipe too long for URL — use Copy recipe"
+    );
+    return;
+  }
+  const url = toolkitShareUrl(result.hash);
+  try {
+    await navigator.clipboard.writeText(url);
+    setFragmentStatus("Share link copied.");
+    setTimeout(() => setFragmentStatus(""), 2000);
+  } catch {
+    setFragmentStatus("Could not copy — copy the address bar instead.");
   }
 }
 
@@ -1318,6 +1631,7 @@ function setRecipeFromSteps() {
   updateKernelChip();
   updateStaleBanner();
   renderVariablesDrawer();
+  scheduleFragmentSync();
 }
 
 /**
@@ -1599,6 +1913,7 @@ function loadRecipeText(text, opts = {}) {
   renderOpsDrawer();
   updateKernelChip();
   updateStaleBanner();
+  scheduleFragmentSync();
 }
 
 /** @param {string} title */
@@ -1881,7 +2196,7 @@ function renderInputsPanel(needs) {
         <input type="file" id="load-ciphertext-file" class="hidden" multiple accept=".asc,.pgp,.txt,*/*">
       </div>
       <textarea id="input-ciphertext" class="compose-message" rows="8" spellcheck="false"
-        placeholder="Paste -----BEGIN PGP MESSAGE----- blocks (and/or already-decrypted mnemonics). Smartcard/YubiKey OpenPGP keys cannot be used in the browser — decrypt those externally and paste mnemonics in the share rows above."></textarea>
+        placeholder="Paste -----BEGIN PGP MESSAGE----- blocks (and/or already-decrypted mnemonics). Smartcard/YubiKey OpenPGP keys cannot be used in the browser — decrypt those externally and paste mnemonics in the share rows above.">${escapeHtml(ciphertextDraft)}</textarea>
       <label class="field-label mt-md" for="input-vault-key">Vault private key (only for ciphertext you can decrypt here)</label>
       <select id="input-vault-key" class="text-input">
         <option value="">— paste key below / not needed if all shares are plaintext —</option>
@@ -1998,16 +2313,21 @@ function wireInputsPanel(host, needs) {
   }
 
   if (needs.includes("gpg")) {
+    const ctEl = host.querySelector("#input-ciphertext");
+    ctEl?.addEventListener("input", () => {
+      if (ctEl instanceof HTMLTextAreaElement) ciphertextDraft = ctEl.value;
+    });
     wireFileButton(host, "#load-ciphertext-btn", "#load-ciphertext-file", async (files) => {
-      const ctEl = host.querySelector("#input-ciphertext");
-      if (!(ctEl instanceof HTMLTextAreaElement)) return;
+      const box = host.querySelector("#input-ciphertext");
+      if (!(box instanceof HTMLTextAreaElement)) return;
       /** @type {string[]} */
       const chunks = [];
       for (const f of files) chunks.push(await f.text());
       const joined = chunks.join("\n\n").trim();
-      ctEl.value = ctEl.value.trim()
-        ? `${ctEl.value.trim()}\n\n${joined}`
+      ciphertextDraft = box.value.trim()
+        ? `${box.value.trim()}\n\n${joined}`
         : joined;
+      box.value = ciphertextDraft;
     });
   }
 
@@ -2138,8 +2458,8 @@ async function collectRuntimeInputs() {
     const vaultEl = document.getElementById("input-vault-key");
     const privEl = document.getElementById("input-privkey");
     const passEl = document.getElementById("input-key-pass");
-    const armored =
-      ctEl instanceof HTMLTextAreaElement ? ctEl.value.trim() : "";
+    if (ctEl instanceof HTMLTextAreaElement) ciphertextDraft = ctEl.value;
+    const armored = ciphertextDraft.trim();
     const messages = splitArmoredMessages(armored);
     // Mnemonics interleaved with ciphertext (or a ciphertext-box-only paste).
     const remainder = stripArmoredMessages(armored);
@@ -2255,8 +2575,15 @@ function renderPresets() {
       ) {
         return;
       }
+      lastPresetId = preset.id;
+      fragmentWriteLock = true;
       loadRecipeText(preset.recipe, { title: preset.title, migrate: true });
+      writeToolkitHash(hashForPreset(preset.id), { replace: true });
+      queueMicrotask(() => {
+        fragmentWriteLock = false;
+      });
       document.getElementById("preset-gallery")?.removeAttribute("open");
+      scrollFocusedCellIntoView();
     });
   });
   grid.querySelectorAll("[data-preset-append]").forEach((btn) => {
@@ -2265,8 +2592,10 @@ function renderPresets() {
       const id = btn.getAttribute("data-preset-append");
       const preset = PRESETS.find((p) => p.id === id);
       if (!preset) return;
+      lastPresetId = null;
       appendPresetAsCells(preset);
       document.getElementById("preset-gallery")?.removeAttribute("open");
+      scrollFocusedCellIntoView();
     });
   });
 }
@@ -4651,13 +4980,15 @@ function renderArtifactCard(a, i, opts = {}) {
             <button type="button" class="btn btn-ghost btn-compact" data-download="${i}">Download</button>
             ${
               artifactLooksLikePgpCiphertext(a)
-                ? `<button type="button" class="btn btn-ghost btn-compact btn-popout" data-decrypt="${i}"
-                    title="Open this OpenPGP ciphertext in a separate Decrypt window">${popoutButtonHtml("Decrypt…")}</button>`
+                ? `<button type="button" class="btn btn-ghost btn-compact" data-copy-decrypt-link="${i}"
+                    title="Copy a Toolkit link that opens Decrypt with this ciphertext prefilled">Copy decrypt link</button>
+                  <button type="button" class="btn btn-ghost btn-compact btn-popout" data-decrypt="${i}"
+                    title="Insert a decrypt cell and seed ciphertext Inputs">${popoutButtonHtml("Decrypt…")}</button>`
                 : `<button type="button" class="btn btn-ghost btn-compact btn-popout" data-encrypt="${i}"
                     title="${
                       artifactIsMessage(a)
-                        ? "Open as an Encrypt compose message in a new window"
-                        : "Attach as a file in a separate Encrypt window"
+                        ? "Insert an encrypt cell and seed plaintext Inputs"
+                        : "Insert an encrypt cell with this file as text input"
                     }">${popoutButtonHtml(
                       artifactIsMessage(a) ? "Encrypt as message…" : "Encrypt as file…"
                     )}</button>`
@@ -4868,6 +5199,52 @@ function wireArtifactPanel(panel, arts) {
       touchActivity();
     });
   });
+  panel.querySelectorAll("[data-copy-decrypt-link]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-copy-decrypt-link"));
+      if (list[i] && btn instanceof HTMLButtonElement) {
+        void copyDecryptShareLink(list[i], btn);
+      }
+      touchActivity();
+    });
+  });
+}
+
+/**
+ * Copy `/toolkit#decrypt&ct=…` for a ciphertext/envelope artifact.
+ * @param {{ content?: string, label?: string }} artifact
+ * @param {HTMLButtonElement} button
+ */
+async function copyDecryptShareLink(artifact, button) {
+  const idle = "Copy decrypt link";
+  const result = hashForDecryptLink(String(artifact.content ?? ""));
+  if (!result.ok) {
+    setFragmentStatus(
+      result.reason ||
+        "Message too long for a link — copy the ciphertext instead."
+    );
+    button.textContent = "Too long";
+    setTimeout(() => {
+      button.textContent = idle;
+    }, 1800);
+    return;
+  }
+  const url = toolkitShareUrl(result.hash);
+  try {
+    await navigator.clipboard.writeText(url);
+    setFragmentStatus("Decrypt link copied — ciphertext is in the URL fragment.");
+    button.textContent = "Copied link";
+    setTimeout(() => {
+      button.textContent = idle;
+      setFragmentStatus("");
+    }, 2000);
+  } catch {
+    setFragmentStatus("Could not copy — copy the address bar after opening the link.");
+    button.textContent = "Copy failed";
+    setTimeout(() => {
+      button.textContent = idle;
+    }, 1800);
+  }
 }
 
 /**
@@ -4911,44 +5288,6 @@ function artifactIsMessage(a) {
 }
 
 /**
- * Build a binary-safe Encrypt transfer payload.
- *
- * Messages send UTF-8 text (string unavoidable for compose). Files send a
- * Uint8Array so Encrypt can build a File without UTF-8 mangling and so the
- * handoff can transfer/wipe the buffer (see openArtifactInEncrypt).
- *
- * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} artifact
- */
-function buildEncryptTransfer(artifact) {
-  const label = artifact.label || "Toolkit artifact";
-  const filename = sanitizeFilename(artifact.filename);
-  const mime = artifact.mime || "application/octet-stream";
-  const pipeType = artifact.pipeType || null;
-
-  if (artifactIsMessage(artifact)) {
-    return {
-      disposition: "message",
-      text: String(artifact.content ?? ""),
-      label,
-      filename,
-      mime: mime.startsWith("text/") ? mime : "text/plain; charset=utf-8",
-      encoding: artifact.encoding || "text",
-      pipeType,
-    };
-  }
-
-  return {
-    disposition: "file",
-    bytes: artifactToBytes(artifact),
-    label,
-    filename,
-    mime,
-    encoding: artifact.encoding || "binary",
-    pipeType,
-  };
-}
-
-/**
  * Recover raw octets for a file-disposition artifact.
  * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} a
  * @returns {Uint8Array}
@@ -4987,159 +5326,59 @@ function artifactLooksLikePgpCiphertext(a) {
 }
 
 /**
- * Open the Encrypt composer and transfer one artifact after it signals that
- * its crypto self-test and UI initialization have completed. Content travels
- * only through a same-origin window message; it is never put in a URL or
- * persistent browser storage.
- *
- * File dispositions: copy into a dedicated ArrayBuffer and *transfer* it via
- * postMessage’s transfer list so the opener’s view is detached (byteLength → 0)
- * instead of structured-clone duplicating the secret. Then wipe any still-live
- * view with inlined fill(0). See memory-safety.js and MDN Transferable objects.
- * Do not drop the transfer list “for simplicity”.
- *
+ * Seed plaintext for an in-page encrypt cell (never put secrets in the URL).
+ * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} artifact
+ * @returns {string}
+ */
+function plaintextSeedFromArtifact(artifact) {
+  if (artifactIsMessage(artifact)) {
+    return String(artifact.content ?? "");
+  }
+  const content = String(artifact.content ?? "");
+  if (content) return content;
+  const bytes = artifactToBytes(artifact);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+}
+
+/**
+ * Insert an encrypt cell and seed Inputs with this artifact (in-page; no popout).
  * @param {import("../lib/toolkit/engine.js").ToolkitArtifact} artifact
  * @param {HTMLButtonElement} button
  */
 function openArtifactInEncrypt(artifact, button) {
   const asMessage = artifactIsMessage(artifact);
   const idleLabel = asMessage ? "Encrypt as message…" : "Encrypt as file…";
-  const transfer = buildEncryptTransfer(artifact);
-  const popup = window.open(
-    "/encrypt?source=toolkit",
-    "_blank",
-    "popup,width=1100,height=850"
-  );
-  if (!popup) {
-    setPopoutButtonLabel(button, "Pop-up blocked");
-    setTimeout(() => {
-      setPopoutButtonLabel(button, idleLabel);
-    }, 1800);
-    return;
-  }
-
-  button.disabled = true;
-  setPopoutButtonLabel(button, "Opening…");
-  const timeout = setTimeout(() => {
-    window.removeEventListener("message", onReady);
-    button.disabled = false;
+  const seed = plaintextSeedFromArtifact(artifact);
+  insertMessagingCell("encrypt");
+  inputTextDraft = seed;
+  if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
+  else validateAndBind();
+  setPopoutButtonLabel(button, "Cell added");
+  setTimeout(() => {
     setPopoutButtonLabel(button, idleLabel);
-  }, 15_000);
-
-  /** @param {MessageEvent} event */
-  function onReady(event) {
-    if (
-      event.origin !== window.location.origin ||
-      event.source !== popup ||
-      event.data?.type !== "basilisk:encrypt-ready"
-    ) {
-      return;
-    }
-    clearTimeout(timeout);
-    window.removeEventListener("message", onReady);
-
-    /** @type {Transferable[]} */
-    const transferList = [];
-    // Own a tightly packed buffer so transfer does not detach pipeline
-    // artifact.bytes (which may still back the Results download tile).
-    if (
-      transfer.disposition === "file" &&
-      transfer.bytes instanceof Uint8Array &&
-      transfer.bytes.byteLength > 0
-    ) {
-      const owned = new Uint8Array(transfer.bytes);
-      transfer.bytes = owned;
-      transferList.push(owned.buffer);
-    }
-
-    popup.postMessage(
-      {
-        type: "basilisk:encrypt-artifact",
-        artifact: transfer,
-      },
-      window.location.origin,
-      transferList
-    );
-    // Transfer usually detaches owned.buffer (byteLength → 0); wipe if still live.
-    if (transfer.disposition === "file") {
-      try {
-        if (transfer.bytes?.byteLength > 0) transfer.bytes.fill(0);
-      } catch (_) {
-        /* wipe */
-      }
-    }
-
-    popup.focus();
-    setPopoutButtonLabel(button, "Opened");
-    setTimeout(() => {
-      button.disabled = false;
-      setPopoutButtonLabel(button, idleLabel);
-    }, 1200);
-  }
-
-  window.addEventListener("message", onReady);
+  }, 1200);
 }
 
 /**
- * Open Decrypt and transfer OpenPGP ciphertext after the page signals ready.
+ * Insert a decrypt cell and seed ciphertext Inputs (in-page; no popout).
  * @param {{ label?: string, filename?: string, content: string, mime?: string }} artifact
  * @param {HTMLButtonElement} button
  */
 function openArtifactInDecrypt(artifact, button) {
   const idleLabel = "Decrypt…";
-  const popup = window.open(
-    "/decrypt?source=toolkit",
-    "_blank",
-    "popup,width=1100,height=850"
-  );
-  if (!popup) {
-    setPopoutButtonLabel(button, "Pop-up blocked");
-    setTimeout(() => {
-      setPopoutButtonLabel(button, idleLabel);
-    }, 1800);
-    return;
-  }
-
-  button.disabled = true;
-  setPopoutButtonLabel(button, "Opening…");
-  const timeout = setTimeout(() => {
-    window.removeEventListener("message", onReady);
-    button.disabled = false;
+  const seed = String(artifact.content ?? "");
+  insertMessagingCell("decrypt");
+  ciphertextDraft = seed;
+  if (currentInputNeeds.length) renderInputsPanel(currentInputNeeds);
+  else validateAndBind();
+  setPopoutButtonLabel(button, "Cell added");
+  setTimeout(() => {
     setPopoutButtonLabel(button, idleLabel);
-  }, 15_000);
-
-  /** @param {MessageEvent} event */
-  function onReady(event) {
-    if (
-      event.origin !== window.location.origin ||
-      event.source !== popup ||
-      event.data?.type !== "basilisk:decrypt-ready"
-    ) {
-      return;
-    }
-    clearTimeout(timeout);
-    window.removeEventListener("message", onReady);
-    popup.postMessage(
-      {
-        type: "basilisk:decrypt-ciphertext",
-        artifact: {
-          label: artifact.label || "Toolkit ciphertext",
-          filename: sanitizeFilename(artifact.filename, "encrypted.asc"),
-          content: artifact.content,
-          mime: artifact.mime || "application/pgp-encrypted",
-        },
-      },
-      window.location.origin
-    );
-    popup.focus();
-    setPopoutButtonLabel(button, "Opened");
-    setTimeout(() => {
-      button.disabled = false;
-      setPopoutButtonLabel(button, idleLabel);
-    }, 1200);
-  }
-
-  window.addEventListener("message", onReady);
+  }, 1200);
 }
 
 /**
@@ -5290,6 +5529,18 @@ document.getElementById("reset-notebook-btn")?.addEventListener("click", () => {
 });
 document.getElementById("add-cell-btn")?.addEventListener("click", () => {
   insertCell(chains.length);
+});
+document.getElementById("qs-encrypt")?.addEventListener("click", () => {
+  insertMessagingCell("encrypt");
+});
+document.getElementById("qs-decrypt")?.addEventListener("click", () => {
+  insertMessagingCell("decrypt");
+});
+document.getElementById("qs-symencrypt")?.addEventListener("click", () => {
+  insertMessagingCell("symencrypt");
+});
+document.getElementById("copy-share-link")?.addEventListener("click", () => {
+  void copyShareLink();
 });
 document.getElementById("kernel-chip")?.addEventListener("click", () => {
   variablesOpen = !variablesOpen;
@@ -5638,6 +5889,10 @@ document.addEventListener("click", (e) => {
   }
 });
 
-loadRecipeText(PRESETS[0].recipe, { title: PRESETS[0].title, migrate: true });
+applyToolkitHash(location.hash, { boot: true });
+window.addEventListener("hashchange", () => {
+  if (fragmentWriteLock) return;
+  applyToolkitHash(location.hash);
+});
 touchActivity();
 startPage();

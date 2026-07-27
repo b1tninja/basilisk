@@ -81,6 +81,42 @@ In the browser toolkit, each blank-line **chain** is one notebook **cell**. A se
 
 Idle auto-scrub uses the same path as **Clear sensitive data**. The whole notebook still serializes to multi-chain recipe source (shareable / Templates). Slot-side params (`to=@`, `key=@`) resolve from the kernel when present. Duplicate `out @label` within one cell still errors; re-running a later cell may replace a kernel binding written earlier.
 
+### Sharing via URL fragment
+
+Toolkit recipes are addressable in the **URL fragment** (never sent to the server):
+
+| Fragment | Loads |
+|----------|--------|
+| `#encrypt` / `#decrypt` / `#symencrypt` | Messaging quick-start notebooks |
+| `#t=<presetId>` | A Templates preset by id |
+| `#r=<compact-recipe>` | Full notebook in a URL-friendly compact form |
+| `#decrypt&ct=<base64url>` | Decrypt starter + **ciphertext Inputs seed** |
+| `#r=…&ct=…` / `#t=…&ct=…` | Recipe/preset plus ciphertext seed |
+
+**Compact `#r=` form** (what Copy link / auto-hash write):
+
+- Pipes without spaces: `input|gpg.encrypt`
+- Chains joined with `~` instead of blank lines
+- `tee` / `foreach` bodies as one-line braces: `foreach{ - out @share }`
+- Spaces encoded as `+`; tokens like `|@=~` stay readable in the address bar
+
+On load, the compact payload is expanded and **beautified** back to canonical multi-line recipe text (blank-line chains, spaced pipes, indented or brace bodies). Legacy fully percent-encoded pretty recipes still parse.
+
+**Ciphertext seed (`ct`)** — from a ciphertext tile’s **Copy decrypt link**:
+
+- `ct` is unpadded base64url of **binary** OpenPGP message bytes (ASCII armor is stripped for transport, then re-armored into Inputs on load).
+- Seeds are minted only by an explicit share action (not auto-synced on every edit).
+- Soft cap ~6k characters for the whole hash; longer messages: copy armor / download instead.
+
+| Allowed in the fragment | Forbidden (v1) |
+|-------------------------|----------------|
+| Recipe / starter / preset id | Private-key armor, passphrases |
+| OpenPGP **ciphertext** / envelope (`ct`) | Plaintext Inputs (`txt=`), vault selection |
+
+Ciphertext in a URL may appear in **browser history**, screenshots, and chat logs (like emailing an `.asc`). The recipient still needs the matching private key. The fragment is not sent to Basilisk servers. Idle / Clear sensitive wipes Inputs; reload the link to re-seed.
+
+Use **Copy link** in the notebook header for recipe-only shares. Private-key armor and passphrases are never written into the fragment. If the encoded recipe exceeds ~6k characters, auto-hash updates stop — share via **Copy recipe** instead.
+
 ## Arguments
 
 Each apply stage is `name` then zero or more args:
