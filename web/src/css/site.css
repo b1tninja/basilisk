@@ -1,53 +1,90 @@
-/* ===== Design Tokens (serpent-key theme) ===== */
+/* ===== Design Tokens (diadem shield / basilisk theme) ===== */
 :root {
+  /* Brand: forest green (protection/trust — OpenPGP surface) */
   --brand: #2e7d4f;
   --brand-hover: #1f5c38;
-  /* Text/icons on solid brand fills (must stay readable on --brand). */
   --on-brand: #ffffff;
+
+  /* Secondary: gold (shared secrets — SSS surface) */
   --accent: #c9a227;
+  --accent-hover: #a67f1e;
+
+  /* Surfaces */
   --surface: #ffffff;
   --surface-raised: #f6f8fa;
   --border: #d0d7de;
+  --border-weak: #eaeef2;
+
+  /* Typography */
   --text: #1c2128;
   --text-muted: #57606a;
+
+  /* States */
   --error: #cf222e;
   --success: #1a7f37;
+
+  /* Badges */
   --badge-approved-bg: #dafbe1;
   --badge-approved-fg: #1a7f37;
   --badge-pending-bg: #fff8c5;
   --badge-pending-fg: #9a6700;
   --badge-default-bg: #eaeef2;
   --badge-default-fg: #57606a;
+
+  /* Layout */
   --radius-sm: 6px;
   --radius: 10px;
   --shadow-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
   --shadow: 0 4px 20px rgba(0,0,0,.09), 0 1px 3px rgba(0,0,0,.04);
   --brand-glow: rgba(46, 125, 79, .12);
+
+  /* Glyph colors (for new icon system) */
+  --glyph-neutral: #57606a;
+  --glyph-brand: #2e7d4f;
+  --glyph-accent: #c9a227;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    /* Brand: bright neon green (dark mode) */
     --brand: #4cde82;
     --brand-hover: #6aeea0;
-    /* Neon brand fails WCAG with white — use near-black ink on fills. */
     --on-brand: #0b1410;
+
+    /* Secondary: gold (shared secrets) */
     --accent: #d4b84a;
+    --accent-hover: #e8cc5a;
+
+    /* Surfaces */
     --surface: #0d1117;
     --surface-raised: #161b22;
     --border: #30363d;
+    --border-weak: #21262d;
+
+    /* Typography */
     --text: #e6edf3;
     --text-muted: #8b949e;
+
+    /* States */
     --error: #ff7b72;
     --success: #3fb950;
+
+    /* Badges */
     --badge-approved-bg: #0f2a1b;
     --badge-approved-fg: #3fb950;
     --badge-pending-bg: #261d09;
     --badge-pending-fg: #d29922;
     --badge-default-bg: #21262d;
     --badge-default-fg: #8b949e;
+
     --shadow-sm: 0 1px 3px rgba(0,0,0,.3);
     --shadow: 0 4px 20px rgba(0,0,0,.4);
     --brand-glow: rgba(76, 222, 130, .15);
+
+    /* Glyph colors */
+    --glyph-neutral: #8b949e;
+    --glyph-brand: #4cde82;
+    --glyph-accent: #d4b84a;
   }
 }
 

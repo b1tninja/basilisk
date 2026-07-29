@@ -43,7 +43,7 @@ function paramTypeBits(p: ParamSpec): string {
   return typeBits.join(" · ");
 }
 
-/** Standard tool card — docs, kind, I/O types, params. */
+/** Standard tool card — docs, kind, I/O types, params. Redesigned with uniform widget system. */
 export function ToolCard({
   op,
   decode = false,
@@ -83,89 +83,139 @@ export function ToolCard({
 
   return (
     <div
-      className={cn("tool-card", compact && "tool-card-compact", className)}
+      className={cn(
+        "tool-card rounded-lg border border-[var(--border)] bg-[var(--surface)] transition-all",
+        compact && "tool-card-compact",
+        className
+      )}
       data-dir={decode ? "decode" : "encode"}
     >
-      <header className="tool-card-head">
+      {/* Header: glyph + title + metadata row */}
+      <header className="flex gap-3 border-b border-[var(--border)] p-3.5">
         <Glyph
           id={glyphIdFor(op)}
-          size={compact ? 18 : 22}
-          svgClassName="ops-glyph ops-glyph-tile tool-card-glyph"
+          size={compact ? 18 : 20}
+          className="mt-0.5 text-[var(--foreground)]"
         />
-        <div className="tool-card-titles">
-          <p className="tool-card-name">{nameLabel}</p>
-          <p className="tool-card-recipe muted fs-xs">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-[var(--foreground)] truncate">{nameLabel}</p>
+          <p className="text-xs text-[var(--muted-foreground)] font-mono">
             Recipe <code>{recipeTok}</code>
           </p>
         </div>
       </header>
-      <div className="tool-card-meta">
-        <span className={`toolbox-badge toolbox-${tb}`} title={tbMeta.label}>
+
+      {/* Metadata chips */}
+      <div className="flex flex-wrap gap-2 px-3.5 py-2.5 border-b border-[var(--border)]">
+        <span
+          className={cn(
+            "inline-flex text-xs font-bold px-2 py-1 rounded-md",
+            `toolbox-badge toolbox-${tb}`,
+            "bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)]"
+          )}
+          title={tbMeta.label}
+        >
           {tbMeta.badge}
         </span>
-        {shelf ? <span className="tool-card-chip">{shelf}</span> : null}
-        <span className="tool-card-chip">{kindLabel}</span>
-        {blocked ? (
-          <span className="tool-card-flag tool-card-flag-warn">FIPS blocked</span>
+        {shelf ? (
+          <span className="inline-flex text-xs font-semibold px-2 py-1 rounded-md bg-[var(--surface-raised)] text-[var(--muted-foreground)]">
+            {shelf}
+          </span>
         ) : null}
-        {fit ? <span className="tool-card-flag tool-card-flag-fit">Fits tip</span> : null}
+        <span className="inline-flex text-xs font-semibold px-2 py-1 rounded-md bg-[var(--surface-raised)] text-[var(--muted-foreground)]">
+          {kindLabel}
+        </span>
+        {blocked ? (
+          <span className="inline-flex text-xs font-bold px-2 py-1 rounded-md bg-red-200/20 text-red-700 dark:bg-red-950/30 dark:text-red-400">
+            FIPS blocked
+          </span>
+        ) : null}
+        {fit ? (
+          <span className="inline-flex text-xs font-bold px-2 py-1 rounded-md bg-green-200/20 text-green-700 dark:bg-green-950/30 dark:text-green-400">
+            Fits tip
+          </span>
+        ) : null}
         {op.unresolvedInputs ? (
-          <span className="tool-card-flag">Needs {String(op.unresolvedInputs)} input</span>
+          <span className="text-xs text-[var(--muted-foreground)]">
+            Needs {String(op.unresolvedInputs)} input
+          </span>
         ) : null}
         {op.unresolvedRecipients ? (
-          <span className="tool-card-flag">Needs recipients</span>
+          <span className="text-xs text-[var(--muted-foreground)]">Needs recipients</span>
         ) : null}
       </div>
-      <div className="tool-card-io" aria-label="Input and output types">
-        <div className="tool-card-io-side">
-          <span className="tool-card-io-label muted">In</span>
-          <span className="tool-card-type" data-io="in">
-            {io.input}
-          </span>
+
+      {/* I/O types */}
+      <div className="flex items-center justify-between gap-3 px-3.5 py-3 border-b border-[var(--border)] text-xs">
+        <div className="flex items-baseline gap-1">
+          <span className="font-semibold text-[var(--muted-foreground)]">In</span>
+          <span className="font-mono font-bold text-[var(--foreground)]">{io.input}</span>
         </div>
-        <span className="tool-card-io-arrow" aria-hidden>
-          →
-        </span>
-        <div className="tool-card-io-side">
-          <span className="tool-card-io-label muted">Out</span>
-          <span className="tool-card-type" data-io="out">
-            {io.output}
-          </span>
+        <span className="text-[var(--muted-foreground)]">→</span>
+        <div className="flex items-baseline gap-1">
+          <span className="font-semibold text-[var(--muted-foreground)]">Out</span>
+          <span className="font-mono font-bold text-[var(--foreground)]">{io.output}</span>
         </div>
       </div>
-      {docLead ? <p className="tool-card-doc">{docLead}</p> : null}
+
+      {/* Documentation */}
+      {docLead ? (
+        <p className="px-3.5 py-3 text-xs text-[var(--muted-foreground)] leading-relaxed border-b border-[var(--border)]">
+          {docLead}
+        </p>
+      ) : null}
+
+      {/* Aliases */}
       {!compact && op.aliases?.length ? (
-        <p className="tool-card-aliases muted fs-xs">
+        <p className="px-3.5 py-2 text-xs text-[var(--muted-foreground)] border-b border-[var(--border)]">
           Aliases:{" "}
           {op.aliases.map((a, i) => (
             <span key={a}>
               {i ? ", " : ""}
-              <code>{a}</code>
+              <code className="font-mono">{a}</code>
             </span>
           ))}
         </p>
       ) : null}
+
+      {/* Parameters */}
       {shown.length ? (
-        <div className="tool-card-params">
-          <p className="tool-card-section">Parameters</p>
-          <ul className="tool-card-param-list">
+        <div className="border-b border-[var(--border)]">
+          <p className="px-3.5 pt-3 pb-2 text-xs font-bold uppercase tracking-wider text-[var(--muted-foreground)] gap-1">
+            Parameters
+          </p>
+          <ul className="space-y-2 px-3.5 pb-3">
             {shown.map((p) => (
-              <li key={p.name}>
-                <code>{p.name}</code>
-                <span className="tool-card-param-type muted">{paramTypeBits(p)}</span>
-                {p.doc ? <span className="tool-card-param-doc">{p.doc}</span> : null}
+              <li key={p.name} className="text-xs">
+                <code className="font-bold font-mono text-[var(--foreground)]">{p.name}</code>
+                <div className="text-[var(--muted-foreground)]">
+                  <span className="font-mono text-xs">{paramTypeBits(p)}</span>
+                  {p.doc ? (
+                    <p className="mt-0.5 text-[var(--muted-foreground)] italic">
+                      {p.doc}
+                    </p>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>
           {params.length > shown.length ? (
-            <p className="muted fs-xs">+{params.length - shown.length} more in Docs</p>
+            <p className="px-3.5 pb-3 text-xs text-[var(--muted-foreground)]">
+              +{params.length - shown.length} more in Docs
+            </p>
           ) : null}
         </div>
       ) : (
-        <p className="tool-card-noparams muted fs-xs">No parameters.</p>
+        <p className="px-3.5 py-2 text-xs text-[var(--muted-foreground)] border-b border-[var(--border)]">
+          No parameters.
+        </p>
       )}
+
+      {/* Hint */}
       {!hideHint && !compact ? (
-        <p className="tool-card-hint muted fs-xs">Drag onto a cell, or click to append.</p>
+        <p className="px-3.5 py-2 text-xs text-[var(--muted-foreground)] italic">
+          Drag onto a cell, or click to append.
+        </p>
       ) : null}
     </div>
   );

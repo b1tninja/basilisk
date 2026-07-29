@@ -16,7 +16,7 @@ type Props = {
   className?: string;
 };
 
-/** Single builder param — bool / enum / text / locked. Views registry ParamSpec. */
+/** Single builder param — bool / enum / text / locked. Redesigned with uniform widget system. */
 export function ParamField({
   param,
   value,
@@ -32,58 +32,103 @@ export function ParamField({
 
   if (control) {
     return (
-      <label className={cn("builder-param", className)} title={title}>
-        <span className="builder-param-name">{param.name}</span>
+      <div className={cn("param-field", className)} title={title}>
+        <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] block mb-1.5">
+          {param.name}
+        </label>
         {control}
-      </label>
+      </div>
     );
   }
 
   if (param.type === "bool" || param.type === "flag") {
     const checked = val === true || val === "true";
     return (
-      <label className={cn("builder-param builder-param-bool", className)} title={title}>
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onChange(param.name, e.target.checked)}
-        />
-        <span className="builder-param-name">{param.name}</span>
-        {param.flag ? <span className="builder-param-flag">{param.flag}</span> : null}
-      </label>
+      <div className={cn("param-field param-field-bool", className)} title={title}>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => onChange(param.name, e.target.checked)}
+            className="w-4 h-4 rounded border-[var(--border)] bg-[var(--surface)] accent-[var(--brand)]"
+          />
+          <span className="text-sm font-semibold text-[var(--text)]">{param.name}</span>
+          {param.flag ? (
+            <code className="text-xs text-[var(--text-muted)] font-mono">{param.flag}</code>
+          ) : null}
+        </label>
+      </div>
     );
   }
 
   if (param.type === "enum") {
+    const enumValues = param.enum || [];
+    // If <= 3 options, show as segmented buttons; otherwise use select
+    if (enumValues.length <= 3) {
+      return (
+        <div className={cn("param-field", className)} title={title}>
+          <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] block mb-2">
+            {param.name}
+            {locked && (
+              <span className="ml-2 text-xs font-normal normal-case text-[var(--text-muted)]">
+                (locked by format)
+              </span>
+            )}
+          </label>
+          <div className="inline-flex rounded-md border border-[var(--border)] overflow-hidden bg-[var(--surface-raised)]">
+            {enumValues.map((e) => (
+              <button
+                key={e}
+                disabled={locked}
+                onClick={() => onChange(param.name, e)}
+                className={cn(
+                  "px-3 py-1.5 text-sm font-bold border-l border-[var(--border)] first:border-l-0 transition-colors",
+                  String(val) === e
+                    ? "bg-[var(--brand)] text-[var(--on-brand)]"
+                    : "bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-raised)]"
+                )}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     return (
-      <label className={cn("builder-param", className)} title={title}>
-        <span className="builder-param-name">
-          <span>{param.name}</span>
-          {locked ? (
-            <span className="muted fs-xs builder-param-lock-tag">locked by format</span>
-          ) : null}
-        </span>
+      <div className={cn("param-field", className)} title={title}>
+        <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] block mb-1.5">
+          {param.name}
+          {locked && (
+            <span className="ml-2 text-xs font-normal normal-case text-[var(--text-muted)]">
+              (locked by format)
+            </span>
+          )}
+        </label>
         <select
-          className="text-input"
+          className="w-full px-2.5 py-1.5 text-sm border border-[var(--border)] rounded-md bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)] focus:ring-offset-1"
           disabled={locked}
           value={String(val)}
           onChange={(e) => onChange(param.name, e.target.value)}
         >
-          {(param.enum || []).map((e) => (
+          {enumValues.map((e) => (
             <option key={e} value={e}>
               {e}
             </option>
           ))}
         </select>
-      </label>
+      </div>
     );
   }
 
   return (
-    <label className={cn("builder-param", className)} title={title}>
-      <span className="builder-param-name">{param.name}</span>
+    <div className={cn("param-field", className)} title={title}>
+      <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] block mb-1.5">
+        {param.name}
+      </label>
       <input
-        className="text-input"
+        className="w-full px-2.5 py-1.5 text-sm border border-[var(--border)] rounded-md bg-[var(--surface)] text-[var(--text)] font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand)] focus:ring-offset-1"
         type={param.type === "int" ? "number" : "text"}
         value={String(val ?? "")}
         onChange={(e) =>
@@ -93,7 +138,7 @@ export function ParamField({
           )
         }
       />
-    </label>
+    </div>
   );
 }
 
@@ -112,9 +157,11 @@ export function ParamFieldGroup({
   onChange,
   className,
 }: GroupProps) {
+  const visibleParams = params.filter((p) => visibilityFor?.(p)?.show !== false);
+
   return (
-    <div className={cn("builder-params", className)}>
-      {params.map((p) => (
+    <div className={cn("flex flex-col gap-4", className)}>
+      {visibleParams.map((p) => (
         <ParamField
           key={p.name}
           param={p}
