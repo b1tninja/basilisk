@@ -7,6 +7,11 @@ import {
   validateRecipe,
   unresolvedRecipients,
 } from "../lib/toolkit/recipe.js";
+import {
+  stitchPresetPair,
+  resolvePresetPair,
+  bridgeModeMeta,
+} from "../lib/toolkit/conjugate-stitch.js";
 import { listSteps, getStep } from "../lib/toolkit/registry.js";
 import {
   MESSAGING_STARTERS,
@@ -159,6 +164,9 @@ export function useNotebook() {
       const needs = cellInputNeeds(chain);
       if (needs.includes("text") && !inputText.trim()) badges.push("needs input");
       if (needs.includes("gpg") && !ciphertext.trim()) badges.push("needs ciphertext");
+      if (needs.includes("key")) badges.push("needs key");
+      if (needs.includes("shares")) badges.push("needs shares");
+      if (needs.includes("envelope")) badges.push("needs envelope");
       const slots = cellRecipientSlots(chain);
       const filled = boundRecipientsRef.current.filter((r) => r?.fingerprint).length;
       if (slots > 0 && filled < slots) badges.push("needs recipients");
@@ -219,16 +227,206 @@ export function useNotebook() {
     });
   }, []);
 
-  const appendOp = useCallback(
-    (opName: string, opts?: { decode?: boolean }) => {
+  const makeStep = useCallback(
+    (opName: string, opts?: { decode?: boolean; params?: Record<string, unknown> }) => {
       const spec = getStep(opName);
-      if (!spec) return;
-      const step: RecipeStep = { name: opName, params: {} };
+      if (!spec) return null;
+      const step: RecipeStep = { name: opName, params: { ...(opts?.params || {}) } };
       for (const p of spec.params || []) {
-        if (p.default !== undefined) step.params![p.name] = p.default;
+        if (step.params![p.name] === undefined && p.default !== undefined) {
+          step.params![p.name] = p.default;
+        }
       }
       if (opts?.decode) step.params!.decode = true;
-      const next = [...steps, step];
+      return step;
+    },
+    []
+  );
+
+  const appendOp = useCallback(
+    (opName: string, opts?: { decode?: boolean; params?: Record<string, unknown> }) => {
+      const step = makeStep(opName, opts);
+      if (!step) return;
+      setCellSteps(focusedCell, [...steps, step]);
+    },
+    [focusedCell, makeStep, setCellSteps, steps]
+  );
+
+  const insertOpAt = useCallback(
+    (
+      index: number,
+      opName: string,
+      opts?: { decode?: boolean; params?: Record<string, unknown> }
+    ) => {
+      const step = makeStep(opName, opts);
+      if (!step) return;
+      const at = Math.max(0, Math.min(steps.length, index));
+      const next = [...steps.slice(0, at), step, ...steps.slice(at)];
+      setCellSteps(focusedCell, next);
+    },
+    [focusedCell, makeStep, setCellSteps, steps]
+  );
+
+  /** Append (or insert at body index) inside a tee/foreach nest. */
+  const nestOp = useCallback(
+    (
+      stem: number,
+      branch: number | null,
+      opName: string,
+      opts?: { decode?: boolean; params?: Record<string, unknown>; at?: number }
+    ) => {
+      const step = makeStep(opName, opts);
+      if (!step) return;
+      const next = steps.map((s, i) => {
+        if (i !== stem) return s;
+        const clone: RecipeStep = {
+          ...s,
+          body: s.body ? [...s.body] : undefined,
+          branches: s.branches?.map((b) => ({
+            ...b,
+            body: b.body ? [...b.body] : [],
+          })),
+        };
+        if (branch != null) {
+          const br = clone.branches?.[branch];
+          if (!br) return s;
+          const body = [...(br.body || [])];
+          const at =
+            opts?.at != null
+              ? Math.max(0, Math.min(body.length, opts.at))
+              : body.length;
+          body.splice(at, 0, step);
+          br.body = body;
+        } else {
+          const body = [...(clone.body || [])];
+          const at =
+            opts?.at != null
+              ? Math.max(0, Math.min(body.length, opts.at))
+              : body.length;
+          body.splice(at, 0, step);
+          clone.body = body;
+        }
+        return clone;
+      });
+      setCellSteps(focusedCell, next);
+    },
+    [focusedCell, makeStep, setCellSteps, steps]
+  );
+
+  const updateNestStepParams = useCallback(
+    (
+      stem: number,
+      branch: number | null,
+      bodyIndex: number,
+      name: string,
+      value: string | number | boolean
+    ) => {
+      const next = steps.map((s, i) => {
+        if (i !== stem) return s;
+        const clone: RecipeStep = {
+          ...s,
+          body: s.body ? [...s.body] : undefined,
+          branches: s.branches?.map((b) => ({
+            ...b,
+            body: b.body ? [...b.body] : [],
+          })),
+        };
+        const list =
+          branch != null ? clone.branches?.[branch]?.body : clone.body;
+        if (!list || !list[bodyIndex]) return s;
+        list[bodyIndex] = {
+          ...list[bodyIndex],
+          params: { ...(list[bodyIndex].params || {}), [name]: value },
+        };
+        return clone;
+      });
+      setCellSteps(focusedCell, next);
+    },
+    [focusedCell, setCellSteps, steps]
+  );
+
+  const removeNestStep = useCallback(
+    (stem: number, branch: number | null, bodyIndex: number) => {
+      const next = steps.map((s, i) => {
+        if (i !== stem) return s;
+        const clone: RecipeStep = {
+          ...s,
+          body: s.body ? [...s.body] : undefined,
+          branches: s.branches?.map((b) => ({
+            ...b,
+            body: b.body ? [...b.body] : [],
+          })),
+        };
+        if (branch != null) {
+          const br = clone.branches?.[branch];
+          if (!br?.body) return s;
+          br.body = br.body.filter((_, j) => j !== bodyIndex);
+        } else if (clone.body) {
+          clone.body = clone.body.filter((_, j) => j !== bodyIndex);
+        }
+        return clone;
+      });
+      setCellSteps(focusedCell, next);
+    },
+    [focusedCell, setCellSteps, steps]
+  );
+
+  const reorderStem = useCallback(
+    (from: number, to: number) => {
+      if (from === to || from < 0 || from >= steps.length) return;
+      const next = [...steps];
+      const [moved] = next.splice(from, 1);
+      let insertAt = to;
+      if (from < to) insertAt = to - 1;
+      insertAt = Math.max(0, Math.min(next.length, insertAt));
+      next.splice(insertAt, 0, moved);
+      setCellSteps(focusedCell, next);
+    },
+    [focusedCell, setCellSteps, steps]
+  );
+
+  /** Reorder within a tee/foreach body or selector branch. `toBody` is gap splice index. */
+  const reorderNest = useCallback(
+    (stem: number, branch: number | null, fromBody: number, toBody: number) => {
+      if (fromBody === toBody) return;
+      const next = steps.map((s, i) => {
+        if (i !== stem) return s;
+        const clone: RecipeStep = {
+          ...s,
+          body: s.body ? [...s.body] : undefined,
+          branches: s.branches?.map((b) => ({
+            ...b,
+            body: b.body ? [...b.body] : [],
+          })),
+        };
+        const list =
+          branch != null ? clone.branches?.[branch]?.body : clone.body;
+        if (!list || fromBody < 0 || fromBody >= list.length) return s;
+        const body = [...list];
+        const [moved] = body.splice(fromBody, 1);
+        let insertAt = toBody;
+        if (fromBody < toBody) insertAt = toBody - 1;
+        insertAt = Math.max(0, Math.min(body.length, insertAt));
+        body.splice(insertAt, 0, moved);
+        if (branch != null && clone.branches?.[branch]) {
+          clone.branches[branch].body = body;
+        } else {
+          clone.body = body;
+        }
+        return clone;
+      });
+      setCellSteps(focusedCell, next);
+    },
+    [focusedCell, setCellSteps, steps]
+  );
+
+  const updateStepParams = useCallback(
+    (stepIndex: number, name: string, value: string | number | boolean) => {
+      const next = steps.map((s, i) =>
+        i === stepIndex
+          ? { ...s, params: { ...(s.params || {}), [name]: value } }
+          : s
+      );
       setCellSteps(focusedCell, next);
     },
     [focusedCell, setCellSteps, steps]
@@ -264,6 +462,86 @@ export function useNotebook() {
     setChains(ast.chains?.length ? ast.chains : [{ steps: ast.steps || [] }]);
     setFocusedCell(0);
   }, []);
+
+  const appendPreset = useCallback((id: string) => {
+    const p = PRESETS.find((x: { id: string }) => x.id === id);
+    if (!p) return;
+    const { ast } = compileRecipe(p.recipe);
+    if (!ast) return;
+    const loaded: RecipeChain[] = (ast.chains?.length
+      ? ast.chains
+      : [{ steps: ast.steps || [] }]
+    ).map((c: RecipeChain) => ({ steps: [...(c.steps || [])] }));
+    if (!loaded.length) return;
+    setChains((prev) => {
+      if (prev.length === 1 && !(prev[0].steps || []).length) {
+        setFocusedCell(0);
+        return loaded;
+      }
+      const start = prev.length;
+      setFocusedCell(start);
+      return [...prev, ...loaded];
+    });
+    if (!title || title === "Untitled notebook") setTitle(p.title);
+  }, [title]);
+
+  const appendPresetPair = useCallback((pairId: string) => {
+    const pair = resolvePresetPair(pairId);
+    if (!pair) return null;
+    const st = stitchPresetPair(pair.forward, pair.reverse);
+    if (st.errors?.length) {
+      setRunError(st.errors.join(" · "));
+      return null;
+    }
+    const { ast } = compileRecipe(st.recipe);
+    if (!ast) return null;
+    const loaded: RecipeChain[] = (ast.chains?.length
+      ? ast.chains
+      : [{ steps: ast.steps || [] }]
+    ).map((c: RecipeChain) => ({ steps: [...(c.steps || [])] }));
+    if (!loaded.length) return null;
+    const pairTitle = `${pair.forward.title} ⇄ ${pair.reverse.title}`;
+    setChains((prev) => {
+      if (prev.length === 1 && !(prev[0].steps || []).length) {
+        setFocusedCell(0);
+        return loaded;
+      }
+      const start = prev.length;
+      setFocusedCell(start);
+      return [...prev, ...loaded];
+    });
+    setTitle(pairTitle);
+    const meta = bridgeModeMeta(st.mode, st.bridge);
+    setRunStatus(meta.toast);
+    setRunError("");
+    return st;
+  }, []);
+
+  const applyCellRecipeText = useCallback((cellIndex: number, text: string) => {
+    const { ast, validation } = compileRecipe(text);
+    if (!ast || !validation?.ok) {
+      setRunError(
+        (validation?.errors || [])
+          .map((e: { message?: string }) => e.message || String(e))
+          .join(" · ") || "Recipe parse failed"
+      );
+      return false;
+    }
+    const chain = ast.chains?.[0] || { steps: ast.steps || [] };
+    setChains((prev) => {
+      const next = [...prev];
+      next[cellIndex] = { steps: [...(chain.steps || [])] };
+      return next;
+    });
+    setRunError("");
+    return true;
+  }, []);
+
+  const cellRecipeSource = useCallback(
+    (cellIndex: number) =>
+      serializeRecipe({ chains: [chains[cellIndex] || { steps: [] }] }),
+    [chains]
+  );
 
   const addCell = useCallback(() => {
     setChains((prev) => {
@@ -482,9 +760,20 @@ export function useNotebook() {
     source,
     formatFingerprint,
     appendOp,
+    insertOpAt,
+    nestOp,
+    reorderStem,
+    reorderNest,
+    updateStepParams,
+    updateNestStepParams,
     removeStep,
+    removeNestStep,
     insertMessaging,
     loadPreset,
+    appendPreset,
+    appendPresetPair,
+    applyCellRecipeText,
+    cellRecipeSource,
     addCell,
     deleteCell,
     runFrom,

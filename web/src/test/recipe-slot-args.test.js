@@ -11,10 +11,20 @@ import {
 } from "../lib/toolkit/recipe.js";
 
 describe("named slot args", () => {
-  it("canonicalizes key=cek to key=@cek", () => {
-    const { text, errors } = canonicalizeRecipe(
+  it("rejects bare key=cek (require @)", () => {
+    const { errors } = parseRecipe(
       "genkey aes/256 | out @cek\n\nrandom 32 | aes-gcm key=cek"
     );
+    expect(errors.some((e) => /require @|@cek/i.test(e.message))).toBe(true);
+  });
+
+  it("migrateRecipe rewrites key=cek to key=@cek", async () => {
+    const { migrateRecipe } = await import("../lib/toolkit/step-names.js");
+    const { recipe } = migrateRecipe(
+      "genkey aes/256 | out @cek\n\nrandom 32 | aes-gcm key=cek"
+    );
+    expect(recipe).toContain("key=@cek");
+    const { text, errors } = canonicalizeRecipe(recipe);
     expect(errors).toEqual([]);
     expect(text).toContain("aes-gcm key=@cek");
   });
@@ -92,6 +102,44 @@ describe("as cast", () => {
     expect(arts.filter((a) => a.shareIndex).length).toBe(3);
   }, 30_000);
 
+  it("coerces as int / as bool", async () => {
+    const { ast, validation } = compileRecipe(`"255" | as int | out @n
+
+true | as bool | out @ok
+
+0 | as bool | out @no`);
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    expect(arts.find((a) => /n\./i.test(a.filename || "") || a.label === "n")?.content).toBe(
+      "255"
+    );
+    expect(arts.find((a) => /ok/i.test(a.filename || a.label || ""))?.content).toBe(
+      "true"
+    );
+    expect(arts.find((a) => /no/i.test(a.filename || a.label || ""))?.content).toBe(
+      "false"
+    );
+  });
+
+  it("accepts aad=@ and salt=@ slot bytes", async () => {
+    const { ast, validation } = compileRecipe(`"ctx" | utf8 | out @aad
+
+random 16 | out @salt
+
+genkey aes/256 | out @cek
+
+"hi" | utf8 | aes-gcm key=@cek aad=@aad | to hex | out @ct
+
+in @ct | from hex | aes-gcm -d key=@cek aad=@aad | utf8 | out @pt
+
+"pw" | utf8 | pbkdf2 16 salt=@salt as=aes/128 | export raw | to hex | out @k`);
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    expect(arts.find((a) => /pt/i.test(a.filename || a.label || ""))?.content).toBe(
+      "hi"
+    );
+  }, 30_000);
+
   it("canonicalizes as MASTER", () => {
     const { text, errors } = canonicalizeRecipe("random 32 | digest | AS MASTER");
     expect(errors).toEqual([]);
@@ -104,7 +152,7 @@ describe("ecdh / wrap slot args (validate)", () => {
   it("ecdh with private+peer slots clears key panel", () => {
     const src = `genkey ec/p256 usage=derive | out @local
 
-genkey ec/p256 usage=derive | .public | export jwk | out @peer
+genkey ec/p256 usage=derive | :public | export jwk | out @peer
 
 ecdh private=@local peer=@peer | to hex`;
     const { validation } = compileRecipe(src);

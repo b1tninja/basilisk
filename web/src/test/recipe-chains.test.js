@@ -27,22 +27,51 @@ in @kp | export pkcs8 | pem`;
     expect(ast.chains[1].steps[0].params.ref).toBe("@kp");
   });
 
-  it("canonicalizes bare out/in labels to @ and from→in", () => {
-    const { text, errors } = canonicalizeRecipe(`genkey ec/p256 | out kp
+  it("rejects bare out labels (require @)", () => {
+    const { errors } = parseRecipe(`genkey ec/p256 | out kp
 
-from kp | export pkcs8 | pem`);
+@kp | export pkcs8 | pem`);
+    expect(errors.some((e) => /require @|@kp/i.test(e.message))).toBe(true);
+  });
+
+  it("migrateRecipe rewrites bare out labels to @", async () => {
+    const { migrateRecipe } = await import("../lib/toolkit/step-names.js");
+    const { recipe } = migrateRecipe(`genkey ec/p256 | out kp
+
+in kp | export pkcs8 | pem`);
+    expect(recipe).toContain("out @kp");
+    expect(recipe).toContain("in @kp");
+    const { text, errors } = canonicalizeRecipe(recipe);
     expect(errors).toEqual([]);
     expect(text).toBe(`genkey ec/p256 | out @kp
 
-in @kp | export pkcs8 | pem`);
+@kp | export pkcs8 | pem`);
   });
 
-  it("canonicalizes out name=public to out @public", () => {
+  it("accepts bare @slot source and @slot | out inheritance", () => {
+    const { text, errors } = canonicalizeRecipe(`genkey ec/p256 | out @kp
+
+@kp | out`);
+    expect(errors).toEqual([]);
+    expect(text).toBe(`genkey ec/p256 | out @kp
+
+@kp | out @kp`);
+  });
+
+  it("canonicalizes out name=@public", () => {
     const { text, errors } = canonicalizeRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | out name=public"
+      "genkey ec/p256 | export pkcs8 | pem | out @public"
     );
     expect(errors).toEqual([]);
     expect(text).toBe("genkey ec/p256 | export pkcs8 | pem | out @public");
+  });
+
+  it("migrateRecipe rewrites out name=public to out @public", async () => {
+    const { migrateRecipe } = await import("../lib/toolkit/step-names.js");
+    const { recipe } = migrateRecipe(
+      "genkey ec/p256 | export pkcs8 | pem | out name=public"
+    );
+    expect(recipe).toContain("out @public");
   });
 
   it("rejects path-like out refs", () => {
@@ -92,13 +121,14 @@ in 1 | export pkcs8 | pem`);
   it("round-trips serialize with blank line between chains", () => {
     const src = `genkey ec/p256 | out @kp
 
-in @kp | .public | export spki | pem | out @public`;
+in @kp | :public | export spki | pem | out @public`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     const out = serializeRecipe(ast);
     expect(out).toContain("\n\n");
     expect(out).toContain("out @kp");
-    expect(out).toContain("in @kp");
+    expect(out).toContain("@kp | :public");
+    expect(out).not.toContain("in @kp");
     expect(parseRecipe(out).errors).toEqual([]);
   });
 });

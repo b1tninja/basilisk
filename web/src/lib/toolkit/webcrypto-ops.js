@@ -596,7 +596,7 @@ export function ecdhDefaultBits(privateKey) {
  * @param {CryptoKey} privateKey
  * @param {CryptoKey} publicKey
  * @param {{ bits?: number, as?: string }} [opts]
- * @returns {Promise<Uint8Array|{ type: "keypair", data: object, meta: object }>}
+ * @returns {Promise<Uint8Array|{ type: "key", data: CryptoKey, meta: object }>}
  */
 export async function ecdhDerive(privateKey, publicKey, opts = {}) {
   const as = String(opts.as || "bytes");
@@ -619,12 +619,13 @@ export async function ecdhDerive(privateKey, publicKey, opts = {}) {
     target.usages
   );
   return {
-    type: "keypair",
-    data: { privateKey: key, publicKey: null, secretKey: key },
+    type: "key",
+    data: key,
     meta: {
       alg: target.alg,
       algorithm:
         typeof target.derived === "string" ? target.derived : target.derived.name,
+      which: "secret",
       symmetric: true,
       sensitive: true,
     },
@@ -992,7 +993,7 @@ export function deriveAsTarget(as) {
 /**
  * @param {Uint8Array} ikm
  * @param {{ salt?: Uint8Array, info?: Uint8Array, length: number, hash?: string, as?: string }} opts
- * @returns {Promise<Uint8Array|{ type: "keypair", data: object, meta: object }>}
+ * @returns {Promise<Uint8Array|{ type: "key", data: CryptoKey, meta: object }>}
  */
 export async function hkdfDerive(ikm, opts) {
   const hash = opts.hash || "SHA-256";
@@ -1018,11 +1019,12 @@ export async function hkdfDerive(ikm, opts) {
     target.usages
   );
   return {
-    type: "keypair",
-    data: { privateKey: key, publicKey: null, secretKey: key },
+    type: "key",
+    data: key,
     meta: {
       alg: target.alg,
       algorithm: typeof target.derived === "string" ? target.derived : target.derived.name,
+      which: "secret",
       symmetric: true,
       sensitive: true,
     },
@@ -1032,7 +1034,7 @@ export async function hkdfDerive(ikm, opts) {
 /**
  * @param {Uint8Array} password
  * @param {{ salt: Uint8Array, iterations: number, length: number, hash?: string, as?: string }} opts
- * @returns {Promise<Uint8Array|{ type: "keypair", data: object, meta: object }>}
+ * @returns {Promise<Uint8Array|{ type: "key", data: CryptoKey, meta: object }>}
  */
 export async function pbkdf2Derive(password, opts) {
   const hash = opts.hash || "SHA-256";
@@ -1058,11 +1060,12 @@ export async function pbkdf2Derive(password, opts) {
     target.usages
   );
   return {
-    type: "keypair",
-    data: { privateKey: key, publicKey: null, secretKey: key },
+    type: "key",
+    data: key,
     meta: {
       alg: target.alg,
       algorithm: typeof target.derived === "string" ? target.derived : target.derived.name,
+      which: "secret",
       symmetric: true,
       sensitive: true,
     },

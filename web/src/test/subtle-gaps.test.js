@@ -51,7 +51,7 @@ describe("wrap mode=aes-gcm", () => {
     const { ast, validation } = compileRecipe(`genkey aes/256 | out @kek
 genkey aes/256 | out @cek
 wrap mode=aes-gcm key=@kek target=@cek | to hex | out @wrapped
-in @wrapped | from hex | unwrap mode=aes-gcm key=@kek | to hex`);
+in @wrapped | from hex | unwrap mode=aes-gcm key=@kek | export raw | to hex`);
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
     const wrapped = out.find((a) => /wrapped/i.test(a.filename || a.label || ""));
@@ -66,7 +66,7 @@ describe("hkdf as=aes-kw/256 wrap", () => {
     const { ast, validation } = compileRecipe(`random 32 | hkdf 32 as=aes-kw/256 | out @kek
 genkey aes/256 | out @cek
 wrap key=@kek target=@cek | to hex | out @wrapped
-in @wrapped | from hex | unwrap key=@kek | to hex`);
+in @wrapped | from hex | unwrap key=@kek | export raw | to hex`);
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
     expect(out.some((a) => /^[0-9a-f]{64}$/.test(a.content || ""))).toBe(true);

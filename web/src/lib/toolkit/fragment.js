@@ -3,6 +3,7 @@
  *
  * Forms (first match wins):
  *   #encrypt | #decrypt | #symencrypt  — named messaging starters
+ *     (#symencrypt = mode=passphrase + generated @pw)
  *   #t=<presetId>                      — Templates preset
  *   #r=<compact-recipe>                — URL-friendly compact recipe
  *                                        (beautified via canonicalize on load)
@@ -61,7 +62,9 @@ export const MESSAGING_STARTERS = {
   },
   symencrypt: {
     title: "Password encrypt",
-    recipe: "input | gpg.symencrypt",
+    recipe: `passphrase mode=char | out @pw
+
+input | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg`,
   },
 };
 

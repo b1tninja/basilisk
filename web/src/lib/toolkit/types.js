@@ -8,13 +8,15 @@
 
 /** @typedef {import("./registry.js").IoType} IoType */
 
+import { slotLabelKey } from "./recipe-parse.js";
+
 /**
  * @typedef {object} RefinedType
  * @property {IoType} base
  * @property {string} [kind]  scalar | master | der | pem | armored | mnemonic | opaque | …
  * @property {string} [alg]
  * @property {number} [length]
- * @property {"public"|"private"} [which]
+ * @property {"public"|"private"|"secret"} [which]
  * @property {string} [encoding]
  */
 
@@ -195,6 +197,12 @@ export function inferSourceType(name, params = {}) {
     }
     case "input":
       return typeOf("text", { kind: "opaque" });
+    case "lit": {
+      const kind = String(params.kind || "text");
+      if (kind === "int") return typeOf("int");
+      if (kind === "bool") return typeOf("bool");
+      return typeOf("text");
+    }
     case "shares": {
       return typeOf("shares", { kind: "mnemonic" });
     }
@@ -209,6 +217,36 @@ export function inferSourceType(name, params = {}) {
     default:
       return tNone();
   }
+}
+
+/**
+ * @param {Record<string, *>} params
+ * @returns {"master"|"passphrase"}
+ */
+function gpgSymMode(params) {
+  const mode = String(params?.mode ?? "").trim().toLowerCase();
+  return mode === "passphrase" ? "passphrase" : "master";
+}
+
+/**
+ * @param {Record<string, *>} params
+ * @param {string} op
+ * @returns {string|null}
+ */
+function gpgSymModeTypeError(params, op) {
+  const rawMode = String(params?.mode ?? "").trim().toLowerCase();
+  const pw = String(params?.passphrase ?? "").trim();
+  if (rawMode && rawMode !== "master" && rawMode !== "passphrase") {
+    return `${op} mode= must be master or passphrase (got ${rawMode})`;
+  }
+  const mode = rawMode || "master";
+  if (mode === "master" && pw) {
+    return `${op}: passphrase= requires mode=passphrase (default mode=master is the SSS envelope path)`;
+  }
+  if (mode === "passphrase" && !pw) {
+    return `${op} mode=passphrase requires passphrase= or passphrase=@slot`;
+  }
+  return null;
 }
 
 /**
@@ -229,10 +267,12 @@ export function inferParamDrivenType(name, current, params = {}) {
     }
     const format = String(params.format || "pkcs8").toLowerCase();
     const alg = current.alg || "ec/p256";
-    // Projected `.public` / `.private` tips are `key` — tip which wins over params.
+    // Projected `:public` / `:private` / secret tips are `key` — tip which wins over params.
     const tipWhich =
       current.base === "key" &&
-      (current.which === "public" || current.which === "private")
+      (current.which === "public" ||
+        current.which === "private" ||
+        current.which === "secret")
         ? current.which
         : null;
     // Projected `key` tip selects the half; `which=` only applies to full keypairs.
@@ -246,10 +286,18 @@ export function inferParamDrivenType(name, current, params = {}) {
         };
       }
     }
+    if (tipWhich === "secret") {
+      if (format === "spki" || format === "pkcs8" || format === "scalar" || format === "d") {
+        return {
+          ok: false,
+          error: `"export ${format}" is for asymmetric keys — tip is ${formatType(current)}; use export raw or export jwk`,
+        };
+      }
+    }
     if (tipWhich === "private" && format === "spki") {
       return {
         ok: false,
-        error: `"export spki" needs a public key — use .public | export spki (tip is ${formatType(current)})`,
+        error: `"export spki" needs a public key — use :public | export spki (tip is ${formatType(current)})`,
       };
     }
 
@@ -475,6 +523,36 @@ export function inferParamDrivenType(name, current, params = {}) {
     const t = String(params.type || "opaque").toLowerCase();
     const alg = String(params.alg || current.alg || "ec/p256");
 
+    // Coerce scalars
+    if (t === "int") {
+      if (
+        current.base !== "int" &&
+        current.base !== "text" &&
+        current.base !== "bytes" &&
+        current.base !== "bool"
+      ) {
+        return {
+          ok: false,
+          error: `"as int" expects int, text, bytes, or bool, got ${formatType(current)}`,
+        };
+      }
+      return { ok: true, output: typeOf("int") };
+    }
+    if (t === "bool") {
+      if (
+        current.base !== "bool" &&
+        current.base !== "int" &&
+        current.base !== "text" &&
+        current.base !== "bytes"
+      ) {
+        return {
+          ok: false,
+          error: `"as bool" expects bool, int, text, or bytes, got ${formatType(current)}`,
+        };
+      }
+      return { ok: true, output: typeOf("bool") };
+    }
+
     // Materialize → CryptoKey tips
     if (t === "key" || t === "keypair") {
       const fromPem = current.base === "text";
@@ -606,7 +684,7 @@ export function inferParamDrivenType(name, current, params = {}) {
     }
     return {
       ok: false,
-      error: `"as" type must be master, scalar, opaque, public, private, key, or keypair — got "${t}"`,
+      error: `"as" type must be master, scalar, opaque, public, private, key, keypair, int, or bool — got "${t}"`,
     };
   }
 
@@ -708,6 +786,14 @@ export function inferParamDrivenType(name, current, params = {}) {
           `Pipe that to sss directly (already 16/32 bytes).`,
       };
     }
+    const modeErr = gpgSymModeTypeError(params, "gpg.symencrypt");
+    if (modeErr) return { ok: false, error: modeErr };
+    if (gpgSymMode(params) === "passphrase") {
+      return {
+        ok: true,
+        output: typeOf("text", { kind: "armored", encoding: "openpgp" }),
+      };
+    }
     return {
       ok: true,
       output: typeOf("bytes", { kind: "master", length: 32 }),
@@ -715,6 +801,20 @@ export function inferParamDrivenType(name, current, params = {}) {
   }
 
   if (name === "gpg.symdecrypt") {
+    const modeErr = gpgSymModeTypeError(params, "gpg.symdecrypt");
+    if (modeErr) return { ok: false, error: modeErr };
+    if (gpgSymMode(params) === "passphrase") {
+      if (current.base !== "text" && current.base !== "bytes") {
+        return {
+          ok: false,
+          error: `"gpg.symdecrypt mode=passphrase" expects armored text/bytes, got ${formatType(current)}`,
+        };
+      }
+      return {
+        ok: true,
+        output: typeOf("bytes", { kind: "opaque" }),
+      };
+    }
     if (current.base !== "bytes" || current.kind !== "master") {
       return {
         ok: false,
@@ -730,7 +830,15 @@ export function inferParamDrivenType(name, current, params = {}) {
 
   if (name === "in") {
     // Concrete type is resolved in validateRecipe / engine from the slot registry.
+    // walkPipelineTypes has no slot map — opaque is an honest "unknown until validate".
     return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+  }
+
+  if (name === "lit") {
+    const kind = String(params.kind || "text");
+    if (kind === "int") return { ok: true, output: typeOf("int") };
+    if (kind === "bool") return { ok: true, output: typeOf("bool") };
+    return { ok: true, output: typeOf("text") };
   }
 
   if (name === "tee" || name === "peek" || name === "out") {
@@ -748,22 +856,18 @@ export function inferParamDrivenType(name, current, params = {}) {
       return { ok: false, error: `"select" needs a pipeline value` };
     }
     const sel = String(params.selector || "");
-    const m = sel.replace(/^\./, "").toLowerCase();
+    const m = sel.replace(/^[.:]/, "").toLowerCase();
     if (
       m === "private" ||
-      m === "priv" ||
-      m === "secret" ||
-      m === "public" ||
-      m === "pub"
+      m === "public"
     ) {
       if (current.base !== "keypair") {
         return {
           ok: false,
-          error: `selector ".${m}" requires keypair, got ${formatType(current)}`,
+          error: `selector ":${m}" requires keypair, got ${formatType(current)}`,
         };
       }
-      const which =
-        m === "public" || m === "pub" ? "public" : "private";
+      const which = m === "public" ? "public" : "private";
       // Project to a real `key` tip (half), not keypair+which folklore.
       return {
         ok: true,
@@ -774,7 +878,7 @@ export function inferParamDrivenType(name, current, params = {}) {
       if (current.base !== "item") {
         return {
           ok: false,
-          error: `selector ".key" requires item, got ${formatType(current)}`,
+          error: `selector ":key" requires item, got ${formatType(current)}`,
         };
       }
       return { ok: true, output: typeOf("text", { kind: "opaque" }) };
@@ -783,7 +887,7 @@ export function inferParamDrivenType(name, current, params = {}) {
       if (current.base !== "item") {
         return {
           ok: false,
-          error: `selector ".value" requires item, got ${formatType(current)}`,
+          error: `selector ":value" requires item, got ${formatType(current)}`,
         };
       }
       if (current.kind === "raw") {
@@ -899,7 +1003,7 @@ export function inferParamDrivenType(name, current, params = {}) {
     if (as !== "bytes") {
       return {
         ok: true,
-        output: typeOf("keypair", { alg: as, which: "private" }),
+        output: typeOf("key", { alg: as, which: "secret" }),
       };
     }
     const length = Number(params.length) || 32;
@@ -916,7 +1020,7 @@ export function inferParamDrivenType(name, current, params = {}) {
         error: `"verify" expects bytes or text, got ${formatType(current)}`,
       };
     }
-    return { ok: true, output: typeOf("text", { kind: "opaque" }) };
+    return { ok: true, output: typeOf("bool") };
   }
 
   if (name === "ecdh") {
@@ -924,7 +1028,7 @@ export function inferParamDrivenType(name, current, params = {}) {
     if (as !== "bytes") {
       return {
         ok: true,
-        output: typeOf("keypair", { alg: as, which: "private" }),
+        output: typeOf("key", { alg: as, which: "secret" }),
       };
     }
     return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
@@ -941,7 +1045,11 @@ export function inferParamDrivenType(name, current, params = {}) {
         error: `"unwrap" expects bytes, got ${formatType(current)}`,
       };
     }
-    return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
+    const alg = String(params.alg || "aes/256");
+    return {
+      ok: true,
+      output: typeOf("key", { alg, which: "secret" }),
+    };
   }
 
   return null;
@@ -997,7 +1105,10 @@ export function resolveStepType(spec, current, params = {}) {
     }
     return {
       ok: false,
-      error: `Type mismatch: "${name}" expects ${want}, got ${formatType(current)}.`,
+      error:
+        current.base === "bundle"
+          ? `Type mismatch: "${name}" expects ${want}, got bundle (foreach tip — use @slots from the body, not the bundle tip).`
+          : `Type mismatch: "${name}" expects ${want}, got ${formatType(current)}.`,
     };
   }
   return {
@@ -1132,6 +1243,8 @@ export function stepAcceptsRefined(spec, from) {
       "master",
       "scalar",
       "opaque",
+      "int",
+      "bool",
     ]) {
       const alt = inferParamDrivenType("as", current, { type });
       if (alt?.ok) return true;
@@ -1185,7 +1298,13 @@ export function artifactMetaFromType(t) {
   if (t.base === "key") {
     return {
       role: "key",
-      tags: [t.which === "public" ? "public" : "private"],
+      tags: [
+        t.which === "public"
+          ? "public"
+          : t.which === "secret"
+            ? "secret"
+            : "private",
+      ],
     };
   }
   if (t.base === "recipients") {
@@ -1231,15 +1350,18 @@ export function artifactIsTextualForEncrypt(a) {
 
 /**
  * Walk recipe steps and compute refined input→output types per step.
+ * Tracks `out @label` within the walk so later `in` / bare `@label` resolve
+ * to the registered tip (ghost chips); unbound `in` stays opaque.
  *
  * @param {{ name: string, params?: Record<string, *>, body?: *, branches?: *, foreachSelector?: string }[]} steps
  * @param {{ getStep: (name: string) => { name: string, kind?: string, overloads?: StepOverload[], input?: IoType, output?: IoType } | null }} deps
+ * @param {Map<string, RefinedType>} [slotTypes]  mutable map shared across chains/bodies
  * @returns {{
  *   edges: { index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string }[],
  *   final: RefinedType,
  * }}
  */
-export function walkPipelineTypes(steps, deps) {
+export function walkPipelineTypes(steps, deps, slotTypes = new Map()) {
   /** @type {RefinedType} */
   let current = tNone();
   /** @type {{ index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string, body?: { index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string }[] }[]} */
@@ -1260,8 +1382,26 @@ export function walkPipelineTypes(steps, deps) {
       });
       continue;
     }
+    if (step.name === "in") {
+      const ref = String(step.params?.ref || "");
+      const key = slotLabelKey(ref);
+      /** @type {RefinedType} */
+      const loaded =
+        key && slotTypes.has(key)
+          ? { ...slotTypes.get(key) }
+          : typeOf("bytes", { kind: "opaque" });
+      current = loaded;
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: { ...current },
+        ok: true,
+      });
+      continue;
+    }
     if (step.name === "foreach") {
-      const mode = String(step.foreachSelector || ".values").replace(/^\./, "");
+      const mode = String(step.foreachSelector || ":values").replace(/^[.:]/, "");
       /** @type {RefinedType} */
       let itemType;
       if (mode === "items") {
@@ -1275,7 +1415,7 @@ export function walkPipelineTypes(steps, deps) {
             : typeOf("text", { kind: "mnemonic" });
       }
       const bodyEdges = step.body?.length
-        ? walkBodyTypes(step.body, itemType, deps)
+        ? walkBodyTypes(step.body, itemType, deps, slotTypes)
         : [];
       current = typeOf("bundle");
       edges.push({
@@ -1299,13 +1439,13 @@ export function walkPipelineTypes(steps, deps) {
       (step.body?.length || step.branches?.length)
     ) {
       const bodyEdges = step.body?.length
-        ? walkBodyTypes(step.body, current, deps)
+        ? walkBodyTypes(step.body, current, deps, slotTypes)
         : [];
       /** @type {{ member: string, edges: ReturnType<typeof walkBodyTypes> }[]} */
       const branchEdges = [];
       for (const br of step.branches || []) {
         const m = String(br.member || br.selector || "")
-          .replace(/^\./, "")
+          .replace(/^[.:]/, "")
           .toLowerCase();
         const which =
           m === "private" || m === "priv" || m === "secret"
@@ -1319,7 +1459,7 @@ export function walkPipelineTypes(steps, deps) {
             : current;
         branchEdges.push({
           member: which || m,
-          edges: walkBodyTypes(br.body || [], projected, deps),
+          edges: walkBodyTypes(br.body || [], projected, deps, slotTypes),
         });
       }
       edges.push({
@@ -1348,6 +1488,10 @@ export function walkPipelineTypes(steps, deps) {
       break;
     }
     current = resolved.output;
+    if (step.name === "out") {
+      const key = slotLabelKey(String(step.params?.name || "@output"));
+      if (key) slotTypes.set(key, { ...current });
+    }
     edges.push({
       index: i,
       name: step.name,
@@ -1364,8 +1508,9 @@ export function walkPipelineTypes(steps, deps) {
  * @param {{ name: string, params?: Record<string, *> }[]} body
  * @param {RefinedType} start
  * @param {{ getStep: (name: string) => { name: string, kind?: string, overloads?: StepOverload[], input?: IoType, output?: IoType } | null }} deps
+ * @param {Map<string, RefinedType>} [slotTypes]
  */
-function walkBodyTypes(body, start, deps) {
+function walkBodyTypes(body, start, deps, slotTypes = new Map()) {
   /** @type {RefinedType} */
   let current = start;
   /** @type {{ index: number, name: string, input: RefinedType, output: RefinedType|null, ok: boolean, error?: string }[]} */
@@ -1385,6 +1530,22 @@ function walkBodyTypes(body, start, deps) {
       });
       continue;
     }
+    if (step.name === "in") {
+      const ref = String(step.params?.ref || "");
+      const key = slotLabelKey(ref);
+      current =
+        key && slotTypes.has(key)
+          ? { ...slotTypes.get(key) }
+          : typeOf("bytes", { kind: "opaque" });
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: { ...current },
+        ok: true,
+      });
+      continue;
+    }
     const resolved = resolveStepType(spec, current, step.params || {});
     if (!resolved.ok) {
       edges.push({
@@ -1398,6 +1559,10 @@ function walkBodyTypes(body, start, deps) {
       break;
     }
     current = resolved.output;
+    if (step.name === "out") {
+      const key = slotLabelKey(String(step.params?.name || "@output"));
+      if (key) slotTypes.set(key, { ...current });
+    }
     edges.push({
       index: i,
       name: step.name,

@@ -33,6 +33,17 @@ import { validateShareMnemonic } from "../lib/slip39/blip39.js";
 import { base64ToBytes, hexToBytes } from "../lib/toolkit/encode.js";
 import { glyphHtml } from "../lib/toolkit/glyphs.js";
 import {
+  mountToolCard,
+  mountOpsShelf,
+  mountParamFields,
+  mountModeToggle,
+  mountRecipeChipFlow,
+  mountSuggestRail,
+  mountMenuPopover,
+  mountPresetMenu,
+  parseStepMime,
+} from "../toolkit/widgets/index.ts";
+import {
   DEFAULT_TOOLKIT_PREFS,
   getIdleClearMs,
   getToolkitPrefs,
@@ -91,15 +102,18 @@ import {
 import {
   CIPHER_PICKER_ALIASES,
   defaultCollapsedShelfKeys,
+  formatDirectionForTip,
   getShelfMeta,
   getStep,
   instantiateCipherPick,
   instantiateFormatPick,
+  KEY_FORMAT_META,
   KEY_FORMAT_PICKS,
   listCipherPickerSteps,
   listDrawerRows,
   listSteps,
   pairDirection,
+  pairTileLabel,
   stepsAccepting,
   TOOLBOX_META,
 } from "../lib/toolkit/registry.js";
@@ -131,6 +145,7 @@ import {
   typeOf,
   walkPipelineTypes,
 } from "../lib/toolkit/types.js";
+import { suggestByToolboxMap } from "../lib/toolkit/suggest.js";
 import {
   PROFILE_AUTO,
   PROFILE_COMPATIBLE,
@@ -209,6 +224,15 @@ let cellCollapsed = new Set();
 /** Cells showing raw recipe text instead of the chip preview */
 /** @type {Set<number>} */
 let cellRecipeRawMode = new Set();
+/** Cells showing tall builder cards (Preview defaults to chip editor only) */
+/** @type {Set<number>} */
+let cellShowBuilderCards = new Set();
+/**
+ * Selected chip in Preview for inline params.
+ * `body` set ⇒ nest body / branch body index; omit for the stem step itself.
+ * @type {{ cell: number, stem: number, branch?: number|null, body?: number|null } | null}
+ */
+let chipEdit = null;
 /** Variables drawer open */
 let variablesOpen = false;
 /** Expanded artifact previews: `${cellIndex}:${artIndex}` */
@@ -265,10 +289,6 @@ let ciphertextDraft = "";
 let fragmentWriteLock = false;
 /** Last preset id loaded (for short `#t=` fragment form). */
 let lastPresetId = /** @type {string|null} */ (null);
-/** Templates menu: active category (null = first group). */
-let presetMenuGroup = /** @type {string|null} */ (null);
-/** Templates menu search query. */
-let presetMenuFilter = "";
 /** Last library workspace id (Save updates this entry). */
 let lastWorkspaceId = /** @type {string|null} */ (null);
 /** Fingerprint of title+recipe after last load/save (dirty tracking). */
@@ -356,48 +376,6 @@ function toolkitPgpModeHint() {
   return `Auto: prefers ${formatProfileSpec(PROFILE_MODERN)}; falls back to compatible for legacy recipient keys. Password envelopes (gpg.symencrypt) always follow the selected profile.`;
 }
 
-/**
- * Segmented Modern / Compatible / Auto control (notebook header).
- * @param {string} radioName  unique name= for this radio group
- * @param {{ advancedLink?: boolean }} [opts]
- */
-function renderPgpModeToggle(radioName, opts = {}) {
-  const modes = [
-    { value: "auto", label: "Auto" },
-    { value: "modern", label: "Modern" },
-    { value: "compatible", label: "Compatible" },
-  ];
-  const active =
-    toolkitEncryptPreset === "custom" ? "" : toolkitEncryptPreset;
-  return `
-    <div class="pgp-mode">
-      <fieldset class="pgp-mode-toggle">
-        <legend class="pgp-mode-legend">OpenPGP mode</legend>
-        <div class="pgp-mode-options" role="presentation">
-          ${modes
-            .map(
-              (m) => `<label class="pgp-mode-option${active === m.value ? " is-active" : ""}">
-            <input type="radio" name="${escapeHtml(radioName)}" value="${m.value}"
-              ${active === m.value ? "checked" : ""}>
-            <span>${m.label}</span>
-          </label>`
-            )
-            .join("")}
-          ${
-            toolkitEncryptPreset === "custom"
-              ? `<span class="pgp-mode-custom" title="${escapeHtml(formatProfileSpec(toolkitEncryptProfile))}">Custom</span>`
-              : ""
-          }
-        </div>
-      </fieldset>
-      <p class="muted fs-xs pgp-mode-hint mb-0">${escapeHtml(toolkitPgpModeHint())}${
-        opts.advancedLink
-          ? ` <button type="button" class="text-link pgp-advanced-link" id="pgp-advanced-link">Advanced OpenPGP…</button>`
-          : ""
-      }</p>
-    </div>`;
-}
-
 /** Open the expert crypto params panel (cipher / AEAD / S2K). */
 function openCryptoParamsPanel() {
   const details = document.getElementById("crypto-params-details");
@@ -471,6 +449,7 @@ let activeWorker = null;
 
 const STEP_MIME = "application/x-basilisk-step";
 const REORDER_MIME = "application/x-basilisk-reorder";
+const CHIP_REORDER_MIME = "application/x-basilisk-chip-reorder";
 
 const KIND_META = {
   source: { label: "Sources", order: 0 },
@@ -568,6 +547,17 @@ function currentUnverifiedSuites() {
  * @returns {string}
  */
 function stepDisplayName(spec, params = null) {
+  if (params && String(params.kind) && spec?.name === "lit") {
+    if (params.kind === "int") return String(params.value ?? "0");
+    if (params.kind === "bool") {
+      return params.value === true ||
+        params.value === 1 ||
+        String(params.value).toLowerCase() === "true"
+        ? "true"
+        : "false";
+    }
+    return JSON.stringify(String(params.value ?? ""));
+  }
   if (!spec) return "";
   if (spec.decodeTwin && params) {
     const tok = decodeTwinToken(spec, !!params.decode);
@@ -589,6 +579,8 @@ let toolCardPinned = false;
  */
 function friendlyTypeLabel(t) {
   if (!t || t.base === "none") return "empty";
+  if (t.base === "int") return "int";
+  if (t.base === "bool") return "bool";
   if (t.base === "text" && t.kind === "pem") {
     return t.which ? `PEM ${t.which}` : "PEM text";
   }
@@ -630,115 +622,6 @@ function friendlyTypeLabel(t) {
 }
 
 /**
- * Standard tool card — docs, kind, I/O types, params (shared hover + reference).
- * @param {import("../lib/toolkit/registry.js").StepSpec} s
- * @param {{ decode?: boolean, blocked?: boolean, fit?: boolean, hideHint?: boolean }} [opts]
- * @returns {string}
- */
-function toolCardHtml(s, opts = {}) {
-  const decode = !!opts.decode;
-  const params = { ...defaultParams(s), ...(decode ? { decode: true } : {}) };
-  const io = s.effectiveIo
-    ? s.effectiveIo(params)
-    : { input: s.input, output: s.output };
-  const nameLabel = stepDisplayName(s, { decode });
-  const glyph = opsGlyphForStep(s);
-  const kindLabel = KIND_META[s.kind]?.label || s.kind;
-  const shelf = s.shelf ? getShelfMeta(s.shelf).label : "";
-  const recipeTok = decodeTwinToken(s, decode);
-  const aliases = (s.aliases || []).length
-    ? `<p class="tool-card-aliases muted fs-xs">Aliases: ${(s.aliases || [])
-        .map((a) => `<code>${escapeHtml(a)}</code>`)
-        .join(", ")}</p>`
-    : "";
-  const tip = currentPipelineOutput();
-  const paramList = (s.params || []).filter(
-    (p) => paramVisibility(s.name, p, params, tip).show
-  );
-  const shown = paramList.slice(0, 8);
-  const paramsHtml = shown.length
-    ? `<div class="tool-card-params">
-        <p class="tool-card-section">Parameters</p>
-        <ul class="tool-card-param-list">
-          ${shown
-            .map((p) => {
-              const typeBits = [p.type];
-              if (p.enum?.length) {
-                typeBits.push(
-                  p.enum.length > 4
-                    ? `${p.enum.length} options`
-                    : p.enum.join("|")
-                );
-              } else if (p.default !== undefined && p.default !== null) {
-                typeBits.push(`default ${String(p.default)}`);
-              }
-              return `<li>
-                <code>${escapeHtml(p.name)}</code>
-                <span class="tool-card-param-type muted">${escapeHtml(typeBits.join(" · "))}</span>
-                ${p.doc ? `<span class="tool-card-param-doc">${escapeHtml(p.doc)}</span>` : ""}
-              </li>`;
-            })
-            .join("")}
-        </ul>
-        ${
-          paramList.length > shown.length
-            ? `<p class="muted fs-xs">+${paramList.length - shown.length} more in Docs</p>`
-            : ""
-        }
-      </div>`
-    : `<p class="tool-card-noparams muted fs-xs">No parameters.</p>`;
-  const flags = [];
-  if (opts.blocked) flags.push(`<span class="tool-card-flag tool-card-flag-warn">FIPS blocked</span>`);
-  if (opts.fit) flags.push(`<span class="tool-card-flag tool-card-flag-fit">Fits tip</span>`);
-  if (s.unresolvedInputs)
-    flags.push(
-      `<span class="tool-card-flag">Needs ${escapeHtml(String(s.unresolvedInputs))} input</span>`
-    );
-  if (s.unresolvedRecipients)
-    flags.push(`<span class="tool-card-flag">Needs recipients</span>`);
-
-  return `
-    <div class="tool-card">
-      <header class="tool-card-head">
-        ${glyphHtml(glyph, "ops-glyph ops-glyph-tile tool-card-glyph")}
-        <div class="tool-card-titles">
-          <p class="tool-card-name">${escapeHtml(nameLabel)}</p>
-          <p class="tool-card-recipe muted fs-xs">Recipe <code>${escapeHtml(recipeTok)}</code></p>
-        </div>
-        <button type="button" class="btn btn-ghost btn-compact tool-card-pin"
-          data-tool-card-pin aria-pressed="${toolCardPinned ? "true" : "false"}"
-          title="${toolCardPinned ? "Unpin (Esc)" : "Pin card"}">${toolCardPinned ? "Pinned" : "Pin"}</button>
-      </header>
-      <div class="tool-card-meta">
-        ${toolboxBadgeHtml(s.toolbox)}
-        ${shelf ? `<span class="tool-card-chip">${escapeHtml(shelf)}</span>` : ""}
-        <span class="tool-card-chip">${escapeHtml(kindLabel)}</span>
-        ${suiteChipHtml(s.toolbox)}
-        ${flags.join("")}
-      </div>
-      <div class="tool-card-io" aria-label="Input and output types">
-        <div class="tool-card-io-side">
-          <span class="tool-card-io-label muted">In</span>
-          <span class="tool-card-type" data-io="in">${escapeHtml(io.input)}</span>
-        </div>
-        <span class="tool-card-io-arrow" aria-hidden="true">→</span>
-        <div class="tool-card-io-side">
-          <span class="tool-card-io-label muted">Out</span>
-          <span class="tool-card-type" data-io="out">${escapeHtml(io.output)}</span>
-        </div>
-      </div>
-      <p class="tool-card-doc">${escapeHtml(s.doc)}</p>
-      ${aliases}
-      ${paramsHtml}
-      ${
-        opts.hideHint
-          ? ""
-          : `<p class="tool-card-hint muted fs-xs">Drag onto a cell, or click to append. Esc dismisses.</p>`
-      }
-    </div>`;
-}
-
-/**
  * @param {HTMLElement} host
  * @param {DOMRect} anchorRect
  */
@@ -768,6 +651,8 @@ function hideToolCard() {
   if (!host) return;
   host.classList.add("hidden");
   host.hidden = true;
+  const body = host.querySelector("[data-tool-card-body]");
+  if (body) mountToolCard(body, null);
   host.innerHTML = "";
   if (toolCardAnchor instanceof HTMLElement) {
     toolCardAnchor.removeAttribute("aria-describedby");
@@ -820,7 +705,24 @@ function showToolCard(anchor, name, decode) {
   if (anchor instanceof HTMLElement) {
     anchor.setAttribute("aria-describedby", "ops-tool-card");
   }
-  host.innerHTML = toolCardHtml(s, { decode, blocked, fit });
+  host.innerHTML = `
+    <div class="tool-card-island-wrap">
+      <div class="tool-card-island-pin-row">
+        <button type="button" class="btn btn-ghost btn-compact tool-card-pin"
+          data-tool-card-pin aria-pressed="${toolCardPinned ? "true" : "false"}"
+          title="${toolCardPinned ? "Unpin (Esc)" : "Pin card"}">${
+            toolCardPinned ? "Pinned" : "Pin"
+          }</button>
+      </div>
+      <div data-tool-card-body></div>
+    </div>`;
+  mountToolCard(host.querySelector("[data-tool-card-body]"), {
+    op: s,
+    decode,
+    blocked,
+    fit,
+    hideHint: false,
+  });
   host.classList.toggle("ops-tool-card-pinned", toolCardPinned);
   host.querySelector("[data-tool-card-pin]")?.addEventListener("click", (e) => {
     e.preventDefault();
@@ -839,46 +741,8 @@ function showToolCard(anchor, name, decode) {
 
 app.innerHTML = `
   <div class="app-toolbar">
-    <details class="toolbar-menu" id="preset-gallery">
-      <summary class="btn btn-ghost btn-compact toolkit-presets-summary">Templates <span aria-hidden="true">▾</span></summary>
-      <div class="toolbar-popover preset-menu-popover">
-        <p class="muted m-0-b-md fs-sm">Pick a category, then a notebook. Companion rows (⇄) can add forward and inverse together.</p>
-        <div class="preset-menu" id="preset-grid"></div>
-      </div>
-    </details>
-    <details class="toolbar-menu" id="more-menu">
-      <summary class="btn btn-ghost btn-compact" title="More actions">
-        ${glyphHtml("more", "ops-glyph toolbar-glyph")} More
-      </summary>
-      <div class="toolbar-popover toolbar-popover-menu">
-        <button type="button" class="toolbar-menu-item" id="toggle-reference" title="Full step docs">Docs</button>
-        <button type="button" class="toolbar-menu-item" id="focus-keyring-btn">Keyring</button>
-        <button type="button" class="toolbar-menu-item" id="shortcuts-btn">
-          ${glyphHtml("shortcuts", "ops-glyph toolbar-glyph")} Keyboard shortcuts
-        </button>
-        <hr class="toolbar-menu-sep">
-        <button type="button" class="toolbar-menu-item" id="workspace-save-btn"
-          title="Save title + recipe to this browser’s library">Save notebook</button>
-        <button type="button" class="toolbar-menu-item" id="copy-recipe-btn"
-          title="Copy canonical recipe text to the clipboard">Copy recipe</button>
-        <button type="button" class="toolbar-menu-item" id="workspace-library-btn"
-          title="Open saved notebooks from this browser">Library…</button>
-        <button type="button" class="toolbar-menu-item" id="workspace-export-btn"
-          title="Download title + recipe as .basilisk.json">Export file</button>
-        <button type="button" class="toolbar-menu-item" id="workspace-import-btn"
-          title="Load a .basilisk.json or plain recipe file">Import file…</button>
-        <hr class="toolbar-menu-sep">
-        <button type="button" class="toolbar-menu-item" id="clear-sensitive-btn"
-          title="Wipe kernel slots, outputs, and inputs — keep cell recipes">Clear sensitive</button>
-        <button type="button" class="toolbar-menu-item" id="copy-share-link"
-          title="Copy shareable toolkit link (recipe in URL fragment)">Copy link</button>
-        <hr class="toolbar-menu-sep">
-        <button type="button" class="toolbar-menu-item" id="reset-notebook-btn"
-          title="Clear sensitive and reset to one empty cell">Reset notebook</button>
-        <button type="button" class="toolbar-menu-item text-error" id="destroy-btn"
-          title="Zeroize all in-memory secrets, inputs, and outputs (best-effort)">Destroy</button>
-      </div>
-    </details>
+    <span id="preset-gallery" class="toolbar-menu"></span>
+    <span id="more-menu" class="toolbar-menu"></span>
     <input type="file" id="workspace-import-file" class="hidden"
       accept=".json,.txt,.recipe,.basilisk.json,application/json,text/plain">
     <dialog id="workspace-library-dialog" class="toolkit-dialog">
@@ -1168,6 +1032,10 @@ function insertCell(at) {
   cellRecipeRawMode = new Set(
     [...cellRecipeRawMode].map((i) => (i >= idx ? i + 1 : i))
   );
+  cellShowBuilderCards = new Set(
+    [...cellShowBuilderCards].map((i) => (i >= idx ? i + 1 : i))
+  );
+  if (chipEdit && chipEdit.cell >= idx) chipEdit = { ...chipEdit, cell: chipEdit.cell + 1 };
   focusCell(idx);
   setRecipeFromSteps();
 }
@@ -1179,6 +1047,8 @@ function deleteCell(index) {
   if (chains.length <= 1) {
     chains = [{ steps: [] }];
     cellRecipeRawMode = new Set();
+    cellShowBuilderCards = new Set();
+    chipEdit = null;
     focusCell(0);
     kernel.clearCellOutputs(0);
     setRecipeFromSteps();
@@ -1191,6 +1061,15 @@ function deleteCell(index) {
       .filter((i) => i !== index)
       .map((i) => (i > index ? i - 1 : i))
   );
+  cellShowBuilderCards = new Set(
+    [...cellShowBuilderCards]
+      .filter((i) => i !== index)
+      .map((i) => (i > index ? i - 1 : i))
+  );
+  if (chipEdit) {
+    if (chipEdit.cell === index) chipEdit = null;
+    else if (chipEdit.cell > index) chipEdit = { ...chipEdit, cell: chipEdit.cell - 1 };
+  }
   focusCell(Math.min(focusedCell, chains.length - 1));
   setRecipeFromSteps();
 }
@@ -2448,6 +2327,9 @@ function cloneBuilderStep(s) {
  * @type {{ stem: number, body?: number | null, branch?: number | null } | null}
  */
 let insertFocus = null;
+/** Stem splice index from chip-gap + (cleared after addStepAt). */
+/** @type {number | null} */
+let pendingStemInsert = null;
 
 /** @param {typeof insertFocus} focus */
 function isNestInsertFocus(focus) {
@@ -2458,7 +2340,146 @@ function isNestInsertFocus(focus) {
 }
 
 /**
- * Jump from Preview nest chips into the SIDE CHAINS / nest editor.
+ * Resolve a Preview chip path to its RecipeStep.
+ * @param {{ cell: number, stem: number, branch?: number|null, body?: number|null }} path
+ * @returns {import("../lib/toolkit/recipe.js").RecipeStep | null}
+ */
+function stepAtChipEdit(path) {
+  const list = chains[path.cell]?.steps || [];
+  const parent = list[path.stem];
+  if (!parent) return null;
+  if (path.branch != null && Number.isFinite(path.branch)) {
+    if (path.body == null || !Number.isFinite(path.body)) return null;
+    return parent.branches?.[path.branch]?.body?.[path.body] ?? null;
+  }
+  if (path.body != null && Number.isFinite(path.body)) {
+    return parent.body?.[path.body] ?? null;
+  }
+  return parent;
+}
+
+/**
+ * @param {{ cell: number, stem: number, branch?: number|null, body?: number|null } | null} a
+ * @param {{ cell: number, stem: number, branch?: number|null, body?: number|null } | null} b
+ */
+function sameChipEdit(a, b) {
+  if (!a || !b) return false;
+  return (
+    a.cell === b.cell &&
+    a.stem === b.stem &&
+    (a.branch ?? null) === (b.branch ?? null) &&
+    (a.body ?? null) === (b.body ?? null)
+  );
+}
+
+/**
+ * @param {HTMLElement} el
+ * @returns {{ cell: number, stem: number, branch?: number|null, body?: number|null } | null}
+ */
+function chipPathFromEditEl(el) {
+  const cell = Number(el.getAttribute("data-cell"));
+  const stem = Number(el.getAttribute("data-edit-stem"));
+  if (!Number.isFinite(cell) || !Number.isFinite(stem)) return null;
+  /** @type {{ cell: number, stem: number, branch?: number|null, body?: number|null }} */
+  const path = { cell, stem };
+  const branchAttr = el.getAttribute("data-edit-branch");
+  const bodyAttr = el.getAttribute("data-edit-body");
+  if (branchAttr != null && branchAttr !== "") path.branch = Number(branchAttr);
+  if (bodyAttr != null && bodyAttr !== "") path.body = Number(bodyAttr);
+  return path;
+}
+
+/**
+ * @param {HTMLElement} el
+ * @returns {{ cell: number, stem: number, branch?: number|null, body?: number|null } | null}
+ */
+function chipPathFromGapEl(el) {
+  const cell = Number(el.getAttribute("data-cell"));
+  const stem = Number(el.getAttribute("data-gap-stem"));
+  if (!Number.isFinite(cell) || !Number.isFinite(stem)) return null;
+  /** @type {{ cell: number, stem: number, branch?: number|null, body?: number|null }} */
+  const path = { cell, stem };
+  const branchAttr = el.getAttribute("data-gap-branch");
+  const bodyAttr = el.getAttribute("data-gap-body");
+  if (branchAttr != null && branchAttr !== "") path.branch = Number(branchAttr);
+  if (bodyAttr != null && bodyAttr !== "") path.body = Number(bodyAttr);
+  return path;
+}
+
+/**
+ * Reorder a chip within its lane (stem pipeline or one nest/branch body).
+ * `to` uses gap insert-index encoding (stem or body = splice index).
+ * @param {{ cell: number, stem: number, branch?: number|null, body?: number|null }} from
+ * @param {{ cell: number, stem: number, branch?: number|null, body?: number|null }} to
+ * @returns {boolean}
+ */
+function reorderChipPath(from, to) {
+  if (from.cell !== to.cell) return false;
+  const list = chains[from.cell]?.steps;
+  if (!list) return false;
+  if (from.cell !== focusedCell) focusCell(from.cell);
+
+  const fromNest = from.body != null;
+  const toNest = to.body != null;
+  if (fromNest !== toNest) return false;
+
+  if (!fromNest) {
+    let fromIdx = from.stem;
+    let toIdx = to.stem;
+    if (
+      !Number.isFinite(fromIdx) ||
+      !Number.isFinite(toIdx) ||
+      fromIdx < 0 ||
+      fromIdx >= list.length
+    ) {
+      return false;
+    }
+    if (fromIdx < toIdx) toIdx -= 1;
+    toIdx = Math.max(0, Math.min(list.length - 1, toIdx));
+    if (toIdx === fromIdx) return false;
+    const [moved] = list.splice(fromIdx, 1);
+    list.splice(toIdx, 0, moved);
+    chipEdit = null;
+    insertFocus = { stem: toIdx };
+    setRecipeFromSteps();
+    return true;
+  }
+
+  if (from.stem !== to.stem) return false;
+  if ((from.branch ?? null) !== (to.branch ?? null)) return false;
+  const parent = list[from.stem];
+  if (!parent) return false;
+  const lane =
+    from.branch != null
+      ? parent.branches?.[from.branch]?.body
+      : parent.body;
+  if (!lane) return false;
+  let fromIdx = /** @type {number} */ (from.body);
+  let toIdx = /** @type {number} */ (to.body);
+  if (
+    !Number.isFinite(fromIdx) ||
+    !Number.isFinite(toIdx) ||
+    fromIdx < 0 ||
+    fromIdx >= lane.length
+  ) {
+    return false;
+  }
+  if (fromIdx < toIdx) toIdx -= 1;
+  toIdx = Math.max(0, Math.min(lane.length - 1, toIdx));
+  if (toIdx === fromIdx) return false;
+  const [moved] = lane.splice(fromIdx, 1);
+  lane.splice(toIdx, 0, moved);
+  chipEdit = null;
+  insertFocus =
+    from.branch != null
+      ? { stem: from.stem, branch: from.branch, body: toIdx }
+      : { stem: from.stem, body: toIdx };
+  setRecipeFromSteps();
+  return true;
+}
+
+/**
+ * Jump from Preview nest chrome into insert focus (and cards if shown).
  * @param {number} cellIndex
  * @param {number} stem
  * @param {number|null|undefined} branch
@@ -2471,17 +2492,28 @@ function focusBuilderNestFromPreview(cellIndex, stem, branch) {
   if (!parent || (parent.name !== "tee" && parent.name !== "foreach")) return;
   if (branch != null && Number.isFinite(branch) && parent.branches?.[branch]) {
     insertFocus = { stem, branch, body: null };
+    nestSuggestExpanded = { stem, branch };
   } else {
     insertFocus = { stem, body: null };
+    nestSuggestExpanded = { stem, branch: null };
   }
-  renderBuilderInto(
-    document.getElementById(`cell-builder-${cellIndex}`),
-    cellIndex
-  );
+  chipEdit = null;
+  if (cellShowBuilderCards.has(cellIndex)) {
+    renderBuilderInto(
+      document.getElementById(`cell-builder-${cellIndex}`),
+      cellIndex
+    );
+  }
+  renderNotebook();
   renderSuggestDrawer();
   requestAnimationFrame(() => {
     const cell = document.querySelector(`.notebook-cell[data-cell="${cellIndex}"]`);
     const target =
+      cell?.querySelector(
+        branch != null
+          ? `[data-preview-nest="${stem}"][data-preview-branch="${branch}"]`
+          : `.cell-recipe-indent-line[data-preview-nest="${stem}"]:not([data-preview-branch])`
+      ) ||
       (branch != null &&
         cell?.querySelector(
           `[data-flow-stem="${stem}"] .builder-branch-list > .builder-branch-row:nth-child(${
@@ -2519,6 +2551,7 @@ function addStepAt(name, index, paramOverrides) {
     start: 0,
     end: 0,
   };
+  if (step.name === "export") syncWhichWithFormat(step);
 
   // Prefer inserting into a focused tee/foreach nest or selector branch.
   if (insertFocus && index == null && isNestInsertFocus(insertFocus)) {
@@ -2551,8 +2584,35 @@ function addStepAt(name, index, paramOverrides) {
 
   const at =
     index == null || Number.isNaN(index)
-      ? steps.length
+      ? pendingStemInsert != null
+        ? Math.max(0, Math.min(steps.length, pendingStemInsert))
+        : steps.length
       : Math.max(0, Math.min(steps.length, index));
+  pendingStemInsert = null;
+
+  // On a full keypair tip, `export spki` needs `:public` first (openssl -pubout).
+  const tipBefore = walkPipelineTypes(
+    steps.slice(0, at),
+    { getStep },
+    slotTypesBeforeCell(focusedCell)
+  ).final;
+  if (
+    step.name === "export" &&
+    tipBefore?.base === "keypair" &&
+    String(step.params.format || "pkcs8") === "spki"
+  ) {
+    steps.splice(at, 0, {
+      name: "select",
+      params: { selector: ":public" },
+      start: 0,
+      end: 0,
+    });
+    steps.splice(at + 1, 0, step);
+    insertFocus = { stem: at + 1 };
+    setRecipeFromSteps();
+    return;
+  }
+
   steps.splice(at, 0, step);
   // Focus tee/foreach so the next suggested add goes into the list body.
   if (step.name === "foreach") {
@@ -2561,23 +2621,27 @@ function addStepAt(name, index, paramOverrides) {
   } else if (step.name === "tee") {
     if (!step.body) step.body = [];
     // Seed selector branches when teeing a keypair.
-    const prefix = walkPipelineTypes(steps.slice(0, at), { getStep });
+    const prefix = walkPipelineTypes(
+      steps.slice(0, at),
+      { getStep },
+      slotTypesBeforeCell(focusedCell)
+    );
     if (prefix.final?.base === "keypair" && !step.branches?.length) {
       step.branches = [
         {
           member: "private",
-          selector: ".private",
+          selector: ":private",
           body: [
             { name: "inspect", params: { format: "auto" }, start: 0, end: 0 },
           ],
         },
         {
           member: "public",
-          selector: ".public",
+          selector: ":public",
           body: [
             {
               name: "export",
-              params: { format: "spki", which: "public" },
+              params: { format: "spki" },
               start: 0,
               end: 0,
             },
@@ -2600,7 +2664,11 @@ function addStepAt(name, index, paramOverrides) {
  * @returns {import("../lib/toolkit/types.js").RefinedType}
  */
 function pipelineOutputAtFocus(focus) {
-  const walked = walkPipelineTypes(steps, { getStep });
+  const walked = walkPipelineTypes(
+    steps,
+    { getStep },
+    slotTypesBeforeCell(focusedCell)
+  );
   const parent = steps[focus.stem];
   const edge = walked.edges[focus.stem];
   if (!parent || !edge) return walked.final;
@@ -2668,7 +2736,21 @@ function currentPipelineOutput() {
   if (insertFocus && isNestInsertFocus(insertFocus)) {
     return pipelineOutputAtFocus(insertFocus);
   }
-  return walkPipelineTypes(steps, { getStep }).final;
+  return walkPipelineTypes(steps, { getStep }, slotTypesBeforeCell(focusedCell)).final;
+}
+
+/**
+ * Slot tip map from earlier notebook cells (for `in` / `@label` ghosts).
+ * @param {number} cellIndex
+ * @returns {Map<string, import("../lib/toolkit/types.js").RefinedType>}
+ */
+function slotTypesBeforeCell(cellIndex) {
+  /** @type {Map<string, import("../lib/toolkit/types.js").RefinedType>} */
+  const slots = new Map();
+  for (let i = 0; i < cellIndex; i++) {
+    walkPipelineTypes(chains[i]?.steps || [], { getStep }, slots);
+  }
+  return slots;
 }
 
 /**
@@ -2676,19 +2758,24 @@ function currentPipelineOutput() {
  * @returns {ReturnType<typeof walkPipelineTypes>["edges"]}
  */
 function builderTypeEdges() {
-  return walkPipelineTypes(steps, { getStep }).edges;
+  return walkPipelineTypes(steps, { getStep }, slotTypesBeforeCell(focusedCell)).edges;
 }
 
 /**
- * Sync export `which` when format locks the key half.
+ * Format implies the key half — clear deprecated `which=` so serialize stays clean.
+ * Prefer `:public` / `:private` selectors when the tip is a full keypair.
  * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
  */
 function syncWhichWithFormat(step) {
   if (step.name !== "export") return;
   const format = String(step.params.format || "");
-  if (format === "spki") step.params.which = "public";
-  else if (format === "pkcs8" || format === "scalar" || format === "d") {
-    step.params.which = "private";
+  if (
+    format === "spki" ||
+    format === "pkcs8" ||
+    format === "scalar" ||
+    format === "d"
+  ) {
+    delete step.params.which;
   }
 }
 
@@ -2722,25 +2809,11 @@ function paramVisibility(stepName, param, params, tip) {
     const t = String(params?.type || "opaque").toLowerCase();
     if (t !== "key" && t !== "keypair") return { show: false };
   }
-  if (param.name !== "which") return { show: true };
-  const format = String(params.format || "");
-  if (stepName === "export") {
-    // Projected key tip already owns the half — hide which= (still set via syncWhichWithFormat).
-    if (
-      tip &&
-      typeof tip === "object" &&
-      tip.base === "key" &&
-      (tip.which === "public" || tip.which === "private")
-    ) {
-      return { show: false };
-    }
-    if (format === "spki") {
-      return { show: true, locked: true, forced: "public" };
-    }
-    if (format === "pkcs8" || format === "scalar" || format === "d") {
-      return { show: true, locked: true, forced: "private" };
-    }
+  // Prefer `:public` / `:private` over export which= (openssl pkey -pubout style).
+  if (stepName === "export" && param.name === "which") {
+    return { show: false };
   }
+  if (param.name !== "which") return { show: true };
   return { show: true };
 }
 
@@ -3842,161 +3915,13 @@ async function collectRuntimeInputs() {
 }
 
 function renderPresets() {
-  const grid = document.getElementById("preset-grid");
-  if (!grid) return;
-
-  const groups = listPresetGroups();
-  if (!presetMenuGroup || !groups.includes(presetMenuGroup)) {
-    presetMenuGroup = groups[0] || null;
-  }
-
-  const q = presetMenuFilter.trim().toLowerCase();
-  /** @param {typeof PRESETS[number]} p */
-  const matches = (p) => {
-    if (!q) return true;
-    return (
-      p.id.toLowerCase().includes(q) ||
-      p.title.toLowerCase().includes(q) ||
-      (p.blurb || "").toLowerCase().includes(q) ||
-      (p.recipe || "").toLowerCase().includes(q) ||
-      (p.group || "").toLowerCase().includes(q)
-    );
-  };
-
-  /** @type {Map<string, typeof PRESETS>} */
-  const byGroup = new Map();
-  for (const g of groups) byGroup.set(g, []);
-  for (const p of PRESETS) {
-    if (!matches(p)) continue;
-    const g = p.group || "Pipelines";
-    if (!byGroup.has(g)) byGroup.set(g, []);
-    byGroup.get(g).push(p);
-  }
-
-  /** @param {typeof PRESETS[number]} p */
-  const card = (p) => `
-    <div class="preset-card-wrap">
-      <button type="button" class="preset-card" data-preset="${escapeHtml(p.id)}" title="Replace notebook with this template">
-        <strong>${escapeHtml(p.title)}</strong>
-        <span class="muted">${escapeHtml(p.blurb)}</span>
-      </button>
-      <div class="preset-card-actions">
-        <button type="button" class="btn btn-ghost btn-compact preset-append-btn" data-preset-append="${escapeHtml(p.id)}"
-          title="Append this template’s chains as new cells">Append</button>
-        <details class="preset-recipe-details">
-          <summary class="muted fs-xs">Show recipe</summary>
-          <code class="preset-recipe">${escapeHtml(p.recipe)}</code>
-        </details>
-      </div>
-    </div>`;
-
-  /**
-   * @param {typeof PRESETS} presets
-   * @returns {string}
-   */
-  const renderItems = (presets) => {
-    let items = "";
-    for (let i = 0; i < presets.length; i++) {
-      const p = presets[i];
-      const next = presets[i + 1];
-      if (p.pair && next?.pair === p.pair) {
-        const st = stitchPresetPair(p, next);
-        const meta = bridgeModeMeta(st.mode, st.bridge);
-        const labelId = `preset-pair-${escapeHtml(p.pair)}`;
-        items += `
-          <div class="preset-pair" role="group" aria-labelledby="${labelId}">
-            <div class="preset-pair-head">
-              <div class="preset-pair-head-text">
-                <span class="preset-pair-kicker" id="${labelId}">Companion</span>
-                <span class="badge preset-bridge-badge" data-bridge="${escapeHtml(st.mode)}">${escapeHtml(meta.badge)}</span>
-              </div>
-              <button type="button" class="btn btn-compact preset-pair-both-btn"
-                data-preset-pair="${escapeHtml(p.pair)}"
-                title="${escapeHtml(meta.hint)}">Add both ⇄</button>
-            </div>
-            <div class="preset-pair-body">
-              ${card(p)}
-              <span class="preset-pair-link" aria-hidden="true" title="Companion pipelines">⇄</span>
-              ${card(next)}
-            </div>
-            <p class="preset-pair-hint muted">${escapeHtml(meta.hint)}</p>
-          </div>`;
-        i++;
-      } else {
-        items += card(p);
-      }
-    }
-    return items || `<p class="muted fs-sm preset-menu-empty">No templates in this category.</p>`;
-  };
-
-  const searching = !!q;
-  let bodyHtml = "";
-  if (searching) {
-    for (const g of groups) {
-      const presets = byGroup.get(g) || [];
-      if (!presets.length) continue;
-      bodyHtml += `
-        <p class="preset-group-title">${escapeHtml(g)}</p>
-        <div class="preset-menu-items">${renderItems(presets)}</div>`;
-    }
-    if (!bodyHtml) {
-      bodyHtml = `<p class="muted fs-sm preset-menu-empty">No templates match “${escapeHtml(presetMenuFilter.trim())}”.</p>`;
-    }
-  } else {
-    const active = presetMenuGroup || groups[0];
-    const presets = byGroup.get(active) || [];
-    bodyHtml = `<div class="preset-menu-items">${renderItems(presets)}</div>`;
-  }
-
-  const catsHtml = groups
-    .map((g) => {
-      const n = (byGroup.get(g) || []).length;
-      const active = !searching && g === presetMenuGroup;
-      const dim = searching && n === 0;
-      return `<button type="button" class="preset-cat-btn${active ? " is-active" : ""}${dim ? " is-dim" : ""}"
-        data-preset-cat="${escapeHtml(g)}" ${searching ? "disabled" : ""}>
-        <span>${escapeHtml(g)}</span>
-        <span class="preset-cat-count">${n}</span>
-      </button>`;
-    })
-    .join("");
-
-  grid.innerHTML = `
-    <div class="preset-menu-toolbar">
-      <input type="search" class="preset-menu-search" id="preset-menu-search"
-        placeholder="Search templates…" value="${escapeHtml(presetMenuFilter)}"
-        autocomplete="off" spellcheck="false" aria-label="Search templates">
-    </div>
-    <div class="preset-menu-body">
-      <nav class="preset-cats" aria-label="Template categories">${catsHtml}</nav>
-      <div class="preset-menu-panel">${bodyHtml}</div>
-    </div>`;
-
-  const searchEl = grid.querySelector("#preset-menu-search");
-  if (searchEl instanceof HTMLInputElement) {
-    searchEl.addEventListener("input", () => {
-      presetMenuFilter = searchEl.value;
-      renderPresets();
-      const again = document.getElementById("preset-menu-search");
-      if (again instanceof HTMLInputElement) {
-        again.focus();
-        const len = again.value.length;
-        again.setSelectionRange(len, len);
-      }
-    });
-  }
-
-  grid.querySelectorAll("[data-preset-cat]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      presetMenuGroup = btn.getAttribute("data-preset-cat");
-      presetMenuFilter = "";
-      renderPresets();
-    });
-  });
-
-  grid.querySelectorAll("[data-preset]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.getAttribute("data-preset");
+  mountPresetMenu(document.getElementById("preset-gallery"), {
+    presets: PRESETS,
+    groups: listPresetGroups(),
+    label: 'Templates ▾',
+    align: "start",
+    triggerClassName: "btn btn-ghost btn-compact toolkit-presets-summary",
+    onLoad: (id) => {
       const preset = PRESETS.find((p) => p.id === id);
       if (!preset) return;
       const hasContent =
@@ -4016,31 +3941,20 @@ function renderPresets() {
       queueMicrotask(() => {
         fragmentWriteLock = false;
       });
-      document.getElementById("preset-gallery")?.removeAttribute("open");
       scrollFocusedCellIntoView();
-    });
-  });
-  grid.querySelectorAll("[data-preset-append]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const id = btn.getAttribute("data-preset-append");
+    },
+    onAppend: (id) => {
       const preset = PRESETS.find((p) => p.id === id);
       if (!preset) return;
       lastPresetId = null;
       appendPresetAsCells(preset);
-      document.getElementById("preset-gallery")?.removeAttribute("open");
       scrollFocusedCellIntoView();
-    });
-  });
-  grid.querySelectorAll("[data-preset-pair]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const pairId = btn.getAttribute("data-preset-pair") || "";
+    },
+    onAddBoth: (pairId) => {
       const pair = resolvePresetPair(pairId);
       if (!pair) return;
       lastPresetId = null;
       const st = appendPresetPairAsCells(pair.forward, pair.reverse);
-      document.getElementById("preset-gallery")?.removeAttribute("open");
       scrollFocusedCellIntoView();
       const status = document.getElementById("run-status");
       if (status && st) {
@@ -4049,7 +3963,7 @@ function renderPresets() {
         status.textContent = meta.toast;
         status.classList.remove("hidden");
       }
-    });
+    },
   });
 }
 
@@ -4338,13 +4252,17 @@ function suggestedNextSteps(from, opts = {}) {
 /**
  * Expand a toolbox in the ops accordion (from suggest-next squares).
  * @param {string} tb
+ * @param {{ shelf?: string }} [opts]  optional shelf id within the toolbox (e.g. "keys")
  */
-function openOpsToolbox(tb) {
+function openOpsToolbox(tb, opts = {}) {
   if (!tb || !TOOLBOX_META[tb]) return;
   // Collapse every toolbox except the chosen one; leave drawers closed.
   opsCollapsed = new Set(
     Object.keys(TOOLBOX_META).filter((k) => k !== tb)
   );
+  if (opts.shelf) {
+    opsShelfExpanded.add(`${tb}:${opts.shelf}`);
+  }
   const ws = document.getElementById("chef-workspace");
   if (ws?.classList.contains("ops-collapsed")) {
     ws.classList.remove("ops-collapsed");
@@ -4352,212 +4270,51 @@ function openOpsToolbox(tb) {
   }
   renderOpsDrawer();
   requestAnimationFrame(() => {
-    document
-      .querySelector(`.ops-category[data-toolbox="${CSS.escape(tb)}"]`)
-      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  });
-}
-
-/**
- * One suggest-next chip button.
- * @param {import("../lib/toolkit/registry.js").StepSpec} s
- * @param {import("../lib/toolkit/types.js").RefinedType} from
- * @param {{ primary?: boolean, index?: number, showToolbox?: boolean }} [opts]
- * @returns {string}
- */
-function suggestNextChipHtml(s, from, opts = {}) {
-  const decode =
-    s.name === "blip39" && from.base === "shares" && from.kind === "mnemonic";
-  const params = { ...defaultParams(s), ...(decode ? { decode: true } : {}) };
-  const resolved = resolveStepType(s, from, params);
-  const outLabel =
-    resolved.ok && resolved.output.base !== "none"
-      ? formatType(resolved.output)
-      : s.output || "";
-  const primary = opts.primary ? " suggest-chip-primary" : "";
-  const label = stepDisplayName(s, { decode }) || s.name;
-  const blocked = stepBlockedByFips(s.name);
-  // Inside a toolbox pull-out the toolbox is already known — skip the badge.
-  const showToolbox = opts.showToolbox === true;
-  return `
-    <button type="button" class="suggest-chip${primary}${blocked ? " suggest-chip-fips-blocked" : ""}" role="listitem"
-      data-suggest-op="${escapeHtml(s.name)}"
-      data-suggest-decode="${decode ? "1" : "0"}"
-      draggable="${blocked ? "false" : "true"}"
-      ${blocked ? 'aria-disabled="true"' : ""}
-      title="${escapeHtml(blocked ? `FIPS mode: blocked — ${s.toolbox} unverified` : s.doc)}">
-      ${showToolbox ? toolboxBadgeHtml(s.toolbox) : ""}
-      ${suiteChipHtml(s.toolbox)}
-      <span class="suggest-chip-name">${escapeHtml(label)}</span>
-      ${
-        outLabel
-          ? `<span class="suggest-chip-out muted">→ ${escapeHtml(outLabel)}</span>`
-          : ""
-      }
-    </button>`;
-}
-
-/**
- * Catalog map for suggest toolbox tiles (shared by cell + nest rails).
- * @returns {Map<string, import("../lib/toolkit/registry.js").StepSpec[]>}
- */
-function suggestByToolboxMap() {
-  /** @type {Map<string, import("../lib/toolkit/registry.js").StepSpec[]>} */
-  const byToolbox = new Map();
-  for (const s of listSteps()) {
-    if (
-      s.kind === "flow" &&
-      s.name !== "foreach" &&
-      s.name !== "tee" &&
-      s.name !== "in" &&
-      s.name !== "as"
-    ) {
-      continue;
-    }
-    const tb = s.toolbox || "io";
-    const list = byToolbox.get(tb) || [];
-    list.push(s);
-    byToolbox.set(tb, list);
-  }
-  return byToolbox;
-}
-
-/**
- * Suggest toolbox rail + pull-out menus (chips live in the pull-out, not a flat strip).
- * @param {import("../lib/toolkit/registry.js").StepSpec[]} next
- * @param {import("../lib/toolkit/types.js").RefinedType} from
- * @param {Map<string, import("../lib/toolkit/registry.js").StepSpec[]>} byToolbox
- * @param {Set<string>} tipFit
- * @param {number} primaryCount
- * @param {{ scope?: "cell" | "nest", stem?: number, branch?: number | null }} [ctx]
- * @returns {string}
- */
-function suggestToolboxMenusHtml(
-  next,
-  from,
-  byToolbox,
-  tipFit,
-  primaryCount,
-  ctx = {}
-) {
-  const scope = ctx.scope || "cell";
-  const stem = ctx.stem;
-  const branch = ctx.branch;
-  /** @type {Map<string, { spec: import("../lib/toolkit/registry.js").StepSpec, index: number }[]>} */
-  const nextByTb = new Map();
-  next.forEach((s, index) => {
-    const tb = s.toolbox || "io";
-    const list = nextByTb.get(tb) || [];
-    list.push({ spec: s, index });
-    nextByTb.set(tb, list);
-  });
-
-  const keys = Object.keys(TOOLBOX_META).sort(
-    (a, b) => (TOOLBOX_META[a]?.order ?? 9) - (TOOLBOX_META[b]?.order ?? 9)
-  );
-  if (
-    suggestPullout &&
-    suggestPullout.scope === scope &&
-    !keys.includes(suggestPullout.tb)
-  ) {
-    suggestPullout = null;
-  }
-
-  const pulloutOpen = (tb) =>
-    !!(
-      suggestPullout &&
-      suggestPullout.scope === scope &&
-      suggestPullout.tb === tb &&
-      (scope === "cell" ||
-        (suggestPullout.stem === stem &&
-          (suggestPullout.branch ?? null) === (branch ?? null)))
-    );
-
-  const scopeAttrs =
-    scope === "nest"
-      ? `data-suggest-scope="nest" data-suggest-stem="${stem}"${
-          branch != null ? ` data-suggest-branch="${branch}"` : ""
-        }`
-      : `data-suggest-scope="cell"`;
-
-  const tiles = keys
-    .map((tb) => {
-      const meta = TOOLBOX_META[tb] || { label: tb, glyph: "gear", badge: tb };
-      const catalog = byToolbox.get(tb) || [];
-      const picks = nextByTb.get(tb) || [];
-      const fit = picks.length > 0 || catalog.some((s) => tipFit.has(s.name));
-      const open = pulloutOpen(tb);
-      const tipNote = picks.length
-        ? ` — ${picks.length} quick pick${picks.length === 1 ? "" : "s"}`
-        : fit
-          ? " — tip fits; browse in Toolkit"
-          : catalog.length
-            ? " — no quick picks for tip"
-            : " — empty";
-      return opsDrillTileHtml({
-        glyph: meta.glyph || "gear",
-        label: meta.badge || meta.label || tb,
-        count: picks.length || undefined,
-        fit: picks.length > 0,
-        enabled: catalog.length > 0,
-        muted: !fit,
-        title: `${meta.label || tb}${tipNote}`,
-        attrs: `${scopeAttrs} data-suggest-pullout="${escapeHtml(tb)}" aria-expanded="${
-          open ? "true" : "false"
-        }" aria-label="${escapeHtml(
-          (meta.label || tb) + tipNote
-        )}${open ? " (open)" : ""}"`,
-      });
-    })
-    .join("");
-
-  let pullout = "";
-  const openTb =
-    suggestPullout &&
-    suggestPullout.scope === scope &&
-    (scope === "cell" ||
-      (suggestPullout.stem === stem &&
-        (suggestPullout.branch ?? null) === (branch ?? null)))
-      ? suggestPullout.tb
+    const shelfSel = opts.shelf
+      ? `.ops-shelf[data-shelf="${CSS.escape(opts.shelf)}"]`
       : null;
-  if (openTb) {
-    const tb = openTb;
-    const meta = TOOLBOX_META[tb] || { label: tb };
-    const picks = nextByTb.get(tb) || [];
-    const chips = picks.length
-      ? picks
-          .map(({ spec, index }) =>
-            suggestNextChipHtml(spec, from, {
-              primary: index < primaryCount,
-            })
-          )
-          .join("")
-      : `<p class="muted fs-xs mb-0">No quick picks for this tip — try Toolkit ▸</p>`;
-    pullout = `
-      <div class="suggest-pullout" role="region"
-        aria-label="${escapeHtml(meta.label || tb)} suggestions">
-        <div class="suggest-pullout-head">
-          <p class="suggest-pullout-title mb-0">${escapeHtml(meta.label || tb)}</p>
-          <button type="button" class="btn btn-ghost btn-compact" data-suggest-open-ops="${escapeHtml(tb)}"
-            title="Open this toolbox in Toolkit">Toolkit ▸</button>
-          <button type="button" class="btn btn-ghost btn-compact" data-suggest-pullout-close
-            aria-label="Close menu">✕</button>
-        </div>
-        <div class="suggest-next-chips suggest-pullout-chips" role="list">
-          ${chips}
-        </div>
-      </div>`;
-  }
+    const target =
+      (shelfSel &&
+        document.querySelector(
+          `.ops-category[data-toolbox="${CSS.escape(tb)}"] ${shelfSel}`
+        )) ||
+      document.querySelector(`.ops-category[data-toolbox="${CSS.escape(tb)}"]`);
+    target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+}
 
-  return `
-    <div class="suggest-toolbox-wrap" ${scopeAttrs}>
-      <div class="suggest-toolbox-rail" role="list">
-        <span class="suggest-next-plus" aria-hidden="true" title="Add step">+</span>
-        <span class="sr-only">Add step</span>
-        <div class="ops-icon-grid ops-drill-grid suggest-toolbox-tiles">${tiles}</div>
-      </div>
-      ${pullout}
-    </div>`;
+/**
+ * Tip-fit nest rail items for RecipeChipFlow SuggestRail.
+ * @param {number} stem
+ * @param {number | null} [branch]
+ * @returns {{ op: import("../lib/toolkit/registry.js").StepSpec, decode?: boolean, label?: string }[]}
+ */
+function nestRailItemsFor(stem, branch = null) {
+  const parent = steps[stem];
+  if (!parent || (parent.name !== "tee" && parent.name !== "foreach")) return [];
+  const focus = {
+    stem,
+    body: /** @type {null} */ (null),
+    ...(branch != null ? { branch } : {}),
+  };
+  const from = pipelineOutputAtFocus(focus);
+  const lastBody =
+    branch != null
+      ? parent.branches?.[branch]?.body || []
+      : parent.body || [];
+  const last = lastBody[lastBody.length - 1];
+  const terminal = !!(last && (isTerminalSink(last.name) || last.name === "inspect"));
+  let next = suggestedNextSteps(from, { terminal, hasForeach: true });
+  next = next.filter((s) => s.name !== "tee" && s.name !== "foreach");
+  return next.map((s) => {
+    const decode =
+      s.name === "blip39" && from.base === "shares" && from.kind === "mnemonic";
+    return {
+      op: s,
+      decode,
+      label: stepDisplayName(s, decode ? { decode: true } : {}) || s.name,
+    };
+  });
 }
 
 /**
@@ -4588,28 +4345,10 @@ function nestSuggestRailHtml(stem, branch = null, opts = {}) {
   const br = branch != null ? parent.branches?.[branch] : null;
   const targetLabel =
     branch != null
-      ? br?.selector || (br?.member ? `.${br.member}` : "branch")
+      ? br?.selector || (br?.member ? `:${br.member}` : "branch")
       : parent.name === "foreach"
         ? "foreach body"
         : "tee body";
-
-  let next = suggestedNextSteps(from, { terminal, hasForeach: true });
-  // Nested tee/foreach rejected in v1 — keep the nest linear.
-  next = next.filter((s) => s.name !== "tee" && s.name !== "foreach");
-  const tipFit = new Set(next.map((s) => s.name));
-  for (const s of stepsAccepting(from)) {
-    if (s.name !== "tee" && s.name !== "foreach") tipFit.add(s.name);
-  }
-  const byToolbox = suggestByToolboxMap();
-  const primaryCount = from.base === "shares" ? 2 : 3;
-  const toolbox = suggestToolboxMenusHtml(
-    next,
-    from,
-    byToolbox,
-    tipFit,
-    primaryCount,
-    { scope: "nest", stem, branch }
-  );
 
   if (inline) {
     const expanded =
@@ -4638,28 +4377,119 @@ function nestSuggestRailHtml(stem, branch = null, opts = {}) {
       ${
         expanded
           ? `<div class="suggest-nest-popout" role="region"
-              aria-label="Add step to ${escapeHtml(targetLabel)}">${toolbox}</div>`
+              aria-label="Add step to ${escapeHtml(targetLabel)}"
+              data-suggest-rail-host data-nest-stem="${stem}"${
+                branch != null ? ` data-nest-branch="${branch}"` : ""
+              }></div>`
           : ""
       }
     </div>`;
   }
 
-  // Same soft strip as the cell-level suggest drawer.
+  // Same soft strip as the cell-level suggest drawer — React island host.
   return `
     <div class="suggest-next suggest-next-cell suggest-next-soft${
       terminal ? " suggest-next-optional" : ""
     }" data-nest-suggest="${stem}" aria-label="Add step to ${escapeHtml(targetLabel)}">
-      ${toolbox}
+      <div data-suggest-rail-host data-nest-stem="${stem}"${
+        branch != null ? ` data-nest-branch="${branch}"` : ""
+      }></div>
     </div>`;
 }
 
 /**
- * Wire suggest toolbox pull-outs + chips inside a host (cell or nest).
+ * Mount SuggestRail islands for Cards nest rails (after HTML render).
+ * @param {ParentNode} host
+ */
+function mountNestSuggestRails(host) {
+  host.querySelectorAll("[data-suggest-rail-host]").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    const stem = Number(el.getAttribute("data-nest-stem"));
+    if (!Number.isFinite(stem)) return;
+    const branchAttr = el.getAttribute("data-nest-branch");
+    const branch = branchAttr != null ? Number(branchAttr) : null;
+    const parent = steps[stem];
+    if (!parent || (parent.name !== "tee" && parent.name !== "foreach")) {
+      mountSuggestRail(el, null);
+      return;
+    }
+    const focus = {
+      stem,
+      body: /** @type {null} */ (null),
+      ...(branch != null ? { branch } : {}),
+    };
+    const from = pipelineOutputAtFocus(focus);
+    const lastBody =
+      branch != null
+        ? parent.branches?.[branch]?.body || []
+        : parent.body || [];
+    const last = lastBody[lastBody.length - 1];
+    const terminal = !!(
+      last &&
+      (isTerminalSink(last.name) || last.name === "inspect")
+    );
+    let next = suggestedNextSteps(from, { terminal, hasForeach: true });
+    next = next.filter((s) => s.name !== "tee" && s.name !== "foreach");
+    const tipFit = new Set(next.map((s) => s.name));
+    for (const s of stepsAccepting(from)) {
+      if (s.name !== "tee" && s.name !== "foreach") tipFit.add(s.name);
+    }
+    const byToolbox = suggestByToolboxMap();
+    const primaryCount = from.base === "shares" ? 2 : 3;
+    const rail = suggestRailToolboxProps(
+      next,
+      from,
+      byToolbox,
+      tipFit,
+      primaryCount,
+      { scope: "nest", stem, branch }
+    );
+    mountSuggestRail(el, {
+      scope: "nest",
+      toolboxes: rail.toolboxes,
+      activeToolbox: rail.activeToolbox,
+      pulloutChips: rail.pulloutChips,
+      onAppend: (name, opts) => {
+        insertFocus =
+          branch != null
+            ? { stem, branch, body: null }
+            : { stem, body: null };
+        nestSuggestExpanded = null;
+        suggestPullout = null;
+        addStepAt(name, undefined, opts?.decode ? { decode: true } : undefined);
+      },
+      onToolboxClick: (tb) => {
+        const catalog = byToolbox.get(tb) || [];
+        if (!catalog.length) return;
+        insertFocus =
+          branch != null
+            ? { stem, branch, body: null }
+            : { stem, body: null };
+        const same =
+          suggestPullout &&
+          suggestPullout.scope === "nest" &&
+          suggestPullout.tb === tb &&
+          suggestPullout.stem === stem &&
+          (suggestPullout.branch ?? null) === branch;
+        suggestPullout = same
+          ? null
+          : { scope: "nest", tb, stem, branch };
+        renderNotebook();
+      },
+      onClosePullout: () => {
+        suggestPullout = null;
+        renderNotebook();
+      },
+      onOpenOps: (tb) => openOpsToolbox(tb),
+    });
+  });
+}
+
+/**
+ * Wire nest expand buttons + leftover HTML suggest hosts (React rails handle their own clicks).
  * @param {ParentNode} host
  */
 function wireSuggestMenus(host) {
-  const byToolbox = suggestByToolboxMap();
-
   host.querySelectorAll("[data-nest-expand]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const stem = Number(btn.getAttribute("data-nest-expand"));
@@ -4682,7 +4512,12 @@ function wireSuggestMenus(host) {
     });
   });
 
+  // Legacy HTML pull-outs (if any remain outside React islands).
+  const byToolbox = suggestByToolboxMap();
   host.querySelectorAll("[data-suggest-pullout]").forEach((btn) => {
+    if (btn.closest("[data-suggest-rail-host]") || btn.closest("#suggest-next")) {
+      return;
+    }
     btn.addEventListener("click", () => {
       const tb = btn.getAttribute("data-suggest-pullout") || "";
       const scope =
@@ -4720,6 +4555,9 @@ function wireSuggestMenus(host) {
   });
 
   host.querySelectorAll("[data-suggest-pullout-close]").forEach((btn) => {
+    if (btn.closest("[data-suggest-rail-host]") || btn.closest("#suggest-next")) {
+      return;
+    }
     btn.addEventListener("click", () => {
       suggestPullout = null;
       if (btn.closest("[data-nest-suggest]")) renderNotebook();
@@ -4728,12 +4566,16 @@ function wireSuggestMenus(host) {
   });
 
   host.querySelectorAll("[data-suggest-open-ops]").forEach((btn) => {
+    if (btn.closest("[data-suggest-rail-host]") || btn.closest("#suggest-next")) {
+      return;
+    }
     btn.addEventListener("click", () => {
       openOpsToolbox(btn.getAttribute("data-suggest-open-ops") || "");
     });
   });
 
   host.querySelectorAll("[data-suggest-compose]").forEach((el) => {
+    if (el.closest("#suggest-next")) return;
     el.addEventListener("click", () => {
       const kind = el.getAttribute("data-suggest-compose") || "";
       applyCompositionChip(kind);
@@ -4741,6 +4583,9 @@ function wireSuggestMenus(host) {
   });
 
   host.querySelectorAll("[data-suggest-op]").forEach((el) => {
+    if (el.closest("[data-suggest-rail-host]") || el.closest("#suggest-next")) {
+      return;
+    }
     const name = el.getAttribute("data-suggest-op") || "";
     const decode = el.getAttribute("data-suggest-decode") === "1";
     const overrides = decode ? { decode: true } : undefined;
@@ -4784,6 +4629,182 @@ function wireSuggestMenus(host) {
 }
 
 /**
+ * Build toolbox tiles + pull-out chips for SuggestRail (cell / nest).
+ * @param {import("../lib/toolkit/registry.js").StepSpec[]} next
+ * @param {import("../lib/toolkit/types.js").RefinedType} from
+ * @param {Map<string, import("../lib/toolkit/registry.js").StepSpec[]>} byToolbox
+ * @param {Set<string>} tipFit
+ * @param {number} primaryCount
+ * @param {{ scope?: "cell" | "nest", stem?: number, branch?: number | null }} [ctx]
+ */
+function suggestRailToolboxProps(next, from, byToolbox, tipFit, primaryCount, ctx = {}) {
+  const scope = ctx.scope || "cell";
+  const stem = ctx.stem;
+  const branch = ctx.branch;
+  /** @type {Map<string, { spec: import("../lib/toolkit/registry.js").StepSpec, index: number }[]>} */
+  const nextByTb = new Map();
+  next.forEach((s, index) => {
+    const tb = s.toolbox || "io";
+    const list = nextByTb.get(tb) || [];
+    list.push({ spec: s, index });
+    nextByTb.set(tb, list);
+  });
+
+  const keys = Object.keys(TOOLBOX_META).sort(
+    (a, b) => (TOOLBOX_META[a]?.order ?? 9) - (TOOLBOX_META[b]?.order ?? 9)
+  );
+  if (
+    suggestPullout &&
+    suggestPullout.scope === scope &&
+    !keys.includes(suggestPullout.tb)
+  ) {
+    suggestPullout = null;
+  }
+
+  const pulloutOpen = (tb) =>
+    !!(
+      suggestPullout &&
+      suggestPullout.scope === scope &&
+      suggestPullout.tb === tb &&
+      (scope === "cell" ||
+        (suggestPullout.stem === stem &&
+          (suggestPullout.branch ?? null) === (branch ?? null)))
+    );
+
+  const toolboxes = keys.map((tb) => {
+    const meta = TOOLBOX_META[tb] || { label: tb, glyph: "gear", badge: tb };
+    const catalog = byToolbox.get(tb) || [];
+    const picks = nextByTb.get(tb) || [];
+    const fit = picks.length > 0 || catalog.some((s) => tipFit.has(s.name));
+    const tipNote = picks.length
+      ? ` — ${picks.length} quick pick${picks.length === 1 ? "" : "s"}`
+      : fit
+        ? " — tip fits; browse in Toolkit"
+        : catalog.length
+          ? " — no quick picks for tip"
+          : " — empty";
+    return {
+      id: tb,
+      label: meta.label || tb,
+      badge: meta.badge || meta.label || tb,
+      glyph: meta.glyph || "gear",
+      count: picks.length || undefined,
+      fit: picks.length > 0,
+      muted: !fit,
+      enabled: catalog.length > 0,
+      title: `${meta.label || tb}${tipNote}`,
+    };
+  });
+
+  const openTb =
+    suggestPullout &&
+    suggestPullout.scope === scope &&
+    (scope === "cell" ||
+      (suggestPullout.stem === stem &&
+        (suggestPullout.branch ?? null) === (branch ?? null)))
+      ? suggestPullout.tb
+      : null;
+
+  const pulloutChips = openTb
+    ? (nextByTb.get(openTb) || []).map(({ spec, index }) => {
+        const decode =
+          spec.name === "blip39" &&
+          from.base === "shares" &&
+          from.kind === "mnemonic";
+        const params = {
+          ...defaultParams(spec),
+          ...(decode ? { decode: true } : {}),
+        };
+        const resolved = resolveStepType(spec, from, params);
+        const outLabel =
+          resolved.ok && resolved.output.base !== "none"
+            ? formatType(resolved.output)
+            : spec.output || "";
+        return {
+          op: spec,
+          decode,
+          label: stepDisplayName(spec, { decode }) || spec.name,
+          hint: outLabel || undefined,
+          primary: index < primaryCount,
+          blocked: stepBlockedByFips(spec.name),
+        };
+      })
+    : [];
+
+  return { toolboxes, activeToolbox: openTb, pulloutChips, scope };
+}
+
+/**
+ * Compose chip descriptors for SuggestRail (cell drawer).
+ * Includes warn/error “need” chips when the focused cell has unmet runtime inputs.
+ * @param {import("../lib/toolkit/types.js").RefinedType} from
+ * @returns {{ id: string, label: string, primary?: boolean, tone?: "default"|"warn"|"error", title?: string }[]}
+ */
+function compositionSuggestChips(from) {
+  /** @type {{ id: string, label: string, primary?: boolean, tone?: "default"|"warn"|"error", title?: string }[]} */
+  const chips = [];
+  /** @type {Set<string>} */
+  const seen = new Set();
+  const push = (id, label, opts = {}) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    chips.push({ id, label, ...opts });
+  };
+
+  const unmet = cellUnmetNeeds(chains[focusedCell] || { steps });
+  if (unmet.includes("needs key")) {
+    push("missing-key", "missing key", {
+      tone: "warn",
+      primary: true,
+      title: "Open WebCrypto → Keys (genkey / import) to supply a key upstream",
+    });
+  }
+  if (unmet.includes("needs recipients")) {
+    push("missing-recipients", "missing recipients", {
+      tone: "warn",
+      title: "Open OpenPGP / HKP tools, or use the recipients binder",
+    });
+  }
+  if (unmet.includes("needs input")) {
+    push("missing-input", "missing input", {
+      tone: "warn",
+      title: "Add an input source (input / random / genkey) or paste message text",
+    });
+  }
+  if (unmet.includes("needs ciphertext")) {
+    push("missing-ciphertext", "missing ciphertext", {
+      tone: "warn",
+      title: "Paste OpenPGP ciphertext in the decrypt panel, or add a ciphertext source",
+    });
+  }
+
+  if (from && steps.length) {
+    if (from.base === "recipients") {
+      push("encrypt-to", "Encrypt message to this set", { primary: true });
+    }
+    if (from.base === "openpgp-key" && from.which === "private") {
+      push("sign-with", "Sign with this key", { primary: true });
+    }
+  }
+
+  for (const m of kernel.listSlots()) {
+    const kind = slotMetaKind(m);
+    if (kind === "recipients") {
+      push(
+        `encrypt-to:${m.label}`,
+        `Encrypt to @${m.label}${m.recipients != null ? ` (${m.recipients})` : ""}`,
+        { primary: !chips.some((c) => !c.tone || c.tone === "default") }
+      );
+    } else if (kind === "openpgp-private") {
+      push(`sign-with:${m.label}`, `Sign with @${m.label}`, {
+        primary: !chips.some((c) => !c.tone || c.tone === "default"),
+      });
+    }
+  }
+  return chips;
+}
+
+/**
  * Contextual next-block drawer under the focused cell’s pipeline.
  * Nest/branch continuation uses the soft + rails inside tee/foreach nests.
  */
@@ -4794,25 +4815,29 @@ function renderSuggestDrawer() {
   // When building inside a nest, the nest + rail owns suggestions.
   if (isNestInsertFocus(insertFocus)) {
     host.hidden = true;
-    host.innerHTML = "";
+    mountSuggestRail(host, null);
     host.classList.remove("suggest-next-soft", "suggest-next-optional");
     if (suggestPullout?.scope === "cell") suggestPullout = null;
     return;
   }
 
-  const from = walkPipelineTypes(steps, { getStep }).final;
+  const from = walkPipelineTypes(
+    steps,
+    { getStep },
+    slotTypesBeforeCell(focusedCell)
+  ).final;
   const last = steps[steps.length - 1];
   const terminal = !!(last && (isTerminalSink(last.name) || last.name === "inspect"));
   const hasForeach = steps.some((s) => s.name === "foreach");
   const next = suggestedNextSteps(from, { hasForeach, terminal });
-  const composeChips = compositionSuggestChipsHtml(from);
+  const composeChips = compositionSuggestChips(from);
   const tipFit = new Set(next.map((s) => s.name));
   for (const s of stepsAccepting(from)) tipFit.add(s.name);
   const byToolbox = suggestByToolboxMap();
 
-  if (!next.length && !composeChips && !byToolbox.size) {
+  if (!next.length && !composeChips.length && !byToolbox.size) {
     host.hidden = true;
-    host.innerHTML = "";
+    mountSuggestRail(host, null);
     host.classList.remove("suggest-next-soft", "suggest-next-optional");
     if (suggestPullout?.scope === "cell") suggestPullout = null;
     return;
@@ -4821,69 +4846,47 @@ function renderSuggestDrawer() {
   const primaryCount = !steps.length ? 3 : from.base === "shares" ? 2 : 3;
   host.classList.toggle("suggest-next-optional", terminal && !!steps.length);
   host.classList.toggle("suggest-next-soft", true);
-
   host.hidden = false;
-  host.innerHTML = `
-    ${suggestToolboxMenusHtml(next, from, byToolbox, tipFit, primaryCount, {
-      scope: "cell",
-    })}
-    ${composeChips}`;
 
-  wireSuggestMenus(host);
+  const rail = suggestRailToolboxProps(
+    next,
+    from,
+    byToolbox,
+    tipFit,
+    primaryCount,
+    { scope: "cell" }
+  );
+
+  mountSuggestRail(host, {
+    scope: "cell",
+    toolboxes: rail.toolboxes,
+    activeToolbox: rail.activeToolbox,
+    pulloutChips: rail.pulloutChips,
+    composeChips,
+    onAppend: (name, opts) => {
+      addStepAt(name, undefined, opts?.decode ? { decode: true } : undefined);
+    },
+    onToolboxClick: (tb) => {
+      const catalog = byToolbox.get(tb) || [];
+      if (!catalog.length) return;
+      const same =
+        suggestPullout &&
+        suggestPullout.scope === "cell" &&
+        suggestPullout.tb === tb;
+      suggestPullout = same ? null : { scope: "cell", tb };
+      renderSuggestDrawer();
+    },
+    onClosePullout: () => {
+      suggestPullout = null;
+      renderSuggestDrawer();
+    },
+    onOpenOps: (tb) => openOpsToolbox(tb),
+    onCompose: (id) => applyCompositionChip(id),
+  });
 }
 
 /**
- * Tip-type + kernel-slot composition chips (new cells that consume @slots).
- * @param {import("../lib/toolkit/types.js").RefinedType} from
- * @returns {string}
- */
-function compositionSuggestChipsHtml(from) {
-  /** @type {string[]} */
-  const chips = [];
-  /** @type {Set<string>} */
-  const seen = new Set();
-
-  const push = (id, label, primary = false) => {
-    if (seen.has(id)) return;
-    seen.add(id);
-    chips.push(`
-      <button type="button" class="suggest-chip suggest-chip-compose${primary ? " suggest-chip-primary" : ""}"
-        data-suggest-compose="${escapeHtml(id)}">
-        <span class="suggest-chip-name">${escapeHtml(label)}</span>
-      </button>`);
-  };
-
-  if (from && steps.length) {
-    if (from.base === "recipients") {
-      push("encrypt-to", "Encrypt message to this set", true);
-    }
-    if (from.base === "openpgp-key" && from.which === "private") {
-      push("sign-with", "Sign with this key", true);
-    }
-  }
-
-  for (const m of kernel.listSlots()) {
-    const kind = slotMetaKind(m);
-    if (kind === "recipients") {
-      push(
-        `encrypt-to:${m.label}`,
-        `Encrypt to @${m.label}${m.recipients != null ? ` (${m.recipients})` : ""}`,
-        !chips.length
-      );
-    } else if (kind === "openpgp-private") {
-      push(`sign-with:${m.label}`, `Sign with @${m.label}`, !chips.length);
-    }
-  }
-
-  if (!chips.length) return "";
-  return `<div class="suggest-next-chips suggest-compose-chips mb-sm" role="list">
-    <span class="suggest-compose-label muted fs-xs">Compose</span>
-    ${chips.join("")}
-  </div>`;
-}
-
-/**
- * @param {string} kind  encrypt-to | encrypt-to:label | sign-with | sign-with:label
+ * @param {string} kind  encrypt-to | encrypt-to:label | sign-with | sign-with:label | missing-key | …
  */
 function applyCompositionChip(kind) {
   const raw = String(kind || "");
@@ -4891,6 +4894,32 @@ function applyCompositionChip(kind) {
   const base = colon >= 0 ? raw.slice(0, colon) : raw;
   const forcedLabel = colon >= 0 ? raw.slice(colon + 1).replace(/^@/, "") : "";
   const last = steps[steps.length - 1];
+
+  if (base === "missing-key") {
+    opsFilter = "genkey";
+    const filterEl = document.getElementById("ops-filter");
+    if (filterEl instanceof HTMLInputElement) filterEl.value = "genkey";
+    openOpsToolbox("webcrypto", { shelf: "keys" });
+    return;
+  }
+  if (base === "missing-recipients") {
+    opsFilter = "hkp";
+    const filterEl = document.getElementById("ops-filter");
+    if (filterEl instanceof HTMLInputElement) filterEl.value = "hkp";
+    openOpsToolbox("hkp");
+    return;
+  }
+  if (base === "missing-input") {
+    opsFilter = "input";
+    const filterEl = document.getElementById("ops-filter");
+    if (filterEl instanceof HTMLInputElement) filterEl.value = "input";
+    openOpsToolbox("io");
+    return;
+  }
+  if (base === "missing-ciphertext") {
+    openOpsToolbox("openpgp");
+    return;
+  }
 
   if (base === "encrypt-to") {
     let label = forcedLabel || "alices";
@@ -5005,7 +5034,12 @@ function opsItemHtml(s, suggested, opts = {}) {
     ? s.effectiveIo({ ...defaultParams(s), ...(decode ? { decode: true } : {}) })
     : { input: s.input, output: s.output };
   const ioLabel = `${io.input} → ${io.output}`;
-  const nameLabel = stepDisplayName(s, { decode });
+  const recipeLabel = stepDisplayName(s, { decode });
+  const nameLabel =
+    pairTileLabel(s, {
+      decode,
+      pairRole: opts.pairRole || (decode ? "reverse" : "forward"),
+    }) || recipeLabel;
   const shortName = nameLabel;
   const blocked = stepBlockedByFips(s.name);
   const cellClass = opts.cellClass || "";
@@ -5021,7 +5055,7 @@ function opsItemHtml(s, suggested, opts = {}) {
       data-op-decode="${decode ? "1" : "0"}"
       data-dir="${escapeHtml(dir)}"${pairRole}
       ${blocked ? "aria-disabled=\"true\"" : ""}
-      aria-label="${escapeHtml(nameLabel)} — ${escapeHtml(ioLabel)}">
+      aria-label="${escapeHtml(nameLabel)} — ${escapeHtml(recipeLabel)} (${escapeHtml(ioLabel)})">
       ${glyphHtml(glyph, "ops-glyph ops-glyph-tile")}
       <span class="ops-item-name">${escapeHtml(shortName)}</span>
     </button>`;
@@ -5164,33 +5198,50 @@ function cipherKitHtml(suggested) {
 }
 
 /**
- * Key formats meta: Export | Import → pick jwk/pkcs8/… → concrete export/import card.
+ * Key formats kit: concrete PKCS#8 / SPKI / JWK / … picks (not bare export/import tiles).
+ * Tip implies Export vs Import when possible; otherwise Export|Import chooses direction.
+ * @param {import("../lib/toolkit/types.js").RefinedType} [tip]
  * @returns {string}
  */
-function formatKitHtml() {
+function formatKitHtml(tip) {
+  const implied = formatDirectionForTip(tip);
   const open = formatPickerState;
+  const direction = open?.direction || implied;
   const expOpen = open?.direction === "export";
   const impOpen = open?.direction === "import";
-  const panel = open
+  const showPicks = !!direction;
+  const panel = showPicks
     ? `
       <div class="ops-cipher-picker" role="listbox" aria-label="Choose key format">
-        <p class="muted fs-xs mb-xs"><code>${escapeHtml(open.direction)}</code> format</p>
+        <p class="muted fs-xs mb-xs"><code>${escapeHtml(direction)}</code> — pick a format tool</p>
         <div class="ops-icon-grid ops-kit-pick-grid">
         ${KEY_FORMAT_PICKS.map((fmt) => {
-          const short = fmt.length > 9 ? `${fmt.slice(0, 8)}…` : fmt;
+          const meta = KEY_FORMAT_META[fmt] || { label: fmt, title: fmt };
+          const fit =
+            direction === "export"
+              ? tip?.base === "keypair" || tip?.base === "key"
+              : tip?.base === "bytes" ||
+                tip?.base === "text" ||
+                tip?.base === "none" ||
+                !tip;
+          const short =
+            meta.label.length > 9 ? `${meta.label.slice(0, 8)}…` : meta.label;
           return `
-            <button type="button" class="ops-item ops-item-icon ops-cipher-pick"
+            <button type="button" class="ops-item ops-item-icon ops-cipher-pick${
+              fit ? " ops-item-fit" : " ops-item-dim"
+            }"
               data-format-pick="${escapeHtml(fmt)}"
               role="option"
-              aria-label="${escapeHtml(`${open.direction} ${fmt}`)}"
-              title="${escapeHtml(`${open.direction} ${fmt}`)}">
+              aria-label="${escapeHtml(`${direction} ${meta.label}`)}"
+              title="${escapeHtml(`${direction}: ${meta.title}`)}">
               ${glyphHtml("ports", "ops-glyph ops-glyph-tile")}
               <span class="ops-item-name">${escapeHtml(short)}</span>
             </button>`;
         }).join("")}
         </div>
       </div>`
-    : "";
+    : `
+      <p class="muted fs-xs mb-xs">Choose Export or Import, then a format (PKCS#8, SPKI, …).</p>`;
   return `
     <div class="ops-cipher-kit" data-format-kit>
       <p class="ops-pair-caption muted fs-xs">Key formats</p>
@@ -5198,16 +5249,16 @@ function formatKitHtml() {
         ${kitMetaTileHtml({
           glyph: "ports",
           shortName: "Export",
-          title: "Export key — choose format (jwk, pkcs8, …)",
-          attrs: `data-format-meta="export" aria-expanded="${expOpen ? "true" : "false"}"`,
-          open: !!expOpen,
+          title: "Export — choose PKCS#8, SPKI, JWK, raw, or scalar",
+          attrs: `data-format-meta="export" aria-expanded="${expOpen || (implied === "export" && !open) ? "true" : "false"}"`,
+          open: !!(expOpen || (implied === "export" && showPicks && !impOpen)),
         })}
         ${kitMetaTileHtml({
           glyph: "ports",
           shortName: "Import",
-          title: "Import key — choose format (jwk, pkcs8, …)",
-          attrs: `data-format-meta="import" aria-expanded="${impOpen ? "true" : "false"}"`,
-          open: !!impOpen,
+          title: "Import — choose PKCS#8, SPKI, JWK, raw, or scalar",
+          attrs: `data-format-meta="import" aria-expanded="${impOpen || (implied === "import" && !open) ? "true" : "false"}"`,
+          open: !!(impOpen || (implied === "import" && showPicks && !expOpen)),
         })}
       </div>
       ${panel}
@@ -5332,8 +5383,9 @@ function sortOpsItems(items) {
  * @returns {string}
  */
 function opsToolGridHtml(shelfItems, suggested) {
+  const visible = shelfItems.filter((s) => !s.kitOnly);
   return `<div class="ops-icon-grid" role="list">
-    ${listDrawerRows(shelfItems)
+    ${listDrawerRows(visible)
       .map((row) => opsDrawerRowHtml(row, suggested))
       .join("")}
   </div>`;
@@ -5383,29 +5435,25 @@ function listOpsShelfEntries(tb, items, suggested, q) {
     for (const shelf of shelves) {
       const shelfItems = byShelf.get(shelf) || [];
       const meta = getShelfMeta(shelf);
+      const visible = shelfItems.filter((s) => !s.kitOnly);
+      const fitCount =
+        shelf === "keys"
+          ? visible.filter((s) => suggested.has(s.name)).length +
+            (suggested.has("export") || suggested.has("import") ? 1 : 0)
+          : visible.filter((s) => suggested.has(s.name)).length;
       entries.push({
         id: shelf,
         label: meta.label,
         glyph: meta.glyph || "gear",
         kind: "shelf",
         items: shelfItems,
-        fitCount: shelfItems.filter((s) => suggested.has(s.name)).length,
+        fitCount,
       });
     }
   }
 
-  // Kits after shelves — pickers, not primary discovery
+  // Kits after shelves — cipher/HMAC stay drill tiles; Formats lives inside Keys.
   if (tb === "webcrypto") {
-    if (formatKitMatchesFilter(q)) {
-      entries.push({
-        id: "kit-formats",
-        label: "Formats",
-        glyph: "ports",
-        kind: "kit",
-        kit: "format",
-        fitCount: ["export", "import"].filter((n) => suggested.has(n)).length,
-      });
-    }
     if (cipherKitMatchesFilter(q)) {
       entries.push({
         id: "kit-cipher",
@@ -5437,11 +5485,16 @@ function listOpsShelfEntries(tb, items, suggested, q) {
  */
 function renderOpsShelfLeaf(entry, suggested) {
   if (entry.kind === "kit") {
-    if (entry.kit === "format") return formatKitHtml();
     if (entry.kit === "cipher") return cipherKitHtml(suggested);
     if (entry.kit === "mac") return macKitHtml();
   }
-  return opsToolGridHtml(entry.items || [], suggested);
+  const tip = currentPipelineOutput();
+  const grid = opsToolGridHtml(entry.items || [], suggested);
+  // Formats kit lives on Keys (kitOnly export/import are not shelf tiles).
+  if (entry.id === "keys" && formatKitMatchesFilter(opsFilter.trim().toLowerCase())) {
+    return `${formatKitHtml(tip)}${grid}`;
+  }
+  return grid;
 }
 
 /**
@@ -5469,7 +5522,7 @@ function seedTipPreferredShelves(from) {
   } else if (seed === "der") {
     opsCollapsed.delete("webcrypto");
     opsCollapsed.delete("flow");
-    opsShelfExpanded.add("webcrypto:kit-formats");
+    opsShelfExpanded.add("webcrypto:keys");
     opsShelfExpanded.add("flow:control");
   }
 }
@@ -5480,8 +5533,6 @@ function renderOpsDrawer() {
   if (!host) return;
   forceHideToolCard();
 
-  const q = opsFilter.trim().toLowerCase();
-  const filterActive = !!q;
   const from = currentPipelineOutput();
   seedTipPreferredShelves(from);
   const suggested = new Set(stepsAccepting(from).map((s) => s.name));
@@ -5492,26 +5543,6 @@ function renderOpsDrawer() {
       s.name === "tee" ||
       s.name === "in" ||
       s.name === "as"
-  );
-
-  /** @type {Map<string, typeof all>} */
-  const byToolbox = new Map();
-  for (const s of all) {
-    if (q) {
-      const shelfLabel = s.shelf ? getShelfMeta(s.shelf).label : "";
-      const hay =
-        `${s.name} ${s.label || ""} ${s.toolbox} ${s.shelf || ""} ${shelfLabel} ${s.kind} ${s.doc} ${(s.aliases || []).join(" ")}`.toLowerCase();
-      if (!hay.includes(q)) continue;
-    }
-    const tb = s.toolbox || "io";
-    const list = byToolbox.get(tb) || [];
-    list.push(s);
-    byToolbox.set(tb, list);
-  }
-
-  // Stable order — every toolbox stays in the accordion (empty when filtered out)
-  const toolboxes = Object.keys(TOOLBOX_META).sort(
-    (a, b) => (TOOLBOX_META[a]?.order ?? 9) - (TOOLBOX_META[b]?.order ?? 9)
   );
 
   if (hint) {
@@ -5549,134 +5580,30 @@ function renderOpsDrawer() {
     }
   }
 
-  if (filterActive && ![...byToolbox.values()].flat().length) {
-    host.innerHTML = `<p class="muted fs-sm">Nothing matches “${escapeHtml(opsFilter)}”.</p>`;
-    return;
-  }
-
-  /**
-   * @param {string} tb
-   * @param {typeof all} items
-   */
-  const accordionBody = (tb, items) => {
-    const entries = listOpsShelfEntries(tb, items, suggested, opsFilter.trim());
-    if (!entries.length) {
-      return `<p class="muted fs-xs mb-0">No ops in this toolbox${
-        filterActive ? " for the current search" : ""
-      }.</p>`;
-    }
-    return entries
-      .map((entry) => {
-        const key = `${tb}:${entry.id}`;
-        const collapsed = !filterActive && !opsShelfExpanded.has(key);
-        const count =
-          entry.kind === "kit"
-            ? entry.kit === "cipher"
-              ? listCipherPickerSteps().length
-              : entry.kit === "format"
-                ? KEY_FORMAT_PICKS.length
-                : 2
-            : listDrawerRows(entry.items || []).length;
-        const fit = (entry.fitCount || 0) > 0;
-        return `
-          <div class="ops-shelf${fit ? " ops-shelf-fit" : ""}" data-shelf="${escapeHtml(key)}">
-            <button type="button" class="ops-shelf-toggle${fit ? " ops-shelf-toggle-fit" : ""}"
-              data-toggle-shelf="${escapeHtml(key)}"
-              aria-expanded="${collapsed ? "false" : "true"}">
-              <span class="ops-shelf-label">${glyphHtml(entry.glyph, "ops-glyph ops-glyph-shelf")}<span>${escapeHtml(entry.label)}</span></span>
-              <span class="muted fs-xs">${count}${fit ? " · tip" : ""}</span>
-            </button>
-            <div class="ops-shelf-body ${collapsed ? "hidden" : ""}">
-              ${renderOpsShelfLeaf(entry, suggested)}
-            </div>
-          </div>`;
-      })
-      .join("");
-  };
-
-  host.innerHTML = `
-    <div class="ops-toolbox-strip mb-sm">
-      <p class="muted fs-xs mb-xs">Jump</p>
-      ${opsToolboxGridHtml(suggested, byToolbox)}
-    </div>
-    ${toolboxes
-      .map((tb) => {
-        const meta = TOOLBOX_META[tb] || { label: tb };
-        const items = byToolbox.get(tb) || [];
-        const collapsed = opsCollapsed.has(tb) && !filterActive;
-        const fit = items.some((s) => suggested.has(s.name));
-        const empty = !items.length && !filterActive;
-        return `
-        <div class="ops-category${fit ? " ops-category-fit" : ""}${empty ? " ops-category-empty" : ""}" data-toolbox="${escapeHtml(tb)}">
-          <button type="button" class="ops-category-toggle${fit ? " ops-category-toggle-fit" : ""}"
-            data-toggle-toolbox="${escapeHtml(tb)}"
-            aria-expanded="${collapsed ? "false" : "true"}"
-            title="${escapeHtml(meta.label || tb)}${empty ? " — empty" : fit ? " — tip fit" : ""}">
-            <span class="ops-category-mark" aria-hidden="true">
-              ${suiteChipHtml(tb)}
-              ${glyphHtml(meta.glyph, "ops-glyph ops-glyph-toolbox")}
-            </span>
-            <span class="ops-category-text">
-              <span class="ops-category-name">${escapeHtml(meta.label || tb)}</span>
-              <span class="ops-category-meta muted fs-xs">${items.length}${fit ? " · tip" : ""}</span>
-            </span>
-          </button>
-          <div class="ops-category-body ${collapsed ? "hidden" : ""}">
-            ${accordionBody(tb, items)}
-          </div>
-        </div>`;
-      })
-      .join("")}`;
-
-  host.querySelectorAll("[data-ops-open-toolbox]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      openOpsToolbox(btn.getAttribute("data-ops-open-toolbox") || "");
-    });
-  });
-
-  host.querySelectorAll("[data-toggle-toolbox]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const tb = btn.getAttribute("data-toggle-toolbox") || "";
-      if (opsCollapsed.has(tb)) opsCollapsed.delete(tb);
-      else opsCollapsed.add(tb);
+  // React OpsShelf island (shared with ToolkitShell / catalog).
+  mountOpsShelf(host, {
+    ops: all,
+    filter: opsFilter,
+    onFilter: (q) => {
+      opsFilter = q;
+      const el = document.getElementById("ops-filter");
+      if (el instanceof HTMLInputElement && el.value !== q) el.value = q;
       renderOpsDrawer();
-    });
-  });
-
-  host.querySelectorAll("[data-toggle-shelf]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const key = btn.getAttribute("data-toggle-shelf") || "";
-      if (opsShelfExpanded.has(key)) opsShelfExpanded.delete(key);
-      else opsShelfExpanded.add(key);
-      renderOpsDrawer();
-    });
-  });
-
-  host.querySelectorAll("[data-op]").forEach((el) => {
-    const name = el.getAttribute("data-op") || "";
-    const decode = el.getAttribute("data-op-decode") === "1";
-    const overrides = decode ? { decode: true } : undefined;
-    el.addEventListener("pointerenter", () => showToolCard(el, name, decode));
-    el.addEventListener("pointerleave", () => scheduleHideToolCard());
-    el.addEventListener("focus", () => showToolCard(el, name, decode));
-    el.addEventListener("blur", () => scheduleHideToolCard());
-    el.addEventListener("dragstart", (e) => {
-      forceHideToolCard();
-      if (stepBlockedByFips(name)) {
-        e.preventDefault();
-        return;
-      }
-      const dt = e.dataTransfer;
-      if (!dt) return;
-      dt.setData(STEP_MIME, name);
-      dt.setData("text/plain", name);
-      if (decode) dt.setData("application/x-basilisk-decode", "1");
-      dt.effectAllowed = "copy";
-      el.classList.add("ops-dragging");
-    });
-    el.addEventListener("dragend", () => el.classList.remove("ops-dragging"));
-    el.addEventListener("click", () => addStepAt(name, undefined, overrides));
+    },
+    onAppend: (name, opts) => {
+      const overrides = {
+        ...(opts?.params || {}),
+        ...(opts?.decode ? { decode: true } : {}),
+      };
+      addStepAt(
+        name,
+        undefined,
+        Object.keys(overrides).length ? overrides : undefined
+      );
+    },
+    tipFit: suggested,
+    tip: from,
+    hideSearch: true,
   });
 
   const cardHost = document.getElementById("ops-tool-card");
@@ -5695,11 +5622,8 @@ function renderOpsDrawer() {
     opsBody.dataset.toolCardScrollWired = "1";
     opsBody.addEventListener("scroll", () => hideToolCard(), { passive: true });
   }
-
-  wireCipherKit(host);
-  wireFormatKit(host);
-  wireMacKit(host);
 }
+
 
 /**
  * Encrypt/Decrypt meta chips → cipher subset → concrete addStepAt.
@@ -5762,7 +5686,11 @@ function wireFormatKit(host) {
     el.addEventListener("click", (e) => {
       e.stopPropagation();
       const fmt = el.getAttribute("data-format-pick") || "";
-      const direction = formatPickerState?.direction || "export";
+      const tip = currentPipelineOutput();
+      const direction =
+        formatPickerState?.direction ||
+        formatDirectionForTip(tip) ||
+        "export";
       try {
         const pick = instantiateFormatPick(direction, fmt);
         formatPickerState = null;
@@ -6476,16 +6404,10 @@ function applyCellRecipeText(cellIndex, source, opts = {}) {
 function cellRecipeSummaryHtml(cellSteps, cellIndex) {
   const stepsList = cellSteps || [];
   const raw = cellRecipeRawMode.has(cellIndex);
+  const showCards = cellShowBuilderCards.has(cellIndex);
   const source = cellRecipeSource(stepsList);
-  const modeToggle = `
-    <div class="cell-recipe-mode" role="group" aria-label="Recipe view">
-      <button type="button" class="cell-recipe-mode-btn${!raw ? " is-active" : ""}"
-        data-cell-recipe-view="preview" data-cell="${cellIndex}"
-        aria-pressed="${raw ? "false" : "true"}">Preview</button>
-      <button type="button" class="cell-recipe-mode-btn${raw ? " is-active" : ""}"
-        data-cell-recipe-view="raw" data-cell="${cellIndex}"
-        aria-pressed="${raw ? "true" : "false"}">Raw</button>
-    </div>`;
+  const modeValue = raw ? "raw" : showCards ? "cards" : "preview";
+  const modeToggle = `<div data-mode-toggle-host data-cell="${cellIndex}" data-mode-value="${modeValue}"></div>`;
 
   let body = "";
   if (raw) {
@@ -6497,134 +6419,66 @@ function cellRecipeSummaryHtml(cellSteps, cellIndex) {
         aria-label="Cell recipe text">${escapeHtml(source)}</textarea>
       <p class="cell-recipe-err status-row err hidden mt-xs mb-0" data-cell-recipe-err="${cellIndex}" hidden></p>
       <p class="muted fs-xs mb-0 mt-xs">Beautifies on paste and when you leave the field or switch to Preview.</p>`;
-  } else if (!stepsList.length) {
-    body = `
-      <p class="muted fs-sm mb-0 cell-recipe-empty">Empty cell — switch to <strong>Raw</strong> to type a recipe, or drop an op below.</p>`;
   } else {
-    const pipe = `<span class="builder-branch-pipe muted" aria-hidden="true">|</span>`;
-    const walked = walkPipelineTypes(stepsList, { getStep });
+    const walked = walkPipelineTypes(stepsList, { getStep }, slotTypesBeforeCell(cellIndex));
     const edges = walked.edges || [];
-    /**
-     * @param {*} edge
-     * @returns {string}
-     */
-    const edgeLabel = (edge) => {
-      if (!edge) return "";
-      if (edge.error) return edge.error;
-      const inn = friendlyTypeLabel(edge.input);
-      const out = edge.output ? friendlyTypeLabel(edge.output) : "∅";
-      return `${inn} → ${out}`;
-    };
-    /**
-     * @param {import("../lib/toolkit/recipe.js").RecipeStep} s
-     * @param {*} edge
-     * @param {{ leadingPipe?: boolean, previewFocus?: { stem: number, branch?: number|null } }} [opts]
-     */
-    const chip = (s, edge, opts = {}) =>
-      `${opts.leadingPipe ? pipe : ""}${builderIngredientChipHtml(s, {
-        typeEdge: edgeLabel(edge) || "— → —",
-        typeError: !!(edge && !edge.ok),
-        hoverCard: true,
-        previewFocus: opts.previewFocus,
-      })}`;
-    /**
-     * Chip row for a branch/body pipeline (no nest expand).
-     * @param {import("../lib/toolkit/recipe.js").RecipeStep[]} list
-     * @param {*[]} listEdges
-     * @param {{ stem: number, branch?: number|null }} [previewFocus]
-     */
-    const chipRow = (list, listEdges, previewFocus) =>
-      (list || [])
-        .map((s, i) =>
-          chip(s, listEdges?.[i], {
-            leadingPipe: i > 0,
-            previewFocus,
-          })
-        )
-        .join("");
-
-    /** @type {string[]} */
-    const flowParts = [];
-    /** @type {string[]} */
-    const rowBuf = [];
-    /** After an indented nest, next stem chip is prefixed with `|` (new row). */
-    let stemContinue = false;
-    const flushRow = () => {
-      if (!rowBuf.length) return;
-      flowParts.push(
-        `<div class="cell-recipe-flow-row suggest-next-chips" role="list">${rowBuf.join("")}</div>`
-      );
-      rowBuf.length = 0;
-    };
-
-    stepsList.forEach((s, i) => {
-      const nestEdge = edges[i];
-      const hasNest =
-        (s.name === "tee" || s.name === "foreach") &&
-        ((s.branches || []).length > 0 || (s.body || []).length > 0);
-
-      rowBuf.push(
-        chip(s, nestEdge, {
-          leadingPipe: stemContinue || rowBuf.length > 0,
-          previewFocus: hasNest ? { stem: i, branch: null } : undefined,
-        })
-      );
-      stemContinue = false;
-
-      if (!hasNest) return;
-
-      // Indented list form (canonical): `tee` / `foreach` then `- …` lines;
-      // stem continues on a following `| …` row — same as serializeRecipe.
-      // Preview is a read-only map — clicks jump to SIDE CHAINS / nest editor.
-      flushRow();
-
-      const branchMeta = nestEdge?.branches || [];
-      (s.branches || []).forEach((br, bi) => {
-        const rawSel = String(br.selector || br.member || "").trim();
-        const sel =
-          !rawSel
-            ? ".?"
-            : rawSel.startsWith(".") || rawSel.startsWith("[")
-              ? rawSel
-              : `.${rawSel}`;
-        const bodyEdges = branchMeta[bi]?.edges || [];
-        const nestFocus = { stem: i, branch: bi };
-        flowParts.push(`
-          <div class="cell-recipe-indent-line cell-recipe-indent-jump" role="listitem"
-            data-preview-nest="${i}" data-preview-branch="${bi}" data-cell="${cellIndex}"
-            tabindex="0" title="Edit this side chain in the builder">
-            <span class="cell-recipe-indent-dash" aria-hidden="true">-</span>
-            <span class="suggest-chip suggest-chip-primary builder-branch-selector">
-              <span class="suggest-chip-name">${escapeHtml(sel)}</span>
-            </span>
-            ${br.body?.length ? pipe : ""}
-            <div class="suggest-next-chips cell-recipe-indent-chips" role="list">
-              ${chipRow(br.body || [], bodyEdges, nestFocus)}
+    let inlineEdit = "";
+    if (chipEdit && chipEdit.cell === cellIndex) {
+      const selected = stepAtChipEdit(chipEdit);
+      if (selected) {
+        const nestEdge =
+          chipEdit.branch != null
+            ? edges[chipEdit.stem]?.branches?.[chipEdit.branch]?.edges?.[
+                chipEdit.body ?? -1
+              ]
+            : chipEdit.body != null
+              ? edges[chipEdit.stem]?.body?.[chipEdit.body]
+              : edges[chipEdit.stem];
+        const tip =
+          nestEdge && typeof nestEdge.input === "object" ? nestEdge.input : null;
+        void tip;
+        const spec = getStep(selected.name);
+        inlineEdit = `
+          <div class="cell-recipe-inline-edit" data-cell="${cellIndex}">
+            <div class="cell-recipe-inline-edit-head">
+              <strong class="cell-recipe-inline-edit-name">${escapeHtml(
+                stepDisplayName(spec, selected.params) || selected.name
+              )}</strong>
+              <span class="muted fs-xs">${escapeHtml(spec?.doc || "")}</span>
+              <div class="cell-recipe-inline-edit-actions">
+                <button type="button" class="btn btn-ghost btn-compact text-error"
+                  data-chip-remove="1" data-cell="${cellIndex}"
+                  data-edit-stem="${chipEdit.stem}"${
+                    chipEdit.branch != null
+                      ? ` data-edit-branch="${chipEdit.branch}"`
+                      : ""
+                  }${
+                    chipEdit.body != null
+                      ? ` data-edit-body="${chipEdit.body}"`
+                      : ""
+                  } title="Remove step" aria-label="Remove step">✕</button>
+                <button type="button" class="btn btn-ghost btn-compact" data-chip-done="${cellIndex}">Done</button>
+              </div>
             </div>
-          </div>`);
-      });
-      if ((s.body || []).length) {
-        const bodyEdges = nestEdge?.body || [];
-        const nestFocus = { stem: i, branch: null };
-        flowParts.push(`
-          <div class="cell-recipe-indent-line cell-recipe-indent-jump" role="listitem"
-            data-preview-nest="${i}" data-cell="${cellIndex}"
-            tabindex="0" title="Edit this nest in the builder">
-            <span class="cell-recipe-indent-dash" aria-hidden="true">-</span>
-            <div class="suggest-next-chips cell-recipe-indent-chips" role="list">
-              ${chipRow(s.body || [], bodyEdges, nestFocus)}
-            </div>
-          </div>`);
+            <div class="builder-params" data-param-fields-host
+              data-cell="${cellIndex}"
+              data-edit-stem="${chipEdit.stem}"${
+                chipEdit.branch != null ? ` data-edit-branch="${chipEdit.branch}"` : ""
+              }${
+                chipEdit.body != null ? ` data-edit-body="${chipEdit.body}"` : ""
+              }></div>
+          </div>`;
       }
-
-      stemContinue = true;
-    });
-    flushRow();
+    }
 
     body = `
-      <div class="cell-recipe-flow" role="group" aria-label="Recipe preview (read-only map)">
-        ${flowParts.join("")}
-      </div>`;
+      <div data-recipe-chip-flow data-cell="${cellIndex}"></div>
+      ${
+        !stepsList.length
+          ? `<p class="muted fs-sm mb-0 cell-recipe-empty">Empty cell — use <strong>+</strong>, Raw, or drop an op from the left shelf.</p>`
+          : ""
+      }
+      ${inlineEdit}`;
   }
 
   return `
@@ -6661,10 +6515,40 @@ function renderNotebook() {
     );
     if (anyPgp) {
       modeHost.classList.remove("hidden");
-      modeHost.innerHTML = renderPgpModeToggle("toolkit-pgp-mode-recipe", {
-        advancedLink: true,
+      const active =
+        toolkitEncryptPreset === "custom" ? "auto" : toolkitEncryptPreset;
+      modeHost.innerHTML = `
+        <div class="pgp-mode">
+          <fieldset class="pgp-mode-toggle">
+            <legend class="pgp-mode-legend">OpenPGP mode</legend>
+            <div data-pgp-mode-toggle></div>
+            ${
+              toolkitEncryptPreset === "custom"
+                ? `<span class="pgp-mode-custom" title="${escapeHtml(formatProfileSpec(toolkitEncryptProfile))}">Custom</span>`
+                : ""
+            }
+          </fieldset>
+          <p class="muted fs-xs pgp-mode-hint mb-0">${escapeHtml(toolkitPgpModeHint())}
+            <button type="button" class="text-link pgp-advanced-link" id="pgp-advanced-link">Advanced OpenPGP…</button>
+          </p>
+        </div>`;
+      mountModeToggle(modeHost.querySelector("[data-pgp-mode-toggle]"), {
+        value: active || "auto",
+        legacy: true,
+        ariaLabel: "OpenPGP mode",
+        className: "pgp-mode-options cell-recipe-mode",
+        options: [
+          { value: "auto", label: "Auto" },
+          { value: "modern", label: "Modern" },
+          { value: "compatible", label: "Compatible" },
+        ],
+        onChange: (v) => {
+          applyToolkitEncryptPreset(
+            /** @type {"auto"|"compatible"|"modern"} */ (v)
+          );
+          renderNotebook();
+        },
       });
-      wirePgpModeToggles(modeHost);
       modeHost.querySelector("#pgp-advanced-link")?.addEventListener("click", () => {
         openCryptoParamsPanel();
       });
@@ -6728,7 +6612,11 @@ function renderNotebook() {
         </header>
         <div class="notebook-cell-body ${collapsed ? "hidden" : ""}">
           ${cellRecipeSummaryHtml(chain.steps || [], i)}
-          <div class="builder-steps cell-builder builder-spine" id="cell-builder-${i}" data-cell="${i}"></div>
+          <div class="builder-steps cell-builder builder-spine${
+            !cellRecipeRawMode.has(i) && !cellShowBuilderCards.has(i)
+              ? " builder-spine-hidden"
+              : ""
+          }" id="cell-builder-${i}" data-cell="${i}"></div>
           <!-- Fallback hosts when a need has no matching step card yet -->
           <div class="cell-inputs cell-inputs-fallback" id="cell-inputs-${i}" data-cell="${i}" hidden></div>
           <div class="cell-bind cell-bind-fallback" id="cell-bind-${i}" data-cell="${i}"></div>
@@ -6793,40 +6681,287 @@ function renderNotebook() {
       void runNotebookFrom(Number(btn.getAttribute("data-run-from")));
     });
   });
-  host.querySelectorAll("[data-cell-recipe-view]").forEach((btn) => {
-    // Keep textarea focused when switching to Preview so blur doesn't race the click.
-    btn.addEventListener("mousedown", (e) => {
-      if (btn.getAttribute("data-cell-recipe-view") === "preview") e.preventDefault();
-    });
-    btn.addEventListener("click", () => {
-      const i = Number(btn.getAttribute("data-cell"));
-      const view = btn.getAttribute("data-cell-recipe-view");
-      if (!Number.isFinite(i)) return;
-      if (view === "raw") {
-        cellRecipeRawMode.add(i);
-        renderNotebook();
-        const ta = document.querySelector(`[data-cell-recipe-ta="${i}"]`);
-        if (ta instanceof HTMLTextAreaElement) {
-          ta.focus();
-          ta.setSelectionRange(ta.value.length, ta.value.length);
+  host.querySelectorAll("[data-mode-toggle-host]").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    const cell = Number(el.getAttribute("data-cell"));
+    if (!Number.isFinite(cell)) return;
+    const raw = cellRecipeRawMode.has(cell);
+    const showCards = cellShowBuilderCards.has(cell);
+    const value = raw ? "raw" : showCards ? "cards" : "preview";
+    mountModeToggle(el, {
+      value,
+      legacy: true,
+      ariaLabel: "Recipe view",
+      options: [
+        { value: "preview", label: "Preview" },
+        { value: "raw", label: "Raw" },
+        {
+          value: "cards",
+          label: "Cards",
+          title: "Show tall step cards under the chip flow",
+        },
+      ],
+      onChange: (view) => {
+        if (view === "raw") {
+          cellRecipeRawMode.add(cell);
+          if (chipEdit?.cell === cell) chipEdit = null;
+          renderNotebook();
+          const ta = document.querySelector(`[data-cell-recipe-ta="${cell}"]`);
+          if (ta instanceof HTMLTextAreaElement) {
+            ta.focus();
+            ta.setSelectionRange(ta.value.length, ta.value.length);
+          }
+          return;
         }
-        return;
-      }
-      const ta = document.querySelector(`[data-cell-recipe-ta="${i}"]`);
-      const source =
-        ta instanceof HTMLTextAreaElement
-          ? ta.value
-          : cellRecipeSource(chains[i]?.steps || []);
-      if (!applyCellRecipeText(i, source, { toPreview: true })) {
-        cellRecipeRawMode.add(i);
-        renderNotebook();
-      }
+        if (view === "cards") {
+          cellShowBuilderCards.add(cell);
+          cellRecipeRawMode.delete(cell);
+          const ta = document.querySelector(`[data-cell-recipe-ta="${cell}"]`);
+          const source =
+            ta instanceof HTMLTextAreaElement
+              ? ta.value
+              : cellRecipeSource(chains[cell]?.steps || []);
+          applyCellRecipeText(cell, source, { toPreview: true });
+          cellShowBuilderCards.add(cell);
+          renderNotebook();
+          return;
+        }
+        // preview
+        cellShowBuilderCards.delete(cell);
+        const ta = document.querySelector(`[data-cell-recipe-ta="${cell}"]`);
+        const source =
+          ta instanceof HTMLTextAreaElement
+            ? ta.value
+            : cellRecipeSource(chains[cell]?.steps || []);
+        if (!applyCellRecipeText(cell, source, { toPreview: true })) {
+          cellRecipeRawMode.add(cell);
+          renderNotebook();
+        }
+      },
     });
   });
+
+  host.querySelectorAll("[data-recipe-chip-flow]").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    const cell = Number(el.getAttribute("data-cell"));
+    if (!Number.isFinite(cell)) return;
+    const list = chains[cell]?.steps || [];
+    const showCards = cellShowBuilderCards.has(cell);
+    const walked = walkPipelineTypes(list, { getStep }, slotTypesBeforeCell(cell));
+    const edges = walked.edges || [];
+    /**
+     * @param {import("../lib/toolkit/recipe.js").RecipeStep} s
+     * @param {*} edge
+     * @param {*} prevEdge
+     */
+    const stepView = (s, edge, prevEdge) => {
+      const spec = getStep(s.name);
+      const t =
+        (prevEdge && prevEdge.ok && prevEdge.output) ||
+        (edge && edge.input) ||
+        null;
+      const ghostIn =
+        t && t.base !== "none" ? friendlyTypeLabel(t) : undefined;
+      return {
+        name: s.name,
+        label: stepDisplayName(spec, s.params) || s.name,
+        hint: chipHintForStep(s) || undefined,
+        op: spec || undefined,
+        error: !!(edge && !edge.ok),
+        ghostIn,
+      };
+    };
+    /** @type {import("../toolkit/widgets/RecipeChipFlow").ChipStemView[]} */
+    const stems = list.map((s, i) => {
+      const nestEdge = edges[i];
+      const hasNest =
+        (s.name === "tee" || s.name === "foreach") &&
+        ((s.branches || []).length > 0 || (s.body || []).length > 0);
+      const branchMeta = nestEdge?.branches || [];
+      return {
+        step: stepView(s, nestEdge, i > 0 ? edges[i - 1] : undefined),
+        hasNest,
+        branches: (s.branches || []).map((br, bi) => {
+          const rawSel = String(br.selector || br.member || "").trim();
+          const sel =
+            !rawSel
+              ? ":?"
+              : rawSel.startsWith(":") || rawSel.startsWith("[")
+                ? rawSel
+                : `:${rawSel}`;
+          const bodyEdges = branchMeta[bi]?.edges || [];
+          return {
+            selector: sel,
+            steps: (br.body || []).map((bs, bi2) =>
+              stepView(
+                bs,
+                bodyEdges[bi2],
+                bi2 > 0 ? bodyEdges[bi2 - 1] : undefined
+              )
+            ),
+          };
+        }),
+        body: (s.body || []).map((bs, bi) => {
+          const bodyEdges = nestEdge?.body || [];
+          return stepView(
+            bs,
+            bodyEdges[bi],
+            bi > 0 ? bodyEdges[bi - 1] : undefined
+          );
+        }),
+      };
+    });
+
+    /**
+     * Apply gap click focus (same as legacy [data-gap-insert]).
+     * @param {{ cell: number, stem: number, branch?: number|null, body?: number|null }} path
+     */
+    const applyGap = (path) => {
+      if (path.cell !== focusedCell) focusCell(path.cell);
+      chipEdit = null;
+      if (path.body != null || path.branch != null) {
+        const bodyAt = path.body != null ? path.body : 0;
+        insertFocus =
+          path.branch != null
+            ? { stem: path.stem, branch: path.branch, body: bodyAt - 1 }
+            : { stem: path.stem, body: bodyAt - 1 };
+        nestSuggestExpanded =
+          path.branch != null
+            ? { stem: path.stem, branch: path.branch }
+            : { stem: path.stem, branch: null };
+        pendingStemInsert = null;
+      } else {
+        pendingStemInsert = path.stem;
+        insertFocus = { stem: Math.max(0, path.stem - 1) };
+        nestSuggestExpanded = null;
+      }
+      renderNotebook();
+      renderSuggestDrawer();
+      renderOpsDrawer();
+    };
+
+    /**
+     * @param {{ cell: number, stem: number, branch?: number|null, body?: number|null }} path
+     * @param {string} name
+     * @param {{ decode?: boolean }} [opts]
+     */
+    const dropStep = (path, name, opts) => {
+      if (!getStep(name)) return;
+      if (path.cell !== focusedCell) focusCell(path.cell);
+      chipEdit = null;
+      const overrides = opts?.decode ? { decode: true } : undefined;
+      if (path.body != null) {
+        insertFocus =
+          path.branch != null
+            ? { stem: path.stem, branch: path.branch, body: path.body - 1 }
+            : { stem: path.stem, body: path.body - 1 };
+        pendingStemInsert = null;
+        addStepAt(name, undefined, overrides);
+      } else {
+        pendingStemInsert = null;
+        addStepAt(name, path.stem, overrides);
+      }
+    };
+
+    mountRecipeChipFlow(el, {
+      cell,
+      stems,
+      selected: chipEdit?.cell === cell ? chipEdit : null,
+      activeGap:
+        cell === focusedCell
+          ? pendingStemInsert != null
+            ? { cell, stem: pendingStemInsert }
+            : insertFocus && isNestInsertFocus(insertFocus) && insertFocus.body != null
+              ? {
+                  cell,
+                  stem: insertFocus.stem,
+                  branch: insertFocus.branch ?? null,
+                  body: (insertFocus.body ?? -1) + 1,
+                }
+              : null
+          : null,
+      showNestRails: !showCards,
+      nestExpanded: nestSuggestExpanded,
+      nestRailFor: (stem, branch) => nestRailItemsFor(stem, branch),
+      onSelect: (path) => {
+        if (path.cell !== focusedCell) focusCell(path.cell);
+        chipEdit = sameChipEdit(chipEdit, path) ? null : path;
+        pendingStemInsert = null;
+        renderNotebook();
+        renderSuggestDrawer();
+      },
+      onGap: applyGap,
+      onBranchHit: (stem, branch) => {
+        focusBuilderNestFromPreview(cell, stem, branch);
+      },
+      onNestToggle: (stem, branch) => {
+        const same =
+          nestSuggestExpanded &&
+          nestSuggestExpanded.stem === stem &&
+          (nestSuggestExpanded.branch ?? null) === branch;
+        nestSuggestExpanded = same ? null : { stem, branch };
+        if (same) suggestPullout = null;
+        else {
+          insertFocus =
+            branch != null
+              ? { stem, branch, body: null }
+              : { stem, body: null };
+        }
+        renderNotebook();
+      },
+      onNestAppend: (stem, branch, name, opts) => {
+        if (cell !== focusedCell) focusCell(cell);
+        insertFocus =
+          branch != null
+            ? { stem, branch, body: null }
+            : { stem, body: null };
+        addStepAt(name, undefined, opts?.decode ? { decode: true } : undefined);
+      },
+      onReorder: (from, to) => {
+        reorderChipPath(from, to);
+      },
+      onDropStep: dropStep,
+      onRemove: (path) => {
+        if (path.cell !== focusedCell) focusCell(path.cell);
+        const list = chains[path.cell]?.steps || steps;
+        if (path.branch != null && path.body != null) {
+          list[path.stem]?.branches?.[path.branch]?.body?.splice(path.body, 1);
+        } else if (path.body != null) {
+          list[path.stem]?.body?.splice(path.body, 1);
+        } else {
+          list.splice(path.stem, 1);
+        }
+        if (sameChipEdit(chipEdit, path)) chipEdit = null;
+        insertFocus = null;
+        setRecipeFromSteps();
+      },
+    });
+  });
+
+  host.querySelectorAll("[data-chip-tool-card]").forEach((el) => {
+    const name = el.getAttribute("data-chip-tool-card") || "";
+    const s = getStep(name);
+    if (s) mountToolCard(el, { op: s, compact: true, hideHint: true });
+  });
+
+  mountCardParamFieldHosts(host, focusedCell);
+
+  // Nest + rails: Preview uses RecipeChipFlow; Cards builder mounts SuggestRail islands.
+  mountNestSuggestRails(host);
+  wireSuggestMenus(host);
+  host.querySelectorAll(".cell-recipe-inline-edit").forEach((panel) => {
+    if (!(panel instanceof HTMLElement)) return;
+    wireEncryptToControls(panel);
+    wireBuilderParamEditors(panel);
+  });
+
   const jumpPreviewNest = (el) => {
     const jump =
-      el.closest("[data-preview-nest]") ||
-      (el.hasAttribute?.("data-preview-nest") ? el : null);
+      el.closest(".cell-recipe-branch-hit[data-preview-nest]") ||
+      (el.classList?.contains("cell-recipe-branch-hit") &&
+      el.hasAttribute?.("data-preview-nest")
+        ? el
+        : null);
     if (!(jump instanceof HTMLElement)) return;
     const cellIndex = Number(
       jump.getAttribute("data-cell") ||
@@ -6839,18 +6974,215 @@ function renderNotebook() {
       branchAttr != null && branchAttr !== "" ? Number(branchAttr) : null;
     focusBuilderNestFromPreview(cellIndex, stem, branch);
   };
-  host.querySelectorAll("[data-preview-nest]").forEach((el) => {
+  host.querySelectorAll(".cell-recipe-branch-hit[data-preview-nest]").forEach((el) => {
+    if (el.closest("[data-recipe-chip-flow]")) return;
     el.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       jumpPreviewNest(/** @type {HTMLElement} */ (el));
     });
-    el.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" && e.key !== " ") return;
+  });
+
+  host.querySelectorAll("[data-chip-edit]").forEach((btn) => {
+    if (!(btn instanceof HTMLElement)) return;
+    if (btn.closest("[data-recipe-chip-flow]")) return;
+    let suppressClick = false;
+    btn.addEventListener("dragstart", (e) => {
+      const path = chipPathFromEditEl(btn);
+      const dt = e.dataTransfer;
+      if (!path || !dt) {
+        e.preventDefault();
+        return;
+      }
+      suppressClick = true;
+      dt.effectAllowed = "move";
+      const payload = JSON.stringify(path);
+      dt.setData(CHIP_REORDER_MIME, payload);
+      // Stem chips also speak the builder reorder mime (tall Cards dropzones).
+      if (path.body == null) {
+        dt.setData(REORDER_MIME, String(path.stem));
+      }
+      // text/plain fallback for browsers picky about custom MIME types
+      dt.setData("text/plain", `basilisk-chip:${payload}`);
+      btn.classList.add("dragging");
+      document.body.classList.add("chip-reorder-dragging");
+    });
+    btn.addEventListener("dragend", () => {
+      btn.classList.remove("dragging");
+      document.body.classList.remove("chip-reorder-dragging");
+      setTimeout(() => {
+        suppressClick = false;
+      }, 40);
+    });
+    btn.addEventListener("click", (e) => {
       e.preventDefault();
-      jumpPreviewNest(/** @type {HTMLElement} */ (el));
+      e.stopPropagation();
+      if (suppressClick) {
+        suppressClick = false;
+        return;
+      }
+      const path = chipPathFromEditEl(btn);
+      if (!path) return;
+      if (path.cell !== focusedCell) focusCell(path.cell);
+      chipEdit = sameChipEdit(chipEdit, path) ? null : path;
+      pendingStemInsert = null;
+      renderNotebook();
+      renderSuggestDrawer();
     });
   });
+
+  host.querySelectorAll("[data-chip-done]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-chip-done"));
+      if (chipEdit?.cell === i) chipEdit = null;
+      renderNotebook();
+    });
+  });
+
+  host.querySelectorAll("[data-chip-remove]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const cell = Number(btn.getAttribute("data-cell"));
+      const stem = Number(btn.getAttribute("data-edit-stem"));
+      const branchAttr = btn.getAttribute("data-edit-branch");
+      const bodyAttr = btn.getAttribute("data-edit-body");
+      if (!Number.isFinite(cell) || !Number.isFinite(stem)) return;
+      if (cell !== focusedCell) focusCell(cell);
+      const list = chains[cell]?.steps || steps;
+      if (branchAttr != null && bodyAttr != null) {
+        list[stem]?.branches?.[Number(branchAttr)]?.body?.splice(Number(bodyAttr), 1);
+      } else if (bodyAttr != null) {
+        list[stem]?.body?.splice(Number(bodyAttr), 1);
+      } else {
+        list.splice(stem, 1);
+      }
+      chipEdit = null;
+      insertFocus = null;
+      setRecipeFromSteps();
+    });
+  });
+
+  host.querySelectorAll("[data-gap-insert]").forEach((btn) => {
+    if (!(btn instanceof HTMLElement)) return;
+    if (btn.closest("[data-recipe-chip-flow]")) return;
+    btn.addEventListener("dragover", (e) => {
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      const types = Array.from(dt.types || []);
+      const chipDrag = document.body.classList.contains("chip-reorder-dragging");
+      if (
+        !chipDrag &&
+        !types.includes(CHIP_REORDER_MIME) &&
+        !types.includes(REORDER_MIME) &&
+        !types.includes(STEP_MIME)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      dt.dropEffect =
+        chipDrag || types.includes(CHIP_REORDER_MIME) || types.includes(REORDER_MIME)
+          ? "move"
+          : "copy";
+      host
+        .querySelectorAll(".cell-recipe-gap-drop-active")
+        .forEach((z) => z.classList.remove("cell-recipe-gap-drop-active"));
+      btn.classList.add("cell-recipe-gap-drop-active");
+    });
+    btn.addEventListener("dragleave", () => {
+      btn.classList.remove("cell-recipe-gap-drop-active");
+    });
+    btn.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      btn.classList.remove("cell-recipe-gap-drop-active");
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      const to = chipPathFromGapEl(btn);
+      if (!to) return;
+
+      const chipRaw = dt.getData(CHIP_REORDER_MIME);
+      const plain = dt.getData("text/plain") || "";
+      const plainChip = plain.startsWith("basilisk-chip:")
+        ? plain.slice("basilisk-chip:".length)
+        : "";
+      const raw = chipRaw || plainChip;
+      if (raw) {
+        try {
+          const from = JSON.parse(raw);
+          if (from && typeof from === "object") {
+            reorderChipPath(from, to);
+            return;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const reorderRaw = dt.getData(REORDER_MIME);
+      if (reorderRaw !== "" && to.body == null) {
+        reorderChipPath(
+          { cell: to.cell, stem: Number(reorderRaw) },
+          to
+        );
+        return;
+      }
+
+      const parsed = parseStepMime(
+        dt.getData(STEP_MIME) || dt.getData("text/plain")
+      );
+      if (parsed?.name && getStep(parsed.name)) {
+        if (to.cell !== focusedCell) focusCell(to.cell);
+        chipEdit = null;
+        const decode =
+          parsed.decode ||
+          dt.getData("application/x-basilisk-decode") === "1";
+        const overrides = decode ? { decode: true } : undefined;
+        if (to.body != null) {
+          insertFocus =
+            to.branch != null
+              ? { stem: to.stem, branch: to.branch, body: to.body - 1 }
+              : { stem: to.stem, body: to.body - 1 };
+          pendingStemInsert = null;
+          addStepAt(parsed.name, undefined, overrides);
+        } else {
+          pendingStemInsert = null;
+          addStepAt(parsed.name, to.stem, overrides);
+        }
+      }
+    });
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const cell = Number(btn.getAttribute("data-cell"));
+      const stem = Number(btn.getAttribute("data-gap-stem"));
+      const branchAttr = btn.getAttribute("data-gap-branch");
+      const bodyAttr = btn.getAttribute("data-gap-body");
+      if (!Number.isFinite(cell) || !Number.isFinite(stem)) return;
+      if (cell !== focusedCell) focusCell(cell);
+      chipEdit = null;
+      if (branchAttr != null || bodyAttr != null) {
+        const branch =
+          branchAttr != null && branchAttr !== "" ? Number(branchAttr) : null;
+        const bodyAt = bodyAttr != null ? Number(bodyAttr) : 0;
+        // addStepAt nest path inserts at body+1; bodyAt is the splice index.
+        insertFocus =
+          branch != null
+            ? { stem, branch, body: bodyAt - 1 }
+            : { stem, body: bodyAt - 1 };
+        nestSuggestExpanded =
+          branch != null ? { stem, branch } : { stem, branch: null };
+        pendingStemInsert = null;
+      } else {
+        pendingStemInsert = stem;
+        insertFocus = { stem: Math.max(0, stem - 1) };
+        nestSuggestExpanded = null;
+      }
+      renderNotebook();
+      renderSuggestDrawer();
+      renderOpsDrawer();
+    });
+  });
+
   host.querySelectorAll("[data-cell-recipe-ta]").forEach((el) => {
     if (!(el instanceof HTMLTextAreaElement)) return;
     const i = Number(el.getAttribute("data-cell-recipe-ta"));
@@ -7068,51 +7400,76 @@ function recipeChipDocstringHtml(step, typeEdge = "") {
 }
 
 /**
+ * Compact chip hint (out name, format, etc.).
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
+ * @returns {string}
+ */
+function chipHintForStep(step) {
+  if (step.name === "out") return String(step.params?.name || "output");
+  if (step.name === "export" && step.params?.format) return String(step.params.format);
+  if (step.name === "text") {
+    return String(step.params?.label || step.params?.name || "");
+  }
+  if (
+    step.name === "inspect" &&
+    step.params?.format &&
+    step.params.format !== "auto"
+  ) {
+    return String(step.params.format);
+  }
+  return "";
+}
+
+/**
  * Compact ingredient chip for a nested branch step (matches suggest-next look).
  * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
- * @param {{ typeEdge?: string, typeError?: boolean, hoverCard?: boolean }} [opts]
+ * @param {{
+ *   typeEdge?: string,
+ *   typeError?: boolean,
+ *   hoverCard?: boolean,
+ *   previewFocus?: { stem: number, branch?: number|null },
+ *   editPath?: { cell: number, stem: number, branch?: number|null, body?: number|null },
+ *   selected?: boolean,
+ * }} [opts]
  * @returns {string}
  */
 function builderIngredientChipHtml(step, opts = {}) {
   const spec = getStep(step.name);
   const label = stepDisplayName(spec, step.params) || step.name;
-  let hint = "";
-  if (step.name === "out") {
-    hint = String(step.params?.name || "output");
-  } else if (step.name === "export" && step.params?.format) {
-    hint = String(step.params.format);
-  } else if (step.name === "text") {
-    hint = String(step.params?.label || step.params?.name || "");
-  } else if (
-    step.name === "inspect" &&
-    step.params?.format &&
-    step.params.format !== "auto"
-  ) {
-    hint = String(step.params.format);
-  }
+  const hint = chipHintForStep(step);
   const typeEdge = opts.typeEdge || "";
   const hoverCard = !!opts.hoverCard;
-  const pf = opts.previewFocus;
+  const ep = opts.editPath;
+  const selected = !!opts.selected;
+  const editAttrs = ep
+    ? ` type="button" draggable="true" data-chip-edit="1" data-cell="${ep.cell}" data-edit-stem="${ep.stem}"${
+        ep.branch != null ? ` data-edit-branch="${ep.branch}"` : ""
+      }${
+        ep.body != null ? ` data-edit-body="${ep.body}"` : ""
+      } aria-pressed="${selected ? "true" : "false"}" title="Drag to reorder · click to edit"`
+    : "";
+  const pf = !ep ? opts.previewFocus : null;
   const previewAttrs =
     pf && Number.isFinite(pf.stem)
       ? ` data-preview-nest="${pf.stem}"${
           pf.branch != null ? ` data-preview-branch="${pf.branch}"` : ""
-        } tabindex="0" title="Edit in builder nest"`
+        } tabindex="0" title="Edit nest"`
       : "";
   const pop = hoverCard
     ? `<span class="cell-recipe-chip-pop${
         opts.typeError ? " cell-recipe-chip-pop-error" : ""
-      }" role="tooltip">
-        ${recipeChipDocstringHtml(step, typeEdge)}
-      </span>`
+      }" role="tooltip" data-chip-tool-card="${escapeHtml(step.name)}"${
+        /* decode twin not used on placed chips */ ""
+      }></span>`
     : "";
+  const tag = ep ? "button" : "span";
   return `
-    <span class="suggest-chip builder-ingredient-chip${
+    <${tag} class="suggest-chip builder-ingredient-chip${
       hoverCard ? " builder-ingredient-chip-hot" : ""
     }${opts.typeError ? " builder-ingredient-chip-error" : ""}${
       pf ? " builder-ingredient-chip-jump" : ""
-    }" role="listitem"${previewAttrs}
-      ${hoverCard || pf ? "" : `title="${escapeHtml(spec?.doc || step.name)}"`}>
+    }${selected ? " is-selected" : ""}${ep ? " builder-ingredient-chip-edit" : ""}" role="listitem"${editAttrs}${previewAttrs}
+      ${hoverCard || pf || ep ? "" : `title="${escapeHtml(spec?.doc || step.name)}"`}>
       ${toolboxBadgeHtml(spec?.toolbox, { glyphOnly: true })}
       <span class="suggest-chip-name">${escapeHtml(label)}</span>
       ${
@@ -7121,7 +7478,7 @@ function builderIngredientChipHtml(step, opts = {}) {
           : ""
       }
       ${pop}
-    </span>`;
+    </${tag}>`;
 }
 
 /**
@@ -7134,7 +7491,7 @@ function builderIngredientChipHtml(step, opts = {}) {
  * @returns {string}
  */
 function builderTeeBranchHtml(br, stem, branchIndex, opts = {}) {
-  const sel = br.selector || (br.member ? `.${br.member}` : "·");
+  const sel = br.selector || (br.member ? `:${br.member}` : "·");
   const body = br.body || [];
   const bodyEdges = opts.bodyEdges || [];
   // Summary rows (no stem) get per-chip type/param hover cards.
@@ -7156,7 +7513,18 @@ function builderTeeBranchHtml(br, stem, branchIndex, opts = {}) {
           }
           return `${
             i
-              ? `<span class="builder-branch-pipe muted" aria-hidden="true">|</span>`
+              ? `<span class="builder-branch-pipe muted" aria-hidden="true">|</span>${(() => {
+                  const prev = bodyEdges[i - 1];
+                  const t =
+                    (prev && prev.ok && prev.output) ||
+                    (edge && edge.input) ||
+                    null;
+                  if (!t || t.base === "none") return "";
+                  const label = friendlyTypeLabel(t);
+                  return `<span class="builder-type-ghost${
+                    edge && !edge.ok ? " builder-type-ghost-error" : ""
+                  }" aria-hidden="true" title="Piped type">${escapeHtml(label)}</span><span class="builder-branch-pipe muted" aria-hidden="true">|</span>`;
+                })()}`
               : ""
           }${builderIngredientChipHtml(
             s,
@@ -7188,6 +7556,237 @@ function builderTeeBranchHtml(br, stem, branchIndex, opts = {}) {
  * @param {HTMLElement} host
  * @param {number} cellIndex
  */
+/**
+ * Param field markup shared by tall cards (special controls) and legacy HTML.
+ * @param {import("../lib/toolkit/recipe.js").RecipeStep} step
+ * @param {{ step?: number, stem?: number, body?: number|null, branch?: number|null }} path
+ * @param {*} tip
+ * @param {{ specialsOnly?: boolean, skipSpecials?: boolean }} [opts]
+ * @returns {string}
+ */
+function builderParamFieldsHtml(step, path, tip, opts = {}) {
+  syncWhichWithFormat(step);
+  const spec = getStep(step.name);
+  const nest =
+    path.stem != null
+      ? {
+          parentStem: path.stem,
+          bodyIndex: path.body,
+          branch: path.branch,
+        }
+      : {};
+  const i = path.step ?? path.stem ?? 0;
+  const isSpecial = (pName) =>
+    (step.name === "gpg.encrypt" && pName === "to") ||
+    ((step.name === "hkp.search" || step.name === "hkp.get") &&
+      pName === "keyserver");
+  return (spec?.params || [])
+    .map((p) => {
+      if (opts.specialsOnly && !isSpecial(p.name)) return "";
+      if (opts.skipSpecials && isSpecial(p.name)) return "";
+      const vis = paramVisibility(step.name, p, step.params || {}, tip);
+      if (!vis.show) return "";
+      const val =
+        vis.forced != null
+          ? vis.forced
+          : step.params[p.name] ?? p.default ?? "";
+      const title = p.doc ? ` title="${escapeHtml(p.doc)}"` : "";
+      let dataAttrs;
+      if (path.stem != null && path.branch != null) {
+        dataAttrs = `data-stem="${path.stem}" data-branch="${path.branch}" data-body="${path.body}" data-param="${escapeHtml(p.name)}"`;
+      } else if (path.stem != null) {
+        dataAttrs = `data-stem="${path.stem}" data-body="${path.body}" data-param="${escapeHtml(p.name)}"`;
+      } else {
+        dataAttrs = `data-step="${path.step}" data-param="${escapeHtml(p.name)}"`;
+      }
+      if (p.type === "bool") {
+        if (opts.specialsOnly) return "";
+        const checked = val === true || val === "true";
+        return `<label class="builder-param builder-param-bool"${title}>
+            <input type="checkbox" ${dataAttrs}
+              ${checked ? "checked" : ""}>
+            <span class="builder-param-name">${escapeHtml(p.name)}</span>${
+              p.flag
+                ? `<span class="builder-param-flag">${escapeHtml(p.flag)}</span>`
+                : ""
+            }</label>`;
+      }
+      if (p.type === "enum") {
+        if (opts.specialsOnly) return "";
+        const locked = !!vis.locked;
+        return `<label class="builder-param"${title}>
+            <span class="builder-param-name"><span>${escapeHtml(p.name)}</span>${
+              locked
+                ? `<span class="muted fs-xs builder-param-lock-tag">locked by format</span>`
+                : ""
+            }</span>
+            <select ${dataAttrs} class="text-input"
+              ${locked ? "disabled" : ""}>
+              ${(p.enum || [])
+                .map(
+                  (e) =>
+                    `<option value="${escapeHtml(e)}" ${String(val) === e ? "selected" : ""}>${escapeHtml(e)}</option>`
+                )
+                .join("")}
+            </select></label>`;
+      }
+      if (step.name === "gpg.encrypt" && p.name === "to") {
+        return encryptToParamHtml(step, val, dataAttrs, nest, i);
+      }
+      if (
+        (step.name === "hkp.search" || step.name === "hkp.get") &&
+        p.name === "keyserver"
+      ) {
+        const select = keyserverSelectFromOptionsHtml({
+          options: keyserverOptionsCache,
+          selected: String(val ?? ""),
+          dataAttrs,
+        });
+        return `<label class="builder-param"${title}>
+            <span class="builder-param-name">${escapeHtml(p.name)}</span>
+            ${select}</label>`;
+      }
+      if (opts.specialsOnly) return "";
+      return `<label class="builder-param"${title}>
+          <span class="builder-param-name">${escapeHtml(p.name)}</span>
+          <input class="text-input" type="${p.type === "int" ? "number" : "text"}" ${dataAttrs}
+            value="${escapeHtml(String(val ?? ""))}"></label>`;
+    })
+    .join("");
+}
+
+/**
+ * Mount ParamField islands on tall Cards (and any host with data-param-fields-host).
+ * @param {ParentNode} host
+ * @param {number} cellIndex
+ */
+function mountCardParamFieldHosts(host, cellIndex) {
+  host.querySelectorAll("[data-param-fields-host]").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    const cell = Number(el.getAttribute("data-cell") ?? cellIndex);
+    const stem = Number(el.getAttribute("data-edit-stem"));
+    const branchAttr = el.getAttribute("data-edit-branch");
+    const bodyAttr = el.getAttribute("data-edit-body");
+    if (!Number.isFinite(stem)) return;
+    /** @type {{ cell: number, stem: number, branch?: number|null, body?: number|null }} */
+    const editPath = { cell, stem };
+    if (branchAttr != null && branchAttr !== "") editPath.branch = Number(branchAttr);
+    if (bodyAttr != null && bodyAttr !== "") editPath.body = Number(bodyAttr);
+    const step = stepAtChipEdit(editPath);
+    if (!step) return;
+    const spec = getStep(step.name);
+    if (!spec) return;
+    const walked = walkPipelineTypes(
+      chains[cell]?.steps || [],
+      { getStep },
+      slotTypesBeforeCell(cell)
+    );
+    const edges = walked.edges || [];
+    const nestEdge =
+      editPath.branch != null
+        ? edges[editPath.stem]?.branches?.[editPath.branch]?.edges?.[
+            editPath.body ?? -1
+          ]
+        : editPath.body != null
+          ? edges[editPath.stem]?.body?.[editPath.body]
+          : edges[editPath.stem];
+    const tip =
+      nestEdge && typeof nestEdge.input === "object" ? nestEdge.input : null;
+    const skipSpecials = el.hasAttribute("data-card-params");
+    const params = (spec.params || []).filter((p) => {
+      if (!skipSpecials) return true;
+      if (step.name === "gpg.encrypt" && p.name === "to") return false;
+      if (
+        (step.name === "hkp.search" || step.name === "hkp.get") &&
+        p.name === "keyserver"
+      ) {
+        return false;
+      }
+      return true;
+    });
+    mountParamFields(el, {
+      params,
+      values: step.params || {},
+      visibilityFor: (p) =>
+        paramVisibility(step.name, p, step.params || {}, tip),
+      onChange: (name, value) => {
+        step.params[name] = value;
+        if (name === "format") syncWhichWithFormat(step);
+        setRecipeFromSteps();
+      },
+    });
+  });
+}
+
+/**
+ * Wire param/vault controls on a host (builder spine or Preview inline edit).
+ * @param {ParentNode} host
+ */
+function wireBuilderParamEditors(host) {
+  host.querySelectorAll("[data-vault-fpr]").forEach((el) => {
+    el.addEventListener("change", () => {
+      if (!(el instanceof HTMLSelectElement) || !el.value) return;
+      const stemAttr = el.getAttribute("data-stem");
+      /** @type {import("../lib/toolkit/recipe.js").RecipeStep|undefined} */
+      let target;
+      if (stemAttr != null) {
+        const stem = Number(stemAttr);
+        const body = Number(el.getAttribute("data-body"));
+        const branchAttr = el.getAttribute("data-branch");
+        if (branchAttr != null && branchAttr !== "") {
+          target = steps[stem]?.branches?.[Number(branchAttr)]?.body?.[body];
+        } else {
+          target = steps[stem]?.body?.[body];
+        }
+      } else {
+        const i = Number(el.getAttribute("data-step"));
+        target = steps[i];
+      }
+      if (!target) return;
+      target.params.fpr = el.value;
+      setRecipeFromSteps();
+      validateAndBind();
+    });
+  });
+
+  host.querySelectorAll("[data-param]").forEach((el) => {
+    el.addEventListener("change", () => {
+      const name = el.getAttribute("data-param");
+      if (!name) return;
+      const stemAttr = el.getAttribute("data-stem");
+      /** @type {import("../lib/toolkit/recipe.js").RecipeStep|undefined} */
+      let target;
+      if (stemAttr != null) {
+        const stem = Number(stemAttr);
+        const body = Number(el.getAttribute("data-body"));
+        const branchAttr = el.getAttribute("data-branch");
+        if (branchAttr != null && branchAttr !== "") {
+          target = steps[stem]?.branches?.[Number(branchAttr)]?.body?.[body];
+        } else {
+          target = steps[stem]?.body?.[body];
+        }
+      } else {
+        const i = Number(el.getAttribute("data-step"));
+        target = steps[i];
+      }
+      if (!target) return;
+      const spec = getStep(target.name);
+      const p = (spec?.params || []).find((x) => x.name === name);
+      if (el instanceof HTMLInputElement && el.type === "checkbox") {
+        target.params[name] = el.checked;
+      } else {
+        const v =
+          el instanceof HTMLInputElement || el instanceof HTMLSelectElement
+            ? el.value
+            : "";
+        target.params[name] = p?.type === "int" ? Number(v) : v;
+      }
+      if (name === "format") syncWhichWithFormat(target);
+      setRecipeFromSteps();
+    });
+  });
+}
+
 function renderBuilderInto(host, cellIndex) {
   if (!host) return;
   void cellIndex;
@@ -7241,68 +7840,21 @@ function renderBuilderInto(host, cellIndex) {
           (step.name === "tee" || step.name === "foreach")
         : insertFocus.body === focusBody);
 
-    const paramFields = (spec?.params || [])
-      .map((p) => {
-        const tip =
-          edge && typeof edge.input === "object" ? edge.input : null;
-        const vis = paramVisibility(step.name, p, step.params || {}, tip);
-        if (!vis.show) return "";
-        const val =
-          vis.forced != null
-            ? vis.forced
-            : step.params[p.name] ?? p.default ?? "";
-        const title = p.doc ? ` title="${escapeHtml(p.doc)}"` : "";
-        const dataAttrs =
-          nest.parentStem != null
-            ? `data-stem="${nest.parentStem}" data-body="${nest.bodyIndex}" data-param="${escapeHtml(p.name)}"`
-            : `data-step="${i}" data-param="${escapeHtml(p.name)}"`;
-        if (p.type === "bool") {
-          const checked = val === true || val === "true";
-          return `<label class="builder-param builder-param-bool"${title}>
-            <span class="builder-param-name">${escapeHtml(p.name)}${p.flag ? ` <code>${escapeHtml(p.flag)}</code>` : ""}</span>
-            <input type="checkbox" ${dataAttrs}
-              ${checked ? "checked" : ""}></label>`;
-        }
-        if (p.type === "enum") {
-          const locked = !!vis.locked;
-          return `<label class="builder-param"${title}>
-            <span class="builder-param-name"><span>${escapeHtml(p.name)}</span>${
-              locked
-                ? `<span class="muted fs-xs builder-param-lock-tag">locked by format</span>`
-                : ""
-            }</span>
-            <select ${dataAttrs} class="text-input"
-              ${locked ? "disabled" : ""}>
-              ${(p.enum || [])
-                .map(
-                  (e) =>
-                    `<option value="${escapeHtml(e)}" ${String(val) === e ? "selected" : ""}>${escapeHtml(e)}</option>`
-                )
-                .join("")}
-            </select></label>`;
-        }
-        if (step.name === "gpg.encrypt" && p.name === "to") {
-          return encryptToParamHtml(step, val, dataAttrs, nest, i);
-        }
-        if (
-          (step.name === "hkp.search" || step.name === "hkp.get") &&
-          p.name === "keyserver"
-        ) {
-          const select = keyserverSelectFromOptionsHtml({
-            options: keyserverOptionsCache,
-            selected: String(val ?? ""),
-            dataAttrs,
-          });
-          return `<label class="builder-param"${title}>
-            <span class="builder-param-name">${escapeHtml(p.name)}</span>
-            ${select}</label>`;
-        }
-        return `<label class="builder-param"${title}>
-          <span class="builder-param-name">${escapeHtml(p.name)}</span>
-          <input class="text-input" ${dataAttrs}
-                 value="${escapeHtml(String(val))}" ${p.type === "int" ? 'type="number"' : 'type="text"'}></label>`;
-      })
-      .join("");
+    const tip =
+      edge && typeof edge.input === "object" ? edge.input : null;
+    const paramPath =
+      nest.parentStem != null
+        ? { stem: nest.parentStem, body: nest.bodyIndex }
+        : { step: i };
+    const specialFields = builderParamFieldsHtml(step, paramPath, tip, {
+      specialsOnly: true,
+    });
+    const paramHost = `<div data-param-fields-host
+      data-cell="${cellIndex}"
+      data-edit-stem="${focusStem}"${
+        focusBody != null ? ` data-edit-body="${focusBody}"` : ""
+      } data-card-params="1"></div>`;
+    const paramFields = `${paramHost}${specialFields}`;
 
     const needsVaultFprPick =
       (step.name === "agent.unlock" || step.name === "agent.pub") &&
@@ -7359,7 +7911,7 @@ function renderBuilderInto(host, cellIndex) {
             : step.name === "sss.split"
               ? `<p class="builder-type-hint muted fs-xs mb-sm">Produces <code>shares/raw</code>. Pipe into <code>blip39</code> for word phrases.</p>`
               : step.name === "foreach" && !nestHasPreview
-                ? `<p class="builder-type-hint muted fs-xs mb-sm">Add child steps as an indented list (<code>- out @share</code>) or brace body. Optional <code>foreach .items</code>.</p>`
+                ? `<p class="builder-type-hint muted fs-xs mb-sm">Add child steps as an indented list (<code>- out @share</code>) or brace body. Optional <code>foreach :items</code>.</p>`
                 : step.name === "tee" && !nestHasPreview
                   ? `<p class="builder-type-hint muted fs-xs mb-sm">Side chains below fork a clone; stem continues after the nest. Prefer <code>peek</code> for inspect-only.</p>`
                   : "";
@@ -7399,9 +7951,11 @@ function renderBuilderInto(host, cellIndex) {
                 : ""
           }
           ${outSummary ? `<span class="muted fs-xs">${escapeHtml(outSummary)}</span>` : ""}
-          <button type="button" class="btn btn-ghost btn-compact text-error" data-remove-stem="${focusStem}" ${
-            focusBody != null ? `data-remove-body="${focusBody}"` : ""
-          }>Remove</button>
+          <div class="btn-row wrap builder-card-actions">
+            <button type="button" class="btn btn-ghost btn-compact text-error" data-remove-stem="${focusStem}" ${
+              focusBody != null ? `data-remove-body="${focusBody}"` : ""
+            } title="Remove step" aria-label="Remove step">✕</button>
+          </div>
         </div>
         <div class="builder-card-runtime" data-runtime-slot="${i}" data-cell="${cellIndex}" hidden></div>
         <div class="builder-card-bind" data-bind-slot="${i}" data-cell="${cellIndex}" hidden></div>
@@ -7518,60 +8072,8 @@ function renderBuilderInto(host, cellIndex) {
   host.innerHTML = parts.join("");
   wireEncryptToControls(host);
   wireSuggestMenus(host);
-
-  host.querySelectorAll("[data-vault-fpr]").forEach((el) => {
-    el.addEventListener("change", () => {
-      if (!(el instanceof HTMLSelectElement) || !el.value) return;
-      const stemAttr = el.getAttribute("data-stem");
-      /** @type {import("../lib/toolkit/recipe.js").RecipeStep|undefined} */
-      let target;
-      if (stemAttr != null) {
-        const stem = Number(stemAttr);
-        const body = Number(el.getAttribute("data-body"));
-        target = steps[stem]?.body?.[body];
-      } else {
-        const i = Number(el.getAttribute("data-step"));
-        target = steps[i];
-      }
-      if (!target) return;
-      target.params.fpr = el.value;
-      setRecipeFromSteps();
-      renderBuilder();
-      validateAndBind();
-    });
-  });
-
-  host.querySelectorAll("[data-param]").forEach((el) => {
-    el.addEventListener("change", () => {
-      const name = el.getAttribute("data-param");
-      if (!name) return;
-      const stemAttr = el.getAttribute("data-stem");
-      /** @type {import("../lib/toolkit/recipe.js").RecipeStep|undefined} */
-      let target;
-      if (stemAttr != null) {
-        const stem = Number(stemAttr);
-        const body = Number(el.getAttribute("data-body"));
-        target = steps[stem]?.body?.[body];
-      } else {
-        const i = Number(el.getAttribute("data-step"));
-        target = steps[i];
-      }
-      if (!target) return;
-      const spec = getStep(target.name);
-      const p = (spec?.params || []).find((x) => x.name === name);
-      if (el instanceof HTMLInputElement && el.type === "checkbox") {
-        target.params[name] = el.checked;
-      } else {
-        const v =
-          el instanceof HTMLInputElement || el instanceof HTMLSelectElement
-            ? el.value
-            : "";
-        target.params[name] = p?.type === "int" ? Number(v) : v;
-      }
-      if (name === "format") syncWhichWithFormat(target);
-      setRecipeFromSteps();
-    });
-  });
+  wireBuilderParamEditors(host);
+  mountCardParamFieldHosts(host, cellIndex);
 
   host.querySelectorAll("[data-focus-stem]").forEach((card) => {
     card.addEventListener("click", (e) => {
@@ -7863,10 +8365,14 @@ function wireDropZones(host) {
         return;
       }
 
-      const name = dt.getData(STEP_MIME) || dt.getData("text/plain");
-      if (name && getStep(name)) {
-        const decode = dt.getData("application/x-basilisk-decode") === "1";
-        addStepAt(name, insertAt, decode ? { decode: true } : undefined);
+      const parsed = parseStepMime(
+        dt.getData(STEP_MIME) || dt.getData("text/plain")
+      );
+      if (parsed?.name && getStep(parsed.name)) {
+        const decode =
+          parsed.decode ||
+          dt.getData("application/x-basilisk-decode") === "1";
+        addStepAt(parsed.name, insertAt, decode ? { decode: true } : undefined);
       }
     });
   });
@@ -7888,10 +8394,16 @@ function renderReference() {
         <summary>${toolboxBadgeHtml(s.toolbox)} <code>${escapeHtml(s.name)}</code>
           <span class="muted">${escapeHtml(s.kind)}</span>
           · ${escapeHtml(s.input)} → ${escapeHtml(s.output)}</summary>
-        ${toolCardHtml(s, { hideHint: true })}
+        <div data-ref-tool-card="${escapeHtml(s.name)}"></div>
       </details>`
     )
     .join("");
+  body.querySelectorAll("[data-ref-tool-card]").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    const name = el.getAttribute("data-ref-tool-card") || "";
+    const s = getStep(name);
+    if (s) mountToolCard(el, { op: s, hideHint: true });
+  });
 }
 
 /**
@@ -8756,27 +9268,72 @@ function setReferenceOpen(open) {
   if (referenceOpen) renderReference();
 }
 
-document.getElementById("toggle-reference")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  setReferenceOpen(!referenceOpen);
-});
+function mountMoreMenu() {
+  mountMenuPopover(document.getElementById("more-menu"), {
+    label: "More",
+    align: "start",
+    triggerClassName: "btn btn-ghost btn-compact",
+    items: [
+      { id: "docs", label: "Docs", onSelect: () => setReferenceOpen(!referenceOpen) },
+      {
+        id: "keyring",
+        label: "Keyring",
+        onSelect: () => {
+          sessionTrayOpen = "keychain";
+          renderSessionTray();
+          document
+            .getElementById("session-tray")
+            ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        },
+      },
+      {
+        id: "shortcuts",
+        label: "Keyboard shortcuts",
+        onSelect: () => {
+          const dlg = document.getElementById("shortcuts-dialog");
+          if (dlg instanceof HTMLDialogElement) dlg.showModal();
+        },
+      },
+      {
+        id: "save",
+        label: "Save notebook",
+        onSelect: () => saveCurrentWorkspace(),
+        separatorBefore: true,
+      },
+      { id: "copy-recipe", label: "Copy recipe", onSelect: () => void copyRecipeText() },
+      { id: "library", label: "Library…", onSelect: () => openWorkspaceLibrary() },
+      { id: "export", label: "Export file", onSelect: () => exportCurrentWorkspaceFile() },
+      {
+        id: "import",
+        label: "Import file…",
+        onSelect: () => document.getElementById("workspace-import-file")?.click(),
+      },
+      {
+        id: "clear",
+        label: "Clear sensitive",
+        onSelect: () => clearSensitiveData(),
+        separatorBefore: true,
+      },
+      { id: "copy-link", label: "Copy link", onSelect: () => void copyShareLink() },
+      {
+        id: "reset",
+        label: "Reset notebook",
+        onSelect: () => resetNotebook(),
+        separatorBefore: true,
+      },
+      { id: "destroy", label: "Destroy", onSelect: () => secureDestroy() },
+    ],
+  });
+}
+
+mountMoreMenu();
+
 document.getElementById("ops-docs-btn")?.addEventListener("click", () => {
   setReferenceOpen(true);
 });
 
 document.getElementById("close-reference")?.addEventListener("click", () => {
   setReferenceOpen(false);
-});
-
-document.getElementById("destroy-btn")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  secureDestroy();
-});
-document.getElementById("focus-keyring-btn")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  sessionTrayOpen = "keychain";
-  renderSessionTray();
-  document.getElementById("session-tray")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
 document.getElementById("session-tray-rail")?.querySelectorAll("[data-tray]").forEach((btn) => {
@@ -8787,18 +9344,6 @@ document.getElementById("session-tray-rail")?.querySelectorAll("[data-tray]").fo
     sessionTrayOpen = sessionTrayOpen === id ? null : id;
     renderSessionTray();
   });
-});
-document.getElementById("shortcuts-btn")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  const dlg = document.getElementById("shortcuts-dialog");
-  if (dlg instanceof HTMLDialogElement) dlg.showModal();
-});
-document.getElementById("clear-sensitive-btn")?.addEventListener("click", () => {
-  clearSensitiveData();
-});
-document.getElementById("reset-notebook-btn")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  resetNotebook();
 });
 document.getElementById("add-cell-btn")?.addEventListener("click", () => {
   insertCell(chains.length);
@@ -8811,29 +9356,6 @@ document.getElementById("qs-decrypt")?.addEventListener("click", () => {
 });
 document.getElementById("qs-symencrypt")?.addEventListener("click", () => {
   insertMessagingCell("symencrypt");
-});
-document.getElementById("copy-share-link")?.addEventListener("click", () => {
-  void copyShareLink();
-});
-document.getElementById("copy-recipe-btn")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  void copyRecipeText();
-});
-document.getElementById("workspace-save-btn")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  saveCurrentWorkspace();
-});
-document.getElementById("workspace-library-btn")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  openWorkspaceLibrary();
-});
-document.getElementById("workspace-export-btn")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  exportCurrentWorkspaceFile();
-});
-document.getElementById("workspace-import-btn")?.addEventListener("click", () => {
-  document.getElementById("more-menu")?.removeAttribute("open");
-  document.getElementById("workspace-import-file")?.click();
 });
 document.getElementById("workspace-import-file")?.addEventListener("change", (e) => {
   const input = e.target;
@@ -8850,15 +9372,6 @@ document.getElementById("prefs-menu")?.addEventListener("toggle", (e) => {
   const d = e.target;
   if (d instanceof HTMLDetailsElement && d.open) {
     renderPrefsForm();
-    document.getElementById("more-menu")?.removeAttribute("open");
-    document.getElementById("preset-gallery")?.removeAttribute("open");
-  }
-});
-document.getElementById("more-menu")?.addEventListener("toggle", (e) => {
-  const d = e.target;
-  if (d instanceof HTMLDetailsElement && d.open) {
-    document.getElementById("prefs-menu")?.removeAttribute("open");
-    document.getElementById("preset-gallery")?.removeAttribute("open");
   }
 });
 
@@ -9188,11 +9701,9 @@ window.addEventListener("pagehide", () => {
 document.addEventListener("click", (e) => {
   const t = e.target;
   if (!(t instanceof Node)) return;
-  for (const id of ["prefs-menu", "more-menu", "preset-gallery"]) {
-    const menu = document.getElementById(id);
-    if (menu instanceof HTMLDetailsElement && menu.open && !menu.contains(t)) {
-      menu.removeAttribute("open");
-    }
+  const menu = document.getElementById("prefs-menu");
+  if (menu instanceof HTMLDetailsElement && menu.open && !menu.contains(t)) {
+    menu.removeAttribute("open");
   }
 });
 

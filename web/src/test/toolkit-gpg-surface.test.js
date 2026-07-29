@@ -119,3 +119,31 @@ describe("gpg.sign inputNeeds", () => {
     );
   });
 });
+
+describe("gpg.symencrypt passphrase (gpg -c)", () => {
+  it("round-trips with mode=passphrase passphrase=@slot", async () => {
+    const { ast, validation } = compileRecipe(`"correct horse" | out @pw
+
+"hello gpg-c" | utf8 | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg
+
+in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8 | out @pt`);
+    expect(validation.ok).toBe(true);
+    expect(validation.inputNeeds || []).not.toContain("envelope");
+    const arts = await runRecipe(ast);
+    expect(arts.find((a) => /pt/i.test(a.filename || a.label || ""))?.content).toBe(
+      "hello gpg-c"
+    );
+  }, 60_000);
+
+  it("rejects passphrase= without mode=passphrase", () => {
+    const { validation } = compileRecipe(
+      `"pw" | out @pw
+
+"hi" | utf8 | gpg.symencrypt passphrase=@pw`
+    );
+    expect(validation.ok).toBe(false);
+    expect(
+      validation.errors.some((e) => /mode=passphrase/i.test(e.message))
+    ).toBe(true);
+  });
+});

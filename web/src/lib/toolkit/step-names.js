@@ -3,7 +3,7 @@
  * Basilisk-legacy tokens (aesgcm, wa-*, recover, …) are NOT accepted at parse time —
  * use migrateRecipe() to rewrite old recipes.
  *
- * Bare `encrypt` / `decrypt` are parse sugar for WebCrypto ciphers (not OpenPGP).
+ * Bare `encrypt` / `decrypt` are migrator-only sugar for WebCrypto ciphers (not OpenPGP).
  * Old OpenPGP `encrypt gpg` / `decrypt gpg` still migrate via compound rules.
  */
 
@@ -42,7 +42,7 @@ const ALTERNATE_FORMS = new Map(
 
 /**
  * Old Basilisk tokens → canonical (migrator only; not used by the parser).
- * Bare `encrypt` / `decrypt` are intentionally omitted — they are WebCrypto sugar.
+ * Bare `encrypt` / `decrypt` + transform are rewritten separately in migrateRecipe.
  * @type {Record<string, string>}
  */
 export const LEGACY_STEP_MIGRATE = {
@@ -64,6 +64,11 @@ export const LEGACY_STEP_MIGRATE = {
   "wa-mds": "webauthn.mds",
   "gpg.vault": "agent.unlock",
   "gpg.vault.pub": "agent.pub",
+  paste: "input",
+  cat: "input",
+  print: "text",
+  echo: "text",
+  dump: "inspect",
 };
 
 /**
@@ -86,7 +91,8 @@ export function resolveAlternateForm(raw) {
 }
 
 /**
- * Resolve a cipher transform for `encrypt` / `decrypt` sugar (hyphen, sized, or JCE).
+ * Resolve a cipher transform for migrator `encrypt` / `decrypt` sugar
+ * (hyphen, sized, or JCE).
  * @param {string} raw
  * @returns {StepResolve|null}
  */
@@ -170,6 +176,9 @@ export function decodeTwinToken(spec, decode) {
  */
 export function legacyRemovalHint(raw) {
   const key = normalizeStepToken(raw);
+  if (key === "encrypt" || key === "decrypt") {
+    return `"${raw}" was removed from live parse — use a concrete cipher (aes-gcm, …) or Upgrade recipe to migrate`;
+  }
   if (key === "hex") {
     return `"hex" was removed — use to hex (or Upgrade recipe to migrate)`;
   }
@@ -218,6 +227,63 @@ export function migrateRecipe(text) {
     /(^|[\s|;{]|-(?:\s+))decrypt\s+gpg(?=[\s|;}\-]|$)/gi
   );
 
+  // Bare slot labels → @ (live parse requires @).
+  {
+    let n = 0;
+    recipe = recipe.replace(
+      /(^|[\s|;{]|-(?:\s+))out\s+name=([A-Za-z][A-Za-z0-9_-]*)(?=[\s|;}\-]|$)/gi,
+      (m, pre, lab) => {
+        n += 1;
+        return `${pre}out @${lab}`;
+      }
+    );
+    recipe = recipe.replace(
+      /(^|[\s|;{]|-(?:\s+))out\s+(?!@)([A-Za-z][A-Za-z0-9_-]*)(?=[\s|;}\-]|$)/gi,
+      (m, pre, lab) => {
+        n += 1;
+        return `${pre}out @${lab}`;
+      }
+    );
+    recipe = recipe.replace(
+      /(^|[\s|;{]|-(?:\s+))in\s+(?!@)([A-Za-z][A-Za-z0-9_-]*)(?=[\s|;}\-]|$)/gi,
+      (m, pre, lab) => {
+        n += 1;
+        return `${pre}in @${lab}`;
+      }
+    );
+    // Known slot-typed kwargs (not to= emails / fingerprints).
+    recipe = recipe.replace(
+      /\b(key|peer|private|target|with)=(?!@)([A-Za-z][A-Za-z0-9_-]*)\b/gi,
+      (m, k, lab) => {
+        n += 1;
+        return `${k}=@${lab}`;
+      }
+    );
+    if (n) counts.set("bare-slot-@", (counts.get("bare-slot-@") || 0) + n);
+  }
+
+  // WebCrypto sugar: encrypt|decrypt [-d] TRANSFORM → concrete cipher (migrator-only).
+  {
+    let n = 0;
+    recipe = recipe.replace(
+      /(^|[\s|;{]|-(?:\s+))(encrypt|decrypt)(?:\s+-d)?\s+([A-Za-z][A-Za-z0-9./_-]*)(?=[\s|;}\-]|$)/gi,
+      (m, pre, verb, transform) => {
+        const resolved = resolveCipherTransform(transform);
+        if (!resolved) return m;
+        n += 1;
+        const hadDashD = /\s+-d\s/i.test(m);
+        const decode =
+          String(verb).toLowerCase() === "decrypt" || hadDashD;
+        // Keep OpenSSL-sized forms (still live-parse); map JCE / bare to canonical.
+        const key = normalizeStepToken(transform);
+        const keepSized = /^(aes)-\d{3}-(gcm|cbc|ctr)$/.test(key);
+        const outToken = keepSized ? key : resolved.canonical;
+        return `${pre}${outToken}${decode ? " -d" : ""}`;
+      }
+    );
+    if (n) counts.set("encrypt/decrypt", (counts.get("encrypt/decrypt") || 0) + n);
+  }
+
   // Hex conjugate → CyberChef to/from (do not double-rewrite `to hex` / `from hex`).
   apply(
     "unhex",
@@ -252,6 +318,54 @@ export function migrateRecipe(text) {
     if (n) counts.set("from (slot)", (counts.get("from (slot)") || 0) + n);
   }
 
+  // Member selectors `.public` → `:public` (not dotted ops like gpg.vault.pub).
+  {
+    let n = 0;
+    recipe = recipe.replace(
+      /(^|[\s|;{]|-\s+)\.(public|private|pub|priv|secret|items|values|keys|key|value)\b/gi,
+      (m, pre, name) => {
+        n += 1;
+        return `${pre}:${String(name).toLowerCase()}`;
+      }
+    );
+    if (n) counts.set(".selector", (counts.get(".selector") || 0) + n);
+  }
+
+  // Selector shorts → canonical :public / :private.
+  {
+    let n = 0;
+    recipe = recipe.replace(
+      /(^|[\s|;{]|-\s+):(pub|priv|secret)\b/gi,
+      (m, pre, name) => {
+        n += 1;
+        const canon =
+          String(name).toLowerCase() === "pub" ? "public" : "private";
+        return `${pre}:${canon}`;
+      }
+    );
+    if (n) counts.set(":selector-short", (counts.get(":selector-short") || 0) + n);
+  }
+
+  // `hexdump` as a step → `inspect format=hexdump`.
+  apply(
+    "hexdump",
+    "inspect format=hexdump",
+    /(^|[\s|;{]|-(?:\s+))hexdump(?=[\s|;}\-]|$)/gi
+  );
+
+  // `export d` / `import d` → scalar.
+  {
+    let n = 0;
+    recipe = recipe.replace(
+      /(^|[\s|;{]|-(?:\s+))(export|import)\s+d(?=[\s|;}\-]|$)/gi,
+      (m, pre, verb) => {
+        n += 1;
+        return `${pre}${verb} scalar`;
+      }
+    );
+    if (n) counts.set("export/import d", (counts.get("export/import d") || 0) + n);
+  }
+
   // Longer keys first so wa-create beats nothing overlapping; sort by length desc.
   const keys = Object.keys(LEGACY_STEP_MIGRATE).sort((a, b) => b.length - a.length);
   for (const from of keys) {
@@ -271,6 +385,11 @@ export function migrateRecipe(text) {
     "from (slot)": "in",
     "encrypt gpg": "gpg.encrypt",
     "decrypt gpg": "gpg.decrypt",
+    "encrypt/decrypt": "aes-gcm / …",
+    ".selector": ":selector",
+    ":selector-short": ":public/:private",
+    hexdump: "inspect format=hexdump",
+    "export/import d": "export/import scalar",
   };
   const changes = [...counts.entries()].map(([from, count]) => ({
     from,

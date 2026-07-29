@@ -22,7 +22,7 @@ describe("nested list recipe syntax", () => {
 
   it("parses tee body then continues stem with |", () => {
     const src = `genkey ec/p256 | tee
-  - export spki which=public
+  - export spki
   - pem
   - out @public
 | export pkcs8 | pem`;
@@ -43,8 +43,8 @@ describe("nested list recipe syntax", () => {
 
   it("parses brace tee body", () => {
     const src = `genkey ec/p256 | tee {
-  - .private | inspect
-  - .public | export spki | out @pub
+  - :private | inspect
+  - :public | export spki | out @pub
 } | export pkcs8 | pem`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
@@ -134,10 +134,10 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
     expect(arts.filter((a) => a.role === "share").length).toBe(3);
   }, 30_000);
 
-  it("foreach .items projects .value", async () => {
+  it("foreach :items projects :value", async () => {
     const { ast, validation } = compileRecipe(
-      `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach .items
-  - .value | out @share`
+      `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach :items
+  - :value | out @share`
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -157,7 +157,7 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
   it("tee list body emits side out without consuming stem", async () => {
     const { ast, validation } = compileRecipe(
       `genkey ec/p256 | tee
-  - export spki which=public
+  - export spki
   - out @pub
 | export pkcs8 | pem | out @priv`
     );
@@ -170,8 +170,8 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
 
   it("parses tee selector branches", () => {
     const src = `genkey ec/p256 | tee
-  - .private | inspect
-  - .public | export spki | out @pub`;
+  - :private | inspect
+  - :public | export spki | out @pub`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     const tee = ast.steps.find((s) => s.name === "tee");
@@ -180,10 +180,10 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
     expect(tee.branches?.[1].body.map((b) => b.name)).toEqual(["export", "out"]);
   });
 
-  it("runs .private selector branch inspect without consuming stem", async () => {
+  it("runs :private selector branch inspect without consuming stem", async () => {
     const { ast, validation } = compileRecipe(
       `genkey ec/p256 | tee
-  - .private | inspect
+  - :private | inspect
 | export pkcs8 | pem | out @priv`
     );
     expect(validation.ok).toBe(true);
@@ -196,8 +196,16 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
 
   it("rejects unknown selectors", () => {
     const { errors } = parseRecipe(`genkey ec/p256 | tee
-  - .foo | inspect`);
+  - :foo | inspect`);
     expect(errors.some((e) => /Unknown selector/i.test(e.message))).toBe(true);
+  });
+
+  it("rejects legacy dot members", () => {
+    const { errors } = parseRecipe(`genkey ec/p256 | tee
+  - .public | export spki`);
+    expect(
+      errors.some((e) => /Member selectors use :public/i.test(e.message))
+    ).toBe(true);
   });
 
   it("rejects empty tee (use peek)", () => {

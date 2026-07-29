@@ -37,7 +37,7 @@ describe("gpg.sign / gpg.verify", () => {
         },
       },
     });
-    expect(out[0].content).toMatch(/verified/i);
+    expect(out[0].content).toMatch(/^true$/i);
   }, 60_000);
 
   it("detached sign + verify via signature=@slot", async () => {
@@ -65,6 +65,6 @@ in @msg | gpg.verify signature=@sig | out @ok`;
       },
     });
     const ok = arts.find((a) => /ok/i.test(a.filename || a.label || "")) || arts.at(-1);
-    expect(String(ok.content)).toMatch(/verified/i);
+    expect(String(ok.content)).toMatch(/^true$/i);
   }, 60_000);
 });

@@ -10,6 +10,34 @@
 import { bytesToHex } from "./encode.js";
 import { buildPacketMapFromArmoredSync } from "../packet-hex-view.js";
 
+/**
+ * SHA-256 hex of a public JWK's identifying fields (handy fingerprint; not full RFC 7638 for all kty).
+ * @param {JsonWebKey|Record<string, *>|null|undefined} jwk
+ * @returns {Promise<string>}
+ */
+async function publicJwkThumbprintHex(jwk) {
+  if (!jwk || typeof jwk !== "object") return "";
+  /** @type {Record<string, string>} */
+  const canon = { kty: String(jwk.kty || "") };
+  if (jwk.crv) canon.crv = String(jwk.crv);
+  if (jwk.x) canon.x = String(jwk.x);
+  if (jwk.y) canon.y = String(jwk.y);
+  if (jwk.n) canon.n = String(jwk.n);
+  if (jwk.e) canon.e = String(jwk.e);
+  // Sorted keys for stable digest.
+  const keys = Object.keys(canon).sort();
+  const body = `{${keys.map((k) => `${JSON.stringify(k)}:${JSON.stringify(canon[k])}`).join(",")}}`;
+  try {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(body)
+    );
+    return bytesToHex(new Uint8Array(digest));
+  } catch {
+    return "";
+  }
+}
+
 /** @typedef {"auto"|"text"|"hex"|"hexdump"|"packets"|"jwk"|"meta"} InspectFormat */
 
 /** Formats offered by the inspect / tee result tile. */
@@ -106,6 +134,147 @@ function isMostlyPrintable(text) {
 }
 
 /**
+ * Colon-separated hex groups (openssl -text style).
+ * @param {string} hex
+ * @param {number} [group]
+ * @returns {string}
+ */
+function colonHex(hex, group = 2) {
+  const h = String(hex || "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+  if (!h) return "";
+  const parts = [];
+  for (let i = 0; i < h.length; i += group) {
+    parts.push(h.slice(i, i + group));
+  }
+  return parts.join(":");
+}
+
+/**
+ * Decode base64url JWK field to lowercase hex (no padding).
+ * @param {string|undefined} b64u
+ * @returns {string}
+ */
+function jwkFieldToHex(b64u) {
+  if (!b64u) return "";
+  try {
+    const pad = "=".repeat((4 - (b64u.length % 4)) % 4);
+    const b64 = String(b64u).replace(/-/g, "+").replace(/_/g, "/") + pad;
+    const bin = atob(b64);
+    let hex = "";
+    for (let i = 0; i < bin.length; i++) {
+      hex += bin.charCodeAt(i).toString(16).padStart(2, "0");
+    }
+    return hex;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * openssl pkey -text–style summary from JWK snapshot fields.
+ * @param {InspectSnapshot} snap
+ * @param {{ redactPrivate?: boolean }} [opts]
+ * @returns {string[]}
+ */
+export function formatOpenSslTextLines(snap, opts = {}) {
+  const meta = snap.meta || {};
+  const kp = snap.keypair || {};
+  const jwk = kp.privateJwk || kp.publicJwk || {};
+  const redact = opts.redactPrivate !== false && !!meta.sensitive;
+  /** @type {string[]} */
+  const lines = [];
+
+  const kty = String(jwk.kty || "");
+  const crv = String(jwk.crv || meta.curve || "");
+  const alg = String(meta.alg || meta.algorithm || "");
+
+  if (kty === "EC" || /^ec\//i.test(alg) || crv.startsWith("P-")) {
+    const bits =
+      crv === "P-256" || alg.includes("p256")
+        ? 256
+        : crv === "P-384" || alg.includes("p384")
+          ? 384
+          : crv === "P-521" || alg.includes("p521")
+            ? 521
+            : null;
+    const curveName =
+      crv === "P-256"
+        ? "prime256v1"
+        : crv === "P-384"
+          ? "secp384r1"
+          : crv === "P-521"
+            ? "secp521r1"
+            : crv || "?";
+    const label = kp.hasPrivate ? "Private-Key" : "Public-Key";
+    lines.push(
+      bits != null
+        ? `${label}: (${bits} bit, ${crv || curveName})`
+        : `${label}: (${crv || alg || "EC"})`
+    );
+    if (kp.hasPrivate && jwk.d) {
+      lines.push("priv:");
+      if (redact) {
+        lines.push("    [redacted]");
+      } else {
+        const hx = jwkFieldToHex(jwk.d);
+        lines.push(`    ${colonHex(hx) || "[unavailable]"}`);
+      }
+    }
+    const x = jwkFieldToHex(jwk.x);
+    const y = jwkFieldToHex(jwk.y);
+    if (x && y) {
+      lines.push("pub:");
+      lines.push(`    ${colonHex(`04${x}${y}`)}`);
+    }
+    lines.push(`ASN1 OID: ${curveName}`);
+    if (crv) lines.push(`NIST CURVE: ${crv}`);
+  } else if (kty === "OKP" || /ed25519|x25519/i.test(alg + crv)) {
+    const curve = crv || (alg.includes("x25519") ? "X25519" : "Ed25519");
+    const label = kp.hasPrivate ? "Private-Key" : "Public-Key";
+    lines.push(`${label}: (${curve})`);
+    if (kp.hasPrivate && jwk.d) {
+      lines.push("priv:");
+      lines.push(redact ? "    [redacted]" : `    ${colonHex(jwkFieldToHex(jwk.d))}`);
+    }
+    if (jwk.x) {
+      lines.push("pub:");
+      lines.push(`    ${colonHex(jwkFieldToHex(jwk.x))}`);
+    }
+  } else if (kty === "RSA" || /^rsa\//i.test(alg)) {
+    const nHex = jwkFieldToHex(jwk.n);
+    const bits = nHex ? nHex.length * 4 : null;
+    const label = kp.hasPrivate ? "Private-Key" : "Public-Key";
+    lines.push(bits != null ? `${label}: (${bits} bit)` : `${label}: (RSA)`);
+    if (jwk.n) {
+      lines.push("modulus:");
+      lines.push(`    ${colonHex(nHex)}`);
+    }
+    if (jwk.e) {
+      lines.push(`publicExponent: ${colonHex(jwkFieldToHex(jwk.e))} (0x${jwkFieldToHex(jwk.e)})`);
+    }
+    if (kp.hasPrivate && jwk.d) {
+      lines.push("privateExponent:");
+      lines.push(redact ? "    [redacted]" : `    ${colonHex(jwkFieldToHex(jwk.d))}`);
+    }
+  } else if (kty === "oct" || meta.symmetric || /^aes\//i.test(alg) || /^hmac\//i.test(alg)) {
+    lines.push(`Secret-Key: (${alg || "oct"})`);
+    if (jwk.k) {
+      lines.push("k:");
+      lines.push(redact ? "    [redacted]" : `    ${colonHex(jwkFieldToHex(jwk.k))}`);
+    }
+  } else {
+    lines.push(`Key: (${alg || kty || meta.algorithm || "unknown"})`);
+  }
+
+  if (meta.alg) lines.push(`basilisk.alg: ${meta.alg}`);
+  if (kp.thumbprint) lines.push(`jwk.thumbprint.sha256: ${kp.thumbprint}`);
+  if (Array.isArray(jwk.key_ops) && jwk.key_ops.length) {
+    lines.push(`usages: ${jwk.key_ops.join(", ")}`);
+  }
+  return lines;
+}
+
+/**
  * Drop non-cloneable / non-JSON fields from pipeline meta for snapshots.
  * @param {Record<string, *>|undefined|null} meta
  * @returns {Record<string, *>}
@@ -164,6 +333,23 @@ export async function buildInspectSnapshot(value) {
     return { type: "text", meta, text: String(value.data ?? "") };
   }
 
+  if (value.type === "int") {
+    const n = Number(value.data);
+    return {
+      type: "int",
+      meta,
+      text: String(Number.isFinite(n) ? Math.trunc(n) : 0),
+    };
+  }
+
+  if (value.type === "bool") {
+    return {
+      type: "bool",
+      meta,
+      text: value.data ? "true" : "false",
+    };
+  }
+
   if (value.type === "shares") {
     const d = value.data || {};
     const env = d.envelope || value.meta?.envelope;
@@ -180,8 +366,27 @@ export async function buildInspectSnapshot(value) {
   }
 
   if (value.type === "keypair" || value.type === "key") {
-    const priv = value.data?.privateKey;
-    const pub = value.data?.publicKey;
+    // Full keypair bags are `{ privateKey, publicKey }`. Projected `:public` /
+    // `:private` tips are a bare CryptoKey on `data` with `meta.which`.
+    const bag = value.data;
+    const isCryptoKey =
+      typeof CryptoKey !== "undefined" && bag instanceof CryptoKey;
+    const tipWhich =
+      value.meta?.which === "public" ||
+      value.meta?.which === "private" ||
+      value.meta?.which === "secret"
+        ? value.meta.which
+        : null;
+    let priv = !isCryptoKey ? bag?.privateKey : null;
+    let pub = !isCryptoKey ? bag?.publicKey : null;
+    let secret = !isCryptoKey ? bag?.secretKey : null;
+    if (isCryptoKey) {
+      if (tipWhich === "public") pub = bag;
+      else if (tipWhich === "private") priv = bag;
+      else if (tipWhich === "secret" || bag.type === "secret") secret = bag;
+      else if (bag.type === "public") pub = bag;
+      else priv = bag;
+    }
     /** @type {InspectSnapshot["keypair"]} */
     const keypair = {
       hasPrivate: !!priv,
@@ -194,6 +399,14 @@ export async function buildInspectSnapshot(value) {
         /* keep hasPrivate */
       }
     }
+    if (secret) {
+      try {
+        keypair.privateJwk = await crypto.subtle.exportKey("jwk", secret);
+        keypair.hasPrivate = true;
+      } catch {
+        /* keep */
+      }
+    }
     if (pub) {
       try {
         keypair.publicJwk = await crypto.subtle.exportKey("jwk", pub);
@@ -202,12 +415,32 @@ export async function buildInspectSnapshot(value) {
       }
     }
     try {
-      const key = priv || pub;
+      const key = priv || secret || pub;
       if (key) {
         keypair.raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
       }
     } catch {
       /* raw not extractable for many algs */
+    }
+    const pubForThumb = keypair.publicJwk || (() => {
+      const j = keypair.privateJwk;
+      if (!j) return null;
+      // Strip private fields for thumbprint of asymmetric keys.
+      if (j.kty === "oct") return null;
+      const { d, p, q, dp, dq, qi, oth, k, ...rest } = j;
+      void d;
+      void p;
+      void q;
+      void dp;
+      void dq;
+      void qi;
+      void oth;
+      void k;
+      return rest;
+    })();
+    if (pubForThumb) {
+      const tp = await publicJwkThumbprintHex(pubForThumb);
+      if (tp) keypair.thumbprint = tp;
     }
     return { type: value.type, meta, keypair };
   }
@@ -321,6 +554,11 @@ export function inspectFromSnapshot(snap, format = "auto") {
     return `${lines.join("\n")}\n`;
   }
 
+  if (snap.type === "int" || snap.type === "bool") {
+    lines.push(`value: ${snap.text ?? ""}`);
+    return `${lines.join("\n")}\n`;
+  }
+
   if (snap.type === "shares") {
     const d = snap.shares || { mnemonics: [] };
     const mnemonics = d.mnemonics || [];
@@ -361,10 +599,38 @@ export function inspectFromSnapshot(snap, format = "auto") {
       return `${lines.join("\n")}\n`;
     }
 
-    if (kp.privateJwk && (fmt === "auto" || fmt === "jwk" || fmt === "text")) {
-      lines.push("--- private JWK ---");
-      lines.push(JSON.stringify(kp.privateJwk, null, 2));
+    if (fmt === "auto" || fmt === "text") {
+      lines.push("--- openssl -text ---");
+      lines.push(...formatOpenSslTextLines(snap));
       lines.push("");
+    }
+
+    if (kp.privateJwk && (fmt === "auto" || fmt === "jwk" || fmt === "text")) {
+      if (fmt === "jwk" || fmt === "text") {
+        lines.push("--- private JWK ---");
+        lines.push(JSON.stringify(kp.privateJwk, null, 2));
+        lines.push("");
+      } else if (fmt === "auto") {
+        lines.push("--- private JWK (summary) ---");
+        lines.push(
+          JSON.stringify(
+            {
+              kty: kp.privateJwk.kty,
+              crv: kp.privateJwk.crv,
+              alg: kp.privateJwk.alg,
+              key_ops: kp.privateJwk.key_ops,
+              ext: kp.privateJwk.ext,
+              has_d: !!kp.privateJwk.d,
+              has_x: !!kp.privateJwk.x,
+              has_n: !!kp.privateJwk.n,
+            },
+            null,
+            2
+          )
+        );
+        lines.push("(use format=jwk for full JWK)");
+        lines.push("");
+      }
     } else if (kp.hasPrivate && (fmt === "auto" || fmt === "jwk" || fmt === "text")) {
       lines.push("private JWK: export failed");
     }

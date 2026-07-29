@@ -26,6 +26,8 @@ describe("registry completeness", () => {
       expect(s.doc.length).toBeGreaterThan(10);
       expect(s.input).toBeTruthy();
       expect(s.output).toBeTruthy();
+      const positionals = (s.params || []).filter((p) => p.positional);
+      expect(positionals.length, s.name).toBeLessThanOrEqual(1);
     }
   });
 });
@@ -56,6 +58,17 @@ describe("preset groups", () => {
     }
     for (const [g, n] of counts) {
       expect(n, g).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it("every preset compiles with no validation errors", () => {
+    for (const p of PRESETS) {
+      const { validation } = compileRecipe(p.recipe);
+      expect(
+        validation.errors.map((e) => e.message),
+        `${p.id}: ${validation.errors.map((e) => e.message).join("; ")}`
+      ).toEqual([]);
+      expect(validation.ok, p.id).toBe(true);
     }
   });
 });
@@ -223,7 +236,7 @@ describe("validation", () => {
     expect(ast.chains[1].steps.find((s) => s.name === "from")?.params?.encoding).toBe(
       "hex"
     );
-    expect(serializeRecipe(ast)).toBe("random 8 | to hex | out @h\n\nin @h | from hex");
+    expect(serializeRecipe(ast)).toBe("random 8 | to hex | out @h\n\n@h | from hex");
   });
 
   it("migrateRecipe rewrites hex/unhex and slot from", () => {
@@ -252,15 +265,15 @@ describe("validation", () => {
     expect(validation.inputNeeds).toContain("shares");
   });
 
-  it("input step reports text inputNeeds and canonicalizes paste/cat aliases", () => {
+  it("input step reports text inputNeeds; paste/cat migrate via Upgrade", () => {
     const { validation } = compileRecipe("input | utf8 | to hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("text");
 
-    const { ast, errors } = parseRecipe("paste | utf8 | to hex");
-    expect(errors).toEqual([]);
-    expect(ast.steps[0].name).toBe("input");
-    expect(parseRecipe("cat | utf8 | to hex").ast.steps[0].name).toBe("input");
+    const migrated = migrateRecipe("paste | utf8 | to hex");
+    expect(migrated.recipe).toMatch(/^input\b/);
+    expect(parseRecipe(migrated.recipe).ast.steps[0].name).toBe("input");
+    expect(migrateRecipe("cat | utf8").recipe).toMatch(/^input\b/);
   });
 
   it("rejects more than one input step per pipeline", () => {
@@ -317,7 +330,7 @@ describe("validation", () => {
 
   it("accepts pem | gpg.symencrypt | sss.split", () => {
     const { validation } = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | gpg.symencrypt | sss.split threshold=2 shares=3"
+      "genkey ec/p256 | export pkcs8 | pem | gpg.symencrypt mode=master | sss.split threshold=2 shares=3"
     );
     expect(validation.ok).toBe(true);
   });
@@ -333,5 +346,39 @@ describe("validation", () => {
       "genkey ec/p384 | export scalar | sss.split threshold=2 shares=3"
     );
     expect(validation.ok).toBe(false);
+  });
+});
+
+describe("export which= policy", () => {
+  it("does not warn when which= is omitted (format implies half)", () => {
+    const { validation } = compileRecipe(
+      "genkey ec/p256 | :public | export spki | pem"
+    );
+    expect(validation.ok).toBe(true);
+    expect(
+      validation.warnings.some((w) => /export which=/i.test(w))
+    ).toBe(false);
+  });
+
+  it("warns when which= is written explicitly", () => {
+    const { validation } = compileRecipe(
+      "genkey ec/p256 | export jwk which=public"
+    );
+    expect(validation.ok).toBe(true);
+    expect(
+      validation.warnings.some((w) =>
+        /export which= is discouraged.*\:public/i.test(w)
+      )
+    ).toBe(true);
+  });
+
+  it("errors when which= conflicts with a projected key tip", () => {
+    const { validation } = compileRecipe(
+      "genkey ec/p256 | :public | export jwk which=private"
+    );
+    expect(validation.ok).toBe(false);
+    expect(
+      validation.errors.some((e) => /conflicts with tip/i.test(e.message))
+    ).toBe(true);
   });
 });

@@ -26,6 +26,17 @@ export function clonePipelineValue(value) {
   if (value.type === "text") {
     return { type: "text", data: String(value.data), meta: { ...value.meta } };
   }
+  if (value.type === "int") {
+    const n = Number(value.data);
+    return {
+      type: "int",
+      data: Number.isFinite(n) ? Math.trunc(n) : 0,
+      meta: { ...value.meta },
+    };
+  }
+  if (value.type === "bool") {
+    return { type: "bool", data: !!value.data, meta: { ...value.meta } };
+  }
   if (value.type === "item") {
     const inner = value.data?.value;
     return {

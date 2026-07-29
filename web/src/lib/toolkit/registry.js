@@ -13,7 +13,7 @@
 import { CIPHER_DISPATCH_TARGETS } from "./step-names.js";
 import { stepAcceptsRefined, typeOf } from "./types.js";
 
-/** @typedef {"none"|"bytes"|"text"|"key"|"keypair"|"shares"|"artifact"|"bundle"|"item"|"recipients"|"openpgp-key"} IoType */
+/** @typedef {"none"|"bytes"|"text"|"int"|"bool"|"key"|"keypair"|"shares"|"artifact"|"bundle"|"item"|"recipients"|"openpgp-key"} IoType */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
 /** @typedef {"enum"|"int"|"string"|"bool"|"flag"|"slot"} ParamType */
 /** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"|"agent"|"hkp"} Toolbox */
@@ -22,20 +22,32 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
 /** @typedef {import("./types.js").RefinedType} RefinedType */
 
 /**
+ * Parameter declaration for a step. Registry is the SSOT — parser, serialize,
+ * Reference, and toolcards all read these fields. Unknown `name=` kwargs are
+ * rejected at parse (see recipe-parse `parseApply`). Convention: at most one
+ * `positional: true` param per step (enforced by `registryIssues`).
+ *
+ * CLI flags use `type: "bool"` + `flag: "-d"` (not a separate apply form).
+ * `type: "flag"` is reserved / unused in the current registry.
+ *
  * @typedef {object} ParamSpec
- * @property {string} name
- * @property {ParamType} type
+ * @property {string} name  kwarg key (`key=…`) and AST `params` key
+ * @property {ParamType} type  enum | int | string | bool | flag | slot
  * @property {string} [doc]
- * @property {*} [default]
+ * @property {*} [default]  filled when omitted; omitted from serialize unless serialize:"always"
  * @property {string[]} [enum]  allowed values when type === "enum"
- * @property {number} [min]
- * @property {number} [max]
- * @property {boolean} [positional]  first bare token binds to this param
+ * @property {number} [min]  int lower bound (docs / UI; validate may enforce)
+ * @property {number} [max]  int upper bound
+ * @property {boolean} [positional]  first bare token binds here (≤1 per step)
  * @property {string} [flag]  bare CLI flag (e.g. "-d") that sets this bool to true
  * @property {boolean} [allowIndex]  for type "slot": allow 1-based index refs (default false)
+ * @property {"always"} [serialize]  always emit `name=value` even when equal to default
  */
 
 /**
+ * Step declaration — SSOT for ops drawer, Reference, parse, and serialize.
+ * UI toolcards are views of `getStep()` / `listSteps()`, not a parallel schema.
+ *
  * @typedef {object} StepSpec
  * @property {string} name
  * @property {StepKind} kind
@@ -45,7 +57,9 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
  * @property {string} [conjugate]  sibling inverse step name (drawer pair row)
  * @property {string} [conjugateOf]  forward partner — omitted from solo drawer list
  * @property {boolean} [decodeTwin]  drawer shows encode | encode -d pair
+ * @property {boolean} [kitOnly]  omit from shelf grids — discover via a meta kit (format/cipher/collection)
  * @property {string} [pairCaption]  optional family label above a conjugate row
+ * @property {{ forward: string, reverse: string }} [pairLabels]  friendly tile verbs (Encrypt/Decrypt, Encode/Decode) — UX only
  * @property {string} [glyph]  key into generated glyphs.js (overrides shelf/toolbox)
  * @property {string} doc
  * @property {IoType} input
@@ -275,11 +289,10 @@ export const STEPS = [
     shelf: "ports",
     conjugate: "out",
     pairCaption: "In / out",
-    doc: "Free-form text at run time (textarea / file). Never stored in the recipe. Aliases: `paste`, `cat`. Example: `input | utf8 | to hex`.",
+    doc: "Free-form text at run time (textarea / file). Never stored in the recipe. Example: `input | utf8 | to hex`. (Legacy aliases `paste`/`cat` migrate via Upgrade recipe.)",
     input: "none",
     output: "text",
     unresolvedInputs: "text",
-    aliases: ["paste", "cat"],
     params: [],
   },
   {
@@ -301,7 +314,8 @@ export const STEPS = [
     shelf: "keys",
     conjugate: "import",
     pairCaption: "Export / import",
-    doc: "Export a keypair or projected `key` tip (pkcs8 / spki / jwk / raw / scalar). After `.public` / `.private` the tip is `key` and selects the half — prefer `export spki` on `.public`, `export pkcs8` / `export scalar` on the stem or `.private`.",
+    kitOnly: true,
+    doc: "Export a keypair or projected `key` tip (pkcs8 / spki / jwk / raw / scalar). Prefer selectors for the half: `:public | export spki`, `:private | export pkcs8` (openssl pkey -pubout style). `format=spki` implies public; `pkcs8`/`scalar` imply private. In the ops drawer, pick a format from the Keys → Formats kit (not a bare Export tile).",
     input: "keypair",
     output: "bytes",
     params: [
@@ -310,15 +324,15 @@ export const STEPS = [
         type: "enum",
         positional: true,
         default: "pkcs8",
-        enum: ["pkcs8", "spki", "jwk", "raw", "scalar", "d"],
-        doc: "Export format (scalar/d = private key material as fixed-length bytes for sss)",
+        enum: ["pkcs8", "spki", "jwk", "raw", "scalar"],
+        doc: "Export format (scalar = private key material as fixed-length bytes for sss)",
       },
       {
         name: "which",
         type: "enum",
         default: "private",
         enum: ["private", "public"],
-        doc: "Which half when the tip is a full keypair. Ignored (and must not conflict) after `.public` / `.private`. Prefer format=spki for public material.",
+        doc: "Deprecated — prefer `:public` / `:private` before export. Still accepted on a full keypair for jwk/raw; ignored after a selector (must not conflict).",
       },
     ],
     effectiveIo(params) {
@@ -335,6 +349,7 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "keys",
     conjugateOf: "export",
+    kitOnly: true,
     doc: "Import DER/raw/scalar/JWK. `import spki` yields a public `key` tip; other formats yield a full keypair. Example: `… | export jwk | import jwk alg=ed25519` or `import scalar alg=ec/p256`.",
     input: "bytes",
     output: "keypair",
@@ -344,8 +359,8 @@ export const STEPS = [
         type: "enum",
         positional: true,
         default: "pkcs8",
-        enum: ["pkcs8", "spki", "raw", "scalar", "d", "jwk"],
-        doc: "Import format (jwk = JSON text; spki = public key tip; scalar/d = EC/OKP private bytes)",
+        enum: ["pkcs8", "spki", "raw", "scalar", "jwk"],
+        doc: "Import format (jwk = JSON text; spki = public key tip; scalar = EC/OKP private bytes)",
       },
       {
         name: "alg",
@@ -420,6 +435,7 @@ export const STEPS = [
     shelf: "sign",
     conjugate: "verify",
     pairCaption: "Sign / verify (HMAC via hmac sugar)",
+    pairLabels: { forward: "Sign", reverse: "Verify" },
     doc: "Sign pipeline bytes with a WebCrypto private/HMAC key. Prefer `sign key=@kp` (slot from `out`); else key panel. RSA-PSS `saltLength=` (default 32); ECDSA optional `hash=` override. Example: `input | utf8 | sign key=@kp | base64url`.",
     input: "bytes",
     output: "bytes",
@@ -454,9 +470,9 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "sign",
     conjugateOf: "sign",
-    doc: "Verify a signature over pipeline message bytes. Prefer `verify key=@pub`; else key panel. Default fail-loud; `soft` / `-q` emits `verified` or `invalid` instead of throwing on bad sig. Signature via `signature=` or runtime binding. Same `saltLength=` / `hash=` as sign.",
+    doc: "Verify a signature over pipeline message bytes. Prefer `verify key=@pub`; else key panel. Default fail-loud; `soft` / `-q` emits `true`/`false` instead of throwing on bad sig. Signature via `signature=` or runtime binding. Same `saltLength=` / `hash=` as sign.",
     input: "bytes",
-    output: "text",
+    output: "bool",
     unresolvedInputs: "key",
     params: [
       {
@@ -476,7 +492,7 @@ export const STEPS = [
         type: "bool",
         flag: "-q",
         default: false,
-        doc: "Soft mode: emit verified|invalid text (never throw on bad signature). Prefer fail-loud for auth decisions.",
+        doc: "Soft mode: emit bool true|false (never throw on bad signature). Prefer fail-loud for auth decisions.",
       },
       {
         name: "saltLength",
@@ -502,7 +518,9 @@ export const STEPS = [
     shelf: "aead",
     decodeTwin: true,
     pairCaption: "AES-GCM",
-    doc: "AES-GCM encrypt (default) or decrypt with `-d`. Prefer `aes-gcm key=@cek`; else key panel. Optional `tagLength=` (default 128). Also accepts `aes-256-gcm` / `AES/GCM/NoPadding`, and sugar `encrypt AES/GCM/NoPadding` / `decrypt …`. Distinct from OpenPGP `gpg.encrypt`.",
+    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
+    kitOnly: true,
+    doc: "AES-GCM encrypt (default) or decrypt with `-d`. Prefer `aes-gcm key=@cek`; else key panel. Optional `tagLength=` (default 128). Also accepts `aes-256-gcm` / `AES/GCM/NoPadding`. Bare `encrypt`/`decrypt` sugar is migrator-only — write the concrete op. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -524,7 +542,7 @@ export const STEPS = [
         name: "aad",
         type: "string",
         default: "",
-        doc: "Optional additional authenticated data (UTF-8)",
+        doc: "Optional AAD as UTF-8 string, or `@slot` of text/bytes",
       },
       {
         name: "tagLength",
@@ -532,6 +550,12 @@ export const STEPS = [
         default: "128",
         enum: ["96", "104", "112", "120", "128"],
         doc: "Authentication tag length in bits (default 128)",
+      },
+      {
+        name: "keyBits",
+        type: "enum",
+        enum: ["128", "192", "256"],
+        doc: "Optional AES key-size check (from sized forms like `aes-256-gcm`)",
       },
     ],
     effectiveIo() {
@@ -545,6 +569,8 @@ export const STEPS = [
     shelf: "cipher",
     decodeTwin: true,
     pairCaption: "AES-CBC",
+    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
+    kitOnly: true,
     doc: "AES-CBC encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT. Prefer `aes-cbc key=@cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
@@ -563,6 +589,12 @@ export const STEPS = [
         default: "",
         doc: "Live AES key slot (`@cek`); omit to use the key panel",
       },
+      {
+        name: "keyBits",
+        type: "enum",
+        enum: ["128", "192", "256"],
+        doc: "Optional AES key-size check (from sized forms like `aes-256-cbc`)",
+      },
     ],
     effectiveIo() {
       return { input: "bytes", output: "bytes" };
@@ -575,6 +607,8 @@ export const STEPS = [
     shelf: "cipher",
     decodeTwin: true,
     pairCaption: "AES-CTR",
+    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
+    kitOnly: true,
     doc: "AES-CTR encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT (128-bit counter block); `length=` is AesCtrParams.length (default 64), not IV size. Prefer `aes-ctr key=@cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
@@ -601,6 +635,12 @@ export const STEPS = [
         max: 128,
         doc: "Counter bits in AesCtrParams.length (IV packing stays 16 bytes)",
       },
+      {
+        name: "keyBits",
+        type: "enum",
+        enum: ["128", "192", "256"],
+        doc: "Optional AES key-size check (from sized forms like `aes-256-ctr`)",
+      },
     ],
     effectiveIo() {
       return { input: "bytes", output: "bytes" };
@@ -613,6 +653,8 @@ export const STEPS = [
     shelf: "rsa",
     decodeTwin: true,
     pairCaption: "RSA-OAEP",
+    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
+    kitOnly: true,
     doc: "RSA-OAEP encrypt (default) or decrypt with `-d`. Prefer `rsa-oaep key=@rk`; else key panel. Optional `label=` (must match on decrypt). Also accepts JCE `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`. Distinct from OpenPGP `gpg.encrypt` and AES `aes-gcm`.",
     input: "bytes",
     output: "bytes",
@@ -637,6 +679,12 @@ export const STEPS = [
         default: "",
         doc: "Optional OAEP label (UTF-8; empty = omit)",
       },
+      {
+        name: "hash",
+        type: "enum",
+        enum: ["sha-1", "sha-256", "sha-384", "sha-512"],
+        doc: "Optional OAEP hash check (from JCE forms like OAEPWithSHA-256…)",
+      },
     ],
     effectiveIo() {
       return { input: "bytes", output: "bytes" };
@@ -649,6 +697,8 @@ export const STEPS = [
     shelf: "rsa",
     decodeTwin: true,
     pairCaption: "RSAES-PKCS1",
+    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
+    kitOnly: true,
     doc: "RSAES-PKCS1-v1_5 encrypt/decrypt (`-d`). Discouraged — prefer `rsa-oaep`. Pure-JS (not SubtleCrypto). Uses any RSA key (OAEP/PSS JWK) via `key=@rk`. Also accepts `RSA/ECB/PKCS1Padding`. Outputs tagged legacy/discouraged.",
     input: "bytes",
     output: "bytes",
@@ -677,7 +727,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "kdf",
-    doc: "HKDF-Extract/Expand. Default emits OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → keypair. Distinct from the `as master` cast stage. Example: `webauthn.prf | hkdf 32 as=aes/256 | export jwk | out @cek`.",
+    doc: "HKDF-Extract/Expand. Default emits OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → live `key` tip (`which: secret`), matching `unwrap`. Distinct from the `as master` cast stage. Example: `webauthn.prf | hkdf 32 as=aes/256 | out @cek`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -695,19 +745,19 @@ export const STEPS = [
         type: "enum",
         default: "bytes",
         enum: DERIVE_AS_ENUM,
-        doc: "bytes = deriveBits OKM; else deriveKey (AES-GCM, AES-KW, or HMAC)",
+        doc: "bytes = deriveBits OKM; else deriveKey → key tip (AES-GCM, AES-KW, or HMAC)",
       },
       {
         name: "salt",
         type: "string",
         default: "",
-        doc: "Optional salt (UTF-8; empty = zero-length salt)",
+        doc: "Optional salt as UTF-8 string, or `@slot` of text/bytes (empty = zero-length salt)",
       },
       {
         name: "info",
         type: "string",
         default: "",
-        doc: "Optional info/context string (UTF-8)",
+        doc: "Optional info/context as UTF-8 string, or `@slot` of text/bytes",
       },
       {
         name: "hash",
@@ -719,7 +769,7 @@ export const STEPS = [
     ],
     effectiveIo(params) {
       const as = String(params?.as || "bytes");
-      if (as !== "bytes") return { input: "bytes", output: "keypair" };
+      if (as !== "bytes") return { input: "bytes", output: "key" };
       return { input: "bytes", output: "bytes" };
     },
   },
@@ -728,7 +778,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "kdf",
-    doc: "PBKDF2-HMAC derive. Default OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → keypair. Example: `passphrase 6 | pbkdf2 32 as=aes/256 | export jwk | out @cek`.",
+    doc: "PBKDF2-HMAC derive. Default OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → live `key` tip (`which: secret`). Example: `passphrase 6 | pbkdf2 32 as=aes/256 | out @cek`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -746,13 +796,13 @@ export const STEPS = [
         type: "enum",
         default: "bytes",
         enum: DERIVE_AS_ENUM,
-        doc: "bytes = deriveBits OKM; else deriveKey (AES-GCM, AES-KW, or HMAC)",
+        doc: "bytes = deriveBits OKM; else deriveKey → key tip (AES-GCM, AES-KW, or HMAC)",
       },
       {
         name: "salt",
         type: "string",
         default: "basilisk",
-        doc: "Salt (UTF-8)",
+        doc: "Salt as UTF-8 string, or `@slot` of text/bytes",
       },
       {
         name: "iterations",
@@ -772,7 +822,7 @@ export const STEPS = [
     ],
     effectiveIo(params) {
       const as = String(params?.as || "bytes");
-      if (as !== "bytes") return { input: "bytes", output: "keypair" };
+      if (as !== "bytes") return { input: "bytes", output: "key" };
       return { input: "bytes", output: "bytes" };
     },
   },
@@ -781,7 +831,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "agreement",
-    doc: "ECDH/X25519 deriveBits (default) or deriveKey via `as=aes/256` / `as=aes-kw/256`. Prefer `genkey x25519` then `ecdh private=@local peer=@peer`. bits=0 auto-sizes from curve.",
+    doc: "ECDH/X25519 deriveBits (default) or deriveKey via `as=aes/256` / `as=aes-kw/256` → live `key` tip (`which: secret`). Prefer `genkey x25519` then `ecdh private=@local peer=@peer`. bits=0 auto-sizes from curve.",
     input: "none",
     output: "bytes",
     unresolvedInputs: "key",
@@ -811,12 +861,12 @@ export const STEPS = [
         type: "enum",
         default: "bytes",
         enum: DERIVE_AS_ENUM,
-        doc: "bytes = deriveBits; else deriveKey (AES-GCM, AES-KW, or HMAC)",
+        doc: "bytes = deriveBits; else deriveKey → key tip (AES-GCM, AES-KW, or HMAC)",
       },
     ],
     effectiveIo(params) {
       const as = String(params?.as || "bytes");
-      if (as !== "bytes") return { input: "none", output: "keypair" };
+      if (as !== "bytes") return { input: "none", output: "key" };
       return { input: "none", output: "bytes" };
     },
   },
@@ -880,9 +930,9 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "wrap",
     conjugateOf: "wrap",
-    doc: "Unwrap pipeline wrapped bytes. Modes match `wrap`. Prefer `unwrap key=@kek`. Content modes expect IV||wrapped packing.",
+    doc: "Unwrap pipeline wrapped bytes into a live `key` tip (CryptoKey). Modes match `wrap`. Prefer `unwrap key=@kek`. Content modes expect IV||wrapped packing. Use `export raw` when you need bytes.",
     input: "bytes",
-    output: "bytes",
+    output: "key",
     unresolvedInputs: "key",
     params: [
       {
@@ -936,7 +986,8 @@ export const STEPS = [
     glyph: "pem",
     conjugate: "der",
     pairCaption: "PEM / DER",
-    doc: "Wrap DER bytes as PEM armor. Label auto: SPKI/`which=public` → PUBLIC KEY, PKCS#8 → PRIVATE KEY. Conjugate: `der` strips armor. Example: `.public | export spki | pem | out @public`.",
+    pairLabels: { forward: "Armor", reverse: "Dearmor" },
+    doc: "Wrap DER bytes as PEM armor. Label auto: SPKI/`which=public` → PUBLIC KEY, PKCS#8 → PRIVATE KEY. Conjugate: `der` strips armor. Example: `:public | export spki | pem | out @public`.",
     input: "bytes",
     output: "text",
     params: [
@@ -969,6 +1020,8 @@ export const STEPS = [
     glyph: "base64",
     decodeTwin: true,
     pairCaption: "Base64",
+    pairLabels: { forward: "Encode", reverse: "Decode" },
+    kitOnly: true,
     doc: "Encode bytes as Base64 (`base64.encode`) or decode (`base64.decode`). Example: `random 32 | base64.encode | out @secret`. Also accepts `base64 -d`.",
     input: "bytes",
     output: "text",
@@ -994,6 +1047,8 @@ export const STEPS = [
     glyph: "base64",
     decodeTwin: true,
     pairCaption: "Base64url",
+    pairLabels: { forward: "Encode", reverse: "Decode" },
+    kitOnly: true,
     doc: "Encode bytes as URL-safe Base64 without padding (`base64url.encode`) or decode (`base64url.decode`). Also accepts `base64url -d`.",
     input: "bytes",
     output: "text",
@@ -1019,6 +1074,7 @@ export const STEPS = [
     glyph: "hex",
     conjugate: "from",
     pairCaption: "To / From",
+    pairLabels: { forward: "Encode", reverse: "Decode" },
     doc: "Encode bytes to text. Today: `to hex` (lowercase hex). Example: `… | digest | to hex | out @digest`.",
     input: "bytes",
     output: "text",
@@ -1070,6 +1126,8 @@ export const STEPS = [
     glyph: "base32",
     decodeTwin: true,
     pairCaption: "Base32",
+    pairLabels: { forward: "Encode", reverse: "Decode" },
+    kitOnly: true,
     doc: "Encode bytes as RFC 4648 Base32 (`base32.encode`) or decode (`base32.decode`). Example: `random 10 | base32.encode | out @id`.",
     input: "bytes",
     output: "text",
@@ -1110,7 +1168,7 @@ export const STEPS = [
     shelf: "split",
     conjugate: "sss.combine",
     pairCaption: "Split / combine",
-    doc: "Split a 16/32-byte master into raw SSS shares (K-of-N). Pipe into `blip39` for mnemonics. EC: `export scalar | sss.split …`. Large PEM: `… | pem | out @pem | gpg.symencrypt | sss.split …`.",
+    doc: "Split a 16/32-byte master into raw SSS shares (K-of-N). Pipe into `blip39` for mnemonics. EC: `export scalar | sss.split …`. Large PEM: `… | pem | out @pem | gpg.symencrypt mode=master | sss.split …`.",
     input: "bytes",
     output: "shares",
     params: [
@@ -1167,6 +1225,7 @@ export const STEPS = [
     shelf: "split",
     decodeTwin: true,
     pairCaption: "BLIP39",
+    pairLabels: { forward: "Encode", reverse: "Decode" },
     doc: "Encode raw SSS shares as BLIP39 mnemonics (`blip39.encode`) or decode (`blip39.decode`). Example: `… | sss.split | blip39.encode | foreach`. Recover: `shares | blip39.decode | sss.combine`. Also accepts `blip39 -d`.",
     input: "shares",
     output: "shares",
@@ -1232,18 +1291,37 @@ export const STEPS = [
     shelf: "password",
     conjugate: "gpg.symdecrypt",
     pairCaption: "Symmetric",
-    doc: "OpenPGP-symmetric-encrypt the payload under a fresh 32-byte master (SKESK/SEIPD), emit `envelope.asc`, pass master bytes to `sss.split`. Example: `… | pem | out @pem | gpg.symencrypt | sss.split threshold=2 shares=3 | blip39 | foreach` / `- out @share`.",
+    doc: "OpenPGP-symmetric encrypt (`gpg -c` style). Dual mode is explicit: default `mode=master` (fresh 32-byte master tip + `envelope.asc` for SSS); `mode=passphrase` + `passphrase=`/`@slot` emits armored ciphertext as the tip (no master). Passphrase alone does not flip modes. Example SSS: `… | pem | gpg.symencrypt mode=master | sss.split …`. Example password: `\"hi\" | utf8 | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg`.",
     input: "text",
     output: "bytes",
     params: [
       {
+        name: "mode",
+        type: "enum",
+        default: "master",
+        enum: ["master", "passphrase"],
+        serialize: "always",
+        doc: "master = SSS random-master tip + envelope artifact; passphrase = gpg -c tip (requires passphrase=)",
+      },
+      {
         name: "name",
         type: "string",
         default: "envelope",
-        doc: "Envelope artifact filename stem",
+        doc: "Envelope / ciphertext artifact filename stem",
+      },
+      {
+        name: "passphrase",
+        type: "string",
+        default: "",
+        doc: "User passphrase (UTF-8) or `@slot` of text — required with mode=passphrase; forbidden with mode=master",
       },
     ],
-    // Type flow via inferParamDrivenType (rejects master/scalar; accepts pem/der/opaque).
+    effectiveIo(params) {
+      const mode = String(params?.mode || "master").toLowerCase();
+      if (mode === "passphrase") return { input: "text", output: "text" };
+      return { input: "text", output: "bytes" };
+    },
+    // Type flow also via inferParamDrivenType.
   },
   {
     name: "gpg.symdecrypt",
@@ -1251,11 +1329,31 @@ export const STEPS = [
     toolbox: "openpgp",
     shelf: "password",
     conjugateOf: "gpg.symencrypt",
-    doc: "Decrypt a bound `envelope.asc` using pipeline master bytes as the hex passphrase (inverse of `gpg.symencrypt`). Example: `shares | blip39 -d | sss.combine | gpg.symdecrypt | utf8 | out @pem`.",
+    doc: "Decrypt OpenPGP-symmetric ciphertext. Dual mode is explicit: default `mode=master` (tip is 16/32-byte master; bound `envelope.asc` decrypts with hex(master)); `mode=passphrase` + `passphrase=`/`@slot` (tip is armored ciphertext). Passphrase alone does not flip modes. Example: `in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "envelope",
-    params: [],
+    params: [
+      {
+        name: "mode",
+        type: "enum",
+        default: "master",
+        enum: ["master", "passphrase"],
+        serialize: "always",
+        doc: "master = SSS recover path (envelope panel); passphrase = tip is armored ciphertext",
+      },
+      {
+        name: "passphrase",
+        type: "string",
+        default: "",
+        doc: "User passphrase (UTF-8) or `@slot` — required with mode=passphrase; forbidden with mode=master",
+      },
+    ],
+    effectiveIo(params) {
+      const mode = String(params?.mode || "master").toLowerCase();
+      if (mode === "passphrase") return { input: "text", output: "bytes" };
+      return { input: "bytes", output: "bytes" };
+    },
     overloads: [
       {
         when: { base: "bytes", kind: "master" },
@@ -1269,7 +1367,7 @@ export const STEPS = [
     toolbox: "flow",
     shelf: "control",
     flowControl: true,
-    doc: "Map a required body over a shares collection. Indent `-` lines or `{ … }`. Optional `foreach .items` / `.values` / `.keys`. Example: `… | blip39 | foreach` / `- out @share` or `- encrypt gpg`.",
+    doc: "Map a required body over a shares collection. Indent `-` lines or `{ … }`. Optional `foreach :items` / `:values` / `:keys`. Tip is a `bundle` of per-item tips (side effects via `out` / auto-emit) — do not pipe the bundle into cipher/KDF ops; use `@slot`s from the body. Example: `… | blip39 | foreach` / `- out @share` or `- gpg.encrypt`.",
     input: "shares",
     output: "bundle",
     params: [],
@@ -1293,6 +1391,37 @@ export const STEPS = [
     ],
   },
   {
+    name: "lit",
+    kind: "source",
+    toolbox: "flow",
+    shelf: "control",
+    kitOnly: true,
+    doc: "Stem literal (parse/serialize as the literal itself — never written as `lit …`). Strings → text; decimal/hex ints → int; `true`/`false` → bool. Example: `\"hello\" | out @msg`, `0xff | out @n`, or `true | out @ok`.",
+    input: "none",
+    output: "text",
+    params: [
+      {
+        name: "kind",
+        type: "enum",
+        default: "text",
+        enum: ["text", "int", "bool"],
+        doc: "Literal kind",
+      },
+      {
+        name: "value",
+        type: "string",
+        default: "",
+        doc: "Literal value (string text, decimal int, or true/false)",
+      },
+    ],
+    effectiveIo(params) {
+      const kind = String(params?.kind || "text");
+      if (kind === "int") return { input: "none", output: "int" };
+      if (kind === "bool") return { input: "none", output: "bool" };
+      return { input: "none", output: "text" };
+    },
+  },
+  {
     name: "in",
     kind: "source",
     toolbox: "flow",
@@ -1314,7 +1443,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "flow",
     shelf: "control",
-    doc: "Project a member via selector. `.public` / `.private` turn a keypair tip into a `key` tip (CryptoKey half). Usually written bare: `.public | export spki | pem`. Also as a tee/foreach branch prefix: `- .public | …`.",
+    doc: "Project a member via selector. `:public` / `:private` turn a keypair tip into a `key` tip (CryptoKey half). Usually written bare: `:public | export spki | pem`. Also as a tee/foreach branch prefix: `- :public | …`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -1322,7 +1451,7 @@ export const STEPS = [
         name: "selector",
         type: "string",
         positional: true,
-        doc: "Selector text, e.g. .private or .value",
+        doc: "Selector text, e.g. :private or :value",
       },
     ],
   },
@@ -1331,7 +1460,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "flow",
     shelf: "control",
-    doc: "Cast the tip. Retag (no crypto): `as master` / `as scalar` / `as opaque` / `as public` / `as private`. Materialize (WebCrypto): `as key` / `as keypair` from DER or PEM. Distinct from hkdf/pbkdf2/ecdh param `as=aes/256`. Literal casts (`1234 as int`) are not shipped yet.",
+    doc: "Cast the tip. Retag (no crypto): `as master` / `as scalar` / `as opaque` / `as public` / `as private` / `as int` / `as bool`. Materialize (WebCrypto): `as key` / `as keypair` from DER or PEM. Distinct from hkdf/pbkdf2/ecdh param `as=aes/256`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -1348,8 +1477,10 @@ export const STEPS = [
           "private",
           "key",
           "keypair",
+          "int",
+          "bool",
         ],
-        doc: "Cast target (retag or materialize — see docs)",
+        doc: "Cast target (retag, coerce, or materialize — see docs)",
       },
       {
         name: "alg",
@@ -1380,6 +1511,8 @@ export const STEPS = [
       const t = String(params?.type || "opaque").toLowerCase();
       if (t === "key") return { input: "bytes", output: "key" };
       if (t === "keypair") return { input: "bytes", output: "keypair" };
+      if (t === "int") return { input: "text", output: "int" };
+      if (t === "bool") return { input: "text", output: "bool" };
       if (t === "public" || t === "private") return { input: "bytes", output: "bytes" };
       return { input: "bytes", output: "bytes" };
     },
@@ -1528,9 +1661,9 @@ export const STEPS = [
     toolbox: "openpgp",
     shelf: "gpgsign",
     conjugateOf: "gpg.sign",
-    doc: "Verify an OpenPGP cleartext or detached signature. Prefer `gpg.verify key=@pub`. Detached: `signature=@slot`. Fail-loud by default; `soft`/`-q` → verified|invalid. Distinct from WebCrypto `verify`.",
+    doc: "Verify an OpenPGP cleartext or detached signature. Prefer `gpg.verify key=@pub`. Detached: `signature=@slot`. Fail-loud by default; `soft`/`-q` → bool true|false. Distinct from WebCrypto `verify`.",
     input: "text",
-    output: "text",
+    output: "bool",
     unresolvedInputs: "gpg",
     params: [
       {
@@ -1550,10 +1683,10 @@ export const STEPS = [
         type: "bool",
         flag: "-q",
         default: false,
-        doc: "Soft mode: emit verified|invalid text",
+        doc: "Soft mode: emit bool true|false (never throw on bad signature)",
       },
     ],
-    overloads: [{ when: { base: "text" }, output: { base: "text" } }],
+    overloads: [{ when: { base: "text" }, output: { base: "bool" } }],
   },
   {
     name: "agent.unlock",
@@ -1800,10 +1933,9 @@ export const STEPS = [
     kind: "sink",
     toolbox: "io",
     shelf: "ports",
-    doc: "Emit a message tile (no filename; Encrypt compose). Aliases: `print`, `echo`. Prefer `out @label` when you need a file tile + reusable slot.",
+    doc: "Emit a message tile (no filename; Encrypt compose). Prefer `out @label` when you need a file tile + reusable slot. (Legacy aliases `print`/`echo` migrate via Upgrade recipe.)",
     input: "text",
     output: "text",
-    aliases: ["print", "echo"],
     params: [
       {
         name: "name",
@@ -1949,10 +2081,9 @@ export const STEPS = [
     kind: "transform",
     toolbox: "flow",
     shelf: "control",
-    doc: "Human-readable dump of the current value (openssl-style / hexdump). Tile keeps a snapshot for live format switching. Aliases: `dump`, `hexdump`. Example: `genkey ec/p256 | tee` / `- .private | inspect`.",
+    doc: "Human-readable dump of the current value (openssl-style / hexdump). Tile keeps a snapshot for live format switching. Example: `genkey ec/p256 | tee` / `- :private | inspect`. (Legacy aliases `dump`/`hexdump` migrate via Upgrade recipe.)",
     input: "bytes",
     output: "text",
-    aliases: ["dump", "hexdump"],
     params: [
       {
         name: "format",
@@ -1969,7 +2100,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "flow",
     shelf: "control",
-    doc: "Fork side chains on a clone (`- .public | …`); stem continues unchanged. Use `peek` for a side inspect only.",
+    doc: "Fork side chains on a clone (`- :public | …`); stem continues unchanged. Use `peek` for a side inspect only.",
     input: "bytes",
     output: "bytes",
     params: [],
@@ -2136,6 +2267,197 @@ export const CIPHER_PICKER_ALIASES = {
 };
 
 /**
+ * @typedef {object} OpCollectionMember
+ * @property {string} id
+ * @property {string} name  StepSpec.name
+ * @property {string} label  short mode caption (GCM, Base64, OAEP)
+ * @property {string} [title]
+ */
+
+/**
+ * Op family for shelf kits (AES modes, RSA paddings, Base64/Base32, …).
+ * Members are usually `kitOnly`; recipe verbs stay concrete.
+ *
+ * @typedef {object} OpCollection
+ * @property {string} id
+ * @property {string} label
+ * @property {Toolbox} toolbox
+ * @property {string} shelf  insert near this shelf order
+ * @property {string} glyph
+ * @property {{ forward: string, reverse: string }} actionLabels
+ * @property {string[]} [search]  filter needles for kit visibility
+ * @property {OpCollectionMember[]} members
+ */
+
+/** @type {Record<string, OpCollection>} */
+export const OP_COLLECTIONS = {
+  aes: {
+    id: "aes",
+    label: "AES",
+    toolbox: "webcrypto",
+    shelf: "aead",
+    glyph: "aead",
+    actionLabels: { forward: "Encrypt", reverse: "Decrypt" },
+    search: ["cipher", "encrypt", "decrypt", "aes", "aead", "gcm", "cbc", "ctr"],
+    members: [
+      {
+        id: "gcm",
+        name: "aes-gcm",
+        label: "GCM",
+        title: "AES-GCM — authenticated encrypt / decrypt",
+      },
+      {
+        id: "cbc",
+        name: "aes-cbc",
+        label: "CBC",
+        title: "AES-CBC — unauthenticated (prefer GCM)",
+      },
+      {
+        id: "ctr",
+        name: "aes-ctr",
+        label: "CTR",
+        title: "AES-CTR — unauthenticated (prefer GCM)",
+      },
+    ],
+  },
+  rsa: {
+    id: "rsa",
+    label: "RSA",
+    toolbox: "webcrypto",
+    shelf: "rsa",
+    glyph: "rsa",
+    actionLabels: { forward: "Encrypt", reverse: "Decrypt" },
+    search: ["cipher", "encrypt", "decrypt", "rsa", "oaep", "pkcs"],
+    members: [
+      {
+        id: "oaep",
+        name: "rsa-oaep",
+        label: "OAEP",
+        title: "RSA-OAEP — preferred RSA encrypt / decrypt",
+      },
+      {
+        id: "pkcs1",
+        name: "rsa-pkcs1",
+        label: "PKCS1",
+        title: "RSAES-PKCS1-v1_5 — discouraged (prefer OAEP)",
+      },
+    ],
+  },
+  encoding: {
+    id: "encoding",
+    label: "Base",
+    toolbox: "encoding",
+    shelf: "binary",
+    glyph: "binary",
+    actionLabels: { forward: "Encode", reverse: "Decode" },
+    search: [
+      "encode",
+      "decode",
+      "base64",
+      "base64url",
+      "base32",
+      "binary",
+    ],
+    members: [
+      {
+        id: "base64",
+        name: "base64",
+        label: "Base64",
+        title: "Base64 encode / decode",
+      },
+      {
+        id: "base64url",
+        name: "base64url",
+        label: "Base64url",
+        title: "URL-safe Base64 encode / decode",
+      },
+      {
+        id: "base32",
+        name: "base32",
+        label: "Base32",
+        title: "RFC 4648 Base32 encode / decode",
+      },
+    ],
+  },
+};
+
+/**
+ * @returns {OpCollection[]}
+ */
+export function listOpCollections() {
+  return Object.values(OP_COLLECTIONS);
+}
+
+/**
+ * @param {string} id
+ * @returns {OpCollection|null}
+ */
+export function getOpCollection(id) {
+  return OP_COLLECTIONS[id] || null;
+}
+
+/**
+ * @param {string} stepName
+ * @returns {OpCollection|null}
+ */
+export function collectionForStep(stepName) {
+  const name = String(stepName || "");
+  for (const col of listOpCollections()) {
+    if (col.members.some((m) => m.name === name)) return col;
+  }
+  return null;
+}
+
+/**
+ * Friendly shelf-tile verb (Encrypt / Decode / …). Null → use recipe display name.
+ * @param {StepSpec|null|undefined} step
+ * @param {{ decode?: boolean, pairRole?: "forward"|"reverse"|"solo" }} [opts]
+ * @returns {string|null}
+ */
+export function pairTileLabel(step, opts = {}) {
+  if (!step) return null;
+  let labels = step.pairLabels || null;
+  if (!labels) {
+    const col = collectionForStep(step.name);
+    if (col) labels = col.actionLabels;
+  }
+  if (!labels && step.conjugateOf) {
+    const fwd = getStep(step.conjugateOf);
+    labels = fwd?.pairLabels || null;
+  }
+  if (!labels) return null;
+  const reverse = !!opts.decode || opts.pairRole === "reverse";
+  if (reverse) return labels.reverse;
+  if (
+    opts.pairRole === "forward" ||
+    opts.pairRole === "solo" ||
+    step.decodeTwin ||
+    step.conjugate
+  ) {
+    return labels.forward;
+  }
+  return labels.forward;
+}
+
+/**
+ * AES modes for the OpsShelf AES drawer (kitOnly steps — not shelf tiles).
+ * @type {OpCollectionMember[]}
+ */
+export const AES_MODE_PICKS = OP_COLLECTIONS.aes.members;
+
+/**
+ * RSA paddings for the OpsShelf RSA drawer (kitOnly steps — not shelf tiles).
+ * @type {OpCollectionMember[]}
+ */
+export const RSA_PADDING_PICKS = OP_COLLECTIONS.rsa.members;
+
+/**
+ * Base64 / Base64url / Base32 for the encoding collection drawer.
+ * @type {OpCollectionMember[]}
+ */
+export const ENCODING_MODE_PICKS = OP_COLLECTIONS.encoding.members;
+
+/**
  * WebCrypto cipher steps offered by the Encrypt/Decrypt meta-picker.
  * Order: AEAD → Cipher → RSA (matches shelf taxonomy).
  * @returns {StepSpec[]}
@@ -2168,7 +2490,52 @@ export function instantiateCipherPick(concreteName, decode = false) {
 }
 
 /** Export/import formats offered by the Key formats meta-picker. */
-export const KEY_FORMAT_PICKS = ["jwk", "pkcs8", "spki", "raw", "scalar"];
+export const KEY_FORMAT_PICKS = ["pkcs8", "spki", "jwk", "raw", "scalar"];
+
+/**
+ * Drawer labels / titles for key-format picks (openssl-flavored).
+ * @type {Record<string, { label: string, title: string }>}
+ */
+export const KEY_FORMAT_META = {
+  pkcs8: {
+    label: "PKCS#8",
+    title: "Private key PKCS#8 (openssl pkcs8 / pkey)",
+  },
+  spki: {
+    label: "SPKI",
+    title: "Public key SPKI (openssl pkey -pubout)",
+  },
+  jwk: {
+    label: "JWK",
+    title: "JSON Web Key (text)",
+  },
+  raw: {
+    label: "raw",
+    title: "Raw key bytes",
+  },
+  scalar: {
+    label: "scalar",
+    title: "Private scalar / d (fixed-length bytes for SSS)",
+  },
+};
+
+/**
+ * Tip-implied export vs import for the Formats kit (null → ask Export|Import).
+ * @param {{ base?: string, kind?: string, encoding?: string }|null|undefined} tip
+ * @returns {"export"|"import"|null}
+ */
+export function formatDirectionForTip(tip) {
+  if (!tip || tip.base === "none") return null;
+  if (tip.base === "keypair" || tip.base === "key") return "export";
+  if (tip.base === "bytes") return "import";
+  if (
+    tip.base === "text" &&
+    (tip.encoding === "jwk" || tip.kind === "pem" || tip.encoding === "pem")
+  ) {
+    return "import";
+  }
+  return null;
+}
 
 /**
  * @param {"export"|"import"} direction

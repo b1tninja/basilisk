@@ -38,6 +38,10 @@ describe("parseToolkitHash", () => {
     });
     expect(MESSAGING_STARTERS.encrypt.recipe).toContain("gpg.encrypt");
     expect(MESSAGING_STARTERS.decrypt.recipe).toBe("gpg.decrypt");
+    expect(MESSAGING_STARTERS.symencrypt.recipe).toContain(
+      "gpg.symencrypt mode=passphrase"
+    );
+    expect(MESSAGING_STARTERS.symencrypt.recipe).toContain("passphrase=@pw");
   });
 
   it("parses preset and recipe forms", () => {
@@ -61,7 +65,7 @@ describe("compact share form", () => {
     const foreachPretty = `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`;
     expect(compactRecipeText(foreachPretty)).toBe(
-      "random 32|sss.split|blip39|foreach{ - out @share }"
+      "random 32|sss.split|blip39.encode|foreach{ - out @share }"
     );
 
     const chained = `genkey ec/p256 | out @kp
@@ -69,7 +73,7 @@ describe("compact share form", () => {
 in @kp | export spki | pem | out @pub`;
     const compact = compactRecipeText(chained);
     expect(compact).toBe(
-      "genkey ec/p256|out @kp~in @kp|export spki|pem|out @pub"
+      "genkey ec/p256|out @kp~@kp|export spki|pem|out @pub"
     );
     expect(compact).not.toContain("\n");
     expect(encodeSharePayload(compact)).toContain("|");
@@ -96,7 +100,7 @@ in @kp | export spki | pem | out @pub`;
     const { text, errors } = canonicalizeRecipe(action.recipe);
     expect(errors).toEqual([]);
     expect(text).toBe(
-      "genkey ec/p256 | out @kp\n\nin @kp | export spki | pem | out @pub"
+      "genkey ec/p256 | out @kp\n\n@kp | export spki | pem | out @pub"
     );
   });
 
@@ -248,7 +252,7 @@ describe("hash writers", () => {
     expect(r.hash.startsWith("#r=")).toBe(true);
     expect(parseToolkitHash(r.hash)).toEqual({
       kind: "recipe",
-      recipe: "random 8|hex|out @x",
+      recipe: "random 8|to hex|out @x",
     });
   });
 

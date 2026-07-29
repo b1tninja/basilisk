@@ -101,14 +101,20 @@ check_status "/pks/lookup?op=stats"            "$BASE_URL/pks/lookup?op=stats"
 check_body   "/ (HTML title)"                  "$BASE_URL/?${SMOKE_QS}" "Basilisk"
 wait_for_sri_html "$BASE_URL/?${SMOKE_QS}" || true
 
-# 4. Clean-URL page aliases — derived from web/*.html so new pages are covered.
-#    index.html → /search; every other page → /<name>.
+# 4. Clean-URL page aliases — product pages only (Vite rollup inputs).
+#    index.html → /search; every other built page → /<name>.
+#    Dev/snapshot fixtures under web/ (e.g. tool-card-preview.html) are not
+#    in vite.config.js and are not deployed — skip them.
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VITE_CONFIG="${REPO_ROOT}/web/vite.config.js"
 check_status "/search"                         "$BASE_URL/search?${SMOKE_QS}"
 shopt -s nullglob
 for html in "${REPO_ROOT}/web"/*.html; do
   page="$(basename "$html" .html)"
   [[ "$page" == "index" ]] && continue
+  if ! grep -qE "${page}\\.html" "$VITE_CONFIG"; then
+    continue
+  fi
   check_status "/$page"                        "$BASE_URL/${page}?${SMOKE_QS}"
 done
 

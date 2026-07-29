@@ -239,14 +239,91 @@ function baseCases() {
     {
       id: "encoding.roundtrip",
       recipe:
-        "random 24 | base64 | base64 -d | base64url | base64url -d | to hex | from hex | base32 | base32 -d | to hex | out @x",
+        "random 24 | base64 | base64.decode | base64url | base64url.decode | to hex | from hex | base32 | base32.decode | to hex | out @x",
       mode: "run",
+    },
+    {
+      id: "lit.text-int-bool",
+      recipe: `"hello world" | out @msg
+
+0xff | out @n
+255 | out @n2
+true | out @ok
+"1" | as bool | out @yes
+"42" | as int | out @answer`,
+      mode: "run",
+      assert: (a) => {
+        const msg = a.find((x) => /msg/i.test(String(x.label || x.filename || "")));
+        if (!msg || String(msg.content) !== "hello world") {
+          throw new Error("expected lit text hello world");
+        }
+        const ok = a.find((x) => /ok/i.test(String(x.label || x.filename || "")));
+        if (!ok || String(ok.content) !== "true") {
+          throw new Error("expected lit bool true");
+        }
+        const answer = a.find((x) =>
+          /answer/i.test(String(x.label || x.filename || ""))
+        );
+        if (!answer || String(answer.content) !== "42") {
+          throw new Error("expected as int → 42");
+        }
+      },
+    },
+    {
+      id: "aes-gcm.keyBits",
+      recipe: `genkey aes/128 | out @k128
+
+genkey aes/192 | out @k192
+
+genkey aes/256 | out @k256
+
+"sized" | utf8 | aes-gcm keyBits=192 key=@k192 | to hex | out @ct192
+
+"sized" | utf8 | aes-128-gcm key=@k128 | to hex | out @ct128
+
+"sized" | utf8 | aes-256-gcm key=@k256 | to hex | out @ct256
+
+"sized" | utf8 | aes-128-cbc key=@k128 | to hex | out @cbc
+
+"sized" | utf8 | aes-256-cbc key=@k256 | to hex | out @cbc256
+
+"sized" | utf8 | aes-256-ctr key=@k256 | to hex | out @ctr
+
+"sized" | utf8 | aes-cbc keyBits=192 key=@k192 | to hex | out @cbc192
+
+"sized" | utf8 | aes-ctr keyBits=128 key=@k128 | to hex | out @ctr128
+
+"sized" | utf8 | aes-ctr keyBits=192 key=@k192 | to hex | out @ctr192`,
+      mode: "run",
+    },
+    {
+      id: "rsa-oaep.hash-forms",
+      recipe: `genkey rsa/2048 usage=encrypt hash=sha-256 | out @rk256
+
+"oaep" | utf8 | RSA/ECB/OAEPWithSHA-256AndMGF1Padding key=@rk256 | to hex | out @ct256
+
+in @ct256 | from hex | RSA/ECB/OAEPWithSHA-256AndMGF1Padding -d key=@rk256 | utf8 | out @pt`,
+      mode: "run",
+      timeoutMs: 60_000,
+    },
+    {
+      id: "rsa-oaep.hash-enum",
+      recipe: `genkey rsa/2048 usage=encrypt hash=sha-256 | out @rk
+
+"x" | utf8 | rsa-oaep hash=sha-1 key=@rk | out @a
+
+"x" | utf8 | rsa-oaep hash=sha-256 key=@rk | out @b
+
+"x" | utf8 | rsa-oaep hash=sha-384 key=@rk | out @c
+
+"x" | utf8 | rsa-oaep hash=sha-512 key=@rk | out @d`,
+      mode: "compile",
     },
     {
       id: "pem.labels",
       recipe: `genkey ec/p256 | export pkcs8 | pem label="PRIVATE KEY" | out @priv
 
-genkey ec/p256 | .public | export spki | pem label="PUBLIC KEY" | out @pub`,
+genkey ec/p256 | :public | export spki | pem label="PUBLIC KEY" | out @pub`,
       mode: "run",
       timeoutMs: 30_000,
     },
@@ -303,6 +380,27 @@ in @msg | verify -q key=@kp signature=@sig | out @result`,
       mode: "run",
       bindings: { inputs: { text: { value: "soft-ok" } } },
       timeoutMs: 30_000,
+    },
+    {
+      id: "aes-gcm.aad-slot",
+      recipe: `"aad" | utf8 | out @aad
+
+genkey aes/256 | out @cek
+
+"hi" | utf8 | aes-gcm key=@cek aad=@aad | to hex | out @ct
+
+in @ct | from hex | aes-gcm -d key=@cek aad=@aad | utf8 | out @pt`,
+      mode: "run",
+    },
+    {
+      id: "gpg.symencrypt.passphrase",
+      recipe: `"pw" | out @pw
+
+"secret" | utf8 | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg
+
+in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8 | out @pt`,
+      mode: "run",
+      timeoutMs: 60_000,
     },
     {
       id: "import.raw.aes",
@@ -442,7 +540,7 @@ passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-512 | to hex
       id: "ecdh.x25519",
       recipe: `genkey x25519 | out @local
 
-genkey x25519 | .public | out @peer
+genkey x25519 | :public | out @peer
 
 ecdh private=@local peer=@peer | to hex | out @shared`,
       mode: "run",
@@ -526,13 +624,18 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
     },
     {
       id: "export.d.alias",
-      recipe: "genkey ec/p256 | export d | to hex | out @d",
+      recipe: "genkey ec/p256 | export scalar | to hex | out @d",
       mode: "run",
+    },
+    {
+      id: "export.which=public",
+      recipe: "genkey ec/p256 | export jwk which=public | out @j",
+      mode: "compile",
     },
     {
       id: "import.spki",
       recipe:
-        "genkey ec/p256 | .public | export spki | import spki alg=ec/p256 | export spki | pem | out @pub",
+        "genkey ec/p256 | :public | export spki | import spki alg=ec/p256 | export spki | pem | out @pub",
       mode: "run",
     },
 
@@ -544,8 +647,8 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
 
 random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out @one
 
-random 32 | sss.split threshold=2 shares=3 | blip39 | foreach .items
-  - .value | out @item`,
+random 32 | sss.split threshold=2 shares=3 | blip39 | foreach :items
+  - :value | out @item`,
       mode: "run",
       timeoutMs: 30_000,
     },
@@ -558,7 +661,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach .items
     },
     {
       id: "shares.combine",
-      recipe: "shares | blip39 -d | sss.combine | base64 | out @secret",
+      recipe: "shares | blip39.decode | sss.combine | base64 | out @secret",
       mode: "run",
       bindings: async () => {
         const { ast } = compileRecipe(
@@ -581,13 +684,13 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach .items
     {
       id: "in.select.as.peek.tee.inspect",
       recipe: `genkey ec/p256 | tee
-  - .public | export spki which=public | pem | out @public
-  - .private | inspect format=hex
+  - :public | export spki | pem | out @public
+  - :private | inspect format=hex
 | peek keypair format=meta | export pkcs8 | pem | out @private
 
 in @private | der | as opaque | to hex | out @hex
 
-genkey ec/p256 | .public | export spki which=public | pem | out @pub2`,
+genkey ec/p256 | :public | export spki | pem | out @pub2`,
       mode: "run",
       timeoutMs: 30_000,
     },
@@ -630,11 +733,11 @@ random 32 | as scalar | to hex | out @s
 
 random 32 | as opaque | to hex | out @o
 
-genkey ec/p256 | .public | export spki | as public | pem | out @pubpem
+genkey ec/p256 | :public | export spki | as public | pem | out @pubpem
 
 genkey ec/p256 | export pkcs8 | as private | pem | out @privpem
 
-genkey ec/p256 | .public | export spki | pem | as key | export spki | out @pub2
+genkey ec/p256 | :public | export spki | pem | as key | export spki | out @pub2
 
 genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
       mode: "run",
@@ -745,7 +848,7 @@ in @msg | gpg.verify -q signature=@sig | out @ok`,
     },
     {
       id: "gpg.symencrypt.decrypt",
-      recipe: `input | gpg.symencrypt name=env | sss.split threshold=2 shares=3 | blip39 | foreach
+      recipe: `input | gpg.symencrypt mode=master name=env | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`,
       mode: "run",
       bindings: {
@@ -758,13 +861,13 @@ in @msg | gpg.verify -q signature=@sig | out @ok`,
     {
       id: "gpg.symdecrypt",
       recipe:
-        "shares | blip39 -d | sss.combine | gpg.symdecrypt | utf8 | out @pem",
+        "shares | blip39.decode | sss.combine | gpg.symdecrypt mode=master | utf8 | out @pem",
       mode: "run",
       bindings: async () => {
         const pem =
           "-----BEGIN PRIVATE KEY-----\nMIIBverbsmoke\n-----END PRIVATE KEY-----";
         const { ast } = compileRecipe(
-          `input | gpg.symencrypt name=env | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share`
+          `input | gpg.symencrypt mode=master name=env | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share`
         );
         const arts = await runRecipe(ast, {
           inputs: { text: { value: pem } },
@@ -950,7 +1053,7 @@ function genkeyMatrix() {
     if (alg.startsWith("aes/") || alg.startsWith("hmac/")) {
       recipe = `genkey ${alg} | export jwk | out @k`;
     } else if (alg.startsWith("rsa/")) {
-      recipe = `genkey ${alg} hash=sha-256 | .public | export spki | pem | out @pub`;
+      recipe = `genkey ${alg} hash=sha-256 | :public | export spki | pem | out @pub`;
     } else if (alg === "x25519") {
       recipe = `genkey ${alg} usage=derive | export jwk | out @k`;
     } else {
@@ -966,21 +1069,21 @@ function genkeyMatrix() {
   out.push({
     id: "genkey.rsa.padding=pkcs1",
     recipe:
-      "genkey rsa/2048 usage=sign padding=pkcs1 hash=sha-256 | .public | export spki | pem | out @pub",
+      "genkey rsa/2048 usage=sign padding=pkcs1 hash=sha-256 | :public | export spki | pem | out @pub",
     mode: "run",
     timeoutMs: 60_000,
   });
   out.push({
     id: "genkey.rsa.hash=sha-384",
     recipe:
-      "genkey rsa/2048 usage=encrypt hash=sha-384 | .public | export spki | pem | out @pub",
+      "genkey rsa/2048 usage=encrypt hash=sha-384 | :public | export spki | pem | out @pub",
     mode: "run",
     timeoutMs: 60_000,
   });
   out.push({
     id: "genkey.rsa.hash=sha-512",
     recipe:
-      "genkey rsa/2048 usage=encrypt hash=sha-512 | .public | export spki | pem | out @pub",
+      "genkey rsa/2048 usage=encrypt hash=sha-512 | :public | export spki | pem | out @pub",
     mode: "run",
     timeoutMs: 60_000,
   });
@@ -1027,7 +1130,7 @@ function deriveAsMatrix() {
         id: `ecdh.as=${as}`,
         recipe: `genkey ec/p521 | out @local
 
-genkey ec/p521 | .public | out @peer
+genkey ec/p521 | :public | out @peer
 
 ecdh private=@local peer=@peer as=${as} | export jwk | out @k`,
         mode: "compile",
@@ -1039,7 +1142,7 @@ ecdh private=@local peer=@peer as=${as} | export jwk | out @k`,
         id: "ecdh.as=bytes",
         recipe: `genkey x25519 | out @local
 
-genkey x25519 | .public | out @peer
+genkey x25519 | :public | out @peer
 
 ecdh private=@local peer=@peer as=bytes | to hex | out @shared`,
         mode: "run",
@@ -1050,7 +1153,7 @@ ecdh private=@local peer=@peer as=bytes | to hex | out @shared`,
       id: `ecdh.as=${as}`,
       recipe: `genkey x25519 | out @local
 
-genkey x25519 | .public | out @peer
+genkey x25519 | :public | out @peer
 
 ecdh private=@local peer=@peer as=${as} | export jwk | out @k`,
       mode: "run",
@@ -1155,7 +1258,7 @@ function importMatrix() {
     {
       id: "import.format=d",
       recipe:
-        "genkey ec/p256 | export d | import d alg=ec/p256 | export pkcs8 | pem | out @p",
+        "genkey ec/p256 | export scalar | import scalar alg=ec/p256 | export pkcs8 | pem | out @p",
       mode: "run",
     },
     {
@@ -1239,14 +1342,14 @@ function importMatrix() {
 function miscParamMatrix() {
   return [
     {
-      id: "foreach.keys",
-      recipe: `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach .keys
+      id: "foreach:keys",
+      recipe: `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach :keys
   - out @k`,
       mode: "run",
     },
     {
-      id: "foreach.values",
-      recipe: `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach .values
+      id: "foreach:values",
+      recipe: `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach :values
   - out @v`,
       mode: "run",
     },

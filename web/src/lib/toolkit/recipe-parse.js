@@ -3,21 +3,21 @@
  * Normative grammar: docs/RECIPE.md
  *
  * Supports multi-chain recipes (blank-line separated), `@slot` refs on `out`/`in`,
- * tee/foreach bodies, and bare selectors (`.public`, `[n]`).
+ * tee/foreach bodies, member selectors (`:public`, `[n]`), and bare `@slot` sources.
  *
  * AST steps match recipe.js RecipeStep, with:
  *   - chains[] + steps (= chains[0].steps)
- *   - tee.branches[].selector  e.g. ".private"
+ *   - tee.branches[].selector  e.g. ":private"
  *   - tee.branches[].member    canonical "private"|"public"
- *   - foreach.foreachSelector  e.g. ".items" (optional)
+ *   - foreach.foreachSelector  e.g. ":items" (optional)
  *   - select steps for bare selectors: { name: "select", params: { selector } }
+ *   - bare `@label` → { name: "in", params: { ref: "@label" } }
  */
 
 import { canonicalName, getStep } from "./registry.js";
 import {
   legacyRemovalHint,
   resolveAlternateForm,
-  resolveCipherTransform,
   resolveDecodeTwinVerb,
 } from "./step-names.js";
 
@@ -31,10 +31,7 @@ import {
 
 const SELECTOR_MEMBERS = new Set([
   "private",
-  "priv",
-  "secret",
   "public",
-  "pub",
   "keys",
   "values",
   "items",
@@ -48,10 +45,11 @@ const SELECTOR_MEMBERS = new Set([
  */
 export function canonicalSelectorMember(raw) {
   const m = String(raw || "")
-    .replace(/^\./, "")
+    .replace(/^[.:]/, "")
     .toLowerCase();
-  if (m === "private" || m === "priv" || m === "secret") return "private";
-  if (m === "public" || m === "pub") return "public";
+  // Legacy shorts accepted only via Upgrade recipe / migrator — not live parse.
+  if (m === "private") return "private";
+  if (m === "public") return "public";
   return m;
 }
 
@@ -72,7 +70,7 @@ export function isPathLikeRef(raw) {
 
 /**
  * Canonical slot ref for out/in: `@label` or decimal index string.
- * Bare ident → `@ident`. Rejects path-like forms.
+ * Labels must include `@` (bare `kp` / `key=cek` rejected — use migrateRecipe / Upgrade).
  * @param {string} raw
  * @param {{ allowIndex?: boolean }} [opts]
  * @returns {{ ok: true, ref: string } | { ok: false, error: string }}
@@ -96,7 +94,16 @@ export function normalizeSlotRef(raw, opts = {}) {
     if (n < 1) return { ok: false, error: "Slot index must be ≥ 1" };
     return { ok: true, ref: String(n) };
   }
-  const bare = s.startsWith("@") ? s.slice(1) : s;
+  if (!s.startsWith("@")) {
+    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(s)) {
+      return { ok: false, error: `Invalid slot label "${s}"` };
+    }
+    return {
+      ok: false,
+      error: `Slot labels require @ (use @${s}, not ${s})`,
+    };
+  }
+  const bare = s.slice(1);
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(bare)) {
     return { ok: false, error: `Invalid slot label "${s}"` };
   }
@@ -311,6 +318,19 @@ class Parser {
       }
       stages.push(this.parseStage(parentIndent));
     }
+    // `@kp | out` → out inherits @kp (same as `in @kp | out @kp`).
+    for (let i = 1; i < stages.length; i++) {
+      const prev = stages[i - 1];
+      const cur = stages[i];
+      if (cur.name !== "out") continue;
+      const name = cur.params?.name;
+      const isDefault =
+        name === undefined || name === "" || name === "@output";
+      if (!isDefault) continue;
+      if (prev.name === "in" && String(prev.params?.ref || "").startsWith("@")) {
+        cur.params = { ...cur.params, name: String(prev.params.ref) };
+      }
+    }
     return stages;
   }
 
@@ -320,11 +340,43 @@ class Parser {
    */
   parseStage(parentIndent) {
     this.skipSpaces();
-    if (this.peek() === ".") {
+    if (this.peek() === ":") {
       return this.parseSelectorStage();
+    }
+    if (this.peek() === ".") {
+      const start = this.pos;
+      this.pos++;
+      const id = this.readIdent();
+      this.errors.push({
+        message: id
+          ? `Member selectors use :${id.toLowerCase()} (dot is for namespaced ops like gpg.encrypt)`
+          : "Member selectors use :public / :private (dot is for namespaced ops like gpg.encrypt)",
+        start,
+        end: this.pos,
+      });
+      return {
+        name: "select",
+        params: { selector: id ? `:${id}` : ":" },
+        start,
+        end: this.pos,
+      };
     }
     if (this.peek() === "[") {
       return this.parseIndexSelectorStage();
+    }
+    if (this.peek() === "@") {
+      return this.parseBareSlotStage();
+    }
+
+    // Stem literals: "…" / '…' / 0xff / decimal int / true|false.
+    if (this.peek() === '"' || this.peek() === "'") {
+      return this.parseLiteralStage();
+    }
+    if (/[0-9]/.test(this.peek())) {
+      return this.parseLiteralStage();
+    }
+    if (/^(true|false)(?![A-Za-z0-9_.+/-])/i.test(this.src.slice(this.pos))) {
+      return this.parseLiteralStage();
     }
 
     const nameStart = this.pos;
@@ -368,9 +420,20 @@ class Parser {
     }
 
     // CyberChef encoding: `to` / `from` are normal registry steps (positional encoding).
-    // WebCrypto sugar: encrypt|decrypt <transform> → concrete aes-* / rsa-* 
+    // Bare encrypt|decrypt sugar is migrator-only — hard-error in live parse.
     if (lower === "encrypt" || lower === "decrypt") {
-      return this.parseCipherDispatcher(lower, nameStart);
+      this.errors.push({
+        message:
+          `"${name}" was removed from live parse — use a concrete cipher (aes-gcm, …) or Upgrade recipe to migrate`,
+        start: nameStart,
+        end: this.pos,
+      });
+      return {
+        name: "aes-gcm",
+        params: { decode: lower === "decrypt" },
+        start: nameStart,
+        end: this.pos,
+      };
     }
 
     // Encoding twins: base64.encode / base64.decode → base64 / base64 -d.
@@ -415,12 +478,119 @@ class Parser {
 
     const step = this.parseApply(canon, name, nameStart);
     if (alt?.expectedKeyBits) {
-      step.params = { ...step.params, expectedKeyBits: alt.expectedKeyBits };
+      step.params = { ...step.params, keyBits: alt.expectedKeyBits };
     }
     if (alt?.oaepHash) {
-      step.params = { ...step.params, oaepHash: alt.oaepHash };
+      step.params = { ...step.params, hash: alt.oaepHash };
     }
     return step;
+  }
+
+  /**
+   * Stem literal stage → internal `lit` (serialize writes the literal form).
+   * @returns {RecipeStep}
+   */
+  parseLiteralStage() {
+    const start = this.pos;
+    if (this.peek() === '"' || this.peek() === "'") {
+      const value = this.readString();
+      return {
+        name: "lit",
+        params: { kind: "text", value },
+        start,
+        end: this.pos,
+      };
+    }
+    // Bool: true / false (case-insensitive; must be a whole token).
+    if (/^(true|false)(?![A-Za-z0-9_.+/-])/i.test(this.src.slice(this.pos))) {
+      const word = this.src.slice(this.pos).match(/^(true|false)/i)?.[0] || "";
+      this.pos += word.length;
+      return {
+        name: "lit",
+        params: { kind: "bool", value: word.toLowerCase() === "true" },
+        start,
+        end: this.pos,
+      };
+    }
+    // Hex int 0x… or decimal.
+    if (
+      this.peek() === "0" &&
+      (this.src[this.pos + 1] === "x" || this.src[this.pos + 1] === "X")
+    ) {
+      this.pos += 2;
+      const hexStart = this.pos;
+      while (/[0-9A-Fa-f]/.test(this.peek())) this.pos++;
+      if (this.pos === hexStart) {
+        this.errors.push({
+          message: "Expected hex digits after `0x`",
+          start,
+          end: this.pos,
+        });
+        return {
+          name: "lit",
+          params: { kind: "int", value: 0 },
+          start,
+          end: this.pos,
+        };
+      }
+      const hex = this.src.slice(hexStart, this.pos);
+      const n = Number.parseInt(hex, 16);
+      return {
+        name: "lit",
+        params: { kind: "int", value: Number.isFinite(n) ? n : 0 },
+        start,
+        end: this.pos,
+      };
+    }
+    const n = this.readNumber();
+    if (n == null) {
+      this.errors.push({
+        message: "Expected a number literal",
+        start,
+        end: this.pos,
+      });
+      return {
+        name: "lit",
+        params: { kind: "int", value: 0 },
+        start,
+        end: this.pos,
+      };
+    }
+    return {
+      name: "lit",
+      params: { kind: "int", value: n },
+      start,
+      end: this.pos,
+    };
+  }
+
+  /**
+   * Bare `@label` source — same as `in @label`.
+   * @returns {RecipeStep}
+   */
+  parseBareSlotStage() {
+    const start = this.pos;
+    this.pos++; // @
+    const id = this.readIdent();
+    if (!id) {
+      this.errors.push({
+        message: "Expected slot label after `@`",
+        start,
+        end: this.pos,
+      });
+      return {
+        name: "in",
+        params: { ref: "@" },
+        start,
+        end: this.pos,
+      };
+    }
+    return {
+      name: "in",
+      params: { ref: `@${id}` },
+      start,
+      end: this.pos,
+    };
   }
 
   /**
@@ -428,17 +598,17 @@ class Parser {
    */
   parseSelectorStage() {
     const start = this.pos;
-    this.pos++; // .
+    this.pos++; // :
     const id = this.readIdent();
     if (!id) {
       this.errors.push({
-        message: "Expected selector name after `.`",
+        message: "Expected selector name after `:`",
         start,
         end: this.pos,
       });
-      return { name: "select", params: { selector: "." }, start, end: this.pos };
+      return { name: "select", params: { selector: ":" }, start, end: this.pos };
     }
-    const sel = `.${id}`;
+    const sel = `:${id.toLowerCase()}`;
     const member = canonicalSelectorMember(id);
     if (!SELECTOR_MEMBERS.has(id.toLowerCase()) && !SELECTOR_MEMBERS.has(member)) {
       this.errors.push({
@@ -515,7 +685,7 @@ class Parser {
     if (!body.listBody.length && !body.branches.length) {
       this.errors.push({
         message:
-          "tee requires a body — use `{ - .public | … }` or indented `-` lines (use `peek` for a side inspect)",
+          "tee requires a body — use `{ - :public | … }` or indented `-` lines (use `peek` for a side inspect)",
         start,
         end: this.pos,
       });
@@ -542,36 +712,48 @@ class Parser {
     this.skipSpaces();
     /** @type {string|undefined} */
     let foreachSelector;
-    if (this.peek() === ".") {
+    if (this.peek() === ":") {
       const selStart = this.pos;
       this.pos++;
       const id = this.readIdent();
       if (!id) {
         this.errors.push({
-          message: "Expected selector after `foreach .`",
+          message: "Expected selector after `foreach :`",
           start: selStart,
           end: this.pos,
         });
       } else {
-        foreachSelector = `.${id}`;
+        foreachSelector = `:${id.toLowerCase()}`;
         const m = id.toLowerCase();
         if (m !== "items" && m !== "values" && m !== "keys") {
           this.errors.push({
-            message: `foreach selector must be .items, .values, or .keys (got ${foreachSelector})`,
+            message: `foreach selector must be :items, :values, or :keys (got ${foreachSelector})`,
             start: selStart,
             end: this.pos,
           });
         }
       }
       this.skipSpaces();
+    } else if (this.peek() === ".") {
+      const selStart = this.pos;
+      this.pos++;
+      const id = this.readIdent();
+      this.errors.push({
+        message: id
+          ? `foreach selectors use :${id.toLowerCase()} (not .${id})`
+          : "foreach selectors use :items / :values / :keys",
+        start: selStart,
+        end: this.pos,
+      });
+      this.skipSpaces();
     }
 
     const body = this.parseBody(parentIndent);
     if (!body.listBody.length && !body.branches.length) {
       // branches shouldn't appear under foreach with selectors as member —
-      // allow list body only; if someone used - .key under foreach .items it's a list body with selector prefix...
+      // allow list body only; if someone used - :key under foreach :items it's a list body with selector prefix...
       // Actually foreach body branches with selectors mean per-item projection via tee inside,
-      // OR we allow - .value | out as a branch-style list item.
+      // OR we allow - :value | out as a branch-style list item.
       // parseBody puts selector-prefix items into branches for tee; for foreach we need them as body with selector.
     }
     if (!body.listBody.length && !body.branches.length) {
@@ -591,7 +773,7 @@ class Parser {
       // Flatten: foreach body item with selector becomes a mini-pipeline starting with select.
       const selStep = {
         name: "select",
-        params: { selector: br.selector || `.${br.member}` },
+        params: { selector: br.selector || `:${br.member}` },
         start: br.start || start,
         end: br.end || this.pos,
       };
@@ -829,8 +1011,8 @@ class Parser {
     const start = this.pos;
     this.pos++; // -
     if (this.peek() !== " " && this.peek() !== "\t") {
-      // allow `-step`? grammar requires space; be lenient if next is .
-      if (this.peek() !== ".") {
+      // allow `-:public` without space; require space otherwise
+      if (this.peek() !== ":" && this.peek() !== "[") {
         this.errors.push({
           message: "Expected space after `-` in list body",
           start: this.pos,
@@ -842,18 +1024,18 @@ class Parser {
 
     /** @type {string|null} */
     let selector = null;
-    if (this.peek() === ".") {
+    if (this.peek() === ":") {
       const selStart = this.pos;
       this.pos++;
       const id = this.readIdent();
       if (!id) {
         this.errors.push({
-          message: "Expected selector name after `.`",
+          message: "Expected selector name after `:`",
           start: selStart,
           end: this.pos,
         });
       } else {
-        selector = `.${id}`;
+        selector = `:${id.toLowerCase()}`;
         const member = canonicalSelectorMember(id);
         if (
           !SELECTOR_MEMBERS.has(id.toLowerCase()) &&
@@ -871,11 +1053,27 @@ class Parser {
           this.skipSpaces();
         } else {
           this.errors.push({
-            message: `Expected \`|\` after selector ${selector} (e.g. \`- .private | inspect\`)`,
+            message: `Expected \`|\` after selector ${selector} (e.g. \`- :private | inspect\`)`,
             start: this.pos,
             end: this.pos,
           });
         }
+      }
+    } else if (this.peek() === ".") {
+      const selStart = this.pos;
+      this.pos++;
+      const id = this.readIdent();
+      this.errors.push({
+        message: id
+          ? `Member selectors use :${id.toLowerCase()} (e.g. \`- :public | …\`)`
+          : "Member selectors use :public / :private",
+        start: selStart,
+        end: this.pos,
+      });
+      this.skipSpaces();
+      if (this.peek() === "|") {
+        this.pos++;
+        this.skipSpaces();
       }
     } else if (this.peek() === "[") {
       const idx = this.parseIndexSelectorStage();
@@ -895,7 +1093,7 @@ class Parser {
     if (selector) {
       const member = canonicalSelectorMember(selector);
       branches.push({
-        member: member === selector.replace(/^\./, "") ? member : member,
+        member: canonicalSelectorMember(selector),
         selector,
         body: pipe,
         start,
@@ -915,84 +1113,6 @@ class Parser {
         });
       }
     }
-  }
-
-  /**
-   * Parse `encrypt` / `decrypt` + cipher transform into a concrete WebCrypto op.
-   * @param {"encrypt"|"decrypt"} verb
-   * @param {number} nameStart
-   * @returns {RecipeStep}
-   */
-  parseCipherDispatcher(verb, nameStart) {
-    let decode = verb === "decrypt";
-    this.skipSpaces();
-
-    // Optional `-d` before the transform (`encrypt -d aes-gcm …`).
-    if (
-      this.peek() === "-" &&
-      /[A-Za-z]/.test(this.src[this.pos + 1] || "")
-    ) {
-      const flagStart = this.pos;
-      this.pos++;
-      const flagName = this.readIdent();
-      if (flagName.toLowerCase() === "d") {
-        decode = true;
-      } else {
-        this.errors.push({
-          message: `Unknown flag "-${flagName}" for ${verb}`,
-          start: flagStart,
-          end: this.pos,
-        });
-      }
-      this.skipSpaces();
-    }
-
-    const transformStart = this.pos;
-    const transform = this.readStepName();
-    if (!transform) {
-      this.errors.push({
-        message: `${verb} requires a cipher transform (e.g. AES/GCM/NoPadding or aes-gcm)`,
-        start: nameStart,
-        end: this.pos,
-      });
-      return {
-        name: "aes-gcm",
-        params: { decode },
-        start: nameStart,
-        end: this.pos,
-      };
-    }
-
-    const resolved = resolveCipherTransform(transform);
-    if (!resolved) {
-      const jceHint = transform.includes("/")
-        ? `Unknown JCE transform "${transform}"; try aes-gcm (or AES/GCM/NoPadding)`
-        : `Unknown cipher transform "${transform}" for ${verb}; try aes-gcm or AES/GCM/NoPadding`;
-      this.errors.push({
-        message: jceHint,
-        start: transformStart,
-        end: this.pos,
-      });
-      return {
-        name: "aes-gcm",
-        params: { decode },
-        start: nameStart,
-        end: this.pos,
-      };
-    }
-
-    const step = this.parseApply(resolved.canonical, verb, nameStart);
-    if (decode) step.params = { ...step.params, decode: true };
-    if (resolved.expectedKeyBits) {
-      step.params = {
-        ...step.params,
-        expectedKeyBits: resolved.expectedKeyBits,
-      };
-    }
-    if (resolved.oaepHash) {
-      step.params = { ...step.params, oaepHash: resolved.oaepHash };
-    }
-    return step;
   }
 
   /**
@@ -1172,11 +1292,20 @@ class Parser {
           // Named values may be base64url (can start with a digit) — don't use
           // readArgValue's number shortcut.
           const rawVal = this.readNamedArgValue();
-          params[word] = coerceParam(spec, word, rawVal);
+          const known = (spec?.params || []).some((p) => p.name === word);
+          if (!known) {
+            this.errors.push({
+              message: `Unknown parameter "${word}" for ${canon}`,
+              start: tokStart,
+              end: this.pos,
+            });
+          } else {
+            params[word] = coerceParam(spec, word, rawVal);
+          }
         } else {
-          // Positional: allow alg ids like ec/p256 (slash beyond bare ident).
+          // Positional: allow alg ids (ec/p256) and emails (alice@example.org).
           let raw = word;
-          if (this.peek() === "/") {
+          if (/[/:@+]/.test(this.peek())) {
             this.pos = tokStart;
             raw = this.readArgValue();
           }
@@ -1303,7 +1432,9 @@ class Parser {
     if (!/[A-Za-z]/.test(this.peek())) return "";
     const start = this.pos;
     this.pos++;
-    while (/[A-Za-z0-9_./-]/.test(this.peek())) this.pos++;
+    // Mid-token `@` / `:` so positional emails (`hkp.search alice@example.org`)
+    // parse as one value. Leading `@slot` is handled above.
+    while (/[A-Za-z0-9_+./:@-]/.test(this.peek())) this.pos++;
     return this.src.slice(start, this.pos);
   }
 
@@ -1376,6 +1507,13 @@ class Parser {
 function coerceParam(spec, key, raw) {
   const p = (spec?.params || []).find((x) => x.name === key);
   if (!p) return raw;
+  if (
+    (spec?.name === "export" || spec?.name === "import") &&
+    key === "format" &&
+    String(raw).toLowerCase() === "d"
+  ) {
+    return "scalar";
+  }
   if (p.type === "int") {
     const n = Number(raw);
     return Number.isFinite(n) ? Math.floor(n) : raw;

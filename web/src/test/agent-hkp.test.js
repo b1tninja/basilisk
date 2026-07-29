@@ -70,7 +70,7 @@ in @signed | gpg.verify key=@me | out @ok`;
       },
     });
     const ok = arts.find((a) => /ok/i.test(a.filename || a.label || "")) || arts.at(-1);
-    expect(String(ok.content)).toMatch(/verified/i);
+    expect(String(ok.content)).toMatch(/^true$/i);
 
     const pubRun = compileRecipe(`agent.pub ${fpr} | out @pub`);
     const pubArts = await runRecipe(pubRun.ast, { inputs: {} });

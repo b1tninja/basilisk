@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Toolkit widgets — Basilisk</title>
+  <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64">
+</head>
+<body class="layout-app">
+  <nav>
+    <a class="nav-logo" href="/">
+      <img src="/favicon.png" alt="" width="28" height="28">
+      Basilisk
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="/toolkit">Toolkit</a>
+      <a class="nav-link active" href="/toolkit-widgets">Widgets</a>
+      <a class="nav-link" href="/preferences">Preferences</a>
+    </div>
+  </nav>
+  <h1 class="sr-only">Toolkit widget catalog</h1>
+  <div id="toolkit-widgets-root" class="app-main"></div>
+  <script type="module" src="/src/pages/toolkit-widgets.tsx"></script>
+</body>
+</html>

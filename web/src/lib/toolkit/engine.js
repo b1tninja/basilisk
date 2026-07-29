@@ -329,7 +329,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
       }
       for (const br of node.branches || []) {
         await runTeeSide(
-          projectSelector(value, br.selector || `.${br.member}`),
+          projectSelector(value, br.selector || `:${br.member}`),
           br.body
         );
       }
@@ -344,8 +344,8 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
       }
       const threshold = Number(value.data.threshold) || 0;
       const body = node.body;
-      const mode = String(node.step.foreachSelector || ".values")
-        .replace(/^\./, "")
+      const mode = String(node.step.foreachSelector || ":values")
+        .replace(/^[.:]/, "")
         .toLowerCase();
       const rawItems = value.data.raw;
       const mnemonicItems = value.data.mnemonics;
@@ -353,6 +353,8 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
       const items = useRaw ? rawItems : mnemonicItems || [];
       if (!items.length) throw new Error("foreach requires a non-empty share set");
 
+      /** @type {PipelineValue[]} */
+      const parts = [];
       for (let i = 0; i < items.length; i++) {
         /** @type {PipelineValue} */
         let itemVal;
@@ -462,8 +464,15 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
             }
           }
         }
+        if (itemVal) parts.push(itemVal);
       }
-      value = { type: "bundle", data: artifacts };
+      // Tip is a foreach bundle of per-item tips — not the global artifact list.
+      // Side effects (out tiles / auto-emitted shares) already live in `artifacts`.
+      value = {
+        type: "bundle",
+        data: { parts, count: parts.length },
+        meta: { kind: "foreach", count: parts.length },
+      };
       continue;
     }
 
@@ -536,7 +545,7 @@ function expandPlan(steps) {
 }
 
 /**
- * Project a selector (`.private`, `.items`, `.key`, …) from a pipeline value.
+ * Project a selector (`:private`, `:items`, `:key`, …) from a pipeline value.
  * @param {PipelineValue} value
  * @param {string} selector
  * @returns {PipelineValue}
@@ -548,14 +557,14 @@ export function projectSelector(value, selector) {
       `selector ${raw}: use as a stem stage ([n] / at), not projectSelector`
     );
   }
-  const m = raw.replace(/^\./, "").toLowerCase();
+  const m = raw.replace(/^[.:]/, "").toLowerCase();
   if (m === "private" || m === "priv" || m === "secret") {
     if (value.type !== "keypair") {
-      throw new Error(`selector .private requires a keypair`);
+      throw new Error(`selector :private requires a keypair`);
     }
     const handles = pipelineKeyHandles(value);
     const priv = handles.privateKey;
-    if (!priv) throw new Error("selector .private: no private key on keypair");
+    if (!priv) throw new Error("selector :private: no private key on keypair");
     return {
       type: "key",
       data: priv,
@@ -564,11 +573,11 @@ export function projectSelector(value, selector) {
   }
   if (m === "public" || m === "pub") {
     if (value.type !== "keypair") {
-      throw new Error(`selector .public requires a keypair`);
+      throw new Error(`selector :public requires a keypair`);
     }
     const handles = pipelineKeyHandles(value);
     const pub = handles.publicKey;
-    if (!pub) throw new Error("selector .public: no public key on keypair");
+    if (!pub) throw new Error("selector :public: no public key on keypair");
     return {
       type: "key",
       data: pub,
@@ -577,7 +586,7 @@ export function projectSelector(value, selector) {
   }
   if (m === "key") {
     if (value.type !== "item") {
-      throw new Error(`selector .key requires an item ({key, value})`);
+      throw new Error(`selector :key requires an item ({key, value})`);
     }
     return {
       type: "text",
@@ -587,20 +596,20 @@ export function projectSelector(value, selector) {
   }
   if (m === "value") {
     if (value.type !== "item") {
-      throw new Error(`selector .value requires an item ({key, value})`);
+      throw new Error(`selector :value requires an item ({key, value})`);
     }
     const inner = value.data?.value;
     if (!inner || typeof inner !== "object") {
-      throw new Error("selector .value: missing item value");
+      throw new Error("selector :value: missing item value");
     }
     return /** @type {PipelineValue} */ (inner);
   }
   if (m === "keys" || m === "values" || m === "items") {
     throw new Error(
-      `selector .${m}: use as foreach .${m} (stem projection of whole collections is not supported)`
+      `selector :${m}: use as foreach :${m} (stem projection of whole collections is not supported)`
     );
   }
-  throw new Error(`Unknown selector ".${m}"`);
+  throw new Error(`Unknown selector ":${m}"`);
 }
 
 /**
@@ -647,6 +656,31 @@ async function execStepBody(step, value, bindings, artifacts) {
       const n = Number(step.params.length) || 32;
       const buf = crypto.getRandomValues(new Uint8Array(n));
       return { type: "bytes", data: buf, meta: { sensitive: true } };
+    }
+    case "lit": {
+      const kind = String(step.params?.kind || "text");
+      if (kind === "int") {
+        const n = Number(step.params?.value);
+        return {
+          type: "int",
+          data: Number.isFinite(n) ? Math.trunc(n) : 0,
+          meta: {},
+        };
+      }
+      if (kind === "bool") {
+        const v = step.params?.value;
+        const b =
+          v === true ||
+          v === 1 ||
+          String(v).toLowerCase() === "true" ||
+          String(v) === "1";
+        return { type: "bool", data: b, meta: {} };
+      }
+      return {
+        type: "text",
+        data: String(step.params?.value ?? ""),
+        meta: {},
+      };
     }
     case "passphrase": {
       const mode = String(step.params.mode || "diceware").toLowerCase();
@@ -743,7 +777,9 @@ async function execStepBody(step, value, bindings, artifacts) {
       // Projected `key` tip selects the half; which= only applies to full keypairs.
       const tipWhich =
         value?.type === "key" &&
-        (value?.meta?.which === "public" || value?.meta?.which === "private")
+        (value?.meta?.which === "public" ||
+          value?.meta?.which === "private" ||
+          value?.meta?.which === "secret")
           ? value.meta.which
           : null;
       return exportKey(
@@ -995,16 +1031,16 @@ async function execStepBody(step, value, bindings, artifacts) {
       if (!ok) {
         if (soft) {
           return {
-            type: "text",
-            data: "invalid",
+            type: "bool",
+            data: false,
             meta: { sensitive: false, tags },
           };
         }
         throw new Error("Signature verification failed");
       }
       return {
-        type: "text",
-        data: "verified",
+        type: "bool",
+        data: true,
         meta: { sensitive: false, tags },
       };
     }
@@ -1013,9 +1049,12 @@ async function execStepBody(step, value, bindings, artifacts) {
       const key =
         (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
         (await resolveBoundKey(bindings, "secret"));
-      assertExpectedAesKeyBits(key, step.params?.expectedKeyBits, "aes-gcm");
-      const aadStr = String(step.params.aad || "");
-      const aad = aadStr ? textToBytes(aadStr) : undefined;
+      assertExpectedAesKeyBits(key, step.params?.keyBits ?? step.params?.expectedKeyBits, "aes-gcm");
+      const aad = await resolveBytesOrUtf8Param(
+        bindings,
+        step.params?.aad,
+        "aes-gcm aad"
+      );
       const tagLength = Number(step.params.tagLength) || 128;
       if (step.params.decode) {
         const plain = await aesGcmDecrypt(key, bytes, aad, tagLength);
@@ -1047,7 +1086,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       const key =
         (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
         (await resolveBoundKey(bindings, "secret"));
-      assertExpectedAesKeyBits(key, step.params?.expectedKeyBits, "aes-cbc");
+      assertExpectedAesKeyBits(key, step.params?.keyBits ?? step.params?.expectedKeyBits, "aes-cbc");
       if (step.params.decode) {
         const plain = await aesCbcDecrypt(key, bytes);
         try {
@@ -1070,7 +1109,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       const key =
         (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
         (await resolveBoundKey(bindings, "secret"));
-      assertExpectedAesKeyBits(key, step.params?.expectedKeyBits, "aes-ctr");
+      assertExpectedAesKeyBits(key, step.params?.keyBits ?? step.params?.expectedKeyBits, "aes-ctr");
       const ctrLength = Number(step.params.length) || 64;
       if (step.params.decode) {
         const plain = await aesCtrDecrypt(key, bytes, ctrLength);
@@ -1101,6 +1140,7 @@ async function execStepBody(step, value, bindings, artifacts) {
           `rsa-oaep requires an RSA-OAEP key, got ${key.algorithm?.name || "unknown"}`
         );
       }
+      assertExpectedOaepHash(key, step.params?.hash ?? step.params?.oaepHash);
       const oaep = rsaOaepParams(step.params.label);
       if (decrypt) {
         const plain = new Uint8Array(
@@ -1167,16 +1207,26 @@ async function execStepBody(step, value, bindings, artifacts) {
         .replace("SHA-", "SHA-");
       const hashName =
         hash === "SHA-384" ? "SHA-384" : hash === "SHA-512" ? "SHA-512" : "SHA-256";
-      const saltStr = String(step.params.salt || "");
-      const infoStr = String(step.params.info || "");
+      const salt =
+        (await resolveBytesOrUtf8Param(
+          bindings,
+          step.params?.salt,
+          "hkdf salt"
+        )) || new Uint8Array();
+      const info =
+        (await resolveBytesOrUtf8Param(
+          bindings,
+          step.params?.info,
+          "hkdf info"
+        )) || new Uint8Array();
       const out = await hkdfDerive(ikm, {
         length,
         as,
         hash: hashName,
-        salt: saltStr ? textToBytes(saltStr) : new Uint8Array(),
-        info: infoStr ? textToBytes(infoStr) : new Uint8Array(),
+        salt,
+        info,
       });
-      if (out && typeof out === "object" && out.type === "keypair") return out;
+      if (out && typeof out === "object" && out.type === "key") return out;
       return {
         type: "bytes",
         data: out,
@@ -1193,7 +1243,13 @@ async function execStepBody(step, value, bindings, artifacts) {
         .replace("SHA-", "SHA-");
       const hashName =
         hash === "SHA-384" ? "SHA-384" : hash === "SHA-512" ? "SHA-512" : "SHA-256";
-      const salt = textToBytes(String(step.params.salt || "basilisk"));
+      const salt =
+        (await resolveBytesOrUtf8Param(
+          bindings,
+          step.params?.salt,
+          "pbkdf2 salt",
+          { defaultUtf8: "basilisk" }
+        )) || textToBytes("basilisk");
       const out = await pbkdf2Derive(password, {
         salt,
         iterations,
@@ -1201,7 +1257,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         as,
         hash: hashName,
       });
-      if (out && typeof out === "object" && out.type === "keypair") return out;
+      if (out && typeof out === "object" && out.type === "key") return out;
       return {
         type: "bytes",
         data: out,
@@ -1233,7 +1289,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         bits: Number(step.params.bits) || 0,
         as: String(step.params.as || "bytes"),
       });
-      if (out && typeof out === "object" && out.type === "keypair") return out;
+      if (out && typeof out === "object" && out.type === "key") return out;
       return {
         type: "bytes",
         data: out,
@@ -1292,12 +1348,12 @@ async function execStepBody(step, value, bindings, artifacts) {
       const mode = String(step.params?.mode || "aes-kw").toLowerCase();
       const alg = String(step.params.alg || "aes/256");
       const { importAlg, usages, metaAlg } = unwrapImportParams(alg);
-      let unwrapped;
+      let key;
       if (mode === "rsa-oaep") {
         const wrappingKey =
           (await resolveSlotKey(bindings, step.params?.key, "private", "rsa-oaep")) ||
           (await resolveBoundKey(bindings, "private"));
-        unwrapped = await rsaOaepUnwrap(
+        key = await rsaOaepUnwrap(
           wrappingKey,
           wrapped,
           importAlg,
@@ -1308,7 +1364,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         const wrappingKey =
           (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
           (await resolveBoundKey(bindings, "secret"));
-        unwrapped = await aesContentUnwrap(
+        key = await aesContentUnwrap(
           mode,
           wrappingKey,
           wrapped,
@@ -1324,18 +1380,17 @@ async function execStepBody(step, value, bindings, artifacts) {
           (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
           (await resolveBoundKey(bindings, "secret"));
         const kw = await ensureAesWrapKey(wrappingKey, "AES-KW");
-        unwrapped = await aesKwUnwrap(kw, wrapped, importAlg, usages);
+        key = await aesKwUnwrap(kw, wrapped, importAlg, usages);
       }
-      const raw = new Uint8Array(await crypto.subtle.exportKey("raw", unwrapped));
       return {
-        type: "bytes",
-        data: raw,
+        type: "key",
+        data: key,
         meta: {
           sensitive: true,
-          kind: "opaque",
+          which: "secret",
           alg: metaAlg,
           mode,
-          length: raw.length,
+          symmetric: true,
         },
       };
     }
@@ -1455,11 +1510,25 @@ async function execStepBody(step, value, bindings, artifacts) {
           filename: "payload.bin",
         };
       }
-      const master = crypto.getRandomValues(new Uint8Array(32));
-      const hexPass = bytesToHex(master);
+      const mode = resolveGpgSymMode(step.params, "gpg.symencrypt");
+      const userPass =
+        mode === "passphrase"
+          ? await resolvePassphraseParam(
+              bindings,
+              step.params?.passphrase,
+              "gpg.symencrypt passphrase"
+            )
+          : null;
+      if (mode === "passphrase" && !userPass) {
+        throw new Error(
+          "gpg.symencrypt mode=passphrase requires passphrase= or passphrase=@slot"
+        );
+      }
+      const master = mode === "master" ? crypto.getRandomValues(new Uint8Array(32)) : null;
+      const password = userPass || bytesToHex(/** @type {Uint8Array} */ (master));
       const arts = await encryptArtifacts({
         recipients: [],
-        passwords: [hexPass],
+        passwords: [password],
         payloads: [payload],
         profile: bindings.encryption?.profile || PROFILE_AUTO,
         hideRecipients: false,
@@ -1469,7 +1538,10 @@ async function execStepBody(step, value, bindings, artifacts) {
       const cryptoSummary = await summarizeEncryption(armored);
       const stem = safeOutputStem(step.params.name || "envelope");
       artifacts.push({
-        label: "OpenPGP envelope — required for recovery (not a share)",
+        label:
+          mode === "passphrase"
+            ? "OpenPGP symmetric ciphertext"
+            : "OpenPGP envelope — required for recovery (not a share)",
         filename: `${stem}.asc`,
         content: armored,
         sensitive: false,
@@ -1477,15 +1549,75 @@ async function execStepBody(step, value, bindings, artifacts) {
         cryptoSummary,
         disposition: "file",
         role: "envelope",
-        tags: ["openpgp", "skesk"],
+        tags:
+          mode === "passphrase"
+            ? ["openpgp", "skesk", "passphrase"]
+            : ["openpgp", "skesk"],
       });
+      if (mode === "passphrase") {
+        return {
+          type: "text",
+          data: armored,
+          meta: {
+            ...value.meta,
+            kind: "armored",
+            encoding: "openpgp",
+            sensitive: false,
+          },
+        };
+      }
       return {
         type: "bytes",
-        data: master,
+        data: /** @type {Uint8Array} */ (master),
         meta: { ...value.meta, sensitive: true, openPgpEnvelope: true },
       };
     }
     case "gpg.symdecrypt": {
+      const mode = resolveGpgSymMode(step.params, "gpg.symdecrypt");
+      if (mode === "passphrase") {
+        const userPass = await resolvePassphraseParam(
+          bindings,
+          step.params?.passphrase,
+          "gpg.symdecrypt passphrase"
+        );
+        if (!userPass) {
+          throw new Error(
+            "gpg.symdecrypt mode=passphrase requires passphrase= or passphrase=@slot"
+          );
+        }
+        let armored;
+        if (value?.type === "text") {
+          armored = String(value.data);
+        } else if (value?.type === "bytes" && value.data instanceof Uint8Array) {
+          armored = bytesToText(value.data);
+        } else {
+          throw new Error(
+            "gpg.symdecrypt mode=passphrase expects armored ciphertext on the tip"
+          );
+        }
+        if (!/BEGIN PGP MESSAGE/i.test(armored)) {
+          throw new Error(
+            "gpg.symdecrypt mode=passphrase: tip does not look like an OpenPGP message"
+          );
+        }
+        const message = await readMessage({ armoredMessage: armored });
+        const { data } = await openpgpDecrypt({
+          message,
+          passwords: [userPass],
+          format: "binary",
+        });
+        const plain =
+          data instanceof Uint8Array
+            ? data
+            : data instanceof ArrayBuffer
+              ? new Uint8Array(data)
+              : textToBytes(String(data));
+        return {
+          type: "bytes",
+          data: plain,
+          meta: { sensitive: true },
+        };
+      }
       if (!value || value.type !== "bytes") {
         throw new Error("gpg.symdecrypt expects master bytes from recover");
       }
@@ -1566,16 +1698,16 @@ async function execStepBody(step, value, bindings, artifacts) {
         const ok = await verifyOpenPgp(String(value.data), keys, detached);
         if (!ok) {
           if (soft) {
-            return { type: "text", data: "invalid", meta: { sensitive: false } };
+            return { type: "bool", data: false, meta: { sensitive: false } };
           }
           throw new Error("gpg.verify: signature invalid");
         }
-        return { type: "text", data: "verified", meta: { sensitive: false } };
+        return { type: "bool", data: true, meta: { sensitive: false } };
       } catch (err) {
         if (soft) {
           const msg = err instanceof Error ? err.message : String(err);
           if (/invalid|verification|signature/i.test(msg)) {
-            return { type: "text", data: "invalid", meta: { sensitive: false } };
+            return { type: "bool", data: false, meta: { sensitive: false } };
           }
         }
         throw err;
@@ -1843,7 +1975,7 @@ async function execStepBody(step, value, bindings, artifacts) {
     }
     case "tee": {
       throw new Error(
-        "tee requires a body — use `{ - .public | … }` or indented `-` lines (use `peek` for a side inspect)"
+        "tee requires a body — use `{ - :public | … }` or indented `-` lines (use `peek` for a side inspect)"
       );
     }
     case "peek": {
@@ -2010,6 +2142,10 @@ async function execStepBody(step, value, bindings, artifacts) {
         };
       }
 
+      if (kind === "int" || kind === "bool") {
+        return coercePipelineScalar(value, kind);
+      }
+
       if (!value || value.type !== "bytes") {
         throw new Error("as expects bytes");
       }
@@ -2055,7 +2191,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         };
       }
       throw new Error(
-        `as type must be master, scalar, opaque, public, private, key, or keypair — got "${kind}"`
+        `as type must be master, scalar, opaque, public, private, key, keypair, int, or bool — got "${kind}"`
       );
     }
     case "select": {
@@ -2259,6 +2395,107 @@ function assertExpectedAesKeyBits(key, expectedBits, op) {
       `${op}: key is ${len}-bit but recipe requested ${want}-bit (e.g. aes-${want}-gcm)`
     );
   }
+}
+
+/**
+ * @param {CryptoKey} key
+ * @param {unknown} expectedHash
+ */
+function assertExpectedOaepHash(key, expectedHash) {
+  const want = String(expectedHash || "")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-");
+  if (!want) return;
+  const got = String(key?.algorithm?.hash?.name || "")
+    .toLowerCase()
+    .replace(/_/g, "-");
+  const norm = (h) =>
+    h === "sha-1" || h === "sha1"
+      ? "sha-1"
+      : h === "sha-256" || h === "sha256"
+        ? "sha-256"
+        : h === "sha-384" || h === "sha384"
+          ? "sha-384"
+          : h === "sha-512" || h === "sha512"
+            ? "sha-512"
+            : h;
+  if (got && norm(got) !== norm(want)) {
+    throw new Error(
+      `rsa-oaep: key hash is ${got || "unknown"} but recipe requested ${want}`
+    );
+  }
+}
+
+/**
+ * Coerce pipeline tip to int or bool.
+ * @param {PipelineValue|null|undefined} value
+ * @param {"int"|"bool"} kind
+ * @returns {PipelineValue}
+ */
+function coercePipelineScalar(value, kind) {
+  if (!value) throw new Error(`as ${kind} expects a pipeline value`);
+  if (kind === "int") {
+    if (value.type === "int") {
+      const n = Number(value.data);
+      return {
+        type: "int",
+        data: Number.isFinite(n) ? Math.trunc(n) : 0,
+        meta: { ...value.meta },
+      };
+    }
+    if (value.type === "bool") {
+      return { type: "int", data: value.data ? 1 : 0, meta: { ...value.meta } };
+    }
+    if (value.type === "text") {
+      const s = String(value.data).trim();
+      const n = /^-?\d+$/.test(s)
+        ? Number(s)
+        : /^0x[0-9a-f]+$/i.test(s)
+          ? Number.parseInt(s.slice(2), 16)
+          : Number(s);
+      if (!Number.isFinite(n)) {
+        throw new Error(`as int: cannot parse "${s}"`);
+      }
+      return { type: "int", data: Math.trunc(n), meta: { ...value.meta } };
+    }
+    if (value.type === "bytes" && value.data instanceof Uint8Array) {
+      if (value.data.length === 0) {
+        throw new Error("as int: empty bytes");
+      }
+      // Big-endian unsigned from up to 6 bytes (safe integer).
+      const slice = value.data.subarray(0, Math.min(6, value.data.length));
+      let n = 0;
+      for (const b of slice) n = n * 256 + b;
+      return { type: "int", data: n, meta: { ...value.meta } };
+    }
+    throw new Error(`as int expects int, text, bytes, or bool (got ${value.type})`);
+  }
+  // bool
+  if (value.type === "bool") {
+    return { type: "bool", data: !!value.data, meta: { ...value.meta } };
+  }
+  if (value.type === "int") {
+    return { type: "bool", data: Number(value.data) !== 0, meta: { ...value.meta } };
+  }
+  if (value.type === "text") {
+    const s = String(value.data).trim().toLowerCase();
+    if (["true", "yes", "1", "on"].includes(s)) {
+      return { type: "bool", data: true, meta: { ...value.meta } };
+    }
+    if (["false", "no", "0", "off", ""].includes(s)) {
+      return { type: "bool", data: false, meta: { ...value.meta } };
+    }
+    throw new Error(`as bool: cannot parse "${value.data}"`);
+  }
+  if (value.type === "bytes" && value.data instanceof Uint8Array) {
+    return {
+      type: "bool",
+      data: value.data.some((b) => b !== 0),
+      meta: { ...value.meta },
+    };
+  }
+  throw new Error(`as bool expects bool, int, text, or bytes (got ${value.type})`);
 }
 
 /**
@@ -2616,6 +2853,93 @@ async function decryptGpgSource(bindings, _artifacts) {
 }
 
 /**
+ * Resolve optional bytes from a UTF-8 literal or `@slot` of text/bytes.
+ * Empty / missing → null (caller supplies default).
+ * @param {object} bindings
+ * @param {string|undefined|null} raw
+ * @param {string} label
+ * @param {{ defaultUtf8?: string }} [opts]
+ * @returns {Promise<Uint8Array|null>}
+ */
+async function resolveBytesOrUtf8Param(bindings, raw, label, opts = {}) {
+  const s = String(raw ?? "").trim();
+  if (!s) {
+    if (opts.defaultUtf8 != null) return textToBytes(String(opts.defaultUtf8));
+    return null;
+  }
+  if (s.startsWith("@")) {
+    const resolve = bindings?.resolveSlot;
+    if (typeof resolve !== "function") {
+      throw new Error(`${label}=${s}: runtime slot resolver missing`);
+    }
+    const value = resolve(s);
+    if (!value) throw new Error(`${label}=${s}: unknown slot`);
+    if (value.type === "bytes" && value.data instanceof Uint8Array) {
+      return new Uint8Array(value.data);
+    }
+    if (value.type === "text") return textToBytes(String(value.data));
+    throw new Error(`${label}=${s}: slot must be text or bytes`);
+  }
+  return textToBytes(s);
+}
+
+/**
+ * Explicit dual-mode for gpg.symencrypt / gpg.symdecrypt.
+ * Default `mode=master` (SSS). Passphrase path requires `mode=passphrase`
+ * — passphrase alone does not flip the tip shape.
+ * @param {Record<string, *>|undefined|null} params
+ * @param {string} op
+ * @returns {"master"|"passphrase"}
+ */
+function resolveGpgSymMode(params, op) {
+  const rawMode = String(params?.mode ?? "").trim().toLowerCase();
+  const pw = String(params?.passphrase ?? "").trim();
+  const mode = rawMode || "master";
+  if (mode !== "master" && mode !== "passphrase") {
+    throw new Error(
+      `${op} mode= must be master or passphrase (got ${rawMode || "(empty)"})`
+    );
+  }
+  if (mode === "master" && pw) {
+    throw new Error(
+      `${op}: passphrase= requires mode=passphrase (default mode=master is the SSS envelope path)`
+    );
+  }
+  if (mode === "passphrase" && !pw) {
+    throw new Error(
+      `${op} mode=passphrase requires passphrase= or passphrase=@slot`
+    );
+  }
+  return /** @type {"master"|"passphrase"} */ (mode);
+}
+
+/**
+ * Resolve passphrase= literal or `@slot` text. Empty → null.
+ * @param {object} bindings
+ * @param {string|undefined|null} raw
+ * @param {string} label
+ * @returns {Promise<string|null>}
+ */
+async function resolvePassphraseParam(bindings, raw, label) {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  if (s.startsWith("@")) {
+    const resolve = bindings?.resolveSlot;
+    if (typeof resolve !== "function") {
+      throw new Error(`${label}=${s}: runtime slot resolver missing`);
+    }
+    const value = resolve(s);
+    if (!value) throw new Error(`${label}=${s}: unknown slot`);
+    if (value.type === "text") return String(value.data);
+    if (value.type === "bytes" && value.data instanceof Uint8Array) {
+      return bytesToText(value.data);
+    }
+    throw new Error(`${label}=${s}: slot must be text (or UTF-8 bytes)`);
+  }
+  return s;
+}
+
+/**
  * Resolve verify signature= from @slot, base64url string, or panel binding.
  * @param {object} bindings
  * @param {string|undefined|null} refOrB64
@@ -2785,7 +3109,8 @@ async function exportKey(value, format, which) {
   }
   const { meta } = value;
   const handles = pipelineKeyHandles(value);
-  const priv = handles.privateKey;
+  // Symmetric / unwrap tips store the handle as secretKey (which=secret).
+  const priv = handles.privateKey || handles.secretKey;
   const pub = handles.publicKey;
   const fmt = String(format || "pkcs8").toLowerCase();
 
@@ -3480,7 +3805,7 @@ async function materializeOutArtifacts(value, params) {
   if (value.type === "keypair" || value.type === "key") {
     const parts = [];
     const handles = pipelineKeyHandles(value);
-    const priv = handles.privateKey;
+    const priv = handles.privateKey || handles.secretKey;
     const pub = handles.publicKey;
     if (priv) {
       try {
@@ -3544,6 +3869,42 @@ async function materializeOutArtifacts(value, params) {
  * @returns {ToolkitArtifact[]}
  */
 function valueToArtifacts(value, name = "artifact") {
+  if (value.type === "int") {
+    return [
+      attachPipeMeta(
+        {
+          label: name,
+          filename: `${name}.txt`,
+          content: String(value.data),
+          sensitive: !!value.meta?.sensitive,
+          mime: "text/plain; charset=utf-8",
+          encoding: "text",
+          disposition: "file",
+          role: "text",
+          tags: ["int"],
+        },
+        value
+      ),
+    ];
+  }
+  if (value.type === "bool") {
+    return [
+      attachPipeMeta(
+        {
+          label: name,
+          filename: `${name}.txt`,
+          content: value.data ? "true" : "false",
+          sensitive: !!value.meta?.sensitive,
+          mime: "text/plain; charset=utf-8",
+          encoding: "text",
+          disposition: "file",
+          role: "text",
+          tags: ["bool"],
+        },
+        value
+      ),
+    ];
+  }
   if (value.type === "text") {
     const isInspect = !!value.meta?.inspect;
     return [

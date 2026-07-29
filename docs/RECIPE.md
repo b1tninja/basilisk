@@ -14,23 +14,23 @@ genkey ec/p256 | export pkcs8 | pem | out @private
 
 # Mid-stem fork (tee): branches run on a clone; stem continues
 genkey ec/p256 | tee
-  - .private | inspect
-  - .public | export spki | pem | out @public
+  - :private | inspect
+  - :public | export spki | pem | out @public
 | export pkcs8 | pem | out @private
 
-# Multi-chain: blank line starts a new pipeline; in loads a prior out slot
+# Multi-chain: blank line starts a new pipeline; @slot loads a prior out
 genkey ec/p256 | out @kp
 
-in @kp | .public | export spki | pem | out @public
-in @kp | export pkcs8 | pem | out @private
+@kp | :public | export spki | pem | out @public
+@kp | export pkcs8 | pem | out @private
 
 # Shares collection → foreach body
 random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share
 
 # Dict view + per-item projection
-… | blip39 | foreach .items
-  - .value | out @share
+… | blip39 | foreach :items
+  - :value | out @share
 
 # One share (1-based index)
 … | blip39 | [1] | out @share-1
@@ -41,18 +41,19 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - A recipe is one or more **chains** separated by blank lines.
 - Within a chain: flat `|` stem; a newline between stem lines is the same as `|`.
 - Blocks: `tee` / `foreach` take a **body** (braces `{ … }` or indented `-` lines).
-- Member / dict projection uses **selectors** (`.private`, `.items`, …).
-- Slots: `out @label` registers a live pipeline value; `in @label` / `in 1` loads it.
+- Member / dict projection uses **colon selectors** (`:private`, `:items`, …). Dot (`.`) is reserved for namespaced ops (`gpg.encrypt`, `sss.split`) — not members.
+- Slots: `out @label` registers a live pipeline value; load with bare `@label` (preferred) or `in @label` / `in 1`. `@kp | out` re-emits as `@kp`.
 - Named slot args pass live values into ops: `aes-gcm key=@cek` (stem stays the payload).
-- Namespaced product ops use dots (`gpg.encrypt`, `sss.combine`, `webauthn.prf`); cipher ops use hyphens (`aes-gcm`). OpenSSL-sized (`aes-256-gcm`), JCE (`AES/GCM/NoPadding`), and sugar `encrypt`/`decrypt` + transform parse to the same canonical hyphen name.
-- Bare `out kp` / `in kp` / `key=cek` is shorthand for `@` form (canonical always uses `@`).
+- Namespaced product ops use dots (`gpg.encrypt`, `sss.combine`, `webauthn.prf`); cipher ops use hyphens (`aes-gcm`). OpenSSL-sized (`aes-256-gcm`) and JCE (`AES/GCM/NoPadding`) parse to the same canonical hyphen name — **serialize preserves** size/hash as `keyBits=` / `hash=` when implied by those forms. Bare `encrypt`/`decrypt` sugar is migrator-only.
+- Bare `out kp` / `in kp` / `key=cek` do **not** live-parse — use `@label` (`out @kp`, `key=@cek`). Upgrade recipe / `migrateRecipe` rewrites bare forms. `@` is **load-only** — sinks stay `out @label`.
+- Stem literals: `"hello"` / `'…'` → text; `255` / `0xff` → int (serialize ints as decimal); `true` / `false` → bool. Example: `"hello world" | out @var`.
 - Prefer **positional** args: `out @public`, `export pkcs8`, `genkey ec/p256`.
-- Casts: retag (`as master` / `as public` / …) or materialize (`as key` / `as keypair` → WebCrypto handles). Literal casts (`1234 as int`) are not shipped yet.
+- Casts: retag (`as master` / `as public` / …), coerce (`as int` / `as bool`), or materialize (`as key` / `as keypair` → WebCrypto handles). Literal postfix (`1234 as int`) is not shipped — use `"1234" | as int` or `1234` stem lit.
 - Empty `tee` is invalid; use `peek` for a side inspect snapshot.
 - List marker is only `-`. Leading tabs are errors.
 - File paths (`./x.pem`, quoted paths, `file:…`) are reserved — not supported yet.
 - Comments: full-line `# …` (kept inside the current chain).
-- Ops-drawer **shelves** and **conjugate rows** (encode | decode, sign | verify, `pem` | `der`, `to` | `from`) are UI only for layout — encoding twins use `base64.encode` / `base64.decode` (also accept `-d`); PEM armor uses `pem` ↔ `der`; hex uses CyberChef-style `to hex` / `from hex`.
+- Ops-drawer **shelves**, **collections** (`OP_COLLECTIONS`: AES / RSA / Base64·Base32), and **conjugate rows** (encrypt | decrypt, encode | decode, sign | verify, `pem` | `der`, `to` | `from`) are UI only — friendly tile labels (`pairLabels` / collection `actionLabels`) do not change recipe tokens. Encoding twins canonicalize to `base64.encode` / `base64.decode` (`-d` parse-only); PEM armor uses `pem` ↔ `der`; hex uses CyberChef-style `to hex` / `from hex`. Cipher twins keep `aes-gcm` / `aes-gcm -d`.
 
 ## Chains
 
@@ -64,7 +65,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 | First chain | Also exposed as `ast.steps` for older callers |
 
 Use **tee** when you need a mid-stem projection fork (public beside private export).
-Use **blank-line chains + `in`** when a later pipeline should reuse an earlier `out`.
+Use **blank-line chains + `@slot` / `in`** when a later pipeline should reuse an earlier `out`.
 
 ## Notebook execution (toolkit UI)
 
@@ -108,7 +109,7 @@ Toolkit recipes are addressable in the **URL fragment** (never sent to the serve
 
 | Fragment | Loads |
 |----------|--------|
-| `#encrypt` / `#decrypt` / `#symencrypt` | Messaging quick-start notebooks |
+| `#encrypt` / `#decrypt` / `#symencrypt` | Messaging quick-start notebooks (`#symencrypt` = `mode=passphrase` + generated `@pw`) |
 | `#t=<presetId>` | A Templates preset by id |
 | `#r=<compact-recipe>` | Full notebook in a URL-friendly compact form |
 | `#decrypt&ct=<base64url>` | Decrypt starter + **ciphertext Inputs seed** |
@@ -160,7 +161,7 @@ Each apply stage is `name` then zero or more args:
 | Form | Example | Notes |
 |------|---------|-------|
 | Positional | `genkey ec/p256`, `out @public` | Binds the step’s `positional` param |
-| Named | `sss.split threshold=2 shares=3` | `ident=value` |
+| Named | `sss.split threshold=2 shares=3` | `ident=value` — **unknown `name=` rejected at parse** |
 | Flag | `aes-gcm -d`, `base64 -d` | Sets the param with `flag: "-d"` to `true` (ciphers + encoding twins) |
 | Encode / decode verb | `base64.encode`, `base64.decode` | Encoding `decodeTwin` steps — serialize as `.encode` / `.decode` (AST still `{ decode }`) |
 | Armor conjugate | `pem`, `der` | Armor / dearmor — not `.encode`/`.decode` twins |
@@ -171,7 +172,30 @@ value is not the registry default (slot names always serialize as `@label`).
 Encoding twins canonicalize to `name.encode` / `name.decode` (not `-d`).
 PEM armor serializes as bare `pem` / `der`; hex as `to hex` / `from hex`.
 
-Aliases resolve at parse time (`paste` → `input`, …). Slot load is **`in @label` only** — `from` is the encoding verb (`from hex`). Basilisk-legacy step tokens (`encrypt`, `aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
+Aliases resolve at parse time only via Upgrade recipe for retired tokens (`paste` → `input`, …). Slot load is **`in @label` / bare `@label`** — `from` is the encoding verb (`from hex`). Basilisk-legacy step tokens (`aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, bare `encrypt`/`decrypt` sugar, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
+
+### ParamSpec (registry)
+
+`web/src/lib/toolkit/registry.js` declares each step’s params. Parser, serialize,
+Reference, and toolcards all read this schema — toolcards are views of
+`getStep()`, not a second DSL. At most one `positional` param per step.
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `name` | yes | Kwarg key and AST `params` key |
+| `type` | yes | `enum` \| `int` \| `string` \| `bool` \| `flag` \| `slot` — CLI flags use `bool` + `flag` |
+| `doc` | no | Reference / toolcard blurb |
+| `default` | no | Filled when omitted; usually omitted from serialize |
+| `enum` | no | Allowed values when `type === "enum"` |
+| `min` / `max` | no | Int bounds (docs / UI) |
+| `positional` | no | First bare token binds here (≤1 per step) |
+| `flag` | no | Bare CLI flag (e.g. `"-d"`) → sets bool `true` |
+| `allowIndex` | no | For `type: "slot"`: allow 1-based index refs |
+| `serialize` | no | `"always"` — emit `name=value` even when equal to default (e.g. `mode=`) |
+
+Non-param parse mechanisms stay outside ParamSpec: JCE/sized verb forms →
+`keyBits` / `hash` via `step-names`; mid-token `@` emails; bare `@label` /
+`out`/`in` slot sugar.
 
 ## Slots (`@label`)
 
@@ -182,7 +206,6 @@ re-parsed artifact text.
 | Form | Meaning |
 |------|---------|
 | `out @kp` | Emit + register memory slot `kp` (+ next 1-based index) |
-| `out kp` | Same (rewrites to `out @kp`) |
 | `in @kp` | Load slot `kp` |
 | `in 1` | Load first registered slot by registration order |
 | `./x.pem`, `"…"`, `file:…` | Reserved for future file I/O — rejected today |
@@ -193,6 +216,7 @@ Rules:
 - Forward / missing refs → error.
 - Only explicit `out` registers slots (dangling auto-emit does not).
 - Default stem when omitted: `@output`.
+- Bare `out kp` / `key=cek` → parse error; **Upgrade recipe** rewrites to `@`.
 
 ## Named slot args
 
@@ -210,14 +234,17 @@ in @ct | aes-gcm -d key=@cek | utf8 | out @plain
 | Op | Slot args |
 |----|-----------|
 | `aes-gcm` / `aes-cbc` / `aes-ctr` / `rsa-oaep` / `rsa-pkcs1` / `sign` / `unwrap` | `key=@…` |
+| `aes-gcm` | also `aad=@…` (or UTF-8 literal) |
+| `hkdf` / `pbkdf2` | `salt=@…` / `info=@…` (hkdf); literals still OK |
 | `verify` | `key=@…` `signature=@…` (or bare base64url for `signature=`) |
 | `gpg.verify` | `signature=@…` (detached; cleartext uses stem) |
+| `gpg.symencrypt` / `gpg.symdecrypt` | `mode=master` (default, SSS) or `mode=passphrase` + `passphrase=@…` (`gpg -c`); passphrase alone does not flip modes |
 | `ecdh` | `private=@…` `peer=@…` |
 | `wrap` | `key=@…` (wrapping) `target=@…` (CEK) |
 
 Rules:
 
-- Refs use the same `@label` sugar as `out` / `in` (bare `key=cek` → `key=@cek`).
+- Refs use `@label` (`key=@cek`). Bare `key=cek` is a parse error — Upgrade rewrites it.
 - Forward / missing refs error at validate (same as `in`).
 - When required slot args are present, the key/peer/wrap/signature panels are not required.
 - Panels remain as fallback when slot args are omitted.
@@ -238,21 +265,16 @@ in @msg | verify key=@kp signature=@sig | out @ok
 | OpenPGP | `gpg.genkey` / `gpg.inspect` / `gpg.encrypt` / `gpg.decrypt` / `gpg.sign` / `gpg.verify` / `gpg.symencrypt` / `gpg.symdecrypt` | `gpg.encrypt -s` sign+encrypt; `key=@slot` on sign/verify/`-s` | dotted |
 | Agent (My Keys) | `agent.unlock` / `agent.pub` / `agent.list` / `agent.save` | migrate `gpg.vault` → `agent.unlock`; emit `openpgp-key` | dotted |
 | HKP (keyserver) | `hkp.get` / `hkp.search` / `hkp.filter` / `recipients.merge` | search → `recipients`; get → `openpgp-key/public` | dotted |
-| WebCrypto AEAD/cipher/RSA | `aes-gcm`, `aes-cbc`, `aes-ctr`, `rsa-oaep`, `rsa-pkcs1` | `aes-256-gcm`, `AES/GCM/NoPadding`, `encrypt AES/GCM/NoPadding`, `decrypt …` | hyphen |
-| SSS | `sss.split` / `sss.combine` | — | dotted |
-| WebAuthn | `webauthn.caps` … `webauthn.mds` | — | dotted |
-| WebCrypto sign | `sign` / `verify` | `hmac`, `hmac.verify` | bare (SubtleCrypto) |
-| Key wrap | `wrap` / `unwrap` | `mode=aes-kw` (default), `aes-gcm`, `aes-cbc`, `aes-ctr`, `rsa-oaep` | hyphen modes |
+| WebCrypto AEAD/cipher/RSA | `aes-gcm`, `aes-cbc`, `aes-ctr`, `rsa-oaep`, `rsa-pkcs1` | `aes-256-gcm`, `AES/GCM/NoPadding` (live); `encrypt`/`decrypt` sugar via migrator only | hyphen |
 
-Bare `encrypt` / `decrypt` are **WebCrypto sugar** (not OpenPGP): they require a cipher transform and rewrite to the concrete op on parse.
+Write concrete cipher ops in recipes. Bare `encrypt` / `decrypt` are **migrator-only** (not OpenPGP): Upgrade recipe rewrites known sugar to `aes-gcm` / …; live parse hard-errors.
 
 ```text
-input | utf8 | encrypt AES/GCM/NoPadding key=@cek | out @ct
-in @ct | decrypt aes-gcm key=@cek | utf8 | out @plain
-# serialize → aes-gcm / aes-gcm -d
+input | utf8 | aes-gcm key=@cek | out @ct
+in @ct | aes-gcm -d key=@cek | utf8 | out @plain
 ```
 
-**Builder UX:** the ops drawer’s **Pick a cipher** strip (Encrypt | Decrypt) is a meta entry — it opens a subset of AEAD/cipher/RSA ops and inserts a **concrete** card (`aes-gcm`, …) with decode pre-filled for Decrypt. There is never a builder block named `encrypt` / `decrypt`. Recipe-text sugar and the picker land on the same AST.
+**Builder UX:** the ops drawer’s **Pick a cipher** strip (Encrypt | Decrypt) is a meta entry — it opens a subset of AEAD/cipher/RSA ops and inserts a **concrete** card (`aes-gcm`, …) with decode pre-filled for Decrypt. There is never a builder block named `encrypt` / `decrypt`.
 
 OpenPGP signatures are **`gpg.sign` / `gpg.verify` only** — never bare `sign`/`verify`. OpenPGP encrypt stays **`gpg.encrypt`** (`-s` / `sign=true` = sign-then-encrypt). Prefer **`agent.unlock`** + `key=@slot` so recipes address My Keys by fingerprint/slot (not pasted armor). `hkp.get` loads remote public keys for verify. `gpg.genkey` emits `openpgp-key/private`; `gpg.inspect` summarizes armor without decrypting.
 
@@ -306,9 +328,9 @@ passphrase mode=char length=20 | out @pass
 random 10 | base32 | out @id
 ```
 
-WebCrypto `verify` is fail-loud by default; `verify -q` / `soft=true` emits text `verified` or `invalid` (setup errors still throw). Same soft mode on `gpg.verify`. Prefer fail-loud for auth decisions. `aes-cbc` / `aes-ctr` are **unauthenticated** — prefer `aes-gcm` for new work.
+WebCrypto `verify` is fail-loud by default; `verify -q` / `soft=true` emits bool `true` or `false` (setup errors still throw). Same soft mode on `gpg.verify`. Prefer fail-loud for auth decisions. `aes-cbc` / `aes-ctr` are **unauthenticated** — prefer `aes-gcm` for new work.
 
-RSA sign keys: `genkey rsa/2048 padding=pss` (default) or `padding=pkcs1` (discouraged RSASSA-PKCS1-v1_5); optional `hash=sha-256|384|512`. Content encrypt stays `rsa-oaep` (optional `label=`); key wrap uses `wrap mode=rsa-oaep`. SubtleCrypto knobs: `aes-gcm tagLength=`, `aes-ctr length=` (counter bits; IV packing stays 16 bytes), `sign`/`verify` `saltLength=` (RSA-PSS) and `hash=` (ECDSA override; `auto` = curve default). Symmetric sizes include `aes/192` and `hmac/sha384`.
+RSA sign keys: `genkey rsa/2048 padding=pss` (default) or `padding=pkcs1` (discouraged RSASSA-PKCS1-v1_5); optional `hash=sha-256|384|512`. Content encrypt stays `rsa-oaep` (optional `label=`); key wrap uses `wrap mode=rsa-oaep`. `unwrap` yields a live **`key` tip** — pipe `export raw` / `export jwk` before `to hex`. SubtleCrypto knobs: `aes-gcm tagLength=`, `aes-ctr length=` (counter bits; IV packing stays 16 bytes), `sign`/`verify` `saltLength=` (RSA-PSS) and `hash=` (ECDSA override; `auto` = curve default). Symmetric sizes include `aes/192` and `hmac/sha384`.
 
 `ecdh` defaults `bits=0` (curve-aware: P-256/X25519 → 256, P-384 → 384, P-521 → 528) and accepts `as=aes/256` etc. like `hkdf`.
 
@@ -332,13 +354,13 @@ Stage form only: `… | as TYPE`. Three kinds:
 |------|---------|-------|----------|
 | **Retag** | No | `as master`, `as scalar`, `as opaque`, `as public`, `as private` | Same payload; change refined tip / `which` |
 | **Materialize** | Yes | `as key`, `as keypair` | Import DER/PEM/JWK into WebCrypto **CryptoKey** / keypair tips |
-| **Coerce** | Later | `as int`, `as bool`, … | Not shipped — needs tip bases + consuming ops; literal postfix (`1234 as int`) deferred |
+| **Coerce** | No | `as int`, `as bool` | Parse/convert tip to `int` or `bool` (from text / bytes / int / bool). Postfix `1234 as int` deferred — use stem lit or `"1234" \| as int` |
 
 ```text
 random 16 | digest | as master | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share
 
-.public | export spki | pem | out @pub
+:public | export spki | pem | out @pub
 in @pub | der | as key
 # or: in @pub | as key
 # or: in @priv | as keypair
@@ -352,14 +374,27 @@ in @pub | der | as key
 | `as public` / `as private` | Set `which` on `bytes/der` or `text/pem` (no SubtleCrypto) |
 | `as key` | Materialize a single **CryptoKey** tip (`which` from tip/PEM label or prior retag) |
 | `as keypair` | Materialize a **keypair** tip from private material (pkcs8 / private PEM / JWK-with-`d`) |
+| `as int` | Coerce tip to `int` (decimal/hex text, big-endian bytes ≤6, bool→0/1) |
+| `as bool` | Coerce tip to `bool` (`true`/`false`/`yes`/`no`/`0`/`1`, nonzero bytes/int) |
 
 Live `key` / `keypair` tips are backed by WebCrypto `CryptoKey` handles (artifacts still export JWK/PEM/DER — handles are never persisted). Explicit `import` / `export` remain for spelled-out formats. Never: `as jwk` (use `export jwk` / `import jwk`).
 
-Homonym: the stage `as master` is distinct from KDF/ECDH params `hkdf … as=aes/256` / `pbkdf2 … as=aes/256` / `ecdh … as=aes/256` (`deriveKey` → keypair when not `bytes`).
+### Homonyms (document once — do not rename)
+
+| Tokens | Meaning A | Meaning B |
+|--------|-----------|-----------|
+| `to` | Encoding: `to hex` | Recipients: `gpg.encrypt to=@…` / `to=email:…` |
+| `from` | Encoding: `from hex` | *(retired slot load — use `in` / `@label`)* |
+| `as` | Cast stage: `as master` / `as key` / `as int` | KDF param: `hkdf … as=aes/256` → live `key` tip |
+| `encrypt` / `decrypt` | *(migrator-only sugar)* | Prefer `aes-gcm` / `gpg.encrypt` |
+| `mode=` | Cipher unwrap modes (`wrap`/`unwrap`) | `gpg.symencrypt mode=master\|passphrase` |
+
+Teach the concrete form; Upgrade recipe rewrites retired sugar.
+
 ## Selectors
 
 Bare selector stages become `select` under the hood; under `tee` / `foreach`
-they also appear as branch prefixes (`- .public | …`).
+they also appear as branch prefixes (`- :public | …`).
 
 ### Projectors (stem or branch)
 
@@ -367,26 +402,37 @@ These change the tip type:
 
 | Selector | Tip before | Tip after |
 |----------|------------|-----------|
-| `.public` / `.pub` | `keypair` | `key` (CryptoKey) + `which=public` |
-| `.private` / `.priv` / `.secret` | `keypair` | `key` (CryptoKey) + `which=private` |
-| `.key` | `item` | `text/opaque` |
-| `.value` | `item` | `text/mnemonic` or `bytes/opaque` |
+| `:public` / `:pub` | `keypair` | `key` (CryptoKey) + `which=public` |
+| `:private` / `:priv` / `:secret` | `keypair` | `key` (CryptoKey) + `which=private` |
+| `:key` | `item` | `text/opaque` |
+| `:value` | `item` | `text/mnemonic` or `bytes/opaque` |
 | `[n]` / `at n` | `shares` | one share (`text/mnemonic` or `bytes`) |
 | `[n:m]` / `at n:m` | `shares` | `shares` slice |
 
-After `.public`, use `export spki` (not `export pkcs8`). After `.private` or on a
+After `:public`, use `export spki` (not `export pkcs8`). After `:private` or on a
 full keypair stem, use `export pkcs8` / `export scalar`. The projected `key` tip
-selects the half — you do not need `export which=…` there.
+selects the half — do **not** write `export which=…` (discouraged; compile warns).
+`format=spki` already means public; `pkcs8` / `scalar` already mean private.
+
+OpenSSL analogs ([`pkey -pubout`](https://docs.openssl.org/1.1.1/man1/pkey/),
+[`ec`](https://docs.openssl.org/1.1.1/man1/ec/) / [`rsa`](https://docs.openssl.org/1.1.1/man1/rsa/)
+`-pubout`):
+
+| OpenSSL | Basilisk |
+|---------|----------|
+| `openssl pkey -pubout` | `:public \| export spki \| pem` |
+| private PEM (default) | `export pkcs8 \| pem` or `:private \| export pkcs8 \| pem` |
+| `openssl pkey -text` | `inspect` / `peek` (prefer on the full keypair or after a selector) |
 
 ASCII-armored round-trips keep the half through `pem` / `der`
 (`BEGIN PUBLIC KEY` ↔ SPKI, `BEGIN PRIVATE KEY` ↔ PKCS#8):
 
 ```text
-.public | export spki | pem | out @pub
+:public | export spki | pem | out @pub
 in @pub | der | import spki
 # or: in @pub | as key
 
-export pkcs8 | pem | out @priv
+:private | export pkcs8 | pem | out @priv
 in @priv | der | import pkcs8
 # or: in @priv | as keypair
 ```
@@ -395,15 +441,15 @@ in @priv | der | import pkcs8
 
 | Form | Meaning |
 |------|---------|
-| `foreach .items` | iterate `{key,value}` items |
-| `foreach .values` | iterate share values |
-| `foreach .keys` | iterate share keys |
+| `foreach :items` | iterate `{key,value}` items |
+| `foreach :values` | iterate share values |
+| `foreach :keys` | iterate share keys |
 
-Stem `.items` / `.keys` / `.values` are rejected — use `foreach`.
+Stem `:items` / `:keys` / `:values` are rejected — use `foreach`.
 
 ### Casts vs selectors
 
-Selectors project live keypair halves (`.public`). Retag casts set `which` on
+Selectors project live keypair halves (`:public`). Retag casts set `which` on
 serialized material (`as public`). Materializing casts (`as key`) import into
 CryptoKey tips. They are not interchangeable with selectors.
 ## Blocks
@@ -414,22 +460,23 @@ Side pipelines on a **clone** (or projected member). Stem value is unchanged.
 
 ```text
 genkey ec/p256 | tee
-  - .public | export spki | pem | out @public
+  - :public | export spki | pem | out @public
 | export pkcs8 | pem | out @private
 ```
 
-Brace form is equivalent: `tee { - .public | … }`.
+Brace form is equivalent: `tee { - :public | … }`.
 
 ### `foreach`
 
-Map a body over a shares collection. Optional selector before the body:
+Map a body over a shares collection. Optional selector before the body.
+The tip after `foreach` is a **`bundle`** of per-item tips (side effects via `out` / auto-emitted shares) — do **not** pipe the bundle into cipher/KDF ops; use `@slot`s written in the body.
 
 ```text
 … | blip39 | foreach
-  - gpg.encrypt
+  - out @share
 
-… | blip39 | foreach .items
-  - .value | out @share
+… | blip39 | foreach :items
+  - :value | out @share
 ```
 
 Nested `tee` / `foreach` inside a body is rejected in v1.
@@ -447,15 +494,15 @@ genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private
 | Keyword | Role |
 |---------|------|
 | `tee` | Side pipelines on clone/projection; stem unchanged. **Requires** a body. |
-| `foreach` | Map body over a sequence. Optional `.items` / `.values` / `.keys`. |
+| `foreach` | Map body over a sequence. Optional `:items` / `:values` / `:keys`. |
 | `peek` | Side inspect snapshot; stem unchanged. |
 | `at` | Same as `[n]` / `[n:m]` — share index or slice. |
-| `in` | Source: load a prior `out` slot by `@label` or 1-based index. |
+| `in` | Source: load a prior `out` slot by `@label` or 1-based index (also written bare as `@label`). |
 | `to` / `from` | Encoding conjugate (`to hex` / `from hex`). |
-| `out` | Emit a tile, register a slot, pass the value through. |
+| `out` | Emit a tile, register a slot, pass the value through. After `@x` / `in @x`, bare `out` inherits `@x`. |
 | `as` | Retag refined bytes kind (`master` / `scalar` / `opaque`). |
-| `input` | Free-form text at run time (not a slot). Aliases: `paste`, `cat`. |
-| `select` | Internal name for a bare selector stage (usually written as `.public`). |
+| `input` | Free-form text at run time (not a slot). Legacy `paste`/`cat` migrate via Upgrade recipe. |
+| `select` | Internal name for a bare selector stage (usually written as `:public`). |
 
 ## EBNF
 
@@ -479,11 +526,14 @@ comment_line = space , comment , nl ;
 pipeline_line = space , [ "|" ] , space , pipeline , space , nl ;
 
 pipeline     = stage , { space , "|" , space , stage } ;
-stage        = block | apply | selector ;
+stage        = block | apply | selector | slot_source | literal ;
+literal      = string | hex_int | number | bool_lit ;
+hex_int      = "0x" | "0X" , hexdigit , { hexdigit } ;
+bool_lit     = "true" | "false" ;
 
 apply        = name , { space , arg } ;
 name         = ident | dotted_name | hyphen_name | jce_name ;
-dotted_name  = ident , "." , ident , { "." , ident } ;
+dotted_name  = ident , "." , ident , { "." , ident } ;  (* ops only: gpg.encrypt *)
 hyphen_name  = ident , "-" , ident , { "-" , ident } ;
 jce_name     = letter , { letter | digit | "/" | "-" } ; (* allowlisted JCE transforms only *)
 arg          = flag | binding | positional ;
@@ -494,9 +544,10 @@ value        = string | number | bare_value | slot_ref | "true" | "false" ;
 bare_value   = letter , { letter | digit | "_" | "-" | "/" | "." } ;
 
 slot_ref     = "@" , ident | ident | number ;
-(* bare ident ≡ @ident for out/in names and type=slot params; number = 1-based index for in *)
+slot_source  = "@" , ident ;  (* ≡ in @ident ; serialize prefers this form *)
 
-selector     = "." , ident
+(* Members use colon — dot is reserved for dotted_name ops *)
+selector     = ":" , ident
              | "[" , number , [ ":" , number ] , "]" ;
 
 block        = tee_block | foreach_block ;
@@ -512,7 +563,7 @@ indent       = "  " , { "  " } ;
 branch       = [ selector , space , "|" , space ] , pipeline ;
 ```
 
-Parser alternatives are **ordered** (first match wins).
+Parser alternatives are **ordered** (first match wins). Dot-prefixed members (`.public`) are **rejected** — use `:public` (Upgrade recipe rewrites old recipes).
 
 ## Semantics
 
@@ -524,7 +575,7 @@ in @x / in N load cloned slot (typed); must refer to an earlier out
 key=@x       named slot arg — resolve live value into the op (not the stem)
 as kind      retag bytes refined type (allowlisted)
 tee body     side branches on projection/clone; stem unchanged
-foreach      over values (default) or .items / .keys / .values
+foreach      over values (default) or :items / :keys / :values
 peek         side inspect; stem unchanged
 ```
 
@@ -547,10 +598,13 @@ Paste / blur canonicalize via `canonicalizeRecipe`:
 |-----------|--------------|
 | Flat `foreach \| out` | `foreach` with a body: `- out @share` |
 | Trailing `merge` / `collect` | Omit — body closes by dedent or `}` |
-| Side-export / mid-stem fork | `tee` with `- .public \| …` (or multi-chain `out @kp` + `in @kp`) |
+| Side-export / mid-stem fork | `tee` with `- :public \| …` (or multi-chain `out @kp` + `@kp`) |
+| Dot member (`.public`) | Colon member (`:public`) — Upgrade recipe rewrites |
+| `in @x` only | Bare `@x` also loads the slot; serialize prefers `@x` |
 | Side inspect without a body | `peek @label` |
-| `encrypt gpg` / `gpg` / `decrypt gpg` | `gpg.encrypt` / `gpg.decrypt` (bare `encrypt`/`decrypt` are WebCrypto sugar now) |
-| `symencrypt` / `symdecrypt` | `gpg.symencrypt` / `gpg.symdecrypt` |
+| `encrypt gpg` / `gpg` / `decrypt gpg` | `gpg.encrypt` / `gpg.decrypt` |
+| `encrypt AES/…` / `decrypt aes-gcm` | concrete `aes-gcm` / … (migrator-only; live parse rejects) |
+| `symencrypt` / `symdecrypt` | `gpg.symencrypt` / `gpg.symdecrypt` (`mode=master` default; `mode=passphrase` for gpg -c) |
 | `aesgcm` / `aescbc` / `aesctr` | `aes-gcm` / `aes-cbc` / `aes-ctr` |
 | `rsaoaep` / `rsapkcs1` | `rsa-oaep` / `rsa-pkcs1` |
 | `sss` / `recover` | `sss.split` / `sss.combine` |

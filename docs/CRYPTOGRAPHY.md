@@ -16,7 +16,7 @@ Server-side OpenPGP **parsing/policy** (`basilisk/openpgp/`) is out of scope her
 
 ### Toolkit toolboxes
 
-Every recipe step declares a `toolbox` in `registry.js`. The ops drawer is a Swiss-army layout: toolboxes (with SVG glyphs) → taxonomy **shelves** → **conjugate rows** (encrypt | decrypt, encode | `-d`). Badges on builder/suggest chips keep similar verbs distinct. Shelves and conjugates are UX-only — recipe tokens are unchanged. Glyph metaphors, exported SVG assets, and the build-time `glyphs.js` pipeline are documented in [GLYPHS.md](./GLYPHS.md).
+Every recipe step declares a `toolbox` in `registry.js`. The ops drawer is a Swiss-army layout: toolboxes (with SVG glyphs) → taxonomy **shelves** → **collections** (AES modes, RSA paddings, Base64/Base32 with Encrypt|Decrypt or Encode|Decode actions) → **conjugate rows**. Badges on builder/suggest chips keep similar verbs distinct. Shelves, collections, and conjugates are UX-only — recipe tokens are unchanged. Glyph metaphors, exported SVG assets, and the build-time `glyphs.js` pipeline are documented in [GLYPHS.md](./GLYPHS.md).
 
 Drawer order: WebCrypto → Encoding → I/O → Flow → OpenPGP → SSS → WebAuthn.
 
@@ -104,7 +104,7 @@ Product split (intentional today):
 | **Ownertrust** | localStorage `basilisk.keyTrust.v1` (`trust.js`) | `trusted` / `marginal` / `never` by fingerprint (this browser only) |
 | **UI prefs** | localStorage (`prefs.js`) | Expert mode; **preferred upstream keyserver** (`basilisk.preferredKeyserver`) — allowlisted host or empty for server default; Preferences page at `/preferences` |
 
-Resolve order for Encrypt / Toolkit recipients: in-memory → pubkey cache → Basilisk portal/`/pks/lookup` → (signed-in + `BASILISK_UPSTREAM_ENABLED`) browser-direct HKP to an allowlisted host. Upstream results are **never** written as server `approved`; they stay device-local with an origin chip. Recipient picker ranks by ownertrust, then origin (Basilisk before upstream), and shows `.trust-badge` / `.key-hit-trusted` styles for locally trusted keys.
+Resolve order for Encrypt / Toolkit recipients: in-memory → pubkey cache → Basilisk portal/`/pks/lookup` → (signed-in + `BASILISK_UPSTREAM_ENABLED`) browser-direct HKP to an allowlisted host. Upstream results are **never** written as server `approved`; they stay device-local with an origin chip. Recipient picker ranks by ownertrust, then origin (Basilisk before upstream), and shows `.trust-badge` / `:key-hit-trusted` styles for locally trusted keys.
 
 **GET-only CORS:** Public key fetch (`/pks/lookup`, HKP v2 GET certs, WKD, `GET /api/v1/key/<fpr>`) sends `Access-Control-Allow-Origin: *` on success and error responses (including 404), plus OPTIONS preflight for `GET, HEAD, OPTIONS` only. Mutate paths (`POST /pks/add`, HKP v2 upload, claim/auth APIs) do **not**. Never combine `*` with credentials. If `cache_mode=redirect`, the CDN/blob host must also send ACAO for the follow-up GET.
 
@@ -189,21 +189,21 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js` + `step-names.j
 | `import` | Done | `importKey` (+ scalar → PKCS#8 for EC/OKP; `import jwk` text; RSA/X25519 SPKI) |
 | `pem` / `der` | Done | Armor / identity |
 | `base64` / `base64url` / `base32` / `hex` / `utf8` | Done | Encoding (`-d` decode where applicable; Base32 = RFC 4648 unpadded) |
-| `inspect` (`dump` / `hexdump`) | Done | Dump; result tile keeps a snapshot for live format switching (no re-run) |
+| `inspect` (`dump` / `hexdump`) | Done | Dump; openssl-`-text`-ish key summary + JWK thumbprint; result tile keeps a snapshot for live format switching (no re-run) |
 
 ### Transforms — WebCrypto ops
 
 | Op | Status | Crypto |
 |----|--------|--------|
 | `digest` | Done | `subtle.digest` SHA-256/384/512; SHA-1 **discouraged** (warn + `legacy` tags) |
-| `sign` / `verify` | Done | Bound JWK / `key=@slot`; `signature=@slot` or bare base64url; fail-loud default; `soft`/`-q` → `verified`\|`invalid` |
+| `sign` / `verify` | Done | Bound JWK / `key=@slot`; `signature=@slot` or bare base64url; fail-loud default; `soft`/`-q` → bool `true`\|`false` |
 | `aes-gcm` / `-d` | Done | AES-GCM; `key=@slot`; also `aes-256-gcm`, `AES/GCM/NoPadding` |
 | `aes-cbc` / `aes-ctr` | Done | Unauthenticated AES-CBC/CTR interop; IV(16)\|\|CT; prefer `aes-gcm` |
 | `rsa-oaep` / `-d` | Done | RSA-OAEP content encrypt; `key=@slot`; JCE OAEP forms accepted |
 | `rsa-pkcs1` / `-d` | Done | RSAES-PKCS1-v1_5 (pure-JS; **discouraged**; warn + tags); prefer `rsa-oaep` |
-| `hkdf` / `pbkdf2` | Done | `deriveBits` (default) or `deriveKey` via `as=aes/256` etc. |
+| `hkdf` / `pbkdf2` | Done | `deriveBits` (default) or `deriveKey` via `as=aes/256` etc. → live `key` tip (`which: secret`) |
 | `ecdh` | Done | ECDH/X25519; `bits=0` curve-aware; `as=` → `deriveKey` like hkdf |
-| `wrap` / `unwrap` | Done | `mode=aes-kw` (default), `aes-gcm`/`aes-cbc`/`aes-ctr`, or `rsa-oaep`; unwrap `alg=` aes/hmac/aes-kw; optional OAEP `label=`, GCM `tagLength=`, CTR `length=` |
+| `wrap` / `unwrap` | Done | `mode=aes-kw` (default), `aes-gcm`/`aes-cbc`/`aes-ctr`, or `rsa-oaep`; unwrap → live `key` tip (`export raw` for bytes); unwrap `alg=` aes/hmac/aes-kw; optional OAEP `label=`, GCM `tagLength=`, CTR `length=` |
 
 ### Transforms — secret sharing
 
@@ -222,8 +222,8 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js` + `step-names.j
 | `gpg.inspect` | Done | Armored summary / packet map / JSON (no decrypt) |
 | `gpg.encrypt` / `gpg.decrypt` | Done | Public-key encrypt / decrypt; `to=@\|email\|fpr`; `mode=separate\|combined`; `sign`/`-s` |
 | `gpg.sign` / `gpg.verify` | Done | Cleartext (default) or detached; `key=@slot` or vault panel; soft `-q` |
-| `gpg.symencrypt` | Done | SKESK + SEIPD under fresh 32 B master |
-| `gpg.symdecrypt` | Done | Unwrap with master-as-passphrase |
+| `gpg.symencrypt` | Done | Dual mode: default `mode=master` (SKESK under fresh 32 B master tip + envelope); `mode=passphrase` + `passphrase=` (`gpg -c` tip) |
+| `gpg.symdecrypt` | Done | Dual mode: `mode=master` unwraps bound envelope with hex(master); `mode=passphrase` decrypts armored tip |
 
 ### Agent (toolbox `agent`, no CAST suite)
 
@@ -268,8 +268,8 @@ Compose with WebCrypto: `webauthn.prf \| hkdf 32 \| …` / `aes-gcm`.
 
 | Op | Status | Crypto |
 |----|--------|--------|
-| `foreach` | Done | Map via required body (`-` list or `{ … }`); optional `.items` / `.values` / `.keys` |
-| `tee` / `peek` / `in` / `as` | Done | tee = mid-stem forks; `out @x` + chains + `in @x`; named args `key=@x`; cast `as master` (retag) distinct from KDF param `as=aes/256`; `peek` = side inspect |
+| `foreach` | Done | Map via required body (`-` list or `{ … }`); optional `:items` / `:values` / `:keys` |
+| `tee` / `peek` / `in` / `as` | Done | tee = mid-stem forks; `out @x` + chains + `in @x`; named args `key=@x`; cast `as master` (retag) / `as int`/`as bool` (coerce) / `as key` (materialize); distinct from hkdf/pbkdf2/ecdh param `as=aes/256`; `peek` = side inspect |
 | `at` / `[n]` | Done | 1-based share index / slice |
 | `gpg.encrypt` | Done | OpenPGP.js public-key encrypt (sink); `-s` sign-then-encrypt |
 | `gpg.genkey` / `gpg.inspect` | Done | Curve25519 keygen; armor inspect without decrypt |
@@ -285,7 +285,7 @@ Compose with WebCrypto: `webauthn.prf \| hkdf 32 \| …` / `aes-gcm`.
 | `rsa-oaep` | — | `RSA/ECB/OAEPWithSHA-1AndMGF1Padding`, `…SHA-256…` |
 | `rsa-pkcs1` | — | `RSA/ECB/PKCS1Padding` |
 
-Serialize always emits the hyphenated canonical name. Sugar: `encrypt AES/GCM/NoPadding` / `decrypt …` parse to the same concrete op. Legacy Basilisk tokens (`aesgcm`, `wa-*`, `recover`, `encrypt gpg`, …) require `migrateRecipe` / Upgrade recipe.
+Serialize always emits the hyphenated canonical name. Bare `encrypt` / `decrypt` sugar is **migrator-only** (Upgrade recipe → concrete `aes-gcm` / …). Legacy Basilisk tokens (`aesgcm`, `wa-*`, `recover`, `encrypt gpg`, …) also require `migrateRecipe` / Upgrade recipe.
 
 ### Missing toolkit steps (WebCrypto gap tracker)
 
@@ -297,9 +297,9 @@ Serialize always emits the hyphenated canonical name. Sugar: `encrypt AES/GCM/No
 | `aes-cbc` / `aes-ctr` | Done | Unauthenticated interop; IV(16)\|\|CT; prefer `aes-gcm` for new work |
 | `rsa-oaep` / `-d` | Done | RSA-OAEP content encrypt/decrypt; `key=@slot` |
 | `rsa-pkcs1` / `-d` | Done | RSAES-PKCS1-v1_5 pure-JS interop; discouraged (warn + tags) |
-| `hkdf` / `pbkdf2` | Done | `deriveBits` or `as=` → `deriveKey` (AES / HMAC keypair) |
+| `hkdf` / `pbkdf2` | Done | `deriveBits` or `as=` → `deriveKey` (AES / HMAC / AES-KW → live `key` tip, `which: secret`) |
 | `ecdh` | Done | Curve-aware bits; `as=` → deriveKey; slots `private=@` `peer=@` |
-| `wrap` / `unwrap` | Done | `mode=aes-kw`\|`aes-gcm`\|`aes-cbc`\|`aes-ctr`\|`rsa-oaep`; unwrap `alg=` aes/hmac/aes-kw; `label=` / `tagLength=` / `length=` |
+| `wrap` / `unwrap` | Done | `mode=aes-kw`\|`aes-gcm`\|`aes-cbc`\|`aes-ctr`\|`rsa-oaep`; unwrap → `key` tip (`export raw` for bytes); unwrap `alg=` aes/hmac/aes-kw; `label=` / `tagLength=` / `length=` |
 | `hmac` / `hmac.verify` | Done | Parse sugar → `sign` / `verify` (HMAC keys) |
 | `sign` / `verify` knobs | Done | RSA-PSS `saltLength=`; ECDSA `hash=` (`auto` = curve default) |
 | `aes-gcm` `tagLength=` | Done | 96\|104\|112\|120\|128 (default 128) |
@@ -376,7 +376,7 @@ Display maps in `algos.js` also name historical algorithms for **inspection** of
 | OpenPGP public-key encrypt | ✓ | | ✓ sink | signaling |
 | OpenPGP password / SKESK | ✓ | | `gpg.symencrypt` | |
 | Sign + encrypt | ✓ | | | signaling |
-| Decrypt / verify | | ✓ | `decrypt` / `symdecrypt` | session AES-GCM |
+| Decrypt / verify | | ✓ | `gpg.decrypt` / `gpg.symdecrypt` | session AES-GCM |
 | Profiles Auto/Modern/Compatible | ✓ | | ✓ | default seal |
 | Crypto self-test gate | ✓ OpenPGP | ✓ OpenPGP | suites + FIPS mode | separate (ungated) |
 | WebCrypto keygen | | | ✓ | ECDH only |
@@ -393,24 +393,24 @@ Stem stays a flat `|` pipeline; `tee` / `foreach` take brace or indented `-` bod
 blank lines separate chains; `out @label` / `in @label` reuse live values.
 
 ```text
-# WebCrypto key → PEM
+# WebCrypto key → PEM (openssl pkey / genpkey style)
 genkey ec/p256 | export pkcs8 | pem
 
-# Tee selector branches
+# Tee selector branches (prefer :public / :private over export which=)
 genkey ec/p256 | tee
-  - .private | inspect
-  - .public | export spki | pem | out @public
+  - :private | inspect
+  - :public | export spki | pem | out @public
 | export pkcs8 | pem | out @private
 
 # Multi-chain reuse (blank line + in @slot)
 genkey ec/p256 | out @kp
 
-in @kp | .public | export spki | pem | out @public
-in @kp | export pkcs8 | pem | out @private
+@kp | :public | export spki | pem | out @public
+@kp | :private | export pkcs8 | pem | out @private
 
 # Scalar SSS + BLIP39 (tee public, foreach shares)
 genkey ec/p256 | tee
-  - .public | export spki | pem | out @public
+  - :public | export spki | pem | out @public
 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share
 
@@ -421,9 +421,67 @@ genkey ec/p256 | tee
 shares | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem
 
 # Large payload via OpenPGP envelope then SSS
-… | pem | gpg.symencrypt | sss.split threshold=2 shares=3 | blip39 | foreach
+… | pem | gpg.symencrypt mode=master | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share
 ```
+
+### OpenSSL CLI ↔ toolkit (keys)
+
+Coarse tip is always `keypair` (or projected `key`); RSA vs EC vs Ed25519 live in refined `alg` / meta — not separate IoTypes. OpenPGP stays `openpgp-key`.
+
+| OpenSSL (1.1.1) | Toolkit |
+|-----------------|---------|
+| [`genpkey`](https://docs.openssl.org/1.1.1/man1/genpkey/) / `genrsa` | `genkey alg=…` |
+| [`pkey -pubout`](https://docs.openssl.org/1.1.1/man1/pkey/) / [`ec -pubout`](https://docs.openssl.org/1.1.1/man1/ec/) / [`rsa -pubout`](https://docs.openssl.org/1.1.1/man1/rsa/) | `:public \| export spki \| pem` |
+| private PEM/DER | `export pkcs8 \| pem` or `:private \| export pkcs8 \| pem` |
+| `pkey -text` / `-text_pub` | `inspect` / `peek` (openssl-style summary + JWK thumbprint on auto/text; `format=jwk` for full JWK) |
+| PEM ↔ DER | `pem` / `der` |
+| `dgst` / `enc` / `rand` / `pkeyutl` | `digest` / `aes-*`+`rsa-oaep` / `random` / `sign`·`verify`·encrypt ops |
+| `rand -hex 32` | `random 32 \| to hex` |
+| `enc -aes-256-gcm` / `-d` | `aes-gcm` / `aes-gcm -d` (prefer AEAD over CBC/CTR) |
+
+Prefer selectors over `export which=` (discouraged; compile warns). In the ops
+drawer, **Keys → Key formats** picks PKCS#8 / SPKI / JWK / … (bare Export/Import
+tiles are kit-only). Not in scope: `req` / `x509` / `cms` / `pkcs12` / CA / OCSP.
+
+### OpenSSL / GPG ↔ toolkit (password → cipher)
+
+Password-based encryption is **two steps** in the toolkit: derive a key, then encrypt.
+There is no single `openssl enc -pass` twin for WebCrypto AEAD.
+
+| Goal | OpenSSL / GPG | Toolkit recipe |
+|------|---------------|----------------|
+| Passphrase → AES key | `openssl kdf` / PBKDF2 | `input \| utf8 \| pbkdf2 32 salt=@salt as=aes/256 \| out @cek` |
+| Encrypt with that CEK | `enc -aes-256-gcm -K … -iv …` | `"payload" \| utf8 \| aes-gcm key=@cek \| to hex \| out @ct` |
+| Decrypt | `enc -d …` | `in @ct \| from hex \| aes-gcm -d key=@cek \| utf8` |
+| OpenPGP password (SKESK) | `gpg -c` | `gpg.symencrypt mode=passphrase passphrase=@pw` / `gpg.symdecrypt mode=passphrase passphrase=@pw` (SSS path: `mode=master`, random master tip) |
+| Wrap CEK under KEK | `pkeyutl -encrypt` / AES-KW | `wrap key=@kek target=@cek` → bytes; `unwrap … \| export raw` for key bytes |
+
+```text
+# Password → AES-GCM (WebCrypto)
+"correct horse battery staple" | utf8 | out @pw
+random 16 | out @salt
+in @pw | pbkdf2 32 salt=@salt as=aes/256 | out @cek
+"hello" | utf8 | aes-gcm key=@cek | to hex | out @ct
+
+# OpenPGP symmetric (gpg -c style)
+"secret" | out @pw
+"hello" | utf8 | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg
+in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8
+```
+
+`unwrap` yields a live **`key` tip** (CryptoKey), not bytes — pipe `export raw` / `export jwk` when you need material. Prefer `unwrap key=@kek` over panel defaults.
+
+### GPG CLI ↔ toolkit (OpenPGP)
+
+| GPG | Toolkit |
+|-----|---------|
+| `gpg --gen-key` (Curve25519) | `gpg.genkey email="…" \| out @priv` |
+| `--export` / `--export-secret-keys` | `out` of public/private armor; `agent.pub` / `agent.unlock` for My Keys |
+| `--encrypt` / `--decrypt` | `gpg.encrypt` / `gpg.decrypt` (`-s` = sign+encrypt) |
+| `--sign` / `--verify` | `gpg.sign` / `gpg.verify` |
+| `--symmetric` / `-c` | `gpg.symencrypt mode=passphrase passphrase=@pw` / `gpg.symdecrypt mode=passphrase passphrase=@pw` (`mode=master` for SSS envelope path) |
+| `--list-packets` / inspect | `gpg.inspect` (`format=summary\|packets\|json`) |
 
 ---
 

@@ -6,7 +6,7 @@ import {
   inspectValue,
 } from "../lib/toolkit/inspect.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
-import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { compileRecipe, migrateRecipe } from "../lib/toolkit/recipe.js";
 
 describe("formatHexdump", () => {
   it("renders offset, hex, and ascii", () => {
@@ -19,8 +19,9 @@ describe("formatHexdump", () => {
 });
 
 describe("inspect / tee", () => {
-  it("hexdump alias dumps random bytes as text", async () => {
-    const { ast, validation } = compileRecipe("random 16 | hexdump");
+  it("hexdump migrates to inspect format=hexdump", async () => {
+    const { recipe } = migrateRecipe("random 16 | hexdump");
+    const { ast, validation } = compileRecipe(recipe);
     expect(validation.ok).toBe(true);
     expect(ast.steps[1].name).toBe("inspect");
     expect(ast.steps[1].params.format).toBe("hexdump");
@@ -49,6 +50,38 @@ describe("inspect / tee", () => {
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
     expect(arts[0].content).toMatch(/OKP|Ed25519|private JWK/i);
+  }, 30_000);
+
+  it("inspect of projected :public key tip exports public JWK", async () => {
+    const { ast, validation } = compileRecipe(
+      "genkey ec/p256 | :public | inspect jwk"
+    );
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    expect(arts[0].content).toMatch(/type: key/);
+    expect(arts[0].content).toMatch(/which: public/);
+    expect(arts[0].content).toMatch(/public JWK|EC|crv/i);
+    expect(arts[0].content).not.toMatch(/private JWK/);
+  }, 30_000);
+
+  it("inspect of projected :private key tip exports private JWK", async () => {
+    const { ast, validation } = compileRecipe(
+      "genkey ed25519 | :private | inspect jwk"
+    );
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    expect(arts[0].content).toMatch(/type: key/);
+    expect(arts[0].content).toMatch(/which: private|private JWK|OKP|Ed25519/i);
+  }, 30_000);
+
+  it("inspect auto includes openssl -text summary and jwk thumbprint", async () => {
+    const { ast, validation } = compileRecipe("genkey ec/p256 | inspect");
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast);
+    const text = String(arts[0].content || "");
+    expect(text).toMatch(/openssl -text/i);
+    expect(text).toMatch(/Private-Key|Public-Key|prime256v1|NIST CURVE/i);
+    expect(text).toMatch(/jwk\.thumbprint\.sha256:/);
   }, 30_000);
 
   it("inspectValue meta format for text", async () => {

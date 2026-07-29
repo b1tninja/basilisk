@@ -63,12 +63,12 @@ describe("refined types", () => {
     }
   });
 
-  it("select .public/.private projects keypair → key tip", () => {
+  it("select :public/:private projects keypair → key tip", () => {
     const sel = getStep("select");
     const pub = resolveStepType(
       sel,
       typeOf("keypair", { alg: "ec/p256" }),
-      { selector: ".public" }
+      { selector: ":public" }
     );
     expect(pub.ok).toBe(true);
     if (pub.ok) {
@@ -79,7 +79,7 @@ describe("refined types", () => {
     const priv = resolveStepType(
       sel,
       typeOf("keypair", { alg: "ed25519" }),
-      { selector: ".priv" }
+      { selector: ":private" }
     );
     expect(priv.ok).toBe(true);
     if (priv.ok) {
@@ -150,9 +150,9 @@ describe("refined types", () => {
     }
   });
 
-  it("walkPipelineTypes: tee .public branch is key then DER", () => {
+  it("walkPipelineTypes: tee :public branch is key then DER", () => {
     const compiled = compileRecipe(
-      "genkey ec/p256 | tee\n  - .public | export spki\n| export pkcs8"
+      "genkey ec/p256 | tee\n  - :public | export spki\n| export pkcs8"
     );
     expect(compiled.validation.ok).toBe(true);
     const { edges } = walkPipelineTypes(compiled.ast.steps, { getStep });
@@ -161,6 +161,20 @@ describe("refined types", () => {
     const br0 = tee?.branches?.[0]?.edges || [];
     expect(formatType(br0[0]?.input)).toBe("key/ec/p256/public");
     expect(formatType(br0[0]?.output)).toMatch(/bytes\/der/);
+  });
+
+  it("walkPipelineTypes: in @slot resolves prior out tip", () => {
+    const compiled = compileRecipe(
+      "genkey ec/p256 | out @kp\n\n@kp | :public | export spki"
+    );
+    expect(compiled.validation.ok).toBe(true);
+    const slots = new Map();
+    const c0 = walkPipelineTypes(compiled.ast.chains[0].steps, { getStep }, slots);
+    expect(formatType(c0.final)).toMatch(/keypair/);
+    expect(slots.get("kp")?.base).toBe("keypair");
+    const c1 = walkPipelineTypes(compiled.ast.chains[1].steps, { getStep }, slots);
+    const inEdge = c1.edges.find((e) => e.name === "in");
+    expect(inEdge?.output?.base).toBe("keypair");
   });
 
   it("stepsAccepting hides sss after pem", () => {

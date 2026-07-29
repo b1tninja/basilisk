@@ -658,10 +658,8 @@ export async function assertCryptoReady() {
   // Fast path — already ready.
   if (_state === "READY") return;
 
-  // If POST is running (or hasn't been started), wait for it.
-  if (_postPromise) {
-    await _postPromise;
-  }
+  // Wait for POST (start it if the page entry point forgot to).
+  await runCryptoSelfTests();
 
   if (_state !== "READY") {
     const last = _failureLog.at(-1);

@@ -135,7 +135,7 @@ describe("sign / verify", () => {
         key: { privateKey: kp.privateKey, publicKey: kp.publicKey },
       },
     });
-    expect(verified[0].content).toBe("verified");
+    expect(verified[0].content).toBe("true");
     void msg;
   }, 30_000);
 
@@ -152,7 +152,7 @@ describe("sign / verify", () => {
     ).rejects.toThrow(/verif/i);
   }, 30_000);
 
-  it("soft verify emits invalid instead of throwing", async () => {
+  it("soft verify emits false instead of throwing", async () => {
     const kp = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
     const { ast } = compileRecipe("input | utf8 | verify -q signature=AAAA");
     const out = await runRecipe(ast, {
@@ -161,10 +161,10 @@ describe("sign / verify", () => {
         key: { publicKey: kp.publicKey },
       },
     });
-    expect(out[0].content).toBe("invalid");
+    expect(out[0].content).toBe("false");
   }, 30_000);
 
-  it("soft verify emits verified on success", async () => {
+  it("soft verify emits true on success", async () => {
     const kp = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
     const { ast: signAst } = compileRecipe("input | utf8 | sign | base64url");
     const signed = await runRecipe(signAst, {
@@ -182,7 +182,7 @@ describe("sign / verify", () => {
         key: { publicKey: kp.publicKey },
       },
     });
-    expect(out[0].content).toBe("verified");
+    expect(out[0].content).toBe("true");
   }, 30_000);
 
   it("round-trips ECDSA P-256", async () => {
@@ -206,7 +206,7 @@ describe("sign / verify", () => {
         key: { publicKey: kp.publicKey },
       },
     });
-    expect(verified[0].content).toBe("verified");
+    expect(verified[0].content).toBe("true");
   }, 30_000);
 
   it("round-trips HMAC-SHA-256", async () => {
@@ -225,7 +225,7 @@ describe("sign / verify", () => {
     const verified = await runRecipe(verAst, {
       inputs: { text: { value: "hmac" }, key: { secretKey: key } },
     });
-    expect(verified[0].content).toBe("verified");
+    expect(verified[0].content).toBe("true");
   }, 30_000);
 
   it("round-trips RSA-PSS 2048", async () => {
@@ -255,7 +255,7 @@ describe("sign / verify", () => {
         key: { publicKey: kp.publicKey },
       },
     });
-    expect(verified[0].content).toBe("verified");
+    expect(verified[0].content).toBe("true");
   }, 60_000);
 });
 
@@ -472,7 +472,7 @@ describe("import jwk / spki", () => {
 
   it("imports X25519 public SPKI", async () => {
     const { ast, validation } = compileRecipe(
-      "genkey x25519 | .public | export spki | import spki alg=x25519 | export spki | to hex"
+      "genkey x25519 | :public | export spki | import spki alg=x25519 | export spki | to hex"
     );
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
@@ -481,7 +481,7 @@ describe("import jwk / spki", () => {
 
   it("round-trips armored public and private PEM", async () => {
     const { ast, validation } = compileRecipe(`genkey ec/p256 | tee
-  - .public | export spki | pem | out @pub
+  - :public | export spki | pem | out @pub
 | export pkcs8 | pem | out @priv
 
 in @pub | der | import spki alg=ec/p256 | export spki | pem | out @pub2
@@ -611,7 +611,9 @@ describe("wrap / unwrap", () => {
         },
       },
     });
-    const { ast: unwrapAst } = compileRecipe("input | from hex | unwrap | to hex");
+    const { ast: unwrapAst } = compileRecipe(
+      "input | from hex | unwrap | export raw | to hex"
+    );
     const unwrapped = await runRecipe(unwrapAst, {
       inputs: {
         text: { value: wrapped[0].content },
@@ -628,7 +630,7 @@ genkey hmac/sha256 | out @cek
 
 wrap key=@kek target=@cek | to hex | out @wrapped
 
-in @wrapped | from hex | unwrap key=@kek alg=hmac/sha256 | to hex`);
+in @wrapped | from hex | unwrap key=@kek alg=hmac/sha256 | export raw | to hex`);
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
     const hexes = arts.filter((a) => /^[0-9a-f]{64}$/i.test(String(a.content || "")));
@@ -642,7 +644,7 @@ genkey aes/256 | out @cek
 
 wrap mode=rsa-oaep key=@rk target=@cek | to hex | out @wrapped
 
-in @wrapped | from hex | unwrap mode=rsa-oaep key=@rk | to hex`);
+in @wrapped | from hex | unwrap mode=rsa-oaep key=@rk | export raw | to hex`);
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
     expect(arts.some((a) => /^[0-9a-f]{64}$/i.test(String(a.content || "")))).toBe(
@@ -667,7 +669,7 @@ in @msg | verify key=@kp signature=@sig | out @result`);
     const out = await runRecipe(ast, {
       inputs: { text: { value: "pkcs1-sign" } },
     });
-    expect(out.some((a) => a.content === "verified")).toBe(true);
+    expect(out.some((a) => a.content === "true")).toBe(true);
     const sig = out.find((a) => (a.tags || []).includes("rsassa-pkcs1-v1_5"));
     expect(sig).toBeTruthy();
   }, 60_000);
@@ -717,7 +719,7 @@ in @msg | verify key=@kp signature=@sig | out @result`);
     const out = await runRecipe(ast, {
       inputs: { text: { value: "slot-sig" } },
     });
-    expect(out.some((a) => a.content === "verified")).toBe(true);
+    expect(out.some((a) => a.content === "true")).toBe(true);
   }, 30_000);
 });
 

@@ -33,7 +33,7 @@ describe("step name alternates", () => {
     const sized = parseRecipe("random 16 | aes-256-gcm key=@k");
     expect(sized.errors).toEqual([]);
     expect(sized.ast?.steps?.[1]?.name).toBe("aes-gcm");
-    expect(sized.ast?.steps?.[1]?.params?.expectedKeyBits).toBe(256);
+    expect(sized.ast?.steps?.[1]?.params?.keyBits).toBe(256);
     expect(serializeRecipe(sized.ast)).toContain("aes-gcm");
     expect(serializeRecipe(sized.ast)).not.toContain("aes-256-gcm");
   });
@@ -44,7 +44,7 @@ describe("step name alternates", () => {
   });
 });
 
-describe("encrypt / decrypt cipher sugar", () => {
+describe("encrypt / decrypt cipher sugar (migrator-only)", () => {
   it("resolveCipherTransform accepts JCE, sized, and hyphen forms", () => {
     expect(resolveCipherTransform("AES/GCM/NoPadding")?.canonical).toBe("aes-gcm");
     expect(resolveCipherTransform("aes-256-gcm")).toEqual({
@@ -55,40 +55,53 @@ describe("encrypt / decrypt cipher sugar", () => {
     expect(resolveCipherTransform("digest")).toBeNull();
   });
 
-  it("encrypt TRANSFORM rewrites to concrete aes-gcm and serializes hyphen", () => {
-    const { ast, errors } = parseRecipe(
+  it("live parse rejects encrypt / decrypt sugar", () => {
+    const { errors } = parseRecipe(
       "random 16 | encrypt AES/GCM/NoPadding key=@k"
     );
+    expect(errors.some((e) => /removed from live parse|Upgrade recipe/i.test(e.message))).toBe(
+      true
+    );
+  });
+
+  it("migrateRecipe rewrites encrypt TRANSFORM to concrete aes-gcm", () => {
+    const { recipe, changes } = migrateRecipe(
+      "random 16 | encrypt AES/GCM/NoPadding key=@k"
+    );
+    expect(recipe).toContain("aes-gcm");
+    expect(recipe).not.toMatch(/\bencrypt\b/);
+    expect(changes.some((c) => c.from === "encrypt/decrypt")).toBe(true);
+    const { ast, errors } = parseRecipe(recipe);
     expect(errors).toEqual([]);
     expect(ast?.steps?.[1]?.name).toBe("aes-gcm");
     expect(ast?.steps?.[1]?.params?.decode).toBeFalsy();
     expect(serializeRecipe(ast)).toContain("aes-gcm");
-    expect(serializeRecipe(ast)).not.toMatch(/\bencrypt\b/);
   });
 
-  it("decrypt sized transform sets decode + expectedKeyBits", () => {
-    const { ast, errors } = parseRecipe(
-      "random 16 | decrypt aes-256-gcm key=@k"
-    );
+  it("migrateRecipe rewrites decrypt sized transform to decode + keyBits", () => {
+    const { recipe } = migrateRecipe("random 16 | decrypt aes-256-gcm key=@k");
+    expect(recipe).toMatch(/aes-256-gcm\s+-d/);
+    const { ast, errors } = parseRecipe(recipe);
     expect(errors).toEqual([]);
     expect(ast?.steps?.[1]?.name).toBe("aes-gcm");
     expect(ast?.steps?.[1]?.params?.decode).toBe(true);
-    expect(ast?.steps?.[1]?.params?.expectedKeyBits).toBe(256);
+    expect(ast?.steps?.[1]?.params?.keyBits).toBe(256);
     expect(serializeRecipe(ast)).toMatch(/aes-gcm\s+-d/);
   });
 
-  it("encrypt -d before transform decrypts", () => {
-    const { ast, errors } = parseRecipe("random 16 | encrypt -d aes-gcm key=@k");
+  it("migrateRecipe rewrites encrypt -d before transform", () => {
+    const { recipe } = migrateRecipe("random 16 | encrypt -d aes-gcm key=@k");
+    expect(recipe).toMatch(/aes-gcm\s+-d/);
+    const { ast, errors } = parseRecipe(recipe);
     expect(errors).toEqual([]);
-    expect(ast?.steps?.[1]?.name).toBe("aes-gcm");
     expect(ast?.steps?.[1]?.params?.decode).toBe(true);
   });
 
   it("bare encrypt without transform errors", () => {
     const { errors } = parseRecipe("random 16 | encrypt");
-    expect(errors.some((e) => /requires a cipher transform/i.test(e.message))).toBe(
-      true
-    );
+    expect(
+      errors.some((e) => /removed from live parse|Upgrade recipe|cipher/i.test(e.message))
+    ).toBe(true);
   });
 
   it("gpg.encrypt remains OpenPGP and distinct from encrypt sugar", () => {
@@ -153,7 +166,7 @@ describe("encode / decode twin verbs", () => {
       "import",
     ]);
     expect(serializeRecipe(ast)).toBe(
-      "export spki | pem | out @pub\n\nin @pub | der | import spki"
+      "export spki | pem | out @pub\n\n@pub | der | import spki"
     );
   });
 
@@ -174,7 +187,7 @@ describe("encode / decode twin verbs", () => {
     expect(ast?.chains?.[0]?.steps?.[1]?.params?.encoding).toBe("hex");
     expect(ast?.chains?.[1]?.steps?.map((s) => s.name)).toEqual(["in", "from"]);
     expect(ast?.chains?.[1]?.steps?.[1]?.params?.encoding).toBe("hex");
-    expect(serializeRecipe(ast)).toBe("random 8 | to hex | out @h\n\nin @h | from hex");
+    expect(serializeRecipe(ast)).toBe("random 8 | to hex | out @h\n\n@h | from hex");
   });
 
   it("isToFromEncoding recognizes hex only for now", () => {
@@ -222,12 +235,22 @@ symencrypt | symdecrypt`;
     expect(LEGACY_STEP_MIGRATE.decrypt).toBeUndefined();
   });
 
-  it("does not rewrite bare encrypt (WebCrypto sugar)", () => {
+  it("rewrites bare encrypt/decrypt sugar to concrete ciphers", () => {
     const { recipe, changes } = migrateRecipe(
       "input | utf8 | encrypt AES/GCM/NoPadding key=@cek"
     );
-    expect(recipe).toContain("encrypt AES/GCM/NoPadding");
-    expect(changes.some((c) => c.from === "encrypt")).toBe(false);
+    expect(recipe).toContain("aes-gcm");
+    expect(recipe).not.toMatch(/\bencrypt\b/);
+    expect(changes.some((c) => c.from === "encrypt/decrypt")).toBe(true);
+  });
+
+  it("rewrites bare slot labels to @", () => {
+    const { recipe, changes } = migrateRecipe(
+      "genkey aes/256 | out cek\n\nrandom 16 | aes-gcm key=cek"
+    );
+    expect(recipe).toContain("out @cek");
+    expect(recipe).toContain("key=@cek");
+    expect(changes.some((c) => c.from === "bare-slot-@")).toBe(true);
   });
 
   it("compileRecipe accepts only after migrate", () => {

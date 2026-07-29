@@ -196,13 +196,13 @@ describe("self-contained roundtrip presets", () => {
     });
     const ok = arts.find(
       (a) =>
+        String(a.content).toLowerCase() === "true" ||
         String(a.content).toLowerCase() === "ok" ||
-        String(a.content).toLowerCase() === "valid" ||
-        String(a.content).includes("verified")
+        String(a.content).toLowerCase() === "valid"
     );
-    // verify sugar may emit text "true" / "ok" / boolean-ish
+    // hmac.verify / soft verify emit bool true (or text "true" / "ok")
     expect(
-      ok || arts.some((a) => /true|ok|valid|verified/i.test(String(a.content)))
+      ok || arts.some((a) => /^true$/i.test(String(a.content).trim()))
     ).toBeTruthy();
   }, 30_000);
 

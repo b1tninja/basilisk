@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { bytesToBase64Url } from "../lib/toolkit/encode.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
-import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { compileRecipe, migrateRecipe } from "../lib/toolkit/recipe.js";
 
 describe("toolkit engine", () => {
   it("generates a P-256 PKCS#8 PEM that WebCrypto can re-import", async () => {
@@ -95,8 +95,9 @@ describe("toolkit engine", () => {
     expect(arts[0].mime).toMatch(/^text\/plain/);
   });
 
-  it("print alias resolves to the text sink", () => {
-    const { ast, validation } = compileRecipe("passphrase words=4 | print");
+  it("print alias migrates to the text sink", () => {
+    const { recipe } = migrateRecipe("passphrase words=4 | print");
+    const { ast, validation } = compileRecipe(recipe);
     expect(validation.ok).toBe(true);
     expect(ast.steps.at(-1)?.name).toBe("text");
   });

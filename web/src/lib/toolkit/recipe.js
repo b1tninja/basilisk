@@ -4,12 +4,13 @@
  *
  *   genkey ec/p256 | out @kp
  *
- *   in @kp | .public | export spki | pem | out @public
- *   in @kp | export pkcs8 | pem | out @private
+ *   @kp | :public | export spki | pem | out @public
+ *   @kp | export pkcs8 | pem | out @private
  *
  * Decode: encoding twins prefer `base64.encode` / `base64.decode` (also accept `-d`).
  * pem ↔ der and to ↔ from (encoding) are conjugate pairs (bare verbs, not decodeTwin).
- * Cipher twins still use `-d` (`aes-gcm -d`). Slot sugar: bare `out kp` → `@kp`.
+ * Cipher twins still use `-d` (`aes-gcm -d`). Slot labels require `@` (`out @kp` / `key=@cek`);
+ * bare `out kp` / `key=cek` → `migrateRecipe` / Upgrade. Bare `@kp` ≡ `in @kp` on load.
  */
 
 import {
@@ -95,6 +96,47 @@ function pushUsageHonestyWarnings(step, warnings) {
 }
 
 /**
+ * True when the recipe source literally writes `which=` on this step
+ * (defaults filled by the parser do not count).
+ * @param {RecipeStep} step
+ * @param {string} [source]
+ */
+function stepSourceHasWhich(step, source) {
+  if (!source || step.start == null || step.end == null) return false;
+  return /\bwhich\s*=/.test(source.slice(step.start, step.end));
+}
+
+/**
+ * Discourage `export which=` — prefer `:public` / `:private` (openssl pkey -pubout).
+ * @param {RecipeStep} step
+ * @param {import("./types.js").RefinedType} current
+ * @param {{ warnings: string[], errors: RecipeError[], source?: string, stepIndex: number }} ctx
+ */
+function pushExportWhichPolicy(step, current, ctx) {
+  if (step.name !== "export") return;
+  if (!stepSourceHasWhich(step, ctx.source)) return;
+  const slice = String(ctx.source || "").slice(step.start ?? 0, step.end ?? 0);
+  const m = slice.match(/\bwhich\s*=\s*([A-Za-z]+)/);
+  const written = m?.[1]?.toLowerCase() || "";
+  ctx.warnings.push(
+    `export which= is discouraged — prefer :public / :private before export (like openssl pkey -pubout)`
+  );
+  if (
+    current.base === "key" &&
+    (current.which === "public" || current.which === "private") &&
+    written &&
+    written !== current.which
+  ) {
+    ctx.errors.push({
+      message: `export which=${written} conflicts with tip ${formatType(current)} — drop which= (selector already chose the half)`,
+      start: step.start,
+      end: step.end,
+      stepIndex: ctx.stepIndex,
+    });
+  }
+}
+
+/**
  * Whether a WebCrypto op still needs the key/peer/wrap panels.
  * @param {RecipeStep} step
  */
@@ -175,6 +217,69 @@ function lookupSlotType(ref, slotTypes, slotTypesByIndex) {
   }
   const key = slotLabelKey(r);
   return key ? slotTypes.get(key) || null : null;
+}
+
+/**
+ * Validate string params that optionally take `@slot` of text/bytes
+ * (`aad=`, `salt=`, `info=`, `passphrase=`, and verify `signature=`).
+ * @param {RecipeStep} step
+ * @param {Map<string, import("./types.js").RefinedType>} slotTypes
+ * @param {import("./types.js").RefinedType[]} slotTypesByIndex
+ * @param {RecipeError[]} errors
+ * @param {number} stepIndex
+ */
+function validateOptionalBytesSlotStrings(
+  step,
+  slotTypes,
+  slotTypesByIndex,
+  errors,
+  stepIndex
+) {
+  /** @type {string[]} */
+  const names = [];
+  if (
+    step.name === "aes-gcm" ||
+    step.name === "hkdf" ||
+    step.name === "pbkdf2" ||
+    step.name === "gpg.symencrypt" ||
+    step.name === "gpg.symdecrypt"
+  ) {
+    for (const n of ["aad", "salt", "info", "passphrase"]) {
+      if (step.params?.[n] != null && String(step.params[n]).trim() !== "") {
+        names.push(n);
+      }
+    }
+  }
+  if (step.name === "verify" || step.name === "gpg.verify") {
+    const sig = String(step.params?.signature || "").trim();
+    if (sig.startsWith("@")) names.push("signature");
+  }
+  for (const name of names) {
+    const raw = String(step.params?.[name] || "").trim();
+    if (!raw.startsWith("@")) continue;
+    const loaded = lookupSlotType(raw, slotTypes, slotTypesByIndex);
+    if (!loaded) {
+      errors.push({
+        message: `${step.name} ${name}=${raw}: unknown slot (register earlier with out ${raw})`,
+        start: step.start,
+        end: step.end,
+        stepIndex,
+      });
+      continue;
+    }
+    if (
+      loaded.base !== "bytes" &&
+      loaded.base !== "text" &&
+      loaded.base !== "none"
+    ) {
+      errors.push({
+        message: `${step.name} ${name}=${raw}: slot type ${formatType(loaded)} cannot supply text/bytes`,
+        start: step.start,
+        end: step.end,
+        stepIndex,
+      });
+    }
+  }
 }
 
 /**
@@ -274,10 +379,10 @@ function validateStepSlotParams(
 }
 
 /**
- * Labeled tee branch (selector style: `- .private | …`).
+ * Labeled tee branch (selector style: `- :private | …`).
  * @typedef {object} TeeBranch
  * @property {string} member  e.g. private | public | key | value
- * @property {string} [selector]  e.g. ".private"
+ * @property {string} [selector]  e.g. ":private"
  * @property {RecipeStep[]} body
  * @property {number} [start]
  * @property {number} [end]
@@ -291,7 +396,7 @@ function validateStepSlotParams(
  * @property {number} end
  * @property {RecipeStep[]} [body]  nested `-` list body for tee / foreach
  * @property {TeeBranch[]} [branches]  tee selector branches
- * @property {string} [foreachSelector]  e.g. ".items"
+ * @property {string} [foreachSelector]  e.g. ":items"
  * @property {"brace"|"indent"} [bodyForm]
  */
 
@@ -383,6 +488,23 @@ export function canonicalizeRecipe(source) {
  * @returns {string}
  */
 export function serializeStep(step) {
+  if (step.name === "lit") {
+    const kind = String(step.params?.kind || "text");
+    if (kind === "int") {
+      const n = Number(step.params?.value);
+      return Number.isFinite(n) ? String(Math.trunc(n)) : "0";
+    }
+    if (kind === "bool") {
+      const v = step.params?.value;
+      return v === true ||
+        v === 1 ||
+        String(v).toLowerCase() === "true" ||
+        String(v) === "1"
+        ? "true"
+        : "false";
+    }
+    return JSON.stringify(String(step.params?.value ?? ""));
+  }
   const spec = getStep(step.name);
   const useEncodeVerb =
     !!spec?.decodeTwin && decodeTwinToken(spec, false) === `${step.name}.encode`;
@@ -401,7 +523,8 @@ export function serializeStep(step) {
       continue;
     }
     // Omit default *named* params, and default out/text/peek names only.
-    if (v === p.default) {
+    // `serialize: "always"` keeps defaults visible (e.g. gpg.symencrypt mode=master).
+    if (v === p.default && p.serialize !== "always") {
       const omitName =
         p.positional &&
         p.name === "name" &&
@@ -498,7 +621,7 @@ function serializeChainSteps(steps, opts = {}) {
       }
     }
     for (const br of step.branches || []) {
-      const sel = br.selector || `.${br.member}`;
+      const sel = br.selector || `:${br.member}`;
       const pipe = serializePipeline(br.body || [], opts);
       lines.push(`- ${sel}${pipeJoin}${pipe}`);
     }
@@ -519,6 +642,12 @@ function serializeChainSteps(steps, opts = {}) {
     let head = serializeStep(step);
     if (step.name === "foreach" && step.foreachSelector) {
       head = `foreach ${step.foreachSelector}`;
+    } else if (step.name === "lit") {
+      head = serializeStep(step);
+    } else if (step.name === "in" && step.params?.ref) {
+      const ref = String(step.params.ref);
+      // Prefer bare `@label`; keep `in N` for 1-based indexes.
+      head = /^\d+$/.test(ref) ? `in ${ref}` : ref.startsWith("@") ? ref : `@${ref}`;
     } else if (step.name === "select" && step.params?.selector) {
       head = String(step.params.selector);
     } else if (step.name === "at" && step.params?.selector != null) {
@@ -567,7 +696,7 @@ export function serializeRecipe(astOrSteps, opts = {}) {
 }
 
 /**
- * Refined type after a selector projection (`.private`, `.items`, …).
+ * Refined type after a selector projection (`:private`, `:items`, …).
  * @param {import("./types.js").RefinedType} current
  * @param {string} memberOrSelector
  * @returns {{ ok: true, type: import("./types.js").RefinedType } | { ok: false, error: string }}
@@ -587,7 +716,7 @@ export function projectTypeForMember(current, memberOrSelector) {
     if (current.base !== "keypair") {
       return {
         ok: false,
-        error: `selector ".${m}" requires keypair, got ${formatType(current)}`,
+        error: `selector ":${m}" requires keypair, got ${formatType(current)}`,
       };
     }
     return {
@@ -600,7 +729,7 @@ export function projectTypeForMember(current, memberOrSelector) {
     if (current.base !== "shares") {
       return {
         ok: false,
-        error: `selector ".${m}" requires shares, got ${formatType(current)}`,
+        error: `selector ":${m}" requires shares, got ${formatType(current)}`,
       };
     }
     if (m === "keys") {
@@ -609,7 +738,7 @@ export function projectTypeForMember(current, memberOrSelector) {
     if (m === "items") {
       return { ok: true, type: typeOf("item", { kind: current.kind || "mnemonic" }) };
     }
-    // .values — same per-element type as foreach default
+    // :values — same per-element type as foreach default
     if (current.kind === "raw") {
       return { ok: true, type: typeOf("bytes", { kind: "opaque" }) };
     }
@@ -620,7 +749,7 @@ export function projectTypeForMember(current, memberOrSelector) {
     if (current.base !== "item") {
       return {
         ok: false,
-        error: `selector ".${m}" requires an item ({key,value}), got ${formatType(current)}`,
+        error: `selector ":${m}" requires an item ({key,value}), got ${formatType(current)}`,
       };
     }
     if (m === "key") {
@@ -632,7 +761,7 @@ export function projectTypeForMember(current, memberOrSelector) {
     return { ok: true, type: typeOf("text", { kind: "mnemonic" }) };
   }
 
-  return { ok: false, error: `Unknown selector ".${m}"` };
+  return { ok: false, error: `Unknown selector ":${m}"` };
 }
 
 /**
@@ -644,6 +773,7 @@ export function projectTypeForMember(current, memberOrSelector) {
  *   warnings: string[],
  *   stepIndex: number,
  *   inForeach: boolean,
+ *   source?: string,
  * }} ctx
  * @returns {{
  *   final: import("./types.js").RefinedType,
@@ -751,6 +881,7 @@ function validateBodySteps(body, startType, ctx) {
     if (ctx.warnings) {
       pushDiscouragedAlgoWarnings(step, ctx.warnings);
       pushUsageHonestyWarnings(step, ctx.warnings);
+      pushExportWhichPolicy(step, current, ctx);
     }
     if (step.name === "gpg.encrypt" && !String(step.params?.to || "").trim()) {
       encryptInBody = true;
@@ -965,10 +1096,15 @@ export function validateRecipe(ast) {
     // Skip "key" — gated by stepNeedsKeyPanel (honors key=@slot).
     // Skip "gpg" — gated by stepNeedsGpgPrivatePanel / stepNeedsGpgPassphrasePanel.
     // gpg.decrypt / input / shares already handled above.
+    // gpg.symdecrypt mode=passphrase does not need the envelope panel.
+    const skipEnvelope =
+      step.name === "gpg.symdecrypt" &&
+      String(step.params?.mode || "master").toLowerCase() === "passphrase";
     if (
       step.name !== "gpg.decrypt" &&
       step.name !== "input" &&
       step.name !== "shares" &&
+      !skipEnvelope &&
       spec.unresolvedInputs &&
       spec.unresolvedInputs !== "key" &&
       spec.unresolvedInputs !== "gpg" &&
@@ -1024,11 +1160,8 @@ export function validateRecipe(ast) {
       continue;
     }
 
-    if (step.name === "gpg.symdecrypt") {
-      if (!inputNeeds.includes("envelope")) inputNeeds.push("envelope");
-    }
-
     validateStepSlotParams(step, slotTypes, slotTypesByIndex, errors, stepIndex);
+    validateOptionalBytesSlotStrings(step, slotTypes, slotTypesByIndex, errors, stepIndex);
 
     if (stepNeedsKeyPanel(step) && !inputNeeds.includes("key")) {
       inputNeeds.push("key");
@@ -1036,33 +1169,12 @@ export function validateRecipe(ast) {
 
     pushDiscouragedAlgoWarnings(step, warnings);
     pushUsageHonestyWarnings(step, warnings);
-
-    // verify signature=@slot: forward-ref check like other slot params
-    if (step.name === "verify") {
-      const sig = String(step.params?.signature || "").trim();
-      if (sig.startsWith("@")) {
-        const loaded = lookupSlotType(sig, slotTypes, slotTypesByIndex);
-        if (!loaded) {
-          errors.push({
-            message: `verify signature=${sig}: unknown slot (register earlier with out ${sig})`,
-            start: step.start,
-            end: step.end,
-            stepIndex,
-          });
-        } else if (
-          loaded.base !== "bytes" &&
-          loaded.base !== "text" &&
-          loaded.base !== "none"
-        ) {
-          errors.push({
-            message: `verify signature=${sig}: slot type ${formatType(loaded)} cannot supply a signature`,
-            start: step.start,
-            end: step.end,
-            stepIndex,
-          });
-        }
-      }
-    }
+    pushExportWhichPolicy(step, current, {
+      warnings,
+      errors,
+      source: ast.source,
+      stepIndex,
+    });
 
     if (step.name === "foreach") {
       if (current.base !== "shares") {
@@ -1084,7 +1196,7 @@ export function validateRecipe(ast) {
         current = typeOf("bundle");
         continue;
       }
-      const mode = String(step.foreachSelector || ".values").replace(/^\./, "");
+      const mode = String(step.foreachSelector || ":values").replace(/^[.:]/, "");
       /** @type {import("./types.js").RefinedType} */
       let itemType;
       if (mode === "items") {
@@ -1104,6 +1216,7 @@ export function validateRecipe(ast) {
         inForeach: true,
         slotTypes,
         slotTypesByIndex,
+        source: ast.source,
       });
       if (bodyVal.encryptInBody) {
         foreachGpg = true;
@@ -1129,7 +1242,7 @@ export function validateRecipe(ast) {
       if (!step.body?.length && !step.branches?.length) {
         errors.push({
           message:
-            "tee requires a body — use `{ - .public | … }` or indented `-` lines (use `peek` for a side inspect)",
+            "tee requires a body — use `{ - :public | … }` or indented `-` lines (use `peek` for a side inspect)",
           start: step.start,
           end: step.end,
           stepIndex,
@@ -1144,6 +1257,7 @@ export function validateRecipe(ast) {
           inForeach: false,
           slotTypes,
           slotTypesByIndex,
+          source: ast.source,
         });
         for (const need of bodyVal.inputNeeds) {
           if (!inputNeeds.includes(need)) inputNeeds.push(need);
@@ -1171,6 +1285,7 @@ export function validateRecipe(ast) {
           inForeach: false,
           slotTypes,
           slotTypesByIndex,
+          source: ast.source,
         });
         for (const need of bodyVal.inputNeeds) {
           if (!inputNeeds.includes(need)) inputNeeds.push(need);
@@ -1375,6 +1490,7 @@ export function unresolvedInputs(ast) {
 export function registryIssues() {
   /** @type {string[]} */
   const issues = [];
+  const paramTypes = new Set(["enum", "int", "string", "bool", "flag", "slot"]);
   for (const s of listSteps()) {
     if (!s.name) issues.push("step missing name");
     if (!s.kind) issues.push(`${s.name}: missing kind`);
@@ -1382,9 +1498,25 @@ export function registryIssues() {
     if (!s.doc) issues.push(`${s.name}: missing doc`);
     if (!s.input) issues.push(`${s.name}: missing input`);
     if (!s.output) issues.push(`${s.name}: missing output`);
+    const positionals = (s.params || []).filter((p) => p.positional);
+    if (positionals.length > 1) {
+      issues.push(
+        `${s.name}: at most one positional param (found ${positionals
+          .map((p) => p.name)
+          .join(", ")})`
+      );
+    }
     for (const p of s.params || []) {
       if (!p.name) issues.push(`${s.name}: param missing name`);
       if (!p.type) issues.push(`${s.name}.${p.name}: missing type`);
+      else if (!paramTypes.has(p.type)) {
+        issues.push(`${s.name}.${p.name}: invalid type "${p.type}"`);
+      }
+      if (p.serialize != null && p.serialize !== "always") {
+        issues.push(
+          `${s.name}.${p.name}: serialize must be "always" (got ${JSON.stringify(p.serialize)})`
+        );
+      }
     }
   }
   return issues;
@@ -1436,7 +1568,7 @@ export const PRESETS = [
     blurb:
       "Tee the public SPKI PEM, then export PKCS#8 — mid-stem fork keeps the keypair on the stem.",
     recipe: `genkey ec/p256 | tee
-  - .public | export spki | pem | out @public
+  - :public | export spki | pem | out @public
 | export pkcs8 | pem | out @private`,
   },
   {
@@ -1454,8 +1586,8 @@ export const PRESETS = [
       "Register the live keypair with out @kp, then reuse it across blank-line chains with in @kp.",
     recipe: `genkey ec/p256 | out @kp
 
-in @kp | .public | export spki | pem | out @public
-in @kp | export pkcs8 | pem | out @private`,
+@kp | :public | export spki | pem | out @public
+@kp | export pkcs8 | pem | out @private`,
   },
   {
     id: "ed25519-jwk",
@@ -1512,7 +1644,7 @@ in @msg | hmac.verify key=@mac signature=@tag | out @ok`,
     title: "JWK SHA-256 digest",
     blurb:
       "Export a public JWK and SHA-256 digest the JSON text (handy fingerprint; not RFC 7638 canonical thumbprint).",
-    recipe: `genkey ec/p256 | .public | export jwk | out @jwk
+    recipe: `genkey ec/p256 | :public | export jwk | out @jwk
 
 in @jwk | utf8 | digest | to hex | out @thumb`,
   },
@@ -1521,8 +1653,8 @@ in @jwk | utf8 | digest | to hex | out @thumb`,
     group: "Digest & MAC",
     title: "Soft signature verify",
     blurb:
-      "Fail-soft verify (`-q`): emits text `verified` or `invalid` instead of throwing. Bind signature= (or the sig panel) at run time; prefer fail-loud for auth.",
-    recipe: `genkey ed25519 | .public | export jwk | out @pub
+      "Fail-soft verify (`-q`): emits bool `true` or `false` instead of throwing. Bind signature= (or the sig panel) at run time; prefer fail-loud for auth.",
+    recipe: `genkey ed25519 | :public | export jwk | out @pub
 
 input | utf8 | verify -q key=@pub | out @result`,
   },
@@ -1560,7 +1692,7 @@ in @ct | from hex | aes-gcm -d key=@cek | utf8 | out @plain`,
 
 input | utf8 | aes-gcm key=@cek | base64url | out @ct
 
-in @ct | base64url -d | aes-gcm -d key=@cek | utf8 | out @plain`,
+in @ct | base64url.decode | aes-gcm -d key=@cek | utf8 | out @plain`,
   },
   {
     id: "hkdf-as-aes-gcm",
@@ -1601,27 +1733,27 @@ in @ct | from hex | aes-ctr -d key=@cek | utf8 | out @plain`,
     group: "Keys wrap / agree",
     title: "HKDF → AES-KW → wrap CEK",
     blurb:
-      "Derive an AES-KW KEK (`as=aes-kw/256`), wrap a CEK with AES-KW, then unwrap.",
+      "Derive an AES-KW KEK (`as=aes-kw/256`), wrap a CEK with AES-KW, then unwrap (`export raw` before hex — unwrap tip is a live key).",
     recipe: `random 32 | hkdf 32 as=aes-kw/256 | out @kek
 
 genkey aes/256 | out @cek
 
 wrap key=@kek target=@cek | to hex | out @wrapped
 
-in @wrapped | from hex | unwrap key=@kek | to hex | out @cek-raw`,
+in @wrapped | from hex | unwrap key=@kek | export raw | to hex | out @cek-raw`,
   },
   {
     id: "wrap-aes-gcm",
     group: "Keys wrap / agree",
     title: "Wrap CEK with AES-GCM",
     blurb:
-      "SubtleCrypto wrapKey under AES-GCM (IV||wrapped packing). Prefer AES-KW for new key-wrap work.",
+      "SubtleCrypto wrapKey under AES-GCM (IV||wrapped packing). Prefer AES-KW for new key-wrap work. Unwrap yields a live key tip — `export raw` before hex.",
     recipe: `genkey aes/256 | out @kek
 genkey aes/256 | out @cek
 
 wrap mode=aes-gcm key=@kek target=@cek | to hex | out @wrapped
 
-in @wrapped | from hex | unwrap mode=aes-gcm key=@kek | to hex | out @cek-raw`,
+in @wrapped | from hex | unwrap mode=aes-gcm key=@kek | export raw | to hex | out @cek-raw`,
   },
   {
     id: "x25519-ecdh",
@@ -1650,7 +1782,7 @@ in @cek | export jwk | out @cek-jwk`,
     pair: "slip39-secret",
     title: "Recover secret from BLIP39 shares",
     blurb: "Paste K-of-N mnemonics, decode to raw SSS, reconstruct the 16/32-byte master as Base64.",
-    recipe: "shares | blip39 -d | sss.combine | base64 | out @secret",
+    recipe: "shares | blip39.decode | sss.combine | base64 | out @secret",
   },
   {
     id: "out-mid-pipeline",
@@ -1660,7 +1792,7 @@ in @cek | export jwk | out @cek-jwk`,
     blurb:
       "Tee the public PEM, then SSS + BLIP39-split the 32-byte scalar (no envelope) — preferred for P-256 keys.",
     recipe: `genkey ec/p256 | tee
-  - .public | export spki | pem | out @public
+  - :public | export spki | pem | out @public
 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`,
   },
@@ -1671,7 +1803,7 @@ in @cek | export jwk | out @cek-jwk`,
     title: "Rebuild P-256 key from scalar shares",
     blurb: "Decode BLIP39 shares of a P-256 private scalar, recover SSS, and re-import as WebCrypto.",
     recipe:
-      "shares | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
+      "shares | blip39.decode | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
   },
   {
     id: "quorum-gpg",
@@ -1681,7 +1813,7 @@ in @cek | export jwk | out @cek-jwk`,
     blurb:
       "Tee the public PEM, SSS-split the 32-byte scalar 2-of-3, BLIP39-encode, encrypt each share to a different recipient.",
     recipe: `genkey ec/p256 | tee
-  - .public | export spki | pem | out @public
+  - :public | export spki | pem | out @public
 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
   - gpg.encrypt`,
   },
@@ -1691,9 +1823,9 @@ in @cek | export jwk | out @cek-jwk`,
     pair: "quorum-gpg",
     title: "Decrypt GPG shares → rebuild key",
     blurb:
-      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then blip39 -d | sss.combine and rebuild the P-256 PEM from the scalar.",
+      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then blip39.decode | sss.combine and rebuild the P-256 PEM from the scalar.",
     recipe:
-      "gpg.decrypt | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
+      "gpg.decrypt | blip39.decode | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
   },
   {
     id: "pem-envelope-split",
@@ -1702,7 +1834,7 @@ in @cek | export jwk | out @cek-jwk`,
     title: "Split PEM via OpenPGP envelope",
     blurb:
       "Emit PKCS#8 PEM (@pem), OpenPGP-encrypt under a random 32-byte master, then SSS + BLIP39-split the master. Keep envelope.asc with the shares.",
-    recipe: `genkey ec/p256 | export pkcs8 | pem | out @pem | gpg.symencrypt | sss.split threshold=2 shares=3 | blip39 | foreach
+    recipe: `genkey ec/p256 | export pkcs8 | pem | out @pem | gpg.symencrypt mode=master | sss.split threshold=2 shares=3 | blip39 | foreach
   - out @share`,
   },
   {
@@ -1712,7 +1844,7 @@ in @cek | export jwk | out @cek-jwk`,
     title: "Recover PEM from envelope + shares",
     blurb:
       "Decode + recover shares to the hex master, then gpg.symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
-    recipe: "shares | blip39 -d | sss.combine | gpg.symdecrypt | utf8 | out @pem",
+    recipe: "shares | blip39.decode | sss.combine | gpg.symdecrypt mode=master | utf8 | out @pem",
   },
   {
     id: "gpg-decrypt",
@@ -1821,7 +1953,7 @@ input | gpg.encrypt to=@alices mode=combined`,
 
 input | utf8 | aes-gcm key=@cek | base64url | out @ct
 
-in @ct | base64url -d | aes-gcm -d key=@cek | utf8 | out @plain`,
+in @ct | base64url.decode | aes-gcm -d key=@cek | utf8 | out @plain`,
   },
   {
     id: "webauthn-attest-mds",

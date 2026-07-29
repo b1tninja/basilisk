@@ -48,6 +48,11 @@ body.layout-app:has(#toolkit-root) {
   min-height: 0;
 }
 
+/* Widget catalog is a long document under layout-app (body overflow:hidden) */
+#toolkit-widgets-root {
+  overflow-y: auto;
+}
+
 .toolkit-shell {
   --background: var(--surface);
   --foreground: var(--text);

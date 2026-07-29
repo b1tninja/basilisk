@@ -50,7 +50,7 @@ in @msg | verify key=@mac signature=@tag | out @ok`
       inputs: { text: { value: "hmac384" } },
     });
     const ok = arts.find((a) => /ok/i.test(a.filename || a.label || ""));
-    expect(String(ok?.content)).toMatch(/verified/i);
+    expect(String(ok?.content)).toMatch(/^true$/i);
   }, 30_000);
 });
 
@@ -67,7 +67,7 @@ in @msg | verify key=@rk signature=@sig | out @ok`
       inputs: { text: { value: "rsa-hash" } },
     });
     const ok = arts.find((a) => /ok/i.test(a.filename || a.label || ""));
-    expect(String(ok?.content)).toMatch(/verified/i);
+    expect(String(ok?.content)).toMatch(/^true$/i);
   }, 60_000);
 });
 
@@ -141,7 +141,7 @@ in @msg | verify key=@rk signature=@sig saltLength=16 | out @ok`
       inputs: { text: { value: "pss-salt" } },
     });
     const ok = arts.find((a) => /ok/i.test(a.filename || a.label || ""));
-    expect(String(ok?.content)).toMatch(/verified/i);
+    expect(String(ok?.content)).toMatch(/^true$/i);
   }, 60_000);
 
   it("ECDSA hash=sha-512 override on P-256", async () => {
@@ -156,6 +156,6 @@ in @msg | verify key=@kp signature=@sig hash=sha-512 | out @ok`
       inputs: { text: { value: "ecdsa-hash" } },
     });
     const ok = arts.find((a) => /ok/i.test(a.filename || a.label || ""));
-    expect(String(ok?.content)).toMatch(/verified/i);
+    expect(String(ok?.content)).toMatch(/^true$/i);
   }, 30_000);
 });
