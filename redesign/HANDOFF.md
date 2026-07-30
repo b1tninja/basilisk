@@ -168,8 +168,23 @@ Roughly in value order:
    `authenticated` demands *both* pgpVerified and kcVerified, and `via` is a
    best-effort async `getStats` enrichment that patches in after the row first
    renders. Tests in `quorum-roster.test.js`.
-3. **32d clipboard ops**, **33d artifact diff**, **36b/36c**, **37a/37b**,
+3. ~~**32d clipboard ops**~~ — done. `clipboard.read` (source, gated: the
+   shell registers a permission surface via `setClipboardReadGate`, asked
+   every run, Allow reads inside the click's transient activation) and
+   `clipboard.write` (passthrough sink in `POLYMORPHIC_STEPS`, toast-weight
+   confirm via `basilisk:clipboard-wrote`). `lib/toolkit/clipboard-ops.js`,
+   tests in `clipboard-ops.test.js`. Note for e2e: a *scripted* Run click has
+   no transient activation, so `writeText` is denied — drive Run with a real
+   input event. Still open: **33d artifact diff**, **36b/36c**, **37a/37b**,
    **38a/38b** — see the handoff READMEs.
+   Also new since: **cross-cell slot gating** (`lib/toolkit/slot-graph.js`) —
+   a later cell's unmet inputs no longer block the producing cells; runFrom
+   gates per cell (checkpoint semantics) and the `shares` panel op falls back
+   to indexed share slots a foreach emitted this session (see
+   `split-recover-e2e.test.js` for the real round trip). And **session-only
+   keys for e2e**: dev-only `window.__basiliskE2E.mintSessionKey()`
+   (`lib/e2e-hooks.js`, tree-shaken from production), resolved by
+   `unlockVaultForUse` via the session cache without vault membership.
 4. **TOTP (turn 43) deserves its own scope.** A value that mutates on a local
    timer is new for this engine — every current value is fixed at run time.
    That is an engine change, not polish.

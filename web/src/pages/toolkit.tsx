@@ -37,4 +37,10 @@ function ToolkitPage() {
 }
 
 installBootDiagnostics();
+// Automation hooks (mint session-only test keys, …) — dev server only. The
+// condition is statically false in the build, so the module is tree-shaken
+// out and production ships no e2e surface.
+if (import.meta.env.DEV) {
+  void import("../lib/e2e-hooks.js");
+}
 createRoot(document.getElementById("app")!).render(<ToolkitPage />);

@@ -98,6 +98,7 @@ cd web && npm run glyphs
 | `input` | Input | Panel with inbound rail | Runtime input — content panel with left inbound mark. |
 | `out` | Out | Panel with outbound rail | Emit / slot out — content panel with right outbound mark. |
 | `passphrase` | Passphrase | Key over baseline | Passphrase source — key above a text baseline. |
+| `clipboard` | Clipboard | Clipboard with clip | Clipboard source/sink - board with binder clip (clipboard.read, clipboard.write). |
 | `qr` | QR | QR finder squares | QR code sink — three finder patterns plus modules. |
 | `inspect` | Inspect | Magnifier with crosshair | Inspect / dump — magnifying glass with focus cross. |
 | `peek` | Peek | Eye | Peek side snapshot — eye outline. |

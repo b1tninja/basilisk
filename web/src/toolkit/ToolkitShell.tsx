@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { restartLiveIce } from "../lib/toolkit/quorum-ops.js";
+import { setClipboardReadGate } from "../lib/toolkit/clipboard-ops.js";
 import { cn } from "@/lib/cn";
 import { useNotebook } from "./useNotebook";
 import { RecipientBinderHost } from "./RecipientBinderHost";
@@ -312,6 +313,38 @@ export function ToolkitShell() {
       setPendingInsert({ cell, stem, branch: null, body: 0 });
     }
   };
+  /**
+   * §32d — clipboard.read's permission moment. Asked every run and never
+   * remembered (clipboard contents change silently between runs). The Allow
+   * handler reads the clipboard itself so the read happens inside the click's
+   * transient activation.
+   */
+  const [clipboardAsk, setClipboardAsk] = useState<{
+    resolve: (text: string | null) => void;
+  } | null>(null);
+  /** §32d — clipboard.write toast ("ok" weight, 2s auto-dismiss). */
+  const [clipboardWrote, setClipboardWrote] = useState<number | null>(null);
+  useEffect(() => {
+    setClipboardReadGate(
+      () =>
+        new Promise<string | null>((resolve) => {
+          setClipboardAsk({ resolve });
+        })
+    );
+    const onWrote = (ev: Event) => {
+      setClipboardWrote((ev as CustomEvent<{ chars: number }>).detail?.chars ?? 0);
+    };
+    window.addEventListener("basilisk:clipboard-wrote", onWrote);
+    return () => {
+      setClipboardReadGate(null);
+      window.removeEventListener("basilisk:clipboard-wrote", onWrote);
+    };
+  }, []);
+  useEffect(() => {
+    if (clipboardWrote == null) return;
+    const t = window.setTimeout(() => setClipboardWrote(null), 2000);
+    return () => window.clearTimeout(t);
+  }, [clipboardWrote]);
   const [cellViews, setCellViews] = useState<Record<number, CellView>>({});
   const [rawDrafts, setRawDrafts] = useState<Record<number, string>>({});
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
@@ -752,6 +785,57 @@ export function ToolkitShell() {
             )}
           >
             {nb.runError || nb.runStatus}
+          </p>
+        ) : null}
+
+        {clipboardAsk ? (
+          <div
+            className="flex flex-wrap items-center gap-2 border-b border-l-2 border-[var(--border)] border-l-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_8%,transparent)] px-3.5 py-1.5"
+            data-clipboard-ask
+          >
+            <span className="text-[length:11.5px] font-semibold text-[var(--foreground)]">
+              Read clipboard contents when this cell runs?
+            </span>
+            <span className="text-[length:10.5px] text-[var(--muted-foreground)]">
+              Asked every run — never remembered, since clipboard contents change
+              silently between runs.
+            </span>
+            <div className="ml-auto flex gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  clipboardAsk.resolve(null);
+                  setClipboardAsk(null);
+                }}
+              >
+                Deny
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  const ask = clipboardAsk;
+                  setClipboardAsk(null);
+                  // Read inside the click so transient activation is live; a
+                  // browser-level denial surfaces as the op's own error.
+                  navigator.clipboard
+                    .readText()
+                    .then((t) => ask.resolve(t))
+                    .catch(() => ask.resolve(null));
+                }}
+              >
+                Allow &amp; paste
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {clipboardWrote != null ? (
+          <p
+            className="border-b border-[var(--border)] px-3.5 py-1 text-[length:11px] text-[var(--muted-foreground)]"
+            data-clipboard-wrote
+          >
+            Copied to clipboard · {clipboardWrote} chars
           </p>
         ) : null}
 

@@ -13,6 +13,7 @@ import {
   bridgeModeMeta,
 } from "../lib/toolkit/conjugate-stitch.js";
 import { listSteps, getStep } from "../lib/toolkit/registry.js";
+import { wiredForCell } from "../lib/toolkit/slot-graph.js";
 import {
   MESSAGING_STARTERS,
   parseToolkitHash,
@@ -141,18 +142,32 @@ export function useNotebook() {
   const refreshVault = useCallback(async () => {
     try {
       const keys = await listKeys();
-      setVaultKeys(
-        (keys || []).map((k: VaultKeyRow) => ({
-          fingerprint: k.fingerprint,
-          uid: k.uid,
-          email: k.email,
-          protection: k.protection,
-          // Carried so GpgKeyBinder (§39b) can warn before you sign with a key
-          // that is about to expire — the vault has always known this, the
-          // projection just dropped it.
-          expires: k.expires ?? null,
-        }))
-      );
+      const rows: VaultKeyRow[] = (keys || []).map((k: VaultKeyRow) => ({
+        fingerprint: k.fingerprint,
+        uid: k.uid,
+        email: k.email,
+        protection: k.protection,
+        // Carried so GpgKeyBinder (§39b) can warn before you sign with a key
+        // that is about to expire — the vault has always known this, the
+        // projection just dropped it.
+        expires: k.expires ?? null,
+      }));
+      // Session-only keys (unlocked/minted in memory, never persisted) are
+      // still keys the user holds — the binder lists them so recipes can sign
+      // with one. They expire with the session, which the row says plainly.
+      const inVault = new Set(rows.map((r) => r.fingerprint));
+      for (const s of sessionList()) {
+        if (!inVault.has(s.fingerprint)) {
+          rows.push({
+            fingerprint: s.fingerprint,
+            uid: "Session-only key",
+            email: "",
+            protection: "session",
+            expires: s.expiresAt,
+          });
+        }
+      }
+      setVaultKeys(rows);
     } catch {
       setVaultKeys([]);
     }
@@ -160,7 +175,7 @@ export function useNotebook() {
 
   useEffect(() => {
     void refreshVault();
-  }, [refreshVault]);
+  }, [refreshVault, sessionTick]);
 
   /** Compile `text` and replace the notebook's title/chains with it. Returns whether it parsed. */
   const loadRecipeText = useCallback((title: string, text: string) => {
@@ -213,10 +228,18 @@ export function useNotebook() {
       if (!chain?.steps?.length) return [];
       const badges: string[] = [];
       const needs = cellInputNeeds(chain);
+      // A need an earlier cell's outputs can satisfy is wired, not missing —
+      // running the cells above materializes it (slot-graph checkpoint
+      // semantics). Only genuinely unproducible inputs gate.
+      const { wiredNeeds } = wiredForCell(chains, cellIndex);
       if (needs.includes("text") && !inputText.trim()) badges.push("needs input");
       if (needs.includes("gpg") && !ciphertext.trim()) badges.push("needs ciphertext");
       if (needs.includes("key")) badges.push("needs key");
-      if (needs.includes("shares") && !shareRows.some((s) => s.trim())) {
+      if (
+        needs.includes("shares") &&
+        !shareRows.some((s) => s.trim()) &&
+        !wiredNeeds.has("shares")
+      ) {
         badges.push("needs shares");
       }
       if (needs.includes("envelope") && !envelopeArmored.trim()) {
@@ -242,14 +265,25 @@ export function useNotebook() {
     ]
   );
 
+  const blockerTextFor = (badge: string): string =>
+    badge === "needs input"
+      ? "Add input text before running"
+      : badge === "needs ciphertext"
+        ? "Paste OpenPGP ciphertext before running"
+        : badge === "needs recipients"
+          ? "Add recipients before running"
+          : badge;
+
+  // Only the FIRST runnable cell can block starting a run. Later cells are
+  // checkpoints: runFrom executes up to the first cell whose needs are still
+  // unmet at that moment and pauses there, keeping everything already
+  // produced — a companion cell waiting on inputs must never prevent the
+  // cell that would produce them from running.
   const readinessBlocker = useMemo(() => {
     for (let i = 0; i < chains.length; i++) {
       if (!chains[i]?.steps?.length) continue;
       const u = unmetForCell(i);
-      if (u.includes("needs input")) return "Add input text before running";
-      if (u.includes("needs ciphertext")) return "Paste OpenPGP ciphertext before running";
-      if (u.includes("needs recipients")) return "Add recipients before running";
-      if (u[0]) return u[0];
+      return u[0] ? blockerTextFor(u[0]) : "";
     }
     return "";
   }, [chains, unmetForCell]);
@@ -815,10 +849,6 @@ export function useNotebook() {
 
   const runFrom = useCallback(
     async (from: number) => {
-      if (readinessBlocker) {
-        setRunError(readinessBlocker);
-        return;
-      }
       if (!compiled.validation?.ok) {
         setRunError(
           (compiled.validation?.errors || []).map((e: { message: string }) => e.message).join(" · ") ||
@@ -841,6 +871,24 @@ export function useNotebook() {
             return;
           }
           const i = runnable[n];
+          // Checkpoint: gate each cell as it comes up, not the notebook as a
+          // whole. A later cell's unmet inputs pause the run *there* — with
+          // everything above it already produced — instead of preventing the
+          // producing cells from running at all.
+          const unmet = unmetForCell(i);
+          if (unmet.length) {
+            const msg = blockerTextFor(unmet[0]);
+            if (n === 0) {
+              setRunError(msg);
+              setRunStatus("Blocked");
+              return;
+            }
+            setKernelEpoch((x) => x + 1);
+            setRunStatus(
+              `Paused before cell [${i}] — ${msg}. Cells above it ran; Run from here once its inputs are in.`
+            );
+            return;
+          }
           setRunProgress({ cell: n + 1, total: runnable.length });
           setRunningCell(i);
           setRunStatus(`Running cell ${i}…`);
@@ -858,7 +906,7 @@ export function useNotebook() {
         setRunningCell(null);
       }
     },
-    [buildBindings, chains, compiled.validation, readinessBlocker]
+    [buildBindings, chains, compiled.validation, unmetForCell]
   );
 
   const stopRun = useCallback(() => {

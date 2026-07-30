@@ -335,6 +335,13 @@ export function createSlotRegistry() {
 
   const labels = () => [...slotsByLabel.keys()];
 
+  /**
+   * Cloned indexed slots (foreach `out` values carry `shareIndex` and land
+   * here) — what the `shares` op falls back to when nothing was pasted.
+   * @returns {PipelineValue[]}
+   */
+  const indexed = () => slotsByIndex.map((v) => clonePipelineValue(v));
+
   const snapshotKeys = () => new Set(slotsByLabel.keys());
 
   /**
@@ -382,6 +389,7 @@ export function createSlotRegistry() {
     evictSensitive,
     deleteSlot,
     labels,
+    indexed,
     listMetas,
     snapshotKeys,
     size: () => slotsByLabel.size,

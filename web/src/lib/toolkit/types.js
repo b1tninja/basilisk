@@ -100,6 +100,8 @@ export const POLYMORPHIC_STEPS = new Set([
   "text",
   "select",
   "in",
+  // Sink-with-passthrough like `out`: copies the value, pipes it on unchanged.
+  "clipboard.write",
 ]);
 
 export function isPassthroughStep(name) {
@@ -375,6 +377,9 @@ export function inferSourceType(name, params = {}) {
       return typeOf("stats", { kind: "data-channel" });
     case "rtc.quality":
       return typeOf("stats", { kind: "quality" });
+    case "clipboard.read":
+      // Whatever the user last copied — text of unknown provenance.
+      return typeOf("text", { kind: "opaque" });
     default:
       return tNone();
   }
@@ -1004,7 +1009,12 @@ export function inferParamDrivenType(name, current, params = {}) {
     return { ok: true, output: typeOf("text") };
   }
 
-  if (name === "tee" || name === "peek" || name === "out") {
+  if (
+    name === "tee" ||
+    name === "peek" ||
+    name === "out" ||
+    name === "clipboard.write"
+  ) {
     if (!current || current.base === "none") {
       return {
         ok: false,

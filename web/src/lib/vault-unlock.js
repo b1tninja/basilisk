@@ -43,28 +43,39 @@ export async function unlockVaultForUse(fingerprint, opts = {}) {
   /** @type {import("./vault.js").VaultKeyMeta|undefined} */
   let meta = opts.meta;
   if (!meta) {
-    const all = await listKeys();
-    meta = all.find((k) => k.fingerprint === fpr);
+    try {
+      const all = await listKeys();
+      meta = all.find((k) => k.fingerprint === fpr);
+    } catch (_) {
+      // No vault in this context (or it failed to open) — a session-only key
+      // can still resolve below.
+    }
   }
-  if (!meta) throw new Error("Key not found in vault");
 
+  // Session cache first — and a session hit does not *require* vault
+  // membership: a session-only key (minted in memory, never persisted) is
+  // still a key the user holds. Only when neither the session nor the vault
+  // knows the fingerprint is it genuinely not found.
   if (!opts.skipSession) {
     const cached = sessionGet(fpr);
     if (cached) {
       sessionTouch(fpr);
-      try {
-        await touchKeyUsed(fpr);
-      } catch (_) {
-        /* ignore */
+      if (meta) {
+        try {
+          await touchKeyUsed(fpr);
+        } catch (_) {
+          /* ignore */
+        }
       }
       return {
         armored: cached,
         openPgpPassphrase,
         fingerprint: fpr,
-        protection: meta.protection,
+        protection: meta?.protection || "session",
       };
     }
   }
+  if (!meta) throw new Error("Key not found in vault");
 
   /** @type {{ passphrase?: string, prfIkm?: Uint8Array }} */
   const unlockOpts = {};

@@ -22,6 +22,7 @@ export const GLYPH_PATHS = {
   "binary": "<path d=\"M5 5h3v3H5zM12 5h3v3h-3zM5 12h3v3H5zM12 12h3v3h-3z\"/>",
   "blip39": "`n <path d=\"M4 5h12v3H4zM4 9.5h12v3H4zM4 14h8v2H4z\"/>`n",
   "cipher": "<rect x=\"3\" y=\"3\" width=\"6\" height=\"6\" rx=\"1\"/><rect x=\"11\" y=\"3\" width=\"6\" height=\"6\" rx=\"1\"/><rect x=\"3\" y=\"11\" width=\"6\" height=\"6\" rx=\"1\"/><rect x=\"11\" y=\"11\" width=\"6\" height=\"6\" rx=\"1\"/><path d=\"M6 6l8 8M14 6L6 14\"/>",
+  "clipboard": "<rect x=\"5\" y=\"4.5\" width=\"10\" height=\"13\" rx=\"1.3\"/> <rect x=\"7.5\" y=\"2.5\" width=\"5\" height=\"3\" rx=\"0.8\"/>",
   "control": "<circle cx=\"5\" cy=\"5\" r=\"2\"/><circle cx=\"15\" cy=\"5\" r=\"2\"/><circle cx=\"10\" cy=\"15\" r=\"2\"/><path d=\"M5 7v3c0 2 2 3 5 3s5-1 5-3V7\"/>",
   "digest": "<path d=\"M3.5 5h7M3.5 9h5M3.5 13h6\"/><path d=\"M13 3.5v13M16.5 5v11.5\"/><path d=\"M11.5 7h6.5M11.5 11h6.5\"/>",
   "directory": "<circle cx=\"7\" cy=\"7\" r=\"2.2\"/><circle cx=\"13.5\" cy=\"7.5\" r=\"1.8\"/><path d=\"M3.5 15c.6-2.4 2.2-3.5 3.5-3.5s2.9 1.1 3.5 3.5\"/><path d=\"M11.2 14.5c.4-1.6 1.5-2.4 2.3-2.4s1.9.8 2.3 2.4\"/>",

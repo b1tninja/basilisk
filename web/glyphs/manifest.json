@@ -374,6 +374,13 @@
       "description": "Passphrase source — key above a text baseline."
     },
     {
+      "id": "clipboard",
+      "group": "tool",
+      "label": "Clipboard",
+      "metaphor": "Clipboard with clip",
+      "description": "Clipboard source/sink - board with binder clip (clipboard.read, clipboard.write)."
+    },
+    {
       "id": "qr",
       "group": "tool",
       "label": "QR",

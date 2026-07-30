@@ -149,6 +149,14 @@ const STEP_DOCS = {
     label: "MDN · RTCDataChannel message event",
   },
   "quorum.close": { url: `${MDN}/RTCDataChannel/close`, label: "MDN · RTCDataChannel.close()" },
+  "clipboard.read": {
+    url: `${MDN}/Clipboard/readText`,
+    label: "MDN · Clipboard.readText()",
+  },
+  "clipboard.write": {
+    url: `${MDN}/Clipboard/writeText`,
+    label: "MDN · Clipboard.writeText()",
+  },
 
   // ── Literals ──
   bytes: {

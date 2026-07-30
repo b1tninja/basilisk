@@ -266,7 +266,13 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
   const resolveSlot = (ref) => registry.resolve(ref);
 
   // Named slot args (`key=@cek`) resolve through the same registry as `in`.
-  bindings = { ...bindings, resolveSlot };
+  // `listIndexedSlots` lets the `shares` panel op fall back to share slots an
+  // earlier cell's foreach emitted this session (wired inputs, §slot-graph).
+  bindings = {
+    ...bindings,
+    resolveSlot,
+    listIndexedSlots: () => registry.indexed?.() || [],
+  };
 
   let stepOrdinal = 0;
 
@@ -816,9 +822,21 @@ async function execStepBody(step, value, bindings, artifacts) {
     }
     case "shares": {
       const inp = bindings.inputs?.shares;
-      const mnemonics = (inp?.mnemonics || []).map((m) => String(m).trim()).filter(Boolean);
+      let mnemonics = (inp?.mnemonics || []).map((m) => String(m).trim()).filter(Boolean);
       if (!mnemonics.length) {
-        throw new Error("No BLIP39 share mnemonics provided — paste shares before running.");
+        // Wired fallback: a split cell that ran earlier this session left its
+        // shares as indexed slots (foreach `out` values carry shareIndex).
+        // Pasting always wins — the fallback only fires on an empty panel.
+        const indexed = bindings.listIndexedSlots?.() || [];
+        mnemonics = indexed
+          .filter((v) => v?.type === "text" && v.meta?.shareIndex)
+          .map((v) => String(v.data).trim())
+          .filter(Boolean);
+      }
+      if (!mnemonics.length) {
+        throw new Error(
+          "No BLIP39 share mnemonics provided — paste shares (or run a split cell first) before running."
+        );
       }
       /** @type {Uint8Array|null} */
       let envelope = null;
@@ -2538,6 +2556,14 @@ async function execStepBody(step, value, bindings, artifacts) {
         ice,
         step.name === "quorum.offer" ? "creator" : "joiner"
       );
+    }
+    case "clipboard.read":
+    case "clipboard.write": {
+      // Lazy + main-thread only — navigator.clipboard does not exist in workers.
+      const cb = await import("./clipboard-ops.js");
+      return step.name === "clipboard.read"
+        ? cb.execClipboardRead()
+        : cb.execClipboardWrite(value);
     }
     case "rtc.gather":
     case "rtc.check":

@@ -1374,6 +1374,21 @@ in @offer | rtc.answer ice=@ice | out @answer`,
       mode: "compile",
       skipReason: "needs a live WebRTC exchange",
     },
+
+    // ── Clipboard as a signaling channel (§32d) — both need the browser's
+    // clipboard plus (for read) the UI's permission gate, so compile-only.
+    {
+      id: "clipboard.read.compile",
+      recipe: "clipboard.read | out @pasted",
+      mode: "compile",
+      skipReason: "needs navigator.clipboard + the UI permission gate",
+    },
+    {
+      id: "clipboard.write.compile",
+      recipe: "random 16 | encode base64 | clipboard.write | out @copied",
+      mode: "compile",
+      skipReason: "needs navigator.clipboard (main-thread browser only)",
+    },
   ];
 
   return cases;
