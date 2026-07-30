@@ -124,6 +124,22 @@ baseline that may go down but never up.
 
 ## What is outstanding
 
+**Recipe-language turns 46/47 are implemented** (gap ambiguity + selector
+grammar): scope-named nested gaps ("+ step in :public" / "in loop body"),
+containers always render their nest region, the continue gap hides while a
+tee/foreach is empty, inserting a container auto-focuses its body gap, foreach
+bodies anchor on a static "↻ each item" chip, tee stems offer ghost selector
+branches from the closed projector table (`selectorGhostsFor` in suggest.js)
+plus "+ branch" and "peek instead", an armed branch materializes atomically
+with its first step (`addBranchWithStep`), and tee/foreach are absent — not
+dimmed — from shelf and fit for any nested caret (enforced in `nestOp` too,
+against drag-drops). Tests: `selector-ghosts.test.js`; catalog section
+"RecipeChipFlow" shows the new states. Still unbuilt from 47: a chip
+affordance for `foreach`'s own `:items`/`:values`/`:keys` gap (source-view
+only today, stored as `foreachSelector`), and per-item selector ghosts inside
+a body (the caret offers fit-checked ops incl. `select`, just not a dedicated
+ghost row).
+
 Design turns **36–39 have no handoff README** — read them from
 `Basilisk Toolkit v2.dc.html` directly via the claude_design MCP. Everything
 else has one in `redesign/design_handoff_*/`.

@@ -415,6 +415,9 @@ export function useNotebook() {
       opName: string,
       opts?: { decode?: boolean; params?: Record<string, unknown>; at?: number }
     ) => {
+      // Nested tee/foreach is rejected by the parser (RECIPE.md, v1). The
+      // shelf already hides them for nested carets; this catches drag-drops.
+      if (opName === "tee" || opName === "foreach") return;
       const step = makeStep(opName, opts);
       if (!step) return;
       const next = steps.map((s, i) => {
@@ -449,6 +452,49 @@ export function useNotebook() {
         return clone;
       });
       setCellSteps(focusedCell, next);
+    },
+    [focusedCell, makeStep, setCellSteps, steps]
+  );
+
+  /**
+   * Create a selector branch on a tee *together with* its first step. A branch
+   * is not valid recipe text until it has a step (`- :public |` alone doesn't
+   * parse), so the two land as one mutation — the UI "arms" the branch
+   * client-side until then, same as activeGap.
+   */
+  const addBranchWithStep = useCallback(
+    (
+      stem: number,
+      selector: string,
+      opName: string,
+      opts?: { decode?: boolean; params?: Record<string, unknown> }
+    ) => {
+      const step = makeStep(opName, opts);
+      if (!step) return;
+      const next = steps.map((s, i) => {
+        if (i !== stem) return s;
+        const branches = [...(s.branches || [])];
+        branches.push({
+          selector,
+          member: selector.replace(/^:/, ""),
+          body: [step],
+        });
+        return { ...s, branches };
+      });
+      setCellSteps(focusedCell, next);
+    },
+    [focusedCell, makeStep, setCellSteps, steps]
+  );
+
+  /** Swap one stem step for another op ("peek instead of an empty tee"). */
+  const replaceStep = useCallback(
+    (stem: number, opName: string) => {
+      const step = makeStep(opName);
+      if (!step || !steps[stem]) return;
+      setCellSteps(
+        focusedCell,
+        steps.map((s, i) => (i === stem ? step : s))
+      );
     },
     [focusedCell, makeStep, setCellSteps, steps]
   );
@@ -1029,6 +1075,8 @@ export function useNotebook() {
     appendOp,
     insertOpAt,
     nestOp,
+    addBranchWithStep,
+    replaceStep,
     reorderStem,
     reorderNest,
     updateStepParams,

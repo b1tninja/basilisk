@@ -16,6 +16,7 @@ import {
   tNone,
   walkPipelineTypes,
 } from "./types.js";
+import { projectTypeForMember } from "./recipe.js";
 
 /** @typedef {import("./types.js").RefinedType} RefinedType */
 /** @typedef {import("./registry.js").StepSpec} StepSpec */
@@ -218,14 +219,47 @@ export function preferredNextOrder(from) {
 }
 
 /**
+ * The closed projector-selector table (RECIPE.md "Projectors"). Ghost chips
+ * read from this list and nothing else — it is a property of the grammar, not
+ * a registry field to author. Index selectors (`[n]` / `[n:m]`) are stem
+ * stages (`at`), not members, and iteration views (`:items`/`:keys`/`:values`)
+ * are `foreach`'s own modifier — neither belongs here.
+ */
+export const PROJECTOR_SELECTORS = Object.freeze([
+  ":public",
+  ":private",
+  ":key",
+  ":value",
+]);
+
+/**
+ * Selector ghosts that actually project the given tip — the "+ branch"
+ * affordances for a `tee` on that tip. Fit-checked exactly like any op:
+ * `keypair` offers `:public`/`:private`, `item` offers `:key`/`:value`,
+ * anything else offers none (a plain no-selector branch is always available —
+ * the EBNF makes the selector optional).
+ * @param {RefinedType} tip
+ * @returns {string[]}
+ */
+export function selectorGhostsFor(tip) {
+  if (!tip || tip.base === "none") return [];
+  return PROJECTOR_SELECTORS.filter((sel) => projectTypeForMember(tip, sel).ok);
+}
+
+/**
  * Compatible next steps for the builder suggest drawer, ranked for the tip type.
  * @param {RefinedType} from
- * @param {{ hasForeach?: boolean, terminal?: boolean }} [opts]
+ * @param {{ hasForeach?: boolean, terminal?: boolean, nested?: boolean }} [opts]
  * @returns {StepSpec[]}
  */
 export function suggestedNextSteps(from, opts = {}) {
   const terminal = !!opts.terminal;
+  const nested = !!opts.nested;
   let list = stepsAccepting(from).filter((s) => {
+    // Nested tee/foreach is rejected by the parser (RECIPE.md, v1), so inside
+    // a branch or body they are absent — not dimmed, absent, the same as any
+    // op with zero possible fits. `tee` is kind "transform", so match names.
+    if (nested && (s.name === "tee" || s.name === "foreach")) return false;
     if (s.kind === "flow") return s.name === "foreach";
     return true;
   });
@@ -296,13 +330,17 @@ export function nestedTipFor(chains, cellIndex, stemIndex) {
 
 /**
  * @param {RefinedType} tip
- * @param {{ terminal?: boolean, hasForeach?: boolean }} [opts]
+ * @param {{ terminal?: boolean, hasForeach?: boolean, nested?: boolean }} [opts]
  * @returns {{ next: StepSpec[], tipFit: Set<string> }}
  */
 export function tipFitFor(tip, opts = {}) {
+  const nested = !!opts.nested;
   const next = suggestedNextSteps(tip, opts);
   const tipFit = new Set(next.map((s) => s.name));
-  for (const s of stepsAccepting(tip)) tipFit.add(s.name);
+  for (const s of stepsAccepting(tip)) {
+    if (nested && (s.name === "tee" || s.name === "foreach")) continue;
+    tipFit.add(s.name);
+  }
   return { next, tipFit };
 }
 

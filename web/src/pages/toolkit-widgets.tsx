@@ -1041,6 +1041,75 @@ function CatalogApp() {
             onNestAppend={() => {}}
             onReorder={() => {}}
           />
+          <StateLabel>
+            Fresh tee — ghost selectors from the projector table, no continue gap yet,
+            peek offered while empty (turns 46/47)
+          </StateLabel>
+          <RecipeChipFlow
+            cell={1}
+            stems={[
+              {
+                step: { name: "genkey", label: sample?.label || "genkey", op: sample },
+                hasNest: false,
+              },
+              {
+                step: { name: "tee", label: "tee" },
+                hasNest: true,
+                nestKind: "tee",
+                nestAdd: [":public", ":private"],
+              },
+            ]}
+            selected={null}
+            onSelect={() => {}}
+            onGap={() => {}}
+            onBranchHit={() => {}}
+            onArmBranch={() => {}}
+            onPeekInstead={() => {}}
+            onReorder={() => {}}
+          />
+          <StateLabel>Armed :public branch — lands with its first step (turn 47)</StateLabel>
+          <RecipeChipFlow
+            cell={2}
+            stems={[
+              {
+                step: { name: "genkey", label: sample?.label || "genkey", op: sample },
+                hasNest: false,
+              },
+              {
+                step: { name: "tee", label: "tee" },
+                hasNest: true,
+                nestKind: "tee",
+                nestAdd: [":private"],
+              },
+            ]}
+            selected={null}
+            armedBranch={{ stem: 1, selector: ":public" }}
+            onSelect={() => {}}
+            onGap={() => {}}
+            onBranchHit={() => {}}
+            onArmBranch={() => {}}
+            onAddBranchStep={() => {}}
+            onReorder={() => {}}
+          />
+          <StateLabel>
+            foreach — the body anchors on ↻ each item and its gap names the scope (46c)
+          </StateLabel>
+          <RecipeChipFlow
+            cell={3}
+            stems={[
+              {
+                step: { name: "foreach", label: "foreach" },
+                hasNest: true,
+                nestKind: "foreach",
+                body: [],
+              },
+            ]}
+            selected={null}
+            onSelect={() => {}}
+            onGap={() => {}}
+            onBranchHit={() => {}}
+            onReorder={() => {}}
+          />
         </Section>
 
         <Section id="paramfield" title="ParamField">

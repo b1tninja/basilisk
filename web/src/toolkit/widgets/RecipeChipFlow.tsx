@@ -39,8 +39,21 @@ export type ChipBranchView = {
 export type ChipStemView = {
   step: ChipStepView;
   hasNest: boolean;
+  /** Which container op this is — drives the nest chrome (anchor chip, ghosts). */
+  nestKind?: "tee" | "foreach";
+  /**
+   * Fitting selector ghosts for a new tee branch, from the closed projector
+   * table (suggest.js selectorGhostsFor) — already fit-checked upstream.
+   */
+  nestAdd?: string[];
   branches?: ChipBranchView[];
   body?: ChipStepView[];
+};
+
+/** A tee branch armed client-side — real recipe text once its first step lands. */
+export type ArmedBranch = {
+  stem: number;
+  selector: string;
 };
 
 function pathKey(p: ChipPath): string {
@@ -67,9 +80,22 @@ export type RecipeChipFlowProps = {
   selected?: ChipPath | null;
   /** Gap path waiting for an op from the shelf (click-to-insert focus). */
   activeGap?: ChipPath | null;
+  /** Selector branch armed on a tee — rendered as a ghost row until its first step lands. */
+  armedBranch?: ArmedBranch | null;
   onSelect: (path: ChipPath) => void;
   onGap: (path: ChipPath) => void;
   onBranchHit: (stem: number, branch: number | null) => void;
+  /** Arm a new selector branch on a tee stem (clicking a ghost chip). */
+  onArmBranch?: (stem: number, selector: string) => void;
+  /** First step dropped onto an armed branch — materializes branch + step at once. */
+  onAddBranchStep?: (
+    stem: number,
+    selector: string,
+    name: string,
+    opts?: { decode?: boolean }
+  ) => void;
+  /** Swap an empty tee for peek — RECIPE.md's documented side-inspect alternative. */
+  onPeekInstead?: (stem: number) => void;
   onReorder: (from: ChipPath, to: ChipPath) => void;
   onDropStep?: (
     path: ChipPath,
@@ -142,6 +168,7 @@ function ChipRow({
   steps,
   base,
   nested = false,
+  scopeLabel,
   selected,
   activeGap,
   onSelect,
@@ -154,6 +181,13 @@ function ChipRow({
   base: { cell: number; stem: number; branch?: number | null };
   /** Nested rows use the 14px caret (design v2 §20f). */
   nested?: boolean;
+  /**
+   * Names the scope this row's gaps insert into (":public", "loop body") so a
+   * branch gap can never be mistaken for the continue-main-chain gap — the two
+   * previously rendered as the literal same component with the same label
+   * (design turn 46a).
+   */
+  scopeLabel?: string;
   selected?: ChipPath | null;
   activeGap?: ChipPath | null;
   onSelect: (path: ChipPath) => void;
@@ -162,6 +196,7 @@ function ChipRow({
   onDropStep?: RecipeChipFlowProps["onDropStep"];
   onRemove?: RecipeChipFlowProps["onRemove"];
 }) {
+  const scope = scopeLabel ? ` in ${scopeLabel}` : "";
   const [dropAt, setDropAt] = useState<number | null>(null);
 
   const bindGap = (body: number) => {
@@ -220,7 +255,8 @@ function ChipRow({
     return (
       <div className="suggest-next-chips cell-recipe-indent-chips flex flex-wrap items-center gap-1">
         <InsertGap
-          label="Insert first step"
+          label={`Insert first step${scope}`}
+          showLabel={!!scopeLabel}
           scale={nested ? "nested" : "default"}
           data-cell={base.cell}
           data-gap-stem={base.stem}
@@ -264,7 +300,7 @@ function ChipRow({
               }
             />
             <InsertGap
-              label="Insert step here"
+              label={`Insert step here${scope}`}
               scale={nested ? "nested" : "default"}
               data-cell={base.cell}
               data-gap-stem={base.stem}
@@ -285,9 +321,13 @@ export function RecipeChipFlow({
   stems,
   selected = null,
   activeGap = null,
+  armedBranch = null,
   onSelect,
   onGap,
   onBranchHit,
+  onArmBranch,
+  onAddBranchStep,
+  onPeekInstead,
   onReorder,
   onDropStep,
   onRemove,
@@ -416,15 +456,23 @@ export function RecipeChipFlow({
         }
       />
     );
-    row.push(
-      <InsertGap
-        key={`gap-${i + 1}`}
-        label="Insert step here"
-        data-cell={cell}
-        data-gap-stem={i + 1}
-        {...stemGap(i + 1)}
-      />
-    );
+    const nestedCount =
+      (stem.branches || []).reduce((n, b) => n + b.steps.length, 0) +
+      (stem.body?.length || 0);
+    // An empty tee/foreach cannot be continued past — it isn't valid syntax
+    // yet — so the continue-main-chain gap only appears once the nest has a
+    // step (design turn 46b). Everything else keeps its trailing gap.
+    if (!stem.hasNest || nestedCount > 0) {
+      row.push(
+        <InsertGap
+          key={`gap-${i + 1}`}
+          label="Insert step here"
+          data-cell={cell}
+          data-gap-stem={i + 1}
+          {...stemGap(i + 1)}
+        />
+      );
+    }
     stemContinue = false;
 
     if (!stem.hasNest) return;
@@ -459,6 +507,7 @@ export function RecipeChipFlow({
             steps={br.steps}
             base={{ cell, stem: i, branch: bi }}
             nested
+            scopeLabel={br.selector}
             selected={selected}
             activeGap={activeGap}
             onSelect={onSelect}
@@ -471,9 +520,73 @@ export function RecipeChipFlow({
       );
     });
 
+    const armedHere = armedBranch && armedBranch.stem === i ? armedBranch : null;
+    if (armedHere) {
+      // Armed branch — client-side only until its first step lands, because
+      // `- :public |` alone is not valid recipe text. Dropping/inserting the
+      // first step materializes branch and step as one mutation.
+      rows.push(
+        <div
+          key={`armed-${i}`}
+          className="cell-recipe-indent-line"
+          role="listitem"
+          data-preview-nest={i}
+          data-armed-branch={armedHere.selector}
+          data-cell={cell}
+        >
+          <span className="cell-recipe-indent-dash" aria-hidden>
+            -
+          </span>
+          <SuggestChip
+            label={armedHere.selector}
+            variant="selector"
+            className="cell-recipe-branch-hit"
+            title="New branch — lands with its first step"
+          />
+          <InsertGap
+            label={`Insert first step in ${armedHere.selector}`}
+            showLabel
+            pending
+            scale="nested"
+            data-cell={cell}
+            data-gap-stem={i}
+            onDragOver={(e) => {
+              if (!chipDragTypes([...e.dataTransfer.types])) return;
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "copy";
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const parsed = parseStepMime(
+                e.dataTransfer.getData(STEP_MIME) ||
+                  e.dataTransfer.getData("text/plain")
+              );
+              if (parsed?.name) {
+                onAddBranchStep?.(i, armedHere.selector, parsed.name, {
+                  decode: parsed.decode,
+                });
+              }
+            }}
+          />
+        </div>
+      );
+    }
+
+    // Body row: foreach always has one (the loop body); a tee shows its
+    // no-selector lines when they exist, or when the caret is aimed there.
+    const bodyTargeted =
+      activeGap &&
+      activeGap.stem === i &&
+      (activeGap.branch ?? null) === null &&
+      activeGap.body != null &&
+      activeGap.cell === cell;
     if (
+      stem.nestKind === "foreach" ||
       (stem.body && stem.body.length) ||
-      (!(stem.branches || []).length && stem.hasNest)
+      bodyTargeted ||
+      (!(stem.branches || []).length && !armedHere && stem.nestKind !== "tee")
     ) {
       rows.push(
         <div
@@ -486,10 +599,29 @@ export function RecipeChipFlow({
           <span className="cell-recipe-indent-dash" aria-hidden>
             -
           </span>
+          {stem.nestKind === "foreach" ? (
+            // The loop body's anchor — branches get a selector chip to hang
+            // on; a body otherwise starts with nothing but the dash (46c).
+            <SuggestChip
+              label="↻ each item"
+              variant="selector"
+              className="cell-recipe-branch-hit"
+              title="Loop body — runs once per item"
+              onClick={() =>
+                onGap({
+                  cell,
+                  stem: i,
+                  branch: null,
+                  body: stem.body?.length || 0,
+                })
+              }
+            />
+          ) : null}
           <ChipRow
             steps={stem.body || []}
             base={{ cell, stem: i, branch: null }}
             nested
+            scopeLabel={stem.nestKind === "foreach" ? "loop body" : "branch"}
             selected={selected}
             activeGap={activeGap}
             onSelect={onSelect}
@@ -498,6 +630,58 @@ export function RecipeChipFlow({
             onDropStep={onDropStep}
             onRemove={onRemove}
           />
+        </div>
+      );
+    }
+
+    if (stem.nestKind === "tee" && !armedHere) {
+      // Ghost affordances for the next branch: fitting selectors from the
+      // closed projector table, an unselected branch (the EBNF makes the
+      // selector optional — never force one), and, while the tee is empty,
+      // peek — RECIPE.md's documented alternative to an empty tee.
+      const ghosts = stem.nestAdd || [];
+      rows.push(
+        <div
+          key={`add-${i}`}
+          className="cell-recipe-indent-line"
+          role="listitem"
+          data-preview-nest={i}
+          data-nest-add
+          data-cell={cell}
+        >
+          <span className="cell-recipe-indent-dash" aria-hidden>
+            -
+          </span>
+          {ghosts.map((sel) => (
+            <SuggestChip
+              key={sel}
+              label={`+ ${sel}`}
+              variant="ghost"
+              title={`Add a ${sel} branch`}
+              onClick={() => onArmBranch?.(i, sel)}
+            />
+          ))}
+          <SuggestChip
+            label="+ branch"
+            variant="ghost"
+            title="Add a branch with no selector — it works on the cloned value directly"
+            onClick={() =>
+              onGap({
+                cell,
+                stem: i,
+                branch: null,
+                body: stem.body?.length || 0,
+              })
+            }
+          />
+          {nestedCount === 0 && onPeekInstead ? (
+            <SuggestChip
+              label="peek instead"
+              variant="ghost"
+              title="Empty tee is invalid — peek is the side-inspect it usually meant"
+              onClick={() => onPeekInstead(i)}
+            />
+          ) : null}
         </div>
       );
     }

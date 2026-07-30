@@ -9,6 +9,13 @@ type Props = {
   pending?: boolean;
   /** 'nested' = 14px hit target inside a compound-op chip (§20f). */
   scale?: "default" | "nested";
+  /**
+   * Render the label text beside the +, not only as title/aria. Used where a
+   * bare + would be ambiguous about which scope it inserts into — a nested
+   * branch/body gap names its scope ("+ step in :public") so it can never be
+   * confused with the continue-main-chain gap (design turn 46).
+   */
+  showLabel?: boolean;
   onClick?: () => void;
   onDragOver?: (e: DragEvent) => void;
   onDragLeave?: (e: DragEvent) => void;
@@ -27,6 +34,7 @@ export function InsertGap({
   active = false,
   pending = false,
   scale = "default",
+  showLabel = false,
   onClick,
   onDragOver,
   onDragLeave,
@@ -69,6 +77,7 @@ export function InsertGap({
       className={cn(
         "cell-recipe-gap-add",
         scale === "nested" && "cell-recipe-gap-nested",
+        showLabel && "cell-recipe-gap-labeled",
         active && "cell-recipe-gap-drop-active",
         className
       )}
@@ -77,6 +86,11 @@ export function InsertGap({
       {...shared}
     >
       <span aria-hidden>+</span>
+      {showLabel ? (
+        <span className="cell-recipe-gap-label" aria-hidden>
+          {label}
+        </span>
+      ) : null}
     </button>
   );
 }

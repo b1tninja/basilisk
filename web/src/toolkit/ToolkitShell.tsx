@@ -52,9 +52,14 @@ import {
   type SuiteDetail,
 } from "./widgets/index";
 import { getStep } from "../lib/toolkit/registry.js";
-import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { compileRecipe, projectTypeForMember } from "../lib/toolkit/recipe.js";
 import { stepOverridesProfile } from "../lib/pgp/profile-from-step.js";
-import { cellPipelineTip, nestedTipFor, tipFitFor } from "../lib/toolkit/suggest.js";
+import {
+  cellPipelineTip,
+  nestedTipFor,
+  selectorGhostsFor,
+  tipFitFor,
+} from "../lib/toolkit/suggest.js";
 import { getTrust, setTrust, type TrustLevel } from "../lib/trust.js";
 import { getSuiteStatus, runCryptoSelfTests } from "../lib/crypto-self-test.js";
 import { getFipsMode, setFipsMode, FIPS_MODE_DISCLAIMER } from "../lib/fips-mode.js";
@@ -66,7 +71,7 @@ import {
   newWorkspaceId,
 } from "../lib/toolkit/workspace-store.js";
 import type { ToolkitWorkspace } from "../lib/toolkit/workspace-store.js";
-import type { ChipPath, ChipStemView } from "./widgets/RecipeChipFlow";
+import type { ArmedBranch, ChipPath, ChipStemView } from "./widgets/RecipeChipFlow";
 import type { RecipeChain, RecipeStep } from "./notebook-types";
 
 type CellView = "pipeline" | "source";
@@ -293,6 +298,20 @@ export function ToolkitShell() {
   const [quorumCell, setQuorumCell] = useState<number | null>(null);
   /** Gap click sets pending insert; next shelf append / drop uses it. */
   const [pendingInsert, setPendingInsert] = useState<ChipPath | null>(null);
+  /**
+   * Tee branch armed from a selector ghost (design turn 47). Client-side only:
+   * `- :public |` with no step is not valid recipe text, so the branch
+   * materializes together with its first inserted step.
+   */
+  const [armedBranch, setArmedBranch] = useState<
+    (ArmedBranch & { cell: number }) | null
+  >(null);
+  /** Inserting a container auto-focuses its own first body gap (turn 46b). */
+  const focusNestAfterInsert = (cell: number, name: string, stem: number) => {
+    if (name === "tee" || name === "foreach") {
+      setPendingInsert({ cell, stem, branch: null, body: 0 });
+    }
+  };
   const [cellViews, setCellViews] = useState<Record<number, CellView>>({});
   const [rawDrafts, setRawDrafts] = useState<Record<number, string>>({});
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
@@ -551,15 +570,45 @@ export function ToolkitShell() {
       : null;
 
   const tipModel = useMemo(() => {
+    if (armedBranch) {
+      // The armed caret fits against the *projected* member, not the raw nest
+      // input — a :public branch on a keypair takes key ops, not keypair ops.
+      const nestTip = nestedTipFor(nb.chains, armedBranch.cell, armedBranch.stem);
+      const projected = projectTypeForMember(nestTip, armedBranch.selector);
+      const tip = projected.ok ? projected.type : nestTip;
+      const { next, tipFit } = tipFitFor(tip, {
+        terminal: false,
+        hasForeach: false,
+        nested: true,
+      });
+      return { tip, next, tipFit };
+    }
     if (nestedInsert) {
       const tip = nestedTipFor(nb.chains, nestedInsert.cell, nestedInsert.stem);
-      const { next, tipFit } = tipFitFor(tip, { terminal: false, hasForeach: false });
+      const { next, tipFit } = tipFitFor(tip, {
+        terminal: false,
+        hasForeach: false,
+        nested: true,
+      });
       return { tip, next, tipFit };
     }
     const { tip, terminal, hasForeach } = cellPipelineTip(nb.chains, nb.focusedCell);
     const { next, tipFit } = tipFitFor(tip, { terminal, hasForeach });
     return { tip, next, tipFit };
-  }, [nb.chains, nb.focusedCell, nestedInsert]);
+  }, [nb.chains, nb.focusedCell, nestedInsert, armedBranch]);
+
+  // Nested tee/foreach is rejected by the parser, so while the caret is inside
+  // a branch or body the two are absent from the shelf entirely — not dimmed
+  // (design turn 47, "nested is rejected").
+  const shelfOps = useMemo(
+    () =>
+      nestedInsert || armedBranch
+        ? nb.filteredOps.filter(
+            (s: { name: string }) => s.name !== "tee" && s.name !== "foreach"
+          )
+        : nb.filteredOps,
+    [nb.filteredOps, nestedInsert, armedBranch]
+  );
 
   /**
    * Find the first `rtc.ice` step anywhere in the notebook and open its param
@@ -749,7 +798,7 @@ export function ToolkitShell() {
             <div className="relative flex min-h-0" style={{ width: opsWidth }}>
               <OpsShelf
                 className="w-full"
-                ops={nb.filteredOps}
+                ops={shelfOps}
                 filter={nb.opsFilter}
                 onFilter={nb.setOpsFilter}
                 tipFit={tipModel.tipFit}
@@ -762,11 +811,13 @@ export function ToolkitShell() {
                   <div className="border-b border-l-2 border-[var(--border)] border-l-[var(--caret)] bg-[color-mix(in_srgb,var(--caret)_6%,transparent)] px-2.5 py-2">
                     <div className="text-[length:9.5px] font-bold uppercase tracking-wider text-[var(--caret)]">
                       Caret ·{" "}
-                      {describeCaretPosition(
-                        pendingInsert,
-                        nb.focusedCell,
-                        nb.chains[nb.focusedCell]?.steps || []
-                      )}
+                      {armedBranch
+                        ? `new ${armedBranch.selector} branch on step ${armedBranch.stem + 1} · cell [${nb.focusedCell}]`
+                        : describeCaretPosition(
+                            pendingInsert,
+                            nb.focusedCell,
+                            nb.chains[nb.focusedCell]?.steps || []
+                          )}
                     </div>
                     {!pendingInsert ||
                     nestedInsert ||
@@ -784,6 +835,22 @@ export function ToolkitShell() {
                   </div>
                 }
                 onAppend={(name, opts) => {
+                  if (armedBranch && armedBranch.cell === nb.focusedCell) {
+                    const ab = armedBranch;
+                    setArmedBranch(null);
+                    nb.addBranchWithStep(ab.stem, ab.selector, name, opts);
+                    // Keep building in the branch that just landed.
+                    const branchIndex = (
+                      nb.chains[ab.cell]?.steps?.[ab.stem]?.branches || []
+                    ).length;
+                    setPendingInsert({
+                      cell: ab.cell,
+                      stem: ab.stem,
+                      branch: branchIndex,
+                      body: 1,
+                    });
+                    return;
+                  }
                   if (pendingInsert && pendingInsert.cell === nb.focusedCell) {
                     const path = pendingInsert;
                     setPendingInsert(null);
@@ -792,12 +859,17 @@ export function ToolkitShell() {
                         ...opts,
                         at: path.body,
                       });
+                      // Keep the caret in the same scope, after the new step.
+                      setPendingInsert({ ...path, body: path.body + 1 });
                       return;
                     }
                     nb.insertOpAt(path.stem, name, opts);
+                    focusNestAfterInsert(path.cell, name, path.stem);
                     return;
                   }
+                  const endStem = nb.chains[nb.focusedCell]?.steps?.length ?? 0;
                   nb.appendOp(name, opts);
+                  focusNestAfterInsert(nb.focusedCell, name, endStem);
                 }}
               />
               <button
@@ -1098,19 +1170,30 @@ export function ToolkitShell() {
                           ) : null}
                           {cellView(i) !== "source" ? (() => {
                             const list = chain.steps || [];
-                            const stems: ChipStemView[] = list.map((s) => {
+                            const stems: ChipStemView[] = list.map((s, si) => {
                               const spec = getStep(s.name);
-                              const hasNest =
-                                (s.name === "tee" || s.name === "foreach") &&
-                                ((s.branches || []).length > 0 ||
-                                  (s.body || []).length > 0);
+                              // Containers always render their nest region —
+                              // an empty tee/foreach shows its own body gap
+                              // and ghost affordances instead of masquerading
+                              // as a linear op (turn 46).
+                              const isNest =
+                                s.name === "tee" || s.name === "foreach";
                               return {
                                 step: {
                                   name: s.name,
                                   label: spec?.label || s.name,
                                   op: spec || undefined,
                                 },
-                                hasNest,
+                                hasNest: isNest,
+                                nestKind: isNest
+                                  ? (s.name as "tee" | "foreach")
+                                  : undefined,
+                                nestAdd:
+                                  s.name === "tee"
+                                    ? selectorGhostsFor(
+                                        nestedTipFor(nb.chains, i, si)
+                                      )
+                                    : undefined,
                                 branches: (s.branches || []).map((br) => {
                                   const rawSel = String(
                                     br.selector || br.member || ""
@@ -1171,9 +1254,13 @@ export function ToolkitShell() {
                                   activeGap={
                                     pendingInsert?.cell === i ? pendingInsert : null
                                   }
+                                  armedBranch={
+                                    armedBranch?.cell === i ? armedBranch : null
+                                  }
                                   onSelect={(path) => {
                                     nb.setFocusedCell(i);
                                     setPendingInsert(null);
+                                    setArmedBranch(null);
                                     setChipEdit((prev) =>
                                       prev &&
                                       prev.cell === path.cell &&
@@ -1188,16 +1275,44 @@ export function ToolkitShell() {
                                   onGap={(path) => {
                                     nb.setFocusedCell(i);
                                     setChipEdit(null);
+                                    setArmedBranch(null);
                                     setPendingInsert(path);
                                   }}
                                   onBranchHit={(stem, branch) => {
                                     nb.setFocusedCell(i);
+                                    setArmedBranch(null);
                                     setPendingInsert({
                                       cell: i,
                                       stem,
                                       branch,
                                       body: null,
                                     });
+                                  }}
+                                  onArmBranch={(stem, selector) => {
+                                    nb.setFocusedCell(i);
+                                    setChipEdit(null);
+                                    setPendingInsert(null);
+                                    setArmedBranch({ cell: i, stem, selector });
+                                  }}
+                                  onAddBranchStep={(stem, selector, name, opts) => {
+                                    nb.setFocusedCell(i);
+                                    setArmedBranch(null);
+                                    nb.addBranchWithStep(stem, selector, name, opts);
+                                    const branchIndex = (
+                                      nb.chains[i]?.steps?.[stem]?.branches || []
+                                    ).length;
+                                    setPendingInsert({
+                                      cell: i,
+                                      stem,
+                                      branch: branchIndex,
+                                      body: 1,
+                                    });
+                                  }}
+                                  onPeekInstead={(stem) => {
+                                    nb.setFocusedCell(i);
+                                    setArmedBranch(null);
+                                    setPendingInsert(null);
+                                    nb.replaceStep(stem, "peek");
                                   }}
                                   onReorder={(from, to) => {
                                     if (from.cell !== i || to.cell !== i) return;
@@ -1225,6 +1340,7 @@ export function ToolkitShell() {
                                   onDropStep={(path, name, opts) => {
                                     nb.setFocusedCell(i);
                                     setPendingInsert(null);
+                                    setArmedBranch(null);
                                     if (path.body != null) {
                                       nb.nestOp(
                                         path.stem,
@@ -1235,6 +1351,7 @@ export function ToolkitShell() {
                                       return;
                                     }
                                     nb.insertOpAt(path.stem, name, opts);
+                                    focusNestAfterInsert(i, name, path.stem);
                                     setChipEdit(null);
                                   }}
                                   onRemove={(path) => {

@@ -3136,6 +3136,22 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   border-radius: 3px;
   font-size: 0.7rem;
 }
+/* Scope-named gap ("+ step in :public") — a nested gap names the scope it
+ * inserts into so it cannot be confused with the continue-main-chain gap,
+ * which stays a bare + (design turn 46). */
+.cell-recipe-gap-add.cell-recipe-gap-labeled {
+  width: auto;
+  height: 18px;
+  gap: 4px;
+  padding: 0 7px 0 5px;
+  border-radius: 9px;
+  opacity: 0.85;
+}
+.cell-recipe-gap-label {
+  font: 500 10px system-ui, sans-serif;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
 .cell-recipe-gap-add:hover,
 .cell-recipe-gap-add:focus-visible {
   opacity: 1;
