@@ -31,6 +31,7 @@ import {
   CryptoProfileControl,
   GpgKeyBinder,
   ConnectionsPanel,
+  ShareCards,
 } from "../toolkit/widgets/index";
 import { getTypeMeta } from "../lib/toolkit/type-registry.js";
 import { Button } from "@/components/ui/button";
@@ -126,6 +127,7 @@ function CatalogApp() {
               "modetoggle",
               "menupopover",
               "presetmenu",
+              "sharecards",
             ].map((id) => (
               <a
                 key={id}
@@ -1233,9 +1235,123 @@ function CatalogApp() {
             onAddBoth={() => {}}
           />
         </Section>
+
+        <Section id="sharecards" title="ShareCards — printable split output (key-ceremony kit)">
+          <p className="text-xs text-[var(--muted-foreground)]">
+            The toolkit&rsquo;s only deliberate reveal-to-paper surface. Cards render masked;
+            the button that unmasks them says what printing actually does, and{" "}
+            <strong>Print cards</strong> only appears once revealed. The print stylesheet lives
+            in <code>toolkit.css</code> — a masked card set is <em>hidden</em> from the print
+            job rather than printed as bullets.
+          </p>
+
+          <StateLabel>Masked (default) — 3 shares, 2-of-3, QR present</StateLabel>
+          <ShareCards artifacts={demoShareArtifacts} label="Board key ceremony" date="2026-07-30" />
+
+          <StateLabel>Revealed — what goes on the page</StateLabel>
+          <ShareCards
+            artifacts={demoShareArtifacts}
+            label="Board key ceremony"
+            date="2026-07-30"
+            defaultRevealed
+            onPrint={() => {}}
+          />
+
+          <StateLabel>
+            No QR in the recipe, and no threshold recorded — the card admits both
+          </StateLabel>
+          <ShareCards
+            artifacts={[
+              { role: "share", shareIndex: 1, content: "alpha bravo charlie delta echo foxtrot" },
+              { role: "share", shareIndex: 2, content: "golf hotel india juliet kilo lima" },
+            ]}
+            defaultRevealed
+            onPrint={() => {}}
+          />
+
+          <StateLabel>Empty — cell has not been run</StateLabel>
+          <ShareCards artifacts={[]} />
+        </Section>
       </div>
     </TooltipProvider>
   );
+}
+
+/**
+ * Catalog fixture: what `sss.split … | blip39 | foreach { - out @share | qr }`
+ * leaves behind. Deliberately fake words — a catalog page must never hold a
+ * real mnemonic, even a throwaway one.
+ */
+const demoShareArtifacts = [
+  {
+    label: "Share 1",
+    filename: "share-1.txt",
+    role: "share",
+    sensitive: true,
+    shareIndex: 1,
+    traits: { shareOf: 1, threshold: 2 },
+    content:
+      "sample words only ceremony fixture never real mnemonic catalog page eleven twelve",
+  },
+  {
+    label: "Share 1 QR",
+    filename: "share-1.svg",
+    role: "qr",
+    mime: "image/svg+xml",
+    shareIndex: 1,
+    content: demoQrSvg(1),
+  },
+  {
+    label: "Share 2",
+    filename: "share-2.txt",
+    role: "share",
+    sensitive: true,
+    shareIndex: 2,
+    traits: { shareOf: 2, threshold: 2 },
+    content:
+      "second sample words only ceremony fixture never real mnemonic catalog eleven twelve",
+  },
+  {
+    label: "Share 2 QR",
+    filename: "share-2.svg",
+    role: "qr",
+    mime: "image/svg+xml",
+    shareIndex: 2,
+    content: demoQrSvg(2),
+  },
+  {
+    label: "Share 3",
+    filename: "share-3.txt",
+    role: "share",
+    sensitive: true,
+    shareIndex: 3,
+    traits: { shareOf: 3, threshold: 2 },
+    content:
+      "third sample words only ceremony fixture never real mnemonic catalog eleven twelve",
+  },
+  {
+    label: "Share 3 QR",
+    filename: "share-3.svg",
+    role: "qr",
+    mime: "image/svg+xml",
+    shareIndex: 3,
+    content: demoQrSvg(3),
+  },
+];
+
+/** A QR-shaped placeholder — enough to check the card's layout and print size. */
+function demoQrSvg(seed: number): string {
+  const cells: string[] = [];
+  for (let y = 0; y < 12; y++) {
+    for (let x = 0; x < 12; x++) {
+      if ((x * 7 + y * 5 + seed * 3) % 3 === 0) {
+        cells.push(`<rect x="${x}" y="${y}" width="1" height="1"/>`);
+      }
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor">${cells.join(
+    ""
+  )}</svg>`;
 }
 
 installBootDiagnostics();

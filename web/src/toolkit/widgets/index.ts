@@ -32,6 +32,7 @@ export {
   type ConnectionsSession,
 } from "./ConnectionsPanel";
 export { TypeCard } from "./TypeCard";
+export { ShareCards, type ShareCardArtifact, type ShareCardsProps } from "./ShareCards";
 export {
   STEP_MIME,
   REORDER_MIME,
