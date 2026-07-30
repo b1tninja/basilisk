@@ -1,5 +1,6 @@
 import { Cable, Copy, RotateCw, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { meshHealth } from "@/lib/quorum/relay.js";
 import type { SessionStripState } from "./SessionStrip";
 
 /**
@@ -130,6 +131,24 @@ export function ConnectionsPanel({
           </span>
         ) : null}
       </div>
+
+      {session.expected ? (() => {
+        // The honest mesh line (p2p-dkg DESIGN §1): full mesh is the right
+        // topology for DKG-sized rooms and quadratically wrong past ~8 —
+        // state the degree instead of pretending arbitrary N is fine.
+        const health = meshHealth((session.expected ?? 0) + 1);
+        return (
+          <p
+            className={cn(
+              "text-[10px]",
+              health.overCap ? "font-semibold text-[var(--warn)]" : "text-[var(--muted-foreground)]"
+            )}
+            data-mesh-health={health.overCap ? "over-cap" : "ok"}
+          >
+            mesh · {health.participants} participants · {health.note}
+          </p>
+        );
+      })() : null}
 
       {peers.length ? (
         <ul className="flex flex-col gap-1">

@@ -133,6 +133,10 @@ const STEP_DOCS = {
     url: `${MDN}/RTCPeerConnection/connectionState`,
     label: "MDN · RTCPeerConnection.connectionState",
   },
+  "rtc.restart": {
+    url: `${MDN}/RTCPeerConnection/restartIce`,
+    label: "MDN · RTCPeerConnection.restartIce()",
+  },
   "rtc.stats": {
     url: `${MDN}/RTCDataChannel/bufferedAmount`,
     label: "MDN · RTCDataChannel.bufferedAmount",

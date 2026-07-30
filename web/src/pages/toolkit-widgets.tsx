@@ -801,6 +801,19 @@ function CatalogApp() {
                 onClose={() => {}}
               />
             </div>
+            <div className="rounded-lg border border-[var(--border)]">
+              <StateLabel>Over the mesh soft cap — the honest degradation warning</StateLabel>
+              <ConnectionsPanel
+                session={{
+                  phase: "waiting",
+                  room: "KJ8X2M4P9FQ",
+                  role: "creator",
+                  connected: 3,
+                  expected: 11,
+                }}
+                onClose={() => {}}
+              />
+            </div>
           </div>
         </Section>
 

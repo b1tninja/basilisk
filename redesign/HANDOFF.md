@@ -155,8 +155,18 @@ Roughly in value order:
    design doc overstates the remaining gaps: `QuorumSession` is already
    N-party, and `derivePairwiseSessionKey` already binds room + both fprs +
    audience + nonces + both DTLS fingerprints (the RFC 8844 shape) at the
-   *pairwise* level. What genuinely remains: mesh self-bootstrap (relayed
-   introductions over authenticated links) → DKG rounds.
+   *pairwise* level. **Mesh self-bootstrap is now in**: signaling is
+   channel-first (`_sendTo` prefers a live direct link, then a one-hop relay
+   over kc-verified links, then the mailbox), sealed envelopes ride data
+   channels as `{v, env, hops}` frames with hop cap + bounded dedupe
+   (`lib/quorum/relay.js`, tested in `quorum-relay.test.js`), and members
+   forward frames addressed to peers they hold links to — so only the first
+   join needs the mailbox, and renegotiation survives it dying. `rtc.restart`
+   makes ICE recovery chainable, and ConnectionsPanel states mesh degree with
+   the DESIGN §1 soft-cap warning past 8 participants. Caveat, stated
+   honestly: the relay path is verified at the pure-rule and compile level;
+   a live two-browser relay run has not been performed. What remains: DKG
+   rounds on the finished bus.
    Also applied: the 48a naming audit — seven camelCase ops renamed
    (`rtc.gather/check/state/stats/offer/answer/quality`; `rtc.statsReport`
    was a seventh the audit missed), old names retired + migrated, and a

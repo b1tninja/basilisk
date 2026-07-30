@@ -25,6 +25,7 @@ import {
   sealSignalingEnvelope,
 } from "./crypto.js";
 import { canonicalAudience, isValidRoomId } from "./room.js";
+import { classifyChannelFrame, createSeenSet, shouldRelay } from "./relay.js";
 import { postSignaling, startSignalingPoll } from "./signaling.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
@@ -125,6 +126,8 @@ export class QuorumSession {
     this._since = 0;
     this._poll = null;
     this._seenSeqs = new Set();
+    /** Relayed-envelope dedupe — one armored blob is handled once, ever. */
+    this._envSeen = createSeenSet();
   }
 
   async start() {
@@ -297,8 +300,70 @@ export class QuorumSession {
     }
     const { payload, signerFpr } = opened;
     if (signerFpr === this.myFpr) return;
+    // Everyone polls the mailbox themselves — a message for someone else is
+    // simply not ours; relaying is a channel-path concern.
     if (payload.to && payload.to !== this.myFpr) return;
+    await this._handleSignal(payload, signerFpr);
+  }
 
+  /**
+   * A sealed envelope arriving over a data channel instead of the mailbox —
+   * either addressed to us (channel-first signaling, mesh introductions) or
+   * to be forwarded (we are the relaying member). Verification is identical
+   * to the mailbox path: same sealed envelope, same checks, only the wire
+   * differs.
+   * @param {string} fromFpr peer whose channel delivered the frame
+   * @param {{ env: string, hops: number }} frame
+   */
+  async _onChannelEnvelope(fromFpr, frame) {
+    if (this._envSeen.seen(frame.env)) return;
+    let opened;
+    try {
+      opened = await openSignalingEnvelope({
+        armored: frame.env,
+        decryptionKey: this.privateKey,
+        audienceKeyByFpr: this.audienceKeys,
+        audienceFprs: this.audienceFprs,
+        expectedRoomId: this.roomId,
+      });
+    } catch (err) {
+      this.onError?.(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+    const { payload, signerFpr } = opened;
+    if (signerFpr === this.myFpr) return;
+    if (payload.to && payload.to !== this.myFpr) {
+      // Not ours: pass it one link onward. Introductions ride only
+      // authenticated links, directly to the target when we hold that link,
+      // otherwise on to every other verified member (bounded by the hop cap
+      // and the per-node dedupe — a small room drowns no one).
+      if (!shouldRelay({ to: payload.to, myFpr: this.myFpr, hops: frame.hops })) {
+        return;
+      }
+      const out = JSON.stringify({ v: 1, env: frame.env, hops: frame.hops + 1 });
+      const target = this.peers.get(payload.to);
+      if (target?.channel?.readyState === "open" && target.kcVerified) {
+        target.channel.send(out);
+        return;
+      }
+      for (const [fpr, p] of this.peers) {
+        if (fpr === fromFpr) continue;
+        if (p.channel?.readyState === "open" && p.kcVerified) {
+          p.channel.send(out);
+        }
+      }
+      return;
+    }
+    await this._handleSignal(payload, signerFpr);
+  }
+
+  /**
+   * Verified signaling payload → session/peer state. Shared by the mailbox
+   * and channel paths.
+   * @param {import("./crypto.js").QuorumEnvelopePayload} payload
+   * @param {string} signerFpr
+   */
+  async _handleSignal(payload, signerFpr) {
     if (payload.type === "invite") {
       await this._handleInvite(payload, signerFpr);
       return;
@@ -600,11 +665,16 @@ export class QuorumSession {
    * @param {string} raw
    */
   async _onChannelMessage(peerFpr, raw) {
+    const frame = classifyChannelFrame(raw);
+    if (frame?.kind === "envelope") {
+      await this._onChannelEnvelope(peerFpr, frame);
+      return;
+    }
+    if (frame?.kind !== "session") return;
     const peer = this.peers.get(peerFpr);
     if (!peer?.sessionKey) return;
     try {
-      const wrapper = JSON.parse(raw);
-      const pt = await decryptSessionPayload(peer.sessionKey, wrapper.blob);
+      const pt = await decryptSessionPayload(peer.sessionKey, frame.blob);
       const msg = JSON.parse(pt);
       if (msg.kind === "kc") {
         const th = String(msg.transcriptHash || "");
@@ -748,7 +818,60 @@ export class QuorumSession {
       signingKey: this.privateKey,
       audienceKeys,
     });
+    // Channel-first: once links exist, signaling rides them and the mailbox
+    // becomes the bootstrap-only path — a renegotiation survives the mailbox
+    // dying, and a newcomer's introduction reaches peers it cannot signal
+    // directly. The envelope is sealed end to end either way; the wire
+    // carries nothing a relay can read or alter.
+    if (this._sendEnvelopeViaChannel(toFpr, armored)) return;
     await postSignaling(this.roomId, armored);
+  }
+
+  /**
+   * @param {string} toFpr
+   * @param {string} armored
+   * @returns {boolean} whether any channel accepted it
+   */
+  _sendEnvelopeViaChannel(toFpr, armored) {
+    // Never re-handle our own frame if a copy gossips back.
+    this._envSeen.seen(armored);
+    const frame = JSON.stringify({ v: 1, env: armored, hops: 0 });
+    const direct = this.peers.get(toFpr);
+    // Direct link: any open channel on a *live* connection will do —
+    // pre-verification traffic is exactly what signaling is, and the envelope
+    // carries its own proof. The connectionState check matters during ICE
+    // failure: a dying channel still reads "open" and would swallow the very
+    // restart offer meant to revive it — that case must reach the mailbox.
+    if (
+      direct?.channel?.readyState === "open" &&
+      direct.pc?.connectionState === "connected"
+    ) {
+      try {
+        direct.channel.send(frame);
+        return true;
+      } catch (_) {
+        /* fall through to relay / mailbox */
+      }
+    }
+    // Relay: only over authenticated links (relayed introductions must ride
+    // links whose far end is proven, DESIGN §7 step 4).
+    let sent = false;
+    for (const [fpr, p] of this.peers) {
+      if (fpr === toFpr) continue;
+      if (
+        p.channel?.readyState === "open" &&
+        p.kcVerified &&
+        p.pc?.connectionState === "connected"
+      ) {
+        try {
+          p.channel.send(frame);
+          sent = true;
+        } catch (_) {
+          /* this member just dropped — try the next */
+        }
+      }
+    }
+    return sent;
   }
 
   _emitRoster() {

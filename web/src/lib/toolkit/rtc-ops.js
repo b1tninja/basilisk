@@ -431,6 +431,40 @@ export async function execDataChannelStats() {
   });
 }
 
+/* ───────────────────────── rtc.restart ───────────────────────── */
+
+/**
+ * ICE restart as a pipeline primitive — the same recovery the Connections
+ * panel button performs, chainable: `rtc.restart | out @state` after a
+ * `stun.check` that came back degraded, or scripted into a reconnect recipe.
+ * Renegotiates in place: room, invite, and roster survive because the session
+ * never closed — only its transport did. The new offers ride
+ * onnegotiationneeded (perfect negotiation), channel-first where links are
+ * still live, the mailbox where they are not.
+ */
+export async function execRtcRestart() {
+  const session = requireSession("rtc.restart");
+  let restarted = 0;
+  for (const [, peer] of session.peers) {
+    if (typeof peer.pc?.restartIce !== "function") continue;
+    try {
+      peer.pc.restartIce();
+      restarted += 1;
+    } catch (_) {
+      /* peer already torn down — nothing to restart */
+    }
+  }
+  const state = /** @type {{ data: Record<string, unknown> }} */ (
+    execConnectionState()
+  );
+  return netValue(
+    "connstate",
+    { ...state.data, restarted },
+    "ice-restart.json",
+    { rtcConnState: true, restarted }
+  );
+}
+
 /* ───────────────────────── rtc.quality (29d) ───────────────────────── */
 
 /** Live quality numbers — RTT, throughput, loss — per connected peer. */

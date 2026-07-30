@@ -2646,6 +2646,17 @@ export const STEPS = [
     params: [],
   },
   {
+    name: "rtc.restart",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    glyph: "ports",
+    doc: "Restart ICE on every peer connection of the live exchange and report the resulting per-peer state. Renegotiates in place — room, invite, and roster survive. The chainable form of the Connections panel's Restart button. Example: `rtc.restart | out @state`.",
+    input: "none",
+    output: "connstate",
+    params: [],
+  },
+  {
     name: "rtc.stats",
     kind: "source",
     toolbox: "webrtc",

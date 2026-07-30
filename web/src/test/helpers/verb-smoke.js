@@ -1363,6 +1363,12 @@ in @offer | rtc.answer ice=@ice | out @answer`,
       skipReason: "needs a live WebRTC exchange",
     },
     {
+      id: "rtc.restart.compile",
+      recipe: "rtc.restart | out @state",
+      mode: "compile",
+      skipReason: "needs a live WebRTC exchange",
+    },
+    {
       id: "rtc.stats.compile",
       recipe: "rtc.stats | out @bp",
       mode: "compile",

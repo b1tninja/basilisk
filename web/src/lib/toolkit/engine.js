@@ -2571,6 +2571,7 @@ async function execStepBody(step, value, bindings, artifacts) {
     case "rtc.offer":
     case "rtc.answer":
     case "rtc.state":
+    case "rtc.restart":
     case "rtc.stats":
     case "rtc.quality": {
       // Lazy + main-thread only, same as the quorum ops these sit under.
@@ -2589,6 +2590,8 @@ async function execStepBody(step, value, bindings, artifacts) {
           return rtc.execCreateAnswer(value, p, bindings);
         case "rtc.state":
           return rtc.execConnectionState();
+        case "rtc.restart":
+          return rtc.execRtcRestart();
         case "rtc.stats":
           return rtc.execDataChannelStats();
         default:

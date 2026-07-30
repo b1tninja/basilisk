@@ -371,6 +371,10 @@ export function inferSourceType(name, params = {}) {
     }
     case "rtc.state":
       return typeOf("connstate");
+    case "rtc.restart":
+      // Same observe-only shape as rtc.state — a restart is an action whose
+      // only pipeline-visible result is the state it leaves behind.
+      return typeOf("connstate");
     case "rtc.check":
       return typeOf("stats", { kind: "candidate-pairs" });
     case "rtc.stats":
