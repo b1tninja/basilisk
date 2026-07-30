@@ -15,6 +15,12 @@ import {
 import { listSteps, getStep } from "../lib/toolkit/registry.js";
 import { wiredForCell } from "../lib/toolkit/slot-graph.js";
 import {
+  ceremonyCells,
+  ceremonyTitle,
+  tileForSlot,
+  type CeremonyStageId,
+} from "../lib/toolkit/ceremony.js";
+import {
   MESSAGING_STARTERS,
   parseToolkitHash,
   hashForNotebook,
@@ -132,7 +138,7 @@ export function useNotebook() {
   const cancelQuorum = useCallback(() => {
     window.dispatchEvent(new CustomEvent("basilisk:quorum-cancel"));
   }, []);
-  const [sheet, setSheet] = useState<"workspace" | "prefs" | null>(
+  const [sheet, setSheet] = useState<"workspace" | "prefs" | "ceremony" | null>(
     null
   );
   const [kernelEpoch, setKernelEpoch] = useState(0);
@@ -829,6 +835,12 @@ export function useNotebook() {
       inputs.keypair = { value: keypairMaterial.trim() };
     }
     bindings.inputs = inputs;
+    // Context `run.receipt` cannot see for itself: the whole notebook's source
+    // (it only ever receives one cell) and the human name for the ceremony.
+    // Through bindings, not the recipe text — a ceremony label is metadata, and
+    // putting it in the recipe would push it into share links and saved
+    // workspaces.
+    bindings.receipt = { recipeSource: source, label: title };
     const recs = boundRecipientsRef.current.filter((r) => r?.fingerprint);
     if (recs.length) {
       bindings.recipientKeysArmored = recs.map((r) => r.armoredKey);
@@ -845,6 +857,8 @@ export function useNotebook() {
     sharePassphrase,
     envelopeArmored,
     keypairMaterial,
+    source,
+    title,
   ]);
 
   const runFrom = useCallback(
@@ -908,6 +922,106 @@ export function useNotebook() {
     },
     [buildBindings, chains, compiled.validation, unmetForCell]
   );
+
+  /**
+   * Guided key ceremony (CeremonySheet).
+   *
+   * The ceremony builds ordinary notebook cells and runs them on the same
+   * kernel the Run button uses — same slots, same per-cell outputs, same
+   * receipt run log. What it does *not* do is go through `runFrom`: that runs
+   * every cell from an index onward, so a notebook holding the receipt cell
+   * would mint a receipt the moment the verify step ran. Each stage appends its
+   * own cell and runs exactly that one.
+   */
+  const [ceremonyStage, setCeremonyStage] = useState<CeremonyStageId>("setup");
+  const [ceremonyParams, setCeremonyParams] = useState({
+    threshold: 2,
+    shares: 3,
+    label: "",
+    qr: true,
+    signWith: "",
+  });
+  const [ceremonyRun, setCeremonyRun] = useState<"idle" | "running" | "done" | "error">(
+    "idle"
+  );
+  const [ceremonyError, setCeremonyError] = useState("");
+
+  const updateCeremonyParams = useCallback(
+    (patch: Partial<typeof ceremonyParams>) => {
+      setCeremonyParams((prev) => ({ ...prev, ...patch }));
+    },
+    []
+  );
+
+  const openCeremony = useCallback(() => {
+    setCeremonyStage("setup");
+    setCeremonyRun("idle");
+    setCeremonyError("");
+    setSheet("ceremony");
+  }, []);
+
+  const runCeremonyStage = useCallback(
+    async (stage: CeremonyStageId) => {
+      const cells = ceremonyCells(ceremonyParams);
+      const at = cells.findIndex((c) => c.stage === stage);
+      if (at < 0) return;
+      const compiled = cells.slice(0, at + 1).map((c) => {
+        const { ast } = compileRecipe(c.recipe);
+        if (!ast?.chains?.length) throw new Error(`Ceremony cell failed to compile: ${c.stage}`);
+        return ast.chains[0] as RecipeChain;
+      });
+      setCeremonyRun("running");
+      setCeremonyError("");
+      try {
+        // Show the cells in the notebook as they are added, so the ceremony is
+        // never doing something the user cannot see in Source view.
+        setTitle(ceremonyTitle(ceremonyParams));
+        setChains(compiled.map((c) => ({ steps: [...(c.steps || [])] })));
+        setFocusedCell(at);
+        const bindings = {
+          ...buildBindings(),
+          receipt: {
+            recipeSource: cells.map((c) => c.recipe).join("\n\n"),
+            label: ceremonyParams.label || ceremonyTitle(ceremonyParams),
+          },
+        };
+        await kernelRef.current.runCell(at, compiled[at], bindings);
+        setKernelEpoch((n) => n + 1);
+        setCeremonyRun("done");
+      } catch (err) {
+        setKernelEpoch((n) => n + 1);
+        setCeremonyError(err instanceof Error ? err.message : String(err));
+        setCeremonyRun("error");
+      }
+    },
+    [buildBindings, ceremonyParams]
+  );
+
+  /** Which notebook cell each ceremony stage's outputs live in. */
+  const ceremonyCellIndex = useMemo(() => {
+    const cells = ceremonyCells(ceremonyParams);
+    return {
+      split: cells.findIndex((c) => c.stage === "split"),
+      verify: cells.findIndex((c) => c.stage === "verify"),
+      receipt: cells.findIndex((c) => c.stage === "receipt"),
+    };
+  }, [ceremonyParams]);
+
+  const ceremonyView = useMemo(() => {
+    void kernelEpoch;
+    const outs = (i: number) =>
+      (i >= 0 ? kernelRef.current.getCellOutputs(i) : []) as ArtifactTile[];
+    const splitOut = outs(ceremonyCellIndex.split);
+    return {
+      expectedDigest: tileForSlot(splitOut, "expected"),
+      recoveredDigest: tileForSlot(outs(ceremonyCellIndex.verify), "recovered"),
+      // Only the share/QR tiles — the digest tile is not a card.
+      shareArtifacts: splitOut.filter(
+        (a) => a.role === "share" || a.role === "qr"
+      ) as ArtifactTile[],
+      receiptText: tileForSlot(outs(ceremonyCellIndex.receipt), "receipt"),
+    };
+  }, [ceremonyCellIndex, kernelEpoch]);
 
   const stopRun = useCallback(() => {
     stopRunRef.current = true;
@@ -1106,6 +1220,15 @@ export function useNotebook() {
     cancelQuorum,
     sheet,
     setSheet,
+    ceremonyStage,
+    setCeremonyStage,
+    ceremonyParams,
+    updateCeremonyParams,
+    ceremonyRun,
+    ceremonyError,
+    openCeremony,
+    runCeremonyStage,
+    ceremonyView,
     slotMetas,
     cellStatuses,
     cellTimings,

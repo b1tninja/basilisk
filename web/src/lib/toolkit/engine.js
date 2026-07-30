@@ -2092,7 +2092,11 @@ async function execStepBody(step, value, bindings, artifacts) {
         // materializes on its own carry no such request and stay masked —
         // that is the whole point of the gate.
         a.revealable = true;
-        if (value.meta?.stunCheck) {
+        if (value.meta?.runReceipt) {
+          // Its own role so the kernel can keep it out of the run log and the
+          // UI can offer "verify this" rather than treating it as loose text.
+          a.role = "receipt";
+        } else if (value.meta?.stunCheck) {
           // Quorum diagnostic (§22b) — overrides materializeOutArtifacts'
           // generic text/secret default; UI reads the JSON body for ok/
           // candidates and offers "Configure TURN" when srflx is missing.
@@ -2582,6 +2586,46 @@ async function execStepBody(step, value, bindings, artifacts) {
         step.name === "quorum.offer" ? "creator" : "joiner"
       );
     }
+    case "run.receipt": {
+      const receipt = await currentRunReceipt(bindings, artifacts, step.params || {});
+      const { receiptToJson } = await import("./receipt.js");
+      return {
+        type: "text",
+        data: receiptToJson(receipt),
+        // A receipt is digests and recipe text by construction — publishing it
+        // is the point, so masking it would be theatre. `run.receipt` is also
+        // not on the reveal-gate list precisely because there is nothing here
+        // to reveal.
+        meta: { sensitive: false, kind: "opaque", runReceipt: true },
+      };
+    }
+    case "run.verify": {
+      if (!value || value.type !== "text") {
+        throw new Error("run.verify expects receipt text (use `input` to paste one)");
+      }
+      const { parseReceipt, compareReceipts, summarizeComparison } = await import(
+        "./receipt.js"
+      );
+      const claimed = parseReceipt(String(value.data));
+      // The re-run's own receipt is built from the same artifacts this run has
+      // produced so far, so `… | run.verify` compares like with like.
+      const actual = await currentRunReceipt(bindings, artifacts, {
+        label: claimed.label,
+      });
+      const result = compareReceipts(claimed, actual);
+      if (!result.ok && !step.params?.soft) {
+        throw new Error(summarizeComparison(result));
+      }
+      return {
+        type: "bool",
+        data: result.ok,
+        meta: {
+          sensitive: false,
+          receiptComparison: result,
+          receiptSummary: summarizeComparison(result),
+        },
+      };
+    }
     case "clipboard.read":
     case "clipboard.write": {
       // Lazy + main-thread only — navigator.clipboard does not exist in workers.
@@ -2626,6 +2670,53 @@ async function execStepBody(step, value, bindings, artifacts) {
     default:
       throw new Error(`Unsupported step: ${step.name}`);
   }
+}
+
+/**
+ * Build a receipt for the run in progress.
+ *
+ * Two halves, because a run receipt spans more than one engine call. The
+ * kernel accumulates a digested log of the cells it has already executed this
+ * session and hands it over as `bindings.receipt.runLog`; the artifacts of the
+ * *current* call become one more cell appended to that log. So `run.receipt`
+ * placed in the last cell of a notebook receipts the whole notebook, and the
+ * same op run standalone (no kernel, as in tests) receipts just itself.
+ *
+ * Modelled as an op rather than a kernel-only export deliberately: a receipt
+ * that can only be produced by a button is not composable, and the entire
+ * value here comes from piping it into `gpg.sign` and `out` — the existing
+ * signing path, with no new key handling. The kernel-level facts it cannot see
+ * for itself (notebook source, prior cells) arrive through `bindings`, the
+ * same runtime channel `input` and `shares` already use and the same one that
+ * keeps them out of recipe text.
+ *
+ * @param {RuntimeBindings} bindings
+ * @param {ToolkitArtifact[]} artifacts  artifacts of the current engine call
+ * @param {Record<string, *>} params
+ */
+async function currentRunReceipt(bindings, artifacts, params) {
+  const { buildRunReceipt, digestArtifact, digestInputs, opsRegistryVersion } =
+    await import("./receipt.js");
+  const ctx = /** @type {*} */ (bindings).receipt || {};
+  /** @type {import("./receipt.js").ReceiptCell[]} */
+  const cells = Array.isArray(ctx.runLog) ? [...ctx.runLog] : [];
+  const outputs = [];
+  for (const a of artifacts) outputs.push(await digestArtifact(a));
+  cells.push({
+    index: Number(ctx.cellIndex) || cells.length,
+    recipe: String(ctx.cellRecipe || ctx.recipeSource || ""),
+    startedAt: String(ctx.startedAt || new Date().toISOString()),
+    inputs: await digestInputs(bindings.inputs),
+    outputs,
+  });
+  const label =
+    String(params?.label || "").trim() || String(ctx.label || "").trim() || undefined;
+  return buildRunReceipt({
+    label,
+    registry: opsRegistryVersion(),
+    recipeSource: String(ctx.recipeSource || ctx.cellRecipe || ""),
+    cells,
+  });
 }
 
 /**

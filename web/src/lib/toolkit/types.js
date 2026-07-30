@@ -322,6 +322,10 @@ export function inferSourceType(name, params = {}) {
     }
     case "input":
       return typeOf("text", { kind: "opaque" });
+    case "run.receipt":
+      // Canonical JSON, so the tip is plain opaque text — exactly what
+      // `gpg.sign` and `out` already consume. No new type is warranted for it.
+      return typeOf("text", { kind: "opaque" });
     case "lit": {
       const kind = String(params.kind || "text");
       if (kind === "int") return typeOf("int");

@@ -4,7 +4,8 @@
 
 import { runRecipe } from "./engine.js";
 import { createSlotRegistry } from "./slot-registry.js";
-import { recipeChains } from "./recipe.js";
+import { recipeChains, serializeRecipe } from "./recipe.js";
+import { digestArtifact, digestInputs } from "./receipt.js";
 
 /**
  * Best-effort wipe of artifact tiles (owned bytes + inspect snapshots).
@@ -78,6 +79,7 @@ function wipeArtifacts(list) {
  * @property {() => void} destroy
  * @property {() => import("./slot-registry.js").SlotMeta[]} listSlots
  * @property {() => number} slotCount
+ * @property {() => import("./receipt.js").ReceiptCell[]} getRunLog
  */
 
 /**
@@ -91,6 +93,19 @@ export function createKernel() {
   const cellStatus = new Map();
   /** @type {Map<number, { ranAt: number, durationMs: number }>} Last successful run, for the readiness/status line. */
   const cellTimings = new Map();
+  /**
+   * Digested log of the cells run this session, in execution order — the prior
+   * half of what `run.receipt` reports.
+   *
+   * Kept here rather than derived from `cellOutputs` because a receipt is about
+   * *the run*, not about the current state of the tiles: re-running cell 1
+   * replaces its outputs, and the receipt should record that both runs
+   * happened. Cleared by Clear sensitive along with everything else, since a
+   * digest of a share is still a fact about a ceremony the user asked to
+   * forget.
+   * @type {import("./receipt.js").ReceiptCell[]}
+   */
+  let runLog = [];
 
   /**
    * @param {number} i
@@ -146,6 +161,41 @@ export function createKernel() {
       .sort((a, b) => a - b);
 
   /**
+   * Record one executed cell as digests.
+   *
+   * A `run.receipt` tile is itself an output of the cell that minted it, and
+   * including it would make the log self-referential — the receipt would have
+   * to contain the digest of a document that contains that digest. Dropped
+   * here, which also keeps a later `run.verify` re-run comparable: its own
+   * receipt tile is dropped on the same rule.
+   *
+   * @param {number} cellIndex
+   * @param {string} cellRecipe
+   * @param {number} startedAt
+   * @param {import("./engine.js").RuntimeBindings} bindings
+   * @param {import("./engine.js").ToolkitArtifact[]} artifacts
+   */
+  const appendRunLog = async (cellIndex, cellRecipe, startedAt, bindings, artifacts) => {
+    try {
+      const outputs = [];
+      for (const a of artifacts) {
+        if (a?.role === "receipt") continue;
+        outputs.push(await digestArtifact(a));
+      }
+      runLog.push({
+        index: cellIndex,
+        recipe: cellRecipe,
+        startedAt: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+        inputs: await digestInputs(bindings?.inputs),
+        outputs,
+      });
+    } catch (_) {
+      // Receipt bookkeeping must never turn a successful run into a failure.
+    }
+  };
+
+  /**
    * @param {number} cellIndex
    * @param {import("./recipe.js").RecipeChain|import("./recipe.js").RecipeStep[]} chainOrSteps
    * @param {import("./engine.js").RuntimeBindings} [bindings]
@@ -159,10 +209,29 @@ export function createKernel() {
     }
     setCellStatus(cellIndex, "running");
     const startedAt = Date.now();
+    let cellRecipe = "";
+    try {
+      cellRecipe = serializeRecipe({ chains: [chain] });
+    } catch (_) {
+      /* a receipt should never be the reason a run fails */
+    }
+    // `run.receipt` inside this cell needs the cells that came before it, plus
+    // enough context to name this one. Passed through bindings — the same
+    // runtime channel `input`/`shares` use — so none of it can leak into the
+    // recipe text or a share link.
+    const receiptCtx = {
+      runLog: [...runLog],
+      cellIndex,
+      cellRecipe,
+      recipeSource:
+        /** @type {*} */ (bindings)?.receipt?.recipeSource || cellRecipe,
+      label: /** @type {*} */ (bindings)?.receipt?.label || "",
+      startedAt: new Date(startedAt).toISOString(),
+    };
     try {
       const artifacts = await runRecipe(
         { chains: [chain], steps: chain.steps, source: "" },
-        bindings,
+        { ...bindings, receipt: receiptCtx },
         {
           slotRegistry: slots,
           allowReplaceSlots: true,
@@ -171,6 +240,7 @@ export function createKernel() {
       cellOutputs.set(cellIndex, artifacts);
       setCellStatus(cellIndex, "ok");
       cellTimings.set(cellIndex, { ranAt: Date.now(), durationMs: Date.now() - startedAt });
+      await appendRunLog(cellIndex, cellRecipe, startedAt, bindings, artifacts);
       invalidateFrom(cellIndex + 1);
       return artifacts;
     } catch (err) {
@@ -205,6 +275,7 @@ export function createKernel() {
     cellOutputs.clear();
     cellStatus.clear();
     cellTimings.clear();
+    runLog = [];
     slots.clear();
     // A live quorum exchange is session state too — tear it down and zeroize
     // its keys. Dynamic import so WebRTC never enters the base bundle; if the
@@ -223,6 +294,7 @@ export function createKernel() {
     cellOutputs.clear();
     cellStatus.clear();
     cellTimings.clear();
+    runLog = [];
     slots.evictSensitive();
   };
 
@@ -290,6 +362,8 @@ export function createKernel() {
     markAllWithOutputsStale,
     listSlots: () => slots.listMetas(),
     slotCount: () => slots.size(),
+    /** Digested per-cell log of this session's runs (see `runLog`). */
+    getRunLog: () => runLog.map((c) => ({ ...c })),
   };
 }
 

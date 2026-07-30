@@ -36,6 +36,7 @@ import {
   CellTypeErrors,
   GpgKeyBinder,
   ConnectionsPanel,
+  CeremonySheet,
   STEP_MIME,
   parseStepMime,
   ModeToggle,
@@ -709,9 +710,15 @@ export function ToolkitShell() {
               triggerClassName="h-auto w-auto rounded-[6px] p-[6px]"
               items={[
                 {
+                  id: "ceremony",
+                  label: "Key ceremony…",
+                  onSelect: () => nb.openCeremony(),
+                },
+                {
                   id: "workspace",
                   label: "Workspace library",
                   onSelect: () => nb.setSheet("workspace"),
+                  separatorBefore: true,
                 },
                 {
                   id: "toolkit-prefs",
@@ -2361,6 +2368,32 @@ export function ToolkitShell() {
           </button>
         )}
         </div>
+
+        {/* Guided key ceremony — the kit's front door (HANDOFF: a window is a Sheet) */}
+        <CeremonySheet
+          open={nb.sheet === "ceremony"}
+          onOpenChange={(o) => nb.setSheet(o ? "ceremony" : null)}
+          stage={nb.ceremonyStage}
+          onStage={nb.setCeremonyStage}
+          threshold={nb.ceremonyParams.threshold}
+          shares={nb.ceremonyParams.shares}
+          label={nb.ceremonyParams.label}
+          qr={nb.ceremonyParams.qr}
+          onParams={nb.updateCeremonyParams}
+          signingKeys={nb.vaultKeys.map((k) => ({
+            fingerprint: k.fingerprint,
+            uid: k.uid,
+          }))}
+          signWith={nb.ceremonyParams.signWith}
+          onSignWith={(fingerprint) => nb.updateCeremonyParams({ signWith: fingerprint })}
+          onRunStage={nb.runCeremonyStage}
+          runState={nb.ceremonyRun}
+          runError={nb.ceremonyError}
+          expectedDigest={nb.ceremonyView.expectedDigest}
+          recoveredDigest={nb.ceremonyView.recoveredDigest}
+          shareArtifacts={nb.ceremonyView.shareArtifacts}
+          receiptText={nb.ceremonyView.receiptText}
+        />
 
         {/* Workspace library sheet */}
         <Sheet

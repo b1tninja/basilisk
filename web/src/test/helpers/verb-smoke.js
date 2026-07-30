@@ -1381,6 +1381,53 @@ in @offer | rtc.answer ice=@ice | out @answer`,
       skipReason: "needs a live WebRTC exchange",
     },
 
+    // ── Run receipts — digests of what the run did, signable and checkable ──
+    {
+      id: "run.receipt",
+      recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
+  - out @share
+
+run.receipt "verb smoke ceremony" | out @receipt`,
+      mode: "run",
+      timeoutMs: 30_000,
+      assert: (arts) => {
+        const tile = arts.find((a) => /run-receipt/.test(String(a.content || "")));
+        if (!tile) throw new Error("expected a run receipt tile");
+        const receipt = JSON.parse(String(tile.content));
+        if (receipt.label !== "verb smoke ceremony") {
+          throw new Error("receipt did not take the label argument");
+        }
+        if (!receipt.cells?.length || !receipt.cells[0].outputs?.length) {
+          throw new Error("receipt recorded no cell outputs");
+        }
+        // The invariant worth a smoke test: mnemonics went past this op and
+        // none of them are in the receipt.
+        const mnemonic = arts.find((a) => a.role === "share");
+        if (mnemonic && String(tile.content).includes(String(mnemonic.content).trim())) {
+          throw new Error("receipt leaked a share value");
+        }
+      },
+    },
+    {
+      id: "run.verify",
+      // Self-consistent by construction: the receipt is minted and checked
+      // inside one run, so the comparison has something real to agree with. The
+      // interesting failure paths (tampered digest, extra cell) are unit-tested
+      // in run-receipt.test.js against the pure comparator.
+      recipe: "run.receipt | run.verify | out @ok",
+      mode: "run",
+      assert: (arts) => {
+        if (!arts.some((a) => String(a.content).trim() === "true")) {
+          throw new Error("a receipt should verify against the run that minted it");
+        }
+      },
+    },
+    {
+      id: "run.verify.soft",
+      recipe: "run.receipt | run.verify -q | out @ok",
+      mode: "run",
+    },
+
     // ── Clipboard as a signaling channel (§32d) — both need the browser's
     // clipboard plus (for read) the UI's permission gate, so compile-only.
     {

@@ -1554,6 +1554,9 @@ export const PRESET_GROUP_ORDER = Object.freeze([
   "Encrypt",
   "Keys wrap / agree",
   "Split & recover",
+  // The key-ceremony kit: the guided flow's stages as templates, so the same
+  // pipelines are reachable without the Sheet.
+  "Ceremony",
   "OpenPGP",
   "Directory",
   "WebAuthn",
@@ -1804,6 +1807,27 @@ in @cek | export jwk | out @cek-jwk`,
     title: "Recover secret from BLIP39 shares",
     blurb: "Paste K-of-N mnemonics, decode to raw SSS, reconstruct the 16/32-byte master as Base64.",
     recipe: "shares | blip39.decode | sss.combine | base64 | out @secret",
+  },
+  {
+    id: "ceremony-receipt",
+    group: "Ceremony",
+    pair: "ceremony-audit",
+    title: "Sign a run receipt",
+    blurb:
+      "Split a secret, then mint a receipt of the run — recipe, timestamps, and digests of every output, never the outputs — and OpenPGP-sign it with a vault key.",
+    recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
+  - out @share
+
+run.receipt | gpg.sign | out @receipt`,
+  },
+  {
+    id: "ceremony-verify",
+    group: "Ceremony",
+    pair: "ceremony-audit",
+    title: "Check a receipt against a re-run",
+    blurb:
+      "Paste a receipt (signed or plain) and compare it to the run happening now. Digests only — the check never reveals what was split.",
+    recipe: "input | run.verify | out @ok",
   },
   {
     id: "out-mid-pipeline",

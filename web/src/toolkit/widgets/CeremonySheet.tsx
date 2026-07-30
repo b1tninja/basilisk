@@ -1,0 +1,367 @@
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { ShareCards, type ShareCardArtifact } from "./ShareCards";
+import {
+  CEREMONY_STAGES,
+  ceremonyIssues,
+  nextStage,
+  prevStage,
+  stageIndex,
+  verificationResult,
+  type CeremonyStageId,
+} from "../../lib/toolkit/ceremony.js";
+
+export type CeremonyRunState = "idle" | "running" | "done" | "error";
+
+export type CeremonySheetProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  stage: CeremonyStageId;
+  onStage: (stage: CeremonyStageId) => void;
+  /** Quorum + label, owned by the caller so the recipes stay reproducible. */
+  threshold: number;
+  shares: number;
+  label: string;
+  qr: boolean;
+  onParams: (patch: {
+    threshold?: number;
+    shares?: number;
+    label?: string;
+    qr?: boolean;
+  }) => void;
+  /** Vault keys offered for signing the receipt. */
+  signingKeys?: { fingerprint: string; uid?: string }[];
+  signWith?: string;
+  onSignWith?: (fingerprint: string) => void;
+  /** Runs the cells this stage owns; resolves when the notebook has run. */
+  onRunStage: (stage: CeremonyStageId) => void | Promise<void>;
+  runState: CeremonyRunState;
+  runError?: string;
+  /** Digest hex from the split cell's `@expected` tile. */
+  expectedDigest: string;
+  /** Digest hex from the verify cell's `@recovered` tile. */
+  recoveredDigest: string;
+  shareArtifacts: ShareCardArtifact[];
+  receiptText: string;
+};
+
+/**
+ * The guided key ceremony — a Sheet, per the handoff's rule that a design
+ * needing a window is a `Sheet`.
+ *
+ * It owns sequence and wording, not execution: every stage's work is ordinary
+ * notebook cells run through `useNotebook`, so the ceremony is reproducible by
+ * hand, visible in Source view, and shareable as recipe text. This component
+ * never touches the engine.
+ *
+ * The order is the product. Verification sits before printing because proving
+ * the shares recombine after the room has dispersed is not a ceremony, and the
+ * verify panel reports a match from two SHA-256 digests without ever putting
+ * the secret back on screen.
+ */
+export function CeremonySheet({
+  open,
+  onOpenChange,
+  stage,
+  onStage,
+  threshold,
+  shares,
+  label,
+  qr,
+  onParams,
+  signingKeys = [],
+  signWith = "",
+  onSignWith,
+  onRunStage,
+  runState,
+  runError = "",
+  expectedDigest,
+  recoveredDigest,
+  shareArtifacts,
+  receiptText,
+}: CeremonySheetProps) {
+  const [advanced, setAdvanced] = useState(false);
+  const issues = ceremonyIssues({ threshold, shares });
+  const current = CEREMONY_STAGES[stageIndex(stage)] ?? CEREMONY_STAGES[0];
+  const verification = verificationResult(expectedDigest, recoveredDigest);
+  const busy = runState === "running";
+
+  const canAdvance =
+    stage === "setup"
+      ? issues.length === 0
+      : stage === "split"
+        ? !!expectedDigest && !busy
+        : stage === "verify"
+          ? verification.status === "match"
+          : stage === "cards"
+            ? true
+            : false;
+
+  const advanceLabel =
+    stage === "setup"
+      ? "Start the split"
+      : stage === "split"
+        ? "Prove the shares work"
+        : stage === "verify"
+          ? "Print the cards"
+          : stage === "cards"
+            ? "Sign a receipt"
+            : "";
+
+  const goNext = () => {
+    const next = nextStage(stage);
+    if (!next) return;
+    onStage(next);
+    const meta = CEREMONY_STAGES[stageIndex(next)];
+    if (meta?.runsCells) void onRunStage(next);
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>Key ceremony</SheetTitle>
+          <SheetDescription>
+            Split a fresh secret into shares, prove they recombine without showing it
+            again, print a card per holder, and sign a receipt of what happened.
+          </SheetDescription>
+        </SheetHeader>
+
+        <ol className="ceremony-steps">
+          {CEREMONY_STAGES.map((s, i) => {
+            const at = stageIndex(stage);
+            const state = i < at ? "done" : i === at ? "current" : "todo";
+            return (
+              <li key={s.id} className="ceremony-step" data-state={state}>
+                <span className="ceremony-step-dot">{i + 1}</span>
+                <span className="ceremony-step-title">{s.title}</span>
+              </li>
+            );
+          })}
+        </ol>
+
+        <Separator />
+
+        <div className="ceremony-body">
+          <h3 className="ceremony-stage-title">{current.title}</h3>
+          <p className="ceremony-stage-blurb">{current.blurb}</p>
+
+          {stage === "setup" ? (
+            <div className="ceremony-fields">
+              <label className="ceremony-field">
+                <span>Ceremony label</span>
+                <Input
+                  value={label}
+                  placeholder="Board key, Q3 root key, room name…"
+                  onChange={(e) => onParams({ label: e.target.value })}
+                />
+                <small>Printed on every card and recorded in the receipt.</small>
+              </label>
+
+              <div className="ceremony-quorum">
+                <label className="ceremony-field">
+                  <span>Shares to make</span>
+                  <Input
+                    type="number"
+                    min={2}
+                    max={16}
+                    value={shares}
+                    onChange={(e) => onParams({ shares: Number(e.target.value) })}
+                  />
+                </label>
+                <label className="ceremony-field">
+                  <span>Needed to recover</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={16}
+                    value={threshold}
+                    onChange={(e) => onParams({ threshold: Number(e.target.value) })}
+                  />
+                </label>
+              </div>
+
+              {/*
+                Only stated for a quorum that can exist. Rendering it
+                unconditionally put "Any 5 of 3 cards will reconstruct the
+                secret" on screen beside the error saying it cannot — the
+                summary must never restate an impossible quorum as fact.
+              */}
+              {issues.length ? null : (
+                <p className="ceremony-quorum-note">
+                  Any <strong>{threshold}</strong> of <strong>{shares}</strong> cards will
+                  reconstruct the secret. Fewer than {threshold} reveal nothing at all.
+                </p>
+              )}
+
+              <label className="ceremony-toggle">
+                <input
+                  type="checkbox"
+                  checked={qr}
+                  onChange={(e) => onParams({ qr: e.target.checked })}
+                />
+                <span>Print a QR code beside each mnemonic</span>
+              </label>
+
+              {issues.length ? (
+                <ul className="ceremony-issues">
+                  {issues.map((i) => (
+                    <li key={i}>{i}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
+          {stage === "split" ? (
+            <div className="ceremony-panel">
+              {busy ? <p className="ceremony-status">Drawing and splitting…</p> : null}
+              {expectedDigest ? (
+                <>
+                  <p className="ceremony-status" data-tone="ok">
+                    {shareArtifacts.filter((a) => a.role === "share").length} shares
+                    created. The secret itself was never written to a tile — only its
+                    digest.
+                  </p>
+                  <dl className="ceremony-digest">
+                    <dt>Digest of the secret</dt>
+                    <dd>
+                      <code>{expectedDigest}</code>
+                    </dd>
+                  </dl>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+
+          {stage === "verify" ? (
+            <div className="ceremony-panel">
+              {busy ? <p className="ceremony-status">Recombining the shares…</p> : null}
+              <p className="ceremony-status" data-tone={
+                verification.status === "match"
+                  ? "ok"
+                  : verification.status === "mismatch"
+                    ? "error"
+                    : "pending"
+              }>
+                {verification.message}
+              </p>
+              <dl className="ceremony-digest">
+                <dt>Original</dt>
+                <dd>
+                  <code>{verification.expected || "—"}</code>
+                </dd>
+                <dt>Recombined</dt>
+                <dd>
+                  <code>{verification.recovered || "—"}</code>
+                </dd>
+              </dl>
+              {verification.status === "mismatch" ? (
+                <Button variant="secondary" onClick={() => void onRunStage("verify")}>
+                  Try again
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {stage === "cards" ? (
+            <div className="ceremony-panel">
+              <ShareCards
+                artifacts={shareArtifacts}
+                label={label}
+                threshold={threshold}
+              />
+            </div>
+          ) : null}
+
+          {stage === "receipt" ? (
+            <div className="ceremony-panel">
+              {signingKeys.length ? (
+                <label className="ceremony-field">
+                  <span>Sign with</span>
+                  <select
+                    className="ceremony-select"
+                    value={signWith}
+                    onChange={(e) => onSignWith?.(e.target.value)}
+                  >
+                    <option value="">Do not sign</option>
+                    {signingKeys.map((k) => (
+                      <option key={k.fingerprint} value={k.fingerprint}>
+                        {k.uid || k.fingerprint.slice(-16)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <p className="ceremony-status" data-tone="pending">
+                  No unlocked key — the receipt will be made unsigned. An unsigned
+                  receipt is still a usable record.
+                </p>
+              )}
+
+              {busy ? <p className="ceremony-status">Writing the receipt…</p> : null}
+
+              {receiptText ? (
+                <>
+                  <p className="ceremony-status" data-tone="ok">
+                    Receipt written. It holds the recipe, timestamps, and a digest of
+                    every output — no shares, no secret.
+                  </p>
+                  <button
+                    type="button"
+                    className="ceremony-disclosure"
+                    onClick={() => setAdvanced((v) => !v)}
+                  >
+                    {advanced ? "Hide" : "Show"} receipt
+                  </button>
+                  {advanced ? (
+                    <pre className="ceremony-receipt">{receiptText}</pre>
+                  ) : null}
+                </>
+              ) : (
+                <Button onClick={() => void onRunStage("receipt")} disabled={busy}>
+                  Write the receipt
+                </Button>
+              )}
+            </div>
+          ) : null}
+
+          {runError ? (
+            <p className="ceremony-status" data-tone="error">
+              {runError}
+            </p>
+          ) : null}
+        </div>
+
+        <SheetFooter>
+          {prevStage(stage) ? (
+            <Button
+              variant="secondary"
+              onClick={() => onStage(prevStage(stage) as CeremonyStageId)}
+              disabled={busy}
+            >
+              Back
+            </Button>
+          ) : null}
+          {advanceLabel ? (
+            <Button onClick={goNext} disabled={!canAdvance || busy}>
+              {advanceLabel}
+            </Button>
+          ) : (
+            <Button onClick={() => onOpenChange(false)}>Done</Button>
+          )}
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  );
+}

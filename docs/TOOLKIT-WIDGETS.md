@@ -28,6 +28,28 @@
  * | **MenuPopover** | Toolbar menus (shadcn DropdownMenu) |
  * | **PresetMenu** | Templates gallery (categories, search, companion pairs) |
  * | **TypeCard** | Pipeline-type docs / producers / consumers / literal constructor |
+ * | **ShareCards** | Print-ready card per share (mnemonic, QR, index, threshold, label, date) |
+ * | **CeremonySheet** | Guided key ceremony — quorum → split → verify → print → receipt |
+ *
+ * ## The key-ceremony kit
+ *
+ * `ShareCards` is the toolkit's only deliberate secret-to-paper surface, so it
+ * is the one place where the reveal gate is a product decision rather than a
+ * default: cards render masked, the unmask button says what printing does
+ * (cleartext, spooling, print servers) instead of saying "Show", `Print` only
+ * appears once revealed, and the gate re-arms on remount. Its `@media print`
+ * block in `toolkit.css` *hides* a masked card set rather than printing rows of
+ * bullets — a page of dots looks like a successful ceremony artifact once filed.
+ *
+ * `CeremonySheet` owns sequence and wording, never execution. Every stage's
+ * work is ordinary notebook cells run through `useNotebook` on the same kernel
+ * as the Run button, so a ceremony is reproducible by hand, visible in Source
+ * view, and shareable as recipe text. Two rules live in
+ * `lib/toolkit/ceremony.js` rather than in the component: the master secret is
+ * never written to an `out` tile (a `tee` branch digests it in place), and
+ * verification compares two SHA-256 digests rather than showing the recovered
+ * secret. Verification is sequenced *before* printing — proving the shares
+ * recombine after the room has dispersed is not a ceremony.
  *
  * ## Types in the toolbox
  *
