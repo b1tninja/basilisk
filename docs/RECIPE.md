@@ -278,6 +278,38 @@ in @ct | aes-gcm -d key=@cek | utf8 | out @plain
 
 OpenPGP signatures are **`gpg.sign` / `gpg.verify` only** — never bare `sign`/`verify`. OpenPGP encrypt stays **`gpg.encrypt`** (`-s` / `sign=true` = sign-then-encrypt). Prefer **`agent.unlock`** + `key=@slot` so recipes address My Keys by fingerprint/slot (not pasted armor). `hkp.get` loads remote public keys for verify. `gpg.genkey` emits `openpgp-key/private`; `gpg.inspect` summarizes armor without decrypting.
 
+### Run receipts (`run.receipt` / `run.verify`)
+
+A **receipt** is a signable record of what a run did, carrying **digests, never
+values**: the recipe source, each cell's runtime-input and output SHA-256
+digests, timestamps, and an op-registry fingerprint.
+
+```text
+random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
+  - out @share
+
+run.receipt "Board key ceremony" | gpg.sign key=@me | out @receipt
+
+input | run.verify | out @ok      # check a receipt against a re-run
+```
+
+| Op | Role |
+|----|------|
+| `run.receipt [label]` | Source → canonical JSON text. Pipe into `gpg.sign` / `out`. |
+| `run.verify` (`-q`) | Transform: receipt text → `bool`. Fail-loud; `-q` emits `false`. |
+
+- The receipt covers **every cell run this session**, not just its own: the
+  kernel keeps a digested run log and hands it to the op through runtime
+  bindings (like `input`/`shares`), so nothing kernel-level enters recipe text.
+- Its own tile is excluded from the log — a receipt cannot contain its own digest.
+- Comparison ignores `createdAt` / `durationMs` and compares recipe text,
+  registry version, and every input/output digest in order.
+- A recipe containing `random` / `genkey` **will not** re-verify — that is
+  correct. Only a deterministic stretch (recombine a known secret, re-derive a
+  known key) is re-checkable digest-for-digest.
+- Signature validity is `gpg.verify`'s job; `run.verify` accepts a cleartext-
+  signed receipt and reads the payload out of the armor.
+
 ### Pipeline types: `recipients` / `openpgp-key`
 
 | Type | Meaning | Secrets? | Typical producers |

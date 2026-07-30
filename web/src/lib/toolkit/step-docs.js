@@ -53,6 +53,11 @@ const STEP_DOCS = {
 
   // ── I/O ──
   random: { url: `${MDN}/Crypto/getRandomValues`, label: "MDN · Crypto.getRandomValues()" },
+  // The receipt ops have no protocol of their own; what *is* normative about
+  // them is the deterministic serialization the digest and the signature are
+  // taken over, so both point at JCS rather than at nothing.
+  "run.receipt": { url: `${RFC}/rfc8785`, label: "RFC 8785 · JSON Canonicalization" },
+  "run.verify": { url: `${RFC}/rfc8785`, label: "RFC 8785 · JSON Canonicalization" },
   passphrase: { url: "https://en.wikipedia.org/wiki/Diceware", label: "Diceware" },
 
   // ── OpenPGP — one spec covers the whole toolbox ──

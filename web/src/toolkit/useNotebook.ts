@@ -829,6 +829,12 @@ export function useNotebook() {
       inputs.keypair = { value: keypairMaterial.trim() };
     }
     bindings.inputs = inputs;
+    // Context `run.receipt` cannot see for itself: the whole notebook's source
+    // (it only ever receives one cell) and the human name for the ceremony.
+    // Through bindings, not the recipe text — a ceremony label is metadata, and
+    // putting it in the recipe would push it into share links and saved
+    // workspaces.
+    bindings.receipt = { recipeSource: source, label: title };
     const recs = boundRecipientsRef.current.filter((r) => r?.fingerprint);
     if (recs.length) {
       bindings.recipientKeysArmored = recs.map((r) => r.armoredKey);
@@ -845,6 +851,8 @@ export function useNotebook() {
     sharePassphrase,
     envelopeArmored,
     keypairMaterial,
+    source,
+    title,
   ]);
 
   const runFrom = useCallback(

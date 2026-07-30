@@ -220,6 +220,12 @@ export const SHELF_META = {
   text: { label: "Text", order: 1, glyph: "text" },
   ports: { label: "Ports", order: 0, glyph: "ports" },
   /**
+   * Run receipts — the audit surface for a key ceremony. Its own shelf rather
+   * than another entry under Ports because these two ops are about the *run*,
+   * not about moving a value in or out of one.
+   */
+  receipt: { label: "Receipt", order: 2, glyph: "ports" },
+  /**
    * §31a — type constructors, grouped so a typed value can be *instantiated*
    * instead of entered as free text and cast downstream. A sub-shelf of I/O
    * rather than a replacement for it: the design's "Input / output" category
@@ -2094,6 +2100,46 @@ export const STEPS = [
     input: "text",
     output: "artifact",
     params: [],
+  },
+  {
+    name: "run.receipt",
+    kind: "source",
+    toolbox: "io",
+    shelf: "receipt",
+    conjugate: "run.verify",
+    pairCaption: "Run receipt",
+    pairLabels: { forward: "Receipt", reverse: "Verify" },
+    doc: "Emit a signable receipt for this run: recipe source, per-cell input/output **digests** (never the values), timestamps, and the op-registry version. Sign it with the vault key — `run.receipt | gpg.sign key=@me | out @receipt` — and check it later with `run.verify`.",
+    input: "none",
+    output: "text",
+    params: [
+      {
+        name: "label",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Ceremony label recorded in the receipt (defaults to the notebook title)",
+      },
+    ],
+  },
+  {
+    name: "run.verify",
+    kind: "transform",
+    toolbox: "io",
+    shelf: "receipt",
+    conjugateOf: "run.receipt",
+    doc: "Check a receipt (signed or plain JSON) against the run happening now — digests only, so neither side reveals a secret. Fail-loud by default; `run.verify -q` emits a bool instead. Example: `input | run.verify -q | out @ok`.",
+    input: "text",
+    output: "bool",
+    params: [
+      {
+        name: "soft",
+        type: "bool",
+        flag: "-q",
+        default: false,
+        doc: "Emit false instead of throwing when the receipt does not match",
+      },
+    ],
   },
   {
     name: "clipboard.read",
