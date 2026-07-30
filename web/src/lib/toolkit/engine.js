@@ -13,10 +13,6 @@ import {
   readPrivateKey,
 } from "openpgp";
 import {
-  generateCharPassphrase,
-  generateWordPassphrase,
-} from "../passphrase-gen.js";
-import {
   dearmorToBytes,
   enrichSpansWithPackets,
   mapPacketSpans,
@@ -665,7 +661,28 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
   const prevType =
     value?.meta?.type ||
     (value ? typeOf(/** @type {import("./registry.js").IoType} */ (value.type)) : typeOf("none"));
-  const result = await execStepBody(step, value, bindings, artifacts);
+  /** @type {PipelineValue} */
+  let result;
+  try {
+    result = await execStepBody(step, value, bindings, artifacts);
+  } catch (err) {
+    // Attribute the failure to its step without touching the message — callers
+    // (the headless CLI, and any future banner) can say *which* op died even
+    // when the throw came from a lazily imported module that never saw the
+    // step. Messages are left byte-identical on purpose; tests assert them.
+    if (err && typeof err === "object" && !("basiliskStep" in err)) {
+      try {
+        Object.defineProperty(err, "basiliskStep", {
+          value: step.name,
+          enumerable: false,
+          configurable: true,
+        });
+      } catch (_) {
+        /* frozen error: attribution is best-effort */
+      }
+    }
+    throw err;
+  }
   const spec = getStep(step.name);
   if (result && spec && result.type !== "bundle") {
     const resolved = resolveStepType(spec, prevType, step.params || {});
@@ -760,6 +777,14 @@ async function execStepBody(step, value, bindings, artifacts) {
       };
     }
     case "passphrase": {
+      // Lazy: the EFF wordlist is a 7776-line asset pulled in through Vite's
+      // `?raw`, so a static import made every consumer of the engine — the
+      // crypto worker, and now the headless CLI — depend on the bundler even
+      // when no recipe generates a passphrase. Same lazy-import remedy the
+      // clipboard/rtc cases already use.
+      const { generateCharPassphrase, generateWordPassphrase } = await import(
+        "../passphrase-gen.js"
+      );
       const mode = String(step.params.mode || "diceware").toLowerCase();
       if (mode === "char") {
         const length = Number(step.params.length) || 20;

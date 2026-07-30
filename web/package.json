@@ -2,7 +2,11 @@
   "name": "basilisk-portal",
   "private": true,
   "type": "module",
+  "bin": {
+    "basilisk": "cli/basilisk.js"
+  },
   "scripts": {
+    "cli": "node cli/basilisk.js",
     "glyphs": "node scripts/build-glyphs.mjs",
     "predev": "npm run glyphs",
     "prebuild": "npm run glyphs",

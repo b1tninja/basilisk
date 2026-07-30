@@ -617,6 +617,7 @@ Use `migrateRecipe(text)` (or the toolkit **Upgrade recipe** button) for a one-s
 
 ## See also
 
+- [CLI.md](./CLI.md) — running these recipes headlessly under Node (`basilisk run` / `check` / `list-ops`), and which ops are browser-only
 - [CRYPTOGRAPHY.md](./CRYPTOGRAPHY.md) — algorithms, toolbox inventory, example recipes
 - `web/src/lib/toolkit/registry.js` — step docs / params (Reference panel)
 - `web/src/lib/toolkit/recipe.js` — validate / serialize / presets
