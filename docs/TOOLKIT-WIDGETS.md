@@ -29,6 +29,23 @@
  * | **PresetMenu** | Templates gallery (categories, search, companion pairs) |
  * | **TypeCard** | Pipeline-type docs / producers / consumers / literal constructor |
  *
+ * ## Files section (`#fileops`)
+ *
+ * Not a widget — a states page for the file/`stream`/`age` ops, because they
+ * introduced a toolbox, a shelf, seven glyphs, and a toast, and every one of
+ * those is a place the catalog is cheaper than the app. It carries the new
+ * glyph strip, the `age` toolbox dot beside its neighbours (its colour is
+ * duplicated in `toolkit.css` and guarded by `toolbox-dot-css.test.js`), the
+ * four ToolCards, and both confirmation toasts.
+ *
+ * The catalog earned its keep here again: the section is where the picker's
+ * off-screen scaffolding was measured, which is how a site-wide
+ * `input[type=file] { display: none }` in `site.css` was found sitting on
+ * `file.read`'s `<input type=file>` fallback. A `display: none` input is
+ * click-inert in some engines, so the fallback would have failed silently on
+ * exactly the browsers that lack the File System Access API — invisible to
+ * every unit test, since those stub the DOM and never run the cascade.
+ *
  * ## Types in the toolbox
  *
  * The ops drawer has two peer modes, `ops` and `types` — a type is not an op, so

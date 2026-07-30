@@ -2207,8 +2207,11 @@ export const STEPS = [
     output: "bytes",
     params: [
       {
+        // `string`, not `slot`, so a literal `age1…` parses — a recipient is
+        // public, and `age -r age1…` is how everyone writes it. `key=` on the
+        // decrypt side stays a `slot` for the opposite reason.
         name: "to",
-        type: "slot",
+        type: "string",
         positional: true,
         default: "",
         doc: "Recipients: `age1…` (space/comma separated) or an `@slot` holding them",
@@ -2242,11 +2245,14 @@ export const STEPS = [
     output: "bytes",
     params: [
       {
+        // Deliberately a `slot` and not a string: a literal identity in `key=`
+        // would be a private key sitting in recipe text, which is exactly what
+        // Copy link, Export, and the workspace library then carry off.
         name: "key",
         type: "slot",
         positional: true,
         default: "",
-        doc: "Slot holding an `AGE-SECRET-KEY-1…` identity",
+        doc: "Slot holding an `AGE-SECRET-KEY-1…` identity (never write the identity inline — recipe text is shareable)",
       },
       {
         name: "passphrase",

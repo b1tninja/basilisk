@@ -209,10 +209,19 @@ body.layout-app:has(#app > .toolkit-shell) {
  * File picker scaffolding (`file.read` / `file.save`, lib/toolkit/file-ops.js).
  * The `<input type=file>` and download `<a>` are created, clicked, and removed
  * within one call; they must be in the document (Safari will not fire `change`
- * on a detached input) but must never be seen or take layout. `display: none`
- * is deliberately not used — a hidden input is click-inert in some engines.
+ * on a detached input) but must never be seen or take layout.
+ *
+ * `display` is set explicitly, and the selector is compound on purpose:
+ * site.css carries a global `input[type=file] { display: none }` for the
+ * styled upload controls, and a `display: none` input is click-inert in some
+ * engines — so inheriting it would have silently broken the whole fallback
+ * path on exactly the browsers that need it (Firefox, Safari, any insecure
+ * context). Caught by measuring `getComputedStyle` in the live page; no unit
+ * test against a stubbed DOM could see it.
  */
-[data-basilisk-file-picker] {
+[data-basilisk-file-picker],
+input[type="file"][data-basilisk-file-picker] {
+  display: block;
   position: fixed;
   left: -9999px;
   top: 0;

@@ -279,6 +279,26 @@ file.read | age.encrypt to=@pub | file.save name=doc.age`
     expect(validation.errors.map((e) => e.message)).toEqual([]);
   });
 
+  it("takes a literal recipient but refuses a literal identity", () => {
+    // The asymmetry is the point: `age -r age1…` is how everyone writes a
+    // recipient, and it is public. An identity written inline would be a
+    // private key in recipe text — which Copy link, Export, and the workspace
+    // library all carry off. So `key=` is slot-typed and rejects a literal.
+    expect(
+      compileRecipe("file.read | age.encrypt to=age1abcdef | out @ct").validation.ok
+    ).toBe(true);
+    expect(
+      compileRecipe("file.read | age.encrypt age1abcdef | out @ct").validation.ok
+    ).toBe(true);
+    const literalIdentity = compileRecipe(
+      "file.read | age.decrypt key=AGE-SECRET-KEY-1ABC | out @pt"
+    );
+    expect(literalIdentity.validation.ok).toBe(false);
+    expect(literalIdentity.validation.errors.map((e) => e.message).join(" ")).toMatch(
+      /require @|unknown slot/i
+    );
+  });
+
   it("switches its output type on armor=", () => {
     expect(getStep("age.encrypt").effectiveIo({ armor: true }).output).toBe("text");
     expect(getStep("age.encrypt").effectiveIo({ armor: false }).output).toBe("bytes");

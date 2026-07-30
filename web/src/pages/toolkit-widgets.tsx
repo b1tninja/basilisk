@@ -105,6 +105,7 @@ function CatalogApp() {
           <nav className="mt-4 flex flex-wrap gap-2 text-xs">
             {[
               "glyph",
+              "fileops",
               "toolcard",
               "opstile",
               "opsshelf",
@@ -170,6 +171,78 @@ function CatalogApp() {
               </div>
             ))}
           </div>
+        </Section>
+
+        <Section
+          id="fileops"
+          title="Files — file.read / file.save, stream.*, age.*"
+        >
+          <StateLabel>
+            New glyphs. Documents for disk, chunk row for STREAM, key and padlock
+            for age — the age toolbox is a padlocked page rather than OpenPGP’s
+            envelope, because age encrypts files and PGP encrypts messages
+          </StateLabel>
+          <div className="flex flex-wrap items-end gap-6">
+            {[
+              { id: "file-read", label: "file.read" },
+              { id: "file-save", label: "file.save" },
+              { id: "stream", label: "stream.seal/open" },
+              { id: "age", label: "age (toolbox)" },
+              { id: "age-key", label: "age.keygen" },
+              { id: "age-lock", label: "age.encrypt" },
+              { id: "file", label: "files (shelf)" },
+            ].map((g) => (
+              <div key={g.id} className="flex flex-col items-center gap-1">
+                <Glyph id={g.id} size={22} svgClassName="ops-glyph ops-glyph-tile" />
+                <code className="text-[0.65rem]">{g.label}</code>
+              </div>
+            ))}
+          </div>
+
+          <StateLabel>
+            Toolbox dots — age is its own toolbox (peer of OpenPGP), so it needs
+            its own colour in toolkit.css; toolbox-dot-css.test.js guards the
+            duplication
+          </StateLabel>
+          <div className="flex flex-wrap items-end gap-6">
+            {["age", "openpgp", "webcrypto", "io"].map((tb) => (
+              <div key={tb} className="flex flex-col items-center gap-2">
+                <span className="flex h-4 items-center">
+                  <ToolboxDot op={{ toolbox: tb, output: "bytes" }} />
+                </span>
+                <code className="text-[0.65rem]">{tb}</code>
+              </div>
+            ))}
+          </div>
+
+          <StateLabel>
+            ToolCards — the docs surface these ops actually ship with, including
+            the CLI equivalences and the “this is not age” warning on stream.*
+          </StateLabel>
+          <div className="grid gap-4 md:grid-cols-2">
+            {["file.read", "file.save", "stream.seal", "age.encrypt"].map((n) => {
+              const op = ops.find((o) => o.name === n);
+              return op ? <ToolCard key={n} op={op} className="max-w-sm" /> : null;
+            })}
+          </div>
+
+          <StateLabel>
+            file.save confirmation — toast weight, matching clipboard.write. The
+            user just drove a save dialog; a modal would restate what they did.
+            file.read has no counterpart: the picker is both permission and receipt
+          </StateLabel>
+          <p
+            className="border-b border-[var(--border)] px-3.5 py-1 text-[length:11px] text-[var(--muted-foreground)]"
+            data-file-saved
+          >
+            Saved report.pdf.age · 41,984 bytes
+          </p>
+          <p
+            className="border-b border-[var(--border)] px-3.5 py-1 text-[length:11px] text-[var(--muted-foreground)]"
+            data-clipboard-wrote
+          >
+            Copied to clipboard · 128 chars
+          </p>
         </Section>
 
         <Section id="toolcard" title="ToolCard — docs-only (§19f)">
