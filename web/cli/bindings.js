@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
  * @property {string} [inputFile]    file whose contents feed `input`
  * @property {string} [shares]       file, one BLIP39 mnemonic per line
  * @property {string} [ciphertext]   file holding OpenPGP armor (or an envelope)
+ * @property {string} [privateKey]   armored OpenPGP private key file
  * @property {string} [passphraseEnv] env var name holding the passphrase
  * @property {boolean} [stdinInput]  use piped stdin as `input` text
  */
@@ -36,25 +37,22 @@ function readText(path) {
 }
 
 /**
- * Split a shares file into mnemonics: one per line, blanks and `#` comments
- * dropped. Blank-line-separated blocks are joined, so a file that wraps long
- * mnemonics across lines still works.
+ * Split a shares file into mnemonics: **one per line**. Blank lines and `#`
+ * comments are dropped, and internal whitespace is collapsed so a share copied
+ * out of a terminal with ragged spacing still parses.
+ *
+ * One line = one share, with no cleverness about wrapped lines. A 33-word
+ * mnemonic soft-wrapped in a terminal looks exactly like two shares to any
+ * heuristic, and guessing wrong yields "Invalid share checksum" — a message
+ * that sends you looking at your crypto instead of your text file.
  * @param {string} text
  * @returns {string[]}
  */
 export function parseSharesFile(text) {
   return String(text)
-    .split(/\n\s*\n/)
-    .map((block) =>
-      block
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith("#"))
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim()
-    )
-    .filter(Boolean);
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .filter((line) => line && !line.startsWith("#"));
 }
 
 /**
@@ -89,6 +87,17 @@ export function buildBindings(spec = {}, ctx = {}) {
     // rather than making the caller guess which op will want it.
     inputs.gpg = { ...(inputs.gpg || {}), armoredMessages: [armored] };
     inputs.envelope = { armored };
+  }
+
+  if (spec.privateKey) {
+    // The key-panel equivalent. Headless there is no vault (`agent.*` is
+    // browser-only), so without this `--ciphertext` has nothing to decrypt
+    // with unless the recipe carries `key=@slot`.
+    const armored = readText(spec.privateKey).trim();
+    if (!armored.includes("BEGIN PGP")) {
+      throw new Error(`--private-key ${spec.privateKey}: not an armored OpenPGP key`);
+    }
+    inputs.gpg = { ...(inputs.gpg || {}), privateKeyArmored: armored };
   }
 
   if (spec.passphraseEnv) {

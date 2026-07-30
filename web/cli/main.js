@@ -52,6 +52,9 @@ Run options:
   --stdin                     Same, read from piped stdin
   --shares <file>             BLIP39 mnemonics, one per line, for \`shares\`
   --ciphertext <file>         OpenPGP armor for \`gpg.decrypt\` / envelope ops
+  --private-key <file>        Armored OpenPGP private key (the key panel's job;
+                              there is no vault headless — \`agent.*\` is
+                              browser-only)
   --passphrase-env <VAR>      Read the passphrase from an environment variable
                               (there is no --passphrase: it would land in shell
                               history, in \`ps\`, and in CI logs)
@@ -72,6 +75,7 @@ const FLAGS_WITH_VALUE = new Set([
   "--input-file",
   "--shares",
   "--ciphertext",
+  "--private-key",
   "--passphrase-env",
   "--toolbox",
 ]);
@@ -284,6 +288,8 @@ async function cmdRun(positional, options, io) {
       shares: typeof options["--shares"] === "string" ? options["--shares"] : undefined,
       ciphertext:
         typeof options["--ciphertext"] === "string" ? options["--ciphertext"] : undefined,
+      privateKey:
+        typeof options["--private-key"] === "string" ? options["--private-key"] : undefined,
       passphraseEnv:
         typeof options["--passphrase-env"] === "string"
           ? options["--passphrase-env"]
