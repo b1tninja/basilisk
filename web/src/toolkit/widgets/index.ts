@@ -34,6 +34,11 @@ export {
 export { TypeCard } from "./TypeCard";
 export { ShareCards, type ShareCardArtifact, type ShareCardsProps } from "./ShareCards";
 export {
+  CeremonySheet,
+  type CeremonySheetProps,
+  type CeremonyRunState,
+} from "./CeremonySheet";
+export {
   STEP_MIME,
   REORDER_MIME,
   CHIP_REORDER_MIME,
