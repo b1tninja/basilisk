@@ -135,7 +135,9 @@ describe("mds helpers", () => {
     try {
       localStorage?.removeItem?.("basilisk.mdsBlob.v1");
       const r = await lookupAaguidInMds("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
-      expect(r.status).toBe("true");
+      // lookupAaguidInMds returns one of "verified" | "unverified" |
+      // "unavailable" — never a boolean-ish string.
+      expect(r.status).toBe("verified");
       expect(r.description).toBe("Acme Key");
     } finally {
       globalThis.fetch = prev;

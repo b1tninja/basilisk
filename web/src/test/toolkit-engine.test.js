@@ -53,9 +53,12 @@ describe("toolkit engine", () => {
     expect(s).not.toMatch(/[+/=]/);
   });
 
+  // `out name=label` is retired from live parse — slot labels require `@`
+  // (Upgrade recipe rewrites the old spelling). These use the canonical form;
+  // the migration itself is asserted separately below.
   it("out emits a named file tile without duplicating a terminal value", async () => {
     const { ast, validation } = compileRecipe(
-      "random 16 | out name=secret encoding=hex ext=hex"
+      "random 16 | out @secret encoding=hex ext=hex"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -69,7 +72,7 @@ describe("toolkit engine", () => {
 
   it("out passes the value through for later steps", async () => {
     const { ast, validation } = compileRecipe(
-      "random 8 | out name=raw encoding=base64 | encode hex"
+      "random 8 | out @raw encoding=base64 | encode hex"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -104,9 +107,24 @@ describe("toolkit engine", () => {
 
   it("validates pem | out | gpg.encrypt-style type flow", () => {
     const { validation } = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | out name=key ext=pem | gpg.encrypt"
+      "genkey ec/p256 | export pkcs8 | pem | out @key ext=pem | gpg.encrypt"
     );
     expect(validation.ok).toBe(true);
+  });
+
+  it("retires bare `out name=label`, and migrates it rather than aliasing", () => {
+    // The invariant behind the rewrite above: one spelling per operation.
+    // The old form must fail live parse with a pointed message *and* be
+    // repaired by Upgrade recipe — an alias that silently worked would let
+    // both spellings drift apart.
+    const legacy = "random 16 | out name=secret encoding=hex ext=hex";
+    const { validation } = compileRecipe(legacy);
+    expect(validation.ok).toBe(false);
+    expect(validation.errors[0].message).toMatch(/slot labels require @/i);
+    expect(migrateRecipe(legacy).recipe).toBe(
+      "random 16 | out @secret encoding=hex ext=hex"
+    );
+    expect(compileRecipe(migrateRecipe(legacy).recipe).validation.ok).toBe(true);
   });
 
   it("input step feeds runtime text through the pipeline", async () => {

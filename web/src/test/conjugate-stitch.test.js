@@ -18,6 +18,31 @@ import {
   PRESETS,
 } from "../lib/toolkit/recipe.js";
 
+/**
+ * Whether the recipe loads `label` from a slot anywhere.
+ *
+ * Asserted on the parsed AST, not the text: `in @ct` and the bare `@ct`
+ * serialize differently but parse to the identical `in` step, and the
+ * serializer deliberately prefers the bare form (RECIPE.md's own
+ * multi-chain examples are written that way). These tests used to
+ * string-match `in @ct` and so failed on a printer change that broke
+ * nothing — what they mean to assert is which slot the reverse chain
+ * consumes.
+ * @param {string} recipe
+ * @param {string} label e.g. "@ct"
+ */
+function loadsSlot(recipe, label) {
+  const { ast } = compileRecipe(recipe);
+  const want = label.replace(/^@/, "");
+  return (ast?.chains || []).some((chain) =>
+    (chain.steps || []).some(
+      (s) =>
+        s.name === "in" &&
+        String(s.params?.ref || "").replace(/^@/, "") === want
+    )
+  );
+}
+
 describe("bridgeSlotName", () => {
   it("produces a valid @label from pair ids", () => {
     expect(bridgeSlotName("slip39-secret")).toBe("@slip39_secret");
@@ -84,7 +109,7 @@ describe("stitchPresetPair", () => {
     const st = stitchPresetPair(forward, reverse);
     expect(st.mode).toBe("as-is");
     expect(st.bridge).toBe("@ct");
-    expect(st.recipe).toContain("in @ct");
+    expect(loadsSlot(st.recipe, "@ct")).toBe(true);
   });
 
   it("rewrites reverse input → in @bridge when forward ends with out", () => {
@@ -103,7 +128,7 @@ describe("stitchPresetPair", () => {
     const st = stitchPresetPair(forward, reverse);
     expect(st.mode).toBe("slot");
     expect(st.bridge).toBe("@payload");
-    expect(st.recipe).toContain("in @payload");
+    expect(loadsSlot(st.recipe, "@payload")).toBe(true);
     expect(st.recipe).not.toMatch(/^input\b/m);
     // to hex text → utf8 encodes to bytes → base64url is valid after stitch
     const { validation } = compileRecipe(st.recipe);
@@ -137,7 +162,7 @@ describe("stitchPresetPair", () => {
     expect(st.mode).toBe("slot");
     expect(st.bridge).toBe("@need_out");
     expect(st.recipe).toContain("| out @need_out");
-    expect(st.recipe).toContain("in @need_out");
+    expect(loadsSlot(st.recipe, "@need_out")).toBe(true);
   });
 
   it("collectOutLabels / collectConsumedSlots / lastChainFinalOut", () => {

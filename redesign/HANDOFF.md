@@ -110,10 +110,24 @@ npm run build
 npm test
 ```
 
-**Baseline: exactly 3 pre-existing failing files** — `conjugate-stitch`,
-`toolkit-engine`, `webauthn-mds`. They were failing before this work and are
-unrelated to it. **That number must never grow.** Currently 899 tests, 892
-passing.
+**Baseline: green. 957 tests, 957 passing, 77 files.** The three long-standing
+failures (`conjugate-stitch`, `toolkit-engine`, `webauthn-mds`) were fixed —
+and all three were **stale tests, not broken code**, which is why they
+survived so long:
+
+- `conjugate-stitch` string-matched `in @ct` after the serializer deliberately
+  switched to the canonical bare `@ct` (RECIPE.md's own multi-chain examples
+  use it). Now asserted on the parsed AST via a `loadsSlot` helper, so a
+  future printer change cannot break it again.
+- `toolkit-engine` used `out name=label`, retired from live parse when slot
+  labels started requiring `@`. Recipes updated, plus a new test pinning the
+  actual invariant: the legacy form must *fail* parse and be repaired by
+  `migrateRecipe`, never silently aliased.
+- `webauthn-mds` asserted `status === "true"`; the API returns
+  `"verified" | "unverified" | "unavailable"` (a corrupted assertion — its
+  sibling test had it right).
+
+**Any failure is now a real one.** Do not re-introduce a tolerated baseline.
 
 Two gates will catch you and are worth knowing about rather than fighting:
 `recipe-verbs.test.js` demands every op and every enum value appear in the verb

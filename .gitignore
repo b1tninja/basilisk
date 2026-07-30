@@ -22,6 +22,10 @@ marketplace/package/
 web/node_modules/
 web/dist/
 
+# Ephemeral agent worktrees — separate checkouts of this same repo, never
+# content of it. Without this, `git add -A` commits them as gitlinks.
+.claude/worktrees/
+
 # Terraform
 .terraform/
 *.tfstate
