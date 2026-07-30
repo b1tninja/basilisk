@@ -2557,6 +2557,29 @@ async function execStepBody(step, value, bindings, artifacts) {
         step.name === "quorum.offer" ? "creator" : "joiner"
       );
     }
+    case "jose.decode":
+    case "jose.sign":
+    case "jose.verify":
+    case "jose.encrypt":
+    case "jose.decrypt": {
+      // Lazy like the other product modules — a recipe that never touches a
+      // token never pays for the JOSE tables. Unlike clipboard/WebRTC this is
+      // pure WebCrypto, so it is worker-safe.
+      const jose = await import("./jose-ops.js");
+      const p = step.params || {};
+      switch (step.name) {
+        case "jose.decode":
+          return jose.execJoseDecode(value, p);
+        case "jose.sign":
+          return jose.execJoseSign(value, p, bindings);
+        case "jose.verify":
+          return jose.execJoseVerify(value, p, bindings);
+        case "jose.encrypt":
+          return jose.execJoseEncrypt(value, p, bindings);
+        default:
+          return jose.execJoseDecrypt(value, p, bindings);
+      }
+    }
     case "clipboard.read":
     case "clipboard.write": {
       // Lazy + main-thread only — navigator.clipboard does not exist in workers.

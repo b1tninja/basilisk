@@ -596,6 +596,36 @@
       "label": "WebAuthn MDS",
       "metaphor": "Directory document",
       "description": "webauthn.mds — MDS document with lens."
+    },
+    {
+      "id": "jose",
+      "group": "toolbox",
+      "label": "JOSE",
+      "metaphor": "Three dot-separated segments",
+      "description": "A compact JOSE serialization is header.payload.signature - three blocks with the separators between them, plus the signature spark (jose.sign, jose.verify).",
+      "refs": [
+        "RFC 7515 - JSON Web Signature"
+      ]
+    },
+    {
+      "id": "jose-jwe",
+      "group": "shelf",
+      "label": "JWE envelope",
+      "metaphor": "Sealed envelope",
+      "description": "A JWE carries an encrypted payload rather than a signed one - the envelope glyph with a lock shackle (jose.encrypt, jose.decrypt).",
+      "refs": [
+        "RFC 7516 - JSON Web Encryption"
+      ]
+    },
+    {
+      "id": "jose-decode",
+      "group": "tool",
+      "label": "Decode token",
+      "metaphor": "Segments under a lens",
+      "description": "Reading a token without verifying it - the three segments with an inspection lens, deliberately not the signature spark (jose.decode).",
+      "refs": [
+        "RFC 7519 - JSON Web Token"
+      ]
     }
   ]
 }

@@ -201,3 +201,6 @@ body.layout-app:has(#app > .toolkit-shell) {
 .toolbox-dot[data-toolbox-dot="webauthn"] {
   background: #79c0ff;
 }
+.toolbox-dot[data-toolbox-dot="jose"] {
+  background: #ff7b72;
+}

@@ -1395,9 +1395,170 @@ in @offer | rtc.answer ice=@ice | out @answer`,
       mode: "compile",
       skipReason: "needs navigator.clipboard (main-thread browser only)",
     },
+
+    // ── JOSE (RFC 7515 / 7516 / 7519) ──
+    // All real `run` cases: these are pure WebCrypto, so unlike the WebRTC and
+    // clipboard ops there is nothing here that needs a browser the test does
+    // not have. The per-algorithm matrices are below in `joseMatrix`.
+    {
+      id: "jose.decode",
+      recipe: "input | jose.decode | out @claims",
+      mode: "run",
+      bindings: { inputs: { text: { value: RFC7515_A1_TOKEN } } },
+      assert: (a) => {
+        const body = JSON.parse(String(a[a.length - 1].content));
+        if (body.verified !== false) throw new Error("decode must report unverified");
+        if (body.claims?.iss !== "joe") throw new Error("expected the RFC 7515 A.1 claims");
+      },
+    },
+    {
+      id: "jose.decode.format=compact",
+      recipe: "input | jose.decode compact | out @claims",
+      mode: "run",
+      bindings: { inputs: { text: { value: RFC7515_A1_TOKEN } } },
+      assert: (a) => {
+        const line = String(a[a.length - 1].content);
+        if (line.includes("\n")) throw new Error("compact format must be one line");
+      },
+    },
+    {
+      id: "jose.verify.expiry=ignore",
+      // Signature valid, `exp` long past: the default would refuse, and
+      // `expiry=ignore` is how you look at an old token on purpose.
+      recipe: `genkey ed25519 | out @k
+
+'{"sub":"basilisk","exp":1300819380}' | jose.sign key=@k | out @token
+
+@token | jose.verify key=@k expiry=ignore | out @claims`,
+      mode: "run",
+    },
   ];
 
   return cases;
+}
+
+/** RFC 7515 A.1 — the HS256 example, used as a decode fixture. */
+const RFC7515_A1_TOKEN =
+  "eyJ0eXAiOiJKV1QiLA0KICJhbGciOiJIUzI1NiJ9" +
+  ".eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGFtcGxlLmNvbS9pc19yb290Ijp0cnVlfQ" +
+  ".dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+
+/**
+ * JOSE algorithm matrices — one real sign→verify (or encrypt→decrypt) round
+ * trip per enum value, since every one of them is a WebCrypto primitive and
+ * a compile-only case would prove nothing about the wire format.
+ * @returns {VerbSmokeCase[]}
+ */
+function joseMatrix() {
+  /** JWS alg enum value → the `genkey` spelling that produces a matching key. */
+  const SIGN_KEYS = {
+    hs256: "genkey hmac/sha256",
+    hs384: "genkey hmac/sha384",
+    hs512: "genkey hmac/sha512",
+    rs256: "genkey rsa/2048 usage=sign padding=pkcs1 hash=sha-256",
+    ps256: "genkey rsa/2048 usage=sign padding=pss hash=sha-256",
+    es256: "genkey ec/p256 usage=sign",
+    es384: "genkey ec/p384 usage=sign",
+    es512: "genkey ec/p521 usage=sign",
+    eddsa: "genkey ed25519 usage=sign",
+  };
+
+  /** @type {VerbSmokeCase[]} */
+  const out = [];
+
+  const signAlgs = getStep("jose.sign")?.params?.find((p) => p.name === "alg")?.enum || [];
+  for (const alg of signAlgs) {
+    if (alg === "auto") {
+      // `auto` is the default, so it is credited by any case that omits
+      // `alg=` — but a case that *shows* it reading the key off an Ed25519
+      // slot is the one worth having.
+      out.push({
+        id: "jose.sign.alg=auto",
+        recipe: `genkey ed25519 | out @k
+
+'{"sub":"basilisk"}' | jose.sign key=@k | out @token
+
+@token | jose.verify key=@k | out @claims`,
+        mode: "run",
+        assert: (a) => {
+          const token = a.find((x) => x.label === "token");
+          if (!token) throw new Error("no token tile");
+          const header = JSON.parse(
+            Buffer.from(String(token.content).split(".")[0], "base64url").toString()
+          );
+          if (header.alg !== "EdDSA") throw new Error(`auto picked ${header.alg}, want EdDSA`);
+        },
+      });
+      continue;
+    }
+    const gen = SIGN_KEYS[alg];
+    if (!gen) continue;
+    const rsa = gen.includes("rsa/");
+    out.push({
+      id: `jose.sign.alg=${alg}`,
+      recipe: `${gen} | out @k
+
+'{"sub":"basilisk","iat":1700000000}' | jose.sign key=@k alg=${alg} | out @token
+
+@token | jose.verify key=@k alg=${alg} | out @claims`,
+      mode: "run",
+      timeoutMs: rsa ? 90_000 : 30_000,
+      assert: (a) => {
+        const claims = a.find((x) => x.label === "claims");
+        if (!claims) throw new Error("no verified claims tile");
+        if (JSON.parse(String(claims.content)).sub !== "basilisk") {
+          throw new Error("round trip lost the payload");
+        }
+      },
+    });
+  }
+
+  /** JWE alg enum value → the key that manages the CEK, and its slot name. */
+  const JWE_KEYS = {
+    dir: "genkey aes/256",
+    a128kw: "genkey aes/128",
+    a256kw: "genkey aes/256",
+    "rsa-oaep-256": "genkey rsa/2048 usage=encrypt hash=sha-256",
+  };
+  const jweAlgs = getStep("jose.encrypt")?.params?.find((p) => p.name === "alg")?.enum || [];
+  for (const alg of jweAlgs) {
+    const gen = JWE_KEYS[alg];
+    if (!gen) continue;
+    out.push({
+      id: `jose.encrypt.alg=${alg}`,
+      recipe: `${gen} | out @k
+
+'sealed by basilisk' | jose.encrypt key=@k alg=${alg} | out @jwe
+
+@jwe | jose.decrypt key=@k | out @plain`,
+      mode: "run",
+      timeoutMs: alg.startsWith("rsa") ? 90_000 : 30_000,
+      assert: (a) => {
+        const plain = a.find((x) => x.label === "plain");
+        if (String(plain?.content).trim() !== "sealed by basilisk") {
+          throw new Error(`JWE round trip returned ${plain?.content}`);
+        }
+      },
+    });
+  }
+
+  // `enc` needs a `dir` key of the matching size, which is the strictest
+  // pairing — an A128GCM content key is 128 bits, not "whatever the slot has".
+  const encs = getStep("jose.encrypt")?.params?.find((p) => p.name === "enc")?.enum || [];
+  for (const enc of encs) {
+    const bits = enc.slice(1, 4);
+    out.push({
+      id: `jose.encrypt.enc=${enc}`,
+      recipe: `genkey aes/${bits} | out @cek
+
+'sealed by basilisk' | jose.encrypt key=@cek enc=${enc} | out @jwe
+
+@jwe | jose.decrypt key=@cek | out @plain`,
+      mode: "run",
+    });
+  }
+
+  return out;
 }
 
 /**
@@ -1818,6 +1979,7 @@ export function listVerbSmokeCases() {
     ...pemLabelMatrix(),
     ...importMatrix(),
     ...miscParamMatrix(),
+    ...joseMatrix(),
   ];
 }
 

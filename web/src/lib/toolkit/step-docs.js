@@ -112,6 +112,13 @@ const STEP_DOCS = {
     label: "FIDO Alliance · Metadata Service",
   },
 
+  // ── JOSE — each op points at the RFC that defines its serialization ──
+  "jose.sign": { url: `${RFC}/rfc7515`, label: "RFC 7515 · JSON Web Signature" },
+  "jose.verify": { url: `${RFC}/rfc7515#section-5.2`, label: "RFC 7515 §5.2 · Validating a JWS" },
+  "jose.encrypt": { url: `${RFC}/rfc7516`, label: "RFC 7516 · JSON Web Encryption" },
+  "jose.decrypt": { url: `${RFC}/rfc7516#section-5.2`, label: "RFC 7516 §5.2 · Decrypting a JWE" },
+  "jose.decode": { url: `${RFC}/rfc7519`, label: "RFC 7519 · JSON Web Token" },
+
   // ── WebRTC ──
   "rtc.ice": {
     url: `${MDN}/RTCPeerConnection/RTCPeerConnection#iceservers`,

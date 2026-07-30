@@ -39,6 +39,7 @@ cd web && npm run glyphs
 | `hkp` | HKP | Keyserver hub with radiating spokes | HTTP Keyserver Protocol lookup/search — a central node with compass spokes (directory + fetch). <br><small>OpenPGP HKP</small> |
 | `sss` | SSS / BLIP39 | Stacked share cards | Shamir secret sharing / BLIP39 — offset stacked cards as K-of-N fragments (any threshold recovers; a single share is useless alone). <br><small>Shamir 1979; puzzle/share UX metaphor</small> |
 | `webauthn` | WebAuthn | FIDO passkey (person + overlapping key) | Official passkey layout: person on the left, simplified key on the right slightly overlapping (create, prf, caps). <br><small>FIDO Alliance Passkey Icon Usage Guidelines</small> |
+| `jose` | JOSE | Three dot-separated segments | A compact JOSE serialization is header.payload.signature - three blocks with the separators between them, plus the signature spark (jose.sign, jose.verify). <br><small>RFC 7515 - JSON Web Signature</small> |
 
 ## Shelves
 
@@ -65,6 +66,7 @@ cd web && npm run glyphs
 | `attestation` | Attestation / MDS | Shield with check | Soft attestation / FIDO MDS — shield containing a checkmark. |
 | `directory` | Directory | People / contacts | HKP directory search — two contact silhouettes (alias of recipients). |
 | `recipients` | Recipients | People / contacts | Recipients list / merge — two contact silhouettes. |
+| `jose-jwe` | JWE envelope | Sealed envelope | A JWE carries an encrypted payload rather than a signed one - the envelope glyph with a lock shackle (jose.encrypt, jose.decrypt). <br><small>RFC 7516 - JSON Web Encryption</small> |
 
 ## Toolbar / kernel
 
@@ -130,6 +132,7 @@ cd web && npm run glyphs
 | `wa-caps` | WebAuthn caps | Passkey with check | webauthn.caps — person plus readiness check. |
 | `wa-attest` | WebAuthn attest | Shield with check | webauthn.attest — attestation shield. |
 | `wa-mds` | WebAuthn MDS | Directory document | webauthn.mds — MDS document with lens. |
+| `jose-decode` | Decode token | Segments under a lens | Reading a token without verifying it - the three segments with an inspection lens, deliberately not the signature spark (jose.decode). <br><small>RFC 7519 - JSON Web Token</small> |
 
 ## Asset format
 

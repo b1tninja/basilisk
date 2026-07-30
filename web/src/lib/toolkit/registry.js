@@ -28,7 +28,7 @@ import { POLYMORPHIC_STEPS, stepAcceptsRefined, typeOf } from "./types.js";
  */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
 /** @typedef {"enum"|"int"|"string"|"bool"|"flag"|"slot"} ParamType */
-/** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"|"agent"|"hkp"|"webrtc"} Toolbox */
+/** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"|"agent"|"hkp"|"webrtc"|"jose"} Toolbox */
 /** @typedef {string} Shelf */
 /** @typedef {import("./types.js").StepOverload} StepOverload */
 /** @typedef {import("./types.js").RefinedType} RefinedType */
@@ -127,6 +127,7 @@ export const TOOLBOX_META = {
   sss: { label: "SSS / BLIP39", badge: "SSS", order: 7, glyph: "sss", color: "#e3b341" },
   webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 8, glyph: "webauthn", color: "#79c0ff" },
   webrtc: { label: "WebRTC", badge: "WebRTC", order: 9, glyph: "agent", color: "#58a6ff" },
+  jose: { label: "JOSE", badge: "JOSE", order: 10, glyph: "jose", color: "#ff7b72" },
 };
 
 /**
@@ -236,6 +237,10 @@ export const SHELF_META = {
   recipients: { label: "Recipients", order: 2, glyph: "recipients" },
   // WebRTC category groups (design v2 §25b) — the one category deep enough to
   // need sub-headers: ICE/STUN, Peer & signaling, Data channel, Stats.
+  // JOSE splits the way the RFCs do: a signed token and an encrypted one are
+  // different objects with different failure modes, not two directions of one.
+  token: { label: "Token (JWS / JWT)", order: 0, glyph: "jose" },
+  envelope: { label: "Envelope (JWE)", order: 1, glyph: "jose-jwe" },
   ice: { label: "ICE / STUN", order: 0, glyph: "ports" },
   peer: { label: "Peer & signaling", order: 1, glyph: "agent" },
   channel: { label: "Data channel", order: 2, glyph: "agent" },
@@ -2263,6 +2268,161 @@ export const STEPS = [
       },
     ],
   },
+  // ── JOSE toolbox — JWS / JWE / JWT (RFC 7515 / 7516 / 7519) ──
+  //
+  // Its own toolbox rather than a shelf under WebCrypto: JOSE is a wire
+  // format with its own key metadata, header parameters, and failure modes,
+  // and folding it into `webcrypto` would put `jose.decode` — which does no
+  // crypto at all — beside `aes-gcm`. The ops do run on WebCrypto, but so
+  // does OpenPGP-adjacent work that has its own toolbox for the same reason.
+  {
+    name: "jose.decode",
+    kind: "transform",
+    toolbox: "jose",
+    shelf: "token",
+    doc: "Inspect a compact JWS/JWE **without verifying it** — header plus claims, marked unverified. This is the safe first move on a token you were handed: it never checks a signature, so it never implies one was valid. Example: `input | jose.decode | out @claims`. To trust the contents, use `jose.verify`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "format",
+        type: "enum",
+        positional: true,
+        default: "json",
+        enum: ["json", "compact"],
+        doc: "Pretty-printed JSON (default) or one line",
+      },
+    ],
+  },
+  {
+    name: "jose.sign",
+    kind: "transform",
+    toolbox: "jose",
+    shelf: "token",
+    conjugate: "jose.verify",
+    pairCaption: "JWS (RFC 7515)",
+    pairLabels: { forward: "Sign", reverse: "Verify" },
+    doc: "Sign the pipeline payload into a compact JWS (a JWT when the payload is JSON claims). `alg=auto` reads the algorithm off the key; naming one is checked against the key, never trusted. Example: `input | jose.sign key=@k alg=es256 | out @token`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Live signing key slot (`@k`) — private half or HMAC secret",
+      },
+      {
+        name: "alg",
+        type: "enum",
+        default: "auto",
+        enum: ["auto", "hs256", "hs384", "hs512", "rs256", "ps256", "es256", "es384", "es512", "eddsa"],
+        doc: "JWS algorithm; `auto` derives it from the key. Serialized uppercase in the header (es256 → ES256).",
+      },
+      {
+        name: "typ",
+        type: "string",
+        default: "JWT",
+        doc: "Header `typ` (empty to omit)",
+      },
+      {
+        name: "kid",
+        type: "string",
+        default: "",
+        doc: "Optional header `kid` (key id)",
+      },
+    ],
+  },
+  {
+    name: "jose.verify",
+    kind: "transform",
+    toolbox: "jose",
+    shelf: "token",
+    conjugateOf: "jose.sign",
+    doc: "Verify a compact JWS and emit its payload. Fail-loud with no soft mode — an unverified payload is attacker-chosen, so there is nothing to branch on; inspect those with `jose.decode`. Refuses `alg=none` and any header that disagrees with the bound key (algorithm confusion). `exp`/`nbf` are checked unless `expiry=ignore`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Live verification key slot (`@pub`) — public half or HMAC secret",
+      },
+      {
+        name: "alg",
+        type: "enum",
+        default: "auto",
+        enum: ["auto", "hs256", "hs384", "hs512", "rs256", "ps256", "es256", "es384", "es512", "eddsa"],
+        doc: "Require this algorithm (`auto` = whatever the key supports; the header must match the key either way)",
+      },
+      {
+        name: "expiry",
+        type: "enum",
+        default: "check",
+        enum: ["check", "ignore"],
+        doc: "Enforce `exp` / `nbf` after the signature checks out, or report them without failing",
+      },
+    ],
+  },
+  {
+    name: "jose.encrypt",
+    kind: "transform",
+    toolbox: "jose",
+    shelf: "envelope",
+    conjugate: "jose.decrypt",
+    pairCaption: "JWE (RFC 7516)",
+    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
+    doc: "Encrypt the payload into a compact JWE. AES-GCM content encryption only (`enc=a128gcm|a192gcm|a256gcm`); key management is `dir` (the slot key *is* the CEK), AES-KW, or RSA-OAEP-256. Example: `input | jose.encrypt key=@cek | out @jwe`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Live key slot — the CEK for `dir`, the KEK for AES-KW, the RSA public key for RSA-OAEP-256",
+      },
+      {
+        name: "alg",
+        type: "enum",
+        default: "dir",
+        enum: ["dir", "a128kw", "a256kw", "rsa-oaep-256"],
+        doc: "Key-management algorithm (uppercased in the header: a256kw → A256KW)",
+      },
+      {
+        name: "enc",
+        type: "enum",
+        default: "a256gcm",
+        enum: ["a128gcm", "a192gcm", "a256gcm"],
+        doc: "Content encryption. Only the AEAD modes are implemented — A*CBC-HS* is a composite construction WebCrypto cannot do in one call.",
+      },
+      {
+        name: "kid",
+        type: "string",
+        default: "",
+        doc: "Optional header `kid`",
+      },
+    ],
+  },
+  {
+    name: "jose.decrypt",
+    kind: "transform",
+    toolbox: "jose",
+    shelf: "envelope",
+    conjugateOf: "jose.encrypt",
+    doc: "Decrypt a compact JWE and emit its plaintext. `alg` / `enc` come from the token's protected header, which is also the AEAD's additional data — tampering with either breaks the tag rather than changing how it decrypts.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Live key slot — the CEK for `dir`, the KEK for AES-KW, the RSA private key for RSA-OAEP-256",
+      },
+    ],
+  },
   {
     name: "inspect",
     kind: "transform",
@@ -2781,6 +2941,11 @@ export const STEP_GLYPHS = {
   "webauthn.caps": "wa-caps",
   "webauthn.attest": "wa-attest",
   "webauthn.mds": "wa-mds",
+  "jose.decode": "jose-decode",
+  "jose.sign": "jose",
+  "jose.verify": "jose",
+  "jose.encrypt": "jose-jwe",
+  "jose.decrypt": "jose-jwe",
 };
 
 for (const step of STEPS) {
