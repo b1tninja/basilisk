@@ -23,7 +23,7 @@ import {
 } from "../lib/toolkit/registry.js";
 
 describe("toolbox shelf taxonomy", () => {
-  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → age → Agent → HKP → SSS → WebAuthn → WebRTC", () => {
+  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → age → Agent → HKP → SSS → WebAuthn → WebRTC → JOSE", () => {
     const ordered = Object.entries(TOOLBOX_META)
       .sort((a, b) => a[1].order - b[1].order)
       .map(([k]) => k);
@@ -41,6 +41,7 @@ describe("toolbox shelf taxonomy", () => {
       "sss",
       "webauthn",
       "webrtc",
+      "jose",
     ]);
   });
 

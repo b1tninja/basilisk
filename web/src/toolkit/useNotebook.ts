@@ -372,6 +372,7 @@ export function useNotebook() {
         // tips on purpose (a snapshot would retain raw private JWK fields the
         // masked text dump does not), so its absence is meaningful, not a gap.
         inspectSnapshot: a.inspectSnapshot,
+        jose: a.jose,
       }))
     );
   }, [chains, kernelEpoch]);

@@ -879,6 +879,58 @@ export function inferParamDrivenType(name, current, params = {}) {
     };
   }
 
+  // ── JOSE (RFC 7515 / 7516 / 7519) ──
+  //
+  // Modeled as refined `text`, not as new base types. A compact JWS *is* a
+  // string on the wire, and every op that already accepts text — `out`,
+  // `clipboard.write`, `digest`, `encode` — should keep accepting one. A new
+  // base would have bought a stricter arrow at the cost of making every
+  // existing text consumer refuse a token, and `resolveStepType` would then
+  // need a route for it everywhere. The `kind` refinement carries the
+  // distinction that matters (`text/jws` vs `text/jwe`), which is exactly
+  // what refinements are for — the same call `text/pem` already makes.
+  if (name === "jose.sign" || name === "jose.encrypt") {
+    if (current.base !== "text" && current.base !== "bytes") {
+      return {
+        ok: false,
+        error: `"${name}" expects the payload as text or bytes, got ${formatType(current)}`,
+      };
+    }
+    return {
+      ok: true,
+      output: typeOf("text", {
+        kind: name === "jose.sign" ? "jws" : "jwe",
+        encoding: "jose",
+      }),
+    };
+  }
+
+  if (name === "jose.decode" || name === "jose.verify" || name === "jose.decrypt") {
+    if (current.base !== "text") {
+      return {
+        ok: false,
+        error: `"${name}" expects a compact JOSE token as text, got ${formatType(current)}`,
+      };
+    }
+    if (name === "jose.verify" && current.kind === "jwe") {
+      return {
+        ok: false,
+        error: `"jose.verify" expects text/jws — a JWE is encrypted, not signed; use "jose.decrypt"`,
+      };
+    }
+    if (name === "jose.decrypt" && current.kind === "jws") {
+      return {
+        ok: false,
+        error: `"jose.decrypt" expects text/jwe — a JWS is signed, not encrypted; use "jose.verify"`,
+      };
+    }
+    // `jose.decode` always reports JSON; the other two emit whatever the
+    // token carried, which is JSON for a JWT and opaque otherwise. `json` is
+    // the honest common answer — nothing downstream branches on it, and
+    // claiming `opaque` would understate what a JWT payload is.
+    return { ok: true, output: typeOf("text", { kind: "json" }) };
+  }
+
   if (name === "utf8") {
     if (current.base === "bytes") {
       return { ok: true, output: typeOf("text", { kind: current.kind || "opaque" }) };
