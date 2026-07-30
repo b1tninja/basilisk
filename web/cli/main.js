@@ -440,9 +440,11 @@ export async function main(argv, io) {
   }
   const { command, positional, options } = parsed;
 
-  if (!command || options["--help"] || options["-h"]) {
+  // Asking for help is not an error; being given nothing to do is.
+  const askedForHelp = options["--help"] === true || options["-h"] === true;
+  if (askedForHelp || !command) {
     io.out(USAGE);
-    return command ? EXIT.ok : EXIT.usage;
+    return askedForHelp ? EXIT.ok : EXIT.usage;
   }
 
   try {
