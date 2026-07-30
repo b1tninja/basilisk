@@ -15,6 +15,9 @@
  * the only honest reading of a vector whose exact header is unreproducible.
  */
 import { describe, expect, it } from "vitest";
+import { PRESETS, compileRecipe, recipeChains } from "../lib/toolkit/recipe.js";
+import { runRecipe } from "../lib/toolkit/engine.js";
+import { cellSlotIO, wiredForCell } from "../lib/toolkit/slot-graph.js";
 import {
   claimTiming,
   decodeCompact,
@@ -619,6 +622,85 @@ describe("claim timing", () => {
       expired: false,
       notYetValid: false,
     });
+  });
+});
+
+/* ────────────────────────────── templates ────────────────────────────── */
+
+describe("JOSE templates", () => {
+  const preset = (id) => PRESETS.find((p) => p.id === id);
+
+  it("compiles every JOSE preset on its own", () => {
+    // Standalone compilation is the gate that decided the shape of these:
+    // a companion pair's inverse must work when loaded alone, and a JWS
+    // verification cannot — it needs a key, and no paste panel conjures one.
+    // So sign→verify ships as one slot-wired preset instead of a pair.
+    const jose = PRESETS.filter((p) => p.group === "JOSE");
+    expect(jose.map((p) => p.id)).toEqual([
+      "jwt-decode",
+      "jwt-sign-es256",
+      "jwe-roundtrip",
+    ]);
+    for (const p of jose) {
+      expect(p.pair, `${p.id} should not claim a pair it cannot honour`).toBeUndefined();
+      const { validation } = compileRecipe(p.recipe);
+      expect(
+        validation.errors.map((e) => e.message),
+        p.id
+      ).toEqual([]);
+    }
+  });
+
+  it("wires the verify cell through slots, not through a paste panel", () => {
+    // The split-cell precedent: a later cell must not block the notebook on an
+    // input an earlier cell is about to produce. Both of the verify cell's
+    // needs are labelled slots written above it, so `wiredForCell` reports
+    // them wired rather than missing — and nothing here opens an Inputs panel.
+    const { ast, validation } = compileRecipe(preset("jwt-sign-es256").recipe);
+    expect(validation.errors.map((e) => e.message)).toEqual([]);
+    const chains = recipeChains(ast);
+    // genkey cell, sign cell, verify cell.
+    expect(chains).toHaveLength(3);
+
+    const verify = cellSlotIO(chains[2]);
+    expect([...verify.consumes].sort()).toEqual(["jwtkey", "token"]);
+
+    const { wiredSlots } = wiredForCell(chains, 2);
+    expect([...wiredSlots].sort()).toEqual(["jwtkey", "token"]);
+  });
+
+  it("runs the sign → verify template end to end", async () => {
+    const { ast } = compileRecipe(preset("jwt-sign-es256").recipe);
+    const arts = await runRecipe(ast, {
+      inputs: { text: { value: '{"sub":"alice","exp":4102444800}' } },
+    });
+    const claims = arts.find((a) => a.label === "claims");
+    expect(JSON.parse(String(claims.content)).sub).toBe("alice");
+    // The token tile carries the reader's body, and says it was verified.
+    const token = arts.find((a) => a.label === "token");
+    expect(token.jose.kind).toBe("jws");
+    expect(token.jose.header.alg).toBe("ES256");
+    expect(claims.jose.verified).toBe(true);
+  });
+
+  it("runs the JWE round trip end to end", async () => {
+    const { ast, validation } = compileRecipe(preset("jwe-roundtrip").recipe);
+    expect(validation.errors.map((e) => e.message)).toEqual([]);
+    const arts = await runRecipe(ast, {
+      inputs: { text: { value: "sealed payload" } },
+    });
+    expect(String(arts.find((a) => a.label === "plain").content)).toBe("sealed payload");
+  });
+
+  it("decodes without a key, and the tile is marked unverified", async () => {
+    const { ast } = compileRecipe(preset("jwt-decode").recipe);
+    const arts = await runRecipe(ast, { inputs: { text: { value: A1.token } } });
+    const tile = arts.find((a) => a.label === "claims");
+    expect(tile.jose.verified).toBe(false);
+    expect(tile.jose.claims.iss).toBe("joe");
+    // Public claims are not masked — masking them would hide the answer the
+    // template exists to give.
+    expect(tile.sensitive).toBeFalsy();
   });
 });
 

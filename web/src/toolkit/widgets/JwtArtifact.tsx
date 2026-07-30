@@ -215,7 +215,13 @@ function Timeline({
       </p>
     );
   }
-  const start = nbf ?? iat ?? Math.min(now, exp);
+  // A token with neither `iat` nor `nbf` has no stated beginning. The bar
+  // still needs one, so it falls back to "now or the expiry, whichever is
+  // earlier" — but that is an assumption, not a claim, so the left-hand
+  // caption is omitted rather than printed. Printing it produced the same
+  // timestamp on both ends of an already-expired token, which read as a bug.
+  const statedStart = nbf ?? iat;
+  const start = statedStart ?? Math.min(now, exp);
   const span = Math.max(1, exp - start);
   const left = exp - now;
   const remaining = Math.min(Math.max(left, 0), span);
@@ -245,7 +251,9 @@ function Timeline({
         <span data-jwt-tone={tone} data-jwt-fill={bucket} className="jwt-fill absolute inset-y-0 left-0" />
       </div>
       <div className="flex items-baseline justify-between gap-2 text-[9.5px] text-[var(--muted-foreground)]">
-        <span className="font-mono">{fmtEpoch(start)}</span>
+        <span className="font-mono">
+          {statedStart != null ? fmtEpoch(statedStart) : ""}
+        </span>
         <span data-jwt-tone={tone} className="jwt-value font-mono font-semibold">
           {notYetValid
             ? `valid ${relativeSeconds((nbf as number) - now)}`

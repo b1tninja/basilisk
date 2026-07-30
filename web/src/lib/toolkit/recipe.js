@@ -1557,6 +1557,7 @@ export const PRESET_GROUP_ORDER = Object.freeze([
   "OpenPGP",
   "Directory",
   "WebAuthn",
+  "JOSE",
   "Encoding",
 ]);
 
@@ -1985,6 +1986,45 @@ in @ct | base64url.decode | aes-gcm -d key=@cek | utf8 | out @plain`,
     recipe: `input | webauthn.attest | out @att
 
 in @att | webauthn.mds | out @mds`,
+  },
+  {
+    id: "jwt-decode",
+    group: "JOSE",
+    title: "Decode a JWT (unverified)",
+    blurb:
+      "Paste a token in Inputs and read its header and claims — without checking the signature, and labelled as such. The safe first move on a token you were handed; nothing leaves the page. To trust what it says, run the verify companion instead.",
+    recipe: "input | jose.decode | out @claims",
+  },
+  {
+    // Sign and verify ship as *one* preset rather than a companion pair, the
+    // way `aes-gcm-roundtrip` and `hmac-sign-verify` already do. A pair's
+    // inverse has to stand on its own when loaded alone, which the SSS
+    // inverses manage because `shares` opens a paste panel — but a JWS
+    // verification needs a key, and there is no panel that conjures one. The
+    // cells are still slot-wired (`@jwtkey`, `@token`), so `slot-graph` gates
+    // them per cell exactly as it would across a pair.
+    id: "jwt-sign-es256",
+    group: "JOSE",
+    title: "Sign & verify a JWT (ES256)",
+    blurb:
+      'Generate a P-256 signing key, sign JSON claims from Inputs into a compact JWS, then verify it back. Try `{"sub":"alice","exp":2000000000}` — the token tile shows the claims and a live expiry clock. Verification enforces `exp`; add `expiry=ignore` to inspect an old token anyway.',
+    recipe: `genkey ec/p256 usage=sign | out @jwtkey
+
+input | jose.sign key=@jwtkey alg=es256 | out @token
+
+@token | jose.verify key=@jwtkey | out @claims`,
+  },
+  {
+    id: "jwe-roundtrip",
+    group: "JOSE",
+    title: "Encrypt & decrypt a JWE",
+    blurb:
+      "Wrap a payload in a compact JWE under a generated AES-256 key (`dir` means that key *is* the content key, so there is no wrapped-CEK segment), then unseal it. The protected header is the AEAD's additional data — editing `alg` or `enc` in transit breaks the tag rather than changing how it decrypts.",
+    recipe: `genkey aes/256 | out @cek
+
+input | jose.encrypt key=@cek | out @jwe
+
+@jwe | jose.decrypt key=@cek | out @plain`,
   },
   {
     id: "base32-id",

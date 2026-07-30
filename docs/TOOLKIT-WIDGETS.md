@@ -28,6 +28,18 @@
  * | **MenuPopover** | Toolbar menus (shadcn DropdownMenu) |
  * | **PresetMenu** | Templates gallery (categories, search, companion pairs) |
  * | **TypeCard** | Pipeline-type docs / producers / consumers / literal constructor |
+ * | **JwtArtifact** | JWS/JWE reader — verdict banner, header/claims, live expiry bar |
+ *
+ * `JwtArtifact` renders any artifact carrying a `jose` body (set by the
+ * `jose.*` ops via `meta.jose`). The verdict travels *on the artifact* rather
+ * than being re-derived from the token text, because only the op that ran
+ * knows whether a key checked out — a widget parsing the token itself could
+ * report nothing but "unverified". Two rules it enforces: an unverified body
+ * never reaches the verified appearance (no green anywhere, including the
+ * `exp` row and the validity bar), and the expiry clock ticks live rather
+ * than freezing at run time. Tones ride `data-jwt-tone` with the palette
+ * enumerated in toolkit.css; the bar width is bucketed into twelfths because
+ * a computed percentage would need an inline style the CSP refuses.
  *
  * ## Types in the toolbox
  *

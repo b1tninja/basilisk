@@ -266,6 +266,7 @@ in @msg | verify key=@kp signature=@sig | out @ok
 | Agent (My Keys) | `agent.unlock` / `agent.pub` / `agent.list` / `agent.save` | migrate `gpg.vault` → `agent.unlock`; emit `openpgp-key` | dotted |
 | HKP (keyserver) | `hkp.get` / `hkp.search` / `hkp.filter` / `recipients.merge` | search → `recipients`; get → `openpgp-key/public` | dotted |
 | WebCrypto AEAD/cipher/RSA | `aes-gcm`, `aes-cbc`, `aes-ctr`, `rsa-oaep`, `rsa-pkcs1` | `aes-256-gcm`, `AES/GCM/NoPadding` (live); `encrypt`/`decrypt` sugar via migrator only | hyphen |
+| JOSE (JWS / JWE / JWT) | `jose.decode` / `jose.sign` / `jose.verify` / `jose.encrypt` / `jose.decrypt` | `key=@slot` on all but `decode`; alg/enc values are lowercase (`alg=es256` → header `ES256`) | dotted |
 
 Write concrete cipher ops in recipes. Bare `encrypt` / `decrypt` are **migrator-only** (not OpenPGP): Upgrade recipe rewrites known sugar to `aes-gcm` / …; live parse hard-errors.
 
@@ -329,6 +330,37 @@ random 10 | base32 | out @id
 ```
 
 WebCrypto `verify` is fail-loud by default; `verify -q` / `soft=true` emits bool `true` or `false` (setup errors still throw). Same soft mode on `gpg.verify`. Prefer fail-loud for auth decisions. `aes-cbc` / `aes-ctr` are **unauthenticated** — prefer `aes-gcm` for new work.
+
+### JOSE (RFC 7515 / 7516 / 7519)
+
+```text
+genkey ec/p256 usage=sign | out @jwtkey
+
+input | jose.sign key=@jwtkey alg=es256 | out @token
+@token | jose.verify key=@jwtkey | out @claims
+
+input | jose.decode | out @unverified
+
+genkey aes/256 | out @cek
+input | jose.encrypt key=@cek | out @jwe
+@jwe | jose.decrypt key=@cek | out @plain
+```
+
+Typed as refined **`text`** — `text/jws`, `text/jwe`, and `text/json` for a
+decoded or verified body. A compact JWS is a string on the wire, so no new base
+type: `text/jws` is the same call `text/pem` makes.
+
+| Rule | Behavior |
+|------|----------|
+| `jose.decode` | Never checks a signature; output leads with `"verified": false` and the tile renders with an unverified banner |
+| `jose.verify` | Fail-loud, **no soft mode** — an unverified payload is attacker-chosen. Refuses `alg=none`, and refuses any header that disagrees with the bound key (algorithm confusion) |
+| `expiry=` | `check` (default) enforces `exp`/`nbf` after the signature checks out; `ignore` reports them without failing |
+| `alg=` / `enc=` | Lowercase in the recipe, uppercase on the wire (`es256` → `ES256`, `a256gcm` → `A256GCM`) |
+| Sensitivity | A signed token and a JWE are bearer material (masked, revealable via `out`); decoded/verified claims are not |
+
+Not implemented: `alg=none`, RSA1_5, `A*CBC-HS*` content encryption, ECDH-ES,
+PBES2. The first is refused on principle; the rest need composition
+SubtleCrypto does not do in one call.
 
 RSA sign keys: `genkey rsa/2048 padding=pss` (default) or `padding=pkcs1` (discouraged RSASSA-PKCS1-v1_5); optional `hash=sha-256|384|512`. Content encrypt stays `rsa-oaep` (optional `label=`); key wrap uses `wrap mode=rsa-oaep`. `unwrap` yields a live **`key` tip** — pipe `export raw` / `export jwk` before `to hex`. SubtleCrypto knobs: `aes-gcm tagLength=`, `aes-ctr length=` (counter bits; IV packing stays 16 bytes), `sign`/`verify` `saltLength=` (RSA-PSS) and `hash=` (ECDSA override; `auto` = curve default). Symmetric sizes include `aes/192` and `hmac/sha384`.
 
