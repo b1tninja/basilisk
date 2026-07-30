@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Recipe language corrections — design reference (turns 46-48)</title>
+<style>body{margin:0;background:#010409;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}</style>
+</head>
+<body>
+<section id="t48" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t48" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">48</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">Auditing the WebRTC/Types work (21-31) against the real grammar</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Same exercise 47 just did for tee/foreach, applied backward to the earlier WebRTC toolbox and Types work — now that <code style="color:#e6edf3">docs/RECIPE.md</code> and the real <code style="color:#e6edf3">type-registry.js</code> are both actually read. One real naming bug, one design that should reuse an existing idiom instead of inventing a parallel one, and one piece of good news worth stating plainly rather than re-litigating.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 48a naming convention violation -->
+<div id="48a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#48a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">48a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Real bug: six WebRTC op names break the naming convention</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Every real namespaced op in RECIPE.md is <code style="color:#e6edf3">namespace.singlelowercaseword</code> — <code style="color:#e6edf3">gpg.encrypt</code>, <code style="color:#e6edf3">hkp.get</code>, <code style="color:#e6edf3">agent.unlock</code>, <code style="color:#e6edf3">webauthn.prf</code>, <code style="color:#e6edf3">sss.split</code>. Turns 23-30's WebRTC ops (<code style="color:#e6edf3">quorum.*</code> is fine) introduced six that camelCase instead, which no real op anywhere in the language does.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:grid;grid-template-columns:1fr 1fr;padding:7px 12px;border-bottom:1px solid #1c2229;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781"><span>Wrong (23-30)</span><span>Fixed</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;padding:6px 12px;border-bottom:1px solid #161b22"><code style="font:400 10px ui-monospace,Menlo,monospace;color:#ff7b72">rtc.gatherCandidates</code><code style="font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">rtc.gather</code></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;padding:6px 12px;border-bottom:1px solid #161b22"><code style="font:400 10px ui-monospace,Menlo,monospace;color:#ff7b72">rtc.checkConnectivity</code><code style="font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">rtc.check</code></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;padding:6px 12px;border-bottom:1px solid #161b22"><code style="font:400 10px ui-monospace,Menlo,monospace;color:#ff7b72">rtc.connectionState</code><code style="font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">rtc.state</code></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;padding:6px 12px;border-bottom:1px solid #161b22"><code style="font:400 10px ui-monospace,Menlo,monospace;color:#ff7b72">rtc.dataChannelStats</code><code style="font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">rtc.stats</code></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;padding:6px 12px"><code style="font:400 10px ui-monospace,Menlo,monospace;color:#ff7b72">rtc.createOffer/Answer</code><code style="font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">rtc.offer / rtc.answer</code></div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Every WEBRTC-TOOLBOX.md table entry needs the rename</div>
+    find/replace only — no behavior, params, or<br>
+    UI in turns 23-30 changes, just the six names
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781"><code style="color:#e6edf3">rtc.offer</code>/<code style="color:#e6edf3">rtc.answer</code> also now read cleanly distinct from <code style="color:#e6edf3">quorum.offer</code> — the raw-SDP escape hatch versus the wrapped session op, which was always the intended relationship (30d) but the old camelCase names obscured it visually.</div>
+  </div>
+</div>
+
+<!-- 48b quorum.recv should reuse foreach/bundle -->
+<div id="48b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#48b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">48b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">quorum.recv already has a real-language answer: bundle + foreach</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Turn 30c invented a bespoke fix for "an op that produces many values over time" — <code style="color:#e6edf3">cell.output</code> becomes an array, plus a new collect-vs-run-downstream toggle. But the language already solves exactly this shape: <code style="color:#e6edf3">foreach</code>'s tip is a <strong style="color:#e6edf3">bundle</strong> of per-item tips, explicitly "do not pipe the bundle into cipher/KDF ops; use <code style="color:#e6edf3">@slot</code>s written in the body." Multiple messages arriving over a session is structurally the same problem sss.split's shares already are.</div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px solid #30363d;border-radius:8px;font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e;line-height:1.8">
+    <span style="color:#ff7b72">// 30c, bespoke</span><br>
+    cell.output: OutputArtifact[]<br>
+    recv.onMessageMode: 'auto-run' | 'collect'<br><br>
+    <span style="color:#4cde82">// reusing the real idiom</span><br>
+    quorum.recv | foreach<br>
+    &nbsp;&nbsp;- out @msg
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Not a full retraction — the UI insight still holds</div>
+    still true: needs a live-appending display,<br>
+    still true: default should not silently fan out
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">30c's actual UI observation (a live-appending list, defaulting to inert rather than auto-cascading) is still correct and still needed — what's wrong is inventing a new <code style="color:#e6edf3">cell.output</code> shape and a bespoke mode toggle when <code style="color:#e6edf3">foreach</code> over a live-appending source already models "one op, many results over iterations" as a first-class bundle. The retrofit target becomes: does <code style="color:#e6edf3">foreach</code>'s body support a <em>live, still-growing</em> source (a data channel) rather than only a pre-computed one (shares)? That's a real, narrower question for whoever owns the engine — smaller than 30c's original ask.</div>
+  </div>
+</div>
+
+<!-- 48c quorum.mesh should reuse foreach -->
+<div id="48c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#48c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">48c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">quorum.mesh's MESH region may not need to exist</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">29c invented a new cell region (a roster list, sibling to SESSION) to wrap <code style="color:#e6edf3">sss.split</code>'s <code style="color:#e6edf3">n</code> shares into <code style="color:#e6edf3">n</code> parallel sessions. RECIPE.md's own real example for shares is a plain <code style="color:#e6edf3">foreach</code> body — the same mechanism might just work as-is, no new region: <code style="color:#e6edf3">sss.split | blip39 | foreach - quorum.offer | send</code>, one iteration per share, using the SESSION region (21a) already built per-cell rather than a new roster widget.</div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px solid #30363d;border-radius:8px;font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e;line-height:1.8">
+    sss.split threshold=2 shares=3<br>
+    | blip39<br>
+    | foreach<br>
+    &nbsp;&nbsp;- quorum.offer | quorum.send
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Flagged, not resolved — needs an engine answer</div>
+    open question: can a body step (quorum.offer)<br>
+    legitimately pause the whole foreach mid-iteration?
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">This isn't a confident retraction the way 48a/47d are — RECIPE.md never shows a body step that blocks waiting for a network peer, only ever synchronous per-item transforms. If <code style="color:#e6edf3">foreach</code>'s execution model can't pause per-iteration for <code style="color:#e6edf3">quorum.offer</code>'s waiting-peer state (21a), then 29c's dedicated MESH region is the right call after all — the UI as designed doesn't need to change either way, this is purely a question for whoever implements whether the roster UI is load-bearing or removable in favor of an existing idiom.</div>
+  </div>
+</div>
+
+<!-- 48d validated, not broken -->
+<div id="48d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#48d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">48d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">The good news: the network type system was already right</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Worth stating plainly rather than re-auditing what already passed: the real <code style="color:#e6edf3">type-registry.js</code> (read for turn 32) already declares <code style="color:#e6edf3">host</code>, <code style="color:#e6edf3">endpoint</code>, <code style="color:#e6edf3">candidate</code>, <code style="color:#e6edf3">sdp</code>, <code style="color:#e6edf3">certificate</code>, <code style="color:#e6edf3">session</code>, <code style="color:#e6edf3">channel</code>, <code style="color:#e6edf3">peer</code>, <code style="color:#e6edf3">connstate</code>, <code style="color:#e6edf3">stats</code> as its own dedicated "Network types" section — nearly a one-to-one match with what turns 23-30 speculated into existence before that file was ever read. The 31/32 int-literal widget's <code style="color:#e6edf3">0x</code>/<code style="color:#e6edf3">0b</code>/<code style="color:#e6edf3">0o</code> support also matches the real <code style="color:#e6edf3">parseIntLiteral</code> exactly — no correction needed there despite RECIPE.md's own stem-literal grammar only mentioning decimal/hex, because the widget serializes through a <code style="color:#e6edf3">lit</code> step rather than emitting a bare EBNF literal token, so the two aren't in conflict.</div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Net result of this audit</div>
+    1 real bug (48a, mechanical rename)<br>
+    2 open questions for the engine owner (48b, 48c)<br>
+    1 confirmation nothing needs fixing (48d)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">The pattern worth carrying forward: reading the actual grammar/registry caught one real naming defect and surfaced two places where a bespoke UI mechanism might collapse into an idiom the language already has — smaller, cheaper fixes than a full redesign, and exactly the kind of finding that's only available by reading the source rather than continuing to design from the type system's shape alone.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t46" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t46" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">46</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">tee and foreach — the real ambiguity is two gaps with the same label</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Read the real <code style="color:#e6edf3">RecipeChipFlow.tsx</code> to ground this rather than guess. The nest infrastructure already exists — <code style="color:#e6edf3">ChipStemView.hasNest</code>/<code style="color:#e6edf3">branches</code>/<code style="color:#e6edf3">body</code> render an indented <code style="color:#e6edf3">-</code> line below the stem row exactly like <code style="color:#e6edf3">docs/RECIPE.md</code>'s own syntax. The actual bug is narrower and confirms the hunch: the gap immediately after a stem chip on its own row ("continue the main chain") and the gap inside its nested branch/body row ("build the subchain") render as the <em>literal same component with the literal same label</em> — <code style="color:#e6edf3">InsertGap label="Insert step here"</code>, or <code style="color:#e6edf3">"Insert first step"</code> when empty, in both places. Nothing in the chip, the gap, or the layout tells a user which one they're looking at. <code style="color:#e6edf3">foreach</code> has it worse, confirmed in <a href="#46c">46c</a>: its body has no selector chip at all, just a bare dash — even less to anchor on than <code style="color:#e6edf3">tee</code>'s <code style="color:#e6edf3">:public</code>-style branch chip.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 46a the exact ambiguity -->
+<div id="46a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#46a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">46a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Two gaps, one label, no visual hierarchy between them</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">This is what the real component renders today for a freshly-placed <code style="color:#e6edf3">tee</code> with one empty branch — reconstructed exactly from <code style="color:#e6edf3">RecipeChipFlow.tsx</code>'s row/flush logic, not invented. Both circles say the identical thing.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:11px">
+    <div style="display:flex;align-items:center;gap:4px;margin-bottom:9px">
+      <span style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:3px 7px;border-radius:5px">tee</span>
+      <span style="width:20px;height:20px;border-radius:50%;border:1px dashed #ff7b72;display:grid;place-items:center;font:600 12px system-ui,sans-serif;color:#ff7b72">+</span>
+      <span style="font:400 9px ui-monospace,Menlo,monospace;color:#ff7b72;margin-left:2px">"Insert step here"</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding-left:14px;border-left:1px solid #21262d">
+      <span style="color:#6e7781;font:400 12px system-ui,sans-serif">-</span>
+      <span style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:2px 6px;border-radius:5px">:public</span>
+      <span style="width:20px;height:20px;border-radius:50%;border:1px dashed #ff7b72;display:grid;place-items:center;font:600 12px system-ui,sans-serif;color:#ff7b72">+</span>
+      <span style="font:400 9px ui-monospace,Menlo,monospace;color:#ff7b72">"Insert first step"</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Confirmed in the component, not assumed</div>
+    top gap: InsertGap label="Insert step here"<br>
+    branch gap: InsertGap label="Insert first step"<br>
+    → same &lt;InsertGap&gt;, same visual weight, same copy family
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Worse: nothing about <code style="color:#e6edf3">tee</code>'s own chip marks it as a container. It renders through the exact same <code style="color:#e6edf3">SuggestChip variant="placed"</code> as <code style="color:#e6edf3">base64</code> or <code style="color:#e6edf3">genkey</code> — a linear, one-in-one-out op — so there's no signal at the chip itself that "what comes next" is a different kind of question for this one.</div>
+  </div>
+</div>
+
+<!-- 46b the fix for tee -->
+<div id="46b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#46b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">46b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Three small fixes, no new components</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Nothing here needs a new widget — <code style="color:#e6edf3">InsertGap</code>, <code style="color:#e6edf3">SuggestChip</code>, and the existing indent-line layout already carry everything needed. It's a props/copy fix plus one auto-focus behavior on insert.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:11px">
+    <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">
+      <span style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:3px 7px;border-radius:5px 5px 0 0">tee</span>
+      <span style="font:400 9px system-ui,sans-serif;color:#6e7781">splits into branches ↓</span>
+    </div>
+    <div style="width:1px;height:8px;background:#30363d;margin-left:11px"></div>
+    <div style="display:flex;align-items:center;gap:6px;padding-left:8px;border-left:1px solid #58a6ff;margin-left:4px">
+      <span style="color:#6e7781;font:400 12px system-ui,sans-serif">-</span>
+      <span style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:2px 6px;border-radius:5px">:public</span>
+      <span style="height:20px;padding:0 7px;border-radius:10px;border:1px solid #58a6ff;background:rgba(88,166,255,.1);display:grid;place-items:center;font:500 9.5px system-ui,sans-serif;color:#58a6ff">+ step in :public</span>
+    </div>
+    <div style="margin-top:4px;font:400 9px system-ui,sans-serif;color:#6e7781;padding-left:30px">"Insert after tee" only appears once this branch has ≥1 step</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">The three changes</div>
+    1. gap label: `+ step in ${branchSelector}`<br>
+    2. onCaretInsert('tee') → auto-set activeGap<br>
+    &nbsp;&nbsp;to the new branch's first body slot<br>
+    3. hide the stem-row gap until hasNest body ≥1
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">(1) is the real fix — a branch gap's label names the branch it belongs to, so it can never be mistaken for the top-level one. (2) means the caret that just inserted <code style="color:#e6edf3">tee</code> immediately hands off to the branch's own empty gap — <code style="color:#e6edf3">activeGap</code> already exists as a prop, this is just choosing where it points on insert instead of leaving it null. (3) removes the confusing gap entirely for the one moment it has nothing valid to mean yet — <code style="color:#e6edf3">tee</code> with an empty branch can't meaningfully continue past itself, so don't show a gap that implies it can.</div>
+  </div>
+</div>
+
+<!-- 46c foreach, worse case -->
+<div id="46c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#46c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">46c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">foreach confirmed worse — its body has no selector chip to anchor on</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The bet was right. <code style="color:#e6edf3">ChipStemView.body</code> (the unbranched-nest path, exactly <code style="color:#e6edf3">foreach</code>'s shape) renders the same indented <code style="color:#e6edf3">-</code> line as a branch but with no <code style="color:#e6edf3">SuggestChip variant="selector"</code> in front of it — <code style="color:#e6edf3">tee</code> at least has <code style="color:#e6edf3">:public</code> to look at; <code style="color:#e6edf3">foreach</code>'s indent starts with nothing but the dash itself.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:11px">
+    <div style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:3px 7px;border-radius:5px 5px 0 0;display:inline-block;margin-bottom:3px">foreach</div>
+    <div style="width:1px;height:8px;background:#30363d;margin-left:11px"></div>
+    <div style="display:flex;align-items:center;gap:6px;padding-left:8px;border-left:1px solid #4cde82;margin-left:4px">
+      <span style="height:20px;padding:0 8px;border-radius:5px;background:rgba(76,222,130,.1);border:1px solid #4cde82;display:grid;place-items:center;font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">↻ each item</span>
+      <span style="height:20px;padding:0 7px;border-radius:10px;border:1px solid #4cde82;background:rgba(76,222,130,.1);display:grid;place-items:center;font:500 9.5px system-ui,sans-serif;color:#4cde82">+ step in loop body</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Give body the same anchor branches already have</div>
+    body row gets a static "↻ each item" chip,<br>
+    same slot ChipBranchView.selector fills for tee
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Not a new prop shape — <code style="color:#e6edf3">stem.body</code>'s render branch in <code style="color:#e6edf3">RecipeChipFlow.tsx</code> just needs the same leading chip <code style="color:#e6edf3">ChipRow</code> for branches already gets, using a fixed label instead of a per-branch selector string (since a loop body has exactly one, unnamed). Same 46b fixes apply identically: the gap says "+ step in loop body," and inserting <code style="color:#e6edf3">foreach</code> auto-focuses that gap instead of leaving the stem-row gap active.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+
+</body>
+</html>

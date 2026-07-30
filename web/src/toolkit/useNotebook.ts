@@ -36,6 +36,15 @@ import type {
   VaultKeyRow,
 } from "./notebook-types";
 
+/** One roster row — mirror of lib/quorum/roster's ConnectionPeerRow. */
+export type QuorumPeerRow = {
+  id: string;
+  fingerprint: string;
+  state: "new" | "connecting" | "connected" | "disconnected" | "failed" | "closed";
+  authenticated: boolean;
+  via?: string;
+};
+
 /** Mirror of quorum-ops' QuorumExchangeState — arrives via `basilisk:quorum-state`. */
 export type QuorumUiState = {
   phase: "idle" | "offering" | "waiting" | "connected" | "closed" | "failed";
@@ -45,6 +54,7 @@ export type QuorumUiState = {
   connected: number;
   expected: number;
   status: string;
+  peers: QuorumPeerRow[];
 };
 
 function emptyChains(): RecipeChain[] {
@@ -106,6 +116,7 @@ export function useNotebook() {
     connected: 0,
     expected: 0,
     status: "",
+    peers: [],
   });
   /** Cell index currently executing — lets the shell pin SessionStrip to it. */
   const [runningCell, setRunningCell] = useState<number | null>(null);
@@ -136,6 +147,10 @@ export function useNotebook() {
           uid: k.uid,
           email: k.email,
           protection: k.protection,
+          // Carried so GpgKeyBinder (§39b) can warn before you sign with a key
+          // that is about to expire — the vault has always known this, the
+          // projection just dropped it.
+          expires: k.expires ?? null,
         }))
       );
     } catch {
@@ -269,6 +284,30 @@ export function useNotebook() {
   const cellTimings: ({ ranAt: number; durationMs: number } | null)[] = useMemo(() => {
     void kernelEpoch;
     return chains.map((_, i) => kernelRef.current.getCellTiming?.(i) ?? null);
+  }, [chains, kernelEpoch]);
+
+  /**
+   * Type/validation errors per cell (§33c).
+   *
+   * These were previously only reachable by running: the validator knew the
+   * pipeline was ill-typed, but nothing surfaced it until the engine threw.
+   * `stepIndex` anchors each error to the chip that caused it, so the banner
+   * can name the step rather than describing the cell.
+   */
+  const cellErrors: { message: string; stepIndex: number }[][] = useMemo(() => {
+    void kernelEpoch;
+    return chains.map((chain) => {
+      if (!chain?.steps?.length) return [];
+      try {
+        const v = validateRecipe({ chains: [chain], steps: chain.steps, source: "" });
+        return (v.errors || []).map((e: { message: string; stepIndex?: number }) => ({
+          message: String(e.message),
+          stepIndex: typeof e.stepIndex === "number" ? e.stepIndex : -1,
+        }));
+      } catch {
+        return [];
+      }
+    });
   }, [chains, kernelEpoch]);
 
   const cellOutputs: ArtifactTile[][] = useMemo(() => {
@@ -627,7 +666,14 @@ export function useNotebook() {
 
   const applyCellRecipeText = useCallback((cellIndex: number, text: string) => {
     const { ast, validation } = compileRecipe(text);
-    if (!ast || !validation?.ok) {
+    // Only a *parse* failure is refused. A recipe that parses but does not
+    // type-check is still the recipe the author wrote, and rejecting it
+    // wholesale meant you could not type an ill-typed pipeline at all — the
+    // edit silently reverted and a page-level line explained why. That made
+    // the per-cell type-error banner unreachable from the Source view by
+    // construction: there was no way to *be* in the state it describes.
+    // Accept it, let it sit there, and let the banner name the problem.
+    if (!ast) {
       setRunError(
         (validation?.errors || [])
           .map((e: { message?: string }) => e.message || String(e))
@@ -635,6 +681,9 @@ export function useNotebook() {
       );
       return false;
     }
+    // Validation errors now belong to the cell's own banner, so clear the
+    // page-level line rather than saying the same sentence in two places.
+    setRunError("");
     const chain = ast.chains?.[0] || { steps: ast.steps || [] };
     setChains((prev) => {
       const next = [...prev];
@@ -967,6 +1016,7 @@ export function useNotebook() {
     cellStatuses,
     cellTimings,
     cellOutputs,
+    cellErrors,
     publishArtifact,
     readinessBlocker,
     unmetForCell,

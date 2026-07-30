@@ -1,0 +1,1464 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>WebRTC toolbox — design reference (turns 21a-30)</title>
+<style>body{margin:0;background:#010409;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}</style>
+</head>
+<body>
+<section id="t30" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t30" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">30</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">Storage schemas, recv-as-output, and the last remaining widgets</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Four things close out the design pass. <a href="#30a">30a</a> what's a device preference (localStorage) vs. what needs real storage (IndexedDB) — including a fact worth designing around: an <code style="color:#e6edf3">RTCCertificate</code> can be structured-cloned into IndexedDB and reused across sessions, which is the only way 29a's "Pin across sessions" can actually work. <a href="#30b">30b</a> the IndexedDB schema itself. <a href="#30c">30c</a> is the real gap: <code style="color:#e6edf3">quorum.recv</code> doesn't produce one output, it produces a stream of them over time, and turn 21a never addressed that. <a href="#30d">30d</a> closes the three ⬜ items <code style="color:#e6edf3">WEBRTC-TOOLBOX.md</code> still listed as undesigned.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 30a local vs indexeddb -->
+<div id="30a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#30a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">30a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Where each piece of state actually belongs</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Three different scopes, three different stores — mixing them (e.g. a TURN credential in plain <code style="color:#e6edf3">localStorage</code>) would be a real regression against 22a's secret-handling rule.</div>
+  <div style="width:420px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:grid;grid-template-columns:120px 1fr 90px;padding:7px 12px;border-bottom:1px solid #1c2229;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781">
+      <span>Data</span><span>Belongs in</span><span style="text-align:right">Why</span>
+    </div>
+    <div style="display:grid;grid-template-columns:120px 1fr 90px;padding:7px 12px;align-items:center"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">theme, tray tab</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">localStorage</span><span style="font:400 9.5px system-ui,sans-serif;color:#6e7781;text-align:right">device UI pref</span></div>
+    <div style="display:grid;grid-template-columns:120px 1fr 90px;padding:7px 12px;align-items:center;background:rgba(88,166,255,.05)"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#58a6ff">STUN urls (24b)</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">localStorage</span><span style="font:400 9.5px system-ui,sans-serif;color:#6e7781;text-align:right">not secret</span></div>
+    <div style="display:grid;grid-template-columns:120px 1fr 90px;padding:7px 12px;align-items:center;background:rgba(227,179,65,.06)"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#e3b341">TURN credential</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">same secret store as keys</span><span style="font:400 9.5px system-ui,sans-serif;color:#6e7781;text-align:right">22a rule</span></div>
+    <div style="display:grid;grid-template-columns:120px 1fr 90px;padding:7px 12px;align-items:center"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#d2a8ff">RTCCertificate (29a)</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">IndexedDB</span><span style="font:400 9.5px system-ui,sans-serif;color:#6e7781;text-align:right">structured-clonable, JSON can't hold it</span></div>
+    <div style="display:grid;grid-template-columns:120px 1fr 90px;padding:7px 12px;align-items:center;background:rgba(88,166,255,.05)"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#58a6ff">session log (28a)</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">IndexedDB, ring-buffered</span><span style="font:400 9.5px system-ui,sans-serif;color:#6e7781;text-align:right">survives reload, capped</span></div>
+    <div style="display:grid;grid-template-columns:120px 1fr 90px;padding:7px 12px;align-items:center"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">recipe, cells</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">notebook doc</span><span style="font:400 9.5px system-ui,sans-serif;color:#6e7781;text-align:right">already the pattern</span></div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Why RTCCertificate is the interesting case</div>
+    idbStore.put({ id, cert }) <span style="color:#6e7781">// cert is the</span><br>
+    <span style="color:#6e7781">// live RTCCertificate object, structured-cloned</span>
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">This isn't a UI choice, it's a platform fact worth designing around: <code style="color:#e6edf3">RTCCertificate</code> is one of the few WebRTC objects the structured clone algorithm supports, specifically so apps can persist and reuse an identity across page loads. "Pin across sessions" (29a) only works if the retrofit stores the real object this way, not a serialized fingerprint string it tries to reconstruct from.</div>
+  </div>
+</div>
+
+<!-- 30b IndexedDB schema -->
+<div id="30b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#30b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">30b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">IndexedDB schema — three stores, one database</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">A single <code style="color:#e6edf3">basilisk_webrtc</code> database, versioned separately from whatever store already holds notebooks — WebRTC's persistence needs (identities, rolling logs) are a different shape and lifecycle than notebook documents.</div>
+  <div style="width:420px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:12px;font:400 10.5px/1.8 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="color:#58a6ff;font-weight:600;margin-bottom:2px">db: basilisk_webrtc (v1)</div>
+    <div style="padding-left:12px">
+      <span style="color:#d2a8ff">certificates</span> <span style="color:#6e7781">keyPath: id</span><br>
+      <span style="padding-left:12px;color:#6e7781">{ id, label, cert, fingerprint, algorithm, createdAt, expiresAt }</span><br><br>
+      <span style="color:#58a6ff">sessionLog</span> <span style="color:#6e7781">keyPath: id, auto</span><br>
+      <span style="padding-left:12px;color:#6e7781">{ id, notebookId, cellId, peerLabel, phase, ts, detail, level }</span><br>
+      <span style="padding-left:12px;color:#6e7781">index: [notebookId, ts] · index: [cellId, ts]</span><br><br>
+      <span style="color:#4cde82">peerHistory</span> <span style="color:#6e7781">keyPath: fingerprint</span><br>
+      <span style="padding-left:12px;color:#6e7781">{ fingerprint, label, lastConnectedAt, notebookIds[] }</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Retention</div>
+    sessionLog: ring-buffer per notebookId,<br>
+    &nbsp;&nbsp;cap ~2000 rows, oldest evicted first
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781"><code style="color:#e6edf3">peerHistory</code> is what would power a "recently connected" affordance in 24a/27's Active peers list (typing a peer label could suggest one seen before) — not designed as its own widget this pass, but the store exists so that's additive later, not a schema change. <code style="color:#e6edf3">certificates</code> rows the user never pins are simply never written — ephemeral by default, matching 29a's decision that pinning is opt-in.</div>
+  </div>
+</div>
+
+<!-- 30c recv as output -->
+<div id="30c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#30c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">30c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px"><code>quorum.recv</code> doesn't have an output — it has a stream of them</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Turn 21a treated <code style="color:#e6edf3">recv</code> as a normal pipeline op with one output slot, same as <code style="color:#e6edf3">encrypt</code> or <code style="color:#e6edf3">genkey</code>. That's wrong: a data channel's <code style="color:#e6edf3">message</code> event can fire any number of times over a session's life, so <code style="color:#e6edf3">recv</code> is closer to <code style="color:#e6edf3">rtc.gatherCandidates</code> (23a) — a live-appending <code style="color:#e6edf3">OutputList</code> — except each row here is also a real pipeline value something downstream might consume, not just a diagnostic.</div>
+  <div style="width:380px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid #161b22">
+      <code style="font:600 10.5px ui-monospace,Menlo,monospace;color:#6e7781;background:#161b22;padding:2px 6px;border-radius:4px">6</code>
+      <span style="font:500 12px system-ui,sans-serif;color:#e6edf3">Receive Dana's replies</span>
+      <span style="display:flex;align-items:center;gap:5px;margin-left:2px"><span style="width:6px;height:6px;border-radius:50%;background:#4cde82"></span><span style="font:400 10.5px system-ui,sans-serif;color:#6e7781">channel open</span></span>
+    </div>
+    <div style="padding:11px 12px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+        <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.recv</code>
+        <span style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">channel :quorum</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 9px;background:rgba(88,166,255,.06);border:1px solid rgba(88,166,255,.25);border-radius:6px">
+        <span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#58a6ff">On each message</span>
+        <div style="display:flex;background:#0d1117;border:1px solid #30363d;border-radius:5px;overflow:hidden;height:22px;margin-left:auto">
+          <span style="padding:0 8px;display:grid;place-items:center;font:500 9.5px system-ui,sans-serif;color:#04140a;background:#4cde82">Run downstream</span>
+          <span style="padding:0 8px;display:grid;place-items:center;font:500 9.5px system-ui,sans-serif;color:#6e7781">Collect only</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:#010409;border-left:2px solid #4cde82;border-radius:0 6px 6px 0;margin-bottom:5px">
+        <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(76,222,130,.12);color:#4cde82">NEW</span>
+        <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">msg #4</code>
+        <span style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">228 B · 14:07:02</span>
+        <button style="height:20px;padding:0 7px;background:#161b22;border:1px solid #21262d;border-radius:4px;font:500 9.5px system-ui,sans-serif;color:#e6edf3;cursor:pointer">Run [7] on this →</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;opacity:.6">
+        <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">msg #3</code>
+        <span style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">892 B · 14:05:40</span>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#4cde82">✓ ran [7]</span>
+      </div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Shape change — this is the real retrofit risk</div>
+    cell.output: OutputArtifact <span style="color:#ff7b72">→</span> OutputArtifact[]<br>
+    recv.onMessageMode: 'auto-run-downstream' | 'collect'
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">"Run downstream" re-executes the cells after <code style="color:#e6edf3">recv</code> once per incoming message — effectively a per-message fan-out, not a single run. "Collect only" just appends to the list for the user to act on manually (the "Run [7] on this →" button per row). Default is <strong style="color:#e6edf3">Collect only</strong> — auto-re-running downstream cells on arbitrary incoming network data is a meaningfully bigger behavior change than anything else in this design and shouldn't be silently on by default.</div>
+  </div>
+</div>
+
+<!-- 30d remaining widgets -->
+<div id="30d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#30d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">30d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Closing the last three ⬜ — connection state, back-pressure, raw SDP</span>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px;width:380px">
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:9px 11px">
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:6px">rtc.connectionState — state-machine strip</div>
+      <div style="display:flex;align-items:center;gap:5px">
+        <span style="font:500 9.5px ui-monospace,Menlo,monospace;color:#4cde82">new</span><span style="color:#484f58">→</span>
+        <span style="font:500 9.5px ui-monospace,Menlo,monospace;color:#4cde82">connecting</span><span style="color:#484f58">→</span>
+        <span style="font:600 9.5px ui-monospace,Menlo,monospace;color:#e6edf3;padding:1px 5px;background:rgba(76,222,130,.14);border-radius:3px">connected</span><span style="color:#484f58">→</span>
+        <span style="font:500 9.5px ui-monospace,Menlo,monospace;color:#6e7781">disconnected</span><span style="color:#484f58">→</span>
+        <span style="font:500 9.5px ui-monospace,Menlo,monospace;color:#6e7781">closed</span>
+      </div>
+    </div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:9px 11px">
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Back-pressure — send throttled by bufferedamountlow</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="flex:1;height:5px;background:#161b22;border-radius:3px;overflow:hidden"><div style="width:64%;height:100%;background:#e3b341"></div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#e3b341">buffered 640 KB</span>
+      </div>
+      <div style="font:400 9.5px system-ui,sans-serif;color:#6e7781;margin-top:5px">send() calls queue automatically past the high-water mark</div>
+    </div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:9px 11px">
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:6px">rtc.createOffer — raw SDP escape hatch</div>
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#010409;border:1px solid #21262d;border-radius:6px">
+        <span style="font:500 9px system-ui,sans-serif;padding:2px 5px;border-radius:3px;background:rgba(88,166,255,.12);color:#58a6ff">SDP</span>
+        <code style="flex:1;font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">v=0␊o=- 46117…␊s=-␊t=0 0…</code>
+        <button style="height:19px;padding:0 6px;background:#161b22;border:1px solid #30363d;border-radius:4px;font:500 9px system-ui,sans-serif;color:#e6edf3;cursor:pointer">Copy</button>
+      </div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">All three reuse existing chrome</div>
+    connectionState → same strip shape as 26a's type row<br>
+    back-pressure → same progress bar primitive as 20b<br>
+    raw SDP → OutputList row, binary-artifact pattern (20h)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">None of these needed new chrome invented — the WebRTC toolbox pass consistently found that once the pipeline/tray split (21a/24) and the kind system (25a) existed, almost every remaining surface was a re-application of something already built, not a new pattern.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t29" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t29" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">29</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">What else fits — identity, reliability, mesh, and bandwidth</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Sweeping the rest of the WebRTC reference against Basilisk's actual shape (a crypto/text notebook, not a calling app) rules out most of what's left: media capture, DTMF telephony, and encoded transforms have no user here and stay unplanned (WEBRTC-TOOLBOX.md §4/5/7). Four things are a real fit, though — one of them, <a href="#29c">29c</a>, ties directly into a toolkit primitive that already exists (<code style="color:#e6edf3">sss.split</code>/<code style="color:#e6edf3">combine</code>) and is the strongest new idea this pass found.</p>
+  <p style="margin:0"><a href="#29a">29a</a> a certificate/identity op for the DTLS fingerprint 28b already displays but nothing yet produces. <a href="#29b">29b</a> data-channel reliability as a param block, not a hidden default. <a href="#29c">29c</a> a mesh session — Quorum's name already implies more than two parties; this is what makes that literal, wired straight to k-of-n secret sharing. <a href="#29d">29d</a> the live bandwidth/quality strip §6 left as a placeholder.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 29a certificate/identity -->
+<div id="29a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#29a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">29a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px"><code>rtc.certificate</code> — the DTLS identity 28b's fingerprint actually comes from</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">28b displays a DTLS fingerprint as if it just exists. It doesn't — <code style="color:#e6edf3">RTCPeerConnection</code> generates or is handed an <code style="color:#e6edf3">RTCCertificate</code> before <code style="color:#e6edf3">offer</code>/<code style="color:#e6edf3">join</code> run. Making that a source op (mirrors <code style="color:#e6edf3">genkey</code>'s shape exactly — 18b) means a user can pin a long-lived identity across sessions instead of getting a fresh throwaway fingerprint every time, and it belongs where key material already lives.</div>
+  <div style="width:280px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:10px 12px">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781;margin-bottom:8px">Keys tray — new subsection</div>
+    <div style="padding:8px;background:#161b22;border:1px solid #21262d;border-radius:7px">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px">
+        <span style="font:600 11px system-ui,sans-serif;color:#e6edf3">Session identity</span>
+        <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(210,168,255,.12);color:#d2a8ff">DTLS</span>
+      </div>
+      <code style="display:block;font:500 10px ui-monospace,Menlo,monospace;color:#58a6ff;margin-bottom:6px">3F:2A:9C:1B:…:B8 sha-256</code>
+      <div style="display:flex;gap:5px">
+        <button style="height:21px;padding:0 8px;background:#0d1117;border:1px solid #30363d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#e6edf3;cursor:pointer">Pin across sessions</button>
+        <button style="height:21px;padding:0 8px;background:transparent;border:none;font:500 10px system-ui,sans-serif;color:#8b949e;cursor:pointer">Regenerate</button>
+      </div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Op contract</div>
+    op: rtc.certificate<br>
+    out: CertificateHandle { fingerprint, algo, expires }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Unpinned, this is implicit and ephemeral — most recipes never need the op at all, <code style="color:#e6edf3">quorum.offer</code> generates a throwaway certificate itself exactly like today. The op only matters the moment a user wants "verify it's still me" across repeated sessions, which is a Keys-tab concept, not a Connections-tab one.</div>
+  </div>
+</div>
+
+<!-- 29b reliability config -->
+<div id="29b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#29b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">29b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Channel reliability — a visible param, not a silent "reliable ordered" default</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e"><code style="color:#e6edf3">RTCDataChannel</code> can be reliable-ordered (the default), unordered, or partially reliable (time- or retry-bounded) — set once at channel creation, unchangeable after. For a large ciphertext blob over a flaky link, unordered/partial-reliable genuinely matters. This becomes one more section in <code style="color:#e6edf3">quorum.offer</code>'s existing inline param editor (18b's pattern), not a separate dialog.</div>
+  <div style="width:320px;background:#010409;border:1px solid #21262d;border-radius:8px;padding:10px 11px">
+    <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:6px">
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">reliability</code>
+      <span style="font:400 10px system-ui,sans-serif;color:#6e7781">set at open, fixed after</span>
+    </div>
+    <div style="display:flex;background:#0d1117;border:1px solid #30363d;border-radius:6px;overflow:hidden;height:28px">
+      <span style="flex:1;display:grid;place-items:center;font:500 10px system-ui,sans-serif;color:#04140a;background:#4cde82">Reliable</span>
+      <span style="flex:1;display:grid;place-items:center;font:500 10px system-ui,sans-serif;color:#6e7781">Unordered</span>
+      <span style="flex:1;display:grid;place-items:center;font:500 10px system-ui,sans-serif;color:#6e7781">Time-bounded</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">quorum.offer params — one addition</div>
+    reliability: 'reliable' | 'unordered'<br>
+    &nbsp;&nbsp;| { maxPacketLifeTime: ms } | { maxRetransmits: n }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Defaults to <code style="color:#e6edf3">'reliable'</code>, so nothing changes for existing recipes. Picking "Time-bounded" reveals a single ms field inline, same disclosure pattern the param grid already uses for conditional fields (18b's <code style="color:#e6edf3">aead</code> row).</div>
+  </div>
+</div>
+
+<!-- 29c mesh -->
+<div id="29c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#29c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">29c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px"><code>quorum.mesh</code> — making the name literal: k-of-n shares, k-of-n peers</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">WebRTC itself is peer-to-peer only — no built-in group session, so "mesh" here means the recipe author's <code style="color:#e6edf3">sss.split</code> already producing <code style="color:#e6edf3">n</code> shares (18b's shelf lists it) and a mesh op opening <code style="color:#e6edf3">n</code> independent <code style="color:#e6edf3">quorum.offer</code> connections, one per recipient, auto-routing share <code style="color:#e6edf3">i</code> to peer <code style="color:#e6edf3">i</code>. This is the one idea in this pass that isn't just "port another MDN interface" — it's a real recipe a user would build with pieces the toolkit already has.</div>
+  <div style="width:380px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:11px 12px">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:9px">
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">sss.split</code>
+      <span style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">k=2 / n=3</span>
+      <span style="color:#484f58">›</span>
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.mesh</code>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#161b22;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#4cde82"></span><span style="font:500 10.5px system-ui,sans-serif;color:#e6edf3;flex:1">share 1 → Dana</span><span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">connected</span></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#161b22;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><span style="font:500 10.5px system-ui,sans-serif;color:#e6edf3;flex:1">share 2 → Sam</span><span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#58a6ff">waiting for peer</span></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#161b22;border-radius:6px;opacity:.5"><span style="width:6px;height:6px;border-radius:50%;background:#6e7781"></span><span style="font:500 10.5px system-ui,sans-serif;color:#e6edf3;flex:1">share 3 → Priya</span><span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">not offered</span></div>
+    </div>
+    <div style="margin-top:8px;font:400 10px system-ui,sans-serif;color:#6e7781">2 of 3 connected — quorum reachable, cell can run</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">New cell region — MESH, sibling of SESSION</div>
+    op: quorum.mesh<br>
+    in: SssShare[] (from sss.split)<br>
+    roster: { shareIndex, peerLabel, state }[]
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">The tray's Active peers (24a) lists every roster row as its own entry — no special-casing, a mesh session is just <code style="color:#e6edf3">n</code> ordinary sessions that happen to share a cell. Readiness (turn 20e/21a) reads "quorum reachable" the same way it already reads a cell's other blockers — <code style="color:#e6edf3">k</code>-of-<code style="color:#e6edf3">n</code> connected, not all-<code style="color:#e6edf3">n</code>.</div>
+  </div>
+</div>
+
+<!-- 29d bandwidth stats -->
+<div id="29d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#29d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">29d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px"><code>rtc.statsReport</code> — the §6 placeholder, now designed</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Live <code style="color:#e6edf3">getStats()</code> numbers, folded into 28b's peer detail drawer as one more section rather than a separate tool — bitrate/RTT/loss only matter in the context of a specific peer's connection, which is exactly what that drawer already shows.</div>
+  <div style="width:280px;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:11px">
+    <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:7px">Live quality</div>
+    <div style="display:flex;align-items:flex-end;gap:2px;height:28px;margin-bottom:7px">
+      <span style="flex:1;background:#4cde82;height:60%;border-radius:1px"></span><span style="flex:1;background:#4cde82;height:75%;border-radius:1px"></span><span style="flex:1;background:#4cde82;height:50%;border-radius:1px"></span><span style="flex:1;background:#e3b341;height:85%;border-radius:1px"></span><span style="flex:1;background:#4cde82;height:65%;border-radius:1px"></span><span style="flex:1;background:#4cde82;height:70%;border-radius:1px"></span>
+    </div>
+    <div style="font:400 10px ui-monospace,Menlo,monospace;color:#8b949e;line-height:1.7">38ms rtt · 0.2% loss · 4.1 KB/s</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Peer detail addition (28b)</div>
+    stats: { rttMs, packetLossPct, throughputBps }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Small enough to poll on an interval rather than needing a push-based event model — this is the lowest-effort item in this turn precisely because it slots into a drawer that already exists rather than needing new chrome.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t28" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t28" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">28</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">The full handshake, made visible — session log, peer detail, and what a "hexdump" honestly can be</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">24c's debug console was a stub. A real session log has to cover the whole handshake, which has more stages than turns 21a–26 modeled explicitly: <strong style="color:#e6edf3">signaling</strong> (offer/answer exchanged over whatever out-of-band channel Quorum uses — the PGP-signed invite blob) → <strong style="color:#e6edf3">ICE</strong> (gathering, trickling, pair checks — 23a/23b/26a/26b) → <strong style="color:#e6edf3">DTLS handshake</strong> (once ICE picks a pair, the two peers do a DTLS handshake to secure the channel — new to this design) → <strong style="color:#e6edf3">SCTP association</strong> (the data-channel transport negotiates on top of DTLS before any channel can open — also new) → <strong style="color:#e6edf3">data channel open</strong> → message flow → close. <a href="#28a">28a</a> is that full log. <a href="#28b">28b</a> is the peer detail this log's rows link into — IP/port/candidate-pair/transport specifics. <a href="#28c">28c</a> is the honest version of "packet hexdump": <code style="color:#e6edf3">RTCDataChannel</code> only ever gives JS the decrypted message payload, never a raw wire capture, so this shows the message's bytes, not a sniffed packet — the design has to say that plainly rather than imply something WebRTC can't do. <a href="#28d">28d</a> ties all five phases back to which existing turn/component owns each one.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 28a full session log -->
+<div id="28a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#28a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">28a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Session log — one phase-colored timeline per peer, not a flat event dump</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">24c's console was one flat list. A real log groups by phase (left rail dot changes color per phase) so "where did this stall" is answerable at a glance — a wall of monospace lines all the same color can't show that. Opens from a peer row in 24a/27's tray, replacing the inline collapsed console with a focused view.</div>
+  <div style="width:420px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #1c2229">
+      <span style="font:600 11px system-ui,sans-serif;color:#e6edf3">Session log — Dana</span>
+      <span style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">cell [2]</span>
+      <div style="margin-left:auto;display:flex;gap:4px">
+        <button style="height:19px;padding:0 7px;background:#161b22;border:1px solid #30363d;border-radius:4px;font:500 9px system-ui,sans-serif;color:#e6edf3;cursor:pointer">All</button>
+        <button style="height:19px;padding:0 7px;background:transparent;border:1px solid #21262d;border-radius:4px;font:500 9px system-ui,sans-serif;color:#6e7781;cursor:pointer">Errors</button>
+      </div>
+    </div>
+    <div style="padding:4px 0;max-height:280px;overflow:auto">
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#8b949e;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#8b949e">SIGNALING</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">offer sent · via invite blob (PGP-signed)</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:02:09</span>
+      </div>
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#8b949e;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#8b949e">SIGNALING</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">answer received · signalingState → stable</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:02:33</span>
+      </div>
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#58a6ff;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#58a6ff">ICE</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">gathering → srflx 203.0.113.9:60122</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:02:33</span>
+      </div>
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#58a6ff;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#58a6ff">ICE</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">pair srflx↔srflx → succeeded, nominated</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:02:34</span>
+      </div>
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#d2a8ff;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#d2a8ff">DTLS</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">handshake → connecting</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:02:34</span>
+      </div>
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#d2a8ff;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#d2a8ff">DTLS</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">handshake → connected · fingerprint verified</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:02:34</span>
+      </div>
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#f0883e;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#f0883e">SCTP</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">association → connected · max msg 256 KB</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:02:35</span>
+      </div>
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#4cde82;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#4cde82">CHANNEL</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">"quorum" data channel → open</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:02:35</span>
+      </div>
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#4cde82;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#4cde82">CHANNEL</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">↑ sent 892 B · cell [3] output</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:03:02</span>
+      </div>
+      <div style="display:flex;gap:8px;padding:6px 12px;align-items:flex-start">
+        <span style="width:6px;height:6px;border-radius:50%;background:#e3b341;margin-top:4px;flex-shrink:0"></span>
+        <div style="flex:1;min-width:0"><div style="font:500 10px system-ui,sans-serif;color:#e3b341">ICE</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">icecandidateerror · turn:relay… code 701</div></div>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#484f58">14:03:40</span>
+      </div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Contract — extends 24c</div>
+    debugEvents: { ts, phase: 'signaling'|'ice'|<br>
+    &nbsp;&nbsp;'dtls'|'sctp'|'channel', detail, level }[]
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Phase color reuses existing tokens where one already fits (ICE=caret blue, error=warn) and adds two: DTLS=<code style="color:#e6edf3">#d2a8ff</code> (decode purple, since it's the "secure the pipe" step, adjacent conceptually to decrypt), SCTP=<code style="color:#e6edf3">#f0883e</code> (the existing HKP/directory orange, reused since both are "transport plumbing" categories). No new phase color invented beyond that.</div>
+  </div>
+</div>
+
+<!-- 28b peer detail -->
+<div id="28b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#28b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">28b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Peer detail — IP/port/transport, grown from 25c's small popover into a drawer</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">25c's peer popover had room for four lines. Real debugging needs the nominated pair's full addresses, both transports' states, and the DTLS fingerprint used to authenticate the channel — that's a drawer, not a popover. Opens the same way (click a 24a/27 peer row) but slides in from the tray's right edge rather than anchoring a small bubble.</div>
+  <div style="width:320px;background:#161b22;border:1px solid #30363d;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:14px;display:flex;flex-direction:column;gap:11px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="width:7px;height:7px;border-radius:50%;background:#4cde82"></span>
+      <span style="font:600 12px system-ui,sans-serif;color:#e6edf3;flex:1">Sam</span>
+      <span style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">cell [5]</span>
+    </div>
+    <div>
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:5px">Nominated pair</div>
+      <div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e;line-height:1.7">
+        local &nbsp;srflx&nbsp; 203.0.113.9:60122 / udp<br>
+        remote srflx&nbsp; 198.51.100.22:54210 / udp<br>
+        role &nbsp;&nbsp;&nbsp;&nbsp;controlling · rtt 38ms
+      </div>
+    </div>
+    <div>
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:5px">DTLS transport</div>
+      <div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e;line-height:1.7">
+        state &nbsp;&nbsp;connected<br>
+        remote fp &nbsp;3F:2A:9C:…:B8 (sha-256)
+      </div>
+    </div>
+    <div>
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:5px">SCTP transport</div>
+      <div style="font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e;line-height:1.7">
+        state &nbsp;&nbsp;connected<br>
+        max message &nbsp;256 KB
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:2px">
+      <button style="flex:1;height:24px;background:#0d1117;border:1px solid #30363d;border-radius:5px;font:500 10.5px system-ui,sans-serif;color:#e6edf3;cursor:pointer">Full session log</button>
+      <button style="flex:1;height:24px;background:#0d1117;border:1px solid #30363d;border-radius:5px;font:500 10.5px system-ui,sans-serif;color:#e6edf3;cursor:pointer">Jump to cell</button>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Sourced directly from stats</div>
+    RTCIceCandidatePairStats (local/remote address,<br>
+    protocol, rtt) + RTCIceCandidate.transport.role<br>
+    + RTCDtlsTransport / RTCSctpTransport .state
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Every field here is a real <code style="color:#e6edf3">getStats()</code>/transport property, not a UI invention — this is a formatted read-out, not new data the browser doesn't already expose.</div>
+  </div>
+</div>
+
+<!-- 28c message bytes, honestly scoped -->
+<div id="28c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#28c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">28c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Message bytes — a hexdump of the payload, explicitly not a packet capture</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">A real constraint worth stating plainly: <code style="color:#e6edf3">RTCDataChannel</code> only ever hands JS the decrypted message payload after SCTP/DTLS have already stripped their framing — there is no browser API that exposes raw UDP/DTLS wire packets to a web page. So this view is a hexdump of one <code style="color:#e6edf3">quorum.send</code>/<code style="color:#e6edf3">recv</code> message's bytes, labeled as exactly that. Designing it to imply a packet sniffer would be inaccurate to what the platform can do.</div>
+  <div style="width:400px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #1c2229">
+      <span style="width:5px;height:5px;border-radius:50%;background:#4cde82"></span>
+      <span style="font:600 11px system-ui,sans-serif;color:#e6edf3">Message · sent to Dana</span>
+      <span style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">892 B</span>
+    </div>
+    <div style="padding:9px 4px 9px 12px;font:400 10.5px/1.6 ui-monospace,Menlo,monospace;color:#8b949e;overflow:auto;max-height:150px">
+      <div><span style="color:#484f58">0000</span>&nbsp; <span style="color:#e6edf3">c3 03 8c 4a  0e 90 3f 21  6d 5a 7e b1  02 dd 88 40</span>&nbsp; <span style="color:#6e7781">·..J..?!mZ~....@</span></div>
+      <div><span style="color:#484f58">0010</span>&nbsp; <span style="color:#e6edf3">7f fe 21 09  aa 4c 03 90  e2 b1 55 60  10 3c 9d 02</span>&nbsp; <span style="color:#6e7781">..!..L....U`.&lt;..</span></div>
+      <div><span style="color:#484f58">0020</span>&nbsp; <span style="color:#e6edf3">88 41 90 fe  33 aa 12 90  d0 4c 91 aa  00 12 8f fe</span>&nbsp; <span style="color:#6e7781">.A..3....L......</span></div>
+      <div style="color:#484f58">… 53 more rows (876 bytes)</div>
+    </div>
+    <div style="padding:8px 12px;border-top:1px solid #1c2229;font:400 10px system-ui,sans-serif;color:#6e7781">This is the <code style="color:#e6edf3">quorum.send</code> payload after DTLS/SCTP decryption — application data, not a wire capture. Content is opaque ciphertext here because it's the <code style="color:#e6edf3">openpgp.encrypt</code> output from cell [3].</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Where it opens from</div>
+    OutputList row (20h) → "View bytes" <span style="color:#6e7781">// any</span><br>
+    <span style="color:#6e7781">// binary artifact, not channel-specific</span>
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Not a new WebRTC-only feature — this is a general hexdump viewer any binary <code style="color:#e6edf3">OutputArtifact</code> can use (ciphertext, keys, this message), reusing the disclosure pattern 24c's console already established rather than inventing a third one.</div>
+  </div>
+</div>
+
+<!-- 28d full lifecycle map -->
+<div id="28d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#28d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">28d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">The whole handshake, phase by phase, mapped to who owns it</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Every earlier turn touched one phase. Laid end to end, two phases (DTLS, SCTP) had no owner at all before this turn — they were implicit inside <code style="color:#e6edf3">QuorumSession</code> with no UI surface. This table is the retrofit checklist: it says exactly which turn's design covers which phase, and calls out the gap this turn fills.</div>
+  <div style="width:460px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:grid;grid-template-columns:90px 1fr 90px;padding:7px 12px;border-bottom:1px solid #1c2229;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781">
+      <span>Phase</span><span>What happens</span><span style="text-align:right">Owner</span>
+    </div>
+    <div style="display:grid;grid-template-columns:90px 1fr 90px;padding:7px 12px;align-items:center"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#8b949e">Signaling</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">Offer/answer traded via the invite blob</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#4cde82;text-align:right">21a</span></div>
+    <div style="display:grid;grid-template-columns:90px 1fr 90px;padding:7px 12px;align-items:center;background:rgba(88,166,255,.05)"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#58a6ff">ICE</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">Gather candidates, check pairs, nominate</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#4cde82;text-align:right">23a-c,26a,26b</span></div>
+    <div style="display:grid;grid-template-columns:90px 1fr 90px;padding:7px 12px;align-items:center;background:rgba(210,168,255,.05)"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#d2a8ff">DTLS</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">Secures the nominated pair with a handshake</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#e3b341;text-align:right">28a/b only</span></div>
+    <div style="display:grid;grid-template-columns:90px 1fr 90px;padding:7px 12px;align-items:center;background:rgba(240,136,62,.05)"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#f0883e">SCTP</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">Negotiates the data-channel transport</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#e3b341;text-align:right">28a/b only</span></div>
+    <div style="display:grid;grid-template-columns:90px 1fr 90px;padding:7px 12px;align-items:center"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">Channel</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">quorum.send/recv flow, back-pressure</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#4cde82;text-align:right">21a<span style="color:#6e7781">, bp ⬜</span></span></div>
+    <div style="display:grid;grid-template-columns:90px 1fr 90px;padding:7px 12px;align-items:center"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#ff7b72">Recovery</code><span style="font:400 10.5px system-ui,sans-serif;color:#8b949e">ICE restart when a live session drops</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#4cde82;text-align:right">26c</span></div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">The one real gap this turn closes</div>
+    SessionStrip.state gains no new value —<br>
+    'waiting' already covers DTLS+SCTP time
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">The cell-level strip (21a) deliberately stays coarse — a user doesn't need to watch DTLS negotiate in the pipeline view. The detail this turn adds (28a/28b) lives one level down, in the tray, for when something needs debugging — same split turn 24 already drew between ambient tray chrome and in-pipeline chrome.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t27" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t27" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">27</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">In the shell — Connections as the tray's fifth tab</span>
+</div>
+
+<div style="max-width:860px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0">The full composite, same 1500×900 shell as 18b, same 252/1fr/328 column split. Left: the toolbox with the WebRTC category (25b) expanded. Center: cell <code style="color:#e6edf3">[2]</code> mid-<code style="color:#e6edf3">quorum.offer</code>, SESSION region showing (21a). Right: the session tray's tab bar gains a fifth tab — <code style="color:#e6edf3">Connections</code> — sitting after <code style="color:#e6edf3">Keys / Slots / Inputs / Params</code>, not replacing any of them. Its body stacks 24a's peer list over 24b's server preferences, with 24c's debug console collapsed at the bottom — the same vertical stacking the <code style="color:#e6edf3">Keys</code> tab already uses for multiple key cards.</p>
+</div>
+
+<div style="width:1500px;background:#0d1117;border:1px solid #30363d;border-radius:12px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5)">
+
+  <div style="display:flex;align-items:center;gap:12px;height:46px;padding:0 14px;border-bottom:1px solid #21262d">
+    <div style="display:flex;align-items:center;gap:7px">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <polygon points="12,2 20,6 20,14 12,22 4,14 4,6" fill="#4cde82"></polygon>
+        <circle cx="9" cy="4.3" r="0.9" fill="#d4b84a"></circle><circle cx="12" cy="3.4" r="0.9" fill="#d4b84a"></circle><circle cx="15" cy="4.3" r="0.9" fill="#d4b84a"></circle>
+        <circle cx="12" cy="11" r="2.6" fill="#0d1117"></circle><rect x="10.8" y="13" width="2.4" height="5.5" rx="1" fill="#0d1117"></rect><circle cx="12" cy="11" r="1" fill="#d4b84a"></circle>
+      </svg>
+      <span style="font:600 13px system-ui,sans-serif;letter-spacing:.01em;color:#e6edf3">basilisk</span>
+    </div>
+    <div style="width:1px;height:18px;background:#21262d"></div>
+    <span style="font:500 13px system-ui,sans-serif;color:#e6edf3">Onboard Dana &amp; Sam — live channel</span>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;background:rgba(227,179,65,.1);border:1px solid rgba(227,179,65,.35);border-radius:20px">
+        <span style="width:5px;height:5px;border-radius:50%;background:#e3b341"></span>
+        <span style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e3b341">3 suites ready · 1 issue</span>
+        <span style="font-size:8px;color:#e3b341">▾</span>
+      </div>
+      <button style="height:28px;padding:0 11px;background:#161b22;border:1px solid #30363d;border-radius:6px;font:500 11.5px system-ui,sans-serif;color:#e6edf3;cursor:pointer">Templates</button>
+      <button style="width:28px;height:28px;background:transparent;border:1px solid #21262d;border-radius:6px;font:500 13px system-ui,sans-serif;color:#8b949e;cursor:pointer">⋯</button>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;height:44px;padding:0 14px;background:#010409;border-bottom:1px solid #21262d">
+    <button style="height:30px;padding:0 13px;background:#21262d;border:none;border-radius:6px;font:600 11.5px system-ui,sans-serif;color:#ff7b72;cursor:pointer">■ Stop</button>
+    <span style="font:400 11.5px ui-monospace,Menlo,monospace;color:#58a6ff">Paused at cell [2] — waiting for peer…</span>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+      <button style="height:28px;padding:0 10px;background:transparent;border:none;font:500 11.5px system-ui,sans-serif;color:#8b949e;cursor:pointer">Copy link</button>
+      <button style="display:flex;align-items:center;gap:6px;height:28px;padding:0 10px;background:#161b22;border:1px solid #58a6ff;border-radius:6px;font:500 11.5px system-ui,sans-serif;color:#58a6ff;cursor:pointer">Tray <span style="font-size:9px">▾</span></button>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:252px 1fr 328px;height:810px">
+
+    <!-- toolbox: WebRTC category expanded -->
+    <div style="display:flex;flex-direction:column;border-right:1px solid #21262d;background:#0d1117;min-height:0">
+      <div style="padding:11px 12px 9px;border-bottom:1px solid #1c2229">
+        <div style="display:flex;align-items:center;gap:7px;height:30px;padding:0 9px;background:#010409;border:1px solid #30363d;border-radius:6px">
+          <span style="font-size:11px;color:#6e7781">⌕</span>
+          <span style="flex:1;font:400 11.5px system-ui,sans-serif;color:#6e7781">Search 94 operations</span>
+        </div>
+      </div>
+      <div style="flex:1;overflow:hidden;padding:6px 0">
+        <div style="display:flex;align-items:center;gap:6px;padding:7px 12px 5px">
+          <span style="font-size:8px;color:#6e7781">▸</span>
+          <span style="font:600 10px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#8b949e">OpenPGP</span>
+          <span style="font:500 10px ui-monospace,Menlo,monospace;color:#484f58">9</span>
+          <span style="margin-left:auto;width:6px;height:6px;border-radius:2px;background:#d2a8ff"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;padding:9px 12px 5px;background:rgba(88,166,255,.05)">
+          <span style="font-size:8px;color:#58a6ff">▾</span>
+          <span style="font:600 10px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#e6edf3">WebRTC</span>
+          <span style="font:500 10px ui-monospace,Menlo,monospace;color:#484f58">10</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 12px 3px 22px"><span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">ICE / STUN</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:6px;height:6px;background:#58a6ff;border-radius:1px;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">rtc.ice</code></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:6px;height:6px;background:#58a6ff;border-radius:1px;flex-shrink:0;transform:rotate(45deg)"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">rtc.gatherCandidates</code></div>
+        <div style="display:flex;align-items:center;gap:6px;padding:8px 12px 3px 22px"><span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Peer &amp; signaling</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px;background:rgba(210,168,255,.08)"><span style="width:6px;height:6px;background:#d2a8ff;border-radius:1px;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.offer</code><span style="font:600 9px system-ui,sans-serif;color:#d2a8ff">● live</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:6px;height:6px;background:#d2a8ff;border-radius:1px;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.join</code></div>
+        <div style="display:flex;align-items:center;gap:6px;padding:8px 12px 3px 22px"><span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Data channel</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px;opacity:.4"><span style="width:0;height:0;border-left:3.5px solid transparent;border-right:3.5px solid transparent;border-bottom:6px solid #4cde82;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.send</code><span style="font:400 9px system-ui,sans-serif;color:#6e7781">needs channel</span></div>
+      </div>
+      <div style="padding:10px 12px;border-top:1px solid #1c2229">
+        <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:7px">Kits</div>
+        <div style="display:flex;gap:6px">
+          <button style="flex:1;padding:7px 4px;background:#161b22;border:1px solid #21262d;border-radius:6px;font:500 10px system-ui,sans-serif;color:#8b949e;cursor:pointer">AES / RSA</button>
+          <button style="flex:1;padding:7px 4px;background:#161b22;border:1px solid #21262d;border-radius:6px;font:500 10px system-ui,sans-serif;color:#8b949e;cursor:pointer">Formats</button>
+          <button style="flex:1;padding:7px 4px;background:rgba(210,168,255,.14);border:1px solid #d2a8ff;border-radius:6px;font:500 10px system-ui,sans-serif;color:#d2a8ff;cursor:pointer">Quorum</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- notebook: cell 2, quorum.offer, waiting -->
+    <div style="display:flex;flex-direction:column;min-width:0;background:#010409">
+      <div style="flex:1;overflow:hidden;padding:16px 18px;display:flex;flex-direction:column;gap:12px">
+        <div style="background:#0d1117;border:1px solid #21262d;border-radius:10px;overflow:hidden;opacity:.55">
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 12px">
+            <code style="font:600 10.5px ui-monospace,Menlo,monospace;color:#6e7781;background:#161b22;padding:2px 6px;border-radius:4px">1</code>
+            <span style="font:500 12px system-ui,sans-serif;color:#e6edf3">Generate the device key</span>
+            <span style="margin-left:2px;font:400 10.5px system-ui,sans-serif;color:#6e7781">ran 14s ago</span>
+          </div>
+        </div>
+
+        <div style="background:#0d1117;border:1px solid rgba(88,166,255,.4);border-radius:10px;overflow:hidden;box-shadow:0 0 0 3px rgba(88,166,255,.08)">
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid #161b22">
+            <code style="font:600 10.5px ui-monospace,Menlo,monospace;color:#04140a;background:#58a6ff;padding:2px 6px;border-radius:4px">2</code>
+            <span style="font:500 12px system-ui,sans-serif;color:#e6edf3">Open a channel to Dana</span>
+            <span style="display:flex;align-items:center;gap:5px;margin-left:2px">
+              <span style="width:6px;height:6px;border-radius:50%;background:#58a6ff;box-shadow:0 0 0 3px rgba(88,166,255,.2)"></span>
+              <span style="font:400 10.5px system-ui,sans-serif;color:#58a6ff">waiting for peer</span>
+            </span>
+          </div>
+          <div style="display:flex;align-items:stretch">
+            <div style="width:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:rgba(88,166,255,.08)">
+              <span style="writing-mode:vertical-rl;font:600 8.5px system-ui,sans-serif;letter-spacing:.08em;color:#58a6ff">SESSION</span>
+            </div>
+            <div style="flex:1;padding:11px 12px">
+              <div style="display:flex;align-items:center;gap:2px;margin-bottom:9px">
+                <div style="padding:5px 9px;background:#161b22;border:1px solid #58a6ff;border-radius:6px"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.offer</code></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:8px 10px;background:rgba(88,166,255,.07);border:1px solid rgba(88,166,255,.3);border-radius:7px">
+                <span style="width:7px;height:7px;border-radius:50%;background:#58a6ff;box-shadow:0 0 0 3px rgba(88,166,255,.2)"></span>
+                <span style="font:400 11px system-ui,sans-serif;color:#e6edf3">Waiting for peer to join…</span>
+                <code style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">kJ8x…9fQ</code>
+                <button style="height:22px;padding:0 8px;background:#161b22;border:1px solid #30363d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#e6edf3;cursor:pointer;white-space:nowrap">Copy invite</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- tray: fifth tab, Connections active -->
+    <div style="display:flex;flex-direction:column;border-left:1px solid #21262d;background:#0d1117;min-height:0">
+      <div style="display:flex;gap:2px;padding:9px 10px 0;overflow:hidden">
+        <span style="padding:6px 9px;font:500 11px system-ui,sans-serif;color:#6e7781;border-bottom:2px solid transparent">Keys</span>
+        <span style="padding:6px 9px;font:500 11px system-ui,sans-serif;color:#6e7781;border-bottom:2px solid transparent">Slots <span style="font-family:ui-monospace,Menlo,monospace;color:#484f58">4</span></span>
+        <span style="padding:6px 9px;font:500 11px system-ui,sans-serif;color:#6e7781;border-bottom:2px solid transparent">Inputs</span>
+        <span style="padding:6px 9px;font:500 11px system-ui,sans-serif;color:#6e7781;border-bottom:2px solid transparent">Params</span>
+        <span style="padding:6px 9px;font:600 11px system-ui,sans-serif;color:#58a6ff;border-bottom:2px solid #58a6ff;white-space:nowrap">Connections <span style="font-family:ui-monospace,Menlo,monospace;color:#58a6ff">2</span></span>
+      </div>
+      <div style="height:1px;background:#21262d"></div>
+
+      <div style="flex:1;overflow:hidden;padding:10px 12px;display:flex;flex-direction:column;gap:10px">
+
+        <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58">Active peers</div>
+        <div style="background:#161b22;border:1px solid #21262d;border-radius:8px;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 10px;border-bottom:1px solid #1c2229;cursor:pointer">
+            <span style="width:7px;height:7px;border-radius:50%;background:#e3b341;flex-shrink:0"></span>
+            <div style="flex:1">
+              <div style="font:500 11px system-ui,sans-serif;color:#e6edf3">Dana</div>
+              <div style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">cell [2] · waiting for peer…</div>
+            </div>
+            <button style="height:20px;padding:0 7px;background:#0d1117;border:1px solid #21262d;border-radius:4px;font:500 9.5px system-ui,sans-serif;color:#8b949e;cursor:pointer">Cancel</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 10px;cursor:pointer">
+            <span style="width:7px;height:7px;border-radius:50%;background:#4cde82;flex-shrink:0"></span>
+            <div style="flex:1">
+              <div style="font:500 11px system-ui,sans-serif;color:#e6edf3">Sam</div>
+              <div style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">cell [5] · srflx · 38ms</div>
+            </div>
+            <button style="height:20px;padding:0 7px;background:#0d1117;border:1px solid #21262d;border-radius:4px;font:500 9.5px system-ui,sans-serif;color:#8b949e;cursor:pointer">Close</button>
+          </div>
+        </div>
+
+        <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-top:2px">Server preferences</div>
+        <div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:7px">
+          <div style="display:flex;align-items:center;gap:8px"><span style="font:500 9px system-ui,sans-serif;padding:2px 5px;border-radius:3px;background:rgba(88,166,255,.12);color:#58a6ff">STUN</span><code style="flex:1;font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">stun.l.google.com:19302</code></div>
+          <div style="display:flex;align-items:center;gap:8px"><span style="font:500 9px system-ui,sans-serif;padding:2px 5px;border-radius:3px;background:rgba(210,168,255,.12);color:#d2a8ff">TURN</span><code style="flex:1;font:500 10px ui-monospace,Menlo,monospace;color:#6e7781">not configured</code></div>
+          <button style="align-self:flex-start;height:20px;padding:0 8px;background:#0d1117;border:1px solid #30363d;border-radius:5px;font:500 9.5px system-ui,sans-serif;color:#e6edf3;cursor:pointer">+ Add server</button>
+        </div>
+
+        <div style="border:1px solid #21262d;border-radius:8px;overflow:hidden;margin-top:2px">
+          <div style="display:flex;align-items:center;gap:6px;padding:8px 10px;cursor:pointer">
+            <span style="font-size:8px;color:#6e7781">▸</span>
+            <span style="font:600 10px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8b949e">Debug console</span>
+            <span style="margin-left:auto;font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">7 events</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</section>
+
+<section id="t26" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t26" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">26</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">Deep-dive corrections from MDN's connectivity &amp; session-lifetime guides</span>
+</div>
+
+<div style="max-width:860px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0">Reading MDN's <em>WebRTC connectivity</em> and <em>Session lifetime</em> guides in full surfaces things turns 23–25 got wrong or left out: a fourth UDP candidate type (<code style="color:#e6edf3">prflx</code>), the controlling/controlled agent split that decides who nominates a pair, ICE restart as the real recovery path when a connection fails (not just "Configure TURN"), and the pending/current local-remote description split. <a href="#26a">26a</a> corrects 23a/23b's candidate types, <a href="#26b">26b</a> adds the controlling/controlled role, <a href="#26c">26c</a> adds ICE restart as a SessionStrip action.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 26a corrected candidate types -->
+<div id="26a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#26a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">26a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Correction — 23a was missing <code>prflx</code>, and TCP candidates are a real (rare) fourth column</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">MDN lists four UDP candidate types, not three: <code style="color:#e6edf3">host</code>, <code style="color:#e6edf3">prflx</code> (peer reflexive — discovered mid-negotiation via trickle ICE, not requested upfront like <code style="color:#e6edf3">srflx</code>), <code style="color:#e6edf3">srflx</code>, <code style="color:#e6edf3">relay</code>. 23a's list skipped <code style="color:#e6edf3">prflx</code> entirely. TCP candidates exist too (<code style="color:#e6edf3">active</code>/<code style="color:#e6edf3">passive</code>/<code style="color:#e6edf3">so</code>) but are rare enough in practice that they get a protocol badge, not their own row type — same visual treatment as any UDP row, just tagged <code style="color:#e6edf3">tcp</code> instead of <code style="color:#e6edf3">udp</code>.</div>
+  <div style="width:380px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:4px">
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid #161b22">
+      <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(88,166,255,.12);color:#58a6ff">HOST</span>
+      <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">192.168.1.14:54321</code>
+      <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">udp</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid #161b22">
+      <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(255,166,87,.12);color:#ffa557">PRFLX</span>
+      <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">10.0.0.2:41220</code>
+      <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">udp</span>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">found via trickle</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid #161b22">
+      <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(76,222,130,.12);color:#4cde82">SRFLX</span>
+      <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">203.0.113.9:60122</code>
+      <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">udp</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px">
+      <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(210,168,255,.12);color:#d2a8ff">RELAY</span>
+      <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">198.51.100.4:3478</code>
+      <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">tcp</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Corrected type — 23a/23b</div>
+    type: 'host'|'prflx'|'srflx'|'relay'<br>
+    protocol: 'udp'|'tcp'
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781"><code style="color:#e6edf3">prflx</code> rows can appear <em>after</em> gathering already "finished" (trickle ICE keeps discovering candidates during negotiation) — the <code style="color:#e6edf3">OutputList</code> for 23a needs to append rows live, not just render a static list from one gather pass.</div>
+  </div>
+</div>
+
+<!-- 26b controlling/controlled -->
+<div id="26b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#26b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">26b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Controlling vs. controlled agent — one badge on the matrix, not a user decision</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">ICE picks one peer as the controlling agent, who makes the final call on which candidate pair wins and tells the other (controlled) peer. This is assigned by the protocol, not chosen by the user — the UI's only job is to say which role this peer has, so "why did it pick that pair and not this faster one" has an answer. Added as a small badge on 23b's matrix header.</div>
+  <div style="width:380px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #1c2229">
+      <span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781">Candidate pairs</span>
+      <span style="margin-left:auto;display:flex;align-items:center;gap:5px;padding:2px 7px;background:rgba(88,166,255,.1);border:1px solid rgba(88,166,255,.3);border-radius:20px">
+        <span style="width:5px;height:5px;border-radius:50%;background:#58a6ff"></span>
+        <span style="font:500 9.5px ui-monospace,Menlo,monospace;color:#58a6ff">controlling</span>
+      </span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 70px;gap:0;padding:8px 12px;align-items:center;background:rgba(76,222,130,.06);border-left:2px solid #4cde82">
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">srflx:60122</code>
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">srflx:51004</code>
+      <span style="font:600 9.5px system-ui,sans-serif;color:#4cde82;text-align:right">✓ nominated</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">23b addition</div>
+    role: 'controlling' | 'controlled' <span style="color:#6e7781">// read-only</span>
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Read from <code style="color:#e6edf3">RTCIceTransport.role</code> once connected; before that it shows nothing rather than guessing. No control affordance — it doesn't matter which peer has which role for correctness, only for explaining behavior, so this is informational-only chrome.</div>
+  </div>
+</div>
+
+<!-- 26c ICE restart -->
+<div id="26c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#26c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">26c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">ICE restart — the real recovery action, distinct from "Configure TURN" (22b)</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">22b's "Configure TURN" fixes a server-config problem discovered <em>before</em> connecting. ICE restart is different: it recovers a session that connected fine and then broke (network switch, congestion) — MDN's fix pattern is <code style="color:#e6edf3">setConfiguration()</code> + <code style="color:#e6edf3">restartIce()</code> on <code style="color:#e6edf3">iceConnectionState === 'failed'</code>, with media/data continuing on the old path until the new one is ready. SessionStrip (21a) needs this as a distinct action, not folded into Cancel.</div>
+  <div style="width:400px;background:#0d1117;border:1px solid rgba(255,123,114,.35);border-radius:7px;padding:8px 10px;display:flex;align-items:center;gap:9px">
+    <span style="width:7px;height:7px;border-radius:50%;background:#ff7b72"></span>
+    <span style="font:400 11px system-ui,sans-serif;color:#e6edf3">Connection dropped — network changed.</span>
+    <button style="margin-left:auto;height:22px;padding:0 9px;background:rgba(255,123,114,.14);border:1px solid #ff7b72;border-radius:5px;font:600 10px system-ui,sans-serif;color:#ff7b72;cursor:pointer;white-space:nowrap">Restart connection</button>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">SessionStrip — one more state + action</div>
+    state: … | 'failed'<br>
+    onRestartIce: () =&gt; void
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Clicking it doesn't reopen the caret or touch the recipe — it calls <code style="color:#e6edf3">restartIce()</code> on the existing <code style="color:#e6edf3">QuorumSession</code>, same live <code style="color:#e6edf3">sessionHandle</code> (21a), and the strip returns to <code style="color:#e6edf3">connected</code> automatically once the new path is up. This is the item turn 22's two-peer verification checklist should specifically test: does data actually keep flowing on the old path while restart negotiates the new one, per MDN's behavior.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t25" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t25" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">25</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">WebRTC toolkit — new kinds, shelf tree, glyphs, and tool dialogs</span>
+</div>
+
+<div style="max-width:860px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0">Fills in the remaining UX turns 23/24 left implicit: <a href="#25a">25a</a> four new pipeline <em>kinds</em> the caret fit-check (19a) needs to recognize alongside bytes/text/ciphertext, <a href="#25b">25b</a> the full <code style="color:#e6edf3">OpsShelf</code> tree for the WebRTC category (all four groups from <code style="color:#e6edf3">WEBRTC-TOOLBOX.md</code>), <a href="#25c">25c</a> the two tool dialogs 24a/24b's buttons open, <a href="#25d">25d</a> how a new kind shows up in a chip's tip and blocks a mismatched caret the same way bytes/ciphertext already do.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 25a new kinds & glyphs -->
+<div id="25a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#25a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">25a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Four new kinds — shape-coded, not just color-coded</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Bytes/text/ciphertext kinds are color dots only, because there are few of them and a cell's own label disambiguates. WebRTC introduces socket-like handles that aren't payload data at all — mixing them into the same color-only dot system risks a user mistaking a live session handle for a data value. Each new kind gets a distinct <em>shape</em> (still 6px, still sits where the color dot already sits) so the difference reads before the label is even parsed.</div>
+  <div style="width:280px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:9px">
+      <span style="width:7px;height:7px;border-radius:1px;background:#58a6ff;flex-shrink:0;transform:rotate(45deg)"></span>
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">candidate</code>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">IceCandidate</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:9px">
+      <span style="width:7px;height:7px;background:#d2a8ff;flex-shrink:0;border-radius:1px"></span>
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">session</code>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">SessionHandle</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:9px">
+      <span style="width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:7px solid #4cde82;flex-shrink:0"></span>
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">channel</code>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">DataChannelRef</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:9px">
+      <span style="width:7px;height:7px;border-radius:50%;border:1.5px solid #e3b341;background:transparent;flex-shrink:0"></span>
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">connState</code>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">live diagnostic, not data</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">OpKind — extends the existing union</div>
+    'bytes'|'text'|'ciphertext'|'signature'<br>
+    | 'candidate'|'session'|'channel'|'connState'
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Diamond/square/triangle/ring render at the same 6-7px box every dot already occupies — pure CSS (rotated square, border-triangle, transparent-fill ring), no icon font or SVG asset. <code style="color:#e6edf3">connState</code>'s hollow ring reads as "observe, don't consume" — it's the one kind a cell can display but never bind as an input.</div>
+  </div>
+</div>
+
+<!-- 25b full shelf tree -->
+<div id="25b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#25b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">25b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">OpsShelf — the WebRTC category, all four groups</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">One category, four sub-headers matching <code style="color:#e6edf3">WEBRTC-TOOLBOX.md</code>'s sections 1–3 plus stats — same collapsible group pattern the tree already uses for <code style="color:#e6edf3">WebCrypto</code>/<code style="color:#e6edf3">RSA</code> (20a), just one level deeper since this category has more ops than any existing one.</div>
+  <div style="width:264px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="padding:6px 0">
+      <div style="display:flex;align-items:center;gap:6px;padding:7px 12px 5px">
+        <span style="font-size:8px;color:#6e7781">▾</span>
+        <span style="font:600 10px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#8b949e">WebRTC</span>
+        <span style="font:500 10px ui-monospace,Menlo,monospace;color:#484f58">10</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:6px 12px 3px 22px">
+        <span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">ICE / STUN</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:6px;height:6px;background:#58a6ff;border-radius:1px;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">rtc.ice</code></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:6px;height:6px;background:#58a6ff;border-radius:1px;flex-shrink:0;transform:rotate(45deg)"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">rtc.gatherCandidates</code></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:6px;height:6px;background:#58a6ff;border-radius:1px;flex-shrink:0;transform:rotate(45deg)"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">rtc.checkConnectivity</code></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 12px 3px 22px">
+        <span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Peer &amp; signaling</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:6px;height:6px;background:#d2a8ff;border-radius:1px;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.offer</code></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:6px;height:6px;background:#d2a8ff;border-radius:1px;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.join</code></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px;opacity:.5"><span style="width:6px;height:6px;background:#484f58;border-radius:1px;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">rtc.createOffer</code><span style="font:400 9px system-ui,sans-serif;color:#6e7781">advanced</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 12px 3px 22px">
+        <span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Data channel</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:0;height:0;border-left:3.5px solid transparent;border-right:3.5px solid transparent;border-bottom:6px solid #4cde82;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.send</code></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px"><span style="width:0;height:0;border-left:3.5px solid transparent;border-right:3.5px solid transparent;border-bottom:6px solid #4cde82;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.recv</code></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 12px 3px 22px">
+        <span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Stats</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 12px 4px 22px;opacity:.75"><span style="width:6px;height:6px;border-radius:50%;border:1.3px solid #e3b341;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">rtc.statsReport</code><span style="font:400 9px system-ui,sans-serif;color:#6e7781">planned</span></div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Tree shape — one level deeper, same component</div>
+    category.groups: { label, ops: Op[] }[]
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Only the WebRTC category needs <code style="color:#e6edf3">groups</code> today — every other category keeps its flat <code style="color:#e6edf3">ops</code> array, so this is additive, optional structure, not a tree-wide rewrite. Sub-header rows aren't collapsible themselves (only the category header is); they're static section dividers.</div>
+  </div>
+</div>
+
+<!-- 25c tool dialogs -->
+<div id="25c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#25c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">25c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Tool dialogs — Add server, and a peer row's detail popover</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The two buttons turn 24 left as bare affordances (24b's "+ Add server", 24a's peer row) — both are small anchored popovers, same chrome as 21b's Publish confirm, not full modals.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Add server</div>
+      <div style="width:260px;background:#161b22;border:1px solid #30363d;border-radius:9px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:12px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;gap:6px">
+          <button style="flex:1;padding:6px 0;background:rgba(88,166,255,.14);border:1px solid #58a6ff;border-radius:5px;font:600 10px system-ui,sans-serif;color:#58a6ff;cursor:pointer">STUN</button>
+          <button style="flex:1;padding:6px 0;background:#0d1117;border:1px solid #21262d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#8b949e;cursor:pointer">TURN</button>
+        </div>
+        <div style="height:26px;padding:0 8px;background:#0d1117;border:1px solid #30363d;border-radius:5px;display:flex;align-items:center"><span style="font:400 10.5px ui-monospace,Menlo,monospace;color:#6e7781">stun:host:port</span></div>
+        <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:2px">
+          <button style="height:24px;padding:0 10px;background:transparent;border:1px solid #30363d;border-radius:5px;font:500 10.5px system-ui,sans-serif;color:#8b949e;cursor:pointer">Cancel</button>
+          <button style="height:24px;padding:0 10px;background:#58a6ff;border:none;border-radius:5px;font:600 10.5px system-ui,sans-serif;color:#01121f;cursor:pointer">Add</button>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Peer detail — click a 24a row</div>
+      <div style="width:260px;background:#161b22;border:1px solid #30363d;border-radius:9px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:12px;display:flex;flex-direction:column;gap:6px">
+        <div style="font:600 11px system-ui,sans-serif;color:#e6edf3">Dana · cell [1]</div>
+        <div style="font:400 10px ui-monospace,Menlo,monospace;color:#8b949e;line-height:1.7">nominated pair: srflx ↔ srflx<br>rtt: 42ms · state: connected<br>invite fp: kJ8x…9fQ</div>
+        <button style="align-self:flex-start;margin-top:4px;height:22px;padding:0 8px;background:#161b22;border:1px solid #30363d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#e6edf3;cursor:pointer">Jump to cell</button>
+      </div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Both reuse Popover, no new component</div>
+    &lt;Popover anchor={buttonRef} align="start"&gt;
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Same primitive as 20d's "More ▾" and 21b's confirm — this turn adds no new dialog system, just two more contents for the existing one.</div>
+  </div>
+</div>
+
+<!-- 25d kind flowing through a chip's tip -->
+<div id="25d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#25d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">25d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">A new kind at the tip — the caret dims exactly like bytes/ciphertext already do</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">This is the payoff for 25a: once <code style="color:#e6edf3">session</code>/<code style="color:#e6edf3">channel</code> are real kinds, the existing fit-check (19a/20b) already knows what to do with them — no special-case code, they flow through the same <code style="color:#e6edf3">cellTip</code> mechanism as any other kind.</div>
+  <div style="width:340px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:11px 12px">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:9px">
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.offer</code>
+      <span style="color:#484f58">›</span>
+      <span style="width:6px;height:6px;background:#d2a8ff;border-radius:1px"></span>
+      <span style="font:400 10px system-ui,sans-serif;color:#8b949e">tip: session</span>
+    </div>
+    <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:5px;padding-left:2px">Caret open — filtered by tip kind session</div>
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 4px"><span style="width:6px;height:6px;background:#4cde82;border-radius:1px;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.send</code></div>
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 4px;opacity:.4"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">base64</code><span style="font:400 9px system-ui,sans-serif;color:#6e7781">needs bytes/text</span></div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Zero new fit logic</div>
+    fit(op, tipKind) = op.acceptsKinds.includes(tipKind)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781"><code style="color:#e6edf3">base64</code> dims for the same reason any encoding op already dims after a non-bytes/text tip — <code style="color:#e6edf3">session</code> just joins the set of kinds that function can mismatch against. This is the strongest evidence 25a's kind additions are structurally sound: they need no new branch anywhere in the shelf, only new entries in the kind union and the tip label's shape lookup.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t24" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t24" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">24</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">A Connections tray tab — session/peer management as toolkit chrome, not ops</span>
+</div>
+
+<div style="max-width:860px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0">Turn 23 modeled ICE/STUN as recipe ops because a recipe author sometimes needs to compose them explicitly. But most of what a user wants day-to-day — which peers are connected, what the default STUN/TURN list is, why a handshake failed — isn't recipe behavior, it's ambient session state. That's the same split the tray already makes for secrets: <code style="color:#e6edf3">Inputs</code> holds runtime values a recipe binds to, not something every cell re-declares. A new <code style="color:#e6edf3">Connections</code> tray tab holds the peer/session equivalent: <a href="#24a">24a</a> active peers list, <a href="#24b">24b</a> default server preferences, <a href="#24c">24c</a> a debug console. None of these are pipeline ops — they're built-in toolkit capability, always there whether or not the open recipe uses Quorum.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 24a peers list -->
+<div id="24a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#24a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">24a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Active peers — one row per session, across all cells</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">A notebook can have more than one <code style="color:#e6edf3">quorum.offer</code>/<code style="color:#e6edf3">join</code> cell (parallel sessions with different recipients). The tray lists every session regardless of which cell created it — the single place to see "who am I connected to right now" without hunting through cells.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="padding:9px 12px;border-bottom:1px solid #1c2229;font:600 10px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8b949e">Connections</div>
+    <div style="display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid #161b22">
+      <span style="width:7px;height:7px;border-radius:50%;background:#4cde82;flex-shrink:0"></span>
+      <div style="flex:1">
+        <div style="font:500 11px system-ui,sans-serif;color:#e6edf3">Dana</div>
+        <div style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">cell [1] · srflx · 42ms</div>
+      </div>
+      <button style="height:20px;padding:0 7px;background:#161b22;border:1px solid #21262d;border-radius:4px;font:500 9.5px system-ui,sans-serif;color:#8b949e;cursor:pointer">Close</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:9px;padding:9px 12px">
+      <span style="width:7px;height:7px;border-radius:50%;background:#e3b341;flex-shrink:0"></span>
+      <div style="flex:1">
+        <div style="font:500 11px system-ui,sans-serif;color:#e6edf3">Sam</div>
+        <div style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">cell [4] · waiting for peer…</div>
+      </div>
+      <button style="height:20px;padding:0 7px;background:#161b22;border:1px solid #21262d;border-radius:4px;font:500 9.5px system-ui,sans-serif;color:#8b949e;cursor:pointer">Cancel</button>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Contract</div>
+    trayConnections: { peerLabel, cellId, state,<br>
+    &nbsp;&nbsp;candidateType?, rttMs?, onClose }[]
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Clicking a row scrolls/focuses that cell (same "jump to source" pattern the tray likely already uses for Inputs bindings). Close here and Cancel/Close in the cell's own SessionStrip (21a) are the same action, two entry points.</div>
+  </div>
+</div>
+
+<!-- 24b server preferences -->
+<div id="24b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#24b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">24b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Server preferences — the default every new <code>rtc.ice</code> inherits</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">A user shouldn't have to configure STUN/TURN in every recipe. Tray-level preferences set the default server list; a recipe's own <code style="color:#e6edf3">rtc.ice</code> cell (23c) only needs to exist when a recipe wants to override it — otherwise it's implicit.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781">Default servers</div>
+    <div style="display:flex;align-items:center;gap:8px"><span style="font:500 9px system-ui,sans-serif;padding:2px 5px;border-radius:3px;background:rgba(88,166,255,.12);color:#58a6ff">STUN</span><code style="flex:1;font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">stun.l.google.com:19302</code></div>
+    <div style="display:flex;align-items:center;gap:8px"><span style="font:500 9px system-ui,sans-serif;padding:2px 5px;border-radius:3px;background:rgba(210,168,255,.12);color:#d2a8ff">TURN</span><code style="flex:1;font:500 10.5px ui-monospace,Menlo,monospace;color:#6e7781">not configured</code></div>
+    <button style="align-self:flex-start;height:22px;padding:0 9px;background:#161b22;border:1px solid #30363d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#e6edf3;cursor:pointer;margin-top:2px">+ Add server</button>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Contract</div>
+    trayDefaultIceServers: RtcIceServer[]<br>
+    <span style="color:#6e7781">// rtc.ice cell param falls back to this</span><br>
+    <span style="color:#6e7781">// when its own servers array is empty</span>
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">TURN credential here is the same locked, tray-bound <code style="color:#e6edf3">secret</code> field as 22a/23c — preferences aren't an exception to that rule, they're where the bindable value actually lives.</div>
+  </div>
+</div>
+
+<!-- 24c debug console -->
+<div id="24c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#24c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">24c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Debug console — the ICE/signaling event log, collapsed by default</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">A raw, timestamped log of state transitions and candidate events — the thing turn 23's tidy widgets deliberately don't show. Collapsed under a disclosure row so it doesn't compete with 24a/24b for attention; opened only when something needs debugging.</div>
+  <div style="width:340px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid #1c2229;cursor:pointer">
+      <span style="font-size:8px;color:#6e7781">▾</span>
+      <span style="font:600 10px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8b949e">Debug console</span>
+      <span style="margin-left:auto;font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">12 events</span>
+    </div>
+    <div style="padding:8px 12px;font:400 10px/1.7 ui-monospace,Menlo,monospace;color:#8b949e;max-height:110px;overflow:auto">
+      <div><span style="color:#484f58">14:02:11</span> <span style="color:#58a6ff">icegatheringstatechange</span> → gathering</div>
+      <div><span style="color:#484f58">14:02:11</span> <span style="color:#58a6ff">icecandidate</span> host 192.168.1.14:54321</div>
+      <div><span style="color:#484f58">14:02:12</span> <span style="color:#58a6ff">icecandidate</span> srflx 203.0.113.9:60122</div>
+      <div><span style="color:#484f58">14:02:13</span> <span style="color:#4cde82">iceconnectionstatechange</span> → connected</div>
+      <div><span style="color:#484f58">14:02:13</span> <span style="color:#4cde82">selectedcandidatepairchange</span> srflx↔srflx</div>
+      <div><span style="color:#484f58">14:03:40</span> <span style="color:#e3b341">icecandidateerror</span> turn:relay… 701</div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Contract</div>
+    debugEvents: { ts, event, detail, level }[]
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Fed directly by the WebRTC events MDN documents on <code style="color:#e6edf3">RTCPeerConnection</code>/<code style="color:#e6edf3">RTCIceTransport</code> (icecandidate, icecandidateerror, iceconnectionstatechange, selectedcandidatepairchange) — this is a passthrough log, not a redesigned event model. Errors get the warn color, everything else is neutral gray.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t23" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t23" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">23</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">WebRTC toolbox, ground up — starting with ICE &amp; STUN</span>
+</div>
+
+<div style="max-width:860px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0">Turns 21a/22b treated Quorum's WebRTC plumbing (<code style="color:#e6edf3">rtc.ice</code>, <code style="color:#e6edf3">stun.check</code>) as two supporting ops behind a session feature. This turn designs them as their own toolbox, the way <code style="color:#e6edf3">aes.*</code> or <code style="color:#e6edf3">openpgp.*</code> are — connectivity establishment (ICE candidate gathering, STUN reflexive discovery, TURN relay, connectivity checks) modeled as recipe-pipeline blocks a user composes and inspects like any crypto op. Three widgets: <a href="#23a">23a</a> candidate gathering as a pipeline op with a typed output list, <a href="#23b">23b</a> the connectivity-check matrix (candidate pairs, not a single pass/fail), <a href="#23c">23c</a> the server config block TURN credentials bind into. The full toolbox scope beyond ICE/STUN — signaling, data channel, media capture, stats — is indexed in <code style="color:#e6edf3">WEBRTC-TOOLBOX.md</code>, handed off alongside this turn.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 23a candidate gathering -->
+<div id="23a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#23a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">23a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px"><code>rtc.gatherCandidates</code> — ICE gathering as a typed output list</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: gathering candidates is a source op, same shape as <code style="color:#e6edf3">openpgp.export</code> — it runs once and produces a list of typed artifacts (host / srflx / relay), rendered with 20h's <code style="color:#e6edf3">OutputList</code>, one row per candidate. This is the ICE half of what <code style="color:#e6edf3">stun.check</code> (22b) only summarized as pass/fail — here the user sees exactly which candidate types were found, which is what actually explains a later connectivity failure.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div style="width:380px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:4px">
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid #161b22">
+        <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(88,166,255,.12);color:#58a6ff">HOST</span>
+        <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">192.168.1.14:54321</code>
+        <span style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">udp</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid #161b22">
+        <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(76,222,130,.12);color:#4cde82">SRFLX</span>
+        <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">203.0.113.9:60122</code>
+        <span style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">udp</span>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#4cde82">via stun:</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 10px">
+        <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(210,168,255,.12);color:#d2a8ff">RELAY</span>
+        <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#6e7781;text-decoration:line-through;opacity:.6">— none gathered —</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#e3b341">no TURN configured</span>
+      </div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Op contract</div>
+      op: rtc.gatherCandidates<br>
+      in: rtc.ice (server config)<br>
+      out: IceCandidate[] { type: 'host'|'srflx'|'relay',<br>
+      &nbsp;&nbsp;address, port, protocol: 'udp'|'tcp' }
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">A missing <code style="color:#e6edf3">relay</code> row isn't an error — it's the expected result of not configuring TURN (23c) yet, styled as a dim informational row, not a failure row. This is the artifact <code style="color:#e6edf3">quorum.offer</code> (21a) consumes internally; surfacing it standalone is what makes ICE debuggable outside a live session.</div>
+    </div>
+  </div>
+</div>
+
+<!-- 23b connectivity check matrix -->
+<div id="23b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#23b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">23b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px"><code>rtc.checkConnectivity</code> — candidate pairs, not one pass/fail</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: ICE tests every local×remote candidate pair, not the connection as a whole — so the op's output is a small matrix, one row per pair, states matching the ICE spec (<code style="color:#e6edf3">waiting → in-progress → succeeded/failed</code>), with the nominated (selected) pair highlighted once one succeeds.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div style="width:380px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:1fr 1fr 70px;gap:0;padding:8px 12px;border-bottom:1px solid #1c2229;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781">
+        <span>Local</span><span>Remote</span><span style="text-align:right">State</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 70px;gap:0;padding:8px 12px;align-items:center;background:rgba(76,222,130,.06);border-left:2px solid #4cde82">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">srflx:60122</code>
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">srflx:51004</code>
+        <span style="font:600 9.5px system-ui,sans-serif;color:#4cde82;text-align:right">✓ nominated</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 70px;gap:0;padding:8px 12px;align-items:center">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">host:54321</code>
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">host:53211</code>
+        <span style="font:500 9.5px system-ui,sans-serif;color:#6e7781;text-align:right">failed</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 70px;gap:0;padding:8px 12px;align-items:center;opacity:.5">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">host:54321</code>
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">srflx:51004</code>
+        <span style="font:500 9.5px system-ui,sans-serif;color:#6e7781;text-align:right">skipped</span>
+      </div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Op contract</div>
+      op: rtc.checkConnectivity<br>
+      out: CandidatePair[] { local, remote,<br>
+      &nbsp;&nbsp;state: 'waiting'|'in-progress'|<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;'succeeded'|'failed', nominated?: boolean }
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Skipped pairs (lower-priority pairs ICE never tries once a higher-priority one succeeds) render at 50% opacity, not hidden — a user debugging "why is this slow" needs to see the whole candidate graph, not just the winner. 22b's "Configure TURN" action becomes the fallback CTA shown under this matrix when every row fails.</div>
+    </div>
+  </div>
+</div>
+
+<!-- 23c server config -->
+<div id="23c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#23c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">23c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px"><code>rtc.ice</code> config block — STUN free, TURN bound (22a)</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: one config cell upstream of gathering/checking, holding the server list. STUN entries are plain URLs (no auth, safe as literal params); TURN entries carry <code style="color:#e6edf3">username</code>/<code style="color:#e6edf3">credential</code>, so the credential field reuses 22a's locked <code style="color:#e6edf3">secret</code> <code style="color:#e6edf3">ParamField</code> exactly.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(88,166,255,.12);color:#58a6ff">STUN</span>
+        <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">stun:stun.l.google.com:19302</code>
+      </div>
+      <div style="height:1px;background:#161b22"></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(210,168,255,.12);color:#d2a8ff">TURN</span>
+        <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">turn:relay.example.com:3478</code>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding-left:34px">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">credential</code>
+        <span style="font-size:9px;color:#4cde82">🔒</span>
+        <div style="flex:1;height:22px;padding:0 7px;background:rgba(76,222,130,.07);border:1px solid rgba(76,222,130,.3);border-radius:5px;display:flex;align-items:center">
+          <span style="font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">@dana-turn-pass</span>
+        </div>
+      </div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Reuses 22a exactly</div>
+      registry: rtc.ice.params.credential.secret = true
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">No new param type — this cell is why 22a's <code style="color:#e6edf3">secret</code> flag exists at all. Multiple STUN/TURN rows are a plain array param, add/remove like any repeatable param group already in the registry.</div>
+    </div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t22" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t22" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">22</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">New questions from landing 21a — secret params, TURN fallback, and what isn't a design question</span>
+</div>
+
+<div style="max-width:860px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0">Of the four items surfaced landing Quorum: <a href="#22a">22a</a> and <a href="#22b">22b</a> are real design decisions with mockups below. The other two — live two-peer mesh verification and the resulting SESSION-transition polish — aren't design questions; there's nothing to mock up until someone runs a real paired session, so they're logged as a verification checklist instead, not designed here.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 22a secret param -->
+<div id="22a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#22a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">22a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">ParamField — a "secret" param can't become free text or serialize into a share link</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: the registry marks certain params <code style="color:#e6edf3">secret: true</code> (<code style="color:#e6edf3">quorum.offer/join key=</code>, <code style="color:#e6edf3">rtc.ice credential=</code>). A secret <code style="color:#e6edf3">ParamField</code> renders locked — no text cursor, no typed value ever shown or stored — and only accepts a binding to an Inputs-tray slot. Sharing the recipe link omits the field's value entirely; the recipient sees the same locked, unbound state and must bind their own.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Unbound — locked, not editable</div>
+      <div style="width:240px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:9px 10px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">key</code>
+          <span style="font-size:9px;color:#e3b341">🔒</span>
+          <span style="font:400 9px system-ui,sans-serif;color:#e3b341;margin-left:auto">secret</span>
+        </div>
+        <div style="height:26px;padding:0 8px;background:#010409;border:1px dashed #30363d;border-radius:5px;display:flex;align-items:center">
+          <span style="font:400 10.5px system-ui,sans-serif;color:#6e7781">Bind a value from Inputs…</span>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Bound — shows the slot, never the value</div>
+      <div style="width:240px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:9px 10px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">key</code>
+          <span style="font-size:9px;color:#4cde82">🔒</span>
+          <span style="font:400 9px system-ui,sans-serif;color:#4cde82;margin-left:auto">bound</span>
+        </div>
+        <div style="height:26px;padding:0 8px;background:rgba(76,222,130,.07);border:1px solid rgba(76,222,130,.3);border-radius:5px;display:flex;align-items:center;gap:6px">
+          <span style="font:500 10.5px ui-monospace,Menlo,monospace;color:#4cde82">@dana-turn-pass</span>
+          <span style="font-size:9px;color:#6e7781;margin-left:auto;cursor:pointer">✕</span>
+        </div>
+      </div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Registry + ParamField — new shape</div>
+      param: { secret?: boolean, … }<br>
+      value: { kind: 'unbound' } | { kind: 'bound', slotRef: string }
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Recipe serialization drops any param whose registry entry has <code style="color:#e6edf3">secret: true</code> down to its <code style="color:#e6edf3">slotRef</code> string (never a literal) — same rule whether the link goes through Publish (21b) or plain copy/export. Non-secret params are unaffected; this is additive to <code style="color:#e6edf3">ParamField</code>, not a rewrite.</div>
+    </div>
+  </div>
+</div>
+
+<!-- 22b TURN fallback -->
+<div id="22b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#22b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">22b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">stun.check — its diagnostic row gets a "Configure TURN" action, not just a note</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: when <code style="color:#e6edf3">stun.check</code> reports no server-reflexive candidate, its <code style="color:#e6edf3">OutputList</code> row (20h) grows one inline action button. Clicking it opens the caret at the upstream <code style="color:#e6edf3">rtc.ice</code> cell with the <code style="color:#e6edf3">turn=</code> param field focused — it doesn't add a new panel, it drives the existing caret + param-field affordances at a specific target.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div style="width:360px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:4px">
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 10px">
+        <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(227,179,65,.12);color:#e3b341">DIAG</span>
+        <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">stun.check</code>
+        <span style="font:400 10px system-ui,sans-serif;color:#e3b341">no srflx candidate</span>
+        <button style="height:22px;padding:0 8px;background:#e3b341;border:none;border-radius:5px;font:600 10px system-ui,sans-serif;color:#1a1405;cursor:pointer;white-space:nowrap">Configure TURN</button>
+      </div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">OutputArtifact — one conditional action</div>
+      diagnosticAction?: { label: string, onClick: () =&gt; void }
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781"><code style="color:#e6edf3">onClick</code> is supplied by the shell, not <code style="color:#e6edf3">stun.check</code> itself — it calls the same <code style="color:#e6edf3">pendingInsert</code>-style caret-open the shelf already uses, targeted at <code style="color:#e6edf3">rtc.ice</code>'s cell and its <code style="color:#e6edf3">turn</code> field. Present only when the diagnostic actually failed; a clean check's row has no action, same as any other non-actionable diagnostic.</div>
+    </div>
+  </div>
+</div>
+
+<!-- verification checklist, not a design item -->
+<div style="width:640px;padding:14px 16px;background:#0d1117;border:1px dashed #484f58;border-radius:10px">
+  <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#6e7781;margin-bottom:8px">Not designed here — verification checklist for #6/#7 (needs a real second peer)</div>
+  <div style="font:400 11px/1.7 system-ui,sans-serif;color:#8b949e">
+    ☐ Two browser profiles, run a notebook with <code style="color:#e6edf3">offer→send→recv</code> on one, <code style="color:#e6edf3">join→recv→send</code> on the other<br>
+    ☐ Confirm RunBar flips <code style="color:#e6edf3">waiting-peer → running</code> with no flash of <code style="color:#e6edf3">idle</code>/<code style="color:#e6edf3">blocked</code><br>
+    ☐ Confirm SessionStrip flips <code style="color:#e6edf3">waiting → connected</code> in step with RunBar, not before/after it<br>
+    ☐ Confirm Cancel during <code style="color:#e6edf3">waiting</code> reliably un-pauses the run on both ends<br>
+    ☐ Fold any breakage back into <code style="color:#e6edf3">quorum-ops.js</code>, not the widgets — the UI coupling is one-way by design
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t21" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t21" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">21</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">Five open questions from landing turn 20</span>
+</div>
+
+<div style="max-width:860px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0">In order: <a href="#21a">21a</a> Quorum as a <code style="color:#e6edf3">quorum</code> toolbox (the requested direction — the run boundary becomes the session boundary), <a href="#21b">21b</a> where Publish/<code style="color:#e6edf3">publishedAs</code> actually come from, <a href="#21c">21c</a> search suggesting a kit chip, <a href="#21d">21d</a> nested-caret fit as its own filter, <a href="#21e">21e</a> collapsing four suite chips into one pill.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 21a Quorum toolbox -->
+<div id="21a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#21a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">21a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Quorum as a toolbox — the run boundary is the session boundary</span>
+  </div>
+  <div style="max-width:760px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: <code style="color:#e6edf3">quorum.offer / join / send / recv / close</code> sit in the shelf's category tree like any other kit, wrapping <code style="color:#e6edf3">QuorumSession</code> 1:1 — no separate Quorum page. The design problem the old page didn't have: <code style="color:#e6edf3">offer</code> and <code style="color:#e6edf3">join</code> aren't instant. Running a notebook that contains one now has a real waiting state, not just idle/blocked/running (19g) — so the run <em>pauses at that cell</em> until a peer connects, the same way it already pauses at a blocked cell, just for a different reason.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Shelf — new category, alongside the existing kits</div>
+      <div style="width:252px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+        <div style="padding:6px 0">
+          <div style="display:flex;align-items:center;gap:6px;padding:7px 12px 5px">
+            <span style="font-size:8px;color:#6e7781">▾</span>
+            <span style="font:600 10px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#8b949e">Quorum</span>
+            <span style="font:500 10px ui-monospace,Menlo,monospace;color:#484f58">7</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.offer</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.join</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.send</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.recv</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.close</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px;opacity:.75"><span style="width:6px;height:6px;border-radius:50%;background:#6e7781"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">rtc.ice</code><span style="font:400 9px system-ui,sans-serif;color:#6e7781">config</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px;opacity:.75"><span style="width:6px;height:6px;border-radius:50%;background:#6e7781"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">stun.check</code><span style="font:400 9px system-ui,sans-serif;color:#6e7781">diagnostic</span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Cell — new SESSION region, waiting for peer</div>
+      <div style="width:400px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+        <div style="padding:11px 12px;border-bottom:1px solid #161b22">
+          <div style="display:flex;align-items:center;gap:2px">
+            <div style="padding:5px 9px;background:#161b22;border:1px solid #58a6ff;border-radius:6px"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.offer</code></div>
+            <span style="padding:0 4px;color:#484f58">›</span>
+            <div style="padding:5px 9px;background:#161b22;border:1px solid #30363d;border-radius:6px;opacity:.4"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.send</code></div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:stretch">
+          <div style="width:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:rgba(88,166,255,.08)">
+            <span style="writing-mode:vertical-rl;font:600 8.5px system-ui,sans-serif;letter-spacing:.08em;color:#58a6ff">SESSION</span>
+          </div>
+          <div style="flex:1;padding:11px 12px">
+            <div style="display:flex;align-items:center;gap:9px;padding:8px 10px;background:rgba(88,166,255,.07);border:1px solid rgba(88,166,255,.3);border-radius:7px">
+              <span style="width:7px;height:7px;border-radius:50%;background:#58a6ff;box-shadow:0 0 0 3px rgba(88,166,255,.2)"></span>
+              <span style="font:400 11px system-ui,sans-serif;color:#e6edf3">Waiting for peer to join…</span>
+              <code style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">kJ8x…9fQ</code>
+              <button style="height:22px;padding:0 8px;background:#161b22;border:1px solid #30363d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#e6edf3;cursor:pointer;white-space:nowrap">Copy invite</button>
+              <button style="height:22px;padding:0 8px;background:transparent;border:1px solid #30363d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#8b949e;cursor:pointer;white-space:nowrap">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="width:400px;margin-top:8px;display:flex;align-items:center;gap:10px;height:44px;padding:0 14px;background:#010409;border:1px solid rgba(88,166,255,.3);border-radius:8px">
+        <button style="height:30px;padding:0 13px;background:#21262d;border:none;border-radius:6px;font:600 11.5px system-ui,sans-serif;color:#ff7b72;cursor:pointer">■ Stop</button>
+        <span style="font:400 11.5px ui-monospace,Menlo,monospace;color:#58a6ff">Paused at cell [1] — waiting for peer…</span>
+      </div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">RunBar — one new state</div>
+      state: 'idle'|'blocked'|'running'|'waiting-peer'<br>
+      sessionInvite?: string<br>
+      onCopyInvite: () =&gt; void<br>
+      onCancelSession: () =&gt; void
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">New <code style="color:#e6edf3">SessionStrip</code> component (cell-level, same slot pattern as 19h's READINESS row): <code style="color:#e6edf3">state: 'offering'|'waiting'|'connected'|'closed'</code>. <code style="color:#e6edf3">quorum.offer</code>'s output is two things — an <code style="color:#e6edf3">inviteBlob</code> (PGP-signed, goes through the existing Copy/Publish affordance from 20h) and a live <code style="color:#e6edf3">sessionHandle</code> that <code style="color:#e6edf3">send/recv/close</code> downstream read as their input. <code style="color:#e6edf3">rtc.ice</code> is a config source op (params: STUN/TURN list) upstream of <code style="color:#e6edf3">offer</code>/<code style="color:#e6edf3">join</code>; <code style="color:#e6edf3">stun.check</code> is a one-shot diagnostic whose output is a plain <code style="color:#e6edf3">OutputList</code> row (20h), not publishable. WebRTC's main-thread requirement means <code style="color:#e6edf3">offer</code>/<code style="color:#e6edf3">join</code> can't run inside whatever isolation <code style="color:#e6edf3">agent.*</code> steps use — they need to be flagged main-thread-only in the op registry the same way, if <code style="color:#e6edf3">agent.*</code> already has such a flag.</div>
+    </div>
+  </div>
+</div>
+
+<!-- 21b Publish plumbing -->
+<div id="21b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#21b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">21b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Publish plumbing — scoped to key exports, persisted on the notebook</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: Publish isn't a generic action on any output — it only appears on <code style="color:#e6edf3">openpgp.export</code> (public key) rows, publishing to the app's own directory (the same one <code style="color:#e6edf3">19a</code>'s "Key directory · HKP" category fetches from). <code style="color:#e6edf3">publishedAs</code> is written into the notebook document itself, not local UI state — reopening the notebook still shows <code style="color:#e6edf3">@pub</code>.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div style="width:340px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:4px">
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 10px">
+        <span style="font:500 9px system-ui,sans-serif;letter-spacing:.05em;padding:2px 5px;border-radius:3px;background:rgba(76,222,130,.12);color:#4cde82">KEY</span>
+        <code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">dana.pub.asc</code>
+        <span style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">1.8 KB</span>
+        <button style="height:22px;padding:0 8px;background:#161b22;border:1px solid #30363d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#e6edf3;cursor:pointer">Copy</button>
+        <button style="height:22px;padding:0 8px;background:#4cde82;border:none;border-radius:5px;font:600 10px system-ui,sans-serif;color:#04140a;cursor:pointer">Publish</button>
+      </div>
+    </div>
+    <div style="width:280px;padding:10px 12px;background:#0d1117;border:1px solid #30363d;border-radius:9px;box-shadow:0 10px 24px rgba(0,0,0,.4)">
+      <div style="font:400 11px/1.5 system-ui,sans-serif;color:#e6edf3;margin-bottom:8px">Publish as <code style="color:#8b949e">3F2A…C81</code>? Anyone with directory access can fetch it.</div>
+      <div style="display:flex;gap:6px;justify-content:flex-end">
+        <button style="height:24px;padding:0 10px;background:transparent;border:1px solid #30363d;border-radius:5px;font:500 10.5px system-ui,sans-serif;color:#8b949e;cursor:pointer">Cancel</button>
+        <button style="height:24px;padding:0 10px;background:#4cde82;border:none;border-radius:5px;font:600 10.5px system-ui,sans-serif;color:#04140a;cursor:pointer">Publish</button>
+      </div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">OutputArtifact — two fields, one action</div>
+      publishable?: boolean <span style="color:#6e7781">// true only for key exports</span><br>
+      directoryUrl?: string <span style="color:#6e7781">// set once publishedAs is</span><br>
+      useNotebook().publishArtifact(cellId, i)
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Publish opens the confirm popover shown at left (not a bare click — this is a one-way action), then calls <code style="color:#e6edf3">publishArtifact</code>, which POSTs and writes <code style="color:#e6edf3">publishedAs</code>/<code style="color:#e6edf3">directoryUrl</code> into that cell's output entry in the notebook doc. The row's Publish button becomes a link icon next to <code style="color:#e6edf3">@pub</code> that copies <code style="color:#e6edf3">directoryUrl</code>.</div>
+    </div>
+  </div>
+</div>
+
+<!-- 21c search x kit -->
+<div id="21c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#21c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">21c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Search suggests the kit — doesn't require finding the footer first</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: yes. If a query matches zero browse-mode ops but matches <code style="color:#e6edf3">kitOnly</code> ops, a suggestion row appears above the (empty) results instead of a bare "no results".</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div style="width:252px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+      <div style="padding:11px 12px 9px;border-bottom:1px solid #1c2229">
+        <div style="display:flex;align-items:center;gap:7px;height:30px;padding:0 9px;background:#010409;border:1px solid #58a6ff;border-radius:6px">
+          <span style="font-size:11px;color:#6e7781">⌕</span>
+          <span style="flex:1;font:400 11.5px system-ui,sans-serif;color:#e6edf3">aes</span>
+        </div>
+      </div>
+      <div style="padding:12px">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 9px;background:rgba(76,222,130,.06);border:1px dashed rgba(76,222,130,.35);border-radius:7px;cursor:pointer">
+          <span style="font:400 11px system-ui,sans-serif;color:#8b949e">Not in browse mode. Try the</span>
+          <span style="font:600 11px system-ui,sans-serif;color:#4cde82">AES / RSA</span>
+          <span style="font:400 11px system-ui,sans-serif;color:#8b949e">kit ▸</span>
+        </div>
+      </div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">OpsShelf — derived, no new prop</div>
+      <span style="color:#6e7781">// suggestedKit = kits.find(k =&gt;</span><br>
+      <span style="color:#6e7781">//   k.ops.some(op =&gt; matches(op, filter)))</span><br>
+      <span style="color:#6e7781">// shown when browse-mode results.length === 0</span>
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Clicking the suggestion calls the same <code style="color:#e6edf3">onKitFilter</code> from 20a and keeps the query text — the kit's own (now much smaller) op list is still filtered by "aes". No new state, no new prop; this is one derived value plus a row in the empty-state branch.</div>
+    </div>
+  </div>
+</div>
+
+<!-- 21d nested-caret filtering -->
+<div id="21d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#21d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">21d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Nested-caret fit — its own slot filter, not the cell's</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: a compound op declares <code style="color:#e6edf3">nestSlots</code> in the registry, one entry per internal slot with its own expected kind. The nested caret (20f) reads that slot's kind, not the cell's overall tip — today it's reusing the cell tip's fit set, which is wrong whenever a slot's kind differs from the cell's edges (e.g. the sign slot inside sign+encrypt wants bytes→signature, not bytes→ciphertext).</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div style="width:280px;background:#0d1117;border:1px solid #4cde82;border-radius:7px;padding:8px 10px">
+      <code style="font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">openpgp.signAndEncrypt</code>
+      <div style="display:flex;align-items:center;gap:4px;margin-top:8px;padding-left:4px">
+        <div style="padding:3px 7px;background:#161b22;border:1px solid #21262d;border-radius:5px"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#8b949e">sign</code></div>
+        <button style="width:14px;height:14px;background:rgba(88,166,255,.14);border:1px solid #58a6ff;border-radius:3px;color:#58a6ff;font:600 8px system-ui,sans-serif;cursor:pointer;padding:0">+</button>
+        <div style="padding:3px 7px;background:#161b22;border:1px solid #21262d;border-radius:5px"><code style="font:500 10px ui-monospace,Menlo,monospace;color:#8b949e">encrypt</code></div>
+      </div>
+      <div style="font:400 10px system-ui,sans-serif;color:#6e7781;margin-top:6px">nest at "+" → slot <code style="color:#8b949e">between(sign,encrypt)</code> → kind <code style="color:#8b949e">bytes→bytes</code>, not the cell's <code style="color:#8b949e">bytes→ciphertext</code></div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Registry — new shape on compound ops</div>
+      nestSlots: { [slotId]: { kind: OpKind } }<br>
+      <span style="color:#6e7781">// Caret's onActivate passes slotId, not just path</span>
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">OpsShelf's fit computation becomes <code style="color:#e6edf3">path.slotId ? op.nestSlots[path.slotId].kind : cellTip</code> — one branch, not a parallel filtering system. Ops with no <code style="color:#e6edf3">nestSlots</code> (the vast majority) are unaffected.</div>
+    </div>
+  </div>
+</div>
+
+<!-- 21e suite status consolidation -->
+<div id="21e" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#21e" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">21e</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Suite status — one pill, worst-status tone, popover for detail</span>
+  </div>
+  <div style="max-width:460px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: collapse. <code style="color:#e6edf3">TopBar</code> (20d) keeps its single <code style="color:#e6edf3">suiteStatus</code> prop — the shell now reduces its four suite chips into it instead of rendering them as children.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Pill — one issue, worst status wins the tone</div>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;background:rgba(227,179,65,.1);border:1px solid rgba(227,179,65,.35);border-radius:20px;width:fit-content">
+        <span style="width:5px;height:5px;border-radius:50%;background:#e3b341"></span>
+        <span style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e3b341">3 suites ready · 1 issue</span>
+        <span style="font-size:8px;color:#e3b341">▾</span>
+      </div>
+    </div>
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Popover — per-suite detail, unchanged data</div>
+      <div style="width:220px;background:#161b22;border:1px solid #30363d;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:5px">
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 9px"><span style="width:5px;height:5px;border-radius:50%;background:#4cde82"></span><span style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">OpenPGP</span><span style="font:400 10px system-ui,sans-serif;color:#6e7781">6.1</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 9px"><span style="width:5px;height:5px;border-radius:50%;background:#4cde82"></span><span style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">WebCrypto</span><span style="font:400 10px system-ui,sans-serif;color:#6e7781">native</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 9px"><span style="width:5px;height:5px;border-radius:50%;background:#4cde82"></span><span style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">Secret sharing</span><span style="font:400 10px system-ui,sans-serif;color:#6e7781">ok</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 9px"><span style="width:5px;height:5px;border-radius:50%;background:#e3b341"></span><span style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">Quorum</span><span style="font:400 10px system-ui,sans-serif;color:#e3b341">no STUN</span></div>
+      </div>
+    </div>
+    <div style="width:280px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">TopBar.suiteStatus — derived shape</div>
+      suiteStatus: { label, tone }<br>
+      suiteDetail: { name, tone, note }[]
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Shell computes <code style="color:#e6edf3">label</code>/<code style="color:#e6edf3">tone</code> from <code style="color:#e6edf3">suiteDetail</code> (worst tone present, count of non-ok) and passes both down; TopBar renders the pill from the first, the popover list from the second. The four existing per-suite checks are unchanged — only their render site moves.</div>
+    </div>
+  </div>
+</div>
+
+</div>
+</section>
+
+
+</body>
+</html>

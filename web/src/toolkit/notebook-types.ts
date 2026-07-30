@@ -14,6 +14,8 @@ export type VaultKeyRow = {
   uid?: string;
   email?: string;
   protection?: string;
+  /** Epoch ms, or null when the key does not expire. */
+  expires?: number | null;
 };
 
 export type SlotMeta = {

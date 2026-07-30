@@ -31,6 +31,13 @@ export type InspectSnapshot = {
     hasPublic?: boolean;
   };
   recipients?: { label?: string; fingerprint?: string; hasArmor?: boolean }[];
+  openpgpKey?: {
+    which?: string;
+    fingerprint?: string;
+    primary?: { alg?: string; fingerprint?: string; created?: string; expires?: string };
+    userIds?: { id: string; selfSigned?: boolean }[];
+    subkeys?: { alg?: string; fingerprint?: string; bound?: boolean }[];
+  };
 };
 
 type Props = {
@@ -171,6 +178,95 @@ function SharesBody({ shares }: { shares: NonNullable<InspectSnapshot["shares"]>
   );
 }
 
+/**
+ * An OpenPGP key is a tree, not a blob (§32b): a primary key with user IDs and
+ * subkeys bound under it. This is the only nested body — every other type is
+ * flat — so the indent and rule are local rather than a shared layout.
+ */
+function OpenpgpKeyBody({
+  pgpKey: k,
+}: {
+  pgpKey: NonNullable<InspectSnapshot["openpgpKey"]>;
+}) {
+  const primary = k.primary;
+  if (!primary) {
+    // Unparseable, or an older snapshot without structure — fall back to the
+    // flat identity fields rather than showing nothing.
+    return (
+      <Rows
+        rows={[
+          ["which", String(k.which || "—")],
+          ["fingerprint", String(k.fingerprint || "—")],
+        ]}
+      />
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
+          primary
+        </p>
+        <Rows
+          rows={[
+            ["alg", primary.alg || "—"],
+            ["fingerprint", primary.fingerprint || "—"],
+            ...(primary.created ? ([["created", primary.created]] as [string, string][]) : []),
+            ...(primary.expires
+              ? ([["expires", primary.expires]] as [string, string][])
+              : ([["expires", "never"]] as [string, string][])),
+          ]}
+        />
+      </div>
+      <div className="border-l border-[var(--border)] pl-2.5">
+        {k.userIds?.length ? (
+          <div className="mb-1.5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
+              user ids
+            </p>
+            <ul className="flex flex-col gap-0.5">
+              {k.userIds.map((u, i) => (
+                <li key={i} className="flex items-baseline gap-1.5">
+                  <code className="break-all font-mono text-[10px] text-[var(--foreground)]">
+                    {u.id}
+                  </code>
+                  {u.selfSigned ? (
+                    <span className="shrink-0 text-[9px] text-[var(--brand)]">self-signed</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {k.subkeys?.length ? (
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
+              subkeys <span className="font-mono font-normal">{k.subkeys.length}</span>
+            </p>
+            <ul className="flex flex-col gap-0.5">
+              {k.subkeys.map((s, i) => (
+                <li key={i} className="flex items-baseline gap-1.5">
+                  <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
+                    {s.alg || "?"}
+                  </span>
+                  <code className="break-all font-mono text-[10px] text-[var(--foreground)]">
+                    {s.fingerprint}
+                  </code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+      {k.which === "private" ? (
+        <p className="font-mono text-[10px] italic text-[var(--muted-foreground)]">
+          secret key material — withheld
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function InspectorArtifact({ snapshot, masked = false, className }: Props) {
   const meta = snapshot.meta || {};
   const bytes = asBytes(snapshot.bytes);
@@ -206,6 +302,8 @@ export function InspectorArtifact({ snapshot, masked = false, className }: Props
         <p className="font-mono text-[10px] italic text-[var(--muted-foreground)]">
           sensitive — value not shown
         </p>
+      ) : snapshot.openpgpKey ? (
+        <OpenpgpKeyBody pgpKey={snapshot.openpgpKey} />
       ) : snapshot.keypair ? (
         <KeypairBody keypair={snapshot.keypair} />
       ) : snapshot.shares ? (

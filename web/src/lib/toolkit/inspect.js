@@ -317,6 +317,49 @@ function cloneableMeta(meta) {
  * @param {import("./engine.js").PipelineValue|null|undefined} value
  * @returns {Promise<InspectSnapshot|null>}
  */
+/**
+ * Primary key, user IDs, and subkeys of an armored OpenPGP key (§32b).
+ *
+ * An OpenPGP key is a *tree* — a primary key with user IDs and subkeys bound
+ * to it by self-signatures — and reporting only "openpgp-key, N chars"
+ * throws away the only part anyone inspects it for. Never returns private
+ * material: fingerprints and algorithms identify a key without exposing it.
+ *
+ * @param {string} armored
+ * @returns {Promise<object>} structure fields, or `{}` when unparseable
+ */
+async function readOpenpgpStructure(armored) {
+  if (!armored.includes("BEGIN PGP")) return {};
+  try {
+    const { readKey } = await import("openpgp");
+    const key = await readKey({ armoredKey: armored });
+    const algOf = (k) => {
+      const a = k.getAlgorithmInfo?.() || {};
+      return [a.algorithm, a.curve || (a.bits ? `${a.bits}` : "")]
+        .filter(Boolean)
+        .join("/");
+    };
+    const expiry = await key.getExpirationTime?.().catch(() => null);
+    return {
+      primary: {
+        alg: algOf(key),
+        fingerprint: key.getFingerprint?.() || "",
+        created: key.getCreationTime?.()?.toISOString?.() || "",
+        // openpgp.js returns Infinity for "never expires".
+        expires: expiry && expiry !== Infinity ? new Date(expiry).toISOString() : "",
+      },
+      userIds: (key.getUserIDs?.() || []).map((id) => ({ id, selfSigned: true })),
+      subkeys: (key.getSubkeys?.() || []).map((sk) => ({
+        alg: algOf(sk),
+        fingerprint: sk.getFingerprint?.() || "",
+        bound: true,
+      })),
+    };
+  } catch {
+    return {};
+  }
+}
+
 export async function buildInspectSnapshot(value) {
   if (!value) return null;
   const meta = cloneableMeta(value.meta);
@@ -455,6 +498,10 @@ export async function buildInspectSnapshot(value) {
         which: value.meta?.which || "private",
         fingerprint: value.meta?.fingerprint || "",
         length: armored.length,
+        // Structure for the tree body (§32b). Best-effort: a key that will not
+        // parse still gets the flat fields above, so the inspector degrades to
+        // what it always showed rather than failing.
+        ...(await readOpenpgpStructure(armored)),
       },
     };
   }

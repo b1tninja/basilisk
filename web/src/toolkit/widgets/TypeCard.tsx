@@ -6,6 +6,7 @@ import {
 } from "../../lib/toolkit/type-registry.js";
 import { cn } from "@/lib/cn";
 import { Input } from "@/components/ui/input";
+import { KindGlyph } from "./kind-glyphs";
 
 type Props = {
   meta: TypeMeta;
@@ -215,7 +216,10 @@ export function TypeCard({ meta, onInsertLiteral, onPickOp, compact = false, cla
       )}
       data-type={meta.base}
     >
-      <header className="flex items-baseline gap-2 border-b border-[var(--border)] p-3.5">
+      <header className="flex items-center gap-2 border-b border-[var(--border)] p-3.5">
+        {/* Same kind→glyph map the output rows use, so a type never shows one
+            icon here and a different one there (§35). */}
+        <KindGlyph kind={meta.base} size={14} className="text-[var(--muted-foreground)]" />
         <code className="font-mono text-sm font-bold text-[var(--foreground)]">{meta.label}</code>
         <span className="text-xs text-[var(--muted-foreground)]">type</span>
         {meta.literal ? (

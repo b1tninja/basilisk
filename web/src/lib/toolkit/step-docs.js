@@ -47,8 +47,8 @@ const STEP_DOCS = {
   base64: { url: `${RFC}/rfc4648#section-4`, label: "RFC 4648 §4 · Base64" },
   base64url: { url: `${RFC}/rfc4648#section-5`, label: "RFC 4648 §5 · Base64url" },
   base32: { url: `${RFC}/rfc4648#section-6`, label: "RFC 4648 §6 · Base32" },
-  to: { url: `${RFC}/rfc4648`, label: "RFC 4648 · Base encodings" },
-  from: { url: `${RFC}/rfc4648`, label: "RFC 4648 · Base encodings" },
+  encode: { url: `${RFC}/rfc4648`, label: "RFC 4648 · Base encodings" },
+  decode: { url: `${RFC}/rfc4648`, label: "RFC 4648 · Base encodings" },
   utf8: { url: `${MDN}/TextEncoder`, label: "MDN · TextEncoder" },
 
   // ── I/O ──
@@ -118,33 +118,33 @@ const STEP_DOCS = {
     label: "MDN · RTCConfiguration.iceServers",
   },
   "stun.check": { url: `${RFC}/rfc8489`, label: "RFC 8489 · STUN" },
-  "rtc.gatherCandidates": { url: `${MDN}/RTCIceCandidate`, label: "MDN · RTCIceCandidate" },
-  "rtc.checkConnectivity": { url: `${RFC}/rfc8445#section-7`, label: "RFC 8445 §7 · ICE checks" },
+  "rtc.gather": { url: `${MDN}/RTCIceCandidate`, label: "MDN · RTCIceCandidate" },
+  "rtc.check": { url: `${RFC}/rfc8445#section-7`, label: "RFC 8445 §7 · ICE checks" },
   "rtc.certificate": { url: `${MDN}/RTCCertificate`, label: "MDN · RTCCertificate" },
-  "rtc.createOffer": {
+  "rtc.offer": {
     url: `${MDN}/RTCPeerConnection/createOffer`,
     label: "MDN · RTCPeerConnection.createOffer()",
   },
-  "rtc.createAnswer": {
+  "rtc.answer": {
     url: `${MDN}/RTCPeerConnection/createAnswer`,
     label: "MDN · RTCPeerConnection.createAnswer()",
   },
-  "rtc.connectionState": {
+  "rtc.state": {
     url: `${MDN}/RTCPeerConnection/connectionState`,
     label: "MDN · RTCPeerConnection.connectionState",
   },
-  "rtc.dataChannelStats": {
+  "rtc.stats": {
     url: `${MDN}/RTCDataChannel/bufferedAmount`,
     label: "MDN · RTCDataChannel.bufferedAmount",
   },
-  "rtc.statsReport": {
+  "rtc.quality": {
     url: `${MDN}/RTCPeerConnection/getStats`,
     label: "MDN · RTCPeerConnection.getStats()",
   },
   "quorum.offer": { url: `${MDN}/RTCDataChannel`, label: "MDN · RTCDataChannel" },
   "quorum.join": { url: `${MDN}/RTCDataChannel`, label: "MDN · RTCDataChannel" },
-  "quorum.send": { url: `${MDN}/RTCDataChannel/send`, label: "MDN · RTCDataChannel.send()" },
-  "quorum.recv": {
+  "rtc.send": { url: `${MDN}/RTCDataChannel/send`, label: "MDN · RTCDataChannel.send()" },
+  "rtc.recv": {
     url: `${MDN}/RTCDataChannel/message_event`,
     label: "MDN · RTCDataChannel message event",
   },

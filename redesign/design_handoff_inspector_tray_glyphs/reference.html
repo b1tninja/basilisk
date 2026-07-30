@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Inspector, tray, and glyphs — design reference (turns 32-35)</title>
+<style>body{margin:0;background:#010409;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}</style>
+</head>
+<body>
+<section id="t35" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t35" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">35</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">Glyphs over tiny text — tray tabs and kind badges</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">The real uniformity rule already answers which system these belong to: <code style="color:#e6edf3">docs/TOOLKIT-WIDGETS.md</code> says "one glyph renderer [<code style="color:#e6edf3">Glyph</code>, op icons only]; lucide only for non-op chrome." A tray tab and an <code style="color:#e6edf3">OutputList</code> kind badge are chrome, not ops — so the fix isn't a new custom icon system, it's applying an icon library the codebase already depends on to two places that currently render text-only. <a href="#35a">35a</a> the six tray tabs. <a href="#35b">35b</a> the kind badge that appears on every single <code style="color:#e6edf3">OutputList</code> row. <a href="#35c">35c</a> the one place a glyph would be wrong to add.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 35a tray tab glyphs -->
+<div id="35a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#35a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">35a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Six tabs, six lucide icons — solves 34a's narrow-width squeeze too</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">"Connections" at 10.5px was already the tightest label in 34a's six-way split; an icon-only tab bar removes the wrapping problem entirely rather than needing ever-smaller type. Text doesn't disappear — it becomes the tooltip, so a new user still gets the word once, on hover, and everyone else stops re-reading six labels a hundred times a session.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:flex;border-bottom:1px solid #21262d">
+      <span style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0;border-right:1px solid #21262d;color:#6e7781">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M21 2l-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></svg>
+      </span>
+      <span style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0;border-right:1px solid #21262d;color:#6e7781">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 11v2M12 11v2M17 11v2"/></svg>
+      </span>
+      <span style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0 6px;border-right:1px solid #21262d;color:#e6edf3;border-bottom:2px solid #58a6ff">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 017 7h2M15 7h2a5 5 0 010 10h-2M8 12h8"/></svg>
+      </span>
+      <span style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0;border-right:1px solid #21262d;color:#6e7781">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>
+      </span>
+      <span style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0;border-right:1px solid #21262d;color:#6e7781">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9M6 13l6-6 6 6"/><path d="M4 3h16"/></svg>
+      </span>
+      <span style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0;color:#6e7781">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h9M17 6h3M4 12h3M9 12h11M4 18h13M20 18h0"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
+      </span>
+    </div>
+    <div style="padding:8px 10px;font:400 9.5px system-ui,sans-serif;color:#6e7781;text-align:center">hover any tab → tooltip shows "Connections"</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Real lucide names, not custom SVGs</div>
+    Keys → KeyRound&nbsp;&nbsp;Slots → LayoutGrid<br>
+    Connections → Cable&nbsp;&nbsp;Outputs → ArrowDownToLine<br>
+    Inputs → ArrowUpFromLine&nbsp;&nbsp;Params → SlidersHorizontal
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Outputs/Inputs deliberately mirror each other (down-into-tray vs. up-out-of-notebook) rather than using unrelated metaphors, so the pair reads as a pair at a glance the way the words "Outputs"/"Inputs" already did. At ≥960px, keep the word beside the icon (icon + label, not icon-only) — icon-only is the <960px collapse behavior from 32e, not the default; don't force everyone to learn six pictograms just to save the space a wide tray already has.</div>
+  </div>
+</div>
+
+<!-- 35b kind badge glyphs -->
+<div id="35b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#35b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">35b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">OutputList's kind badge — the highest-frequency tiny text in the app</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The real <code style="color:#e6edf3">OutputList.tsx</code> row starts with a 9px uppercase kind badge — "TEXT", "KEY", "DIAG" — on <em>every single output row in the app</em>, which is exactly the tiny-text problem at its most repeated. A 12×12 glyph in front of the badge lets a user scan a long Outputs tab (34a) by shape before they'd even need to read the word.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:4px">
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 8px">
+      <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px 2px 5px;border-radius:3px;background:rgba(88,166,255,.12)">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        <span style="font:500 9px system-ui,sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#58a6ff">text</span>
+      </span>
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">ciphertext</code>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 8px">
+      <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px 2px 5px;border-radius:3px;background:rgba(76,222,130,.12)">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#4cde82" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="15.5" r="4.5"/><path d="M20 4l-8.4 8.4"/></svg>
+        <span style="font:500 9px system-ui,sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#4cde82">key</span>
+      </span>
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">dana.pub.asc</code>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 8px">
+      <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px 2px 5px;border-radius:3px;background:rgba(227,179,65,.12)">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#e3b341" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 8-6-16-3 8H2"/></svg>
+        <span style="font:500 9px system-ui,sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#e3b341">diag</span>
+      </span>
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">nat</code>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Where it slots into the real prop</div>
+    KIND_GLYPH: Record&lt;string, LucideIcon&gt;<br>
+    = { text: AlignLeft, key: KeyRound,<br>
+    &nbsp;&nbsp;&nbsp;diag: Activity, bytes: Binary, … }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Purely a rendering change inside the existing badge <code style="color:#e6edf3">&lt;span&gt;</code> in <code style="color:#e6edf3">OutputList.tsx</code> — no new prop on <code style="color:#e6edf3">OutputArtifact</code>, since <code style="color:#e6edf3">a.kind</code> already carries the string the lookup keys off of. Same map should back <code style="color:#e6edf3">TypeCard</code>'s header badge and the Types-category shelf rows (31a) so one kind never has two different glyphs depending which screen you're looking at it from.</div>
+  </div>
+</div>
+
+<!-- 35c where not to add one -->
+<div id="35c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#35c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">35c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Where a glyph would make it worse, not better</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The candidate/session/channel/connState dots (25a, reused everywhere in the WebRTC toolbox) are deliberately abstract CSS shapes, not pictograms — and they should stay that way. A pictogram tempts a specific real-world object (a plug for "session," a chat bubble for "channel") that invites a wrong reading once the abstraction leaks — WebRTC's <code style="color:#e6edf3">channel</code> isn't a chat, and a plug icon on a <code style="color:#e6edf3">session</code> row implies "connected" even mid-negotiation. Shape-plus-color without representational meaning is the safer signal for exactly these four types; keep 35a/35b's icon treatment scoped to chrome (tabs, kind badges) and leave the pipeline-type dots as they are.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px;display:flex;gap:14px;align-items:center;justify-content:center">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+      <span style="width:7px;height:7px;background:#58a6ff;transform:rotate(45deg)"></span>
+      <code style="font:400 9px ui-monospace,Menlo,monospace;color:#6e7781">candidate</code>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+      <span style="width:7px;height:7px;background:#4cde82;border-radius:1px"></span>
+      <code style="font:400 9px ui-monospace,Menlo,monospace;color:#6e7781">session</code>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+      <span style="width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:7px solid #d2a8ff"></span>
+      <code style="font:400 9px ui-monospace,Menlo,monospace;color:#6e7781">channel</code>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+      <span style="width:7px;height:7px;border-radius:50%;border:1.5px solid #8b949e"></span>
+      <code style="font:400 9px ui-monospace,Menlo,monospace;color:#6e7781">connState</code>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">The rule, stated once</div>
+    a value's live/handle state → abstract shape<br>
+    chrome navigation/labels → lucide pictogram
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Same distinction the codebase already draws between the custom <code style="color:#e6edf3">Glyph</code> renderer (op icons) and lucide (chrome) — this turn just extends "chrome" to explicitly include tray tabs and kind badges, and confirms the pipeline-type dots aren't chrome, they're op semantics, so they stay in the shape system.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t34" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t34" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">34</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">The tray, resolved — six tabs, and Keys/Slots/Params finally drawn</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px"><a href="#34a">34a</a> the decision: <strong style="color:#e6edf3">Connections stays its own tab</strong> — it doesn't fold into Outputs. Its job is live management (Close/Cancel, ongoing state, cross-notebook visibility) versus Outputs' job (at-rest artifacts, grouped by cell); those are different enough verbs that merging them would mean every Outputs row needs a management-action affordance it otherwise never has. Server preferences (STUN/TURN defaults), though, do move — they're a session-level default, the same category as the crypto profile, so they belong in Params. <a href="#34b">34b</a>-<a href="#34d">34d</a> draw Keys, Slots, and Params for the first time — referenced in three turns now, never actually laid out.</p>
+</div>
+
+<div id="34a" style="margin-bottom:26px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e;margin-bottom:9px">
+    <a href="#34a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">34a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Six tabs, ordered by how often each is touched</span>
+  </div>
+  <div style="width:100%;max-width:640px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:flex;border-bottom:1px solid #21262d">
+      <span style="flex:1;text-align:center;padding:9px 0;font:500 10.5px system-ui,sans-serif;color:#6e7781;border-right:1px solid #21262d">Keys</span>
+      <span style="flex:1;text-align:center;padding:9px 0;font:500 10.5px system-ui,sans-serif;color:#6e7781;border-right:1px solid #21262d">Slots</span>
+      <span style="flex:1;text-align:center;padding:9px 0 7px;font:600 10.5px system-ui,sans-serif;color:#e6edf3;border-right:1px solid #21262d;border-bottom:2px solid #58a6ff">Connections</span>
+      <span style="flex:1;text-align:center;padding:9px 0;font:500 10.5px system-ui,sans-serif;color:#6e7781;border-right:1px solid #21262d">Outputs</span>
+      <span style="flex:1;text-align:center;padding:9px 0;font:500 10.5px system-ui,sans-serif;color:#6e7781;border-right:1px solid #21262d">Inputs</span>
+      <span style="flex:1;text-align:center;padding:9px 0;font:500 10.5px system-ui,sans-serif;color:#6e7781">Params</span>
+    </div>
+    <div style="padding:10px 12px">
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 8px;background:#010409;border-radius:6px;margin-bottom:6px">
+        <span style="width:6px;height:6px;border-radius:50%;background:#4cde82;flex-shrink:0"></span>
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">Quorum · cell [2]</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#4cde82;margin-left:auto">Connected · 2 peers</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 8px;background:#010409;border-radius:6px">
+        <span style="width:6px;height:6px;border-radius:50%;background:#ff7b72;flex-shrink:0"></span>
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">Quorum · cell [5]</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#ff7b72;margin-left:auto">Failed · Restart</span>
+      </div>
+    </div>
+  </div>
+  <div style="width:100%;max-width:640px;margin-top:10px;padding:11px 13px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    keys → slots → connections → outputs → inputs → params
+    <div style="margin-top:8px;padding-top:7px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Ordered read-to-write: material you already hold (Keys, Slots) before live activity (Connections), before what a run just made (Outputs), before what a run still needs from you (Inputs), before defaults you rarely touch (Params) — the same "most-consulted first" logic the shelf's category tree already follows. A notebook with no WebRTC ops in it never populates Connections, but the tab stays visible rather than appearing/disappearing — a tray whose tab count changes under you is worse than one quiet empty tab.</div>
+  </div>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 34b Keys tab -->
+<div id="34b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#34b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">34b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Keys — every CryptoKey/keypair/OpenPGP key, one flat list</span>
+  </div>
+  <div style="max-width:410px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Not a keyring-app rewrite — this is the legacy Keyring sheet's contents, re-homed as a tray tab so it sits alongside the other four instead of behind a separate menu action. Each row reuses <code style="color:#e6edf3">InspectorArtifact</code>'s keypair chips (private/public-half badges) rather than inventing a second key summary format.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="padding:8px 10px;border-bottom:1px solid #21262d;display:flex;align-items:center">
+      <span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Keys · 2</span>
+      <span style="margin-left:auto;font:500 9.5px system-ui,sans-serif;color:#58a6ff">+ Generate / Import</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid #161b22">
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#4cde82;flex:1">@dana-id</code>
+      <span style="font:500 9px system-ui,sans-serif;padding:2px 5px;border-radius:3px;background:rgba(227,179,65,.12);color:#e3b341">private+public</span>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">ec/p256</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;padding:8px 10px">
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#4cde82;flex:1">@sam-pub</code>
+      <span style="font:500 9px system-ui,sans-serif;padding:2px 5px;border-radius:3px;background:rgba(88,166,255,.12);color:#58a6ff">public only</span>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">rsa/2048</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Row = slotName + keypair chips</div>
+    { slotName, hasPrivate, hasPublic, alg }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">"+ Generate / Import" opens <code style="color:#e6edf3">TypeCard</code>'s own keypair origin picker (31c) inline rather than a separate dialog — the tray action and the Types-category entry are the same widget in two mount points, not two implementations.</div>
+  </div>
+</div>
+
+<!-- 34c Slots tab -->
+<div id="34c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#34c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">34c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Slots — every <code>@name</code> in the notebook, bound or not</span>
+  </div>
+  <div style="max-width:410px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The legacy Variables sheet's job, unchanged in substance: every slot name any cell's <code style="color:#e6edf3">out @x</code> or param binding refers to, whether or not it has a value yet. This is the one tab that overlaps Keys/Inputs/Outputs in membership — a slot can be a key, a runtime input, or a produced output — so it's the index, and the other three are the detail views for their own kind.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="padding:8px 10px;border-bottom:1px solid #21262d;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Slots · 5</div>
+    <div style="display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;gap:7px;padding:7px 10px;border-bottom:1px solid #161b22">
+        <code style="font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">@dana-id</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781;margin-left:auto">Keys</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:7px;padding:7px 10px;border-bottom:1px solid #161b22">
+        <code style="font:500 10px ui-monospace,Menlo,monospace;color:#4cde82">@msg</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781;margin-left:auto">Inputs</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:7px;padding:7px 10px">
+        <code style="font:500 10px ui-monospace,Menlo,monospace;color:#6e7781">@ct</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#e3b341;margin-left:auto">not yet bound</span>
+      </div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Cross-reference, not duplication</div>
+    { slotName, home: 'keys'|'inputs'|'outputs'|null }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Clicking a row jumps to that slot's real tab (Keys/Inputs/Outputs) rather than opening a second detail view here — Slots only ever shows the name, its home, and whether it's bound yet. This keeps the "click a row → go to the thing" gesture from 32e/33b singular even though this is the one tab that points sideways into the tray instead of down into the notebook.</div>
+  </div>
+</div>
+
+<!-- 34d Params tab -->
+<div id="34d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#34d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">34d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Params — notebook-wide defaults, not per-cell param forms</span>
+  </div>
+  <div style="max-width:410px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Resolves its own ambiguity: this is <em>not</em> an aggregate of every cell's inline <code style="color:#e6edf3">ParamField</code>s (those stay inline, right under each cell's chips, exactly where they are today). It's the small set of session-level fallbacks a cell can choose to inherit — the crypto profile <code style="color:#e6edf3">CryptoProfileControl</code> already edits, plus 24b's STUN/TURN server defaults, now folded in per 34a.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="padding:8px 10px;border-bottom:1px solid #21262d;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Session defaults</div>
+    <div style="padding:9px 10px;border-bottom:1px solid #161b22">
+      <div style="font:500 10px system-ui,sans-serif;color:#e6edf3;margin-bottom:5px">Crypto profile</div>
+      <div style="display:flex;background:#010409;border:1px solid #30363d;border-radius:5px;overflow:hidden;height:22px">
+        <span style="flex:1;display:grid;place-items:center;font:500 9.5px system-ui,sans-serif;color:#04140a;background:#4cde82">Modern</span>
+        <span style="flex:1;display:grid;place-items:center;font:500 9.5px system-ui,sans-serif;color:#6e7781">Compatible</span>
+        <span style="flex:1;display:grid;place-items:center;font:500 9.5px system-ui,sans-serif;color:#6e7781">Custom</span>
+      </div>
+    </div>
+    <div style="padding:9px 10px">
+      <div style="font:500 10px system-ui,sans-serif;color:#e6edf3;margin-bottom:5px">STUN/TURN servers <span style="font:400 9px system-ui,sans-serif;color:#6e7781">— fallback for empty rtc.ice</span></div>
+      <code style="display:block;font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781">stun:stun.cloudflare.com:3478</code>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">What moved, what didn't</div>
+    moved in: rtc.ice server defaults (24b)<br>
+    stayed inline: every per-cell ParamField
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">The crypto-profile block is the real <code style="color:#e6edf3">CryptoProfileControl.tsx</code> component, re-parented from wherever the session-default picker currently lives into this tab — not a redesign of it. Custom mode's dense sub-fields (flagged in the last round) are still the open item here; this turn only relocates the control, doesn't redesign its Custom state.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t33" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t33" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">33</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">SessionStrip's failed state, the Inputs tab, type errors, and artifact diff</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Four more from the brief's own inventory, each grounded in a real prop shape read off the pushed TSX. <a href="#33a">33a</a> closes the one concrete gap the brief's Middling table named for <code style="color:#e6edf3">SessionStrip</code> — <code style="color:#e6edf3">failed</code> + ICE restart aren't in its type union yet. <a href="#33b">33b</a> is 32e's Inputs tab, undesigned there. <a href="#33c">33c</a> is the brief's flat statement that type errors have no designed presentation, even though <code style="color:#e6edf3">SuggestChip</code> already ships an <code style="color:#e6edf3">error</code> prop with nowhere to put the message. <a href="#33d">33d</a> is the Unbuilt list's "artifact history / diff."</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 33a SessionStrip failed -->
+<div id="33a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#33a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">33a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">SessionStrip — a fifth state, not a fork of the other four</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The real <code style="color:#e6edf3">SessionStripState</code> union is <code style="color:#e6edf3">"offering" | "waiting" | "connected" | "closed"</code> — a connection that was working and then drops has nowhere to render. It needs to look like a break in <code style="color:#e6edf3">connected</code>'s own lineage, not a new unrelated tone, so the user reads "this was fine and stopped being fine," not "something else happened."</div>
+  <div style="width:300px;display:flex;flex-direction:column;gap:6px">
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;border:1px solid rgba(255,123,114,.3);background:rgba(255,123,114,.07)">
+      <span style="width:7px;height:7px;border-radius:50%;background:#ff7b72;flex-shrink:0"></span>
+      <span style="font:400 11px system-ui,sans-serif;color:#e6edf3">Connection lost — ICE disconnected</span>
+      <code style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">KJ8X…9FQ</code>
+    </div>
+    <div style="display:flex;justify-content:flex-end">
+      <span style="height:22px;padding:0 8px;display:grid;place-items:center;background:#161b22;border:1px solid #ff7b72;border-radius:5px;font:500 10px system-ui,sans-serif;color:#ff7b72">Restart connection</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Type union + wiring</div>
+    type SessionStripState = "offering" |<br>
+    &nbsp;&nbsp;"waiting" | "connected" | "closed" | "failed"<br>
+    onRestartIce?: () =&gt; void
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">"Restart connection" calls <code style="color:#e6edf3">pc.restartIce()</code> and re-negotiates — it does not tear down and re-invite like Cancel does, so the room code and any Quorum roster stay put. Distinct from 22b's pre-connection "Configure TURN" (which never had a session to restart): this button only appears once <code style="color:#e6edf3">connectionState</code> hits <code style="color:#e6edf3">failed</code> after having been <code style="color:#e6edf3">connected</code>, read straight off the connstate strip already in <code style="color:#e6edf3">NetworkArtifact.tsx</code> rather than a second state machine.</div>
+  </div>
+</div>
+
+<!-- 33b Inputs tab -->
+<div id="33b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#33b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">33b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Inputs tab — where runtime secrets actually live</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">32e sketched Outputs; Inputs is the other new tab and the more important one — it's the literal destination of the redesign's founding cut, "runtime secrets move out of cells." A pasted message, a share mnemonic typed in at run time, an imported key: each becomes a named slot here instead of living in a cell's local state, so any step anywhere can bind <code style="color:#e6edf3">@msg</code> the same way it binds a tray-held key today.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="padding:8px 10px;border-bottom:1px solid #21262d;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Inputs · 3</div>
+    <div style="display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid #161b22">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#4cde82">@msg</code>
+        <span style="font:400 10px system-ui,sans-serif;color:#6e7781">pasted text · 228 B</span>
+        <span style="margin-left:auto;font:400 9.5px system-ui,sans-serif;color:#6e7781">used by [4]</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid #161b22">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#4cde82">@share2</code>
+        <span style="font:400 10px system-ui,sans-serif;color:#6e7781">mnemonic · 24 words</span>
+        <span style="margin-left:auto;font:400 9.5px system-ui,sans-serif;color:#e3b341">unused</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:7px;padding:8px 10px">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#4cde82">@imported-key</code>
+        <span style="font:400 10px system-ui,sans-serif;color:#6e7781">keypair · imported</span>
+        <span style="margin-left:auto;font:400 9.5px system-ui,sans-serif;color:#6e7781">used by [1]</span>
+      </div>
+    </div>
+    <div style="padding:8px 10px;border-top:1px solid #21262d">
+      <span style="display:block;text-align:center;padding:6px 0;background:#161b22;border:1px dashed #30363d;border-radius:6px;font:500 10px system-ui,sans-serif;color:#6e7781">+ New input slot</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Row shape — reuses Keys/Slots chrome</div>
+    { slotName, kind: 'text'|'mnemonic'|'keypair',<br>
+    &nbsp;&nbsp;sizeLabel, usedByCells: number[] }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">"unused" in place of a used-by list is a real signal worth surfacing, not hiding — an unused share mnemonic sitting in the tray is exactly the kind of stray secret the redesign's tray-over-cells model exists to make visible. Clicking a row jumps to its first consuming cell, same convention as 32e's Outputs rows and 24a's Active peers list — one "click a tray row → go to the cell" gesture, reused a fourth time rather than invented per tab.</div>
+  </div>
+</div>
+
+<!-- 33c type errors -->
+<div id="33c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#33c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">33c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Type errors — the chip already turns red, it just says nothing</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e"><code style="color:#e6edf3">SuggestChip</code>'s catalog fixture already shows an <code style="color:#e6edf3">error</code> variant — a chip with no explanation attached. The brief calls type errors the most common failure with no designed presentation, and that's the gap exactly: the visual exists, the message doesn't. It needs one line, attached to the one chip that's wrong, in the vocabulary <code style="color:#e6edf3">type-registry.js</code> already speaks — "expected X, got Y" using real base-type names, not an engine stack trace.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px">
+    <div style="display:flex;align-items:center;gap:4px;margin-bottom:8px">
+      <span style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:4px 8px;border-radius:5px">genkey</span>
+      <span style="color:#484f58;font-size:11px">→</span>
+      <span style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:4px 8px;border-radius:5px">export spki</span>
+      <span style="color:#484f58;font-size:11px">→</span>
+      <span style="font:500 11px ui-monospace,Menlo,monospace;color:#ff7b72;background:rgba(255,123,114,.1);border:1px solid #ff7b72;padding:3px 7px;border-radius:5px">sss.split</span>
+    </div>
+    <div style="display:flex;gap:7px;padding:7px 9px;background:rgba(255,123,114,.06);border-left:2px solid #ff7b72;border-radius:0 6px 6px 0">
+      <span style="font-size:11px;color:#ff7b72;flex-shrink:0">⚠</span>
+      <span style="font:400 11px/1.5 system-ui,sans-serif;color:#e6edf3"><code style="color:#ff7b72">sss.split</code> expects <code style="color:#4cde82">bytes</code>, this cell gives it <code style="color:#e3b341">text</code>. <a href="#" style="color:#58a6ff;text-decoration:none">Insert a cast →</a></span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Where the message lives</div>
+    chip.error?: { expected: string, got: string,<br>
+    &nbsp;&nbsp;fixStep?: string }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">One error banner per cell, directly under the chip row — not a tooltip (brief's own words: "a blocker's fix should be a chip, not a tooltip," already the rule <code style="color:#e6edf3">RunBar</code>'s blocked state follows). "Insert a cast →" is only offered when <code style="color:#e6edf3">type-registry.js</code>'s producer list for the expected type contains a real op that can sit between the two chips — never a generic "fix this" that might not resolve anything. When RunBar is also blocked by this cell, its blocker text is the same sentence, not a second wording of the same fact.</div>
+  </div>
+</div>
+
+<!-- 33d artifact diff -->
+<div id="33d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#33d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">33d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Artifact diff — this run against the last one, not a version history</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Scoped deliberately narrow: one comparison, this run vs. the immediately previous run of the same cell, not a full history browser. Most useful case is exactly the one the brief names — did changing an upstream param actually change this output, or did I just re-run and get the same bytes back?</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:8px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid #161b22">
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">ciphertext</code>
+      <span style="font:500 9px system-ui,sans-serif;padding:2px 6px;border-radius:4px;background:rgba(227,179,65,.12);color:#e3b341">changed</span>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">vs. last run</span>
+    </div>
+    <div style="padding:8px 10px;font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">
+      892 B <span style="color:#4cde82">→</span> 917 B &nbsp;·&nbsp; first differing byte at offset 40
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Placement — a row footer, not a new panel</div>
+    lastRun?: { sizeBytes, firstDiffOffset }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Lives as one line under the existing <code style="color:#e6edf3">OutputList</code> row (a fourth footer state alongside preview/content/inspector), not a diff viewer — for most Basilisk outputs (ciphertext, signatures) a byte-level visual diff is meaningless noise; "changed / unchanged, first difference at offset N" is the whole useful signal. Only appears when a previous run's artifact for that exact label still exists in memory — nothing persists across a reload, matching turn 30's storage rule that ephemeral run state never quietly becomes durable.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t32" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t32" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">32</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">Reality check against the pushed retrofit, then the four real gaps</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">The brief (<code style="color:#e6edf3">PROMPT.md</code>) described <code style="color:#e6edf3">InspectorArtifact.tsx</code>, <code style="color:#e6edf3">TypeCard.tsx</code>, <code style="color:#e6edf3">NetworkArtifact.tsx</code>, <code style="color:#e6edf3">OutputList.tsx</code>, <code style="color:#e6edf3">SessionStrip.tsx</code>, and <code style="color:#e6edf3">type-registry.js</code> as existing, thin first passes. They didn't exist at the commit synced into this project — they landed moments ago at <code style="color:#e6edf3">3bb6a54610ef</code>. Having now read all six real files plus the widget catalog fixtures (<code style="color:#e6edf3">pages/toolkit-widgets.tsx</code>), the honest news is that the coder retrofitted turns 21-31 further and better than expected: the inspector's per-type bodies, the format switcher, reveal/hide, the type card's literal constructor and origin picker, and every network manager widget are already built and close to what this file specified. <a href="#32a">32a</a> is the corrected status table. What's left is narrower than the brief implies — four real gaps, <a href="#32b">32b</a>-<a href="#32e">32e</a>.</p>
+</div>
+
+<div id="32a" style="margin-bottom:28px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e;margin-bottom:9px">
+    <a href="#32a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">32a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Corrected maturity table, read from the actual TSX</span>
+  </div>
+  <div style="width:100%;max-width:820px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:grid;grid-template-columns:170px 100px 1fr;padding:7px 14px;border-bottom:1px solid #1c2229;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781">
+      <span>Widget</span><span>Actually is</span><span>Real remaining gap</span>
+    </div>
+    <div style="display:grid;grid-template-columns:170px 100px 1fr;padding:8px 14px;align-items:center"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">InspectorArtifact</code><span style="font:600 10px system-ui,sans-serif;color:#4cde82">built</span><span style="font:400 11px system-ui,sans-serif;color:#8b949e">bytes/text/keypair/shares/recipients bodies done. No <code style="color:#e6edf3">openpgp-key</code> body at all — falls through to the generic "no value body" line. <a href="#32b">32b</a></span></div>
+    <div style="display:grid;grid-template-columns:170px 100px 1fr;padding:8px 14px;align-items:center;background:rgba(255,255,255,.015)"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">OutputList format bar</code><span style="font:600 10px system-ui,sans-serif;color:#4cde82">built</span><span style="font:400 11px system-ui,sans-serif;color:#8b949e">Brief's open question is already answered in code: <code style="color:#e6edf3">inspectSnapshot</code> and <code style="color:#e6edf3">content</code> are mutually exclusive branches, so a row never shows both a format bar and an inspector. Worth stating as a decision — <a href="#32c">32c</a>.</span></div>
+    <div style="display:grid;grid-template-columns:170px 100px 1fr;padding:8px 14px;align-items:center"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">Reveal / Hide</code><span style="font:600 10px system-ui,sans-serif;color:#4cde82">built</span><span style="font:400 11px system-ui,sans-serif;color:#8b949e">Gated correctly on <code style="color:#e6edf3">revealable</code>. No timeout, no screen-share warning — brief asked for both; neither is in the code. <a href="#32c">32c</a></span></div>
+    <div style="display:grid;grid-template-columns:170px 100px 1fr;padding:8px 14px;align-items:center;background:rgba(255,255,255,.015)"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">Expand → Sheet</code><span style="font:600 10px system-ui,sans-serif;color:#e3b341">partial</span><span style="font:400 11px system-ui,sans-serif;color:#8b949e">Only wired for <code style="color:#e6edf3">hasNetworkRenderer</code> rows. A big hexdump or an inspector body has no "open as its own window" — the three-sizes idea the brief asked for is half-built. <a href="#32c">32c</a></span></div>
+    <div style="display:grid;grid-template-columns:170px 100px 1fr;padding:8px 14px;align-items:center"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">Clipboard source/sink</code><span style="font:600 10px system-ui,sans-serif;color:#ff7b72">unbuilt</span><span style="font:400 11px system-ui,sans-serif;color:#8b949e">Confirmed absent — only <code style="color:#e6edf3">navigator.clipboard.writeText</code> Copy buttons exist, no <code style="color:#e6edf3">clipboard</code> pipeline step in the registry. <a href="#32d">32d</a></span></div>
+    <div style="display:grid;grid-template-columns:170px 100px 1fr;padding:8px 14px;align-items:center;background:rgba(255,255,255,.015)"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">TypeCard</code><span style="font:600 10px system-ui,sans-serif;color:#4cde82">built</span><span style="font:400 11px system-ui,sans-serif;color:#8b949e">Literal constructor + origin picker match turn 31 closely. "Start a pipeline from here" is answered — <code style="color:#e6edf3">onPickOp</code> already inserts a producer/consumer/origin step.</span></div>
+    <div style="display:grid;grid-template-columns:170px 100px 1fr;padding:8px 14px;align-items:center"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">Session tray</code><span style="font:600 10px system-ui,sans-serif;color:#ff7b72">unbuilt</span><span style="font:400 11px system-ui,sans-serif;color:#8b949e"><code style="color:#e6edf3">TOOLKIT-WIDGETS.md</code>'s own cutover checklist says it plainly: "Session tray … Keyring + Variables sheets only … no." No unified Keys/Slots/Outputs/Inputs/Params surface exists. <a href="#32e">32e</a></span></div>
+  </div>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 32b openpgp-key body -->
+<div id="32b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#32b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">32b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">openpgp-key body — packet structure, not a JWK grid</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The brief calls this "the richest and least designed" — correct, it's the one snapshot shape <code style="color:#e6edf3">InspectorArtifact.tsx</code> doesn't branch on at all. An OpenPGP transferable key (RFC 9580) is a tree — primary key, subkeys each with their own binding signature, user IDs each with a self-signature — not a flat field grid like a WebCrypto keypair. The tree needs its own body, reusing <code style="color:#e6edf3">Rows</code> for leaf fields but adding one level of nesting the current component has no concept of.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px">
+    <div style="display:flex;gap:5px;margin-bottom:9px">
+      <span style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:2px 6px;border-radius:4px">type: openpgp-key</span>
+      <span style="font:500 9px system-ui,sans-serif;padding:2px 6px;border-radius:4px;background:rgba(227,179,65,.12);color:#e3b341">sensitive</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:5px 0">
+      <span style="width:6px;height:6px;border-radius:50%;background:#4cde82;flex-shrink:0"></span>
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">ed25519</code>
+      <span style="font:400 10px system-ui,sans-serif;color:#6e7781">primary · sign, certify</span>
+      <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781;margin-left:auto">3F2A…C81</span>
+    </div>
+    <div style="padding-left:14px;border-left:1px solid #21262d;margin-left:3px">
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 0">
+        <span style="width:5px;height:5px;border-radius:2px;background:#58a6ff;flex-shrink:0"></span>
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">dana@example.org</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#4cde82;margin-left:auto">✓ self-signed</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 0">
+        <span style="width:5px;height:5px;border-radius:2px;background:#d2a8ff;flex-shrink:0"></span>
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">x25519</code>
+        <span style="font:400 10px system-ui,sans-serif;color:#6e7781">subkey · encrypt</span>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#4cde82;margin-left:auto">✓ bound</span>
+      </div>
+    </div>
+    <div style="margin-top:8px;padding-top:7px;border-top:1px solid #161b22;font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">expires 2027-03-01 · no revocation</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Snapshot shape to add</div>
+    snapshot.openpgpKey?: {<br>
+    &nbsp;&nbsp;primary: { alg, fingerprint, usages,<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;created, expires?, revoked? },<br>
+    &nbsp;&nbsp;userIds: { id, selfSigned }[],<br>
+    &nbsp;&nbsp;subkeys: { alg, fingerprint,<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;usages, bound }[]<br>
+    }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">A new field on <code style="color:#e6edf3">InspectSnapshot</code>, one new body function (<code style="color:#e6edf3">OpenPgpKeyBody</code>), one new branch in the component's if/else chain — same shape as every other body, no change to the row chrome or masking gate. The primary key's own scalar material is never shown, matching the keypair body's "d — withheld" convention.</div>
+  </div>
+</div>
+
+<!-- 32c value display finishing -->
+<div id="32c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#32c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">32c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Finishing value display: reveal timeout, expand for every artifact</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Three small, real gaps against an otherwise-complete widget. First, name the already-correct behavior as a decision so nobody "fixes" it: format bar and inspector body are mutually exclusive per row, never both. Second, a revealed secret has no auto-hide — the brief explicitly asked whether reveal times out; it should, since a masked value with no timeout is a screen-share leak waiting to happen. Third, <code style="color:#e6edf3">Expand</code> only appears for network types — a keypair or a 4&nbsp;KB hexdump body can't open in the Sheet, so the "preview / inline / window" three-tier idea is only real for one type family.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <span style="font:600 9px system-ui,sans-serif;padding:2px 5px;border-radius:3px;background:rgba(227,179,65,.14);color:#e3b341">REVEALED</span>
+      <code style="font:500 10px ui-monospace,Menlo,monospace;color:#6e7781">master-key</code>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:5px">
+        <div style="width:36px;height:3px;background:#161b22;border-radius:2px;overflow:hidden"><div style="width:40%;height:100%;background:#e3b341"></div></div>
+        <span style="font:400 9px ui-monospace,Menlo,monospace;color:#6e7781">12s</span>
+      </div>
+    </div>
+    <code style="display:block;font:400 10px ui-monospace,Menlo,monospace;color:#e6edf3;word-break:break-all">7f3a9c2e1b8d4f60...</code>
+    <div style="margin-top:7px;font:400 9.5px system-ui,sans-serif;color:#6e7781">Auto-hides in 15s of no interaction · any click resets the timer</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Contract additions</div>
+    revealTimeoutMs: number = 15000<br>
+    hasNetworkRenderer(a.netType) ||<br>
+    &nbsp;&nbsp;a.inspectSnapshot || (a.content &amp;&amp;<br>
+    &nbsp;&nbsp;a.content.length &gt; 512)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">No screen-share-detection API exists to build the brief's other ask against — the Screen Capture API tells a page it's <em>being captured by itself</em> (e.g. tab-share preview), not that someone else is viewing the user's screen. Design honesty: the timeout is the real mitigation; don't build a fake "screen-share detected" indicator that doesn't correspond to a real signal.</div>
+  </div>
+</div>
+
+<!-- 32d clipboard -->
+<div id="32d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#32d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">32d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Clipboard source/sink — confirmed unbuilt, designed from scratch</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Two new ops, source and sink, each with its own permission moment — reading the clipboard is a privacy event (any site could be watching what you last copied), writing to it is comparatively low-stakes since the user just ran the recipe that produces the value.</div>
+  <div style="width:320px;display:flex;flex-direction:column;gap:8px">
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px">
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:7px">clipboard.read — source, gated</div>
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#010409;border:1px solid rgba(227,179,65,.3);border-radius:6px">
+        <span style="font-size:11px">📋</span>
+        <span style="flex:1;font:400 10.5px system-ui,sans-serif;color:#e6edf3">Read clipboard contents when this cell runs?</span>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <span style="flex:1;padding:5px 0;text-align:center;background:#161b22;border:1px solid #30363d;border-radius:5px;font:500 9.5px system-ui,sans-serif;color:#6e7781">Not now</span>
+        <span style="flex:1;padding:5px 0;text-align:center;background:#e3b341;border-radius:5px;font:500 9.5px system-ui,sans-serif;color:#1a1405">Allow this run</span>
+      </div>
+      <div style="margin-top:6px;font:400 9.5px system-ui,sans-serif;color:#6e7781">Asked every run — never remembered, since clipboard contents change silently between runs</div>
+    </div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px">
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:7px">After read — preview before it enters the pipeline</div>
+      <div style="padding:7px 9px;background:#010409;border:1px solid #21262d;border-radius:6px">
+        <code style="font:400 10px ui-monospace,Menlo,monospace;color:#e6edf3">-----BEGIN PGP MESSAGE----- hQEMA...</code>
+      </div>
+      <div style="margin-top:5px;font:400 9.5px system-ui,sans-serif;color:#6e7781">892 bytes · text/pem detected</div>
+    </div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px">
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:7px">clipboard.write — sink, low-friction</div>
+      <div style="display:flex;align-items:center;gap:7px">
+        <code style="flex:1;font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">quorum.recv | clipboard.write</code>
+        <span style="font:500 9px system-ui,sans-serif;padding:2px 6px;border-radius:4px;background:rgba(76,222,130,.12);color:#4cde82">✓ copied</span>
+      </div>
+      <div style="margin-top:5px;font:400 9.5px system-ui,sans-serif;color:#6e7781">Toast-style confirm on every write, no dialog — same weight as an ordinary Copy button</div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">New registry entries</div>
+    clipboard.read: none → text | bytes<br>
+    clipboard.write: any → artifact (sink)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Read is a permission moment because the browser's <code style="color:#e6edf3">clipboard-read</code> permission is itself a real gate the OS/browser enforces — the dialog above mirrors that, it doesn't invent a stricter one. Write needs no permission prompt (`clipboard-write` is auto-granted on user-gesture-triggered calls), so its confirm is purely a UX courtesy, not a security gate — keep it lightweight and don't over-dramatize it to match Read's weight.</div>
+  </div>
+</div>
+
+<!-- 32e session tray -->
+<div id="32e" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#32e" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">32e</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">The tray as one surface — Keys · Slots · Outputs · Inputs · Params</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The single biggest real gap. Today it's two unrelated Sheets (Keyring, Variables); the design calls for one persistent tray with five tabs. Outputs is genuinely new — every cell's <code style="color:#e6edf3">OutputList</code> in one place, grouped by cell, so "what did this notebook produce" doesn't mean scrolling the whole pipeline. Inputs holds runtime secrets that never touch the recipe text (pasted messages, share mnemonics) — this is where turn 21a/22a's "runtime secrets move out of cells" decision actually has to live.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:flex;border-bottom:1px solid #21262d">
+      <span style="flex:1;text-align:center;padding:8px 0;font:500 10px system-ui,sans-serif;color:#6e7781">Keys</span>
+      <span style="flex:1;text-align:center;padding:8px 0;font:500 10px system-ui,sans-serif;color:#6e7781">Slots</span>
+      <span style="flex:1;text-align:center;padding:8px 0 6px;font:600 10px system-ui,sans-serif;color:#e6edf3;border-bottom:2px solid #58a6ff">Outputs</span>
+      <span style="flex:1;text-align:center;padding:8px 0;font:500 10px system-ui,sans-serif;color:#6e7781">Inputs</span>
+      <span style="flex:1;text-align:center;padding:8px 0;font:500 10px system-ui,sans-serif;color:#6e7781">Params</span>
+    </div>
+    <div style="padding:9px 10px">
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Cell [2] — Encrypt to Dana</div>
+      <div style="padding:7px 8px;background:#010409;border-radius:6px;margin-bottom:8px">
+        <code style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">ciphertext</code>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#6e7781;margin-left:6px">892 B</span>
+      </div>
+      <div style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Cell [0] — Generate key</div>
+      <div style="padding:7px 8px;background:#010409;border-radius:6px">
+        <code style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">dana.pub.asc</code>
+        <span style="font:400 9.5px ui-monospace,Menlo,monospace;color:#4cde82;margin-left:6px">@C81FSAM</span>
+      </div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Narrow-width behavior</div>
+    ≥ 960px: tray docked right, 320px, always visible<br>
+    &lt; 960px: tray collapses to a bottom sheet,<br>
+    &nbsp;&nbsp;tab bar becomes the sheet's drag handle row
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Outputs groups by cell (not a flat feed) so a 10-cell notebook doesn't become an undifferentiated scroll — each cell's group reuses the exact <code style="color:#e6edf3">OutputList</code> component already built, just re-parented under a cell-label heading instead of living inline under the cell. This is layout, not a new artifact-row component.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+
+</body>
+</html>

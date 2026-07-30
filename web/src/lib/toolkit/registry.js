@@ -17,7 +17,7 @@ import { POLYMORPHIC_STEPS, stepAcceptsRefined, typeOf } from "./types.js";
  * Pipeline value types.
  *
  * The `host`…`stats` tail is the network/WebRTC vocabulary (design v2 §25a).
- * These are real types, not JSON-text-with-a-badge: `rtc.createAnswer` accepts
+ * These are real types, not JSON-text-with-a-badge: `rtc.answer` accepts
  * only an `sdp`, a live `session` handle can never be piped into a crypto op,
  * and the caret's fit check narrows on them like any other base.
  *
@@ -2362,7 +2362,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "peer",
     glyph: "agent",
-    doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `quorum.send/recv/close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
+    doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `rtc.send`/`rtc.recv`/`quorum.close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
     input: "none",
     output: "session",
     params: [
@@ -2445,23 +2445,31 @@ export const STEPS = [
     ],
   },
   {
-    name: "quorum.send",
+    name: "rtc.send",
     kind: "transform",
     toolbox: "webrtc",
     shelf: "channel",
     glyph: "agent",
-    doc: "Send the pipeline text to every verified peer in the live exchange (per-peer session keys; key-confirmed channels only). Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run.",
+    doc: "Write the pipeline text to the live data channel (per-peer session keys; key-confirmed channels only). `to=` addresses one peer by fingerprint; empty broadcasts to every verified peer, which is the exchange's own policy. Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run.",
     input: "text",
     output: "text",
-    params: [],
+    params: [
+      {
+        name: "to",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Recipient fingerprint (prefix ok); empty = every verified peer",
+      },
+    ],
   },
   {
-    name: "quorum.recv",
+    name: "rtc.recv",
     kind: "source",
     toolbox: "webrtc",
     shelf: "channel",
     glyph: "agent",
-    doc: "Wait for the next message from the live exchange and emit it as text (`meta.from` = sender fingerprint). Pauses the run until a message arrives or `wait` expires. Example: `quorum.recv | gpg.verify`.",
+    doc: "Read from the live data channel. `count=1` (default) waits for one message and emits it as text (`meta.from` = sender fingerprint); `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `rtc.recv | gpg.verify`, or `rtc.recv count=all | foreach\\n  - gpg.verify`.",
     input: "none",
     output: "text",
     params: [
@@ -2472,12 +2480,27 @@ export const STEPS = [
         doc: "Only accept from this fingerprint (prefix ok); empty = any peer",
       },
       {
+        name: "count",
+        type: "string",
+        default: "1",
+        doc: "How many to collect: 1 (text), a number, or `all` to drain the inbox (bundle)",
+      },
+      {
         name: "wait",
         type: "int",
         default: 120000,
         doc: "Receive timeout (ms)",
       },
     ],
+    effectiveIo(params) {
+      // The output *type* changes with `count`, so the caret and the type
+      // checker see a bundle only when one is actually produced. Reporting
+      // `text` for a multi-message read would let `gpg.verify` be appended to
+      // something that is really a collection — exactly the mistake the type
+      // system exists to catch.
+      const count = String(params?.count ?? "1").trim().toLowerCase();
+      return { input: "none", output: count === "1" ? "text" : "bundle" };
+    },
   },
   {
     name: "quorum.close",
@@ -2495,12 +2518,12 @@ export const STEPS = [
   // The raw layer under `quorum.*`: each wraps one browser WebRTC capability
   // so ICE/DTLS/SCTP are debuggable outside a live session.
   {
-    name: "rtc.gatherCandidates",
+    name: "rtc.gather",
     kind: "source",
     toolbox: "webrtc",
     shelf: "ice",
     glyph: "ports",
-    doc: "Gather ICE candidates against the configured servers and emit one row per candidate — `host` (local NIC), `srflx` (server-reflexive, via STUN), `relay` (via TURN), plus any `prflx` peer-reflexive found by trickle. Each row carries protocol (`udp`/`tcp`). A missing `relay` row is informational, not an error — it just means no TURN is configured. This is what `quorum.offer` consumes internally; run it standalone to see why a later connection failed. Example: `rtc.ice turn=… | out @ice` then `rtc.gatherCandidates ice=@ice | out @cands`.",
+    doc: "Gather ICE candidates against the configured servers and emit one row per candidate — `host` (local NIC), `srflx` (server-reflexive, via STUN), `relay` (via TURN), plus any `prflx` peer-reflexive found by trickle. Each row carries protocol (`udp`/`tcp`). A missing `relay` row is informational, not an error — it just means no TURN is configured. This is what `quorum.offer` consumes internally; run it standalone to see why a later connection failed. Example: `rtc.ice turn=… | out @ice` then `rtc.gather ice=@ice | out @cands`.",
     input: "none",
     output: "candidate",
     params: [
@@ -2519,12 +2542,12 @@ export const STEPS = [
     ],
   },
   {
-    name: "rtc.checkConnectivity",
+    name: "rtc.check",
     kind: "source",
     toolbox: "webrtc",
     shelf: "ice",
     glyph: "ports",
-    doc: "Report the ICE candidate-pair check matrix for the live exchange: one row per local×remote pair with its state (`waiting`/`in-progress`/`succeeded`/`failed`), the nominated pair flagged, plus this peer's `controlling`/`controlled` role. Needs a live `quorum.offer`/`quorum.join` — ICE only checks pairs once both sides have exchanged candidates. Example: `quorum.offer … | out @s` then `rtc.checkConnectivity | out @pairs`.",
+    doc: "Report the ICE candidate-pair check matrix for the live exchange: one row per local×remote pair with its state (`waiting`/`in-progress`/`succeeded`/`failed`), the nominated pair flagged, plus this peer's `controlling`/`controlled` role. Needs a live `quorum.offer`/`quorum.join` — ICE only checks pairs once both sides have exchanged candidates. Example: `quorum.offer … | out @s` then `rtc.check | out @pairs`.",
     input: "none",
     output: "stats",
     params: [],
@@ -2550,12 +2573,12 @@ export const STEPS = [
     ],
   },
   {
-    name: "rtc.createOffer",
+    name: "rtc.offer",
     kind: "source",
     toolbox: "webrtc",
     shelf: "peer",
     glyph: "agent",
-    doc: "Raw SDP offer — the escape hatch below `quorum.offer` for inspecting or hand-carrying the session description. Creates a peer connection with one data channel and emits its SDP as text. Does not signal anything; pair it with your own transport. Example: `rtc.createOffer | out @sdp`.",
+    doc: "Raw SDP offer — the escape hatch below `quorum.offer` for inspecting or hand-carrying the session description. Creates a peer connection with one data channel and emits its SDP as text. Does not signal anything; pair it with your own transport. Example: `rtc.offer | out @sdp`.",
     input: "none",
     output: "sdp",
     params: [
@@ -2574,12 +2597,12 @@ export const STEPS = [
     ],
   },
   {
-    name: "rtc.createAnswer",
+    name: "rtc.answer",
     kind: "transform",
     toolbox: "webrtc",
     shelf: "peer",
     glyph: "agent",
-    doc: "Raw SDP answer for a piped offer — the `rtc.createOffer` conjugate. Takes the remote offer SDP as pipeline text, applies it as the remote description, and emits the local answer SDP. Example: `in @remoteOffer | rtc.createAnswer | out @answer`.",
+    doc: "Raw SDP answer for a piped offer — the `rtc.offer` conjugate. Takes the remote offer SDP as pipeline text, applies it as the remote description, and emits the local answer SDP. Example: `in @remoteOffer | rtc.answer | out @answer`.",
     input: "sdp",
     output: "sdp",
     params: [
@@ -2592,34 +2615,34 @@ export const STEPS = [
     ],
   },
   {
-    name: "rtc.connectionState",
+    name: "rtc.state",
     kind: "source",
     toolbox: "webrtc",
     shelf: "peer",
     glyph: "ports",
-    doc: "Observe-only snapshot of the live exchange's `connectionState`, `iceConnectionState`, `iceGatheringState`, and `signalingState`, per peer. Diagnostic — never bind it as an input to a crypto op. Needs a live `quorum.offer`/`quorum.join`. Example: `rtc.connectionState | out @state`.",
+    doc: "Observe-only snapshot of the live exchange's `connectionState`, `iceConnectionState`, `iceGatheringState`, and `signalingState`, per peer. Diagnostic — never bind it as an input to a crypto op. Needs a live `quorum.offer`/`quorum.join`. Example: `rtc.state | out @state`.",
     input: "none",
     output: "connstate",
     params: [],
   },
   {
-    name: "rtc.dataChannelStats",
+    name: "rtc.stats",
     kind: "source",
     toolbox: "webrtc",
     shelf: "channel",
     glyph: "ports",
-    doc: "Data-channel back-pressure and counters for the live exchange: `bufferedAmount` against its low-water threshold, ready state, and messages/bytes sent+received per peer. Use it to see whether `quorum.send` is queueing behind a slow link. Example: `rtc.dataChannelStats | out @bp`.",
+    doc: "Data-channel back-pressure and counters for the live exchange: `bufferedAmount` against its low-water threshold, ready state, and messages/bytes sent+received per peer. Use it to see whether `rtc.send` is queueing behind a slow link. Example: `rtc.stats | out @bp`.",
     input: "none",
     output: "stats",
     params: [],
   },
   {
-    name: "rtc.statsReport",
+    name: "rtc.quality",
     kind: "source",
     toolbox: "webrtc",
     shelf: "rtcstats",
     glyph: "ports",
-    doc: "Live `getStats()` quality numbers for the exchange — round-trip time, bytes/packets each way, and packet loss per connected peer. Example: `rtc.statsReport | out @quality`.",
+    doc: "Live `getStats()` quality numbers for the exchange — round-trip time, bytes/packets each way, and packet loss per connected peer. Example: `rtc.quality | out @quality`.",
     input: "none",
     output: "stats",
     params: [],
@@ -2739,7 +2762,7 @@ for (const step of STEPS) {
   }
   // Keys are lower-cased because `getStep`/`canonicalName` lower-case their
   // query — storing the original case would make any mixed-case op name
-  // (e.g. `rtc.gatherCandidates`) silently unresolvable. `step.name` keeps
+  // (e.g. `rtc.gather`) silently unresolvable. `step.name` keeps
   // its authored casing for display and serialization.
   BY_NAME.set(step.name.toLowerCase(), step);
   ALIAS_TO_CANONICAL.set(step.name.toLowerCase(), step.name);

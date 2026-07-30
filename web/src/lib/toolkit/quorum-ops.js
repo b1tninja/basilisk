@@ -4,7 +4,7 @@
  *
  * The run boundary is the session boundary: `quorum.offer`/`quorum.join`
  * create the exchange (pausing the run at that cell until peers mesh),
- * `quorum.send`/`quorum.recv` use it, and `quorum.close` — or the kernel's
+ * `rtc.send`/`rtc.recv` use it, and `quorum.close` — or the kernel's
  * Clear session — tears it down and zeroizes keys.
  *
  * Main-thread only: RTCPeerConnection does not exist in workers.
@@ -18,6 +18,7 @@
 
 import { QuorumSession, DEFAULT_ICE_SERVERS } from "../quorum/rtc.js";
 import { deriveRoomId, canonicalAudience } from "../quorum/room.js";
+import { projectRosterPeers, selectedCandidateType } from "../quorum/roster.js";
 
 /**
  * @typedef {object} QuorumExchangeState
@@ -28,6 +29,7 @@ import { deriveRoomId, canonicalAudience } from "../quorum/room.js";
  * @property {number} connected
  * @property {number} expected
  * @property {string} status   last human-readable session status line
+ * @property {import("../quorum/roster.js").ConnectionPeerRow[]} peers
  */
 
 /** @type {QuorumExchangeState} */
@@ -39,6 +41,7 @@ const IDLE_STATE = Object.freeze({
   connected: 0,
   expected: 0,
   status: "",
+  peers: Object.freeze([]),
 });
 
 /**
@@ -49,9 +52,45 @@ const IDLE_STATE = Object.freeze({
  *   inbox: { from: string, text: string, ts: number }[],
  *   recvWaiters: ((msg: { from: string, text: string, ts: number } | null) => void)[],
  *   cancelled: boolean,
+ *   viaByFpr: Map<string, string>,
+ *   viaPending: Set<string>,
  * } | null}
  */
 let current = null;
+
+/**
+ * Roster → panel rows, plus best-effort ICE `via` enrichment.
+ *
+ * `getStats` is async while roster emits are not, so the first projection of a
+ * newly connected peer has no `via`; the lookup patches it in when it lands.
+ * Cached per exchange — the selected pair does not change without a
+ * reconnection, and a reconnection makes a new exchange.
+ *
+ * @param {Map<string, import("../quorum/rtc.js").QuorumPeerState>} peersMap
+ * @returns {import("../quorum/roster.js").ConnectionPeerRow[]}
+ */
+function projectPeers(peersMap) {
+  const ex = current;
+  if (!ex) return [];
+  for (const [fpr, peer] of peersMap) {
+    if (
+      peer.status !== "connected" ||
+      !peer.pc ||
+      ex.viaByFpr.has(fpr) ||
+      ex.viaPending.has(fpr)
+    ) {
+      continue;
+    }
+    ex.viaPending.add(fpr);
+    void selectedCandidateType(peer.pc).then((via) => {
+      ex.viaPending.delete(fpr);
+      if (!via || current !== ex || ex.cancelled) return;
+      ex.viaByFpr.set(fpr, via);
+      patchState({ peers: projectRosterPeers(peersMap, ex.viaByFpr) });
+    });
+  }
+  return projectRosterPeers(peersMap, ex.viaByFpr);
+}
 
 function emitState() {
   if (typeof window === "undefined") return;
@@ -76,6 +115,36 @@ export function getLiveSession() {
   return current && !current.cancelled ? current.session : null;
 }
 
+/**
+ * Re-run ICE on every peer connection of the live exchange (design v2 §33a).
+ *
+ * Re-negotiates *in place*: the room code, the signed invite, and any mesh
+ * roster survive, because the session itself never closed — only its transport
+ * did. That is what separates this from Cancel + re-invite, and from 22b's
+ * "Configure TURN", which fires before a session exists at all.
+ *
+ * @returns {number} peer connections restarted (0 when nothing is live)
+ */
+export function restartLiveIce() {
+  const session = getLiveSession();
+  if (!session) return 0;
+  const peers = session.peers || (session.pc ? [{ pc: session.pc }] : []);
+  let n = 0;
+  for (const peer of peers) {
+    const pc = peer?.pc || peer;
+    // `restartIce` is unavailable on older engines; a peer that cannot restart
+    // should not abort the ones that can.
+    if (typeof pc?.restartIce !== "function") continue;
+    try {
+      pc.restartIce();
+      n += 1;
+    } catch {
+      /* peer already torn down — nothing to restart */
+    }
+  }
+  return n;
+}
+
 /** Current exchange snapshot (UI polls this on mount, then follows events). */
 export function getQuorumState() {
   return current ? { ...current.state } : { ...IDLE_STATE };
@@ -93,7 +162,13 @@ export function closeQuorumExchange(reason = "closed") {
     /* ignore */
   }
   ex.inbox.length = 0;
-  ex.state = { ...ex.state, phase: reason === "failed" ? "failed" : "closed" };
+  // A failed exchange keeps its last roster so the panel can show *which*
+  // links died; a clean close clears it — the session ended, nothing is live.
+  ex.state = {
+    ...ex.state,
+    phase: reason === "failed" ? "failed" : "closed",
+    peers: reason === "failed" ? ex.state.peers : [],
+  };
   emitState();
   current = null;
 }
@@ -280,6 +355,7 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       }
       patchState({
         connected,
+        peers: projectPeers(peers),
         phase:
           connected >= needPeers
             ? "connected"
@@ -304,10 +380,13 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       connected: 0,
       expected: audience.length - 1,
       status: "starting…",
+      peers: [],
     },
     inbox: [],
     recvWaiters: [],
     cancelled: false,
+    viaByFpr: new Map(),
+    viaPending: new Set(),
   };
   emitState();
 
@@ -372,42 +451,64 @@ function waitForPeers(needPeers, wait) {
 /**
  * @param {{ type: string, data: unknown, meta?: Record<string, unknown> }} value
  */
-export async function execQuorumSend(value) {
-  const ex = requireExchange("quorum.send");
+export async function execQuorumSend(value, params) {
+  const ex = requireExchange("rtc.send");
   const text =
     value?.type === "text"
       ? String(value.data)
       : new TextDecoder().decode(/** @type {Uint8Array} */ (value?.data));
-  await ex.session.sendChat(text);
+  const to = String(params?.to || "").trim();
+  // Addressed sends throw when no verified peer matches, rather than quietly
+  // reaching nobody — see QuorumSession.sendChatTo.
+  if (to) await ex.session.sendChatTo(to, text);
+  else await ex.session.sendChat(text);
   return value;
 }
 
 /** @param {Record<string, unknown>} params */
 export async function execQuorumRecv(params) {
-  const ex = requireExchange("quorum.recv");
+  const ex = requireExchange("rtc.recv");
   const fromFilter = String(params?.from || "")
     .replace(/\s+/g, "")
     .toUpperCase();
   const wait = Math.max(1000, Number(params?.wait) || 120000);
   const deadline = Date.now() + wait;
 
-  for (;;) {
-    const queued = fromFilter
-      ? ex.inbox.findIndex((m) => m.from.toUpperCase().startsWith(fromFilter))
-      : ex.inbox.length
-        ? 0
-        : -1;
-    if (queued >= 0) {
-      const msg = ex.inbox.splice(queued, 1)[0];
-      return {
-        type: "text",
-        data: msg.text,
-        meta: { sensitive: true, from: msg.from, ts: msg.ts },
-      };
+  // `count` decides both how many messages to gather and what shape comes out
+  // (§30c). One message stays a plain `text` so the common two-party read is
+  // unchanged; anything else is a `bundle`, because in a mesh "the next
+  // message" is not a well-defined thing — several peers speak at once.
+  const countRaw = String(params?.count ?? "1").trim().toLowerCase();
+  const drain = countRaw === "all";
+  const want = drain ? Infinity : Math.max(1, Number(countRaw) || 1);
+  const single = !drain && want === 1;
+
+  /** @type {{ from: string, text: string, ts: number }[]} */
+  const got = [];
+
+  /** Pull every already-queued message this call is allowed to take. */
+  const takeQueued = () => {
+    for (let i = 0; i < ex.inbox.length && got.length < want; ) {
+      const m = ex.inbox[i];
+      if (!fromFilter || m.from.toUpperCase().startsWith(fromFilter)) {
+        got.push(m);
+        ex.inbox.splice(i, 1);
+      } else {
+        i += 1;
+      }
     }
+  };
+
+  for (;;) {
+    takeQueued();
+    // `all` returns as soon as it has anything — draining an inbox should not
+    // then block for `wait` hoping for more.
+    if (got.length >= want || (drain && got.length)) break;
+
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-      throw new Error(`quorum.recv: no message within ${Math.round(wait / 1000)}s`);
+      if (got.length) break; // partial collection is still a result
+      throw new Error(`rtc.recv: no message within ${Math.round(wait / 1000)}s`);
     }
     /** @type {{ from: string, text: string, ts: number } | null} */
     const msg = await new Promise((resolve) => {
@@ -423,19 +524,39 @@ export async function execQuorumRecv(params) {
     });
     if (msg === null) {
       if (!current || current.cancelled) {
-        throw new Error("quorum.recv: exchange closed while waiting");
+        throw new Error("rtc.recv: exchange closed while waiting");
       }
       continue; // timeout path re-checked at loop top
     }
     if (!fromFilter || msg.from.toUpperCase().startsWith(fromFilter)) {
-      return {
-        type: "text",
-        data: msg.text,
-        meta: { sensitive: true, from: msg.from, ts: msg.ts },
-      };
+      got.push(msg);
+    } else {
+      ex.inbox.push(msg); // not for this filter — requeue for another recv
     }
-    ex.inbox.push(msg); // not for this filter — requeue for another recv
   }
+
+  if (single) {
+    const msg = got[0];
+    return {
+      type: "text",
+      data: msg.text,
+      meta: { sensitive: true, from: msg.from, ts: msg.ts },
+    };
+  }
+  // Bundle parts mirror what `foreach` produces, so the existing collection
+  // machinery (`foreach`, `[n]`, `at`) works on received messages with no
+  // special-casing. `from` rides on each part, not on the bundle: in a mesh
+  // the sender differs per message.
+  const parts = got.map((m) => ({
+    type: "text",
+    data: m.text,
+    meta: { sensitive: true, from: m.from, ts: m.ts },
+  }));
+  return {
+    type: "bundle",
+    data: { parts, count: parts.length },
+    meta: { kind: "recv", count: parts.length, sensitive: true },
+  };
 }
 
 /**

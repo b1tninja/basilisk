@@ -6295,3 +6295,32 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   position: relative;
 }
 
+
+/*
+ * Boot diagnostics banner (lib/boot-diagnostics.js).
+ *
+ * Styled here rather than inline because the app runs under
+ * `style-src 'self'` — a style attribute in the load-failure reporter would
+ * itself be blocked, which is precisely the class of bug it exists to surface.
+ */
+#boot-diagnostics {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 9999;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--error) 14%, var(--surface));
+  border-top: 2px solid var(--error);
+  color: var(--foreground);
+  font: 12px/1.5 ui-monospace, Menlo, monospace;
+}
+#boot-diagnostics ul {
+  margin: 6px 0 0;
+  padding-inline-start: 18px;
+}
+#boot-diagnostics li {
+  color: var(--muted-foreground);
+  word-break: break-all;
+}

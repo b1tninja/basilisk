@@ -1303,7 +1303,7 @@ rtc.ice stun=stun:stun.example.org:3478 turn=turn:relay.example.org:3478 usernam
 
 quorum.offer to="${"A".repeat(40)},${"B".repeat(40)}" key=@me wait=5000 | out @session
 
-quorum.recv wait=5000 | quorum.close | out @last`,
+rtc.recv wait=5000 | quorum.close | out @last`,
       mode: "compile",
       skipReason: "needs WebRTC mesh + a live peer",
     },
@@ -1313,7 +1313,7 @@ quorum.recv wait=5000 | quorum.close | out @last`,
 
 quorum.join to="${"A".repeat(40)},${"B".repeat(40)}" key=@me | out @session
 
-input | quorum.send | out @sent`,
+input | rtc.send | out @sent`,
       mode: "compile",
       skipReason: "needs WebRTC mesh + a live peer",
     },
@@ -1321,16 +1321,16 @@ input | quorum.send | out @sent`,
     // ── WebRTC primitives (§23a/23b/29a/29d/30d) — every one needs a real
     // RTCPeerConnection (and several a live exchange), so all compile-only.
     {
-      id: "rtc.gatherCandidates.compile",
+      id: "rtc.gather.compile",
       recipe: `rtc.ice | out @ice
 
-rtc.gatherCandidates ice=@ice timeout=3000 | out @cands`,
+rtc.gather ice=@ice timeout=3000 | out @cands`,
       mode: "compile",
       skipReason: "needs RTCPeerConnection (main-thread browser only)",
     },
     {
-      id: "rtc.checkConnectivity.compile",
-      recipe: "rtc.checkConnectivity | out @pairs",
+      id: "rtc.check.compile",
+      recipe: "rtc.check | out @pairs",
       mode: "compile",
       skipReason: "needs a live WebRTC exchange with a peer",
     },
@@ -1347,30 +1347,30 @@ rtc.gatherCandidates ice=@ice timeout=3000 | out @cands`,
       skipReason: "needs RTCPeerConnection.generateCertificate",
     },
     {
-      id: "rtc.createOffer.answer.compile",
+      id: "rtc.offer.answer.compile",
       recipe: `rtc.ice | out @ice
 
-rtc.createOffer ice=@ice label=basilisk | out @offer
+rtc.offer ice=@ice label=basilisk | out @offer
 
-in @offer | rtc.createAnswer ice=@ice | out @answer`,
+in @offer | rtc.answer ice=@ice | out @answer`,
       mode: "compile",
       skipReason: "needs RTCPeerConnection (main-thread browser only)",
     },
     {
-      id: "rtc.connectionState.compile",
-      recipe: "rtc.connectionState | out @state",
+      id: "rtc.state.compile",
+      recipe: "rtc.state | out @state",
       mode: "compile",
       skipReason: "needs a live WebRTC exchange",
     },
     {
-      id: "rtc.dataChannelStats.compile",
-      recipe: "rtc.dataChannelStats | out @bp",
+      id: "rtc.stats.compile",
+      recipe: "rtc.stats | out @bp",
       mode: "compile",
       skipReason: "needs a live WebRTC exchange",
     },
     {
-      id: "rtc.statsReport.compile",
-      recipe: "rtc.statsReport | out @quality",
+      id: "rtc.quality.compile",
+      recipe: "rtc.quality | out @quality",
       mode: "compile",
       skipReason: "needs a live WebRTC exchange",
     },

@@ -23,6 +23,10 @@ import {
   NetworkArtifact,
   SessionStrip,
   TypeCard,
+  CellTypeErrors,
+  CryptoProfileControl,
+  GpgKeyBinder,
+  ConnectionsPanel,
 } from "../toolkit/widgets/index";
 import { getTypeMeta } from "../lib/toolkit/type-registry.js";
 import { Button } from "@/components/ui/button";
@@ -109,6 +113,10 @@ function CatalogApp() {
               "outputlist",
               "networkartifact",
               "typecard",
+              "connections",
+              "gpgkeybinder",
+              "cryptoprofile",
+              "celltypeerrors",
               "recipechipflow",
               "paramfield",
               "modetoggle",
@@ -722,6 +730,204 @@ function CatalogApp() {
                   diagnosticAction: { label: "Configure TURN", onClick: () => {} },
                 },
               ]}
+            />
+          </div>
+        </Section>
+
+        <Section
+          id="connections"
+          title="ConnectionsPanel — live sessions, separate from Outputs (§34)"
+        >
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            Outputs holds what a run <em>produced</em>; this holds what is <em>open</em>,
+            with the actions that close or repair it. Connectivity and authentication are
+            reported separately on purpose — a peer can be fully connected and completely
+            unverified, and conflating the two is how you trust the wrong end of a working
+            pipe.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-lg border border-[var(--border)]">
+              <StateLabel>Idle — names the op that starts one</StateLabel>
+              <ConnectionsPanel session={{ phase: "idle" }} />
+            </div>
+            <div className="rounded-lg border border-[var(--border)]">
+              <StateLabel>Waiting — invite published, no peers yet</StateLabel>
+              <ConnectionsPanel
+                session={{
+                  phase: "waiting",
+                  room: "KJ8X2M4P9FQ",
+                  role: "creator",
+                  invite: "basilisk://join/KJ8X…9FQ",
+                  connected: 0,
+                  expected: 3,
+                }}
+                onCopyInvite={() => {}}
+                onClose={() => {}}
+              />
+            </div>
+            <div className="rounded-lg border border-[var(--border)]">
+              <StateLabel>Mesh — mixed verification, one peer still connecting</StateLabel>
+              <ConnectionsPanel
+                session={{
+                  phase: "connected",
+                  room: "KJ8X2M4P9FQ",
+                  role: "creator",
+                  connected: 2,
+                  expected: 3,
+                  peers: [
+                    { id: "dana@example.com", state: "connected", authenticated: true, via: "srflx" },
+                    { id: "peer-7c3f", state: "connected", authenticated: false, via: "relay" },
+                    { id: "peer-19ab", state: "connecting" },
+                  ],
+                }}
+                onClose={() => {}}
+              />
+            </div>
+            <div className="rounded-lg border border-[var(--border)]">
+              <StateLabel>Failed — recovery in place, room preserved</StateLabel>
+              <ConnectionsPanel
+                session={{
+                  phase: "failed",
+                  room: "KJ8X2M4P9FQ",
+                  connected: 0,
+                  expected: 2,
+                  peers: [{ id: "dana@example.com", state: "failed", authenticated: true }],
+                }}
+                onRestartIce={() => {}}
+                onClose={() => {}}
+              />
+            </div>
+          </div>
+        </Section>
+
+        <Section
+          id="gpgkeybinder"
+          title="GpgKeyBinder — a key you hold, not one you're encrypting to (§39b)"
+        >
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            Easy to conflate with recipient binding, and the directions are opposite:
+            recipients are public keys you encrypt <em>to</em>; this picks a key you can
+            act <em>as</em>, for <code className="font-mono">gpg.sign</code> or{" "}
+            <code className="font-mono">gpg.decrypt</code>. It reads the same vault the
+            Keys tray renders, so there is no second list to fall out of sync.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <StateLabel>Selection + expiry escalation (quiet &gt; 30d)</StateLabel>
+              <GpgKeyBinder
+                label="Sign with"
+                value="9F2A1C4E8B6D3057AA11BB22CC33DD44EE55FF66"
+                onChange={() => {}}
+                keys={[
+                  {
+                    fingerprint: "9F2A1C4E8B6D3057AA11BB22CC33DD44EE55FF66",
+                    uid: "Dana Okonkwo <dana@example.com>",
+                    expires: null,
+                  },
+                  {
+                    fingerprint: "1122334455667788AABBCCDDEEFF00112233445566",
+                    uid: "old-work-key <ops@example.com>",
+                    expires: Date.now() + 4 * 86_400_000,
+                  },
+                  {
+                    fingerprint: "AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555",
+                    uid: "rotating <rot@example.com>",
+                    expires: Date.now() + 20 * 86_400_000,
+                  },
+                ]}
+              />
+            </div>
+            <div>
+              <StateLabel>Empty vault — says what to do, not &ldquo;no keys&rdquo;</StateLabel>
+              <GpgKeyBinder label="Decrypt with" keys={[]} onChange={() => {}} />
+            </div>
+          </div>
+        </Section>
+
+        <Section
+          id="cryptoprofile"
+          title="CryptoProfileControl — Custom mode as a 2×2 grid (§36c)"
+        >
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            Paired by what each choice governs: Cipher/AEAD decide how the message is kept
+            secret, S2K/Compression how the passphrase is stretched and the body packed.
+            Stacked full-width, the four pickers pushed the divergence warning and the
+            flags footer below the fold.
+          </p>
+          <div className="max-w-md">
+            <StateLabel>Custom — all four pickers, flags footer</StateLabel>
+            <CryptoProfileControl
+              value={{
+                profile: "custom",
+                cipher: "aes256",
+                aead: "gcm",
+                s2k: "argon2",
+                compression: "off",
+              }}
+              onChange={() => {}}
+              sessionProfile="modern"
+            />
+          </div>
+          <div className="max-w-md">
+            <StateLabel>
+              Custom that exactly matches Modern — divergence warning spans both columns
+            </StateLabel>
+            <CryptoProfileControl
+              value={{
+                profile: "custom",
+                cipher: "aes256",
+                aead: "ocb",
+                s2k: "argon2",
+                compression: "off",
+              }}
+              onChange={() => {}}
+              sessionProfile="modern"
+            />
+          </div>
+        </Section>
+
+        <Section
+          id="celltypeerrors"
+          title="CellTypeErrors — type failures as a surface, not a runtime throw (§33c)"
+        >
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            Sits under the chip row, where RunBar&rsquo;s blocked state already lives — a
+            banner rather than a tooltip, because a message you must hover to find is not
+            one you read before pressing Run. The fix hint only appears when the registry
+            knows an op that actually produces the wanted type.
+          </p>
+          <div className="max-w-2xl">
+            <StateLabel>
+              Named step + a real producer for the expected type (offers a fix)
+            </StateLabel>
+            <CellTypeErrors
+              steps={[{ name: "genkey" }, { name: "digest" }]}
+              errors={[
+                {
+                  message:
+                    '"digest" expects DER bytes — add export pkcs8, export scalar, or spki first.',
+                  stepIndex: 1,
+                },
+              ]}
+              onFocusStep={() => {}}
+            />
+          </div>
+          <div className="max-w-2xl">
+            <StateLabel>
+              Message names no parseable type — silent rather than a guessed fix
+            </StateLabel>
+            <CellTypeErrors
+              steps={[{ name: "sss.combine" }]}
+              errors={[
+                { message: "shares/raw needs blip39 -d before sss.combine.", stepIndex: 0 },
+              ]}
+            />
+          </div>
+          <div className="max-w-2xl">
+            <StateLabel>Validator gave no stepIndex — banner without a chip anchor</StateLabel>
+            <CellTypeErrors
+              steps={[]}
+              errors={[{ message: "Nested foreach is not allowed.", stepIndex: -1 }]}
             />
           </div>
         </Section>

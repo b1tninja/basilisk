@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Types toolbox — design reference (turn 31)</title>
+<style>body{margin:0;background:#010409;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}</style>
+</head>
+<body>
+<section id="t31" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t31" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">31</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">Types as instantiable toolbox entries, and docstring links</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">This one is toolkit-wide, not WebRTC-specific — it changes how the <code style="color:#e6edf3">Input / output</code> category works everywhere. Today "input" is one generic text box, and getting a typed value (an int, a keypair) means input → cast op. The alternative: a <strong style="color:#e6edf3">Types</strong> category where each type is its own source op with a widget shaped like that type's native form — an int field takes <code style="color:#e6edf3">42</code> or <code style="color:#e6edf3">0x2A</code> directly, no parse step; a keypair can be generated <em>or imported</em> as a first-class origin, not just <code style="color:#e6edf3">genkey</code>'s output. <a href="#31a">31a</a> the category. <a href="#31b">31b</a> the Int/Hex widget. <a href="#31c">31c</a> KeyPair as an instantiable type, not only a generate-op result. <a href="#31d">31d</a> every tool card gets a docs link back to the real spec/MDN page it wraps.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 31a Types category -->
+<div id="31a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#31a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">31a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">"Input / output" becomes "Types" — instantiate, don't cast</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">18b's shelf listed a flat "Input / output" category, 7 ops, generic gray dot — really just "give me some bytes/text from somewhere." Splitting it into one entry per real kind lets each carry its own native widget instead of a text box plus a cast step downstream. Text stays (it <em>is</em> what free text should be), but Int, Hex, KeyPair, and Certificate get their own shape.</div>
+  <div style="width:264px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="padding:6px 0">
+      <div style="display:flex;align-items:center;gap:6px;padding:9px 12px 5px;background:rgba(88,166,255,.05)">
+        <span style="font-size:8px;color:#58a6ff">▾</span>
+        <span style="font:600 10px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#e6edf3">Types</span>
+        <span style="font:500 10px ui-monospace,Menlo,monospace;color:#484f58">7</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 12px 5px 22px"><span style="width:6px;height:6px;border-radius:50%;background:#8b949e;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">text</code></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 12px 5px 22px"><span style="width:6px;height:6px;border-radius:50%;background:#f0883e;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">int</code></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 12px 5px 22px"><span style="width:6px;height:6px;background:#f0883e;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">hex</code></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 12px 5px 22px;background:rgba(76,222,130,.08)"><span style="width:6px;height:6px;border-radius:2px;background:#4cde82;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">keyPair</code><span style="font:400 9px system-ui,sans-serif;color:#4cde82">● new</span></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 12px 5px 22px"><span style="width:6px;height:6px;border-radius:2px;background:#d2a8ff;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">certificate</code><span style="font:400 9px system-ui,sans-serif;color:#6e7781">29a</span></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 12px 5px 22px"><span style="width:6px;height:6px;background:#58a6ff;border-radius:1px;flex-shrink:0;transform:rotate(45deg)"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">iceServer</code></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 12px 5px 22px"><span style="width:6px;height:6px;border-radius:50%;background:#8b949e;flex-shrink:0"></span><code style="flex:1;font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">bytes</code></div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Registry — types are ops with no inputs</div>
+    op.kind: 'type' <span style="color:#6e7781">// vs 'transform' | 'source'</span><br>
+    op.instantiates: OpKind <span style="color:#6e7781">// which kind it produces</span>
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Nothing about downstream fit-checking (19a/20b/25d) changes — a type op's output kind flows through the caret exactly like <code style="color:#e6edf3">genkey</code>'s already does. This is a shelf/authoring reorganization, not a new pipeline mechanism. Existing recipes using the old <code style="color:#e6edf3">input :text</code> shape keep working — it just now reads as <code style="color:#e6edf3">text</code> from the Types category instead of a generic "Input / output" one.</div>
+  </div>
+</div>
+
+<!-- 31b Int/Hex widget -->
+<div id="31b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#31b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">31b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Int — one field, decimal or <code>0x</code> hex, no parse step to add</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Today, getting the number 42 into a pipeline means <code style="color:#e6edf3">input :text</code> → some parse-int op the toolkit may not even have yet. The Int type widget accepts either notation directly and normalizes on blur, showing both forms plus the byte length it'll serialize to — so what you typed and what the pipeline actually holds are never in question.</div>
+  <div style="width:280px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:11px 12px">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <span style="width:6px;height:6px;border-radius:50%;background:#f0883e"></span>
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">int</code>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781;margin-left:auto">out → <code style="color:#4cde82">@k</code></span>
+    </div>
+    <div style="height:30px;padding:0 9px;background:#010409;border:1px solid #58a6ff;border-radius:6px;display:flex;align-items:center">
+      <span style="font:500 12px ui-monospace,Menlo,monospace;color:#e6edf3">0x2A</span>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:7px;font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">
+      <span>= 42 decimal</span><span>·</span><span>1 byte</span><span>·</span><span>big-endian</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Widget contract</div>
+    op: types.int<br>
+    accepts: /^-?\d+$/ | /^0x[0-9a-f]+$/i<br>
+    out: IntValue { value: bigint, byteLength }
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781"><code style="color:#e6edf3">hex</code> is the sibling widget for the reverse case — a byte string the user thinks of as hex first (a key, a nonce), where <code style="color:#e6edf3">int</code> is a small number they think of as a number. Both normalize to the same underlying <code style="color:#e6edf3">bytes</code> kind on output, so an op downstream that wants bytes doesn't care which type widget produced them.</div>
+  </div>
+</div>
+
+<!-- 31c KeyPair type -->
+<div id="31c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#31c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">31c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">KeyPair — generate <em>or</em> import, same type either way</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e"><code style="color:#e6edf3">genkey</code> (18b, WebCrypto category) stays exactly as it is — it's still how most keypairs get made. But a keypair a user already has (exported from another tool, a long-lived identity) had no way to enter the pipeline as a typed value before; it had to masquerade as base64 text and get parsed. The Types entry offers both origins behind one segmented control, so the rest of the pipeline sees the same <code style="color:#e6edf3">CryptoKeyPair</code> kind regardless of where it came from.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:11px 12px">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:9px">
+      <span style="width:6px;height:6px;border-radius:2px;background:#4cde82"></span>
+      <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">keyPair</code>
+    </div>
+    <div style="display:flex;background:#010409;border:1px solid #30363d;border-radius:6px;overflow:hidden;height:26px;margin-bottom:9px">
+      <span style="flex:1;display:grid;place-items:center;font:500 10px system-ui,sans-serif;color:#6e7781">Generate</span>
+      <span style="flex:1;display:grid;place-items:center;font:500 10px system-ui,sans-serif;color:#04140a;background:#4cde82">Import</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;height:28px;padding:0 9px;background:#010409;border:1px dashed #30363d;border-radius:6px">
+      <span style="font:400 10.5px system-ui,sans-serif;color:#6e7781">Paste JWK or PEM…</span>
+    </div>
+    <div style="font:400 9.5px system-ui,sans-serif;color:#6e7781;margin-top:6px">Private half stays non-extractable once imported, same as a generated key</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Widget contract</div>
+    op: types.keyPair<br>
+    mode: 'generate' | 'import'<br>
+    generate: delegates to genkey's own param set<br>
+    import: accepts jwk | pkcs8+spki pem
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">"Generate" mode isn't a second implementation — it renders <code style="color:#e6edf3">genkey</code>'s exact param form inline and produces the identical output shape, so a recipe can be authored either from Types or from WebCrypto and behave the same. This is the template for any future type that has both a "make one" and "bring your own" origin — <code style="color:#e6edf3">certificate</code> (29a) is the next candidate: generate ephemeral vs. import a pinned one.</div>
+  </div>
+</div>
+
+<!-- 31d docstring links -->
+<div id="31d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#31d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">31d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Every tool card links back to the real spec it wraps</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">One line, bottom of the inline param editor (18b's pattern) and the caret's hover/detail card alike — a quiet "Docs ↗" pointing at the actual MDN or spec page the op is a thin wrapper over. Doesn't compete with the op's own description text; it's a footer, not a callout.</div>
+  <div style="width:340px;background:#010409;border:1px solid #21262d;border-radius:8px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:9px;padding:8px 11px;border-bottom:1px solid #161b22">
+      <code style="font:600 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">genkey</code>
+      <span style="font:400 11px system-ui,sans-serif;color:#6e7781">Generate a WebCrypto keypair</span>
+    </div>
+    <div style="padding:9px 11px;font:400 10.5px system-ui,sans-serif;color:#6e7781">ec/p256 · non-extractable private half</div>
+    <div style="padding:7px 11px;border-top:1px solid #161b22;display:flex;align-items:center;gap:5px">
+      <span style="font-size:9px;color:#58a6ff">↗</span>
+      <a href="#" style="font:400 10.5px system-ui,sans-serif;color:#58a6ff;text-decoration:none">SubtleCrypto.generateKey — MDN</a>
+    </div>
+  </div>
+  <div style="width:340px;background:#010409;border:1px solid #21262d;border-radius:8px;overflow:hidden;margin-top:4px">
+    <div style="display:flex;align-items:center;gap:9px;padding:8px 11px;border-bottom:1px solid #161b22">
+      <code style="font:600 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.offer</code>
+      <span style="font:400 11px system-ui,sans-serif;color:#6e7781">Open a WebRTC session, wait for a peer</span>
+    </div>
+    <div style="padding:7px 11px;border-top:1px solid #161b22;display:flex;align-items:center;gap:5px">
+      <span style="font-size:9px;color:#58a6ff">↗</span>
+      <a href="#" style="font:400 10.5px system-ui,sans-serif;color:#58a6ff;text-decoration:none">RTCPeerConnection — MDN</a>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Registry — one field, every op</div>
+    op.docUrl?: string
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Optional, so ops with no single canonical spec page (composite ops like <code style="color:#e6edf3">openpgp.signAndEncrypt</code>) simply omit the footer rather than linking somewhere approximate. Populate it once per op at registry-authoring time — <code style="color:#e6edf3">genkey→SubtleCrypto.generateKey</code>, <code style="color:#e6edf3">rtc.ice→RTCConfiguration.iceServers</code>, <code style="color:#e6edf3">rtc.gatherCandidates→RTCIceCandidate</code>, <code style="color:#e6edf3">aes.encrypt→SubtleCrypto.encrypt</code> — this is documentation-authoring work, not a design decision per op.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+
+</body>
+</html>

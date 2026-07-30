@@ -180,7 +180,12 @@ export function CryptoProfileControl({
       ) : null}
 
       {profile === "custom" ? (
-        <div className="mt-3 space-y-3">
+        /* §36c — four stacked full-width blocks became a 2×2 grid, paired by
+           what each choice governs: Cipher/AEAD decide how the message is kept
+           secret, S2K/Compression how the passphrase is stretched and the body
+           packed. Stacking them pushed the divergence warning and the flags
+           footer below the fold, so both read as afterthoughts. */
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <p className="mb-1 text-[length:10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
               Cipher
@@ -238,8 +243,10 @@ export function CryptoProfileControl({
             />
           </div>
 
+          {/* Full width — these describe the whole profile, not one field,
+              so they must not become grid columns beside a picker. */}
           {divergence.preset !== "custom" ? (
-            <div className="rounded-md border border-l-[3px] border-[color-mix(in_srgb,var(--warn)_45%,var(--border))] border-l-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)] px-2.5 py-2">
+            <div className="rounded-md border border-l-[3px] border-[color-mix(in_srgb,var(--warn)_45%,var(--border))] border-l-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)] px-2.5 py-2 sm:col-span-2">
               <p className="text-[length:11px] font-bold text-[var(--foreground)]">
                 Same as {divergence.preset === "modern" ? "Modern" : "Compatible"} — no need for
                 Custom
@@ -253,7 +260,7 @@ export function CryptoProfileControl({
             </div>
           ) : null}
 
-          <div className="flex items-center justify-between gap-2 rounded-md bg-[var(--surface)] px-2.5 py-[6px]">
+          <div className="flex items-center justify-between gap-2 rounded-md bg-[var(--surface)] px-2.5 py-[6px] sm:col-span-2">
             <code className="truncate text-[length:10.5px] text-[var(--muted-foreground)]">
               {flags}
             </code>

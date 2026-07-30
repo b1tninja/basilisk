@@ -78,7 +78,7 @@ function netValue(type, data, filename, meta = {}) {
   return { type, data, meta: { sensitive: false, filename, ...meta } };
 }
 
-/* ─────────────────────── rtc.gatherCandidates (23a/26a) ─────────────────────── */
+/* ─────────────────────── rtc.gather (23a/26a) ─────────────────────── */
 
 /**
  * Gather ICE candidates and report every one, typed.
@@ -94,8 +94,8 @@ function netValue(type, data, filename, meta = {}) {
  * @param {object} bindings
  */
 export async function execGatherCandidates(params, bindings) {
-  requireWebRtc("rtc.gatherCandidates");
-  const iceServers = resolveIceServers(params, bindings, "rtc.gatherCandidates");
+  requireWebRtc("rtc.gather");
+  const iceServers = resolveIceServers(params, bindings, "rtc.gather");
   const timeout = Math.max(500, Number(params?.timeout) || 5000);
   const started = performance.now();
   const pc = new RTCPeerConnection({ iceServers });
@@ -165,7 +165,7 @@ export async function execGatherCandidates(params, bindings) {
   );
 }
 
-/* ────────────────────── rtc.checkConnectivity (23b/26b) ────────────────────── */
+/* ────────────────────── rtc.check (23b/26b) ────────────────────── */
 
 /**
  * Candidate-pair check matrix for the live exchange.
@@ -176,7 +176,7 @@ export async function execGatherCandidates(params, bindings) {
  * chose the pair it did. Role is read-only: the protocol assigns it.
  */
 export async function execCheckConnectivity() {
-  const session = requireSession("rtc.checkConnectivity");
+  const session = requireSession("rtc.check");
   /** @type {{ peer: string, role: string, pairs: object[] }[]} */
   const peers = [];
   for (const [fpr, peer] of session.peers) {
@@ -301,15 +301,15 @@ export async function execCertificate(params) {
   );
 }
 
-/* ──────────────────── rtc.createOffer / rtc.createAnswer (30d) ──────────────────── */
+/* ──────────────────── rtc.offer / rtc.answer (30d) ──────────────────── */
 
 /**
  * Raw SDP offer — the escape hatch below `quorum.offer`. Signals nothing;
  * the caller carries the blob however they like.
  */
 export async function execCreateOffer(params, bindings) {
-  requireWebRtc("rtc.createOffer");
-  const iceServers = resolveIceServers(params, bindings, "rtc.createOffer");
+  requireWebRtc("rtc.offer");
+  const iceServers = resolveIceServers(params, bindings, "rtc.offer");
   const label = String(params?.label || "basilisk");
   const pc = new RTCPeerConnection({ iceServers });
   try {
@@ -336,15 +336,15 @@ export async function execCreateOffer(params, bindings) {
  * @param {{ type: string, data: unknown }} value
  */
 export async function execCreateAnswer(value, params, bindings) {
-  requireWebRtc("rtc.createAnswer");
+  requireWebRtc("rtc.answer");
   const sdp =
     value?.type === "sdp" || value?.type === "text"
       ? String(value.data)
       : new TextDecoder().decode(/** @type {Uint8Array} */ (value?.data));
   if (!/^v=0/m.test(sdp)) {
-    throw new Error("rtc.createAnswer expects an SDP offer as pipeline text");
+    throw new Error("rtc.answer expects an SDP offer as pipeline text");
   }
-  const iceServers = resolveIceServers(params, bindings, "rtc.createAnswer");
+  const iceServers = resolveIceServers(params, bindings, "rtc.answer");
   const pc = new RTCPeerConnection({ iceServers });
   try {
     await pc.setRemoteDescription({ type: "offer", sdp });
@@ -365,11 +365,11 @@ export async function execCreateAnswer(value, params, bindings) {
   }
 }
 
-/* ─────────────────────── rtc.connectionState (30d) ─────────────────────── */
+/* ─────────────────────── rtc.state (30d) ─────────────────────── */
 
 /** Observe-only state snapshot — never bindable as a crypto op's input. */
 export function execConnectionState() {
-  const session = requireSession("rtc.connectionState");
+  const session = requireSession("rtc.state");
   const peers = [];
   for (const [fpr, peer] of session.peers) {
     peers.push({
@@ -389,11 +389,11 @@ export function execConnectionState() {
   });
 }
 
-/* ─────────────────────── rtc.dataChannelStats (30d) ─────────────────────── */
+/* ─────────────────────── rtc.stats (30d) ─────────────────────── */
 
-/** Back-pressure + counters: is `quorum.send` queueing behind a slow link? */
+/** Back-pressure + counters: is `rtc.send` queueing behind a slow link? */
 export async function execDataChannelStats() {
-  const session = requireSession("rtc.dataChannelStats");
+  const session = requireSession("rtc.stats");
   const peers = [];
   for (const [fpr, peer] of session.peers) {
     const ch = peer.channel;
@@ -431,11 +431,11 @@ export async function execDataChannelStats() {
   });
 }
 
-/* ───────────────────────── rtc.statsReport (29d) ───────────────────────── */
+/* ───────────────────────── rtc.quality (29d) ───────────────────────── */
 
 /** Live quality numbers — RTT, throughput, loss — per connected peer. */
 export async function execStatsReport() {
-  const session = requireSession("rtc.statsReport");
+  const session = requireSession("rtc.quality");
   const peers = [];
   for (const [fpr, peer] of session.peers) {
     if (!peer.pc) continue;

@@ -24,6 +24,13 @@ export { OutputList, type OutputArtifact } from "./OutputList";
 export { NetworkArtifact, hasNetworkRenderer } from "./NetworkArtifact";
 export { SessionStrip, type SessionStripState } from "./SessionStrip";
 export { InspectorArtifact, hasInspectorRenderer, type InspectSnapshot } from "./InspectorArtifact";
+export { CellTypeErrors, type CellTypeError } from "./CellTypeErrors";
+export { GpgKeyBinder, expiryNote, daysUntilExpiry } from "./GpgKeyBinder";
+export {
+  ConnectionsPanel,
+  type ConnectionPeer,
+  type ConnectionsSession,
+} from "./ConnectionsPanel";
 export { TypeCard } from "./TypeCard";
 export {
   STEP_MIME,

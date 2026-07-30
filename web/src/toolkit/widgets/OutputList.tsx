@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/cn";
 import { NetworkArtifact, hasNetworkRenderer } from "./NetworkArtifact";
 import { InspectorArtifact, type InspectSnapshot } from "./InspectorArtifact";
+import { KindGlyph } from "./kind-glyphs";
 import {
   bytesToBase32,
   bytesToBase64,
@@ -112,6 +113,31 @@ export function formatArtifact(content: string, format: ArtifactFormat): string 
   }
 }
 
+/**
+ * Whether a row has enough body to be worth its own window (§32c).
+ *
+ * Expand was originally network-only, but a keypair inspector body or a large
+ * hexdump has exactly the same problem — too much value for a list row. The
+ * threshold is deliberately generous: below it, the inline body is already
+ * fully readable and a window would be ceremony.
+ */
+const EXPANDABLE_CONTENT_CHARS = 512;
+
+export function canExpand(a: OutputArtifact): boolean {
+  if (hasNetworkRenderer(a.netType)) return true;
+  if (a.inspectSnapshot) return true;
+  return (a.content?.length ?? 0) > EXPANDABLE_CONTENT_CHARS;
+}
+
+/**
+ * How long a revealed secret stays visible before re-masking (§32c).
+ *
+ * There is no honest way to detect screen sharing — the Screen Capture API
+ * only tells a page about its *own* capture — so a timeout is the real
+ * mitigation rather than a reassuring indicator that cannot be backed up.
+ */
+export const REVEAL_TIMEOUT_MS = 15000;
+
 /** Segmented alphabet picker for one artifact row. */
 function FormatBar({
   value,
@@ -155,6 +181,19 @@ export function OutputList({ outputs, className }: Props) {
    */
   const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
   const [formats, setFormats] = useState<Record<string, ArtifactFormat>>({});
+  /**
+   * Bumped by any interaction with a revealed row; the auto-hide timer keys
+   * off it, so reading or reformatting a value keeps it open and walking away
+   * re-masks it.
+   */
+  const [revealTouch, setRevealTouch] = useState(0);
+  const keepRevealed = () => setRevealTouch((n) => n + 1);
+
+  useEffect(() => {
+    if (!revealed.size) return undefined;
+    const t = setTimeout(() => setRevealed(new Set()), REVEAL_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [revealed, revealTouch]);
   const expandedRow = expanded != null ? outputs[expanded] : null;
   if (!outputs.length) return null;
   return (
@@ -174,9 +213,12 @@ export function OutputList({ outputs, className }: Props) {
           )}
         >
         <div className="flex items-center gap-2.5" title={a.preview}>
+          {/* §35 — glyph in front of the existing label. `a.kind` is already
+              the lookup key, so no new prop; the same map backs TypeCard and
+              the Types shelf so one kind never shows two icons. */}
           <span
             className={cn(
-              "shrink-0 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider",
+              "inline-flex shrink-0 items-center gap-1 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider",
               a.kind === "diag"
                 ? "bg-[color-mix(in_srgb,var(--warn)_12%,transparent)] text-[var(--warn)]"
                 : a.kind === "key"
@@ -184,6 +226,7 @@ export function OutputList({ outputs, className }: Props) {
                   : "bg-[color-mix(in_srgb,var(--caret)_12%,transparent)] text-[var(--caret)]"
             )}
           >
+            <KindGlyph kind={a.kind} />
             {a.kind}
           </span>
           <code className="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-[var(--foreground)]">
@@ -194,6 +237,16 @@ export function OutputList({ outputs, className }: Props) {
               sensitive
             </Badge>
           ) : null}
+          <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
+            {fmtSize(a.sizeBytes)}
+          </span>
+        </div>
+
+        {/* §36a — actions on their own line. The identity line above answers
+            "what is this"; this one answers "what can I do to it". Eight
+            controls sharing one flex row gave a plain text artifact the same
+            visual weight as a publishable key with five affordances. */}
+        <div className="flex flex-wrap items-center gap-1.5">
           {a.diagnosticAction ? (
             <Button
               size="sm"
@@ -206,10 +259,7 @@ export function OutputList({ outputs, className }: Props) {
               {a.diagnosticAction.label}
             </Button>
           ) : null}
-          <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
-            {fmtSize(a.sizeBytes)}
-          </span>
-          {hasNetworkRenderer(a.netType) ? (
+          {canExpand(a) ? (
             <Button
               size="sm"
               variant="secondary"
@@ -337,13 +387,20 @@ export function OutputList({ outputs, className }: Props) {
               className="mt-0.5"
             />
           ) : a.content ? (
-            <span className="flex flex-col gap-1 pl-[1px]">
+            <span
+              className="flex flex-col gap-1 pl-[1px]"
+              /* Reading or reformatting a revealed value counts as still
+                 looking at it, so the auto-hide timer restarts. */
+              onMouseMove={a.sensitive ? keepRevealed : undefined}
+              onFocus={a.sensitive ? keepRevealed : undefined}
+            >
               <span className="flex items-center gap-2">
                 <FormatBar
                   value={formats[a.label] || "raw"}
-                  onChange={(f) =>
-                    setFormats((prev) => ({ ...prev, [a.label]: f }))
-                  }
+                  onChange={(f) => {
+                    keepRevealed();
+                    setFormats((prev) => ({ ...prev, [a.label]: f }));
+                  }}
                 />
                 {a.sensitive ? (
                   <button
@@ -395,15 +452,29 @@ export function OutputList({ outputs, className }: Props) {
               ) : null}
             </SheetTitle>
           </SheetHeader>
-          {expandedRow && hasNetworkRenderer(expandedRow.netType) ? (
+          {expandedRow ? (
             <div className="overflow-y-auto px-4 pb-4">
-              <NetworkArtifact
-                netType={expandedRow.netType!}
-                netKind={expandedRow.netKind}
-                data={expandedRow.netData}
-                content={expandedRow.content}
-                onConfigureTurn={expandedRow.onConfigureTurn}
-              />
+              {/* Same widget the row uses, given room — never a second
+                  rendering of the same value. */}
+              {hasNetworkRenderer(expandedRow.netType) ? (
+                <NetworkArtifact
+                  netType={expandedRow.netType!}
+                  netKind={expandedRow.netKind}
+                  data={expandedRow.netData}
+                  content={expandedRow.content}
+                  onConfigureTurn={expandedRow.onConfigureTurn}
+                />
+              ) : expandedRow.inspectSnapshot ? (
+                <InspectorArtifact
+                  snapshot={expandedRow.inspectSnapshot as InspectSnapshot}
+                />
+              ) : (
+                <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-[var(--foreground)]">
+                  {expandedRow.sensitive && !revealed.has(expandedRow.label)
+                    ? "sensitive — value not shown"
+                    : expandedRow.content}
+                </pre>
+              )}
               <Button
                 size="sm"
                 variant="secondary"

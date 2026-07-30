@@ -363,7 +363,7 @@ export const TYPE_META = {
     base: "candidate",
     label: "candidate",
     summary: "ICE candidates gathered for a connection.",
-    doc: "The list `rtc.gatherCandidates` collects: host, server-reflexive, peer-reflexive, and relay routes that ICE will try. Browsers redact the local address of host candidates behind an mDNS name, so what you see is what the peer would see.",
+    doc: "The list `rtc.gather` collects: host, server-reflexive, peer-reflexive, and relay routes that ICE will try. Browsers redact the local address of host candidates behind an mDNS name, so what you see is what the peer would see.",
     ref: { url: `${MDN}/RTCIceCandidate`, label: "MDN · RTCIceCandidate" },
   },
 

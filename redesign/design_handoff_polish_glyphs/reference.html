@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Polish pass — design reference (turns 40-45)</title>
+<style>body{margin:0;background:#010409;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}</style>
+</head>
+<body>
+<section id="t45" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t45" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">45</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">Correction — two real glyph files already exist; finish that work, don't redo it</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Turn 44 was written before reading the real glyph source, and its 44b "before" states were invented — the shipped <code style="color:#e6edf3">glyphs.js</code> (auto-generated, ~60 entries, real <code style="color:#e6edf3">viewBox 0 0 20 20</code>) already draws <code style="color:#e6edf3">genkey</code> as a literal key-and-lock, <code style="color:#e6edf3">export</code> as a tray with an arrow, <code style="color:#e6edf3">openpgp</code> as an envelope-flap padlock. Retract 44b's comparisons; 44a's house-style principle and 44d's legend idea still stand, they just apply to real work already underway, not a from-scratch redesign.</p>
+  <p style="margin:0 0 8px">More important: <code style="color:#e6edf3">glyphs-redesigned.js</code> already exists — an explicit, unmerged in-progress pass (its own header: "turns 1-6") covering all 9 toolboxes and 21 of the shelf icons, with a real stated grammar: 24px grid, 1.75px stroke, round caps, built only from circles/lines/arcs/polygons, and color intent (green = OpenPGP/trust, gold = SSS/sharing, gray = everything else). <a href="#45a">45a</a> the real remaining scope — roughly 30 op-level glyphs in <code style="color:#e6edf3">glyphs.js</code> this pass never reached. <a href="#45b">45b</a> draws the two genuinely new ones (<code style="color:#e6edf3">totp</code>, <code style="color:#e6edf3">clipboard</code>) in the exact same grammar, ready to merge.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 45a real remaining scope -->
+<div id="45a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#45a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">45a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">What's actually still unredesigned — and it's op-family clusters, not scattered icons</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Diffing <code style="color:#e6edf3">glyphs.js</code>'s full key list against <code style="color:#e6edf3">glyphs-redesigned.js</code>'s coverage: the gap isn't random leftover icons, it's entire op families that came after the "turns 1-6" pass stopped — GPG's five variants, HKP's five, WebAuthn's five, plus the KDF/encoding singles. Finishing these in family batches (so <code style="color:#e6edf3">gpg-encrypt</code>/<code style="color:#e6edf3">gpg-sign</code>/<code style="color:#e6edf3">gpg-genkey</code> read as siblings) matters more than picking five unrelated icons at random.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:grid;grid-template-columns:90px 1fr;padding:7px 12px;border-bottom:1px solid #1c2229;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781"><span>Family</span><span>Members still on the old auto-gen style</span></div>
+    <div style="display:grid;grid-template-columns:90px 1fr;padding:7px 12px;border-bottom:1px solid #161b22"><code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#4cde82">gpg-*</code><span style="font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e">encrypt, sym, genkey, sign, inspect</span></div>
+    <div style="display:grid;grid-template-columns:90px 1fr;padding:7px 12px;border-bottom:1px solid #161b22;background:rgba(255,255,255,.015)"><code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">hkp-*</code><span style="font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e">get, search, cache, filter</span></div>
+    <div style="display:grid;grid-template-columns:90px 1fr;padding:7px 12px;border-bottom:1px solid #161b22"><code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">wa-*</code><span style="font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e">create, get, attest, caps, prf, mds</span></div>
+    <div style="display:grid;grid-template-columns:90px 1fr;padding:7px 12px;background:rgba(255,255,255,.015)"><code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#8b949e">kdf/pass</code><span style="font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e">hkdf, pbkdf2, passphrase, recover</span></div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Not this file's job to draw all ~30</div>
+    finish = merge redesigned.js's 30 entries,<br>
+    then extend its own grammar to the rest
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Mocking all thirty here would mean re-deriving a grammar the codebase already wrote down precisely (24px grid, 1.75px stroke, circles/lines/arcs/polygons only, green/gold/gray). The actionable spec is: merge what exists, then apply that exact stated rule to the four families above — gpg-* keeps <code style="color:#e6edf3">openpgp</code>'s green, hkp-* keeps the existing radiating-dot "network" motif already used for the hkp toolbox glyph, wa-* keeps the fingerprint-plus-shield vocabulary its own five entries already share in the un-redesigned set.</div>
+  </div>
+</div>
+
+<!-- 45b totp + clipboard, in the real grammar -->
+<div id="45b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#45b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">45b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">totp + clipboard — genuinely absent from both files, drawn to spec</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Checked both real files directly: <code style="color:#e6edf3">qr</code> already exists in <code style="color:#e6edf3">glyphs.js</code> (44c's mock for it was redundant, if harmless). <code style="color:#e6edf3">totp</code> and <code style="color:#e6edf3">clipboard</code> are the two actually missing, so these are drawn against <code style="color:#e6edf3">glyphs-redesigned.js</code>'s exact rule — circles, lines, simple arcs only, 1.75px stroke, <code style="color:#e6edf3">currentColor</code>, gray (neither trust nor sharing family).</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:12px;display:flex;justify-content:space-around">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+      <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="#8b949e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10.5" r="6.5"/><path d="M10 6.5v4l3 2"/><path d="M7.5 2.5h5"/></svg>
+      <code style="font:500 9.5px ui-monospace,Menlo,monospace;color:#e6edf3">totp</code>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+      <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="#8b949e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4.5" width="10" height="13" rx="1.3"/><rect x="7.5" y="2.5" width="5" height="3" rx="0.8"/></svg>
+      <code style="font:500 9.5px ui-monospace,Menlo,monospace;color:#e6edf3">clipboard</code>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Ready-to-merge entries</div>
+    "totp": "&lt;circle cx='10' cy='10.5' r='6.5'/&gt;<br>
+    &nbsp;&nbsp;&lt;path d='M10 6.5v4l3 2'/&gt;&lt;path d='M7.5 2.5h5'/&gt;"<br>
+    "clipboard": "&lt;rect x='5' y='4.5' w='10' h='13'<br>
+    &nbsp;&nbsp;rx='1.3'/&gt;&lt;rect x='7.5' y='2.5' w='5' h='3' rx='.8'/&gt;"
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Both single-path-family, same restraint as the rest of <code style="color:#e6edf3">glyphs-redesigned.js</code> — <code style="color:#e6edf3">totp</code> is a clock face with hands mid-tick (echoing 43b's "this value is always mid-cycle" idea, without needing the countdown ring that only makes sense on the live output row itself), <code style="color:#e6edf3">clipboard</code> is the universally-known silhouette at the house stroke weight. Neither needs new color intent — they join the gray "everything else" group alongside <code style="color:#e6edf3">webauthn</code> and <code style="color:#e6edf3">agent</code>.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t44" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t44" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">44</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">Redesigning the op glyphs themselves — Glyph.tsx, not chrome</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Turn 35 deliberately left the op-glyph system alone — it was about chrome (tabs, kind badges) borrowing lucide, and 35c's real rule was "leave the pipeline-type dots as they are." This is the other half: the real <code style="color:#e6edf3">Glyph.tsx</code> catalog fixture shows <code style="color:#e6edf3">genkey</code>, <code style="color:#e6edf3">openpgp</code>, <code style="color:#e6edf3">tee</code>, <code style="color:#e6edf3">export</code>, <code style="color:#e6edf3">gear</code> — five abstract marks a first-time user has no reason to already know. <a href="#44a">44a</a> the principle: metaphor before abstraction, and a house style distinct enough from lucide chrome that "this is a crypto op" is legible before you've read a single label. <a href="#44b">44b</a> redesigns the highest-frequency primitives. <a href="#44c">44c</a> gives this session's new ops (QR, TOTP, clipboard) real glyphs instead of borrowed lucide placeholders. <a href="#44d">44d</a> — even a good icon set earns a one-time legend.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 44a principle -->
+<div id="44a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#44a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">44a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Metaphor first, and a house style that reads as "crypto op"</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Two rules. First: every glyph should be guessable from the shape alone before you've hovered for the tooltip — a padlock for encrypt, not a chevron. Second: op glyphs stay visually distinct from 35a/35b's lucide chrome, so a user's eye can tell "toolbox item" from "navigation" at a glance — slightly bolder stroke (2.2px vs lucide's 2px) and small rounded joins rather than lucide's sharp miters, subtle enough to not look like a different product, definite enough to sort the two families apart.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:12px;display:flex;justify-content:space-around">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+      <span style="font:400 9px system-ui,sans-serif;color:#6e7781">op glyph<br>2.2px, round</span>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#6e7781" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 017 7h2M15 7h2a5 5 0 010 10h-2M8 12h8"/></svg>
+      <span style="font:400 9px system-ui,sans-serif;color:#6e7781">lucide chrome<br>2px, sharper</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">What doesn't change</div>
+    still one renderer: GLYPH_PATHS → Glyph<br>
+    still op-icons-only (TOOLKIT-WIDGETS.md's own rule)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">This redesigns the paths inside <code style="color:#e6edf3">GLYPH_PATHS</code>, not the component or the rule that draws the line between op icons and chrome — 35's uniformity rule stays exactly as it was, this just makes what's on the op side of that line actually self-explanatory.</div>
+  </div>
+</div>
+
+<!-- 44b core primitives -->
+<div id="44b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#44b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">44b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">The highest-traffic ops, redrawn</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Picked by frequency, not alphabetically — these are the ops in nearly every recipe in this file's own mockups. Each pairs the current abstract mark against a literal one.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:9px;overflow:hidden">
+    <div style="display:grid;grid-template-columns:1fr 40px 1fr;padding:7px 12px;border-bottom:1px solid #1c2229;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#6e7781"><span>Before</span><span></span><span>After — the metaphor</span></div>
+    <div style="display:grid;grid-template-columns:1fr 40px 1fr;align-items:center;padding:9px 12px;border-bottom:1px solid #161b22">
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#484f58" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3"/></svg><code style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">gear</code></div>
+      <span style="text-align:center;color:#484f58">→</span>
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="15.5" r="4.5"/><path d="M20 4l-8.4 8.4M18 6l2 2M15 9l2 2"/></svg><code style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">genkey — a literal key</code></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 40px 1fr;align-items:center;padding:9px 12px;border-bottom:1px solid #161b22">
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#484f58" stroke-width="2"><path d="M4 12h16M14 6l6 6-6 6"/></svg><code style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">export</code></div>
+      <span style="text-align:center;color:#484f58">→</span>
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M12 12V3M8 7l4-4 4 4"/></svg><code style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">export — box, arrow out</code></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 40px 1fr;align-items:center;padding:9px 12px;border-bottom:1px solid #161b22">
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#484f58" stroke-width="2"><path d="M4 4v16M4 12h16M20 4v16"/></svg><code style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">tee</code></div>
+      <span style="text-align:center;color:#484f58">→</span>
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h6M10 12l6-6M10 12l6 6"/><circle cx="4" cy="12" r="1.6" fill="#e6edf3" stroke="none"/></svg><code style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">tee — one pipe forking</code></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 40px 1fr;align-items:center;padding:9px 12px">
+      <div style="display:flex;align-items:center;gap:6px"><span style="font:600 15px serif;color:#484f58">🔒</span><code style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">openpgp</code></div>
+      <span style="text-align:center;color:#484f58">→</span>
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/><path d="M12 14v2.5"/></svg><code style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">openpgp — padlock, one dot</code></div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Encrypt/decrypt/sign/verify already work</div>
+    unchanged: encrypt (closing lock), decrypt (open<br>
+    lock), sign (pen), verify (shield+check)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Worth stating what's <em>not</em> broken: the real registry's most literal glyphs were already fine, this pass only touches the five that were genuinely abstract. <code style="color:#e6edf3">tee</code>'s single filled dot at the source end reads as "one thing splits into two paths" without needing 25a's dot-shape vocabulary borrowed in — a plain fork shape carries the whole idea on its own.</div>
+  </div>
+</div>
+
+<!-- 44c new ops need glyphs too -->
+<div id="44c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#44c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">44c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">This session's new ops shouldn't borrow lucide as a placeholder</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">42d and 43a-d mocked QR and TOTP with plain lucide-style outline icons because that's what was on hand mid-spec — by 35c's own rule those need real <code style="color:#e6edf3">GLYPH_PATHS</code> entries once they're actual registry ops, not chrome standing in for them.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:12px;display:flex;justify-content:space-around">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="3" width="6" height="6" rx="1"/><rect x="3" y="15" width="6" height="6" rx="1"/><path d="M15 15h2.5v2.5M19.5 19.5H21M15 21h2"/></svg>
+      <code style="font:500 9.5px ui-monospace,Menlo,monospace;color:#e6edf3">qr</code>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>
+      <code style="font:500 9.5px ui-monospace,Menlo,monospace;color:#e6edf3">totp</code>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="12" height="16" rx="2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
+      <code style="font:500 9.5px ui-monospace,Menlo,monospace;color:#e6edf3">clipboard</code>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Same house style, drawn at 44a's weight</div>
+    +qr, +totp, +clipboard in GLYPH_PATHS
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781"><code style="color:#e6edf3">totp</code>'s clock hands point to a specific time rather than 12:00, a small deliberate touch echoing 43b's "this ticks" idea even in the static glyph. <code style="color:#e6edf3">clipboard</code> is the one universally-already-understood shape in this whole file — drawn at 44a's stroke weight so it still visually belongs to the op family rather than looking like it wandered in from a different icon set.</div>
+  </div>
+</div>
+
+<!-- 44d legend -->
+<div id="44d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#44d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">44d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Even good icons deserve a legend, once</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Recognizability isn't the same as certainty — a new user should be able to confirm a guess without hovering thirty tiles one at a time. A small "?" affordance in <code style="color:#e6edf3">OpsShelf</code>'s own header opens a reference sheet of every glyph and its op name, dismissible and not shown again unless asked for.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:11px">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="15.5" r="4.5"/><path d="M20 4l-8.4 8.4"/></svg><span style="font:400 8px ui-monospace,Menlo,monospace;color:#6e7781">genkey</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M12 12V3M8 7l4-4 4 4"/></svg><span style="font:400 8px ui-monospace,Menlo,monospace;color:#6e7781">export</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h6M10 12l6-6M10 12l6 6"/><circle cx="4" cy="12" r="1.6" fill="#e6edf3" stroke="none"/></svg><span style="font:400 8px ui-monospace,Menlo,monospace;color:#6e7781">tee</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/></svg><span style="font:400 8px ui-monospace,Menlo,monospace;color:#6e7781">totp</span></div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Not a modal, not persistent</div>
+    "?" → Popover (same primitive as 41c's tab tooltips)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">A popover anchored to the shelf header, not a full-screen modal — the whole point of 44a/44b/44c is that most users never need this. It exists as a safety net for the genuinely unfamiliar ones, not as an admission the icons don't work; if this popover gets used constantly in practice, that's the actual signal a glyph needs redrawing, not that the legend should get more prominent.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t43" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t43" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">43</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">TOTP — a genuinely new interaction, not just a new op</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">RFC 6238 is HMAC over a moving time counter — the toolkit's existing crypto primitives, no new algorithm to design around. What's actually new is the output: every op in this file so far computes once and sits still; a TOTP code is correct for exactly 30 seconds and then silently wrong, which is a value that ticks on a clock rather than on an event (30c's <code style="color:#e6edf3">recv</code> appends on an external message; this changes on its own with nobody doing anything). <a href="#43a">43a</a> the two ops. <a href="#43b">43b</a> the ticking output row. <a href="#43c">43c</a> where it plugs into 42d's QR work. <a href="#43d">43d</a> where the secret itself lives.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 43a the ops -->
+<div id="43a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#43a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">43a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px"><code>totp.generate</code> / <code>totp.verify</code> — a pair, like sign/verify already is</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Same shape the toolkit already uses for asymmetric pairs: one op produces, one op checks. <code style="color:#e6edf3">generate</code> takes a base32 secret plus the standard period/digits/algorithm params (defaults match every authenticator app: 30s, 6 digits, SHA-1) and outputs the current code. <code style="color:#e6edf3">verify</code> takes a secret and a candidate code, returns <code style="color:#e6edf3">bool</code> — same as <code style="color:#e6edf3">verify</code>/<code style="color:#e6edf3">gpg.verify</code> already do for signatures.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px">
+    <div style="display:flex;align-items:center;gap:4px;margin-bottom:9px">
+      <span style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:4px 8px;border-radius:5px">in @totp-secret</span>
+      <span style="color:#484f58;font-size:11px">→</span>
+      <span style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;background:rgba(88,166,255,.14);border:1px solid #58a6ff;padding:4px 8px;border-radius:5px">totp.generate</span>
+    </div>
+    <div style="display:flex;gap:7px">
+      <div style="flex:1;padding:5px 7px;background:#010409;border:1px solid #21262d;border-radius:5px"><div style="font:500 8.5px system-ui,sans-serif;color:#6e7781">period</div><div style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">30s</div></div>
+      <div style="flex:1;padding:5px 7px;background:#010409;border:1px solid #21262d;border-radius:5px"><div style="font:500 8.5px system-ui,sans-serif;color:#6e7781">digits</div><div style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">6</div></div>
+      <div style="flex:1;padding:5px 7px;background:#010409;border:1px solid #21262d;border-radius:5px"><div style="font:500 8.5px system-ui,sans-serif;color:#6e7781">alg</div><div style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3">SHA-1</div></div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Registry entries</div>
+    totp.generate: bytes/base32 → text/digits<br>
+    totp.verify: { secret, code } → bool<br>
+    &nbsp;&nbsp;window param: ±1 step, default on
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">SHA-1 is the default specifically because it's what every real authenticator app (Google/Microsoft/Authy) actually ships — SHA-256/512 are real RFC options but choosing them makes the secret incompatible with anything but Basilisk itself, so the param exists but shouldn't be the first thing a user sees. <code style="color:#e6edf3">verify</code>'s ±1-step window absorbs ordinary clock drift between two devices, matching how every real TOTP verifier behaves.</div>
+  </div>
+</div>
+
+<!-- 43b ticking output -->
+<div id="43b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#43b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">43b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">A row that updates itself — no rerun, no recv event</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Every other <code style="color:#e6edf3">OutputList</code> row is a snapshot of the moment the cell ran. A TOTP row is the one place staleness is the entire point — the countdown ring isn't decoration, it's the difference between "this code still works" and "this code is already wrong."</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px;display:flex;align-items:center;gap:11px">
+    <div style="position:relative;width:34px;height:34px;flex-shrink:0">
+      <svg width="34" height="34" viewBox="0 0 34 34"><circle cx="17" cy="17" r="14" fill="none" stroke="#21262d" stroke-width="3"/><circle cx="17" cy="17" r="14" fill="none" stroke="#4cde82" stroke-width="3" stroke-dasharray="88" stroke-dashoffset="27" stroke-linecap="round" transform="rotate(-90 17 17)"/></svg>
+      <span style="position:absolute;inset:0;display:grid;place-items:center;font:600 9px ui-monospace,Menlo,monospace;color:#e6edf3">19s</span>
+    </div>
+    <div>
+      <code style="font:700 16px ui-monospace,Menlo,monospace;color:#e6edf3;letter-spacing:.06em">482 019</code>
+      <div style="font:400 9.5px system-ui,sans-serif;color:#6e7781">@totp-secret · refreshes automatically</div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Distinct from 30c's recv, on purpose</div>
+    recv: appends a new row per external message<br>
+    totp: one row, mutates in place, on a local timer
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">This is why it needs its own small spec rather than reusing <code style="color:#e6edf3">recv</code>'s list model: a TOTP code isn't a new value arriving, it's the same cell's existing output becoming a different value on its own. The ring turns <code style="color:#e6edf3">--warn</code> in the last 5 seconds (same accent 41b's live-step underline uses) as a get-it-now signal, then the whole row briefly flashes as the new code lands — the one animation in this file that's load-bearing rather than decorative, since missing the window is a real failure mode TOTP users hit constantly today.</div>
+  </div>
+</div>
+
+<!-- 43c QR synergy -->
+<div id="43c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#43c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">43c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Provisioning — TOTP secrets are exactly what 42d's QR tool is for</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">A TOTP secret is base32, well under QR's capacity, and its standard transport is already a QR code — every authenticator app's "scan this" screen is an <code style="color:#e6edf3">otpauth://</code> URI encoded exactly the way <code style="color:#e6edf3">qr.encode</code> already works. This is the clearest case yet for a chip pair rather than a single op.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <span style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:3px 7px;border-radius:5px">random 20</span>
+      <span style="color:#484f58;font-size:10px">→</span>
+      <span style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3;background:#21262d;padding:3px 7px;border-radius:5px">totp.uri issuer=Basilisk</span>
+      <span style="color:#484f58;font-size:10px">→</span>
+      <span style="font:500 10px ui-monospace,Menlo,monospace;color:#e6edf3;background:rgba(88,166,255,.14);border:1px solid #58a6ff;padding:3px 7px;border-radius:5px">qr.encode</span>
+    </div>
+    <div style="width:64px;height:64px;background:#010409;border-radius:5px;display:grid;place-items:center;margin:0 auto">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="1.4"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3h-3zM14 21h3M21 14v3"/></svg>
+    </div>
+    <div style="text-align:center;margin-top:6px;font:400 9.5px system-ui,sans-serif;color:#6e7781">Scan with any authenticator app</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">One more op, not a special case in qr.encode</div>
+    totp.uri: { secret, issuer, account } → text<br>
+    &nbsp;&nbsp;("otpauth://totp/...")
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781"><code style="color:#e6edf3">totp.uri</code> is the missing middle step — it's what turns a raw secret into the URI format authenticator apps actually expect, then hands ordinary <code style="color:#e6edf3">text</code> to <code style="color:#e6edf3">qr.encode</code> exactly like any other chip. No special-casing inside <code style="color:#e6edf3">qr.encode</code> for TOTP specifically — the two tools compose because the type system already lines up.</div>
+  </div>
+</div>
+
+<!-- 43d where the secret lives -->
+<div id="43d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#43d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">43d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">A TOTP secret is key material — it lives in Keys, not Inputs</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Worth being deliberate here since it could plausibly go either place: 33b's Inputs tab is for one-off runtime pastes (a message, a share for this run); a TOTP secret is closer to a long-lived credential you'll use in every future session, same durability as a keypair — so it belongs in 34b's Keys tab, not Inputs.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="padding:8px 10px;border-bottom:1px solid #21262d;font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">Keys · 3</div>
+    <div style="display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid #161b22">
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#4cde82;flex:1">@dana-id</code>
+      <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">ec/p256</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;padding:8px 10px">
+      <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#4cde82;flex:1">@totp-secret</code>
+      <span style="font:500 9px system-ui,sans-serif;padding:2px 5px;border-radius:3px;background:rgba(227,179,65,.12);color:#e3b341">totp</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Adds a kind, doesn't fork the tab</div>
+    Keys row kind: 'keypair' | 'openpgp' | 'totp'
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Same list, same "+ Generate / Import" action (Generate runs <code style="color:#e6edf3">random 20</code>, Import pastes an existing <code style="color:#e6edf3">otpauth://</code> URI or raw base32) — a third kind badge, not a seventh tray tab. Follows 30a's storage rule the same way a pinned certificate does: ephemeral by default, written to the same IndexedDB store as pinned certs only once the user explicitly keeps it.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t42" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t42" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">42</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">File System Access, real downloads, background notifications, and a new tool: QR</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Four browser-native capabilities the app hasn't reached for yet. <a href="#42a">42a</a> File System Access for notebooks on real disk, next to 37b's in-app library rather than replacing it. <a href="#42b">42b</a> gives artifacts an actual Download, since today's <code style="color:#e6edf3">OutputList</code> only has Copy. <a href="#42c">42c</a> the Notification API for the one wait that genuinely spans tab-switches — a Quorum peer joining. <a href="#42d">42d</a> is the handy new tool: <code style="color:#e6edf3">qr.encode</code>/<code style="color:#e6edf3">qr.decode</code>, because a crypto notebook that already does key exchange and secret sharing keeps needing an out-of-band channel, and a phone camera is the one every user already has.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 42a File System Access -->
+<div id="42a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#42a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">42a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Save to disk, next to 37b's saved-in-browser list</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">37b's workspace library is browser-local storage — real, but invisible outside the browser profile it's in. <code style="color:#e6edf3">window.showSaveFilePicker</code>/<code style="color:#e6edf3">showOpenFilePicker</code> add a genuine file on disk a user can back up, sync via their own tool, or hand to a colleague — same recipe-text-only payload as 37b, just a different destination.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="padding:8px 10px;border-bottom:1px solid #21262d;display:flex;align-items:center">
+      <span style="font:600 9px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#484f58">My notebooks · 3</span>
+      <span style="margin-left:auto;display:flex;gap:10px">
+        <span style="font:500 9.5px system-ui,sans-serif;color:#58a6ff">Open file…</span>
+        <span style="font:500 9.5px system-ui,sans-serif;color:#58a6ff">Save to disk…</span>
+      </span>
+    </div>
+    <div style="padding:8px 10px;font:400 9.5px system-ui,sans-serif;color:#6e7781">Onboard Dana &amp; Sam.basilisk · saved 2m ago</div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Falls back cleanly where unsupported</div>
+    if 'showSaveFilePicker' in window → native picker<br>
+    else → existing download-link fallback
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Firefox and Safari don't implement File System Access as of this writing, so this is additive rather than a dependency — the button always exists, and where the API is missing it silently becomes an ordinary file download instead of a picker, never a dead button or a browser-support warning the user has to parse. File handle permissions aren't persisted across reloads (the API doesn't allow it), so "Save" on a reopened session always re-prompts for the file once, then writes silently after.</div>
+  </div>
+</div>
+
+<!-- 42b artifact download -->
+<div id="42b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#42b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">42b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Download — the action Copy can't cover</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Copy assumes the value's destination is another text field. A 4 MB export, a binary GLB-style artifact, or an armored key someone needs to email as an attachment all want a real file instead — pasting a megabyte of base64 into a chat box is the actual failure mode this closes.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:4px">
+    <div style="padding:9px 9px 8px;border-bottom:1px solid #161b22">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px 2px 5px;border-radius:3px;background:rgba(76,222,130,.12)">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#4cde82" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="15.5" r="4.5"/><path d="M20 4l-8.4 8.4"/></svg>
+          <span style="font:500 9px system-ui,sans-serif;text-transform:uppercase;color:#4cde82">key</span>
+        </span>
+        <code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">dana.pub.asc</code>
+        <code style="font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">1.8 KB</code>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:10px">
+        <span style="font:500 9.5px system-ui,sans-serif;color:#6e7781">Copy</span>
+        <span style="font:500 9.5px system-ui,sans-serif;color:#58a6ff">Download</span>
+        <span style="font:600 9.5px system-ui,sans-serif;color:#04140a;background:#4cde82;padding:2px 7px;border-radius:4px">Publish</span>
+      </div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Threshold, not every row</div>
+    show Download when: sizeBytes &gt; 2048 ||<br>
+    &nbsp;&nbsp;kind === 'key' || netType === 'sdp'
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Joins 36a's actions line (Copy · Expand · Publish) as a fourth item rather than every row growing a button it won't use — a 32-byte master key never needs Download, an 1800-byte key export always benefits from it. Filename comes straight from the artifact's own <code style="color:#e6edf3">label</code>; sensitive artifacts still require Reveal first, same gate as Copy already respects.</div>
+  </div>
+</div>
+
+<!-- 42c Notification API -->
+<div id="42c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#42c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">42c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">One background notification, for the one wait that outlasts the tab</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Almost every op resolves in milliseconds — a Notification for a hash finishing would be noise. The genuine exception is <code style="color:#e6edf3">quorum.offer</code>'s "waiting for peer" (SessionStrip, real component), which can sit for minutes while the user reasonably switches tabs to send the invite link. Scoped to exactly that one wait, not a general notification system.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:10px 11px;display:flex;gap:9px">
+    <div style="width:26px;height:26px;border-radius:6px;background:#161b22;flex-shrink:0;display:grid;place-items:center;font-size:12px">🔑</div>
+    <div>
+      <div style="font:600 10.5px system-ui,sans-serif;color:#e6edf3">Basilisk</div>
+      <div style="font:400 10px system-ui,sans-serif;color:#8b949e">Dana joined your session — back to cell [2]</div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Asked for, not assumed</div>
+    Notification.requestPermission() only fires<br>
+    the first time a cell enters "waiting" state
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">The permission prompt itself only appears at the moment it would actually be used (the first Quorum wait), not on app load — matching 32d's clipboard-read gating philosophy of asking in context, never speculatively. If denied, nothing degrades: the existing in-tab <code style="color:#e6edf3">SessionStrip</code>/<code style="color:#e6edf3">RunBar</code> waiting-peer state is already sufficient feedback for a user who keeps the tab focused.</div>
+  </div>
+</div>
+
+<!-- 42d QR tool -->
+<div id="42d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#42d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">42d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">The new tool: <code>qr.encode</code> / <code>qr.decode</code></span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Everything this notebook already does — key exchange, share splitting, session invites — eventually needs to cross an air gap: a fingerprint read off another screen, a share carried on paper, an invite handed to someone without a shared network. A phone camera is the one out-of-band channel every user already owns; QR is the natural encode/decode pair for it.</div>
+  <div style="width:320px;display:flex;flex-direction:column;gap:8px">
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:9px 10px;display:flex;align-items:center;gap:10px">
+      <div style="width:44px;height:44px;background:#010409;border-radius:5px;display:grid;place-items:center;flex-shrink:0">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="1.6"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3h-3zM14 21h3M21 14v3"/></svg>
+      </div>
+      <div>
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">qr.encode</code>
+        <div style="font:400 9.5px system-ui,sans-serif;color:#6e7781">bytes/text → image · max ~2.3KB per code</div>
+      </div>
+    </div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:9px 10px">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3">qr.decode</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">camera or dropped image → bytes/text</span>
+      </div>
+      <div style="height:22px;border:1px dashed #30363d;border-radius:5px;display:grid;place-items:center;font:400 9.5px system-ui,sans-serif;color:#6e7781">Point camera at a code, or drop an image</div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">One real constraint worth designing around</div>
+    QR capacity: ~2,953 B binary / ~4,296 alphanumeric
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">A single SSS share or a public-key fingerprint fits easily; a full armored key often doesn't — <code style="color:#e6edf3">qr.encode</code> should refuse over-capacity input with a clear byte-count error rather than silently truncating, and offer "split across N codes" only as an explicit follow-up decision, not a default. <code style="color:#e6edf3">qr.decode</code>'s camera view reuses 32d's permission-moment pattern (camera access is a privacy event, same weight as clipboard read) and feeds 33b's Inputs tab exactly like a pasted share does today.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t41" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t41" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">41</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">First-run canvas, live-step feedback, glyph accessibility, light theme</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Four more, one of them a correction to turn 35's own work. <a href="#41a">41a</a> the blank notebook a first-time user actually opens to — distinct from 40a's tray-tab empties, this is the main canvas. <a href="#41b">41b</a> which chip is executing right now during a run — <code style="color:#e6edf3">RunBar</code> has a global progress count, no cell has ever shown "this one, this instant." <a href="#41c">41c</a> corrects a real regression: turn 35 put glyphs in front of text with nothing said about screen readers. <a href="#41d">41d</a> checks the whole accent palette actually holds up in the light theme the brief requires and every mockup so far has skipped.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 41a first-run canvas -->
+<div id="41a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#41a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">41a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">A blank notebook shouldn't be a blank page</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Zero cells, no chips, no tray content — every affordance in the app (shelf, caret, tray) is dormant simultaneously, which is exactly the moment a crypto tool most needs to not look empty-by-accident. One cell, pre-seeded with the end-of-pipeline caret already active, plus 37b's saved-notebook list and <code style="color:#e6edf3">PresetMenu</code>'s templates surfaced inline rather than behind a menu click.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:14px">
+    <div style="text-align:center;margin-bottom:12px">
+      <p style="margin:0 0 3px;font:600 12px system-ui,sans-serif;color:#e6edf3">Start a recipe</p>
+      <p style="margin:0;font:400 10.5px system-ui,sans-serif;color:#6e7781">Click the caret, or pick a template below</p>
+    </div>
+    <div style="display:flex;justify-content:center;margin-bottom:12px">
+      <span style="height:26px;padding:0 12px;display:grid;place-items:center;background:#161b22;border:1px dashed #58a6ff;border-radius:6px;font:500 11px system-ui,sans-serif;color:#58a6ff">+ Insert first step</span>
+    </div>
+    <div style="display:flex;gap:6px">
+      <span style="flex:1;padding:8px;background:#010409;border:1px solid #21262d;border-radius:6px;font:400 9.5px system-ui,sans-serif;color:#8b949e;text-align:center">Encrypt a message</span>
+      <span style="flex:1;padding:8px;background:#010409;border:1px solid #21262d;border-radius:6px;font:400 9.5px system-ui,sans-serif;color:#8b949e;text-align:center">Generate a keypair</span>
+      <span style="flex:1;padding:8px;background:#010409;border:1px solid #21262d;border-radius:6px;font:400 9.5px system-ui,sans-serif;color:#8b949e;text-align:center">Split a secret</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Vanishes on the first real edit</div>
+    show when: cells.length === 0
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">The three template cards are the exact same <code style="color:#e6edf3">PresetMenu</code> data (39/24's Keys/Secrets groups), just the three most common ones surfaced without opening the gallery — clicking "more templates" still opens the real menu. This is a single conditional render on an empty notebook, not a separate onboarding flow with its own state to maintain.</div>
+  </div>
+</div>
+
+<!-- 41b live step feedback -->
+<div id="41b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#41b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">41b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Which chip is running, right now</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e"><code style="color:#e6edf3">RunBar</code>'s real catalog fixture shows "progress: cell 2 of 4" — cell granularity only. Inside a cell with five chips, the user has no signal which step the pipeline is currently on, which matters most for the slow ones: a keyserver lookup, a large-buffer hash, an actual network round-trip in <code style="color:#e6edf3">stun.check</code>.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 11px">
+    <div style="display:flex;align-items:center;gap:4px">
+      <span style="font:500 10.5px ui-monospace,Menlo,monospace;color:#6e7781;background:#161b22;padding:3px 7px;border-radius:5px;opacity:.5">genkey ✓</span>
+      <span style="color:#484f58;font-size:10px">→</span>
+      <span style="position:relative;font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3;background:rgba(88,166,255,.14);border:1px solid #58a6ff;padding:3px 7px;border-radius:5px">
+        export spki
+        <span style="position:absolute;left:0;right:0;bottom:-1px;height:2px;background:#58a6ff;border-radius:2px;animation:none;width:60%"></span>
+      </span>
+      <span style="color:#484f58;font-size:10px">→</span>
+      <span style="font:500 10.5px ui-monospace,Menlo,monospace;color:#6e7781;background:#161b22;padding:3px 7px;border-radius:5px;opacity:.5">out</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Chip-level, not a new progress system</div>
+    chip.runState: 'done' | 'active' | 'pending'
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Done chips dim to 50% rather than disappearing, so the whole pipeline stays legible mid-run instead of collapsing to just the active step. The thin progress underline is indeterminate for ops with no real duration estimate (most WebCrypto calls resolve in milliseconds and this state will barely flash) and determinate only where the op reports actual progress — <code style="color:#e6edf3">stun.check</code>'s round-trip, a large-file hash — so it never fakes precision the runtime doesn't have.</div>
+  </div>
+</div>
+
+<!-- 41c glyph a11y -->
+<div id="41c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#41c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">41c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Correcting turn 35 — a glyph is not a label</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">35a made the tray tabs icon-first with the word as a hover tooltip; 35b put a glyph in front of every <code style="color:#e6edf3">OutputList</code> kind badge. Neither turn said what a screen reader announces. A tooltip is mouse-only — without an <code style="color:#e6edf3">aria-label</code> on the tab button itself, a keyboard/AT user gets an unlabeled icon, which is strictly worse than the text-only tab bar this was meant to improve on.</div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px solid #30363d;border-radius:8px;font:400 10.5px ui-monospace,Menlo,monospace;color:#8b949e;line-height:1.8">
+    &lt;button role="tab" aria-label="Connections"<br>
+    &nbsp;&nbsp;title="Connections"&gt;<br>
+    &nbsp;&nbsp;&lt;Cable aria-hidden /&gt;<br>
+    &lt;/button&gt;
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Applies to both 35a and 35b</div>
+    icon: aria-hidden="true" (decorative)<br>
+    label: on the interactive parent, always
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Same fix, two call sites: the tray tab button and the <code style="color:#e6edf3">OutputList</code> kind badge <code style="color:#e6edf3">&lt;span&gt;</code> both get <code style="color:#e6edf3">aria-label</code> equal to the text that's still visually present right next to the icon in the badge case (35b never went icon-only, so this is pure redundancy-as-safety-net there) and equal to the tooltip text in the tab case (where at narrow widths the text genuinely isn't visible, so the label is the only place the word exists at all).</div>
+  </div>
+</div>
+
+<!-- 41d light theme check -->
+<div id="41d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#41d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">41d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Forty turns of dark mockups, zero of them checked in light</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The brief states light and dark both, dark as the default reading — every mockup in this file used fixed dark hex values for speed, which is fine for design intent but never actually validated the real <code style="color:#e6edf3">var(--brand)</code>/<code style="color:#e6edf3">var(--warn)</code> tokens hold contrast once <code style="color:#e6edf3">--surface</code> flips to white. One spot-check, using the real token pairs, rather than assuming.</div>
+  <div style="width:320px;background:#ffffff;border:1px solid #d0d7de;border-radius:8px;padding:10px 11px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+      <span style="font:500 9px system-ui,sans-serif;padding:2px 6px;border-radius:3px;background:rgba(154,103,0,.12);color:#9a6700">sensitive</span>
+      <span style="font:500 9px system-ui,sans-serif;padding:2px 6px;border-radius:3px;background:rgba(9,105,218,.1);color:#0969da">text</span>
+      <span style="font:500 9px system-ui,sans-serif;padding:2px 6px;border-radius:3px;background:rgba(207,34,46,.1);color:#cf222e">error</span>
+    </div>
+    <code style="font:400 10px ui-monospace,Menlo,monospace;color:#24292f">master-key — sensitive, value not shown</code>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Light-theme token pairs (from turn 30d)</div>
+    --warn: #e3b341 dark → #9a6700 light<br>
+    --caret: #58a6ff dark → #0969da light<br>
+    --error: #ff7b72 dark → #cf222e light
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Holds fine at these exact pairs — light mode needs darker, more saturated versions of each accent to keep 4.5:1 text contrast on white, which is already what turn 30's handoff wrote down and nobody since has actually rendered. Flagging as confirmed rather than assumed is the point of this item; no new tokens needed, no color changed.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<section id="t40" style="padding:40px 44px 64px;background:#010409;border-bottom:1px solid #161b22">
+
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px">
+  <a href="#t40" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e6edf3;color:#010409;border-radius:4px;text-decoration:none">40</a>
+  <span style="font:600 14px/1.2 system-ui,sans-serif;color:#e6edf3">First-class polish — empty states, ⌘K, undo, and a notification vocabulary</span>
+</div>
+
+<div style="max-width:880px;margin:0 0 26px;font:13px/1.6 system-ui,sans-serif;color:#8b949e">
+  <p style="margin:0 0 8px">Every feature row is designed now — this pass is about the difference between "feature-complete" and "feels considered." Four things no individual turn covered because they cut across all of them: <a href="#40a">40a</a> what a tray tab looks like with nothing in it yet (six tabs were designed full, none empty). <a href="#40b">40b</a> a command palette, because a caret-and-chip model with 30+ ops rewards a keyboard path as much as the shelf. <a href="#40c">40c</a> undo, because nothing in 39 turns has one and a few of those actions are destructive. <a href="#40d">40d</a> one shared toast vocabulary so clipboard grants, publish confirms, and copy actions stop each inventing their own feedback shape.</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+<!-- 40a empty states -->
+<div id="40a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#40a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">40a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Six tray tabs, six empty states — none of them "no data"</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Every tray mockup in turns 32-39 showed rows already in it. A brand-new notebook shows all six empty at once, and a generic "Nothing here" repeated six times would read as unfinished chrome rather than a considered surface. Each tab's empty state names the specific action that would fill it — the same information the row-click gesture already teaches, offered one step earlier.</div>
+  <div style="width:300px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="display:flex;border-bottom:1px solid #21262d">
+      <span style="flex:1;text-align:center;padding:8px 0;font:600 9.5px system-ui,sans-serif;color:#e6edf3;border-bottom:2px solid #58a6ff">Connections</span>
+      <span style="flex:1;text-align:center;padding:8px 0;font:500 9.5px system-ui,sans-serif;color:#6e7781">Outputs</span>
+    </div>
+    <div style="padding:26px 18px;display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#30363d" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 017 7h2M15 7h2a5 5 0 010 10h-2M8 12h8"/></svg>
+      <p style="margin:0;font:400 10.5px/1.5 system-ui,sans-serif;color:#6e7781">No live sessions yet.<br>Add <code style="color:#8b949e">quorum.offer</code> to a cell to start one.</p>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">One line per tab, not a generic empty component</div>
+    Keys — "Generate or import to get started"<br>
+    Slots — "Slots appear once a cell writes `out @x`"<br>
+    Outputs — "Run a cell to see its artifacts here"<br>
+    Inputs — "Nothing pasted in yet"<br>
+    Params — never empty (always has defaults)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Same 35a tab glyph, drawn larger (20px) and at 30% stroke opacity, anchors each empty state — so recognizing "I'm looking at Connections" doesn't depend on having read the tab bar first. Params is the one tab that's structurally never empty, since it always shows the active profile — worth stating so nobody builds an empty state for a case that can't occur.</div>
+  </div>
+</div>
+
+<!-- 40b command palette -->
+<div id="40b" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#40b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">40b</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">⌘K — the caret model, without leaving the keyboard</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">The whole redesign is built around "click a caret, browse a fit-dimmed shelf" — a fast mouse flow with no keyboard equivalent. ⌘K opens the same fit-aware list as text, at whatever caret was last focused (or end-of-pipeline if none), so a user who already knows the op name never touches the shelf at all.</div>
+  <div style="width:320px;background:#0d1117;border:1px solid #58a6ff;border-radius:9px;overflow:hidden;box-shadow:0 0 0 3px rgba(88,166,255,.12)">
+    <div style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid #21262d">
+      <span style="font-size:11px;color:#484f58">⌘K</span>
+      <code style="flex:1;font:400 11px ui-monospace,Menlo,monospace;color:#e6edf3">sig</code>
+      <span style="font:400 9px system-ui,sans-serif;color:#6e7781">cell [2] · after export</span>
+    </div>
+    <div style="padding:4px">
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(88,166,255,.08);border-radius:5px">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">sign</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">bytes → bytes</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 8px">
+        <code style="font:500 10.5px ui-monospace,Menlo,monospace;color:#e6edf3;flex:1">gpg.sign</code>
+        <span style="font:400 9.5px system-ui,sans-serif;color:#6e7781">text → text/pem</span>
+      </div>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Filters the exact same list OpsShelf dims</div>
+    results = ops.filter(fits tipFit).filter(matches query)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Not a second search index — ⌘K and <code style="color:#e6edf3">OpsShelf</code>'s own filter box run the identical query against the identical <code style="color:#e6edf3">tipFit</code> set, so an op findable one way is always findable the other. Enter inserts at the caret shown in the header ("cell [2] · after export"); Escape returns focus to wherever it was, never stealing focus permanently the way a full-page command bar would.</div>
+  </div>
+</div>
+
+<!-- 40c undo -->
+<div id="40c" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#40c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">40c</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Undo — nothing destructive should be silent</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Across 39 turns: chip remove (✕, turn 19), cell delete, and Slots/Keys rows all destroy something with one click and no confirm dialog — correctly, dialogs on every delete would be worse than the mistake. The right fix is a single reusable undo toast, not per-action confirms.</div>
+  <div style="width:320px;display:flex;align-items:center;gap:10px;padding:9px 12px;background:#161b22;border:1px solid #30363d;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.4)">
+    <span style="font:400 11px system-ui,sans-serif;color:#e6edf3;flex:1">Removed <code style="color:#8b949e">base64</code> from cell [2]</span>
+    <span style="font:600 10px system-ui,sans-serif;color:#58a6ff">Undo</span>
+    <span style="font:400 9px ui-monospace,Menlo,monospace;color:#484f58">4s</span>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">One toast type, every destructive action</div>
+    pushUndo({ label, undo: () =&gt; void })<br>
+    scope: chip remove, cell delete, key delete,<br>
+    &nbsp;&nbsp;input-slot delete
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Deliberately excluded: reveal-then-hide (33a's timeout) and session Close (already asks nothing, but reconnecting isn't "undo," it's a new handshake) — undo only covers actions that destroy recipe/notebook <em>state</em>, not runtime/live objects that can't actually be restored. Ctrl/⌘-Z also triggers the most recent one, so the toast is a visible affordance for a shortcut power users will reach for anyway.</div>
+  </div>
+</div>
+
+<!-- 40d toast vocabulary -->
+<div id="40d" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#40d" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">40d</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">One notification shape for copy, publish, grants, and clipboard</span>
+  </div>
+  <div style="max-width:420px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Right now feedback is scattered per-feature: Copy has no confirmation at all in the real <code style="color:#e6edf3">OutputList.tsx</code>, Publish gets a popover, 32d's clipboard write got a "toast-style confirm" with no shared component behind it. Three severities, one component, bottom-center stack.</div>
+  <div style="width:300px;display:flex;flex-direction:column;gap:6px">
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 11px;background:#161b22;border:1px solid #30363d;border-radius:7px">
+      <span style="color:#4cde82;font-size:11px">✓</span>
+      <span style="font:400 10.5px system-ui,sans-serif;color:#e6edf3">Copied to clipboard</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 11px;background:#161b22;border:1px solid rgba(227,179,65,.4);border-radius:7px">
+      <span style="color:#e3b341;font-size:11px">⚠</span>
+      <span style="font:400 10.5px system-ui,sans-serif;color:#e6edf3;flex:1">Clipboard read denied — recipe paused at cell [1]</span>
+      <span style="font:600 9.5px system-ui,sans-serif;color:#58a6ff">Retry</span>
+    </div>
+  </div>
+  <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+    <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">Severity, not per-feature styling</div>
+    toast('ok' | 'warn' | 'error', text, action?)
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">Copy finally gets the confirmation it's missing in the real component today — 'ok', 2s auto-dismiss, no action. A denied clipboard permission (32d) is 'warn' with a Retry, since denying once shouldn't mean re-authoring the recipe. 40c's undo toast is this same component in its 'ok'-plus-action shape — one primitive serving both, not two.</div>
+  </div>
+</div>
+
+</div>
+</section>
+
+
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>21a — Quorum toolbox (design reference)</title>
+<style>
+body{margin:0;background:#010409;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;padding:40px 44px 64px}
+a{color:#4cde82}
+</style>
+</head>
+<body>
+<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+<!-- 21a Quorum toolbox -->
+<div id="21a" style="display:flex;flex-direction:column;gap:9px">
+  <div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:#8b949e">
+    <a href="#21a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#21262d;color:#e6edf3;border-radius:5px;text-decoration:none">21a</a>
+    <span style="color:#e6edf3;font-weight:600;font-size:12px">Quorum as a toolbox — the run boundary is the session boundary</span>
+  </div>
+  <div style="max-width:760px;font:400 11.5px/1.6 system-ui,sans-serif;color:#8b949e">Decision: <code style="color:#e6edf3">quorum.offer / join / send / recv / close</code> sit in the shelf's category tree like any other kit, wrapping <code style="color:#e6edf3">QuorumSession</code> 1:1 — no separate Quorum page. The design problem the old page didn't have: <code style="color:#e6edf3">offer</code> and <code style="color:#e6edf3">join</code> aren't instant. Running a notebook that contains one now has a real waiting state, not just idle/blocked/running (19g) — so the run <em>pauses at that cell</em> until a peer connects, the same way it already pauses at a blocked cell, just for a different reason.</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Shelf — new category, alongside the existing kits</div>
+      <div style="width:252px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+        <div style="padding:6px 0">
+          <div style="display:flex;align-items:center;gap:6px;padding:7px 12px 5px">
+            <span style="font-size:8px;color:#6e7781">▾</span>
+            <span style="font:600 10px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#8b949e">Quorum</span>
+            <span style="font:500 10px ui-monospace,Menlo,monospace;color:#484f58">7</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.offer</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.join</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.send</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.recv</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px"><span style="width:6px;height:6px;border-radius:50%;background:#58a6ff"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.close</code></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px;opacity:.75"><span style="width:6px;height:6px;border-radius:50%;background:#6e7781"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">rtc.ice</code><span style="font:400 9px system-ui,sans-serif;color:#6e7781">config</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 12px;opacity:.75"><span style="width:6px;height:6px;border-radius:50%;background:#6e7781"></span><code style="flex:1;font:500 11.5px ui-monospace,Menlo,monospace;color:#e6edf3">stun.check</code><span style="font:400 9px system-ui,sans-serif;color:#6e7781">diagnostic</span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:6px">Cell — new SESSION region, waiting for peer</div>
+      <div style="width:400px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+        <div style="padding:11px 12px;border-bottom:1px solid #161b22">
+          <div style="display:flex;align-items:center;gap:2px">
+            <div style="padding:5px 9px;background:#161b22;border:1px solid #58a6ff;border-radius:6px"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.offer</code></div>
+            <span style="padding:0 4px;color:#484f58">›</span>
+            <div style="padding:5px 9px;background:#161b22;border:1px solid #30363d;border-radius:6px;opacity:.4"><code style="font:500 11px ui-monospace,Menlo,monospace;color:#e6edf3">quorum.send</code></div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:stretch">
+          <div style="width:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:rgba(88,166,255,.08)">
+            <span style="writing-mode:vertical-rl;font:600 8.5px system-ui,sans-serif;letter-spacing:.08em;color:#58a6ff">SESSION</span>
+          </div>
+          <div style="flex:1;padding:11px 12px">
+            <div style="display:flex;align-items:center;gap:9px;padding:8px 10px;background:rgba(88,166,255,.07);border:1px solid rgba(88,166,255,.3);border-radius:7px">
+              <span style="width:7px;height:7px;border-radius:50%;background:#58a6ff;box-shadow:0 0 0 3px rgba(88,166,255,.2)"></span>
+              <span style="font:400 11px system-ui,sans-serif;color:#e6edf3">Waiting for peer to join…</span>
+              <code style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:#6e7781">kJ8x…9fQ</code>
+              <button style="height:22px;padding:0 8px;background:#161b22;border:1px solid #30363d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#e6edf3;cursor:pointer;white-space:nowrap">Copy invite</button>
+              <button style="height:22px;padding:0 8px;background:transparent;border:1px solid #30363d;border-radius:5px;font:500 10px system-ui,sans-serif;color:#8b949e;cursor:pointer;white-space:nowrap">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="width:400px;margin-top:8px;display:flex;align-items:center;gap:10px;height:44px;padding:0 14px;background:#010409;border:1px solid rgba(88,166,255,.3);border-radius:8px">
+        <button style="height:30px;padding:0 13px;background:#21262d;border:none;border-radius:6px;font:600 11.5px system-ui,sans-serif;color:#ff7b72;cursor:pointer">■ Stop</button>
+        <span style="font:400 11.5px ui-monospace,Menlo,monospace;color:#58a6ff">Paused at cell [1] — waiting for peer…</span>
+      </div>
+    </div>
+    <div style="width:300px;padding:12px;background:#0d1117;border:1px dashed #30363d;border-radius:10px;font:400 11px/1.65 ui-monospace,Menlo,monospace;color:#8b949e">
+      <div style="font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#484f58;margin-bottom:8px;font-family:system-ui,sans-serif">RunBar — one new state</div>
+      state: 'idle'|'blocked'|'running'|'waiting-peer'<br>
+      sessionInvite?: string<br>
+      onCopyInvite: () =&gt; void<br>
+      onCancelSession: () =&gt; void
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #21262d;font:400 10.5px/1.6 system-ui,sans-serif;color:#6e7781">New <code style="color:#e6edf3">SessionStrip</code> component (cell-level, same slot pattern as 19h's READINESS row): <code style="color:#e6edf3">state: 'offering'|'waiting'|'connected'|'closed'</code>. <code style="color:#e6edf3">quorum.offer</code>'s output is two things — an <code style="color:#e6edf3">inviteBlob</code> (PGP-signed, goes through the existing Copy/Publish affordance from 20h) and a live <code style="color:#e6edf3">sessionHandle</code> that <code style="color:#e6edf3">send/recv/close</code> downstream read as their input. <code style="color:#e6edf3">rtc.ice</code> is a config source op (params: STUN/TURN list) upstream of <code style="color:#e6edf3">offer</code>/<code style="color:#e6edf3">join</code>; <code style="color:#e6edf3">stun.check</code> is a one-shot diagnostic whose output is a plain <code style="color:#e6edf3">OutputList</code> row (20h), not publishable. WebRTC's main-thread requirement means <code style="color:#e6edf3">offer</code>/<code style="color:#e6edf3">join</code> can't run inside whatever isolation <code style="color:#e6edf3">agent.*</code> steps use — they need to be flagged main-thread-only in the op registry the same way, if <code style="color:#e6edf3">agent.*</code> already has such a flag.</div>
+    </div>
+  </div>
+</div>
+
+
+</div>
+</body>
+</html>

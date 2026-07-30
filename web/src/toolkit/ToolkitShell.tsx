@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Link2, Eraser, Plus, MoreHorizontal } from "lucide-react";
+import {
+  Link2,
+  Eraser,
+  Plus,
+  MoreHorizontal,
+  KeyRound,
+  LayoutGrid,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  SlidersHorizontal,
+  Cable,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -14,12 +25,16 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { restartLiveIce } from "../lib/toolkit/quorum-ops.js";
 import { cn } from "@/lib/cn";
 import { useNotebook } from "./useNotebook";
 import { RecipientBinderHost } from "./RecipientBinderHost";
 import {
   OpsShelf,
   DocsFooter,
+  CellTypeErrors,
+  GpgKeyBinder,
+  ConnectionsPanel,
   STEP_MIME,
   parseStepMime,
   ModeToggle,
@@ -174,12 +189,31 @@ const NEED_BLOCKER: Record<
   string,
   { priority: number; label: string; action: string; tray: "keys" | "inputs" }
 > = {
-  "needs recipients": { priority: 0, label: "recipients aren't bound", action: "Bind", tray: "inputs" },
+  // Recipients are public keys you encrypt *to*, so they live in Keys — this
+  // pointed at Inputs, where they have never been. The wording matches
+  // `gpg.encrypt`'s runtime error deliberately: a failure discovered before
+  // the run and the same failure discovered during it should not be two
+  // different sentences describing one problem.
+  "needs recipients": {
+    priority: 0,
+    label: "no recipients chosen",
+    action: "Open Keys",
+    tray: "keys",
+  },
   "needs key": { priority: 0, label: "no key is unlocked", action: "Open Keys", tray: "keys" },
   "needs input": { priority: 1, label: "message text isn't set", action: "Add text", tray: "inputs" },
   "needs ciphertext": { priority: 1, label: "ciphertext isn't pasted", action: "Paste", tray: "inputs" },
   "needs shares": { priority: 1, label: "share mnemonics aren't entered", action: "Enter", tray: "inputs" },
   "needs envelope": { priority: 1, label: "an OpenPGP envelope isn't provided", action: "Provide", tray: "inputs" },
+  // `keypair` (§31c) takes its JWK/PEM at run time, so Inputs is right here —
+  // unlike recipients above. Listed explicitly so it reads as a sentence
+  // rather than falling through to "key material is missing".
+  "needs key material": {
+    priority: 1,
+    label: "no key has been pasted",
+    action: "Paste",
+    tray: "inputs",
+  },
 };
 
 /**
@@ -264,7 +298,7 @@ export function ToolkitShell() {
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const [trayOpen, setTrayOpen] = useState(true);
   const [trayTab, setTrayTab] = useState<
-    "keys" | "slots" | "outputs" | "inputs" | "params"
+    "keys" | "slots" | "connections" | "outputs" | "inputs" | "params"
   >("keys");
   /** One-shot Load-template undo — set right before a destructive replace, cleared once used or superseded. */
   const [undoSnapshot, setUndoSnapshot] = useState<{
@@ -958,14 +992,16 @@ export function ToolkitShell() {
 
                         {quorumCell === i && nb.quorumState.phase !== "idle" ? (
                           <SessionStrip
+                            /* `failed` used to be flattened onto `closed`
+                               because the strip had nowhere to put it (§33a);
+                               it is now its own state with a recovery action. */
                             state={
-                              nb.quorumState.phase === "failed"
-                                ? "closed"
-                                : (nb.quorumState.phase as
-                                    | "offering"
-                                    | "waiting"
-                                    | "connected"
-                                    | "closed")
+                              nb.quorumState.phase as
+                                | "offering"
+                                | "waiting"
+                                | "connected"
+                                | "closed"
+                                | "failed"
                             }
                             room={nb.quorumState.room}
                             invite={nb.quorumState.invite}
@@ -974,10 +1010,25 @@ export function ToolkitShell() {
                               void navigator.clipboard.writeText(nb.quorumState.invite)
                             }
                             onCancel={() => nb.cancelQuorum()}
+                            onRestartIce={() => void restartLiveIce()}
                           />
                         ) : null}
 
                         <div className="builder-spine relative space-y-2 pl-1">
+                          {/* §33c — belongs to the cell, not to one view of
+                              it: an ill-typed pipeline is just as wrong while
+                              you are editing the text as while you are looking
+                              at chips. Placed above both branches so switching
+                              views never hides the complaint. */}
+                          <CellTypeErrors
+                            className="mb-2"
+                            errors={nb.cellErrors[i] || []}
+                            steps={chain.steps || []}
+                            onFocusStep={(si) => {
+                              nb.setFocusedCell(i);
+                              setChipEdit({ cell: i, stem: si, branch: null, body: null });
+                            }}
+                          />
                           {cellView(i) === "source" ? (
                             <div className="space-y-2">
                               <Textarea
@@ -1275,6 +1326,20 @@ export function ToolkitShell() {
                                       };
                                       return (
                                         <>
+                                          {/* §39b — `gpg.sign key=` names a key you
+                                              hold, so it gets the vault binder rather
+                                              than a free-text field you must paste a
+                                              fingerprint into. Recipients keep their own
+                                              (opposite-direction) resolution path. */}
+                                          {selectedStep.name === "gpg.sign" ? (
+                                            <GpgKeyBinder
+                                              className="mb-3"
+                                              label="Sign with"
+                                              keys={nb.vaultKeys}
+                                              value={String(selectedStep.params?.key || "")}
+                                              onChange={(fpr) => handleParamChange("key", fpr)}
+                                            />
+                                          ) : null}
                                           {isPgpEncryptStep ? (
                                             <CryptoProfileControl
                                               className="mb-3"
@@ -1439,31 +1504,63 @@ export function ToolkitShell() {
         {/* Session tray — persistent, not modal. Replaces the old Keyring/Variables/Crypto sheets. */}
         {trayOpen ? (
           <div className="flex w-[328px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface)]">
-            <div className="flex items-center gap-1 border-b border-[var(--border)] px-2 pt-2">
+            <div
+              role="tablist"
+              aria-label="Session tray"
+              className="flex items-center gap-1 border-b border-[var(--border)] px-2 pt-2"
+            >
               {(
                 [
-                  { id: "keys" as const, label: "Keys" },
-                  { id: "slots" as const, label: "Slots", count: nb.slotMetas.length },
+                  // §35 — icon + label. Outputs/Inputs deliberately mirror
+                  // each other (down-into-tray vs. up-out-of-notebook).
+                  { id: "keys" as const, label: "Keys", Icon: KeyRound },
+                  {
+                    id: "slots" as const,
+                    label: "Slots",
+                    count: nb.slotMetas.length,
+                    Icon: LayoutGrid,
+                  },
+                  // §34 — Connections sits between at-rest material and
+                  // at-rest results, in read-to-write order: what you hold →
+                  // what is live → what a run just made → what a run still
+                  // needs → rarely-touched defaults.
+                  {
+                    id: "connections" as const,
+                    label: "Connections",
+                    count:
+                      nb.quorumState.phase === "idle" ? 0 : nb.quorumState.connected || 0,
+                    Icon: Cable,
+                  },
                   {
                     id: "outputs" as const,
                     label: "Outputs",
                     count: allOutputs.length,
+                    Icon: ArrowDownToLine,
                   },
-                  { id: "inputs" as const, label: "Inputs" },
-                  { id: "params" as const, label: "Params" },
+                  { id: "inputs" as const, label: "Inputs", Icon: ArrowUpFromLine },
+                  { id: "params" as const, label: "Params", Icon: SlidersHorizontal },
                 ]
               ).map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
+                  role="tab"
+                  aria-selected={trayTab === tab.id}
+                  /* §41c — the label is carried by the button, not the icon,
+                     so the accessible name survives if the text is ever
+                     collapsed away at narrow widths. The glyph itself is
+                     aria-hidden. */
+                  aria-label={tab.label}
+                  title={tab.label}
                   onClick={() => setTrayTab(tab.id)}
                   className={cn(
-                    "border-b-2 px-2.5 py-1.5 text-[length:11px] font-semibold transition-colors",
+                    "inline-flex items-center gap-1 border-b-2 px-2.5 py-1.5 text-[length:11px] font-semibold transition-colors",
                     trayTab === tab.id
                       ? "border-[var(--brand)] text-[var(--foreground)]"
                       : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   )}
                 >
+                  <tab.Icon size={13} strokeWidth={2} aria-hidden />
                   {tab.label}
                   {tab.count ? (
                     <span className="ml-1 font-mono text-[10px] text-[var(--muted-foreground)]">
@@ -1696,6 +1793,36 @@ export function ToolkitShell() {
                       Clear all slots
                     </Button>
                   ) : null}
+                </ScrollArea>
+              </>
+            ) : null}
+
+            {trayTab === "connections" ? (
+              <>
+                <div className="border-b border-[var(--border)] p-3">
+                  <h3 className="text-sm font-bold">Connections</h3>
+                  <p className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
+                    Whatever is live right now, and the actions that close or repair it.
+                    Separate from Outputs, which holds what a run already produced.
+                  </p>
+                </div>
+                <ScrollArea className="flex-1">
+                  <ConnectionsPanel
+                    session={{
+                      phase: nb.quorumState.phase,
+                      room: nb.quorumState.room,
+                      role: nb.quorumState.role,
+                      invite: nb.quorumState.invite,
+                      connected: nb.quorumState.connected,
+                      expected: nb.quorumState.expected,
+                      peers: nb.quorumState.peers,
+                    }}
+                    onCopyInvite={() =>
+                      void navigator.clipboard.writeText(nb.quorumState.invite)
+                    }
+                    onClose={() => nb.cancelQuorum()}
+                    onRestartIce={() => void restartLiveIce()}
+                  />
                 </ScrollArea>
               </>
             ) : null}

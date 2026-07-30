@@ -64,6 +64,25 @@ export const LEGACY_STEP_MIGRATE = {
   "wa-mds": "webauthn.mds",
   "gpg.vault": "agent.unlock",
   "gpg.vault.pub": "agent.pub",
+  // Channel traffic moved from the session manager to the transport. `quorum.*`
+  // now covers only the exchange itself — room, roster, lifecycle — while
+  // `rtc.*` owns the connection primitives, which is where reading and writing
+  // a data channel always belonged (`rtc.stats` was already there).
+  // The practical payoff: `rtc.send`/`rtc.recv` work on any data channel rather
+  // than being married to a quorum room.
+  "quorum.send": "rtc.send",
+  "quorum.recv": "rtc.recv",
+  // Recipe-language audit (design turn 48a): every real namespaced op is
+  // `namespace.singlelowercaseword`; the WebRTC toolbox shipped seven that
+  // camelCased instead. Keys are lowercase because hint lookup normalizes the
+  // typed token first; the rewrite regex matches case-insensitively.
+  "rtc.gathercandidates": "rtc.gather",
+  "rtc.checkconnectivity": "rtc.check",
+  "rtc.connectionstate": "rtc.state",
+  "rtc.datachannelstats": "rtc.stats",
+  "rtc.createoffer": "rtc.offer",
+  "rtc.createanswer": "rtc.answer",
+  "rtc.statsreport": "rtc.quality",
   paste: "input",
   cat: "input",
   print: "text",

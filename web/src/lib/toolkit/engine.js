@@ -349,8 +349,32 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
 
     if (node.kind === "foreach") {
       lastStepEmitted = false;
+      // A bundle is already a list of pipeline values, so iterating it needs
+      // none of the share-specific unpacking below — run the body per part and
+      // re-bundle. This is what makes `rtc.recv count=all | foreach` work, and
+      // it closes the older gap where `foreach` produced a type it could not
+      // then consume.
+      if (value?.type === "bundle") {
+        const inParts = Array.isArray(value.data?.parts) ? value.data.parts : [];
+        if (!inParts.length) throw new Error("foreach requires a non-empty bundle");
+        /** @type {PipelineValue[]} */
+        const outParts = [];
+        for (let i = 0; i < inParts.length; i++) {
+          let itemVal = inParts[i];
+          for (const step of node.body) {
+            itemVal = await execStep(step, itemVal, bindings, artifacts, i);
+          }
+          outParts.push(itemVal);
+        }
+        value = {
+          type: "bundle",
+          data: { parts: outParts, count: outParts.length },
+          meta: { ...value.meta, count: outParts.length },
+        };
+        continue;
+      }
       if (!value || value.type !== "shares") {
-        throw new Error("foreach requires shares");
+        throw new Error("foreach requires shares or a bundle");
       }
       const threshold = Number(value.data.threshold) || 0;
       const body = node.body;
@@ -1906,8 +1930,13 @@ async function execStepBody(step, value, bindings, artifacts) {
       let keys = resolved.keys;
       let fps = resolved.fingerprints;
       if (!keys.length) {
+        // Only reachable with no `to=` at all: every other token kind throws
+        // its own, more specific error inside resolveEncryptRecipients. So
+        // this message should describe *that* case rather than reciting all
+        // three ways to name a recipient — two of which would be advice to do
+        // what the author already did.
         throw new Error(
-          "GPG recipients not bound — set to=@slot / look up to=email, or choose binder recipients."
+          "gpg.encrypt: no recipients chosen. Pick them in the Keys tray, or name them on the step — `to=@slot` for an earlier lookup, or `to=someone@example.com` to resolve one now."
         );
       }
       // Foreach + binder: one recipient per share index (legacy SSS fan-out).
@@ -2462,8 +2491,8 @@ async function execStepBody(step, value, bindings, artifacts) {
     case "stun.check":
     case "quorum.offer":
     case "quorum.join":
-    case "quorum.send":
-    case "quorum.recv":
+    case "rtc.send":
+    case "rtc.recv":
     case "quorum.close": {
       // Lazy: keeps WebRTC + the quorum mesh out of the base bundle.
       // Main-thread only — RTCPeerConnection does not exist in workers.
@@ -2486,8 +2515,8 @@ async function execStepBody(step, value, bindings, artifacts) {
         return q.execRtcIce(params);
       }
       if (step.name === "stun.check") return q.execStunCheck(step.params || {});
-      if (step.name === "quorum.send") return q.execQuorumSend(value);
-      if (step.name === "quorum.recv") return q.execQuorumRecv(step.params || {});
+      if (step.name === "rtc.send") return q.execQuorumSend(value, step.params || {});
+      if (step.name === "rtc.recv") return q.execQuorumRecv(step.params || {});
       if (step.name === "quorum.close") return q.execQuorumClose(value);
       const privateKey = await resolveGpgPrivateKey(bindings, step.params?.key);
       let ice = null;
@@ -2510,31 +2539,31 @@ async function execStepBody(step, value, bindings, artifacts) {
         step.name === "quorum.offer" ? "creator" : "joiner"
       );
     }
-    case "rtc.gatherCandidates":
-    case "rtc.checkConnectivity":
+    case "rtc.gather":
+    case "rtc.check":
     case "rtc.certificate":
-    case "rtc.createOffer":
-    case "rtc.createAnswer":
-    case "rtc.connectionState":
-    case "rtc.dataChannelStats":
-    case "rtc.statsReport": {
+    case "rtc.offer":
+    case "rtc.answer":
+    case "rtc.state":
+    case "rtc.stats":
+    case "rtc.quality": {
       // Lazy + main-thread only, same as the quorum ops these sit under.
       const rtc = await import("./rtc-ops.js");
       const p = step.params || {};
       switch (step.name) {
-        case "rtc.gatherCandidates":
+        case "rtc.gather":
           return rtc.execGatherCandidates(p, bindings);
-        case "rtc.checkConnectivity":
+        case "rtc.check":
           return rtc.execCheckConnectivity();
         case "rtc.certificate":
           return rtc.execCertificate(p);
-        case "rtc.createOffer":
+        case "rtc.offer":
           return rtc.execCreateOffer(p, bindings);
-        case "rtc.createAnswer":
+        case "rtc.answer":
           return rtc.execCreateAnswer(value, p, bindings);
-        case "rtc.connectionState":
+        case "rtc.state":
           return rtc.execConnectionState();
-        case "rtc.dataChannelStats":
+        case "rtc.stats":
           return rtc.execDataChannelStats();
         default:
           return rtc.execStatsReport();
@@ -2833,7 +2862,15 @@ async function resolveEncryptRecipients(bindings, toParam, policy = "ask") {
   }
 
   if (!list.length) {
-    throw new Error("gpg.encrypt: empty recipients after resolve");
+    // Reached when a `to=@slot` resolved to a value carrying no usable public
+    // key — an empty recipients set, or text that is not armor. Naming the
+    // slot and what it should hold beats reporting the internal outcome.
+    const ref = token.kind === "slot" ? token.ref : "";
+    throw new Error(
+      ref
+        ? `gpg.encrypt to=${ref}: that slot holds no usable public key. Point it at a lookup result — e.g. \`hkp.search someone@example.com | out ${ref}\`.`
+        : "gpg.encrypt: no usable public key among the resolved recipients."
+    );
   }
 
   const { loadRecipientKey } = await import("../recipient-picker.js");

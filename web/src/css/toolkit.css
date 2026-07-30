@@ -101,3 +101,28 @@ body.layout-app:has(#app > .toolkit-shell) {
   --ring: var(--brand);
   --radius: 10px;
 }
+
+/*
+ * Connections peer dots (design v2 §34).
+ *
+ * These live here rather than in a `style={{ background }}` prop because the
+ * app is served under `style-src 'self'` — any inline style attribute, including
+ * the ones React writes for a style object, is blocked outright. The peer state
+ * set is closed, so the stylesheet can simply enumerate it.
+ */
+.peer-dot[data-peer-state="new"],
+.peer-dot[data-peer-state="closed"] {
+  background: var(--muted-foreground);
+}
+.peer-dot[data-peer-state="connecting"] {
+  background: var(--caret);
+}
+.peer-dot[data-peer-state="connected"] {
+  background: var(--brand);
+}
+.peer-dot[data-peer-state="disconnected"] {
+  background: var(--warn);
+}
+.peer-dot[data-peer-state="failed"] {
+  background: var(--error);
+}

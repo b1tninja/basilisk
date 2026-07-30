@@ -53,7 +53,30 @@ export const DEFAULT_ICE_SERVERS = [
  * @property {JsonWebKey|null} localEcdhJwk
  * @property {string|null} localHelloNonce
  * @property {boolean} kcSent
+ * @property {boolean} polite      perfect negotiation: lower fingerprint yields on glare
+ * @property {boolean} makingOffer
+ * @property {boolean} ignoreOffer
  */
+
+/**
+ * Perfect-negotiation collision rule (MDN pattern), pure so it is testable
+ * without an RTCPeerConnection. A collision is an incoming offer while we are
+ * mid-offer ourselves or otherwise not stable; the impolite peer ignores it,
+ * the polite peer accepts (its own offer rolls back implicitly inside
+ * `setRemoteDescription`).
+ *
+ * Politeness is assigned without coordination — each pair compares stable
+ * identifiers and the lexicographically lower fingerprint is polite. Both
+ * sides compute the same answer independently, which is the property that
+ * makes this work with no negotiation about who negotiates.
+ *
+ * @param {{ polite: boolean, makingOffer: boolean, signalingState: string }} x
+ * @returns {"accept"|"ignore"}
+ */
+export function offerCollisionAction({ polite, makingOffer, signalingState }) {
+  const collision = makingOffer || signalingState !== "stable";
+  return !polite && collision ? "ignore" : "accept";
+}
 
 /**
  * @typedef {object} QuorumSessionOpts
@@ -102,7 +125,6 @@ export class QuorumSession {
     this._since = 0;
     this._poll = null;
     this._seenSeqs = new Set();
-    this._makingOffer = new Set();
   }
 
   async start() {
@@ -194,13 +216,50 @@ export class QuorumSession {
    * @param {string} text
    */
   async sendChat(text) {
+    return this._sendChatFiltered(text, "");
+  }
+
+  /**
+   * Chat to a single verified peer, by fingerprint prefix.
+   *
+   * Distinct from `_sendTo`, which goes over the signalling relay for
+   * handshake traffic — this is the encrypted data channel. Each peer already
+   * gets its own `sessionKey` in the broadcast loop, so addressing one is a
+   * filter rather than a different code path.
+   *
+   * @param {string} toFpr  fingerprint or unambiguous prefix
+   * @param {string} text
+   * @returns {Promise<number>} peers written to (never 0 — throws instead)
+   */
+  async sendChatTo(toFpr, text) {
+    const n = await this._sendChatFiltered(text, toFpr);
+    if (!n) {
+      // Silence here would be dangerous: the author asked to tell one peer and
+      // would have no signal that nobody heard it.
+      throw new Error(
+        `rtc.send to=${toFpr}: no verified peer with that fingerprint is connected`
+      );
+    }
+    return n;
+  }
+
+  /**
+   * @param {string} text
+   * @param {string} toFpr  empty = every verified peer
+   * @returns {Promise<number>} peers written to
+   */
+  async _sendChatFiltered(text, toFpr) {
     const body = JSON.stringify({
       kind: "chat",
       text: String(text || ""),
       ts: Date.now(),
       from: this.myFpr,
     });
-    for (const peer of this.peers.values()) {
+    const want = String(toFpr || "").replace(/\s+/g, "").toUpperCase();
+    let sent = 0;
+    // The map is keyed by fingerprint; the peer record itself carries no copy
+    // of it, so the key is the only place to match on.
+    for (const [fpr, peer] of this.peers) {
       if (
         !peer.channel ||
         peer.channel.readyState !== "open" ||
@@ -209,9 +268,12 @@ export class QuorumSession {
       ) {
         continue;
       }
+      if (want && !String(fpr || "").toUpperCase().startsWith(want)) continue;
       const blob = await encryptSessionPayload(peer.sessionKey, body);
       peer.channel.send(JSON.stringify({ v: 1, blob }));
+      sent += 1;
     }
+    return sent;
   }
 
   /** @param {{ seq: number, payload: string }} msg */
@@ -272,14 +334,28 @@ export class QuorumSession {
       const p = this.peers.get(signerFpr);
       const pc = p?.pc;
       if (!pc || !p) return;
-      await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      p.localDtls = extractDtlsFingerprint(answer.sdp || "");
+      // Perfect negotiation: on glare the impolite peer drops the incoming
+      // offer (its own is in flight and will win); the polite peer accepts —
+      // setRemoteDescription rolls its pending local offer back implicitly.
+      p.ignoreOffer =
+        offerCollisionAction({
+          polite: p.polite,
+          makingOffer: p.makingOffer,
+          signalingState: pc.signalingState,
+        }) === "ignore";
+      if (p.ignoreOffer) return;
+      try {
+        await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
+        await pc.setLocalDescription();
+      } catch (err) {
+        this.onError?.(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+      p.localDtls = extractDtlsFingerprint(pc.localDescription?.sdp || "");
       const local = await this._ensureLocalEcdh(signerFpr);
       await this._sendTo(signerFpr, {
         type: "answer",
-        sdp: answer.sdp || "",
+        sdp: pc.localDescription?.sdp || "",
         dtlsFingerprint: p.localDtls,
         ecdhPublicJwk: local.jwk,
         helloNonce: local.helloNonce,
@@ -294,7 +370,15 @@ export class QuorumSession {
       const p = this.peers.get(signerFpr);
       const pc = p?.pc;
       if (!pc || !p) return;
-      await pc.setRemoteDescription({ type: "answer", sdp: payload.sdp });
+      // An answer to an offer we rolled back arrives in a state that cannot
+      // take it — stale by construction, dropped rather than surfaced.
+      if (pc.signalingState !== "have-local-offer") return;
+      try {
+        await pc.setRemoteDescription({ type: "answer", sdp: payload.sdp });
+      } catch (err) {
+        this.onError?.(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
       await this._maybeDeriveSession(signerFpr);
       peer.status = "connecting";
       this._emitRoster();
@@ -302,11 +386,14 @@ export class QuorumSession {
     }
 
     if (payload.type === "ice" && payload.candidate) {
-      const pc = this.peers.get(signerFpr)?.pc;
+      const p = this.peers.get(signerFpr);
+      const pc = p?.pc;
       if (!pc) return;
       try {
         await pc.addIceCandidate(payload.candidate);
       } catch (err) {
+        // Candidates for an offer we deliberately ignored fail by design.
+        if (p?.ignoreOffer) return;
         this.onError?.(
           err instanceof Error ? err : new Error(String(err))
         );
@@ -394,6 +481,9 @@ export class QuorumSession {
       localEcdhJwk: null,
       localHelloNonce: null,
       kcSent: false,
+      polite: this.myFpr < fpr,
+      makingOffer: false,
+      ignoreOffer: false,
     };
   }
 
@@ -439,6 +529,29 @@ export class QuorumSession {
         helloNonce: local.helloNonce,
       });
     };
+    // One offer path for both the first negotiation and every renegotiation:
+    // creating the data channel below trips this, and so does restartIce()
+    // (which previously went nowhere — no handler meant no new offer, so
+    // "Restart connection" only ever cleared flags). No-arg
+    // setLocalDescription picks offer-or-answer from signalingState itself.
+    pc.onnegotiationneeded = async () => {
+      try {
+        peer.makingOffer = true;
+        await pc.setLocalDescription();
+        peer.localDtls = extractDtlsFingerprint(pc.localDescription?.sdp || "");
+        await this._sendTo(peerFpr, {
+          type: "offer",
+          sdp: pc.localDescription?.sdp || "",
+          dtlsFingerprint: peer.localDtls,
+          ecdhPublicJwk: local.jwk,
+          helloNonce: local.helloNonce,
+        });
+      } catch (err) {
+        this.onError?.(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        peer.makingOffer = false;
+      }
+    };
     pc.onconnectionstatechange = () => {
       const st = pc.connectionState;
       if (st === "connected") {
@@ -454,20 +567,9 @@ export class QuorumSession {
     };
 
     if (asOfferer) {
-      if (this._makingOffer.has(peerFpr)) return;
-      this._makingOffer.add(peerFpr);
+      // The offer itself rides onnegotiationneeded, which this trips.
       const channel = pc.createDataChannel("quorum", { ordered: true });
       this._wireChannel(peerFpr, channel);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      peer.localDtls = extractDtlsFingerprint(offer.sdp || "");
-      await this._sendTo(peerFpr, {
-        type: "offer",
-        sdp: offer.sdp || "",
-        dtlsFingerprint: peer.localDtls,
-        ecdhPublicJwk: local.jwk,
-        helloNonce: local.helloNonce,
-      });
     }
   }
 

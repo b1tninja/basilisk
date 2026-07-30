@@ -1,7 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 
-export type SessionStripState = "offering" | "waiting" | "connected" | "closed";
+export type SessionStripState =
+  | "offering"
+  | "waiting"
+  | "connected"
+  | "closed"
+  | "failed";
 
 type Props = {
   state: SessionStripState;
@@ -13,6 +18,13 @@ type Props = {
   connected?: number;
   onCopyInvite?: () => void;
   onCancel?: () => void;
+  /**
+   * Re-negotiate in place (§33a). Distinct from 22b's "Configure TURN", which
+   * fires *before* a session exists; by the time this shows there is a live
+   * connection whose transport dropped, so the room code and mesh roster stay
+   * put and only ICE is restarted.
+   */
+  onRestartIce?: () => void;
   className?: string;
 };
 
@@ -21,6 +33,7 @@ const STATE_TEXT: Record<SessionStripState, string> = {
   waiting: "Waiting for peer to join…",
   connected: "Connected",
   closed: "Session closed",
+  failed: "Connection lost",
 };
 
 function shortRoom(room: string): string {
@@ -39,22 +52,29 @@ export function SessionStrip({
   connected = 0,
   onCopyInvite,
   onCancel,
+  onRestartIce,
   className,
 }: Props) {
   const live = state === "offering" || state === "waiting";
+  // `failed` reads as a break in the connected lineage, so it takes the error
+  // accent rather than a new unrelated tone.
   const tone =
     state === "closed"
       ? "var(--muted-foreground)"
-      : state === "connected"
-        ? "var(--brand)"
-        : "var(--caret)";
+      : state === "failed"
+        ? "var(--error)"
+        : state === "connected"
+          ? "var(--brand)"
+          : "var(--caret)";
   return (
     <div
       className={cn(
         "flex flex-wrap items-center gap-2 rounded-[7px] border px-2.5 py-2",
         state === "connected"
           ? "border-[color-mix(in_srgb,var(--brand)_30%,transparent)] bg-[color-mix(in_srgb,var(--brand)_7%,transparent)]"
-          : "border-[color-mix(in_srgb,var(--caret)_30%,transparent)] bg-[color-mix(in_srgb,var(--caret)_7%,transparent)]",
+          : state === "failed"
+            ? "border-[color-mix(in_srgb,var(--error)_30%,transparent)] bg-[color-mix(in_srgb,var(--error)_7%,transparent)]"
+            : "border-[color-mix(in_srgb,var(--caret)_30%,transparent)] bg-[color-mix(in_srgb,var(--caret)_7%,transparent)]",
         state === "closed" && "opacity-60",
         className
       )}
@@ -95,6 +115,18 @@ export function SessionStrip({
           }}
         >
           Copy invite
+        </Button>
+      ) : null}
+      {state === "failed" && onRestartIce ? (
+        <Button
+          size="sm"
+          className="h-[22px] shrink-0 rounded-[5px] bg-[var(--error)] px-2 text-[10px] font-bold text-[#1a0505] hover:opacity-90"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRestartIce();
+          }}
+        >
+          Restart connection
         </Button>
       ) : null}
       {live && onCancel ? (

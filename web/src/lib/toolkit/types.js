@@ -78,8 +78,12 @@ export const NETWORK_TYPES = new Set([
   ...NETWORK_OBSERVE_TYPES,
 ]);
 
-/** Types whose `length` refinement counts elements, not bytes. */
-const LIST_TYPES = new Set(["candidate", "peer"]);
+/**
+ * Types whose `length` refinement counts elements, not bytes. `bundle` and
+ * `shares` are collections, so "3B" would be actively misleading — a bundle of
+ * three messages is not three bytes.
+ */
+const LIST_TYPES = new Set(["candidate", "peer", "bundle", "shares"]);
 
 /**
  * Steps that accept any pipeline value — display/plumbing, not computation.
@@ -341,11 +345,11 @@ export function inferSourceType(name, params = {}) {
     case "stun.check":
       // The peer's own server-reflexive address, as discovered.
       return typeOf("endpoint", { kind: "reflexive" });
-    case "rtc.gatherCandidates":
+    case "rtc.gather":
       return typeOf("candidate");
     case "rtc.certificate":
       return typeOf("certificate", { alg: String(params.alg || "ecdsa") });
-    case "rtc.createOffer":
+    case "rtc.offer":
       return typeOf("sdp", { which: "offer" });
     case "quorum.offer":
     case "quorum.join":
@@ -354,16 +358,22 @@ export function inferSourceType(name, params = {}) {
       return typeOf("session", {
         which: name === "quorum.offer" ? "offer" : "answer",
       });
-    case "quorum.recv":
-      // The received message really is data — text, not a handle.
-      return typeOf("text", { kind: "opaque" });
-    case "rtc.connectionState":
+    case "rtc.recv": {
+      // Received messages really are data — text, not a handle. `count` picks
+      // the shape (§30c): one message stays text, several become a bundle so
+      // `foreach` can walk them. Must agree with the step's `effectiveIo`.
+      const count = String(params.count ?? "1").trim().toLowerCase();
+      if (count === "1") return typeOf("text", { kind: "opaque" });
+      const n = count === "all" ? undefined : Number(count) || undefined;
+      return typeOf("bundle", n ? { length: n } : {});
+    }
+    case "rtc.state":
       return typeOf("connstate");
-    case "rtc.checkConnectivity":
+    case "rtc.check":
       return typeOf("stats", { kind: "candidate-pairs" });
-    case "rtc.dataChannelStats":
+    case "rtc.stats":
       return typeOf("stats", { kind: "data-channel" });
-    case "rtc.statsReport":
+    case "rtc.quality":
       return typeOf("stats", { kind: "quality" });
     default:
       return tNone();
@@ -1286,9 +1296,9 @@ export function resolveStepType(spec, current, params = {}) {
           : `Type mismatch: "${name}" expects ${want}, got ${formatType(current)}.`,
     };
   }
-  // `rtc.createAnswer` consumes an offer and produces the other half of the
+  // `rtc.answer` consumes an offer and produces the other half of the
   // exchange — keep the two distinguishable rather than both being bare `sdp`.
-  if (name === "rtc.createAnswer") {
+  if (name === "rtc.answer") {
     return { ok: true, output: typeOf("sdp", { which: "answer" }) };
   }
   return {
@@ -1314,7 +1324,7 @@ export function stepAcceptsRefined(spec, from) {
   }
 
   if (POLYMORPHIC_STEPS.has(spec.name)) return true;
-  if (spec.name === "foreach") return current.base === "shares";
+  if (spec.name === "foreach") return current.base === "shares" || current.base === "bundle";
   if (spec.name === "export") {
     return current.base === "keypair" || current.base === "key";
   }

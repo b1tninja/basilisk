@@ -26,7 +26,24 @@ export async function fetchJson(url, opts) {
     }
     throw Object.assign(new Error(msg || `Request failed (${r.status})`), { status: r.status });
   }
-  return r.json();
+  // A 2xx response is not automatically JSON: an SPA fallback or a captive
+  // portal answers 200 with `<!DOCTYPE html>`, and `r.json()` then surfaces
+  // `Unexpected token '<'` — a parser message for what is really a routing or
+  // connectivity failure. Only the failure path is rewritten, so a valid body
+  // still takes the plain `r.json()` route and callers passing a minimal
+  // response stub are unaffected.
+  try {
+    return await r.json();
+  } catch (err) {
+    const type = r.headers?.get?.("content-type") || "";
+    if (!type || /json/i.test(type)) throw err; // genuinely malformed JSON
+    throw Object.assign(
+      new Error(
+        `Expected JSON from ${url} but got ${type.split(";")[0]} — the endpoint may be unavailable.`
+      ),
+      { status: r.status, nonJson: true }
+    );
+  }
 }
 
 export async function fetchText(url) {

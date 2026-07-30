@@ -390,10 +390,10 @@ describe("network / WebRTC types (design v2 §25a)", () => {
   });
 
   it("type-checks the offer → answer SDP exchange", () => {
-    const ok = compileRecipe("rtc.createOffer | rtc.createAnswer | out @a");
+    const ok = compileRecipe("rtc.offer | rtc.answer | out @a");
     expect(ok.validation.ok, JSON.stringify(ok.validation.errors)).toBe(true);
 
-    const bad = compileRecipe("rtc.gatherCandidates | rtc.createAnswer | out @a");
+    const bad = compileRecipe("rtc.gather | rtc.answer | out @a");
     expect(bad.validation.ok).toBe(false);
     expect(bad.validation.errors[0].message).toMatch(/expects sdp, got candidate/);
   });
@@ -405,18 +405,18 @@ describe("network / WebRTC types (design v2 §25a)", () => {
   });
 
   it("refuses to let an observe-only diagnostic be consumed", () => {
-    const { validation } = compileRecipe("rtc.connectionState | base64 | out @b");
+    const { validation } = compileRecipe("rtc.state | base64 | out @b");
     expect(validation.ok).toBe(false);
     expect(validation.errors[0].message).toMatch(/observe-only/);
   });
 
   it("still lets every network type reach out / inspect", () => {
     for (const src of [
-      "rtc.gatherCandidates | out @c",
-      "rtc.connectionState | inspect",
+      "rtc.gather | out @c",
+      "rtc.state | inspect",
       "rtc.ice | out @ice",
       "quorum.offer to=\"AAAA\" | out @s",
-      "rtc.statsReport | out @q",
+      "rtc.quality | out @q",
     ]) {
       const { validation } = compileRecipe(src);
       expect(validation.ok, `${src}: ${JSON.stringify(validation.errors)}`).toBe(true);
@@ -425,12 +425,12 @@ describe("network / WebRTC types (design v2 §25a)", () => {
 
   it("accepts an rtc.ice endpoint slot for ice=, and rejects a wrong-typed slot", () => {
     const ok = compileRecipe(
-      "rtc.ice | out @ice\n\nrtc.gatherCandidates ice=@ice | out @c"
+      "rtc.ice | out @ice\n\nrtc.gather ice=@ice | out @c"
     );
     expect(ok.validation.ok, JSON.stringify(ok.validation.errors)).toBe(true);
 
     const bad = compileRecipe(
-      "genkey ec/p256 | out @kp\n\nrtc.gatherCandidates ice=@kp | out @c"
+      "genkey ec/p256 | out @kp\n\nrtc.gather ice=@kp | out @c"
     );
     expect(bad.validation.ok).toBe(false);
     expect(bad.validation.errors.some((e) => /not an ICE config/.test(e.message))).toBe(true);

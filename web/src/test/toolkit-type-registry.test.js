@@ -104,7 +104,7 @@ describe("producers and consumers are derived from the registry", () => {
     expect(producersOf("keypair")).toContain("genkey");
     expect(producersOf("bytes")).toContain("random");
     expect(producersOf("bytes")).toContain("bytes");
-    expect(producersOf("sdp")).toContain("rtc.createOffer");
+    expect(producersOf("sdp")).toContain("rtc.offer");
   });
 
   it("never claims a producer for a reserved type", () => {
