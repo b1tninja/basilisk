@@ -43,7 +43,8 @@ const BASELINE = {
   // OpsShelf (was 4) and TopBar (was 6) converted to data attributes +
   // enumerated CSS — toolbox-dot / suite-tone rules in toolkit.css.
   "src/toolkit/widgets/RunBar.tsx": 1,
-  "src/toolkit/widgets/SessionStrip.tsx": 1,
+  // SessionStrip (was 1) converted with the per-peer work — the status dot's
+  // tone and live glow are `[data-session-tone]` rules in toolkit.css.
 };
 
 function walk(dir, pred, out = []) {

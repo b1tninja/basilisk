@@ -1197,6 +1197,7 @@ export function ToolkitShell() {
                             room={nb.quorumState.room}
                             invite={nb.quorumState.invite}
                             connected={nb.quorumState.connected}
+                            peers={nb.quorumState.peers}
                             onCopyInvite={() =>
                               void navigator.clipboard.writeText(nb.quorumState.invite)
                             }

@@ -517,6 +517,38 @@ function CatalogApp() {
               <StateLabel>Closed — keys zeroized</StateLabel>
               <SessionStrip state="closed" room="KJ8XW2PQZM4RT9FQ" />
             </div>
+            <div>
+              <StateLabel>
+                Mesh — per-peer rows; the summary alone could not say one link is
+                down and one peer unverified
+              </StateLabel>
+              <SessionStrip
+                state="connected"
+                room="KJ8XW2PQZM4RT9FQ"
+                connected={2}
+                peers={[
+                  { id: "AAAA1111…9999", fingerprint: "A".repeat(40), state: "connected", authenticated: true, via: "srflx" },
+                  { id: "BBBB2222…8888", fingerprint: "B".repeat(40), state: "connected", authenticated: false, via: "relay" },
+                  { id: "CCCC3333…7777", fingerprint: "C".repeat(40), state: "failed", authenticated: true },
+                ]}
+                onRestartIce={() => {}}
+              />
+            </div>
+            <div>
+              <StateLabel>Mesh, still forming — a peer mid-handshake</StateLabel>
+              <SessionStrip
+                state="waiting"
+                room="KJ8XW2PQZM4RT9FQ"
+                invite="quorum KJ8XW2PQZM4RT9FQ · 3 keys · localhost"
+                peers={[
+                  { id: "AAAA1111…9999", state: "connected", authenticated: true },
+                  { id: "BBBB2222…8888", state: "connecting" },
+                  { id: "CCCC3333…7777", state: "new" },
+                ]}
+                onCopyInvite={() => {}}
+                onCancel={() => {}}
+              />
+            </div>
           </div>
           <div>
             <StateLabel>RunBar · waiting-peer — Stop stays, Copy invite / Cancel appear</StateLabel>

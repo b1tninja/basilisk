@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import type { ConnectionPeer } from "./ConnectionsPanel";
 
 export type SessionStripState =
   | "offering"
@@ -16,6 +17,19 @@ type Props = {
   invite?: string;
   /** Verified-peer count while connected. */
   connected?: number;
+  /**
+   * Live roster (p2p-dkg DESIGN §6 — "per-peer, not per-session").
+   *
+   * A session-level summary is a lie in a mesh: "Connected · 3 peers" reads
+   * identically whether every link is healthy or one died, which is exactly
+   * the state a ceremony needs to notice. Given a roster the strip lists each
+   * peer; without one it stays the two-party summary it always was, so no
+   * caller is forced to supply it.
+   *
+   * Reuses `ConnectionPeer` rather than a parallel shape — same rows the
+   * Connections tab renders, same `.peer-dot` CSS.
+   */
+  peers?: ConnectionPeer[];
   onCopyInvite?: () => void;
   onCancel?: () => void;
   /**
@@ -50,22 +64,22 @@ export function SessionStrip({
   room = "",
   invite = "",
   connected = 0,
+  peers,
   onCopyInvite,
   onCancel,
   onRestartIce,
   className,
 }: Props) {
   const live = state === "offering" || state === "waiting";
-  // `failed` reads as a break in the connected lineage, so it takes the error
-  // accent rather than a new unrelated tone.
-  const tone =
-    state === "closed"
-      ? "var(--muted-foreground)"
-      : state === "failed"
-        ? "var(--error)"
-        : state === "connected"
-          ? "var(--brand)"
-          : "var(--caret)";
+  const roster = peers || [];
+  // A link that died while the session as a whole still reports connected —
+  // the case the session-level summary cannot express.
+  const brokenPeers = roster.filter(
+    (p) => p.state === "failed" || p.state === "disconnected"
+  ).length;
+  const unverifiedPeers = roster.filter(
+    (p) => p.state === "connected" && !p.authenticated
+  ).length;
   return (
     <div
       className={cn(
@@ -80,15 +94,17 @@ export function SessionStrip({
       )}
       data-session-strip={state}
     >
+      {/* Tone comes from `[data-session-tone]` rules in toolkit.css, never a
+          style prop: `style-src 'self'` blocks every element.style write, and
+          the state set is closed. `failed` reads as a break in the connected
+          lineage, so it takes the error accent rather than a new tone. */}
       <span
         className={cn(
-          "h-[7px] w-[7px] shrink-0 rounded-full",
+          "session-dot h-[7px] w-[7px] shrink-0 rounded-full",
           live && "animate-pulse"
         )}
-        style={{
-          background: tone,
-          boxShadow: live ? `0 0 0 3px color-mix(in srgb, ${tone} 20%, transparent)` : undefined,
-        }}
+        data-session-tone={state}
+        data-session-live={live ? "1" : undefined}
         aria-hidden
       />
       <span className="text-[length:11px] text-[var(--foreground)]">
@@ -96,6 +112,25 @@ export function SessionStrip({
           ? `Connected · ${connected} peer${connected === 1 ? "" : "s"}`
           : STATE_TEXT[state]}
       </span>
+      {/* Partial failure has to surface on the summary line too — the roster
+          below may be scrolled out of view, and "Connected" alone would read
+          as success while a custodian's link is down. */}
+      {brokenPeers ? (
+        <span
+          className="rounded-[4px] bg-[color-mix(in_srgb,var(--error)_14%,transparent)] px-1.5 py-px text-[9.5px] font-semibold text-[var(--error)]"
+          data-session-degraded
+        >
+          {brokenPeers} link{brokenPeers === 1 ? "" : "s"} down
+        </span>
+      ) : null}
+      {unverifiedPeers ? (
+        <span
+          className="rounded-[4px] bg-[color-mix(in_srgb,var(--warn)_14%,transparent)] px-1.5 py-px text-[9.5px] font-semibold text-[var(--warn)]"
+          data-session-unverified
+        >
+          {unverifiedPeers} unverified
+        </span>
+      ) : null}
       {room ? (
         <code
           className="ml-auto font-mono text-[10px] text-[var(--muted-foreground)]"
@@ -141,6 +176,62 @@ export function SessionStrip({
         >
           Cancel
         </Button>
+      ) : null}
+
+      {/* Per-peer rows: the mesh answer to "who is actually here". Only when
+          a roster was supplied and the session is not already closed — a
+          closed session's last roster belongs in the Connections tab's
+          history, not here where it would read as still-live. */}
+      {roster.length && state !== "closed" ? (
+        <ul className="mt-0.5 flex w-full flex-col gap-0.5" data-session-peers>
+          {roster.map((p) => (
+            <li
+              key={p.fingerprint || p.id}
+              className="flex items-center gap-1.5 pl-[15px]"
+              data-session-peer={p.state}
+            >
+              <span
+                className="peer-dot h-[5px] w-[5px] shrink-0 rounded-full"
+                data-peer-state={p.state}
+                aria-hidden
+              />
+              <code
+                className="min-w-0 flex-1 truncate font-mono text-[10px] text-[var(--muted-foreground)]"
+                title={p.fingerprint || undefined}
+              >
+                {p.id}
+              </code>
+              {p.via ? (
+                <span className="shrink-0 font-mono text-[9px] text-[var(--muted-foreground)]">
+                  {p.via}
+                </span>
+              ) : null}
+              {/* Connectivity and authentication stay separate here for the
+                  same reason as in ConnectionsPanel: a peer can be fully
+                  connected and completely unverified.
+                  The verdict is withheld until the link is up, though — a peer
+                  mid-handshake has not *failed* verification, it has not
+                  reached it, and badging every joining peer "unverified"
+                  cries wolf on every join. These rows show no state text
+                  (only the dot), so an unqualified badge would be the only
+                  thing a reader sees. */}
+              {p.state === "connected" || p.state === "failed" ? (
+                <span
+                  className={cn(
+                    "shrink-0 text-[9px] font-semibold",
+                    p.authenticated ? "text-[var(--brand)]" : "text-[var(--warn)]"
+                  )}
+                >
+                  {p.authenticated ? "verified" : "unverified"}
+                </span>
+              ) : (
+                <span className="shrink-0 text-[9px] text-[var(--muted-foreground)]">
+                  {p.state}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

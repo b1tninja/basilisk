@@ -128,6 +128,30 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * SessionStrip status dot (§21a/33a) — same CSP conversion as the peer dots.
+ * The live glow was a `boxShadow` computed from the tone in a style prop;
+ * both are enumerated here now. `closed` is muted, `failed` takes the error
+ * accent because it is a break in the connected lineage, not a new tone.
+ */
+.session-dot[data-session-tone="offering"],
+.session-dot[data-session-tone="waiting"] {
+  background: var(--caret);
+}
+.session-dot[data-session-tone="connected"] {
+  background: var(--brand);
+}
+.session-dot[data-session-tone="failed"] {
+  background: var(--error);
+}
+.session-dot[data-session-tone="closed"] {
+  background: var(--muted-foreground);
+}
+.session-dot[data-session-live="1"][data-session-tone="offering"],
+.session-dot[data-session-live="1"][data-session-tone="waiting"] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--caret) 20%, transparent);
+}
+
+/*
  * Suite-status tones (TopBar §21e) — same CSP conversion as the peer dots.
  * The tone set is closed (ok | warn | error); the "note" variant mutes ok
  * because a healthy suite's note is commentary, not a signal.
