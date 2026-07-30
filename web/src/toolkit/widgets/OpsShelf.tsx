@@ -152,7 +152,7 @@ function SectionHeader({
   label,
   count,
   fitCount,
-  color,
+  toolbox,
   open,
   onToggle,
 }: {
@@ -160,7 +160,8 @@ function SectionHeader({
   count: number;
   /** Ops in this toolbox that fit the caret tip — set only while tipFit is active (§19a). */
   fitCount?: number | null;
-  color: string;
+  /** Toolbox id — the dot colour is enumerated per id in toolkit.css. */
+  toolbox: string;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -183,9 +184,11 @@ function SectionHeader({
       <span className="font-mono text-[10px] text-[color-mix(in_srgb,var(--muted-foreground)_65%,transparent)]">
         {fitCount == null ? count : `${fitCount} fit`}
       </span>
+      {/* Colour from `[data-toolbox-dot]` rules in toolkit.css — the toolbox
+          set is closed, and `style-src 'self'` blocks element.style writes. */}
       <span
-        className="ml-auto h-[6px] w-[6px] shrink-0 rounded-[2px]"
-        style={{ background: color }}
+        className="toolbox-dot ml-auto h-[6px] w-[6px] shrink-0 rounded-[2px]"
+        data-toolbox-dot={toolbox}
         aria-hidden
       />
     </button>
@@ -511,9 +514,6 @@ export function OpsShelf({
         ) : kitFilter === "ciphers" || kitFilter === "base" ? (
           <div className="flex flex-col pb-4">
             {collections.map((col) => {
-              const color =
-                (TOOLBOX_META as Record<string, { color?: string }>)[col.toolbox]
-                  ?.color || "#8b949e";
               const members = q
                 ? col.members.filter((m) => m.name.toLowerCase().includes(q))
                 : col.members;
@@ -523,7 +523,7 @@ export function OpsShelf({
                   key={`${col.id}-kit`}
                   dataShelf={col.id}
                   title={col.label}
-                  color={color}
+                  toolbox={col.toolbox}
                   modes={members}
                   tipFit={tipFit}
                   expanded={kitOpen[col.id] !== false}
@@ -544,10 +544,7 @@ export function OpsShelf({
               tip={tip}
               direction={formatDirection}
               open={formatOpen}
-              color={
-                (TOOLBOX_META as Record<string, { color?: string }>).webcrypto
-                  ?.color || "#8b949e"
-              }
+              toolbox="webcrypto"
               onToggle={(dir) =>
                 setFormatOpen((prev) => (prev === dir ? null : dir))
               }
@@ -584,7 +581,7 @@ export function OpsShelf({
                   label={meta.label || tb}
                   count={count}
                   fitCount={fitCount}
-                  color={meta.color || "#8b949e"}
+                  toolbox={tb}
                   open={open}
                   onToggle={() =>
                     setTbOverride((prev) => ({ ...prev, [tb]: !open }))
@@ -734,7 +731,7 @@ export function OpsShelf({
 function ModeShelfKit({
   dataShelf,
   title,
-  color,
+  toolbox,
   modes,
   tipFit,
   expanded,
@@ -743,7 +740,8 @@ function ModeShelfKit({
 }: {
   dataShelf: string;
   title: string;
-  color: string;
+  /** Toolbox id — dot colour enumerated per id in toolkit.css. */
+  toolbox: string;
   modes: { id: string; name: string; label: string; title?: string }[];
   tipFit?: Set<string> | null;
   expanded: boolean;
@@ -759,8 +757,8 @@ function ModeShelfKit({
         className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-[3px] text-left hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]"
       >
         <span
-          className="h-[5px] w-[5px] shrink-0 rounded-full"
-          style={{ background: color }}
+          className="toolbox-dot h-[5px] w-[5px] shrink-0 rounded-full"
+          data-toolbox-dot={toolbox}
           aria-hidden
         />
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]">
@@ -805,14 +803,15 @@ function FormatKit({
   tip,
   direction,
   open,
-  color,
+  toolbox,
   onToggle,
   onPick,
 }: {
   tip: OpsShelfTip;
   direction: "export" | "import" | null;
   open: "export" | "import" | null;
-  color: string;
+  /** Toolbox id — dot colour enumerated per id in toolkit.css. */
+  toolbox: string;
   onToggle: (dir: "export" | "import") => void;
   onPick: (fmt: string) => void;
 }) {
@@ -821,8 +820,8 @@ function FormatKit({
     <div data-format-kit>
       <div className="flex items-center gap-1.5 px-1.5 py-[3px]">
         <span
-          className="h-[5px] w-[5px] shrink-0 rounded-full"
-          style={{ background: color }}
+          className="toolbox-dot h-[5px] w-[5px] shrink-0 rounded-full"
+          data-toolbox-dot={toolbox}
           aria-hidden
         />
         <span className="flex-1 font-mono text-[11.5px] font-semibold text-[var(--foreground)]">
@@ -882,8 +881,8 @@ function FormatKit({
                 )}
               >
                 <span
-                  className="h-[5px] w-[5px] shrink-0 rounded-full"
-                  style={{ background: color }}
+                  className="toolbox-dot h-[5px] w-[5px] shrink-0 rounded-full"
+                  data-toolbox-dot={toolbox}
                   aria-hidden
                 />
                 <code className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]">

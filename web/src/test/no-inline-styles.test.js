@@ -40,10 +40,10 @@ const BASELINE = {
   "src/toolkit/ToolkitShell.tsx": 2,
   "src/toolkit/widgets/Glyph.tsx": 1,
   "src/toolkit/widgets/NetworkArtifact.tsx": 3,
-  "src/toolkit/widgets/OpsShelf.tsx": 4,
+  // OpsShelf (was 4) and TopBar (was 6) converted to data attributes +
+  // enumerated CSS — toolbox-dot / suite-tone rules in toolkit.css.
   "src/toolkit/widgets/RunBar.tsx": 1,
   "src/toolkit/widgets/SessionStrip.tsx": 1,
-  "src/toolkit/widgets/TopBar.tsx": 6,
 };
 
 function walk(dir, pred, out = []) {

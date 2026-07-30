@@ -73,9 +73,12 @@ export function basiliskDevServer() {
         const path = q >= 0 ? req.url.slice(0, q) : req.url;
         const query = q >= 0 ? req.url.slice(q) : "";
 
-        if (path === "/search") {
+        // Bare `/` is index.html; rewriting (not early-returning) keeps it
+        // flowing into the report-only CSP block below — `/` and `/search`
+        // previously skipped it, so index.html's would-break-in-production
+        // violations were invisible on exactly the page that has them.
+        if (path === "/") {
           req.url = `/index.html${query}`;
-          return next();
         }
 
         // Extensionless page routes — same map as Flask register_static_portal.

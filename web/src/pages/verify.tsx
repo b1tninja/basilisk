@@ -1,3 +1,7 @@
+// First import on the page, deliberately: it installs listeners for failures
+// that happen *while the rest of this module graph loads*. Anything imported
+// above it could fail unobserved.
+import { installBootDiagnostics } from "../lib/boot-diagnostics.js";
 import { createRoot } from "react-dom/client";
 import { useEffect, useRef, useState } from "react";
 import { Layout } from "../components/Layout";
@@ -364,4 +368,5 @@ function VerifyPage() {
   );
 }
 
+installBootDiagnostics();
 createRoot(document.getElementById("app")!).render(<VerifyPage />);

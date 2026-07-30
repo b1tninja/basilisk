@@ -4,11 +4,10 @@ import { cn } from "@/lib/cn";
 export type SuiteTone = "ok" | "warn" | "error";
 export type SuiteDetail = { name: string; tone: SuiteTone; note: string };
 
-const TONE_COLOR: Record<SuiteTone, string> = {
-  ok: "var(--success)",
-  warn: "var(--warn)",
-  error: "var(--error)",
-};
+// Tone colour comes from `[data-suite-tone]` rules in toolkit.css, never an
+// inline style prop: the page runs under `style-src 'self'`, which blocks
+// every `element.style` write. The tone set is closed, so a stylesheet can
+// enumerate it (same conversion as ConnectionsPanel's peer dots).
 
 type Props = {
   title: string;
@@ -117,27 +116,24 @@ export function TopBar({
             <button
               type="button"
               aria-expanded={suitePopoverOpen}
-              className="flex items-center gap-1.5 rounded-full border px-[9px] py-[4px]"
-              style={{
-                borderColor: `color-mix(in srgb, ${TONE_COLOR[suiteStatus.tone]} 35%, transparent)`,
-                background: `color-mix(in srgb, ${TONE_COLOR[suiteStatus.tone]} 10%, transparent)`,
-              }}
+              className="suite-pill flex items-center gap-1.5 rounded-full border px-[9px] py-[4px]"
+              data-suite-tone={suiteStatus.tone}
               onClick={() => setSuitePopoverOpen((v) => !v)}
             >
               <span
-                className="h-[5px] w-[5px] shrink-0 rounded-full"
-                style={{ background: TONE_COLOR[suiteStatus.tone] }}
+                className="suite-tone-dot h-[5px] w-[5px] shrink-0 rounded-full"
+                data-suite-tone={suiteStatus.tone}
                 aria-hidden
               />
               <span
-                className="font-mono text-[10.5px] font-medium"
-                style={{ color: TONE_COLOR[suiteStatus.tone] }}
+                className="suite-tone-text font-mono text-[10.5px] font-medium"
+                data-suite-tone={suiteStatus.tone}
               >
                 {suiteStatus.label}
               </span>
               <span
-                className="text-[8px]"
-                style={{ color: TONE_COLOR[suiteStatus.tone] }}
+                className="suite-tone-text text-[8px]"
+                data-suite-tone={suiteStatus.tone}
                 aria-hidden
               >
                 ▾
@@ -148,18 +144,16 @@ export function TopBar({
                 {suiteDetail.map((s) => (
                   <div key={s.name} className="flex items-center gap-2 px-[9px] py-[7px]">
                     <span
-                      className="h-[5px] w-[5px] shrink-0 rounded-full"
-                      style={{ background: TONE_COLOR[s.tone] }}
+                      className="suite-tone-dot h-[5px] w-[5px] shrink-0 rounded-full"
+                      data-suite-tone={s.tone}
                       aria-hidden
                     />
                     <span className="flex-1 font-mono text-[11px] font-medium text-[var(--foreground)]">
                       {s.name}
                     </span>
                     <span
-                      className="text-[10px]"
-                      style={{
-                        color: s.tone === "ok" ? "var(--muted-foreground)" : TONE_COLOR[s.tone],
-                      }}
+                      className="suite-tone-note text-[10px]"
+                      data-suite-tone={s.tone}
                     >
                       {s.note}
                     </span>

@@ -188,11 +188,19 @@ Roughly in value order:
 4. **TOTP (turn 43) deserves its own scope.** A value that mutates on a local
    timer is new for this engine — every current value is fixed at run time.
    That is an engine change, not polish.
-5. **Work down the inline-style baseline** (23 sites, 9 files). `TopBar` (6) and
-   `OpsShelf` (4) are the biggest and both colour from closed sets, so they
-   convert exactly like `ConnectionsPanel`'s peer dots did: data attribute plus
-   enumerated CSS.
-6. **Wire `boot-diagnostics` into the other nine pages** — one import each.
+5. **Work down the inline-style baseline** — now 11 sites in 7 files. TopBar
+   (was 6) and OpsShelf (was 4) are converted: `data-suite-tone` /
+   `data-toolbox-dot` plus enumerated rules in toolkit.css.
+   `toolbox-dot-css.test.js` guards the registry↔stylesheet colour
+   duplication against drift. Remaining: index (3), NetworkArtifact (3),
+   ToolkitShell (2), Glyph / RunBar / SessionStrip / toolkit.tsx (1 each).
+6. ~~**Wire `boot-diagnostics` into the other nine pages**~~ — done, all ten
+   entries (redirect stub included). Bonus find: the dev server never sent
+   the report-only CSP header for `/` and `/search` (the early-return skipped
+   the header block), so index — which holds 3 of the remaining inline-style
+   sites — was blind to exactly the failures the header exists to predict.
+   Fixed in `basilisk-dev-server.js`; verified the predicted-violation banner
+   fires on `/`.
 
 Unverified: the `CellTypeErrors` banner is confirmed in the catalog and in a
 live cell, but the RunBar blocker and the banner still word type errors

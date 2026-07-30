@@ -126,3 +126,78 @@ body.layout-app:has(#app > .toolkit-shell) {
 .peer-dot[data-peer-state="failed"] {
   background: var(--error);
 }
+
+/*
+ * Suite-status tones (TopBar §21e) — same CSP conversion as the peer dots.
+ * The tone set is closed (ok | warn | error); the "note" variant mutes ok
+ * because a healthy suite's note is commentary, not a signal.
+ */
+.suite-pill[data-suite-tone="ok"] {
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+.suite-pill[data-suite-tone="warn"] {
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+.suite-pill[data-suite-tone="error"] {
+  border-color: color-mix(in srgb, var(--error) 35%, transparent);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+}
+.suite-tone-dot[data-suite-tone="ok"] {
+  background: var(--success);
+}
+.suite-tone-dot[data-suite-tone="warn"] {
+  background: var(--warn);
+}
+.suite-tone-dot[data-suite-tone="error"] {
+  background: var(--error);
+}
+.suite-tone-text[data-suite-tone="ok"] {
+  color: var(--success);
+}
+.suite-tone-text[data-suite-tone="warn"] {
+  color: var(--warn);
+}
+.suite-tone-text[data-suite-tone="error"] {
+  color: var(--error);
+}
+.suite-tone-note[data-suite-tone="ok"] {
+  color: var(--muted-foreground);
+}
+.suite-tone-note[data-suite-tone="warn"] {
+  color: var(--warn);
+}
+.suite-tone-note[data-suite-tone="error"] {
+  color: var(--error);
+}
+
+/*
+ * Toolbox identity dots (OpsShelf §18b/19a) — colours mirror
+ * TOOLBOX_META[*].color in registry.js; the toolbox set is closed. If a
+ * toolbox is added or recoloured there, add/adjust its rule here — the
+ * default keeps unknown ids visible in neutral grey rather than invisible.
+ */
+.toolbox-dot {
+  background: #8b949e;
+}
+.toolbox-dot[data-toolbox-dot="webcrypto"],
+.toolbox-dot[data-toolbox-dot="agent"] {
+  background: #4cde82;
+}
+.toolbox-dot[data-toolbox-dot="encoding"],
+.toolbox-dot[data-toolbox-dot="webrtc"] {
+  background: #58a6ff;
+}
+.toolbox-dot[data-toolbox-dot="openpgp"] {
+  background: #d2a8ff;
+}
+.toolbox-dot[data-toolbox-dot="hkp"] {
+  background: #f0883e;
+}
+.toolbox-dot[data-toolbox-dot="sss"] {
+  background: #e3b341;
+}
+.toolbox-dot[data-toolbox-dot="webauthn"] {
+  background: #79c0ff;
+}
