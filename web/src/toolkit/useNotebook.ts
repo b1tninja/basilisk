@@ -19,11 +19,11 @@ import {
   hashForNotebook,
   toolkitShareUrl,
 } from "../lib/toolkit/fragment.js";
-import { PROFILE_AUTO, PROFILE_COMPATIBLE, PROFILE_MODERN } from "../lib/pgp/encrypt.js";
+import { profileForMode } from "../lib/pgp/profile-from-step.js";
 import { listKeys } from "../lib/vault.js";
 import { unlockVaultForUse } from "../lib/vault-unlock.js";
 import { sessionEvict, sessionList } from "../lib/vault-session.js";
-import { getToolkitPrefs } from "../lib/toolkit/prefs.js";
+import { getToolkitPrefs, setToolkitPrefs, type ToolkitPrefs } from "../lib/toolkit/prefs.js";
 import { formatFingerprint } from "../lib/utils.js";
 import type {
   ArtifactTile,
@@ -31,18 +31,24 @@ import type {
   PgpMode,
   RecipeChain,
   RecipeStep,
+  ResolvedRecipient,
   SlotMeta,
   VaultKeyRow,
 } from "./notebook-types";
 
+/** Mirror of quorum-ops' QuorumExchangeState — arrives via `basilisk:quorum-state`. */
+export type QuorumUiState = {
+  phase: "idle" | "offering" | "waiting" | "connected" | "closed" | "failed";
+  room: string;
+  role: "creator" | "joiner" | "";
+  invite: string;
+  connected: number;
+  expected: number;
+  status: string;
+};
+
 function emptyChains(): RecipeChain[] {
   return [{ steps: [] }];
-}
-
-function profileForMode(mode: PgpMode) {
-  if (mode === "modern") return { ...PROFILE_MODERN };
-  if (mode === "compatible") return { ...PROFILE_COMPATIBLE };
-  return { ...PROFILE_AUTO };
 }
 
 function cellInputNeeds(chain: RecipeChain): string[] {
@@ -75,6 +81,11 @@ export function useNotebook() {
   const [focusedCell, setFocusedCell] = useState(0);
   const [inputText, setInputText] = useState("");
   const [ciphertext, setCiphertext] = useState("");
+  const [shareRows, setShareRows] = useState<string[]>([""]);
+  const [sharePassphrase, setSharePassphrase] = useState("");
+  const [envelopeArmored, setEnvelopeArmored] = useState("");
+  /** §31c — pasted JWK/PEM for `keypair`. Runtime-only, never serialized. */
+  const [keypairMaterial, setKeypairMaterial] = useState("");
   const [pgpMode, setPgpMode] = useState<PgpMode>("auto");
   const [vaultKeys, setVaultKeys] = useState<VaultKeyRow[]>([]);
   const [sessionTick, setSessionTick] = useState(0);
@@ -82,9 +93,39 @@ export function useNotebook() {
   const [runStatus, setRunStatus] = useState("");
   const [runError, setRunError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [sheet, setSheet] = useState<"keyring" | "variables" | "crypto" | null>(null);
+  const [runProgress, setRunProgress] = useState<{ cell: number; total: number } | null>(
+    null
+  );
+  const stopRunRef = useRef(false);
+  /** Live p2p exchange snapshot (design v2 §21a) — fed by quorum-ops via window events. */
+  const [quorumState, setQuorumState] = useState<QuorumUiState>({
+    phase: "idle",
+    room: "",
+    role: "",
+    invite: "",
+    connected: 0,
+    expected: 0,
+    status: "",
+  });
+  /** Cell index currently executing — lets the shell pin SessionStrip to it. */
+  const [runningCell, setRunningCell] = useState<number | null>(null);
+  useEffect(() => {
+    const onState = (ev: Event) => {
+      const detail = (ev as CustomEvent<QuorumUiState>).detail;
+      if (detail) setQuorumState(detail);
+    };
+    window.addEventListener("basilisk:quorum-state", onState);
+    return () => window.removeEventListener("basilisk:quorum-state", onState);
+  }, []);
+  const cancelQuorum = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("basilisk:quorum-cancel"));
+  }, []);
+  const [sheet, setSheet] = useState<"workspace" | "prefs" | null>(
+    null
+  );
   const [kernelEpoch, setKernelEpoch] = useState(0);
-  const boundRecipientsRef = useRef<{ fingerprint: string; armoredKey: string }[]>([]);
+  const [toolkitPrefs, setToolkitPrefsState] = useState<ToolkitPrefs>(() => getToolkitPrefs());
+  const boundRecipientsRef = useRef<ResolvedRecipient[]>([]);
 
   const refreshVault = useCallback(async () => {
     try {
@@ -106,18 +147,23 @@ export function useNotebook() {
     void refreshVault();
   }, [refreshVault]);
 
+  /** Compile `text` and replace the notebook's title/chains with it. Returns whether it parsed. */
+  const loadRecipeText = useCallback((title: string, text: string) => {
+    const { ast } = compileRecipe(text);
+    if (!ast) return false;
+    setTitle(title);
+    setChains(ast.chains?.length ? ast.chains : [{ steps: ast.steps || [] }]);
+    setFocusedCell(0);
+    return true;
+  }, []);
+
   const loadFromHash = useCallback(() => {
     const action = parseToolkitHash(window.location.hash || "");
     if (!action || action.kind === "empty") return;
     if (action.kind === "starter") {
       const starter = MESSAGING_STARTERS[action.starter];
       if (!starter) return;
-      const { ast } = compileRecipe(starter.recipe);
-      if (ast) {
-        setTitle(starter.title);
-        setChains(ast.chains?.length ? ast.chains : [{ steps: ast.steps || [] }]);
-        setFocusedCell(0);
-      }
+      loadRecipeText(starter.title, starter.recipe);
       if (action.inputs?.ciphertext) setCiphertext(String(action.inputs.ciphertext));
       if (action.inputs?.text) setInputText(String(action.inputs.text));
       return;
@@ -125,23 +171,13 @@ export function useNotebook() {
     if (action.kind === "preset") {
       const p = PRESETS.find((x: { id: string }) => x.id === action.id);
       if (!p) return;
-      const { ast } = compileRecipe(p.recipe);
-      if (ast) {
-        setTitle(p.title);
-        setChains(ast.chains?.length ? ast.chains : [{ steps: ast.steps || [] }]);
-        setFocusedCell(0);
-      }
+      loadRecipeText(p.title, p.recipe);
       return;
     }
     if (action.kind === "recipe") {
-      const { ast } = compileRecipe(action.recipe);
-      if (ast) {
-        setTitle("Shared notebook");
-        setChains(ast.chains?.length ? ast.chains : [{ steps: ast.steps || [] }]);
-        setFocusedCell(0);
-      }
+      loadRecipeText("Shared notebook", action.recipe);
     }
-  }, []);
+  }, [loadRecipeText]);
 
   useEffect(() => {
     loadFromHash();
@@ -165,14 +201,30 @@ export function useNotebook() {
       if (needs.includes("text") && !inputText.trim()) badges.push("needs input");
       if (needs.includes("gpg") && !ciphertext.trim()) badges.push("needs ciphertext");
       if (needs.includes("key")) badges.push("needs key");
-      if (needs.includes("shares")) badges.push("needs shares");
-      if (needs.includes("envelope")) badges.push("needs envelope");
+      if (needs.includes("shares") && !shareRows.some((s) => s.trim())) {
+        badges.push("needs shares");
+      }
+      if (needs.includes("envelope") && !envelopeArmored.trim()) {
+        badges.push("needs envelope");
+      }
+      if (needs.includes("keypair") && !keypairMaterial.trim()) {
+        badges.push("needs key material");
+      }
       const slots = cellRecipientSlots(chain);
       const filled = boundRecipientsRef.current.filter((r) => r?.fingerprint).length;
       if (slots > 0 && filled < slots) badges.push("needs recipients");
       return badges;
     },
-    [chains, inputText, ciphertext, sessionTick, kernelEpoch]
+    [
+      chains,
+      inputText,
+      ciphertext,
+      shareRows,
+      envelopeArmored,
+      keypairMaterial,
+      sessionTick,
+      kernelEpoch,
+    ]
   );
 
   const readinessBlocker = useMemo(() => {
@@ -190,10 +242,20 @@ export function useNotebook() {
   const slotMetas: SlotMeta[] = useMemo(() => {
     void kernelEpoch;
     return (kernelRef.current.listSlots?.() || []).map(
-      (m: { label: string; type?: string; fingerprint?: string }) => ({
+      (m: {
+        label: string;
+        type?: string;
+        fingerprint?: string;
+        sensitive?: boolean;
+        recipients?: number;
+        length?: number;
+      }) => ({
         label: String(m.label || "").replace(/^@/, ""),
         type: String(m.type || "unknown"),
         fingerprint: m.fingerprint,
+        sensitive: !!m.sensitive,
+        recipients: m.recipients,
+        length: m.length,
       })
     );
   }, [kernelEpoch]);
@@ -203,20 +265,59 @@ export function useNotebook() {
     return chains.map((_, i) => kernelRef.current.getCellStatus(i) as CellStatus);
   }, [chains, kernelEpoch]);
 
+  /** Last successful run's timestamp/duration per cell — drives the status-dot line. */
+  const cellTimings: ({ ranAt: number; durationMs: number } | null)[] = useMemo(() => {
+    void kernelEpoch;
+    return chains.map((_, i) => kernelRef.current.getCellTiming?.(i) ?? null);
+  }, [chains, kernelEpoch]);
+
   const cellOutputs: ArtifactTile[][] = useMemo(() => {
     void kernelEpoch;
     return chains.map((_, i) =>
-      (kernelRef.current.getCellOutputs(i) || []).map(
-        (a: ArtifactTile & { role?: string }) => ({
-          label: a.label,
-          filename: a.filename,
-          content: String(a.content ?? ""),
-          sensitive: !!a.sensitive,
-          role: a.role,
-        })
-      )
+      (kernelRef.current.getCellOutputs(i) || []).map((a: ArtifactTile) => ({
+        label: a.label,
+        filename: a.filename,
+        content: String(a.content ?? ""),
+        sensitive: !!a.sensitive,
+        // Carried through explicitly: this projection copies named fields, so
+        // anything the engine adds is dropped here until it is listed.
+        revealable: !!a.revealable,
+        role: a.role,
+        traits: a.traits,
+        publishedAs: a.publishedAs,
+        directoryUrl: a.directoryUrl,
+        netType: a.netType,
+        netKind: a.netKind,
+        netData: a.netData,
+        // Structured `inspect` body. The engine withholds this for sensitive
+        // tips on purpose (a snapshot would retain raw private JWK fields the
+        // masked text dump does not), so its absence is meaningful, not a gap.
+        inspectSnapshot: a.inspectSnapshot,
+      }))
     );
   }, [chains, kernelEpoch]);
+
+  /**
+   * Publish a key-export output to This site's directory (design v2 §21b).
+   * Only meaningful for `role: "public-key"` tiles. Mutates the kernel-held
+   * artifact tile in place (not local UI state) so `publishedAs`/`directoryUrl`
+   * survive re-renders same as any other cell-output field; cleared on
+   * Clear session same as the rest of `cellOutputs`.
+   */
+  const publishArtifact = useCallback(async (cellIndex: number, outputIndex: number) => {
+    const tile = kernelRef.current.getCellOutputs(cellIndex)?.[outputIndex] as
+      | ArtifactTile
+      | undefined;
+    if (!tile) throw new Error("publishArtifact: unknown output");
+    if (tile.role !== "public-key") {
+      throw new Error("publishArtifact: only public-key exports are publishable");
+    }
+    const { publishArmoredKey } = await import("../lib/toolkit/hkp-ops.js");
+    const { fingerprint, directoryUrl } = await publishArmoredKey(tile.content);
+    tile.publishedAs = fingerprint ? `@${fingerprint.slice(-8)}` : "@pub";
+    tile.directoryUrl = directoryUrl;
+    setKernelEpoch((n) => n + 1);
+  }, []);
 
   const setCellSteps = useCallback((cellIndex: number, nextSteps: RecipeStep[]) => {
     setChains((prev) => {
@@ -463,6 +564,13 @@ export function useNotebook() {
     setFocusedCell(0);
   }, []);
 
+  /** Restore an exact prior title/chains snapshot — used by the one-shot "Undo" after Load. */
+  const restoreNotebook = useCallback((title: string, chains: RecipeChain[]) => {
+    setTitle(title);
+    setChains(chains);
+    setFocusedCell(0);
+  }, []);
+
   const appendPreset = useCallback((id: string) => {
     const p = PRESETS.find((x: { id: string }) => x.id === id);
     if (!p) return;
@@ -578,6 +686,19 @@ export function useNotebook() {
         armoredMessages: ciphertext.trim() ? [ciphertext.trim()] : [],
       };
     }
+    const mnemonics = shareRows.map((s) => s.trim()).filter(Boolean);
+    if (needs.includes("shares") || mnemonics.length) {
+      inputs.shares = {
+        mnemonics,
+        ...(sharePassphrase.trim() ? { passphrase: sharePassphrase } : {}),
+      };
+    }
+    if (needs.includes("envelope") || envelopeArmored.trim()) {
+      inputs.envelope = { armored: envelopeArmored.trim() };
+    }
+    if (needs.includes("keypair") || keypairMaterial.trim()) {
+      inputs.keypair = { value: keypairMaterial.trim() };
+    }
     bindings.inputs = inputs;
     const recs = boundRecipientsRef.current.filter((r) => r?.fingerprint);
     if (recs.length) {
@@ -585,7 +706,17 @@ export function useNotebook() {
       bindings.recipientFingerprints = recs.map((r) => r.fingerprint);
     }
     return bindings;
-  }, [chains, focusedCell, pgpMode, inputText, ciphertext]);
+  }, [
+    chains,
+    focusedCell,
+    pgpMode,
+    inputText,
+    ciphertext,
+    shareRows,
+    sharePassphrase,
+    envelopeArmored,
+    keypairMaterial,
+  ]);
 
   const runFrom = useCallback(
     async (from: number) => {
@@ -600,13 +731,23 @@ export function useNotebook() {
         );
         return;
       }
+      const runnable = chains
+        .map((c, i) => i)
+        .filter((i) => i >= from && (chains[i]?.steps?.length ?? 0) > 0);
       setBusy(true);
       setRunError("");
       setRunStatus("Running…");
+      stopRunRef.current = false;
       try {
         const bindings = buildBindings();
-        for (let i = from; i < chains.length; i++) {
-          if (!chains[i]?.steps?.length) continue;
+        for (let n = 0; n < runnable.length; n++) {
+          if (stopRunRef.current) {
+            setRunStatus("Stopped");
+            return;
+          }
+          const i = runnable[n];
+          setRunProgress({ cell: n + 1, total: runnable.length });
+          setRunningCell(i);
           setRunStatus(`Running cell ${i}…`);
           await kernelRef.current.runCell(i, chains[i], bindings);
         }
@@ -618,22 +759,57 @@ export function useNotebook() {
         setRunStatus("Failed");
       } finally {
         setBusy(false);
+        setRunProgress(null);
+        setRunningCell(null);
       }
     },
     [buildBindings, chains, compiled.validation, readinessBlocker]
   );
+
+  const stopRun = useCallback(() => {
+    stopRunRef.current = true;
+    // A run paused inside quorum.offer/join only unblocks when the exchange dies.
+    window.dispatchEvent(new CustomEvent("basilisk:quorum-cancel"));
+  }, []);
 
   const clearSensitive = useCallback(() => {
     kernelRef.current.clearSensitive?.();
     for (const e of sessionList()) sessionEvict(e.fingerprint);
     setInputText("");
     setCiphertext("");
+    setShareRows([""]);
+    setSharePassphrase("");
+    setEnvelopeArmored("");
     boundRecipientsRef.current = [];
     setSessionTick((n) => n + 1);
     setKernelEpoch((n) => n + 1);
     setRunStatus("Cleared sensitive data");
     setRunError("");
   }, []);
+
+  const updateToolkitPrefs = useCallback((patch: Partial<ToolkitPrefs>) => {
+    setToolkitPrefsState(setToolkitPrefs(patch));
+  }, []);
+
+  // Idle auto-scrub: wipe secrets/inputs/outputs (not the recipe) after N
+  // minutes of no pointer/key activity, matching toolkit-legacy.js's
+  // idleClearMinutes preference.
+  useEffect(() => {
+    const ms = toolkitPrefs.idleClearMinutes > 0 ? toolkitPrefs.idleClearMinutes * 60_000 : 0;
+    if (!ms) return;
+    let timer: number | undefined;
+    const reset = () => {
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => clearSensitive(), ms);
+    };
+    const events: (keyof DocumentEventMap)[] = ["pointerdown", "keydown"];
+    events.forEach((ev) => document.addEventListener(ev, reset));
+    reset();
+    return () => {
+      if (timer != null) window.clearTimeout(timer);
+      events.forEach((ev) => document.removeEventListener(ev, reset));
+    };
+  }, [toolkitPrefs.idleClearMinutes, clearSensitive]);
 
   const resetNotebook = useCallback(() => {
     clearSensitive();
@@ -691,6 +867,30 @@ export function useNotebook() {
     []
   );
 
+  /** Insert/replace `in @label` at the start of the focused cell. */
+  const insertSlotRef = useCallback(
+    (label: string) => {
+      const clean = String(label || "").replace(/^@/, "");
+      if (!clean) return;
+      if (steps[0]?.name === "in") {
+        updateStepParams(0, "ref", `@${clean}`);
+      } else {
+        insertOpAt(0, "in", { params: { ref: `@${clean}` } });
+      }
+    },
+    [steps, updateStepParams, insertOpAt]
+  );
+
+  const clearSlot = useCallback((label: string) => {
+    kernelRef.current.slots.deleteSlot(label);
+    setKernelEpoch((n) => n + 1);
+  }, []);
+
+  const clearAllSlots = useCallback(() => {
+    kernelRef.current.slots.clear();
+    setKernelEpoch((n) => n + 1);
+  }, []);
+
   const filteredOps = useMemo(() => {
     const q = opsFilter.trim().toLowerCase();
     const all = listSteps();
@@ -719,7 +919,7 @@ export function useNotebook() {
   );
 
   const setBoundRecipients = useCallback(
-    (recs: { fingerprint: string; armoredKey: string }[]) => {
+    (recs: ResolvedRecipient[]) => {
       boundRecipientsRef.current = recs;
       setSessionTick((n) => n + 1);
     },
@@ -737,8 +937,18 @@ export function useNotebook() {
     setInputText,
     ciphertext,
     setCiphertext,
+    shareRows,
+    setShareRows,
+    sharePassphrase,
+    setSharePassphrase,
+    envelopeArmored,
+    setEnvelopeArmored,
+    keypairMaterial,
+    setKeypairMaterial,
     pgpMode,
     setPgpMode,
+    sessionEncryptProfile: profileForMode(pgpMode),
+    boundRecipients: boundRecipientsRef.current,
     vaultKeys,
     opsFilter,
     setOpsFilter,
@@ -746,11 +956,18 @@ export function useNotebook() {
     runStatus,
     runError,
     busy,
+    runProgress,
+    stopRun,
+    runningCell,
+    quorumState,
+    cancelQuorum,
     sheet,
     setSheet,
     slotMetas,
     cellStatuses,
+    cellTimings,
     cellOutputs,
+    publishArtifact,
     readinessBlocker,
     unmetForCell,
     unlockedCount,
@@ -770,9 +987,11 @@ export function useNotebook() {
     removeNestStep,
     insertMessaging,
     loadPreset,
+    restoreNotebook,
     appendPreset,
     appendPresetPair,
     applyCellRecipeText,
+    loadRecipeText,
     cellRecipeSource,
     addCell,
     deleteCell,
@@ -784,6 +1003,11 @@ export function useNotebook() {
     unlockKey,
     lockKey,
     insertUnlockCell,
+    insertSlotRef,
+    clearSlot,
+    clearAllSlots,
+    toolkitPrefs,
+    updateToolkitPrefs,
     refreshVault,
     setBoundRecipients,
     cellInputNeeds,

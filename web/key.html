@@ -9,30 +9,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body>
-  <nav>
-    <a class="nav-logo" href="/">
-      <img src="/favicon.png" alt="" width="28" height="28">
-      Basilisk
-    </a>
-    <div class="nav-links">
-      <a class="nav-link" href="/">Search</a>
-      <a class="nav-link" href="/toolkit#encrypt">Encrypt</a>
-      <a class="nav-link" href="/toolkit#decrypt">Decrypt</a>
-      <a class="nav-link" href="/verify">Verify</a>
-      <a class="nav-link" href="/my-keys">My Keys</a>
-      
-      <a class="nav-link" href="/quorum">Quorum</a>
-      <a class="nav-link" href="/toolkit">Toolkit</a>
-      <a class="nav-link" href="/preferences">Preferences</a>
-      <a class="nav-link" href="/stats">Stats</a>
-    </div>
-    <div class="auth-widget" id="auth-widget"></div>
-  </nav>
+  <div id="app"></div>
 
-  <p id="error" class="text-error hidden"></p>
-  <p id="loading" class="muted">Loading key details…</p>
-  <div id="content" class="hidden"></div>
-
-  <script type="module" src="/src/pages/key.js"></script>
+  <script type="module" src="/src/pages/key.tsx"></script>
 </body>
 </html>

@@ -9,33 +9,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body>
-  <nav>
-    <a class="nav-logo" href="/">
-      <img src="/favicon.png" alt="" width="28" height="28">
-      Basilisk
-    </a>
-    <div class="nav-links">
-      <a class="nav-link" href="/">Search</a>
-      <a class="nav-link" href="/toolkit#encrypt">Encrypt</a>
-      <a class="nav-link" href="/toolkit#decrypt">Decrypt</a>
-      <a class="nav-link" href="/verify">Verify</a>
-      <a class="nav-link" href="/my-keys">My Keys</a>
-      <a class="nav-link active" href="/quorum">Quorum</a>
-      <a class="nav-link" href="/toolkit">Toolkit</a>
-      <a class="nav-link" href="/preferences">Preferences</a>
-      <a class="nav-link" href="/stats">Stats</a>
-    </div>
-    <div class="auth-widget" id="auth-widget"></div>
-  </nav>
+  <div id="app"></div>
 
-  <div class="page-header">
-    <h1>Quorum</h1>
-    <p class="muted">Peer-to-peer encrypted meeting over WebRTC data channels. The creator posts a PGP-signed invite proving key possession; joiners mesh only after verifying it. The keyserver relays opaque OpenPGP signaling only — it cannot read SDP or chat. Data-channel keys use ephemeral ECDH (forward secrecy); room IDs are scoped to this hostname.</p>
-  </div>
-
-  <p id="error" class="text-error hidden"></p>
-  <div id="quorum-app"></div>
-
-  <script type="module" src="/src/pages/quorum.js"></script>
+  <script type="module" src="/src/pages/quorum.tsx"></script>
 </body>
 </html>

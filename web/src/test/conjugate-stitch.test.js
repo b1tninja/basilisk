@@ -73,13 +73,13 @@ describe("stitchPresetPair", () => {
       id: "fwd",
       pair: "demo",
       title: "fwd",
-      recipe: "random 16 | to hex | out @ct",
+      recipe: "random 16 | encode hex | out @ct",
     };
     const reverse = {
       id: "rev",
       pair: "demo",
       title: "rev",
-      recipe: "in @ct | from hex | base64url | out @plain",
+      recipe: "in @ct | decode hex | base64url | out @plain",
     };
     const st = stitchPresetPair(forward, reverse);
     expect(st.mode).toBe("as-is");
@@ -92,7 +92,7 @@ describe("stitchPresetPair", () => {
       id: "fwd",
       pair: "slot-demo",
       title: "fwd",
-      recipe: "random 16 | to hex | out @payload",
+      recipe: "random 16 | encode hex | out @payload",
     };
     const reverse = {
       id: "rev",
@@ -125,7 +125,7 @@ describe("stitchPresetPair", () => {
       id: "fwd",
       pair: "need-out",
       title: "fwd",
-      recipe: "random 16 | to hex",
+      recipe: "random 16 | encode hex",
     };
     const reverse = {
       id: "rev",

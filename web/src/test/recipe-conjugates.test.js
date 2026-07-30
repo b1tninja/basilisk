@@ -89,7 +89,7 @@ describe("slot-bridge synthetic pair via kernel", () => {
       id: "fwd",
       pair: "hex-bridge",
       title: "fwd",
-      recipe: "random 16 | to hex | out @payload",
+      recipe: "random 16 | encode hex | out @payload",
     };
     const reverse = {
       id: "rev",

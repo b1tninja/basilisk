@@ -53,7 +53,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - List marker is only `-`. Leading tabs are errors.
 - File paths (`./x.pem`, quoted paths, `file:…`) are reserved — not supported yet.
 - Comments: full-line `# …` (kept inside the current chain).
-- Ops-drawer **shelves**, **collections** (`OP_COLLECTIONS`: AES / RSA / Base64·Base32), and **conjugate rows** (encrypt | decrypt, encode | decode, sign | verify, `pem` | `der`, `to` | `from`) are UI only — friendly tile labels (`pairLabels` / collection `actionLabels`) do not change recipe tokens. Encoding twins canonicalize to `base64.encode` / `base64.decode` (`-d` parse-only); PEM armor uses `pem` ↔ `der`; hex uses CyberChef-style `to hex` / `from hex`. Cipher twins keep `aes-gcm` / `aes-gcm -d`.
+- Ops-drawer **shelves**, **collections** (`OP_COLLECTIONS`: AES / RSA / Base64·Base32), and **conjugate rows** (encrypt | decrypt, encode | decode, sign | verify, `pem` | `der`, `encode` | `decode`) are UI only — friendly tile labels (`pairLabels` / collection `actionLabels`) do not change recipe tokens. Encoding twins canonicalize to `base64.encode` / `base64.decode` (`-d` parse-only); PEM armor uses `pem` ↔ `der`; base alphabets use `encode <alphabet>` / `decode <alphabet>`. Cipher twins keep `aes-gcm` / `aes-gcm -d`.
 
 ## Chains
 
@@ -165,14 +165,14 @@ Each apply stage is `name` then zero or more args:
 | Flag | `aes-gcm -d`, `base64 -d` | Sets the param with `flag: "-d"` to `true` (ciphers + encoding twins) |
 | Encode / decode verb | `base64.encode`, `base64.decode` | Encoding `decodeTwin` steps — serialize as `.encode` / `.decode` (AST still `{ decode }`) |
 | Armor conjugate | `pem`, `der` | Armor / dearmor — not `.encode`/`.decode` twins |
-| Hex conjugate | `to hex`, `from hex` | Bytes ↔ hex text (`to` / `from` + encoding; hex only for now) |
+| Base alphabet conjugate | `encode hex`, `decode base64` | Bytes ↔ text in `hex` / `base64` / `base64url` / `base32` |
 
 Canonical serialize omits redundant `name=` for the primary positional when the
 value is not the registry default (slot names always serialize as `@label`).
 Encoding twins canonicalize to `name.encode` / `name.decode` (not `-d`).
-PEM armor serializes as bare `pem` / `der`; hex as `to hex` / `from hex`.
+PEM armor serializes as bare `pem` / `der`; base alphabets as `encode <alphabet>` / `decode <alphabet>`.
 
-Aliases resolve at parse time only via Upgrade recipe for retired tokens (`paste` → `input`, …). Slot load is **`in @label` / bare `@label`** — `from` is the encoding verb (`from hex`). Basilisk-legacy step tokens (`aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, bare `encrypt`/`decrypt` sugar, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
+Aliases resolve at parse time only via Upgrade recipe for retired tokens (`paste` → `input`, …). Slot load is **`in @label` / bare `@label`**; `from` and `to` were retired in favour of `decode` / `encode`, which removes the ambiguity that made `from base64` unparseable. Basilisk-legacy step tokens (`aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, `to` / `from`, bare `encrypt`/`decrypt` sugar, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
 
 ### ParamSpec (registry)
 
@@ -383,8 +383,8 @@ Live `key` / `keypair` tips are backed by WebCrypto `CryptoKey` handles (artifac
 
 | Tokens | Meaning A | Meaning B |
 |--------|-----------|-----------|
-| `to` | Encoding: `to hex` | Recipients: `gpg.encrypt to=@…` / `to=email:…` |
-| `from` | Encoding: `from hex` | *(retired slot load — use `in` / `@label`)* |
+| `to` | *(retired encoding verb — use `encode <alphabet>`)* | Recipients: `gpg.encrypt to=@…` / `to=email:…` |
+| `from` | *(retired — use `decode <alphabet>`)* | *(retired slot load — use `in` / `@label`)* |
 | `as` | Cast stage: `as master` / `as key` / `as int` | KDF param: `hkdf … as=aes/256` → live `key` tip |
 | `encrypt` / `decrypt` | *(migrator-only sugar)* | Prefer `aes-gcm` / `gpg.encrypt` |
 | `mode=` | Cipher unwrap modes (`wrap`/`unwrap`) | `gpg.symencrypt mode=master\|passphrase` |
@@ -498,7 +498,7 @@ genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private
 | `peek` | Side inspect snapshot; stem unchanged. |
 | `at` | Same as `[n]` / `[n:m]` — share index or slice. |
 | `in` | Source: load a prior `out` slot by `@label` or 1-based index (also written bare as `@label`). |
-| `to` / `from` | Encoding conjugate (`to hex` / `from hex`). |
+| `encode` / `decode` | Base-alphabet conjugate (`encode hex` / `decode base64`). |
 | `out` | Emit a tile, register a slot, pass the value through. After `@x` / `in @x`, bare `out` inherits `@x`. |
 | `as` | Retag refined bytes kind (`master` / `scalar` / `opaque`). |
 | `input` | Free-form text at run time (not a slot). Legacy `paste`/`cat` migrate via Upgrade recipe. |

@@ -2,7 +2,6 @@ import { useState, type DragEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { SuggestChip } from "./SuggestChip";
 import { InsertGap } from "./InsertGap";
-import { SuggestRail, type SuggestRailItem } from "./SuggestRail";
 import { ToolCard, type ToolCardOp } from "./ToolCard";
 import {
   CHIP_REORDER_MIME,
@@ -68,19 +67,9 @@ export type RecipeChipFlowProps = {
   selected?: ChipPath | null;
   /** Gap path waiting for an op from the shelf (click-to-insert focus). */
   activeGap?: ChipPath | null;
-  showNestRails?: boolean;
-  nestRailFor?: (stem: number, branch: number | null) => SuggestRailItem[];
-  nestExpanded?: { stem: number; branch: number | null } | null;
   onSelect: (path: ChipPath) => void;
   onGap: (path: ChipPath) => void;
   onBranchHit: (stem: number, branch: number | null) => void;
-  onNestToggle: (stem: number, branch: number | null) => void;
-  onNestAppend: (
-    stem: number,
-    branch: number | null,
-    name: string,
-    opts?: { decode?: boolean }
-  ) => void;
   onReorder: (from: ChipPath, to: ChipPath) => void;
   onDropStep?: (
     path: ChipPath,
@@ -112,7 +101,7 @@ function PlacedChip({
     <SuggestChip
       label={step.label}
       hint={step.hint}
-      variant="editable"
+      variant="placed"
       selected={selected}
       error={step.error}
       op={
@@ -122,6 +111,7 @@ function PlacedChip({
               shelf: step.op.shelf,
               toolbox: step.op.toolbox,
               name: step.op.name,
+              output: step.op.output,
             }
           : undefined
       }
@@ -142,7 +132,7 @@ function PlacedChip({
         align="start"
         className="max-w-none border-0 bg-transparent p-0 text-left text-[var(--text)] shadow-none"
       >
-        <ToolCard op={step.op} compact hideHint className="w-[280px]" />
+        <ToolCard op={step.op} compact className="w-[280px]" />
       </TooltipContent>
     </Tooltip>
   );
@@ -151,6 +141,7 @@ function PlacedChip({
 function ChipRow({
   steps,
   base,
+  nested = false,
   selected,
   activeGap,
   onSelect,
@@ -161,6 +152,8 @@ function ChipRow({
 }: {
   steps: ChipStepView[];
   base: { cell: number; stem: number; branch?: number | null };
+  /** Nested rows use the 14px caret (design v2 §20f). */
+  nested?: boolean;
   selected?: ChipPath | null;
   activeGap?: ChipPath | null;
   onSelect: (path: ChipPath) => void;
@@ -218,7 +211,8 @@ function ChipRow({
           onDropStep?.(path, parsed.name, { decode });
         }
       },
-      active: dropAt === body || samePath(activeGap, path),
+      active: dropAt === body,
+      pending: samePath(activeGap, path),
     };
   };
 
@@ -227,6 +221,7 @@ function ChipRow({
       <div className="suggest-next-chips cell-recipe-indent-chips flex flex-wrap items-center gap-1">
         <InsertGap
           label="Insert first step"
+          scale={nested ? "nested" : "default"}
           data-cell={base.cell}
           data-gap-stem={base.stem}
           data-gap-branch={base.branch ?? undefined}
@@ -247,28 +242,9 @@ function ChipRow({
         return (
           <span key={pathKey(path)} className="inline-flex flex-wrap items-center gap-1">
             {i > 0 ? (
-              <>
-                <span className="builder-branch-pipe muted" aria-hidden>
-                  |
-                </span>
-                {step.ghostIn ? (
-                  <span
-                    className={cn(
-                      "builder-type-ghost",
-                      step.error && "builder-type-ghost-error"
-                    )}
-                    aria-hidden
-                    title="Piped type"
-                  >
-                    {step.ghostIn}
-                  </span>
-                ) : null}
-                {step.ghostIn ? (
-                  <span className="builder-branch-pipe muted" aria-hidden>
-                    |
-                  </span>
-                ) : null}
-              </>
+              <span className="cell-recipe-chip-sep" aria-hidden title={step.ghostIn || undefined}>
+                ›
+              </span>
             ) : null}
             <PlacedChip
               step={step}
@@ -289,6 +265,7 @@ function ChipRow({
             />
             <InsertGap
               label="Insert step here"
+              scale={nested ? "nested" : "default"}
               data-cell={base.cell}
               data-gap-stem={base.stem}
               data-gap-branch={base.branch ?? undefined}
@@ -302,20 +279,15 @@ function ChipRow({
   );
 }
 
-/** Preview chip pipeline using SuggestChip + InsertGap + SuggestRail. */
+/** Preview chip pipeline using SuggestChip + InsertGap carets (§20f — SuggestRail retired). */
 export function RecipeChipFlow({
   cell,
   stems,
   selected = null,
   activeGap = null,
-  showNestRails = true,
-  nestRailFor,
-  nestExpanded = null,
   onSelect,
   onGap,
   onBranchHit,
-  onNestToggle,
-  onNestAppend,
   onReorder,
   onDropStep,
   onRemove,
@@ -375,7 +347,8 @@ export function RecipeChipFlow({
           onDropStep?.(path, parsed.name, { decode });
         }
       },
-      active: stemDrop === stem || samePath(activeGap, path),
+      active: stemDrop === stem,
+      pending: samePath(activeGap, path),
     };
   };
 
@@ -412,26 +385,13 @@ export function RecipeChipFlow({
     const showPipe = stemContinue || row.length > 1;
     if (showPipe) {
       row.push(
-        <span key={`pipe-${i}`} className="inline-flex items-center gap-1">
-          <span className="builder-branch-pipe muted" aria-hidden>
-            |
-          </span>
-          {stem.step.ghostIn ? (
-            <>
-              <span
-                className={cn(
-                  "builder-type-ghost",
-                  stem.step.error && "builder-type-ghost-error"
-                )}
-                aria-hidden
-              >
-                {stem.step.ghostIn}
-              </span>
-              <span className="builder-branch-pipe muted" aria-hidden>
-                |
-              </span>
-            </>
-          ) : null}
+        <span
+          key={`pipe-${i}`}
+          className="cell-recipe-chip-sep"
+          aria-hidden
+          title={stem.step.ghostIn || undefined}
+        >
+          ›
         </span>
       );
     }
@@ -471,11 +431,6 @@ export function RecipeChipFlow({
     flush();
 
     (stem.branches || []).forEach((br, bi) => {
-      const nestItems = nestRailFor?.(i, bi) || [];
-      const expanded =
-        !!nestExpanded &&
-        nestExpanded.stem === i &&
-        (nestExpanded.branch ?? null) === bi;
       rows.push(
         <div
           key={`br-${i}-${bi}`}
@@ -503,6 +458,7 @@ export function RecipeChipFlow({
           <ChipRow
             steps={br.steps}
             base={{ cell, stem: i, branch: bi }}
+            nested
             selected={selected}
             activeGap={activeGap}
             onSelect={onSelect}
@@ -511,16 +467,6 @@ export function RecipeChipFlow({
             onDropStep={onDropStep}
             onRemove={onRemove}
           />
-          {showNestRails ? (
-            <SuggestRail
-              items={nestItems}
-              expandable
-              expanded={expanded}
-              onToggleExpand={() => onNestToggle(i, bi)}
-              expandLabel={`Add step to ${br.selector}`}
-              onAppend={(name, opts) => onNestAppend(i, bi, name, opts)}
-            />
-          ) : null}
         </div>
       );
     });
@@ -529,11 +475,6 @@ export function RecipeChipFlow({
       (stem.body && stem.body.length) ||
       (!(stem.branches || []).length && stem.hasNest)
     ) {
-      const nestItems = nestRailFor?.(i, null) || [];
-      const expanded =
-        !!nestExpanded &&
-        nestExpanded.stem === i &&
-        (nestExpanded.branch ?? null) === null;
       rows.push(
         <div
           key={`body-${i}`}
@@ -548,6 +489,7 @@ export function RecipeChipFlow({
           <ChipRow
             steps={stem.body || []}
             base={{ cell, stem: i, branch: null }}
+            nested
             selected={selected}
             activeGap={activeGap}
             onSelect={onSelect}
@@ -556,16 +498,6 @@ export function RecipeChipFlow({
             onDropStep={onDropStep}
             onRemove={onRemove}
           />
-          {showNestRails ? (
-            <SuggestRail
-              items={nestItems}
-              expandable
-              expanded={expanded}
-              onToggleExpand={() => onNestToggle(i, null)}
-              expandLabel="Add nest step"
-              onAppend={(name, opts) => onNestAppend(i, null, name, opts)}
-            />
-          ) : null}
         </div>
       );
     }

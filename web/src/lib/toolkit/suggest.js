@@ -13,6 +13,7 @@ import {
   formatType,
   isTerminalSink,
   resolveStepType,
+  tNone,
   walkPipelineTypes,
 } from "./types.js";
 
@@ -266,6 +267,31 @@ export function cellPipelineTip(chains, cellIndex) {
     terminal,
     hasForeach: steps.some((s) => s.name === "foreach"),
   };
+}
+
+/**
+ * Type flowing into a `tee`/`foreach` nest slot at `stemIndex` — the value
+ * just *before* that step runs, not the cell's overall final tip. A `tee`
+ * branch (or `foreach` body) starts from a clone of that value, so this is
+ * the caret fit each nested position should actually use (design v2 §21d).
+ * Real-registry scope note: this repo's only nestable ops are `tee`/`foreach`
+ * (free-form branches/body), not the mockup's fixed-slot `signAndEncrypt`
+ * example — same principle (nest fit ≠ cell fit), applied to the ops that
+ * actually exist here.
+ * @param {Array<{ steps?: RecipeStep[] }>} chains
+ * @param {number} cellIndex
+ * @param {number} stemIndex
+ * @returns {RefinedType}
+ */
+export function nestedTipFor(chains, cellIndex, stemIndex) {
+  /** @type {Map<string, RefinedType>} */
+  const slots = new Map();
+  for (let i = 0; i < cellIndex; i++) {
+    walkPipelineTypes(chains[i]?.steps || [], { getStep }, slots);
+  }
+  const steps = chains[cellIndex]?.steps || [];
+  const { edges } = walkPipelineTypes(steps, { getStep }, slots);
+  return edges[stemIndex]?.input || tNone();
 }
 
 /**

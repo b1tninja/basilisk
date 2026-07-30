@@ -79,6 +79,14 @@ function sampleAttestationB64() {
 /** @type {ReturnType<typeof generateKey> extends Promise<infer T> ? T : never | null} */
 let cachedGpgKey = null;
 
+/**
+ * SPKI of the pair a `keypair` case just generated — set by that case's
+ * `bindings` and read back by its `assert`, so the assertion compares against
+ * the real key rather than a hard-coded fixture.
+ * @type {string}
+ */
+let expectedSpkiHex = "";
+
 async function ensureGpgKey() {
   if (cachedGpgKey) return cachedGpgKey;
   cachedGpgKey = await generateKey({
@@ -173,7 +181,7 @@ function baseCases() {
     // —— sources / I/O ——
     {
       id: "random.default",
-      recipe: "random | to hex | out @r",
+      recipe: "random | encode hex | out @r",
       mode: "run",
       assert: (a) => {
         if (!a.some((x) => /^[0-9a-f]{64}$/.test(String(x.content)))) {
@@ -183,8 +191,174 @@ function baseCases() {
     },
     {
       id: "random.length=16",
-      recipe: "random 16 | to hex | out @r",
+      recipe: "random 16 | encode hex | out @r",
       mode: "run",
+    },
+    {
+      id: "bytes.hex",
+      recipe: "bytes deadbeef | encode hex | out @b",
+      mode: "run",
+      assert: (a) => {
+        if (!a.some((x) => String(x.content).trim() === "deadbeef")) {
+          throw new Error("expected the literal to survive the round trip");
+        }
+      },
+    },
+    {
+      id: "bytes.encoding=hex",
+      // A leading 0x is optional — the same four bytes either way.
+      recipe: "bytes 0xdeadbeef encoding=hex | encode hex | out @b",
+      mode: "run",
+      assert: (a) => {
+        if (!a.some((x) => String(x.content).trim() === "deadbeef")) {
+          throw new Error("expected 0x prefix to be stripped");
+        }
+      },
+    },
+    {
+      id: "bytes.encoding=base64",
+      // Quoted because base64 padding would otherwise read as `key=value`.
+      recipe: 'bytes "aGVsbG8=" encoding=base64 | encode hex | out @b',
+      mode: "run",
+      assert: (a) => {
+        if (!a.some((x) => String(x.content).trim() === "68656c6c6f")) {
+          throw new Error("expected base64 to decode to 'hello'");
+        }
+      },
+    },
+    {
+      id: "bytes.encoding=utf8",
+      recipe: "bytes hello encoding=utf8 | encode hex | out @b",
+      mode: "run",
+      assert: (a) => {
+        if (!a.some((x) => String(x.content).trim() === "68656c6c6f")) {
+          throw new Error("expected utf8 text to encode to 'hello'");
+        }
+      },
+    },
+    // —— keypair (§31c): import an existing pair, the counterpart to genkey ——
+    {
+      id: "keypair.format=jwk",
+      // Exports the pair we just imported and checks the public half comes
+      // back byte-identical, so this really exercises the import rather than
+      // just proving the step does not throw.
+      recipe: "keypair jwk alg=ec/p256 | export spki | encode hex | out @pub",
+      mode: "run",
+      bindings: async () => {
+        const kp = await crypto.subtle.generateKey(
+          { name: "ECDSA", namedCurve: "P-256" },
+          true,
+          ["sign", "verify"]
+        );
+        const spki = new Uint8Array(await crypto.subtle.exportKey("spki", kp.publicKey));
+        expectedSpkiHex = bytesToHex(spki);
+        return {
+          inputs: {
+            keypair: {
+              value: JSON.stringify(await crypto.subtle.exportKey("jwk", kp.privateKey)),
+            },
+          },
+        };
+      },
+      assert: (a) => {
+        if (!a.some((x) => String(x.content).trim() === expectedSpkiHex)) {
+          throw new Error("imported public half did not match the original");
+        }
+      },
+    },
+    {
+      id: "keypair.format=pem",
+      // Both halves together — PKCS#8 alone cannot yield SPKI.
+      recipe: "keypair pem alg=ec/p256 | export spki | encode hex | out @pub",
+      mode: "run",
+      bindings: async () => {
+        const kp = await crypto.subtle.generateKey(
+          { name: "ECDSA", namedCurve: "P-256" },
+          true,
+          ["sign", "verify"]
+        );
+        const armor = async (key, fmt, label) => {
+          const der = new Uint8Array(await crypto.subtle.exportKey(fmt, key));
+          const b64 = bytesToBase64(der).replace(/(.{64})/g, "$1\n");
+          return `-----BEGIN ${label}-----\n${b64}\n-----END ${label}-----`;
+        };
+        expectedSpkiHex = bytesToHex(
+          new Uint8Array(await crypto.subtle.exportKey("spki", kp.publicKey))
+        );
+        return {
+          inputs: {
+            keypair: {
+              value:
+                (await armor(kp.privateKey, "pkcs8", "PRIVATE KEY")) +
+                "\n" +
+                (await armor(kp.publicKey, "spki", "PUBLIC KEY")),
+            },
+          },
+        };
+      },
+      assert: (a) => {
+        if (!a.some((x) => String(x.content).trim() === expectedSpkiHex)) {
+          throw new Error("imported public half did not match the original");
+        }
+      },
+    },
+    // The remaining alg/usage values are compile-only: they are the same enum
+    // `import` already declares, and generating an RSA-4096 pair per value
+    // would dominate the suite's runtime without testing anything the two
+    // runs above do not already cover.
+    ...["ec/p384", "ec/p521", "ed25519", "x25519", "rsa/2048", "rsa/3072", "rsa/4096"].map(
+      (alg) => ({
+        id: `keypair.alg=${alg}`,
+        recipe: `keypair jwk alg=${alg} | out @kp`,
+        mode: /** @type {const} */ ("compile"),
+      })
+    ),
+    ...["auto", "sign", "derive", "encrypt"].map((usage) => ({
+      id: `keypair.usage=${usage}`,
+      recipe: `keypair jwk usage=${usage} | out @kp`,
+      mode: /** @type {const} */ ("compile"),
+    })),
+    // —— to / from: one verb per base encoding, round-tripped ——
+    ...[
+      ["hex", "deadbeef"],
+      ["base64", "3q2+7w=="],
+      ["base64url", "3q2-7w"],
+      ["base32", "32W353Y"],
+    ].flatMap(([enc, expected]) => [
+      {
+        id: `to.encoding=${enc}`,
+        recipe: `bytes deadbeef | to ${enc} | out @e`,
+        mode: /** @type {const} */ ("run"),
+        assert: (a) => {
+          if (!a.some((x) => String(x.content).trim() === expected)) {
+            throw new Error(`to ${enc} should encode deadbeef as ${expected}`);
+          }
+        },
+      },
+      {
+        id: `from.encoding=${enc}`,
+        // Round-trips back to the original bytes, so this tests the decode
+        // rather than merely that the step runs.
+        recipe: `bytes deadbeef | to ${enc} | from ${enc} | encode hex | out @rt`,
+        mode: /** @type {const} */ ("run"),
+        assert: (a) => {
+          if (!a.some((x) => String(x.content).trim() === "deadbeef")) {
+            throw new Error(`from ${enc} did not round-trip`);
+          }
+        },
+      },
+    ]),
+    {
+      // The twin steps and the `to`/`from` spelling are the same operation —
+      // if they ever diverge, this crossing fails.
+      id: "to/from.interop-with-twins",
+      recipe: "bytes deadbeef | base64 | decode base64 | encode hex | out @rt",
+      mode: "run",
+      assert: (a) => {
+        if (!a.some((x) => String(x.content).trim() === "deadbeef")) {
+          throw new Error("base64 twin and `from base64` disagree");
+        }
+      },
     },
     {
       id: "passphrase.diceware",
@@ -198,7 +372,7 @@ function baseCases() {
     },
     {
       id: "input+utf8+text",
-      recipe: "input | utf8 | to hex | text note",
+      recipe: "input | utf8 | encode hex | text note",
       mode: "run",
       bindings: { inputs: { text: { value: "hi" } } },
     },
@@ -239,7 +413,7 @@ function baseCases() {
     {
       id: "encoding.roundtrip",
       recipe:
-        "random 24 | base64 | base64.decode | base64url | base64url.decode | to hex | from hex | base32 | base32.decode | to hex | out @x",
+        "random 24 | base64 | base64.decode | base64url | base64url.decode | encode hex | decode hex | base32 | base32.decode | encode hex | out @x",
       mode: "run",
     },
     {
@@ -277,32 +451,32 @@ genkey aes/192 | out @k192
 
 genkey aes/256 | out @k256
 
-"sized" | utf8 | aes-gcm keyBits=192 key=@k192 | to hex | out @ct192
+"sized" | utf8 | aes-gcm keyBits=192 key=@k192 | encode hex | out @ct192
 
-"sized" | utf8 | aes-128-gcm key=@k128 | to hex | out @ct128
+"sized" | utf8 | aes-128-gcm key=@k128 | encode hex | out @ct128
 
-"sized" | utf8 | aes-256-gcm key=@k256 | to hex | out @ct256
+"sized" | utf8 | aes-256-gcm key=@k256 | encode hex | out @ct256
 
-"sized" | utf8 | aes-128-cbc key=@k128 | to hex | out @cbc
+"sized" | utf8 | aes-128-cbc key=@k128 | encode hex | out @cbc
 
-"sized" | utf8 | aes-256-cbc key=@k256 | to hex | out @cbc256
+"sized" | utf8 | aes-256-cbc key=@k256 | encode hex | out @cbc256
 
-"sized" | utf8 | aes-256-ctr key=@k256 | to hex | out @ctr
+"sized" | utf8 | aes-256-ctr key=@k256 | encode hex | out @ctr
 
-"sized" | utf8 | aes-cbc keyBits=192 key=@k192 | to hex | out @cbc192
+"sized" | utf8 | aes-cbc keyBits=192 key=@k192 | encode hex | out @cbc192
 
-"sized" | utf8 | aes-ctr keyBits=128 key=@k128 | to hex | out @ctr128
+"sized" | utf8 | aes-ctr keyBits=128 key=@k128 | encode hex | out @ctr128
 
-"sized" | utf8 | aes-ctr keyBits=192 key=@k192 | to hex | out @ctr192`,
+"sized" | utf8 | aes-ctr keyBits=192 key=@k192 | encode hex | out @ctr192`,
       mode: "run",
     },
     {
       id: "rsa-oaep.hash-forms",
       recipe: `genkey rsa/2048 usage=encrypt hash=sha-256 | out @rk256
 
-"oaep" | utf8 | RSA/ECB/OAEPWithSHA-256AndMGF1Padding key=@rk256 | to hex | out @ct256
+"oaep" | utf8 | RSA/ECB/OAEPWithSHA-256AndMGF1Padding key=@rk256 | encode hex | out @ct256
 
-in @ct256 | from hex | RSA/ECB/OAEPWithSHA-256AndMGF1Padding -d key=@rk256 | utf8 | out @pt`,
+in @ct256 | decode hex | RSA/ECB/OAEPWithSHA-256AndMGF1Padding -d key=@rk256 | utf8 | out @pt`,
       mode: "run",
       timeoutMs: 60_000,
     },
@@ -337,25 +511,25 @@ genkey ec/p256 | :public | export spki | pem label="PUBLIC KEY" | out @pub`,
     // —— webcrypto core ——
     {
       id: "digest.sha-256",
-      recipe: "input | utf8 | digest sha-256 | to hex | out @d256",
+      recipe: "input | utf8 | digest sha-256 | encode hex | out @d256",
       mode: "run",
       bindings: { inputs: { text: { value: "digest" } } },
     },
     {
       id: "digest.sha-384",
-      recipe: "input | utf8 | digest alg=sha-384 | to hex | out @d384",
+      recipe: "input | utf8 | digest alg=sha-384 | encode hex | out @d384",
       mode: "run",
       bindings: { inputs: { text: { value: "digest" } } },
     },
     {
       id: "digest.sha-512",
-      recipe: "input | utf8 | digest alg=sha-512 | to hex | out @d512",
+      recipe: "input | utf8 | digest alg=sha-512 | encode hex | out @d512",
       mode: "run",
       bindings: { inputs: { text: { value: "digest" } } },
     },
     {
       id: "digest.sha-1",
-      recipe: "input | utf8 | digest alg=sha-1 | to hex | out @d1",
+      recipe: "input | utf8 | digest alg=sha-1 | encode hex | out @d1",
       mode: "run",
       bindings: { inputs: { text: { value: "digest" } } },
     },
@@ -387,9 +561,9 @@ in @msg | verify -q key=@kp signature=@sig | out @result`,
 
 genkey aes/256 | out @cek
 
-"hi" | utf8 | aes-gcm key=@cek aad=@aad | to hex | out @ct
+"hi" | utf8 | aes-gcm key=@cek aad=@aad | encode hex | out @ct
 
-in @ct | from hex | aes-gcm -d key=@cek aad=@aad | utf8 | out @pt`,
+in @ct | decode hex | aes-gcm -d key=@cek aad=@aad | utf8 | out @pt`,
       mode: "run",
     },
     {
@@ -400,6 +574,29 @@ in @ct | from hex | aes-gcm -d key=@cek aad=@aad | utf8 | out @pt`,
 
 in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8 | out @pt`,
       mode: "run",
+      timeoutMs: 60_000,
+    },
+    {
+      id: "gpg.symencrypt.profile-custom",
+      recipe:
+        "input | gpg.symencrypt mode=master name=env profile=custom cipher=aes128 aead=off s2k=iterated compression=zlib | out @env",
+      mode: "run",
+      bindings: { inputs: { text: { value: "sym-profile" } } },
+      timeoutMs: 60_000,
+    },
+    {
+      id: "gpg.symencrypt.profile-modern",
+      recipe:
+        "input | gpg.symencrypt mode=master name=env profile=modern cipher=aes192 aead=gcm compression=zip | out @env",
+      mode: "run",
+      bindings: { inputs: { text: { value: "sym-profile" } } },
+      timeoutMs: 60_000,
+    },
+    {
+      id: "gpg.symencrypt.profile-compatible",
+      recipe: "input | gpg.symencrypt mode=master name=env profile=compatible aead=eax | out @env",
+      mode: "run",
+      bindings: { inputs: { text: { value: "sym-profile" } } },
       timeoutMs: 60_000,
     },
     {
@@ -418,9 +615,9 @@ in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8 | out @pt`,
       id: "aes-gcm.roundtrip",
       recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aes-gcm key=@cek | to hex | out @ct
+input | utf8 | aes-gcm key=@cek | encode hex | out @ct
 
-in @ct | from hex | aes-gcm -d key=@cek | utf8 | out @pt`,
+in @ct | decode hex | aes-gcm -d key=@cek | utf8 | out @pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "gcm" } } },
     },
@@ -428,9 +625,9 @@ in @ct | from hex | aes-gcm -d key=@cek | utf8 | out @pt`,
       id: "aes-gcm.tagLength=96",
       recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aes-gcm key=@cek tagLength=96 | to hex | out @ct
+input | utf8 | aes-gcm key=@cek tagLength=96 | encode hex | out @ct
 
-in @ct | from hex | aes-gcm -d key=@cek tagLength=96 | utf8 | out @pt`,
+in @ct | decode hex | aes-gcm -d key=@cek tagLength=96 | utf8 | out @pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "gcm96" } } },
     },
@@ -479,9 +676,9 @@ in @msg | verify key=@kp signature=@sig hash=sha-512 | out @ok`,
       id: "aes-cbc.roundtrip",
       recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aes-cbc key=@cek | to hex | out @ct
+input | utf8 | aes-cbc key=@cek | encode hex | out @ct
 
-in @ct | from hex | aes-cbc -d key=@cek | utf8 | out @pt`,
+in @ct | decode hex | aes-cbc -d key=@cek | utf8 | out @pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "cbc" } } },
     },
@@ -489,9 +686,9 @@ in @ct | from hex | aes-cbc -d key=@cek | utf8 | out @pt`,
       id: "aes-ctr.roundtrip",
       recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aes-ctr key=@cek length=64 | to hex | out @ct
+input | utf8 | aes-ctr key=@cek length=64 | encode hex | out @ct
 
-in @ct | from hex | aes-ctr -d key=@cek length=64 | utf8 | out @pt`,
+in @ct | decode hex | aes-ctr -d key=@cek length=64 | utf8 | out @pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "ctr" } } },
     },
@@ -499,9 +696,9 @@ in @ct | from hex | aes-ctr -d key=@cek length=64 | utf8 | out @pt`,
       id: "rsa-oaep.roundtrip",
       recipe: `genkey rsa/2048 usage=encrypt | out @rk
 
-input | utf8 | rsa-oaep key=@rk | to hex | out @ct
+input | utf8 | rsa-oaep key=@rk | encode hex | out @ct
 
-in @ct | from hex | rsa-oaep -d key=@rk | utf8 | out @pt`,
+in @ct | decode hex | rsa-oaep -d key=@rk | utf8 | out @pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "oaep" } } },
       timeoutMs: 60_000,
@@ -510,29 +707,29 @@ in @ct | from hex | rsa-oaep -d key=@rk | utf8 | out @pt`,
       id: "rsa-pkcs1.roundtrip",
       recipe: `genkey rsa/2048 usage=encrypt | out @rk
 
-input | utf8 | rsa-pkcs1 key=@rk | to hex | out @ct
+input | utf8 | rsa-pkcs1 key=@rk | encode hex | out @ct
 
-in @ct | from hex | rsa-pkcs1 -d key=@rk | utf8 | out @pt`,
+in @ct | decode hex | rsa-pkcs1 -d key=@rk | utf8 | out @pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "pkcs1" } } },
       timeoutMs: 60_000,
     },
     {
       id: "hkdf.bytes+hash",
-      recipe: `random 32 | hkdf 32 hash=sha-256 salt=s info=i | to hex | out @a
+      recipe: `random 32 | hkdf 32 hash=sha-256 salt=s info=i | encode hex | out @a
 
-random 32 | hkdf 32 hash=sha-384 | to hex | out @b
+random 32 | hkdf 32 hash=sha-384 | encode hex | out @b
 
-random 32 | hkdf 32 hash=sha-512 | to hex | out @c`,
+random 32 | hkdf 32 hash=sha-512 | encode hex | out @c`,
       mode: "run",
     },
     {
       id: "pbkdf2.bytes+hash",
-      recipe: `passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-256 | to hex | out @a
+      recipe: `passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-256 | encode hex | out @a
 
-passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-384 | to hex | out @b
+passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-384 | encode hex | out @b
 
-passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-512 | to hex | out @c`,
+passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-512 | encode hex | out @c`,
       mode: "run",
       timeoutMs: 60_000,
     },
@@ -542,7 +739,7 @@ passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-512 | to hex
 
 genkey x25519 | :public | out @peer
 
-ecdh private=@local peer=@peer | to hex | out @shared`,
+ecdh private=@local peer=@peer | encode hex | out @shared`,
       mode: "run",
       timeoutMs: 30_000,
     },
@@ -619,12 +816,12 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
     },
     {
       id: "export.raw.aes",
-      recipe: "genkey aes/256 | export raw | to hex | out @raw",
+      recipe: "genkey aes/256 | export raw | encode hex | out @raw",
       mode: "run",
     },
     {
       id: "export.d.alias",
-      recipe: "genkey ec/p256 | export scalar | to hex | out @d",
+      recipe: "genkey ec/p256 | export scalar | encode hex | out @d",
       mode: "run",
     },
     {
@@ -688,7 +885,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach :items
   - :private | inspect format=hex
 | peek keypair format=meta | export pkcs8 | pem | out @private
 
-in @private | der | as opaque | to hex | out @hex
+in @private | der | as opaque | encode hex | out @hex
 
 genkey ec/p256 | :public | export spki | pem | out @pub2`,
       mode: "run",
@@ -727,11 +924,11 @@ genkey ec/p256 | :public | export spki | pem | out @pub2`,
     },
     {
       id: "as.casts",
-      recipe: `random 32 | as master | to hex | out @m
+      recipe: `random 32 | as master | encode hex | out @m
 
-random 32 | as scalar | to hex | out @s
+random 32 | as scalar | encode hex | out @s
 
-random 32 | as opaque | to hex | out @o
+random 32 | as opaque | encode hex | out @o
 
 genkey ec/p256 | :public | export spki | as public | pem | out @pubpem
 
@@ -804,6 +1001,29 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
     {
       id: "gpg.encrypt.sign",
       recipe: "input | utf8 | gpg.encrypt -s policy=all | out @ct",
+      mode: "run",
+      bindings: gpgBindings,
+      timeoutMs: 60_000,
+    },
+    {
+      id: "gpg.encrypt.profile-custom",
+      recipe:
+        "input | utf8 | gpg.encrypt policy=one profile=custom cipher=aes128 aead=off s2k=iterated compression=zlib | out @ct",
+      mode: "run",
+      bindings: gpgBindings,
+      timeoutMs: 60_000,
+    },
+    {
+      id: "gpg.encrypt.profile-modern",
+      recipe:
+        "input | utf8 | gpg.encrypt policy=one profile=modern cipher=aes192 aead=gcm compression=zip | out @ct",
+      mode: "run",
+      bindings: gpgBindings,
+      timeoutMs: 60_000,
+    },
+    {
+      id: "gpg.encrypt.profile-compatible",
+      recipe: "input | utf8 | gpg.encrypt policy=one profile=compatible aead=eax | out @ct",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
@@ -985,7 +1205,7 @@ in @a | recipients.merge with=@b | out @merged`,
     {
       id: "webauthn.create",
       // Tip without `out` so the engine auto-emits a tile for asserts.
-      recipe: "webauthn.create user=verb-smoke | to hex",
+      recipe: "webauthn.create user=verb-smoke | encode hex",
       mode: "run",
       assert: (arts) => {
         if (!arts.some((a) => /^[0-9a-f]{64}$/.test(String(a.content || "")))) {
@@ -1008,7 +1228,7 @@ in @a | recipients.merge with=@b | out @merged`,
     },
     {
       id: "webauthn.prf",
-      recipe: "webauthn.prf | to hex",
+      recipe: "webauthn.prf | encode hex",
       mode: "run",
       setup: async () => {
         // Ensure prf-meta exists (create may not have run yet if tests reorder).
@@ -1034,6 +1254,125 @@ in @att | webauthn.mds | out @mds`,
       recipe: `input | webauthn.mds ${ZERO_AAGUID} | out @mds0`,
       mode: "run",
       bindings: { inputs: { text: { value: "{}" } } },
+    },
+
+    // ── Quorum toolbox (§21a) — rtc.ice is pure config and runs for real;
+    // stun.check / quorum.* need WebRTC + live peers, so compile-only here.
+    {
+      id: "rtc.ice.defaults",
+      recipe: "rtc.ice | out @ice",
+      mode: "run",
+      assert: (arts) => {
+        const body = arts.map((a) => String(a.content || "")).join("\n");
+        const json = JSON.parse(body.slice(body.indexOf("{")));
+        if (!Array.isArray(json.iceServers) || json.iceServers.length < 2) {
+          throw new Error("expected default STUN servers from rtc.ice");
+        }
+        if (!json.iceServers.every((s) => /^stuns?:/.test(String(s.urls)))) {
+          throw new Error("default rtc.ice must be stun-only");
+        }
+      },
+    },
+    {
+      id: "rtc.ice.turn",
+      recipe: `passphrase | out @cred
+
+rtc.ice stun=stun:stun.example.org:3478 turn=turn:relay.example.org:3478 username=u credential=@cred | out @ice`,
+      mode: "run",
+      assert: (arts) => {
+        const body = arts.map((a) => String(a.content || "")).join("\n");
+        const json = JSON.parse(body.slice(body.indexOf("{")));
+        const turn = json.iceServers.find((s) => /^turns?:/.test(String(s.urls)));
+        if (!turn || turn.username !== "u" || !turn.credential) {
+          throw new Error("expected TURN entry with a resolved credential from rtc.ice");
+        }
+        if (turn.credential === "@cred") {
+          throw new Error("rtc.ice credential=@slot was not resolved to its slot value");
+        }
+      },
+    },
+    {
+      id: "stun.check.compile",
+      recipe: "stun.check stun:stun.example.org:3478 timeout=1000 | out @nat",
+      mode: "compile",
+      skipReason: "needs RTCPeerConnection (main-thread browser only)",
+    },
+    {
+      id: "quorum.exchange.compile",
+      recipe: `gpg.genkey email="quorum-smoke@example.com" | out @me
+
+quorum.offer to="${"A".repeat(40)},${"B".repeat(40)}" key=@me wait=5000 | out @session
+
+quorum.recv wait=5000 | quorum.close | out @last`,
+      mode: "compile",
+      skipReason: "needs WebRTC mesh + a live peer",
+    },
+    {
+      id: "quorum.join.send.compile",
+      recipe: `gpg.genkey email="quorum-smoke@example.com" | out @me
+
+quorum.join to="${"A".repeat(40)},${"B".repeat(40)}" key=@me | out @session
+
+input | quorum.send | out @sent`,
+      mode: "compile",
+      skipReason: "needs WebRTC mesh + a live peer",
+    },
+
+    // ── WebRTC primitives (§23a/23b/29a/29d/30d) — every one needs a real
+    // RTCPeerConnection (and several a live exchange), so all compile-only.
+    {
+      id: "rtc.gatherCandidates.compile",
+      recipe: `rtc.ice | out @ice
+
+rtc.gatherCandidates ice=@ice timeout=3000 | out @cands`,
+      mode: "compile",
+      skipReason: "needs RTCPeerConnection (main-thread browser only)",
+    },
+    {
+      id: "rtc.checkConnectivity.compile",
+      recipe: "rtc.checkConnectivity | out @pairs",
+      mode: "compile",
+      skipReason: "needs a live WebRTC exchange with a peer",
+    },
+    {
+      id: "rtc.certificate.ecdsa.compile",
+      recipe: "rtc.certificate ecdsa | out @id",
+      mode: "compile",
+      skipReason: "needs RTCPeerConnection.generateCertificate",
+    },
+    {
+      id: "rtc.certificate.rsa.compile",
+      recipe: "rtc.certificate rsa | out @id",
+      mode: "compile",
+      skipReason: "needs RTCPeerConnection.generateCertificate",
+    },
+    {
+      id: "rtc.createOffer.answer.compile",
+      recipe: `rtc.ice | out @ice
+
+rtc.createOffer ice=@ice label=basilisk | out @offer
+
+in @offer | rtc.createAnswer ice=@ice | out @answer`,
+      mode: "compile",
+      skipReason: "needs RTCPeerConnection (main-thread browser only)",
+    },
+    {
+      id: "rtc.connectionState.compile",
+      recipe: "rtc.connectionState | out @state",
+      mode: "compile",
+      skipReason: "needs a live WebRTC exchange",
+    },
+    {
+      id: "rtc.dataChannelStats.compile",
+      recipe: "rtc.dataChannelStats | out @bp",
+      mode: "compile",
+      skipReason: "needs a live WebRTC exchange",
+    },
+    {
+      id: "rtc.statsReport.compile",
+      recipe: "rtc.statsReport | out @quality",
+      mode: "compile",
+      skipReason: "needs a live WebRTC exchange",
     },
   ];
 
@@ -1144,7 +1483,7 @@ ecdh private=@local peer=@peer as=${as} | export jwk | out @k`,
 
 genkey x25519 | :public | out @peer
 
-ecdh private=@local peer=@peer as=bytes | to hex | out @shared`,
+ecdh private=@local peer=@peer as=bytes | encode hex | out @shared`,
         mode: "run",
       });
       continue;
@@ -1205,9 +1544,9 @@ function gcmTagMatrix() {
       id: `aes-gcm.tagLength=${tag}`,
       recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aes-gcm key=@cek tagLength=${tag} | to hex | out @ct
+input | utf8 | aes-gcm key=@cek tagLength=${tag} | encode hex | out @ct
 
-in @ct | from hex | aes-gcm -d key=@cek tagLength=${tag} | utf8 | out @pt`,
+in @ct | decode hex | aes-gcm -d key=@cek tagLength=${tag} | utf8 | out @pt`,
       mode: "run",
       bindings: { inputs: { text: { value: `tag${tag}` } } },
     });
@@ -1388,12 +1727,12 @@ function miscParamMatrix() {
     },
     {
       id: "peek.format=auto",
-      recipe: "random 8 | peek x format=auto | to hex | out @h",
+      recipe: "random 8 | peek x format=auto | encode hex | out @h",
       mode: "run",
     },
     {
       id: "peek.format=hex",
-      recipe: "random 8 | peek x format=hex | to hex | out @h",
+      recipe: "random 8 | peek x format=hex | encode hex | out @h",
       mode: "run",
     },
     {
@@ -1404,7 +1743,7 @@ function miscParamMatrix() {
     },
     {
       id: "peek.format=hexdump",
-      recipe: "random 8 | peek x format=hexdump | to hex | out @h",
+      recipe: "random 8 | peek x format=hexdump | encode hex | out @h",
       mode: "run",
     },
     {

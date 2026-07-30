@@ -1,11 +1,9 @@
 import { decryptKey, readPrivateKey } from "openpgp";
-import { Auth } from "../lib/auth.js";
 import {
   keyHitHtml,
   keyPillExtrasHtml,
   primaryUidLabel,
 } from "../lib/key-hit.js";
-import { zeroKeyMaterial } from "../lib/pgp/memory.js";
 import { normalizeFingerprintInput, normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
 import { DEFAULT_ICE_SERVERS, QuorumSession } from "../lib/quorum/rtc.js";
 import {
@@ -29,15 +27,18 @@ import {
   escapeHtml,
   fetchJson,
   formatFingerprint,
-  showError,
   wireCopyButtons,
 } from "../lib/utils.js";
-import "../css/site.css";
-
-Auth.initWidget(document.getElementById("auth-widget"), "/quorum");
-
-const errorEl = document.getElementById("error");
-const app = document.getElementById("quorum-app");
+/**
+ * Mount the Quorum room UI (WebRTC signaling + audience management) into `container`.
+ * Returns a cleanup function that stops any active session.
+ * @param {HTMLElement} container
+ * @param {{ onError?: (msg: string) => void }} [opts]
+ * @returns {() => void}
+ */
+export function mountQuorum(container, opts = {}) {
+  const app = container;
+  const onErrorCb = opts.onError || (() => {});
 
 /**
  * @typedef {{ fingerprint: string, label: string, userLabel?: string, keyExpiration?: string|null, keyId?: string, self?: boolean }} AudienceEntry
@@ -149,7 +150,7 @@ function render() {
 }
 
 async function refreshVaultSelect() {
-  const sel = document.getElementById("vault-key-select");
+  const sel = app.querySelector("#vault-key-select");
   if (!(sel instanceof HTMLSelectElement)) return;
   try {
     const keys = await vaultListKeys();
@@ -172,7 +173,7 @@ async function refreshVaultSelect() {
 }
 
 function renderAudiencePills() {
-  const el = document.getElementById("audience-pills");
+  const el = app.querySelector("#audience-pills");
   if (!el) return;
   const sorted = sortByTrust(audience);
   el.innerHTML = sorted
@@ -206,9 +207,9 @@ function renderAudiencePills() {
 }
 
 async function updateDerivedRoom() {
-  const el = document.getElementById("derived-room");
-  const copyRoom = document.getElementById("copy-room-btn");
-  const copyAud = document.getElementById("copy-audience-btn");
+  const el = app.querySelector("#derived-room");
+  const copyRoom = app.querySelector("#copy-room-btn");
+  const copyAud = app.querySelector("#copy-audience-btn");
   if (!el) return;
   if (audience.length < 2) {
     el.textContent = "Room ID: — (need at least two fingerprints)";
@@ -241,7 +242,7 @@ async function updateDerivedRoom() {
 }
 
 function renderDropdown(results, warning = "") {
-  const el = document.getElementById("audience-dropdown");
+  const el = app.querySelector("#audience-dropdown");
   if (!el) return;
   const rows = sortByTrust(results || []);
   if (!rows.length) {
@@ -275,7 +276,7 @@ function renderDropdown(results, warning = "") {
 }
 
 function renderRoster(peers) {
-  const el = document.getElementById("roster");
+  const el = app.querySelector("#roster");
   if (!el) return;
   if (!peers || peers.size === 0) {
     el.innerHTML = `<p class="muted fs-sm">No remote peers yet.</p>`;
@@ -308,7 +309,7 @@ function renderRoster(peers) {
 }
 
 function renderChat() {
-  const el = document.getElementById("chat-log");
+  const el = app.querySelector("#chat-log");
   if (!el) return;
   el.innerHTML = chatLog
     .map((m) => {
@@ -323,7 +324,7 @@ function renderChat() {
 }
 
 function parseIceServers() {
-  const ta = document.getElementById("ice-servers");
+  const ta = app.querySelector("#ice-servers");
   const lines = String(ta?.value || "")
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -333,9 +334,9 @@ function parseIceServers() {
 }
 
 async function resolvePrivateKey() {
-  const sel = document.getElementById("vault-key-select");
+  const sel = app.querySelector("#vault-key-select");
   const vaultFpr = sel instanceof HTMLSelectElement ? sel.value : "";
-  const pass = document.getElementById("passphrase")?.value || "";
+  const pass = app.querySelector("#passphrase")?.value || "";
   if (vaultFpr) {
     const keys = await vaultListKeys();
     const meta = keys.find((k) => k.fingerprint === vaultFpr);
@@ -358,7 +359,7 @@ async function resolvePrivateKey() {
       }
     }
   }
-  const armored = document.getElementById("private-key")?.value || "";
+  const armored = app.querySelector("#private-key")?.value || "";
   if (!armored.includes("BEGIN PGP")) {
     throw new Error("Unlock a vault key or paste a private key");
   }
@@ -375,7 +376,7 @@ async function resolvePrivateKey() {
 /** Clear private-key / passphrase DOM after leave (memory-safety.js rule 5). */
 function clearSensitiveQuorumFields() {
   for (const id of ["private-key", "passphrase"]) {
-    const el = document.getElementById(id);
+    const el = app.querySelector("#" + id);
     if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
       el.value = "";
     }
@@ -383,9 +384,9 @@ function clearSensitiveQuorumFields() {
 }
 
 function setSessionUi(active) {
-  const leave = document.getElementById("leave-btn");
-  const chatIn = document.getElementById("chat-input");
-  const chatBtn = document.getElementById("chat-send-btn");
+  const leave = app.querySelector("#leave-btn");
+  const chatIn = app.querySelector("#chat-input");
+  const chatBtn = app.querySelector("#chat-send-btn");
   if (leave instanceof HTMLButtonElement) leave.disabled = !active;
   if (chatIn instanceof HTMLInputElement) chatIn.disabled = !active;
   if (chatBtn instanceof HTMLButtonElement) chatBtn.disabled = !active;
@@ -425,7 +426,7 @@ function ensureSelfInAudienceList(fingerprint) {
  * @param {{ key: import("openpgp").PrivateKey, fingerprint: string }} [identity]
  */
 async function startSession(roomId, audienceFprs, role, identity) {
-  showError(errorEl, "");
+  onErrorCb("");
   if (session) {
     session.stop();
     session = null;
@@ -454,12 +455,12 @@ async function startSession(roomId, audienceFprs, role, identity) {
       renderChat();
     },
     onStatus: (s) => {
-      const el = document.getElementById("session-status");
+      const el = app.querySelector("#session-status");
       if (el) el.textContent = s;
     },
     onError: (err) => {
       console.warn("Quorum:", err);
-      const el = document.getElementById("session-status");
+      const el = app.querySelector("#session-status");
       if (el) el.textContent = `Warning: ${err.message || err}`;
     },
   });
@@ -560,7 +561,7 @@ function wireEvents() {
         keyId: pick.dataset.keyId || "",
       });
       renderDropdown([]);
-      const search = document.getElementById("audience-search");
+      const search = app.querySelector("#audience-search");
       if (search instanceof HTMLInputElement) search.value = "";
       return;
     }
@@ -577,7 +578,7 @@ function wireEvents() {
 
     if (t.id === "copy-room-btn" || t.id === "copy-audience-btn") {
       // Handled by wireCopyButtons via data-copy; keep a status hint.
-      const st = document.getElementById("session-status");
+      const st = app.querySelector("#session-status");
       if (st && t.getAttribute("data-copy")) {
         st.textContent =
           t.id === "copy-audience-btn" ? "Audience copied" : "Room ID copied";
@@ -587,7 +588,7 @@ function wireEvents() {
 
     if (t.id === "create-join-btn") {
       try {
-        showError(errorEl, "");
+        onErrorCb("");
         const identity = await resolvePrivateKey();
         ensureSelfInAudienceList(identity.fingerprint);
         const fprs = requireSelfInAudience(
@@ -600,23 +601,23 @@ function wireEvents() {
         const roomId = await deriveRoomId(fprs);
         await startSession(roomId, fprs, "creator", identity);
       } catch (err) {
-        showError(errorEl, err.message || String(err));
+        onErrorCb(err.message || String(err));
       }
       return;
     }
 
     if (t.id === "join-btn") {
       try {
-        showError(errorEl, "");
+        onErrorCb("");
         const roomId = String(
-          document.getElementById("join-room-id")?.value || ""
+          app.querySelector("#join-room-id")?.value || ""
         )
           .trim()
           .toUpperCase();
         if (!isValidRoomId(roomId)) throw new Error("Invalid room ID");
         const identity = await resolvePrivateKey();
         const lines = String(
-          document.getElementById("join-audience")?.value || ""
+          app.querySelector("#join-audience")?.value || ""
         ).split(/\r?\n/);
         const fprs = lines
           .map((l) => normalizeFingerprintInput(l))
@@ -633,7 +634,7 @@ function wireEvents() {
         }
         await startSession(roomId, audienceWithSelf, "joiner", identity);
       } catch (err) {
-        showError(errorEl, err.message || String(err));
+        onErrorCb(err.message || String(err));
       }
       return;
     }
@@ -644,13 +645,13 @@ function wireEvents() {
       clearSensitiveQuorumFields();
       setSessionUi(false);
       renderRoster(new Map());
-      const st = document.getElementById("session-status");
+      const st = app.querySelector("#session-status");
       if (st) st.textContent = "Left room";
       return;
     }
 
     if (t.id === "chat-send-btn") {
-      const input = document.getElementById("chat-input");
+      const input = app.querySelector("#chat-input");
       const text = input instanceof HTMLInputElement ? input.value.trim() : "";
       if (!text || !session) return;
       try {
@@ -664,7 +665,7 @@ function wireEvents() {
         renderChat();
         if (input instanceof HTMLInputElement) input.value = "";
       } catch (err) {
-        showError(errorEl, err.message || String(err));
+        onErrorCb(err.message || String(err));
       }
     }
   });
@@ -674,10 +675,17 @@ function wireEvents() {
     const t = e.target;
     if (t instanceof HTMLInputElement && t.id === "chat-input") {
       e.preventDefault();
-      document.getElementById("chat-send-btn")?.click();
+      app.querySelector("#chat-send-btn")?.click();
     }
   });
 }
 
-render();
-wireCopyButtons();
+  render();
+  wireCopyButtons();
+
+  return () => {
+    session?.stop();
+    session = null;
+  };
+}
+

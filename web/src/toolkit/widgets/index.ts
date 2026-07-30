@@ -1,16 +1,9 @@
-export { Glyph, glyphIdFor } from "./Glyph";
-export { ToolCard, type ToolCardOp } from "./ToolCard";
+export { Glyph, glyphIdFor, ToolboxDot, toolboxColorFor } from "./Glyph";
+export { ToolCard, DocsFooter, type ToolCardOp } from "./ToolCard";
 export { OpsTile, type OpsTileOp } from "./OpsTile";
 export { OpsShelf, type OpsShelfOp } from "./OpsShelf";
 export { SuggestChip, type SuggestChipVariant } from "./SuggestChip";
 export { InsertGap } from "./InsertGap";
-export {
-  SuggestRail,
-  type SuggestRailItem,
-  type SuggestRailToolbox,
-  type SuggestRailChip,
-  type SuggestComposeChip,
-} from "./SuggestRail";
 export {
   RecipeChipFlow,
   type RecipeChipFlowProps,
@@ -20,9 +13,18 @@ export {
   type ChipBranchView,
 } from "./RecipeChipFlow";
 export { ParamField, ParamFieldGroup, type ParamSpec } from "./ParamField";
+export { CryptoProfileControl, type CryptoProfileValue } from "./CryptoProfileControl";
 export { ModeToggle, type ModeOption } from "./ModeToggle";
 export { MenuPopover, type MenuPopoverItem } from "./MenuPopover";
 export { PresetMenu, type PresetMenuItem } from "./PresetMenu";
+export { RunBar, type RunBarState } from "./RunBar";
+export { TopBar, type SuiteTone, type SuiteDetail } from "./TopBar";
+export { ReadinessBar, type ReadinessBlocker } from "./ReadinessBar";
+export { OutputList, type OutputArtifact } from "./OutputList";
+export { NetworkArtifact, hasNetworkRenderer } from "./NetworkArtifact";
+export { SessionStrip, type SessionStripState } from "./SessionStrip";
+export { InspectorArtifact, hasInspectorRenderer, type InspectSnapshot } from "./InspectorArtifact";
+export { TypeCard } from "./TypeCard";
 export {
   STEP_MIME,
   REORDER_MIME,
@@ -30,16 +32,3 @@ export {
   stepDragPayload,
   parseStepMime,
 } from "./mime";
-export { ensureRoot, renderIsland, unmountIsland } from "./mount";
-export {
-  mountToolCard,
-  mountOpsShelf,
-  mountParamFields,
-  mountModeToggle,
-  mountSuggestChip,
-  mountInsertGap,
-  mountSuggestRail,
-  mountMenuPopover,
-  mountPresetMenu,
-  mountRecipeChipFlow,
-} from "./legacy-bridges";

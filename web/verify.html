@@ -9,34 +9,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body>
-  <nav>
-    <a class="nav-logo" href="/">
-      <img src="/favicon.png" alt="" width="28" height="28">
-      Basilisk
-    </a>
-    <div class="nav-links">
-      <a class="nav-link" href="/">Search</a>
-      <a class="nav-link" href="/toolkit#encrypt">Encrypt</a>
-      <a class="nav-link" href="/toolkit#decrypt">Decrypt</a>
-      <a class="nav-link active" href="/verify">Verify</a>
-      <a class="nav-link" href="/my-keys">My Keys</a>
-      
-      <a class="nav-link" href="/quorum">Quorum</a>
-      <a class="nav-link" href="/toolkit">Toolkit</a>
-      <a class="nav-link" href="/preferences">Preferences</a>
-      <a class="nav-link" href="/stats">Stats</a>
-    </div>
-    <div class="auth-widget" id="auth-widget"></div>
-  </nav>
+  <div id="app"></div>
 
-  <div class="page-header">
-    <h1>Verify fingerprint</h1>
-    <p class="muted">Scan an <code>openpgp4fpr:</code> QR or enter a fingerprint, then confirm against this keyserver. Always verify email and fingerprint — names are unverified.</p>
-  </div>
-
-  <p id="error" class="text-error hidden"></p>
-  <div id="verify-app"></div>
-
-  <script type="module" src="/src/pages/verify.js"></script>
+  <script type="module" src="/src/pages/verify.tsx"></script>
 </body>
 </html>

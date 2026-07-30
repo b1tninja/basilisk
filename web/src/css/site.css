@@ -1,90 +1,103 @@
-/* ===== Design Tokens (diadem shield / basilisk theme) ===== */
+/* ===== Design Tokens (diadem shield / basilisk theme) =====
+ * Dark is the default theme; light is an override for users whose OS
+ * explicitly prefers it (`prefers-color-scheme: light`), not just "no dark". */
 :root {
-  /* Brand: forest green (protection/trust — OpenPGP surface) */
-  --brand: #2e7d4f;
-  --brand-hover: #1f5c38;
-  --on-brand: #ffffff;
+  /* Brand: bright neon green (dark mode) */
+  --brand: #4cde82;
+  --brand-hover: #6aeea0;
+  --on-brand: #0b1410;
 
   /* Secondary: gold (shared secrets — SSS surface) */
-  --accent: #c9a227;
-  --accent-hover: #a67f1e;
+  --accent: #d4b84a;
+  --accent-hover: #e8cc5a;
 
   /* Surfaces */
-  --surface: #ffffff;
-  --surface-raised: #f6f8fa;
-  --border: #d0d7de;
-  --border-weak: #eaeef2;
+  --surface: #0d1117;
+  --surface-raised: #161b22;
+  --border: #30363d;
+  --border-weak: #21262d;
 
   /* Typography */
-  --text: #1c2128;
-  --text-muted: #57606a;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
 
   /* States */
-  --error: #cf222e;
-  --success: #1a7f37;
+  --error: #ff7b72;
+  --success: #3fb950;
+
+  /* Semantic accents (design v2 §20g) — caret/position blue, decode purple,
+   * readiness warn amber. Previously literal hexes in the toolkit widgets. */
+  --caret: #58a6ff;
+  --decode: #d2a8ff;
+  --warn: #e3b341;
 
   /* Badges */
-  --badge-approved-bg: #dafbe1;
-  --badge-approved-fg: #1a7f37;
-  --badge-pending-bg: #fff8c5;
-  --badge-pending-fg: #9a6700;
-  --badge-default-bg: #eaeef2;
-  --badge-default-fg: #57606a;
+  --badge-approved-bg: #0f2a1b;
+  --badge-approved-fg: #3fb950;
+  --badge-pending-bg: #261d09;
+  --badge-pending-fg: #d29922;
+  --badge-default-bg: #21262d;
+  --badge-default-fg: #8b949e;
 
   /* Layout */
   --radius-sm: 6px;
   --radius: 10px;
-  --shadow-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
-  --shadow: 0 4px 20px rgba(0,0,0,.09), 0 1px 3px rgba(0,0,0,.04);
-  --brand-glow: rgba(46, 125, 79, .12);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.3);
+  --shadow: 0 4px 20px rgba(0,0,0,.4);
+  --brand-glow: rgba(76, 222, 130, .15);
 
   /* Glyph colors (for new icon system) */
-  --glyph-neutral: #57606a;
-  --glyph-brand: #2e7d4f;
-  --glyph-accent: #c9a227;
+  --glyph-neutral: #8b949e;
+  --glyph-brand: #4cde82;
+  --glyph-accent: #d4b84a;
 }
 
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    /* Brand: bright neon green (dark mode) */
-    --brand: #4cde82;
-    --brand-hover: #6aeea0;
-    --on-brand: #0b1410;
+    /* Brand: forest green (protection/trust — OpenPGP surface) */
+    --brand: #2e7d4f;
+    --brand-hover: #1f5c38;
+    --on-brand: #ffffff;
 
     /* Secondary: gold (shared secrets) */
-    --accent: #d4b84a;
-    --accent-hover: #e8cc5a;
+    --accent: #c9a227;
+    --accent-hover: #a67f1e;
 
     /* Surfaces */
-    --surface: #0d1117;
-    --surface-raised: #161b22;
-    --border: #30363d;
-    --border-weak: #21262d;
+    --surface: #ffffff;
+    --surface-raised: #f6f8fa;
+    --border: #d0d7de;
+    --border-weak: #eaeef2;
 
     /* Typography */
-    --text: #e6edf3;
-    --text-muted: #8b949e;
+    --text: #1c2128;
+    --text-muted: #57606a;
 
     /* States */
-    --error: #ff7b72;
-    --success: #3fb950;
+    --error: #cf222e;
+    --success: #1a7f37;
+
+    /* Semantic accents (design v2 §20g) — darkened for WCAG AA on white */
+    --caret: #0969da;
+    --decode: #8250df;
+    --warn: #9a6700;
 
     /* Badges */
-    --badge-approved-bg: #0f2a1b;
-    --badge-approved-fg: #3fb950;
-    --badge-pending-bg: #261d09;
-    --badge-pending-fg: #d29922;
-    --badge-default-bg: #21262d;
-    --badge-default-fg: #8b949e;
+    --badge-approved-bg: #dafbe1;
+    --badge-approved-fg: #1a7f37;
+    --badge-pending-bg: #fff8c5;
+    --badge-pending-fg: #9a6700;
+    --badge-default-bg: #eaeef2;
+    --badge-default-fg: #57606a;
 
-    --shadow-sm: 0 1px 3px rgba(0,0,0,.3);
-    --shadow: 0 4px 20px rgba(0,0,0,.4);
-    --brand-glow: rgba(76, 222, 130, .15);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
+    --shadow: 0 4px 20px rgba(0,0,0,.09), 0 1px 3px rgba(0,0,0,.04);
+    --brand-glow: rgba(46, 125, 79, .12);
 
     /* Glyph colors */
-    --glyph-neutral: #8b949e;
-    --glyph-brand: #4cde82;
-    --glyph-accent: #d4b84a;
+    --glyph-neutral: #57606a;
+    --glyph-brand: #2e7d4f;
+    --glyph-accent: #c9a227;
   }
 }
 
@@ -177,6 +190,7 @@ body.layout-app {
 .toolbar-menu > summary::-webkit-details-marker {
   display: none;
 }
+/* Legacy vanilla-JS positioning — do not apply to Radix Popper content, its own position:absolute;left:0 fights Radix's own placement. */
 .toolbar-popover {
   position: absolute;
   left: 0;
@@ -725,7 +739,7 @@ nav {
 }
 
 .nav-link:hover { color: var(--text); background: var(--surface-raised); }
-.nav-link.active { color: var(--text); font-weight: 600; }
+.nav-link.active { color: var(--text); font-weight: 600; background: var(--surface-raised); }
 
 /* Auth widget */
 .auth-widget {
@@ -737,24 +751,85 @@ nav {
   flex-shrink: 0;
 }
 
-.auth-email {
-  color: var(--text-muted);
-  max-width: 180px;
+/* Profile menu (signed-in state) */
+.profile-menu { position: relative; }
+
+.profile-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 3px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  cursor: pointer;
+  font: inherit;
+}
+
+.profile-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: var(--on-brand);
+  font-size: 10.5px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.profile-avatar-lg { width: 34px; height: 34px; font-size: 13px; }
+
+.profile-chevron { font-size: 9px; color: var(--text-muted); }
+
+.profile-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.profile-dropdown-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.profile-dropdown-email {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.auth-signout {
-  color: var(--text-muted);
+.profile-dropdown-items { display: flex; flex-direction: column; padding: 5px; }
+.profile-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
   text-decoration: none;
-  font-size: 0.8rem;
-  padding: 0.25rem 0.55rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  transition: color .12s, border-color .12s;
+  cursor: pointer;
 }
-.auth-signout:hover { color: var(--error); border-color: var(--error); }
+.profile-dropdown-item:hover { background: var(--surface-raised); }
+.profile-dropdown-item svg { flex-shrink: 0; color: var(--text-muted); }
+.profile-dropdown-divider { height: 1px; background: var(--border); }
+.profile-dropdown-signout { color: var(--error); }
+.profile-dropdown-signout svg { color: var(--error); }
 
 /* Sign-in dropdown */
 .sign-in-trigger { position: relative; }
@@ -1083,6 +1158,143 @@ pre {
   letter-spacing: .05em;
   color: var(--text-muted);
 }
+
+/* ===== Search hero (Home) ===== */
+.search-hero {
+  padding: 24px 0 0;
+  text-align: center;
+}
+.search-hero h1 {
+  margin: 0 0 6px;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.search-hero p {
+  margin: 0 0 20px;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+.search-input-row {
+  display: flex;
+  gap: 8px;
+  max-width: 560px;
+  margin: 0 auto;
+}
+.search-input-wrap { flex: 1; position: relative; }
+.search-input-wrap svg {
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.search-input-wrap input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 14px 11px 38px;
+  font-size: 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+.search-submit-btn {
+  padding: 11px 20px;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--brand);
+  color: var(--on-brand);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.search-submit-btn:hover { background: var(--brand-hover); }
+.search-submit-btn:disabled { opacity: 0.6; cursor: default; }
+.search-hint {
+  text-align: center;
+  margin: 10px 0 30px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.results-label {
+  margin: 0 0 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.result-list {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.result-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.result-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: var(--on-brand);
+  font-size: 12px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.result-main { flex: 1; min-width: 0; }
+.result-email-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.result-email { font-size: 14px; font-weight: 700; color: var(--text); }
+.result-pill {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: var(--badge-approved-bg);
+  color: var(--badge-approved-fg);
+}
+.result-pill.pending {
+  background: var(--badge-pending-bg);
+  color: var(--badge-pending-fg);
+}
+.result-fpr {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.result-view-btn {
+  padding: 6px 13px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.result-view-btn:hover { background: var(--surface-raised); }
 
 /* ===== Misc ===== */
 .hidden { display: none !important; }
@@ -2467,6 +2679,13 @@ pre {
 .preset-menu-popover {
   width: min(640px, calc(100vw - 1.5rem));
   max-width: min(640px, calc(100vw - 1.5rem));
+  max-height: 65vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 300;
 }
 .preset-menu {
   display: flex;
@@ -2853,20 +3072,20 @@ pre {
   outline: 2px solid color-mix(in srgb, var(--brand) 55%, transparent);
   outline-offset: 1px;
 }
-.builder-ingredient-chip-edit {
+.builder-ingredient-chip {
   cursor: grab;
   font: inherit;
   color: inherit;
   text-align: left;
 }
-.builder-ingredient-chip-edit:active,
-.builder-ingredient-chip-edit.dragging {
+.builder-ingredient-chip:active,
+.builder-ingredient-chip.dragging {
   cursor: grabbing;
 }
-.builder-ingredient-chip-edit.dragging {
+.builder-ingredient-chip.dragging {
   opacity: 0.45;
 }
-.builder-ingredient-chip-edit.is-selected {
+.builder-ingredient-chip.is-selected {
   border-color: color-mix(in srgb, var(--brand) 55%, var(--border));
   background: color-mix(in srgb, var(--brand) 12%, var(--surface-raised));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 25%, transparent);
@@ -2878,44 +3097,91 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   opacity: 1;
   pointer-events: auto;
 }
+/* Caret drop-target/hover accent is blue (var(--caret)) per design v2 §19d —
+ * the caret is a position marker, distinct from the green brand actions. */
 .cell-recipe-gap-add.cell-recipe-gap-drop-active {
   opacity: 1;
-  color: var(--brand);
+  color: var(--caret);
   border-style: solid;
-  border-color: color-mix(in srgb, var(--brand) 55%, var(--border));
-  background: color-mix(in srgb, var(--brand) 18%, transparent);
+  border-color: var(--caret);
+  background: color-mix(in srgb, var(--caret) 14%, transparent);
   transform: scale(1.15);
 }
 .cell-recipe-gap-add {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.15rem;
-  height: 1.15rem;
-  margin: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0 2px;
   padding: 0;
-  border: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
-  border-radius: 999px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   font-size: 0.85rem;
   line-height: 1;
   cursor: pointer;
-  opacity: 0.35;
+  opacity: 0.55;
   flex: 0 0 auto;
 }
 .cell-recipe-flow-row:hover > .cell-recipe-gap-add,
-.cell-recipe-indent-chips:hover > .cell-recipe-gap-add,
+.cell-recipe-indent-chips:hover > .cell-recipe-gap-add {
+  opacity: 1;
+}
+/* Nested caret inside a compound-op chip — 14px hit target (design v2 §20f). */
+.cell-recipe-gap-add.cell-recipe-gap-nested {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+}
 .cell-recipe-gap-add:hover,
 .cell-recipe-gap-add:focus-visible {
   opacity: 1;
-  color: var(--brand);
-  border-color: color-mix(in srgb, var(--brand) 45%, var(--border));
-  background: color-mix(in srgb, var(--brand) 8%, transparent);
+  color: var(--caret);
+  border-style: solid;
+  border-color: var(--caret);
+  background: color-mix(in srgb, var(--caret) 14%, transparent);
 }
 .cell-recipe-gap-add:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brand) 55%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--caret) 55%, transparent);
   outline-offset: 1px;
+}
+/* Between-chip flow separator (design v2 §18b) — hover shows the piped type. */
+.cell-recipe-chip-sep {
+  padding: 0 5px;
+  font: 400 11px system-ui, sans-serif;
+  color: var(--text-muted);
+  opacity: 0.65;
+  flex: 0 0 auto;
+}
+.cell-recipe-gap-caret {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.cell-recipe-gap-caret-bar {
+  width: 2px;
+  height: 24px;
+  border-radius: 1px;
+  background: var(--caret);
+  flex: 0 0 auto;
+}
+.cell-recipe-gap-caret-label {
+  font: 600 7.5px system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  color: var(--caret);
 }
 .cell-recipe-inline-edit {
   margin-top: 0.55rem;
@@ -5301,9 +5567,6 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   cursor: default;
   flex-shrink: 0;
 }
-.builder-ingredient-chip {
-  cursor: default;
-}
 .builder-branch-empty {
   padding: 0.15rem 0.2rem;
 }
@@ -5890,7 +6153,7 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   .auth-widget {
     margin-left: 0;
   }
-  .auth-email { max-width: 120px; }
+  .profile-dropdown { width: 210px; }
   .key-meta-row {
     grid-template-columns: 1fr;
     gap: 0.2rem;

@@ -59,7 +59,7 @@ describe("webcrypto toolkit registry", () => {
 describe("base64url -d", () => {
   it("round-trips encode/decode", async () => {
     const { ast, validation } = compileRecipe(
-      "random 32 | base64url | base64url -d | to hex"
+      "random 32 | base64url | base64url -d | encode hex"
     );
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
@@ -69,7 +69,7 @@ describe("base64url -d", () => {
 
 describe("digest", () => {
   it("hashes random bytes to 32-byte SHA-256", async () => {
-    const { ast, validation } = compileRecipe("random 32 | digest | to hex");
+    const { ast, validation } = compileRecipe("random 32 | digest | encode hex");
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
     expect(out[0].content).toMatch(/^[0-9a-f]{64}$/);
@@ -77,7 +77,7 @@ describe("digest", () => {
 
   it("supports discouraged sha-1 with warning and tags", async () => {
     const { ast, validation } = compileRecipe(
-      "input | utf8 | digest sha-1 | to hex | out @d"
+      "input | utf8 | digest sha-1 | encode hex | out @d"
     );
     expect(validation.ok).toBe(true);
     expect(
@@ -97,16 +97,16 @@ describe("digest", () => {
     const expected = bytesToHex(
       new Uint8Array(await crypto.subtle.digest("SHA-256", textToBytes(msg)))
     );
-    const { ast } = compileRecipe("input | utf8 | digest | to hex");
+    const { ast } = compileRecipe("input | utf8 | digest | encode hex");
     const out = await runRecipe(ast, { inputs: { text: { value: msg } } });
     expect(out[0].content).toBe(expected);
   });
 
   it("supports sha-384 and sha-512 lengths", async () => {
-    const { ast: a384 } = compileRecipe("input | utf8 | digest alg=sha-384 | to hex");
+    const { ast: a384 } = compileRecipe("input | utf8 | digest alg=sha-384 | encode hex");
     const out384 = await runRecipe(a384, { inputs: { text: { value: "x" } } });
     expect(out384[0].content).toHaveLength(96);
-    const { ast: a512 } = compileRecipe("input | utf8 | digest alg=sha-512 | to hex");
+    const { ast: a512 } = compileRecipe("input | utf8 | digest alg=sha-512 | encode hex");
     const out512 = await runRecipe(a512, { inputs: { text: { value: "x" } } });
     expect(out512[0].content).toHaveLength(128);
   });
@@ -296,17 +296,17 @@ describe("aes-gcm", () => {
       true,
       ["encrypt", "decrypt"]
     );
-    const { ast: encAst } = compileRecipe("input | utf8 | aes-gcm aad=meta | to hex");
+    const { ast: encAst } = compileRecipe("input | utf8 | aes-gcm aad=meta | encode hex");
     const packed = await runRecipe(encAst, {
       inputs: { text: { value: "aad-test" }, key: { secretKey: key } },
     });
-    const { ast: bad } = compileRecipe("input | from hex | aes-gcm -d aad=wrong | utf8");
+    const { ast: bad } = compileRecipe("input | decode hex | aes-gcm -d aad=wrong | utf8");
     await expect(
       runRecipe(bad, {
         inputs: { text: { value: packed[0].content }, key: { secretKey: key } },
       })
     ).rejects.toThrow();
-    const { ast: good } = compileRecipe("input | from hex | aes-gcm -d aad=meta | utf8");
+    const { ast: good } = compileRecipe("input | decode hex | aes-gcm -d aad=meta | utf8");
     const plain = await runRecipe(good, {
       inputs: { text: { value: packed[0].content }, key: { secretKey: key } },
     });
@@ -314,10 +314,10 @@ describe("aes-gcm", () => {
   }, 30_000);
 
   it("aes-gcm and sign report key inputNeeds", () => {
-    expect(compileRecipe("input | utf8 | aes-gcm | to hex").validation.inputNeeds).toContain(
+    expect(compileRecipe("input | utf8 | aes-gcm | encode hex").validation.inputNeeds).toContain(
       "key"
     );
-    expect(compileRecipe("input | utf8 | sign | to hex").validation.inputNeeds).toContain(
+    expect(compileRecipe("input | utf8 | sign | encode hex").validation.inputNeeds).toContain(
       "key"
     );
   });
@@ -326,7 +326,7 @@ describe("aes-gcm", () => {
 describe("hkdf / pbkdf2", () => {
   it("hkdf yields requested length", async () => {
     const { ast, validation } = compileRecipe(
-      "random 32 | hkdf length=16 salt=s info=i | to hex"
+      "random 32 | hkdf length=16 salt=s info=i | encode hex"
     );
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
@@ -348,7 +348,7 @@ in @ct | base64url -d | aes-gcm -d key=@cek | utf8`);
 
   it("hkdf hash=sha-512 works", async () => {
     const { ast } = compileRecipe(
-      "random 32 | hkdf length=16 salt=s info=i hash=sha-512 | to hex"
+      "random 32 | hkdf length=16 salt=s info=i hash=sha-512 | encode hex"
     );
     const out = await runRecipe(ast);
     expect(out[0].content).toHaveLength(32);
@@ -356,7 +356,7 @@ in @ct | base64url -d | aes-gcm -d key=@cek | utf8`);
 
   it("pbkdf2 is deterministic for fixed inputs", async () => {
     const { ast } = compileRecipe(
-      "input | utf8 | pbkdf2 length=16 salt=pepper iterations=1000 | to hex"
+      "input | utf8 | pbkdf2 length=16 salt=pepper iterations=1000 | encode hex"
     );
     const a = await runRecipe(ast, { inputs: { text: { value: "password" } } });
     const b = await runRecipe(ast, { inputs: { text: { value: "password" } } });
@@ -366,7 +366,7 @@ in @ct | base64url -d | aes-gcm -d key=@cek | utf8`);
 
   it("pbkdf2 hash=sha-512 works", async () => {
     const { ast } = compileRecipe(
-      "input | utf8 | pbkdf2 length=16 salt=pepper iterations=1000 hash=sha-512 | to hex"
+      "input | utf8 | pbkdf2 length=16 salt=pepper iterations=1000 hash=sha-512 | encode hex"
     );
     const out = await runRecipe(ast, { inputs: { text: { value: "password" } } });
     expect(out[0].content).toHaveLength(32);
@@ -388,7 +388,7 @@ describe("ecdh", () => {
     const bobPubJwk = await crypto.subtle.exportKey("jwk", bob.publicKey);
     const alicePubJwk = await crypto.subtle.exportKey("jwk", alice.publicKey);
 
-    const { ast } = compileRecipe("ecdh | to hex");
+    const { ast } = compileRecipe("ecdh | encode hex");
     const aOut = await runRecipe(ast, {
       inputs: {
         key: {
@@ -427,7 +427,7 @@ describe("ecdh", () => {
     ]);
     const bobPubJwk = await crypto.subtle.exportKey("jwk", bob.publicKey);
     const alicePubJwk = await crypto.subtle.exportKey("jwk", alice.publicKey);
-    const { ast } = compileRecipe("ecdh bits=256 | to hex");
+    const { ast } = compileRecipe("ecdh bits=256 | encode hex");
     const aOut = await runRecipe(ast, {
       inputs: {
         key: {
@@ -463,7 +463,7 @@ describe("import jwk / spki", () => {
 
   it("imports RSA-OAEP public SPKI", async () => {
     const { ast, validation } = compileRecipe(
-      "genkey rsa/2048 usage=encrypt | export spki | import spki alg=rsa/2048 usage=encrypt | export spki | to hex"
+      "genkey rsa/2048 usage=encrypt | export spki | import spki alg=rsa/2048 usage=encrypt | export spki | encode hex"
     );
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
@@ -472,7 +472,7 @@ describe("import jwk / spki", () => {
 
   it("imports X25519 public SPKI", async () => {
     const { ast, validation } = compileRecipe(
-      "genkey x25519 | :public | export spki | import spki alg=x25519 | export spki | to hex"
+      "genkey x25519 | :public | export spki | import spki alg=x25519 | export spki | encode hex"
     );
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
@@ -509,9 +509,9 @@ describe("aes-cbc / aes-ctr", () => {
   it("aes-cbc round-trips with key=@cek", async () => {
     const { ast, validation } = compileRecipe(`genkey aes/256 | out @cek
 
-input | utf8 | aes-cbc key=@cek | to hex | out @ct
+input | utf8 | aes-cbc key=@cek | encode hex | out @ct
 
-in @ct | from hex | aes-cbc -d key=@cek | utf8`);
+in @ct | decode hex | aes-cbc -d key=@cek | utf8`);
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast, {
       inputs: { text: { value: "cbc hello" } },
@@ -522,9 +522,9 @@ in @ct | from hex | aes-cbc -d key=@cek | utf8`);
   it("aes-ctr round-trips with key=@cek", async () => {
     const { ast, validation } = compileRecipe(`genkey aes/256 | out @cek
 
-input | utf8 | aes-ctr key=@cek | to hex | out @ct
+input | utf8 | aes-ctr key=@cek | encode hex | out @ct
 
-in @ct | from hex | aes-ctr -d key=@cek | utf8`);
+in @ct | decode hex | aes-ctr -d key=@cek | utf8`);
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast, {
       inputs: { text: { value: "ctr hello" } },
@@ -535,7 +535,7 @@ in @ct | from hex | aes-ctr -d key=@cek | utf8`);
   it("aes-cbc rejects truncated ciphertext", async () => {
     const { ast } = compileRecipe(`genkey aes/256 | out @cek
 
-input | from hex | aes-cbc -d key=@cek`);
+input | decode hex | aes-cbc -d key=@cek`);
     await expect(
       runRecipe(ast, { inputs: { text: { value: "0011" } } })
     ).rejects.toThrow(/too short/i);
@@ -546,9 +546,9 @@ describe("rsa-oaep", () => {
   it("encrypts and decrypts with key=@slot", async () => {
     const { ast, validation } = compileRecipe(`genkey rsa/2048 usage=encrypt | out @rk
 
-input | utf8 | rsa-oaep key=@rk | to hex | out @ct
+input | utf8 | rsa-oaep key=@rk | encode hex | out @ct
 
-in @ct | from hex | rsa-oaep -d key=@rk | utf8`);
+in @ct | decode hex | rsa-oaep -d key=@rk | utf8`);
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds || []).not.toContain("key");
     const out = await runRecipe(ast, {
@@ -562,9 +562,9 @@ describe("rsa-pkcs1 (discouraged)", () => {
   it("warns at compile and round-trips with legacy tags", async () => {
     const { ast, validation } = compileRecipe(`genkey rsa/2048 usage=encrypt | out @rk
 
-input | utf8 | rsa-pkcs1 key=@rk | to hex | out @ct
+input | utf8 | rsa-pkcs1 key=@rk | encode hex | out @ct
 
-in @ct | from hex | rsa-pkcs1 -d key=@rk | utf8 | out @plain`);
+in @ct | decode hex | rsa-pkcs1 -d key=@rk | utf8 | out @plain`);
     expect(validation.ok).toBe(true);
     expect(
       validation.warnings.some((w) => /rsa-pkcs1.*discouraged/i.test(w))
@@ -602,7 +602,7 @@ describe("wrap / unwrap", () => {
     const wrapJwk = await crypto.subtle.exportKey("jwk", cek);
     const wrappingJwk = await crypto.subtle.exportKey("jwk", wrappingKey);
 
-    const { ast: wrapAst } = compileRecipe("wrap | to hex");
+    const { ast: wrapAst } = compileRecipe("wrap | encode hex");
     const wrapped = await runRecipe(wrapAst, {
       inputs: {
         key: {
@@ -612,7 +612,7 @@ describe("wrap / unwrap", () => {
       },
     });
     const { ast: unwrapAst } = compileRecipe(
-      "input | from hex | unwrap | export raw | to hex"
+      "input | decode hex | unwrap | export raw | encode hex"
     );
     const unwrapped = await runRecipe(unwrapAst, {
       inputs: {
@@ -628,9 +628,9 @@ describe("wrap / unwrap", () => {
 
 genkey hmac/sha256 | out @cek
 
-wrap key=@kek target=@cek | to hex | out @wrapped
+wrap key=@kek target=@cek | encode hex | out @wrapped
 
-in @wrapped | from hex | unwrap key=@kek alg=hmac/sha256 | export raw | to hex`);
+in @wrapped | decode hex | unwrap key=@kek alg=hmac/sha256 | export raw | encode hex`);
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
     const hexes = arts.filter((a) => /^[0-9a-f]{64}$/i.test(String(a.content || "")));
@@ -642,9 +642,9 @@ in @wrapped | from hex | unwrap key=@kek alg=hmac/sha256 | export raw | to hex`)
 
 genkey aes/256 | out @cek
 
-wrap mode=rsa-oaep key=@rk target=@cek | to hex | out @wrapped
+wrap mode=rsa-oaep key=@rk target=@cek | encode hex | out @wrapped
 
-in @wrapped | from hex | unwrap mode=rsa-oaep key=@rk | export raw | to hex`);
+in @wrapped | decode hex | unwrap mode=rsa-oaep key=@rk | export raw | encode hex`);
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
     expect(arts.some((a) => /^[0-9a-f]{64}$/i.test(String(a.content || "")))).toBe(
@@ -683,9 +683,9 @@ genkey ec/p256 usage=derive | out @bob
 
 ecdh private=@alice peer=@bob as=aes/256 | out @cek
 
-input | utf8 | aes-gcm key=@cek | to hex | out @ct
+input | utf8 | aes-gcm key=@cek | encode hex | out @ct
 
-in @ct | from hex | aes-gcm -d key=@cek | utf8`);
+in @ct | decode hex | aes-gcm -d key=@cek | utf8`);
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast, {
       inputs: { text: { value: "ecdh-derived" } },
@@ -698,7 +698,7 @@ in @ct | from hex | aes-gcm -d key=@cek | utf8`);
 
 genkey ec/p384 usage=derive | out @bob
 
-ecdh private=@alice peer=@bob | to hex | out @shared`);
+ecdh private=@alice peer=@bob | encode hex | out @shared`);
     const out = await runRecipe(ast);
     const shared = out.find((a) => /^[0-9a-f]{96}$/i.test(String(a.content || "")));
     expect(shared).toBeTruthy();

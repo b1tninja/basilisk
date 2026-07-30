@@ -10,13 +10,25 @@
  * Prefer positional short form in docs (`genkey ec/p256`, `out @public`, `in @kp`).
  */
 
-import { CIPHER_DISPATCH_TARGETS } from "./step-names.js";
-import { stepAcceptsRefined, typeOf } from "./types.js";
+import { BASE_ENCODINGS, CIPHER_DISPATCH_TARGETS } from "./step-names.js";
+import { POLYMORPHIC_STEPS, stepAcceptsRefined, typeOf } from "./types.js";
 
-/** @typedef {"none"|"bytes"|"text"|"int"|"bool"|"key"|"keypair"|"shares"|"artifact"|"bundle"|"item"|"recipients"|"openpgp-key"} IoType */
+/**
+ * Pipeline value types.
+ *
+ * The `host`…`stats` tail is the network/WebRTC vocabulary (design v2 §25a).
+ * These are real types, not JSON-text-with-a-badge: `rtc.createAnswer` accepts
+ * only an `sdp`, a live `session` handle can never be piped into a crypto op,
+ * and the caret's fit check narrows on them like any other base.
+ *
+ * `any` is a signature marker, not a value: no step ever *produces* one. It
+ * means "this step accepts whatever the tip holds" — see POLYMORPHIC_STEPS.
+ * @typedef {"none"|"any"|"bytes"|"text"|"int"|"bool"|"key"|"keypair"|"shares"|"artifact"|"bundle"|"item"|"recipients"|"openpgp-key"
+ *   |"host"|"endpoint"|"candidate"|"sdp"|"certificate"|"session"|"channel"|"peer"|"connstate"|"stats"} IoType
+ */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
 /** @typedef {"enum"|"int"|"string"|"bool"|"flag"|"slot"} ParamType */
-/** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"|"agent"|"hkp"} Toolbox */
+/** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"|"agent"|"hkp"|"webrtc"} Toolbox */
 /** @typedef {string} Shelf */
 /** @typedef {import("./types.js").StepOverload} StepOverload */
 /** @typedef {import("./types.js").RefinedType} RefinedType */
@@ -42,6 +54,9 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
  * @property {string} [flag]  bare CLI flag (e.g. "-d") that sets this bool to true
  * @property {boolean} [allowIndex]  for type "slot": allow 1-based index refs (default false)
  * @property {"always"} [serialize]  always emit `name=value` even when equal to default
+ * @property {boolean} [secret]  UI-only: locked to a bound `@slot` ref, never free text; the
+ *   literal value is still whatever the AST carries (recipe text, Publish share links, and
+ *   plain copy/export must redact it to the `@slotRef` string — see design v2 §22a)
  */
 
 /**
@@ -67,7 +82,8 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
  * @property {ParamSpec[]} [params]
  * @property {boolean} [flowControl]
  * @property {boolean} [unresolvedRecipients]  needs runtime recipient binding
- * @property {"shares"|"gpg"|"text"|"envelope"|"key"|"peer"|null} [unresolvedInputs]  needs runtime input panel
+ * @property {"shares"|"gpg"|"text"|"envelope"|"key"|"peer"|"keypair"|null} [unresolvedInputs]  needs runtime input panel
+ * @property {IoType} [instantiates]  §31a — a type constructor: this source *is* how you write that type down
  * @property {string[]} [aliases]
  * @property {(params: Record<string, *>) => { input: IoType, output: IoType }} [effectiveIo]
  * @property {StepOverload[]} [overloads]  refined-type overloads (compile-time dispatch)
@@ -101,15 +117,16 @@ import { stepAcceptsRefined, typeOf } from "./types.js";
 
 /** @type {Record<Toolbox, ToolboxMeta>} */
 export const TOOLBOX_META = {
-  webcrypto: { label: "WebCrypto", badge: "WebCrypto", order: 0, glyph: "webcrypto" },
-  encoding: { label: "Encoding", badge: "Encode", order: 1, glyph: "encoding" }, // pem, base64, base64url, base32, hex, utf8
-  io: { label: "Input / output", badge: "I/O", order: 2, glyph: "io" },
-  flow: { label: "Flow", badge: "Flow", order: 3, glyph: "flow" },
-  openpgp: { label: "OpenPGP", badge: "OpenPGP", order: 4, glyph: "openpgp" },
-  agent: { label: "Agent", badge: "Agent", order: 5, glyph: "agent" },
-  hkp: { label: "HKP", badge: "HKP", order: 6, glyph: "hkp" },
-  sss: { label: "SSS / BLIP39", badge: "SSS", order: 7, glyph: "sss" },
-  webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 8, glyph: "webauthn" },
+  webcrypto: { label: "WebCrypto", badge: "WebCrypto", order: 0, glyph: "webcrypto", color: "#4cde82" },
+  encoding: { label: "Encoding", badge: "Encode", order: 1, glyph: "encoding", color: "#58a6ff" }, // pem, base64, base64url, base32, hex, utf8
+  io: { label: "Input / output", badge: "I/O", order: 2, glyph: "io", color: "#8b949e" },
+  flow: { label: "Flow", badge: "Flow", order: 3, glyph: "flow", color: "#8b949e" },
+  openpgp: { label: "OpenPGP", badge: "OpenPGP", order: 4, glyph: "openpgp", color: "#d2a8ff" },
+  agent: { label: "Agent", badge: "Agent", order: 5, glyph: "agent", color: "#4cde82" },
+  hkp: { label: "HKP", badge: "HKP", order: 6, glyph: "hkp", color: "#f0883e" },
+  sss: { label: "SSS / BLIP39", badge: "SSS", order: 7, glyph: "sss", color: "#e3b341" },
+  webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 8, glyph: "webauthn", color: "#79c0ff" },
+  webrtc: { label: "WebRTC", badge: "WebRTC", order: 9, glyph: "agent", color: "#58a6ff" },
 };
 
 /**
@@ -137,6 +154,53 @@ const UNWRAP_ALG_ENUM = [...AES_HMAC_ALGS, "aes-kw/128", "aes-kw/256"];
 
 const RSA_HASH_ENUM = ["sha-256", "sha-384", "sha-512"];
 
+/**
+ * Shared by every step that emits OpenPGP ciphertext (`gpg.encrypt`,
+ * `gpg.symencrypt`). `profile` defaults to "auto" — the session default set
+ * in Preferences → Cryptographic parameters; picking modern/compatible/custom
+ * here overrides it for this step only. The four `custom` sub-fields only
+ * apply when `profile=custom` (see CryptoProfileControl, which renders these
+ * inline instead of the generic param editor).
+ * @type {ParamSpec[]}
+ */
+const CRYPTO_PROFILE_PARAMS = [
+  {
+    name: "profile",
+    type: "enum",
+    default: "auto",
+    enum: ["auto", "modern", "compatible", "custom"],
+    doc: "Crypto profile for this step. Auto follows the session default; Modern/Compatible/Custom override it here only.",
+  },
+  {
+    name: "cipher",
+    type: "enum",
+    default: "aes256",
+    enum: ["aes128", "aes192", "aes256"],
+    doc: "Custom profile: symmetric cipher.",
+  },
+  {
+    name: "aead",
+    type: "enum",
+    default: "ocb",
+    enum: ["off", "ocb", "gcm", "eax"],
+    doc: "Custom profile: AEAD mode. off = legacy SEIPD v1 (CFB+MDC), no AEAD.",
+  },
+  {
+    name: "s2k",
+    type: "enum",
+    default: "argon2",
+    enum: ["argon2", "iterated"],
+    doc: "Custom profile: password → key derivation (only matters with a passphrase).",
+  },
+  {
+    name: "compression",
+    type: "enum",
+    default: "off",
+    enum: ["off", "zlib", "zip"],
+    doc: "Custom profile: compression applied before encryption.",
+  },
+];
+
 export const SHELF_META = {
   keys: { label: "Keys", order: 0, glyph: "keys" },
   digest: { label: "Digest", order: 1, glyph: "digest" },
@@ -155,6 +219,14 @@ export const SHELF_META = {
   binary: { label: "Binary", order: 0, glyph: "binary" },
   text: { label: "Text", order: 1, glyph: "text" },
   ports: { label: "Ports", order: 0, glyph: "ports" },
+  /**
+   * §31a — type constructors, grouped so a typed value can be *instantiated*
+   * instead of entered as free text and cast downstream. A sub-shelf of I/O
+   * rather than a replacement for it: the design's "Input / output" category
+   * was 7 generic input ops, but this registry's is mostly real ops
+   * (`random`, `passphrase`, `qr`, `out`) that are not types and must stay.
+   */
+  types: { label: "Types", order: 1, glyph: "ports" },
   control: { label: "Control", order: 0, glyph: "control" },
   essentials: { label: "Essentials", order: 0, defaultCollapsed: false, glyph: "essentials" },
   attestation: { label: "Attestation / MDS", order: 1, defaultCollapsed: true, glyph: "attestation" },
@@ -162,6 +234,12 @@ export const SHELF_META = {
   directory: { label: "Directory", order: 1, glyph: "recipients" },
   lookup: { label: "Lookup", order: 0, glyph: "hkp" },
   recipients: { label: "Recipients", order: 2, glyph: "recipients" },
+  // WebRTC category groups (design v2 §25b) — the one category deep enough to
+  // need sub-headers: ICE/STUN, Peer & signaling, Data channel, Stats.
+  ice: { label: "ICE / STUN", order: 0, glyph: "ports" },
+  peer: { label: "Peer & signaling", order: 1, glyph: "agent" },
+  channel: { label: "Data channel", order: 2, glyph: "agent" },
+  rtcstats: { label: "Stats", order: 3, glyph: "ports" },
 };
 
 /** @type {StepSpec[]} */
@@ -237,6 +315,88 @@ export const STEPS = [
     ],
   },
   {
+    // A written-down byte string. `bytes` is by far the most consumed type in
+    // the registry, yet until this step the only way to supply one literally
+    // was `input | hex -d` — an interactive prompt plus a cast, re-asked on
+    // every run. This is the source form of that pipeline.
+    name: "bytes",
+    kind: "source",
+    toolbox: "io",
+    shelf: "types",
+    instantiates: "bytes",
+    doc: "A literal byte string. Example: `bytes deadbeef | aes-gcm @key | out @ct`. Also accepts base64 (`encoding=base64`) or plain text (`encoding=utf8`); a leading `0x` on hex is optional. Quote the value if it contains a space or `=` — base64 padding needs `bytes \"aGVsbG8=\" encoding=base64`.",
+    input: "none",
+    output: "bytes",
+    params: [
+      {
+        name: "value",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "The value, in the chosen encoding",
+      },
+      {
+        name: "encoding",
+        type: "enum",
+        default: "hex",
+        enum: ["hex", "base64", "utf8"],
+        doc: "How to read `value`",
+      },
+    ],
+  },
+  {
+    // §31c — the *import* origin for a keypair. `genkey` remains the way most
+    // keypairs get made, and the Types entry's Generate mode inserts genkey
+    // itself rather than reimplementing it; this step covers the other origin,
+    // a keypair the user already has.
+    //
+    // The material is a runtime input, not a param, for the same reason
+    // `input` is: a pasted private key must never reach the recipe text, and
+    // therefore never reach a share link, Copy recipe, or a saved workspace.
+    name: "keypair",
+    kind: "source",
+    toolbox: "io",
+    shelf: "types",
+    instantiates: "keypair",
+    unresolvedInputs: "keypair",
+    doc: "Import a keypair you already have, pasted at run time (never stored in the recipe). PKCS#8 PEM or JWK yields the full pair; an SPKI PEM yields a public-key tip. Example: `keypair jwk alg=ed25519 | export spki | pem | out @pub`. To make a new one instead, use `genkey`.",
+    input: "none",
+    output: "keypair",
+    params: [
+      {
+        name: "format",
+        type: "enum",
+        positional: true,
+        default: "jwk",
+        enum: ["jwk", "pem"],
+        doc: "How the pasted material is encoded",
+      },
+      {
+        name: "alg",
+        type: "enum",
+        default: "ec/p256",
+        enum: [
+          "ec/p256",
+          "ec/p384",
+          "ec/p521",
+          "ed25519",
+          "x25519",
+          "rsa/2048",
+          "rsa/3072",
+          "rsa/4096",
+        ],
+        doc: "Algorithm to import as",
+      },
+      {
+        name: "usage",
+        type: "enum",
+        default: "auto",
+        enum: ["auto", "sign", "derive", "encrypt"],
+        doc: "Key usage flavor",
+      },
+    ],
+  },
+  {
     name: "passphrase",
     kind: "source",
     toolbox: "io",
@@ -289,7 +449,7 @@ export const STEPS = [
     shelf: "ports",
     conjugate: "out",
     pairCaption: "In / out",
-    doc: "Free-form text at run time (textarea / file). Never stored in the recipe. Example: `input | utf8 | to hex`. (Legacy aliases `paste`/`cat` migrate via Upgrade recipe.)",
+    doc: "Free-form text at run time (textarea / file). Never stored in the recipe. Example: `input | utf8 | encode hex`. (Legacy aliases `paste`/`cat` migrate via Upgrade recipe.)",
     input: "none",
     output: "text",
     unresolvedInputs: "text",
@@ -414,7 +574,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "digest",
-    doc: "Hash bytes with SubtleCrypto.digest (SHA-256 / 384 / 512; SHA-1 available but discouraged). Example: `random 32 | digest | to hex | out @digest`.",
+    doc: "Hash bytes with SubtleCrypto.digest (SHA-256 / 384 / 512; SHA-1 available but discouraged). Example: `random 32 | digest | encode hex | out @digest`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -1067,15 +1227,20 @@ export const STEPS = [
     },
   },
   {
-    name: "to",
+    // Named `encode`/`decode` rather than `to`/`from`: the pair now takes an
+    // alphabet argument, so the verb should say what it does. `from` was also
+    // genuinely ambiguous — it used to be the slot-load verb, so `from base64`
+    // read as "load slot base64" and had to be disambiguated by a hardcoded
+    // list of known encodings. `decode base64` cannot be misread.
+    name: "encode",
     kind: "transform",
     toolbox: "encoding",
     shelf: "binary",
     glyph: "hex",
-    conjugate: "from",
-    pairCaption: "To / From",
+    conjugate: "decode",
+    pairCaption: "Encode / Decode",
     pairLabels: { forward: "Encode", reverse: "Decode" },
-    doc: "Encode bytes to text. Today: `to hex` (lowercase hex). Example: `… | digest | to hex | out @digest`.",
+    doc: "Encode bytes as text in a base alphabet. Example: `… | digest | encode hex | out @digest`, or `… | encode base64url`. (`to` is the old spelling and still parses.)",
     input: "bytes",
     output: "text",
     params: [
@@ -1084,8 +1249,8 @@ export const STEPS = [
         type: "enum",
         positional: true,
         default: "hex",
-        enum: ["hex"],
-        doc: "Target encoding (hex for now; more encodings later)",
+        enum: BASE_ENCODINGS,
+        doc: "Target encoding",
       },
     ],
     effectiveIo(params) {
@@ -1094,13 +1259,13 @@ export const STEPS = [
     },
   },
   {
-    name: "from",
+    name: "decode",
     kind: "transform",
     toolbox: "encoding",
     shelf: "binary",
     glyph: "hex",
-    conjugateOf: "to",
-    doc: "Decode encoded text → bytes. Today: `from hex`. Example: `in @digest | from hex | …`.",
+    conjugateOf: "encode",
+    doc: "Decode base-encoded text → bytes. Example: `in @digest | decode hex | …`, or `… | decode base64`. (`from` is the old spelling and still parses.)",
     input: "text",
     output: "bytes",
     params: [
@@ -1109,8 +1274,8 @@ export const STEPS = [
         type: "enum",
         positional: true,
         default: "hex",
-        enum: ["hex"],
-        doc: "Source encoding (hex for now)",
+        enum: BASE_ENCODINGS,
+        doc: "Source encoding",
       },
     ],
     effectiveIo(params) {
@@ -1315,6 +1480,7 @@ export const STEPS = [
         default: "",
         doc: "User passphrase (UTF-8) or `@slot` of text — required with mode=passphrase; forbidden with mode=master",
       },
+      ...CRYPTO_PROFILE_PARAMS,
     ],
     effectiveIo(params) {
       const mode = String(params?.mode || "master").toLowerCase();
@@ -1426,7 +1592,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "flow",
     shelf: "control",
-    doc: "Source a prior `out` slot (live typed value). Chains are blank-line separated. Forms: `in @kp`, `in kp`, `in 1`. (`from` is the encoding verb — use `from hex`, not slot load.) See docs/RECIPE.md.",
+    doc: "Source a prior `out` slot (live typed value). Chains are blank-line separated. Forms: `in @kp`, `in kp`, `in 1`. (`decode` is the alphabet verb; `in` only loads slots.) See docs/RECIPE.md.",
     input: "none",
     output: "bytes",
     params: [
@@ -1618,6 +1784,7 @@ export const STEPS = [
         default: "",
         doc: "Signing private-key slot when `-s` (`@me`); omit to use the vault key panel",
       },
+      ...CRYPTO_PROFILE_PARAMS,
     ],
   },
   {
@@ -2130,7 +2297,357 @@ export const STEPS = [
       },
     ],
   },
+  // ── Quorum toolbox (design v2 §21a) — the run boundary is the session boundary ──
+  {
+    name: "rtc.ice",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "ice",
+    glyph: "ports",
+    doc: "ICE server config for a quorum exchange — STUN for reflexive discovery, optional TURN relay with credentials. Emits JSON consumed by `quorum.offer`/`quorum.join` via `ice=@slot`. Example: `rtc.ice turn=turn:relay.example.org:3478 username=u credential=p | out @ice`. Defaults: Cloudflare + Google STUN.",
+    input: "none",
+    output: "endpoint",
+    params: [
+      {
+        name: "stun",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Comma-separated stun: URLs. Empty = built-in defaults (Cloudflare + Google).",
+      },
+      {
+        name: "turn",
+        type: "string",
+        default: "",
+        doc: "turn:/turns: relay URL (needed when both peers are behind symmetric NAT)",
+      },
+      { name: "username", type: "string", default: "", doc: "TURN username" },
+      {
+        name: "credential",
+        type: "slot",
+        secret: true,
+        default: "",
+        doc: "TURN credential — bind an @slot from Inputs; never stored/shared as literal text",
+      },
+    ],
+  },
+  {
+    name: "stun.check",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "ice",
+    glyph: "ports",
+    doc: "One-shot NAT diagnostic: gathers ICE candidates against a STUN server and reports the server-reflexive (public) address, candidate mix, and gather time as JSON. Not publishable — a plain output row. Example: `stun.check | out @nat`.",
+    input: "none",
+    output: "endpoint",
+    params: [
+      {
+        name: "server",
+        type: "string",
+        positional: true,
+        default: "stun:stun.cloudflare.com:3478",
+        doc: "STUN server URL",
+      },
+      {
+        name: "timeout",
+        type: "int",
+        default: 4000,
+        doc: "Gather timeout (ms)",
+      },
+    ],
+  },
+  {
+    name: "quorum.offer",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    glyph: "agent",
+    doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `quorum.send/recv/close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
+    input: "none",
+    output: "session",
+    params: [
+      {
+        name: "to",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Audience fingerprints (comma/space separated) — must include your own",
+      },
+      {
+        name: "key",
+        type: "slot",
+        secret: true,
+        default: "",
+        doc: "@slot holding your armored private key (`agent.unlock … | out @me`)",
+      },
+      {
+        name: "ice",
+        type: "string",
+        default: "",
+        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 120000,
+        doc: "How long to wait for the first peer (ms)",
+      },
+      {
+        name: "peers",
+        type: "int",
+        default: 1,
+        doc: "Peers that must connect before the run continues",
+      },
+    ],
+  },
+  {
+    name: "quorum.join",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    glyph: "agent",
+    doc: "Join a run-scoped exchange as peer: verifies the creator's signed invite, then meshes with per-peer ephemeral ECDH (data-channel PFS). Pauses the run at this cell until connected. Same audience + site = same room, no code to paste. Example: `quorum.join to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
+    input: "none",
+    output: "session",
+    params: [
+      {
+        name: "to",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Audience fingerprints (comma/space separated) — must include your own",
+      },
+      {
+        name: "key",
+        type: "slot",
+        secret: true,
+        default: "",
+        doc: "@slot holding your armored private key",
+      },
+      {
+        name: "ice",
+        type: "string",
+        default: "",
+        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 120000,
+        doc: "How long to wait for invite + mesh (ms)",
+      },
+      {
+        name: "peers",
+        type: "int",
+        default: 1,
+        doc: "Peers that must connect before the run continues",
+      },
+    ],
+  },
+  {
+    name: "quorum.send",
+    kind: "transform",
+    toolbox: "webrtc",
+    shelf: "channel",
+    glyph: "agent",
+    doc: "Send the pipeline text to every verified peer in the live exchange (per-peer session keys; key-confirmed channels only). Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run.",
+    input: "text",
+    output: "text",
+    params: [],
+  },
+  {
+    name: "quorum.recv",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "channel",
+    glyph: "agent",
+    doc: "Wait for the next message from the live exchange and emit it as text (`meta.from` = sender fingerprint). Pauses the run until a message arrives or `wait` expires. Example: `quorum.recv | gpg.verify`.",
+    input: "none",
+    output: "text",
+    params: [
+      {
+        name: "from",
+        type: "string",
+        default: "",
+        doc: "Only accept from this fingerprint (prefix ok); empty = any peer",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 120000,
+        doc: "Receive timeout (ms)",
+      },
+    ],
+  },
+  {
+    name: "quorum.close",
+    kind: "transform",
+    toolbox: "webrtc",
+    shelf: "peer",
+    glyph: "agent",
+    doc: "End the exchange now: closes every peer connection and zeroizes session keys. Runs implicitly at Clear session — close early when the exchange is done mid-notebook. Passes the value through.",
+    input: "text",
+    output: "text",
+    params: [],
+  },
+
+  // ── WebRTC primitives (design v2 §23a/23b/26a/26b/29a/29d/30d) ──
+  // The raw layer under `quorum.*`: each wraps one browser WebRTC capability
+  // so ICE/DTLS/SCTP are debuggable outside a live session.
+  {
+    name: "rtc.gatherCandidates",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "ice",
+    glyph: "ports",
+    doc: "Gather ICE candidates against the configured servers and emit one row per candidate — `host` (local NIC), `srflx` (server-reflexive, via STUN), `relay` (via TURN), plus any `prflx` peer-reflexive found by trickle. Each row carries protocol (`udp`/`tcp`). A missing `relay` row is informational, not an error — it just means no TURN is configured. This is what `quorum.offer` consumes internally; run it standalone to see why a later connection failed. Example: `rtc.ice turn=… | out @ice` then `rtc.gatherCandidates ice=@ice | out @cands`.",
+    input: "none",
+    output: "candidate",
+    params: [
+      {
+        name: "ice",
+        type: "slot",
+        default: "",
+        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+      },
+      {
+        name: "timeout",
+        type: "int",
+        default: 5000,
+        doc: "Gather timeout (ms) — trickle can keep finding candidates until this elapses",
+      },
+    ],
+  },
+  {
+    name: "rtc.checkConnectivity",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "ice",
+    glyph: "ports",
+    doc: "Report the ICE candidate-pair check matrix for the live exchange: one row per local×remote pair with its state (`waiting`/`in-progress`/`succeeded`/`failed`), the nominated pair flagged, plus this peer's `controlling`/`controlled` role. Needs a live `quorum.offer`/`quorum.join` — ICE only checks pairs once both sides have exchanged candidates. Example: `quorum.offer … | out @s` then `rtc.checkConnectivity | out @pairs`.",
+    input: "none",
+    output: "stats",
+    params: [],
+  },
+  {
+    name: "rtc.certificate",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    glyph: "genkey",
+    doc: "Generate a DTLS identity (`RTCCertificate`) — the certificate whose fingerprint the remote peer sees. Mirrors `genkey`'s shape. Most recipes never need this: `quorum.offer` mints a throwaway certificate itself. Use it when you want a stable fingerprint a peer can recognize across sessions. Example: `rtc.certificate | out @id`.",
+    input: "none",
+    output: "certificate",
+    params: [
+      {
+        name: "alg",
+        type: "enum",
+        positional: true,
+        default: "ecdsa",
+        enum: ["ecdsa", "rsa"],
+        doc: "Certificate key algorithm (ECDSA P-256 or RSASSA-PKCS1-v1_5 2048)",
+      },
+    ],
+  },
+  {
+    name: "rtc.createOffer",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    glyph: "agent",
+    doc: "Raw SDP offer — the escape hatch below `quorum.offer` for inspecting or hand-carrying the session description. Creates a peer connection with one data channel and emits its SDP as text. Does not signal anything; pair it with your own transport. Example: `rtc.createOffer | out @sdp`.",
+    input: "none",
+    output: "sdp",
+    params: [
+      {
+        name: "ice",
+        type: "slot",
+        default: "",
+        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+      },
+      {
+        name: "label",
+        type: "string",
+        default: "basilisk",
+        doc: "Data-channel label carried in the SDP",
+      },
+    ],
+  },
+  {
+    name: "rtc.createAnswer",
+    kind: "transform",
+    toolbox: "webrtc",
+    shelf: "peer",
+    glyph: "agent",
+    doc: "Raw SDP answer for a piped offer — the `rtc.createOffer` conjugate. Takes the remote offer SDP as pipeline text, applies it as the remote description, and emits the local answer SDP. Example: `in @remoteOffer | rtc.createAnswer | out @answer`.",
+    input: "sdp",
+    output: "sdp",
+    params: [
+      {
+        name: "ice",
+        type: "slot",
+        default: "",
+        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+      },
+    ],
+  },
+  {
+    name: "rtc.connectionState",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    glyph: "ports",
+    doc: "Observe-only snapshot of the live exchange's `connectionState`, `iceConnectionState`, `iceGatheringState`, and `signalingState`, per peer. Diagnostic — never bind it as an input to a crypto op. Needs a live `quorum.offer`/`quorum.join`. Example: `rtc.connectionState | out @state`.",
+    input: "none",
+    output: "connstate",
+    params: [],
+  },
+  {
+    name: "rtc.dataChannelStats",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "channel",
+    glyph: "ports",
+    doc: "Data-channel back-pressure and counters for the live exchange: `bufferedAmount` against its low-water threshold, ready state, and messages/bytes sent+received per peer. Use it to see whether `quorum.send` is queueing behind a slow link. Example: `rtc.dataChannelStats | out @bp`.",
+    input: "none",
+    output: "stats",
+    params: [],
+  },
+  {
+    name: "rtc.statsReport",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "rtcstats",
+    glyph: "ports",
+    doc: "Live `getStats()` quality numbers for the exchange — round-trip time, bytes/packets each way, and packet loss per connected peer. Example: `rtc.statsReport | out @quality`.",
+    input: "none",
+    output: "stats",
+    params: [],
+  },
 ];
+
+/**
+ * Stamp the universal passthroughs with their real input type.
+ *
+ * `out`, `tee`, `peek`, `inspect`, `text`, `select`, and `in` accept *any*
+ * value — the type checker has always known this, but each of them declared
+ * `input: "bytes"` and relied on a hardcoded name list to override it. The
+ * declaration was therefore a lie, and anything reading signatures rather
+ * than asking the checker inherited it: the type browser reported that
+ * nothing at all consumes `stats` or `candidate`, when in fact every one of
+ * these does.
+ *
+ * Applied here rather than written into each spec so `POLYMORPHIC_STEPS`
+ * stays the single source of truth — types.js owns it, and importing the
+ * registry from there would close a cycle.
+ */
+for (const step of STEPS) {
+  // Sources are excluded: `in` is in the passthrough set because it re-roots
+  // the pipeline mid-chain, but it *reads a slot* rather than consuming a
+  // tip, so its input is genuinely `none` and marking it `any` would put it
+  // in every type's "accepted by" list.
+  if (step.kind !== "source" && POLYMORPHIC_STEPS.has(step.name)) step.input = "any";
+}
 
 /** @type {Map<string, StepSpec>} */
 const BY_NAME = new Map();
@@ -2220,11 +2737,15 @@ for (const step of STEPS) {
   } else {
     step.glyph = "gear";
   }
-  BY_NAME.set(step.name, step);
-  ALIAS_TO_CANONICAL.set(step.name, step.name);
+  // Keys are lower-cased because `getStep`/`canonicalName` lower-case their
+  // query — storing the original case would make any mixed-case op name
+  // (e.g. `rtc.gatherCandidates`) silently unresolvable. `step.name` keeps
+  // its authored casing for display and serialization.
+  BY_NAME.set(step.name.toLowerCase(), step);
+  ALIAS_TO_CANONICAL.set(step.name.toLowerCase(), step.name);
   for (const a of step.aliases || []) {
-    ALIAS_TO_CANONICAL.set(a, step.name);
-    BY_NAME.set(a, step);
+    ALIAS_TO_CANONICAL.set(String(a).toLowerCase(), step.name);
+    BY_NAME.set(String(a).toLowerCase(), step);
   }
 }
 

@@ -89,6 +89,8 @@ export function createKernel() {
   const cellOutputs = new Map();
   /** @type {Map<number, CellStatus>} */
   const cellStatus = new Map();
+  /** @type {Map<number, { ranAt: number, durationMs: number }>} Last successful run, for the readiness/status line. */
+  const cellTimings = new Map();
 
   /**
    * @param {number} i
@@ -100,6 +102,12 @@ export function createKernel() {
    * @returns {CellStatus}
    */
   const getCellStatus = (i) => cellStatus.get(i) || "idle";
+
+  /**
+   * @param {number} i
+   * @returns {{ ranAt: number, durationMs: number } | null}
+   */
+  const getCellTiming = (i) => cellTimings.get(i) || null;
 
   /**
    * @param {number} i
@@ -115,6 +123,7 @@ export function createKernel() {
   const clearCellOutputs = (i) => {
     wipeArtifacts(cellOutputs.get(i) || []);
     cellOutputs.delete(i);
+    cellTimings.delete(i);
     if (getCellStatus(i) !== "idle") setCellStatus(i, "idle");
   };
 
@@ -149,6 +158,7 @@ export function createKernel() {
       throw new Error("Empty cell");
     }
     setCellStatus(cellIndex, "running");
+    const startedAt = Date.now();
     try {
       const artifacts = await runRecipe(
         { chains: [chain], steps: chain.steps, source: "" },
@@ -160,10 +170,12 @@ export function createKernel() {
       );
       cellOutputs.set(cellIndex, artifacts);
       setCellStatus(cellIndex, "ok");
+      cellTimings.set(cellIndex, { ranAt: Date.now(), durationMs: Date.now() - startedAt });
       invalidateFrom(cellIndex + 1);
       return artifacts;
     } catch (err) {
       setCellStatus(cellIndex, "error");
+      cellTimings.set(cellIndex, { ranAt: Date.now(), durationMs: Date.now() - startedAt });
       throw err;
     }
   };
@@ -192,7 +204,14 @@ export function createKernel() {
     for (const arts of cellOutputs.values()) wipeArtifacts(arts);
     cellOutputs.clear();
     cellStatus.clear();
+    cellTimings.clear();
     slots.clear();
+    // A live quorum exchange is session state too — tear it down and zeroize
+    // its keys. Dynamic import so WebRTC never enters the base bundle; if the
+    // module was never loaded there is nothing to close.
+    void import("./quorum-ops.js")
+      .then((q) => q.closeQuorumExchange("closed"))
+      .catch(() => {});
   };
 
   /**
@@ -203,6 +222,7 @@ export function createKernel() {
     for (const arts of cellOutputs.values()) wipeArtifacts(arts);
     cellOutputs.clear();
     cellStatus.clear();
+    cellTimings.clear();
     slots.evictSensitive();
   };
 
@@ -220,6 +240,8 @@ export function createKernel() {
     const nextOut = new Map();
     /** @type {Map<number, CellStatus>} */
     const nextStatus = new Map();
+    /** @type {Map<number, { ranAt: number, durationMs: number }>} */
+    const nextTimings = new Map();
     for (const [i, arts] of cellOutputs) {
       const ni = mapFn(i);
       if (ni == null || ni < 0) continue;
@@ -230,10 +252,17 @@ export function createKernel() {
       if (ni == null || ni < 0) continue;
       nextStatus.set(ni, st === "running" ? "idle" : st);
     }
+    for (const [i, t] of cellTimings) {
+      const ni = mapFn(i);
+      if (ni == null || ni < 0) continue;
+      nextTimings.set(ni, t);
+    }
     cellOutputs.clear();
     cellStatus.clear();
+    cellTimings.clear();
     for (const [i, arts] of nextOut) cellOutputs.set(i, arts);
     for (const [i, st] of nextStatus) cellStatus.set(i, st);
+    for (const [i, t] of nextTimings) cellTimings.set(i, t);
   };
 
   /** After reorder, keep tiles but mark every cell that has outputs as stale. */
@@ -247,6 +276,7 @@ export function createKernel() {
     slots,
     getCellOutputs,
     getCellStatus,
+    getCellTiming,
     setCellStatus,
     clearCellOutputs,
     invalidateFrom,

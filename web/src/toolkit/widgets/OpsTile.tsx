@@ -1,8 +1,8 @@
+import type { DragEvent } from "react";
 import {
   TOOLBOX_META,
   getShelfMeta,
   pairDirection,
-  pairTileLabel,
 } from "../../lib/toolkit/registry.js";
 import { decodeTwinToken } from "../../lib/toolkit/step-names.js";
 import { cn } from "@/lib/cn";
@@ -11,108 +11,195 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Glyph, glyphIdFor } from "./Glyph";
+import { ToolboxDot } from "./Glyph";
 import { ToolCard, type ToolCardOp } from "./ToolCard";
 import { STEP_MIME, stepDragPayload } from "./mime";
 
 export type OpsTileOp = ToolCardOp;
 
 type Props = {
+  /** The pair's forward (encode/primary) op — also the row's display name and docs. */
   op: OpsTileOp;
-  decode?: boolean;
-  pairRole?: "forward" | "reverse" | "solo";
-  fit?: boolean;
+  /** Reverse-direction op, when distinct from `op` (e.g. a `conjugate`, not a `decodeTwin`). */
+  reverseOp?: OpsTileOp;
+  /** Row has a working forward (→) direction. Default true. */
+  hasForward?: boolean;
+  /** Row has a working reverse (←) direction. Default: true if `op.decodeTwin` or `reverseOp` given. */
+  hasReverse?: boolean;
+  fit?: { forward: boolean; reverse: boolean };
+  /**
+   * Per-direction dim reason while a caret is active (§20c) — set for a
+   * direction that doesn't fit; renders an 8.5px caption under that arrow
+   * and dims just that handle instead of the whole row.
+   */
+  needs?: { forward?: string; reverse?: string };
+  /** Whole-row dim — neither direction fits the caret. */
   dim?: boolean;
   showTooltip?: boolean;
   onAppend: (name: string, opts?: { decode?: boolean }) => void;
   className?: string;
 };
 
-function displayName(
-  op: OpsTileOp,
-  decode?: boolean,
-  pairRole?: "forward" | "reverse" | "solo"
-): string {
-  const friendly = pairTileLabel(op as never, { decode: !!decode, pairRole });
-  if (friendly) return friendly;
-  if (decode && op.decodeTwin) return decodeTwinToken(op, true);
-  if (op.decodeTwin && !decode) return decodeTwinToken(op, false);
-  return op.label || op.name;
+// Direction is always color-coded (§19a/19b): encode → blue, decode ← purple.
+// `fit` only brightens the handle's background/border toward its own hue.
+// Class strings must stay literal so Tailwind's scanner can see them.
+function directionButtonClass(active: boolean, fit: boolean, kind: "encode" | "decode") {
+  if (!active) {
+    return "border-dashed border-[var(--border)] bg-transparent text-transparent cursor-not-allowed";
+  }
+  if (kind === "decode") {
+    return cn(
+      "cursor-grab active:cursor-grabbing text-[var(--decode)] hover:border-[var(--decode)]",
+      fit
+        ? "border-[color-mix(in_srgb,var(--decode)_40%,transparent)] bg-[color-mix(in_srgb,var(--decode)_14%,transparent)]"
+        : "border-[var(--border)] bg-[var(--surface-raised)]"
+    );
+  }
+  return cn(
+    "cursor-grab active:cursor-grabbing text-[var(--caret)] hover:border-[var(--caret)]",
+    fit
+      ? "border-[color-mix(in_srgb,var(--caret)_40%,transparent)] bg-[color-mix(in_srgb,var(--caret)_14%,transparent)]"
+      : "border-[var(--border)] bg-[var(--surface-raised)]"
+  );
 }
 
-/** Draggable encode/decode op tile for shelves and suggest rails. */
+/** Merged encode/decode row — one dot, one name, up to two direction handles (§19b). */
 export function OpsTile({
   op,
-  decode,
-  pairRole = "solo",
-  fit = false,
+  reverseOp,
+  hasForward = true,
+  hasReverse = !!(op.decodeTwin || reverseOp),
+  fit = { forward: false, reverse: false },
+  needs,
   dim = false,
   showTooltip = true,
   onAppend,
   className,
 }: Props) {
-  const nameLabel = displayName(op, decode, pairRole);
-  const recipeName =
-    op.decodeTwin && decode
-      ? decodeTwinToken(op, true)
-      : op.decodeTwin
-        ? decodeTwinToken(op, false)
-        : op.label || op.name;
-  const dir = pairDirection(op, { decode: !!decode, pairRole });
-  const payload = stepDragPayload(op.name, !!decode);
+  const forwardName = op.name;
+  // A distinct conjugate (e.g. wrap/unwrap) appends its own name with no decode flag;
+  // everything else — decodeTwin ops, and same-name cipher-dispatch kits — appends
+  // this op's own name with decode:true.
+  const reverseIsDistinctConjugate = !!reverseOp && !op.decodeTwin;
+  const reverseName = reverseIsDistinctConjugate ? reverseOp!.name : op.name;
+  const reverseDecode = !reverseIsDistinctConjugate;
+  const reverseDisplayName = op.decodeTwin ? decodeTwinToken(op, true) : reverseName;
+  const forwardPayload = stepDragPayload(forwardName, false);
+  const reversePayload = stepDragPayload(reverseName, reverseDecode);
+  const forwardDir = pairDirection(op, { decode: false, pairRole: "forward" });
+  const reverseDir = pairDirection(reverseOp || op, {
+    decode: reverseDecode,
+    pairRole: "reverse",
+  });
 
-  const button = (
-    <button
-      type="button"
-      draggable
-      data-dir={dir}
-      data-pair-role={pairRole}
+  const hasCaptions = !!(needs?.forward || needs?.reverse);
+
+  const row = (
+    <div
       className={cn(
-        "ops-item ops-item-icon flex w-full min-h-[2.35rem] flex-row items-center justify-start gap-2 rounded-lg border px-2 py-1.5",
-        "cursor-grab active:cursor-grabbing",
-        fit && "ops-item-fit",
-        dim && "ops-item-dim",
-        dir === "encode" &&
-          "border-[color-mix(in_srgb,var(--brand)_42%,var(--border))] bg-[color-mix(in_srgb,var(--brand)_10%,var(--surface-raised))]",
-        dir === "decode" &&
-          "border-[color-mix(in_srgb,var(--accent,#7aa2f7)_42%,var(--border))] bg-[color-mix(in_srgb,var(--accent,#7aa2f7)_10%,var(--surface-raised))]",
-        dir === "neutral" &&
-          "border-transparent bg-[color-mix(in_srgb,var(--surface)_55%,var(--surface-raised))]",
-        "hover:border-[color-mix(in_srgb,var(--brand)_50%,var(--border))]",
+        "flex gap-2 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]",
+        hasCaptions ? "items-start" : "items-center",
+        dim && "opacity-[.32]",
         className
       )}
-      aria-label={`${nameLabel} (${recipeName})`}
-      onClick={() => onAppend(op.name, { decode: !!decode })}
-      onDragStart={(e) => {
-        e.dataTransfer.setData(STEP_MIME, payload);
-        e.dataTransfer.setData("text/plain", recipeName);
-        if (decode) e.dataTransfer.setData("application/x-basilisk-decode", "1");
-        e.dataTransfer.effectAllowed = "copy";
-      }}
     >
-      <Glyph id={glyphIdFor(op)} size={18} />
-      <span className="min-w-0 flex-1 truncate text-left font-mono text-[0.72rem] font-semibold leading-tight">
-        {nameLabel}
+      <ToolboxDot
+        op={op}
+        className={cn("h-[6px] w-[6px]", hasCaptions && "mt-[7px]")}
+      />
+      <code
+        className={cn(
+          "min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]",
+          hasCaptions && "pt-[2px]"
+        )}
+      >
+        {op.name}
+      </code>
+      <span className="flex shrink-0 flex-col items-center gap-[2px]">
+        <button
+          type="button"
+          draggable={hasForward}
+          disabled={!hasForward}
+          data-dir={forwardDir}
+          aria-hidden={!hasForward}
+          className={cn(
+            "flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border text-[10px] font-semibold transition-colors",
+            directionButtonClass(hasForward, fit.forward, "encode"),
+            needs?.forward && "cursor-not-allowed opacity-40"
+          )}
+          aria-label={hasForward ? `${forwardName} — encode` : undefined}
+          title={hasForward ? needs?.forward || "Encode" : undefined}
+          onClick={hasForward ? () => onAppend(forwardName, { decode: false }) : undefined}
+          onDragStart={
+            hasForward
+              ? (e: DragEvent<HTMLButtonElement>) => {
+                  e.dataTransfer.setData(STEP_MIME, forwardPayload);
+                  e.dataTransfer.setData("text/plain", forwardName);
+                  e.dataTransfer.effectAllowed = "copy";
+                }
+              : undefined
+          }
+        >
+          {hasForward ? "→" : ""}
+        </button>
+        {needs?.forward ? (
+          <span className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]">
+            {needs.forward}
+          </span>
+        ) : null}
       </span>
-    </button>
+      <span className="flex shrink-0 flex-col items-center gap-[2px]">
+        <button
+          type="button"
+          draggable={hasReverse}
+          disabled={!hasReverse}
+          data-dir={reverseDir}
+          aria-hidden={!hasReverse}
+          className={cn(
+            "flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border text-[10px] font-semibold transition-colors",
+            directionButtonClass(hasReverse, fit.reverse, "decode"),
+            needs?.reverse && "cursor-not-allowed opacity-40"
+          )}
+          aria-label={hasReverse ? `${reverseDisplayName} — decode` : undefined}
+          title={hasReverse ? needs?.reverse || "Decode" : undefined}
+          onClick={
+            hasReverse ? () => onAppend(reverseName, { decode: reverseDecode }) : undefined
+          }
+          onDragStart={
+            hasReverse
+              ? (e: DragEvent<HTMLButtonElement>) => {
+                  e.dataTransfer.setData(STEP_MIME, reversePayload);
+                  e.dataTransfer.setData("text/plain", reverseDisplayName);
+                  if (reverseDecode) {
+                    e.dataTransfer.setData("application/x-basilisk-decode", "1");
+                  }
+                  e.dataTransfer.effectAllowed = "copy";
+                }
+              : undefined
+          }
+        >
+          {hasReverse ? "←" : ""}
+        </button>
+        {needs?.reverse ? (
+          <span className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]">
+            {needs.reverse}
+          </span>
+        ) : null}
+      </span>
+    </div>
   );
 
-  if (!showTooltip) return button;
+  if (!showTooltip) return row;
 
   return (
     <Tooltip delayDuration={280}>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipTrigger asChild>{row}</TooltipTrigger>
       <TooltipContent
         side="right"
         sideOffset={10}
         className="max-w-none border-0 bg-transparent p-0 text-left text-[var(--text)] shadow-none"
       >
-        <ToolCard
-          op={op}
-          decode={!!decode}
-          fit={fit}
-          className="w-[300px] max-w-[min(300px,calc(100vw-2rem))]"
-        />
+        <ToolCard op={op} className="w-[300px] max-w-[min(300px,calc(100vw-2rem))]" />
       </TooltipContent>
     </Tooltip>
   );

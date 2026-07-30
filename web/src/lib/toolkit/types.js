@@ -9,15 +9,21 @@
 /** @typedef {import("./registry.js").IoType} IoType */
 
 import { slotLabelKey } from "./recipe-parse.js";
+import { BASE_ENCODINGS as BASE_ENCODING_LIST } from "./step-names.js";
 
 /**
  * @typedef {object} RefinedType
  * @property {IoType} base
  * @property {string} [kind]  scalar | master | der | pem | armored | mnemonic | opaque | …
+ *   For `candidate` this is the ICE type: host | srflx | prflx | relay.
  * @property {string} [alg]
- * @property {number} [length]
- * @property {"public"|"private"|"secret"} [which]
+ * @property {number} [length]  byte length, or element count for list-shaped
+ *   values (`candidate`, `peer`)
+ * @property {"public"|"private"|"secret"|"offer"|"answer"} [which]
+ *   Key half, or — for `sdp` — which side of the offer/answer exchange.
  * @property {string} [encoding]
+ * @property {"v4"|"v6"|"name"} [family]  `host` address family
+ * @property {"udp"|"tcp"} [protocol]  `endpoint`/`candidate` transport
  */
 
 /**
@@ -40,6 +46,71 @@ export function typeOf(base, ref = {}) {
 /** @returns {RefinedType} */
 export function tNone() {
   return typeOf("none");
+}
+
+/**
+ * Network/WebRTC value types (design v2 §25a). Split three ways because the
+ * distinction is what the type system is *for*:
+ *  - DATA — inert, serializable, safe to copy/publish/pipe onward.
+ *  - HANDLE — a live browser object. Meaningful only inside the run that
+ *    created it; never publishable, never a crypto op's input.
+ *  - OBSERVE — a diagnostic read-out. Displayable, but not an input to
+ *    anything (a stats snapshot isn't a value you compute with).
+ * @type {ReadonlySet<string>}
+ */
+export const NETWORK_DATA_TYPES = new Set([
+  "host",
+  "endpoint",
+  "candidate",
+  "sdp",
+  "certificate",
+  "peer",
+]);
+/** @type {ReadonlySet<string>} */
+export const NETWORK_HANDLE_TYPES = new Set(["session", "channel"]);
+/** @type {ReadonlySet<string>} */
+export const NETWORK_OBSERVE_TYPES = new Set(["connstate", "stats"]);
+
+/** Every network type, whatever its class. @type {ReadonlySet<string>} */
+export const NETWORK_TYPES = new Set([
+  ...NETWORK_DATA_TYPES,
+  ...NETWORK_HANDLE_TYPES,
+  ...NETWORK_OBSERVE_TYPES,
+]);
+
+/** Types whose `length` refinement counts elements, not bytes. */
+const LIST_TYPES = new Set(["candidate", "peer"]);
+
+/**
+ * Steps that accept any pipeline value — display/plumbing, not computation.
+ * @param {string} name
+ */
+/** Base alphabets `encode`/`decode` accept — one list, owned by step-names.js. */
+export const BASE_ENCODINGS = new Set(BASE_ENCODING_LIST);
+
+export const POLYMORPHIC_STEPS = new Set([
+  "out",
+  "tee",
+  "peek",
+  "inspect",
+  "text",
+  "select",
+  "in",
+]);
+
+export function isPassthroughStep(name) {
+  return POLYMORPHIC_STEPS.has(name);
+}
+
+/**
+ * A live handle or an observe-only read-out can be displayed (`out`,
+ * `inspect`, `text`) but must never be consumed as a crypto op's input —
+ * this is the rule that makes `session`/`connstate` genuinely different from
+ * a JSON blob that merely looks different.
+ * @param {IoType} base
+ */
+export function isObserveOnlyType(base) {
+  return NETWORK_HANDLE_TYPES.has(base) || NETWORK_OBSERVE_TYPES.has(base);
 }
 
 /**
@@ -73,8 +144,14 @@ export function formatType(t) {
   const parts = [t.base];
   if (t.kind) parts.push(t.kind);
   if (t.alg) parts.push(t.alg);
-  if (t.length != null) parts.push(`${t.length}B`);
+  // `length` is a byte count for payloads but an element count for the
+  // list-shaped network types — "candidate/×3" reads better than "3B".
+  if (t.length != null) {
+    parts.push(LIST_TYPES.has(t.base) ? `×${t.length}` : `${t.length}B`);
+  }
   if (t.which) parts.push(t.which);
+  if (t.family) parts.push(t.family);
+  if (t.protocol) parts.push(t.protocol);
   if (t.encoding && t.encoding !== t.kind) parts.push(t.encoding);
   return parts.join("/");
 }
@@ -161,6 +238,28 @@ export function matchOverload(overloads, current, params) {
  * @param {Record<string, *>} params
  * @returns {RefinedType}
  */
+/**
+ * Byte length of a `bytes` literal, or null when the value is malformed or
+ * empty — an unrefined `bytes` type is the honest answer there, since the
+ * engine is the layer that reports the decode error.
+ * @param {string} raw
+ * @param {string} encoding  hex | base64 | utf8
+ * @returns {number|null}
+ */
+function literalByteLength(raw, encoding) {
+  const src = String(raw || "").trim();
+  if (!src) return null;
+  if (encoding === "utf8") return new TextEncoder().encode(src).length;
+  if (encoding === "base64") {
+    const clean = src.replace(/[\s=]/g, "");
+    if (!/^[A-Za-z0-9+/\-_]*$/.test(clean)) return null;
+    return Math.floor((clean.length * 3) / 4) || null;
+  }
+  const hex = src.replace(/^0[xX]/, "").replace(/\s+/g, "");
+  if (!hex.length || hex.length % 2 !== 0 || /[^0-9a-fA-F]/.test(hex)) return null;
+  return hex.length / 2;
+}
+
 export function inferSourceType(name, params = {}) {
   switch (name) {
     case "genkey": {
@@ -173,6 +272,26 @@ export function inferSourceType(name, params = {}) {
         return typeOf("bytes", { kind: "master", length });
       }
       return typeOf("bytes", { length });
+    }
+    case "bytes": {
+      // Refine with the literal's length the same way `random` does, so a
+      // too-short literal fails where it is written rather than deep inside
+      // the step that needed 32 bytes. Computed inline rather than through
+      // type-registry.js: registry.js already imports this module, so
+      // reaching back through it would close an import cycle.
+      const length = literalByteLength(
+        String(params.value ?? ""),
+        String(params.encoding || "hex")
+      );
+      if (length == null) return typeOf("bytes");
+      if (length === 16 || length === 32) return typeOf("bytes", { kind: "master", length });
+      return typeOf("bytes", { length });
+    }
+    case "keypair": {
+      // An SPKI PEM only carries the public half, so the tip is a lone `key`
+      // — the same distinction `import` already draws for its formats.
+      const alg = String(params.alg || "ec/p256");
+      return typeOf("keypair", { alg, which: "private" });
     }
     case "passphrase":
       return typeOf("text", { kind: "opaque" });
@@ -214,6 +333,38 @@ export function inferSourceType(name, params = {}) {
     case "webauthn.create":
     case "webauthn.prf":
       return typeOf("bytes", { kind: "opaque" });
+    // ── Network / WebRTC (design v2 §21a/23a/23b/29a/29d/30d) ──
+    case "rtc.ice":
+      // A list of ICE server addresses — host:port pairs, same shape as any
+      // other endpoint, which is why `ice=@slot` can type-check against it.
+      return typeOf("endpoint", { kind: "ice-servers" });
+    case "stun.check":
+      // The peer's own server-reflexive address, as discovered.
+      return typeOf("endpoint", { kind: "reflexive" });
+    case "rtc.gatherCandidates":
+      return typeOf("candidate");
+    case "rtc.certificate":
+      return typeOf("certificate", { alg: String(params.alg || "ecdsa") });
+    case "rtc.createOffer":
+      return typeOf("sdp", { which: "offer" });
+    case "quorum.offer":
+    case "quorum.join":
+      // A LIVE handle — deliberately not text: it must never be consumable by
+      // a crypto op, and it means nothing outside the run that opened it.
+      return typeOf("session", {
+        which: name === "quorum.offer" ? "offer" : "answer",
+      });
+    case "quorum.recv":
+      // The received message really is data — text, not a handle.
+      return typeOf("text", { kind: "opaque" });
+    case "rtc.connectionState":
+      return typeOf("connstate");
+    case "rtc.checkConnectivity":
+      return typeOf("stats", { kind: "candidate-pairs" });
+    case "rtc.dataChannelStats":
+      return typeOf("stats", { kind: "data-channel" });
+    case "rtc.statsReport":
+      return typeOf("stats", { kind: "quality" });
     default:
       return tNone();
   }
@@ -466,32 +617,34 @@ export function inferParamDrivenType(name, current, params = {}) {
     };
   }
 
-  if (name === "to") {
+  if (name === "encode") {
     const enc = String(params.encoding || "hex").toLowerCase();
-    if (enc !== "hex") {
-      return { ok: false, error: `"to ${enc}" is not supported yet` };
+    if (!BASE_ENCODINGS.has(enc)) {
+      return { ok: false, error: `"encode ${enc}" is not a base alphabet` };
     }
     if (current.base !== "bytes") {
       return {
         ok: false,
-        error: `"to hex" expects bytes, got ${formatType(current)}`,
+        error: `"encode ${enc}" expects bytes, got ${formatType(current)}`,
       };
     }
+    // Carry the encoding as a refinement so a later `from` — or an artifact
+    // renderer — knows which alphabet the text is in without sniffing it.
     return {
       ok: true,
-      output: typeOf("text", { kind: "opaque", encoding: "hex" }),
+      output: typeOf("text", { kind: "opaque", encoding: enc }),
     };
   }
 
-  if (name === "from") {
+  if (name === "decode") {
     const enc = String(params.encoding || "hex").toLowerCase();
-    if (enc !== "hex") {
-      return { ok: false, error: `"from ${enc}" is not supported yet` };
+    if (!BASE_ENCODINGS.has(enc)) {
+      return { ok: false, error: `"decode ${enc}" is not a base alphabet` };
     }
     if (current.base !== "text") {
       return {
         ok: false,
-        error: `"from hex" expects hex text, got ${formatType(current)}`,
+        error: `"decode ${enc}" expects text, got ${formatType(current)}`,
       };
     }
     return { ok: true, output: typeOf("bytes", { kind: "opaque" }) };
@@ -1069,6 +1222,28 @@ export function resolveStepType(spec, current, params = {}) {
     return { ok: true, output: inferSourceType(name, params) };
   }
 
+  // Live handles (`session`/`channel`) and observe-only read-outs
+  // (`connstate`/`stats`) may be displayed but never consumed. `out`, `tee`,
+  // `peek`, `inspect`, `text`, `select`, and `in` are the universal
+  // passthroughs that legitimately accept anything.
+  // `quorum.close` is a control op that tears down the ambient exchange and
+  // passes its input straight through, so it legitimately sees a session.
+  if (
+    current &&
+    isObserveOnlyType(current.base) &&
+    !isPassthroughStep(name) &&
+    name !== "quorum.close"
+  ) {
+    return {
+      ok: false,
+      error: `"${name}" cannot consume ${formatType(current)} — ${
+        NETWORK_HANDLE_TYPES.has(current.base)
+          ? "a live handle is only valid inside the run that opened it"
+          : "this is an observe-only diagnostic"
+      }. Use out / inspect / text to display it.`,
+    };
+  }
+
   const driven = inferParamDrivenType(name, current, params);
   if (driven) return driven;
 
@@ -1111,6 +1286,11 @@ export function resolveStepType(spec, current, params = {}) {
           : `Type mismatch: "${name}" expects ${want}, got ${formatType(current)}.`,
     };
   }
+  // `rtc.createAnswer` consumes an offer and produces the other half of the
+  // exchange — keep the two distinguishable rather than both being bare `sdp`.
+  if (name === "rtc.createAnswer") {
+    return { ok: true, output: typeOf("sdp", { which: "answer" }) };
+  }
   return {
     ok: true,
     output: typeOf(/** @type {IoType} */ (spec.output || "none")),
@@ -1133,17 +1313,7 @@ export function stepAcceptsRefined(spec, from) {
     return spec.kind === "source" || spec.input === "none";
   }
 
-  if (
-    spec.name === "tee" ||
-    spec.name === "peek" ||
-    spec.name === "inspect" ||
-    spec.name === "out" ||
-    spec.name === "text" ||
-    spec.name === "select" ||
-    spec.name === "in"
-  ) {
-    return true;
-  }
+  if (POLYMORPHIC_STEPS.has(spec.name)) return true;
   if (spec.name === "foreach") return current.base === "shares";
   if (spec.name === "export") {
     return current.base === "keypair" || current.base === "key";

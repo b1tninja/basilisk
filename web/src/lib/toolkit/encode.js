@@ -169,6 +169,31 @@ export function parsePem(pem) {
 }
 
 /**
+ * Every PEM block in a document, in order. `parsePem` deliberately returns
+ * only the first — this is for the cases that legitimately carry two, such as
+ * a PKCS#8 private key alongside its SPKI public half.
+ * @param {string} pem
+ * @returns {PemBlock[]}
+ */
+export function parsePemBlocks(pem) {
+  const text = String(pem || "");
+  /** @type {PemBlock[]} */
+  const out = [];
+  const re = /-----BEGIN ([^-]+)-----([\s\S]*?)-----END [^-]+-----/g;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    const label = String(m[1] || "").trim();
+    const meta = pemMetaFromLabel(label);
+    out.push({
+      der: base64ToBytes(m[2].replace(/\s+/g, "")),
+      label,
+      which: meta.which,
+      format: meta.format,
+    });
+  }
+  return out;
+}
+
+/**
  * Strip PEM armor and return DER bytes.
  * @param {string} pem
  * @returns {Uint8Array}

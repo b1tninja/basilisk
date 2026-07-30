@@ -1,21 +1,31 @@
 import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { listSteps } from "../lib/toolkit/registry.js";
+import { tipFitFor } from "../lib/toolkit/suggest.js";
 import {
   Glyph,
+  ToolboxDot,
   ToolCard,
   OpsTile,
   OpsShelf,
   SuggestChip,
   InsertGap,
-  SuggestRail,
   RecipeChipFlow,
   ParamField,
   ParamFieldGroup,
   ModeToggle,
   MenuPopover,
   PresetMenu,
+  RunBar,
+  TopBar,
+  ReadinessBar,
+  OutputList,
+  NetworkArtifact,
+  SessionStrip,
+  TypeCard,
 } from "../toolkit/widgets/index";
+import { getTypeMeta } from "../lib/toolkit/type-registry.js";
+import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "../css/toolkit.css";
 import "../css/site.css";
@@ -55,22 +65,20 @@ function CatalogApp() {
   const sample = ops.find((o) => o.name === "genkey") || ops[0];
   const base64 = ops.find((o) => o.name === "base64") || sample;
   const [filter, setFilter] = useState("");
-  const [mode, setMode] = useState("preview");
+  const [mode, setMode] = useState("pipeline");
   const [gapActive, setGapActive] = useState(false);
   const [params, setParams] = useState<Record<string, unknown>>({
     alg: "ec/p256",
     usage: "auto",
   });
   const [chipSel, setChipSel] = useState(false);
-  const [railOpen, setRailOpen] = useState(false);
+  const [shelfCaretFilter, setShelfCaretFilter] = useState("");
+  const [topbarTitle, setTopbarTitle] = useState("Onboard Dana & Sam");
 
-  const railItems = useMemo(
-    () =>
-      ops.slice(0, 6).map((op) => ({
-        op,
-        label: op.label || op.name,
-      })),
-    [ops]
+  // §19a caret-focused fixture: tipFit for a bytes tip, so real ops dim/fit.
+  const bytesTipFit = useMemo(
+    () => tipFitFor({ base: "bytes" }).tipFit as Set<string>,
+    []
   );
 
   return (
@@ -94,7 +102,13 @@ function CatalogApp() {
               "opsshelf",
               "chips",
               "insertgap",
-              "suggestrail",
+              "runbar",
+              "sessionstrip",
+              "topbar",
+              "readinessbar",
+              "outputlist",
+              "networkartifact",
+              "typecard",
               "recipechipflow",
               "paramfield",
               "modetoggle",
@@ -121,64 +135,169 @@ function CatalogApp() {
               </div>
             ))}
           </div>
+          <StateLabel>
+            WebRTC handle kinds (§25a) — shape-coded so a live socket handle never
+            reads as an ordinary data value; connState is hollow (observe-only)
+          </StateLabel>
+          <div className="flex flex-wrap items-end gap-6">
+            {[
+              { output: "candidate", label: "candidate" },
+              { output: "endpoint", label: "endpoint" },
+              { output: "session", label: "session" },
+              { output: "sdp", label: "sdp" },
+              { output: "channel", label: "channel" },
+              { output: "connstate", label: "connstate" },
+              { output: "stats", label: "stats" },
+              { output: "text", label: "text (data)" },
+            ].map((k) => (
+              <div key={k.label} className="flex flex-col items-center gap-2">
+                <span className="flex h-4 items-center">
+                  <ToolboxDot op={{ toolbox: "webrtc", output: k.output }} />
+                </span>
+                <code className="text-[0.65rem]">{k.label}</code>
+              </div>
+            ))}
+          </div>
         </Section>
 
-        <Section id="toolcard" title="ToolCard">
-          <div className="grid gap-4 md:grid-cols-2">
+        <Section id="toolcard" title="ToolCard — docs-only (§19f)">
+          <div className="grid gap-4 md:grid-cols-3">
             <div>
               <StateLabel>Default</StateLabel>
               {sample ? <ToolCard op={sample} className="max-w-sm" /> : null}
             </div>
             <div>
-              <StateLabel>Compact · fit · blocked</StateLabel>
+              <StateLabel>Compact — hover popover over chips / shelf rows</StateLabel>
               {sample ? (
-                <ToolCard op={sample} compact fit blocked hideHint className="max-w-sm" />
+                <ToolCard op={sample} compact className="max-w-sm" />
+              ) : null}
+            </div>
+            <div>
+              <StateLabel>Pinned docs panel — brand border, ✕ to close</StateLabel>
+              {sample ? (
+                <ToolCard op={sample} compact pinned onClose={() => {}} className="max-w-sm" />
               ) : null}
             </div>
           </div>
         </Section>
 
-        <Section id="opstile" title="OpsTile">
-          <div className="grid max-w-md grid-cols-2 gap-2">
+        <Section id="opstile" title="OpsTile — merged encode/decode row (§19b)">
+          <div className="grid max-w-md grid-cols-1 gap-2">
             {base64 ? (
               <>
                 <div>
-                  <StateLabel>Encode</StateLabel>
-                  <OpsTile op={base64} pairRole="forward" onAppend={() => {}} />
+                  <StateLabel>Default — browse, no caret (plain handles)</StateLabel>
+                  <OpsTile
+                    op={base64}
+                    hasReverse
+                    fit={{ forward: false, reverse: false }}
+                    onAppend={() => {}}
+                    showTooltip={false}
+                  />
                 </div>
                 <div>
-                  <StateLabel>Decode</StateLabel>
-                  <OpsTile op={base64} decode pairRole="reverse" onAppend={() => {}} />
+                  <StateLabel>Caret fit — forward handle brightened</StateLabel>
+                  <OpsTile
+                    op={base64}
+                    hasReverse
+                    fit={{ forward: true, reverse: false }}
+                    onAppend={() => {}}
+                    showTooltip={false}
+                  />
                 </div>
                 <div>
-                  <StateLabel>Dim</StateLabel>
-                  <OpsTile op={base64} dim onAppend={() => {}} showTooltip={false} />
+                  <StateLabel>Decode-only op — no forward direction</StateLabel>
+                  <OpsTile
+                    op={base64}
+                    hasForward={false}
+                    hasReverse
+                    fit={{ forward: false, reverse: true }}
+                    onAppend={() => {}}
+                    showTooltip={false}
+                  />
                 </div>
                 <div>
-                  <StateLabel>Fit</StateLabel>
-                  <OpsTile op={base64} fit onAppend={() => {}} showTooltip={false} />
+                  <StateLabel>Dim — doesn't fit the caret (opacity .32)</StateLabel>
+                  <OpsTile
+                    op={base64}
+                    hasReverse
+                    dim
+                    fit={{ forward: false, reverse: false }}
+                    onAppend={() => {}}
+                    showTooltip={false}
+                  />
                 </div>
               </>
             ) : null}
           </div>
         </Section>
 
-        <Section id="opsshelf" title="OpsShelf">
-          <StateLabel>Bare embed (search + tip-fit unset)</StateLabel>
-          <div className="h-[320px] max-w-xs overflow-hidden rounded-lg border border-[var(--border)]">
-            <OpsShelf
-              ops={ops}
-              filter={filter}
-              onFilter={setFilter}
-              onAppend={() => {}}
-              bare
-            />
+        <Section id="opsshelf" title="OpsShelf — 3 states (§19a) + kit search suggestion (§21c)">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <StateLabel>Browse — no caret focus</StateLabel>
+              <div className="h-[560px] w-[252px] overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface)]">
+                <OpsShelf
+                  ops={ops}
+                  filter={filter}
+                  onFilter={setFilter}
+                  onAppend={() => {}}
+                  bare
+                />
+              </div>
+            </div>
+            <div>
+              <StateLabel>
+                Caret focused — tipFit(bytes) dims the rest, zero-fit sections
+                collapse to “0 fit”
+              </StateLabel>
+              <div className="h-[560px] w-[252px] overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface)]">
+                <OpsShelf
+                  ops={ops}
+                  filter={shelfCaretFilter}
+                  onFilter={setShelfCaretFilter}
+                  onAppend={() => {}}
+                  tipFit={bytesTipFit}
+                  tip={{ base: "bytes" }}
+                  caretBanner={
+                    <div className="border-b border-l-2 border-[var(--border)] border-l-[var(--caret)] bg-[color-mix(in_srgb,var(--caret)_6%,transparent)] px-2.5 py-2">
+                      <div className="text-[length:9.5px] font-bold uppercase tracking-wider text-[var(--caret)]">
+                        Caret · after `genkey` in cell [0]
+                      </div>
+                      <div className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
+                        Showing{" "}
+                        <strong className="text-[var(--foreground)]">
+                          {bytesTipFit.size} ops
+                        </strong>{" "}
+                        that accept <code className="font-mono">bytes</code>.
+                      </div>
+                    </div>
+                  }
+                  bare
+                />
+              </div>
+            </div>
+            <div>
+              <StateLabel>
+                Search matches nothing in browse mode but matches a kitOnly op —
+                suggestion row instead of a bare empty state
+              </StateLabel>
+              <div className="h-[300px] w-[252px] overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface)]">
+                <OpsShelf
+                  ops={ops}
+                  filter="rsa-pkcs1"
+                  onFilter={() => {}}
+                  onAppend={() => {}}
+                  bare
+                />
+              </div>
+            </div>
           </div>
         </Section>
 
         <Section id="chips" title="SuggestChip">
           <div className="flex flex-wrap items-center gap-2">
-            <SuggestChip label="base64.encode" variant="candidate" op={base64} />
+            <SuggestChip label="base64.encode" variant="ghost" op={base64} />
             <SuggestChip
               label="genkey"
               hint="ec/p256"
@@ -189,7 +308,7 @@ function CatalogApp() {
             <SuggestChip
               label="export"
               hint="spki"
-              variant="editable"
+              variant="placed"
               selected={chipSel}
               op={ops.find((o) => o.name === "export")}
               onClick={() => setChipSel((v) => !v)}
@@ -197,7 +316,7 @@ function CatalogApp() {
             <SuggestChip label="broken" variant="placed" error />
             <SuggestChip
               label="base64"
-              variant="editable"
+              variant="placed"
               op={base64}
               onClick={() => {}}
               onRemove={() => {}}
@@ -205,63 +324,452 @@ function CatalogApp() {
           </div>
         </Section>
 
-        <Section id="insertgap" title="InsertGap">
-          <div className="flex items-center gap-3">
-            <SuggestChip label="random" variant="placed" />
-            <InsertGap
-              active={gapActive}
-              onClick={() => setGapActive((v) => !v)}
-              label="Toggle drop-active"
-            />
-            <SuggestChip label="out" variant="placed" />
+        <Section id="insertgap" title="The caret — InsertGap states (§19d)">
+          <div className="flex flex-col gap-3">
+            <div>
+              <StateLabel>Idle gap — between two placed chips (hover the + to brighten)</StateLabel>
+              <div className="flex items-center gap-0.5">
+                <SuggestChip label="genkey" variant="placed" op={sample} />
+                <InsertGap label="Insert step here" onClick={() => {}} />
+                <SuggestChip label="out" variant="placed" />
+              </div>
+            </div>
+            <div>
+              <StateLabel>Active — clicked; toolbox targets this position (HERE)</StateLabel>
+              <div className="flex items-center gap-0.5">
+                <SuggestChip label="genkey" variant="placed" op={sample} />
+                <InsertGap label="Insert step here" pending onClick={() => {}} />
+                <SuggestChip label="out" variant="placed" />
+              </div>
+            </div>
+            <div>
+              <StateLabel>Drop target — dragging an op tile over this gap</StateLabel>
+              <div className="flex items-center gap-0.5">
+                <SuggestChip label="genkey" variant="placed" op={sample} className="opacity-60" />
+                <InsertGap label="Drop here" active onClick={() => setGapActive((v) => !v)} />
+                <SuggestChip label="out" variant="placed" className="opacity-60" />
+              </div>
+            </div>
+            <div>
+              <StateLabel>End-of-pipeline caret — append is “caret at the end”</StateLabel>
+              <div className="flex items-center gap-0.5">
+                <SuggestChip label="out" variant="placed" />
+                <InsertGap label="Insert at end" onClick={() => {}} />
+              </div>
+            </div>
           </div>
         </Section>
 
-        <Section id="suggestrail" title="SuggestRail">
-          <StateLabel>Cell-style rail (op tiles)</StateLabel>
-          <SuggestRail items={railItems} onAppend={() => {}} />
-          <StateLabel>Expandable nest +</StateLabel>
-          <SuggestRail
-            items={railItems}
-            onAppend={() => {}}
-            expandable
-            expanded={railOpen}
-            onToggleExpand={() => setRailOpen((v) => !v)}
-          />
-          <StateLabel>Toolbox squares + pull-out (cell drawer)</StateLabel>
-          <SuggestRail
-            toolboxes={[
-              {
-                id: "encoding",
-                label: "Encoding",
-                badge: "Encode",
-                glyph: "encoding",
-                fit: true,
-                count: 2,
-              },
-              {
-                id: "webcrypto",
-                label: "WebCrypto",
-                badge: "WebCrypto",
-                glyph: "webcrypto",
-                muted: true,
-              },
-            ]}
-            activeToolbox={railOpen ? "encoding" : null}
-            onToolboxClick={() => setRailOpen((v) => !v)}
-            pulloutChips={railItems.map(({ op, decode, label }, i) => ({
-              op,
-              decode,
-              label,
-              primary: i === 0,
-            }))}
-            onAppend={() => {}}
-            onClosePullout={() => setRailOpen(false)}
-            composeChips={[
-              { id: "encrypt-to", label: "Encrypt message to this set", primary: true },
-            ]}
-            onCompose={() => {}}
-          />
+        <Section id="runbar" title="RunBar — idle / blocked / running (§19g)">
+          <div className="flex flex-col gap-3">
+            <div>
+              <StateLabel>Idle — no blocker on the notebook</StateLabel>
+              <div className="overflow-hidden rounded-lg border border-[var(--border)]">
+                <RunBar
+                  state="idle"
+                  focusedCell={2}
+                  onRunAll={() => {}}
+                  onRunFrom={() => {}}
+                >
+                  <Button variant="ghost">Copy link</Button>
+                  <Button variant="outline">Tray ▸</Button>
+                </RunBar>
+              </div>
+            </div>
+            <div>
+              <StateLabel>Blocked — inline chip carries the fix, not a tooltip</StateLabel>
+              <div className="overflow-hidden rounded-lg border border-[var(--border)]">
+                <RunBar
+                  state="blocked"
+                  blocker="Cell [3] can't run — 2 recipient slots empty"
+                  onRunAll={() => {}}
+                  onBind={() => {}}
+                />
+              </div>
+            </div>
+            <div>
+              <StateLabel>Running — Stop replaces Run all, progress 2 of 4</StateLabel>
+              <div className="overflow-hidden rounded-lg border border-[var(--border)]">
+                <RunBar
+                  state="running"
+                  progress={{ cell: 2, total: 4 }}
+                  onRunAll={() => {}}
+                  onStop={() => {}}
+                />
+              </div>
+            </div>
+          </div>
+        </Section>
+
+        <Section id="sessionstrip" title="SessionStrip + waiting-peer — live p2p exchange (§21a)">
+          <div className="flex max-w-md flex-col gap-3">
+            <div>
+              <StateLabel>Offering — publishing signed invite</StateLabel>
+              <SessionStrip state="offering" room="KJ8XW2PQZM4RT9FQ" />
+            </div>
+            <div>
+              <StateLabel>Waiting — run paused at this cell until a peer meshes</StateLabel>
+              <SessionStrip
+                state="waiting"
+                room="KJ8XW2PQZM4RT9FQ"
+                invite="quorum KJ8XW2PQZM4RT9FQ · 2 keys · localhost"
+                onCopyInvite={() => {}}
+                onCancel={() => {}}
+              />
+            </div>
+            <div>
+              <StateLabel>Connected — verified peers meshed</StateLabel>
+              <SessionStrip state="connected" room="KJ8XW2PQZM4RT9FQ" connected={2} />
+            </div>
+            <div>
+              <StateLabel>Closed — keys zeroized</StateLabel>
+              <SessionStrip state="closed" room="KJ8XW2PQZM4RT9FQ" />
+            </div>
+          </div>
+          <div>
+            <StateLabel>RunBar · waiting-peer — Stop stays, Copy invite / Cancel appear</StateLabel>
+            <div className="overflow-hidden rounded-lg border border-[var(--border)]">
+              <RunBar
+                state="waiting-peer"
+                waitingCell={1}
+                sessionInvite="quorum KJ8XW2PQZM4RT9FQ · 2 keys · localhost"
+                onCopyInvite={() => {}}
+                onCancelSession={() => {}}
+                onRunAll={() => {}}
+                onStop={() => {}}
+              />
+            </div>
+          </div>
+        </Section>
+
+        <Section id="topbar" title="TopBar — identity bar + consolidated suite pill (§20d/21e)">
+          <StateLabel>Idle — click the title to rename (Enter saves · Esc cancels) · all suites ok</StateLabel>
+          <div className="overflow-hidden rounded-lg border border-[var(--border)]">
+            <TopBar
+              title={topbarTitle}
+              onRename={setTopbarTitle}
+              subtitle="3 cells"
+              suiteStatus={{ label: "4 suites ready", tone: "ok" }}
+              suiteDetail={[
+                { name: "WebCrypto", tone: "ok", note: "verified" },
+                { name: "OpenPGP", tone: "ok", note: "verified" },
+                { name: "Secret sharing", tone: "ok", note: "verified" },
+                { name: "WebAuthn", tone: "ok", note: "browser" },
+              ]}
+            >
+              <Button variant="outline">Templates</Button>
+              <Button variant="outline" className="px-2">
+                ⋯
+              </Button>
+            </TopBar>
+          </div>
+          <StateLabel>Pill worst-tone-wins — click opens the per-suite popover</StateLabel>
+          <div className="overflow-hidden rounded-lg border border-[var(--border)]">
+            <TopBar
+              title="Onboard Dana & Sam"
+              onRename={() => {}}
+              subtitle="3 cells"
+              suiteStatus={{ label: "3 suites ready · 1 issue", tone: "warn" }}
+              suiteDetail={[
+                { name: "OpenPGP", tone: "ok", note: "verified" },
+                { name: "WebCrypto", tone: "ok", note: "verified" },
+                { name: "Secret sharing", tone: "ok", note: "verified" },
+                { name: "Quorum", tone: "warn", note: "no STUN" },
+              ]}
+            >
+              <Button variant="outline">Templates</Button>
+              <Button variant="outline" className="px-2">
+                ⋯
+              </Button>
+            </TopBar>
+          </div>
+        </Section>
+
+        <Section id="readinessbar" title="ReadinessBar — “one thing left” triage (§20e)">
+          <div className="flex max-w-md flex-col gap-3">
+            <div>
+              <StateLabel>Single blocker</StateLabel>
+              <ReadinessBar
+                blockers={[
+                  {
+                    id: "needs recipients",
+                    label: "recipients aren't bound",
+                    action: "Bind",
+                    onAction: () => {},
+                  },
+                ]}
+              />
+            </div>
+            <div>
+              <StateLabel>Multiple blockers — highest priority named, rest counted</StateLabel>
+              <ReadinessBar
+                blockers={[
+                  {
+                    id: "needs recipients",
+                    label: "recipients aren't bound",
+                    action: "Bind",
+                    onAction: () => {},
+                  },
+                  { id: "b", label: "message text isn't set", action: "Add text", onAction: () => {} },
+                  { id: "c", label: "upstream cell hasn't run", action: "Run", onAction: () => {} },
+                ]}
+              />
+            </div>
+            <div>
+              <StateLabel>Clean run — hidden entirely, not a green checkmark row</StateLabel>
+              <ReadinessBar blockers={[]} />
+              <div className="h-px bg-[var(--surface-raised)]" />
+            </div>
+          </div>
+        </Section>
+
+        <Section id="networkartifact" title="NetworkArtifact — manager widgets per pipeline type (§23a/23b/26a/26b/29d/30d)">
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            The value&rsquo;s <em>type</em> picks the renderer — that&rsquo;s the payoff of these
+            being real pipeline types rather than JSON text. Each also opens in its own
+            window from an artifact row&rsquo;s <strong>Expand</strong> action.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <StateLabel>candidate — typed ICE rows (26a: all four types, dim when absent)</StateLabel>
+              <NetworkArtifact
+                netType="candidate"
+                data={{
+                  candidates: [
+                    { type: "host", address: "192.168.1.14", port: 54321, protocol: "udp" },
+                    { type: "srflx", address: "203.0.113.9", port: 60122, protocol: "udp", relatedAddress: "0.0.0.0" },
+                    { type: "relay", address: "198.51.100.4", port: 3478, protocol: "tcp" },
+                  ],
+                  byType: { host: 1, prflx: 0, srflx: 1, relay: 1 },
+                  ms: 128,
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>stats/candidate-pairs — matrix, nominated highlighted, skipped dimmed</StateLabel>
+              <NetworkArtifact
+                netType="stats"
+                netKind="candidate-pairs"
+                data={{
+                  peers: [
+                    {
+                      peer: "AABBCCDDEEFF0011",
+                      role: "controlling",
+                      pairs: [
+                        { local: { label: "srflx:60122" }, remote: { label: "srflx:51004" }, state: "succeeded", nominated: true, rttMs: 38 },
+                        { local: { label: "host:54321" }, remote: { label: "host:53211" }, state: "failed", nominated: false },
+                        { local: { label: "host:54321" }, remote: { label: "srflx:51004" }, state: "waiting", nominated: false },
+                      ],
+                    },
+                  ],
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>stats/candidate-pairs — all failed, TURN is the fallback CTA (§23b)</StateLabel>
+              <NetworkArtifact
+                netType="stats"
+                netKind="candidate-pairs"
+                onConfigureTurn={() => {}}
+                data={{
+                  allFailed: true,
+                  peers: [
+                    {
+                      peer: "AABBCCDDEEFF0011",
+                      role: "",
+                      pairs: [
+                        { local: { label: "host:54321" }, remote: { label: "host:53211" }, state: "failed" },
+                      ],
+                    },
+                  ],
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>connstate — state-machine strip (§30d)</StateLabel>
+              <NetworkArtifact
+                netType="connstate"
+                data={{
+                  peers: [
+                    { peer: "AABBCCDDEEFF0011", connectionState: "connected", iceConnectionState: "connected", signalingState: "stable", channelState: "open", verified: true },
+                    { peer: "1122334455667788", connectionState: "connecting", iceConnectionState: "checking", signalingState: "have-local-offer", channelState: "connecting" },
+                  ],
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>stats/data-channel — back-pressure bar (§30d)</StateLabel>
+              <NetworkArtifact
+                netType="stats"
+                netKind="data-channel"
+                data={{
+                  peers: [
+                    { peer: "AABBCCDDEEFF0011", readyState: "open", bufferedAmount: 655360, bufferedAmountLowThreshold: 65535, ordered: true, messagesSent: 42, messagesReceived: 17, backPressured: true },
+                    { peer: "1122334455667788", readyState: "open", bufferedAmount: 0, bufferedAmountLowThreshold: 65535, ordered: false, messagesSent: 3, messagesReceived: 3 },
+                  ],
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>stats/quality — live RTT / loss / throughput (§29d)</StateLabel>
+              <NetworkArtifact
+                netType="stats"
+                netKind="quality"
+                data={{ peers: [{ peer: "AABBCCDDEEFF0011", rttMs: 38, packetLossPct: 0.2, bytesSent: 4300, bytesReceived: 12800 }] }}
+              />
+            </div>
+            <div>
+              <StateLabel>endpoint — rtc.ice server list (TURN credential stays bound)</StateLabel>
+              <NetworkArtifact
+                netType="endpoint"
+                data={{ iceServers: [
+                  { urls: "stun:stun.cloudflare.com:3478" },
+                  { urls: "turn:relay.example.org:3478", username: "dana" },
+                ] }}
+              />
+            </div>
+            <div>
+              <StateLabel>endpoint — stun.check discovered address</StateLabel>
+              <NetworkArtifact
+                netType="endpoint"
+                data={{ ok: true, publicAddress: "203.0.113.9:60122", ms: 127, note: "STUN reachable — reflexive address discovered" }}
+              />
+            </div>
+            <div>
+              <StateLabel>certificate — DTLS identity (§29a)</StateLabel>
+              <NetworkArtifact
+                netType="certificate"
+                data={{
+                  algorithm: "ECDSA/P-256",
+                  expires: "2026-08-29T00:00:00.000Z",
+                  fingerprints: [{ algorithm: "sha-256", value: "3F:2A:9C:1B:44:D0:81:E6:B8" }],
+                  note: "ephemeral unless pinned",
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>session — live exchange handle (§21a)</StateLabel>
+              <NetworkArtifact
+                netType="session"
+                data={{ room: "KJ8XW2PQZM4RT9FQ", role: "creator", connected: 1, audience: ["AABBCCDDEEFF00112233", "445566778899AABBCCDD"] }}
+              />
+            </div>
+          </div>
+        </Section>
+
+        <Section id="outputlist" title="OutputList — stacked artifact rows (§20h/21b/22b)">
+          <StateLabel>
+            Text outputs — one-line preview under the row (sensitive values stay hidden)
+          </StateLabel>
+          <div className="max-w-md">
+            <OutputList
+              outputs={[
+                {
+                  label: "ciphertext",
+                  kind: "text",
+                  sizeBytes: 892,
+                  onCopy: () => {},
+                  preview: "-----BEGIN PGP MESSAGE----- hQEMA1... (892 bytes, armored)",
+                },
+                {
+                  label: "master-key",
+                  kind: "text",
+                  sizeBytes: 32,
+                  sensitive: true,
+                  onCopy: () => {},
+                },
+              ]}
+            />
+          </div>
+          <StateLabel>
+            Key export — Publish opens a confirm popover; already-published row shows
+            @slot + a link icon that copies the directory URL
+          </StateLabel>
+          <div className="max-w-md">
+            <OutputList
+              outputs={[
+                {
+                  label: "dana.pub.asc",
+                  kind: "key",
+                  sizeBytes: 1843,
+                  onCopy: () => {},
+                  publishable: true,
+                  publishConfirmLabel: "3F2A…C81",
+                  onPublish: () => {},
+                },
+                {
+                  label: "sam.pub.asc",
+                  kind: "key",
+                  sizeBytes: 1798,
+                  onCopy: () => {},
+                  publishedAs: "@C81FSAM",
+                  directoryUrl: "https://example.org/pks/lookup?op=get&search=0xSAM",
+                },
+              ]}
+            />
+          </div>
+          <StateLabel>
+            stun.check diagnostic — DIAG badge + "Configure TURN" only when the check failed
+          </StateLabel>
+          <div className="max-w-md">
+            <OutputList
+              outputs={[
+                {
+                  label: "nat",
+                  kind: "diag",
+                  sizeBytes: 240,
+                  onCopy: () => {},
+                  diagnosticAction: { label: "Configure TURN", onClick: () => {} },
+                },
+              ]}
+            />
+          </div>
+        </Section>
+
+        <Section
+          id="typecard"
+          title="TypeCard — types as browsable, sometimes constructible, documentation"
+        >
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            The type-system counterpart to ToolCard. Producers and consumers are{" "}
+            <em>derived</em> from the registry, so a card can never advertise an op that
+            no longer exists. Four types can be written down directly; the rest can only
+            be produced, so they show the ops that produce them instead of an editor that
+            could not work.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <StateLabel>
+                int — constructible; the constructor accepts 0x / 0b / 0o and shows the value
+              </StateLabel>
+              <TypeCard meta={getTypeMeta("int")} onInsertLiteral={() => {}} />
+            </div>
+            <div>
+              <StateLabel>bytes — the most consumed type (26 ops), literal + reference</StateLabel>
+              <TypeCard meta={getTypeMeta("bytes")} onInsertLiteral={() => {}} />
+            </div>
+            <div>
+              <StateLabel>
+                keypair — two origins (§31c): Generate inserts genkey itself, Import
+                inserts the run-time paste step
+              </StateLabel>
+              <TypeCard meta={getTypeMeta("keypair")} onPickOp={() => {}} />
+            </div>
+            <div>
+              <StateLabel>
+                stats — observe-only; nothing consumes it, and the card says so
+              </StateLabel>
+              <TypeCard meta={getTypeMeta("stats")} />
+            </div>
+            <div>
+              <StateLabel>host — declared in the union but unused: “reserved”</StateLabel>
+              <TypeCard meta={getTypeMeta("host")} />
+            </div>
+            <div>
+              <StateLabel>text — compact (summary only, no constructor)</StateLabel>
+              <TypeCard meta={getTypeMeta("text")} compact />
+            </div>
+          </div>
         </Section>
 
         <Section id="recipechipflow" title="RecipeChipFlow">
@@ -289,7 +797,6 @@ function CatalogApp() {
               },
             ]}
             selected={null}
-            showNestRails={false}
             onSelect={() => {}}
             onGap={() => setGapActive((v) => !v)}
             onBranchHit={() => {}}
@@ -321,7 +828,6 @@ function CatalogApp() {
             ]}
             selected={null}
             activeGap={gapActive ? { cell: 0, stem: 1, branch: null, body: null } : null}
-            showNestRails={false}
             onSelect={() => {}}
             onGap={() => setGapActive(true)}
             onBranchHit={() => {}}
@@ -347,7 +853,7 @@ function CatalogApp() {
             values={params}
             visibilityFor={(p) =>
               p.name === "usage"
-                ? { show: true, locked: true }
+                ? { show: true, locked: true, lockedReason: "locked by format" }
                 : { show: true }
             }
             onChange={(name, value) =>
@@ -360,28 +866,31 @@ function CatalogApp() {
             onChange={() => {}}
             control={<span className="muted fs-xs">Custom control slot</span>}
           />
+          <StateLabel>Secret param (§22a) — unbound / bound; never free text</StateLabel>
+          <div className="grid max-w-md grid-cols-2 gap-3">
+            <ParamField
+              param={{ name: "key", type: "slot", secret: true, doc: "TURN credential" }}
+              value=""
+              onChange={() => {}}
+              onRequestBind={() => {}}
+            />
+            <ParamField
+              param={{ name: "key", type: "slot", secret: true, doc: "TURN credential" }}
+              value="@dana-turn-pass"
+              onChange={() => {}}
+              onRequestBind={() => {}}
+            />
+          </div>
         </Section>
 
         <Section id="modetoggle" title="ModeToggle">
-          <StateLabel>Legacy cell styles</StateLabel>
-          <ModeToggle
-            legacy
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: "preview", label: "Preview" },
-              { value: "raw", label: "Raw" },
-              { value: "cards", label: "Cards" },
-            ]}
-          />
-          <StateLabel>ToggleGroup</StateLabel>
+          <StateLabel>Cell view — Pipeline / Source</StateLabel>
           <ModeToggle
             value={mode}
             onChange={setMode}
             options={[
-              { value: "preview", label: "Preview" },
-              { value: "raw", label: "Raw" },
-              { value: "cards", label: "Cards" },
+              { value: "pipeline", label: "Pipeline", title: "Chips + inline param panel" },
+              { value: "source", label: "Source", title: "Edit the cell recipe as text" },
             ]}
           />
         </Section>

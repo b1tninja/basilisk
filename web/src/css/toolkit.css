@@ -2,6 +2,21 @@
 @import "./site.css";
 
 /*
+ * site.css's `.suggest-chip { border: 1px solid ... }` shorthand lands after
+ * Tailwind utilities in the cascade (site.css is @imported second, above) and
+ * matches at equal specificity, so `border-dashed` alone can't win — bump it.
+ */
+.suggest-chip.border-dashed {
+  border-style: dashed;
+  background-color: transparent;
+  color: var(--muted-foreground);
+}
+/* Same cascade problem: site.css's `.tool-card { border: 1px solid ... }`. */
+.tool-card[data-pinned] {
+  border-color: var(--brand);
+}
+
+/*
  * Basilisk → shadcn token bridge (no purple defaults).
  * CSS file emit only — keeps toolkit.html style-src 'self'.
  */
@@ -18,14 +33,16 @@
   --color-secondary-foreground: var(--text);
   --color-muted: var(--surface-raised);
   --color-muted-foreground: var(--text-muted);
-  --color-accent: color-mix(in srgb, var(--brand) 14%, var(--surface-raised));
+  --color-accent: var(--accent);
   --color-accent-foreground: var(--text);
   --color-destructive: var(--error);
   --color-destructive-foreground: #fff;
   --color-border: var(--border);
   --color-input: var(--border);
   --color-ring: var(--brand);
-  --radius-sm: var(--radius-sm);
+  /* Literal, not var(--radius-sm): a same-name reference is a cycle that
+   * invalidates the property (site.css's value is the same 6px). */
+  --radius-sm: 6px;
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
 }
@@ -36,12 +53,16 @@
   }
 }
 
-/* Toolkit React shell lives full-bleed under site nav */
-body.layout-app:has(#toolkit-root) {
+/*
+ * Toolkit React shell lives full-bleed under site nav. toolkit.css only ever
+ * loads on toolkit pages, so scoping this to the shared #app mount id is safe —
+ * it never reaches site.css-only pages that also use #app.
+ */
+body.layout-app:has(#app > .toolkit-shell) {
   max-width: none;
 }
 
-#toolkit-root {
+#app:has(> .toolkit-shell) {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -53,7 +74,13 @@ body.layout-app:has(#toolkit-root) {
   overflow-y: auto;
 }
 
-.toolkit-shell {
+/*
+ * Unconditional on :root (not scoped to .toolkit-shell): Radix Dialog/Sheet
+ * portals render into document.body, outside .toolkit-shell, so a
+ * class-scoped definition leaves var(--popover) etc. unresolved there.
+ * toolkit.css is only ever loaded on toolkit pages, so :root is safe.
+ */
+:root {
   --background: var(--surface);
   --foreground: var(--text);
   --card: var(--surface-raised);
@@ -66,10 +93,10 @@ body.layout-app:has(#toolkit-root) {
   --secondary-foreground: var(--text);
   --muted: var(--surface-raised);
   --muted-foreground: var(--text-muted);
-  --accent: color-mix(in srgb, var(--brand) 14%, var(--surface-raised));
-  --accent-foreground: var(--text);
   --destructive: var(--error);
-  --border: var(--border);
+  /* --border intentionally NOT redeclared: shadcn's name matches site.css's
+   * own token, and `--border: var(--border)` is a self-reference cycle that
+   * invalidates the property page-wide (per css-variables spec). */
   --input: var(--border);
   --ring: var(--brand);
   --radius: 10px;

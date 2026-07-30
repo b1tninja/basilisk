@@ -4,7 +4,8 @@ import { cn } from "@/lib/cn";
 
 export type { ParamSpec };
 
-type Visibility = { show: boolean; forced?: unknown; locked?: boolean };
+/** `locked` must ship with `lockedReason` — an unexplained lock reads as a bug. */
+type Visibility = { show: boolean; forced?: unknown; locked?: boolean; lockedReason?: string };
 
 type Props = {
   param: ParamSpec;
@@ -13,8 +14,18 @@ type Props = {
   onChange: (name: string, value: string | number | boolean) => void;
   /** Extra control slot (e.g. recipient binder for to=). */
   control?: ReactNode;
+  /** Secret params (design v2 §22a): open the Inputs/Slots tray to pick a binding. */
+  onRequestBind?: () => void;
+  /** One-shot focus jump (design v2 §22b's "Configure TURN" → rtc.ice's turn=). */
+  autoFocus?: boolean;
   className?: string;
 };
+
+/** `@label` slot reference, or empty/unbound. Secret params only ever hold this shape. */
+function slotRefOf(val: unknown): string | null {
+  const s = typeof val === "string" ? val.trim() : "";
+  return s.startsWith("@") && s.length > 1 ? s : null;
+}
 
 /** Single builder param — bool / enum / text / locked. Redesigned with uniform widget system. */
 export function ParamField({
@@ -23,12 +34,65 @@ export function ParamField({
   visibility = { show: true },
   onChange,
   control,
+  onRequestBind,
+  autoFocus = false,
   className,
 }: Props) {
   if (!visibility.show) return null;
   const val = visibility.forced != null ? visibility.forced : value ?? param.default ?? "";
   const title = param.doc || undefined;
-  const locked = !!visibility.locked;
+  // An unexplained lock is a bug, not a state — no reason, no lock.
+  const locked = !!visibility.locked && !!visibility.lockedReason;
+  const lockedReason = visibility.lockedReason;
+
+  // Secret params (design v2 §22a): no free text, ever — bind-only. The literal
+  // value never renders even when bound; only the @slotRef name is shown.
+  if (param.secret) {
+    const ref = slotRefOf(val);
+    return (
+      <div className={cn("param-field", className)} title={title}>
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <code className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">
+            {param.name}
+          </code>
+          <span className={cn("text-[9px]", ref ? "text-[var(--brand)]" : "text-[var(--warn)]")}>
+            🔒
+          </span>
+          <span
+            className={cn(
+              "ml-auto text-[9px] font-medium",
+              ref ? "text-[var(--brand)]" : "text-[var(--warn)]"
+            )}
+          >
+            {ref ? "bound" : "secret"}
+          </span>
+        </div>
+        {ref ? (
+          <div className="flex h-[26px] items-center gap-1.5 rounded-[5px] border border-[color-mix(in_srgb,var(--brand)_30%,transparent)] bg-[color-mix(in_srgb,var(--brand)_7%,transparent)] px-2">
+            <code className="font-mono text-[10.5px] font-medium text-[var(--brand)]">{ref}</code>
+            <button
+              type="button"
+              className="ml-auto text-[9px] text-[var(--text-muted)] hover:text-[var(--text)]"
+              aria-label={`Unbind ${param.name}`}
+              title="Unbind"
+              onClick={() => onChange(param.name, "")}
+            >
+              ✕
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="flex h-[26px] w-full items-center rounded-[5px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-2 text-left text-[10.5px] text-[var(--text-muted)] hover:border-[var(--brand)] hover:text-[var(--text)]"
+            onClick={onRequestBind}
+            disabled={!onRequestBind}
+          >
+            Bind a value from Inputs…
+          </button>
+        )}
+      </div>
+    );
+  }
 
   if (control) {
     return (
@@ -43,6 +107,40 @@ export function ParamField({
 
   if (param.type === "bool" || param.type === "flag") {
     const checked = val === true || val === "true";
+
+    // "decode" reads as a direction, not a toggle — segmented Encode/Decode.
+    if (param.name === "decode") {
+      return (
+        <div className={cn("param-field", className)} title={title}>
+          <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] block mb-2">
+            {param.name}
+          </label>
+          <div className="inline-flex rounded-md border border-[var(--border)] overflow-hidden bg-[var(--surface-raised)]">
+            {(
+              [
+                { v: false, label: "Encode" },
+                { v: true, label: "Decode" },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={String(opt.v)}
+                type="button"
+                onClick={() => onChange(param.name, opt.v)}
+                className={cn(
+                  "px-3 py-1.5 text-sm font-bold border-l border-[var(--border)] first:border-l-0 transition-colors",
+                  checked === opt.v
+                    ? "bg-[var(--brand)] text-[var(--on-brand)]"
+                    : "bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-raised)]"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className={cn("param-field param-field-bool", className)} title={title}>
         <label className="flex items-center gap-2 cursor-pointer">
@@ -71,7 +169,7 @@ export function ParamField({
             {param.name}
             {locked && (
               <span className="ml-2 text-xs font-normal normal-case text-[var(--text-muted)]">
-                (locked by format)
+                ({lockedReason})
               </span>
             )}
           </label>
@@ -131,6 +229,7 @@ export function ParamField({
         className="w-full px-2.5 py-1.5 text-sm border border-[var(--border)] rounded-md bg-[var(--surface)] text-[var(--text)] font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand)] focus:ring-offset-1"
         type={param.type === "int" ? "number" : "text"}
         value={String(val ?? "")}
+        autoFocus={autoFocus}
         onChange={(e) =>
           onChange(
             param.name,
@@ -147,6 +246,10 @@ type GroupProps = {
   values: Record<string, unknown>;
   visibilityFor?: (p: ParamSpec) => Visibility;
   onChange: (name: string, value: string | number | boolean) => void;
+  /** Called with the param name when a secret field's "Bind…" is clicked. */
+  onRequestBind?: (paramName: string) => void;
+  /** One-shot: autofocus this param's field on mount (design v2 §22b). */
+  focusParam?: string | null;
   className?: string;
 };
 
@@ -155,6 +258,8 @@ export function ParamFieldGroup({
   values,
   visibilityFor,
   onChange,
+  onRequestBind,
+  focusParam,
   className,
 }: GroupProps) {
   const visibleParams = params.filter((p) => visibilityFor?.(p)?.show !== false);
@@ -168,6 +273,8 @@ export function ParamFieldGroup({
           value={values[p.name]}
           visibility={visibilityFor?.(p)}
           onChange={onChange}
+          onRequestBind={onRequestBind ? () => onRequestBind(p.name) : undefined}
+          autoFocus={!!focusParam && p.name === focusParam}
         />
       ))}
     </div>

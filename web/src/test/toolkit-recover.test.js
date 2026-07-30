@@ -20,7 +20,7 @@ describe("toolkit recover / shares", () => {
     const shares = arts.filter((a) => a.shareIndex).map((a) => a.content);
     expect(shares.length).toBe(3);
 
-    const recover = compileRecipe("shares | blip39 -d | sss.combine | to hex");
+    const recover = compileRecipe("shares | blip39 -d | sss.combine | encode hex");
     expect(recover.validation.ok).toBe(true);
     const out = await runRecipe(recover.ast, {
       inputs: { shares: { mnemonics: [shares[0], shares[2]] } },
@@ -57,7 +57,7 @@ describe("toolkit recover / shares", () => {
 
   it("tee emits public key and does not consume keypair for scalar export", async () => {
     const { ast, validation } = compileRecipe(
-      "genkey ec/p256 | tee\n  - :public | export spki | pem | out @public\n| export scalar | to hex"
+      "genkey ec/p256 | tee\n  - :public | export spki | pem | out @public\n| export scalar | encode hex"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -262,7 +262,7 @@ describe("toolkit recover / shares", () => {
     expect(mnemonics.length).toBe(3);
     expect(arts.some((a) => a.role === "envelope")).toBe(false);
 
-    const recover = compileRecipe("shares | blip39 -d | sss.combine | to hex");
+    const recover = compileRecipe("shares | blip39 -d | sss.combine | encode hex");
     const out = await runRecipe(recover.ast, {
       inputs: { shares: { mnemonics: [mnemonics[0], mnemonics[1]] } },
     });
@@ -276,7 +276,7 @@ describe("toolkit recover / shares", () => {
     const arts = await runRecipe(split.ast);
     const mnemonics = arts.filter((a) => a.shareIndex).map((a) => a.content);
 
-    const wrong = compileRecipe("shares | blip39 -d | sss.combine | to hex");
+    const wrong = compileRecipe("shares | blip39 -d | sss.combine | encode hex");
     const wrongOut = await runRecipe(wrong.ast, {
       inputs: {
         shares: {

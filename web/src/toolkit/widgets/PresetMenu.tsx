@@ -316,7 +316,7 @@ export function PresetMenu({
       <DropdownMenuContent
         align={align}
         className={cn(
-          "preset-menu-popover toolbar-popover p-3",
+          "preset-menu-popover p-3",
           "w-[min(640px,calc(100vw-1.5rem))] max-w-[min(640px,calc(100vw-1.5rem))]",
           className
         )}

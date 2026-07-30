@@ -105,6 +105,71 @@ function toggleMenu(e) {
   }
 }
 
+/**
+ * Two-letter avatar initials from an email's local part, e.g.
+ * "jane@example.com" -> "JA", "b@x.com" -> "B".
+ * @param {string} email
+ * @returns {string}
+ */
+function initialsFor(email) {
+  const local = String(email || "").split("@")[0];
+  const letters = local.replace(/[^a-zA-Z0-9]/g, "");
+  return (letters.slice(0, 2) || "?").toUpperCase();
+}
+
+const ICON_KEYRING = `<svg viewBox="0 0 24 24" width="16" height="16"><circle cx="8" cy="9" r="3" fill="none" stroke="currentColor" stroke-width="1.75"/><line x1="10.2" y1="11.2" x2="18" y2="19" stroke="currentColor" stroke-width="1.75"/><line x1="15" y1="16" x2="17" y2="14" stroke="currentColor" stroke-width="1.75"/><line x1="17" y1="18" x2="19" y2="16" stroke="currentColor" stroke-width="1.75"/></svg>`;
+const ICON_PREFERENCES = `<svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.75"/><line x1="12" y1="2" x2="12" y2="5" stroke="currentColor" stroke-width="1.75"/><line x1="12" y1="19" x2="12" y2="22" stroke="currentColor" stroke-width="1.75"/><line x1="2" y1="12" x2="5" y2="12" stroke="currentColor" stroke-width="1.75"/><line x1="19" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.75"/></svg>`;
+const ICON_STATS = `<svg viewBox="0 0 24 24" width="16" height="16"><line x1="6" y1="19" x2="6" y2="12" stroke="currentColor" stroke-width="1.75"/><line x1="12" y1="19" x2="12" y2="6" stroke="currentColor" stroke-width="1.75"/><line x1="18" y1="19" x2="18" y2="15" stroke="currentColor" stroke-width="1.75"/></svg>`;
+const ICON_SIGNOUT = `<svg viewBox="0 0 24 24" width="16" height="16"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" fill="none" stroke="currentColor" stroke-width="1.75"/><line x1="20" y1="12" x2="10" y2="12" stroke="currentColor" stroke-width="1.75"/><polyline points="16,8 20,12 16,16" fill="none" stroke="currentColor" stroke-width="1.75"/></svg>`;
+
+function toggleProfileMenu(e) {
+  e.stopPropagation();
+  const menu = document.getElementById("profile-menu");
+  const btn = document.getElementById("profile-btn");
+  if (!menu || !btn) return;
+  const show = menu.hidden;
+  menu.hidden = !show;
+  btn.setAttribute("aria-expanded", String(show));
+  if (show) {
+    const close = () => {
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+      document.removeEventListener("keydown", onKey);
+    };
+    const onKey = (ke) => {
+      if (ke.key === "Escape") close();
+    };
+    document.addEventListener("click", close, { once: true });
+    document.addEventListener("keydown", onKey);
+  }
+}
+
+function profileMenuHtml(user) {
+  const initials = initialsFor(user.email);
+  return `
+    <div class="profile-menu">
+      <button type="button" class="profile-trigger" id="profile-btn" aria-haspopup="true" aria-expanded="false">
+        <span class="profile-avatar">${escapeHtml(initials)}</span>
+        <span class="profile-chevron">▾</span>
+      </button>
+      <div class="profile-dropdown" id="profile-menu" role="menu" hidden>
+        <div class="profile-dropdown-header">
+          <span class="profile-avatar profile-avatar-lg">${escapeHtml(initials)}</span>
+          <span class="profile-dropdown-email" title="${escapeHtml(user.email)}">${escapeHtml(user.email)}</span>
+        </div>
+        <div class="profile-dropdown-items">
+          <a class="profile-dropdown-item" href="/my-keys" role="menuitem">${ICON_KEYRING}Keyring</a>
+          <a class="profile-dropdown-item" href="/preferences" role="menuitem">${ICON_PREFERENCES}Preferences</a>
+          <a class="profile-dropdown-item" href="/stats" role="menuitem">${ICON_STATS}Stats</a>
+        </div>
+        <div class="profile-dropdown-divider"></div>
+        <div class="profile-dropdown-items">
+          <a class="profile-dropdown-item profile-dropdown-signout" href="/.auth/logout?post_logout_redirect_uri=${encodeURIComponent(`${window.location.origin}/`)}" role="menuitem">${ICON_SIGNOUT}Sign out</a>
+        </div>
+      </div>
+    </div>`;
+}
+
 async function initWidget(container, redirectUrl) {
   if (!container) return;
   const [user, providers] = await Promise.all([getUser(), getProviders()]);
@@ -122,10 +187,9 @@ async function initWidget(container, redirectUrl) {
       container.innerHTML = menu;
     }
   } else {
-    const home = encodeURIComponent(`${window.location.origin}/`);
-    container.innerHTML = `
-      <span class="auth-email" title="${escapeHtml(user.email)}">${escapeHtml(user.email)}</span>
-      <a class="auth-signout" href="/.auth/logout?post_logout_redirect_uri=${home}">Sign out</a>`;
+    container.innerHTML = profileMenuHtml(user);
+    const btn = container.querySelector("#profile-btn");
+    if (btn) btn.addEventListener("click", toggleProfileMenu);
   }
 }
 

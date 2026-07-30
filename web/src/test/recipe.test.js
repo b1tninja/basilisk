@@ -212,43 +212,49 @@ describe("validation", () => {
     expect(serializeRecipe(ast)).toContain("der");
   });
 
-  it("rejects bare hex / unhex; accepts to hex / from hex", () => {
+  it("rejects bare hex / unhex; accepts encode hex / decode hex", () => {
     expect(
       parseRecipe("random 8 | hex | out @h").errors.some((e) =>
-        /hex.*removed|Unknown step|to hex/i.test(e.message)
+        /hex.*removed|Unknown step|encode hex/i.test(e.message)
       )
     ).toBe(true);
     expect(
       parseRecipe("in @h | unhex").errors.some((e) =>
-        /unhex.*removed|Unknown step|from hex/i.test(e.message)
+        /unhex.*removed|Unknown step|decode hex/i.test(e.message)
       )
     ).toBe(true);
     expect(
-      parseRecipe("in @h | to hex -d").errors.some((e) =>
+      parseRecipe("in @h | encode hex -d").errors.some((e) =>
         /Unknown flag|-d/i.test(e.message)
       )
     ).toBe(true);
-    const { ast, errors } = parseRecipe("random 8 | to hex | out @h\n\nin @h | from hex");
+    // Old text still parses — `to`/`from` alias `encode`/`decode` — but it
+    // canonicalizes, so serializing gives back the current spelling.
+    const { ast, errors } = parseRecipe("random 8 | encode hex | out @h\n\nin @h | decode hex");
     expect(errors).toEqual([]);
-    expect(ast.chains[0].steps.find((s) => s.name === "to")?.params?.encoding).toBe(
+    expect(ast.chains[0].steps.find((s) => s.name === "encode")?.params?.encoding).toBe(
       "hex"
     );
-    expect(ast.chains[1].steps.find((s) => s.name === "from")?.params?.encoding).toBe(
+    expect(ast.chains[1].steps.find((s) => s.name === "decode")?.params?.encoding).toBe(
       "hex"
     );
-    expect(serializeRecipe(ast)).toBe("random 8 | to hex | out @h\n\n@h | from hex");
+    expect(serializeRecipe(ast)).toBe("random 8 | encode hex | out @h\n\n@h | decode hex");
   });
 
   it("migrateRecipe rewrites hex/unhex and slot from", () => {
     const { recipe, changes } = migrateRecipe(
       "random 8 | hex | out @h\n\nfrom @h | unhex"
     );
-    expect(recipe).toBe("random 8 | to hex | out @h\n\nin @h | from hex");
+    expect(recipe).toBe("random 8 | encode hex | out @h\n\nin @h | decode hex");
     expect(changes.some((c) => c.from === "hex")).toBe(true);
     expect(changes.some((c) => c.from === "unhex")).toBe(true);
     expect(changes.some((c) => c.from === "from (slot)")).toBe(true);
-    expect(migrateRecipe("random 8 | to hex").recipe).toBe("random 8 | to hex");
-    expect(compileRecipe("random 8 | to base64").validation.ok).toBe(false);
+    expect(migrateRecipe("random 8 | encode hex").recipe).toBe("random 8 | encode hex");
+    // `to` once accepted hex alone; it now names any base encoding, so the
+    // invariant worth keeping is that it validates the alphabet — not that
+    // base64 is missing from it.
+    expect(compileRecipe("random 8 | encode base64").validation.ok).toBe(true);
+    expect(compileRecipe("random 8 | to rot13").validation.ok).toBe(false);
   });
 
   it("rejects shares | sss.combine without blip39 -d", () => {
@@ -266,11 +272,11 @@ describe("validation", () => {
   });
 
   it("input step reports text inputNeeds; paste/cat migrate via Upgrade", () => {
-    const { validation } = compileRecipe("input | utf8 | to hex");
+    const { validation } = compileRecipe("input | utf8 | encode hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("text");
 
-    const migrated = migrateRecipe("paste | utf8 | to hex");
+    const migrated = migrateRecipe("paste | utf8 | encode hex");
     expect(migrated.recipe).toMatch(/^input\b/);
     expect(parseRecipe(migrated.recipe).ast.steps[0].name).toBe("input");
     expect(migrateRecipe("cat | utf8").recipe).toMatch(/^input\b/);
@@ -284,19 +290,19 @@ describe("validation", () => {
   });
 
   it("rejects retired gpgdecrypt alias", () => {
-    const { errors } = parseRecipe("gpgdecrypt | sss.combine | to hex");
+    const { errors } = parseRecipe("gpgdecrypt | sss.combine | encode hex");
     expect(errors.some((e) => /Unknown step/i.test(e.message))).toBe(true);
   });
 
   it("parses gpg.decrypt", () => {
-    const { ast, errors } = parseRecipe("gpg.decrypt | blip39 -d | sss.combine | to hex");
+    const { ast, errors } = parseRecipe("gpg.decrypt | blip39 -d | sss.combine | encode hex");
     expect(errors).toEqual([]);
     expect(ast.steps[0].name).toBe("gpg.decrypt");
     expect(serializeRecipe(ast)).toContain("gpg.decrypt");
   });
 
   it("decrypt recipes request gpg + shares panels for hybrid recovery", () => {
-    const { validation } = compileRecipe("gpg.decrypt | blip39 -d | sss.combine | to hex");
+    const { validation } = compileRecipe("gpg.decrypt | blip39 -d | sss.combine | encode hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toEqual(
       expect.arrayContaining(["gpg", "shares"])

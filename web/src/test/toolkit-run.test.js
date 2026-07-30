@@ -7,9 +7,9 @@ import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { executeToolkitRun } from "../lib/toolkit-run.js";
 
 describe("toolkit-run worker path", () => {
-  it("runs random 16 | digest | to hex with FIPS suites verified", async () => {
+  it("runs random 16 | digest | encode hex with FIPS suites verified", async () => {
     await runCryptoSelfTests();
-    const { ast, validation } = compileRecipe("random 16 | digest | to hex");
+    const { ast, validation } = compileRecipe("random 16 | digest | encode hex");
     expect(validation.ok).toBe(true);
     const { artifacts } = await executeToolkitRun({
       ast,
@@ -22,7 +22,7 @@ describe("toolkit-run worker path", () => {
 
   it("refuses unverified suite when FIPS on (simulated)", async () => {
     await runCryptoSelfTests();
-    const { ast } = compileRecipe("random 16 | digest | to hex");
+    const { ast } = compileRecipe("random 16 | digest | encode hex");
     await expect(
       executeToolkitRun({
         ast,

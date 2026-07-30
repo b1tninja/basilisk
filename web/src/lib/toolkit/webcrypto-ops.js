@@ -390,15 +390,23 @@ export async function importBoundJwk(raw) {
       namedCurve: curve,
     };
     const hasD = !!jwk.d;
+    // Drop `key_ops` before importing, as the Ed25519/X25519 branches already
+    // do. WebCrypto requires the JWK's declared usages to be a *superset* of
+    // the ones requested, so a private JWK exported with `key_ops:["sign"]`
+    // fails twice over: its public copy would carry "sign" while asking for
+    // "verify", and an ECDH import would ask for deriveBits it never listed.
+    // The usages we pass are the authority here; the JWK's own list is not.
+    const privJwk = { ...jwk };
+    delete privJwk.key_ops;
     if (hasD) {
       out.privateKey = await crypto.subtle.importKey(
         "jwk",
-        jwk,
+        privJwk,
         algo,
         true,
         isEcdh ? ["deriveBits", "deriveKey"] : ["sign"]
       );
-      const pub = { ...jwk };
+      const pub = { ...privJwk };
       delete pub.d;
       out.publicKey = await crypto.subtle.importKey(
         "jwk",
@@ -410,7 +418,7 @@ export async function importBoundJwk(raw) {
     } else {
       out.publicKey = await crypto.subtle.importKey(
         "jwk",
-        jwk,
+        privJwk,
         algo,
         true,
         isEcdh ? [] : ["verify"]

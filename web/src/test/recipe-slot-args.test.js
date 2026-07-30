@@ -46,7 +46,7 @@ describe("named slot args", () => {
   });
 
   it("still needs key panel when slot arg omitted", () => {
-    const { validation } = compileRecipe("random 32 | aes-gcm | to hex");
+    const { validation } = compileRecipe("random 32 | aes-gcm | encode hex");
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds).toContain("key");
   });
@@ -58,7 +58,7 @@ random 32 | out @msg
 
 in @msg | aes-gcm key=@cek | out @ct
 
-in @ct | aes-gcm -d key=@cek | to hex`);
+in @ct | aes-gcm -d key=@cek | encode hex`);
     expect(split.validation.ok).toBe(true);
     expect(split.validation.inputNeeds || []).not.toContain("key");
     const arts = await runRecipe(split.ast);
@@ -128,11 +128,11 @@ random 16 | out @salt
 
 genkey aes/256 | out @cek
 
-"hi" | utf8 | aes-gcm key=@cek aad=@aad | to hex | out @ct
+"hi" | utf8 | aes-gcm key=@cek aad=@aad | encode hex | out @ct
 
-in @ct | from hex | aes-gcm -d key=@cek aad=@aad | utf8 | out @pt
+in @ct | decode hex | aes-gcm -d key=@cek aad=@aad | utf8 | out @pt
 
-"pw" | utf8 | pbkdf2 16 salt=@salt as=aes/128 | export raw | to hex | out @k`);
+"pw" | utf8 | pbkdf2 16 salt=@salt as=aes/128 | export raw | encode hex | out @k`);
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
     expect(arts.find((a) => /pt/i.test(a.filename || a.label || ""))?.content).toBe(
@@ -154,7 +154,7 @@ describe("ecdh / wrap slot args (validate)", () => {
 
 genkey ec/p256 usage=derive | :public | export jwk | out @peer
 
-ecdh private=@local peer=@peer | to hex`;
+ecdh private=@local peer=@peer | encode hex`;
     const { validation } = compileRecipe(src);
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds || []).not.toContain("key");
@@ -162,7 +162,7 @@ ecdh private=@local peer=@peer | to hex`;
 
   it("wrap needs both key and target slots to clear panel", () => {
     const partial = compileRecipe(
-      "genkey aes/256 | out @kek\n\nwrap key=@kek | to hex"
+      "genkey aes/256 | out @kek\n\nwrap key=@kek | encode hex"
     );
     expect(partial.validation.inputNeeds).toContain("key");
 
@@ -170,7 +170,7 @@ ecdh private=@local peer=@peer | to hex`;
 
 genkey aes/256 | out @cek
 
-wrap key=@kek target=@cek | to hex`);
+wrap key=@kek target=@cek | encode hex`);
     expect(full.validation.ok).toBe(true);
     expect(full.validation.inputNeeds || []).not.toContain("key");
   });

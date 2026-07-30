@@ -322,7 +322,8 @@ function validateStepSlotParams(
       step.name === "gpg.sign" ||
       step.name === "gpg.verify" ||
       (step.name === "gpg.encrypt" && p.name === "key") ||
-      step.name === "agent.save"
+      step.name === "agent.save" ||
+      ((step.name === "quorum.offer" || step.name === "quorum.join") && p.name === "key")
     ) {
       okBase = okBase || base === "openpgp-key";
     }
@@ -332,9 +333,17 @@ function validateStepSlotParams(
         base === "openpgp-key" ||
         base === "text";
     }
+    // `ice=@slot` wants an ICE server list — `rtc.ice`'s `endpoint` output.
+    // Text still works so a hand-written JSON config keeps functioning.
+    if (p.name === "ice") {
+      okBase = base === "endpoint" || base === "text";
+    }
     if (!okBase) {
       errors.push({
-        message: `${step.name} ${p.name}=${ref}: slot type ${formatType(loaded)} cannot supply a key`,
+        message:
+          p.name === "ice"
+            ? `${step.name} ice=${ref}: slot type ${formatType(loaded)} is not an ICE config — use rtc.ice`
+            : `${step.name} ${p.name}=${ref}: slot type ${formatType(loaded)} cannot supply a key`,
         start: step.start,
         end: step.end,
         stepIndex,
@@ -449,7 +458,7 @@ export function recipeChains(astOrSteps) {
  * @property {string[]} warnings
  * @property {number} [recipientSlots]  how many GPG recipient slots Run needs
  * @property {boolean} [foreachGpg]  gpg.encrypt is inside foreach
- * @property {("shares"|"gpg"|"text"|"envelope"|"key")[]} [inputNeeds]  runtime input panels required
+ * @property {("shares"|"gpg"|"text"|"envelope"|"key"|"keypair")[]} [inputNeeds]  runtime input panels required
  */
 
 /**
@@ -516,6 +525,11 @@ export function serializeStep(step) {
   for (const p of spec?.params || []) {
     const v = step.params?.[p.name];
     if (v === undefined || v === "") continue;
+    // Secret params (design v2 §22a) only ever legitimately hold an `@slot`
+    // ref — the UI enforces that, but the raw AST can still carry a literal
+    // (e.g. hand-typed in Source view). Never let a literal leak into
+    // serialized recipe text (share links, Copy recipe, Workspace saves).
+    if (p.secret && !/^@[^\s|=]+$/.test(String(v))) continue;
     if (p.flag && p.type === "bool") {
       // Encoding twins serialize direction in the verb; skip `-d`.
       if (useEncodeVerb && p.name === "decode") continue;
@@ -531,14 +545,17 @@ export function serializeStep(step) {
         (step.name === "out" || step.name === "text" || step.name === "peek");
       if (omitName || !p.positional) continue;
     }
+    // Positional values need the same quoting as named ones: a bare
+    // `hkp.search john doe` or `bytes aGVsbG8=` does not reparse, so without
+    // this the round trip silently corrupts Copy recipe, share links, and
+    // Workspace saves for any value holding a space, pipe, or `=`.
+    const needsQuote = /[\s|=]/.test(String(v));
+    const quoted = needsQuote ? JSON.stringify(String(v)) : String(v);
     if (p.positional && parts.length === 1) {
-      parts.push(String(v));
+      parts.push(quoted);
       continue;
     }
-    const needsQuote = /[\s|=]/.test(String(v));
-    parts.push(
-      `${p.name}=${needsQuote ? JSON.stringify(String(v)) : String(v)}`
-    );
+    parts.push(`${p.name}=${quoted}`);
   }
   return parts.join(" ");
 }
@@ -778,7 +795,7 @@ export function projectTypeForMember(current, memberOrSelector) {
  * @returns {{
  *   final: import("./types.js").RefinedType,
  *   encryptInBody: boolean,
- *   inputNeeds: ("shares"|"gpg"|"text"|"envelope"|"key")[],
+ *   inputNeeds: ("shares"|"gpg"|"text"|"envelope"|"key"|"keypair")[],
  * }}
  */
 function validateBodySteps(body, startType, ctx) {
@@ -1622,7 +1639,7 @@ export const PRESETS = [
     group: "Digest & MAC",
     title: "SHA-256 digest",
     blurb: "Hash 32 random bytes and show hex.",
-    recipe: "random 32 | digest | to hex | out @digest",
+    recipe: "random 32 | digest | encode hex | out @digest",
   },
   {
     id: "hmac-sign-verify",
@@ -1646,7 +1663,7 @@ in @msg | hmac.verify key=@mac signature=@tag | out @ok`,
       "Export a public JWK and SHA-256 digest the JSON text (handy fingerprint; not RFC 7638 canonical thumbprint).",
     recipe: `genkey ec/p256 | :public | export jwk | out @jwk
 
-in @jwk | utf8 | digest | to hex | out @thumb`,
+in @jwk | utf8 | digest | encode hex | out @thumb`,
   },
   {
     id: "verify-soft",
@@ -1666,9 +1683,9 @@ input | utf8 | verify -q key=@pub | out @result`,
       "Generate an RSA-OAEP key, encrypt a message with rsa-oaep key=@rk, then decrypt across chains.",
     recipe: `genkey rsa/2048 usage=encrypt | out @rk
 
-input | utf8 | rsa-oaep key=@rk | to hex | out @ct
+input | utf8 | rsa-oaep key=@rk | encode hex | out @ct
 
-in @ct | from hex | rsa-oaep -d key=@rk | utf8 | out @plain`,
+in @ct | decode hex | rsa-oaep -d key=@rk | utf8 | out @plain`,
   },
   {
     id: "aes-gcm-roundtrip",
@@ -1678,9 +1695,9 @@ in @ct | from hex | rsa-oaep -d key=@rk | utf8 | out @plain`,
       "Generate an AES-256 key, encrypt with `aes-gcm key=@cek`, then decrypt across chains (preferred AEAD).",
     recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aes-gcm key=@cek | to hex | out @ct
+input | utf8 | aes-gcm key=@cek | encode hex | out @ct
 
-in @ct | from hex | aes-gcm -d key=@cek | utf8 | out @plain`,
+in @ct | decode hex | aes-gcm -d key=@cek | utf8 | out @plain`,
   },
   {
     id: "pbkdf2-aes-gcm",
@@ -1712,9 +1729,9 @@ input | utf8 | aes-gcm key=@cek | base64url | out @ct`,
       "Unauthenticated AES-CBC interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
     recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aes-cbc key=@cek | to hex | out @ct
+input | utf8 | aes-cbc key=@cek | encode hex | out @ct
 
-in @ct | from hex | aes-cbc -d key=@cek | utf8 | out @plain`,
+in @ct | decode hex | aes-cbc -d key=@cek | utf8 | out @plain`,
   },
   {
     id: "aes-ctr-roundtrip",
@@ -1724,9 +1741,9 @@ in @ct | from hex | aes-cbc -d key=@cek | utf8 | out @plain`,
       "Unauthenticated AES-CTR interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
     recipe: `genkey aes/256 | out @cek
 
-input | utf8 | aes-ctr key=@cek | to hex | out @ct
+input | utf8 | aes-ctr key=@cek | encode hex | out @ct
 
-in @ct | from hex | aes-ctr -d key=@cek | utf8 | out @plain`,
+in @ct | decode hex | aes-ctr -d key=@cek | utf8 | out @plain`,
   },
   {
     id: "hkdf-as-aes-kw-wrap",
@@ -1738,9 +1755,9 @@ in @ct | from hex | aes-ctr -d key=@cek | utf8 | out @plain`,
 
 genkey aes/256 | out @cek
 
-wrap key=@kek target=@cek | to hex | out @wrapped
+wrap key=@kek target=@cek | encode hex | out @wrapped
 
-in @wrapped | from hex | unwrap key=@kek | export raw | to hex | out @cek-raw`,
+in @wrapped | decode hex | unwrap key=@kek | export raw | encode hex | out @cek-raw`,
   },
   {
     id: "wrap-aes-gcm",
@@ -1751,9 +1768,9 @@ in @wrapped | from hex | unwrap key=@kek | export raw | to hex | out @cek-raw`,
     recipe: `genkey aes/256 | out @kek
 genkey aes/256 | out @cek
 
-wrap mode=aes-gcm key=@kek target=@cek | to hex | out @wrapped
+wrap mode=aes-gcm key=@kek target=@cek | encode hex | out @wrapped
 
-in @wrapped | from hex | unwrap mode=aes-gcm key=@kek | export raw | to hex | out @cek-raw`,
+in @wrapped | decode hex | unwrap mode=aes-gcm key=@kek | export raw | encode hex | out @cek-raw`,
   },
   {
     id: "x25519-ecdh",

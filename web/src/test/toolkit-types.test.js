@@ -378,3 +378,61 @@ describe("refined types", () => {
     ).toBe(true);
   });
 });
+
+describe("network / WebRTC types (design v2 §25a)", () => {
+  it("formats list-shaped network types with an element count, not bytes", () => {
+    expect(formatType(typeOf("candidate", { length: 3 }))).toBe("candidate/×3");
+    expect(formatType(typeOf("endpoint", { kind: "ice-servers" }))).toBe(
+      "endpoint/ice-servers"
+    );
+    expect(formatType(typeOf("sdp", { which: "answer" }))).toBe("sdp/answer");
+    expect(formatType(typeOf("host", { family: "v6" }))).toBe("host/v6");
+  });
+
+  it("type-checks the offer → answer SDP exchange", () => {
+    const ok = compileRecipe("rtc.createOffer | rtc.createAnswer | out @a");
+    expect(ok.validation.ok, JSON.stringify(ok.validation.errors)).toBe(true);
+
+    const bad = compileRecipe("rtc.gatherCandidates | rtc.createAnswer | out @a");
+    expect(bad.validation.ok).toBe(false);
+    expect(bad.validation.errors[0].message).toMatch(/expects sdp, got candidate/);
+  });
+
+  it("refuses to let a live session handle be consumed by a crypto op", () => {
+    const { validation } = compileRecipe('quorum.offer to="AAAA" | digest | out @d');
+    expect(validation.ok).toBe(false);
+    expect(validation.errors[0].message).toMatch(/live handle/);
+  });
+
+  it("refuses to let an observe-only diagnostic be consumed", () => {
+    const { validation } = compileRecipe("rtc.connectionState | base64 | out @b");
+    expect(validation.ok).toBe(false);
+    expect(validation.errors[0].message).toMatch(/observe-only/);
+  });
+
+  it("still lets every network type reach out / inspect", () => {
+    for (const src of [
+      "rtc.gatherCandidates | out @c",
+      "rtc.connectionState | inspect",
+      "rtc.ice | out @ice",
+      "quorum.offer to=\"AAAA\" | out @s",
+      "rtc.statsReport | out @q",
+    ]) {
+      const { validation } = compileRecipe(src);
+      expect(validation.ok, `${src}: ${JSON.stringify(validation.errors)}`).toBe(true);
+    }
+  });
+
+  it("accepts an rtc.ice endpoint slot for ice=, and rejects a wrong-typed slot", () => {
+    const ok = compileRecipe(
+      "rtc.ice | out @ice\n\nrtc.gatherCandidates ice=@ice | out @c"
+    );
+    expect(ok.validation.ok, JSON.stringify(ok.validation.errors)).toBe(true);
+
+    const bad = compileRecipe(
+      "genkey ec/p256 | out @kp\n\nrtc.gatherCandidates ice=@kp | out @c"
+    );
+    expect(bad.validation.ok).toBe(false);
+    expect(bad.validation.errors.some((e) => /not an ICE config/.test(e.message))).toBe(true);
+  });
+});

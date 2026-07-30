@@ -75,8 +75,8 @@ describe("OAEP label=", () => {
   it("encrypt/decrypt with matching label", async () => {
     const { ast, validation } = compileRecipe(
       `genkey rsa/2048 usage=encrypt | out @rk
-input | utf8 | rsa-oaep key=@rk label=ctx | to hex | out @ct
-in @ct | from hex | rsa-oaep -d key=@rk label=ctx | utf8 | out @plain`
+input | utf8 | rsa-oaep key=@rk label=ctx | encode hex | out @ct
+in @ct | decode hex | rsa-oaep -d key=@rk label=ctx | utf8 | out @plain`
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast, {
@@ -89,8 +89,8 @@ in @ct | from hex | rsa-oaep -d key=@rk label=ctx | utf8 | out @plain`
   it("fails when label mismatches", async () => {
     const { ast } = compileRecipe(
       `genkey rsa/2048 usage=encrypt | out @rk
-input | utf8 | rsa-oaep key=@rk label=a | to hex | out @ct
-in @ct | from hex | rsa-oaep -d key=@rk label=b | utf8`
+input | utf8 | rsa-oaep key=@rk label=a | encode hex | out @ct
+in @ct | decode hex | rsa-oaep -d key=@rk label=b | utf8`
     );
     await expect(
       runRecipe(ast, { inputs: { text: { value: "x" } } })

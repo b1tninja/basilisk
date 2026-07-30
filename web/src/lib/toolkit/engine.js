@@ -27,6 +27,7 @@ import {
   encryptArtifacts,
   summarizeEncryption,
 } from "../pgp/encrypt.js";
+import { resolveStepProfile } from "../pgp/profile-from-step.js";
 import {
   analyzeArmored,
   formatAnalysisSummary,
@@ -50,6 +51,7 @@ import {
   hexToBytes,
   jwkFieldToBytes,
   parsePem,
+  parsePemBlocks,
   pemLabelFor,
   pkcs8FromEcScalar,
   textToBytes,
@@ -97,6 +99,7 @@ import {
   rsaesPkcs1Encrypt,
 } from "./rsaes-pkcs1.js";
 import {
+  NETWORK_TYPES as NETWORK_VALUE_TYPES,
   resolveStepType,
   typeOf,
 } from "./types.js";
@@ -130,11 +133,18 @@ import {
  *   threshold?: number,
  *   which?: "public"|"private",
  *   alg?: string,
+ *   fingerprint?: string,
  * }} [traits]
  * @property {import("./types.js").RefinedType} [pipeType]  refined pipeline type at emit time
  * @property {Uint8Array} [bytes]  raw octets when content is a textual encoding of binary
  * @property {import("./inspect.js").InspectSnapshot} [inspectSnapshot]  for live format switching
  * @property {string} [inspectFormat]  current inspect dump format
+ * @property {string} [publishedAs]  directory slot once published (design v2 §21b)
+ * @property {string} [directoryUrl]  set alongside `publishedAs`
+ * @property {string} [netType]  network/WebRTC pipeline type — the UI's renderer
+ *   discriminator for manager widgets (design v2 §23a/23b/29d/30d)
+ * @property {string} [netKind]  refinement within that type (e.g. "candidate-pairs")
+ * @property {*} [netData]  the structured value, unserialized, for the widget to read
  */
 
 /**
@@ -643,6 +653,30 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
  * @param {ToolkitArtifact[]} artifacts
  * @returns {Promise<PipelineValue>}
  */
+/**
+ * Base encodings reachable through `to <enc>` / `from <enc>`.
+ *
+ * The set matches the `base64`/`base64url`/`base32` twin steps exactly — the
+ * two spellings are the same operation, so they share one table rather than
+ * drifting into "hex only works one way, base64 only the other". `base64ToBytes`
+ * already accepts the URL alphabet, which is why both map onto it.
+ * @type {Record<string, (b: Uint8Array) => string>}
+ */
+const BASE_ENCODERS = {
+  hex: bytesToHex,
+  base64: bytesToBase64,
+  base64url: bytesToBase64Url,
+  base32: bytesToBase32,
+};
+
+/** @type {Record<string, (s: string) => Uint8Array>} */
+const BASE_DECODERS = {
+  hex: hexToBytes,
+  base64: base64ToBytes,
+  base64url: base64ToBytes,
+  base32: base32ToBytes,
+};
+
 async function execStepBody(step, value, bindings, artifacts) {
   switch (step.name) {
     case "genkey":
@@ -656,6 +690,19 @@ async function execStepBody(step, value, bindings, artifacts) {
       const n = Number(step.params.length) || 32;
       const buf = crypto.getRandomValues(new Uint8Array(n));
       return { type: "bytes", data: buf, meta: { sensitive: true } };
+    }
+    case "bytes": {
+      const raw = String(step.params?.value ?? "").trim();
+      const encoding = String(step.params?.encoding || "hex").toLowerCase();
+      let data;
+      if (encoding === "utf8") data = textToBytes(raw);
+      else if (encoding === "base64") data = base64ToBytes(raw);
+      else data = hexToBytes(raw.replace(/^0[xX]/, ""));
+      // Not marked sensitive: the value is written in the recipe in plain
+      // sight, so masking the output would hide it in one pane while showing
+      // it in the other. `random` is the sensitive source; this one is a
+      // literal the author chose to publish.
+      return { type: "bytes", data, meta: {} };
     }
     case "lit": {
       const kind = String(step.params?.kind || "text");
@@ -788,6 +835,64 @@ async function execStepBody(step, value, bindings, artifacts) {
         tipWhich || String(step.params.which || "private")
       );
     }
+    case "keypair": {
+      // Source form of `import` (§31c). Delegates to the very same importKey
+      // the `import` transform calls, so a keypair authored here and one
+      // piped through `… | import` are indistinguishable downstream.
+      const material = String(bindings.inputs?.keypair?.value ?? "").trim();
+      if (!material) {
+        throw new Error("No key material provided — paste a JWK or PEM before running.");
+      }
+      const alg = String(step.params?.alg || "ec/p256");
+      const usage = String(step.params?.usage || "auto");
+      if (String(step.params?.format || "jwk").toLowerCase() === "jwk") {
+        return importKey(
+          { type: "text", data: material, meta: { kind: "jwk", encoding: "jwk" } },
+          "jwk",
+          alg,
+          usage
+        );
+      }
+      // The PEM label already says which half each block is, so the caller
+      // does not have to declare pkcs8 vs spki a second time and get it wrong.
+      //
+      // Both halves are accepted together (the design's "PKCS8 private + SPKI
+      // public") because importing PKCS#8 alone leaves `publicKey` null —
+      // WebCrypto will not recover the public half for you, so a lone private
+      // block cannot satisfy a later `export spki`. Pasting both blocks is the
+      // only way to get a genuinely complete pair.
+      const blocks = parsePemBlocks(material);
+      if (!blocks.length) throw new Error("No PEM block found — expected -----BEGIN …-----");
+      /** @type {*} */
+      let pair = null;
+      /** @type {CryptoKey|null} */
+      let publicKey = null;
+      for (const block of blocks) {
+        const imported = await importKey(
+          { type: "bytes", data: block.der, meta: {} },
+          block.format,
+          alg,
+          usage
+        );
+        if (imported.type === "key" && imported.meta?.which === "public") {
+          publicKey = /** @type {*} */ (imported.data);
+        } else {
+          pair = imported;
+        }
+      }
+      if (!pair) {
+        // Only a public block was pasted — a public-key tip, same as
+        // `import spki` produces.
+        if (!publicKey) throw new Error("Could not import any PEM block");
+        return {
+          type: "key",
+          data: publicKey,
+          meta: { alg, which: "public", sensitive: false },
+        };
+      }
+      if (publicKey && !pair.data.publicKey) pair.data.publicKey = publicKey;
+      return pair;
+    }
     case "import":
       return importKey(
         value,
@@ -865,28 +970,33 @@ async function execStepBody(step, value, bindings, artifacts) {
         data: bytesToBase64Url(value.data),
         meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
       };
-    case "to": {
+    // `to`/`from` are the uniform spelling of a base encoding — one verb, the
+    // encoding as an argument. The `base64`/`base32`/… twins remain as the
+    // shorthand, and both routes share these tables so they cannot diverge.
+    case "encode": {
       const enc = String(step.params?.encoding || "hex").toLowerCase();
-      if (enc !== "hex") throw new Error(`to: unsupported encoding "${enc}"`);
-      if (!value || value.type !== "bytes") throw new Error("to hex expects bytes");
+      const encode = BASE_ENCODERS[enc];
+      if (!encode) throw new Error(`encode: unsupported alphabet "${enc}"`);
+      if (!value || value.type !== "bytes") throw new Error(`encode ${enc} expects bytes`);
       return {
         type: "text",
-        data: bytesToHex(value.data),
+        data: encode(value.data),
         meta: {
           ...value.meta,
           kind: "opaque",
-          encoding: "hex",
+          encoding: enc,
           sensitive: !!value.meta?.sensitive,
         },
       };
     }
-    case "from": {
+    case "decode": {
       const enc = String(step.params?.encoding || "hex").toLowerCase();
-      if (enc !== "hex") throw new Error(`from: unsupported encoding "${enc}"`);
-      if (!value || value.type !== "text") throw new Error("from hex expects hex text");
+      const decode = BASE_DECODERS[enc];
+      if (!decode) throw new Error(`decode: unsupported alphabet "${enc}"`);
+      if (!value || value.type !== "text") throw new Error(`decode ${enc} expects text`);
       return {
         type: "bytes",
-        data: hexToBytes(String(value.data)),
+        data: decode(String(value.data)),
         meta: { ...value.meta, sensitive: !!value.meta?.sensitive },
       };
     }
@@ -1530,7 +1640,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         recipients: [],
         passwords: [password],
         payloads: [payload],
-        profile: bindings.encryption?.profile || PROFILE_AUTO,
+        profile: resolveStepProfile(step, bindings.encryption?.profile || PROFILE_AUTO),
         hideRecipients: false,
       });
       if (!arts.length) throw new Error("gpg.symencrypt produced no ciphertext");
@@ -1829,7 +1939,7 @@ async function execStepBody(step, value, bindings, artifacts) {
             recipients: batch.keys,
             passwords: [],
             payloads: [{ kind: "text", text }],
-            profile: bindings.encryption?.profile || PROFILE_AUTO,
+            profile: resolveStepProfile(step, bindings.encryption?.profile || PROFILE_AUTO),
             hideRecipients: !!bindings.encryption?.hideRecipients,
             signingKeys: signingKey ? [signingKey] : undefined,
           });
@@ -1905,7 +2015,17 @@ async function execStepBody(step, value, bindings, artifacts) {
           a.shareIndex = value.meta.shareIndex;
         }
         a.disposition = "file";
-        if (!a.role) {
+        // Writing `out` *is* the request to see this value, so its tile may
+        // offer Reveal even when the value is sensitive. Tiles the engine
+        // materializes on its own carry no such request and stay masked —
+        // that is the whole point of the gate.
+        a.revealable = true;
+        if (value.meta?.stunCheck) {
+          // Quorum diagnostic (§22b) — overrides materializeOutArtifacts'
+          // generic text/secret default; UI reads the JSON body for ok/
+          // candidates and offers "Configure TURN" when srflx is missing.
+          a.role = "diagnostic";
+        } else if (!a.role) {
           if (a.shareIndex) {
             a.role = "share";
             a.tags = a.tags || ["mnemonic", "blip39"];
@@ -1949,6 +2069,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         encoding: "text",
         disposition: "message",
         role: "text",
+        revealable: true,
         tags: value.meta?.sensitive ? ["sensitive"] : [],
       });
       return value;
@@ -2336,6 +2457,88 @@ async function execStepBody(step, value, bindings, artifacts) {
         ...(value?.meta || {}),
         merged: true,
       });
+    }
+    case "rtc.ice":
+    case "stun.check":
+    case "quorum.offer":
+    case "quorum.join":
+    case "quorum.send":
+    case "quorum.recv":
+    case "quorum.close": {
+      // Lazy: keeps WebRTC + the quorum mesh out of the base bundle.
+      // Main-thread only — RTCPeerConnection does not exist in workers.
+      const q = await import("./quorum-ops.js");
+      if (step.name === "rtc.ice") {
+        const params = { ...(step.params || {}) };
+        const credRef = String(params.credential || "").trim();
+        if (credRef.startsWith("@")) {
+          const resolve = bindings?.resolveSlot;
+          if (typeof resolve !== "function") {
+            throw new Error("rtc.ice: runtime slot resolver missing for credential=");
+          }
+          const slot = resolve(credRef);
+          if (!slot) throw new Error(`rtc.ice: unknown slot ${credRef}`);
+          params.credential =
+            slot.type === "text"
+              ? String(slot.data)
+              : new TextDecoder().decode(/** @type {Uint8Array} */ (slot.data));
+        }
+        return q.execRtcIce(params);
+      }
+      if (step.name === "stun.check") return q.execStunCheck(step.params || {});
+      if (step.name === "quorum.send") return q.execQuorumSend(value);
+      if (step.name === "quorum.recv") return q.execQuorumRecv(step.params || {});
+      if (step.name === "quorum.close") return q.execQuorumClose(value);
+      const privateKey = await resolveGpgPrivateKey(bindings, step.params?.key);
+      let ice = null;
+      const iceRef = String(step.params?.ice || "").trim();
+      if (iceRef) {
+        const resolve = bindings?.resolveSlot;
+        if (typeof resolve !== "function") {
+          throw new Error("quorum: runtime slot resolver missing for ice=");
+        }
+        const slot = resolve(iceRef);
+        if (!slot) throw new Error(`quorum: unknown slot ${iceRef}`);
+        // Pass the slot value through unchanged — `rtc.ice` now emits structured
+        // `endpoint` data; only a legacy text slot needs string parsing.
+        ice = q.parseIceConfig(slot.data);
+      }
+      return q.execQuorumOpen(
+        step.params || {},
+        privateKey,
+        ice,
+        step.name === "quorum.offer" ? "creator" : "joiner"
+      );
+    }
+    case "rtc.gatherCandidates":
+    case "rtc.checkConnectivity":
+    case "rtc.certificate":
+    case "rtc.createOffer":
+    case "rtc.createAnswer":
+    case "rtc.connectionState":
+    case "rtc.dataChannelStats":
+    case "rtc.statsReport": {
+      // Lazy + main-thread only, same as the quorum ops these sit under.
+      const rtc = await import("./rtc-ops.js");
+      const p = step.params || {};
+      switch (step.name) {
+        case "rtc.gatherCandidates":
+          return rtc.execGatherCandidates(p, bindings);
+        case "rtc.checkConnectivity":
+          return rtc.execCheckConnectivity();
+        case "rtc.certificate":
+          return rtc.execCertificate(p);
+        case "rtc.createOffer":
+          return rtc.execCreateOffer(p, bindings);
+        case "rtc.createAnswer":
+          return rtc.execCreateAnswer(value, p, bindings);
+        case "rtc.connectionState":
+          return rtc.execConnectionState();
+        case "rtc.dataChannelStats":
+          return rtc.execDataChannelStats();
+        default:
+          return rtc.execStatsReport();
+      }
     }
     default:
       throw new Error(`Unsupported step: ${step.name}`);
@@ -3684,6 +3887,41 @@ async function materializeOutArtifacts(value, params) {
     ];
   }
 
+  // Network / WebRTC values (design v2 §25a). SDP is already text on the
+  // wire; the rest carry structured data that renders as JSON, exactly the
+  // way `recipients` below already does.
+  if (NETWORK_VALUE_TYPES.has(value.type)) {
+    const isSdp = value.type === "sdp";
+    const content = isSdp
+      ? String(value.data)
+      : JSON.stringify(value.data, null, 2);
+    return [
+      attachPipeMeta(
+        {
+          label,
+          filename:
+            String(value.meta?.filename || "") ||
+            `${stem}${shareSuffix}.${isSdp ? "sdp" : "json"}`,
+          content,
+          sensitive: !!value.meta?.sensitive,
+          mime: isSdp ? "application/sdp" : "application/json",
+          encoding: "text",
+          // stun.check keeps its 22b "Configure TURN" affordance; the rest are
+          // ordinary text rows.
+          role: value.meta?.stunCheck ? "diagnostic" : "text",
+          tags: ["webrtc", value.type],
+          // The pipeline type doubles as the UI's renderer discriminator —
+          // a `candidate` artifact draws the typed candidate list, a
+          // `stats/candidate-pairs` one draws the pair matrix, and so on.
+          netType: value.type,
+          netKind: value.meta?.kind || value.meta?.statsKind || undefined,
+          netData: value.data,
+        },
+        value
+      ),
+    ];
+  }
+
   if (value.type === "recipients") {
     const rows = Array.isArray(value.data) ? value.data : [];
     const content = JSON.stringify(
@@ -3919,6 +4157,10 @@ function valueToArtifacts(value, name = "artifact") {
           // Bare pipeline text prints as a message (use `out` for a named file).
           disposition: isInspect ? "file" : "message",
           role: isInspect ? "inspect" : "text",
+          // `inspect` is an explicit "show me this", so its tile may reveal.
+          // Bare pipeline text was never asked to be displayed and stays
+          // masked if sensitive.
+          revealable: isInspect || undefined,
           tags: isInspect
             ? ["inspect"]
             : value.meta?.sensitive

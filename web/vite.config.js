@@ -36,8 +36,6 @@ export default defineConfig({
         decrypt: resolve(__dirname, "decrypt.html"),
         verify: resolve(__dirname, "verify.html"),
         toolkit: resolve(__dirname, "toolkit.html"),
-        toolkitLegacy: resolve(__dirname, "toolkit-legacy.html"),
-        toolkitReact: resolve(__dirname, "toolkit-react.html"),
         toolkitWidgets: resolve(__dirname, "toolkit-widgets.html"),
         quorum: resolve(__dirname, "quorum.html"),
         preferences: resolve(__dirname, "preferences.html"),

@@ -5,6 +5,7 @@ import {
   type StepSpec,
 } from "../../lib/toolkit/registry.js";
 import { decodeTwinToken } from "../../lib/toolkit/step-names.js";
+import { docsUrlFor } from "../../lib/toolkit/step-docs.js";
 import { cn } from "@/lib/cn";
 import { Glyph, glyphIdFor } from "./Glyph";
 
@@ -17,11 +18,12 @@ export type ToolCardOp = StepSpec;
 type Props = {
   op: ToolCardOp;
   decode?: boolean;
-  blocked?: boolean;
-  fit?: boolean;
-  hideHint?: boolean;
   /** Compact hover / chip-pop layout. */
   compact?: boolean;
+  /** Pinned docs panel — brand border, stays open while editing elsewhere (§19f). */
+  pinned?: boolean;
+  /** Close button for the pinned panel. */
+  onClose?: () => void;
   className?: string;
 };
 
@@ -43,14 +45,38 @@ function paramTypeBits(p: ParamSpec): string {
   return typeBits.join(" · ");
 }
 
+/**
+ * Reference-link footer (§31d) — one quiet line pointing at the spec page the
+ * op wraps. Shared so the tool card and the inline param editor cannot drift;
+ * renders nothing for ops with no single canonical page (composites like
+ * `gpg.encrypt`), which is why it is safe to drop in unconditionally.
+ */
+export function DocsFooter({ op, className }: { op: { name?: string } | string; className?: string }) {
+  const ref = docsUrlFor(op);
+  if (!ref) return null;
+  return (
+    <p className={cn("text-xs", className)}>
+      <a
+        href={ref.url}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="inline-flex items-center gap-1 text-[var(--brand)] hover:underline"
+        title={ref.url}
+      >
+        <span aria-hidden="true">↗</span>
+        {ref.label}
+      </a>
+    </p>
+  );
+}
+
 /** Standard tool card — docs, kind, I/O types, params. Redesigned with uniform widget system. */
 export function ToolCard({
   op,
   decode = false,
-  blocked = false,
-  fit = false,
-  hideHint = false,
   compact = false,
+  pinned = false,
+  onClose,
   className,
 }: Props) {
   const io = op.effectiveIo
@@ -84,11 +110,13 @@ export function ToolCard({
   return (
     <div
       className={cn(
-        "tool-card rounded-lg border border-[var(--border)] bg-[var(--surface)] transition-all",
+        "tool-card rounded-lg border bg-[var(--surface)] transition-all",
+        pinned ? "border-[var(--brand)]" : "border-[var(--border)]",
         compact && "tool-card-compact",
         className
       )}
       data-dir={decode ? "decode" : "encode"}
+      data-pinned={pinned || undefined}
     >
       {/* Header: glyph + title + metadata row */}
       <header className="flex gap-3 border-b border-[var(--border)] p-3.5">
@@ -103,6 +131,17 @@ export function ToolCard({
             Recipe <code>{recipeTok}</code>
           </p>
         </div>
+        {onClose ? (
+          <button
+            type="button"
+            className="h-[18px] w-[18px] shrink-0 self-start text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            aria-label="Close docs"
+            title="Close docs"
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        ) : null}
       </header>
 
       {/* Metadata chips */}
@@ -125,16 +164,6 @@ export function ToolCard({
         <span className="inline-flex text-xs font-semibold px-2 py-1 rounded-md bg-[var(--surface-raised)] text-[var(--muted-foreground)]">
           {kindLabel}
         </span>
-        {blocked ? (
-          <span className="inline-flex text-xs font-bold px-2 py-1 rounded-md bg-red-200/20 text-red-700 dark:bg-red-950/30 dark:text-red-400">
-            FIPS blocked
-          </span>
-        ) : null}
-        {fit ? (
-          <span className="inline-flex text-xs font-bold px-2 py-1 rounded-md bg-green-200/20 text-green-700 dark:bg-green-950/30 dark:text-green-400">
-            Fits tip
-          </span>
-        ) : null}
         {op.unresolvedInputs ? (
           <span className="text-xs text-[var(--muted-foreground)]">
             Needs {String(op.unresolvedInputs)} input
@@ -164,6 +193,14 @@ export function ToolCard({
           {docLead}
         </p>
       ) : null}
+
+      {/* Reference footer (§31d) — normative spec for what this step actually
+          calls, always the last row before aliases/params, never inline with
+          the body copy. Rendered in compact mode too: these cards sit in a
+          Radix tooltip whose provider leaves `disableHoverableContent` at its
+          default of false, so the pointer can travel into the card and reach
+          the link. */}
+      <DocsFooter op={op} className="px-3.5 py-2 border-b border-[var(--border)]" />
 
       {/* Aliases */}
       {!compact && op.aliases?.length ? (
@@ -211,8 +248,12 @@ export function ToolCard({
         </p>
       )}
 
-      {/* Hint */}
-      {!hideHint && !compact ? (
+      {/* Hint / pinned footer */}
+      {pinned ? (
+        <p className="px-3.5 py-2 font-mono text-[10px] text-[var(--muted-foreground)]">
+          pinned · stays open while you edit params elsewhere
+        </p>
+      ) : !compact ? (
         <p className="px-3.5 py-2 text-xs text-[var(--muted-foreground)] italic">
           Drag onto a cell, or click to append.
         </p>

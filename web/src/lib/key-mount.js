@@ -30,14 +30,15 @@ import {
   trustControlsHtml,
   wireTrustControls,
 } from "../lib/trust.js";
-import "../css/site.css";
-
-Auth.initWidget(document.getElementById("auth-widget"));
-
-const fpr = queryParam("fpr");
-const error = document.getElementById("error");
-const content = document.getElementById("content");
-const loading = document.getElementById("loading");
+/**
+ * Mount the key detail view into `container`.
+ * @param {HTMLElement} container
+ */
+export function mountKey(container) {
+  const fpr = queryParam("fpr");
+  const error = container.querySelector("#error");
+  const content = container.querySelector("#content");
+  const loading = container.querySelector("#loading");
 
 function metaRow(label, valueHtml) {
   return `<div class="key-meta-row"><dt>${escapeHtml(label)}</dt><dd>${valueHtml}</dd></div>`;
@@ -607,9 +608,9 @@ async function loadKey() {
     wireSnippetCopy(content);
     wireTrustControls(content);
 
-    const richToggle = document.getElementById("rich-qr-toggle");
-    const qrSvgEl = document.getElementById("verify-qr-svg");
-    const qrCaption = document.getElementById("verify-qr-caption");
+    const richToggle = content.querySelector("#rich-qr-toggle");
+    const qrSvgEl = content.querySelector("#verify-qr-svg");
+    const qrCaption = content.querySelector("#verify-qr-caption");
     richToggle?.addEventListener("change", () => {
       if (!(richToggle instanceof HTMLInputElement) || !qrSvgEl) return;
       const fprUri = richToggle.dataset.fprUri || "";
@@ -628,18 +629,18 @@ async function loadKey() {
     });
 
     // Label edit (claimer only)
-    const labelEditBtn = document.getElementById("label-edit-btn");
-    const labelForm = document.getElementById("label-form");
-    const labelCancelBtn = document.getElementById("label-cancel-btn");
-    const labelClearBtn = document.getElementById("label-clear-btn");
-    const labelStatus = document.getElementById("label-status");
-    const labelDisplay = document.getElementById("key-label-display");
+    const labelEditBtn = content.querySelector("#label-edit-btn");
+    const labelForm = content.querySelector("#label-form");
+    const labelCancelBtn = content.querySelector("#label-cancel-btn");
+    const labelClearBtn = content.querySelector("#label-clear-btn");
+    const labelStatus = content.querySelector("#label-status");
+    const labelDisplay = content.querySelector("#key-label-display");
 
     if (labelEditBtn && labelForm) {
       labelEditBtn.addEventListener("click", () => {
         labelForm.classList.toggle("hidden");
         if (!labelForm.classList.contains("hidden")) {
-          document.getElementById("label-input")?.focus();
+          content.querySelector("#label-input")?.focus();
         }
       });
       labelCancelBtn?.addEventListener("click", () => labelForm.classList.add("hidden"));
@@ -677,16 +678,16 @@ async function loadKey() {
 
       labelForm.addEventListener("submit", async (e) => {
         e.preventDefault();
-        const val = (document.getElementById("label-input")?.value || "").trim();
+        const val = (content.querySelector("#label-input")?.value || "").trim();
         await saveLabel(val);
       });
       labelClearBtn?.addEventListener("click", () => saveLabel(""));
     }
 
-    const claimBtn = document.getElementById("claim-btn");
+    const claimBtn = content.querySelector("#claim-btn");
     if (claimBtn) {
       claimBtn.addEventListener("click", async () => {
-        const status = document.getElementById("claim-status");
+        const status = content.querySelector("#claim-status");
         claimBtn.disabled = true;
         claimBtn.textContent = "Claiming…";
         try {
@@ -715,7 +716,7 @@ async function loadKey() {
       });
     }
 
-    const copyArmored = document.getElementById("copy-armored");
+    const copyArmored = content.querySelector("#copy-armored");
     if (copyArmored && armored) {
       copyArmored.addEventListener("click", async () => {
         try {
@@ -733,7 +734,7 @@ async function loadKey() {
       });
     }
 
-    const dl = document.getElementById("download-armored");
+    const dl = content.querySelector("#download-armored");
     if (dl && armored) {
       const blob = new Blob([armored], { type: "application/pgp-keys" });
       dl.href = URL.createObjectURL(blob);
@@ -744,4 +745,5 @@ async function loadKey() {
   }
 }
 
-loadKey();
+  loadKey();
+}

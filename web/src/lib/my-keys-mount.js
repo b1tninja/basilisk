@@ -61,10 +61,14 @@ import {
   unlockKey as vaultUnlockKey,
 } from "../lib/vault.js";
 import { mdsStatusBadgeHtml } from "../lib/webauthn/mds.js";
-import "../css/site.css";
-
-const content = document.getElementById("content");
-const error = document.getElementById("error");
+/**
+ * Mount the My Keys / vault management UI into `container`.
+ * @param {HTMLElement} container
+ * @returns {() => void} cleanup
+ */
+export function mountMyKeys(container) {
+  const content = container.querySelector("#content");
+  const error = container.querySelector("#error");
 
 /** @type {boolean} */
 let passkeyAvailable = false;
@@ -431,7 +435,7 @@ function wireKeyLabelEditors(keys) {
     const trigger = e.target.closest?.(".label-edit-trigger");
     if (trigger) {
       const editorId = trigger.dataset.editor;
-      const editor = document.getElementById(editorId);
+      const editor = content.querySelector("#" + CSS.escape(editorId));
       if (!editor) return;
       const form = editor.querySelector(".label-form");
       if (!form) return;
@@ -446,7 +450,7 @@ function wireKeyLabelEditors(keys) {
     const cancelBtn = e.target.closest?.(".label-cancel");
     if (cancelBtn) {
       const editorId = cancelBtn.dataset.editor;
-      document.getElementById(editorId)?.querySelector(".label-form")?.classList.add("hidden");
+      content.querySelector("#" + CSS.escape(editorId))?.querySelector(".label-form")?.classList.add("hidden");
       return;
     }
 
@@ -468,7 +472,7 @@ function wireKeyLabelEditors(keys) {
   }
 
   async function applyLabel(editorId, value) {
-    const editor = document.getElementById(editorId);
+    const editor = content.querySelector("#" + CSS.escape(editorId));
     if (!editor) return;
 
     const isDevice = editorId.startsWith("device-label-");
@@ -555,15 +559,15 @@ function wireKeyLabelEditors(keys) {
  * @param {{ email?: string }} user
  */
 function wireGenerateForm(user) {
-  const form = document.getElementById("generate-key-form");
+  const form = content.querySelector("#generate-key-form");
   if (!form) return;
 
   const updateProtectionUi = () => {
     const mode =
       form.querySelector('input[name="vault-protection"]:checked')?.value ||
       "passphrase";
-    const pwRow = document.getElementById("gen-passphrase-row");
-    const warn = document.getElementById("device-only-warn");
+    const pwRow = content.querySelector("#gen-passphrase-row");
+    const warn = content.querySelector("#device-only-warn");
     if (pwRow) pwRow.classList.toggle("hidden", mode !== "passphrase");
     if (warn) warn.classList.toggle("hidden", mode !== "device");
   };
@@ -572,10 +576,10 @@ function wireGenerateForm(user) {
   });
   updateProtectionUi();
 
-  const pwEl = document.getElementById("gen-passphrase");
+  const pwEl = content.querySelector("#gen-passphrase");
   const updateMeter = () => {
-    const meter = document.getElementById("gen-pw-strength-meter");
-    const label = document.getElementById("gen-pw-strength-label");
+    const meter = content.querySelector("#gen-pw-strength-meter");
+    const label = content.querySelector("#gen-pw-strength-label");
     if (!meter || !label) return;
     const est = estimatePassphraseStrength(pwEl?.value || "");
     meter.dataset.strength = est.label;
@@ -589,13 +593,13 @@ function wireGenerateForm(user) {
   };
   pwEl?.addEventListener("input", updateMeter);
 
-  document.getElementById("gen-suggest-pw")?.addEventListener("click", async () => {
+  content.querySelector("#gen-suggest-pw")?.addEventListener("click", async () => {
     const { passphrase, bits } = await suggestPassphrase(6);
-    const p1 = document.getElementById("gen-passphrase");
-    const p2 = document.getElementById("gen-passphrase-confirm");
+    const p1 = content.querySelector("#gen-passphrase");
+    const p2 = content.querySelector("#gen-passphrase-confirm");
     if (p1 instanceof HTMLInputElement) p1.value = passphrase;
     if (p2 instanceof HTMLInputElement) p2.value = passphrase;
-    const out = document.getElementById("gen-suggested-pw");
+    const out = content.querySelector("#gen-suggested-pw");
     if (out) {
       out.innerHTML = suggestedPassphraseHtml(
         passphrase,
@@ -609,22 +613,22 @@ function wireGenerateForm(user) {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const status = document.getElementById("gen-status");
-    const btn = document.getElementById("gen-submit-btn");
+    const status = content.querySelector("#gen-status");
+    const btn = content.querySelector("#gen-submit-btn");
     const mode =
       form.querySelector('input[name="vault-protection"]:checked')?.value ||
       "passphrase";
-    const name = /** @type {HTMLInputElement} */ (document.getElementById("gen-name"))
+    const name = /** @type {HTMLInputElement} */ (content.querySelector("#gen-name"))
       ?.value?.trim() || "";
     const email = (user.email || "").trim();
     const expiryPreset =
-      /** @type {HTMLSelectElement} */ (document.getElementById("gen-expiry"))?.value ||
+      /** @type {HTMLSelectElement} */ (content.querySelector("#gen-expiry"))?.value ||
       "1m";
     const passphrase =
-      /** @type {HTMLInputElement} */ (document.getElementById("gen-passphrase"))
+      /** @type {HTMLInputElement} */ (content.querySelector("#gen-passphrase"))
         ?.value || "";
     const confirm =
-      /** @type {HTMLInputElement} */ (document.getElementById("gen-passphrase-confirm"))
+      /** @type {HTMLInputElement} */ (content.querySelector("#gen-passphrase-confirm"))
         ?.value || "";
 
     if (!email) {
@@ -716,12 +720,12 @@ function wireGenerateForm(user) {
           (result.claimed ? ", ownership claimed." : ".") +
           mdsHtml;
       }
-      document.dispatchEvent(
+      container.dispatchEvent(
         new CustomEvent("basilisk:key-submitted", { detail: result })
       );
       // Clear passphrase fields
-      const p1 = document.getElementById("gen-passphrase");
-      const p2 = document.getElementById("gen-passphrase-confirm");
+      const p1 = content.querySelector("#gen-passphrase");
+      const p2 = content.querySelector("#gen-passphrase-confirm");
       if (p1 instanceof HTMLInputElement) p1.value = "";
       if (p2 instanceof HTMLInputElement) p2.value = "";
       updateMeter();
@@ -891,15 +895,15 @@ async function runVaultExport(fpr, format, btn) {
 
 /** Wire the "import an existing private key" card. */
 function wireImportForm() {
-  const form = document.getElementById("vault-import-form");
+  const form = content.querySelector("#vault-import-form");
   if (!form || form.dataset.wired) return;
   form.dataset.wired = "1";
 
   const armoredEl = /** @type {HTMLTextAreaElement|null} */ (
-    document.getElementById("import-armored")
+    content.querySelector("#import-armored")
   );
-  const pwRow = document.getElementById("import-passphrase-row");
-  const statusEl = document.getElementById("import-status");
+  const pwRow = content.querySelector("#import-passphrase-row");
+  const statusEl = content.querySelector("#import-status");
   const setStatus = (msg, ok = false) => {
     if (!statusEl) return;
     statusEl.textContent = msg;
@@ -926,11 +930,11 @@ function wireImportForm() {
     }, 400);
   });
 
-  document.getElementById("import-suggest-pw")?.addEventListener("click", async () => {
+  content.querySelector("#import-suggest-pw")?.addEventListener("click", async () => {
     const { passphrase, bits } = await suggestPassphrase(6);
-    const input = document.getElementById("import-passphrase");
+    const input = content.querySelector("#import-passphrase");
     if (input instanceof HTMLInputElement) input.value = passphrase;
-    const out = document.getElementById("import-suggested-pw");
+    const out = content.querySelector("#import-suggested-pw");
     if (out) {
       out.innerHTML = suggestedPassphraseHtml(passphrase, bits, "write it down");
       out.classList.remove("hidden");
@@ -939,7 +943,7 @@ function wireImportForm() {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const btn = document.getElementById("import-submit-btn");
+    const btn = content.querySelector("#import-submit-btn");
     let armored = (armoredEl?.value || "").trim();
     if (!armored.includes("PRIVATE KEY BLOCK")) {
       setStatus("Paste an armored PRIVATE key block (-----BEGIN PGP PRIVATE KEY BLOCK-----).");
@@ -950,7 +954,7 @@ function wireImportForm() {
     try {
       const info = await inspectPrivateKey(armored);
       if (!info.locked) {
-        const input = document.getElementById("import-passphrase");
+        const input = content.querySelector("#import-passphrase");
         const pw = input instanceof HTMLInputElement ? input.value : "";
         if (!pw) {
           pwRow?.classList.remove("hidden");
@@ -974,7 +978,7 @@ function wireImportForm() {
       });
       armored = "";
       if (armoredEl) armoredEl.value = "";
-      const pwInput = document.getElementById("import-passphrase");
+      const pwInput = content.querySelector("#import-passphrase");
       if (pwInput instanceof HTMLInputElement) pwInput.value = "";
       setStatus(`Imported ${formatFingerprint(info.fingerprint)} into the vault.`, true);
       setTimeout(loadMyKeys, 800);
@@ -1006,26 +1010,31 @@ async function loadMyKeys() {
 }
 
 wireUploadForm();
-document.addEventListener("basilisk:key-submitted", () => {
-  setTimeout(loadMyKeys, 800);
-});
+  const onKeySubmitted = () => setTimeout(loadMyKeys, 800);
+  container.addEventListener("basilisk:key-submitted", onKeySubmitted);
 
-document.addEventListener("click", async (e) => {
-  const btn = e.target.closest?.("[data-delete-fpr]");
-  if (!btn) return;
-  const fpr = btn.getAttribute("data-delete-fpr");
-  if (!fpr) return;
-  if (!confirm(`Delete / unpublish key ${fpr}? This cannot be undone.`)) return;
-  btn.disabled = true;
-  try {
-    await fetchJson(`/api/v1/me/keys/${encodeURIComponent(fpr)}`, { method: "DELETE" });
-    await loadMyKeys();
-  } catch (err) {
-    showError(error, err.message || "Delete failed");
-    btn.disabled = false;
-  }
-});
+  const onDeleteClick = async (e) => {
+    const btn = e.target.closest?.("[data-delete-fpr]");
+    if (!btn) return;
+    const fpr = btn.getAttribute("data-delete-fpr");
+    if (!fpr) return;
+    if (!confirm(`Delete / unpublish key ${fpr}? This cannot be undone.`)) return;
+    btn.disabled = true;
+    try {
+      await fetchJson(`/api/v1/me/keys/${encodeURIComponent(fpr)}`, { method: "DELETE" });
+      await loadMyKeys();
+    } catch (err) {
+      showError(error, err.message || "Delete failed");
+      btn.disabled = false;
+    }
+  };
+  container.addEventListener("click", onDeleteClick);
 
-Auth.initWidget(document.getElementById("auth-widget"), "/my-keys");
-wireCopyButtons();
-loadMyKeys();
+  wireCopyButtons();
+  loadMyKeys();
+
+  return () => {
+    container.removeEventListener("basilisk:key-submitted", onKeySubmitted);
+    container.removeEventListener("click", onDeleteClick);
+  };
+}

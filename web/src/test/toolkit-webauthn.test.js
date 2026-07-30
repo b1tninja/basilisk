@@ -61,7 +61,7 @@ describe("webauthn toolbox shelves", () => {
   });
 
   it("recipeNeedsMainThread detects webauthn steps", () => {
-    const { ast: plain } = compileRecipe("random 16 | to hex");
+    const { ast: plain } = compileRecipe("random 16 | encode hex");
     expect(recipeNeedsMainThread(plain)).toBe(false);
     const { ast: wa } = compileRecipe("webauthn.caps");
     expect(recipeNeedsMainThread(wa)).toBe(true);
@@ -73,7 +73,7 @@ describe("webauthn toolbox shelves", () => {
     expect(formatType(inferSourceType("webauthn.get"))).toBe("text/opaque");
     expect(formatType(inferSourceType("webauthn.create"))).toBe("bytes/opaque");
     expect(formatType(inferSourceType("webauthn.prf"))).toBe("bytes/opaque");
-    expect(compileRecipe("webauthn.create | to hex").validation.ok).toBe(true);
+    expect(compileRecipe("webauthn.create | encode hex").validation.ok).toBe(true);
     expect(compileRecipe("webauthn.get | out @a").validation.ok).toBe(true);
   });
 });

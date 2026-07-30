@@ -1,10 +1,10 @@
 import type { DragEvent, KeyboardEvent, ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { Glyph, glyphIdFor } from "./Glyph";
+import { ToolboxDot } from "./Glyph";
 import type { ToolCardOp } from "./ToolCard";
 
-export type SuggestChipVariant = "candidate" | "placed" | "selector" | "editable";
+export type SuggestChipVariant = "placed" | "selector" | "ghost";
 
 type Props = {
   label: string;
@@ -12,8 +12,7 @@ type Props = {
   variant?: SuggestChipVariant;
   selected?: boolean;
   error?: boolean;
-  op?: Pick<ToolCardOp, "glyph" | "shelf" | "toolbox" | "name">;
-  glyphId?: string;
+  op?: Pick<ToolCardOp, "glyph" | "shelf" | "toolbox" | "name" | "output">;
   draggable?: boolean;
   onClick?: () => void;
   onDragStart?: (e: DragEvent) => void;
@@ -29,11 +28,10 @@ type Props = {
 export function SuggestChip({
   label,
   hint,
-  variant = "candidate",
+  variant = "ghost",
   selected = false,
   error = false,
   op,
-  glyphId,
   draggable = false,
   onClick,
   onDragStart,
@@ -43,16 +41,14 @@ export function SuggestChip({
   title,
   children,
 }: Props) {
-  const clickable = !!(onClick || variant === "editable");
-  const gid = glyphId || (op ? glyphIdFor(op) : "");
+  const clickable = !!onClick;
   const isPrimary = variant === "selector";
 
   const chipClass = cn(
     "suggest-chip",
-    variant === "placed" || variant === "editable"
-      ? "builder-ingredient-chip"
-      : null,
-    variant === "editable" && "builder-ingredient-chip-edit",
+    variant === "placed" && "builder-ingredient-chip",
+    variant === "ghost" &&
+      "border-dashed border-[var(--border)] bg-transparent text-[var(--muted-foreground)]",
     isPrimary && "suggest-chip-primary builder-branch-selector",
     selected && "is-selected",
     error && "builder-ingredient-chip-error",
@@ -62,7 +58,7 @@ export function SuggestChip({
 
   const body = (
     <>
-      {gid ? <Glyph id={gid} size={16} svgClassName="ops-glyph" /> : null}
+      {op ? <ToolboxDot op={op} /> : null}
       <span className="suggest-chip-name">{label}</span>
       {hint ? <span className="suggest-chip-out muted">{hint}</span> : null}
       {children}
@@ -98,7 +94,7 @@ export function SuggestChip({
             type="button"
             className="suggest-chip-hit"
             draggable={draggable || undefined}
-            aria-pressed={variant === "editable" ? selected : undefined}
+            aria-pressed={variant === "placed" ? selected : undefined}
             onClick={onClick}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
@@ -127,7 +123,7 @@ export function SuggestChip({
       draggable={draggable || undefined}
       className={chipClass}
       title={title}
-      aria-pressed={variant === "editable" ? selected : undefined}
+      aria-pressed={variant === "placed" ? selected : undefined}
       onClick={onClick}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}

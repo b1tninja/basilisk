@@ -2,6 +2,8 @@
  * Toolkit HKP ops — device cache → This site `/pks/lookup` → optional explicit upstream.
  */
 
+import { Auth } from "../auth.js";
+import { fetchJson } from "../utils.js";
 import {
   cacheClear,
   cacheList,
@@ -20,6 +22,55 @@ import {
   recipientFromSearchHit,
   recipientsPipelineValue,
 } from "./recipients-ops.js";
+
+/**
+ * Publish an armored public key to This site's directory (design v2 §21b) —
+ * the same `/pks/add` / `/api/v1/me/keys` write path `keys.js`'s upload form
+ * uses, factored out so `useNotebook().publishArtifact` can call it headlessly.
+ * @param {string} armoredKey
+ * @returns {Promise<{ fingerprint: string, directoryUrl: string }>}
+ */
+export async function publishArmoredKey(armoredKey) {
+  const keytext = String(armoredKey || "").trim();
+  if (!keytext.includes("BEGIN PGP")) {
+    throw new Error("publishArtifact: not an armored public key");
+  }
+  const user = await Auth.getUser();
+  if (user && user.authenticated) {
+    const result = await fetchJson("/api/v1/me/keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: keytext }),
+    });
+    const fpr = String(result?.fingerprint || "").toUpperCase();
+    return {
+      fingerprint: fpr,
+      directoryUrl: fpr
+        ? `${location.origin}/pks/lookup?op=get&search=0x${fpr}`
+        : `${location.origin}/pks/lookup`,
+    };
+  }
+  const r = await fetch("/pks/add", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `keytext=${encodeURIComponent(keytext)}`,
+  });
+  const body = await r.text();
+  if (!r.ok) {
+    throw Object.assign(new Error(body.trim() || `Request failed (${r.status})`), {
+      status: r.status,
+    });
+  }
+  const fprMatch = body.match(/[Ff]ingerprint:\s*([0-9A-Fa-f]{16,64})/);
+  const fpr = fprMatch ? fprMatch[1].toUpperCase() : "";
+  return {
+    fingerprint: fpr,
+    directoryUrl: fpr
+      ? `${location.origin}/pks/lookup?op=get&search=0x${fpr}`
+      : `${location.origin}/pks/lookup`,
+  };
+}
 
 /**
  * @param {Record<string, *>} params

@@ -105,24 +105,33 @@ export function resolveCipherTransform(raw) {
 }
 
 /**
- * Encodings accepted by `to` / `from` (positional). First pass: hex only.
- * @type {Set<string>}
+ * Base alphabets `encode` / `decode` accept, in menu order.
+ *
+ * Lives in this module because it has no imports of its own, so the registry,
+ * the type checker, and the legacy text migration can all share one list
+ * without an import cycle. Adding an alphabet here is the only edit needed for
+ * all three to agree — this list was previously duplicated in each of them,
+ * and the copies had already drifted (two said hex-only).
+ * @type {string[]}
  */
-export const TO_FROM_ENCODINGS = new Set(["hex"]);
+export const BASE_ENCODINGS = ["hex", "base64", "base64url", "base32"];
+
+/** @type {Set<string>} */
+const BASE_ENCODING_SET = new Set(BASE_ENCODINGS);
 
 /**
- * Whether a token is a known `to` / `from` encoding name.
+ * Whether a token names a base alphabet.
  * @param {string} raw
  * @returns {boolean}
  */
-export function isToFromEncoding(raw) {
-  return TO_FROM_ENCODINGS.has(normalizeStepToken(raw));
+export function isBaseEncoding(raw) {
+  return BASE_ENCODING_SET.has(normalizeStepToken(raw));
 }
 
 /**
  * Encoding (and other non-cipher) decodeTwin verbs: `base64.encode` / `base64.decode`.
  * Canonical AST stays `{ name, params: { decode } }`; `-d` remains accepted.
- * Note: `pem` ↔ `der` and `to` ↔ `from` are conjugate pairs (not decodeTwin).
+ * Note: `pem` ↔ `der` and `encode` ↔ `decode` are conjugate pairs (not decodeTwin).
  * @param {string} raw
  * @param {(name: string) => { decodeTwin?: boolean, toolbox?: string } | null | undefined} getStep
  * @returns {{ canonical: string, decode: boolean } | null}
@@ -135,12 +144,12 @@ export function resolveDecodeTwinVerb(raw, getStep) {
   const mode = m[2];
   const alt = resolveAlternateForm(base);
   const canonical = alt?.canonical || base;
-  // Conjugate pairs — not decodeTwin.
+  // Conjugate pairs — not decodeTwin, so they never take a dotted verb.
   if (
     canonical === "pem" ||
     canonical === "der" ||
-    canonical === "to" ||
-    canonical === "from" ||
+    canonical === "encode" ||
+    canonical === "decode" ||
     canonical === "hex" ||
     canonical === "unhex"
   ) {
@@ -156,7 +165,7 @@ export function resolveDecodeTwinVerb(raw, getStep) {
 /**
  * Recipe / UI token for a decodeTwin step direction.
  * Encoding twins prefer `base64.encode` / `base64.decode`; ciphers stay `aes-gcm` / `aes-gcm -d`.
- * pem/der and to/from serialize as bare conjugate verbs (not `.encode`/`.decode`).
+ * pem/der and encode/decode serialize as bare conjugate verbs (not `.encode`/`.decode`).
  * @param {{ name: string, decodeTwin?: boolean, toolbox?: string } | null | undefined} spec
  * @param {boolean} decode
  * @returns {string}
@@ -180,10 +189,20 @@ export function legacyRemovalHint(raw) {
     return `"${raw}" was removed from live parse — use a concrete cipher (aes-gcm, …) or Upgrade recipe to migrate`;
   }
   if (key === "hex") {
-    return `"hex" was removed — use to hex (or Upgrade recipe to migrate)`;
+    return `"hex" was removed — use encode hex (or Upgrade recipe to migrate)`;
   }
   if (key === "unhex") {
-    return `"unhex" was removed — use from hex (or Upgrade recipe to migrate)`;
+    return `"unhex" was removed — use decode hex (or Upgrade recipe to migrate)`;
+  }
+  // Hinted here rather than via LEGACY_STEP_MIGRATE: that map also drives the
+  // final token rewrite in migrateRecipe, and `to`/`from` need the narrower
+  // rules there (only when followed by an alphabet) so a slot-load `from @x`
+  // is not turned into a decode.
+  if (key === "to") {
+    return `"to" was renamed — use encode <alphabet> (or Upgrade recipe to migrate)`;
+  }
+  if (key === "from") {
+    return `"from" was renamed — use decode <alphabet>, or in @slot to load a slot (or Upgrade recipe to migrate)`;
   }
   const to = LEGACY_STEP_MIGRATE[key];
   if (!to) return null;
@@ -284,10 +303,11 @@ export function migrateRecipe(text) {
     if (n) counts.set("encrypt/decrypt", (counts.get("encrypt/decrypt") || 0) + n);
   }
 
-  // Hex conjugate → CyberChef to/from (do not double-rewrite `to hex` / `from hex`).
+  // Bare `hex` → `encode hex` (but not when it is already the argument of an
+  // encode/decode verb, in any of their spellings).
   apply(
     "unhex",
-    "from hex",
+    "decode hex",
     /(^|[\s|;{]|-(?:\s+))unhex(?=[\s|;}\-]|$)/gi
   );
   {
@@ -296,20 +316,30 @@ export function migrateRecipe(text) {
       /(^|[\s|;{]|-(?:\s+))hex(?=[\s|;}\-]|$)/gi,
       (m, pre, offset, full) => {
         const head = full.slice(0, offset + pre.length);
-        if (/\bto\s*$/i.test(head) || /\bfrom\s*$/i.test(head)) return m;
+        if (/\b(to|from|encode|decode)\s*$/i.test(head)) return m;
         n += 1;
-        return `${pre}to hex`;
+        return `${pre}encode hex`;
       }
     );
     if (n) counts.set("hex", (counts.get("hex") || 0) + n);
   }
 
-  // Slot-load alias `from` → `in` when not already `from <encoding>`.
-  // Keep `from hex` (and future encodings); rewrite `from @x` / `from 1` / `from label`.
+  // `from` was overloaded: the slot-load verb *and* the decode verb. Split it
+  // by what follows — an alphabet means decode, anything else meant a slot.
+  //
+  // The alphabet list has to be spelled out here because this is a text
+  // rewrite that runs before parsing. It previously hardcoded `hex` alone, so
+  // the moment `to`/`from` learned base64 every `from base64` was rewritten to
+  // `in base64` and then rejected as a slot label missing its `@`. Renaming
+  // the verb to `decode` is what retires this ambiguity for good; this rule
+  // only has to carry legacy text.
   {
     let n = 0;
     recipe = recipe.replace(
-      /(^|[\s|;{]|-(?:\s+))from(?=\s+(?:@|\d|(?!hex\b)[A-Za-z][\w-]*))/gi,
+      new RegExp(
+        `(^|[\\s|;{]|-(?:\\s+))from(?=\\s+(?:@|\\d|(?!(?:${BASE_ENCODINGS.join("|")})\\b)[A-Za-z][\\w-]*))`,
+        "gi"
+      ),
       (m, pre) => {
         n += 1;
         return `${pre}in`;
@@ -317,6 +347,10 @@ export function migrateRecipe(text) {
     );
     if (n) counts.set("from (slot)", (counts.get("from (slot)") || 0) + n);
   }
+
+  // The surviving `to`/`from` are the encode/decode verbs — rename them.
+  apply("to", "encode", /(^|[\s|;{]|-(?:\s+))to(?=\s+[A-Za-z])/gi);
+  apply("from", "decode", /(^|[\s|;{]|-(?:\s+))from(?=\s+[A-Za-z])/gi);
 
   // Member selectors `.public` → `:public` (not dotted ops like gpg.vault.pub).
   {
@@ -380,8 +414,8 @@ export function migrateRecipe(text) {
 
   /** @type {Record<string, string>} */
   const EXTRA_MIGRATE_TO = {
-    hex: "to hex",
-    unhex: "from hex",
+    hex: "encode hex",
+    unhex: "decode hex",
     "from (slot)": "in",
     "encrypt gpg": "gpg.encrypt",
     "decrypt gpg": "gpg.decrypt",

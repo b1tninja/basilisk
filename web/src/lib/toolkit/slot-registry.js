@@ -191,6 +191,7 @@ function wipeInspectSnapshot(snap) {
  *   has: (ref: string) => boolean,
  *   clear: () => void,
  *   evictSensitive: () => void,
+ *   deleteSlot: (label: string) => void,
  *   labels: () => string[],
  *   listMetas: () => SlotMeta[],
  *   snapshotKeys: () => Set<string>,
@@ -319,6 +320,19 @@ export function createSlotRegistry() {
     slotsByIndex.push(...kept);
   };
 
+  /**
+   * Wipe + remove a single labeled slot (Variables drawer per-row Clear).
+   * @param {string} label
+   */
+  const deleteSlot = (label) => {
+    const key = slotLabelKey(String(label || ""));
+    if (!key) return;
+    const value = slotsByLabel.get(key);
+    if (!value) return;
+    wipePipelineValue(value);
+    slotsByLabel.delete(key);
+  };
+
   const labels = () => [...slotsByLabel.keys()];
 
   const snapshotKeys = () => new Set(slotsByLabel.keys());
@@ -366,6 +380,7 @@ export function createSlotRegistry() {
     has,
     clear,
     evictSensitive,
+    deleteSlot,
     labels,
     listMetas,
     snapshotKeys,
