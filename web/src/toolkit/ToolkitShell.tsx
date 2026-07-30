@@ -1662,6 +1662,9 @@ export function ToolkitShell() {
                                 netData: a.netData,
                                 content: a.content,
                                 inspectSnapshot: a.inspectSnapshot,
+                                // JOSE artifacts render as the JWT reader —
+                                // verdict, claims, and a live expiry clock.
+                                jose: a.jose,
                                 onConfigureTurn: openRtcIceTurnParam,
                                 onCopy: () =>
                                   void navigator.clipboard.writeText(a.content),
@@ -2068,6 +2071,7 @@ export function ToolkitShell() {
                               content: a.content,
                               netType: a.netType,
                               inspectSnapshot: a.inspectSnapshot,
+                              jose: a.jose,
                               netKind: a.netKind,
                               netData: a.netData,
                               preview: a.sensitive ? undefined : oneLinePreview(a.content),

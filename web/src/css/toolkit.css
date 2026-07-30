@@ -204,3 +204,97 @@ body.layout-app:has(#app > .toolkit-shell) {
 .toolbox-dot[data-toolbox-dot="jose"] {
   background: #ff7b72;
 }
+
+/*
+ * JWT / JOSE artifact reader (JwtArtifact).
+ *
+ * Four tones, one closed set: `ok` (verified and current), `warn`
+ * (unverified, or expiring soon), `error` (expired / not yet valid), `muted`
+ * (no verdict to give). Enumerated here rather than computed inline because
+ * `style-src 'self'` refuses an inline style — and because the *unverified*
+ * appearance must not be reachable by accident; it is a rule, not a colour a
+ * caller picks.
+ */
+.jwt-banner[data-jwt-tone="ok"] {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+}
+.jwt-banner[data-jwt-tone="warn"] {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.jwt-banner[data-jwt-tone="error"] {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
+}
+.jwt-banner[data-jwt-tone="muted"] {
+  background: var(--surface);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.jwt-chip[data-jwt-tone="ok"] {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+}
+.jwt-chip[data-jwt-tone="warn"] {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+.jwt-chip[data-jwt-tone="error"] {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+}
+.jwt-chip[data-jwt-tone="muted"] {
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+.jwt-value[data-jwt-tone="ok"] {
+  color: var(--success);
+}
+.jwt-value[data-jwt-tone="warn"] {
+  color: var(--warn);
+}
+.jwt-value[data-jwt-tone="error"] {
+  color: var(--error);
+}
+.jwt-value[data-jwt-tone="muted"] {
+  color: var(--foreground);
+}
+
+/*
+ * Validity bar. The fill is bucketed into twelfths rather than a computed
+ * percentage — same CSP reason — which is finer than the eye resolves on a
+ * bar this size.
+ */
+.jwt-track {
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+}
+.jwt-fill {
+  border-radius: 999px;
+}
+.jwt-fill[data-jwt-tone="ok"] {
+  background: var(--success);
+}
+.jwt-fill[data-jwt-tone="warn"] {
+  background: var(--warn);
+}
+.jwt-fill[data-jwt-tone="error"] {
+  background: var(--error);
+}
+.jwt-fill[data-jwt-tone="muted"] {
+  background: var(--muted-foreground);
+}
+.jwt-fill[data-jwt-fill="0"] { width: 0%; }
+.jwt-fill[data-jwt-fill="1"] { width: 8.33%; }
+.jwt-fill[data-jwt-fill="2"] { width: 16.67%; }
+.jwt-fill[data-jwt-fill="3"] { width: 25%; }
+.jwt-fill[data-jwt-fill="4"] { width: 33.33%; }
+.jwt-fill[data-jwt-fill="5"] { width: 41.67%; }
+.jwt-fill[data-jwt-fill="6"] { width: 50%; }
+.jwt-fill[data-jwt-fill="7"] { width: 58.33%; }
+.jwt-fill[data-jwt-fill="8"] { width: 66.67%; }
+.jwt-fill[data-jwt-fill="9"] { width: 75%; }
+.jwt-fill[data-jwt-fill="10"] { width: 83.33%; }
+.jwt-fill[data-jwt-fill="11"] { width: 91.67%; }
+.jwt-fill[data-jwt-fill="12"] { width: 100%; }

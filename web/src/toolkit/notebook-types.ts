@@ -62,4 +62,11 @@ export type ArtifactTile = {
   revealable?: boolean;
   /** Structured `inspect` body — absent for sensitive tips by design. */
   inspectSnapshot?: unknown;
+  /**
+   * JOSE body from the `jose.*` ops — header, claims, and the op's own
+   * verification verdict. The verdict cannot be re-derived in the UI (only
+   * the op that ran knows whether a key checked out), so it travels with the
+   * artifact rather than being inferred from the token text.
+   */
+  jose?: unknown;
 };

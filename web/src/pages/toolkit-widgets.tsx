@@ -24,6 +24,7 @@ import {
   TopBar,
   ReadinessBar,
   OutputList,
+  JwtArtifact,
   NetworkArtifact,
   SessionStrip,
   TypeCard,
@@ -116,6 +117,7 @@ function CatalogApp() {
               "readinessbar",
               "outputlist",
               "networkartifact",
+              "jwtartifact",
               "typecard",
               "connections",
               "gpgkeybinder",
@@ -664,6 +666,148 @@ function CatalogApp() {
               <NetworkArtifact
                 netType="session"
                 data={{ room: "KJ8XW2PQZM4RT9FQ", role: "creator", connected: 1, audience: ["AABBCCDDEEFF00112233", "445566778899AABBCCDD"] }}
+              />
+            </div>
+          </div>
+        </Section>
+
+        <Section id="jwtartifact" title="JwtArtifact — JWS / JWE reader (RFC 7515 / 7516 / 7519)">
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            The states worth reviewing side by side are the two that must never look
+            alike: <strong>verified</strong> and <strong>unverified</strong>. A{" "}
+            <code className="font-mono">jose.decode</code> result is claims nobody
+            checked, and the whole failure mode of a token inspector is teaching people
+            to read those as if someone had. Expiry tones are computed live from{" "}
+            <code className="font-mono">exp</code>, so a token lapsing in an open tab
+            escalates on its own; the fixed <code className="font-mono">nowMs</code>{" "}
+            below pins each example to the state it is meant to show.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <StateLabel>Verified — signature checked, comfortably in date</StateLabel>
+              <JwtArtifact
+                nowMs={1_700_000_000_000}
+                data={{
+                  kind: "jws",
+                  verified: true,
+                  header: { alg: "ES256", typ: "JWT", kid: "2024-05" },
+                  claims: {
+                    iss: "https://issuer.example",
+                    sub: "alice@example.org",
+                    aud: "basilisk",
+                    iat: 1_699_999_000,
+                    exp: 1_700_086_400,
+                    scope: "read:keys",
+                  },
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>
+                Unverified — jose.decode; warning banner, and it says so in words
+              </StateLabel>
+              <JwtArtifact
+                nowMs={1_700_000_000_000}
+                data={{
+                  kind: "jws",
+                  verified: false,
+                  header: { alg: "HS256", typ: "JWT" },
+                  claims: {
+                    iss: "https://issuer.example",
+                    sub: "alice@example.org",
+                    exp: 1_700_086_400,
+                  },
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>Expiring soon — under five minutes, warn tone</StateLabel>
+              <JwtArtifact
+                nowMs={1_700_000_000_000}
+                data={{
+                  kind: "jws",
+                  verified: true,
+                  header: { alg: "EdDSA", typ: "JWT" },
+                  claims: { sub: "alice", iat: 1_699_996_400, exp: 1_700_000_200 },
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>Expired — valid signature, dead token; that distinction is the message</StateLabel>
+              <JwtArtifact
+                nowMs={1_700_000_000_000}
+                data={{
+                  kind: "jws",
+                  verified: true,
+                  expiryChecked: false,
+                  header: { alg: "RS256", typ: "JWT" },
+                  claims: { sub: "alice", iat: 1_699_900_000, exp: 1_699_990_000 },
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>Not yet valid — nbf in the future</StateLabel>
+              <JwtArtifact
+                nowMs={1_700_000_000_000}
+                data={{
+                  kind: "jws",
+                  verified: true,
+                  header: { alg: "ES256" },
+                  claims: { sub: "alice", nbf: 1_700_003_600, exp: 1_700_090_000 },
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>No exp — a token that never lapses on its own</StateLabel>
+              <JwtArtifact
+                nowMs={1_700_000_000_000}
+                data={{
+                  kind: "jws",
+                  verified: true,
+                  signed: true,
+                  header: { alg: "HS512", typ: "JWT" },
+                  claims: { sub: "service-account", scope: "internal" },
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>JWE, still sealed — payload is not readable yet, and says why</StateLabel>
+              <JwtArtifact
+                nowMs={1_700_000_000_000}
+                data={{
+                  kind: "jwe",
+                  verified: true,
+                  header: { alg: "A256KW", enc: "A256GCM", kid: "kek-1" },
+                  claims: null,
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>JWE, decrypted — AEAD tag is the authentication</StateLabel>
+              <JwtArtifact
+                nowMs={1_700_000_000_000}
+                data={{
+                  kind: "jwe",
+                  verified: true,
+                  decrypted: true,
+                  header: { alg: "dir", enc: "A256GCM" },
+                  claims: { sub: "alice", exp: 1_700_050_000 },
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>
+                Non-JSON payload — a JWS that is not a JWT; no claims invented
+              </StateLabel>
+              <JwtArtifact
+                nowMs={1_700_000_000_000}
+                data={{
+                  kind: "jws",
+                  verified: true,
+                  header: { alg: "EdDSA" },
+                  claims: null,
+                  payloadText: "$argon2id$v=19$m=65536,t=3,p=4$…",
+                }}
               />
             </div>
           </div>

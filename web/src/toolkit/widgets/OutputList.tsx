@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/cn";
 import { NetworkArtifact, hasNetworkRenderer } from "./NetworkArtifact";
 import { InspectorArtifact, type InspectSnapshot } from "./InspectorArtifact";
+import { JwtArtifact, hasJoseRenderer } from "./JwtArtifact";
 import { KindGlyph } from "./kind-glyphs";
 import {
   bytesToBase32,
@@ -55,6 +56,12 @@ export type OutputArtifact = {
   netData?: unknown;
   /** Structured `inspect` body — renders as a typed inspector, not text. */
   inspectSnapshot?: unknown;
+  /**
+   * JOSE body from a `jose.*` op — renders as the JWT reader rather than a
+   * base64url blob. Carries the op's verification verdict, which the UI
+   * cannot re-derive from the token text.
+   */
+  jose?: unknown;
   /** Full serialized content, for types that are text on the wire (SDP). */
   content?: string;
   /**
@@ -126,6 +133,7 @@ const EXPANDABLE_CONTENT_CHARS = 512;
 export function canExpand(a: OutputArtifact): boolean {
   if (hasNetworkRenderer(a.netType)) return true;
   if (a.inspectSnapshot) return true;
+  if (hasJoseRenderer(a.jose)) return true;
   return (a.content?.length ?? 0) > EXPANDABLE_CONTENT_CHARS;
 }
 
@@ -386,6 +394,13 @@ export function OutputList({ outputs, className }: Props) {
               snapshot={a.inspectSnapshot as InspectSnapshot}
               className="mt-0.5"
             />
+          ) : hasJoseRenderer(a.jose) ? (
+            /* A token is base64url — unreadable as text and misleading as a
+               "preview". The reader answers the three questions the blob
+               cannot: was it checked, what does it say, is it still valid.
+               Reached only past the sensitive gate above, so a freshly signed
+               token still masks until it is revealed. */
+            <JwtArtifact data={a.jose} className="mt-0.5" />
           ) : a.content ? (
             <span
               className="flex flex-col gap-1 pl-[1px]"
@@ -468,6 +483,9 @@ export function OutputList({ outputs, className }: Props) {
                 <InspectorArtifact
                   snapshot={expandedRow.inspectSnapshot as InspectSnapshot}
                 />
+              ) : hasJoseRenderer(expandedRow.jose) &&
+                (!expandedRow.sensitive || revealed.has(expandedRow.label)) ? (
+                <JwtArtifact data={expandedRow.jose} />
               ) : (
                 <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-[var(--foreground)]">
                   {expandedRow.sensitive && !revealed.has(expandedRow.label)

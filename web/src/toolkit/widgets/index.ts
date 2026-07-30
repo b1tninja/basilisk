@@ -22,6 +22,16 @@ export { TopBar, type SuiteTone, type SuiteDetail } from "./TopBar";
 export { ReadinessBar, type ReadinessBlocker } from "./ReadinessBar";
 export { OutputList, type OutputArtifact } from "./OutputList";
 export { NetworkArtifact, hasNetworkRenderer } from "./NetworkArtifact";
+export {
+  JwtArtifact,
+  hasJoseRenderer,
+  expiryTone,
+  relativeSeconds,
+  EXPIRY_WARN_SECONDS,
+  EXPIRY_URGENT_SECONDS,
+  type JoseArtifactData,
+  type JoseTiming,
+} from "./JwtArtifact";
 export { SessionStrip, type SessionStripState } from "./SessionStrip";
 export { InspectorArtifact, hasInspectorRenderer, type InspectSnapshot } from "./InspectorArtifact";
 export { CellTypeErrors, type CellTypeError } from "./CellTypeErrors";

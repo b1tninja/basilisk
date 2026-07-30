@@ -145,6 +145,18 @@ import {
  *   discriminator for manager widgets (design v2 §23a/23b/29d/30d)
  * @property {string} [netKind]  refinement within that type (e.g. "candidate-pairs")
  * @property {*} [netData]  the structured value, unserialized, for the widget to read
+ * @property {{
+ *   kind: "jws"|"jwe",
+ *   verified: boolean,
+ *   signed?: boolean,
+ *   decrypted?: boolean,
+ *   expiryChecked?: boolean,
+ *   header: Record<string, *>,
+ *   claims: Record<string, *>|null,
+ *   payloadText?: string|null,
+ *   timing?: { exp: number|null, nbf: number|null, iat: number|null, expired: boolean, notYetValid: boolean },
+ * }} [jose]  JOSE body for the JWT reader — `verified` is the op's verdict,
+ *   not something re-derivable from the token text
  */
 
 /**
@@ -3865,6 +3877,14 @@ function safeOutputStem(raw) {
 function attachPipeMeta(artifact, value) {
   if (value?.meta?.type) {
     artifact.pipeType = value.meta.type;
+  }
+  // JOSE body — header/claims/verification verdict, for the JWT reader. Rides
+  // here rather than being re-parsed in the UI so that the *verdict* travels
+  // with the value: whether a signature was checked is something only the op
+  // that ran knows, and a widget that re-derived it from the token text could
+  // only ever report "unverified".
+  if (value?.meta?.jose) {
+    artifact.jose = value.meta.jose;
   }
   const metaTags = Array.isArray(value?.meta?.tags) ? value.meta.tags : [];
   if (metaTags.length) {
