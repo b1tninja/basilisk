@@ -46,3 +46,31 @@ describe("toolbox dot colours agree between registry and stylesheet", () => {
     expect(unknown, unknown.join(", ")).toEqual([]);
   });
 });
+
+describe("file picker scaffolding survives the global file-input rule", () => {
+  const SITE_CSS = readFileSync(
+    fileURLToPath(new URL("../css/site.css", import.meta.url)),
+    "utf8"
+  );
+
+  it("still hides bare file inputs site-wide", () => {
+    // The rule this guard exists because of. If it ever goes away the
+    // `display: block` below stops being load-bearing, but it does no harm.
+    expect(SITE_CSS).toMatch(/input\[type=["']?file["']?\]\s*\{[^}]*display:\s*none/);
+  });
+
+  it("declares display explicitly for the picker, at winning specificity", () => {
+    // `display: none` makes an input click-inert in some engines, which would
+    // silently break `file.read`'s <input type=file> fallback on exactly the
+    // browsers that have no File System Access API. Measured in the live page
+    // and pinned here; a stubbed-DOM unit test cannot see cascade bugs.
+    const block = CSS.match(
+      /\[data-basilisk-file-picker\][\s\S]*?\{([\s\S]*?)\}/
+    );
+    expect(block, "no [data-basilisk-file-picker] rule in toolkit.css").toBeTruthy();
+    expect(block[1]).toMatch(/display:\s*block/);
+    expect(block[1]).toMatch(/opacity:\s*0/);
+    // Compound selector so it outranks `input[type=file]` (0,1,1).
+    expect(CSS).toContain('input[type="file"][data-basilisk-file-picker]');
+  });
+});

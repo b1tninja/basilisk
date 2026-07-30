@@ -51,7 +51,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - Casts: retag (`as master` / `as public` / …), coerce (`as int` / `as bool`), or materialize (`as key` / `as keypair` → WebCrypto handles). Literal postfix (`1234 as int`) is not shipped — use `"1234" | as int` or `1234` stem lit.
 - Empty `tee` is invalid; use `peek` for a side inspect snapshot.
 - List marker is only `-`. Leading tabs are errors.
-- File paths (`./x.pem`, quoted paths, `file:…`) are reserved — not supported yet.
+- File paths (`./x.pem`, quoted paths, `file:…`) stay reserved as *tokens* — files enter and leave through the `file.read` / `file.save` **ops**, whose picker the browser owns. A recipe never names a path, so a shared recipe cannot reach into someone else's disk.
 - Comments: full-line `# …` (kept inside the current chain).
 - Ops-drawer **shelves**, **collections** (`OP_COLLECTIONS`: AES / RSA / Base64·Base32), and **conjugate rows** (encrypt | decrypt, encode | decode, sign | verify, `pem` | `der`, `encode` | `decode`) are UI only — friendly tile labels (`pairLabels` / collection `actionLabels`) do not change recipe tokens. Encoding twins canonicalize to `base64.encode` / `base64.decode` (`-d` parse-only); PEM armor uses `pem` ↔ `der`; base alphabets use `encode <alphabet>` / `decode <alphabet>`. Cipher twins keep `aes-gcm` / `aes-gcm -d`.
 
@@ -208,7 +208,7 @@ re-parsed artifact text.
 | `out @kp` | Emit + register memory slot `kp` (+ next 1-based index) |
 | `in @kp` | Load slot `kp` |
 | `in 1` | Load first registered slot by registration order |
-| `./x.pem`, `"…"`, `file:…` | Reserved for future file I/O — rejected today |
+| `./x.pem`, `file:…` | Still rejected — disk is reached through `file.read` / `file.save`, not through a path in the recipe |
 
 Rules:
 
@@ -241,6 +241,9 @@ in @ct | aes-gcm -d key=@cek | utf8 | out @plain
 | `gpg.symencrypt` / `gpg.symdecrypt` | `mode=master` (default, SSS) or `mode=passphrase` + `passphrase=@…` (`gpg -c`); passphrase alone does not flip modes |
 | `ecdh` | `private=@…` `peer=@…` |
 | `wrap` | `key=@…` (wrapping) `target=@…` (CEK) |
+| `stream.seal` / `stream.open` | `key=@…` (wraps / unwraps the per-file key) |
+| `age.encrypt` | `to=@…` (recipients) — or `passphrase=`, never both |
+| `age.decrypt` | `key=@…` (an `AGE-SECRET-KEY-1…` identity) — or `passphrase=` |
 
 Rules:
 
@@ -266,6 +269,9 @@ in @msg | verify key=@kp signature=@sig | out @ok
 | Agent (My Keys) | `agent.unlock` / `agent.pub` / `agent.list` / `agent.save` | migrate `gpg.vault` → `agent.unlock`; emit `openpgp-key` | dotted |
 | HKP (keyserver) | `hkp.get` / `hkp.search` / `hkp.filter` / `recipients.merge` | search → `recipients`; get → `openpgp-key/public` | dotted |
 | WebCrypto AEAD/cipher/RSA | `aes-gcm`, `aes-cbc`, `aes-ctr`, `rsa-oaep`, `rsa-pkcs1` | `aes-256-gcm`, `AES/GCM/NoPadding` (live); `encrypt`/`decrypt` sugar via migrator only | hyphen |
+| Chunked AEAD (files) | `stream.seal` / `stream.open` | — | dotted |
+| age | `age.keygen` / `age.recipient` / `age.encrypt` / `age.decrypt` | — | dotted |
+| File I/O | `file.read` / `file.save` | — | dotted |
 
 Write concrete cipher ops in recipes. Bare `encrypt` / `decrypt` are **migrator-only** (not OpenPGP): Upgrade recipe rewrites known sugar to `aes-gcm` / …; live parse hard-errors.
 
@@ -309,6 +315,70 @@ input | run.verify | out @ok      # check a receipt against a re-run
   known key) is re-checkable digest-for-digest.
 - Signature validity is `gpg.verify`'s job; `run.verify` accepts a cleartext-
   signed receipt and reads the payload out of the armor.
+### Files: `file.read` / `file.save`
+
+Disk is a source and a sink, never a path in the recipe. `file.read` opens the
+browser's picker — which *is* the permission moment, so unlike `clipboard.read`
+there is no extra gate — and `file.save` is a passthrough sink like `out`.
+
+```text
+# Encrypt a file to an age recipient and write it back out
+file.read | age.encrypt to=@pub | file.save
+
+# Decrypt one, keeping the round trip symmetric
+file.read | age.decrypt key=@id | file.save
+
+# Filter the picker, and force the pipeline type
+file.read ".pem,.asc" as=text | gpg.inspect | out @report
+file.read as=bytes | digest | encode hex | out @sha
+```
+
+`file.read` emits `bytes` unless the MIME/extension says text (or `as=text`
+forces it), and carries the filename and MIME in meta — which is why
+`file.read | age.encrypt | file.save` names the output `<original>.age` without
+being told. `file.save name=` overrides; `mime=` overrides the type.
+
+### Whole-file encryption: `stream.*` vs `age.*`
+
+Two ways to encrypt a file, and they are **not** the same format.
+
+```text
+# Basilisk's own chunked AEAD — any AES key the notebook holds
+genkey aes/256 | out @cek
+file.read | stream.seal key=@cek chunk=65536 | file.save
+file.read | stream.open key=@cek | file.save
+
+# Real age — what `age -d` on someone else's machine reads
+age.keygen | out @id
+@id | age.recipient | out @pub
+
+file.read | age.encrypt to=@pub | file.save
+file.read | age.decrypt key=@id | file.save
+
+# scrypt passphrase mode, and the armored text form
+file.read | age.encrypt passphrase="correct horse" armor=true | out @armored
+```
+
+| | `stream.seal` | `age.encrypt` |
+|---|---|---|
+| Interop | none — Basilisk-only (`BSKSTRM1`) | full `age-encryption.org/v1` |
+| Key | any AES `key=@slot` (`genkey`, `hkdf`, `ecdh`, `webauthn.prf`) | `age1…` recipients or a passphrase |
+| AEAD | AES-256-GCM (WebCrypto has no ChaCha) | ChaCha20-Poly1305 |
+| Chunking | STREAM, 64 KiB default, `chunk=` | STREAM, 64 KiB fixed |
+| Armor | none — pipe through `base64` | `armor=true` |
+
+Both use the STREAM construction, so both detect chunk reorder, splicing, and
+truncation rather than only end-of-file corruption. Use `age.*` when the file
+leaves Basilisk; use `stream.*` when the key already lives in the notebook and
+you would otherwise have to invent an age identity to hold it.
+
+| CLI | Recipe |
+|-----|--------|
+| `age-keygen` | `age.keygen` |
+| `age -r age1… -o doc.age doc` | `file.read \| age.encrypt to=age1… \| file.save` |
+| `age -a -r age1… …` | `… \| age.encrypt to=age1… armor=true` |
+| `age -p -o doc.age doc` | `… \| age.encrypt passphrase=…` |
+| `age -d -i key.txt doc.age` | `file.read \| age.decrypt key=@id \| file.save` |
 
 ### Pipeline types: `recipients` / `openpgp-key`
 

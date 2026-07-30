@@ -23,7 +23,7 @@ import {
 } from "../lib/toolkit/registry.js";
 
 describe("toolbox shelf taxonomy", () => {
-  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → Agent → HKP → SSS → WebAuthn → WebRTC", () => {
+  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → age → Agent → HKP → SSS → WebAuthn → WebRTC", () => {
     const ordered = Object.entries(TOOLBOX_META)
       .sort((a, b) => a[1].order - b[1].order)
       .map(([k]) => k);
@@ -33,6 +33,9 @@ describe("toolbox shelf taxonomy", () => {
       "io",
       "flow",
       "openpgp",
+      // A peer of OpenPGP, next to it: both encrypt for someone else, with
+      // different key types and different files.
+      "age",
       "agent",
       "hkp",
       "sss",

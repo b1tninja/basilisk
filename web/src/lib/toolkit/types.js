@@ -102,6 +102,10 @@ export const POLYMORPHIC_STEPS = new Set([
   "in",
   // Sink-with-passthrough like `out`: copies the value, pipes it on unchanged.
   "clipboard.write",
+  // Same contract for disk. Anything worth writing out is worth writing to a
+  // file, so restricting it to `bytes` would make `file.save` the one sink you
+  // cannot put after a keypair or a shares set.
+  "file.save",
 ]);
 
 export function isPassthroughStep(name) {
@@ -387,6 +391,17 @@ export function inferSourceType(name, params = {}) {
       return typeOf("stats", { kind: "quality" });
     case "clipboard.read":
       // Whatever the user last copied — text of unknown provenance.
+      return typeOf("text", { kind: "opaque" });
+    case "file.read": {
+      // `auto` is only resolvable once a file is chosen, so the compile-time
+      // answer is the conservative one. Claiming `text` for an unopened picker
+      // would type-check a recipe that then meets a PNG.
+      const as = String(params.as || "auto").toLowerCase();
+      if (as === "text") return typeOf("text", { kind: "opaque" });
+      return typeOf("bytes", { kind: "opaque" });
+    }
+    case "age.keygen":
+      // The identity is the secret half; `age.recipient` is the projection.
       return typeOf("text", { kind: "opaque" });
     default:
       return tNone();
@@ -1021,7 +1036,8 @@ export function inferParamDrivenType(name, current, params = {}) {
     name === "tee" ||
     name === "peek" ||
     name === "out" ||
-    name === "clipboard.write"
+    name === "clipboard.write" ||
+    name === "file.save"
   ) {
     if (!current || current.base === "none") {
       return {

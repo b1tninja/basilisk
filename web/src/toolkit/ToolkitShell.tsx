@@ -325,6 +325,15 @@ export function ToolkitShell() {
   } | null>(null);
   /** §32d — clipboard.write toast ("ok" weight, 2s auto-dismiss). */
   const [clipboardWrote, setClipboardWrote] = useState<number | null>(null);
+  /**
+   * `file.save`'s confirmation, at the same weight and for the same reason:
+   * the user just drove a save dialog, so a modal would be telling them what
+   * they already know. `file.read` has no counterpart — the picker itself is
+   * both the permission and the receipt.
+   */
+  const [fileSaved, setFileSaved] = useState<{ name: string; bytes: number } | null>(
+    null
+  );
   useEffect(() => {
     setClipboardReadGate(
       () =>
@@ -335,10 +344,16 @@ export function ToolkitShell() {
     const onWrote = (ev: Event) => {
       setClipboardWrote((ev as CustomEvent<{ chars: number }>).detail?.chars ?? 0);
     };
+    const onSaved = (ev: Event) => {
+      const d = (ev as CustomEvent<{ name: string; bytes: number }>).detail;
+      setFileSaved({ name: d?.name ?? "file", bytes: d?.bytes ?? 0 });
+    };
     window.addEventListener("basilisk:clipboard-wrote", onWrote);
+    window.addEventListener("basilisk:file-saved", onSaved);
     return () => {
       setClipboardReadGate(null);
       window.removeEventListener("basilisk:clipboard-wrote", onWrote);
+      window.removeEventListener("basilisk:file-saved", onSaved);
     };
   }, []);
   useEffect(() => {
@@ -346,6 +361,11 @@ export function ToolkitShell() {
     const t = window.setTimeout(() => setClipboardWrote(null), 2000);
     return () => window.clearTimeout(t);
   }, [clipboardWrote]);
+  useEffect(() => {
+    if (!fileSaved) return;
+    const t = window.setTimeout(() => setFileSaved(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [fileSaved]);
   const [cellViews, setCellViews] = useState<Record<number, CellView>>({});
   const [rawDrafts, setRawDrafts] = useState<Record<number, string>>({});
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
@@ -843,6 +863,14 @@ export function ToolkitShell() {
             data-clipboard-wrote
           >
             Copied to clipboard · {clipboardWrote} chars
+          </p>
+        ) : null}
+        {fileSaved ? (
+          <p
+            className="border-b border-[var(--border)] px-3.5 py-1 text-[length:11px] text-[var(--muted-foreground)]"
+            data-file-saved
+          >
+            Saved {fileSaved.name} · {fileSaved.bytes.toLocaleString()} bytes
           </p>
         ) : null}
 

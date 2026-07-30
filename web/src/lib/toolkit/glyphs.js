@@ -10,6 +10,9 @@
 /** @type {Record<string, string>} */
 export const GLYPH_PATHS = {
   "aead": "<path d=\"M10 3l7 3v5c0 4-3 6.5-7 8-4-1.5-7-4-7-8V6l7-3z\"/>",
+  "age": "<path d=\"M4.5 3.5h6l4 4v9h-10z\"/> <path d=\"M10.5 3.5v4h4\"/> <path d=\"M8 13.5v-1.5a2 2 0 0 1 4 0v1.5\"/>",
+  "age-key": "<circle cx=\"6.5\" cy=\"9\" r=\"3.5\"/> <path d=\"M10 9h7.5\"/> <path d=\"M14.5 9v3\"/> <path d=\"M17 9v2\"/>",
+  "age-lock": "<rect x=\"4\" y=\"9\" width=\"12\" height=\"8\" rx=\"1.4\"/> <path d=\"M7 9V6.5a3 3 0 0 1 6 0V9\"/> <path d=\"M10 12v2\"/>",
   "agent": "<path d=\"M7.5 10.5a2.5 2.5 0 112.7-2.4L14 12v1.5h-1.5V15H11v-1.5H9.8z\"/><circle cx=\"7.2\" cy=\"8\" r=\"0.9\"/><path d=\"M14.5 4.5a5.5 5.5 0 11-9 0\"/><path d=\"M14.5 4.5V7H12\"/>",
   "agent-list": "`n <path d=\"M4 5h12M4 10h12M4 15h8\"/><path d=\"M15.5 13.5v3M14 15h3\"/>`n",
   "agent-save": "`n <path d=\"M5 4.5h8l2 2v9H5z\"/><path d=\"M7 4.5v4h5v-4\"/><path d=\"M7 14h6\"/>`n",
@@ -29,6 +32,9 @@ export const GLYPH_PATHS = {
   "encoding": "<path d=\"M4 7h5l2 2h5M4 13h5l2-2h5\"/><path d=\"M14 5l3 3-3 3M6 15l-3-3 3-3\"/>",
   "essentials": "<circle cx=\"7\" cy=\"6.5\" r=\"2.3\"/><path d=\"M4 14.5c.5-2.3 2-3.4 3-3.4s2.5 1.1 3 3.4\"/><path d=\"M11.5 9.5l2.2 2.2 4-4\"/>",
   "export": "`n <path d=\"M10 12V4.5M7.5 7L10 4.5 12.5 7\"/><path d=\"M4.5 12.5v3h11v-3\"/>`n",
+  "file": "<path d=\"M5 2.5h6l4 4v11h-10z\"/> <path d=\"M11 2.5v4h4\"/>",
+  "file-read": "<path d=\"M4 2.5h5l3.5 3.5v5\"/> <path d=\"M9 2.5v3.5h3.5\"/> <path d=\"M4 2.5v10h4\"/> <path d=\"M11 15.5h5\"/> <path d=\"M13.5 13l2.5 2.5-2.5 2.5\"/>",
+  "file-save": "<path d=\"M4 2.5h5l3.5 3.5v4\"/> <path d=\"M9 2.5v3.5h3.5\"/> <path d=\"M4 2.5v9h3\"/> <path d=\"M13 10.5v6\"/> <path d=\"M10.5 14l2.5 2.5 2.5-2.5\"/>",
   "fingerprint": "<path d=\"M10 17.5c0-4.2 2.8-6 2.8-9.2a2.8 2.8 0 10-5.6 0c0 1.1.35 2.1.9 3\"/><path d=\"M7.2 17c0-3.4 2.2-4.8 2.2-8\"/><path d=\"M12.8 17c0-3-1-4.4-1-7\"/><path d=\"M8.6 17.2c0-2.2 1.1-3.2 1.1-5.2\"/>",
   "flow": "<path d=\"M4 4v5h5\"/><path d=\"M4 9l5-5\"/><path d=\"M11 11v5h5\"/><path d=\"M11 16l5-5\"/>",
   "foreach": "`n <path d=\"M4 5h4v4H4zM12 5h4v4h-4zM4 12h4v4H4z\"/><path d=\"M9 7h2.5M9 14h2.5M14 10v1.5\"/>`n",
@@ -75,6 +81,7 @@ export const GLYPH_PATHS = {
   "sign": "<path d=\"M4 16c2-4 5-7 8-8l3-3 2 2-3 3c-1 3-4 6-8 8z\"/>",
   "split": "<path d=\"M8 4l-4 6h4l-3 6M12 4l4 6h-4l3 6\"/>",
   "sss": "<rect x=\"3.5\" y=\"6\" width=\"9\" height=\"11\" rx=\"1\"/><rect x=\"6\" y=\"4\" width=\"9\" height=\"11\" rx=\"1\"/><rect x=\"8.5\" y=\"2\" width=\"9\" height=\"11\" rx=\"1\"/>",
+  "stream": "<rect x=\"2\" y=\"8\" width=\"4.5\" height=\"6\" rx=\"1\"/> <rect x=\"7.75\" y=\"8\" width=\"4.5\" height=\"6\" rx=\"1\"/> <rect x=\"13.5\" y=\"8\" width=\"4.5\" height=\"6\" rx=\"1\"/> <path d=\"M4.25 8V6.25a1.75 1.75 0 0 1 3.5 0\"/> <path d=\"M15.75 8V6.25a1.75 1.75 0 0 0-3.5 0\"/>",
   "tee": "`n <path d=\"M10 3.5v13\"/><path d=\"M4 10h12\"/><path d=\"M4 10v5M16 10v5\"/>`n",
   "text": "<path d=\"M5 5h10M7 5v10M5 15h4M11 9h4M11 12h3\"/>",
   "text-sink": "`n <path d=\"M5 4.5h10M7 4.5v11M5 15.5h4M11.5 9h4M11.5 12h3\"/><path d=\"M15.5 14.5v2\"/>`n",

@@ -179,6 +179,9 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js` + `step-names.j
 | `passphrase` | Done | EFF diceware (default) or `mode=char` (69-char alphabet) |
 | `shares` | Done | Runtime BLIP39 mnemonic binding (no crypto) |
 | `input` (`paste` / `cat`) | Done | Free-form text binding |
+| `file.read` | Done | File System Access picker (or `<input type=file>`); text-ish → `text`, else `bytes`; filename/MIME in meta |
+| `clipboard.read` | Done | `navigator.clipboard.readText` behind the UI's per-run permission gate |
+| `age.keygen` | Done | age X25519 identity (`AGE-SECRET-KEY-1…`) — `age-keygen` |
 | `gpg.decrypt` | Done | OpenPGP.js decrypt → share set |
 
 ### Transforms — keys & encoding
@@ -204,6 +207,40 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js` + `step-names.j
 | `hkdf` / `pbkdf2` | Done | `deriveBits` (default) or `deriveKey` via `as=aes/256` etc. → live `key` tip (`which: secret`) |
 | `ecdh` | Done | ECDH/X25519; `bits=0` curve-aware; `as=` → `deriveKey` like hkdf |
 | `wrap` / `unwrap` | Done | `mode=aes-kw` (default), `aes-gcm`/`aes-cbc`/`aes-ctr`, or `rsa-oaep`; unwrap → live `key` tip (`export raw` for bytes); unwrap `alg=` aes/hmac/aes-kw; optional OAEP `label=`, GCM `tagLength=`, CTR `length=` |
+
+### Transforms — whole-file encryption
+
+Both live on the `files` shelf, and the distinction between them is the point:
+one is Basilisk's own format keyed by any AES slot the notebook holds, the
+other is real age that leaves the browser.
+
+| Op | Status | Crypto |
+|----|--------|--------|
+| `stream.seal` / `stream.open` | Done | Chunked AES-256-GCM in the STREAM construction; per-file key wrapped under `key=@slot`; 64 KiB chunks (`chunk=`); counter+final-flag nonce ⇒ reorder / splice / truncation detected |
+| `age.encrypt` / `age.decrypt` | Done | **age-encryption.org/v1** via typage; X25519 `to=` recipients or scrypt `passphrase=`; `armor=true` for the PEM-style form |
+| `age.recipient` | Done | Identity → `age1…` recipient (derived, publishable) |
+
+**`stream.*` is not age.** Same construction, different everything else:
+
+| | age v1 | `stream.seal` |
+|---|---|---|
+| AEAD | ChaCha20-Poly1305 | AES-256-GCM (WebCrypto has no ChaCha) |
+| Chunk | 64 KiB fixed | 64 KiB default, `chunk=` selectable |
+| Key delivery | recipient stanzas (X25519 / scrypt) + HMAC'd header | one AES-GCM-wrapped file key under `key=@slot` |
+| Header integrity | HMAC-SHA-256 keyed by the file key | header is the AAD of the file-key wrap |
+| Armor | `BEGIN AGE ENCRYPTED FILE` | none — pipe through `base64` for text |
+| Magic | `age-encryption.org/v1` | `BSKSTRM1` |
+
+Why chunk at all: `SubtleCrypto.encrypt` is one-shot, so a file must fit in
+memory and its single tag only verifies after the last byte. STREAM (Hoang–
+Reyhanitabar–Rogaway–Vizár, [ePrint 2015/189](https://eprint.iacr.org/2015/189))
+bakes the chunk index and a final-chunk flag into each nonce, which is what
+makes the chunked form as strong as the one-shot one. Wire format and the
+reasoning are in `web/src/lib/toolkit/stream-aead.js`.
+
+Why typage for age: what the toolkit writes has to be what someone else's
+`age -d` reads, and a format that is 95% compatible fails only on their
+machine. `age-encryption` is the implementation by age's own author.
 
 ### Transforms — secret sharing
 
@@ -274,6 +311,8 @@ Compose with WebCrypto: `webauthn.prf \| hkdf 32 \| …` / `aes-gcm`.
 | `gpg.encrypt` | Done | OpenPGP.js public-key encrypt (sink); `-s` sign-then-encrypt |
 | `gpg.genkey` / `gpg.inspect` | Done | Curve25519 keygen; armor inspect without decrypt |
 | `qr` / `text` / `out` | Done | Presentation sinks |
+| `file.save` | Done | Save dialog (or download); passthrough sink like `out`; name from `name=`, else the value's meta |
+| `clipboard.write` | Done | Passthrough sink; text verbatim, bytes as base64 |
 
 ### Cipher spelling accept forms
 

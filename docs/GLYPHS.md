@@ -32,6 +32,7 @@ cd web && npm run glyphs
 |----|-------|----------|-------------|
 | `webcrypto` | WebCrypto | Browser window with key | SubtleCrypto lives in the browser — a chrome window with a small key signals Web API crypto (genkey, digest, AEAD, KDF, …). <br><small>W3C Web Cryptography API</small> |
 | `openpgp` | OpenPGP | Locked envelope | ModernPGP convention for encrypted mail/messages — flap envelope with lock-shackle (gpg.encrypt, gpg.sign, …). <br><small>ModernPGP icons</small> |
+| `age` | age | Document with a lock shackle | age encrypts files, not messages — a page with a folded corner and a shackle, distinguishing it from OpenPGP's envelope (age.keygen, age.encrypt, …). <br><small>age-encryption.org/v1</small> |
 | `encoding` | Encoding | Bidirectional transform arrows | Bytes ↔ text transforms (pem, base64, hex, …) — folded rails with encode/decode arrowheads. |
 | `io` | Input / output | Panel with header and body | Runtime ports and tiles (input, out, random, qr) — a simple content panel. |
 | `flow` | Flow | Branching corner forks | Pipeline control (foreach, tee, in, as) — two L-shaped forks suggesting stem/branch flow. |
@@ -60,6 +61,7 @@ cd web && npm run glyphs
 | `binary` | Binary | Four bit cells | Binary encodings shelf — a 2×2 bit grid (fallback when a tool has no dedicated glyph). |
 | `text` | Text | Typography “T” | Text encodings (utf8) — a capital T with baseline marks. |
 | `ports` | Ports | Two linked ports | I/O ports — two sockets with a bridge (input/out/random). |
+| `file` | Files | Document with a folded corner | Whole-file operations (age.encrypt, stream.seal) — a page rather than the AEAD shield, because these produce a framed file with many tags, not one message with one. |
 | `control` | Control | Flow graph nodes | Flow control shelf — three nodes linked by a U-shaped bus. |
 | `essentials` | Essentials | Passkey person with check | WebAuthn essentials (caps, create, prf) — passkey person plus a readiness checkmark. <br><small>FIDO passkey</small> |
 | `attestation` | Attestation / MDS | Shield with check | Soft attestation / FIDO MDS — shield containing a checkmark. |
@@ -99,6 +101,11 @@ cd web && npm run glyphs
 | `out` | Out | Panel with outbound rail | Emit / slot out — content panel with right outbound mark. |
 | `passphrase` | Passphrase | Key over baseline | Passphrase source — key above a text baseline. |
 | `clipboard` | Clipboard | Clipboard with clip | Clipboard source/sink - board with binder clip (clipboard.read, clipboard.write). |
+| `file-read` | File read | Document with outbound arrow | file.read - a document on disk feeding the pipeline; the arrow leaves the page because bytes flow out of the file. |
+| `file-save` | File save | Document with downward arrow | file.save - the pipeline value coming to rest on disk; down is the universal save direction. |
+| `stream` | Chunked AEAD | Three sealed blocks in a row | stream.seal / stream.open - a file split into independently-tagged chunks, each with its own shackle, which is exactly what the STREAM construction does. |
+| `age-key` | age identity | Key | age.keygen / age.recipient - an X25519 identity and the recipient derived from it. |
+| `age-lock` | age file | Padlock | age.encrypt / age.decrypt - a padlocked age-encryption.org/v1 file. |
 | `qr` | QR | QR finder squares | QR code sink — three finder patterns plus modules. |
 | `inspect` | Inspect | Magnifier with crosshair | Inspect / dump — magnifying glass with focus cross. |
 | `peek` | Peek | Eye | Peek side snapshot — eye outline. |

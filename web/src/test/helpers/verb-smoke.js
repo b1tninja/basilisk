@@ -1442,6 +1442,97 @@ run.receipt "verb smoke ceremony" | out @receipt`,
       mode: "compile",
       skipReason: "needs navigator.clipboard (main-thread browser only)",
     },
+
+    // ── File I/O — both sides open a browser picker, so compile-only. The
+    // real coverage lives in file-ops.test.js against a stubbed picker.
+    {
+      id: "file.read.compile",
+      // The accept list is quoted: a bare token starting with `.` is a
+      // selector to the parser, which is the correct reading everywhere else.
+      recipe: 'file.read ".pem,.asc" as=text | out @loaded',
+      mode: "compile",
+      skipReason: "needs a file picker (main-thread browser only)",
+    },
+    {
+      id: "file.read.bytes.compile",
+      recipe: "file.read as=bytes | out @blob",
+      mode: "compile",
+      skipReason: "needs a file picker (main-thread browser only)",
+    },
+    {
+      id: "file.read.auto.compile",
+      recipe: "file.read as=auto | out @blob",
+      mode: "compile",
+      skipReason: "needs a file picker (main-thread browser only)",
+    },
+    {
+      id: "file.save.compile",
+      recipe: "random 32 | file.save name=key.bin mime=application/octet-stream | out @saved",
+      mode: "compile",
+      skipReason: "needs a save picker / download (main-thread browser only)",
+    },
+
+    // ── Chunked AEAD — pure WebCrypto, so this one genuinely runs.
+    {
+      id: "stream.seal.open",
+      recipe: `genkey aes/256 | out @cek
+
+"chunked payload" | utf8 | stream.seal key=@cek chunk=1024 | out @sealed
+
+in @sealed | stream.open key=@cek | utf8 | out @opened`,
+      mode: "run",
+      assert(arts) {
+        const opened = arts.find((a) => a.label?.includes("opened"));
+        if (!opened || opened.content !== "chunked payload") {
+          throw new Error(`stream round trip lost the payload: ${opened?.content}`);
+        }
+      },
+    },
+
+    // ── age (age-encryption.org/v1) — typage is pure JS + WebCrypto, so the
+    // whole interop path runs here rather than being asserted by inspection.
+    {
+      id: "age.keygen.recipient.roundtrip",
+      recipe: `age.keygen | out @id
+
+in @id | age.recipient | out @pub
+
+"age round trip" | utf8 | age.encrypt to=@pub | out @ct
+
+in @ct | age.decrypt key=@id | utf8 | out @plain`,
+      mode: "run",
+      timeoutMs: 20000,
+      assert(arts) {
+        const plain = arts.find((a) => a.label?.includes("plain"));
+        if (!plain || plain.content !== "age round trip") {
+          throw new Error(`age round trip lost the payload: ${plain?.content}`);
+        }
+      },
+    },
+    {
+      id: "age.armor.passphrase",
+      recipe: `"armored" | utf8 | age.encrypt passphrase="correct horse" armor=true | out @armored
+
+in @armored | age.decrypt passphrase="correct horse" | utf8 | out @plain`,
+      mode: "run",
+      timeoutMs: 20000,
+      assert(arts) {
+        const armored = arts.find((a) => a.label?.includes("armored"));
+        if (!armored?.content?.includes("BEGIN AGE ENCRYPTED FILE")) {
+          throw new Error("age armor=true did not produce PEM-style armor");
+        }
+      },
+    },
+    {
+      id: "age.encrypt.armor.false",
+      recipe: `age.keygen | out @id2
+
+in @id2 | age.recipient | out @pub2
+
+"binary" | utf8 | age.encrypt to=@pub2 armor=false | out @bin`,
+      mode: "run",
+      timeoutMs: 20000,
+    },
   ];
 
   return cases;

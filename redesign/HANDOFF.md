@@ -110,7 +110,7 @@ npm run build
 npm test
 ```
 
-**Baseline: green. 957 tests, 957 passing, 77 files.** The three long-standing
+**Baseline: green. Every test passes.** The three long-standing
 failures (`conjugate-stitch`, `toolkit-engine`, `webauthn-mds`) were fixed —
 and all three were **stale tests, not broken code**, which is why they
 survived so long:
@@ -127,7 +127,9 @@ survived so long:
   `"verified" | "unverified" | "unavailable"` (a corrupted assertion — its
   sibling test had it right).
 
-**Any failure is now a real one.** Do not re-introduce a tolerated baseline.
+**Any failure is now a real one.** Do not re-introduce a tolerated baseline —
+if a brief you were handed says "expect 3 pre-existing failures", it predates
+this and is wrong.
 
 Two gates will catch you and are worth knowing about rather than fighting:
 `recipe-verbs.test.js` demands every op and every enum value appear in the verb
@@ -157,6 +159,33 @@ ghost row).
 Design turns **36–39 have no handoff README** — read them from
 `Basilisk Toolkit v2.dc.html` directly via the claude_design MCP. Everything
 else has one in `redesign/design_handoff_*/`.
+
+~~**Files were the biggest gap between this and a tool people use for real
+work**~~ — closed. `file.read` / `file.save` (`lib/toolkit/file-ops.js`, File
+System Access API with an `<input type=file>` / download-anchor fallback; no
+permission gate, because the browser's picker *is* the consent — contrast
+`clipboard.read`), `stream.seal` / `stream.open` (`lib/toolkit/stream-aead.js`,
+chunked AES-GCM in the STREAM construction, since `SubtleCrypto.encrypt` is
+one-shot), and **full age interop** — `age.*` through typage, so `age -d` on
+someone else's machine reads what this writes. `age` is a new toolbox beside
+OpenPGP; `files` is a new shelf. Tests: `stream-aead.test.js` (reorder,
+splice, truncation both ways, modified header), `age-ops.test.js` (asserts the
+C2SP *wire format*, not just a round trip through one library),
+`file-ops.test.js`. Catalog section: `#fileops`.
+
+Three things worth carrying forward from it:
+- **`stream.*` is deliberately not age**, and says so everywhere — module
+  header, registry doc, RECIPE.md, CRYPTOGRAPHY.md all carry the divergence
+  table. Do not "improve" it toward partial age compatibility; that is the one
+  outcome worse than either honest option.
+- `age.encrypt to=` is `type: "string"` (a recipient is public, and `to=age1…`
+  is how everyone writes it) while `age.decrypt key=` is `type: "slot"` — a
+  literal identity in recipe text would ride out through Copy link, Export, and
+  the workspace library.
+- The catalog caught another one, exactly as advertised: `site.css` has a
+  global `input[type=file] { display: none }`, which would have made the
+  fallback picker click-inert on the browsers that need it. Measured with
+  `getComputedStyle`; no stubbed-DOM test could see it.
 
 Roughly in value order:
 

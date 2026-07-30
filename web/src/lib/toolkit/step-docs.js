@@ -167,6 +167,45 @@ const STEP_DOCS = {
     label: "MDN · Clipboard.writeText()",
   },
 
+  // ── File I/O — the picker APIs, not a wire format ──
+  "file.read": {
+    url: `${MDN}/Window/showOpenFilePicker`,
+    label: "MDN · Window.showOpenFilePicker()",
+  },
+  "file.save": {
+    url: `${MDN}/Window/showSaveFilePicker`,
+    label: "MDN · Window.showSaveFilePicker()",
+  },
+
+  // ── Chunked AEAD — the paper that defines the construction, since this
+  //    format is Basilisk's own and has no RFC to point at ──
+  "stream.seal": {
+    url: "https://eprint.iacr.org/2015/189",
+    label: "Hoang–Reyhanitabar–Rogaway–Vizár · Online AE (STREAM)",
+  },
+  "stream.open": {
+    url: "https://eprint.iacr.org/2015/189",
+    label: "Hoang–Reyhanitabar–Rogaway–Vizár · Online AE (STREAM)",
+  },
+
+  // ── age — one spec covers the toolbox ──
+  "age.keygen": {
+    url: "https://github.com/C2SP/C2SP/blob/main/age.md",
+    label: "C2SP · age-encryption.org/v1",
+  },
+  "age.recipient": {
+    url: "https://github.com/C2SP/C2SP/blob/main/age.md#the-x25519-recipient-type",
+    label: "C2SP · age X25519 recipient",
+  },
+  "age.encrypt": {
+    url: "https://github.com/C2SP/C2SP/blob/main/age.md",
+    label: "C2SP · age-encryption.org/v1",
+  },
+  "age.decrypt": {
+    url: "https://github.com/C2SP/C2SP/blob/main/age.md",
+    label: "C2SP · age-encryption.org/v1",
+  },
+
   // ── Literals ──
   bytes: {
     url: `${MDN}/Uint8Array`,
