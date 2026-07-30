@@ -122,11 +122,16 @@ export const TOOLBOX_META = {
   io: { label: "Input / output", badge: "I/O", order: 2, glyph: "io", color: "#8b949e" },
   flow: { label: "Flow", badge: "Flow", order: 3, glyph: "flow", color: "#8b949e" },
   openpgp: { label: "OpenPGP", badge: "OpenPGP", order: 4, glyph: "openpgp", color: "#d2a8ff" },
-  agent: { label: "Agent", badge: "Agent", order: 5, glyph: "agent", color: "#4cde82" },
-  hkp: { label: "HKP", badge: "HKP", order: 6, glyph: "hkp", color: "#f0883e" },
-  sss: { label: "SSS / BLIP39", badge: "SSS", order: 7, glyph: "sss", color: "#e3b341" },
-  webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 8, glyph: "webauthn", color: "#79c0ff" },
-  webrtc: { label: "WebRTC", badge: "WebRTC", order: 9, glyph: "agent", color: "#58a6ff" },
+  // A peer of OpenPGP, not a sub-shelf of it: age is a different file format
+  // with a different key type, and filing it under `openpgp` would make
+  // `age.encrypt to=` look like it accepts a PGP fingerprint. It sits next to
+  // OpenPGP because that is what a user comparing the two expects.
+  age: { label: "age", badge: "age", order: 5, glyph: "age", color: "#ff7b72" },
+  agent: { label: "Agent", badge: "Agent", order: 6, glyph: "agent", color: "#4cde82" },
+  hkp: { label: "HKP", badge: "HKP", order: 7, glyph: "hkp", color: "#f0883e" },
+  sss: { label: "SSS / BLIP39", badge: "SSS", order: 8, glyph: "sss", color: "#e3b341" },
+  webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 9, glyph: "webauthn", color: "#79c0ff" },
+  webrtc: { label: "WebRTC", badge: "WebRTC", order: 10, glyph: "agent", color: "#58a6ff" },
 };
 
 /**
@@ -219,6 +224,12 @@ export const SHELF_META = {
   binary: { label: "Binary", order: 0, glyph: "binary" },
   text: { label: "Text", order: 1, glyph: "text" },
   ports: { label: "Ports", order: 0, glyph: "ports" },
+  /**
+   * Whole-file operations — `age.encrypt` and the chunked `stream.seal`. Not
+   * folded into `aead`: those ops take a message that fits in memory and hand
+   * back one tag, while these produce a framed file with many.
+   */
+  files: { label: "Files", order: 2, glyph: "file" },
   /**
    * §31a — type constructors, grouped so a typed value can be *instantiated*
    * instead of entered as free text and cast downstream. A sub-shelf of I/O
@@ -2116,6 +2127,197 @@ export const STEPS = [
     params: [],
   },
   {
+    name: "stream.seal",
+    kind: "transform",
+    toolbox: "webcrypto",
+    shelf: "files",
+    conjugate: "stream.open",
+    pairCaption: "Chunked AEAD (STREAM)",
+    pairLabels: { forward: "Seal", reverse: "Open" },
+    doc: "Chunked AES-GCM in the STREAM construction — the way to encrypt a *file*, since `SubtleCrypto.encrypt` is one-shot and its single tag only verifies after the last byte. Each 64 KiB chunk carries its own tag and its index in the nonce, so reorder, splice, and truncation are all detected. A fresh file key is wrapped under `key=@slot`, which is what makes counter nonces safe with a reused key. **Not age** — same construction, different AEAD and header (see `age.encrypt` for files the `age` CLI can read). Example: `file.read | stream.seal key=@cek | file.save name=doc.bskstrm`.",
+    input: "bytes",
+    output: "bytes",
+    unresolvedInputs: "key",
+    params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Live AES key slot (`@cek`) used to wrap the per-file key; omit to use the key panel",
+      },
+      {
+        name: "chunk",
+        type: "int",
+        default: 65536,
+        min: 1024,
+        max: 4194304,
+        doc: "Plaintext bytes per chunk (age uses 65536)",
+      },
+    ],
+  },
+  {
+    name: "stream.open",
+    kind: "transform",
+    toolbox: "webcrypto",
+    shelf: "files",
+    conjugateOf: "stream.seal",
+    doc: "Open a `stream.seal` file. Distinguishes its failures: a bad tag means the file was modified or its chunks reordered; a missing final-chunk flag means it was truncated. Chunk size is read from the header, so `chunk=` is not repeated here. Example: `file.read | stream.open key=@cek | file.save`.",
+    input: "bytes",
+    output: "bytes",
+    unresolvedInputs: "key",
+    params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Live AES key slot (`@cek`) the file was sealed under; omit to use the key panel",
+      },
+    ],
+  },
+  {
+    name: "age.keygen",
+    kind: "source",
+    toolbox: "age",
+    shelf: "keys",
+    doc: "Generate an age X25519 identity (`AGE-SECRET-KEY-1…`) — the same thing `age-keygen` writes. Secret: the tile stays masked until you reveal it. Its public half comes from `age.recipient`. Example: `age.keygen | out @id`.",
+    input: "none",
+    output: "text",
+    params: [],
+  },
+  {
+    name: "age.recipient",
+    kind: "transform",
+    toolbox: "age",
+    shelf: "keys",
+    doc: "Identity → recipient (`age1…`): the publishable half, derived and not invertible. An `age1…` already on the stem passes through, so this is safe to write when you are unsure which half you hold. Example: `in @id | age.recipient | out @pub`.",
+    input: "text",
+    output: "text",
+    params: [],
+  },
+  {
+    name: "age.encrypt",
+    kind: "transform",
+    toolbox: "age",
+    shelf: "files",
+    conjugate: "age.decrypt",
+    pairCaption: "age (age-encryption.org/v1)",
+    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
+    doc: "Encrypt to age recipients — real `age-encryption.org/v1`, produced by typage (age's author's implementation), so `age -d` reads it. `to=` takes one or more `age1…` recipients or an `@slot`; `passphrase=` is the scrypt mode instead (never both). `armor=true` for the PEM-style text form. CLI: `age -r age1… -o doc.age doc`. Example: `file.read | age.encrypt to=@pub | file.save`.",
+    input: "bytes",
+    output: "bytes",
+    params: [
+      {
+        name: "to",
+        type: "slot",
+        positional: true,
+        default: "",
+        doc: "Recipients: `age1…` (space/comma separated) or an `@slot` holding them",
+      },
+      {
+        name: "passphrase",
+        type: "string",
+        default: "",
+        secret: true,
+        doc: "Passphrase (scrypt) mode instead of recipients — `age -p`",
+      },
+      {
+        name: "armor",
+        type: "bool",
+        default: false,
+        doc: "PEM-style ASCII armor (`age -a`) — output is text, not bytes",
+      },
+    ],
+    effectiveIo(params) {
+      return { input: "bytes", output: params?.armor ? "text" : "bytes" };
+    },
+  },
+  {
+    name: "age.decrypt",
+    kind: "transform",
+    toolbox: "age",
+    shelf: "files",
+    conjugateOf: "age.encrypt",
+    doc: "Decrypt an age file with `key=@identity` (or `passphrase=`). Accepts binary and armored input, including an armored file read as bytes. CLI: `age -d -i key.txt doc.age`. Example: `file.read | age.decrypt key=@id | file.save`.",
+    input: "bytes",
+    output: "bytes",
+    params: [
+      {
+        name: "key",
+        type: "slot",
+        positional: true,
+        default: "",
+        doc: "Slot holding an `AGE-SECRET-KEY-1…` identity",
+      },
+      {
+        name: "passphrase",
+        type: "string",
+        default: "",
+        secret: true,
+        doc: "Passphrase, for a file encrypted with `age -p`",
+      },
+    ],
+  },
+  {
+    name: "file.read",
+    kind: "source",
+    toolbox: "io",
+    shelf: "ports",
+    conjugate: "file.save",
+    pairCaption: "File",
+    pairLabels: { forward: "Read", reverse: "Save" },
+    doc: "Open a file from disk into the pipeline. The browser's own picker is the consent — no extra prompt (unlike `clipboard.read`, where the page chooses when to look). Text-ish files arrive as `text`, everything else as `bytes`; force with `as=`. Filename and MIME ride along in meta, so `file.read | age.encrypt to=@pub | file.save` names the output for you. Main-thread only. Example: `file.read accept=.pem | inspect`.",
+    input: "none",
+    output: "bytes",
+    params: [
+      {
+        name: "accept",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Picker filter — extensions and/or MIME types (`.pem,.asc` or `text/plain`)",
+      },
+      {
+        name: "as",
+        type: "enum",
+        default: "auto",
+        enum: ["auto", "text", "bytes"],
+        doc: "Pipeline type: auto sniffs MIME/extension; bytes never guesses an encoding",
+      },
+    ],
+    effectiveIo(params) {
+      // `auto` cannot be resolved until a file is chosen, so the declared type
+      // is the safe one — bytes flows into everything text does via `utf8`,
+      // and claiming `text` for an unopened picker would type-check recipes
+      // that then break on a PNG.
+      return { input: "none", output: String(params?.as) === "text" ? "text" : "bytes" };
+    },
+  },
+  {
+    name: "file.save",
+    kind: "sink",
+    toolbox: "io",
+    shelf: "ports",
+    conjugateOf: "file.read",
+    doc: "Write the current value to disk and pass it through, like `out`. Uses the File System Access API's Save dialog where present, otherwise a plain download. The name comes from `name=`, else the value's own meta (a `file.read` upstream, or `age.encrypt`), else `output.bin`. Example: `… | age.encrypt to=@pub | file.save name=doc.age`.",
+    input: "bytes",
+    output: "bytes",
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Filename to suggest (empty = inherit from the value's meta)",
+      },
+      {
+        name: "mime",
+        type: "string",
+        default: "",
+        doc: "MIME type override (empty = infer from the value)",
+      },
+    ],
+  },
+  {
     name: "text",
     kind: "sink",
     toolbox: "io",
@@ -2745,6 +2947,14 @@ export const STEP_GLYPHS = {
   qr: "qr",
   "clipboard.read": "clipboard",
   "clipboard.write": "clipboard",
+  "file.read": "file-read",
+  "file.save": "file-save",
+  "stream.seal": "stream",
+  "stream.open": "stream",
+  "age.keygen": "age-key",
+  "age.recipient": "age-key",
+  "age.encrypt": "age-lock",
+  "age.decrypt": "age-lock",
   text: "text-sink",
   shares: "shares",
   "sss.split": "split",

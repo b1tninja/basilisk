@@ -27,6 +27,16 @@
       ]
     },
     {
+      "id": "age",
+      "group": "toolbox",
+      "label": "age",
+      "metaphor": "Document with a lock shackle",
+      "description": "age encrypts files, not messages — a page with a folded corner and a shackle, distinguishing it from OpenPGP's envelope (age.keygen, age.encrypt, …).",
+      "refs": [
+        "age-encryption.org/v1"
+      ]
+    },
+    {
       "id": "encoding",
       "group": "toolbox",
       "label": "Encoding",
@@ -229,6 +239,13 @@
       "description": "I/O ports — two sockets with a bridge (input/out/random)."
     },
     {
+      "id": "file",
+      "group": "shelf",
+      "label": "Files",
+      "metaphor": "Document with a folded corner",
+      "description": "Whole-file operations (age.encrypt, stream.seal) — a page rather than the AEAD shield, because these produce a framed file with many tags, not one message with one."
+    },
+    {
       "id": "control",
       "group": "shelf",
       "label": "Control",
@@ -379,6 +396,41 @@
       "label": "Clipboard",
       "metaphor": "Clipboard with clip",
       "description": "Clipboard source/sink - board with binder clip (clipboard.read, clipboard.write)."
+    },
+    {
+      "id": "file-read",
+      "group": "tool",
+      "label": "File read",
+      "metaphor": "Document with outbound arrow",
+      "description": "file.read - a document on disk feeding the pipeline; the arrow leaves the page because bytes flow out of the file."
+    },
+    {
+      "id": "file-save",
+      "group": "tool",
+      "label": "File save",
+      "metaphor": "Document with downward arrow",
+      "description": "file.save - the pipeline value coming to rest on disk; down is the universal save direction."
+    },
+    {
+      "id": "stream",
+      "group": "tool",
+      "label": "Chunked AEAD",
+      "metaphor": "Three sealed blocks in a row",
+      "description": "stream.seal / stream.open - a file split into independently-tagged chunks, each with its own shackle, which is exactly what the STREAM construction does."
+    },
+    {
+      "id": "age-key",
+      "group": "tool",
+      "label": "age identity",
+      "metaphor": "Key",
+      "description": "age.keygen / age.recipient - an X25519 identity and the recipient derived from it."
+    },
+    {
+      "id": "age-lock",
+      "group": "tool",
+      "label": "age file",
+      "metaphor": "Padlock",
+      "description": "age.encrypt / age.decrypt - a padlocked age-encryption.org/v1 file."
     },
     {
       "id": "qr",

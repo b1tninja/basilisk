@@ -201,3 +201,23 @@ body.layout-app:has(#app > .toolkit-shell) {
 .toolbox-dot[data-toolbox-dot="webauthn"] {
   background: #79c0ff;
 }
+.toolbox-dot[data-toolbox-dot="age"] {
+  background: #ff7b72;
+}
+
+/*
+ * File picker scaffolding (`file.read` / `file.save`, lib/toolkit/file-ops.js).
+ * The `<input type=file>` and download `<a>` are created, clicked, and removed
+ * within one call; they must be in the document (Safari will not fire `change`
+ * on a detached input) but must never be seen or take layout. `display: none`
+ * is deliberately not used — a hidden input is click-inert in some engines.
+ */
+[data-basilisk-file-picker] {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}

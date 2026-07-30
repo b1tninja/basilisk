@@ -2565,6 +2565,73 @@ async function execStepBody(step, value, bindings, artifacts) {
         ? cb.execClipboardRead()
         : cb.execClipboardWrite(value);
     }
+    case "file.read":
+    case "file.save": {
+      // Lazy + main-thread only — both pickers need a document and the Run
+      // click's transient activation.
+      const io = await import("./file-ops.js");
+      return step.name === "file.read"
+        ? io.execFileRead(step.params || {})
+        : io.execFileSave(value, step.params || {});
+    }
+    case "stream.seal":
+    case "stream.open": {
+      // Worker-safe: pure WebCrypto. Lazy only to keep the format's tables out
+      // of the hot path for recipes that never touch a file.
+      const s = await import("./stream-aead.js");
+      const bytes = valueToBytes(value);
+      const key =
+        (await resolveSlotKey(bindings, step.params?.key, "secret")) ||
+        (await resolveBoundKey(bindings, "secret"));
+      if (step.name === "stream.open") {
+        const plain = await s.streamOpen(key, bytes);
+        return {
+          type: "bytes",
+          data: plain,
+          meta: {
+            sensitive: true,
+            kind: "opaque",
+            filename: String(value?.meta?.filename || "").replace(/\.bskstrm$/i, "") || undefined,
+          },
+        };
+      }
+      const sealed = await s.streamSeal(key, bytes, {
+        chunk: step.params?.chunk,
+      });
+      const sourceName = String(value?.meta?.filename || "").trim();
+      return {
+        type: "bytes",
+        data: sealed,
+        meta: {
+          // The ciphertext itself is not secret — that is the point of
+          // encrypting it — so it is not masked, matching `age.encrypt`.
+          sensitive: false,
+          kind: "opaque",
+          streamSealed: true,
+          filename: sourceName ? `${sourceName}.bskstrm` : "sealed.bskstrm",
+          mime: "application/octet-stream",
+        },
+      };
+    }
+    case "age.keygen":
+    case "age.recipient":
+    case "age.encrypt":
+    case "age.decrypt": {
+      // Lazy: typage plus its noble primitives is a real chunk of bundle, and
+      // most recipes never reach for age.
+      const age = await import("./age-ops.js");
+      const p = step.params || {};
+      switch (step.name) {
+        case "age.keygen":
+          return age.execAgeKeygen();
+        case "age.recipient":
+          return age.execAgeRecipient(value);
+        case "age.encrypt":
+          return age.execAgeEncrypt(value, p, bindings);
+        default:
+          return age.execAgeDecrypt(value, p, bindings);
+      }
+    }
     case "rtc.gather":
     case "rtc.check":
     case "rtc.certificate":

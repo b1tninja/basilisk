@@ -420,7 +420,10 @@ describe("step reference links", () => {
       const ref = docsUrlFor(step);
       if (!ref) continue;
       expect(ref.url, step.name).toMatch(
-        /^https:\/\/(developer\.mozilla\.org|www\.rfc-editor\.org|www\.w3\.org|www\.itu\.int|en\.wikipedia\.org|github\.com|fidoalliance\.org|www\.ietf\.org)\//
+        // eprint.iacr.org is on the list for `stream.*`: the STREAM
+        // construction is defined in a paper, not an RFC, and pointing at a
+        // blog summary of it would be a worse citation than the paper.
+        /^https:\/\/(developer\.mozilla\.org|www\.rfc-editor\.org|www\.w3\.org|www\.itu\.int|en\.wikipedia\.org|github\.com|fidoalliance\.org|www\.ietf\.org|eprint\.iacr\.org)\//
       );
       expect(ref.label, step.name).toBeTruthy();
     }
