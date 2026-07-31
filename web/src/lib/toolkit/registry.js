@@ -2837,7 +2837,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "ice",
     glyph: "ports",
-    doc: "ICE server config for a quorum exchange — STUN for reflexive discovery, optional TURN relay with credentials. Emits JSON consumed by `quorum.offer`/`quorum.join` via `ice=@slot`. Example: `rtc.ice turn=turn:relay.example.org:3478 username=u credential=p | out @ice`. Defaults: Cloudflare + Google STUN.",
+    doc: "ICE server config for a quorum exchange — STUN for reflexive discovery, optional TURN relay with credentials. Emits JSON consumed by `quorum.offer`/`quorum.join` via `ice=@slot`. `credential=` takes a **slot**, not a literal, so the secret never rides out through Copy link or an exported notebook. Example: `rtc.ice turn=turn:relay.example.org:3478 username=u credential=@turncred | out @ice`. Defaults: Cloudflare + Google STUN.",
     input: "none",
     output: "endpoint",
     params: [

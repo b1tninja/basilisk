@@ -1566,6 +1566,10 @@ export const PRESET_GROUP_ORDER = Object.freeze([
   "Directory",
   "WebAuthn",
   "JOSE",
+  // ICE/STUN diagnostics and hand-carried signalling. Ordered before the live
+  // mesh templates a user reaches for later, because when a connection fails
+  // these are what tells you why.
+  "WebRTC",
   "Encoding",
 ]);
 
@@ -1896,6 +1900,86 @@ run.receipt | gpg.sign | out @receipt`,
     blurb:
       "Decode + recover shares to the hex master, then gpg.symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
     recipe: "shares | blip39.decode | sss.combine | gpg.symdecrypt mode=master | utf8 | out @pem",
+  },
+  {
+    id: "stun-reachable",
+    group: "WebRTC",
+    title: "Is STUN reachable?",
+    blurb:
+      "One-shot NAT check. Reports your server-reflexive address, or says STUN is blocked — the first thing to run when a peer connection will not form.",
+    recipe: "stun.check | out @nat",
+  },
+  {
+    id: "ice-gather",
+    group: "WebRTC",
+    title: "Gather ICE candidates",
+    blurb:
+      "Every route ICE would try, typed: host, peer-reflexive, server-reflexive, relay. A missing relay row means no TURN is configured — informational, not a failure.",
+    recipe: `rtc.ice | out @ice
+
+rtc.gather ice=@ice timeout=5000 | out @candidates`,
+  },
+  {
+    id: "ice-custom-stun",
+    group: "WebRTC",
+    title: "Gather against your own STUN server",
+    blurb:
+      "Same gather, pointed at a STUN server you choose instead of the built-in defaults. Compare the reflexive address with the previous template's to see whether a server is lying to you.",
+    recipe: `rtc.ice stun=stun:stun.l.google.com:19302 | out @ice
+
+rtc.gather ice=@ice | out @candidates`,
+  },
+  {
+    id: "ice-turn-relay",
+    group: "WebRTC",
+    title: "Add a TURN relay",
+    blurb:
+      "For the case both peers are behind symmetric NAT, where no direct route exists. Replace the URL and username, and paste the credential into Inputs — `credential=` takes a slot on purpose, so the secret never rides out in shared recipe text.",
+    recipe: `input | out @turncred
+
+rtc.ice turn=turns:turn.example.net:5349 username=USER credential=@turncred | out @ice
+
+rtc.gather ice=@ice | out @candidates`,
+  },
+  {
+    id: "rtc-dtls-identity",
+    group: "WebRTC",
+    title: "DTLS certificate fingerprint",
+    blurb:
+      "The fingerprint a peer actually sees. An offer carries `a=fingerprint:` and the DTLS handshake must match it — which is what lets a signed invite prove who is on the far end of the channel.",
+    recipe: "rtc.certificate | out @dtls",
+  },
+  {
+    id: "sdp-hand-carried",
+    group: "WebRTC",
+    title: "Hand-carried offer and answer",
+    blurb:
+      "The raw SDP exchange under `quorum.*`, both halves in one notebook so you can read them. In a real exchange the offer goes to the other side by any channel you like — this is what `clipboard.write` and a QR invite are carrying.",
+    recipe: `rtc.offer | out @offer
+
+in @offer | rtc.answer | out @answer`,
+  },
+  {
+    id: "sdp-to-clipboard",
+    group: "WebRTC",
+    title: "Offer, copied out of band",
+    blurb:
+      "Signalling has to start somewhere outside WebRTC. The tee copies the offer to the clipboard while the pipeline keeps it, so you can paste it into chat and still hold it here.",
+    recipe: `rtc.offer | tee
+  - clipboard.write
+| out @offer`,
+  },
+  {
+    id: "rtc-live-diagnostics",
+    group: "WebRTC",
+    title: "Diagnose a live exchange",
+    blurb:
+      "Needs a running `quorum.offer` / `quorum.join` in another cell — these read the exchange that is already open. State first, then the candidate-pair matrix (why ICE chose the route it did), then quality. `rtc.restart` renegotiates in place without losing the room.",
+    recipe: `rtc.state | out @state
+
+rtc.check | out @pairs
+
+rtc.quality | out @quality`,
   },
   {
     id: "gpg-decrypt",
