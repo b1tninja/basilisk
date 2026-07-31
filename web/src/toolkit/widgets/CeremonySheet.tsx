@@ -11,6 +11,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ShareCards, type ShareCardArtifact } from "./ShareCards";
+import { ShareCheck } from "./ShareCheck";
 import {
   CEREMONY_STAGES,
   ceremonyIssues,
@@ -52,7 +53,11 @@ export type CeremonySheetProps = {
   /** Digest hex from the verify cell's `@recovered` tile. */
   recoveredDigest: string;
   shareArtifacts: ShareCardArtifact[];
+  /** JSON from the split cell's `@commitments` tile — the public half. */
+  commitmentsText?: string;
   receiptText: string;
+  /** `file.read | qr.scan`, supplied by the host; absent hides the scan button. */
+  onScanQr?: () => Promise<string>;
 };
 
 /**
@@ -88,9 +93,12 @@ export function CeremonySheet({
   expectedDigest,
   recoveredDigest,
   shareArtifacts,
+  commitmentsText = "",
   receiptText,
+  onScanQr,
 }: CeremonySheetProps) {
   const [advanced, setAdvanced] = useState(false);
+  const [checking, setChecking] = useState(false);
   const issues = ceremonyIssues({ threshold, shares });
   const current = CEREMONY_STAGES[stageIndex(stage)] ?? CEREMONY_STAGES[0];
   const verification = verificationResult(expectedDigest, recoveredDigest);
@@ -239,6 +247,25 @@ export function CeremonySheet({
                       <code>{expectedDigest}</code>
                     </dd>
                   </dl>
+                  {/*
+                    The public half, stated as an instruction rather than shown
+                    as an artifact. Commitments that stay in the notebook make
+                    the split verifiable in principle and unverifiable in
+                    practice — a custodian cannot check a share against a
+                    document they were never given, and this is the only moment
+                    where everyone who needs it is still in the room.
+                  */}
+                  {commitmentsText ? (
+                    <div className="ceremony-commitments">
+                      <p className="ceremony-status" data-tone="pending">
+                        Publish these commitments. They reveal nothing about the secret
+                        and they are what lets each holder check their own card later,
+                        alone, without any other share. Send them by a different route
+                        than the cards.
+                      </p>
+                      <pre className="ceremony-receipt">{commitmentsText}</pre>
+                    </div>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -280,7 +307,29 @@ export function CeremonySheet({
                 artifacts={shareArtifacts}
                 label={label}
                 threshold={threshold}
+                commitments={commitmentsText || null}
               />
+              {/*
+                The rehearsal. Verification at stage 3 proved the *set*
+                recombines; this proves one card, the way its holder will have
+                to prove it — alone, from the printed words, against the
+                published commitments. Doing it once here is how a custodian
+                learns the check exists at all, and it is the last moment the
+                dealer is available to answer for a card that fails.
+              */}
+              <button
+                type="button"
+                className="ceremony-disclosure"
+                onClick={() => setChecking((v) => !v)}
+              >
+                {checking ? "Hide" : "Check a card the way its holder will"}
+              </button>
+              {checking ? (
+                <ShareCheck
+                  initialCommitments={commitmentsText}
+                  onScanQr={onScanQr}
+                />
+              ) : null}
             </div>
           ) : null}
 

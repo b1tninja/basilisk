@@ -27,6 +27,8 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { restartLiveIce } from "../lib/toolkit/quorum-ops.js";
 import { setClipboardReadGate } from "../lib/toolkit/clipboard-ops.js";
+import { execFileRead } from "../lib/toolkit/file-ops.js";
+import { execQrScan } from "../lib/toolkit/qr-scan.js";
 import { setCssVar } from "../lib/css-vars.js";
 import { cn } from "@/lib/cn";
 import { useNotebook } from "./useNotebook";
@@ -38,6 +40,8 @@ import {
   GpgKeyBinder,
   ConnectionsPanel,
   CeremonySheet,
+  ShareCheck,
+  IntegrityPanel,
   STEP_MIME,
   parseStepMime,
   ModeToggle,
@@ -88,6 +92,21 @@ type ToolkitSuiteStatus = {
   sss: SuiteState;
   webauthn: SuiteState;
 };
+
+/**
+ * `file.read | qr.scan` on a photo of a share card.
+ *
+ * Composed from the two ops rather than reaching for a camera: the realistic
+ * input is a phone photo or a screenshot that arrives as a file, and the
+ * browser's own picker is the consent — the same reasoning `file.read` itself
+ * records. Kept at module scope so it is obviously the same pair of calls a
+ * recipe would make, with no shell state involved.
+ */
+async function scanCardPhoto(): Promise<string> {
+  const file = await execFileRead({ accept: "image/*", as: "bytes" });
+  const scanned = await execQrScan(file, {});
+  return String(scanned.data ?? "");
+}
 
 /** Collapse an artifact's content to one displayable line for OutputList (§20h). */
 function oneLinePreview(content: string, max = 140): string {
@@ -734,6 +753,19 @@ export function ToolkitShell() {
                   id: "ceremony",
                   label: "Key ceremony…",
                   onSelect: () => nb.openCeremony(),
+                },
+                {
+                  // Sits beside the ceremony because it is the other end of
+                  // the same act: one makes cards, this one answers the
+                  // question their holders will have months later.
+                  id: "sharecheck",
+                  label: "Check a share…",
+                  onSelect: () => nb.setSheet("sharecheck"),
+                },
+                {
+                  id: "integrity",
+                  label: "Verify this deployment…",
+                  onSelect: () => nb.setSheet("integrity"),
                 },
                 {
                   id: "workspace",
@@ -2433,8 +2465,54 @@ export function ToolkitShell() {
           expectedDigest={nb.ceremonyView.expectedDigest}
           recoveredDigest={nb.ceremonyView.recoveredDigest}
           shareArtifacts={nb.ceremonyView.shareArtifacts}
+          commitmentsText={nb.ceremonyView.commitmentsText}
           receiptText={nb.ceremonyView.receiptText}
+          onScanQr={scanCardPhoto}
         />
+
+        {/*
+          The custodian check, reachable cold. No notebook state feeds it and
+          none of its inputs come from the session: the person it is for is
+          holding a card and nothing else, possibly years later, possibly on a
+          machine that has never run this ceremony.
+        */}
+        <Sheet
+          open={nb.sheet === "sharecheck"}
+          onOpenChange={(o) => nb.setSheet(o ? "sharecheck" : null)}
+        >
+          <SheetContent side="right" className="w-full sm:max-w-xl">
+            <SheetHeader>
+              <SheetTitle>Check a share</SheetTitle>
+              <SheetDescription>
+                Confirm that the card you are holding really belongs to the split it
+                claims to — on its own, without any other share, and without revealing
+                anything.
+              </SheetDescription>
+            </SheetHeader>
+            <div className="px-4 pb-4">
+              <ShareCheck onScanQr={scanCardPhoto} />
+            </div>
+          </SheetContent>
+        </Sheet>
+
+        {/* Verify-this-deployment (THREAT-MODEL "if you want to verify rather than trust") */}
+        <Sheet
+          open={nb.sheet === "integrity"}
+          onOpenChange={(o) => nb.setSheet(o ? "integrity" : null)}
+        >
+          <SheetContent side="right" className="w-full sm:max-w-xl">
+            <SheetHeader>
+              <SheetTitle>Verify this deployment</SheetTitle>
+              <SheetDescription>
+                Every load hands you the JavaScript that will touch your keys. This is
+                what can be checked about the code you were served, and what cannot.
+              </SheetDescription>
+            </SheetHeader>
+            <div className="px-4 pb-4">
+              <IntegrityPanel />
+            </div>
+          </SheetContent>
+        </Sheet>
 
         {/* Workspace library sheet */}
         <Sheet

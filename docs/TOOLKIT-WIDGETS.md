@@ -30,6 +30,9 @@
  * | **TypeCard** | Pipeline-type docs / producers / consumers / literal constructor |
  * | **ShareCards** | Print-ready card per share (mnemonic, QR, index, threshold, label, date) |
  * | **CeremonySheet** | Guided key ceremony — quorum → split → verify → print → receipt |
+ * | **ShareCheck** | Custodian verification — one card, no session, against published commitments |
+ * | **IntegrityPanel** | Verify-this-deployment — module root vs published pin, and its limits |
+ * | **DkgPanel** | Distributed key generation session (design-ahead; not wired) |
  *
  * ## The key-ceremony kit
  *
@@ -50,6 +53,55 @@
  * verification compares two SHA-256 digests rather than showing the recovered
  * secret. Verification is sequenced *before* printing — proving the shares
  * recombine after the room has dispersed is not a ceremony.
+ *
+ * ## The other end of the ceremony (`#sharecheck`)
+ *
+ * `ShareCards` makes cards; `ShareCheck` answers the question their holders
+ * have months later. It is the surface for `vss.verify`, and the design rule it
+ * exists to enforce is that **well-formed is not genuine**: a BLIP39 mnemonic
+ * carries a checksum, so it can decode cleanly while proving nothing at all
+ * about which split it came from. `share-only` is therefore its own state, in
+ * its own (amber) tone, with wording that says explicitly that nothing has been
+ * checked. The four tones are enumerated in `toolkit.css` and no rule derives
+ * one from another, so that state cannot reach the verified appearance by
+ * accident.
+ *
+ * A failed check does not blame the holder. The checksum has already ruled out
+ * transcription, so the verdict names all three remaining causes — wrong
+ * commitments, wrong ceremony, or an `sss` card that can never match any — and
+ * says the check cannot tell them apart.
+ *
+ * Every verdict string lives in `lib/toolkit/share-check.js` and is unit-tested
+ * as a string, because the wording *is* the feature; the verification itself
+ * goes through `execVssVerify`, the same op `… | vss.verify` runs, and the
+ * panel prints that recipe in a disclosure so the shortcut is visibly a
+ * shortcut.
+ *
+ * Cards changed with it. `recoveryLine` is derived rather than hard-coded — the
+ * footer said `sss.combine` for every card the ceremony has printed since it
+ * switched to `vss.split`, which instructs a custodian to run an op that
+ * rejects their shares, at the one moment nobody is available to ask. Cards now
+ * also print the split id (from `publicKeyOf(commitments)`, a *label* for
+ * noticing the wrong document, never a substitute for the check) or the words
+ * "Unverifiable split" — the absence has to be legible on paper.
+ *
+ * ## Verify-this-deployment (`#integrity`)
+ *
+ * `IntegrityPanel` over `lib/toolkit/deployment-check.js`. It does not
+ * re-implement the check: the comparison is `verifyModuleRootAgainstPins`, the
+ * same function the boot path gates on. Four of its six outcomes mean *no
+ * answer* (`unpinned`, `no-sri`, `unreachable`, `disagree`) and none of them is
+ * drawn as success. The limitation — this check runs inside the page it is
+ * checking — sits under every verdict including the successful one, uncollapsed,
+ * because that is the verdict a reader stops reading at.
+ *
+ * The catalog earned its keep twice here. The live dev-server panel reported
+ * "no integrity hashes" while printing a well-formed 64-hex root beside it —
+ * `computeLoadedModulesRoot`'s self-digest fallback, rendered in the row a
+ * careful reader is meant to compare against another machine. And
+ * `toolkit-widgets.html` turned out to carry no CSP meta while
+ * `toolkit-widgets` was missing from `STATIC_PAGES`, so the catalog was the one
+ * page served without the report-only production policy. Both fixed.
  *
  * ## Files section (`#fileops`)
  *
@@ -128,6 +180,16 @@
 |-----|-------|------|
 | `/toolkit` | `pages/toolkit.tsx` → `ToolkitShell` | Production — the React shell |
 | `/toolkit-widgets` | catalog page | Widget states for review |
+
+`DkgPanel` is deliberately absent from the shell: `lib/quorum/dkg.js` has the
+rounds, the op that runs them over a live exchange does not exist, and the panel
+is design-ahead of it. `lib/quorum/dkg-session.js` states its assumptions about
+that op layer; `redesign/CAPABILITY-SURFACES.md` explains why the refusal path
+was designed first. There is a **Start a new session** button and no **Exclude
+them** button, because commitments are broadcast while shares are pairwise —
+only the accuser saw the bad share, and building the eviction primitive without
+the complaint round that adjudicates it would ship the vulnerability with a
+nicer interface.
 
 ## Uniformity rules
  *

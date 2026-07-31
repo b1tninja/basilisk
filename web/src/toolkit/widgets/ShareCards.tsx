@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  checkLine,
   collectShareCards,
   quorumLine,
+  recoveryLine,
   revealWarning,
   type ShareCard,
 } from "../../lib/toolkit/share-cards.js";
@@ -24,6 +26,11 @@ export type ShareCardsProps = {
   label?: string;
   /** Overrides the split's own threshold when the recipe did not record one. */
   threshold?: number;
+  /**
+   * The published commitments, when the caller knows where its own tile is.
+   * Omitted, they are looked for among `artifacts`.
+   */
+  commitments?: string[] | string | null;
   date?: string;
   /**
    * Start revealed. Only for the widget catalog — the production surface always
@@ -53,14 +60,15 @@ export function ShareCards({
   artifacts,
   label = "",
   threshold,
+  commitments = null,
   date,
   defaultRevealed = false,
   onPrint,
 }: ShareCardsProps) {
   const [revealed, setRevealed] = useState(defaultRevealed);
   const cards: ShareCard[] = useMemo(
-    () => collectShareCards(artifacts, { label, threshold, date }),
-    [artifacts, label, threshold, date]
+    () => collectShareCards(artifacts, { label, threshold, date, commitments }),
+    [artifacts, label, threshold, date, commitments]
   );
 
   if (!cards.length) {
@@ -119,6 +127,18 @@ export function ShareCards({
             </div>
 
             <p className="share-card-quorum">{quorumLine(card)}</p>
+            {/* The split id is printed whether or not the set is verifiable, so
+                the absence of one is itself legible on paper: a card with no
+                split line came from a split nobody can check. */}
+            <p className="share-card-split" data-verifiable={card.verifiable ? "yes" : "no"}>
+              {card.verifiable ? (
+                <>
+                  Split <code>{card.splitId}</code>
+                </>
+              ) : (
+                "Unverifiable split"
+              )}
+            </p>
 
             <div className="share-card-body">
               {card.qrSvg ? (
@@ -153,8 +173,11 @@ export function ShareCards({
             </div>
 
             <footer className="share-card-foot">
-              Recover with any {card.threshold > 0 ? card.threshold : "K"} cards:
-              <code> shares | blip39.decode | sss.combine</code>
+              <span className="share-card-check">{checkLine(card)}</span>
+              <span>
+                Recover with any {card.threshold > 0 ? card.threshold : "K"} cards:
+                <code> {recoveryLine(card)}</code>
+              </span>
             </footer>
           </li>
         ))}

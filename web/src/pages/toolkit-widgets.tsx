@@ -33,8 +33,15 @@ import {
   GpgKeyBinder,
   ConnectionsPanel,
   ShareCards,
+  ShareCheck,
+  IntegrityPanel,
+  DkgPanel,
   CeremonySheet,
 } from "../toolkit/widgets/index";
+import { execVssCommitments, execVssSplit } from "../lib/toolkit/vss-ops.js";
+import { encodeShareSet } from "../lib/slip39/blip39.js";
+import type { DeploymentVerdict } from "../lib/toolkit/deployment-check.js";
+import type { DkgParticipant } from "../lib/quorum/dkg-session.js";
 import { getTypeMeta } from "../lib/toolkit/type-registry.js";
 import type { CeremonyStageId } from "../lib/toolkit/ceremony.js";
 import { Button } from "@/components/ui/button";
@@ -86,6 +93,11 @@ function CatalogApp() {
   const [chipSel, setChipSel] = useState(false);
   const [shelfCaretFilter, setShelfCaretFilter] = useState("");
   const [topbarTitle, setTopbarTitle] = useState("Onboard Dana & Sam");
+  // A real commitments document, so the card's split id is one that could
+  // actually be compared against something rather than a plausible-looking
+  // string. The mnemonics beside it stay fake — a card fixture is not the
+  // place to exercise verification, and `#sharecheck` is.
+  const cardSplit = useDemoSplit();
 
   // §19a caret-focused fixture: tipFit for a bytes tip, so real ops dim/fit.
   const bytesTipFit = useMemo(
@@ -134,6 +146,9 @@ function CatalogApp() {
               "presetmenu",
               "sharecards",
               "ceremonysheet",
+              "sharecheck",
+              "integrity",
+              "dkg",
             ].map((id) => (
               <a
                 key={id}
@@ -1521,6 +1536,30 @@ function CatalogApp() {
             onPrint={() => {}}
           />
 
+          <StateLabel>
+            Verifiable split — the card names it, and prints the right recovery op
+          </StateLabel>
+          <ShareCards
+            artifacts={demoShareArtifacts}
+            label="Board key ceremony"
+            date="2026-07-30"
+            commitments={cardSplit.commitments}
+            defaultRevealed
+            onPrint={() => {}}
+          />
+
+          <StateLabel>
+            Unverifiable split (<code>sss.split</code>) — the card says so rather than
+            offering a check that cannot work
+          </StateLabel>
+          <ShareCards
+            artifacts={demoShareArtifacts}
+            label="Board key ceremony"
+            date="2026-07-30"
+            defaultRevealed
+            onPrint={() => {}}
+          />
+
           <StateLabel>Empty — cell has not been run</StateLabel>
           <ShareCards artifacts={[]} />
         </Section>
@@ -1534,8 +1573,377 @@ function CatalogApp() {
           </p>
           <CeremonyStates />
         </Section>
+
+        <Section id="sharecheck" title="ShareCheck — the custodian verification moment">
+          <p className="text-xs text-[var(--muted-foreground)]">
+            One card, months later, on a machine with no session. The states worth staring
+            at are the two that are <em>not</em> verdicts:{" "}
+            <strong>well-formed but unchecked</strong> must never reach the green
+            appearance, and <strong>does not match</strong> must not accuse the holder of
+            mistyping — the BLIP39 checksum has already ruled that out.
+          </p>
+          <ShareCheckStates />
+        </Section>
+
+        <Section id="integrity" title="IntegrityPanel — verify this deployment">
+          <p className="text-xs text-[var(--muted-foreground)]">
+            Four of the six outcomes mean <em>no answer</em>, and none of those is drawn
+            as success. The limitation sits under every verdict including the successful
+            one, uncollapsed, because that is the verdict a reader stops reading at.
+          </p>
+          <IntegrityStates />
+        </Section>
+
+        <Section id="dkg" title="DkgPanel — distributed key generation (design-ahead)">
+          <p className="text-xs text-[var(--muted-foreground)]">
+            Not wired into the shell: <code>lib/quorum/dkg.js</code> has the rounds, the
+            op that runs them over a live exchange does not exist yet. Here for the
+            failure path — there is no complaint round, so a refusal names a dealer whom
+            only <em>you</em> saw misbehave.
+          </p>
+          <DkgStates />
+        </Section>
       </div>
     </TooltipProvider>
+  );
+}
+
+/**
+ * A throwaway verifiable split, made at mount from the real ops.
+ *
+ * Faking this would defeat the section: `verified` and `mismatch` are the
+ * states that can be wrong, and they can only be exercised by shares that
+ * genuinely do and do not lie on a committed polynomial. The secret is 32
+ * random bytes drawn here and never stored, which is why a catalog page is
+ * allowed to hold these mnemonics when it is not allowed to hold a real one.
+ */
+function useDemoSplit(threshold = 2, shares = 3) {
+  return useMemo(() => {
+    const secret = crypto.getRandomValues(new Uint8Array(32));
+    // P-256 scalars must be below the group order; the top byte cleared keeps
+    // the fixture from occasionally failing `vss.split`'s own range check.
+    secret[0] = 0;
+    const set = execVssSplit({ type: "bytes", data: secret }, { threshold, shares });
+    const commitments = String(execVssCommitments(set).data);
+    // `encodeShareSet` zeroes the raw share bytes as it encodes, so it has to
+    // come after the commitments are read off the same object.
+    const { mnemonics } = encodeShareSet(set.data as never);
+    return { mnemonics, commitments };
+  }, [threshold, shares]);
+}
+
+function ShareCheckStates() {
+  const a = useDemoSplit();
+  const b = useDemoSplit(3, 5);
+
+  return (
+    <>
+      <StateLabel>Empty — nothing claimed</StateLabel>
+      <ShareCheck key="empty" />
+
+      <StateLabel>
+        Share only — well-formed, and the panel says nothing has been checked
+      </StateLabel>
+      <ShareCheck key="share-only" initialShare={a.mnemonics[1]} />
+
+      <StateLabel>Commitments only — waiting for a card</StateLabel>
+      <ShareCheck key="commitments-only" initialCommitments={a.commitments} />
+
+      <StateLabel>Verified — a genuine share against its own split</StateLabel>
+      <ShareCheck
+        key="verified"
+        initialShare={a.mnemonics[1]}
+        initialCommitments={a.commitments}
+      />
+
+      <StateLabel>
+        Mismatch — a genuine share against another split&rsquo;s commitments
+      </StateLabel>
+      <ShareCheck
+        key="mismatch"
+        initialShare={a.mnemonics[0]}
+        initialCommitments={b.commitments}
+      />
+
+      <StateLabel>Unreadable share — the checksum caught it</StateLabel>
+      <ShareCheck
+        key="bad-share"
+        initialShare="acid academic not actually a mnemonic at all"
+        initialCommitments={a.commitments}
+      />
+
+      <StateLabel>Unreadable commitments</StateLabel>
+      <ShareCheck
+        key="bad-commitments"
+        initialShare={a.mnemonics[0]}
+        initialCommitments='{"commitments":["not-a-point"]}'
+      />
+
+      <StateLabel>
+        QR unsupported — the honest degradation on Firefox / Safari
+      </StateLabel>
+      <ShareCheck
+        key="no-barcode"
+        onScanQr={async () => ""}
+        scanSupported={false}
+      />
+    </>
+  );
+}
+
+const INTEGRITY_FIXTURES: { note: string; verdict: DeploymentVerdict }[] = [
+  {
+    note: "verified — root matches the published pin",
+    verdict: {
+      status: "verified",
+      tone: "ok",
+      headline: "Matches the published pin for toolkit.html.",
+      detail:
+        "34 modules loaded, folding to root 9f2c1a44b8e07d31…, and 2 pin documents agree. " +
+        "The browser separately enforced each module's own SRI hash on load, so nothing " +
+        "outside this set executed.",
+      root: "9f2c1a44b8e07d3155aa20c9b6de41f8027cc9d54ba1e37f66d0aa9188c3e021",
+      expectedRoot: "9f2c1a44b8e07d3155aa20c9b6de41f8027cc9d54ba1e37f66d0aa9188c3e021",
+      leafCount: 34,
+      pageKey: "toolkit.html",
+      pinUrls: ["/integrity/module-roots.json", "https://mirror.example/module-roots.json"],
+      fetched: 2,
+      raw: "Integrity pin matched (2 sources).",
+    },
+  },
+  {
+    note: "mismatch — the failure the mechanism exists for",
+    verdict: {
+      status: "mismatch",
+      tone: "error",
+      headline: "The code in this tab is not the code the pin describes.",
+      detail:
+        "Module Merkle root mismatch (live 9f2c1a44b8e07d31… ≠ pin 41bb90de77c2a8f5…). " +
+        "This is the failure the whole mechanism exists to make visible. It can be a stale " +
+        "cache or a half-finished deploy — those are the boring explanations and they are the " +
+        "common ones — but it is indistinguishable from the interesting one. Close the tab, " +
+        "clear the cache, and load it again; if the root still differs, do not enter key " +
+        "material into this page.",
+      root: "9f2c1a44b8e07d3155aa20c9b6de41f8027cc9d54ba1e37f66d0aa9188c3e021",
+      expectedRoot: "41bb90de77c2a8f5b0e1cc7d2299a4531ff08b6ea72d40c3195e6b8aa04d7712",
+      leafCount: 34,
+      pageKey: "toolkit.html",
+      pinUrls: ["/integrity/module-roots.json"],
+      fetched: 1,
+      raw: "",
+    },
+  },
+  {
+    note: "mirrors disagree — CDN split-brain",
+    verdict: {
+      status: "disagree",
+      tone: "error",
+      headline: "The pin mirrors do not agree with each other.",
+      detail:
+        "Integrity pin mirrors disagree (9f2c1a44b8e07d31 vs 41bb90de77c2a8f5). Mirrors exist " +
+        "so that subverting one host is not enough; two answers means either a deploy caught " +
+        "mid-flight or one of them is lying, and from here those look identical. Do not use " +
+        "this tab for anything sensitive until the mirrors converge.",
+      root: "9f2c1a44b8e07d3155aa20c9b6de41f8027cc9d54ba1e37f66d0aa9188c3e021",
+      expectedRoot: "",
+      leafCount: 34,
+      pageKey: "toolkit.html",
+      pinUrls: ["/integrity/module-roots.json", "https://mirror.example/module-roots.json"],
+      fetched: 2,
+      raw: "",
+    },
+  },
+  {
+    note: "unreachable — the check that did not run",
+    verdict: {
+      status: "unreachable",
+      tone: "error",
+      headline: "Cannot verify — the pin document could not be read.",
+      detail:
+        "Integrity pin fetch failed (HTTP 503). A blocked or offline fetch looks exactly like " +
+        "a suppressed one. Treat this as unverified rather than as fine: the check that would " +
+        "have caught tampering is the check that did not run.",
+      root: "9f2c1a44b8e07d3155aa20c9b6de41f8027cc9d54ba1e37f66d0aa9188c3e021",
+      expectedRoot: "",
+      leafCount: 34,
+      pageKey: "toolkit.html",
+      pinUrls: ["/integrity/module-roots.json"],
+      fetched: 0,
+      raw: "",
+    },
+  },
+  {
+    note: "unpinned — a root that attests to nothing but itself",
+    verdict: {
+      status: "unpinned",
+      tone: "warn",
+      headline: "Cannot verify — no pin document is configured.",
+      detail:
+        "The 34 modules this page loaded fold to root 9f2c1a44b8e07d31…, and the browser did " +
+        "enforce their individual SRI hashes — a modified module would have failed to execute. " +
+        "What is missing is anything independent to compare the root against, so this number " +
+        "attests to nothing but itself. Write it down and compare it with another machine, or " +
+        "another person, if that matters to you.",
+      root: "9f2c1a44b8e07d3155aa20c9b6de41f8027cc9d54ba1e37f66d0aa9188c3e021",
+      expectedRoot: "",
+      leafCount: 34,
+      pageKey: "toolkit.html",
+      pinUrls: [],
+      fetched: 0,
+      raw: "",
+    },
+  },
+  {
+    note: "no SRI — the dev server, and the honest thing to say about it",
+    verdict: {
+      status: "no-sri",
+      tone: "warn",
+      headline: "Cannot verify — this page carries no integrity hashes.",
+      detail:
+        "Nothing on it declares an SRI digest, so there is no set of module hashes to check. " +
+        "That is normal on the dev server, which serves unhashed modules and a looser " +
+        "Content-Security-Policy than production. If you are seeing this on a deployed origin, " +
+        "the build that produced it did not run the integrity step, and none of the guarantees " +
+        "in the threat model's first section apply to it.",
+      root: "",
+      expectedRoot: "",
+      leafCount: 0,
+      pageKey: "index.html",
+      pinUrls: [],
+      fetched: 0,
+      raw: "",
+    },
+  },
+];
+
+const DEMO_CSP =
+  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; " +
+  "connect-src 'self' https://keys.openpgp.org https://keys.mailvelope.com; " +
+  "img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';";
+
+function IntegrityStates() {
+  return (
+    <>
+      {INTEGRITY_FIXTURES.map((f) => (
+        <div key={f.verdict.status}>
+          <StateLabel>{f.note}</StateLabel>
+          <IntegrityPanel verdict={f.verdict} policy={DEMO_CSP} live={false} />
+        </div>
+      ))}
+      <StateLabel>Live — this page, right now</StateLabel>
+      <IntegrityPanel />
+    </>
+  );
+}
+
+const dkgPeer = (
+  id: string,
+  round: DkgParticipant["round"],
+  extra: Partial<DkgParticipant> = {}
+): DkgParticipant => ({
+  id,
+  round,
+  state: "connected",
+  authenticated: true,
+  ...extra,
+});
+
+const DKG_FIXTURES: { note: string; props: Parameters<typeof DkgPanel>[0] }[] = [
+  {
+    note: "assembling — nobody has dealt yet",
+    props: {
+      participants: [
+        dkgPeer("you", "waiting", { self: true }),
+        dkgPeer("4f2a…", "waiting"),
+        dkgPeer("91cd…", "waiting", { state: "connecting", authenticated: false }),
+      ],
+      onStart: () => {},
+    },
+  },
+  {
+    note: "dealing — waiting on commitments, stated as 1 of 4",
+    props: {
+      started: true,
+      participants: [
+        dkgPeer("you", "verified", { self: true }),
+        dkgPeer("4f2a…", "commitments"),
+        dkgPeer("91cd…", "waiting"),
+        dkgPeer("7b03…", "waiting"),
+        dkgPeer("e5f1…", "waiting", { state: "connecting", authenticated: false }),
+      ],
+    },
+  },
+  {
+    note: "collecting — every commitment in, shares arriving",
+    props: {
+      started: true,
+      participants: [
+        dkgPeer("you", "verified", { self: true }),
+        dkgPeer("4f2a…", "verified"),
+        dkgPeer("91cd…", "share"),
+        dkgPeer("7b03…", "commitments"),
+      ],
+    },
+  },
+  {
+    note: "finalizing — all checked, sum not yet taken",
+    props: {
+      started: true,
+      participants: [
+        dkgPeer("you", "verified", { self: true }),
+        dkgPeer("4f2a…", "verified"),
+        dkgPeer("91cd…", "verified"),
+      ],
+      onFinalize: () => {},
+    },
+  },
+  {
+    note: "refused — one bad dealer, and why that is not a verdict",
+    props: {
+      started: true,
+      participants: [
+        dkgPeer("you", "verified", { self: true }),
+        dkgPeer("4f2a…", "bad"),
+        dkgPeer("91cd…", "verified"),
+      ],
+      onRestart: () => {},
+    },
+  },
+  {
+    note: "complete — a key nobody assembled, and no export button",
+    props: {
+      started: true,
+      threshold: 2,
+      jointPublicKey: "02a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      participants: [
+        dkgPeer("you", "verified", { self: true }),
+        dkgPeer("4f2a…", "verified"),
+        dkgPeer("91cd…", "verified"),
+      ],
+    },
+  },
+  {
+    note: "over the mesh soft cap — the ConnectionsPanel warning, restated here",
+    props: {
+      started: true,
+      participants: [
+        dkgPeer("you", "waiting", { self: true }),
+        ...Array.from({ length: 9 }, (_, i) => dkgPeer(`p${i + 1}…`, "waiting")),
+      ],
+    },
+  },
+];
+
+function DkgStates() {
+  return (
+    <>
+      {DKG_FIXTURES.map((f) => (
+        <div key={f.note}>
+          <StateLabel>{f.note}</StateLabel>
+          <DkgPanel {...f.props} />
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -1545,14 +1953,17 @@ function CatalogApp() {
  */
 function CeremonyStates() {
   const [stage, setStage] = useState<CeremonyStageId | null>(null);
+  // Real commitments, so the split stage's publish panel and the cards stage's
+  // split id are the same objects the ceremony actually produces.
+  const split = useDemoSplit();
   const [params, setParams] = useState({ threshold: 2, shares: 3, label: "Board key", qr: true });
   const digest = (c: string) => c.repeat(64);
 
   const stages: { id: CeremonyStageId; note: string }[] = [
     { id: "setup", note: "quorum pickers + validation" },
-    { id: "split", note: "digest of the secret, no secret" },
+    { id: "split", note: "digest of the secret + commitments to publish" },
     { id: "verify", note: "digests match" },
-    { id: "cards", note: "masked cards, reveal gated" },
+    { id: "cards", note: "masked cards, reveal gated, check-a-card" },
     { id: "receipt", note: "signing key picker + receipt" },
   ];
 
@@ -1597,6 +2008,7 @@ function CeremonyStates() {
         expectedDigest={stage === "setup" ? "" : digest("a")}
         recoveredDigest={stage === "verify" || stage === "cards" ? digest("a") : ""}
         shareArtifacts={demoShareArtifacts}
+        commitmentsText={stage === "setup" ? "" : split.commitments}
         receiptText={
           stage === "receipt"
             ? '{"cells":[{"index":0,"outputs":[{"digest":"aaaa…","label":"share"}]}],"kind":"basilisk.run-receipt","v":1}'

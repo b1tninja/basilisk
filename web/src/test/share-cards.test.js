@@ -9,9 +9,12 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  checkLine,
   collectShareCards,
+  findCommitments,
   inferThreshold,
   quorumLine,
+  recoveryLine,
   revealWarning,
 } from "../lib/toolkit/share-cards.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
@@ -117,6 +120,53 @@ describe("card copy", () => {
     expect(text).toMatch(/cleartext/);
     expect(text).toMatch(/spool|print server/);
     expect(revealWarning(1)).toContain("1 share");
+  });
+});
+
+describe("verifiable splits on paper", () => {
+  it("prints vss.combine for a verifiable set and sss.combine otherwise", async () => {
+    const { ast } = compileRecipe(
+      `random 32 | vss.split threshold=2 shares=3 | tee
+  - vss.commitments | out @commitments
+| blip39 | foreach
+  - out @share`
+    );
+    const arts = await runRecipe(ast);
+    const [card] = collectShareCards(arts);
+    expect(card.verifiable).toBe(true);
+    expect(card.splitId).toMatch(/^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
+    // The old hard-coded line told a vss custodian to run an op that would
+    // reject their shares. It is derived now, so it cannot drift again.
+    expect(recoveryLine(card)).toContain("vss.combine");
+    expect(recoveryLine(card)).toContain("vss.verify");
+    expect(checkLine(card)).toContain(card.splitId);
+  }, 30_000);
+
+  it("says an sss card cannot be checked, rather than offering a check that fails", () => {
+    const [card] = collectShareCards([
+      { role: "share", shareIndex: 1, content: "a a", traits: { threshold: 2 } },
+    ]);
+    expect(card.verifiable).toBe(false);
+    expect(card.splitId).toBe("");
+    expect(recoveryLine(card)).toContain("sss.combine");
+    expect(checkLine(card)).toMatch(/cannot be checked/);
+  });
+
+  it("stamps no split id when the commitments document is unreadable", () => {
+    // An id derived from a document that could not be parsed would be a label
+    // with nothing behind it — and the label's only job is to be compared.
+    const cards = collectShareCards(
+      [{ role: "share", shareIndex: 1, content: "a a" }],
+      { commitments: '{"commitments":["not-a-point"]}' }
+    );
+    expect(cards[0].verifiable).toBe(false);
+  });
+
+  it("finds the commitments tile by shape, not only by slot name", () => {
+    expect(findCommitments([{ content: "hello" }])).toBeNull();
+    expect(
+      findCommitments([{ label: "renamed", content: '{"v":1,"commitments":["02aa"]}' }])
+    ).toEqual(["02aa"]);
   });
 });
 

@@ -611,6 +611,12 @@ body.layout-app:has(#app > .toolkit-shell) {
  * All of it is class- and data-attribute-driven — no inline styles, since the
  * production CSP would strip exactly the rules this view cannot do without.
  */
+.ceremony-commitments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .share-cards {
   display: flex;
   flex-direction: column;
@@ -772,10 +778,33 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 .share-card-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   border-top: 1px solid var(--border);
   padding-top: 7px;
   font-size: 10.5px;
   color: var(--muted-foreground);
+}
+
+.share-card-check {
+  font-weight: 700;
+}
+
+/*
+ * A card either names the split it belongs to or says it belongs to one that
+ * cannot be checked. Both are printed: the absence of a split id has to be
+ * legible on paper, because paper is the only thing that outlives the room.
+ */
+.share-card-split {
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  color: var(--muted-foreground);
+}
+
+.share-card-split[data-verifiable="no"] {
+  font-weight: 700;
+  color: var(--warn);
 }
 
 /*
@@ -980,3 +1009,538 @@ input[type="file"][data-basilisk-file-picker] {
 .jwt-fill[data-jwt-fill="10"] { width: 83.33%; }
 .jwt-fill[data-jwt-fill="11"] { width: 91.67%; }
 .jwt-fill[data-jwt-fill="12"] { width: 100%; }
+
+/*
+ * Custodian share check (ShareCheck).
+ *
+ * Four tones, one closed set, enumerated rather than computed: `ok` (the share
+ * verified), `error` (it did not, or an input is unreadable), `warn` (the
+ * share is well-formed and *nothing has been checked* — the state a careless
+ * design would paint green), `pending` (waiting for input). The warn
+ * appearance is a rule, not a colour the caller picks: `share-only` must never
+ * be reachable in the verified appearance, which is why no rule here derives
+ * one tone from another.
+ */
+.share-check {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.share-check-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 9px;
+  padding: 10px 12px;
+  max-width: 68ch;
+}
+
+.share-check-headline {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.share-check-detail {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+
+.share-check-verdict[data-tone="ok"] {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--border));
+  border-left-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 8%, transparent);
+}
+.share-check-verdict[data-tone="ok"] .share-check-headline {
+  color: var(--brand);
+}
+
+.share-check-verdict[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+.share-check-verdict[data-tone="warn"] .share-check-headline {
+  color: var(--warn);
+}
+
+.share-check-verdict[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--error) 45%, var(--border));
+  border-left-color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+}
+.share-check-verdict[data-tone="error"] .share-check-headline {
+  color: var(--error);
+}
+
+.share-check-verdict[data-tone="pending"] {
+  border-left-color: var(--muted-foreground);
+}
+
+.share-check-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 12px;
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.share-check-facts dt {
+  font-weight: 700;
+  color: var(--muted-foreground);
+}
+
+.share-check-facts dd {
+  margin: 0;
+  color: var(--foreground);
+}
+
+.share-check-facts code {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+
+.share-check-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.share-check-field small {
+  display: block;
+  margin-top: 2px;
+  max-width: 62ch;
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
+.share-check-input {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.share-check-scan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.share-check-note {
+  max-width: 62ch;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.share-check-note[data-tone="warn"] {
+  color: var(--warn);
+}
+
+.share-check-note[data-tone="error"] {
+  color: var(--error);
+}
+
+.share-check-recipe summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.share-check-recipe p {
+  margin-top: 6px;
+  max-width: 66ch;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.share-check-recipe pre {
+  margin-top: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/*
+ * Verify-this-deployment (IntegrityPanel).
+ *
+ * Same four-tone closed set as the share check, and the same rule: the states
+ * that mean "no answer" (`unpinned`, `no-sri`) are `warn`, never `ok`, and the
+ * enumeration here is what makes that unreachable by accident rather than a
+ * thing a caller remembers to do.
+ */
+.integrity-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.integrity-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 9px;
+  padding: 10px 12px;
+  max-width: 70ch;
+}
+
+.integrity-headline {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.integrity-detail {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+
+.integrity-verdict[data-tone="ok"] {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--border));
+  border-left-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 8%, transparent);
+}
+.integrity-verdict[data-tone="ok"] .integrity-headline {
+  color: var(--brand);
+}
+
+.integrity-verdict[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+.integrity-verdict[data-tone="warn"] .integrity-headline {
+  color: var(--warn);
+}
+
+.integrity-verdict[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--error) 45%, var(--border));
+  border-left-color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+}
+.integrity-verdict[data-tone="error"] .integrity-headline {
+  color: var(--error);
+}
+
+.integrity-verdict[data-tone="pending"] {
+  border-left-color: var(--muted-foreground);
+}
+
+/*
+ * Not a disclosure and not muted into invisibility: the limitation is most
+ * load-bearing under the verdict people are least likely to keep reading.
+ */
+.integrity-limit {
+  max-width: 70ch;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+
+.integrity-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.integrity-facts dt {
+  font-weight: 700;
+  color: var(--muted-foreground);
+}
+
+.integrity-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.integrity-root {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.integrity-leaves {
+  color: var(--muted-foreground);
+}
+
+.integrity-pins {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.integrity-policy summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.integrity-policy p {
+  margin-top: 6px;
+  max-width: 66ch;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.integrity-policy pre {
+  margin-top: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  padding: 8px 10px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.integrity-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/*
+ * Distributed key generation (DkgPanel) — design-ahead of the op layer.
+ *
+ * Three independent axes per row, enumerated separately because they are
+ * separate facts: `[data-peer-state]` (reused from ConnectionsPanel — one dot
+ * vocabulary for connectivity across the app), `[data-auth]`, and
+ * `[data-round]`. Nothing here derives one from another; a verified,
+ * connected participant whose share does not check out must be able to render.
+ */
+.dkg-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dkg-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dkg-phase {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dkg-count,
+.dkg-mesh {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+
+.dkg-mesh[data-mesh-health="over-cap"] {
+  font-weight: 700;
+  color: var(--warn);
+}
+
+.dkg-blurb {
+  max-width: 68ch;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+
+.dkg-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.dkg-progress li[data-complete="yes"] {
+  font-weight: 700;
+  color: var(--brand);
+}
+
+.dkg-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dkg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.dkg-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.dkg-auth,
+.dkg-round {
+  flex-shrink: 0;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.dkg-auth[data-auth="yes"] {
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+  color: var(--brand);
+}
+
+.dkg-auth[data-auth="no"] {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+}
+
+.dkg-round[data-round="waiting"] {
+  color: var(--muted-foreground);
+}
+
+.dkg-round[data-round="commitments"],
+.dkg-round[data-round="share"] {
+  color: var(--caret, var(--foreground));
+}
+
+.dkg-round[data-round="verified"] {
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+  color: var(--brand);
+}
+
+.dkg-round[data-round="bad"] {
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+  color: var(--error);
+}
+
+.dkg-refusal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 70ch;
+  border: 1px solid color-mix(in srgb, var(--error) 45%, var(--border));
+  border-left-width: 3px;
+  border-left-color: var(--error);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  padding: 10px 12px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+
+.dkg-refusal-headline {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--error);
+}
+
+/*
+ * The one paragraph in the refusal that argues *against* the reader's first
+ * instinct. Set apart so it cannot be skimmed as more of the same.
+ */
+.dkg-refusal-caution {
+  border-top: 1px solid color-mix(in srgb, var(--error) 30%, transparent);
+  padding-top: 6px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.dkg-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--brand) 45%, var(--border));
+  border-left-width: 3px;
+  border-left-color: var(--brand);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--brand) 8%, transparent);
+  padding: 10px 12px;
+}
+
+.dkg-result-headline {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--brand);
+}
+
+.dkg-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 12px;
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.dkg-facts dt {
+  font-weight: 700;
+  color: var(--muted-foreground);
+}
+
+.dkg-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.dkg-key {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.dkg-note,
+.dkg-experimental {
+  max-width: 70ch;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+
+.dkg-experimental {
+  border-left: 2px solid var(--warn);
+  padding-left: 10px;
+}
+
+.dkg-actions {
+  display: flex;
+  gap: 8px;
+}

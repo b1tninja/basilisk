@@ -43,6 +43,9 @@ export {
 } from "./ConnectionsPanel";
 export { TypeCard } from "./TypeCard";
 export { ShareCards, type ShareCardArtifact, type ShareCardsProps } from "./ShareCards";
+export { ShareCheck, type ShareCheckProps } from "./ShareCheck";
+export { IntegrityPanel, type IntegrityPanelProps } from "./IntegrityPanel";
+export { DkgPanel, type DkgPanelProps } from "./DkgPanel";
 export {
   CeremonySheet,
   type CeremonySheetProps,
