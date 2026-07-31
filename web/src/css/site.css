@@ -1144,6 +1144,32 @@ code {
   color: var(--badge-default-fg);
 }
 .badge.approved { background: var(--badge-approved-bg); color: var(--badge-approved-fg); }
+
+/*
+ * Vault kind badges (§28b, design_handoff_agent_ssh) — closed vocabulary as
+ * a data attribute. pgp borrows the OpenPGP purple its toolbox owns, ssh the
+ * ssh toolbox accent, raw stays muted: a raw key has no format story to tell.
+ */
+.key-kind-badge {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  vertical-align: middle;
+  border: 1px solid currentColor;
+}
+.key-kind-badge[data-key-kind="pgp"] {
+  color: #d2a8ff;
+}
+.key-kind-badge[data-key-kind="ssh"] {
+  color: #39c5cf;
+}
+.key-kind-badge[data-key-kind="raw"] {
+  color: var(--muted-foreground, #8b949e);
+}
 .badge.pending  { background: var(--badge-pending-bg);  color: var(--badge-pending-fg); }
 .badge.revoked  { background: #fff0f0; color: var(--error); }
 .badge.discouraged {

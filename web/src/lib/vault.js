@@ -13,6 +13,7 @@
 
 import { readPrivateKey } from "openpgp";
 import { parseAttestationObject } from "./webauthn/attestation.js";
+import { normalizeVaultFingerprint } from "./vault-session.js";
 import { lookupAaguidInMds } from "./webauthn/mds.js";
 
 const DB_NAME = "basilisk-vault";
@@ -43,6 +44,9 @@ const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
  * @property {string} [aaguid]
  * @property {string} [publicArmored]  Armored public key (no secrets)
  * @property {string|null} [lastUsedAt]  ISO timestamp of last successful unlock
+ * @property {"pgp"|"ssh"|"raw"} [kind]  Absent means pgp (legacy records predate kinds, §28a)
+ * @property {string} [publicLine]  ssh kind: the one-line OpenSSH public form (no secrets)
+ * @property {string} [alg]  Non-pgp kinds: genkey-style algorithm tag (`ed25519`, `x25519`, …) so unlock can re-import
  */
 
 /**
@@ -470,6 +474,10 @@ export async function listKeys() {
       aaguid: r.aaguid || "",
       publicArmored: r.publicArmored || "",
       lastUsedAt: r.lastUsedAt || null,
+      // Multi-kind metadata (§28a); absent on legacy records means pgp.
+      ...(r.kind ? { kind: r.kind } : {}),
+      ...(r.publicLine ? { publicLine: r.publicLine } : {}),
+      ...(r.alg ? { alg: r.alg } : {}),
     };
   });
 }
@@ -495,9 +503,7 @@ export function sortKeysByLastUsed(keys) {
  * @param {string} fingerprint
  */
 export async function touchKeyUsed(fingerprint) {
-  const fpr = String(fingerprint || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
+  const fpr = normalizeVaultFingerprint(fingerprint);
   if (!fpr) return;
   const record = await withStore(STORE_KEYS, "readonly", (s) => s.get(fpr));
   if (!record) return;
@@ -512,9 +518,7 @@ export async function touchKeyUsed(fingerprint) {
  * @param {{ publicArmored?: string, keyIds?: string[] }} patch
  */
 export async function patchKeyMeta(fingerprint, patch) {
-  const fpr = String(fingerprint || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
+  const fpr = normalizeVaultFingerprint(fingerprint);
   const record = await withStore(STORE_KEYS, "readonly", (s) => s.get(fpr));
   if (!record) return;
   /** @type {VaultKeyRecord} */
@@ -539,17 +543,29 @@ export async function patchKeyMeta(fingerprint, patch) {
  * @param {import("./webauthn/mds.js").MdsLookupResult} [opts.mds]  Soft MDS result from PRF create
  * @param {string[]} [opts.keyIds]  Optional; extracted from armoredPrivate when omitted
  * @param {string} [opts.publicArmored]  Optional armored public; derived from private when omitted
+ * @param {"pgp"|"ssh"|"raw"} [opts.kind]  Defaults pgp; non-pgp payloads are opaque text (§28a)
+ * @param {string} [opts.publicLine]  ssh kind: OpenSSH public line
+ * @param {string} [opts.alg]  Non-pgp kinds: algorithm tag for re-import on unlock
  * @returns {Promise<VaultKeyMeta>}
  */
 export async function saveKey(opts) {
-  const fpr = String(opts.fingerprint || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
-  if (fpr.length < 40) throw new Error("Invalid fingerprint");
+  const kind = opts.kind || "pgp";
+  // The id is kind-shaped (§28a): hex OpenPGP fingerprint, or `SHA256:` /
+  // `spki:SHA256:` base64 where hex normalization would destroy it.
+  const fpr =
+    kind === "pgp"
+      ? String(opts.fingerprint || "")
+          .toUpperCase()
+          .replace(/[^0-9A-F]/g, "")
+      : String(opts.fingerprint || "").trim();
+  if (kind === "pgp" && fpr.length < 40) throw new Error("Invalid fingerprint");
+  if (kind !== "pgp" && !/^(spki:)?SHA256:[A-Za-z0-9+/]{43}$/.test(fpr)) {
+    throw new Error(`Invalid ${kind} key id — expected SHA256:… fingerprint, got "${fpr}"`);
+  }
 
   /** @type {string[]} */
   let keyIds = Array.isArray(opts.keyIds) ? [...opts.keyIds] : [];
-  if (!keyIds.length && opts.armoredPrivate) {
+  if (kind === "pgp" && !keyIds.length && opts.armoredPrivate) {
     try {
       keyIds = await collectKeyIds(opts.armoredPrivate);
     } catch (_) {
@@ -558,7 +574,7 @@ export async function saveKey(opts) {
   }
 
   let publicArmored = String(opts.publicArmored || "").trim();
-  if (!publicArmored && opts.armoredPrivate) {
+  if (kind === "pgp" && !publicArmored && opts.armoredPrivate) {
     try {
       publicArmored = await derivePublicArmored(opts.armoredPrivate);
     } catch (_) {
@@ -591,6 +607,14 @@ export async function saveKey(opts) {
     wrapped: ciphertext,
     iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength),
   };
+
+  // The wrap layer above never cared what it wrapped (§28a) — kind is
+  // metadata for listing, id shaping and unlock re-import, not for crypto.
+  if (kind !== "pgp") {
+    record.kind = kind;
+    if (opts.publicLine) record.publicLine = String(opts.publicLine);
+    if (opts.alg) record.alg = String(opts.alg);
+  }
 
   if (opts.mds?.status) {
     record.mdsStatus = opts.mds.status;
@@ -644,9 +668,7 @@ export async function saveKey(opts) {
  * @returns {Promise<string>} armored private key (may still be OpenPGP passphrase-locked)
  */
 export async function unlockKey(fingerprint, opts = {}) {
-  const fpr = String(fingerprint || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
+  const fpr = normalizeVaultFingerprint(fingerprint);
   const record = await withStore(STORE_KEYS, "readonly", (s) => s.get(fpr));
   if (!record) throw new Error("Key not found in vault");
 
@@ -722,9 +744,7 @@ async function derivePublicArmored(armoredPrivate) {
  * @param {string} fingerprint
  */
 export async function deleteKey(fingerprint) {
-  const fpr = String(fingerprint || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
+  const fpr = normalizeVaultFingerprint(fingerprint);
   const record = await withStore(STORE_KEYS, "readonly", (s) => s.get(fpr));
   if (record) {
     for (const buf of [

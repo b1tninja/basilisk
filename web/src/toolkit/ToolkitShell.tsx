@@ -1933,15 +1933,36 @@ export function ToolkitShell() {
                             key={k.fingerprint}
                             className="rounded-[9px] border border-[var(--border)] bg-[var(--surface-raised)] p-3"
                           >
-                            <div className="font-semibold">{k.uid || k.email || "Key"}</div>
-                            <a
-                              className="font-mono text-xs text-[var(--brand)]"
-                              href={`/key?fpr=${k.fingerprint}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              {nb.formatFingerprint(k.fingerprint)}
-                            </a>
+                            <div className="font-semibold">
+                              {(k as { kind?: string }).kind &&
+                              (k as { kind?: string }).kind !== "pgp" ? (
+                                <span
+                                  className="key-kind-badge"
+                                  data-key-kind={(k as { kind?: string }).kind}
+                                >
+                                  {String((k as { kind?: string }).kind).toUpperCase()}
+                                </span>
+                              ) : null}
+                              {k.uid || k.email || "Key"}
+                            </div>
+                            {/* SHA256: ids pass formatFingerprint verbatim (§28a);
+                                the /key page is PGP-shaped, so non-pgp ids render
+                                as plain text rather than a dead link. */}
+                            {(k as { kind?: string }).kind &&
+                            (k as { kind?: string }).kind !== "pgp" ? (
+                              <span className="break-all font-mono text-xs text-[var(--muted-foreground)]">
+                                {k.fingerprint}
+                              </span>
+                            ) : (
+                              <a
+                                className="font-mono text-xs text-[var(--brand)]"
+                                href={`/key?fpr=${k.fingerprint}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {nb.formatFingerprint(k.fingerprint)}
+                              </a>
+                            )}
                             <div className="mt-1 text-xs text-[var(--muted-foreground)]">
                               {k.protection || "device"}
                               {session ? (

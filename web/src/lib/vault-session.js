@@ -16,13 +16,22 @@ export const VAULT_SESSION_TTL_MS = 5 * 60 * 1000;
 const cache = new Map();
 
 /**
+ * Kind-shaped id pattern (§28a): ssh ids are `SHA256:` + 43 chars of
+ * unpadded base64 over the RFC 4253 public blob; raw ids the same over the
+ * SPKI DER, prefixed `spki:`. Case and `+/` are significant in base64, so
+ * these must pass through untouched — the hex normalization below would
+ * destroy them (`SHA256:Ur1h…` → `A256`, which then matches nothing).
+ */
+const KIND_SHAPED_ID = /^(spki:)?SHA256:[A-Za-z0-9+/]{43}$/;
+
+/**
  * @param {string} fingerprint
  * @returns {string}
  */
 export function normalizeVaultFingerprint(fingerprint) {
-  return String(fingerprint || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
+  const raw = String(fingerprint || "").trim();
+  if (KIND_SHAPED_ID.test(raw)) return raw;
+  return raw.toUpperCase().replace(/[^0-9A-F]/g, "");
 }
 
 /**

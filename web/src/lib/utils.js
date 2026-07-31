@@ -53,9 +53,14 @@ export async function fetchText(url) {
 }
 
 export function formatFingerprint(fpr) {
-  const clean = String(fpr || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
+  const raw = String(fpr || "").trim();
+  // Kind-shaped ids (§28a): ssh/raw ids are `SHA256:` base64, displayed
+  // verbatim and never grouped — grouping is a hex-legibility affordance,
+  // and applying the hex cleanup here would render every ssh id as "A256".
+  // Verbatim also matches ssh-keygen -lf, so a row can be compared against
+  // a server log line character for character.
+  if (/^(spki:)?SHA256:/.test(raw)) return raw;
+  const clean = raw.toUpperCase().replace(/[^0-9A-F]/g, "");
   return clean.replace(/(.{4})(?=.)/g, "$1 ");
 }
 

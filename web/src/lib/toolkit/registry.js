@@ -2106,7 +2106,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "agent",
     shelf: "vault",
-    doc: "Unlock a My Keys private key by fingerprint into the pipeline (sensitive). Prefer `agent.unlock AABB… | out @me` then `gpg.sign key=@me`. Main-thread (passkey).",
+    doc: "Unlock a My Keys private key by id into the pipeline (sensitive). pgp keys emit openpgp-key; ssh/raw keys emit a live keypair. Prefer `agent.unlock AABB… | out @me` then `gpg.sign key=@me`. Main-thread (passkey).",
     input: "none",
     output: "openpgp-key",
     params: [
@@ -2115,7 +2115,7 @@ export const STEPS = [
         type: "string",
         positional: true,
         default: "",
-        doc: "Vault fingerprint (hex; spaces/0x ignored)",
+        doc: "Vault id — hex OpenPGP fingerprint, or SHA256:… for ssh/raw kinds",
       },
     ],
   },
@@ -2152,9 +2152,13 @@ export const STEPS = [
     kind: "transform",
     toolbox: "agent",
     shelf: "vault",
-    doc: "Save pipeline armored private into My Keys. `protection=device|passphrase|passkey`. Passphrase via Inputs when `protection=passphrase`. Example: `gpg.genkey email=\"you@example.com\" | agent.save protection=device | out @priv`.",
+    doc: "Save the pipeline's private key into My Keys. OpenPGP armor saves as kind pgp; a WebCrypto keypair saves as kind ssh (ed25519/ec/rsa — id is the SSH SHA256 fingerprint) or raw (x25519). `protection=device|passphrase|passkey`; passphrase applies to pgp only (non-PGP payloads have no S2K yet). Example: `genkey ed25519 | agent.save | out @id`.",
     input: "openpgp-key",
     output: "openpgp-key",
+    overloads: [
+      { when: { base: "openpgp-key" }, output: { base: "openpgp-key" } },
+      { when: { base: "keypair" }, output: { base: "keypair" } },
+    ],
     params: [
       {
         name: "protection",

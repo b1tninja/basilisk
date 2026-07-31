@@ -21,6 +21,7 @@ import {
  * @property {string} openPgpPassphrase  OpenPGP S2K passphrase (may be empty)
  * @property {string} fingerprint
  * @property {import("./vault.js").VaultProtection} protection
+ * @property {"pgp"|"ssh"|"raw"} kind  What `armored` holds: PGP armor, openssh-key-v1 text, or a JWK (§28d)
  */
 
 /**
@@ -37,7 +38,11 @@ import {
  */
 export async function unlockVaultForUse(fingerprint, opts = {}) {
   const fpr = normalizeVaultFingerprint(fingerprint);
-  if (fpr.length < 40) throw new Error("Invalid vault fingerprint");
+  // Kind-shaped ids (SHA256:…) pass normalize verbatim; only the hex form
+  // has a minimum length to enforce (§28a).
+  if (!fpr.startsWith("SHA256:") && !fpr.startsWith("spki:") && fpr.length < 40) {
+    throw new Error("Invalid vault fingerprint");
+  }
 
   const openPgpPassphrase = String(opts.openPgpPassphrase || "");
   /** @type {import("./vault.js").VaultKeyMeta|undefined} */
@@ -72,6 +77,7 @@ export async function unlockVaultForUse(fingerprint, opts = {}) {
         openPgpPassphrase,
         fingerprint: fpr,
         protection: meta?.protection || "session",
+        kind: meta?.kind || "pgp",
       };
     }
   }
@@ -101,6 +107,7 @@ export async function unlockVaultForUse(fingerprint, opts = {}) {
       openPgpPassphrase,
       fingerprint: fpr,
       protection: meta.protection,
+      kind: meta.kind || "pgp",
     };
   } finally {
     if (ownedPrf) {

@@ -328,14 +328,23 @@ function renderVaultSection(vaultKeys) {
   }
   const rows = vaultKeys
     .map((k) => {
+      // One mixed list, kinds legible side by side (§28b) — the badge and
+      // the id shape carry the kind; no per-kind tabs.
+      const kind = k.kind || "pgp";
       const fpr = formatFingerprint(k.fingerprint);
+      const copyLine =
+        kind === "ssh" && k.publicLine
+          ? `<button type="button" class="btn btn-ghost btn-compact" title="Copy OpenSSH public line (authorized_keys / GitHub)" data-vault-copy-line="${escapeHtml(k.fingerprint)}">⧉ public line</button>`
+          : "";
       return `
         <tr>
-          <td><code class="fpr">${escapeHtml(fpr)}</code></td>
+          <td><span class="key-kind-badge" data-key-kind="${kind}">${kind.toUpperCase()}</span>
+              <code class="fpr">${escapeHtml(fpr)}</code></td>
           <td>${escapeHtml(k.uid || k.email || "")}</td>
           <td>${protectionBadge(k.protection, k)}</td>
           <td class="muted">${formatExpiryCountdown(k.expires)}</td>
           <td class="btn-row">
+            ${copyLine}
             <button type="button" class="btn btn-ghost btn-compact" data-vault-export-toggle="${escapeHtml(k.fingerprint)}">Export</button>
             <button type="button" class="btn btn-ghost btn-compact text-error" data-vault-delete="${escapeHtml(k.fingerprint)}">Delete</button>
           </td>
@@ -767,6 +776,27 @@ function wireVaultActions() {
       } catch (err) {
         showError(error, err?.message || "Vault delete failed");
         delBtn.disabled = false;
+      }
+      return;
+    }
+
+    const copyLineBtn = e.target.closest?.("[data-vault-copy-line]");
+    if (copyLineBtn) {
+      // §28b: the public line lives on the row, not behind Export — it is
+      // public material and the single most common SSH key operation.
+      const fpr = copyLineBtn.getAttribute("data-vault-copy-line");
+      const meta = (await vaultListKeys()).find((k) => k.fingerprint === fpr);
+      const line = String(meta?.publicLine || "");
+      if (!line) return;
+      try {
+        await navigator.clipboard.writeText(line);
+        const prev = copyLineBtn.textContent;
+        copyLineBtn.textContent = "copied";
+        setTimeout(() => {
+          copyLineBtn.textContent = prev;
+        }, 1200);
+      } catch (err) {
+        showError(error, err?.message || "Clipboard write failed");
       }
       return;
     }
