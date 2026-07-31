@@ -1431,6 +1431,18 @@ run.receipt "verb smoke ceremony" | out @receipt`,
     // ── Clipboard as a signaling channel (§32d) — both need the browser's
     // clipboard plus (for read) the UI's permission gate, so compile-only.
     {
+      id: "qr.scan.compile",
+      recipe: "file.read | qr.scan | out @invite",
+      mode: "compile",
+      skipReason: "needs BarcodeDetector + a file picker (main-thread browser only)",
+    },
+    {
+      id: "qr.scan.all.compile",
+      recipe: "file.read | qr.scan count=all | foreach\n  - out @code",
+      mode: "compile",
+      skipReason: "needs BarcodeDetector + a file picker (main-thread browser only)",
+    },
+    {
       id: "clipboard.read.compile",
       recipe: "clipboard.read | out @pasted",
       mode: "compile",

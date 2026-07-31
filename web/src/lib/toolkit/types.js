@@ -446,7 +446,38 @@ function gpgSymModeTypeError(params, op) {
  * @param {Record<string, *>} params
  * @returns {{ ok: true, output: RefinedType } | { ok: false, error: string } | null}
  */
+/**
+ * `qr.scan`'s output shape, which its `count` param decides — mirroring
+ * `rtc.recv` (§30c). Must agree with the step's `effectiveIo`: the caret
+ * consults one and the type walker the other, and disagreement is how an op
+ * gets offered after a read that really produced a collection.
+ * @param {Record<string, *>} params
+ * @returns {RefinedType}
+ */
+function qrScanOutput(params) {
+  const count = String(params?.count ?? "1").trim().toLowerCase();
+  return count === "1" ? typeOf("text", { kind: "opaque" }) : typeOf("bundle");
+}
+
 export function inferParamDrivenType(name, current, params = {}) {
+  if (name === "qr.scan") {
+    // Accepts an image from any of its realistic sources: raw bytes off
+    // `file.read`, or SVG markup (`text`) — including the markup `qr` itself
+    // just produced, which is the first thing anyone tries. Resolved here
+    // rather than in the coarse fallback so the `count`-driven bundle shape
+    // applies whatever the input was.
+    if (
+      current.base !== "bytes" &&
+      current.base !== "text" &&
+      current.base !== "artifact"
+    ) {
+      return {
+        ok: false,
+        error: `"qr.scan" expects an image (bytes) or SVG text, got ${formatType(current)}`,
+      };
+    }
+    return { ok: true, output: qrScanOutput(params) };
+  }
   if (name === "export") {
     if (current.base !== "keypair" && current.base !== "key") {
       return {

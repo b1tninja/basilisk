@@ -2661,6 +2661,12 @@ async function execStepBody(step, value, bindings, artifacts) {
           return jose.execJoseDecrypt(value, p, bindings);
       }
     }
+    case "qr.scan": {
+      // Lazy + main-thread: BarcodeDetector and canvas rasterization are not
+      // available in the worker.
+      const { execQrScan } = await import("./qr-scan.js");
+      return execQrScan(value, step.params || {});
+    }
     case "clipboard.read":
     case "clipboard.write": {
       // Lazy + main-thread only — navigator.clipboard does not exist in workers.

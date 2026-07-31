@@ -2158,6 +2158,34 @@ export const STEPS = [
     ],
   },
   {
+    name: "qr.scan",
+    kind: "transform",
+    toolbox: "io",
+    shelf: "ports",
+    glyph: "qr",
+    doc: "Read a QR code out of an image — the conjugate of `qr`. Takes image bytes (`file.read`) or SVG markup and emits the encoded text; `count=all` joins every code found, for a photo of several share cards. Needs a browser with `BarcodeDetector` (Chromium today). Example: `file.read | qr.scan | quorum.join`.",
+    input: "bytes",
+    output: "text",
+    params: [
+      {
+        name: "count",
+        type: "enum",
+        values: ["1", "all"],
+        default: "1",
+        doc: "Take the first code, or every code in the image",
+      },
+    ],
+    effectiveIo(params) {
+      // Same count-driven shape `rtc.recv` established: one code stays `text`
+      // so the ordinary single-invite scan is unchanged, several become a
+      // `bundle` so `foreach` can walk them. Claiming `text` for a photo of a
+      // sheet of share cards would let a cipher op be appended to what is
+      // really a collection.
+      const count = String(params?.count ?? "1").trim().toLowerCase();
+      return { input: "bytes", output: count === "1" ? "text" : "bundle" };
+    },
+  },
+  {
     name: "clipboard.read",
     kind: "source",
     toolbox: "io",

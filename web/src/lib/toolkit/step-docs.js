@@ -165,6 +165,10 @@ const STEP_DOCS = {
     label: "MDN · RTCDataChannel message event",
   },
   "quorum.close": { url: `${MDN}/RTCDataChannel/close`, label: "MDN · RTCDataChannel.close()" },
+  "qr.scan": {
+    url: `${MDN}/BarcodeDetector`,
+    label: "MDN · BarcodeDetector",
+  },
   "clipboard.read": {
     url: `${MDN}/Clipboard/readText`,
     label: "MDN · Clipboard.readText()",
