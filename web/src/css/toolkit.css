@@ -75,6 +75,26 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * CAST indicator (`CastDot`) — power-on self-test status per crypto suite.
+ *
+ * Three states, and the colours are the conventional ones on purpose: this is
+ * a safety light, not decoration. `error` must read as "stop" at a glance,
+ * which is why it also gets a ring — colour alone fails for the ~8% of men
+ * with red-green deficiency, and this is the one indicator where being missed
+ * matters.
+ */
+.cast-dot[data-cast="verified"] {
+  background: var(--success);
+}
+.cast-dot[data-cast="unverified"] {
+  background: var(--warn);
+}
+.cast-dot[data-cast="error"] {
+  background: var(--error);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--error) 35%, transparent);
+}
+
+/*
  * Scrollable regions (`components/ui/scroll-area`).
  *
  * Plain overflow with a styled scrollbar. This replaced a Radix ScrollArea

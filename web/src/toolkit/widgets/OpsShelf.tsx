@@ -18,7 +18,7 @@ import { TypeCard } from "./TypeCard";
 import { cn } from "@/lib/cn";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { ToolboxDot } from "./Glyph";
+import { CastDot, Glyph, glyphIdFor } from "./Glyph";
 import { OpsTile } from "./OpsTile";
 import type { ToolCardOp } from "./ToolCard";
 
@@ -51,6 +51,8 @@ type Props = {
   hideSearch?: boolean;
   /** Caret banner — where the next append/insert lands, named so it agrees with the pipeline gap. */
   caretBanner?: ReactNode;
+  /** Suite self-test map (CAST). Drives the per-op status light. */
+  castStatus?: Record<string, string> | null;
   /** Append a literal step built from the Types tab's constructor. */
   onInsertLiteral?: (step: { name: string; params: Record<string, unknown> }) => void;
 };
@@ -102,6 +104,7 @@ function OpsRow({
   hint,
   dim,
   action,
+  castStatus,
   className,
 }: {
   op: { toolbox?: string };
@@ -109,6 +112,8 @@ function OpsRow({
   hint?: ReactNode;
   dim?: boolean;
   action: ReactNode;
+  /** Suite self-test map; absent while the POST is still running. */
+  castStatus?: Record<string, string> | null;
   className?: string;
 }) {
   return (
@@ -119,10 +124,14 @@ function OpsRow({
         className
       )}
     >
-      <ToolboxDot op={op} />
+      {/* Identity is the glyph; the dot beside it is CAST status. They were
+          conflated into one multi-coloured dot, which meant the toolkit had
+          no visible self-test signal at all. */}
+      <Glyph id={glyphIdFor(op)} size={16} className="shrink-0 opacity-80" />
       <code className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]">
         {name}
       </code>
+      <CastDot op={op} status={castStatus} />
       {hint ? (
         <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
           {hint}
@@ -133,16 +142,26 @@ function OpsRow({
   );
 }
 
-/** Small "add" pill — the row-scale equivalent of the arrow handles, for ops with no direction. */
+/**
+ * The action for an op with no direction.
+ *
+ * Deliberately the same 22×20 square as the direction handles on a pair row.
+ * It used to be a wider pill reading "add", so a list mixing solo and
+ * conjugate ops presented two different-looking controls for the same
+ * gesture — insert this op — and the word implied the arrows did something
+ * else. One shape, one meaning; the glyph says which direction when there is
+ * a choice to make.
+ */
 function AddButton({ onClick, title }: { onClick: () => void; title?: string }) {
   return (
     <button
       type="button"
-      title={title}
+      title={title || "Add to the recipe"}
+      aria-label={title || "Add to the recipe"}
       onClick={onClick}
-      className="h-5 shrink-0 rounded-[4px] border border-[var(--border)] bg-[var(--surface-raised)] px-[7px] text-[10px] font-bold text-[var(--muted-foreground)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand)]"
+      className="flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border border-[var(--border)] bg-[var(--surface-raised)] text-[12px] font-bold leading-none text-[var(--muted-foreground)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand)]"
     >
-      add
+      +
     </button>
   );
 }
@@ -207,6 +226,7 @@ export function OpsShelf({
   bare = false,
   hideSearch = false,
   caretBanner = null,
+  castStatus = null,
   onInsertLiteral,
 }: Props) {
   /**
@@ -604,7 +624,7 @@ export function OpsShelf({
                               if (row.type === "solo" && row.step) {
                                 const fit = !tipFit || tipFit.has(row.step.name);
                                 return (
-                                  <OpsRow
+                                  <OpsRow castStatus={castStatus}
                                     key={`${row.step.name}-${i}`}
                                     op={row.step}
                                     name={row.step.name}
@@ -629,7 +649,7 @@ export function OpsShelf({
                               const revName = row.reverse?.name || row.forward.name;
                               const fitRev = !tipFit || tipFit.has(revName);
                               return (
-                                <OpsTile
+                                <OpsTile castStatus={castStatus}
                                   key={key}
                                   op={row.forward}
                                   reverseOp={row.reverse}
@@ -775,7 +795,7 @@ function ModeShelfKit({
             if (!step) return null;
             const fit = !tipFit || tipFit.has(m.name);
             return (
-              <OpsTile
+              <OpsTile castStatus={castStatus}
                 key={m.id}
                 op={step}
                 hasReverse
@@ -908,7 +928,7 @@ function FormatKit({
 function MacKit({ onAppend }: { onAppend: Props["onAppend"] }) {
   return (
     <div data-mac-kit>
-      <OpsRow
+      <OpsRow castStatus={castStatus}
         op={{ toolbox: "webcrypto" }}
         name="hmac"
         action={
@@ -918,7 +938,7 @@ function MacKit({ onAppend }: { onAppend: Props["onAppend"] }) {
           />
         }
       />
-      <OpsRow
+      <OpsRow castStatus={castStatus}
         op={{ toolbox: "webcrypto" }}
         name="verify"
         action={

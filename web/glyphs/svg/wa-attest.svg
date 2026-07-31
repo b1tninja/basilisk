@@ -1,1 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>`n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">`n  <path d="M10 3.5l5.5 2.5v4.5c0 3.2-2.3 5.5-5.5 6.5-3.2-1-5.5-3.3-5.5-6.5V6z"/><path d="M7.5 10l2 2 3.5-4"/>`n</svg>`n
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M10 3.5l5.5 2.5v4.5c0 3.2-2.3 5.5-5.5 6.5-3.2-1-5.5-3.3-5.5-6.5V6z"/><path d="M7.5 10l2 2 3.5-4"/>
+</svg>

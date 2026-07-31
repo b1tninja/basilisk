@@ -678,6 +678,27 @@
       "refs": [
         "RFC 7519 - JSON Web Token"
       ]
+    },
+    {
+      "id": "gpg-decrypt",
+      "group": "tool",
+      "label": "OpenPGP decrypt",
+      "metaphor": "Envelope, shackle open",
+      "description": "The conjugate of gpg-encrypt - same envelope, padlock open, so the two directions are distinguishable at a glance."
+    },
+    {
+      "id": "encode",
+      "group": "tool",
+      "label": "Encode",
+      "metaphor": "Double chevron right",
+      "description": "Forward direction of a conjugate pair - encode, wrap, sign."
+    },
+    {
+      "id": "decode",
+      "group": "tool",
+      "label": "Decode",
+      "metaphor": "Double chevron left",
+      "description": "Reverse direction of a conjugate pair - decode, unwrap, verify. Mirrors encode exactly so direction reads without labels."
     }
   ]
 }

@@ -140,6 +140,9 @@ cd web && npm run glyphs
 | `wa-attest` | WebAuthn attest | Shield with check | webauthn.attest — attestation shield. |
 | `wa-mds` | WebAuthn MDS | Directory document | webauthn.mds — MDS document with lens. |
 | `jose-decode` | Decode token | Segments under a lens | Reading a token without verifying it - the three segments with an inspection lens, deliberately not the signature spark (jose.decode). <br><small>RFC 7519 - JSON Web Token</small> |
+| `gpg-decrypt` | OpenPGP decrypt | Envelope, shackle open | The conjugate of gpg-encrypt - same envelope, padlock open, so the two directions are distinguishable at a glance. |
+| `encode` | Encode | Double chevron right | Forward direction of a conjugate pair - encode, wrap, sign. |
+| `decode` | Decode | Double chevron left | Reverse direction of a conjugate pair - decode, unwrap, verify. Mirrors encode exactly so direction reads without labels. |
 
 ## Asset format
 

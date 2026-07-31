@@ -957,6 +957,7 @@ export function ToolkitShell() {
                 ops={shelfOps}
                 filter={nb.opsFilter}
                 onFilter={nb.setOpsFilter}
+                castStatus={suiteStatus}
                 tipFit={tipModel.tipFit}
                 tip={{
                   base: tipModel.tip.base,

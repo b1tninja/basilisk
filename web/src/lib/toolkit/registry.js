@@ -3306,7 +3306,7 @@ export const STEP_GLYPHS = {
   inspect: "inspect",
   peek: "peek",
   "gpg.encrypt": "gpg-encrypt",
-  "gpg.decrypt": "gpg-encrypt",
+  "gpg.decrypt": "gpg-decrypt",
   "gpg.sign": "gpg-sign",
   "gpg.verify": "gpg-sign",
   "gpg.genkey": "gpg-genkey",

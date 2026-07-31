@@ -1,1 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>`n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">`n  <path d="M4 5h12v11H4z"/><path d="M7 8h6M7 11h6M7 14h4"/><path d="M14.5 13.5l1.5 1.5"/>`n</svg>`n
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 5h12v11H4z"/><path d="M7 8h6M7 11h6M7 14h4"/><path d="M14.5 13.5l1.5 1.5"/>
+</svg>

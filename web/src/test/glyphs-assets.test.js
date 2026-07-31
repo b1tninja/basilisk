@@ -37,6 +37,21 @@ describe("glyph assets", () => {
     expect(svgFiles).toEqual(ids);
   });
 
+  it("contains only markup, never a shell escape written literally", () => {
+    // 37 of these files were authored by a script that emitted PowerShell's
+    // `\`n` escape as text instead of a newline, so the sequence ended up
+    // inside the extracted path payload and rendered as a stray text node in
+    // every affected <g>. Invisible, and exactly the kind of thing that
+    // survives review — pin it.
+    const bad = String.fromCharCode(96) + "n";
+    for (const id of Object.keys(GLYPH_PATHS)) {
+      expect(GLYPH_PATHS[id], `${id} contains a literal shell escape`).not.toContain(bad);
+    }
+    for (const f of readdirSync(SVG_DIR).filter((f) => f.endsWith(".svg"))) {
+      expect(readFileSync(join(SVG_DIR, f), "utf8"), f).not.toContain(bad);
+    }
+  });
+
   it("marks glyphs.js as generated", () => {
     const src = readFileSync(
       join(WEB_ROOT, "src", "lib", "toolkit", "glyphs.js"),

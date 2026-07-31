@@ -11,7 +11,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ToolboxDot } from "./Glyph";
+import { CastDot, Glyph, glyphIdFor } from "./Glyph";
 import { ToolCard, type ToolCardOp } from "./ToolCard";
 import { STEP_MIME, stepDragPayload } from "./mime";
 
@@ -36,6 +36,8 @@ type Props = {
   /** Whole-row dim — neither direction fits the caret. */
   dim?: boolean;
   showTooltip?: boolean;
+  /** Suite self-test map (CAST); absent while the POST is still running. */
+  castStatus?: Record<string, string> | null;
   onAppend: (name: string, opts?: { decode?: boolean }) => void;
   className?: string;
 };
@@ -73,6 +75,7 @@ export function OpsTile({
   needs,
   dim = false,
   showTooltip = true,
+  castStatus = null,
   onAppend,
   className,
 }: Props) {
@@ -103,9 +106,11 @@ export function OpsTile({
         className
       )}
     >
-      <ToolboxDot
-        op={op}
-        className={cn("h-[6px] w-[6px]", hasCaptions && "mt-[7px]")}
+      {/* Identity is the glyph; the dot after the name is CAST status. */}
+      <Glyph
+        id={glyphIdFor(op)}
+        size={16}
+        className={cn("shrink-0 opacity-80", hasCaptions && "mt-[3px]")}
       />
       <code
         className={cn(
@@ -115,6 +120,7 @@ export function OpsTile({
       >
         {op.name}
       </code>
+      <CastDot op={op} status={castStatus} className={cn(hasCaptions && "mt-[7px]")} />
       <span className="flex shrink-0 flex-col items-center gap-[2px]">
         <button
           type="button"
@@ -140,7 +146,7 @@ export function OpsTile({
               : undefined
           }
         >
-          {hasForward ? "→" : ""}
+          {hasForward ? <Glyph id="encode" size={16} /> : null}
         </button>
         {needs?.forward ? (
           <span className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]">
@@ -178,7 +184,7 @@ export function OpsTile({
               : undefined
           }
         >
-          {hasReverse ? "←" : ""}
+          {hasReverse ? <Glyph id="decode" size={16} /> : null}
         </button>
         {needs?.reverse ? (
           <span className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]">

@@ -1,1 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>`n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">`n  <circle cx="7" cy="7" r="2.5"/><path d="M3.5 14.5c0-2.2 1.6-4 3.5-4s3.5 1.8 3.5 4"/><path d="M12.5 8.5h5M12.5 11.5h5M12.5 14.5h3"/>`n</svg>`n
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="7" cy="7" r="2.5"/><path d="M3.5 14.5c0-2.2 1.6-4 3.5-4s3.5 1.8 3.5 4"/><path d="M12.5 8.5h5M12.5 11.5h5M12.5 14.5h3"/>
+</svg>

@@ -1,5 +1,6 @@
 import { GLYPH_PATHS } from "../../lib/toolkit/glyphs.js";
 import { TOOLBOX_META, SHELF_META, getShelfMeta } from "../../lib/toolkit/registry.js";
+import { toolboxVerification } from "../../lib/toolkit/suite-gate.js";
 import { cn } from "@/lib/cn";
 
 export type GlyphSize = 16 | 18 | 22;
@@ -43,6 +44,50 @@ export function Glyph({
     >
       <g dangerouslySetInnerHTML={{ __html: inner }} />
     </svg>
+  );
+}
+
+/**
+ * CAST status for one op — whether its crypto suite passed the power-on
+ * self-test this session.
+ *
+ * This is what the little light beside an op is *for*. It drifted into being
+ * a toolbox-identity colour, which is both a weaker signal and a misleading
+ * one: a green dot that means "this is the SSS toolbox" reads exactly like a
+ * green dot that means "SSS self-tested clean". Identity is the glyph's job —
+ * every op already has one — so the dot is returned to reporting verification.
+ *
+ * Only `openpgp`, `webcrypto` and `sss` make a CAST claim (`toolboxToSuite`).
+ * Everything else renders nothing at all rather than a decorative dot,
+ * because an indicator that is always present and never means anything is
+ * how the original signal got lost.
+ */
+export function CastDot({
+  op,
+  status,
+  className,
+}: {
+  op: { toolbox?: string };
+  status?: Record<string, string> | null;
+  className?: string;
+}) {
+  if (!status) return null;
+  const state = toolboxVerification(op?.toolbox, status);
+  if (state === "none") return null;
+  const label =
+    state === "verified"
+      ? "self-test passed"
+      : state === "error"
+        ? "self-test FAILED — do not rely on this op"
+        : "not self-tested yet";
+  return (
+    <span
+      className={cn("cast-dot h-[6px] w-[6px] shrink-0 rounded-full", className)}
+      data-cast={state}
+      title={`${op?.toolbox || "suite"}: ${label}`}
+      role="img"
+      aria-label={label}
+    />
   );
 }
 
