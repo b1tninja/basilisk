@@ -92,14 +92,40 @@ export function OpsTile({
     pairRole: "reverse",
   });
 
-  const hasCaptions = !!(needs?.forward || needs?.reverse);
+  /**
+   * One reason, stated once.
+   *
+   * Both handles used to carry their own 8.5px caption, and for the great
+   * majority of pairs those captions read identically ("needs bytes" twice
+   * under one row), which doubled the row's height and its noise for no extra
+   * information. When the two directions genuinely want different inputs the
+   * captions still split per handle; otherwise the row states it inline,
+   * right-aligned, in exactly the place a solo row states it — so the same
+   * fact sits in the same place whichever kind of row you are looking at.
+   */
+  /**
+   * A handle that doesn't fit is now actually inert.
+   *
+   * It used to render `cursor-not-allowed opacity-40` and stay fully live:
+   * clicking it appended the step anyway, and it stayed in the tab order.
+   * Meanwhile the solo rows in the shelf deleted their control outright for
+   * the same condition. Three behaviours for one state — looks disabled and
+   * works, looks disabled and is gone, looks enabled and works — is worse
+   * than any one of them consistently applied.
+   */
+  const forwardLive = hasForward && !needs?.forward;
+  const reverseLive = hasReverse && !needs?.reverse;
+
+  const sharedNeed =
+    needs?.forward && needs.forward === needs.reverse ? needs.forward : null;
+  const splitNeeds = sharedNeed ? undefined : needs;
+  const hasCaptions = !!(splitNeeds?.forward || splitNeeds?.reverse);
 
   const row = (
     <div
       className={cn(
         "flex gap-2 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]",
         hasCaptions ? "items-start" : "items-center",
-        dim && "opacity-[.32]",
         className
       )}
     >
@@ -108,33 +134,48 @@ export function OpsTile({
       <Glyph
         id={glyphIdFor(op)}
         size={16}
-        className={cn("shrink-0 opacity-80", hasCaptions && "mt-[3px]")}
+        className={cn("shrink-0", dim ? "opacity-45" : "opacity-80", hasCaptions && "mt-[3px]")}
       />
       <code
         className={cn(
-          "min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]",
+          "min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium",
+          // Dimming by opacity took this to 1.97:1 and the caption under it to
+          // 1.59:1 in the production build. A colour step is a larger
+          // perceptual drop and still legible; see OPS_DIM_TEXT in OpsShelf.
+          dim ? "text-[var(--muted-foreground)]" : "text-[var(--foreground)]",
           hasCaptions && "pt-[2px]"
         )}
       >
         {op.name}
       </code>
+      {sharedNeed ? (
+        <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
+          {sharedNeed}
+        </span>
+      ) : null}
       <span className="flex shrink-0 flex-col items-center gap-[2px]">
         <button
           type="button"
-          draggable={hasForward}
-          disabled={!hasForward}
+          draggable={forwardLive}
+          disabled={!forwardLive}
           data-dir={forwardDir}
           aria-hidden={!hasForward}
           className={cn(
             "flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border text-[10px] font-semibold transition-colors",
             directionButtonClass(hasForward, fit.forward, "encode"),
-            needs?.forward && "cursor-not-allowed opacity-40"
+            needs?.forward && "cursor-not-allowed opacity-60"
           )}
-          aria-label={hasForward ? `${forwardName} — encode` : undefined}
-          title={hasForward ? needs?.forward || "Encode" : undefined}
-          onClick={hasForward ? () => onAppend(forwardName, { decode: false }) : undefined}
-          onDragStart={
+          aria-label={
             hasForward
+              ? needs?.forward
+                ? `${forwardName} — encode, unavailable: ${needs.forward}`
+                : `${forwardName} — encode`
+              : undefined
+          }
+          title={hasForward ? needs?.forward || "Encode" : undefined}
+          onClick={forwardLive ? () => onAppend(forwardName, { decode: false }) : undefined}
+          onDragStart={
+            forwardLive
               ? (e: DragEvent<HTMLButtonElement>) => {
                   e.dataTransfer.setData(STEP_MIME, forwardPayload);
                   e.dataTransfer.setData("text/plain", forwardName);
@@ -145,31 +186,37 @@ export function OpsTile({
         >
           {hasForward ? <Glyph id="encode" size={16} /> : null}
         </button>
-        {needs?.forward ? (
+        {splitNeeds?.forward ? (
           <span className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]">
-            {needs.forward}
+            {splitNeeds.forward}
           </span>
         ) : null}
       </span>
       <span className="flex shrink-0 flex-col items-center gap-[2px]">
         <button
           type="button"
-          draggable={hasReverse}
-          disabled={!hasReverse}
+          draggable={reverseLive}
+          disabled={!reverseLive}
           data-dir={reverseDir}
           aria-hidden={!hasReverse}
           className={cn(
             "flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border text-[10px] font-semibold transition-colors",
             directionButtonClass(hasReverse, fit.reverse, "decode"),
-            needs?.reverse && "cursor-not-allowed opacity-40"
+            needs?.reverse && "cursor-not-allowed opacity-60"
           )}
-          aria-label={hasReverse ? `${reverseDisplayName} — decode` : undefined}
+          aria-label={
+            hasReverse
+              ? needs?.reverse
+                ? `${reverseDisplayName} — decode, unavailable: ${needs.reverse}`
+                : `${reverseDisplayName} — decode`
+              : undefined
+          }
           title={hasReverse ? needs?.reverse || "Decode" : undefined}
           onClick={
-            hasReverse ? () => onAppend(reverseName, { decode: reverseDecode }) : undefined
+            reverseLive ? () => onAppend(reverseName, { decode: reverseDecode }) : undefined
           }
           onDragStart={
-            hasReverse
+            reverseLive
               ? (e: DragEvent<HTMLButtonElement>) => {
                   e.dataTransfer.setData(STEP_MIME, reversePayload);
                   e.dataTransfer.setData("text/plain", reverseDisplayName);
@@ -183,9 +230,9 @@ export function OpsTile({
         >
           {hasReverse ? <Glyph id="decode" size={16} /> : null}
         </button>
-        {needs?.reverse ? (
+        {splitNeeds?.reverse ? (
           <span className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]">
-            {needs.reverse}
+            {splitNeeds.reverse}
           </span>
         ) : null}
       </span>

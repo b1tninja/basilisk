@@ -70,12 +70,36 @@ describe("CastDot reports the self-test", () => {
     expect(SHELF.match(/<CastDot/g) || []).toHaveLength(1);
     expect(TILE).not.toMatch(/CastDot/);
   });
+
+  it("is the only mark on the section header", () => {
+    // The header also carried a 6px toolbox-identity square at the right
+    // margin. On WebCrypto and OpenPGP that put a green circle meaning
+    // "self-test passed" and a green rounded square meaning "this is the
+    // WebCrypto toolbox" in the same 26px row — the conflation this whole
+    // indicator exists to avoid, relocated rather than resolved. The header
+    // already names the toolbox in words and every row under it carries an
+    // op glyph, so identity was the redundant channel.
+    const header = SHELF.match(/function SectionHeader\([\s\S]*?\n\}\r?\n/);
+    expect(header, "SectionHeader not found").toBeTruthy();
+    expect(header[0]).not.toMatch(/toolbox-dot/);
+  });
+
+  it("keeps a collapsed toolbox header readable", () => {
+    // `opacity-40` on a zero-fit header took its label to 1.82:1 against the
+    // shelf — on the only control that reopens the section. The "0 fit"
+    // count is the signal; the dimming was a second, illegible copy of it.
+    const header = SHELF.match(/function SectionHeader\([\s\S]*?\n\}\r?\n/)[0];
+    expect(header).not.toMatch(/fitCount === 0 && "opacity/);
+  });
 });
 
 describe("identity moved to the glyph", () => {
   it("shelf rows and pair tiles both render an op glyph", () => {
-    expect(SHELF).toMatch(/<Glyph id=\{glyphIdFor\(op\)\}/);
-    expect(TILE).toMatch(/<Glyph\s+id=\{glyphIdFor\(op\)\}/);
+    // Matched across newlines: both call sites gained a conditional opacity
+    // and Prettier wrapped them. The substance is that the glyph id comes
+    // from the op, not that the JSX fits on one line.
+    expect(SHELF).toMatch(/<Glyph\s[\s\S]{0,80}id=\{glyphIdFor\(op\)\}/);
+    expect(TILE).toMatch(/<Glyph\s[\s\S]{0,80}id=\{glyphIdFor\(op\)\}/);
   });
 
   it("gives encrypt and decrypt distinct glyphs", () => {
@@ -102,9 +126,21 @@ describe("one shape for one gesture", () => {
   it("sizes the solo add button like a direction handle", () => {
     // A wide "add" pill next to 22×20 arrow squares presented two different
     // controls for the same action, and implied the arrows did something else.
-    const add = SHELF.match(/function AddButton[\s\S]{0,900}?\n\}/);
+    // The window grew with the button's disabled/draggable states; it is
+    // bounded by the next top-level declaration rather than a character
+    // count so a future addition cannot silently truncate the match.
+    const add = SHELF.match(/function AddButton[\s\S]*?\n\}\r?\n/);
     expect(add, "AddButton not found").toBeTruthy();
     expect(add[0]).toMatch(/h-5 w-\[22px\]/);
     expect(add[0]).not.toMatch(/>\s*add\s*</);
+  });
+
+  it("lets a solo op be dragged, like the direction handles beside it", () => {
+    // The shapes were unified deliberately; leaving one of them undraggable
+    // made the identical square mean two different things, on the gesture
+    // the pipeline is built around.
+    const add = SHELF.match(/function AddButton[\s\S]*?\n\}\r?\n/)[0];
+    expect(add).toMatch(/setData\(STEP_MIME/);
+    expect(add).toMatch(/draggable=\{!disabled && !!dragName\}/);
   });
 });

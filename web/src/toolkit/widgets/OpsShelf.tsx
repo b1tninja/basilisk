@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from "react";
 import {
   TOOLBOX_META,
   getShelfMeta,
@@ -20,6 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { CastDot, Glyph, glyphIdFor } from "./Glyph";
 import { OpsTile } from "./OpsTile";
+import { STEP_MIME, stepDragPayload } from "./mime";
 import type { ToolCardOp } from "./ToolCard";
 
 export type OpsShelfOp = ToolCardOp;
@@ -75,6 +76,25 @@ const KIT_DEFS: ReadonlyArray<{ id: KitId; label: string }> = [
   { id: "hmac", label: "HMAC" },
 ];
 
+/**
+ * How an op that doesn't fit the caret is de-emphasised.
+ *
+ * It used to be `opacity-[.32]` on the whole row, which took the name to
+ * 1.97:1 against the shelf and the "needs bytes" caption under it to 1.59:1
+ * — measured in the production build, light theme. That caption is the one
+ * piece of text explaining *why* the op is unavailable, so the thing a
+ * confused user most needs to read was the least readable thing on screen.
+ *
+ * Stepping the name down from `--foreground` to `--muted-foreground` is a
+ * bigger perceptual drop than the opacity was (13:1 to 4.6:1) and stays above
+ * the 4.5:1 floor, and it leaves the caption alone instead of multiplying
+ * into it. Opacity survives only on the glyph, which carries no text.
+ *
+ * Literal class strings — Tailwind's scanner reads source text, so these must
+ * never be assembled at runtime.
+ */
+const OPS_DIM_TEXT = "text-[var(--muted-foreground)]";
+
 /** Plain-language reason a dimmed op doesn't fit the current caret tip. */
 function needsReason(step: { input?: string } | null | undefined): string {
   const input = step?.input;
@@ -97,7 +117,7 @@ function pairReverseInput(
   return { input: forward.output };
 }
 
-/** One toolbox item — dot, name, and a right-aligned action (arrows / add / disabled reason). */
+/** One toolbox item — glyph, name, and a right-aligned action (arrows / add / disabled reason). */
 function OpsRow({
   op,
   name,
@@ -117,14 +137,22 @@ function OpsRow({
     <div
       className={cn(
         "flex items-center gap-2 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]",
-        dim && "opacity-[.32]",
         className
       )}
     >
       {/* Identity is the glyph. Verification is not per-op — it lives on the
           toolbox header, one light per suite. */}
-      <Glyph id={glyphIdFor(op)} size={16} className="shrink-0 opacity-80" />
-      <code className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]">
+      <Glyph
+        id={glyphIdFor(op)}
+        size={16}
+        className={cn("shrink-0", dim ? "opacity-45" : "opacity-80")}
+      />
+      <code
+        className={cn(
+          "min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium",
+          dim ? OPS_DIM_TEXT : "text-[var(--foreground)]"
+        )}
+      >
         {name}
       </code>
       {hint ? (
@@ -147,21 +175,64 @@ function OpsRow({
  * else. One shape, one meaning; the glyph says which direction when there is
  * a choice to make.
  */
-function AddButton({ onClick, title }: { onClick: () => void; title?: string }) {
+function AddButton({
+  onClick,
+  title,
+  dragName,
+  disabled = false,
+}: {
+  onClick: () => void;
+  title?: string;
+  /**
+   * Step name to put on the drag payload. Omitted only where there is no
+   * single step to drag (the HMAC kit's sugar rows).
+   */
+  dragName?: string;
+  /** Doesn't fit the caret — states the reason and refuses both gestures. */
+  disabled?: boolean;
+}) {
+  const label = title || "Add to the recipe";
   return (
     <button
       type="button"
-      title={title || "Add to the recipe"}
-      aria-label={title || "Add to the recipe"}
-      onClick={onClick}
-      className="flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border border-[var(--border)] bg-[var(--surface-raised)] text-[12px] font-bold leading-none text-[var(--muted-foreground)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand)]"
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      draggable={!disabled && !!dragName}
+      onClick={disabled ? undefined : onClick}
+      onDragStart={
+        !disabled && dragName
+          ? (e: DragEvent<HTMLButtonElement>) => {
+              e.dataTransfer.setData(STEP_MIME, stepDragPayload(dragName, false));
+              e.dataTransfer.setData("text/plain", dragName);
+              e.dataTransfer.effectAllowed = "copy";
+            }
+          : undefined
+      }
+      className={cn(
+        "flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border text-[12px] font-bold leading-none transition-colors",
+        disabled
+          ? "cursor-not-allowed border-dashed border-[var(--border)] bg-transparent text-[color-mix(in_srgb,var(--muted-foreground)_55%,transparent)]"
+          : "cursor-grab border-[var(--border)] bg-[var(--surface-raised)] text-[var(--muted-foreground)] hover:border-[var(--brand)] hover:text-[var(--brand)] active:cursor-grabbing"
+      )}
     >
       +
     </button>
   );
 }
 
-/** Section header — chevron, label, CAST light, item count, toolbox-color square, matching design v2 §18b/19a. */
+/**
+ * Section header — chevron, label, CAST light, item count (design v2 §18b/19a).
+ *
+ * There used to be a second 6px mark out at the right margin carrying the
+ * toolbox's identity colour. On the WebCrypto and OpenPGP headers that put a
+ * 6px green circle (`--success`, "self-test passed") and a 6px green rounded
+ * square (`#4cde82`, "this is the WebCrypto toolbox") in the same 26px row —
+ * the exact conflation ee81d62 set out to remove, relocated rather than
+ * resolved. Identity is already stated twice on this header, once in words
+ * and once per row in the op glyphs, so the colour square was the redundant
+ * one. What remains is the single bit you cannot read from the text.
+ */
 function SectionHeader({
   label,
   count,
@@ -175,7 +246,7 @@ function SectionHeader({
   count: number;
   /** Ops in this toolbox that fit the caret tip — set only while tipFit is active (§19a). */
   fitCount?: number | null;
-  /** Toolbox id — the dot colour is enumerated per id in toolkit.css. */
+  /** Toolbox id — decides whether this suite makes a CAST claim at all. */
   toolbox: string;
   /** Suite self-test map; absent while the POST is still running. */
   castStatus?: Record<string, string> | null;
@@ -187,10 +258,10 @@ function SectionHeader({
       type="button"
       onClick={onToggle}
       aria-expanded={open}
-      className={cn(
-        "flex w-full items-center gap-1.5 px-1 py-[5px] text-left",
-        fitCount === 0 && "opacity-40"
-      )}
+      /* Not dimmed at zero fit any more. This is a live button and the only
+         way back into a collapsed toolbox; `opacity-40` took its label to
+         1.82:1. The count already reads "0 fit", which is the fact. */
+      className="flex w-full items-center gap-1.5 px-1 py-[5px] text-left"
     >
       <span className="text-[8px] text-[var(--muted-foreground)]" aria-hidden>
         {open ? "▾" : "▸"}
@@ -202,16 +273,9 @@ function SectionHeader({
           suite, so one light per toolbox states the fact once instead of
           repeating it down twenty identical rows. */}
       <CastDot op={{ toolbox }} status={castStatus} />
-      <span className="font-mono text-[10px] text-[color-mix(in_srgb,var(--muted-foreground)_65%,transparent)]">
+      <span className="font-mono text-[10px] text-[var(--muted-foreground)]">
         {fitCount == null ? count : `${fitCount} fit`}
       </span>
-      {/* Colour from `[data-toolbox-dot]` rules in toolkit.css — the toolbox
-          set is closed, and `style-src 'self'` blocks element.style writes. */}
-      <span
-        className="toolbox-dot ml-auto h-[6px] w-[6px] shrink-0 rounded-[2px]"
-        data-toolbox-dot={toolbox}
-        aria-hidden
-      />
     </button>
   );
 }
@@ -626,22 +690,30 @@ export function OpsShelf({
                             {rows.map((row, i) => {
                               if (row.type === "solo" && row.step) {
                                 const fit = !tipFit || tipFit.has(row.step.name);
+                                const unfit = !!tipFit && !fit;
                                 return (
                                   <OpsRow
                                     key={`${row.step.name}-${i}`}
                                     op={row.step}
                                     name={row.step.name}
-                                    dim={!!tipFit && !fit}
-                                    hint={
-                                      !fit && tipFit ? needsReason(row.step) : undefined
-                                    }
+                                    dim={unfit}
+                                    hint={unfit ? needsReason(row.step) : undefined}
+                                    /* The control stays put when the op
+                                       doesn't fit, disabled and saying why.
+                                       Removing it made rows jump sideways as
+                                       the caret moved, and left the row with
+                                       no explanation of its own state. */
                                     action={
-                                      !fit && tipFit ? null : (
-                                        <AddButton
-                                          title={row.step.doc}
-                                          onClick={() => onAppend(row.step!.name)}
-                                        />
-                                      )
+                                      <AddButton
+                                        disabled={unfit}
+                                        dragName={row.step.name}
+                                        title={
+                                          unfit
+                                            ? `${row.step.name} ${needsReason(row.step)}`
+                                            : row.step.doc
+                                        }
+                                        onClick={() => onAppend(row.step!.name)}
+                                      />
                                     }
                                   />
                                 );
@@ -898,21 +970,32 @@ function FormatKit({
             return (
               <div
                 key={fmt}
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]",
-                  !fit && "opacity-[.32]"
-                )}
+                className="flex items-center gap-2 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]"
               >
-                <span
-                  className="toolbox-dot h-[5px] w-[5px] shrink-0 rounded-full"
-                  data-toolbox-dot={toolbox}
-                  aria-hidden
+                {/* The kit's rows all share one toolbox, so a toolbox-colour
+                    bullet here was a constant — the direction glyph is what
+                    actually differs between an export and an import row, and
+                    it is the same vocabulary the tree uses. */}
+                <Glyph
+                  id={direction === "import" ? "decode" : "encode"}
+                  size={16}
+                  className={cn("shrink-0", fit ? "opacity-80" : "opacity-45")}
                 />
-                <code className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]">
+                <code
+                  className={cn(
+                    "min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium",
+                    fit ? "text-[var(--foreground)]" : OPS_DIM_TEXT
+                  )}
+                >
                   {meta.label}
                 </code>
                 <AddButton
-                  title={`${direction}: ${meta.title}`}
+                  disabled={!fit}
+                  title={
+                    fit
+                      ? `${direction}: ${meta.title}`
+                      : `${direction} ${meta.label} does not fit here`
+                  }
                   onClick={() => onPick(fmt)}
                 />
               </div>
@@ -936,6 +1019,7 @@ function MacKit({ onAppend }: { onAppend: Props["onAppend"] }) {
         name="hmac"
         action={
           <AddButton
+            dragName="sign"
             title="Insert sign (HMAC keys via genkey hmac/sha256)"
             onClick={() => onAppend("sign")}
           />
@@ -946,6 +1030,7 @@ function MacKit({ onAppend }: { onAppend: Props["onAppend"] }) {
         name="verify"
         action={
           <AddButton
+            dragName="verify"
             title="Insert verify (recipe sugar: hmac.verify)"
             onClick={() => onAppend("verify")}
           />
