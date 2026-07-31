@@ -208,8 +208,26 @@ Roughly in value order:
    makes ICE recovery chainable, and ConnectionsPanel states mesh degree with
    the DESIGN §1 soft-cap warning past 8 participants. Caveat, stated
    honestly: the relay path is verified at the pure-rule and compile level;
-   a live two-browser relay run has not been performed. What remains: DKG
-   rounds on the finished bus.
+   a live two-browser relay run has not been performed.
+
+   **DKG round arithmetic is now implemented and tested** in
+   `lib/quorum/dkg.js` — Feldman VSS / joint-Feldman over P-256, using
+   `@noble/curves` (declared explicitly; WebCrypto exposes no EC point
+   arithmetic, and the existing SSS is GF(256) so it could not carry this).
+   `round1` / `verifyShare` / `finalize` / `reconstruct`, with 20 tests
+   including the one that matters: shares reconstruct to a secret whose
+   public key equals the jointly published one, and equals Σ of the
+   participants' own contributions.
+
+   **What remains is the op/transport layer**, deliberately not half-built.
+   An op has to run the rounds over the live exchange: broadcast commitments,
+   deliver shares pairwise, wait for contributions, `finalize`. Two notes for
+   whoever takes it — the protocol needs *ordered rounds*, so it wants the
+   wait-for-peers machinery `quorum.offer` already has rather than a bare
+   `rtc.recv`; and there is **no complaint round**, so a bad share makes
+   `finalize` refuse and name the dealer, with restart-without-them as the
+   only remedy. The UI must say that plainly, and label the whole thing
+   experimental: it produces a shared key, not threshold signing.
    Also applied: the 48a naming audit — seven camelCase ops renamed
    (`rtc.gather/check/state/stats/offer/answer/quality`; `rtc.statsReport`
    was a seventh the audit missed), old names retired + migrated, and a
