@@ -20,29 +20,37 @@ import { cn } from "@/lib/cn";
 /* ────────────────────────────── shared chrome ────────────────────────────── */
 
 /** ICE candidate types, colored by how far the packet has to travel. */
-const CANDIDATE_TONE: Record<string, string> = {
-  host: "var(--brand)",
-  prflx: "var(--caret)",
-  srflx: "var(--caret)",
-  relay: "var(--warn)",
+const CANDIDATE_TONE: Record<string, NetTone> = {
+  host: "brand",
+  prflx: "caret",
+  srflx: "caret",
+  relay: "warn",
 };
 
-const PAIR_STATE_TONE: Record<string, string> = {
-  succeeded: "var(--brand)",
-  "in-progress": "var(--caret)",
-  waiting: "var(--muted-foreground)",
-  failed: "var(--error)",
-  frozen: "var(--muted-foreground)",
+/**
+ * Badge tones, as *names* rather than colours.
+ *
+ * This used to be a `tone: string` holding `"var(--brand)"` and friends, which
+ * forced a style prop — an element.style write `style-src 'self'` refuses in
+ * production. The values were only ever six tokens, so naming them lets the
+ * stylesheet enumerate them, and the union means a typo is a type error rather
+ * than an invisible transparent badge.
+ */
+export type NetTone = "brand" | "caret" | "muted" | "error" | "warn" | "decode";
+
+const PAIR_STATE_TONE: Record<string, NetTone> = {
+  succeeded: "brand",
+  "in-progress": "caret",
+  waiting: "muted",
+  failed: "error",
+  frozen: "muted",
 };
 
-function TypeBadge({ label, tone }: { label: string; tone: string }) {
+function TypeBadge({ label, tone }: { label: string; tone: NetTone }) {
   return (
     <span
-      className="shrink-0 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider"
-      style={{
-        color: tone,
-        background: `color-mix(in srgb, ${tone} 12%, transparent)`,
-      }}
+      className="net-badge shrink-0 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider"
+      data-tone={tone}
     >
       {label}
     </span>
@@ -101,7 +109,7 @@ function CandidateList({ data }: { data: any }) {
         if (!rows.length) {
           return (
             <Row key={t} dim>
-              <TypeBadge label={t} tone={CANDIDATE_TONE[t] || "var(--muted-foreground)"} />
+              <TypeBadge label={t} tone={CANDIDATE_TONE[t] || "muted"} />
               <span className="text-[10.5px] italic text-[var(--muted-foreground)]">
                 {t === "relay"
                   ? "none gathered — no TURN configured"
@@ -114,7 +122,7 @@ function CandidateList({ data }: { data: any }) {
         }
         return rows.map((c, i) => (
           <Row key={`${t}-${i}`}>
-            <TypeBadge label={t} tone={CANDIDATE_TONE[t] || "var(--muted-foreground)"} />
+            <TypeBadge label={t} tone={CANDIDATE_TONE[t] || "muted"} />
             <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]">
               {c.address ? `${c.address}:${c.port}` : `:${c.port}`}
               {!c.address ? (
@@ -166,7 +174,7 @@ function PairMatrix({ data, onConfigureTurn }: { data: any; onConfigureTurn?: ()
             {/* 26b: role is protocol-assigned and informational only. Chromium
                 leaves it null, so we say so rather than showing a blank chip. */}
             {p.role ? (
-              <TypeBadge label={p.role} tone="var(--caret)" />
+              <TypeBadge label={p.role} tone="caret" />
             ) : (
               <span className="text-[9.5px] italic text-[var(--muted-foreground)]">
                 role not reported by this browser
@@ -194,11 +202,11 @@ function PairMatrix({ data, onConfigureTurn }: { data: any; onConfigureTurn?: ()
                   </span>
                 ) : null}
                 {pair.nominated ? (
-                  <TypeBadge label="✓ nominated" tone="var(--brand)" />
+                  <TypeBadge label="✓ nominated" tone="brand" />
                 ) : (
                   <TypeBadge
                     label={pair.state}
-                    tone={PAIR_STATE_TONE[pair.state] || "var(--muted-foreground)"}
+                    tone={PAIR_STATE_TONE[pair.state] || "muted"}
                   />
                 )}
               </Row>
@@ -245,7 +253,7 @@ function ConnStateStrip({ data }: { data: any }) {
               <code className="font-mono text-[10px] text-[var(--muted-foreground)]">
                 {String(p.peer || "").slice(0, 8)}…
               </code>
-              {p.verified ? <TypeBadge label="verified" tone="var(--brand)" /> : null}
+              {p.verified ? <TypeBadge label="verified" tone="brand" /> : null}
               <span className="ml-auto font-mono text-[9.5px] text-[var(--muted-foreground)]">
                 ice {p.iceConnectionState} · sig {p.signalingState} · ch {p.channelState}
               </span>
@@ -258,17 +266,14 @@ function ConnStateStrip({ data }: { data: any }) {
                 const failed = s === "disconnected" || s === "closed";
                 return (
                   <span key={s} className="flex flex-1 items-center gap-1">
+                    {/* Four-state segment, enumerated in CSS: the reached
+                        stage, the reached-but-broken stage, stages already
+                        passed, and stages still ahead. */}
                     <span
-                      className="h-[3px] flex-1 rounded-full"
-                      style={{
-                        background: active
-                          ? failed
-                            ? "var(--error)"
-                            : "var(--brand)"
-                          : past
-                            ? "color-mix(in srgb, var(--brand) 40%, transparent)"
-                            : "var(--surface-raised)",
-                      }}
+                      className="net-stage h-[3px] flex-1 rounded-full"
+                      data-stage={
+                        active ? (failed ? "active-failed" : "active") : past ? "past" : "ahead"
+                      }
                     />
                   </span>
                 );
@@ -341,17 +346,32 @@ function ChannelStats({ data }: { data: any }) {
               </code>
               <TypeBadge
                 label={p.readyState}
-                tone={p.readyState === "open" ? "var(--brand)" : "var(--muted-foreground)"}
+                tone={p.readyState === "open" ? "brand" : "muted"}
               />
-              {p.backPressured ? <TypeBadge label="back-pressure" tone="var(--warn)" /> : null}
+              {p.backPressured ? <TypeBadge label="back-pressure" tone="warn" /> : null}
             </div>
-            <div className="mt-1.5 h-[3px] overflow-hidden rounded-full bg-[var(--surface-raised)]">
+            {/* Per-peer value, so no single custom property can serve a list
+                of these, and a width style prop is what the CSP refuses. The
+                fill is quantized to 5% and enumerated in CSS instead.
+                Deliberately not a native <progress>: its fill can only be
+                styled through vendor pseudo-elements, and `getComputedStyle`
+                cannot read those back (verified — a probe set to rgb(1,2,3)
+                reads as the host's background), so the one construct we could
+                not measure is the one guarding a diagnostic that matters most
+                when things are already going wrong. ARIA carries the real
+                value; the bar is just its picture. */}
+            <div
+              className="mt-1.5 h-[3px] overflow-hidden rounded-full bg-[var(--surface-raised)]"
+              role="progressbar"
+              aria-valuenow={Math.round(pct)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`buffered ${fmtBytes(p.bufferedAmount || 0)}`}
+            >
               <div
-                className="h-full transition-[width]"
-                style={{
-                  width: `${pct}%`,
-                  background: p.backPressured ? "var(--warn)" : "var(--caret)",
-                }}
+                className="net-buffer-fill h-full transition-[width]"
+                data-tone={p.backPressured ? "warn" : "caret"}
+                data-fill={Math.round(Math.max(0, Math.min(100, pct)) / 5) * 5}
               />
             </div>
             <div className="mt-1 flex gap-3 font-mono text-[9.5px] text-[var(--muted-foreground)]">
@@ -383,7 +403,7 @@ function EndpointPanel({ data }: { data: any }) {
             <Row key={i}>
               <TypeBadge
                 label={isTurn ? "turn" : "stun"}
-                tone={isTurn ? "var(--warn)" : "var(--caret)"}
+                tone={isTurn ? "warn" : "caret"}
               />
               <code className="min-w-0 flex-1 truncate font-mono text-[10.5px]">{url}</code>
               {s.username ? (
@@ -391,7 +411,7 @@ function EndpointPanel({ data }: { data: any }) {
                   as {s.username}
                 </span>
               ) : null}
-              {isTurn ? <TypeBadge label="credential bound" tone="var(--brand)" /> : null}
+              {isTurn ? <TypeBadge label="credential bound" tone="brand" /> : null}
             </Row>
           );
         })}
@@ -402,7 +422,7 @@ function EndpointPanel({ data }: { data: any }) {
   return (
     <div>
       <Row>
-        <TypeBadge label={ok ? "reachable" : "blocked"} tone={ok ? "var(--brand)" : "var(--warn)"} />
+        <TypeBadge label={ok ? "reachable" : "blocked"} tone={ok ? "brand" : "warn"} />
         <code className="min-w-0 flex-1 truncate font-mono text-[11px]">
           {data?.publicAddress || "no public address discovered"}
         </code>
@@ -424,7 +444,7 @@ function CertificatePanel({ data }: { data: any }) {
   return (
     <div>
       <Row>
-        <TypeBadge label="dtls" tone="var(--decode)" />
+        <TypeBadge label="dtls" tone="decode" />
         <code className="min-w-0 flex-1 truncate font-mono text-[10.5px]">{data?.algorithm}</code>
         {data?.expires ? (
           <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
@@ -456,7 +476,7 @@ function SessionPanel({ data }: { data: any }) {
   return (
     <div>
       <Row>
-        <TypeBadge label={data?.role || "session"} tone="var(--caret)" />
+        <TypeBadge label={data?.role || "session"} tone="caret" />
         <code className="min-w-0 flex-1 truncate font-mono text-[10.5px]">room {data?.room}</code>
         <span className="shrink-0 font-mono text-[10px] text-[var(--brand)]">
           {data?.connected ?? 0}/{Math.max(0, audience.length - 1)} connected

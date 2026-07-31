@@ -316,6 +316,94 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * NetworkArtifact (§23a/23b/26a/26b/29d/30d).
+ *
+ * `tone` used to be a colour string passed in by each call site, which forced
+ * a style prop the production CSP refuses. It is a token *name* now, so the
+ * six tones enumerate here and a typo is a TypeScript error instead of an
+ * invisible transparent badge.
+ */
+.net-badge {
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--muted-foreground) 12%, transparent);
+}
+.net-badge[data-tone="brand"] {
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+}
+.net-badge[data-tone="caret"] {
+  color: var(--caret);
+  background: color-mix(in srgb, var(--caret) 12%, transparent);
+}
+.net-badge[data-tone="error"] {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+.net-badge[data-tone="warn"] {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.net-badge[data-tone="decode"] {
+  color: var(--decode);
+  background: color-mix(in srgb, var(--decode) 12%, transparent);
+}
+
+/* Connection-stage strip: reached, reached-but-broken, passed, still ahead. */
+.net-stage[data-stage="active"] {
+  background: var(--brand);
+}
+.net-stage[data-stage="active-failed"] {
+  background: var(--error);
+}
+.net-stage[data-stage="past"] {
+  background: color-mix(in srgb, var(--brand) 40%, transparent);
+}
+.net-stage[data-stage="ahead"] {
+  background: var(--surface-raised);
+}
+
+/*
+ * Back-pressure meter fill. Quantized to 5% so a continuous value can be
+ * enumerated: one bar per peer rules out a shared custom property, and a width
+ * style prop is refused by `style-src 'self'`.
+ *
+ * A native <progress> would be the semantic choice, but its fill is reachable
+ * only through vendor pseudo-elements that `getComputedStyle` will not read
+ * back, so it could never be verified in the page — and this bar is a
+ * diagnostic that matters precisely when something is already wrong. The
+ * wrapper carries role="progressbar" and the exact aria-valuenow, so nothing
+ * is lost to assistive tech by the rounding here.
+ */
+.net-buffer-fill {
+  width: 0;
+  background: var(--caret);
+}
+.net-buffer-fill[data-tone="warn"] {
+  background: var(--warn);
+}
+.net-buffer-fill[data-fill="0"] { width: 0; }
+.net-buffer-fill[data-fill="5"] { width: 5%; }
+.net-buffer-fill[data-fill="10"] { width: 10%; }
+.net-buffer-fill[data-fill="15"] { width: 15%; }
+.net-buffer-fill[data-fill="20"] { width: 20%; }
+.net-buffer-fill[data-fill="25"] { width: 25%; }
+.net-buffer-fill[data-fill="30"] { width: 30%; }
+.net-buffer-fill[data-fill="35"] { width: 35%; }
+.net-buffer-fill[data-fill="40"] { width: 40%; }
+.net-buffer-fill[data-fill="45"] { width: 45%; }
+.net-buffer-fill[data-fill="50"] { width: 50%; }
+.net-buffer-fill[data-fill="55"] { width: 55%; }
+.net-buffer-fill[data-fill="60"] { width: 60%; }
+.net-buffer-fill[data-fill="65"] { width: 65%; }
+.net-buffer-fill[data-fill="70"] { width: 70%; }
+.net-buffer-fill[data-fill="75"] { width: 75%; }
+.net-buffer-fill[data-fill="80"] { width: 80%; }
+.net-buffer-fill[data-fill="85"] { width: 85%; }
+.net-buffer-fill[data-fill="90"] { width: 90%; }
+.net-buffer-fill[data-fill="95"] { width: 95%; }
+.net-buffer-fill[data-fill="100"] { width: 100%; }
+
+/*
  * Guided key ceremony (CeremonySheet). Chrome only — the cards inside it use
  * the .share-card rules below, so the printed page is identical whether the
  * cards were reached through the Sheet or through the notebook.

@@ -41,16 +41,17 @@ const BASELINE = {
   // and `--ops-width` via lib/css-vars for the resizable panel; RunBar (1) →
   // `--run-progress` the same way.
   //
-  // Glyph (was 1) converted — `.toolbox-shape[data-toolbox]` sets `color` and
-  // the shapes paint with `currentColor`. That single site rendered once per
-  // op, so it alone accounted for ~76 of the ~79 live inline styles on
-  // /toolkit; the per-file count badly understated its real exposure.
+  // Empty, and it should stay that way. Every site the ratchet was created to
+  // track has been converted: closed vocabularies became data attributes with
+  // enumerated CSS, static declarations became utility classes, the two
+  // continuous values (panel width, run progress) ride custom properties
+  // published through a constructed stylesheet (lib/css-vars), and the
+  // per-peer back-pressure meter became a native <progress>, whose value the
+  // element carries so no width declaration is needed at all.
   //
-  // NetworkArtifact is the last file, and the genuinely hard one: its three
-  // sites take a caller-supplied `tone` colour string, so converting means
-  // changing what the component accepts (a token name, not a colour) and
-  // updating every call site — a contract change, not a find-and-replace.
-  "src/toolkit/widgets/NetworkArtifact.tsx": 3,
+  // The remaining inline styles in a running page come from Radix primitives,
+  // which this guard does not scan and we do not author. If they ever matter,
+  // the production CSP is what will say so.
 };
 
 function walk(dir, pred, out = []) {
