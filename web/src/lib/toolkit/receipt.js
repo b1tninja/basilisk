@@ -28,8 +28,18 @@
 
 import { listSteps } from "./registry.js";
 
-/** Receipt envelope version. Bump when the *shape* changes, not the content. */
-export const RECEIPT_VERSION = 1;
+/**
+ * Receipt envelope version. Bump when the *shape* changes, not the content.
+ *
+ * v2 (§38c, design_handoff_artifact_actions): artifact `role` is part of
+ * `digestArtifact`, and roles are now stamped from the type projection where
+ * an emit site declared none — so a keypair that digested as `secret` under v1
+ * digests as `key` under v2. The run is unchanged; only its description is.
+ * Without the bump, `run.verify` would report a digest mismatch on a receipt
+ * that is in fact perfectly good, which is the worst possible failure for a
+ * tool whose job is telling you whether to trust a run.
+ */
+export const RECEIPT_VERSION = 2;
 
 /**
  * Artifact fields a receipt may carry. Everything else — above all `content`,
@@ -309,6 +319,15 @@ export function parseReceipt(text) {
   }
   if (!parsed || parsed.kind !== "basilisk.run-receipt") {
     throw new Error("receipt: not a Basilisk run receipt");
+  }
+  if (Number(parsed.v) === 1) {
+    // Name the reason rather than the number. A v1 receipt is not corrupt and
+    // its run was not wrong; this build simply describes artifacts
+    // differently, so no honest comparison is possible.
+    throw new Error(
+      "receipt: this receipt predates a change in how artifact roles are recorded (v1). " +
+        "Its run was not necessarily different — the description was. Re-run the recipe to get a comparable receipt."
+    );
   }
   if (Number(parsed.v) !== RECEIPT_VERSION) {
     throw new Error(`receipt: unsupported version ${parsed.v}`);

@@ -1570,12 +1570,63 @@ export function stepAcceptsRefined(spec, from) {
 }
 
 /**
+ * Every role an artifact may carry (§32c, design_handoff_artifact_actions).
+ *
+ * One frozen list because there were two vocabularies: `engine.js` hand-wrote
+ * `public-key`, `envelope`, `qr` and `inspect` at its emit sites, while
+ * `artifactMetaFromType` below emitted `recipients` and `secret` — and neither
+ * side could produce the other's. A registry that matches on `role` cannot be
+ * built on two disagreeing lists, so this is the reconciliation, and
+ * `artifact-roles.test.js` greps the engine to keep it honest.
+ */
+export const ARTIFACT_ROLES = Object.freeze([
+  "text", // anything with no better description
+  "secret", // sensitive bytes with no richer identity (scalars, masters)
+  "key", // keypair / key / openpgp-key, public or private
+  "public-key", // an armored OpenPGP *public* key — the publishable one
+  "share", // one share of a split
+  "recipients", // a recipient list
+  "ciphertext", // an encrypted message
+  "envelope", // the recovery envelope of a ceremony (not a share)
+  "sshsig", // an sshsig signature block
+  "token", // JOSE: jws / jwe
+  "netvalue", // candidate / sdp / stats / connstate / endpoint / certificate / session
+  "diagnostic", // stun.check and friends — a read-out with a verdict
+  "inspect", // an explicit `inspect` snapshot
+  "receipt", // a run receipt
+  "qr", // an SVG QR rendering of another artifact
+]);
+
+/**
+ * Network value bases that share the `netvalue` role. The base rides along as
+ * a tag, so a kind can match all of them or exactly one.
+ */
+const NETWORK_BASES = Object.freeze([
+  "candidate",
+  "sdp",
+  "stats",
+  "connstate",
+  "endpoint",
+  "certificate",
+  "session",
+]);
+
+/**
  * Project a refined type into artifact role/tags for UI (single source of truth).
  * @param {RefinedType} t
  * @returns {{ role: string, tags: string[] }}
  */
 export function artifactMetaFromType(t) {
   if (!t) return { role: "text", tags: [] };
+  // Refined text kinds that have a dedicated role. Without these they fall
+  // through to `text`, which is what forced the UI to grow parallel
+  // discriminators (`jose`, `netType`) for a discriminator it already had.
+  if (t.kind === "sshsig") return { role: "sshsig", tags: ["ssh", "signature"] };
+  if (t.kind === "jws") return { role: "token", tags: ["jose", "jws"] };
+  if (t.kind === "jwe") return { role: "token", tags: ["jose", "jwe"] };
+  if (NETWORK_BASES.includes(t.base)) {
+    return { role: "netvalue", tags: ["network", t.base] };
+  }
   if (t.base === "shares" && t.kind === "raw") {
     return { role: "share", tags: ["sss", "raw"] };
   }

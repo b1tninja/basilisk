@@ -374,6 +374,19 @@ export function useNotebook() {
         // masked text dump does not), so its absence is meaningful, not a gap.
         inspectSnapshot: a.inspectSnapshot,
         jose: a.jose,
+        // §32/1.4: the fields the kind registry matches and renders on. The
+        // refined type has ridden on every artifact as `pipeType` since the
+        // type system landed, and this projection dropped it — which is why
+        // the UI grew `netType`/`jose`/`inspectSnapshot` as parallel
+        // discriminators for a discriminator it already had.
+        pipeType: a.pipeType,
+        tags: a.tags,
+        shareIndex: a.shareIndex,
+        mime: a.mime,
+        encoding: a.encoding,
+        bytes: a.bytes,
+        stepName: a.stepName,
+        disposition: a.disposition,
       }))
     );
   }, [chains, kernelEpoch]);

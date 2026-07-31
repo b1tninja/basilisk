@@ -69,4 +69,19 @@ export type ArtifactTile = {
    * artifact rather than being inferred from the token text.
    */
   jose?: unknown;
+  /**
+   * The refined pipeline type at emit time, and the tags/metadata the artifact
+   * kind registry (§32) matches on. `pipeType` has ridden on every artifact
+   * since the type system landed; this projection dropped it until §32, which
+   * is why the fields above grew as parallel discriminators for a
+   * discriminator that already existed.
+   */
+  pipeType?: { base?: string; kind?: string; which?: string; alg?: string };
+  tags?: string[];
+  shareIndex?: number;
+  mime?: string;
+  encoding?: string;
+  bytes?: Uint8Array;
+  stepName?: string;
+  disposition?: string;
 };

@@ -96,6 +96,7 @@ import {
 } from "./rsaes-pkcs1.js";
 import {
   NETWORK_TYPES as NETWORK_VALUE_TYPES,
+  artifactMetaFromType,
   resolveStepType,
   typeOf,
 } from "./types.js";
@@ -4115,6 +4116,22 @@ function safeOutputStem(raw) {
 function attachPipeMeta(artifact, value) {
   if (value?.meta?.type) {
     artifact.pipeType = value.meta.type;
+    // §32c: the projection is the *floor*, the emit site is the override.
+    //
+    // Role is a property of the artifact, not of the value: the same `text`
+    // emitted by `inspect` and by `out @msg` are one type and two different
+    // artifacts, and `receipt`/`diagnostic` come from why the artifact
+    // exists, which no projection of a type can know. So a site that
+    // declares a role keeps it; a site that declares none stops being
+    // role-less. That is what turns a keypair emitted by `out` from
+    // "text"/"secret" into role `key`, which is the whole of §35.
+    const projected = artifactMetaFromType(value.meta.type);
+    if (!artifact.role && projected.role) artifact.role = projected.role;
+    if (projected.tags?.length) {
+      const prev = Array.isArray(artifact.tags) ? artifact.tags : [];
+      const seen = new Set(prev.map(String));
+      artifact.tags = [...prev, ...projected.tags.filter((t) => !seen.has(String(t)))];
+    }
   }
   // JOSE body — header/claims/verification verdict, for the JWT reader. Rides
   // here rather than being re-parsed in the UI so that the *verdict* travels
@@ -4291,7 +4308,7 @@ async function materializeOutArtifacts(value, params) {
           sensitive: false,
           mime: "application/json",
           encoding: "text",
-          role: "text",
+          role: "recipients",
           tags: ["openpgp", "recipients"],
         },
         value
@@ -4395,14 +4412,27 @@ async function materializeOutArtifacts(value, params) {
     if (priv) {
       try {
         const jwk = await crypto.subtle.exportKey("jwk", priv);
-        parts.push({
-          label: `${label} · private JWK`,
-          filename: `${stem}-private.${extOverride || "jwk.json"}`,
-          content: JSON.stringify(jwk, null, 2),
-          sensitive: true,
-          mime: mimeOverride || "application/json",
-          encoding: "jwk",
-        });
+        // §32c/1.5: declare the role and which half this is. Before this the
+        // branch returned bare parts with no `attachPipeMeta` at all, so the
+        // `out` fallback stamped both halves `secret` from the *value's*
+        // sensitivity — which mislabelled the public JWK as a secret and left
+        // the tile with no way to tell the halves apart.
+        parts.push(
+          attachPipeMeta(
+            {
+              label: `${label} · private JWK`,
+              filename: `${stem}-private.${extOverride || "jwk.json"}`,
+              content: JSON.stringify(jwk, null, 2),
+              sensitive: true,
+              mime: mimeOverride || "application/json",
+              encoding: "jwk",
+              role: "key",
+              tags: ["keypair", "private"],
+              traits: value.meta?.alg ? { alg: value.meta.alg } : undefined,
+            },
+            value
+          )
+        );
       } catch (err) {
         parts.push({
           label: `${label} · private`,
@@ -4417,14 +4447,22 @@ async function materializeOutArtifacts(value, params) {
     if (pub) {
       try {
         const jwk = await crypto.subtle.exportKey("jwk", pub);
-        parts.push({
-          label: `${label} · public JWK`,
-          filename: `${stem}-public.${extOverride || "jwk.json"}`,
-          content: JSON.stringify(jwk, null, 2),
-          sensitive: false,
-          mime: mimeOverride || "application/json",
-          encoding: "jwk",
-        });
+        parts.push(
+          attachPipeMeta(
+            {
+              label: `${label} · public JWK`,
+              filename: `${stem}-public.${extOverride || "jwk.json"}`,
+              content: JSON.stringify(jwk, null, 2),
+              sensitive: false,
+              mime: mimeOverride || "application/json",
+              encoding: "jwk",
+              role: "key",
+              tags: ["keypair", "public"],
+              traits: value.meta?.alg ? { alg: value.meta.alg } : undefined,
+            },
+            value
+          )
+        );
       } catch (_) {
         /* ignore */
       }
@@ -4642,7 +4680,7 @@ function valueToArtifacts(value, name = "artifact") {
           mime: "application/json",
           encoding: "text",
           disposition: "file",
-          role: "text",
+          role: "recipients",
           tags: ["openpgp", "recipients"],
         },
         value
