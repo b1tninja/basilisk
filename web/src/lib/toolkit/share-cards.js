@@ -16,8 +16,29 @@
  * is not a card. Producing one is therefore an explicit reveal, and the caller
  * is expected to gate it behind a deliberate action — see `ShareCards`.
  *
+ * ## Verifiable splits change what a card has to say
+ *
+ * Since the ceremony started splitting with `vss.split`, a card belongs to a
+ * split that has a public identity — the commitments, and the public key they
+ * commit to. Two consequences the card has to carry, because paper is the only
+ * thing that survives the room:
+ *
+ * - **The recovery line has to be right.** It used to be hard-coded to
+ *   `sss.combine`, which is wrong for every card this ceremony now prints:
+ *   `vss.combine` is the conjugate, and a custodian following the printed
+ *   instruction would have been told to run an op that rejects their shares.
+ *   `recoveryLine` derives it from whether the set is verifiable.
+ * - **The card has to name its split**, so a custodian holding it years later
+ *   can tell whether the commitments document in front of them is the right
+ *   one. The id is a *label*: matching split ids is how you notice you have the
+ *   wrong document, not how you verify a share. `checkLine` says what actually
+ *   verifies it.
+ *
  * @module lib/toolkit/share-cards
  */
+
+import { publicKeyOf } from "../quorum/vss.js";
+import { splitIdFor } from "./share-check.js";
 
 /**
  * @typedef {object} ShareCardArtifact
@@ -40,7 +61,35 @@
  * @property {string} qrSvg      inline SVG, or "" when the recipe emitted none
  * @property {string} label      ceremony label
  * @property {string} date       ISO date (YYYY-MM-DD)
+ * @property {boolean} verifiable  the split published commitments
+ * @property {string} splitId    short label for the split, "" when not verifiable
  */
+
+/**
+ * Find the published commitments among a cell's tiles.
+ *
+ * `vss.commitments | out @commitments` writes an ordinary non-sensitive text
+ * tile, so it arrives in the same flat list as the shares. Matched by content
+ * rather than only by name: a ceremony author may relabel the slot, and a
+ * document that parses as a commitments object *is* one.
+ *
+ * @param {ShareCardArtifact[]} artifacts
+ * @returns {string[]|null}
+ */
+export function findCommitments(artifacts) {
+  for (const a of artifacts || []) {
+    const text = String(a?.content || "").trim();
+    if (!text.startsWith("{") && !text.startsWith("[")) continue;
+    try {
+      const parsed = JSON.parse(text);
+      const list = Array.isArray(parsed) ? parsed : parsed?.commitments;
+      if (Array.isArray(list) && list.length) return list.map(String);
+    } catch {
+      /* not a commitments document */
+    }
+  }
+  return null;
+}
 
 /**
  * Is this tile a share body (as opposed to its QR, or an envelope)?
@@ -87,7 +136,7 @@ export function inferThreshold(artifacts) {
  * Build one card per share from a cell's artifacts.
  *
  * @param {ShareCardArtifact[]} artifacts
- * @param {{ label?: string, date?: string|Date, threshold?: number }} [opts]
+ * @param {{ label?: string, date?: string|Date, threshold?: number, commitments?: string[]|string|null }} [opts]
  * @returns {ShareCard[]}
  */
 export function collectShareCards(artifacts, opts = {}) {
@@ -112,6 +161,26 @@ export function collectShareCards(artifacts, opts = {}) {
       : String(opts.date || new Date().toISOString().slice(0, 10));
   const label = String(opts.label || "").trim();
 
+  // Commitments may be handed in (the ceremony knows where its own tile is) or
+  // discovered in the same cell. A split id is only stamped when the point
+  // parses — a card must not carry an id derived from a document that could
+  // not be read, because the id's whole job is to be compared against one.
+  const explicit = opts.commitments;
+  const commitments = Array.isArray(explicit)
+    ? explicit
+    : typeof explicit === "string" && explicit.trim()
+      ? findCommitments([{ content: explicit }])
+      : findCommitments(list);
+  let splitId = "";
+  if (commitments?.length) {
+    try {
+      splitId = splitIdFor(publicKeyOf(commitments));
+    } catch {
+      splitId = "";
+    }
+  }
+  const verifiable = !!splitId;
+
   const sorted = [...bodies].sort(
     (a, b) => (Number(a.shareIndex) || 0) - (Number(b.shareIndex) || 0)
   );
@@ -126,6 +195,8 @@ export function collectShareCards(artifacts, opts = {}) {
       qrSvg: qrByIndex.get(index) || "",
       label,
       date,
+      verifiable,
+      splitId,
     };
   });
 }
@@ -141,6 +212,46 @@ export function quorumLine(card) {
     return `Share ${card.index} of ${card.total} — any ${card.threshold} of these ${card.total} reconstruct the secret.`;
   }
   return `Share ${card.index} of ${card.total} — the recipe did not record how many are required.`;
+}
+
+/**
+ * The recipe printed on the card for putting the secret back together.
+ *
+ * Was hard-coded to `sss.combine`, which became wrong the moment the ceremony
+ * switched to `vss.split`: `vss.combine` is the conjugate, `sss.combine` is not
+ * a synonym for it, and a custodian following a printed instruction has no way
+ * to notice the card is telling them to run the wrong op. Derived now, so the
+ * two cannot drift again.
+ *
+ * `vss.verify` is included in the verifiable form deliberately. Recovery is the
+ * moment a bad share does its damage — combining an unverified set returns a
+ * *different* secret rather than an error — and the card is the only place the
+ * instruction to check first will still exist.
+ *
+ * @param {ShareCard} card
+ * @returns {string}
+ */
+export function recoveryLine(card) {
+  return card?.verifiable
+    ? "shares | blip39.decode | vss.verify commitments=@commitments | vss.combine"
+    : "shares | blip39.decode | sss.combine";
+}
+
+/**
+ * The sentence telling a holder how to check *this* card on its own.
+ *
+ * Only meaningful for a verifiable split, and says nothing when the split is
+ * not one — an `sss` card genuinely cannot be checked in isolation, and a
+ * reassuring instruction that silently fails is worse than no instruction.
+ *
+ * @param {ShareCard} card
+ * @returns {string}
+ */
+export function checkLine(card) {
+  if (!card?.verifiable) {
+    return "This share cannot be checked on its own — it carries no commitments.";
+  }
+  return `Check this card against the published commitments for split ${card.splitId}.`;
 }
 
 /**

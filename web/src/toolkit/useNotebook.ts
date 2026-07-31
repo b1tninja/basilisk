@@ -138,9 +138,9 @@ export function useNotebook() {
   const cancelQuorum = useCallback(() => {
     window.dispatchEvent(new CustomEvent("basilisk:quorum-cancel"));
   }, []);
-  const [sheet, setSheet] = useState<"workspace" | "prefs" | "ceremony" | null>(
-    null
-  );
+  const [sheet, setSheet] = useState<
+    "workspace" | "prefs" | "ceremony" | "sharecheck" | "integrity" | null
+  >(null);
   const [kernelEpoch, setKernelEpoch] = useState(0);
   const [toolkitPrefs, setToolkitPrefsState] = useState<ToolkitPrefs>(() => getToolkitPrefs());
   const boundRecipientsRef = useRef<ResolvedRecipient[]>([]);
@@ -1016,6 +1016,10 @@ export function useNotebook() {
     return {
       expectedDigest: tileForSlot(splitOut, "expected"),
       recoveredDigest: tileForSlot(outs(ceremonyCellIndex.verify), "recovered"),
+      // The public half. Kept separate from `shareArtifacts` rather than left
+      // in the pile: it is the one output of this ceremony that is meant to be
+      // published, and every surface that shows it says so.
+      commitmentsText: tileForSlot(splitOut, "commitments"),
       // Only the share/QR tiles — the digest tile is not a card.
       shareArtifacts: splitOut.filter(
         (a) => a.role === "share" || a.role === "qr"
