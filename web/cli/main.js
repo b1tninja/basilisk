@@ -43,6 +43,7 @@ Usage:
   basilisk run <recipe>       Compile, validate and execute a recipe
   basilisk check <recipe>     Compile and validate only (non-zero if invalid)
   basilisk list-ops           Dump the op registry
+  basilisk agent --ssh        Serve the ssh-agent protocol on a socket/pipe
 
 Run options:
   --out-dir <dir>             Write each artifact to a file in <dir>
@@ -58,6 +59,13 @@ Run options:
   --passphrase-env <VAR>      Read the passphrase from an environment variable
                               (there is no --passphrase: it would land in shell
                               history, in \`ps\`, and in CI logs)
+
+agent options:
+  --ssh                       Speak draft-miller-ssh-agent (ssh, git, scp)
+  --identity <file>           openssh-key-v1 private key to serve, repeatable
+  --socket <path>             Bind here instead of the platform default
+  --confirm                   Ask on the terminal before every signature
+  --status                    Report whether an agent is reachable, then exit
 
 check options:
   --json                      Emit errors and warnings as JSON
@@ -78,16 +86,30 @@ const FLAGS_WITH_VALUE = new Set([
   "--private-key",
   "--passphrase-env",
   "--toolbox",
+  "--identity",
+  "--socket",
 ]);
 
-const BOOL_FLAGS = new Set(["--json", "--stdin", "--help", "-h", "--quiet"]);
+/** Flags that may appear more than once; their values collect into an array. */
+const REPEATABLE_FLAGS = new Set(["--identity"]);
+
+const BOOL_FLAGS = new Set([
+  "--json",
+  "--stdin",
+  "--help",
+  "-h",
+  "--quiet",
+  "--ssh",
+  "--confirm",
+  "--status",
+]);
 
 /**
  * @param {string[]} argv
- * @returns {{ command: string, positional: string[], options: Record<string, string|boolean> }}
+ * @returns {{ command: string, positional: string[], options: Record<string, string|boolean|string[]> }}
  */
 export function parseArgs(argv) {
-  /** @type {Record<string, string|boolean>} */
+  /** @type {Record<string, string|boolean|string[]>} */
   const options = {};
   /** @type {string[]} */
   const positional = [];
@@ -103,6 +125,13 @@ export function parseArgs(argv) {
     if (FLAGS_WITH_VALUE.has(name)) {
       const value = eq >= 0 ? arg.slice(eq + 1) : argv[++i];
       if (value == null) throw new Error(`${name} requires a value`);
+      if (REPEATABLE_FLAGS.has(name)) {
+        // Several keys, several approvals: the last one must not silently
+        // erase the others, which is what a plain assignment would do.
+        const prev = options[name];
+        options[name] = Array.isArray(prev) ? [...prev, value] : prev ? [prev, value] : [value];
+        continue;
+      }
       options[name] = value;
       continue;
     }
@@ -455,6 +484,8 @@ export async function main(argv, io) {
         return await cmdRun(positional, options, io);
       case "list-ops":
         return cmdListOps(options, io);
+      case "agent":
+        return await cmdAgent(options, io);
       default:
         io.err(`unknown command "${command}"`);
         io.err(USAGE);
@@ -471,3 +502,84 @@ export async function main(argv, io) {
 }
 
 export { USAGE };
+
+/**
+ * `basilisk agent` — the ssh-agent socket server (§30c).
+ *
+ * This is the one place Basilisk stops being a page and becomes a service
+ * other programs talk to: `ssh`, `git` and `scp` speak this protocol over
+ * `$SSH_AUTH_SOCK` (a named pipe on Windows) and neither know nor care what
+ * is behind it.
+ *
+ * Keys come from `--identity` files, not from the browser vault: there is
+ * no IndexedDB here, and pretending otherwise is exactly the dishonesty
+ * the capability layer exists to prevent. Mesh-forwarded approvals (§30d)
+ * are the designed bridge to browser-held keys and are not built yet.
+ *
+ * @param {Record<string, string|boolean|string[]>} options
+ * @param {CliIO} io
+ */
+async function cmdAgent(options, io) {
+  const { defaultAgentPath, agentKeyFromFile, startSshAgent, ttyConfirm } = await import(
+    "./agent-server.js"
+  );
+  const path = typeof options["--socket"] === "string" ? options["--socket"] : defaultAgentPath();
+
+  if (options["--status"]) {
+    // §30b: report what can be checked, which is reachability — not a claim
+    // about what the agent holds, because asking would require being a client.
+    const net = await import("node:net");
+    const reachable = await new Promise((resolve) => {
+      const sock = net.connect(path);
+      const done = (ok) => {
+        sock.destroy();
+        resolve(ok);
+      };
+      sock.once("connect", () => done(true));
+      sock.once("error", () => done(false));
+      setTimeout(() => done(false), 1500);
+    });
+    io.out(reachable ? `agent: reachable at ${path}` : `agent: not running (nothing at ${path})`);
+    return reachable ? EXIT.ok : EXIT.runtime;
+  }
+
+  if (!options["--ssh"]) {
+    io.err("agent: --ssh is required (it is the only protocol served today)");
+    return EXIT.usage;
+  }
+
+  const identities = Array.isArray(options["--identity"])
+    ? options["--identity"]
+    : typeof options["--identity"] === "string"
+      ? [options["--identity"]]
+      : [];
+  if (!identities.length) {
+    io.err("agent: at least one --identity <openssh private key file> is required");
+    return EXIT.usage;
+  }
+
+  /** @type {*[]} */
+  const keys = [];
+  for (const file of identities) {
+    try {
+      keys.push(await agentKeyFromFile(file, { confirm: !!options["--confirm"] }));
+    } catch (err) {
+      io.err(`agent: cannot load ${file} — ${/** @type {*} */ (err)?.message || err}`);
+      return EXIT.runtime;
+    }
+  }
+
+  const { path: bound } = await startSshAgent({
+    keys,
+    path,
+    confirm: options["--confirm"] ? ttyConfirm : undefined,
+    log: (line) => io.err(line),
+  });
+
+  io.err(`agent: listening on ${bound}`);
+  for (const k of keys) io.err(`agent: ${k.fingerprint} ${k.comment}${k.confirm ? " (confirm)" : ""}`);
+  if (process.platform !== "win32") io.err(`agent: export SSH_AUTH_SOCK=${bound}`);
+  // Deliberately never resolves: the process *is* the agent.
+  await new Promise(() => {});
+  return EXIT.ok;
+}

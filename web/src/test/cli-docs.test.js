@@ -132,7 +132,7 @@ describe("docs/CLI.md", () => {
       // Placeholder values like `…` are fine; only the *shape* is checked here.
       expect(() => parseArgs(argv), argv.join(" ")).not.toThrow();
       const { command } = parseArgs(argv);
-      expect(["run", "check", "list-ops"], argv.join(" ")).toContain(command);
+      expect(["run", "check", "list-ops", "agent"], argv.join(" ")).toContain(command);
     }
   });
 

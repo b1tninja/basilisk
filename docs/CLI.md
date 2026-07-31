@@ -26,6 +26,7 @@ Recipe syntax is unchanged: see [RECIPE.md](./RECIPE.md).
 | `run <recipe>` | Compile, validate, execute; print artifacts |
 | `check <recipe>` | Compile and validate only; non-zero exit if invalid |
 | `list-ops` | Dump the op registry (generated from `listSteps()`) |
+| `agent --ssh` | Serve the ssh-agent protocol so `ssh`/`git` can use a key |
 
 Exit codes: `0` ok · `1` usage · `2` invalid recipe · `3` runtime error ·
 `4` browser-only op.
@@ -206,6 +207,54 @@ direction. Its ceremony ops are caught by layer 2, which is exact.
 
 Probes are evaluated live, not cached, so a host that *does* provide a surface
 (jsdom, Electron, a polyfill) is believed rather than second-guessed.
+
+## `agent`
+
+The one command that is not about recipes. `basilisk agent --ssh` speaks the
+ssh-agent protocol (draft-miller-ssh-agent) on a socket, so `ssh`, `git` and
+`scp` can use a key without it ever being written where they could read it.
+
+```bash
+node web/cli/basilisk.js agent --ssh --identity ~/.ssh/id_ed25519
+```
+
+On POSIX it binds `$SSH_AUTH_SOCK` (or `/tmp/basilisk-ssh-agent.sock`); on
+Windows, the named pipe `\\.\pipe\openssh-ssh-agent` that OpenSSH clients
+already look for. `--socket <path>` overrides both. The process *is* the
+agent: it does not fork or daemonise, so `Ctrl-C` is how it stops.
+
+This is not a metaphor borrowed from gpg-agent — it is the same move
+gpg-agent makes with `enable-ssh-support`. Being an ssh-agent is the
+established way a keystore serves SSH clients.
+
+| Option | Does |
+|--------|------|
+| `--ssh` | Required; the only protocol served today |
+| `--identity <file>` | An `openssh-key-v1` private key to serve. Repeatable |
+| `--socket <path>` | Bind here instead of the platform default |
+| `--confirm` | Ask on the terminal before every signature (`ssh-add -c`) |
+| `--status` | Report whether an agent is reachable, then exit |
+
+**What it will not do.** Only *request-identities* and *sign-request* are
+implemented. Adding, removing and locking keys answer `SSH_AGENT_FAILURE` —
+an agent that let a client add keys to your keyring would be a different and
+worse thing, and every client already handles that reply.
+
+**`--confirm` without a terminal.** A confirm-flagged key whose request
+arrives with no TTY is refused with `SSH_AGENT_FAILURE` and a line on stderr.
+Refusing is the correct degradation for a gate whose whole point is a human;
+the agent stays up, because one refused request is not a reason to drop every
+other client. Keys without `--confirm` sign silently, exactly as OpenSSH's own
+agent does.
+
+**Passphrase-protected key files are refused by name.** Their KDF is
+`bcrypt_pbkdf`, which no Web API provides. Decrypt outside
+(`ssh-keygen -p -N ""`) or serve a different key.
+
+**Keys come from files, not from the browser vault.** There is no IndexedDB in
+Node, and the capability layer exists precisely so that this kind of gap is
+stated rather than faked. Bridging browser-held keys to this agent is designed
+(the mesh-forwarding phase) and not built.
 
 ## `list-ops`
 

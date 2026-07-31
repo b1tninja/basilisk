@@ -61,10 +61,14 @@ afterEach(() => {
 });
 
 describe("no surface, no signature", () => {
-  it("refuses and names the flag that would consent (§27f)", async () => {
+  it("refuses, and says where the question can actually be asked (§27f)", async () => {
+    // The design's `--approve` flag is deliberately not named: it does not
+    // exist yet (no vault outside the browser, so `basilisk run` refuses the
+    // agent toolbox at pre-flight), and naming an untypeable flag would be
+    // worse than admitting this host has nowhere to ask.
     expect(hasApprovalGate()).toBe(false);
     await expect(requireApproval(baseRequest())).rejects.toThrow(
-      /needs per-use approval.*--approve SHA256:A+:sign.*--approve-all/s
+      /needs per-use approval, and this host has no surface to ask on.*toolkit page.*being signed/s
     );
   });
 });
