@@ -81,6 +81,21 @@ const STEP_DOCS = {
   },
 
   // ── Secret sharing ──
+  // Feldman VSS — the scheme, not a JS API. Wikipedia for the same reason
+  // `sss.split` cites it: the primary source is a 1987 FOCS paper with no
+  // stable public URL on the allowed hosts.
+  "vss.split": {
+    url: "https://en.wikipedia.org/wiki/Verifiable_secret_sharing",
+    label: "Verifiable secret sharing (Feldman)",
+  },
+  "vss.verify": {
+    url: "https://en.wikipedia.org/wiki/Verifiable_secret_sharing",
+    label: "Verifiable secret sharing (Feldman)",
+  },
+  "vss.combine": {
+    url: "https://en.wikipedia.org/wiki/Verifiable_secret_sharing",
+    label: "Verifiable secret sharing (Feldman)",
+  },
   "sss.split": {
     url: "https://en.wikipedia.org/wiki/Shamir%27s_secret_sharing",
     label: "Shamir's Secret Sharing",

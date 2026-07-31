@@ -1583,6 +1583,18 @@ async function execStepBody(step, value, bindings, artifacts) {
         },
       };
     }
+    case "vss.split":
+    case "vss.verify":
+    case "vss.combine": {
+      // Lazy: the curve arithmetic is only pulled in by a recipe that shares
+      // verifiably, which most do not.
+      const vss = await import("./vss-ops.js");
+      if (step.name === "vss.split") return vss.execVssSplit(value, step.params || {});
+      if (step.name === "vss.verify") {
+        return vss.execVssVerify(value, step.params || {}, bindings);
+      }
+      return vss.execVssCombine(value);
+    }
     case "sss.split": {
       let bytes;
       if (value?.type === "bytes") bytes = value.data;

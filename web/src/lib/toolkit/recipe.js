@@ -1339,6 +1339,10 @@ export function validateRecipe(ast) {
     if (
       current.base === "shares" &&
       step.name !== "sss.combine" &&
+      // The verifiable pair consumes the same share sets: `vss.verify` checks
+      // them and hands them on, `vss.combine` reconstructs from them.
+      step.name !== "vss.verify" &&
+      step.name !== "vss.combine" &&
       step.name !== "blip39" &&
       step.name !== "tee" &&
       step.name !== "peek" &&
@@ -1348,7 +1352,7 @@ export function validateRecipe(ast) {
       step.name !== "select"
     ) {
       errors.push({
-        message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, at N / [n] to select, blip39 to encode/decode, or sss.combine (on raw shares) for bytes/master.`,
+        message: `Cannot pipe shares into "${step.name}" — add foreach to unpack, at N / [n] to select, blip39 to encode/decode, or sss.combine / vss.combine (on raw shares) for bytes/master.`,
         start: step.start,
         end: step.end,
         stepIndex,

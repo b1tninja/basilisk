@@ -836,6 +836,35 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
       mode: "run",
     },
 
+    // —— VSS (verifiable sharing) ——
+    // Real `run` cases: this is pure curve arithmetic with no browser API
+    // behind it, so there is nothing to stub and no reason to compile-only.
+    {
+      id: "vss.split.verify.combine",
+      recipe: `random 32 | vss.split threshold=2 shares=3 | out @shares
+
+in @shares | vss.verify | vss.combine | encode hex | out @recovered`,
+      mode: "run",
+      timeoutMs: 30_000,
+    },
+    {
+      id: "vss.split.blip39.foreach",
+      // Emits the same `shares` shape as sss.split, so the existing
+      // collection machinery composes untouched.
+      recipe: `random 32 | vss.split threshold=2 shares=3 | blip39 | foreach
+  - out @share`,
+      mode: "run",
+      timeoutMs: 30_000,
+    },
+    {
+      id: "vss.scalar.roundtrip",
+      recipe: `genkey ec/p256 | export scalar | vss.split threshold=2 shares=3 | out @s
+
+in @s | vss.verify | out @checked`,
+      mode: "run",
+      timeoutMs: 30_000,
+    },
+
     // —— SSS / BLIP39 / flow ——
     {
       id: "sss.blip39.foreach.at",
