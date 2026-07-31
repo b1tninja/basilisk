@@ -1,0 +1,5 @@
+256 SHA256:BV9AB0OE5ffriBtNWFcPq6qLkdtnnn2LXlERMTNNuGc fixture@basilisk (ED25519)
+256 SHA256:EsrxU2XT8qp+dpYZex29xKLRCC7wGpO5OUgKHvHYKzg fixture@basilisk (ECDSA)
+384 SHA256:lPDBCGskuJdQksqWisSJrYRLxg0hFTLe1akjh2cqb44 fixture@basilisk (ECDSA)
+521 SHA256:xVNs7QZyEQHhq3f3iz56RKNXrfUXc7A/sgYQkK1KANE fixture@basilisk (ECDSA)
+3072 SHA256:S9R5qcoGJYRsSLpBGXUo1qt0VLbFmpESBUzq9CvUyG4 fixture@basilisk (RSA)
