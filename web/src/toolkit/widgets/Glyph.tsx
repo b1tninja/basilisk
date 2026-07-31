@@ -148,12 +148,26 @@ export function shapeForType(output?: string): string | undefined {
   }
 }
 
+/** What a §25a shape is claiming, in words — for the tooltip and the a11y name. */
+const KIND_LABEL: Record<string, string> = {
+  candidate: "an address",
+  session: "a session or identity",
+  channel: "a live channel — only valid inside this run",
+  connState: "observe-only — can be displayed, not consumed",
+};
+
 /**
  * Small toolbox-origin dot, matching the design's chip treatment (color, not
  * icon). Network/WebRTC types (design v2 §25a) additionally get a *shape* —
  * diamond / square / triangle / hollow ring — because a live socket handle
  * shouldn't read as an ordinary data value at a glance. Pure CSS at the same
  * 5-7px footprint every dot already occupies; no icon assets.
+ *
+ * Where the type is ordinary DATA there is no shape, and callers that only
+ * want the meaningful marks should skip the dot entirely rather than render a
+ * plain coloured circle — see SuggestChip. The colour alone repeats what the
+ * chip's own label already says, and a mark that is always present and never
+ * distinguishes anything is how the CAST light got lost in the first place.
  */
 export function ToolboxDot({
   op,
@@ -163,6 +177,7 @@ export function ToolboxDot({
   className?: string;
 }) {
   const kind = shapeForType(op.output);
+  const label = kind ? KIND_LABEL[kind] : undefined;
   // Colour and shape both come from CSS now (`.toolbox-shape[data-toolbox]`
   // sets `color`, the shape rules paint with `currentColor`). This one
   // component renders once per op, so its single style prop was responsible
@@ -184,7 +199,12 @@ export function ToolboxDot({
       )}
       data-toolbox={op.toolbox || "unknown"}
       data-kind={kind || undefined}
-      aria-hidden
+      /* A shape that encodes something gets a name; a bare colour dot stays
+         decorative, because its colour repeats the label beside it. */
+      title={label}
+      role={label ? "img" : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
     />
   );
 }

@@ -1,7 +1,7 @@
 import type { DragEvent, KeyboardEvent, ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { ToolboxDot } from "./Glyph";
+import { ToolboxDot, shapeForType } from "./Glyph";
 import type { ToolCardOp } from "./ToolCard";
 
 export type SuggestChipVariant = "placed" | "selector" | "ghost";
@@ -56,9 +56,28 @@ export function SuggestChip({
     className
   );
 
+  /*
+   * The dot was carrying two orthogonal encodings at once: its shape said
+   * what kind of value the step produces (§25a — address, session, live
+   * channel, observe-only) and its colour said which toolbox the step came
+   * from. On a chip the colour was the redundant half: the chip's own label
+   * is `gpg.encrypt` or `sss.split`, which names the toolbox in words right
+   * beside it. So the dot rendered on every chip and, for the ~95% of steps
+   * that emit ordinary DATA, said nothing at all — the shape channel was
+   * blank and the colour channel was a duplicate.
+   *
+   * Now its presence is the signal: a chip carries a mark only when the value
+   * is not ordinary data, which is exactly when "this is not a byte string
+   * you can save" is worth interrupting the reader for. The colour survives
+   * only there, where the originating toolbox is genuinely additional
+   * information and where a 5px hollow ring needs the contrast to be seen at
+   * all. ToolboxDot gives those a real accessible name.
+   */
+  const marked = !!op && !!shapeForType(op.output);
+
   const body = (
     <>
-      {op ? <ToolboxDot op={op} /> : null}
+      {op && marked ? <ToolboxDot op={op} /> : null}
       <span className="suggest-chip-name">{label}</span>
       {hint ? <span className="suggest-chip-out muted">{hint}</span> : null}
       {children}

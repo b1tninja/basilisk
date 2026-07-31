@@ -429,6 +429,29 @@ function CatalogApp() {
               onRemove={() => {}}
             />
           </div>
+          {/* The §25a mark is presence-bearing: a chip carries one only when
+              the step emits something other than ordinary DATA. Every chip
+              above is a DATA op and shows none; every chip below shows one,
+              which is the whole point of the distinction. */}
+          <p className="mt-3 text-[11px] text-[var(--muted-foreground)]">
+            Non-DATA outputs — the mark appears only here.
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            {[
+              { name: "rtc.gather", output: "candidate" },
+              { name: "quorum.offer", output: "session" },
+              { name: "rtc.open", output: "channel" },
+              { name: "rtc.state", output: "connstate" },
+            ].map((o) => (
+              <SuggestChip
+                key={o.name}
+                label={o.name}
+                hint={o.output}
+                variant="placed"
+                op={{ toolbox: "webrtc", name: o.name, output: o.output }}
+              />
+            ))}
+          </div>
         </Section>
 
         <Section id="insertgap" title="The caret — InsertGap states (§19d)">

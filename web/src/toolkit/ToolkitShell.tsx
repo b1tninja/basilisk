@@ -964,8 +964,11 @@ export function ToolkitShell() {
                   kind: tipModel.tip.kind,
                   encoding: tipModel.tip.encoding,
                 }}
+                /* Content only — OpsShelf owns the band's chrome, so the
+                   caret announcement and the fit filter's escape hatch share
+                   one border and one wash instead of stacking two. */
                 caretBanner={
-                  <div className="border-b border-l-2 border-[var(--border)] border-l-[var(--caret)] bg-[color-mix(in_srgb,var(--caret)_6%,transparent)] px-2.5 py-2">
+                  <div className="px-2.5 py-2">
                     <div className="text-[length:9.5px] font-bold uppercase tracking-wider text-[var(--caret)]">
                       Caret ·{" "}
                       {armedBranch

@@ -510,29 +510,50 @@ export function OpsShelf({
           </div>
         </div>
       ) : null}
-      {caretBanner}
-      {tipFitProp ? (
-        <div className="border-b border-l-2 border-[var(--border)] border-l-[var(--caret)] bg-[color-mix(in_srgb,var(--caret)_6%,transparent)] px-2.5 py-1.5 text-[length:10.5px] text-[var(--muted-foreground)]">
-          {showAll ? (
-            <>
-              Showing <strong className="text-[var(--foreground)]">all {ops.length} operations</strong>.{" "}
-              <button
-                type="button"
-                className="text-[var(--caret)] underline"
-                onClick={() => setShowAll(false)}
-              >
-                Fit to {tip?.base || "tip"} only
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="text-[var(--caret)] underline"
-              onClick={() => setShowAll(true)}
+      {/*
+        One band, not two. The caret banner and the show-all control each drew
+        their own bottom border, caret-blue left rule and 6%-caret wash, so
+        where the caret is and what the shelf is filtered to — one fact and
+        its escape hatch — read as two unrelated announcements stacked on top
+        of each other. They share a container now; the divider between them is
+        a hairline inside it.
+      */}
+      {caretBanner || tipFitProp ? (
+        <div className="border-b border-l-2 border-[var(--border)] border-l-[var(--caret)] bg-[color-mix(in_srgb,var(--caret)_6%,transparent)]">
+          {caretBanner}
+          {tipFitProp ? (
+            <div
+              className={cn(
+                "px-2.5 py-1.5 text-[length:10.5px] text-[var(--muted-foreground)]",
+                caretBanner && "border-t border-[color-mix(in_srgb,var(--caret)_18%,transparent)]"
+              )}
             >
-              Show all {ops.length}
-            </button>
-          )}
+              {showAll ? (
+                <>
+                  Showing{" "}
+                  <strong className="text-[var(--foreground)]">
+                    all {ops.length} operations
+                  </strong>
+                  .{" "}
+                  <button
+                    type="button"
+                    className="text-[var(--caret)] underline"
+                    onClick={() => setShowAll(false)}
+                  >
+                    Fit to {tip?.base || "tip"} only
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="text-[var(--caret)] underline"
+                  onClick={() => setShowAll(true)}
+                >
+                  Show all {ops.length}
+                </button>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
       <ScrollArea className={cn("min-h-0 flex-1 px-2 py-1.5", bare && "px-0")}>
