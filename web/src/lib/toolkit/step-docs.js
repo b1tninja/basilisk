@@ -137,6 +137,11 @@ const STEP_DOCS = {
   },
 
   // ── JOSE — each op points at the RFC that defines its serialization ──
+  "ssh.encode": { url: "https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key", label: "OpenSSH · PROTOCOL.key" },
+  "ssh.decode": { url: "https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key", label: "OpenSSH · PROTOCOL.key" },
+  "ssh.fingerprint": { url: "https://www.rfc-editor.org/rfc/rfc4253", label: "RFC 4253 · SSH transport" },
+  "ssh.sign": { url: "https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig", label: "OpenSSH · PROTOCOL.sshsig" },
+  "ssh.verify": { url: "https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig", label: "OpenSSH · PROTOCOL.sshsig" },
   "jose.sign": { url: `${RFC}/rfc7515`, label: "RFC 7515 · JSON Web Signature" },
   "jose.verify": { url: `${RFC}/rfc7515#section-5.2`, label: "RFC 7515 §5.2 · Validating a JWS" },
   "jose.encrypt": { url: `${RFC}/rfc7516`, label: "RFC 7516 · JSON Web Encryption" },

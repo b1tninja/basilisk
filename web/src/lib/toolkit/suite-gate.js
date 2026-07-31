@@ -16,6 +16,10 @@ export function toolboxToSuite(toolbox) {
   const tb = String(toolbox || "");
   if (tb === "openpgp") return "openpgp";
   if (tb === "webcrypto") return "webcrypto";
+  // SSH's math is SubtleCrypto/@noble — the suite the self-test actually
+  // qualifies. The encodings are not CAST's job; they get interop fixtures
+  // and verb smoke instead (§29g).
+  if (tb === "ssh") return "webcrypto";
   if (tb === "sss") return "sss";
   return null;
 }

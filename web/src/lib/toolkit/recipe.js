@@ -62,6 +62,17 @@ function pushDiscouragedAlgoWarnings(step, warnings) {
     );
   }
   if (
+    step.name === "ssh.encode" &&
+    String(step.params?.format || "public") === "private"
+  ) {
+    // §29f: the block has no passphrase, and vault protection does not
+    // travel with an export. Warned at compile so it reads before the run,
+    // not after the key is already on screen.
+    warnings.push(
+      `ssh.encode format=private emits an unencrypted private key — anything that can read the output can use the key. Prefer keeping it in My Keys and signing with agent.sign`
+    );
+  }
+  if (
     (step.name === "genkey" || step.name === "import") &&
     String(step.params?.alg || "").startsWith("rsa/") &&
     String(step.params?.usage || "auto") !== "encrypt" &&

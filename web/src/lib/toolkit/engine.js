@@ -2761,6 +2761,28 @@ async function execStepBody(step, value, bindings, artifacts) {
           return age.execAgeDecrypt(value, p, bindings);
       }
     }
+    case "ssh.encode":
+    case "ssh.decode":
+    case "ssh.fingerprint":
+    case "ssh.sign":
+    case "ssh.verify": {
+      // Lazy for the same reason as age: a whole wire-format family most
+      // recipes never touch.
+      const ssh = await import("./ssh-ops.js");
+      const p = step.params || {};
+      switch (step.name) {
+        case "ssh.encode":
+          return ssh.execSshEncode(value, p);
+        case "ssh.decode":
+          return ssh.execSshDecode(value);
+        case "ssh.fingerprint":
+          return ssh.execSshFingerprint(value);
+        case "ssh.sign":
+          return ssh.execSshSign(value, p, bindings);
+        default:
+          return ssh.execSshVerify(value, p, bindings);
+      }
+    }
     case "rtc.gather":
     case "rtc.check":
     case "rtc.certificate":

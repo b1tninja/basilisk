@@ -1572,6 +1572,110 @@ in @ct | age.decrypt key=@id | utf8 | out @plain`,
         }
       },
     },
+    // ── SSH (§29g) — every op, every enum value, and -q, in running
+    // recipes. Byte-level interop with ssh-keygen is asserted separately
+    // against checked-in fixtures (ssh-format.test.js); these prove the
+    // registry surface composes.
+    {
+      id: "ssh.encode.decode.fingerprint",
+      recipe: `genkey ed25519 | out @id
+
+in @id | ssh.encode comment="verb@smoke" | out @pub
+
+in @pub | ssh.decode | ssh.fingerprint | out @fp
+
+in @id | ssh.fingerprint | out @fp2`,
+      mode: "run",
+      timeoutMs: 30_000,
+      assert(arts) {
+        const tok = (a, n) => String(a.label || "").split(/[^A-Za-z0-9]+/).includes(n);
+        const pub = arts.find((a) => tok(a, "pub"));
+        if (!pub || !String(pub.content).startsWith("ssh-ed25519 ")) {
+          throw new Error(`ssh.encode did not emit a public line: ${pub?.content}`);
+        }
+        if (!String(pub.content).endsWith(" verb@smoke")) {
+          throw new Error("ssh.encode dropped the comment");
+        }
+        const fp = arts.find((a) => tok(a, "fp"));
+        const fp2 = arts.find((a) => tok(a, "fp2"));
+        if (!String(fp?.content).startsWith("SHA256:")) {
+          throw new Error(`ssh.fingerprint did not emit SHA256:…: ${fp?.content}`);
+        }
+        // The line's fingerprint and the live keypair's must agree — the
+        // encode/decode pair round-tripped the same key.
+        if (String(fp?.content) !== String(fp2?.content)) {
+          throw new Error("fingerprint of decoded line differs from the source keypair");
+        }
+      },
+    },
+    {
+      id: "ssh.encode.format=private.roundtrip",
+      recipe: `genkey ec/p256 | out @id
+
+in @id | ssh.encode format=private comment="verb@smoke" | out @pem
+
+in @pem | ssh.decode | out @again
+
+"private round trip" | utf8 | out @msg | ssh.sign key=@again | out @sig
+
+in @id | ssh.encode | out @pub
+
+in @msg | ssh.verify key=@pub signature=@sig | out @ok`,
+      mode: "run",
+      timeoutMs: 30_000,
+      assert(arts) {
+        const tok = (a, n) => String(a.label || "").split(/[^A-Za-z0-9]+/).includes(n);
+        const pem = arts.find((a) => tok(a, "pem"));
+        if (!String(pem?.content).includes("BEGIN OPENSSH PRIVATE KEY")) {
+          throw new Error("ssh.encode format=private did not emit an openssh-key-v1 block");
+        }
+        const ok = arts.find((a) => tok(a, "ok"));
+        if (String(ok?.content) !== "true") {
+          throw new Error("signature made with the re-imported private key did not verify");
+        }
+      },
+    },
+    {
+      id: "ssh.sign.verify.namespace",
+      recipe: `genkey ed25519 | out @id
+
+in @id | ssh.encode | out @pub
+
+"namespaced" | utf8 | out @msg | ssh.sign key=@id namespace=git | out @sig
+
+in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok
+
+in @msg | ssh.verify -q key=@pub signature=@sig namespace=file | out @wrongns`,
+      mode: "run",
+      timeoutMs: 30_000,
+      assert(arts) {
+        const tok = (a, n) => String(a.label || "").split(/[^A-Za-z0-9]+/).includes(n);
+        const ok = arts.find((a) => tok(a, "ok"));
+        if (String(ok?.content) !== "true") throw new Error("git-namespace verify failed");
+        // -q under the wrong namespace: false, not a throw — and never true.
+        const wrong = arts.find((a) => tok(a, "wrongns"));
+        if (String(wrong?.content) !== "false") {
+          throw new Error(`namespace mismatch must soft-fail false, got: ${wrong?.content}`);
+        }
+      },
+    },
+    {
+      id: "ssh.sign.hash=sha256.rsa",
+      recipe: `genkey rsa/2048 | out @id
+
+in @id | ssh.encode | out @pub
+
+"rsa sshsig" | utf8 | out @msg | ssh.sign key=@id hash=sha256 | out @sig
+
+in @msg | ssh.verify key=@pub signature=@sig | out @ok`,
+      mode: "run",
+      timeoutMs: 45_000,
+      assert(arts) {
+        const tok = (a, n) => String(a.label || "").split(/[^A-Za-z0-9]+/).includes(n);
+        const ok = arts.find((a) => tok(a, "ok"));
+        if (String(ok?.content) !== "true") throw new Error("rsa sha256 sshsig failed to verify");
+      },
+    },
     {
       id: "age.armor.passphrase",
       recipe: `"armored" | utf8 | age.encrypt passphrase="correct horse" armor=true | out @armored

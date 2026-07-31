@@ -345,6 +345,9 @@ body.layout-app:has(#app > .toolkit-shell) {
 .toolbox-shape[data-toolbox="age"] {
   color: #ff7b72;
 }
+.toolbox-shape[data-toolbox="ssh"] {
+  color: #39c5cf;
+}
 .toolbox-shape[data-toolbox="hkp"] {
   color: #f0883e;
 }
@@ -941,6 +944,10 @@ body.layout-app:has(#app > .toolkit-shell) {
 
 .toolbox-dot[data-toolbox-dot="age"] {
   background: #ff7b72;
+}
+
+.toolbox-dot[data-toolbox-dot="ssh"] {
+  background: #39c5cf;
 }
 
 /*

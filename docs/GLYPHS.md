@@ -33,6 +33,7 @@ cd web && npm run glyphs
 | `webcrypto` | WebCrypto | Browser window with key | SubtleCrypto lives in the browser — a chrome window with a small key signals Web API crypto (genkey, digest, AEAD, KDF, …). <br><small>W3C Web Cryptography API</small> |
 | `openpgp` | OpenPGP | Locked envelope | ModernPGP convention for encrypted mail/messages — flap envelope with lock-shackle (gpg.encrypt, gpg.sign, …). <br><small>ModernPGP icons</small> |
 | `age` | age | Document with a lock shackle | age encrypts files, not messages — a page with a folded corner and a shackle, distinguishing it from OpenPGP's envelope (age.keygen, age.encrypt, …). <br><small>age-encryption.org/v1</small> |
+| `ssh` | SSH | Terminal prompt chevron with a key on the baseline | The shell's key — a prompt chevron with a horizontal key lying to its right. No window chrome, distinguishing it from WebCrypto's browser-plus-key (ssh.encode, ssh.sign, …). <br><small>PROTOCOL.sshsig; draft-miller-ssh-agent</small> |
 | `encoding` | Encoding | Bidirectional transform arrows | Bytes ↔ text transforms (pem, base64, hex, …) — folded rails with encode/decode arrowheads. |
 | `io` | Input / output | Panel with header and body | Runtime ports and tiles (input, out, random, qr) — a simple content panel. |
 | `flow` | Flow | Branching corner forks | Pipeline control (foreach, tee, in, as) — two L-shaped forks suggesting stem/branch flow. |
@@ -46,6 +47,7 @@ cd web && npm run glyphs
 
 | Id | Label | Metaphor | Description |
 |----|-------|----------|-------------|
+| `ssh-key` | Keys & wire | Key whose shank trails into three linked blocks | The RFC 4253 blob is literally a chain of length-prefixed fields — a key head trailing chained blocks reads as 'wire format' at 20px (ssh.encode, ssh.decode, ssh.fingerprint). |
 | `keys` | Keys | Key | WebCrypto key material — genkey, export, import. |
 | `digest` | Digest | Input lines collapsing into hash bars | Cryptographic hash — long input lines beside a “#”-like pair of bars (digest). |
 | `sign` | Sign | Quill / pen stroke | Digital signature — a pen tip stroke (WebCrypto sign/verify or OpenPGP gpgsign shelf). |
@@ -86,6 +88,12 @@ cd web && npm run glyphs
 | `fingerprint` | Fingerprint | Fingerprint ridges | OpenPGP key fingerprint — ridge arcs (ModernPGP fingerprint icon). <br><small>ModernPGP fingerprint</small> |
 | `unlock` | Unlock | Open padlock | Unlock vault key into session — shackle open. <br><small>ModernPGP open lock</small> |
 | `lock` | Lock | Closed padlock | Lock / clear session material — shackle closed. <br><small>ModernPGP closed lock</small> |
+
+## op
+
+| Id | Label | Metaphor | Description |
+|----|-------|----------|-------------|
+| `sshsig-sign` | sshsig | Quill stroke with a prompt chevron tucked lower-left | The established signature quill, marked as the shell's — sshsig format, what ssh-keygen -Y and git SSH signing produce (ssh.sign, ssh.verify). |
 
 ## tool
 

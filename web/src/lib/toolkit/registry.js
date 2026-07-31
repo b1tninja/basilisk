@@ -127,12 +127,17 @@ export const TOOLBOX_META = {
   // `age.encrypt to=` look like it accepts a PGP fingerprint. It sits next to
   // OpenPGP because that is what a user comparing the two expects.
   age: { label: "age", badge: "age", order: 5, glyph: "age", color: "#ff7b72" },
-  agent: { label: "Agent", badge: "Agent", order: 6, glyph: "agent", color: "#4cde82" },
-  hkp: { label: "HKP", badge: "HKP", order: 7, glyph: "hkp", color: "#f0883e" },
-  sss: { label: "SSS / BLIP39", badge: "SSS", order: 8, glyph: "sss", color: "#e3b341" },
-  webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 9, glyph: "webauthn", color: "#79c0ff" },
-  webrtc: { label: "WebRTC", badge: "WebRTC", order: 10, glyph: "agent", color: "#58a6ff" },
-  jose: { label: "JOSE", badge: "JOSE", order: 11, glyph: "jose", color: "#ffa657" },
+  // SSH is its own toolbox for the age reason: a different wire format with a
+  // different key container. Filing ssh.sign under WebCrypto's Sign shelf
+  // would imply sign and ssh.sign are variants of one thing when they share
+  // nothing but a verb (§29b, design_handoff_agent_ssh).
+  ssh: { label: "SSH", badge: "SSH", order: 6, glyph: "ssh", color: "#39c5cf" },
+  agent: { label: "Agent", badge: "Agent", order: 7, glyph: "agent", color: "#4cde82" },
+  hkp: { label: "HKP", badge: "HKP", order: 8, glyph: "hkp", color: "#f0883e" },
+  sss: { label: "SSS / BLIP39", badge: "SSS", order: 9, glyph: "sss", color: "#e3b341" },
+  webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 10, glyph: "webauthn", color: "#79c0ff" },
+  webrtc: { label: "WebRTC", badge: "WebRTC", order: 11, glyph: "agent", color: "#58a6ff" },
+  jose: { label: "JOSE", badge: "JOSE", order: 12, glyph: "jose", color: "#ffa657" },
 };
 
 /**
@@ -217,6 +222,8 @@ export const SHELF_META = {
   kdf: { label: "KDF", order: 6, glyph: "kdf" },
   agreement: { label: "Agreement", order: 7, glyph: "agreement" },
   wrap: { label: "Wrap", order: 8, defaultCollapsed: true, glyph: "wrap" },
+  sshwire: { label: "Keys & wire", order: 0, glyph: "ssh-key" },
+  sshsig: { label: "Sign", order: 1, glyph: "sign" },
   pubkey: { label: "Public key", order: 0, glyph: "pubkey" },
   gpgsign: { label: "Sign", order: 1, glyph: "sign" },
   password: { label: "Password", order: 2, glyph: "password" },
@@ -1948,6 +1955,152 @@ export const STEPS = [
     ],
     overloads: [{ when: { base: "text" }, output: { base: "bool" } }],
   },
+  // ── SSH (§29, design_handoff_agent_ssh) — OpenSSH wire formats and sshsig.
+  // Pure JS end to end (@noble/curves + SubtleCrypto), so every op runs
+  // headlessly in the CLI and is interop-tested against ssh-keygen fixtures.
+  {
+    name: "ssh.encode",
+    kind: "transform",
+    toolbox: "ssh",
+    shelf: "sshwire",
+    conjugate: "ssh.decode",
+    pairCaption: "Encode / decode",
+    glyph: "ssh-key",
+    doc: "Encode a keypair/key as OpenSSH — `format=public` (default) emits the one-line public form (`ssh-ed25519 AAAA… comment`) for authorized_keys / GitHub; `format=private` emits an **unencrypted** openssh-key-v1 block and warns. ed25519, ec/p256|384|521, rsa. Example: `genkey ed25519 | ssh.encode comment=\"you@host\" | out @pub`.",
+    input: "keypair",
+    output: "text",
+    params: [
+      {
+        name: "format",
+        type: "enum",
+        default: "public",
+        enum: ["public", "private"],
+        doc: "public = one-line public key; private = unencrypted openssh-key-v1 (explicit only, never a default)",
+      },
+      {
+        name: "comment",
+        type: "string",
+        default: "",
+        doc: "Trailing comment on the public line (openssh-key-v1 carries it too)",
+      },
+    ],
+    overloads: [
+      { when: { base: "keypair" }, output: { base: "text", kind: "ssh-public" } },
+      { when: { base: "key" }, output: { base: "text", kind: "ssh-public" } },
+    ],
+  },
+  {
+    name: "ssh.decode",
+    kind: "transform",
+    toolbox: "ssh",
+    shelf: "sshwire",
+    conjugateOf: "ssh.encode",
+    glyph: "ssh-key",
+    doc: "Decode an OpenSSH public line or (unencrypted) openssh-key-v1 private block into a live key/keypair. Passphrase-protected private files are refused by name — the KDF is bcrypt, which Basilisk cannot run yet. Example: `input | ssh.decode | ssh.fingerprint | out @fp`.",
+    input: "text",
+    output: "keypair",
+    overloads: [
+      { when: { base: "text", kind: "ssh-public" }, output: { base: "key" } },
+      { when: { base: "text", kind: "ssh-private" }, output: { base: "keypair" } },
+      { when: { base: "text" }, output: { base: "keypair" } },
+    ],
+    params: [],
+  },
+  {
+    name: "ssh.fingerprint",
+    kind: "transform",
+    toolbox: "ssh",
+    shelf: "sshwire",
+    glyph: "fingerprint",
+    doc: "SHA-256 fingerprint of an SSH public key — `SHA256:` + base64, byte-identical to `ssh-keygen -lf`. Accepts a keypair, a key, or a public line. Example: `input | ssh.decode | ssh.fingerprint | out @fp`.",
+    input: "keypair",
+    output: "text",
+    overloads: [
+      { when: { base: "keypair" }, output: { base: "text" } },
+      { when: { base: "key" }, output: { base: "text" } },
+      { when: { base: "text", kind: "ssh-public" }, output: { base: "text" } },
+    ],
+    params: [],
+  },
+  {
+    name: "ssh.sign",
+    kind: "transform",
+    toolbox: "ssh",
+    shelf: "sshsig",
+    conjugate: "ssh.verify",
+    pairCaption: "Sign / verify",
+    glyph: "sshsig-sign",
+    doc: "Sign the payload in sshsig format (`ssh-keygen -Y sign`) — also how git signs commits with SSH keys. `namespace=` is part of what is signed: a `git` signature can never verify as a `file` signature. Key from a slot. Example: `input | utf8 | ssh.sign key=@id namespace=git | out @sig`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Private key slot — a keypair, or `ssh.decode` output",
+      },
+      {
+        name: "namespace",
+        type: "string",
+        default: "file",
+        doc: "Signature domain (`file`, `git`); verifier must name the same one",
+      },
+      {
+        name: "hash",
+        type: "enum",
+        default: "sha512",
+        enum: ["sha512", "sha256"],
+        doc: "Payload hash inside the sshsig envelope (ssh-keygen default: sha512)",
+      },
+    ],
+    overloads: [
+      { when: { base: "text" }, output: { base: "text", kind: "sshsig" } },
+      { when: { base: "bytes" }, output: { base: "text", kind: "sshsig" } },
+    ],
+  },
+  {
+    name: "ssh.verify",
+    kind: "transform",
+    toolbox: "ssh",
+    shelf: "sshsig",
+    conjugateOf: "ssh.sign",
+    glyph: "sshsig-sign",
+    doc: "Verify an sshsig signature over the pipeline payload (`ssh-keygen -Y verify`). `signature=@slot` holds the sshsig block, `key=` the public line or a slot; `namespace=` must match the signer's. Fail-loud; `-q` emits bool false instead. Example: `in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok`.",
+    input: "text",
+    output: "bool",
+    params: [
+      {
+        name: "key",
+        type: "slot",
+        default: "",
+        doc: "Signer's public key — slot, or the literal public line",
+      },
+      {
+        name: "signature",
+        type: "slot",
+        default: "",
+        doc: "Slot holding the sshsig block",
+      },
+      {
+        name: "namespace",
+        type: "string",
+        default: "file",
+        doc: "Must equal the namespace the signature was made under",
+      },
+      {
+        name: "soft",
+        type: "bool",
+        flag: "-q",
+        default: false,
+        doc: "Soft mode: emit bool true|false (never throw on bad signature)",
+      },
+    ],
+    overloads: [
+      { when: { base: "text" }, output: { base: "bool" } },
+      { when: { base: "bytes" }, output: { base: "bool" } },
+    ],
+  },
   {
     name: "agent.unlock",
     kind: "source",
@@ -3305,6 +3458,11 @@ export const STEP_GLYPHS = {
   as: "as",
   inspect: "inspect",
   peek: "peek",
+  "ssh.encode": "ssh-key",
+  "ssh.decode": "ssh-key",
+  "ssh.fingerprint": "fingerprint",
+  "ssh.sign": "sshsig-sign",
+  "ssh.verify": "sshsig-sign",
   "gpg.encrypt": "gpg-encrypt",
   "gpg.decrypt": "gpg-decrypt",
   "gpg.sign": "gpg-sign",
