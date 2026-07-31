@@ -211,7 +211,10 @@ describe("participant ids", () => {
 
 describe("threshold bounds", () => {
   it("refuses a threshold nobody could ever meet", () => {
-    expect(() => round1({ ids: [1, 2], threshold: 3 })).toThrow(/exceeds 2 participants/i);
+    // Asserted on substance, not wording: this message now comes from the VSS
+    // layer DKG is built on, and pinning its exact noun would make the test
+    // fail on a refactor that changed nothing about the behaviour.
+    expect(() => round1({ ids: [1, 2], threshold: 3 })).toThrow(/threshold 3 exceeds 2/i);
   });
 
   it("refuses a threshold below 1", () => {
