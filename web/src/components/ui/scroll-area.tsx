@@ -1,41 +1,26 @@
 import * as React from "react";
-import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
 import { cn } from "@/lib/cn";
 
+/**
+ * A scrollable region — a div that scrolls, with the scrollbar styled in CSS.
+ *
+ * This used to wrap `@radix-ui/react-scroll-area`, which renders a `<style>`
+ * element at runtime to hide the native scrollbars it replaces with its own
+ * JS-driven thumb. Under `style-src 'self'` that injection is refused, so on
+ * the built site the rules never applied *and* every mount reported a CSP
+ * violation — all for styling that `overflow` and `::-webkit-scrollbar`
+ * express directly, with no script and nothing to inject.
+ *
+ * The props are unchanged, so no call site moved. What is lost is Radix's
+ * synthetic thumb; what replaces it is the platform's own, styled to the same
+ * tokens in `toolkit.css`.
+ */
 export const ScrollArea = React.forwardRef<
-  React.ElementRef<typeof ScrollAreaPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root>
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
 >(({ className, children, ...props }, ref) => (
-  <ScrollAreaPrimitive.Root
-    ref={ref}
-    className={cn("relative overflow-hidden", className)}
-    {...props}
-  >
-    <ScrollAreaPrimitive.Viewport className="h-full w-full rounded-[inherit]">
-      {children}
-    </ScrollAreaPrimitive.Viewport>
-    <ScrollBar />
-    <ScrollAreaPrimitive.Corner />
-  </ScrollAreaPrimitive.Root>
+  <div ref={ref} className={cn("scroll-area relative", className)} {...props}>
+    {children}
+  </div>
 ));
-ScrollArea.displayName = ScrollAreaPrimitive.Root.displayName;
-
-const ScrollBar = React.forwardRef<
-  React.ElementRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>,
-  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>
->(({ className, orientation = "vertical", ...props }, ref) => (
-  <ScrollAreaPrimitive.ScrollAreaScrollbar
-    ref={ref}
-    orientation={orientation}
-    className={cn(
-      "flex touch-none select-none transition-colors",
-      orientation === "vertical" && "h-full w-2.5 border-l border-l-transparent p-px",
-      orientation === "horizontal" && "h-2.5 flex-col border-t border-t-transparent p-px",
-      className
-    )}
-    {...props}
-  >
-    <ScrollAreaPrimitive.ScrollAreaThumb className="relative flex-1 rounded-full bg-[var(--border)]" />
-  </ScrollAreaPrimitive.ScrollAreaScrollbar>
-));
-ScrollBar.displayName = ScrollAreaPrimitive.ScrollAreaScrollbar.displayName;
+ScrollArea.displayName = "ScrollArea";

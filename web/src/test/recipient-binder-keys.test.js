@@ -43,20 +43,37 @@ describe("Enter runs the lookup", () => {
   });
 });
 
-describe("Radix ScrollArea styling survives the production CSP", () => {
-  it("ships the viewport rules Radix can only deliver inline", () => {
-    // `style-src 'self'` blocks Radix's injected <style>, so on the built site
-    // native scrollbars reappear inside every ScrollArea unless we serve the
-    // same rules ourselves.
-    expect(CSS).toMatch(/\[data-radix-scroll-area-viewport\]\s*\{[^}]*scrollbar-width:\s*none/);
-    expect(CSS).toMatch(
-      /\[data-radix-scroll-area-viewport\]::-webkit-scrollbar\s*\{[^}]*display:\s*none/
-    );
+describe("scroll areas need no runtime style injection", () => {
+  const SCROLL = readFileSync(
+    fileURLToPath(new URL("../components/ui/scroll-area.tsx", import.meta.url)),
+    "utf8"
+  );
+
+  it("does not depend on Radix's ScrollArea", () => {
+    // Its only real contribution was hiding the native scrollbar so it could
+    // draw its own, and it did that by injecting a <style> element — which
+    // `style-src 'self'` refuses, so on the built site the rules never applied
+    // and every mount reported a violation to deliver CSS we can just write.
+    //
+    // Matched on the *import*, not any mention: the comment above the
+    // component names the package precisely to explain why it is gone.
+    expect(SCROLL).not.toMatch(/^\s*import[^\n]*@radix-ui\/react-scroll-area/m);
   });
 
-  it("says why the rules are duplicated, so nobody deletes them as dead CSS", () => {
-    const idx = CSS.indexOf("[data-radix-scroll-area-viewport]");
-    const preamble = CSS.slice(Math.max(0, idx - 1200), idx);
-    expect(preamble).toMatch(/style-src|inline/i);
+  it("scrolls and styles its scrollbar from the stylesheet", () => {
+    expect(SCROLL).toContain("scroll-area");
+    expect(CSS).toMatch(/\.scroll-area\s*\{[^}]*overflow-y:\s*auto/);
+    expect(CSS).toMatch(/\.scroll-area::-webkit-scrollbar-thumb\s*\{/);
+  });
+
+  it("keeps the policy free of an exemption for a library's inline style", () => {
+    // A `style-src` hash would have silenced the report while leaving the
+    // injection in place. Declaring the rules is the fix; blessing them is not.
+    const html = readFileSync(
+      fileURLToPath(new URL("../../toolkit.html", import.meta.url)),
+      "utf8"
+    );
+    expect(html).toMatch(/style-src 'self';/);
+    expect(html).not.toMatch(/style-src[^;]*sha256-/);
   });
 });

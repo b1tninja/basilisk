@@ -75,30 +75,40 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
- * Radix ScrollArea's viewport styling, restated here because *its* copy never
- * applies in production.
+ * Scrollable regions (`components/ui/scroll-area`).
  *
- * `@radix-ui/react-scroll-area` injects these rules as an inline `<style>`
- * element at runtime. `style-src 'self'` refuses inline style elements, so on
- * the built site the injection is blocked, the native scrollbars come back
- * inside every ScrollArea, and boot-diagnostics reports a CSP violation on
- * every page load. The rules themselves are static and harmless — the problem
- * is only how they are delivered — so shipping them in a stylesheet we serve
- * gets the intended appearance under the real policy.
- *
- * This does not silence the violation: Radix still attempts the injection and
- * the report is still correct. Stopping the report needs either a `style-src`
- * hash for this exact text or a Radix version that stops injecting; both are
- * policy decisions rather than fixes, and the appearance bug is worth
- * correcting either way.
+ * Plain overflow with a styled scrollbar. This replaced a Radix ScrollArea
+ * whose only real contribution was hiding the native scrollbar so it could
+ * draw its own — which it did by injecting a `<style>` element at runtime,
+ * something `style-src 'self'` refuses outright. Every mount logged a CSP
+ * violation on the built site to deliver rules CSS states directly.
  */
-[data-radix-scroll-area-viewport] {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+.scroll-area {
+  overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
-[data-radix-scroll-area-viewport]::-webkit-scrollbar {
-  display: none;
+.scroll-area::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+  background-clip: content-box;
+}
+.scroll-area::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /*

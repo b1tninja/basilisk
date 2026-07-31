@@ -548,8 +548,18 @@ export function renderRecipientHits(hitsEl, results, warning, onPick, opts = {})
 export function mountRecipientBinder(host, opts) {
   const slots = Math.max(1, Number(opts.slots) || 1);
   const foreach = !!opts.foreach;
-  /** @type {(Recipient|null)[]} */
-  const bound = Array.from({ length: slots }, () => null);
+  /**
+   * Seeded from `opts.initial` so a second binder — the one on the encrypt
+   * step's own panel — opens showing the recipients already chosen in the
+   * Inputs tray, rather than as an empty form that silently disagrees with
+   * it. Two mounts of this binder are now a view of one selection instead of
+   * two competing ones.
+   * @type {(Recipient|null)[]}
+   */
+  const bound = Array.from(
+    { length: slots },
+    (_, i) => (Array.isArray(opts.initial) ? opts.initial[i] || null : null)
+  );
   let sameForAll = false;
   /** Session override for the binder select ("" = This site). */
   let sessionKeyserver = "";

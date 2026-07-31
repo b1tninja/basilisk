@@ -1617,6 +1617,30 @@ export function ToolkitShell() {
                                               onChange={(fpr) => handleParamChange("key", fpr)}
                                             />
                                           ) : null}
+                                          {/* Recipients, on the step that needs
+                                              them. `gpg.encrypt` without a
+                                              `to=` cannot run until someone is
+                                              chosen, and the chooser used to
+                                              live only in the Inputs tray with
+                                              nothing here pointing at it — so
+                                              the op looked broken rather than
+                                              unconfigured. Seeded from the
+                                              current selection so this and the
+                                              tray copy agree. */}
+                                          {selectedStep.name === "gpg.encrypt" &&
+                                          notebookRecipSlots > 0 ? (
+                                            <div className="mb-3 rounded-[9px] border border-[var(--border)] bg-[var(--surface-raised)] p-2.5">
+                                              <p className="mb-1.5 text-[length:11px] font-bold">
+                                                Recipients
+                                              </p>
+                                              <RecipientBinderHost
+                                                slots={notebookRecipSlots}
+                                                foreach={nb.compiled.validation?.foreachGpg}
+                                                initial={nb.boundRecipients}
+                                                onChange={nb.setBoundRecipients}
+                                              />
+                                            </div>
+                                          ) : null}
                                           {isPgpEncryptStep ? (
                                             <CryptoProfileControl
                                               className="mb-3"
