@@ -3,6 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--
+    The same production policy every other page carries. It was missing here,
+    which made the catalog the one page served without a policy to mirror as
+    report-only — so the surface whose whole job is to expose widget defects
+    could not expose the CSP ones. Identical to toolkit.html by intent: a
+    catalog that runs under a looser policy than the app is showing you a
+    widget that does not exist.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https://keys.openpgp.org https://keys.mailvelope.com; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
   <title>Toolkit widgets — Basilisk</title>
   <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64">
 </head>

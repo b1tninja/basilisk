@@ -21,6 +21,12 @@ const STATIC_PAGES = {
   preferences: "/preferences.html",
   // Local visual fixtures (not registered on Flask)
   "tool-card-preview": "/tool-card-preview.html",
+  // The widget catalog. Absent from this map until now, which meant the one
+  // page whose entire purpose is to surface widget defects was the one page
+  // served without the report-only production CSP — so a new widget's inline
+  // style would look fine in exactly the place it was supposed to be caught.
+  // Vite resolved the route anyway, so nothing appeared broken.
+  "toolkit-widgets": "/toolkit-widgets.html",
 };
 
 /**
