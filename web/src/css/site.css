@@ -1025,28 +1025,50 @@ p { margin: 0.5rem 0; }
 /* ===== Form Elements ===== */
 .form-group { margin-bottom: 1rem; }
 
-label {
-  display: block;
-  font-size: 0.875rem;
-  font-weight: 600;
-  margin-bottom: 0.35rem;
-  color: var(--text);
+/*
+ * Bare-element rules, layered so Tailwind utilities can win (§39b follow-up).
+ *
+ * These are unlayered by default, and Tailwind's utilities live in
+ * `@layer utilities` — unlayered beats layered on any property both set, at
+ * any specificity. On the two toolkit pages that meant a
+ * `<label class="text-xs text-[var(--muted-foreground)]">` rendered at 14px in
+ * full `--text` brightness, `<textarea class="min-h-[60px]">` rendered 180px,
+ * and every `<code>` ignored its size utility. Measured across ~60 elements.
+ *
+ * Wrapping them in `@layer base` here rather than at the import site is what
+ * actually works: `Layout.tsx` imports this file for every page, so the
+ * toolkit pages receive it as a *separate stylesheet* as well as through
+ * `toolkit.css` — layering only the import left the unlayered copy winning.
+ *
+ * Pages without Tailwind are unaffected: a layered rule with nothing competing
+ * applies exactly as before.
+ */
+@layer base {
+  label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+    color: var(--text);
+  }
 }
 
-input[type=search],
-input[type=text],
-textarea {
-  width: 100%;
-  padding: 0.55rem 0.85rem;
-  font-size: 0.9rem;
-  font-family: inherit;
-  background: var(--surface);
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  transition: border-color .15s, box-shadow .15s;
-  outline: none;
-  -webkit-appearance: none;
+@layer base {
+  input[type=search],
+  input[type=text],
+  textarea {
+    width: 100%;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    transition: border-color .15s, box-shadow .15s;
+    outline: none;
+    -webkit-appearance: none;
+  }
 }
 input[type=search]:focus,
 input[type=text]:focus,
@@ -1062,12 +1084,14 @@ textarea:focus {
   }
 }
 
-textarea {
-  min-height: 180px;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 0.78rem;
-  resize: vertical;
-  line-height: 1.5;
+@layer base {
+  textarea {
+    min-height: 180px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 0.78rem;
+    resize: vertical;
+    line-height: 1.5;
+  }
 }
 
 .search-row {
@@ -1143,10 +1167,12 @@ input[type=file] { display: none; }
 .key-table tbody tr:last-child td { border-bottom: none; }
 .key-table tbody tr:hover td { background: var(--surface-raised); }
 
-code {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 0.78rem;
-  word-break: break-all;
+@layer base {
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 0.78rem;
+    word-break: break-all;
+  }
 }
 
 /* ===== Badges ===== */
@@ -1206,16 +1232,18 @@ code {
 }
 
 /* ===== Code block (key display) ===== */
-pre {
-  overflow-x: auto;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  padding: 1rem;
-  border-radius: var(--radius);
-  font-size: 0.78rem;
-  white-space: pre-wrap;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  line-height: 1.5;
+@layer base {
+  pre {
+    overflow-x: auto;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    padding: 1rem;
+    border-radius: var(--radius);
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    line-height: 1.5;
+  }
 }
 
 /* ===== Stats ===== */
