@@ -857,6 +857,18 @@ in @shares | vss.verify | vss.combine | encode hex | out @recovered`,
       timeoutMs: 30_000,
     },
     {
+      id: "vss.commitments.published.separately",
+      // The realistic custodian flow: mnemonics go to people, commitments go
+      // on a noticeboard, and the two are brought back together to verify.
+      recipe: `random 32 | vss.split threshold=2 shares=3 | tee
+  - vss.commitments | out @commitments
+| out @shares
+
+in @shares | vss.verify commitments=@commitments | vss.combine | encode hex | out @back`,
+      mode: "run",
+      timeoutMs: 30_000,
+    },
+    {
       id: "vss.scalar.roundtrip",
       recipe: `genkey ec/p256 | export scalar | vss.split threshold=2 shares=3 | out @s
 

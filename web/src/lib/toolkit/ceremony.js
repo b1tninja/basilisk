@@ -51,14 +51,14 @@ export const CEREMONY_STAGES = Object.freeze([
     id: "split",
     title: "Split the secret",
     blurb:
-      "Draw 32 fresh random bytes, Shamir-split them, and encode each share as a BLIP39 mnemonic with a QR.",
+      "Draw 32 fresh random bytes and split them into verifiable shares, each encoded as a BLIP39 mnemonic with a QR. The published commitments let a holder check their share is genuine without any of the others.",
     runsCells: true,
   },
   {
     id: "verify",
     title: "Prove the shares work",
     blurb:
-      "Recombine the shares and compare digests with the original — before anyone leaves the room, and without showing the secret again.",
+      "Check each share against the commitments, then recombine and compare digests with the original — before anyone leaves the room, and without showing the secret again.",
     runsCells: true,
   },
   {
@@ -167,7 +167,15 @@ export function splitRecipe(params) {
   return [
     "random 32 | tee",
     "  - digest | encode hex | out @expected",
-    `| sss.split threshold=${k} shares=${n} | blip39 | foreach`,
+    // Verifiable rather than plain Shamir: each custodian can check the share
+    // they were handed against the published commitments, at the table,
+    // instead of discovering a bad one when recovery is attempted and the
+    // room is long gone. `vss.commitments` is a second tee branch because the
+    // commitments are *public* and travel separately from the mnemonics —
+    // words carry no commitments, which is the real-world model, not a gap.
+    `| vss.split threshold=${k} shares=${n} | tee`,
+    "  - vss.commitments | out @commitments",
+    "| blip39 | foreach",
     body,
   ].join("\n");
 }
@@ -182,7 +190,15 @@ export function splitRecipe(params) {
  * @returns {string}
  */
 export function verifyRecipe() {
-  return "shares | blip39.decode | sss.combine | digest | encode hex | out @recovered";
+  // `vss.verify` before combining is the point of using VSS at all: without
+  // it, recombining a corrupted set returns a *different* secret rather than
+  // an error, and the digest comparison would report a mismatch without
+  // saying which share was wrong. With it, the bad share is named.
+  return [
+    "shares | blip39.decode",
+    "| vss.verify commitments=@commitments",
+    "| vss.combine | digest | encode hex | out @recovered",
+  ].join(" ");
 }
 
 /**

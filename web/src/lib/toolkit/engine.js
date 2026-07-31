@@ -1585,6 +1585,7 @@ async function execStepBody(step, value, bindings, artifacts) {
     }
     case "vss.split":
     case "vss.verify":
+    case "vss.commitments":
     case "vss.combine": {
       // Lazy: the curve arithmetic is only pulled in by a recipe that shares
       // verifiably, which most do not.
@@ -1593,6 +1594,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       if (step.name === "vss.verify") {
         return vss.execVssVerify(value, step.params || {}, bindings);
       }
+      if (step.name === "vss.commitments") return vss.execVssCommitments(value);
       return vss.execVssCombine(value);
     }
     case "sss.split": {

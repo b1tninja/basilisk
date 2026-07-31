@@ -92,6 +92,10 @@ const STEP_DOCS = {
     url: "https://en.wikipedia.org/wiki/Verifiable_secret_sharing",
     label: "Verifiable secret sharing (Feldman)",
   },
+  "vss.commitments": {
+    url: "https://en.wikipedia.org/wiki/Verifiable_secret_sharing",
+    label: "Verifiable secret sharing (Feldman)",
+  },
   "vss.combine": {
     url: "https://en.wikipedia.org/wiki/Verifiable_secret_sharing",
     label: "Verifiable secret sharing (Feldman)",

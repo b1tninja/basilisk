@@ -78,10 +78,15 @@ describe("recipes", () => {
   const params = { threshold: 2, shares: 3, label: "Board key", qr: true };
 
   it("compiles every cell the ceremony will add", () => {
-    for (const cell of ceremonyCells(params)) {
-      const { validation } = compileRecipe(cell.recipe);
-      expect(validation.errors.map((e) => e.message), cell.stage).toEqual([]);
-    }
+    // Compiled together, because that is what they are: the Sheet appends
+    // them to one notebook, and the verify cell reads `@commitments` from the
+    // split cell. Compiling each in isolation would report a missing slot
+    // that never happens in the flow.
+    const notebook = ceremonyCells(params)
+      .map((c) => c.recipe)
+      .join("\n\n");
+    const { validation } = compileRecipe(notebook);
+    expect(validation.errors.map((e) => e.message)).toEqual([]);
   });
 
   it("never writes the master to an out tile", () => {
@@ -93,8 +98,18 @@ describe("recipes", () => {
 
   it("carries the chosen threshold and share count into the split", () => {
     expect(splitRecipe({ threshold: 3, shares: 5 })).toContain(
-      "sss.split threshold=3 shares=5"
+      "vss.split threshold=3 shares=5"
     );
+  });
+
+  it("splits verifiably, and publishes the commitments that make it so", () => {
+    // The difference a ceremony actually feels: a custodian can check the
+    // share they were handed, at the table. Without the commitments leaving
+    // the cell there is nothing to check it against.
+    const recipe = splitRecipe(params);
+    expect(recipe).toContain("vss.split");
+    expect(recipe).toContain("vss.commitments | out @commitments");
+    expect(recipe).not.toContain("sss.split");
   });
 
   it("drops the qr step when the ceremony asked for no QR", () => {
@@ -104,8 +119,17 @@ describe("recipes", () => {
 
   it("verifies by digest, never by revealing the recovered secret", () => {
     const r = verifyRecipe();
-    expect(r).toContain("sss.combine | digest");
+    expect(r).toContain("vss.combine | digest");
     expect(r).not.toMatch(/out @secret|utf8 \| out/);
+  });
+
+  it("checks the shares against the commitments before recombining them", () => {
+    // Order matters: recombining first and comparing digests afterwards can
+    // only say "something is wrong". Verifying first says which share.
+    const r = verifyRecipe();
+    expect(r.indexOf("vss.verify")).toBeGreaterThan(-1);
+    expect(r.indexOf("vss.verify")).toBeLessThan(r.indexOf("vss.combine"));
+    expect(r).toContain("commitments=@commitments");
   });
 
   it("signs the receipt when a key was chosen, and still makes one when not", () => {
@@ -233,12 +257,21 @@ describe("the whole ceremony, through the kernel", () => {
       .map((a) => String(a.content).trim())
       .slice(0, 2);
 
-    const verifyArts = await kernel.runCell(1, chains[1], {
-      inputs: { shares: { mnemonics: otherMnemonics } },
-    });
-    const result = verificationResult(expected, tileForSlot(verifyArts, "recovered"));
-    expect(result.status).toBe("mismatch");
+    // With verifiable sharing this now fails *earlier and louder* than the
+    // digest comparison it used to reach: the shares are checked against the
+    // published commitments first, so the run stops naming the offending
+    // shares instead of reporting that two hashes differ. For a ceremony that
+    // is the difference between "something is wrong" and "these are from a
+    // different split".
+    await expect(
+      kernel.runCell(1, chains[1], { inputs: { shares: { mnemonics: otherMnemonics } } })
+    ).rejects.toThrow(/do not match the commitments|different split/i);
+
+    // And the comparison helper still reports a mismatch rather than a pass
+    // if it is ever handed a recovered digest that disagrees.
+    expect(verificationResult(expected, "00".repeat(32)).status).toBe("mismatch");
     kernel.destroy();
+    other.destroy();
     other.destroy();
   }, 60_000);
 });

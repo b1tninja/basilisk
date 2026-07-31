@@ -1343,6 +1343,7 @@ export function validateRecipe(ast) {
       // them and hands them on, `vss.combine` reconstructs from them.
       step.name !== "vss.verify" &&
       step.name !== "vss.combine" &&
+      step.name !== "vss.commitments" &&
       step.name !== "blip39" &&
       step.name !== "tee" &&
       step.name !== "peek" &&

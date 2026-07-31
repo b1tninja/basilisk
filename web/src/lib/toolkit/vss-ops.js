@@ -68,6 +68,17 @@ export function execVssSplit(value, params) {
       `vss.split: secret is ${bytes.length} bytes — it must fit in one P-256 scalar (≤ 32). Use sss.split for arbitrary-length data, or gpg.symencrypt first and share the key.`
     );
   }
+  // Reject rather than reduce. `scalarFromHex` takes a modulus, so a 32-byte
+  // value above the curve order would silently become a *different* secret and
+  // reconstruction would hand back bytes the caller never split. Astronomically
+  // rare for random input (~2⁻³²) and certain for some real keys, so it is an
+  // error, not a coin flip.
+  const asInt = BigInt(`0x${bytesToHex(bytes)}`);
+  if (asInt >= ORDER) {
+    throw new Error(
+      "vss.split: secret is not below the P-256 group order — it cannot be shared without being altered. Hash it first (`digest`) or use sss.split."
+    );
+  }
   const secret = scalarFromHex(bytesToHex(bytes));
   if (secret === 0n) {
     // Would make every share equal f(id) of a polynomial with zero constant
@@ -179,6 +190,40 @@ export function execVssVerify(value, params, bindings) {
   return {
     ...value,
     meta: { ...(value.meta || {}), vssVerified: true, verifiedCount: raw.length },
+  };
+}
+
+/**
+ * Extract the public commitments as text, so they can be published.
+ *
+ * Needed because commitments do not travel with the shares once those become
+ * mnemonics: `blip39 -d` rebuilds a share set from words, and words carry no
+ * commitments. That is not a gap to paper over — it is the real-world model.
+ * A custodian holds a *secret* share and the *public* commitments, and the
+ * two arrive by different routes. This is the op that produces the public
+ * half:
+ *
+ *     … | vss.split … | tee
+ *       - vss.commitments | out @commitments
+ *     | blip39 | foreach
+ *       - out @share
+ *
+ * @param {{ type: string, data: any }} value
+ */
+export function execVssCommitments(value) {
+  if (value?.type !== "shares") throw new Error("vss.commitments expects shares");
+  const list = value.data?.commitments;
+  if (!Array.isArray(list) || !list.length) {
+    throw new Error(
+      "vss.commitments: this share set has none — it came from sss.split, or from mnemonics that never carried them"
+    );
+  }
+  return {
+    type: "text",
+    // Publishable by design: these reveal nothing about the secret, and
+    // without them nobody can verify anything.
+    data: JSON.stringify({ v: 1, commitments: list, publicKey: publicKeyOf(list) }),
+    meta: { sensitive: false, kind: "opaque", vssCommitments: true, filename: "commitments.json" },
   };
 }
 

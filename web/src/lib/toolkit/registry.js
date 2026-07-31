@@ -1397,6 +1397,17 @@ export const STEPS = [
     ],
   },
   {
+    name: "vss.commitments",
+    kind: "transform",
+    toolbox: "sss",
+    shelf: "split",
+    glyph: "split",
+    doc: "Extract a `vss.split` set's public commitments as JSON, so they can be published alongside the shares. Commitments do not survive `blip39` — words carry no commitments — and that matches reality: a custodian holds a secret share and the public commitments, arriving by different routes. Example: `… | vss.split … | tee` / `- vss.commitments | out @commitments`.",
+    input: "shares",
+    output: "text",
+    params: [],
+  },
+  {
     name: "vss.combine",
     kind: "transform",
     toolbox: "sss",
