@@ -1,0 +1,1334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Artifact tiles — visual mock (§39–§46)</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   Tokens, verbatim from web/src/css/site.css :root and its
+   @media (prefers-color-scheme: light) override. Scoped to [data-theme]
+   rather than a media query so both schemes render on one page and can be
+   compared and measured side by side. Nothing here is invented: every
+   value below appears in site.css. Where this mock needs a value site.css
+   does not define, it is marked INVENTED in a comment and named in
+   VISUAL-DESIGN.md §39d.
+   ═══════════════════════════════════════════════════════════════════════ */
+[data-theme="dark"] {
+  --brand: #4cde82; --brand-hover: #6aeea0; --on-brand: #0b1410;
+  --accent: #d4b84a;
+  --surface: #0d1117; --surface-raised: #161b22;
+  --border: #30363d; --border-weak: #21262d;
+  --text: #e6edf3; --text-muted: #8b949e;
+  --error: #ff7b72; --success: #3fb950;
+  --caret: #58a6ff; --decode: #d2a8ff; --warn: #e3b341;
+  /* shadcn mirror, as toolkit.css defines it */
+  --foreground: var(--text); --muted-foreground: var(--text-muted);
+  /* §39c — tile tint strength: kind badge and active format tab. 12% dark. */
+  --tile-tint: 12%;
+  --shadow: 0 4px 20px rgba(0,0,0,.4);
+  color-scheme: dark;
+}
+[data-theme="light"] {
+  --brand: #2e7d4f; --brand-hover: #1f5c38; --on-brand: #ffffff;
+  --accent: #c9a227;
+  --surface: #ffffff; --surface-raised: #f6f8fa;
+  --border: #d0d7de; --border-weak: #eaeef2;
+  --text: #1c2128; --text-muted: #57606a;
+  --error: #cf222e; --success: #1a7f37;
+  --caret: #0969da; --decode: #8250df; --warn: #9a6700;
+  --foreground: var(--text); --muted-foreground: var(--text-muted);
+  /* §39c — 6% in light. 12% drops every badge tone below AA, and the
+     shipped format bar's 18% lands the active tab at 3.97:1. 6% is the
+     largest tint at which the binding case (warn, 4.51:1) still clears. */
+  --tile-tint: 6%;
+  --shadow: 0 4px 20px rgba(0,0,0,.09), 0 1px 3px rgba(0,0,0,.04);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { background: #0d1117; }
+body {
+  margin: 0; padding: 0;
+  font: 13px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #0d1117; color: #e6edf3;
+}
+.doc { max-width: 1400px; margin: 0 auto; padding: 26px 22px 80px; }
+h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: -.01em; }
+h2 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .1em;
+  color: #8b949e; margin: 44px 0 4px;
+  border-bottom: 1px solid #21262d; padding-bottom: 6px;
+}
+h3 { font-size: 12.5px; margin: 20px 0 6px; color: #e6edf3; font-weight: 600; }
+/* inside a themed pane the document chrome must follow the pane, not the page */
+.pane h3, .pane p { color: var(--foreground); }
+p.lede { color: #8b949e; margin: 0 0 14px; max-width: 78ch; font-size: 12.5px; }
+p.note { color: #8b949e; margin: 8px 0 0; max-width: 88ch; font-size: 11.5px; }
+.mono, code { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+
+/* two-up theme comparison frame */
+.two-up { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .two-up { grid-template-columns: 1fr; } }
+.pane { border-radius: 12px; padding: 14px; background: var(--surface); border: 1px solid var(--border); }
+.pane > .pane-label {
+  font: 600 9.5px/1 ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase; letter-spacing: .12em;
+  color: var(--muted-foreground); margin-bottom: 10px;
+}
+
+/* ═══ THE TILE ═══════════════════════════════════════════════════════════
+   §40. Every number here is a spec value; the pinned ones (§33a) are
+   marked PIN and were confirmed by getComputedStyle against the shipped
+   OutputList on /toolkit-widgets.html.
+   ══════════════════════════════════════════════════════════════════════ */
+.output-list {
+  border: 1px solid var(--border);      /* PIN */
+  border-radius: 10px;                  /* PIN */
+  background: var(--surface);           /* PIN */
+  padding: 4px;                         /* PIN */
+  /* §46b — the action row's constraint is the LIST's width, not the
+     viewport's: the shipped list is 448px wide on a 1440px screen. A
+     container query is the only primitive that asks the right question. */
+  container-type: inline-size;
+  container-name: artifact-list;
+}
+.tile {
+  padding: 8px 10px;                    /* PIN */
+  display: flex; flex-direction: column;
+  gap: 4px;                             /* PIN */
+  position: relative;
+}
+.tile + .tile { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+
+/* ── identity line (§40b) ── */
+.ident { display: flex; align-items: center; gap: 10px; min-height: 18px; }
+.kindbadge {
+  display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto;
+  border-radius: 3px; padding: 2px 5px;
+  font: 500 9px/1.25 ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase; letter-spacing: .05em;
+  background: color-mix(in srgb, var(--caret) var(--tile-tint), var(--surface));
+  color: var(--caret);
+}
+.kindbadge[data-tone="key"]    { background: color-mix(in srgb, var(--brand) var(--tile-tint), var(--surface)); color: var(--brand); }
+.kindbadge[data-tone="warn"]   { background: color-mix(in srgb, var(--warn) var(--tile-tint), var(--surface)); color: var(--warn); }
+.kindbadge[data-tone="share"]  { background: color-mix(in srgb, var(--decode) var(--tile-tint), var(--surface)); color: var(--decode); }
+.kindbadge[data-tone="muted"]  { background: var(--surface-raised); color: var(--muted-foreground); }
+.kindbadge svg { width: 10px; height: 10px; }
+
+/* The identity label. Authored as a span, NOT <code> — site.css:1127 sets an
+   unlayered `code { font-size: .78rem }` that outranks every Tailwind size
+   utility, so a <code> here renders 12.48px whatever the class says (§39b). */
+.ident-label {
+  flex: 1 1 auto; min-width: 0;
+  font: 500 11px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sensitive-badge {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--foreground);
+  border-radius: 6px; padding: 1px 6px;
+  font: 700 10px/1.3 ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.size {
+  flex: 0 0 auto;
+  font: 400 10px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--muted-foreground);
+}
+
+/* ── body (§40c) ── */
+.body { padding-left: 1px; min-width: 0; }
+.keycard { display: grid; grid-template-columns: 76px minmax(0,1fr) 16px; gap: 3px 8px; align-items: baseline; margin: 0; }
+.keycard dt {
+  font: 600 9px/1.5 ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase; letter-spacing: .07em; color: var(--muted-foreground);
+}
+.keycard dd {
+  margin: 0; min-width: 0;
+  font: 400 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--foreground); overflow-wrap: anywhere;
+}
+.keycard dd.alg { font-weight: 600; }
+.keycard dd .comment { color: var(--muted-foreground); }
+.copyglyph {
+  border: 0; background: none; padding: 0; margin: 0; cursor: pointer;
+  color: var(--muted-foreground); line-height: 1; align-self: center;
+}
+.copyglyph:hover { color: var(--foreground); }
+.copyglyph svg { width: 11px; height: 11px; display: block; }
+
+.rawbody {
+  display: block; max-height: 96px; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 400 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--muted-foreground); margin: 0;
+}
+.rawbody[data-revealed] { color: var(--foreground); }
+.masked {
+  display: flex; align-items: center; gap: 8px;
+  font: italic 400 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--muted-foreground);
+}
+.reveal-btn {
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  background: none; border-radius: 4px; padding: 1px 6px;
+  font: 600 10px/1.4 ui-sans-serif, system-ui, sans-serif;
+  color: var(--warn); cursor: pointer; font-style: normal;
+}
+.reveal-btn:hover { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.empty-note {
+  font: 400 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+  color: var(--muted-foreground); margin: 0; max-width: 62ch;
+}
+.failed-note {
+  display: flex; gap: 6px; align-items: baseline;
+  font: 400 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 10%, var(--surface));
+  border-left: 2px solid var(--error);
+  border-radius: 0 4px 4px 0; padding: 4px 8px; margin: 0 0 4px;
+}
+.warn-row {
+  display: flex; gap: 6px; align-items: baseline;
+  font: 400 10px/1.5 ui-sans-serif, system-ui, sans-serif;
+  /* §44f — the sentence is --foreground, the warning is the border. --warn as
+     body text lands at 4.28:1 in light; and this is the same grammar the gate
+     banner uses, so a warning row and a confirmation read as one family. */
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  border-left: 2px solid var(--warn);
+  border-radius: 0 4px 4px 0; padding: 3px 8px; margin: 0;
+}
+
+/* format bar — the view group, inline, never buttons (§41b) */
+.formatbar { display: inline-flex; gap: 1px; flex: 0 0 auto; }
+.formatbar button {
+  border: 0; background: none; border-radius: 3px; padding: 1px 4px; cursor: pointer;
+  font: 400 9px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--muted-foreground);
+}
+.formatbar button[aria-selected="true"] {
+  background: color-mix(in srgb, var(--brand) var(--tile-tint), var(--surface));
+  color: var(--brand); font-weight: 600;
+}
+
+/* ═══ ACTION ROW (§41) ══════════════════════════════════════════════════
+   Three tiers, three weights, ONE hue. Weight is carried by fill and label
+   darkness; colour is spent only on the outward tier, which is the only
+   thing in the row that leaves the machine.
+   ══════════════════════════════════════════════════════════════════════ */
+.actions {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 4px;                 /* within a group */
+  row-gap: 6px;
+}
+.actions[role="group"] { margin: 0; }
+/* the group gutter and its hairline */
+.gsep {
+  flex: 0 0 auto; width: 1px; height: 14px; margin: 0 6px;
+  background: var(--border);
+}
+.gap-view { flex: 0 0 auto; width: 8px; }
+
+/* §46b — the outward line break. Inert markup, emitted immediately before
+   the outward group and inert at desktop width. Under the container query it
+   becomes a zero-height full-width flex item, which forces the outward
+   action onto its own line without stretching it and without a viewport
+   breakpoint. The hairline that would have ended the previous line goes
+   with it: a separator at end-of-line separates nothing. */
+.brk { display: none; }
+@container artifact-list (max-width: 520px) {
+  .brk { display: block; flex: 0 0 100%; height: 0; margin: 0; }
+  .gsep-outward { display: none; }
+}
+
+.btn {
+  flex: 0 0 auto;
+  height: 22px;                                  /* PIN */
+  display: inline-flex; align-items: center; gap: 4px;
+  border-radius: 5px; padding: 0 8px;            /* PIN (10px text) */
+  font: 600 10px/1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer; white-space: nowrap;
+  border: 1px solid transparent; background: none;
+  color: var(--muted-foreground);
+}
+.btn svg { width: 11px; height: 11px; }
+
+/* inert — quietest: no chrome, muted label. It copies what you already have. */
+.btn[data-action-tier="inert"] { background: none; border-color: transparent; color: var(--muted-foreground); }
+.btn[data-action-tier="inert"]:hover { color: var(--foreground); background: color-mix(in srgb, var(--foreground) 7%, transparent); }
+
+/* local — a real button: raised fill, visible border, full-strength label.
+   It changes durable state on this device. */
+.btn[data-action-tier="local"] {
+  background: var(--surface-raised); border-color: var(--border); color: var(--foreground);
+}
+.btn[data-action-tier="local"]:hover { background: color-mix(in srgb, var(--brand) 8%, var(--surface-raised)); }
+
+/* outward — outline in --warn. The only hue in the row. Deliberate, not
+   recommended: brand fill would make the irreversible action the one the
+   eye lands on (§34a). */
+.btn[data-action-tier="outward"] {
+  background: none;
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+  color: var(--warn);
+}
+.btn[data-action-tier="outward"]:hover { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+
+/* disabled — §44d. NOT opacity:.5 (that lands the label at 2.2:1); the label
+   holds --muted-foreground at 6.15/6.39:1 and the affordance is removed
+   instead: no fill, no border, no pointer, and a dotted underline marking
+   that a reason is attached. */
+.btn[aria-disabled="true"] {
+  background: none !important; border-color: transparent !important;
+  color: var(--muted-foreground) !important;
+  cursor: not-allowed;
+  text-decoration: underline dotted color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  text-underline-offset: 3px;
+}
+/* in-flight — §44e */
+.btn[data-busy] { cursor: progress; }
+.btn[data-busy] .spin {
+  width: 9px; height: 9px; border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor; display: inline-block;
+  animation: sp .7s linear infinite;
+}
+@keyframes sp { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .btn[data-busy] .spin { animation-duration: 2.4s; } }
+
+.more-btn::after { content: "▸"; font-size: 8px; margin-left: 2px; }
+
+/* ── receipt line (§40e) ── */
+.receipt {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  font: 400 10px/1.5 ui-sans-serif, system-ui, sans-serif;
+  color: var(--muted-foreground);
+}
+.receipt .tick { color: var(--success); flex: 0 0 auto; }
+.receipt .tick svg { width: 11px; height: 11px; display: block; }
+.receipt .id { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--foreground); }
+.receipt .err { color: var(--error); }
+.published {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 400 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--brand);
+}
+.published .linkbtn { border:0; background:none; padding:0; cursor:pointer; color: var(--muted-foreground); line-height:1; }
+.published .linkbtn:hover { color: var(--brand); }
+.published .linkbtn svg { width: 11px; height: 11px; display:block; }
+
+/* ═══ GATE BANNER (§43) ══════════════════════════════════════════════════
+   The shell extracted from the shipped ApprovalBanner, verbatim: border-l-2
+   in --warn, warn-8% tint, 11.5px semibold header, a 68px-column <dl> at
+   10.5px, ghost cancel + secondary confirm at size="sm".
+   ══════════════════════════════════════════════════════════════════════ */
+.gate {
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  padding: 10px 14px;
+  border-radius: 0 6px 6px 0;
+}
+.gate-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.gate-title { font: 600 11.5px/1.4 ui-sans-serif, system-ui, sans-serif; color: var(--foreground); }
+.gate-meta { margin-left: auto; font: 400 10px/1.4 ui-monospace, SFMono-Regular, monospace; color: var(--muted-foreground); }
+.gate dl {
+  margin: 8px 0 0; display: grid;
+  grid-template-columns: 68px minmax(0,1fr); gap: 4px 8px;
+  font-size: 10.5px; line-height: 1.5;
+}
+.gate dt { font-weight: 600; color: var(--muted-foreground); }
+.gate dd { margin: 0; min-width: 0; color: var(--foreground); overflow-wrap: anywhere; }
+.gate dd .sub { color: var(--muted-foreground); }
+.gate dd .fpr { font-family: ui-monospace, SFMono-Regular, monospace; letter-spacing: .02em; }
+.gate-actions { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gbtn {
+  height: 22px; display: inline-flex; align-items: center; border-radius: 6px;
+  padding: 0 9px; font: 600 10.5px/1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer; border: 1px solid transparent; background: none; color: var(--foreground);
+}
+.gbtn[data-w="ghost"] { color: var(--foreground); }
+.gbtn[data-w="ghost"]:hover { background: color-mix(in srgb, var(--brand) 10%, transparent); }
+.gbtn[data-w="secondary"] { background: var(--surface-raised); border-color: var(--border); color: var(--foreground); }
+.gbtn[data-w="secondary"]:hover { background: color-mix(in srgb, var(--brand) 8%, var(--surface-raised)); }
+.gate label { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted-foreground); }
+
+/* 375px frame */
+.phone {
+  width: 375px; border: 1px solid var(--border); border-radius: 14px;
+  padding: 10px; background: var(--surface); overflow: hidden;
+}
+.phone .pane-label { margin-bottom: 8px; }
+
+/* contrast chips */
+.cr { font: 400 9.5px/1 ui-monospace, monospace; color: var(--muted-foreground); }
+table.crt { border-collapse: collapse; font-size: 11.5px; width: 100%; margin-top: 8px; }
+table.crt th, table.crt td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #21262d; }
+table.crt th { color: #8b949e; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+table.crt td.n { font-family: ui-monospace, monospace; text-align: right; }
+table.crt td.pass { color: #3fb950; }
+table.crt td.fail { color: #ff7b72; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0 0; }
+.legend > div { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #8b949e; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+<h1>Artifact tiles — visual mock</h1>
+<p class="lede">
+  Companion to <code>VISUAL-DESIGN.md</code> (§39–§46), which carries the
+  reasoning. This file carries the pixels. Every tile appears in both colour
+  schemes side by side; the tokens are copied verbatim from
+  <code>web/src/css/site.css</code> and scoped to <code>[data-theme]</code>
+  so both render at once. Sizes marked PIN in the stylesheet are the §33a
+  values confirmed by <code>getComputedStyle</code> against the shipped
+  <code>OutputList</code>.
+</p>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>§41 — the action row: three tiers, three weights, one hue</h2>
+<p class="lede">
+  The hard case first, because it is the one that decides the vocabulary: a
+  tile carrying four inert actions, one local, and one outward. If tiers were
+  hues this row would be a rainbow; if they were all one weight it would be a
+  toolbar. Weight is carried by <em>fill</em> and <em>label darkness</em>;
+  the single hue is spent on the one action that leaves the machine.
+</p>
+
+<div class="two-up">
+  <div class="pane" data-theme="dark">
+    <div class="pane-label">dark · the six-action worst case</div>
+    <div class="output-list">
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>
+            KEYPAIR
+          </span>
+          <span class="ident-label">kp · public JWK</span>
+          <span class="size">412 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Algorithm</dt><dd class="alg">ed25519</dd><dd></dd>
+            <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+            <dd><button class="copyglyph" title="Copy fingerprint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+            <dt>Public line</dt><dd>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8k7vQ2… <span class="comment">justin@workstation</span></dd>
+            <dd><button class="copyglyph" title="Copy public line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+          </dl>
+        </div>
+        <div class="actions" role="group" aria-label="kp · public JWK actions">
+          <span class="formatbar" role="tablist" aria-label="Display format">
+            <button role="tab" aria-selected="true">card</button>
+            <button role="tab" aria-selected="false">raw</button>
+          </span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Copy public line</button>
+          <button class="btn" data-action-tier="inert">Copy fingerprint</button>
+          <button class="btn more-btn" data-action-tier="inert">More</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+          <span class="gsep gsep-outward"></span><span class="brk"></span>
+          <button class="btn" data-action-tier="outward">Publish</button>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <div><button class="btn" data-action-tier="inert">Inert</button> copies what you have</div>
+      <div><button class="btn" data-action-tier="local">Local</button> writes to this device</div>
+      <div><button class="btn" data-action-tier="outward">Outward</button> leaves the machine</div>
+    </div>
+  </div>
+
+  <div class="pane" data-theme="light">
+    <div class="pane-label">light · the six-action worst case</div>
+    <div class="output-list">
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>
+            KEYPAIR
+          </span>
+          <span class="ident-label">kp · public JWK</span>
+          <span class="size">412 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Algorithm</dt><dd class="alg">ed25519</dd><dd></dd>
+            <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+            <dd><button class="copyglyph" title="Copy fingerprint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+            <dt>Public line</dt><dd>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8k7vQ2… <span class="comment">justin@workstation</span></dd>
+            <dd><button class="copyglyph" title="Copy public line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+          </dl>
+        </div>
+        <div class="actions" role="group" aria-label="kp · public JWK actions">
+          <span class="formatbar" role="tablist" aria-label="Display format">
+            <button role="tab" aria-selected="true">card</button>
+            <button role="tab" aria-selected="false">raw</button>
+          </span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Copy public line</button>
+          <button class="btn" data-action-tier="inert">Copy fingerprint</button>
+          <button class="btn more-btn" data-action-tier="inert">More</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+          <span class="gsep gsep-outward"></span><span class="brk"></span>
+          <button class="btn" data-action-tier="outward">Publish</button>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <div><button class="btn" data-action-tier="inert">Inert</button> copies what you have</div>
+      <div><button class="btn" data-action-tier="local">Local</button> writes to this device</div>
+      <div><button class="btn" data-action-tier="outward">Outward</button> leaves the machine</div>
+    </div>
+  </div>
+</div>
+<p class="note">
+  Rejected: <code>--caret</code> for the local tier (the previous mock's
+  choice). Blue is the caret colour and carries "this is where the insertion
+  point is" everywhere else in the toolkit; spending it here both dilutes that
+  and puts three hues inside a 22px row. Rejected too: brand fill on Publish,
+  which is what ships today — brand is this codebase's "do this", and the one
+  action that cannot be undone should not be the one the eye lands on.
+</p>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>§42 — the key artifacts, which today render as two JWK blobs</h2>
+<p class="lede">
+  The public card and the masked private tile. The private tile's
+  <code>publicView</code> renders <em>while masked</em>: algorithm,
+  fingerprint and public line derive only from the public half, so showing
+  them is not a mask bypass — the rule is "a masked tile may render only what
+  does not derive from the masked material" (§33e).
+</p>
+
+<div class="two-up">
+  <div class="pane" data-theme="dark">
+    <div class="pane-label">dark</div>
+    <div class="output-list">
+      <!-- public -->
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">kp · public JWK</span>
+          <span class="size">412 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Algorithm</dt><dd class="alg">ed25519</dd><dd></dd>
+            <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+            <dd><button class="copyglyph" title="Copy fingerprint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+            <dt>Public line</dt><dd>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8k7vQ2… <span class="comment">justin@workstation</span></dd>
+            <dd><button class="copyglyph" title="Copy public line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+          </dl>
+        </div>
+        <div class="actions" role="group" aria-label="public key actions">
+          <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">card</button><button role="tab" aria-selected="false">raw</button></span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+          <button class="btn more-btn" data-action-tier="inert">More</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+        </div>
+      </div>
+      <!-- private, masked, with publicView -->
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PRIVATE KEY</span>
+          <span class="ident-label">kp · private JWK</span>
+          <span class="sensitive-badge">sensitive</span>
+          <span class="size">648 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Algorithm</dt><dd class="alg">ed25519</dd><dd></dd>
+            <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+            <dd><button class="copyglyph" title="Copy fingerprint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+          </dl>
+          <div class="masked" style="margin-top:4px">
+            <span>sensitive — value not shown</span>
+            <button class="reveal-btn">Reveal</button>
+          </div>
+        </div>
+        <div class="actions" role="group" aria-label="private key actions">
+          <button class="btn" data-action-tier="inert" aria-disabled="true"
+            title="Reveal this value first — a masked value cannot be copied.">Copy</button>
+          <button class="btn" data-action-tier="inert">Copy fingerprint</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+        </div>
+        <div class="warn-row" style="margin-top:2px">
+          <span>Download writes the private key unencrypted — this build has no passphrase protection for exported keys.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane" data-theme="light">
+    <div class="pane-label">light</div>
+    <div class="output-list">
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">kp · public JWK</span>
+          <span class="size">412 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Algorithm</dt><dd class="alg">ed25519</dd><dd></dd>
+            <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+            <dd><button class="copyglyph" title="Copy fingerprint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+            <dt>Public line</dt><dd>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8k7vQ2… <span class="comment">justin@workstation</span></dd>
+            <dd><button class="copyglyph" title="Copy public line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+          </dl>
+        </div>
+        <div class="actions" role="group" aria-label="public key actions">
+          <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">card</button><button role="tab" aria-selected="false">raw</button></span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+          <button class="btn more-btn" data-action-tier="inert">More</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+        </div>
+      </div>
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PRIVATE KEY</span>
+          <span class="ident-label">kp · private JWK</span>
+          <span class="sensitive-badge">sensitive</span>
+          <span class="size">648 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Algorithm</dt><dd class="alg">ed25519</dd><dd></dd>
+            <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+            <dd><button class="copyglyph" title="Copy fingerprint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+          </dl>
+          <div class="masked" style="margin-top:4px">
+            <span>sensitive — value not shown</span>
+            <button class="reveal-btn">Reveal</button>
+          </div>
+        </div>
+        <div class="actions" role="group" aria-label="private key actions">
+          <button class="btn" data-action-tier="inert" aria-disabled="true"
+            title="Reveal this value first — a masked value cannot be copied.">Copy</button>
+          <button class="btn" data-action-tier="inert">Copy fingerprint</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+        </div>
+        <div class="warn-row" style="margin-top:2px">
+          <span>Download writes the private key unencrypted — this build has no passphrase protection for exported keys.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="note">
+  <em>Copy</em> is declared-and-disabled rather than absent: the JWK is
+  genuinely copyable once revealed, so §33d's test lands on "possible here,
+  now? no" — which is the disabled-with-a-reason case, not the omit case.
+  <em>Copy fingerprint</em> and <em>Download</em> stay enabled while masked,
+  because what they emit either derives from the public half or never appears
+  on screen (§34b).
+</p>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>§43 — confirmations, against the shipped approval banner</h2>
+<p class="lede">
+  Three banners in one column so the family resemblance is checkable at a
+  glance. The first is <code>ApprovalBanner</code> as it ships today; the
+  second and third are the new outward and local confirmations. All three are
+  the same shell: 2px <code>--warn</code> left border, warn-8% tint, 11.5px
+  semibold header, a 68px-column <code>&lt;dl&gt;</code> at 10.5px, ghost
+  cancel then secondary confirm.
+</p>
+
+<div class="two-up">
+  <div class="pane" data-theme="dark">
+    <div class="pane-label">dark</div>
+
+    <h3 style="color:var(--muted-foreground);margin-top:0">shipped — ApprovalBanner (§27)</h3>
+    <div class="gate" role="alertdialog" aria-label="agent.sign wants to use a key">
+      <div class="gate-head">
+        <span class="gate-title"><code>agent.sign</code> wants to use a key</span>
+        <span class="gate-meta">request 1 of 1 this run</span>
+      </div>
+      <dl>
+        <dt>Step</dt><dd class="fpr">cell 3 · agent.sign fpr=SHA256:Ur1h… namespace=git</dd>
+        <dt>Key</dt><dd>justin@basilisk.dev <span class="sub">· SSH ed25519 · passkey</span><div class="fpr sub">SHA256:Ur1hPKBrJC3z…</div></dd>
+        <dt>Payload</dt><dd class="fpr">412 bytes · sha256 1a2b3c4d5e6f7a8b…</dd>
+        <dt>Namespace</dt><dd><code>git</code> <span class="sub">— what a verifier must ask for</span></dd>
+      </dl>
+      <div class="gate-actions">
+        <button class="gbtn" data-w="ghost">Deny</button>
+        <button class="gbtn" data-w="secondary">Approve once</button>
+        <label><input type="checkbox"> for this session (5 min)</label>
+      </div>
+    </div>
+
+    <h3>new — outward: publish (§34c)</h3>
+    <div class="gate" role="alertdialog" aria-label="Publish this key to the directory">
+      <div class="gate-head">
+        <span class="gate-title">Publish this key to the directory</span>
+      </div>
+      <dl>
+        <dt>Key</dt><dd>Justin Capella &lt;justin@example.com&gt; <span class="sub">· OpenPGP</span><div class="fpr sub">AABB CCDD EEFF 0011 2233&nbsp; 4455 6677 8899 AABB CCDD</div></dd>
+        <dt>Where</dt><dd>keys.example.com <span class="sub">(this site's directory)</span></dd>
+        <dt>Becomes<br>public</dt><dd class="sub">The key, its user IDs, and every signature on it — readable by anyone with directory access, <span style="color:var(--foreground)">including the email addresses in its user IDs</span>.</dd>
+        <dt>Permanent</dt><dd class="sub">A published key cannot be withdrawn. You can publish a revocation later; you cannot make this copy go away.</dd>
+      </dl>
+      <div class="gate-actions">
+        <button class="gbtn" data-w="ghost">Cancel</button>
+        <button class="gbtn" data-w="secondary">Publish</button>
+      </div>
+    </div>
+
+    <h3>new — local: overwrite (§34d)</h3>
+    <div class="gate" role="alertdialog" aria-label="This key is already in My Keys">
+      <div class="gate-head">
+        <span class="gate-title">This key is already in My Keys</span>
+      </div>
+      <dl>
+        <dt>In the<br>vault</dt><dd>Justin Capella &lt;justin@example.com&gt; <span class="sub">· added 2026-04-02 · passkey</span></dd>
+        <dt>Replacing</dt><dd class="sub">re-wraps it with <span style="color:var(--foreground)">device protection</span> and clears its usage history. Its passkey binding is discarded; you would enrol a new one to restore passkey protection.</dd>
+      </dl>
+      <div class="gate-actions">
+        <button class="gbtn" data-w="ghost">Cancel</button>
+        <button class="gbtn" data-w="secondary">Replace</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane" data-theme="light">
+    <div class="pane-label">light</div>
+
+    <h3 style="color:var(--muted-foreground);margin-top:0">shipped — ApprovalBanner (§27)</h3>
+    <div class="gate" role="alertdialog" aria-label="agent.sign wants to use a key">
+      <div class="gate-head">
+        <span class="gate-title"><code>agent.sign</code> wants to use a key</span>
+        <span class="gate-meta">request 1 of 1 this run</span>
+      </div>
+      <dl>
+        <dt>Step</dt><dd class="fpr">cell 3 · agent.sign fpr=SHA256:Ur1h… namespace=git</dd>
+        <dt>Key</dt><dd>justin@basilisk.dev <span class="sub">· SSH ed25519 · passkey</span><div class="fpr sub">SHA256:Ur1hPKBrJC3z…</div></dd>
+        <dt>Payload</dt><dd class="fpr">412 bytes · sha256 1a2b3c4d5e6f7a8b…</dd>
+        <dt>Namespace</dt><dd><code>git</code> <span class="sub">— what a verifier must ask for</span></dd>
+      </dl>
+      <div class="gate-actions">
+        <button class="gbtn" data-w="ghost">Deny</button>
+        <button class="gbtn" data-w="secondary">Approve once</button>
+        <label><input type="checkbox"> for this session (5 min)</label>
+      </div>
+    </div>
+
+    <h3>new — outward: publish (§34c)</h3>
+    <div class="gate" role="alertdialog" aria-label="Publish this key to the directory">
+      <div class="gate-head">
+        <span class="gate-title">Publish this key to the directory</span>
+      </div>
+      <dl>
+        <dt>Key</dt><dd>Justin Capella &lt;justin@example.com&gt; <span class="sub">· OpenPGP</span><div class="fpr sub">AABB CCDD EEFF 0011 2233&nbsp; 4455 6677 8899 AABB CCDD</div></dd>
+        <dt>Where</dt><dd>keys.example.com <span class="sub">(this site's directory)</span></dd>
+        <dt>Becomes<br>public</dt><dd class="sub">The key, its user IDs, and every signature on it — readable by anyone with directory access, <span style="color:var(--foreground)">including the email addresses in its user IDs</span>.</dd>
+        <dt>Permanent</dt><dd class="sub">A published key cannot be withdrawn. You can publish a revocation later; you cannot make this copy go away.</dd>
+      </dl>
+      <div class="gate-actions">
+        <button class="gbtn" data-w="ghost">Cancel</button>
+        <button class="gbtn" data-w="secondary">Publish</button>
+      </div>
+    </div>
+
+    <h3>new — local: overwrite (§34d)</h3>
+    <div class="gate" role="alertdialog" aria-label="This key is already in My Keys">
+      <div class="gate-head">
+        <span class="gate-title">This key is already in My Keys</span>
+      </div>
+      <dl>
+        <dt>In the<br>vault</dt><dd>Justin Capella &lt;justin@example.com&gt; <span class="sub">· added 2026-04-02 · passkey</span></dd>
+        <dt>Replacing</dt><dd class="sub">re-wraps it with <span style="color:var(--foreground)">device protection</span> and clears its usage history. Its passkey binding is discarded; you would enrol a new one to restore passkey protection.</dd>
+      </dl>
+      <div class="gate-actions">
+        <button class="gbtn" data-w="ghost">Cancel</button>
+        <button class="gbtn" data-w="secondary">Replace</button>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="note">
+  The publish banner has no session checkbox and no "approve the remaining N",
+  which is the visible difference from §27 and the intended one: there is no
+  defensible "don't ask again" for an irreversible outward act. The shell is
+  identical so that the <em>absence</em> reads as a deliberate narrowing
+  rather than a different component.
+</p>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>§44 — states</h2>
+<p class="lede">
+  Empty, failed, disabled-with-reason, in-flight, and success-after-action —
+  plus the published-tile terminal state, which is the only one that removes
+  its own trigger.
+</p>
+
+<div class="two-up">
+  <div class="pane" data-theme="dark">
+    <div class="pane-label">dark</div>
+    <div class="output-list">
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13"/></svg>TOKEN</span>
+          <span class="ident-label">jwt.out</span><span class="size">0 B</span>
+        </div>
+        <div class="body"><p class="empty-note">No decoded token body — run <code>jose.decode</code> or <code>jose.verify</code> to read it.</p></div>
+        <div class="actions" role="group"><button class="btn" data-action-tier="inert">Copy</button><button class="btn" data-action-tier="inert">Download</button></div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13"/></svg>INSPECT</span>
+          <span class="ident-label">snapshot</span><span class="size">1.4 KB</span>
+        </div>
+        <div class="body">
+          <p class="failed-note"><span>Could not read this snapshot: Unexpected token } in JSON at position 214</span></p>
+          <code class="rawbody">{"kind":"keypair","alg":"ed25519","public":{"kty":"OKP"},}</code>
+        </div>
+        <div class="actions" role="group"><button class="btn" data-action-tier="inert">Copy</button><button class="btn" data-action-tier="inert">Download</button><button class="btn" data-action-tier="inert">Expand</button></div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">offline.pub.asc</span><span class="size">1.8 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN PGP PUBLIC KEY BLOCK-----
+mDMEZQ8kLhYJKwYBBAHaRw8BAQdAX9k2vQ7tR…</code></div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local" aria-disabled="true" title="My Keys is unavailable in this browser (no IndexedDB).">Add to keyring</button>
+          <span class="gsep gsep-outward"></span><span class="brk"></span>
+          <button class="btn" data-action-tier="outward" aria-disabled="true" title="Publishing needs a connection to this site's directory.">Publish</button>
+        </div>
+        <div class="receipt"><span>Two actions are unavailable right now; hover or focus either for the reason.</span></div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">dana.pub.asc</span><span class="size">1.8 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN PGP PUBLIC KEY BLOCK-----
+mDMEZQ8kLhYJKwYBBAHaRw8BAQdAX9k2vQ7tR…</code></div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local" data-busy><span class="spin"></span>Adding…</button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">sam.pub.asc</span><span class="size">1.8 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN PGP PUBLIC KEY BLOCK-----
+mDMEZQ8kLhYJKwYBBAHaRw8BAQdAX9k2vQ7tR…</code></div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+          <span class="gsep gsep-outward"></span><span class="brk"></span>
+          <span class="published">@a1b2c3d4<button class="linkbtn" title="Copy directory link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg></button></span>
+        </div>
+        <div class="receipt">
+          <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+          <span>Added to My Keys · device protection · change it in My Keys</span>
+          <span class="id">SHA256:Ur1hPKBrJC3z…</span>
+          <button class="copyglyph" title="Copy vault id"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">rey.pub.asc</span><span class="size">1.8 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN PGP PUBLIC KEY BLOCK-----
+mDMEZQ8kLhYJKwYBBAHaRw8BAQdAX9k2vQ7tR…</code></div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <span class="gsep gsep-outward"></span><span class="brk"></span>
+          <button class="btn" data-action-tier="outward">Publish</button>
+        </div>
+        <div class="receipt"><span class="err">Publish failed: 503 directory unavailable</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="pane" data-theme="light">
+    <div class="pane-label">light</div>
+    <div class="output-list">
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13"/></svg>TOKEN</span>
+          <span class="ident-label">jwt.out</span><span class="size">0 B</span>
+        </div>
+        <div class="body"><p class="empty-note">No decoded token body — run <code>jose.decode</code> or <code>jose.verify</code> to read it.</p></div>
+        <div class="actions" role="group"><button class="btn" data-action-tier="inert">Copy</button><button class="btn" data-action-tier="inert">Download</button></div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13"/></svg>INSPECT</span>
+          <span class="ident-label">snapshot</span><span class="size">1.4 KB</span>
+        </div>
+        <div class="body">
+          <p class="failed-note"><span>Could not read this snapshot: Unexpected token } in JSON at position 214</span></p>
+          <code class="rawbody">{"kind":"keypair","alg":"ed25519","public":{"kty":"OKP"},}</code>
+        </div>
+        <div class="actions" role="group"><button class="btn" data-action-tier="inert">Copy</button><button class="btn" data-action-tier="inert">Download</button><button class="btn" data-action-tier="inert">Expand</button></div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">offline.pub.asc</span><span class="size">1.8 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN PGP PUBLIC KEY BLOCK-----
+mDMEZQ8kLhYJKwYBBAHaRw8BAQdAX9k2vQ7tR…</code></div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local" aria-disabled="true" title="My Keys is unavailable in this browser (no IndexedDB).">Add to keyring</button>
+          <span class="gsep gsep-outward"></span><span class="brk"></span>
+          <button class="btn" data-action-tier="outward" aria-disabled="true" title="Publishing needs a connection to this site's directory.">Publish</button>
+        </div>
+        <div class="receipt"><span>Two actions are unavailable right now; hover or focus either for the reason.</span></div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">dana.pub.asc</span><span class="size">1.8 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN PGP PUBLIC KEY BLOCK-----
+mDMEZQ8kLhYJKwYBBAHaRw8BAQdAX9k2vQ7tR…</code></div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local" data-busy><span class="spin"></span>Adding…</button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">sam.pub.asc</span><span class="size">1.8 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN PGP PUBLIC KEY BLOCK-----
+mDMEZQ8kLhYJKwYBBAHaRw8BAQdAX9k2vQ7tR…</code></div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+          <span class="gsep gsep-outward"></span><span class="brk"></span>
+          <span class="published">@a1b2c3d4<button class="linkbtn" title="Copy directory link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg></button></span>
+        </div>
+        <div class="receipt">
+          <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+          <span>Added to My Keys · device protection · change it in My Keys</span>
+          <span class="id">SHA256:Ur1hPKBrJC3z…</span>
+          <button class="copyglyph" title="Copy vault id"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+          <span class="ident-label">rey.pub.asc</span><span class="size">1.8 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN PGP PUBLIC KEY BLOCK-----
+mDMEZQ8kLhYJKwYBBAHaRw8BAQdAX9k2vQ7tR…</code></div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <span class="gsep gsep-outward"></span><span class="brk"></span>
+          <button class="btn" data-action-tier="outward">Publish</button>
+        </div>
+        <div class="receipt"><span class="err">Publish failed: 503 directory unavailable</span></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+<p class="note">
+  The disabled tier keeps its label at <code>--muted-foreground</code>
+  (6.15:1 dark, 6.39:1 light) and drops its fill and border instead. The
+  shipped <code>Button</code>'s <code>disabled:opacity-50</code> would land
+  the same label at 2.41:1 / 2.20:1 — an unreadable reason is the same as no
+  reason, which is precisely the failure §33d exists to prevent.
+</p>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>§45 — the rest of the inventory, so the base is visible</h2>
+<p class="lede">
+  Four more kinds at the same anatomy. A reader who has learned one tile has
+  learned all of them: same identity line, same body slot, same tier order,
+  same receipt.
+</p>
+
+<div class="two-up">
+  <div class="pane" data-theme="dark">
+    <div class="pane-label">dark</div>
+    <div class="output-list">
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>CIPHERTEXT</span>
+          <span class="ident-label">msg.enc</span><span class="size">892 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Packets</dt><dd>PKESK ×2 · SEIPD ×1</dd><dd></dd>
+            <dt>Recipients</dt><dd>0xAABBCCDD, 0x1122&nbsp;3344</dd><dd></dd>
+            <dt>Cipher</dt><dd>AES-256 / OCB</dd><dd></dd>
+          </dl>
+        </div>
+        <div class="actions" role="group">
+          <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">packets</button><button role="tab" aria-selected="false">armor</button></span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9.5" r="2.6"/><path d="M15 20a4.6 4.6 0 0 1 5.5-4.5"/></svg>SHARE</span>
+          <span class="ident-label">share 2 of 5</span>
+          <span class="sensitive-badge">sensitive</span>
+          <span class="size">1.1 KB</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Threshold</dt><dd>3 of 5</dd><dd></dd>
+            <dt>Set id</dt><dd>44ffee01</dd><dd></dd>
+          </dl>
+          <div class="masked" style="margin-top:4px"><span>sensitive — value not shown</span></div>
+        </div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert" aria-disabled="true" title="Reveal this value first — a masked value cannot be copied.">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Print cards</button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9.5" r="2.6"/><path d="M15 20a4.6 4.6 0 0 1 5.5-4.5"/></svg>RECIPIENTS</span>
+          <span class="ident-label">to.list</span><span class="size">320 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>0xAABBCCDD</dt><dd>Dana Reed &lt;dana@example.com&gt; <span class="comment">· encrypt-capable</span></dd>
+            <dd><button class="copyglyph" title="Import to key cache"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4M4 19h16"/></svg></button></dd>
+            <dt>0x11223344</dt><dd>Sam Ortiz &lt;sam@example.com&gt; <span class="comment">· encrypt-capable</span></dd>
+            <dd><button class="copyglyph" title="Import to key cache"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4M4 19h16"/></svg></button></dd>
+          </dl>
+        </div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy list</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Import all (2)</button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="muted"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13"/></svg>ENVELOPE</span>
+          <span class="ident-label">recovery.env</span><span class="size">2.2 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN BASILISK ENVELOPE-----
+c2VjcmV0LWVudmVsb3BlLXYxAAAAIGtleQ…</code></div>
+        <div class="actions" role="group">
+          <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">raw</button><button role="tab" aria-selected="false">hex</button><button role="tab" aria-selected="false">b64</button></span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+        </div>
+        <div class="receipt"><span>Required for recovery — this is not a share.</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="pane" data-theme="light">
+    <div class="pane-label">light</div>
+    <div class="output-list">
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>CIPHERTEXT</span>
+          <span class="ident-label">msg.enc</span><span class="size">892 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Packets</dt><dd>PKESK ×2 · SEIPD ×1</dd><dd></dd>
+            <dt>Recipients</dt><dd>0xAABBCCDD, 0x1122&nbsp;3344</dd><dd></dd>
+            <dt>Cipher</dt><dd>AES-256 / OCB</dd><dd></dd>
+          </dl>
+        </div>
+        <div class="actions" role="group">
+          <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">packets</button><button role="tab" aria-selected="false">armor</button></span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9.5" r="2.6"/><path d="M15 20a4.6 4.6 0 0 1 5.5-4.5"/></svg>SHARE</span>
+          <span class="ident-label">share 2 of 5</span>
+          <span class="sensitive-badge">sensitive</span>
+          <span class="size">1.1 KB</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Threshold</dt><dd>3 of 5</dd><dd></dd>
+            <dt>Set id</dt><dd>44ffee01</dd><dd></dd>
+          </dl>
+          <div class="masked" style="margin-top:4px"><span>sensitive — value not shown</span></div>
+        </div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert" aria-disabled="true" title="Reveal this value first — a masked value cannot be copied.">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Print cards</button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9.5" r="2.6"/><path d="M15 20a4.6 4.6 0 0 1 5.5-4.5"/></svg>RECIPIENTS</span>
+          <span class="ident-label">to.list</span><span class="size">320 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>0xAABBCCDD</dt><dd>Dana Reed &lt;dana@example.com&gt; <span class="comment">· encrypt-capable</span></dd>
+            <dd><button class="copyglyph" title="Import to key cache"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4M4 19h16"/></svg></button></dd>
+            <dt>0x11223344</dt><dd>Sam Ortiz &lt;sam@example.com&gt; <span class="comment">· encrypt-capable</span></dd>
+            <dd><button class="copyglyph" title="Import to key cache"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4M4 19h16"/></svg></button></dd>
+          </dl>
+        </div>
+        <div class="actions" role="group">
+          <button class="btn" data-action-tier="inert">Copy list</button>
+          <span class="gsep"></span>
+          <button class="btn" data-action-tier="local">Import all (2)</button>
+        </div>
+      </div>
+
+      <div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="muted"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13"/></svg>ENVELOPE</span>
+          <span class="ident-label">recovery.env</span><span class="size">2.2 KB</span>
+        </div>
+        <div class="body"><code class="rawbody">-----BEGIN BASILISK ENVELOPE-----
+c2VjcmV0LWVudmVsb3BlLXYxAAAAIGtleQ…</code></div>
+        <div class="actions" role="group">
+          <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">raw</button><button role="tab" aria-selected="false">hex</button><button role="tab" aria-selected="false">b64</button></span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+        </div>
+        <div class="receipt"><span>Required for recovery — this is not a share.</span></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>§46 — 375px, where the action row breaks</h2>
+<p class="lede">
+  The tile is fluid; the action row is the only part that has to give. It
+  wraps rather than scrolls, the group separators survive the wrap, and the
+  outward action stays last in DOM order — so it stays last in tab order and
+  ends up alone on the final line, which is the correct emphasis by accident
+  of the ordering rule rather than by a special case.
+</p>
+
+<div class="two-up">
+  <div class="pane" data-theme="dark">
+    <div class="pane-label">dark · 375px</div>
+    <div class="phone">
+      <div class="output-list">
+        <div class="tile">
+          <div class="ident">
+            <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+            <span class="ident-label">kp · public JWK</span>
+            <span class="size">412 B</span>
+          </div>
+          <div class="body">
+            <dl class="keycard">
+              <dt>Algorithm</dt><dd class="alg">ed25519</dd><dd></dd>
+              <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+              <dd><button class="copyglyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+              <dt>Public line</dt><dd>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8k7vQ2… <span class="comment">justin@workstation</span></dd>
+              <dd><button class="copyglyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+            </dl>
+          </div>
+          <div class="actions" role="group">
+            <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">card</button><button role="tab" aria-selected="false">raw</button></span>
+            <span class="gap-view"></span>
+            <button class="btn" data-action-tier="inert">Copy</button>
+            <button class="btn more-btn" data-action-tier="inert">More</button>
+            <span class="gsep"></span>
+            <button class="btn" data-action-tier="local">Add to keyring</button>
+            <span class="gsep gsep-outward"></span><span class="brk"></span>
+            <button class="btn" data-action-tier="outward">Publish</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane" data-theme="light">
+    <div class="pane-label">light · 375px</div>
+    <div class="phone">
+      <div class="output-list">
+        <div class="tile">
+          <div class="ident">
+            <span class="kindbadge" data-tone="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3M17 6l2.5 2.5M14.5 8.5 17 11"/></svg>PUBLIC KEY</span>
+            <span class="ident-label">kp · public JWK</span>
+            <span class="size">412 B</span>
+          </div>
+          <div class="body">
+            <dl class="keycard">
+              <dt>Algorithm</dt><dd class="alg">ed25519</dd><dd></dd>
+              <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+              <dd><button class="copyglyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+              <dt>Public line</dt><dd>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8k7vQ2… <span class="comment">justin@workstation</span></dd>
+              <dd><button class="copyglyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></dd>
+            </dl>
+          </div>
+          <div class="actions" role="group">
+            <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">card</button><button role="tab" aria-selected="false">raw</button></span>
+            <span class="gap-view"></span>
+            <button class="btn" data-action-tier="inert">Copy</button>
+            <button class="btn more-btn" data-action-tier="inert">More</button>
+            <span class="gsep"></span>
+            <button class="btn" data-action-tier="local">Add to keyring</button>
+            <span class="gsep gsep-outward"></span><span class="brk"></span>
+            <button class="btn" data-action-tier="outward">Publish</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>§32f — no match, rendered honestly</h2>
+<div class="two-up">
+  <div class="pane" data-theme="dark">
+    <div class="pane-label">dark</div>
+    <div class="output-list">
+      <div class="tile" data-artifact-kind="fallback">
+        <div class="ident">
+          <span class="kindbadge" data-tone="muted"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13"/></svg>WIDGET</span>
+          <span class="ident-label">experiment.out</span><span class="size">96 B</span>
+        </div>
+        <div class="body"><code class="rawbody">a value from a role this build has no kind for — the raw view is still a good view</code></div>
+        <div class="actions" role="group">
+          <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">raw</button><button role="tab" aria-selected="false">hex</button><button role="tab" aria-selected="false">b64</button></span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="pane" data-theme="light">
+    <div class="pane-label">light</div>
+    <div class="output-list">
+      <div class="tile" data-artifact-kind="fallback">
+        <div class="ident">
+          <span class="kindbadge" data-tone="muted"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13"/></svg>WIDGET</span>
+          <span class="ident-label">experiment.out</span><span class="size">96 B</span>
+        </div>
+        <div class="body"><code class="rawbody">a value from a role this build has no kind for — the raw view is still a good view</code></div>
+        <div class="actions" role="group">
+          <span class="formatbar" role="tablist"><button role="tab" aria-selected="true">raw</button><button role="tab" aria-selected="false">hex</button><button role="tab" aria-selected="false">b64</button></span>
+          <span class="gap-view"></span>
+          <button class="btn" data-action-tier="inert">Copy</button>
+          <button class="btn" data-action-tier="inert">Download</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="note">
+  The badge shows <code>artifact.role</code> verbatim and nothing warns the
+  user: the value is fine, only our description of it is missing. The gap is
+  made visible in <code>artifact-kinds.test.js</code>, not in a toast.
+</p>
+
+<h2>contrast, measured</h2>
+<p class="lede">
+  Computed from the site.css token hexes and cross-checked against
+  <code>getComputedStyle</code> on the shipped tile at four independent
+  points. AA for text under 18.66px bold / 24px regular is 4.5:1; everything
+  in a tile is under that threshold, so 4.5:1 is the bar throughout.
+</p>
+<table class="crt">
+  <thead><tr><th>pair</th><th>dark</th><th>light</th><th>verdict</th></tr></thead>
+  <tbody>
+    <tr><td>identity label — <code>--foreground</code> on <code>--surface</code></td><td class="n">16.02</td><td class="n">16.18</td><td class="pass">pass</td></tr>
+    <tr><td>size / receipt / masked — <code>--muted-foreground</code> on <code>--surface</code></td><td class="n">6.15</td><td class="n">6.39</td><td class="pass">pass</td></tr>
+    <tr><td>kind badge, tint 12% dark / 6% light (worst tone, warn)</td><td class="n">7.94</td><td class="n">4.51</td><td class="pass">pass</td></tr>
+    <tr><td>kind badge at 12% in <em>light</em> (rejected)</td><td class="n">—</td><td class="n">4.17</td><td class="fail">fail</td></tr>
+    <tr><td>inert label — <code>--muted-foreground</code> on <code>--surface</code> (no fill)</td><td class="n">6.15</td><td class="n">6.39</td><td class="pass">pass</td></tr>
+    <tr><td>local label — <code>--foreground</code> on <code>--surface-raised</code></td><td class="n">14.64</td><td class="n">15.20</td><td class="pass">pass</td></tr>
+    <tr><td>outward label — <code>--warn</code> on <code>--surface</code></td><td class="n">9.72</td><td class="n">4.87</td><td class="pass">pass</td></tr>
+    <tr><td>outward hover — <code>--warn</code> on warn-8%</td><td class="n">8.59</td><td class="n">4.39</td><td class="fail">light fails — see §46c</td></tr>
+    <tr><td>disabled, proposed — <code>--muted-foreground</code>, no opacity</td><td class="n">6.15</td><td class="n">6.39</td><td class="pass">pass</td></tr>
+    <tr><td>disabled, shipped <code>opacity-50</code> on muted (rejected)</td><td class="n">2.41</td><td class="n">2.20</td><td class="fail">fail</td></tr>
+    <tr><td>disabled, shipped <code>opacity-50</code> on foreground (rejected)</td><td class="n">4.68</td><td class="n">3.20</td><td class="fail">light fails</td></tr>
+    <tr><td>format bar, active tab — <code>--brand</code> on brand-tint (12% / 6%)</td><td class="n">8.74</td><td class="n">4.67</td><td class="pass">pass</td></tr>
+    <tr><td>format bar, active tab at shipped 18% (rejected)</td><td class="n">7.55</td><td class="n">3.97</td><td class="fail">light fails today</td></tr>
+    <tr><td>unencrypted-export row — <code>--foreground</code> on warn-8%</td><td class="n">14.15</td><td class="n">14.60</td><td class="pass">pass</td></tr>
+    <tr><td>unencrypted-export row as <code>--warn</code> body text (rejected)</td><td class="n">8.27</td><td class="n">4.28</td><td class="fail">light fails</td></tr>
+    <tr><td>banner body — <code>--foreground</code> on warn-8%</td><td class="n">14.15</td><td class="n">14.60</td><td class="pass">pass</td></tr>
+    <tr><td>banner <code>&lt;dt&gt;</code> — <code>--muted-foreground</code> on warn-8%</td><td class="n">5.44</td><td class="n">5.77</td><td class="pass">pass</td></tr>
+    <tr><td>sensitive badge — <code>--foreground</code> on accent-18%</td><td class="n">11.40</td><td class="n">13.98</td><td class="pass">pass</td></tr>
+    <tr><td>failure line — <code>--error</code> on error-10%</td><td class="n">6.60</td><td class="n">4.57</td><td class="pass">pass</td></tr>
+    <tr><td>receipt tick — <code>--success</code> on <code>--surface</code></td><td class="n">7.45</td><td class="n">5.08</td><td class="pass">pass</td></tr>
+    <tr><td>published slot — <code>--brand</code> on <code>--surface</code></td><td class="n">10.88</td><td class="n">5.05</td><td class="pass">pass</td></tr>
+    <tr><td>shipped Publish, brand fill (rejected on other grounds)</td><td class="n">10.77</td><td class="n">5.05</td><td class="pass">pass</td></tr>
+    <tr><td>shipped "Configure TURN", dark text on <code>--warn</code> fill</td><td class="n">9.41</td><td class="n">3.76</td><td class="fail">light fails today</td></tr>
+  </tbody>
+</table>
+
+</div>
+</body>
+</html>
