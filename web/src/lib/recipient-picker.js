@@ -675,6 +675,28 @@ export function mountRecipientBinder(host, opts) {
       });
     });
 
+    // Enter runs the lookup.
+    //
+    // The search field is an `<input type="search">` outside any `<form>`, so
+    // there is no implicit submit — without this, typing a fingerprint and
+    // pressing Enter did nothing at all, and the only way to search was to
+    // notice the button. Every other search field on the site submits on
+    // Enter, so its absence here read as the binder being broken.
+    host.querySelectorAll(".binder-search").forEach((input) => {
+      input.addEventListener("keydown", (e) => {
+        const ev = /** @type {KeyboardEvent} */ (e);
+        if (ev.key !== "Enter" || ev.isComposing) return;
+        // A search input fires Enter for its own clear affordance too; the
+        // button is the single definition of what a lookup does, so delegate
+        // rather than duplicate it.
+        ev.preventDefault();
+        const i = input.getAttribute("data-slot");
+        /** @type {HTMLButtonElement|null} */
+        const btn = host.querySelector(`.binder-go[data-slot="${i}"]`);
+        btn?.click();
+      });
+    });
+
     host.querySelectorAll(".binder-go").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const i = Number(btn.getAttribute("data-slot"));

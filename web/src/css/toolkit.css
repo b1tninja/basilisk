@@ -75,6 +75,33 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * Radix ScrollArea's viewport styling, restated here because *its* copy never
+ * applies in production.
+ *
+ * `@radix-ui/react-scroll-area` injects these rules as an inline `<style>`
+ * element at runtime. `style-src 'self'` refuses inline style elements, so on
+ * the built site the injection is blocked, the native scrollbars come back
+ * inside every ScrollArea, and boot-diagnostics reports a CSP violation on
+ * every page load. The rules themselves are static and harmless — the problem
+ * is only how they are delivered — so shipping them in a stylesheet we serve
+ * gets the intended appearance under the real policy.
+ *
+ * This does not silence the violation: Radix still attempts the injection and
+ * the report is still correct. Stopping the report needs either a `style-src`
+ * hash for this exact text or a Radix version that stops injecting; both are
+ * policy decisions rather than fixes, and the appearance bug is worth
+ * correcting either way.
+ */
+[data-radix-scroll-area-viewport] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+[data-radix-scroll-area-viewport]::-webkit-scrollbar {
+  display: none;
+}
+
+/*
  * Unconditional on :root (not scoped to .toolkit-shell): Radix Dialog/Sheet
  * portals render into document.body, outside .toolkit-shell, so a
  * class-scoped definition leaves var(--popover) etc. unresolved there.

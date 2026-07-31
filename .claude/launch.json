@@ -6,6 +6,22 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "web"],
       "port": 5173
+    },
+    {
+      "name": "basilisk-web-prod",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "preview",
+        "--prefix",
+        "web",
+        "--",
+        "--port",
+        "4188",
+        "--strictPort"
+      ],
+      "port": 4188,
+      "autoPort": false
     }
   ]
 }
