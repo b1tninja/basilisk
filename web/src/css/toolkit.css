@@ -256,6 +256,66 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * ToolboxDot shapes (§25a) — the same closed TOOLBOX_META palette, applied to
+ * `color` so one declaration serves all four shapes: a filled dot paints with
+ * `currentColor`, the hollow observe-only ring borders with it, and the
+ * channel triangle uses it for the bottom border that draws the shape.
+ *
+ * Kept as its own block rather than folded into `.toolbox-dot` above: those
+ * rules already ship and work, and rewriting them to `color` + `currentColor`
+ * would risk a live regression for tidiness. `toolbox-dot-css.test.js` checks
+ * *both* families against the registry, so the duplication cannot drift.
+ */
+.toolbox-shape {
+  color: #8b949e;
+  background: currentColor;
+}
+.toolbox-shape[data-toolbox="webcrypto"],
+.toolbox-shape[data-toolbox="agent"] {
+  color: #4cde82;
+}
+.toolbox-shape[data-toolbox="encoding"],
+.toolbox-shape[data-toolbox="webrtc"] {
+  color: #58a6ff;
+}
+.toolbox-shape[data-toolbox="io"],
+.toolbox-shape[data-toolbox="flow"] {
+  color: #8b949e;
+}
+.toolbox-shape[data-toolbox="openpgp"] {
+  color: #d2a8ff;
+}
+.toolbox-shape[data-toolbox="age"] {
+  color: #ff7b72;
+}
+.toolbox-shape[data-toolbox="hkp"] {
+  color: #f0883e;
+}
+.toolbox-shape[data-toolbox="sss"] {
+  color: #e3b341;
+}
+.toolbox-shape[data-toolbox="webauthn"] {
+  color: #79c0ff;
+}
+.toolbox-shape[data-toolbox="jose"] {
+  color: #ffa657;
+}
+/* Observe-only values read as hollow — "display me, don't consume me". */
+.toolbox-shape[data-kind="connState"] {
+  background: transparent;
+  border: 1.5px solid currentColor;
+}
+/* Border-triangle: the box is zero-sized and the bottom border is the shape. */
+.toolbox-shape[data-kind="channel"] {
+  width: 0;
+  height: 0;
+  background: transparent;
+  border-left: 3.5px solid transparent;
+  border-right: 3.5px solid transparent;
+  border-bottom: 6px solid currentColor;
+}
+
+/*
  * Guided key ceremony (CeremonySheet). Chrome only — the cards inside it use
  * the .share-card rules below, so the printed page is identical whether the
  * cards were reached through the Sheet or through the notebook.

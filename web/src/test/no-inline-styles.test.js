@@ -41,19 +41,15 @@ const BASELINE = {
   // and `--ops-width` via lib/css-vars for the resizable panel; RunBar (1) →
   // `--run-progress` the same way.
   //
-  // Both remaining entries key on a colour *string* rather than a closed
-  // vocabulary, so converting them means changing what the component takes,
-  // not find-and-replace.
+  // Glyph (was 1) converted — `.toolbox-shape[data-toolbox]` sets `color` and
+  // the shapes paint with `currentColor`. That single site rendered once per
+  // op, so it alone accounted for ~76 of the ~79 live inline styles on
+  // /toolkit; the per-file count badly understated its real exposure.
   //
-  // Glyph is the one to do next, and the count understates it badly: it is a
-  // single source site that renders once per op, so it accounts for ~76 of
-  // the ~79 live inline styles on /toolkit — by far the largest real CSP
-  // exposure left. Its colour comes from `toolboxColorFor`, i.e. the same
-  // closed TOOLBOX_META palette already enumerated as
-  // `.toolbox-dot[data-toolbox-dot=…]`, so it is convertible: give the span
-  // `data-toolbox`, let the shape rules paint with `currentColor`, and extend
-  // toolbox-dot-css.test.js to guard both selector families.
-  "src/toolkit/widgets/Glyph.tsx": 1,
+  // NetworkArtifact is the last file, and the genuinely hard one: its three
+  // sites take a caller-supplied `tone` colour string, so converting means
+  // changing what the component accepts (a token name, not a colour) and
+  // updating every call site — a contract change, not a find-and-replace.
   "src/toolkit/widgets/NetworkArtifact.tsx": 3,
 };
 

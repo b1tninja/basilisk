@@ -112,43 +112,29 @@ export function ToolboxDot({
   op: { toolbox?: string; output?: string };
   className?: string;
 }) {
-  const color = toolboxColorFor(op);
   const kind = shapeForType(op.output);
-
-  if (kind === "channel") {
-    // CSS border-triangle: the box itself is transparent, the bottom border
-    // paints the shape — so no width/height background applies here.
-    return (
-      <span
-        className={cn("inline-block shrink-0", className)}
-        style={{
-          width: 0,
-          height: 0,
-          borderLeft: "3.5px solid transparent",
-          borderRight: "3.5px solid transparent",
-          borderBottom: `6px solid ${color}`,
-        }}
-        aria-hidden
-        data-kind="channel"
-      />
-    );
-  }
-
+  // Colour and shape both come from CSS now (`.toolbox-shape[data-toolbox]`
+  // sets `color`, the shape rules paint with `currentColor`). This one
+  // component renders once per op, so its single style prop was responsible
+  // for ~76 of the ~79 inline styles on /toolkit — every one of them a write
+  // `style-src 'self'` refuses in production. The toolbox palette is a closed
+  // set (TOOLBOX_META), so a stylesheet can enumerate it; `toolbox-dot-css`
+  // guards the two copies against drift.
   return (
     <span
       className={cn(
-        "inline-block h-[5px] w-[5px] shrink-0",
-        // connState is observe-only — hollow reads as "don't consume this".
-        kind === "connState" ? "rounded-full" : kind === "session" ? "rounded-[1px]" : "rounded-full",
-        kind === "candidate" && "rotate-45 rounded-[1px]"
+        "toolbox-shape inline-block shrink-0",
+        kind !== "channel" && "h-[5px] w-[5px]",
+        kind === "session"
+          ? "rounded-[1px]"
+          : kind === "candidate"
+            ? "rotate-45 rounded-[1px]"
+            : kind !== "channel" && "rounded-full",
+        className
       )}
-      style={
-        kind === "connState"
-          ? { border: `1.5px solid ${color}`, background: "transparent" }
-          : { background: color }
-      }
-      aria-hidden
+      data-toolbox={op.toolbox || "unknown"}
       data-kind={kind || undefined}
+      aria-hidden
     />
   );
 }

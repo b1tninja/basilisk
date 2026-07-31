@@ -15,35 +15,66 @@ const CSS = readFileSync(
   "utf8"
 );
 
-/** @returns {Map<string, string>} toolbox id → colour from the stylesheet */
-function cssDotColors() {
+/**
+ * Two selector families carry the palette — `.toolbox-dot` (shelf headers,
+ * `background`) and `.toolbox-shape` (ToolboxDot, `color`, so the filled dot,
+ * the hollow ring and the channel triangle can all paint with
+ * `currentColor`). Both are checked, so neither can drift from the registry
+ * or from each other.
+ *
+ * @param {"dot"|"shape"} family
+ * @returns {Map<string, string>} toolbox id → colour from the stylesheet
+ */
+function cssColors(family) {
   const out = new Map();
+  const sel = family === "dot" ? "toolbox-dot" : "toolbox-shape";
+  const attr = family === "dot" ? "data-toolbox-dot" : "data-toolbox";
+  const prop = family === "dot" ? "background" : "color";
   // Selector groups may share one block: capture every id before the brace.
-  const re = /((?:\.toolbox-dot\[data-toolbox-dot="[\w-]+"\],?\s*)+)\{\s*background:\s*([^;]+);/g;
+  const re = new RegExp(
+    `((?:\\.${sel}\\[${attr}="[\\w-]+"\\],?\\s*)+)\\{\\s*${prop}:\\s*([^;]+);`,
+    "g"
+  );
   for (const m of CSS.matchAll(re)) {
-    const ids = [...m[1].matchAll(/data-toolbox-dot="([\w-]+)"/g)].map((x) => x[1]);
+    const ids = [...m[1].matchAll(new RegExp(`${attr}="([\\w-]+)"`, "g"))].map((x) => x[1]);
     for (const id of ids) out.set(id, m[2].trim());
   }
   return out;
 }
 
-describe("toolbox dot colours agree between registry and stylesheet", () => {
-  const fromCss = cssDotColors();
+describe.each([["dot"], ["shape"]])(
+  "toolbox %s colours agree between registry and stylesheet",
+  (family) => {
+    const fromCss = cssColors(family);
 
-  it("every toolbox with a colour has a matching CSS rule", () => {
-    const neutral = "#8b949e"; // the .toolbox-dot default — no per-id rule needed
-    const mismatches = [];
-    for (const [id, meta] of Object.entries(TOOLBOX_META)) {
-      const want = (meta.color || neutral).toLowerCase();
-      const got = (fromCss.get(id) || neutral).toLowerCase();
-      if (want !== got) mismatches.push(`${id}: registry ${want}, css ${got}`);
-    }
-    expect(mismatches, mismatches.join("\n")).toEqual([]);
-  });
+    it("every toolbox with a colour has a matching CSS rule", () => {
+      const neutral = "#8b949e"; // the family's default — no per-id rule needed
+      const mismatches = [];
+      for (const [id, meta] of Object.entries(TOOLBOX_META)) {
+        const want = (meta.color || neutral).toLowerCase();
+        const got = (fromCss.get(id) || neutral).toLowerCase();
+        if (want !== got) mismatches.push(`${id}: registry ${want}, css ${got}`);
+      }
+      expect(mismatches, mismatches.join("\n")).toEqual([]);
+    });
 
-  it("the stylesheet names no toolbox the registry lacks", () => {
-    const unknown = [...fromCss.keys()].filter((id) => !(id in TOOLBOX_META));
-    expect(unknown, unknown.join(", ")).toEqual([]);
+    it("the stylesheet names no toolbox the registry lacks", () => {
+      const unknown = [...fromCss.keys()].filter((id) => !(id in TOOLBOX_META));
+      expect(unknown, unknown.join(", ")).toEqual([]);
+    });
+  }
+);
+
+describe("ToolboxDot shapes are painted, not inlined", () => {
+  it("keeps the observe-only ring hollow and the channel triangle border-drawn", () => {
+    // The two shapes that are not a plain filled dot; both previously carried
+    // the colour in a style prop the production CSP refuses.
+    expect(CSS).toMatch(
+      /\.toolbox-shape\[data-kind="connState"\]\s*\{[^}]*border:\s*1\.5px solid currentColor/
+    );
+    expect(CSS).toMatch(
+      /\.toolbox-shape\[data-kind="channel"\]\s*\{[^}]*border-bottom:\s*6px solid currentColor/
+    );
   });
 });
 
