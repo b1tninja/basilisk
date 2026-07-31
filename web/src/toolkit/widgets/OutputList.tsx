@@ -170,7 +170,7 @@ function FormatBar({
           className={cn(
             "rounded-[3px] px-1 py-px font-mono text-[9px] transition-colors",
             f === value
-              ? "bg-[color-mix(in_srgb,var(--brand)_18%,transparent)] font-semibold text-[var(--brand)]"
+              ? "bg-[color-mix(in_srgb,var(--brand)_var(--tile-tint),transparent)] font-semibold text-[var(--brand)]"
               : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
           )}
           onClick={() => onChange(f)}
@@ -269,16 +269,16 @@ export function OutputList({ outputs, className }: Props) {
             className={cn(
               "inline-flex shrink-0 items-center gap-1 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider",
               a.kind === "diag"
-                ? "bg-[color-mix(in_srgb,var(--warn)_12%,transparent)] text-[var(--warn)]"
+                ? "bg-[color-mix(in_srgb,var(--warn)_var(--tile-tint),transparent)] text-[var(--warn)]"
                 : a.kind === "key"
-                  ? "bg-[color-mix(in_srgb,var(--brand)_12%,transparent)] text-[var(--brand)]"
-                  : "bg-[color-mix(in_srgb,var(--caret)_12%,transparent)] text-[var(--caret)]"
+                  ? "bg-[color-mix(in_srgb,var(--brand)_var(--tile-tint),transparent)] text-[var(--brand)]"
+                  : "bg-[color-mix(in_srgb,var(--caret)_var(--tile-tint),transparent)] text-[var(--caret)]"
             )}
           >
             <KindGlyph kind={a.kind} />
             {a.kind}
           </span>
-          <code className="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-[var(--foreground)]">
+          <code className="artifact-label min-w-0 flex-1 truncate font-mono font-medium text-[var(--foreground)]">
             {a.label}
           </code>
           {a.sensitive ? (
@@ -334,7 +334,7 @@ export function OutputList({ outputs, className }: Props) {
           </Button>
           {a.publishedAs ? (
             <span className="flex shrink-0 items-center gap-1">
-              <code className="font-mono text-[10px] text-[var(--brand)]">{a.publishedAs}</code>
+              <code className="artifact-meta font-mono text-[var(--brand)]">{a.publishedAs}</code>
               {a.directoryUrl ? (
                 <button
                   type="button"
@@ -410,7 +410,7 @@ export function OutputList({ outputs, className }: Props) {
               {a.revealable && a.content ? (
                 <button
                   type="button"
-                  className="rounded-[4px] border border-[color-mix(in_srgb,var(--warn)_45%,transparent)] px-1.5 py-px text-[10px] font-semibold text-[var(--warn)] hover:bg-[color-mix(in_srgb,var(--warn)_12%,transparent)]"
+                  className="rounded-[4px] border border-[color-mix(in_srgb,var(--warn)_45%,transparent)] px-1.5 py-px text-[10px] font-semibold text-[var(--warn)] hover:bg-[color-mix(in_srgb,var(--warn)_var(--tile-tint),transparent)]"
                   title="Show this value in the clear"
                   onClick={() =>
                     setRevealed((prev) => new Set(prev).add(a.label))
@@ -463,7 +463,7 @@ export function OutputList({ outputs, className }: Props) {
               </span>
               <code
                 className={cn(
-                  "block max-h-24 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px]",
+                  "artifact-body block max-h-24 overflow-auto whitespace-pre-wrap break-all font-mono",
                   a.sensitive
                     ? "text-[var(--foreground)]"
                     : "text-[var(--muted-foreground)]"
@@ -473,7 +473,7 @@ export function OutputList({ outputs, className }: Props) {
               </code>
             </span>
           ) : a.preview ? (
-            <code className="truncate pl-[1px] font-mono text-[10px] text-[var(--muted-foreground)]">
+            <code className="artifact-body truncate pl-[1px] font-mono text-[var(--muted-foreground)]">
               {a.preview}
             </code>
           ) : null}

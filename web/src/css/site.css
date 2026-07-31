@@ -32,6 +32,21 @@
   --warn: #e3b341;
 
   /*
+   * How strongly a hue tints a small surface — kind badges, the active format
+   * tab (§39c, design_handoff_artifact_actions/visual).
+   *
+   * One token rather than a percentage repeated at each call site, because a
+   * tint that works in dark fails in light and the difference is not
+   * aesthetic. In dark, mixing a hue into the surface raises a chip off the
+   * background. In light it lightens the background *toward* the text, and
+   * contrast falls: measured across the four badge hues, 12% lands every one
+   * of them between 4.17:1 and 4.38:1 — all below the 4.5:1 floor that
+   * applies here, since everything in a tile is small text. 6% is the largest
+   * tint at which the binding case (warn) still clears, at 4.51:1.
+   */
+  --tile-tint: 12%;
+
+  /*
    * Interaction accents, distinct from the semantic ones above.
    *
    * `--interactive` is "you are pointing at this / this one is selected". It
@@ -87,6 +102,10 @@
     --surface-raised: #f6f8fa;
     --border: #d0d7de;
     --border-weak: #eaeef2;
+
+    /* §39c: 12% fails every badge hue against white; 6% is the largest that
+     * clears 4.5:1 on the binding case. */
+    --tile-tint: 6%;
 
     /* Typography */
     --text: #1c2128;

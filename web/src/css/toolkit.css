@@ -1636,3 +1636,29 @@ input[type="file"][data-basilisk-file-picker] {
   background: var(--warn);
   pointer-events: none;
 }
+
+/*
+ * Artifact tile mono sizing (§39b, design_handoff_artifact_actions/visual).
+ *
+ * `site.css` sets an **unlayered** `code { font-size: .78rem }`. Tailwind
+ * utilities live in `@layer utilities`, and an unlayered rule beats a layered
+ * one regardless of specificity — so every `<code>` in the tile rendered at
+ * 12.48px whatever its class asked for. Three intended sizes collapsed to one,
+ * and the collapse was an inversion: the raw body, specified as the quietest
+ * text in the tile at 10px, rendered *larger* than the identity label naming
+ * it. The densest element was the loudest.
+ *
+ * Sizing these by class here is the workaround this repo already documents for
+ * exactly this cascade (`.suggest-chip.border-dashed`, `.tool-card[data-pinned]`).
+ * Narrowing the global rule was rejected: it serves every non-toolkit page,
+ * and this design has no mandate over those.
+ */
+[data-output-list] code.artifact-label {
+  font-size: 11px;
+}
+[data-output-list] code.artifact-body {
+  font-size: 10px;
+}
+[data-output-list] code.artifact-meta {
+  font-size: 9.5px;
+}
