@@ -187,6 +187,37 @@ Three things worth carrying forward from it:
   fallback picker click-inert on the browsers that need it. Measured with
   `getComputedStyle`; no stubbed-DOM test could see it.
 
+**Surfaces for the capability that shipped without one** —
+`redesign/CAPABILITY-SURFACES.md`, four designs, three of them built. The
+custodian verification moment is done: `ShareCheck` over
+`lib/toolkit/share-check.js` (More ▸ Check a share…, and rehearsed inside the
+ceremony's cards stage), cards now print the split id and a *derived* recovery
+line, and the ceremony's split stage tells the room to publish the commitments.
+Verify-this-deployment is done: `IntegrityPanel` over
+`lib/toolkit/deployment-check.js`, presentation only — the comparison is still
+`verifyModuleRootAgainstPins`. `qr.scan` got its first surface, composed from
+`file.read | qr.scan`, degrading honestly where `BarcodeDetector` is absent. The
+DKG session is **designed, not wired**: `lib/quorum/dkg-session.js` +
+`DkgPanel`, catalog-only, with its assumptions about the missing op layer
+written down. Files/age/stream progress remains design-only and is specced in
+the same document.
+
+Three things worth carrying forward:
+
+- **The card was telling custodians to run the wrong op.** `ShareCards`
+  hard-coded `sss.combine` while the ceremony has been splitting with
+  `vss.split` since bd3bb44. Derived now. Look for this class of bug wherever a
+  string was written before the thing it describes changed.
+- **The catalog caught two more.** `IntegrityPanel` printed a 64-hex "Loaded
+  root" beside a verdict saying nothing could be checked — the self-digest
+  fallback, which looks exactly like the number a reader is meant to compare.
+  And `toolkit-widgets.html` had no CSP meta while `toolkit-widgets` was missing
+  from `STATIC_PAGES`, so the catalog was the one page with no report-only
+  policy. Both fixed; the header is now measured live there.
+- **`share-only` must never render green.** A BLIP39 mnemonic decoding cleanly
+  proves transcription, nothing more. The tone enumeration in `toolkit.css` is
+  what makes that structural rather than remembered.
+
 Roughly in value order:
 
 1. **P2P mesh** — `redesign/p2p-dkg/DESIGN.md` has the researched plan.
