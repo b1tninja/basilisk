@@ -8,10 +8,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
-import { NetworkArtifact, hasNetworkRenderer } from "./NetworkArtifact";
-import { InspectorArtifact, type InspectSnapshot } from "./InspectorArtifact";
-import { JwtArtifact, hasJoseRenderer } from "./JwtArtifact";
 import { KindGlyph } from "./kind-glyphs";
+import {
+  ARTIFACT_KINDS,
+  FALLBACK_KIND,
+  type ToolkitArtifactKind,
+} from "../artifact-kinds/registry";
+import { resolveArtifactKind } from "../artifact-kinds/resolve";
 import {
   bytesToBase32,
   bytesToBase64,
@@ -131,9 +134,11 @@ export function formatArtifact(content: string, format: ArtifactFormat): string 
 const EXPANDABLE_CONTENT_CHARS = 512;
 
 export function canExpand(a: OutputArtifact): boolean {
-  if (hasNetworkRenderer(a.netType)) return true;
-  if (a.inspectSnapshot) return true;
-  if (hasJoseRenderer(a.jose)) return true;
+  // §32d: expandability is a property of the *kind*, declared in the table,
+  // not a third list of body-shape predicates kept in sync by hand. Falling
+  // back to the size rule is what an unclaimed artifact gets.
+  const kind = resolveArtifactKind(a, ARTIFACT_KINDS, FALLBACK_KIND);
+  if (kind.expandable) return true;
   return (a.content?.length ?? 0) > EXPANDABLE_CONTENT_CHARS;
 }
 
@@ -177,6 +182,26 @@ function FormatBar({
   );
 }
 
+/**
+ * Render a kind's body, degrading rather than blanking a cell (§32d).
+ *
+ * A view parses data the engine handed it, so a malformed body must fall back
+ * to the raw text path — the tile below renders `a.content` when this returns
+ * null. Throwing here would convert a computation that succeeded into a
+ * user-visible failure, which inverts the severity.
+ */
+function renderKindView(
+  kind: ToolkitArtifactKind,
+  artifact: Parameters<ToolkitArtifactKind["view"]>[0]["artifact"],
+  masked: boolean
+) {
+  try {
+    return kind.view({ artifact, masked });
+  } catch {
+    return null;
+  }
+}
+
 export function OutputList({ outputs, className }: Props) {
   const [confirming, setConfirming] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -203,6 +228,15 @@ export function OutputList({ outputs, className }: Props) {
     return () => clearTimeout(t);
   }, [revealed, revealTouch]);
   const expandedRow = expanded != null ? outputs[expanded] : null;
+  // The Sheet shows the same widget the row does, given room — never a second
+  // rendering of the same value. Masked here means masked there.
+  const expandedKindBody = expandedRow
+    ? renderKindView(
+        resolveArtifactKind(expandedRow, ARTIFACT_KINDS, FALLBACK_KIND),
+        expandedRow,
+        !!expandedRow.sensitive && !revealed.has(expandedRow.label)
+      )
+    : null;
   if (!outputs.length) return null;
   return (
     <div
@@ -212,9 +246,16 @@ export function OutputList({ outputs, className }: Props) {
       )}
       data-output-list
     >
-      {outputs.map((a, i) => (
+      {outputs.map((a, i) => {
+        // §32e: one resolver call, computed once. The kind is decided by the
+        // artifact's identity; `kindBody` is null when this kind has no body
+        // to draw, and the raw path below renders instead.
+        const resolvedKind = resolveArtifactKind(a, ARTIFACT_KINDS, FALLBACK_KIND);
+        const kindBody = renderKindView(resolvedKind, a, false);
+        return (
         <div
           key={`${a.label}-${i}`}
+          data-artifact-kind={resolvedKind.id}
           className={cn(
             "relative flex flex-col gap-1 px-2.5 py-2",
             i < outputs.length - 1 && "border-b border-[color-mix(in_srgb,var(--border)_55%,transparent)]"
@@ -379,28 +420,15 @@ export function OutputList({ outputs, className }: Props) {
                 </button>
               ) : null}
             </span>
-          ) : hasNetworkRenderer(a.netType) ? (
-            <NetworkArtifact
-              netType={a.netType!}
-              netKind={a.netKind}
-              data={a.netData}
-              content={a.content}
-              onConfigureTurn={a.onConfigureTurn}
-            />
-          ) : a.inspectSnapshot ? (
-            /* `inspect` carries a structured snapshot — render the value as
-               what it is, rather than the flattened text dump. */
-            <InspectorArtifact
-              snapshot={a.inspectSnapshot as InspectSnapshot}
-              className="mt-0.5"
-            />
-          ) : hasJoseRenderer(a.jose) ? (
-            /* A token is base64url — unreadable as text and misleading as a
-               "preview". The reader answers the three questions the blob
-               cannot: was it checked, what does it say, is it still valid.
+          ) : kindBody ? (
+            /* §32e: one resolver call where three bespoke predicates used to
+               chain. The kind comes from the artifact's identity (role +
+               tags), and the view reads the body — so a token whose body
+               failed to decode is still a token showing its empty state,
+               rather than falling through and rendering as untyped text.
                Reached only past the sensitive gate above, so a freshly signed
-               token still masks until it is revealed. */
-            <JwtArtifact data={a.jose} className="mt-0.5" />
+               value still masks until it is revealed. */
+            kindBody
           ) : a.content ? (
             <span
               className="flex flex-col gap-1 pl-[1px]"
@@ -450,7 +478,8 @@ export function OutputList({ outputs, className }: Props) {
             </code>
           ) : null}
         </div>
-      ))}
+        );
+      })}
 
       {/* An artifact can also open as its own window — the same widget, given
           room to breathe, using the shell's existing Sheet primitive. */}
@@ -471,21 +500,8 @@ export function OutputList({ outputs, className }: Props) {
             <div className="overflow-y-auto px-4 pb-4">
               {/* Same widget the row uses, given room — never a second
                   rendering of the same value. */}
-              {hasNetworkRenderer(expandedRow.netType) ? (
-                <NetworkArtifact
-                  netType={expandedRow.netType!}
-                  netKind={expandedRow.netKind}
-                  data={expandedRow.netData}
-                  content={expandedRow.content}
-                  onConfigureTurn={expandedRow.onConfigureTurn}
-                />
-              ) : expandedRow.inspectSnapshot ? (
-                <InspectorArtifact
-                  snapshot={expandedRow.inspectSnapshot as InspectSnapshot}
-                />
-              ) : hasJoseRenderer(expandedRow.jose) &&
-                (!expandedRow.sensitive || revealed.has(expandedRow.label)) ? (
-                <JwtArtifact data={expandedRow.jose} />
+              {expandedKindBody ? (
+                expandedKindBody
               ) : (
                 <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-[var(--foreground)]">
                   {expandedRow.sensitive && !revealed.has(expandedRow.label)

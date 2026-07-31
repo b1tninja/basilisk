@@ -16,6 +16,8 @@ import {
   FALLBACK_KIND,
 } from "../toolkit/artifact-kinds/registry.tsx";
 import { ambiguousPairs, resolveArtifactKind } from "../toolkit/artifact-kinds/resolve.ts";
+import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { runRecipe } from "../lib/toolkit/engine.js";
 
 const TABLE_SRC = readFileSync(
   fileURLToPath(new URL("../toolkit/artifact-kinds/registry.tsx", import.meta.url)),
@@ -150,5 +152,48 @@ describe("the existing renderers were folded in, not rewritten (§32e)", () => {
     const jose = ARTIFACT_KINDS.find((k) => k.id === "jose-token");
     expect(jose.view({ artifact: { content: "eyJ…", jose: undefined }, masked: false })).toBeNull();
     expect(jose.empty).toMatch(/jose\.verify/);
+  });
+});
+
+describe("real engine artifacts resolve to the right kind", () => {
+  /** Run a recipe and resolve every artifact it emits. */
+  const kindsFor = async (src) => {
+    const { ast, validation } = compileRecipe(src);
+    expect(validation.ok, (validation.errors || []).map((e) => e.message).join(" · ")).toBe(
+      true
+    );
+    const arts = await runRecipe(ast, {});
+    return arts.map((a) => ({
+      label: a.label,
+      role: a.role,
+      kind: resolveArtifactKind(a, ARTIFACT_KINDS, FALLBACK_KIND).id,
+    }));
+  };
+
+  it("matches an inspect snapshot by identity, not by body presence", async () => {
+    // The old chain asked "is there an inspectSnapshot field". This asks what
+    // the artifact *is*, so a sensitive value — for which the engine
+    // deliberately withholds the snapshot — is still an inspect artifact and
+    // shows the kind's empty sentence rather than silently becoming raw text.
+    const rows = await kindsFor('"hello" | utf8 | inspect');
+    const snap = rows.find((r) => r.role === "inspect");
+    expect(snap, `no inspect artifact in ${JSON.stringify(rows)}`).toBeTruthy();
+    expect(snap.kind).toBe("inspect-snapshot");
+  });
+
+  it("leaves a plain text artifact to the fallback, which still renders it", async () => {
+    const rows = await kindsFor('"plain" | utf8 | out @msg');
+    expect(rows.every((r) => r.kind === "fallback")).toBe(true);
+  });
+
+  it("never throws on anything the engine emits", async () => {
+    // Ambiguity is a build error by design; this is the guard that no real
+    // artifact trips it.
+    const rows = await kindsFor(`genkey ed25519 | out @kp
+
+"x" | utf8 | inspect
+
+"y" | utf8 | out @t`);
+    expect(rows.length).toBeGreaterThan(3);
   });
 });
