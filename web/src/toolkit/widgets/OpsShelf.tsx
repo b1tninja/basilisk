@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import {
   TOOLBOX_META,
   getShelfMeta,
@@ -75,6 +75,21 @@ const KIT_DEFS: ReadonlyArray<{ id: KitId; label: string }> = [
   { id: "formats", label: "Formats" },
   { id: "hmac", label: "HMAC" },
 ];
+
+/**
+ * The search field's accelerator, spelled for the machine it is on.
+ *
+ * The badge in the field read "⌘K" everywhere and nothing listened for it —
+ * a keyboard hint that is both wrong about the key and attached to no
+ * behaviour, on Windows and Linux where ⌘ is not a key at all. The design's
+ * full command palette (turn 40b) is a larger piece of work; the honest
+ * minimum is that the badge sitting inside the search field focuses the
+ * search field.
+ */
+const searchAccel =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "")
+    ? "⌘K"
+    : "Ctrl K";
 
 /**
  * How an op that doesn't fit the caret is de-emphasised.
@@ -321,6 +336,28 @@ export function OpsShelf({
   }, [tipFitProp]);
   const tipFit = showAll ? null : tipFitProp;
 
+  /**
+   * Make the accelerator real. Bound at the window because the point of the
+   * shortcut is reaching the field from anywhere in the shell; the field's
+   * own handler would only work once you were already in it.
+   */
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (hideSearch) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "k" && e.key !== "K") return;
+      if (!e.metaKey && !e.ctrlKey) return;
+      if (e.altKey || e.shiftKey) return;
+      const el = searchRef.current;
+      if (!el) return;
+      e.preventDefault();
+      el.focus();
+      el.select();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hideSearch]);
+
   const grouped = useMemo(() => {
     const q = filter.trim().toLowerCase();
     const filtered = q
@@ -491,6 +528,7 @@ export function OpsShelf({
               ⌕
             </span>
             <Input
+              ref={searchRef}
               className="h-[30px] rounded-[6px] pl-[26px] pr-[36px] text-[11.5px]"
               placeholder={
                 mode === "types"
@@ -499,13 +537,13 @@ export function OpsShelf({
               }
               value={filter}
               onChange={(e) => onFilter(e.target.value)}
-              aria-label="Search toolkit"
+              aria-label={`Search toolkit (${searchAccel})`}
             />
             <span
-              className="pointer-events-none absolute right-[7px] rounded-[3px] bg-[var(--surface-raised)] px-[4px] py-[1px] font-mono text-[9px] font-semibold text-[color-mix(in_srgb,var(--muted-foreground)_75%,transparent)]"
+              className="pointer-events-none absolute right-[7px] rounded-[3px] bg-[var(--surface-raised)] px-[4px] py-[1px] font-mono text-[9px] font-semibold text-[var(--muted-foreground)]"
               aria-hidden
             >
-              ⌘K
+              {searchAccel}
             </span>
           </div>
         </div>

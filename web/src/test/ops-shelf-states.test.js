@@ -71,6 +71,19 @@ describe("an op that doesn't fit still explains itself", () => {
     expect(TILE).toMatch(/decode, unavailable: \$\{needs\.reverse\}/);
   });
 
+  it("wires the accelerator its own badge advertises", () => {
+    // The field showed a "⌘K" badge and nothing anywhere listened for the
+    // key — a hint that was wrong about the key on every non-Apple machine
+    // and attached to no behaviour on any of them.
+    expect(SHELF_CODE).toMatch(/e\.key !== "k" && e\.key !== "K"/);
+    expect(SHELF_CODE).toMatch(/!e\.metaKey && !e\.ctrlKey/);
+    expect(SHELF_CODE).toMatch(/window\.addEventListener\("keydown", onKey\)/);
+    expect(SHELF_CODE).toMatch(/searchRef\.current/);
+    // …and spells it for the platform it is on.
+    expect(SHELF_CODE).toMatch(/\? "⌘K"\s*\r?\n?\s*: "Ctrl K"/);
+    expect(SHELF_CODE).toMatch(/aria-label=\{`Search toolkit \(\$\{searchAccel\}\)`\}/);
+  });
+
   it("states one reason once when both directions want the same input", () => {
     // "needs bytes" printed under each handle doubled the row height and the
     // noise for no extra fact.
