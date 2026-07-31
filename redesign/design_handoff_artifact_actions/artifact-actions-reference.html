@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Artifact kinds + actions — visual reference (§32–§38)</title>
+<style>
+  :root {
+    --brand: #4cde82;
+    --on-brand: #0b1410;
+    --surface: #0d1117;
+    --surface-raised: #161b22;
+    --border: #30363d;
+    --border-soft: #21262d;
+    --foreground: #e6edf3;
+    --muted-foreground: #8b949e;
+    --caret: #58a6ff;
+    --decode: #d2a8ff;
+    --warn: #e3b341;
+    --error: #ff7b72;
+    --success: #3fb950;
+    --ssh: #39c5cf;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --surface: #ffffff;
+      --surface-raised: #f6f8fa;
+      --border: #d0d7de;
+      --border-soft: #eaeef2;
+      --foreground: #1f2328;
+      --muted-foreground: #636c76;
+      --on-brand: #ffffff;
+      --brand: #1a7f37;
+      --caret: #0969da;
+      --decode: #8250df;
+      --warn: #9a6700;
+      --error: #cf222e;
+      --success: #1a7f37;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 24px 64px;
+    background: var(--surface);
+    color: var(--foreground);
+    font: 13px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted-foreground); margin: 40px 0 10px;
+    border-bottom: 1px solid var(--border-soft); padding-bottom: 6px;
+  }
+  p.lede { color: var(--muted-foreground); margin: 0 0 8px; max-width: 74ch; }
+  p.note { color: var(--muted-foreground); font-size: 11.5px; margin: 8px 0 0; max-width: 82ch; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
+
+  /* ── the list container, as measured on /toolkit-widgets ── */
+  .output-list {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 4px;
+  }
+  .tile { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .tile + .tile { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+
+  /* identity line */
+  .ident { display: flex; align-items: center; gap: 10px; }
+  .kindbadge {
+    display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+    border-radius: 3px; padding: 2px 5px;
+    font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: .08em;
+    background: color-mix(in srgb, var(--caret) 12%, transparent); color: var(--caret);
+  }
+  .kindbadge[data-tone="key"] { background: color-mix(in srgb, var(--brand) 12%, transparent); color: var(--brand); }
+  .kindbadge[data-tone="warn"] { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+  .kindbadge[data-tone="ssh"]  { background: color-mix(in srgb, var(--ssh) 14%, transparent); color: var(--ssh); }
+  .kindbadge[data-tone="share"]{ background: color-mix(in srgb, var(--decode) 14%, transparent); color: var(--decode); }
+  .label { flex: 1 1 auto; min-width: 0; font-size: 11px; font-weight: 500; }
+  .sensitive-badge {
+    border-radius: 3px; padding: 1px 5px; font-size: 9px; font-weight: 600;
+    background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn);
+  }
+  .size { flex-shrink: 0; font-size: 10px; color: var(--muted-foreground); }
+
+  /* body */
+  .body { padding-left: 1px; }
+  .keycard { display: grid; grid-template-columns: 84px minmax(0,1fr) 18px; gap: 2px 8px; align-items: baseline; }
+  .keycard dt { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted-foreground); }
+  .keycard dd { margin: 0; font-size: 10.5px; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+  .copyglyph {
+    border: 0; background: none; padding: 0; cursor: default;
+    color: var(--muted-foreground); font-size: 11px; line-height: 1;
+  }
+  .masked { font-size: 10px; font-style: italic; color: var(--muted-foreground); }
+  .rawbody {
+    display: block; max-height: 68px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-family: ui-monospace, monospace; font-size: 10px; color: var(--muted-foreground);
+  }
+  .formatbar { display: inline-flex; gap: 1px; margin-right: 6px; }
+  .formatbar span {
+    border-radius: 3px; padding: 1px 4px; font-family: ui-monospace, monospace; font-size: 9px;
+    color: var(--muted-foreground);
+  }
+  .formatbar span[aria-selected="true"] {
+    background: color-mix(in srgb, var(--brand) 18%, transparent);
+    color: var(--brand); font-weight: 600;
+  }
+
+  /* action row */
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .actions .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .actions .sep { width: 1px; height: 14px; background: var(--border); margin: 0 2px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 22px; padding: 0 8px; border-radius: 5px;
+    font-size: 10px; font-weight: 600; font-family: inherit;
+    border: 1px solid var(--border);
+    background: var(--surface-raised); color: var(--foreground);
+    cursor: default;
+  }
+  .btn[data-action-tier="local"] { color: var(--caret); border-color: color-mix(in srgb, var(--caret) 40%, var(--border)); }
+  .btn[data-action-tier="outward"] {
+    background: transparent; color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  }
+  .btn[disabled] { opacity: .5; }
+  .btn.ghost { background: transparent; border-color: transparent; color: var(--muted-foreground); font-weight: 500; }
+
+  /* receipt line */
+  .receipt {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10px; color: var(--muted-foreground);
+  }
+  .receipt .ok { color: var(--success); }
+  .warnrow {
+    border-left: 2px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+    padding: 5px 8px; font-size: 10px; color: var(--foreground);
+  }
+
+  /* §34c banner — the §27 grammar, minus the grants */
+  .gate {
+    border-left: 2px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+    padding: 10px 14px;
+  }
+  .gate h3 { margin: 0; font-size: 11.5px; font-weight: 600; }
+  .gate dl {
+    display: grid; grid-template-columns: 84px minmax(0,1fr); gap: 4px 8px;
+    margin: 8px 0 0; font-size: 10.5px;
+  }
+  .gate dt { font-weight: 600; color: var(--muted-foreground); }
+  .gate dd { margin: 0; overflow-wrap: anywhere; }
+  .gate .row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; }
+  .cap { font-size: 11px; color: var(--muted-foreground); margin: 0 0 6px; }
+  .cap b { color: var(--foreground); font-weight: 600; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; }
+  .legend div { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted-foreground); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Artifact kinds + actions — visual reference</h1>
+  <p class="lede">
+    Companion to <code>ARTIFACT-ACTIONS-DESIGN.md</code> (§32–§38). This is a
+    document, not app code: its CSS is inline, which shipped code may never be.
+    Where this file and the design document disagree, the <code>.md</code> binds.
+    Tokens are named from <code>web/src/css/site.css</code>; the geometry
+    (8px&nbsp;10px tile padding, 4px gap, 10px list radius, 22px buttons at 10px)
+    was measured on the shipped tile at <code>/toolkit-widgets</code>.
+  </p>
+
+  <div class="legend">
+    <div><span class="btn">Inert</span> Copy, Download — changes nothing</div>
+    <div><span class="btn" data-action-tier="local">Local</span> durable state on this device</div>
+    <div><span class="btn" data-action-tier="outward">Outward</span> irreversible, always last</div>
+  </div>
+
+  <!-- ───────────────────────────── keypair ───────────────────────────── -->
+  <h2>§35c/§35d — the keypair, which today renders as two JWK blobs and nothing else</h2>
+  <p class="cap">
+    <b>Two artifacts, two good tiles.</b> Emission is unchanged in content and
+    count; what changed is that both halves now carry <code>role: "key"</code>
+    and a <code>public</code>/<code>private</code> tag, so the registry can find
+    them. Merging them into one tile was rejected — it would put a private JWK
+    back on the artifact record, which the engine deliberately withholds.
+  </p>
+
+  <div class="output-list">
+
+    <!-- public half -->
+    <div class="tile">
+      <div class="ident">
+        <span class="kindbadge" data-tone="key">⚿ public key</span>
+        <span class="label mono">kp · public JWK</span>
+        <span class="size mono">412 B</span>
+      </div>
+      <div class="body">
+        <dl class="keycard">
+          <dt>Algorithm</dt><dd>ed25519 <span style="color:var(--muted-foreground)">· public half</span></dd><dd></dd>
+          <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+          <dd><button class="copyglyph" title="Copy fingerprint">⧉</button></dd>
+          <dt>Public line</dt><dd>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8k…&nbsp;justin@workstation</dd>
+          <dd><button class="copyglyph" title="Copy public line">⧉</button></dd>
+        </dl>
+      </div>
+      <div class="actions">
+        <div class="group">
+          <span class="formatbar"><span aria-selected="true">raw</span><span>hex</span><span>b64</span></span>
+          <button class="btn ghost">Expand</button>
+        </div>
+        <span class="sep"></span>
+        <div class="group">
+          <button class="btn">Copy</button>
+          <button class="btn">Copy public line</button>
+          <button class="btn">Download</button>
+        </div>
+        <span class="sep"></span>
+        <div class="group">
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+        </div>
+      </div>
+      <p class="note" style="margin-top:2px">
+        No Publish: this is a WebCrypto public half, not an armored OpenPGP
+        public key. Publish is declared on exactly one kind (§38b), so there is
+        no button here and nothing to reason about at runtime.
+      </p>
+    </div>
+
+    <!-- private half, masked -->
+    <div class="tile">
+      <div class="ident">
+        <span class="kindbadge" data-tone="key">⚿ private key</span>
+        <span class="label mono">kp · private JWK</span>
+        <span class="sensitive-badge">sensitive</span>
+        <span class="size mono">596 B</span>
+      </div>
+      <div class="body">
+        <!-- §33e publicView: renders WHILE MASKED, because none of it derives
+             from the masked material. -->
+        <dl class="keycard">
+          <dt>Algorithm</dt><dd>ed25519</dd><dd></dd>
+          <dt>Fingerprint</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8vN2sQ4tR6wE1cB7gH0</dd>
+          <dd><button class="copyglyph" title="Copy fingerprint">⧉</button></dd>
+        </dl>
+        <p class="masked" style="margin:6px 0 0">
+          sensitive — value not shown
+          <button class="btn" style="height:18px;font-size:9.5px;margin-left:6px;color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent);background:transparent">Reveal</button>
+        </p>
+      </div>
+      <div class="actions">
+        <div class="group">
+          <button class="btn" disabled title="Reveal this value first — a masked value cannot be copied.">Copy</button>
+          <button class="btn">Copy fingerprint</button>
+          <button class="btn">Download</button>
+        </div>
+        <span class="sep"></span>
+        <div class="group">
+          <button class="btn" data-action-tier="local">Add to keyring</button>
+        </div>
+      </div>
+      <div class="warnrow" style="margin-top:4px">
+        <b>Unencrypted private key.</b> A download has no passphrase — anything
+        that can read the saved file can use the key. Vault protection does not
+        travel with an export.
+      </div>
+      <p class="note" style="margin-top:2px">
+        <b>The mask rule, visible in one row.</b> Copy is disabled (its output
+        derives from the masked material and lands on a clipboard the mask does
+        not govern). Download is enabled (the picker is the consent; the bytes
+        never reach the screen). Copy fingerprint and Add to keyring are enabled
+        — one emits public material, the other lands in the vault, whose job is
+        to hold the value without showing it.
+      </p>
+    </div>
+  </div>
+
+  <!-- ─────────────────────── receipts + overwrite ─────────────────────── -->
+  <h2>§33f/§34d — after the click, and the one local confirmation</h2>
+  <div class="cols">
+    <div>
+      <p class="cap"><b>Local mutation succeeded.</b> A persistent line in the
+        tile, not a toast: the thing that changed is durable, so the record
+        should be too.</p>
+      <div class="output-list"><div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="key">⚿ private key</span>
+          <span class="label mono">kp · private JWK</span>
+          <span class="sensitive-badge">sensitive</span>
+          <span class="size mono">596 B</span>
+        </div>
+        <div class="body"><p class="masked">sensitive — value not shown</p></div>
+        <div class="actions">
+          <button class="btn" disabled title="Reveal this value first — a masked value cannot be copied.">Copy</button>
+          <button class="btn">Download</button>
+        </div>
+        <div class="receipt">
+          <span class="ok">✓</span>
+          Added to My Keys · ssh · device protection ·
+          <span class="mono">SHA256:Ur1hPKBrJC3z…</span>
+          <button class="copyglyph" title="Copy vault id">⧉</button>
+        </div>
+      </div></div>
+    </div>
+    <div>
+      <p class="cap"><b>The key is already there.</b> <code>vault.saveKey</code>
+        writes with <code>put</code> on a <code>fingerprint</code> keyPath, so an
+        unconfirmed save silently downgrades a passkey-protected key to device
+        protection. This is the only local-mutation confirmation in the design.</p>
+      <div class="gate">
+        <h3>This key is already in My Keys</h3>
+        <dl>
+          <dt>In the vault</dt>
+          <dd>Justin Capella &lt;justin@…&gt; · added 2026-04-02 · <b>passkey</b></dd>
+          <dt>Replacing</dt>
+          <dd>re-wraps it with <b>device</b> protection and clears its usage
+            history. Its passkey binding is discarded; you would enrol a new one
+            to restore passkey protection.</dd>
+        </dl>
+        <div class="row">
+          <button class="btn ghost">Cancel</button>
+          <button class="btn">Replace</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────────────────── publish confirm ───────────────────────── -->
+  <h2>§34c — the outward confirmation, in §27's banner grammar</h2>
+  <p class="cap">
+    Same shell as <code>ApprovalBanner</code>: <code>border-l-2</code> in
+    <code>--warn</code>, warn-tinted background, a <code>&lt;dl&gt;</code> of
+    facts, ghost cancel and secondary confirm, inline at the object it concerns.
+    <b>Absent by design:</b> the session-grant checkbox, the per-run batch, and
+    the request counter — there is no defensible "don't ask again" for an
+    irreversible outward act.
+  </p>
+  <div class="output-list">
+    <div class="tile">
+      <div class="ident">
+        <span class="kindbadge" data-tone="key">⚿ public key</span>
+        <span class="label mono">dana.pub.asc</span>
+        <span class="size mono">3.1 KB</span>
+      </div>
+      <div class="body">
+        <dl class="keycard">
+          <dt>User ID</dt><dd>Dana Ortiz &lt;dana@example.org&gt;</dd><dd></dd>
+          <dt>Fingerprint</dt><dd>AABB CCDD EEFF 0011 2233&nbsp; 4455 6677 8899 AABB CCDD</dd>
+          <dd><button class="copyglyph" title="Copy fingerprint">⧉</button></dd>
+          <dt>Created</dt><dd>2026-03-11 · ed25519</dd><dd></dd>
+        </dl>
+      </div>
+      <div class="actions">
+        <div class="group">
+          <button class="btn">Copy</button>
+          <button class="btn">Download</button>
+        </div>
+        <span class="sep"></span>
+        <div class="group">
+          <button class="btn" data-action-tier="local">Import to key cache</button>
+        </div>
+        <span class="sep"></span>
+        <div class="group">
+          <button class="btn" data-action-tier="outward">Publish</button>
+        </div>
+      </div>
+      <div class="gate" style="margin-top:4px">
+        <h3>Publish this key to the directory</h3>
+        <dl>
+          <dt>Key</dt>
+          <dd>Dana Ortiz &lt;dana@example.org&gt; · OpenPGP<br>
+            <span class="mono" style="font-size:10px;color:var(--muted-foreground)">AABB CCDD EEFF 0011 2233 4455 6677 8899 AABB CCDD</span></dd>
+          <dt>Where</dt>
+          <dd>keys.example.com — <b>this site's directory</b></dd>
+          <dt>Becomes public</dt>
+          <dd>The key, its user IDs, and every signature on it — readable by
+            anyone with directory access, <b>including the email addresses in
+            its user IDs</b>.</dd>
+          <dt>Permanent</dt>
+          <dd>A published key cannot be withdrawn. You can publish a revocation
+            later; you cannot make this copy go away.</dd>
+        </dl>
+        <div class="row">
+          <button class="btn ghost">Cancel</button>
+          <button class="btn">Publish</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    Note the button weight: <b>Publish is an outline button in
+    <code>--warn</code></b>, not the brand-filled control it is today. Brand fill
+    is this codebase's "do this"; the one action in the row that cannot be undone
+    should not be the one the eye lands on. <code>--error</code> was rejected —
+    it is reserved for things that failed.
+  </p>
+
+  <!-- ─────────────────────── two more kinds ─────────────────────── -->
+  <h2>§37 — two more kinds, so the common base is visible</h2>
+  <p class="cap">
+    Different bodies, identical anatomy: identity line, body, action row in tier
+    order, receipt line. A reader who has learned one tile has learned all of
+    them, which is the entire point of §33.
+  </p>
+  <div class="cols">
+
+    <div>
+      <p class="cap"><b>sshsig</b> — Copy and Download, and nothing else.
+        Verification is <code>ssh.verify</code>: it needs a key and a payload,
+        neither of which a tile has.</p>
+      <div class="output-list"><div class="tile">
+        <div class="ident">
+          <span class="kindbadge" data-tone="ssh">✎ sshsig</span>
+          <span class="label mono">commit.sig</span>
+          <span class="size mono">598 B</span>
+        </div>
+        <div class="body">
+          <dl class="keycard">
+            <dt>Namespace</dt><dd>git</dd><dd></dd>
+            <dt>Hash</dt><dd>sha512</dd><dd></dd>
+            <dt>Signer</dt><dd>SHA256:Ur1hPKBrJC3zF0Qw9pLmXaYd8v…</dd>
+            <dd><button class="copyglyph" title="Copy">⧉</button></dd>
+          </dl>
+          <code class="rawbody" style="margin-top:6px">-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgfyRQ…
+-----END SSH SIGNATURE-----</code>
+        </div>
+        <div class="actions">
+          <div class="group">
+            <span class="formatbar"><span aria-selected="true">raw</span><span>hex</span><span>b64</span></span>
+            <button class="btn ghost">Expand</button>
+          </div>
+          <span class="sep"></span>
+          <div class="group">
+            <button class="btn">Copy</button>
+            <button class="btn">Download</button>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <div>
+      <p class="cap"><b>recipients</b> — a list, not a JSON dump. Import is a
+        local mutation writing through the existing public-key cache. "Save as
+        group" was rejected: no group concept exists, and inventing one in a
+        tile is how a parallel vocabulary starts.</p>
+      <div class="output-list"><div class="tile">
+        <div class="ident">
+          <span class="kindbadge">◫ recipients</span>
+          <span class="label mono">board</span>
+          <span class="size mono">1.4 KB</span>
+        </div>
+        <div class="body">
+          <dl class="keycard" style="grid-template-columns:minmax(0,1fr) 78px 18px">
+            <dd>Dana Ortiz &lt;dana@example.org&gt;<br>
+              <span style="color:var(--muted-foreground)">AABB CCDD … AABB CCDD</span></dd>
+            <dd style="font-family:inherit;color:var(--success)">approved</dd>
+            <dd><button class="copyglyph" title="Import to key cache">＋</button></dd>
+            <dd>Sam Reyes &lt;sam@example.org&gt;<br>
+              <span style="color:var(--muted-foreground)">1122 3344 … 5566 7788</span></dd>
+            <dd style="font-family:inherit;color:var(--warn)">unverified</dd>
+            <dd><button class="copyglyph" title="Import to key cache">＋</button></dd>
+          </dl>
+        </div>
+        <div class="actions">
+          <div class="group">
+            <button class="btn ghost">Expand</button>
+            <button class="btn">Copy list</button>
+            <button class="btn">Download</button>
+          </div>
+          <span class="sep"></span>
+          <div class="group">
+            <button class="btn" data-action-tier="local">Import all (2)</button>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <!-- ─────────────────────── fallback ─────────────────────── -->
+  <h2>§32f — no match, rendered honestly</h2>
+  <p class="cap">
+    An artifact whose role no kind claims gets exactly today's raw-text path and
+    the role verbatim on the badge. No warning, no scare word: the value is
+    fine, only our description of it is missing. The gap is surfaced by
+    <code>artifact-kinds.test.js</code>, not by a toast to a user who did
+    nothing wrong.
+  </p>
+  <div class="output-list"><div class="tile">
+    <div class="ident">
+      <span class="kindbadge">◈ envelope</span>
+      <span class="label mono">recovery.asc</span>
+      <span class="size mono">2.8 KB</span>
+    </div>
+    <div class="body">
+      <code class="rawbody">-----BEGIN PGP MESSAGE-----
+
+hQIMA0k7Xy3nq0dLARAAv3q1mV2pRr8sN4tJ0cW9xK6bL7dY2fQ8eH1gT5uP…
+-----END PGP MESSAGE-----</code>
+    </div>
+    <div class="actions">
+      <div class="group">
+        <span class="formatbar"><span aria-selected="true">raw</span><span>hex</span><span>b64</span><span>b32</span></span>
+        <button class="btn ghost">Expand</button>
+      </div>
+      <span class="sep"></span>
+      <div class="group">
+        <button class="btn">Copy</button>
+        <button class="btn">Download</button>
+      </div>
+    </div>
+  </div></div>
+
+  <p class="note" style="margin-top:32px">
+    Both themes are styled (<code>prefers-color-scheme</code>); the app's own
+    theme toggle is not simulated here. Every colour is a token name from
+    <code>site.css</code> — no hex value in this file is invented except the SSH
+    toolbox accent <code>#39c5cf</code>, which is itself already declared in
+    <code>TOOLBOX_META</code> and <code>toolkit.css</code> (agent/SSH §29b).
+  </p>
+</div>
+</body>
+</html>
