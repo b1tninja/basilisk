@@ -1810,14 +1810,14 @@ export function ToolkitShell() {
                               }
                               return {
                                 label,
-                                kind:
-                                  a.role === "share"
-                                    ? "share"
-                                    : a.role === "diagnostic"
-                                      ? "diag"
-                                      : publishable
-                                        ? "key"
-                                        : "text",
+                                // §33a: one mapping, identical to the tray's.
+                                // This pane used to add `publishable ? "key"`
+                                // and collapse everything else to "text", so
+                                // the same artifact wore two different badges
+                                // depending on which pane you looked at. Role
+                                // already says "public-key"; the ternary was
+                                // re-deriving it and disagreeing.
+                                kind: a.role === "diagnostic" ? "diag" : a.role || "text",
                                 diagnosticAction,
                                 sizeBytes: new TextEncoder().encode(a.content).length,
                                 sensitive: a.sensitive,

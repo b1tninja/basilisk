@@ -1662,3 +1662,89 @@ input[type="file"][data-basilisk-file-picker] {
 [data-output-list] code.artifact-meta {
   font-size: 9.5px;
 }
+
+/*
+ * Artifact action tiers (§33b/§41, design_handoff_artifact_actions).
+ *
+ * Three weights, one hue. Inert is quiet text, local is a filled bordered
+ * control, outward is an amber *outline* — and the amber appears at most once
+ * in a row, so the worst case reads quiet → solid → outlined rather than as a
+ * rainbow. Outward is an outline rather than a fill because the shipped
+ * `--warn` fill measures 3.76:1 in light; the outline keeps the promise the
+ * colour makes ("this leaves the machine") without the contrast cost.
+ *
+ * A closed three-value vocabulary, so one enumerated rule set covers it and
+ * `style-src 'self'` never sees an inline write.
+ */
+.artifact-action[data-action-tier="inert"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.artifact-action[data-action-tier="inert"]:hover:not(:disabled) {
+  color: var(--foreground);
+}
+.artifact-action[data-action-tier="local"] {
+  border-color: var(--border);
+  background: var(--surface-raised);
+  color: var(--foreground);
+}
+.artifact-action[data-action-tier="local"]:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.artifact-action[data-action-tier="outward"] {
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  background: transparent;
+  color: var(--warn);
+}
+.artifact-action[data-action-tier="outward"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn) var(--tile-tint), transparent);
+}
+
+/*
+ * Disabled keeps the label readable and removes the *affordance* instead.
+ *
+ * The shipped `disabled:opacity-50` puts a muted label at 2.41:1 in dark and
+ * 2.20:1 in light. That is not a dimmed label, it is an absent one — and since
+ * §33d makes the reason string the feature, a reason nobody can read is the
+ * same as no reason. It is the same class of defect the last polish pass found
+ * here at 1.97:1 and 1.59:1.
+ *
+ * A disabled local or outward action therefore drops to inert weight: a
+ * Publish button that cannot publish should not still wear the colour that
+ * promises "this leaves the machine".
+ */
+.artifact-action:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  text-decoration: underline dotted color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  text-underline-offset: 3px;
+}
+
+/* In-flight is aria-busy, never disabled: a disabled control loses its
+   accessible name in some screen-reader pairings at exactly the moment the
+   user most wants to know what is happening. */
+.artifact-action[aria-busy="true"] .artifact-action-spin {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: artifact-action-spin 0.7s linear infinite;
+}
+@keyframes artifact-action-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Slowed, not stopped — a frozen spinner reads as a hang. */
+  .artifact-action[aria-busy="true"] .artifact-action-spin {
+    animation-duration: 2.4s;
+  }
+}

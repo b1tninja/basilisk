@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
 import { KindGlyph } from "./kind-glyphs";
+import { ArtifactAction } from "./ArtifactAction";
+import { ACTION_REASONS } from "../../lib/toolkit/artifact-reasons.js";
 import {
   ARTIFACT_KINDS,
   FALLBACK_KIND,
@@ -202,6 +204,20 @@ function renderKindView(
   }
 }
 
+/**
+ * Why Copy is unavailable, or undefined when it is fine (§34b).
+ *
+ * Deliberately not "reveal, then copy": an action that lifts the mask on the
+ * user's behalf is the mask bypass, however convenient. The tile asks them to
+ * reveal first, which is a decision they make with the value on screen.
+ */
+function copyReason(a: OutputArtifact, isRevealed: boolean): string | undefined {
+  if (!a.sensitive || isRevealed) return undefined;
+  return a.revealable && a.content
+    ? ACTION_REASONS.maskedButRevealable
+    : ACTION_REASONS.neverAskedFor;
+}
+
 export function OutputList({ outputs, className }: Props) {
   const [confirming, setConfirming] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -309,29 +325,19 @@ export function OutputList({ outputs, className }: Props) {
             </Button>
           ) : null}
           {canExpand(a) ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              className="h-[22px] shrink-0 rounded-[5px] px-2 text-[10px]"
-              onClick={(e) => {
-                e.stopPropagation();
-                setExpanded(i);
-              }}
-            >
-              Expand
-            </Button>
+            <ArtifactAction label="Expand" tier="inert" onClick={() => setExpanded(i)} />
           ) : null}
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-[22px] shrink-0 rounded-[5px] px-2 text-[10px]"
-            onClick={(e) => {
-              e.stopPropagation();
-              a.onCopy();
-            }}
-          >
-            Copy
-          </Button>
+          {/* §34b: Copy is gated on the mask, not silently allowed through it.
+              A masked value that *can* be revealed says so; one the recipe
+              never asked for names the edit that would ask. Revealing is not
+              done on the user's behalf — that would be the mask bypass this
+              rule exists to prevent. */}
+          <ArtifactAction
+            label="Copy"
+            tier="inert"
+            onClick={() => a.onCopy()}
+            reason={copyReason(a, revealed.has(a.label))}
+          />
           {a.publishedAs ? (
             <span className="flex shrink-0 items-center gap-1">
               <code className="artifact-meta font-mono text-[var(--brand)]">{a.publishedAs}</code>
