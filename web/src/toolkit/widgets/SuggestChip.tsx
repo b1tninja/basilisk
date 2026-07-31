@@ -19,6 +19,13 @@ type Props = {
   onDragEnd?: (e: DragEvent) => void;
   /** Show a trailing × that removes this placed step (does not fire onClick). */
   onRemove?: () => void;
+  /**
+   * This step is handling a private key that was exported into the pipeline
+   * (§26c). Renders as a thin --warn underline: a fact about what is in
+   * play, not an alarm — the codebase reserves --error for things that
+   * failed, and this op is legitimate.
+   */
+  keyExposed?: boolean;
   className?: string;
   title?: string;
   children?: ReactNode;
@@ -28,6 +35,7 @@ type Props = {
 export function SuggestChip({
   label,
   hint,
+  keyExposed,
   variant = "ghost",
   selected = false,
   error = false,
@@ -107,7 +115,12 @@ export function SuggestChip({
   // Avoid nested <button>: when removable, outer is a group and the hit target is separate.
   if (onRemove) {
     return (
-      <span className={chipClass} role="group" title={title}>
+      <span
+        className={chipClass}
+        role="group"
+        title={title}
+        data-key-exposed={keyExposed || undefined}
+      >
         {clickable ? (
           <button
             type="button"
@@ -142,6 +155,7 @@ export function SuggestChip({
       draggable={draggable || undefined}
       className={chipClass}
       title={title}
+      data-key-exposed={keyExposed || undefined}
       aria-pressed={variant === "placed" ? selected : undefined}
       onClick={onClick}
       onDragStart={onDragStart}

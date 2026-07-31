@@ -150,3 +150,86 @@ export function wiredForCell(chains, cellIndex) {
   if (usesSharesPanel && sharesAbove) wiredNeeds.add("shares");
   return { wiredNeeds, wiredSlots };
 }
+
+/**
+ * Trace where private key material travels through a recipe (§26c).
+ *
+ * `agent.unlock` declares `exposure: "exports-secret"` — it hands the key to
+ * the pipeline. The step that exports it is not the only place the key is
+ * live. Two ways it spreads, and both are modelled:
+ *
+ *   1. *Along the pipe.* `agent.unlock … | out @me` writes the key into
+ *      `@me` from a step two positions later. So once a chain exposes,
+ *      every following step in that chain is handling the exported value,
+ *      and any `out` among them writes an exposed slot.
+ *   2. *Across cells.* A later cell reading `@me` (`in @me`, `key=@me`) is
+ *      holding the same key, and whatever it writes carries it onward.
+ *
+ * Iterated to a fixed point, because a notebook is not strictly ordered in
+ * what it references and one pass would miss the second hop.
+ *
+ * Deliberately conservative: `agent.unlock | export spki | out @pub` marks
+ * `@pub` too, though a public half is not secret. Narrowing that would mean
+ * deciding which transforms launder key material, which is a judgement the
+ * type system cannot make and a warning should not guess. Over-marking says
+ * "the key was in play on this path"; under-marking would be a false all-clear.
+ *
+ * Reads `exposure` off the registry rather than matching op names, so the
+ * trace covers any future exporting op without an edit here.
+ *
+ * Returns the marked steps as the AST nodes themselves rather than index
+ * keys: the chip flow renders nested bodies and branches, so any positional
+ * scheme has to be kept in sync with how the view happens to flatten them.
+ * Identity cannot drift.
+ *
+ * @param {Array<{ steps?: RecipeStep[] }>} chains  cells, in order
+ * @returns {{ slots: Set<string>, steps: Set<RecipeStep> }}
+ *   `slots` — labels carrying key material. `steps` — every step handling
+ *   it, the exposing step included.
+ */
+export function exposureTrace(chains) {
+  /** @type {Set<string>} */
+  const slots = new Set();
+  /** @type {Set<RecipeStep>} */
+  const steps = new Set();
+
+  for (let pass = 0; pass < 8; pass++) {
+    const before = slots.size + steps.size;
+
+    (chains || []).forEach((chain) => {
+      // Flatten the way the chip flow renders, so `cell:index` keys line up
+      // with what the reader is looking at.
+      /** @type {RecipeStep[]} */
+      const flat = [];
+      const walk = (/** @type {RecipeStep[]} */ list) => {
+        for (const step of list || []) {
+          flat.push(step);
+          walk(step.body || []);
+          for (const br of step.branches || []) walk(br.body || []);
+        }
+      };
+      walk(chain?.steps || []);
+
+      let live = false;
+      flat.forEach((step) => {
+        const bare = { ...step, body: [], branches: [] };
+        const spec = getStep(step.name);
+
+        /** @type {Set<string>} */
+        const reads = new Set();
+        collectSlotRefs([bare], (l) => reads.add(l));
+
+        if (spec?.exposure === "exports-secret") live = true;
+        else if ([...reads].some((l) => slots.has(l))) live = true;
+
+        if (!live) return;
+        steps.add(step);
+        collectOutLabels([bare], (l) => slots.add(l));
+      });
+    });
+
+    if (slots.size + steps.size === before) break;
+  }
+
+  return { slots, steps };
+}

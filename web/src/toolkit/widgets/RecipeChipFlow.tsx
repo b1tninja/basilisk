@@ -29,6 +29,13 @@ export type ChipStepView = {
   op?: ToolCardOp;
   error?: boolean;
   ghostIn?: string;
+  /**
+   * This step is handling private key material exported into the pipeline
+   * (§26c). Computed by `exposureTrace`, not by op name — the mark follows
+   * the key, so it lands on the exporting step *and* everything downstream
+   * still holding it.
+   */
+  keyExposed?: boolean;
 };
 
 export type ChipBranchView = {
@@ -130,6 +137,7 @@ function PlacedChip({
       variant="placed"
       selected={selected}
       error={step.error}
+      keyExposed={step.keyExposed}
       op={
         step.op
           ? {

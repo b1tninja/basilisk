@@ -1608,3 +1608,31 @@ input[type="file"][data-basilisk-file-picker] {
   display: flex;
   gap: 8px;
 }
+
+/*
+ * Key-exposure trace (§26c) — a chip handling a private key that was exported
+ * into the pipeline by `agent.unlock`.
+ *
+ * A thin underline rather than a tint, and `--warn` rather than `--error`.
+ * Tinting the whole chip red was the rejected alternative: an error tone on a
+ * legitimate, sometimes-necessary op cries wolf, and this codebase reserves
+ * `--error` for things that failed. Amber underline states a fact — live key
+ * material passes through here — the way the share-only tone states "nothing
+ * has been checked".
+ *
+ * Present/absent is the whole vocabulary, so one enumerated rule covers it and
+ * `style-src 'self'` never sees an inline write.
+ */
+.suggest-chip[data-key-exposed] {
+  position: relative;
+}
+.suggest-chip[data-key-exposed]::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 2px;
+  height: 1px;
+  background: var(--warn);
+  pointer-events: none;
+}

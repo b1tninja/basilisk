@@ -9,7 +9,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-export type RunBarState = "idle" | "blocked" | "running" | "waiting-peer";
+export type RunBarState =
+  | "idle"
+  | "blocked"
+  | "running"
+  | "waiting-peer"
+  | "waiting-approval";
 
 type Props = {
   /** Derive: running while the kernel is busy, blocked when a readiness blocker exists, else idle. */
@@ -69,11 +74,32 @@ export function RunBar({
         "flex min-h-[44px] flex-wrap items-center gap-2.5 border-b bg-[var(--background)] px-3.5 py-1.5",
         state === "waiting-peer"
           ? "border-[color-mix(in_srgb,var(--caret)_30%,var(--border))]"
-          : "border-[var(--border)]"
+          : state === "waiting-approval"
+            ? "border-[color-mix(in_srgb,var(--warn)_35%,var(--border))]"
+            : "border-[var(--border)]"
       )}
       data-run-state={state}
     >
-      {state === "waiting-peer" ? (
+      {state === "waiting-approval" ? (
+        <>
+          {/* The decision lives in the banner at the requesting cell (§27a);
+              this bar only says the run is stopped and offers the way out
+              that is not a decision about the key. */}
+          <Button
+            variant="outline"
+            className="border-transparent bg-[var(--surface-raised)] text-[var(--error)] hover:bg-[var(--surface-raised)]"
+            onClick={onStop}
+          >
+            <Square />
+            Stop
+          </Button>
+          <span className="font-mono text-[length:11.5px] text-[var(--warn)]">
+            {waitingCell != null
+              ? `Paused at cell [${waitingCell}] — a step wants to use a key`
+              : "Waiting for approval — a step wants to use a key"}
+          </span>
+        </>
+      ) : state === "waiting-peer" ? (
         <>
           <Button
             variant="outline"
@@ -192,7 +218,7 @@ export function RunBar({
         </>
       )}
 
-      {children && state !== "waiting-peer" ? (
+      {children && state !== "waiting-peer" && state !== "waiting-approval" ? (
         <div className="ml-auto flex flex-wrap items-center gap-1">{children}</div>
       ) : null}
     </div>

@@ -88,6 +88,7 @@ import {
   newWorkspaceId,
 } from "../lib/toolkit/workspace-store.js";
 import type { ToolkitWorkspace } from "../lib/toolkit/workspace-store.js";
+import { exposureTrace } from "../lib/toolkit/slot-graph.js";
 import type { ArmedBranch, ChipPath, ChipStemView } from "./widgets/RecipeChipFlow";
 import type { RecipeChain, RecipeStep } from "./notebook-types";
 
@@ -492,6 +493,15 @@ export function ToolkitShell() {
    * grant-covered run is using the key — being able to *watch* it is what
    * makes the grant something other than a rubber stamp.
    */
+  /**
+   * Where private key material travels in this notebook (§26c). Computed
+   * once over every cell rather than per-cell, because the trace crosses
+   * cells: a key exported in cell 1 is still a key in cell 4.
+   */
+  const exposedSteps = useMemo(
+    () => exposureTrace(nb.chains).steps,
+    [nb.chains]
+  );
   const approvalGrants = useMemo(() => {
     void now;
     void approvalAsk;
@@ -839,10 +849,13 @@ export function ToolkitShell() {
         {/* Run bar — run controls + the one global readiness summary, matching design v2 §18b/19g/21a */}
         <RunBar
           state={
-            nb.busy &&
-            (nb.quorumState.phase === "offering" || nb.quorumState.phase === "waiting")
-              ? "waiting-peer"
-              : nb.busy
+            approvalAsk
+              ? "waiting-approval"
+              : nb.busy &&
+                  (nb.quorumState.phase === "offering" ||
+                    nb.quorumState.phase === "waiting")
+                ? "waiting-peer"
+                : nb.busy
                 ? "running"
                 : nb.readinessBlocker
                   ? "blocked"
@@ -1397,6 +1410,7 @@ export function ToolkitShell() {
                                   name: s.name,
                                   label: spec?.label || s.name,
                                   op: spec || undefined,
+                                  keyExposed: exposedSteps.has(s),
                                 },
                                 hasNest: isNest,
                                 nestKind: isNest
@@ -1426,6 +1440,7 @@ export function ToolkitShell() {
                                         name: bs.name,
                                         label: bspec?.label || bs.name,
                                         op: bspec || undefined,
+                                        keyExposed: exposedSteps.has(bs),
                                       };
                                     }),
                                   };
@@ -1436,6 +1451,7 @@ export function ToolkitShell() {
                                     name: bs.name,
                                     label: bspec?.label || bs.name,
                                     op: bspec || undefined,
+                                    keyExposed: exposedSteps.has(bs),
                                   };
                                 }),
                               };

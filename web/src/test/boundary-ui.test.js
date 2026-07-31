@@ -17,6 +17,10 @@ const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)),
 const TOOLCARD = read("../toolkit/widgets/ToolCard.tsx");
 const BANNER = read("../toolkit/widgets/ApprovalBanner.tsx");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
+const CHIP = read("../toolkit/widgets/SuggestChip.tsx");
+const FLOW = read("../toolkit/widgets/RecipeChipFlow.tsx");
+const RUNBAR = read("../toolkit/widgets/RunBar.tsx");
+const CSS = read("../css/toolkit.css");
 
 describe("the shelf teaches the boundary first (§26b)", () => {
   it("puts Boundary above Vault", () => {
@@ -127,5 +131,48 @@ describe("the shell wires the gate and can revoke it (§27c)", () => {
     expect(SHELL).toMatch(/data-approval-grant/);
     expect(SHELL).toMatch(/approved: \{g\.use\}/);
     expect(SHELL).toMatch(/\{g\.uses\}/);
+  });
+});
+
+describe("the pipeline traces the leak (§26c)", () => {
+  it("carries the mark from the trace to the chip", () => {
+    // Computed by exposureTrace over the whole notebook, not per-cell: a key
+    // exported in cell 1 is still a key in cell 4.
+    expect(SHELL).toMatch(/exposureTrace\(nb\.chains\)\.steps/);
+    expect(SHELL).toMatch(/keyExposed: exposedSteps\.has\(s\)/);
+    // Nested bodies and tee branches too — a buried step is exactly where a
+    // hostile recipe would put the interesting one.
+    expect((SHELL.match(/keyExposed: exposedSteps\.has\(/g) || []).length).toBe(3);
+    expect(FLOW).toMatch(/keyExposed=\{step\.keyExposed\}/);
+    expect(CHIP).toMatch(/data-key-exposed=\{keyExposed \|\| undefined\}/);
+  });
+
+  it("marks both chip shapes, removable and not", () => {
+    expect((CHIP.match(/data-key-exposed=/g) || []).length).toBe(2);
+  });
+
+  it("underlines in warn, and never tints the chip as an error", () => {
+    expect(CSS).toMatch(/\.suggest-chip\[data-key-exposed\]::after[^}]*background: var\(--warn\)/s);
+    expect(CSS).not.toMatch(/\[data-key-exposed\][^}]*var\(--error\)/s);
+  });
+});
+
+describe("the run bar says why it stopped (§27a)", () => {
+  it("has a waiting-approval state beside waiting-peer", () => {
+    expect(RUNBAR).toMatch(/"waiting-approval"/);
+    expect(RUNBAR).toMatch(/a step wants to use a key/);
+  });
+
+  it("offers Stop and nothing that decides about the key", () => {
+    // The decision belongs to the banner at the requesting cell; a bar-level
+    // Approve would be exactly the context-free click-through §27a rejects.
+    const block = RUNBAR.match(/state === "waiting-approval" \? \([\s\S]*?\) : state === "waiting-peer"/);
+    expect(block, "waiting-approval block not found").toBeTruthy();
+    expect(block[0]).toMatch(/onClick=\{onStop\}/);
+    expect(block[0]).not.toMatch(/Approve|Deny/);
+  });
+
+  it("is driven by a live request, not by a busy flag", () => {
+    expect(SHELL).toMatch(/approvalAsk\s*\?\s*"waiting-approval"/);
   });
 });

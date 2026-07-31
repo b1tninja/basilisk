@@ -100,8 +100,10 @@ out inline as ⚙ — do not discover them mid-implementation.
   copy. Accept: measured in catalog + live page (`getComputedStyle` on
   badge tones); copy button writes the exact public line (clipboard test
   with real input event, per HANDOFF's transient-activation note).
-- [x] `agent.list` tile renders rows (kind badge, id, protection,
+- [ ] `agent.list` tile renders rows (kind badge, id, protection,
   lastUsedAt) with raw JSON one toggle away. Accept: catalog section.
+  **Not built.** The op emits `kind` and `publicLine` and the CLI/JSON
+  shape is done; only the typed tile widget is outstanding.
 
 ## 4. Boundary ops + approval — §26, §27, §31
 
