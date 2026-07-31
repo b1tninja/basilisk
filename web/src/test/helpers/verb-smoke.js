@@ -8,8 +8,9 @@
  * - bool/flag params exercised both ways where the op is used
  */
 
-import { generateKey, readKey } from "openpgp";
+import { createMessage, encrypt as openpgpEncrypt, generateKey, readKey } from "openpgp";
 import { runRecipe } from "../../lib/toolkit/engine.js";
+import { setApprovalGate } from "../../lib/toolkit/approval-gate.js";
 import { bytesToBase64, bytesToHex, textToBytes } from "../../lib/toolkit/encode.js";
 import {
   compileRecipe,
@@ -2246,14 +2247,41 @@ function miscParamMatrix() {
 }
 
 /**
- * Dynamic agent.unlock / agent.pub after saving a device key.
+ * Encrypt to the verb-smoke vault key, so `agent.decrypt` has real
+ * ciphertext to open. Built with openpgp directly rather than through a
+ * recipe: `gpg.encrypt` emits its ciphertext as an artifact and returns a
+ * null-data value, which no later cell can read from a slot.
+ * @param {string} text
+ */
+export async function encryptToVerbSmokeKey(text) {
+  const k = await ensureGpgKey();
+  const pub = await readKey({ armoredKey: k.publicKey });
+  return openpgpEncrypt({
+    message: await createMessage({ text }),
+    encryptionKeys: pub,
+  });
+}
+
+/**
+ * Dynamic vault-dependent cases: agent.unlock / agent.pub / the boundary
+ * ops, after the test setup has saved a device key.
  * @returns {Promise<VerbSmokeCase[]>}
  */
 export async function agentUnlockCases() {
   const k = await ensureGpgKey();
   const pub = await readKey({ armoredKey: k.publicKey });
   const fpr = pub.getFingerprint().toUpperCase();
-  // Caller must have saved the key into vault (test setup).
+  // An ssh-kind key, minted and vaulted here so `agent.sign format=ssh` has
+  // something to name. Building it at catalog time rather than in a `setup`
+  // hook is what lets the recipe carry the literal SHA256: id.
+  const { execAgentSave } = await import("../../lib/toolkit/agent-ops.js");
+  const sshPair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+  const sshSaved = await execAgentSave(
+    { type: "keypair", data: sshPair, meta: { alg: "ed25519" } },
+    { protection: "device", email: "verb-smoke@example.com" }
+  );
+  const sshId = sshSaved.meta.fingerprint;
+  // Caller must have saved the pgp key into vault (test setup).
   return [
     {
       id: "agent.unlock",
@@ -2265,6 +2293,78 @@ export async function agentUnlockCases() {
       id: "agent.pub",
       recipe: `agent.pub ${fpr} | out @pub`,
       mode: "run",
+    },
+    // Boundary ops (§26f). The approval gate is stubbed to approve once —
+    // the gate's own semantics (deny, scoping, batching, expiry) are pinned
+    // adversarially in approval-gate.test.js; what these cover is that the
+    // ops compile, dispatch and produce real output through the registry.
+    {
+      id: "agent.sign",
+      recipe: `"boundary smoke" | utf8 | agent.sign ${fpr} | out @sig`,
+      mode: "run",
+      timeoutMs: 60_000,
+      setup: () => setApprovalGate(async () => "once"),
+      assert: (arts) => {
+        const sig = arts.find((a) => /sig/.test(String(a.label || "")));
+        if (!String(sig?.content || "").includes("BEGIN PGP SIGNED MESSAGE")) {
+          throw new Error(`agent.sign produced no OpenPGP signature: ${sig?.content}`);
+        }
+      },
+    },
+    {
+      id: "agent.sign.mode=detached",
+      recipe: `"detached smoke" | utf8 | agent.sign ${fpr} mode=detached | out @sig`,
+      mode: "run",
+      timeoutMs: 60_000,
+      setup: () => setApprovalGate(async () => "once"),
+      assert: (arts) => {
+        const sig = arts.find((a) => /sig/.test(String(a.label || "")));
+        if (!String(sig?.content || "").includes("BEGIN PGP SIGNATURE")) {
+          throw new Error(`agent.sign mode=detached produced no signature: ${sig?.content}`);
+        }
+      },
+    },
+    {
+      id: "agent.sign.format=gpg",
+      recipe: `"explicit gpg" | utf8 | agent.sign ${fpr} format=gpg | out @sig`,
+      mode: "run",
+      timeoutMs: 60_000,
+      setup: () => setApprovalGate(async () => "once"),
+    },
+    {
+      id: "agent.sign.format=ssh",
+      // The ssh key is minted and vaulted while the catalog is built, so the
+      // recipe can name its SHA256: id literally — same shape as the HKP
+      // fingerprint substitution above.
+      recipe: `"explicit sshsig" | utf8 | agent.sign ${sshId} format=ssh namespace=git | out @sig`,
+      mode: "run",
+      timeoutMs: 60_000,
+      setup: () => setApprovalGate(async () => "once"),
+      assert: (arts) => {
+        const sig = arts.find((a) => /sig/.test(String(a.label || "")));
+        if (!String(sig?.content || "").includes("BEGIN SSH SIGNATURE")) {
+          throw new Error(`agent.sign format=ssh produced no sshsig: ${sig?.content}`);
+        }
+      },
+    },
+    {
+      id: "agent.decrypt",
+      // Ciphertext arrives through `input`, as the design's own example
+      // writes it — `gpg.encrypt` emits its ciphertext as an *artifact* and
+      // returns a null-data value, so a slot cannot carry it to a later cell.
+      recipe: `input | agent.decrypt ${fpr} | out @plain`,
+      mode: "run",
+      timeoutMs: 60_000,
+      setup: () => setApprovalGate(async () => "once"),
+      bindings: async () => ({
+        inputs: { text: { value: await encryptToVerbSmokeKey("round trip") } },
+      }),
+      assert: (arts) => {
+        const plain = arts.find((a) => /plain/.test(String(a.label || "")));
+        if (String(plain?.content) !== "round trip") {
+          throw new Error(`agent.decrypt lost the payload: ${plain?.content}`);
+        }
+      },
     },
   ];
 }

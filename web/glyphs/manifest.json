@@ -37,6 +37,27 @@
    ]
   },
   {
+   "id": "agent-decrypt",
+   "group": "op",
+   "label": "agent.decrypt",
+   "metaphor": "Vault wall with two text lines emerging",
+   "description": "Plaintext out, wall closed. Distinct from gpg-decrypt's open shackle: nothing here opens."
+  },
+  {
+   "id": "agent-sign",
+   "group": "op",
+   "label": "agent.sign",
+   "metaphor": "Vault wall with a quill stroke emerging through a gap",
+   "description": "The signature leaves, the key does not — the vault outline opens on the right just far enough for the sign quill to pass through."
+  },
+  {
+   "id": "agent-boundary",
+   "group": "shelf",
+   "label": "Boundary",
+   "metaphor": "Vault wall with a keyhole inside it",
+   "description": "The wall is the subject: a rounded vault outline with the keyhole centred inside, for ops that use a key without letting it out (agent.sign, agent.decrypt)."
+  },
+  {
    "id": "ssh",
    "group": "toolbox",
    "label": "SSH",

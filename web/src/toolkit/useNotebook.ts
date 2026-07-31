@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createKernel } from "../lib/toolkit/kernel.js";
+import { beginApprovalRun } from "../lib/toolkit/approval-gate.js";
 import {
   PRESETS,
   compileRecipe,
@@ -878,6 +879,9 @@ export function useNotebook() {
       setRunError("");
       setRunStatus("Running…");
       stopRunRef.current = false;
+      // §27d: per-run approval state (request counter, batch grants) starts
+      // fresh every run — a batch must never outlive the run that minted it.
+      beginApprovalRun();
       try {
         const bindings = buildBindings();
         for (let n = 0; n < runnable.length; n++) {

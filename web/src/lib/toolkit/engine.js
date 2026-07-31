@@ -2516,12 +2516,20 @@ async function execStepBody(step, value, bindings, artifacts) {
       return wa.execWaMds(value, step.params || {});
     }
     case "agent.unlock":
+    case "agent.sign":
+    case "agent.decrypt":
     case "agent.pub":
     case "agent.list":
     case "agent.save": {
       const agent = await import("./agent-ops.js");
       if (step.name === "agent.unlock") {
         return agent.execAgentUnlock(step.params || {}, bindings);
+      }
+      if (step.name === "agent.sign") {
+        return agent.execAgentSign(value, step.params || {}, bindings);
+      }
+      if (step.name === "agent.decrypt") {
+        return agent.execAgentDecrypt(value, step.params || {}, bindings);
       }
       if (step.name === "agent.pub") return agent.execAgentPub(step.params || {});
       if (step.name === "agent.list") return agent.execAgentList();

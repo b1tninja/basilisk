@@ -47,6 +47,7 @@ cd web && npm run glyphs
 
 | Id | Label | Metaphor | Description |
 |----|-------|----------|-------------|
+| `agent-boundary` | Boundary | Vault wall with a keyhole inside it | The wall is the subject: a rounded vault outline with the keyhole centred inside, for ops that use a key without letting it out (agent.sign, agent.decrypt). |
 | `ssh-key` | Keys & wire | Key whose shank trails into three linked blocks | The RFC 4253 blob is literally a chain of length-prefixed fields — a key head trailing chained blocks reads as 'wire format' at 20px (ssh.encode, ssh.decode, ssh.fingerprint). |
 | `keys` | Keys | Key | WebCrypto key material — genkey, export, import. |
 | `digest` | Digest | Input lines collapsing into hash bars | Cryptographic hash — long input lines beside a “#”-like pair of bars (digest). |
@@ -93,6 +94,8 @@ cd web && npm run glyphs
 
 | Id | Label | Metaphor | Description |
 |----|-------|----------|-------------|
+| `agent-decrypt` | agent.decrypt | Vault wall with two text lines emerging | Plaintext out, wall closed. Distinct from gpg-decrypt's open shackle: nothing here opens. |
+| `agent-sign` | agent.sign | Vault wall with a quill stroke emerging through a gap | The signature leaves, the key does not — the vault outline opens on the right just far enough for the sign quill to pass through. |
 | `sshsig-sign` | sshsig | Quill stroke with a prompt chevron tucked lower-left | The established signature quill, marked as the shell's — sshsig format, what ssh-keygen -Y and git SSH signing produce (ssh.sign, ssh.verify). |
 
 ## tool

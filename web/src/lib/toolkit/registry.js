@@ -68,6 +68,7 @@ import { POLYMORPHIC_STEPS, stepAcceptsRefined, typeOf } from "./types.js";
  * @property {StepKind} kind
  * @property {Toolbox} toolbox
  * @property {Shelf} [shelf]  optional sub-group within a toolbox (ops drawer)
+ * @property {"exports-secret"} [exposure]  Declares that this step hands private key material to the pipeline (§26d) — drives the ToolCard warn chip and the data-key-exposed trace
  * @property {string} [label]  optional UI verb (recipe name stays unique)
  * @property {string} [conjugate]  sibling inverse step name (drawer pair row)
  * @property {string} [conjugateOf]  forward partner — omitted from solo drawer list
@@ -255,7 +256,10 @@ export const SHELF_META = {
   control: { label: "Control", order: 0, glyph: "control" },
   essentials: { label: "Essentials", order: 0, defaultCollapsed: false, glyph: "essentials" },
   attestation: { label: "Attestation / MDS", order: 1, defaultCollapsed: true, glyph: "attestation" },
-  vault: { label: "Vault", order: 0, glyph: "agent" },
+  // §26b: the shelf order is the steer — a user opening the Agent toolbox
+  // meets the ops that keep the key inside before the one that exports it.
+  boundary: { label: "Boundary", order: 0, glyph: "agent-boundary" },
+  vault: { label: "Vault", order: 1, glyph: "agent" },
   directory: { label: "Directory", order: 1, glyph: "recipients" },
   lookup: { label: "Lookup", order: 0, glyph: "hkp" },
   recipients: { label: "Recipients", order: 2, glyph: "recipients" },
@@ -2101,12 +2105,82 @@ export const STEPS = [
       { when: { base: "bytes" }, output: { base: "bool" } },
     ],
   },
+  // ── Boundary (§26f) — the key is used without entering the pipeline.
+  {
+    name: "agent.sign",
+    kind: "transform",
+    toolbox: "agent",
+    shelf: "boundary",
+    glyph: "agent-sign",
+    doc: "Sign the pipeline payload with a My Keys key — the private key never enters the pipeline; the unlock happens inside the vault with per-use approval. `format=auto` follows the key's kind: PGP → OpenPGP signature, SSH → sshsig (`namespace=` names the domain, `git` for git). Prefer this over `agent.unlock | gpg.sign`. Example: `input | utf8 | agent.sign AABB… | out @sig`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "fpr",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Vault key id — PGP hex fingerprint or SSH SHA256:… fingerprint",
+      },
+      {
+        name: "format",
+        type: "enum",
+        default: "auto",
+        enum: ["auto", "gpg", "ssh"],
+        doc: "auto = key kind decides. gpg = OpenPGP; ssh = sshsig",
+      },
+      {
+        name: "mode",
+        type: "enum",
+        default: "cleartext",
+        enum: ["cleartext", "detached"],
+        doc: "OpenPGP only: cleartext = signed message; detached = signature only",
+      },
+      {
+        name: "namespace",
+        type: "string",
+        default: "file",
+        doc: "sshsig only: signature domain (`file`, `git`) — shown verbatim in the approval prompt",
+      },
+    ],
+    overloads: [
+      { when: { base: "text" }, output: { base: "text" } },
+      { when: { base: "bytes" }, output: { base: "text" } },
+    ],
+  },
+  {
+    name: "agent.decrypt",
+    kind: "transform",
+    toolbox: "agent",
+    shelf: "boundary",
+    glyph: "agent-decrypt",
+    doc: "Decrypt an OpenPGP message with a My Keys key — ciphertext in, plaintext out; the private key never enters the pipeline (per-use approval). PGP-kind keys only: SSH signing keys cannot decrypt. Example: `input | agent.decrypt AABB… | out @plain`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "fpr",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Vault key id (PGP hex fingerprint); the key's kind must be pgp",
+      },
+    ],
+    overloads: [
+      { when: { base: "text" }, output: { base: "text" } },
+      { when: { base: "bytes" }, output: { base: "text" } },
+    ],
+  },
   {
     name: "agent.unlock",
     kind: "source",
     toolbox: "agent",
     shelf: "vault",
-    doc: "Unlock a My Keys private key by id into the pipeline (sensitive). pgp keys emit openpgp-key; ssh/raw keys emit a live keypair. Prefer `agent.unlock AABB… | out @me` then `gpg.sign key=@me`. Main-thread (passkey).",
+    // §26d: declared in the registry, not special-cased in the widget, so
+    // the treatment is reusable if another exporting op ever appears.
+    exposure: "exports-secret",
+    doc: "Exports the private key into the run — use only when a recipe genuinely needs key material (export, transformation). For signing or decrypting, prefer `agent.sign` / `agent.decrypt`, which keep the key in the vault. pgp keys emit openpgp-key; ssh/raw keys emit a live keypair. Main-thread (passkey).",
     input: "none",
     output: "openpgp-key",
     params: [
@@ -3462,6 +3536,8 @@ export const STEP_GLYPHS = {
   as: "as",
   inspect: "inspect",
   peek: "peek",
+  "agent.sign": "agent-sign",
+  "agent.decrypt": "agent-decrypt",
   "ssh.encode": "ssh-key",
   "ssh.decode": "ssh-key",
   "ssh.fingerprint": "fingerprint",
@@ -3974,7 +4050,16 @@ export function recipeNeedsMainThread(ast) {
     for (const step of steps || []) {
       const spec = getStep(step.name);
       if (spec?.toolbox === "webauthn") return true;
-      if (step.name === "agent.unlock" || step.name === "agent.save") return true;
+      if (
+        step.name === "agent.unlock" ||
+        step.name === "agent.save" ||
+        // Boundary ops need the approval surface, the passkey ceremony and
+        // IndexedDB — all main-thread (§26f).
+        step.name === "agent.sign" ||
+        step.name === "agent.decrypt"
+      ) {
+        return true;
+      }
       if (step.name === "foreach" && visit(step.body || [])) return true;
       if (step.name === "tee") {
         if (visit(step.body || [])) return true;

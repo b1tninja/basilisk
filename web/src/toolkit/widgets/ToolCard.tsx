@@ -164,6 +164,18 @@ export function ToolCard({
         <span className="inline-flex text-xs font-semibold px-2 py-1 rounded-md bg-[var(--surface-raised)] text-[var(--muted-foreground)]">
           {kindLabel}
         </span>
+        {/* §26d: declared on the step, not special-cased by name here, so the
+            treatment travels with the registry. `--warn`, not `--error` — an
+            error tone on a legitimate, sometimes-necessary op cries wolf. */}
+        {(op as { exposure?: string }).exposure === "exports-secret" ? (
+          <span
+            className="inline-flex rounded-md bg-[color-mix(in_srgb,var(--warn)_14%,transparent)] px-2 py-1 text-xs font-semibold text-[var(--warn)]"
+            data-exposure="exports-secret"
+            title="Everything downstream of this step can read the key. Prefer agent.sign / agent.decrypt, which keep it in the vault."
+          >
+            Hands the private key to the pipeline
+          </span>
+        ) : null}
         {op.unresolvedInputs ? (
           <span className="text-xs text-[var(--muted-foreground)]">
             Needs {String(op.unresolvedInputs)} input

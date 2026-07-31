@@ -3,6 +3,13 @@
  * Unlock / save need the window thread (passkey PRF + IndexedDB UX).
  */
 
+import { decryptKey, decrypt as openpgpDecrypt, readMessage, readPrivateKey } from "openpgp";
+import { signOpenPgp } from "../pgp/sign.js";
+import {
+  digestForApproval,
+  requireApproval,
+  shortKeyId,
+} from "./approval-gate.js";
 import { ensurePassphraseProtected, inspectPrivateKey } from "../key-export.js";
 import { bytesToBase64 } from "./encode.js";
 import { sshFingerprint } from "../ssh/fingerprint.js";
@@ -421,4 +428,210 @@ export async function materializeUnlockedKey(result) {
   throw new Error(
     `agent.unlock: stored raw key has kty=${jwk.kty}/${jwk.crv || "?"} — no import path for it yet`
   );
+}
+
+/**
+ * Shared preamble for the boundary ops (§26): resolve the key's metadata,
+ * digest the payload, ask for approval, and only then unlock. The order
+ * matters — approval precedes the unlock ceremony, so the banner is the
+ * informed consent and the authenticator (which cannot display what is
+ * being signed) is only the proof of presence (§27e).
+ *
+ * @param {"sign"|"decrypt"} use
+ * @param {string} stepName
+ * @param {Uint8Array} payload
+ * @param {Record<string, *>} params
+ * @param {import("./engine.js").RuntimeBindings} bindings
+ */
+async function approveAndUnlock(use, stepName, payload, params, bindings) {
+  const fpr = normalizeVaultFingerprint(params.fpr);
+  if (!fpr) throw new Error(`${stepName} requires fpr= (a My Keys id)`);
+  const keys = await listKeys();
+  const meta = keys.find((k) => k.fingerprint === fpr);
+  if (!meta) throw new Error(`${stepName}: key not found in My Keys — check the id`);
+  const kind = meta.kind || "pgp";
+
+  const isText = (() => {
+    try {
+      const s = new TextDecoder("utf-8", { fatal: true }).decode(payload);
+      return /^[\s\S]*$/.test(s) ? s : null;
+    } catch (_) {
+      return null;
+    }
+  })();
+
+  await requireApproval({
+    use,
+    stepName,
+    stepText: serializeApprovalStep(stepName, params),
+    cellIndex: bindings?.cellIndex,
+    keyId: fpr,
+    keyLabel: meta.uid || meta.email || meta.name || fpr,
+    keyKind: /** @type {"pgp"|"ssh"|"raw"} */ (kind),
+    keyProtection: meta.protection || "device",
+    payloadBytes: payload.length,
+    payloadSha256: await digestForApproval(payload),
+    // Ciphertext previews are noise (§27b); text payloads preview so a human
+    // can notice "that is not my commit message".
+    payloadPreview: use === "decrypt" || isText == null ? null : isText.slice(0, 256),
+    ...(params.namespace ? { namespace: String(params.namespace) } : {}),
+    ...(params.mode ? { mode: String(params.mode) } : {}),
+    runTotal: bindings?.approvalRunTotal ?? null,
+  });
+
+  const result = await unlockVaultForUse(fpr, {
+    openPgpPassphrase: String(
+      bindings?.inputs?.gpg?.passphrase || bindings?.inputs?.agent?.passphrase || ""
+    ),
+    skipSession: getToolkitPrefs().sessionOff,
+  });
+  return { meta, kind, result };
+}
+
+/** The step as the recipe wrote it — shown verbatim in the banner (§27b). */
+function serializeApprovalStep(stepName, params) {
+  const parts = [stepName];
+  if (params.fpr) parts.push(String(params.fpr));
+  for (const k of ["format", "mode", "namespace"]) {
+    if (params[k]) parts.push(`${k}=${params[k]}`);
+  }
+  return parts.join(" ");
+}
+
+/**
+ * `agent.sign` (§26f) — the payload goes in, a signature comes out, and the
+ * private key never enters the pipeline. This is the op `agent.unlock |
+ * gpg.sign` should have been.
+ *
+ * @param {import("./engine.js").PipelineValue} value
+ * @param {Record<string, *>} params
+ * @param {import("./engine.js").RuntimeBindings} [bindings]
+ */
+export async function execAgentSign(value, params = {}, bindings = {}) {
+  const payload = approvalPayloadBytes(value, "agent.sign");
+  const { kind, result } = await approveAndUnlock(
+    "sign",
+    "agent.sign",
+    payload,
+    params,
+    bindings
+  );
+
+  let format = String(params.format || "auto");
+  if (format === "auto") format = kind === "pgp" ? "gpg" : "ssh";
+  if (format === "gpg" && kind !== "pgp") {
+    throw new Error(
+      `agent.sign: key ${shortKeyId(result.fingerprint)} is an ${kind.toUpperCase()} key — format=gpg needs a pgp-kind key.`
+    );
+  }
+  if (format === "ssh" && kind === "pgp") {
+    throw new Error(
+      `agent.sign: key ${shortKeyId(result.fingerprint)} is an OpenPGP key — format=ssh needs an ssh-kind key.`
+    );
+  }
+
+  if (format === "gpg") {
+    const privateKey = await readOpenPgpPrivate(result, bindings);
+    const mode = String(params.mode || "cleartext") === "detached" ? "detached" : "cleartext";
+    const data = mode === "cleartext" ? new TextDecoder().decode(payload) : payload;
+    const { armored } = await signOpenPgp(data, [privateKey], mode);
+    return {
+      type: "text",
+      data: armored,
+      meta: {
+        sensitive: false,
+        openPgpSigned: true,
+        detached: mode === "detached",
+        agentSigned: true,
+        fingerprint: result.fingerprint,
+      },
+    };
+  }
+
+  // ssh / raw: sshsig over the payload, key materialized in this frame only.
+  const keyPair = await execSshDecode({ type: "text", data: result.armored });
+  const { execSshSign } = await import("./ssh-ops.js");
+  const signed = await execSshSign(
+    { type: "bytes", data: payload },
+    {
+      key: "@__agent_key",
+      namespace: String(params.namespace || "file"),
+      hash: String(params.hash || "sha512"),
+    },
+    { resolveSlot: () => keyPair }
+  );
+  return {
+    ...signed,
+    meta: { ...(signed.meta || {}), agentSigned: true, fingerprint: result.fingerprint },
+  };
+}
+
+/**
+ * `agent.decrypt` (§26f) — ciphertext in, plaintext out, key stays in the
+ * vault. PGP-kind keys only: an SSH signing key cannot decrypt, and saying
+ * so plainly beats a confusing crypto error three layers down.
+ *
+ * @param {import("./engine.js").PipelineValue} value
+ * @param {Record<string, *>} params
+ * @param {import("./engine.js").RuntimeBindings} [bindings]
+ */
+export async function execAgentDecrypt(value, params = {}, bindings = {}) {
+  const payload = approvalPayloadBytes(value, "agent.decrypt");
+  const { kind, result } = await approveAndUnlock(
+    "decrypt",
+    "agent.decrypt",
+    payload,
+    params,
+    bindings
+  );
+  if (kind !== "pgp") {
+    throw new Error(
+      `agent.decrypt: key ${shortKeyId(result.fingerprint)} is an ${kind === "ssh" ? "SSH signing key — it cannot decrypt" : "raw key — it has no OpenPGP decryption path"}. Only pgp-kind keys decrypt.`
+    );
+  }
+  const privateKey = await readOpenPgpPrivate(result, bindings);
+  const message = await readMessage({ armoredMessage: new TextDecoder().decode(payload) });
+  const out = await openpgpDecrypt({
+    message,
+    decryptionKeys: privateKey,
+    config: { allowInsecureDecryptionWithSigningKeys: true },
+  });
+  const plaintext =
+    typeof out.data === "string" ? out.data : new TextDecoder().decode(out.data);
+  return {
+    type: "text",
+    data: plaintext,
+    // The plaintext is the answer the user asked for, not key material —
+    // masking it would be theater (§26c: mark the leak, not the safe path).
+    meta: { sensitive: false, agentDecrypted: true, fingerprint: result.fingerprint },
+  };
+}
+
+/**
+ * Read the unlocked armor into a decrypted OpenPGP private key. Lives in
+ * this call frame only — it is never bound to a slot, which is the whole
+ * boundary (§26a).
+ * @param {import("../vault-unlock.js").VaultUnlockResult} result
+ * @param {import("./engine.js").RuntimeBindings} bindings
+ */
+async function readOpenPgpPrivate(result, bindings) {
+  let privateKey = await readPrivateKey({ armoredKey: result.armored });
+  if (!privateKey.isDecrypted()) {
+    privateKey = await decryptKey({
+      privateKey,
+      passphrase:
+        result.openPgpPassphrase ||
+        bindings?.inputs?.gpg?.passphrase ||
+        bindings?.inputs?.agent?.passphrase ||
+        "",
+    });
+  }
+  return privateKey;
+}
+
+/** Payload bytes for a boundary op — the exact bytes the digest covers. */
+function approvalPayloadBytes(value, stepName) {
+  if (value?.type === "bytes" && value.data instanceof Uint8Array) return value.data;
+  if (value?.type === "text") return new TextEncoder().encode(String(value.data));
+  throw new Error(`${stepName}: needs text or bytes on the pipeline`);
 }

@@ -27,6 +27,16 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { restartLiveIce } from "../lib/toolkit/quorum-ops.js";
 import { setClipboardReadGate } from "../lib/toolkit/clipboard-ops.js";
+import {
+  beginApprovalRun,
+  clearApprovalGrants,
+  listApprovalGrants,
+  revokeApprovalGrants,
+  setApprovalGate,
+  type ApprovalDecision,
+  type ApprovalRequest,
+} from "../lib/toolkit/approval-gate.js";
+import { ApprovalBanner } from "./widgets/ApprovalBanner";
 import { execFileRead } from "../lib/toolkit/file-ops.js";
 import { execQrScan } from "../lib/toolkit/qr-scan.js";
 import { setCssVar } from "../lib/css-vars.js";
@@ -335,6 +345,14 @@ export function ToolkitShell() {
    * handler reads the clipboard itself so the read happens inside the click's
    * transient activation.
    */
+  /**
+   * The pending boundary-op approval (§27). Inline at the requesting cell,
+   * never a modal — the context is the point.
+   */
+  const [approvalAsk, setApprovalAsk] = useState<{
+    request: ApprovalRequest;
+    resolve: (d: ApprovalDecision) => void;
+  } | null>(null);
   const [clipboardAsk, setClipboardAsk] = useState<{
     resolve: (text: string | null) => void;
   } | null>(null);
@@ -350,6 +368,12 @@ export function ToolkitShell() {
     null
   );
   useEffect(() => {
+    setApprovalGate(
+      (request) =>
+        new Promise<ApprovalDecision>((resolve) => {
+          setApprovalAsk({ request, resolve });
+        })
+    );
     setClipboardReadGate(
       () =>
         new Promise<string | null>((resolve) => {
@@ -367,6 +391,7 @@ export function ToolkitShell() {
     window.addEventListener("basilisk:file-saved", onSaved);
     return () => {
       setClipboardReadGate(null);
+      setApprovalGate(null);
       window.removeEventListener("basilisk:clipboard-wrote", onWrote);
       window.removeEventListener("basilisk:file-saved", onSaved);
     };
@@ -461,6 +486,17 @@ export function ToolkitShell() {
   };
 
   const [now, setNow] = useState(() => Date.now());
+  /**
+   * Live session grants (§27c). Re-read on the same one-second tick that
+   * drives the unlock countdown, so the use counter ticks up while a
+   * grant-covered run is using the key — being able to *watch* it is what
+   * makes the grant something other than a rubber stamp.
+   */
+  const approvalGrants = useMemo(() => {
+    void now;
+    void approvalAsk;
+    return listApprovalGrants();
+  }, [now, approvalAsk]);
   const [workspaces, setWorkspaces] = useState<ToolkitWorkspace[]>(() => listWorkspaces());
   const [workspaceError, setWorkspaceError] = useState("");
   const [inspectedSlot, setInspectedSlot] = useState<string | null>(null);
@@ -583,6 +619,10 @@ export function ToolkitShell() {
 
   const lockAllSessions = () => {
     for (const e of nb.sessionList()) nb.lockKey(e.fingerprint);
+    // §27c: Lock revokes the approval grants too. A grant that survives
+    // "Lock all" would be a standing permission to use keys that are no
+    // longer unlocked — the opposite of what the button promises.
+    clearApprovalGrants();
   };
 
   const saveCurrentWorkspace = () => {
@@ -848,6 +888,16 @@ export function ToolkitShell() {
           </p>
         ) : null}
 
+        {approvalAsk ? (
+          <ApprovalBanner
+            request={approvalAsk.request}
+            onDecide={(decision) => {
+              const ask = approvalAsk;
+              setApprovalAsk(null);
+              ask.resolve(decision);
+            }}
+          />
+        ) : null}
         {clipboardAsk ? (
           <div
             className="flex flex-wrap items-center gap-2 border-b border-l-2 border-[var(--border)] border-l-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_8%,transparent)] px-3.5 py-1.5"
@@ -1974,12 +2024,31 @@ export function ToolkitShell() {
                                 </>
                               ) : null}
                             </div>
+                            {/* §27c: a grant nobody can see is a rubber stamp with
+                                extra steps. This one counts its uses live and
+                                shows its own clock. */}
+                            {approvalGrants
+                              .filter((g) => g.keyId === k.fingerprint)
+                              .map((g) => (
+                                <div
+                                  key={g.use}
+                                  className="mt-0.5 font-mono text-[length:10.5px] text-[var(--warn)]"
+                                  data-approval-grant={g.use}
+                                >
+                                  approved: {g.use} · {g.uses}{" "}
+                                  {g.uses === 1 ? "use" : "uses"} ·{" "}
+                                  {formatCountdown(g.expiresAt - now)} left
+                                </div>
+                              ))}
                             <div className="mt-2 flex flex-wrap gap-1">
                               {unlocked ? (
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  onClick={() => nb.lockKey(k.fingerprint)}
+                                  onClick={() => {
+                                    nb.lockKey(k.fingerprint);
+                                    revokeApprovalGrants(k.fingerprint);
+                                  }}
                                 >
                                   Lock
                                 </Button>
