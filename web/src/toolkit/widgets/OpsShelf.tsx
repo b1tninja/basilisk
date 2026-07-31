@@ -51,7 +51,7 @@ type Props = {
   hideSearch?: boolean;
   /** Caret banner — where the next append/insert lands, named so it agrees with the pipeline gap. */
   caretBanner?: ReactNode;
-  /** Suite self-test map (CAST). Drives the per-op status light. */
+  /** Suite self-test map (CAST). Lights the status dot on each toolbox header. */
   castStatus?: Record<string, string> | null;
   /** Append a literal step built from the Types tab's constructor. */
   onInsertLiteral?: (step: { name: string; params: Record<string, unknown> }) => void;
@@ -104,7 +104,6 @@ function OpsRow({
   hint,
   dim,
   action,
-  castStatus,
   className,
 }: {
   op: { toolbox?: string };
@@ -112,8 +111,6 @@ function OpsRow({
   hint?: ReactNode;
   dim?: boolean;
   action: ReactNode;
-  /** Suite self-test map; absent while the POST is still running. */
-  castStatus?: Record<string, string> | null;
   className?: string;
 }) {
   return (
@@ -124,14 +121,12 @@ function OpsRow({
         className
       )}
     >
-      {/* Identity is the glyph; the dot beside it is CAST status. They were
-          conflated into one multi-coloured dot, which meant the toolkit had
-          no visible self-test signal at all. */}
+      {/* Identity is the glyph. Verification is not per-op — it lives on the
+          toolbox header, one light per suite. */}
       <Glyph id={glyphIdFor(op)} size={16} className="shrink-0 opacity-80" />
       <code className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]">
         {name}
       </code>
-      <CastDot op={op} status={castStatus} />
       {hint ? (
         <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
           {hint}
@@ -166,12 +161,13 @@ function AddButton({ onClick, title }: { onClick: () => void; title?: string }) 
   );
 }
 
-/** Section header — chevron, label, item count, toolbox-color square, matching design v2 §18b/19a. */
+/** Section header — chevron, label, CAST light, item count, toolbox-color square, matching design v2 §18b/19a. */
 function SectionHeader({
   label,
   count,
   fitCount,
   toolbox,
+  castStatus,
   open,
   onToggle,
 }: {
@@ -181,6 +177,8 @@ function SectionHeader({
   fitCount?: number | null;
   /** Toolbox id — the dot colour is enumerated per id in toolkit.css. */
   toolbox: string;
+  /** Suite self-test map; absent while the POST is still running. */
+  castStatus?: Record<string, string> | null;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -200,6 +198,10 @@ function SectionHeader({
       <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
         {label}
       </span>
+      {/* CAST belongs here rather than on each op: the self-test qualifies a
+          suite, so one light per toolbox states the fact once instead of
+          repeating it down twenty identical rows. */}
+      <CastDot op={{ toolbox }} status={castStatus} />
       <span className="font-mono text-[10px] text-[color-mix(in_srgb,var(--muted-foreground)_65%,transparent)]">
         {fitCount == null ? count : `${fitCount} fit`}
       </span>
@@ -602,6 +604,7 @@ export function OpsShelf({
                   count={count}
                   fitCount={fitCount}
                   toolbox={tb}
+                  castStatus={castStatus}
                   open={open}
                   onToggle={() =>
                     setTbOverride((prev) => ({ ...prev, [tb]: !open }))
@@ -624,7 +627,7 @@ export function OpsShelf({
                               if (row.type === "solo" && row.step) {
                                 const fit = !tipFit || tipFit.has(row.step.name);
                                 return (
-                                  <OpsRow castStatus={castStatus}
+                                  <OpsRow
                                     key={`${row.step.name}-${i}`}
                                     op={row.step}
                                     name={row.step.name}
@@ -649,7 +652,7 @@ export function OpsShelf({
                               const revName = row.reverse?.name || row.forward.name;
                               const fitRev = !tipFit || tipFit.has(revName);
                               return (
-                                <OpsTile castStatus={castStatus}
+                                <OpsTile
                                   key={key}
                                   op={row.forward}
                                   reverseOp={row.reverse}
@@ -795,7 +798,7 @@ function ModeShelfKit({
             if (!step) return null;
             const fit = !tipFit || tipFit.has(m.name);
             return (
-              <OpsTile castStatus={castStatus}
+              <OpsTile
                 key={m.id}
                 op={step}
                 hasReverse
@@ -928,7 +931,7 @@ function FormatKit({
 function MacKit({ onAppend }: { onAppend: Props["onAppend"] }) {
   return (
     <div data-mac-kit>
-      <OpsRow castStatus={castStatus}
+      <OpsRow
         op={{ toolbox: "webcrypto" }}
         name="hmac"
         action={
@@ -938,7 +941,7 @@ function MacKit({ onAppend }: { onAppend: Props["onAppend"] }) {
           />
         }
       />
-      <OpsRow castStatus={castStatus}
+      <OpsRow
         op={{ toolbox: "webcrypto" }}
         name="verify"
         action={

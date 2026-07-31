@@ -55,6 +55,21 @@ describe("CastDot reports the self-test", () => {
     expect(SHELL).toMatch(/castStatus=\{suiteStatus\}/);
     expect(SHELF).toMatch(/castStatus\?: Record<string, string> \| null;/);
   });
+
+  it("sits on the toolbox header, at the granularity of the claim", () => {
+    // The self-test qualifies a suite, so every op under one toolbox carries
+    // the same bit. One light where the drawer names the suite; a per-op
+    // light would imply a per-op test that does not exist.
+    const header = SHELF.match(/function SectionHeader\([\s\S]*?\n\}\r?\n/);
+    expect(header, "SectionHeader not found").toBeTruthy();
+    expect(header[0]).toMatch(/<CastDot op=\{\{ toolbox \}\} status=\{castStatus\} \/>/);
+    expect(SHELF).toMatch(/<SectionHeader[\s\S]{0,300}?castStatus=\{castStatus\}/);
+  });
+
+  it("does not repeat itself on every row and tile", () => {
+    expect(SHELF.match(/<CastDot/g) || []).toHaveLength(1);
+    expect(TILE).not.toMatch(/CastDot/);
+  });
 });
 
 describe("identity moved to the glyph", () => {

@@ -11,7 +11,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CastDot, Glyph, glyphIdFor } from "./Glyph";
+import { Glyph, glyphIdFor } from "./Glyph";
 import { ToolCard, type ToolCardOp } from "./ToolCard";
 import { STEP_MIME, stepDragPayload } from "./mime";
 
@@ -36,8 +36,6 @@ type Props = {
   /** Whole-row dim — neither direction fits the caret. */
   dim?: boolean;
   showTooltip?: boolean;
-  /** Suite self-test map (CAST); absent while the POST is still running. */
-  castStatus?: Record<string, string> | null;
   onAppend: (name: string, opts?: { decode?: boolean }) => void;
   className?: string;
 };
@@ -75,7 +73,6 @@ export function OpsTile({
   needs,
   dim = false,
   showTooltip = true,
-  castStatus = null,
   onAppend,
   className,
 }: Props) {
@@ -106,7 +103,8 @@ export function OpsTile({
         className
       )}
     >
-      {/* Identity is the glyph; the dot after the name is CAST status. */}
+      {/* Identity is the glyph. Verification is not per-op — it lives on the
+          toolbox header, one light per suite. */}
       <Glyph
         id={glyphIdFor(op)}
         size={16}
@@ -120,7 +118,6 @@ export function OpsTile({
       >
         {op.name}
       </code>
-      <CastDot op={op} status={castStatus} className={cn(hasCaptions && "mt-[7px]")} />
       <span className="flex shrink-0 flex-col items-center gap-[2px]">
         <button
           type="button"

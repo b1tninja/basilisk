@@ -48,14 +48,19 @@ export function Glyph({
 }
 
 /**
- * CAST status for one op — whether its crypto suite passed the power-on
+ * CAST status for a toolbox — whether its crypto suite passed the power-on
  * self-test this session.
  *
- * This is what the little light beside an op is *for*. It drifted into being
- * a toolbox-identity colour, which is both a weaker signal and a misleading
- * one: a green dot that means "this is the SSS toolbox" reads exactly like a
- * green dot that means "SSS self-tested clean". Identity is the glyph's job —
- * every op already has one — so the dot is returned to reporting verification.
+ * Rendered on the toolbox header, because that is the granularity of the
+ * claim: the self-test qualifies a *suite*, so twenty rows under "OpenPGP"
+ * all carry the same one bit. Stating it once, where the drawer names the
+ * suite, is both less noise and a truer picture — a per-op light implies a
+ * per-op test that does not exist.
+ *
+ * It drifted into being a toolbox-identity colour, which is both a weaker
+ * signal and a misleading one: a green dot that means "this is the SSS
+ * toolbox" reads exactly like a green dot that means "SSS self-tested clean".
+ * Identity is the glyph's job — every op already has one.
  *
  * Only `openpgp`, `webcrypto` and `sss` make a CAST claim (`toolboxToSuite`).
  * Everything else renders nothing at all rather than a decorative dot,
