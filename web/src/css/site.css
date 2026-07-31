@@ -31,6 +31,25 @@
   --decode: #d2a8ff;
   --warn: #e3b341;
 
+  /*
+   * Interaction accents, distinct from the semantic ones above.
+   *
+   * `--interactive` is "you are pointing at this / this one is selected". It
+   * has to be a colour that means nothing else, and gold does not qualify:
+   * `--accent` is documented up top as the shared-secret/SSS surface and sits
+   * within a hair of `--warn` (#d4b84a vs #e3b341), so a hovered chip was
+   * indistinguishable from a chip in its warning state. Most of the rules
+   * that reach for `--accent` were in fact written against a blue accent —
+   * they still carry a `#7aa2f7` fallback from before `--accent` was defined
+   * as gold — so this restores the intent rather than inventing a colour.
+   *
+   * `--focus-ring` is keyboard focus and only that. Green, because blue is
+   * already spoken for by the caret and because focus must stay legible on
+   * top of a hover tint drawn in `--interactive`.
+   */
+  --interactive: #7aa2f7;
+  --focus-ring: var(--brand);
+
   /* Badges */
   --badge-approved-bg: #0f2a1b;
   --badge-approved-fg: #3fb950;
@@ -82,6 +101,10 @@
     --decode: #8250df;
     --warn: #9a6700;
 
+    /* Darkened for AA on white, same as the semantic accents above. */
+    --interactive: #3b5bdb;
+    --focus-ring: var(--brand);
+
     /* Badges */
     --badge-approved-bg: #dafbe1;
     --badge-approved-fg: #1a7f37;
@@ -103,6 +126,27 @@
 
 /* ===== Reset & Base ===== */
 *, *::before, *::after { box-sizing: border-box; }
+
+/*
+ * One focus ring for the whole app.
+ *
+ * Before this, keyboard focus was whatever the UA drew by default on most
+ * controls, an app-coloured 2px ring on four hand-picked ones (in three
+ * different colours, `--brand`, `--accent` and `--caret`, at two offsets),
+ * and *nothing at all* on the pipeline chips, which explicitly set
+ * `outline: none` and leaned on a border tint identical to their own hover
+ * state. Tabbing through a recipe therefore looked exactly like sweeping a
+ * mouse across it.
+ *
+ * A single low-specificity rule is enough because outline does not affect
+ * layout: anything that wants a tighter ring overrides the offset, and
+ * nothing needs to opt out. Components that suppress the outline must
+ * replace it with something at least as visible — see `.suggest-chip`.
+ */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -394,10 +438,12 @@ body.layout-app {
   color: var(--text-muted);
   font-weight: 500;
 }
-.recipe-title-input:hover,
-.recipe-title-input:focus {
+/* Hover reveals that the title is editable at all; focus is the global ring.
+ * These were one rule, so a focused title and a hovered one were the same
+ * picture — and the rule cancelled the outline, so the field had no focus
+ * state whatsoever. */
+.recipe-title-input:hover {
   border-bottom-color: var(--border);
-  outline: none;
 }
 .pane-actions {
   display: flex;
@@ -446,7 +492,6 @@ body.layout-app {
 .session-tray-chip:focus-visible {
   color: var(--text);
   background: color-mix(in srgb, var(--brand) 8%, transparent);
-  outline: none;
 }
 .session-tray-chip.is-open {
   color: var(--text);
@@ -1808,7 +1853,9 @@ pre {
 .recipient-hit:hover:not(:disabled),
 .recipient-hit.active:not(:disabled) { background: var(--surface-raised); }
 .recipient-hit:disabled { opacity: 0.55; cursor: default; }
-.recipient-hit:focus { outline: 2px solid var(--brand); outline-offset: -2px; }
+/* Rows butt against the list edge, so the ring is drawn inside. Colour and
+ * width come from the global `:focus-visible`. */
+.recipient-hit:focus-visible { outline-offset: -2px; }
 .recipient-hit.key-hit-trusted {
   border-left: 3px solid var(--badge-approved-fg, #1a7a4c);
   background: color-mix(in srgb, var(--badge-approved-bg, #e6f4ea) 55%, transparent);
@@ -2917,10 +2964,6 @@ pre {
 .preset-card:hover {
   border-color: var(--accent, #7aa2f7);
 }
-.preset-card:focus-visible {
-  outline: 2px solid var(--accent, #7aa2f7);
-  outline-offset: 2px;
-}
 .preset-recipe {
   font-size: 0.7rem;
   word-break: break-all;
@@ -3069,7 +3112,6 @@ pre {
 }
 .cell-recipe-indent-jump:focus-visible,
 .builder-ingredient-chip-jump:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brand) 55%, transparent);
   outline-offset: 1px;
 }
 .builder-ingredient-chip {
@@ -3161,7 +3203,6 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   background: color-mix(in srgb, var(--caret) 14%, transparent);
 }
 .cell-recipe-gap-add:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--caret) 55%, transparent);
   outline-offset: 1px;
 }
 /* Between-chip flow separator (design v2 §18b) — hover shows the piped type. */
@@ -3932,7 +3973,6 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
 .suggest-chip-need-error:focus-visible {
   border-color: color-mix(in srgb, var(--warn, #c90) 75%, var(--border));
   background: color-mix(in srgb, var(--warn, #c90) 24%, var(--surface-raised));
-  outline: none;
 }
 .suggest-chip-need-error {
   border-color: color-mix(in srgb, var(--error, #c44) 55%, var(--border));
@@ -5934,8 +5974,13 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   text-align: left;
   line-height: inherit;
 }
+/*
+ * The hit area fills the chip, so its ring would trace the same rectangle as
+ * the chip's border. Draw it inside instead of suppressing it — this is the
+ * one place a tighter offset is warranted, not a place to go ringless.
+ */
 .suggest-chip-hit:focus-visible {
-  outline: none;
+  outline-offset: -3px;
 }
 .suggest-chip-remove {
   display: inline-flex;
@@ -5957,19 +6002,31 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
 .suggest-chip-remove:focus-visible {
   color: var(--error, #b91c1c);
   background: color-mix(in srgb, var(--error, #b91c1c) 12%, transparent);
-  outline: none;
 }
-.suggest-chip:hover,
-.suggest-chip:focus-visible {
-  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 55%, var(--border));
-  outline: none;
+.suggest-chip-remove:focus-visible {
+  outline-offset: 0;
+}
+/*
+ * Hover and focus are different facts and no longer share a declaration: the
+ * border tint says "pointer is here", the ring above says "keyboard is here",
+ * and a chip can be both.
+ *
+ * The tint moved off `--accent`. Gold is the shared-secret surface in this
+ * palette and is a near-match for `--warn`, so an ordinary chip under the
+ * cursor rendered within a few percent of `.suggest-chip-warn` — the state
+ * that means the step is missing something. `--interactive` is the blue these
+ * rules were written against before `--accent` was defined as gold, which is
+ * why they all still carry a `#7aa2f7` fallback.
+ */
+.suggest-chip:hover {
+  border-color: color-mix(in srgb, var(--interactive) 55%, var(--border));
 }
 .suggest-chip-with-remove:focus-within {
-  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 55%, var(--border));
+  border-color: color-mix(in srgb, var(--interactive) 55%, var(--border));
 }
 .suggest-chip-primary {
-  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 40%, var(--border));
-  background: color-mix(in srgb, var(--accent, #7aa2f7) 12%, var(--surface-raised, var(--surface)));
+  border-color: color-mix(in srgb, var(--interactive) 40%, var(--border));
+  background: color-mix(in srgb, var(--interactive) 12%, var(--surface-raised, var(--surface)));
 }
 .suggest-chip-name {
   font-family: var(--font-mono, ui-monospace, monospace);
