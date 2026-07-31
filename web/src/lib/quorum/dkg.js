@@ -36,6 +36,7 @@ import {
   publicKeyOf,
   scalarFromHex,
   scalarToHex,
+  shortId,
   verify,
 } from "./vss.js";
 
@@ -113,14 +114,14 @@ export function finalize({ myId, contributions }) {
   const seen = new Set();
   for (const c of contributions) {
     if (seen.has(c.from)) {
-      throw new Error(`dkg: duplicate contribution from ${String(c.from).slice(0, 8)}…`);
+      throw new Error(`dkg: duplicate contribution from ${shortId(c.from)}…`);
     }
     seen.add(c.from);
     if (!verify({ share: c.share, id: myId, commitments: c.commitments })) {
       // Named, because the remedy is to restart without this dealer — there
       // is no complaint round to adjudicate it.
       throw new Error(
-        `dkg: share from ${String(c.from).slice(0, 8)}… does not match their commitments — restart excluding that participant`
+        `dkg: share from ${shortId(c.from)}… does not match their commitments — restart excluding that participant`
       );
     }
   }

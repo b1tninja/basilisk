@@ -1404,6 +1404,16 @@ in @offer | rtc.answer ice=@ice | out @answer`,
       skipReason: "needs a live WebRTC exchange",
     },
     {
+      id: "dkg.run.compile",
+      recipe: `gpg.genkey email="dkg-smoke@example.com" | out @me
+
+quorum.join to="${"A".repeat(40)},${"B".repeat(40)},${"C".repeat(40)}" key=@me | out @session
+
+dkg.run threshold=2 | out @dkg`,
+      mode: "compile",
+      skipReason: "needs a live mesh with every participant present",
+    },
+    {
       id: "rtc.restart.compile",
       recipe: "rtc.restart | out @state",
       mode: "compile",

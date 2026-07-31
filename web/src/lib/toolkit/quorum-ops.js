@@ -19,6 +19,8 @@
 import { QuorumSession, DEFAULT_ICE_SERVERS } from "../quorum/rtc.js";
 import { deriveRoomId, canonicalAudience } from "../quorum/room.js";
 import { projectRosterPeers, selectedCandidateType } from "../quorum/roster.js";
+import { DKG_COMMIT, DKG_SHARE } from "../quorum/dkg-run.js";
+import { idFromFingerprint, scalarToHex } from "../quorum/vss.js";
 
 /**
  * @typedef {object} QuorumExchangeState
@@ -342,6 +344,17 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     onChat: (msg) => {
       const ex = current;
       if (!ex) return;
+      // Protocol traffic gets first refusal. A tap that recognizes a message
+      // consumes it, so DKG round chatter never lands in the inbox a user's
+      // `rtc.recv` is reading — otherwise running a key generation would fill
+      // their pipeline with JSON they did not ask for.
+      for (const tap of ex.taps) {
+        try {
+          if (tap(msg) === true) return;
+        } catch (_) {
+          /* a broken tap must not swallow ordinary chat */
+        }
+      }
       const waiter = ex.recvWaiters.shift();
       if (waiter) waiter(msg);
       else ex.inbox.push(msg);
@@ -387,6 +400,8 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     cancelled: false,
     viaByFpr: new Map(),
     viaPending: new Set(),
+    /** @type {((msg: { from: string, text: string }) => boolean)[]} */
+    taps: [],
   };
   emitState();
 
@@ -571,6 +586,81 @@ export function execQuorumClose(value) {
       meta: { sensitive: false },
     }
   );
+}
+
+/**
+ * A `DkgTransport` over the live exchange.
+ *
+ * The mapping is direct because the mesh already provides what the protocol
+ * needs: `sendChat` broadcasts to every verified peer, `sendChatTo` addresses
+ * one over its own channel — which is why the rounds want a mesh rather than
+ * an SFU — and the tap delivers inbound protocol messages without them
+ * reaching a user's `rtc.recv`.
+ *
+ * Participants are identified by the scalar derived from their PGP
+ * fingerprint, so the polynomial is indexed by the identities the room was
+ * already built on rather than a second numbering everyone has to agree.
+ *
+ * @param {string} op  for error attribution
+ * @returns {{
+ *   transport: import("../quorum/dkg-run.js").DkgTransport,
+ *   myId: string,
+ *   ids: string[],
+ *   release: () => void,
+ * }}
+ */
+export function createExchangeTransport(op = "dkg.run") {
+  const ex = requireExchange(op);
+  const session = ex.session;
+  const byId = new Map();
+  for (const fpr of session.audienceFprs || []) {
+    byId.set(scalarToHex(idFromFingerprint(fpr)), fpr);
+  }
+  const myId = scalarToHex(idFromFingerprint(session.myFpr));
+
+  /** @type {((msg: object) => void)[]} */
+  const handlers = [];
+  const tap = (msg) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(msg?.text ?? ""));
+    } catch {
+      return false; // ordinary chat — leave it for rtc.recv
+    }
+    if (!parsed || typeof parsed !== "object") return false;
+    if (parsed.t !== DKG_COMMIT && parsed.t !== DKG_SHARE) return false;
+    // Trust the *channel* for provenance, not the envelope's own `from`: the
+    // session already authenticated this peer, so stamping the id here means a
+    // participant cannot deal under someone else's name.
+    const fromId = scalarToHex(idFromFingerprint(String(msg.from || "")));
+    for (const h of handlers) h({ ...parsed, from: fromId });
+    return true;
+  };
+  ex.taps.push(tap);
+
+  return {
+    myId,
+    ids: [...byId.keys()],
+    transport: {
+      broadcast: (m) => session.sendChat(JSON.stringify(m)),
+      sendTo: (id, m) => {
+        const fpr = byId.get(id);
+        if (!fpr) throw new Error(`${op}: no participant with id ${id.slice(-8)}`);
+        return session.sendChatTo(fpr, JSON.stringify(m));
+      },
+      subscribe: (handler) => {
+        handlers.push(handler);
+        return () => {
+          const i = handlers.indexOf(handler);
+          if (i >= 0) handlers.splice(i, 1);
+        };
+      },
+    },
+    release: () => {
+      const i = ex.taps.indexOf(tap);
+      if (i >= 0) ex.taps.splice(i, 1);
+    },
+  };
 }
 
 /** @param {string} op */

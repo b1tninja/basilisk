@@ -392,6 +392,11 @@ export function inferSourceType(name, params = {}) {
     case "clipboard.read":
       // Whatever the user last copied — text of unknown provenance.
       return typeOf("text", { kind: "opaque" });
+    case "dkg.run":
+      // The participant's share plus the joint public key, as JSON. `text`
+      // rather than a handle: unlike `session`, this outlives the run — it is
+      // the thing you keep.
+      return typeOf("text", { kind: "opaque" });
     case "file.read": {
       // `auto` is only resolvable once a file is chosen, so the compile-time
       // answer is the conservative one. Claiming `text` for an unopened picker

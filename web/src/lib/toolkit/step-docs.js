@@ -188,6 +188,10 @@ const STEP_DOCS = {
     url: `${MDN}/BarcodeDetector`,
     label: "MDN · BarcodeDetector",
   },
+  "dkg.run": {
+    url: "https://en.wikipedia.org/wiki/Distributed_key_generation",
+    label: "Distributed key generation",
+  },
   "clipboard.read": {
     url: `${MDN}/Clipboard/readText`,
     label: "MDN · Clipboard.readText()",

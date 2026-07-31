@@ -3159,6 +3159,32 @@ export const STEPS = [
     params: [],
   },
   {
+    name: "dkg.run",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    glyph: "split",
+    doc: "**Experimental.** Run a distributed key generation across the live exchange (Feldman VSS over P-256): every participant deals a contribution, verifies what they receive, and sums — so the private key is never assembled anywhere, and any `threshold` of the room can reconstruct it later. Needs a live `quorum.offer`/`quorum.join` with every participant present. There is no complaint round: a bad share aborts the run and names the dealer, and the group must restart without them. Produces a shared key, **not** threshold signing. Example: `dkg.run threshold=3 | out @dkg`.",
+    input: "none",
+    output: "text",
+    params: [
+      {
+        name: "threshold",
+        type: "int",
+        default: 2,
+        min: 1,
+        max: 16,
+        doc: "Participants required to reconstruct later (K)",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 120000,
+        doc: "How long to wait for the other participants (ms)",
+      },
+    ],
+  },
+  {
     name: "rtc.restart",
     kind: "source",
     toolbox: "webrtc",

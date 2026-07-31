@@ -2675,6 +2675,11 @@ async function execStepBody(step, value, bindings, artifacts) {
           return jose.execJoseDecrypt(value, p, bindings);
       }
     }
+    case "dkg.run": {
+      // Lazy + main-thread: it drives the live RTCPeerConnection mesh.
+      const { execDkgRun } = await import("./dkg-ops.js");
+      return execDkgRun(step.params || {});
+    }
     case "qr.scan": {
       // Lazy + main-thread: BarcodeDetector and canvas rasterization are not
       // available in the worker.

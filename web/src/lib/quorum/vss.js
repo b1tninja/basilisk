@@ -112,6 +112,21 @@ export function normalizeIds(ids) {
 }
 
 /**
+ * Short label for an id in a human-facing message.
+ *
+ * Takes the *last* 8 hex digits, not the first. Ids are 64-char zero-padded
+ * scalars, so small numeric ids — 1, 2, 3, which is what a local rehearsal
+ * uses — all begin `00000000`, and a leading-prefix truncation renders every
+ * participant identically in exactly the message someone is reading to find
+ * out who to chase.
+ * @param {string|bigint} id
+ */
+export function shortId(id) {
+  const s = String(id || "");
+  return s.length > 8 ? s.slice(-8) : s;
+}
+
+/**
  * Derive a share id from an OpenPGP fingerprint, so existing identities index
  * the polynomial without a separate numbering scheme to agree on.
  * @param {string} fingerprint
