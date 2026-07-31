@@ -6206,6 +6206,12 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
 .m-0-b-sm { margin: 0 0 0.5rem; }
 .m-0-b-md { margin: 0 0 0.75rem; }
 .m-0-b-lg { margin: 0 0 1rem; }
+/* Utilities standing in for the last static inline styles — every `style={{}}`
+ * is an element.style write that `style-src 'self'` refuses in production,
+ * even for something as inert as centring text. */
+.text-center { text-align: center; }
+.results-label-wide { max-width: 560px; margin: 0 auto 8px; }
+.page-notice { margin: 0.5rem 1.25rem; flex-shrink: 0; }
 .stack-hint { margin: -0.35rem 0 0.85rem; }
 .stack-subhead { margin: -0.5rem 0 1rem; }
 

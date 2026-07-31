@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { Play, Square } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { setCssVar } from "@/lib/css-vars.js";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -53,6 +54,15 @@ export function RunBar({
   onCancelSession,
   children,
 }: Props) {
+  // Publish the fill percentage as a custom property rather than a style prop.
+  // Cleared to 0 when no run is in flight so a stale bar never lingers.
+  useEffect(() => {
+    const pct =
+      progress && progress.total > 0
+        ? Math.max(0, Math.min(100, (progress.cell / progress.total) * 100))
+        : 0;
+    setCssVar("--run-progress", pct, "%");
+  }, [progress?.cell, progress?.total]);
   return (
     <div
       className={cn(
@@ -117,13 +127,17 @@ export function RunBar({
               : "Running…"}
           </span>
           {progress ? (
-            <div className="ml-1.5 h-[3px] max-w-[200px] flex-1 overflow-hidden rounded-full bg-[var(--surface-raised)]">
-              <div
-                className="h-full bg-[var(--caret)] transition-[width]"
-                style={{
-                  width: `${Math.round((progress.cell / progress.total) * 100)}%`,
-                }}
-              />
+            <div
+              className="ml-1.5 h-[3px] max-w-[200px] flex-1 overflow-hidden rounded-full bg-[var(--surface-raised)]"
+              role="progressbar"
+              aria-valuenow={progress.cell}
+              aria-valuemin={0}
+              aria-valuemax={progress.total}
+            >
+              {/* Fill width rides `--run-progress` (lib/css-vars): a continuous
+                  value, so no enumerated rule fits, and a style prop is
+                  blocked by `style-src 'self'`. */}
+              <div className="run-progress-fill h-full bg-[var(--caret)] transition-[width]" />
             </div>
           ) : null}
         </>

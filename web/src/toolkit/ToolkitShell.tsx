@@ -27,6 +27,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { restartLiveIce } from "../lib/toolkit/quorum-ops.js";
 import { setClipboardReadGate } from "../lib/toolkit/clipboard-ops.js";
+import { setCssVar } from "../lib/css-vars.js";
 import { cn } from "@/lib/cn";
 import { useNotebook } from "./useNotebook";
 import { RecipientBinderHost } from "./RecipientBinderHost";
@@ -164,13 +165,8 @@ function relativeTimeShort(atMs: number, now: number): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-const STATUS_DOT_VAR: Record<CellStatus, string> = {
-  ok: "var(--success)",
-  error: "var(--error)",
-  stale: "var(--warn)",
-  running: "var(--brand)",
-  idle: "var(--muted-foreground)",
-};
+// Cell-status colours live in toolkit.css as `[data-cell-status]` rules — the
+// map that used to be here fed a style prop the production CSP refuses.
 
 /** One-line status: dot color + plain-language text, replacing the old badge pile. */
 function describeCellStatus(
@@ -395,6 +391,11 @@ export function ToolkitShell() {
     () => loadToolkitLayout().opsCollapsed === true
   );
   const [opsDragging, setOpsDragging] = useState(false);
+  // Publish the panel width as a custom property instead of a style prop; the
+  // stylesheet reads `--ops-width` (see lib/css-vars for why this route).
+  useEffect(() => {
+    setCssVar("--ops-width", opsWidth, "px");
+  }, [opsWidth]);
   const [trustTick, setTrustTick] = useState(0);
   const applyTrust = (fpr: string, level: TrustLevel) => {
     setTrust(fpr, level);
@@ -914,7 +915,11 @@ export function ToolkitShell() {
               </span>
             </button>
           ) : (
-            <div className="relative flex min-h-0" style={{ width: opsWidth }}>
+            // Width rides `--ops-width`, published through a constructed
+            // stylesheet (lib/css-vars) — a resizable panel is a continuous
+            // value no enumerated rule can cover, and every inline form of it
+            // is blocked by `style-src 'self'`.
+            <div className="ops-panel relative flex min-h-0">
               <OpsShelf
                 className="w-full"
                 ops={shelfOps}
@@ -1062,9 +1067,12 @@ export function ToolkitShell() {
                           [{i}]
                         </Button>
                         <span className="flex items-center gap-1.5">
+                          {/* Colour from `[data-cell-status]` in toolkit.css —
+                              a closed set, and `style-src 'self'` blocks the
+                              style prop in production. */}
                           <span
-                            className="h-[6px] w-[6px] shrink-0 rounded-full"
-                            style={{ background: STATUS_DOT_VAR[status] }}
+                            className="cell-status-dot h-[6px] w-[6px] shrink-0 rounded-full"
+                            data-cell-status={status}
                             aria-hidden
                           />
                           <span className="text-[length:10.5px] text-[var(--muted-foreground)]">

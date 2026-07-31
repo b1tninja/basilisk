@@ -35,16 +35,26 @@ const INLINE_STYLE = /style\s*=\s*(?:"|\{\{)/;
  * converted; do not add to them.
  */
 const BASELINE = {
-  "src/pages/index.tsx": 3,
-  "src/pages/toolkit.tsx": 1,
-  "src/toolkit/ToolkitShell.tsx": 2,
+  // Converted so far: OpsShelf (4) and TopBar (6) → toolbox-dot / suite-tone
+  // rules; SessionStrip (1) → data-session-tone; index (3) and toolkit.tsx (1)
+  // → plain utility classes; ToolkitShell (2) → data-cell-status for the dot
+  // and `--ops-width` via lib/css-vars for the resizable panel; RunBar (1) →
+  // `--run-progress` the same way.
+  //
+  // Both remaining entries key on a colour *string* rather than a closed
+  // vocabulary, so converting them means changing what the component takes,
+  // not find-and-replace.
+  //
+  // Glyph is the one to do next, and the count understates it badly: it is a
+  // single source site that renders once per op, so it accounts for ~76 of
+  // the ~79 live inline styles on /toolkit — by far the largest real CSP
+  // exposure left. Its colour comes from `toolboxColorFor`, i.e. the same
+  // closed TOOLBOX_META palette already enumerated as
+  // `.toolbox-dot[data-toolbox-dot=…]`, so it is convertible: give the span
+  // `data-toolbox`, let the shape rules paint with `currentColor`, and extend
+  // toolbox-dot-css.test.js to guard both selector families.
   "src/toolkit/widgets/Glyph.tsx": 1,
   "src/toolkit/widgets/NetworkArtifact.tsx": 3,
-  // OpsShelf (was 4) and TopBar (was 6) converted to data attributes +
-  // enumerated CSS — toolbox-dot / suite-tone rules in toolkit.css.
-  "src/toolkit/widgets/RunBar.tsx": 1,
-  // SessionStrip (was 1) converted with the per-peer work — the status dot's
-  // tone and live glow are `[data-session-tone]` rules in toolkit.css.
 };
 
 function walk(dir, pred, out = []) {

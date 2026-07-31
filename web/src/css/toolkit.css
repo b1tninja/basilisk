@@ -152,6 +152,35 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * Continuous values published by lib/css-vars through a constructed
+ * stylesheet. The fallbacks matter: before the first resize (or on an engine
+ * without constructed stylesheets) the panel still needs a sane width.
+ */
+.ops-panel {
+  width: var(--ops-width, 320px);
+}
+.run-progress-fill {
+  width: var(--run-progress, 0%);
+}
+
+/* Per-cell run status (CellStatus) — mirrors the old STATUS_DOT_VAR map. */
+.cell-status-dot[data-cell-status="ok"] {
+  background: var(--success);
+}
+.cell-status-dot[data-cell-status="error"] {
+  background: var(--error);
+}
+.cell-status-dot[data-cell-status="stale"] {
+  background: var(--warn);
+}
+.cell-status-dot[data-cell-status="running"] {
+  background: var(--brand);
+}
+.cell-status-dot[data-cell-status="idle"] {
+  background: var(--muted-foreground);
+}
+
+/*
  * Suite-status tones (TopBar §21e) — same CSP conversion as the peer dots.
  * The tone set is closed (ok | warn | error); the "note" variant mutes ok
  * because a healthy suite's note is commentary, not a signal.

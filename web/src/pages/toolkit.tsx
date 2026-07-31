@@ -27,7 +27,7 @@ function ToolkitPage() {
   return (
     <Layout active="toolkit">
       {selfTestError ? (
-        <p className="text-error" style={{ margin: "0.5rem 1.25rem", flexShrink: 0 }}>
+        <p className="text-error page-notice">
           {selfTestError}
         </p>
       ) : null}

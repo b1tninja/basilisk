@@ -270,10 +270,10 @@ function IndexPage() {
 
       {error ? <p className="text-error">{error}</p> : null}
       {cautionHtml ? <div dangerouslySetInnerHTML={{ __html: cautionHtml }} /> : null}
-      {message ? <p className="muted" style={{ textAlign: "center" }}>{message}</p> : null}
+      {message ? <p className="muted text-center">{message}</p> : null}
       {results ? (
         <div>
-          <p className="results-label" style={{ maxWidth: 560, margin: "0 auto 8px" }}>
+          <p className="results-label results-label-wide">
             {results.length} result{results.length === 1 ? "" : "s"}
           </p>
           <div className="result-list">
@@ -284,7 +284,7 @@ function IndexPage() {
         </div>
       ) : null}
 
-      <p className="mt-lg" style={{ textAlign: "center" }}>
+      <p className="mt-lg text-center">
         <a className="text-link" href="/my-keys">
           Submit a public key
         </a>
