@@ -412,6 +412,10 @@ export function useNotebook() {
     tile.publishedAs = fingerprint ? `@${fingerprint.slice(-8)}` : "@pub";
     tile.directoryUrl = directoryUrl;
     setKernelEpoch((n) => n + 1);
+    // Returned, not just stored: the Activity log records where an outward
+    // action *went* (§36), and a log that says "Published" without naming the
+    // directory answers the wrong half of the question at 2am.
+    return { fingerprint, directoryUrl };
   }, []);
 
   const setCellSteps = useCallback((cellIndex: number, nextSteps: RecipeStep[]) => {

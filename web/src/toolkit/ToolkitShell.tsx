@@ -1805,8 +1805,6 @@ export function ToolkitShell() {
                             outputs={(nb.cellOutputs[i] || []).map((a, oi) => {
                               const label =
                                 a.label || a.filename || `output ${oi + 1}`;
-                              const publishable = a.role === "public-key";
-                              const fpr = a.traits?.fingerprint || "";
                               let diagnosticAction:
                                 | { label: string; onClick: () => void }
                                 | undefined;
@@ -1858,15 +1856,17 @@ export function ToolkitShell() {
                                 onConfigureTurn: openRtcIceTurnParam,
                                 onCopy: () =>
                                   void navigator.clipboard.writeText(a.content),
-                                publishable,
-                                publishConfirmLabel: fpr
-                                  ? `${fpr.slice(0, 4)}…${fpr.slice(-3)}`
-                                  : undefined,
                                 publishedAs: a.publishedAs,
                                 directoryUrl: a.directoryUrl,
-                                onPublish: publishable
-                                  ? () => nb.publishArtifact(i, oi)
-                                  : undefined,
+                                // Whether this artifact *may* be published is
+                                // the kind table's answer (§38b — `key.publish`
+                                // is declared on `openpgp-public` alone).
+                                // What the shell supplies is the route, and
+                                // the host the confirmation must name: this
+                                // site, never an upstream keyserver, because
+                                // no upstream write path exists.
+                                onPublish: () => nb.publishArtifact(i, oi),
+                                directoryHost: location.host,
                               };
                             })}
                           />
@@ -2399,6 +2399,17 @@ export function ToolkitShell() {
                               netData: a.netData,
                               preview: a.sensitive ? undefined : oneLinePreview(a.content),
                               onCopy: () => copyText(a.content),
+                              // §33a/§38b: the same tile, so the same actions.
+                              // Publish is declared by the kind, which means
+                              // this pane offers it too — and had to be given
+                              // the route, or a public key in the tray would
+                              // render a disabled Publish whose stated reason
+                              // ("needs a connection to the directory") was
+                              // not the real one.
+                              publishedAs: a.publishedAs,
+                              directoryUrl: a.directoryUrl,
+                              onPublish: () => nb.publishArtifact(Number(cell), oi),
+                              directoryHost: location.host,
                             }))}
                           />
                         </div>

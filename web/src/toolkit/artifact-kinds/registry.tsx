@@ -108,10 +108,11 @@ const pgpCardFor = (publicOnly: boolean) =>
 export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
   {
     /**
-     * The armored public key `gpg.genkey` emits. The only kind that gets
-     * Publish (§35f) — and Publish stays on the tile's existing confirm
-     * flow until §34c's ConsequenceBanner lands, rather than being declared
-     * here twice.
+     * The armored public key `gpg.genkey` emits, and the only kind that gets
+     * Publish (§35f/§38b). It is declared here rather than passed in as a
+     * per-artifact callback, so "which artifacts can be published" is one
+     * answer in the table instead of a `publishable` boolean the shell
+     * recomputes — the same consolidation the badge mapping needed.
      */
     id: "openpgp-public",
     match: { role: "public-key" },
@@ -119,7 +120,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     glyph: "openpgp-key",
     view: pgpCardFor(true),
     empty: "Not a readable OpenPGP key — showing the armor.",
-    actions: ["copy", "key.copyFingerprint"],
+    actions: ["copy", "key.copyFingerprint", "key.publish"],
   },
   {
     /**

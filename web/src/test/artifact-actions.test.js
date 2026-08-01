@@ -290,3 +290,154 @@ describe("the key actions against a real artifact", () => {
     );
   });
 });
+
+describe("outward confirmation shares §27's shell (§34c/§43a/§43b)", () => {
+  const GATE = read("../toolkit/widgets/GateBanner.tsx");
+  const CONSEQUENCE = read("../toolkit/widgets/ConsequenceBanner.tsx");
+  const APPROVAL = read("../toolkit/widgets/ApprovalBanner.tsx");
+  const TILE = read("../toolkit/widgets/ArtifactTile.tsx");
+
+  it("draws both banners from one shell, so neither can drift", () => {
+    // A second confirmation grammar teaches that confirmations are
+    // decorative, which is the failure mode that makes every confirmation in
+    // the product worthless.
+    expect(APPROVAL).toMatch(/from "\.\/GateBanner"/);
+    expect(CONSEQUENCE).toMatch(/from "\.\/GateBanner"/);
+    // The chrome is declared once, in the shell, and nowhere else.
+    for (const [name, src] of [
+      ["ApprovalBanner", APPROVAL],
+      ["ConsequenceBanner", CONSEQUENCE],
+    ]) {
+      expect(src, name).not.toMatch(/border-l-2/);
+      expect(src, name).not.toMatch(/grid-cols-\[68px/);
+      expect(src, name).not.toMatch(/role="alertdialog"/);
+    }
+    expect(GATE).toMatch(/border-l-2 border-\[var\(--border\)\] border-l-\[var\(--warn\)\]/);
+    expect(GATE).toMatch(/bg-\[color-mix\(in_srgb,var\(--warn\)_8%,transparent\)\]/);
+    expect(GATE).toMatch(/grid-cols-\[68px_minmax\(0,1fr\)\]/);
+    expect(GATE).toMatch(/role="alertdialog"/);
+  });
+
+  it("gives the publish banner no session grant, no batch, no counter (§43b)", () => {
+    // The absences *are* the semantic difference, and they read as decisions
+    // only because the shell around them is identical.
+    expect(CONSEQUENCE).not.toMatch(/type="checkbox"/);
+    expect(CONSEQUENCE).not.toMatch(/for this session/);
+    expect(CONSEQUENCE).not.toMatch(/remaining/);
+    expect(CONSEQUENCE).not.toMatch(/meta=/);
+    // Still present on the approval banner, which did not change.
+    expect(APPROVAL).toMatch(/type="checkbox"/);
+    expect(APPROVAL).toMatch(/meta=\{/);
+  });
+
+  it("leaves the approval banner without focus theft or an Escape binding", () => {
+    // §33g claims the approval banner already moves focus and resolves
+    // Escape. It never has, and unit 4.4's contract is that its behaviour
+    // does not change — so both are opt-in on the shell and this one does not
+    // opt in. A keystroke that used to do nothing must not start denying a
+    // signing request as a side effect of a refactor.
+    expect(APPROVAL).not.toMatch(/onEscape/);
+    expect(APPROVAL).not.toMatch(/\.focus\(\)/);
+    expect(CONSEQUENCE).toMatch(/onEscape=/);
+    expect(CONSEQUENCE).toMatch(/cancelRef\.current\?\.focus\(\)/);
+  });
+
+  it("puts neither banner button in --warn (§43c)", () => {
+    // On the warn-8% ground, --warn text measures 4.39:1 in light. Amber
+    // marks the decision *point*: on the tile that is the button, inside the
+    // banner it is the banner, and the buttons are its answer.
+    const actions = CONSEQUENCE.match(/actions=\{[\s\S]*?\n {6}\}/);
+    expect(actions, "actions block not found").toBeTruthy();
+    expect(actions[0]).not.toMatch(/--warn/);
+    expect(actions[0]).toMatch(/variant="ghost"[\s\S]*?variant="secondary"/);
+  });
+
+  it("renders inline in the tile, never as a floating layer (§43d)", () => {
+    // A layer dismissed by clicking away trains dismissal, and the context —
+    // which tile, which artifact — is what the question is about.
+    expect(TILE).toMatch(/<ConsequenceBanner/);
+    expect(TILE).not.toMatch(/absolute right-2 top-full/);
+    expect(TILE).not.toMatch(/publishConfirmLabel/);
+  });
+});
+
+describe("Publish is outward, declared once, and states its consequences (§34a/§38b)", () => {
+  const publish = actionById("key.publish");
+
+  it("is the one outward action, on the one kind that can be published", () => {
+    const outward = ARTIFACT_ACTIONS.filter((a) => a.tier === "outward").map((a) => a.id);
+    expect(outward).toEqual(["key.publish"]);
+    const kinds = ARTIFACT_KINDS.filter((k) => (k.actions || []).includes("key.publish")).map(
+      (k) => k.id
+    );
+    // `publishArtifact` throws on any role but public-key; the registry and
+    // the function now agree in two places instead of one.
+    expect(kinds).toEqual(["openpgp-public"]);
+    expect(ARTIFACT_KINDS.find((k) => k.id === "openpgp-public").match.role).toBe("public-key");
+  });
+
+  it("disables with a reason when there is no route to the directory", () => {
+    expect(publish.available({ artifact: {}, services: {} })).toEqual({
+      disabled: ACTION_REASONS.offline,
+    });
+    expect(publish.available({ artifact: {}, services: { directory: { publish: () => {} } } })).toBe(
+      true
+    );
+  });
+
+  it("names this site and never a keyserver on the Where line", () => {
+    // `upstream-hkp.js` is lookup-only; there is no upstream write path at
+    // all, so wording that could name a keyserver would be a lie about where
+    // the key went.
+    const spec = publish.confirm({
+      artifact: { label: "dana.pub.asc", traits: { fingerprint: "3F2AB19C4D7E0518" } },
+      services: { directory: { host: "keys.example.com", publish: () => {} } },
+    });
+    const where = spec.facts.find((f) => f.term === "Where");
+    expect(where.detail).toBe("keys.example.com");
+    expect(where.sub).toBe("this site's directory — not an upstream keyserver");
+    expect(JSON.stringify(spec)).not.toMatch(/keys\.openpgp\.org|keys\.mailvelope\.com/);
+  });
+
+  it("says what becomes public and what permanent means, verbatim", () => {
+    // The email addresses are the consequence people are surprised by, and
+    // "you can add a tombstone, you cannot delete" is the accurate model — a
+    // user who thinks revocation is deletion will make the wrong call.
+    const spec = publish.confirm({
+      artifact: { label: "dana.pub.asc", traits: {} },
+      services: { directory: { host: "h", publish: () => {} } },
+    });
+    expect(spec.facts.find((f) => f.term === "Becomes public").detail).toBe(
+      "The key, its user IDs, and every signature on it — readable by anyone with directory access, including the email addresses in its user IDs."
+    );
+    expect(spec.facts.find((f) => f.term === "Permanent").detail).toBe(
+      "A published key cannot be withdrawn. You can publish a revocation later; you cannot make this copy go away."
+    );
+    expect(spec.confirmLabel).toBe("Publish");
+  });
+
+  it("shows the fingerprint in display shape, not normalized hex", () => {
+    const spec = publish.confirm({
+      artifact: {
+        label: "dana.pub.asc",
+        traits: { fingerprint: "3F2AB19C4D7E0518A2B6C93D4E7F0A1B2C3D4E5F" },
+      },
+      services: { directory: { host: "h", publish: () => {} } },
+    });
+    expect(spec.facts.find((f) => f.term === "Key").sub).toBe(
+      "3F2A B19C 4D7E 0518 A2B6 C93D 4E7F 0A1B 2C3D 4E5F"
+    );
+  });
+
+  it("reports where the key went, so the Activity log can name it", async () => {
+    const res = await publish.run({
+      services: {
+        directory: {
+          publish: async () => ({ fingerprint: "ABC", directoryUrl: "https://x/pks/lookup" }),
+        },
+      },
+    });
+    expect(res.receipt).toBe("Published");
+    expect(res.detail).toBe("https://x/pks/lookup");
+  });
+});

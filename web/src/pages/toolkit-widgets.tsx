@@ -39,6 +39,7 @@ import {
   DkgPanel,
   CeremonySheet,
   ApprovalBanner,
+  ConsequenceBanner,
 } from "../toolkit/widgets/index";
 import { execVssCommitments, execVssSplit } from "../lib/toolkit/vss-ops.js";
 import { qrSvg } from "../lib/qr.js";
@@ -991,8 +992,49 @@ function CatalogApp() {
             />
           </div>
           <StateLabel>
-            Key export — Publish opens a confirm popover; already-published row shows
-            @slot + a link icon that copies the directory URL
+            Key export — Publish raises the §34c consequence banner inline; the
+            already-published row shows @slot + a link icon that copies the directory
+            URL, and offers no Publish at all
+          </StateLabel>
+          <p className="mb-1 max-w-md text-[11px] text-[var(--muted-foreground)]">
+            These two rows carried <code>kind: "key"</code> and no <code>role</code>, so
+            they resolved to the <em>fallback</em> kind while purporting to demonstrate
+            the publish flow — the "a fixture that merely looks like what the engine
+            emits" trap, in the section that exists to catch it. They carry{" "}
+            <code>role: "public-key"</code> now, which is what makes Publish appear at
+            all: the action is declared by the kind, not passed in as a flag.
+          </p>
+          <div className="max-w-md">
+            <OutputList
+              outputs={[
+                {
+                  label: "dana.pub.asc",
+                  kind: "key",
+                  role: "public-key",
+                  tags: ["openpgp", "public-key"],
+                  traits: { fingerprint: "3F2AB19C4D7E0518A2B6C93D4E7F0A1B2C3D4E5F" },
+                  sizeBytes: 1843,
+                  onCopy: () => {},
+                  onPublish: async () => ({ fingerprint: "3F2A…C81" }),
+                  directoryHost: "keys.example.com",
+                },
+                {
+                  label: "sam.pub.asc",
+                  kind: "key",
+                  role: "public-key",
+                  tags: ["openpgp", "public-key"],
+                  traits: { fingerprint: "C81F5AM19C4D7E0518A2B6C93D4E7F0A1B2C3D4E" },
+                  sizeBytes: 1798,
+                  onCopy: () => {},
+                  publishedAs: "@C81FSAM",
+                  directoryUrl: "https://example.org/pks/lookup?op=get&search=0xSAM",
+                },
+              ]}
+            />
+          </div>
+          <StateLabel>
+            The same key with no route to the directory — Publish is declared by the
+            kind, so it renders, disabled, carrying the reason
           </StateLabel>
           <div className="max-w-md">
             <OutputList
@@ -1000,19 +1042,11 @@ function CatalogApp() {
                 {
                   label: "dana.pub.asc",
                   kind: "key",
+                  role: "public-key",
+                  tags: ["openpgp", "public-key"],
+                  traits: { fingerprint: "3F2AB19C4D7E0518A2B6C93D4E7F0A1B2C3D4E5F" },
                   sizeBytes: 1843,
                   onCopy: () => {},
-                  publishable: true,
-                  publishConfirmLabel: "3F2A…C81",
-                  onPublish: () => {},
-                },
-                {
-                  label: "sam.pub.asc",
-                  kind: "key",
-                  sizeBytes: 1798,
-                  onCopy: () => {},
-                  publishedAs: "@C81FSAM",
-                  directoryUrl: "https://example.org/pks/lookup?op=get&search=0xSAM",
                 },
               ]}
             />
@@ -1139,6 +1173,105 @@ function CatalogApp() {
                   runTotal: null,
                 }}
                 onDecide={() => {}}
+              />
+            </div>
+          </div>
+          <p className="mb-1 mt-4 text-[11px] text-[var(--muted-foreground)]">
+            The two consequence banners, stacked under the approval ones on purpose
+            (§43a). The resemblance is the feature: a user who has learned that a
+            warn-bordered panel with a facts table means a decision should not have to
+            learn a second visual language for the same sentence. And §43b's point only
+            works if the shell is otherwise identical — the eye lands where the session
+            checkbox was, and finds nothing there. There is no defensible "don't ask
+            again" for publishing.
+          </p>
+          <div className="max-w-lg space-y-4" data-catalog-consequence>
+            <div>
+              <StateLabel>
+                Publish — every line is data held at the moment of the click. "Where"
+                names this site and can never name a keyserver: there is no upstream
+                write path
+              </StateLabel>
+              <ConsequenceBanner
+                spec={{
+                  title: "Publish this key to the directory",
+                  facts: [
+                    {
+                      term: "Key",
+                      detail: "dana.pub.asc",
+                      sub: "3F2A B19C 4D7E 0518 A2B6 C93D 4E7F 0A1B 2C3D 4E5F",
+                    },
+                    {
+                      term: "Where",
+                      detail: "keys.example.com",
+                      sub: "this site's directory — not an upstream keyserver",
+                    },
+                    {
+                      term: "Becomes public",
+                      detail:
+                        "The key, its user IDs, and every signature on it — readable by anyone with directory access, including the email addresses in its user IDs.",
+                    },
+                    {
+                      term: "Permanent",
+                      detail:
+                        "A published key cannot be withdrawn. You can publish a revocation later; you cannot make this copy go away.",
+                    },
+                  ],
+                  confirmLabel: "Publish",
+                }}
+                onConfirm={() => {}}
+                onCancel={() => {}}
+              />
+            </div>
+            <div>
+              <StateLabel>
+                Failed — the thrown message verbatim, and the button stays live. A failed
+                publish is retryable; "something went wrong" is worse than the failure
+              </StateLabel>
+              <ConsequenceBanner
+                spec={{
+                  title: "Publish this key to the directory",
+                  facts: [
+                    { term: "Key", detail: "dana.pub.asc", sub: "3F2A B19C 4D7E 0518" },
+                    {
+                      term: "Where",
+                      detail: "keys.example.com",
+                      sub: "this site's directory — not an upstream keyserver",
+                    },
+                  ],
+                  confirmLabel: "Publish",
+                }}
+                error="Request failed (503): the directory is not accepting keys right now."
+                onConfirm={() => {}}
+                onCancel={() => {}}
+              />
+            </div>
+            <div>
+              <StateLabel>
+                Overwrite (§34d) — the shape the one confirming local mutation will use.
+                Not reachable yet: <code>keyring.add</code> is blocked on{" "}
+                <code>saveKey(&#123; onConflict &#125;)</code>, because a button whose
+                failure mode is silently weakening a key's protection must not ship first
+              </StateLabel>
+              <ConsequenceBanner
+                spec={{
+                  title: "This key is already in My Keys",
+                  facts: [
+                    {
+                      term: "In the vault",
+                      detail: "Justin Capella <justin@basilisk.dev>",
+                      sub: "added 2026-04-02 · passkey",
+                    },
+                    {
+                      term: "Replacing",
+                      detail:
+                        "re-wraps it with device protection and clears its usage history. Its passkey binding is discarded; you would enrol a new one to restore passkey protection.",
+                    },
+                  ],
+                  confirmLabel: "Replace",
+                }}
+                onConfirm={() => {}}
+                onCancel={() => {}}
               />
             </div>
           </div>

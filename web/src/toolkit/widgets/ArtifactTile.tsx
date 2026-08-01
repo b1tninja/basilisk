@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
 import { KindGlyph } from "./kind-glyphs";
-import { ArtifactAction } from "./ArtifactAction";
+import { ArtifactAction, type ActionTier } from "./ArtifactAction";
+import { ConsequenceBanner, type ConsequenceSpec } from "./ConsequenceBanner";
 import { actionsFor } from "../../lib/toolkit/artifact-actions.js";
 import { recordActivity } from "../../lib/toolkit/activity-log.js";
 import {
@@ -40,12 +41,18 @@ export type OutputArtifact = {
   sizeBytes: number;
   sensitive?: boolean;
   onCopy: () => void;
-  /** True only for key-export rows — the sole publishable output kind (§21b). */
-  publishable?: boolean;
-  /** Confirm-popover label, e.g. a short fingerprint ("3F2A…C81"). */
-  publishConfirmLabel?: string;
-  /** Publish action — called only after the confirm popover is accepted. */
-  onPublish?: () => void | Promise<void>;
+  /**
+   * The route to this site's directory, when there is one.
+   *
+   * Its *presence* is what makes Publish available; which artifacts may be
+   * published is the kind table's answer (`key.publish` is declared on
+   * `openpgp-public` alone, §38b), not a `publishable` flag the shell
+   * recomputes beside it. The two used to disagree in exactly the way the
+   * badge mapping did.
+   */
+  onPublish?: () => Promise<{ fingerprint?: string; directoryUrl?: string } | void>;
+  /** Host named on the confirmation's "Where" line — this site, never an upstream. */
+  directoryHost?: string;
   /** Slot this artifact was already published to — replaces the Publish button. */
   publishedAs?: string;
   /** Directory URL once published — the row's link icon copies this. */
@@ -197,6 +204,24 @@ export function renderKindView(
   }
 }
 
+/**
+ * One entry of the action table, as this file consumes it.
+ *
+ * The table is JS with JSDoc types, so this is the structural shape rather
+ * than an import — narrow on purpose, listing only what the tile actually
+ * calls, so a table field the tile ignores cannot start looking load-bearing.
+ */
+type ArtifactActionSpec = {
+  id: string;
+  label: string;
+  tier: ActionTier;
+  available: (ctx: unknown) => true | { disabled: string };
+  confirm?: (ctx: unknown) => ConsequenceSpec | null;
+  run: (ctx: unknown) => Promise<{ receipt?: string; detail?: string } | void>;
+};
+
+type PendingConfirm = { action: ArtifactActionSpec; spec: ConsequenceSpec };
+
 type ArtifactTileProps = {
   artifact: OutputArtifact;
   /** Draws the divider under every row but the last (§40a). */
@@ -241,13 +266,68 @@ export function ArtifactTile({
   onFormatChange,
   onExpand,
 }: ArtifactTileProps) {
-  const [confirming, setConfirming] = useState(false);
+  /**
+   * The pending confirmation, its in-flight flag and the last thrown message
+   * (§34c/§33f). One at a time by construction: an action that has raised a
+   * banner is the only thing the tile is asking about, so a second click on a
+   * different action cannot stack a second question.
+   */
+  const [pending, setPending] = useState<PendingConfirm | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   // §32e: one resolver call, computed once. The kind is decided by the
   // artifact's identity; `kindBody` is null when this kind has no body
   // to draw, and the raw path below renders instead.
   const resolvedKind = resolveArtifactKind(a, ARTIFACT_KINDS, FALLBACK_KIND);
   const kindBody = renderKindView(resolvedKind, a, false);
   const masked = !!a.sensitive && !revealed;
+  const services = {
+    // The existing handler, not a re-implementation: it fires the shipped
+    // clipboard toast and knows this artifact's own serialization. The table
+    // makes its *gating* uniform.
+    copyArtifact: () => a.onCopy(),
+    clipboard: { write: (t: string) => navigator.clipboard.writeText(t) },
+    // Injected only when the caller supplied a publish route, so `available()`
+    // reports "no connection to this site's directory" rather than the tile
+    // deciding by omission whether the button exists at all.
+    directory: a.onPublish
+      ? { host: a.directoryHost || "this site", publish: () => a.onPublish!() }
+      : undefined,
+  };
+
+  /**
+   * Run an action, log it, and surface what it did (§33f, §36).
+   *
+   * Logging lives here — the one place every action passes through — so a
+   * newly declared action cannot forget. Only on success: an action that threw
+   * moved nothing, and recording it as though it had would make the log lie in
+   * the direction that matters least forgivably.
+   */
+  const runAction = (action: ArtifactActionSpec) => {
+    const ctx = { artifact: a, kind: resolvedKind, masked, services };
+    setBusy(true);
+    setError(null);
+    void Promise.resolve(action.run(ctx))
+      .then((result) => {
+        setPending(null);
+        return recordActivity({
+          action: action.id,
+          label: action.label,
+          artifact: a.label,
+          tier: action.tier,
+          content: a.content,
+          detail: result?.detail,
+          receipt: result?.receipt,
+        });
+      })
+      .catch((e: unknown) => {
+        // Verbatim, and the button stays live: a failed publish is retryable,
+        // and "something went wrong" is the one outcome worse than the failure.
+        setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => setBusy(false));
+  };
+
   return (
     <div
       data-artifact-kind={resolvedKind.id}
@@ -311,49 +391,33 @@ export function ArtifactTile({
             tile because there is only one Copy — the churn this whole
             abstraction exists to stop is each tile growing its own. */}
         {actionsFor(resolvedKind).map((action) => {
-          const ctx = {
-            artifact: a,
-            kind: resolvedKind,
-            masked,
-            services: {
-              // The existing handler, not a re-implementation: it fires the
-              // shipped clipboard toast and knows this artifact's own
-              // serialization. The table makes its *gating* uniform.
-              copyArtifact: () => a.onCopy(),
-              clipboard: { write: (t: string) => navigator.clipboard.writeText(t) },
-            },
-          };
+          // §33f: an outward action is replaced by its result. Once the key is
+          // published the button is gone, which is the only one of the three
+          // receipt weights that makes re-firing an irreversible action
+          // structurally impossible.
+          if (action.tier === "outward" && a.publishedAs) return null;
+          const ctx = { artifact: a, kind: resolvedKind, masked, services };
           const availability = action.available(ctx);
           const reason = availability === true ? undefined : availability.disabled;
+          const confirmSpec = availability === true ? action.confirm?.(ctx) : null;
           return (
             <ArtifactAction
               key={action.id}
               label={action.label}
               tier={action.tier}
               reason={reason}
+              busy={busy && pending?.action.id === action.id}
+              busyLabel={`${action.label}…`}
               onClick={() => {
-                void Promise.resolve(action.run(ctx))
-                  .then((result) =>
-                    // §36: logged here, in the one place every action
-                    // passes through, so a newly declared action cannot
-                    // forget. Only on success — an action that threw moved
-                    // nothing, and recording it as though it had would make
-                    // the log lie in the direction that matters least
-                    // forgivably.
-                    recordActivity({
-                      action: action.id,
-                      label: action.label,
-                      artifact: a.label,
-                      tier: action.tier,
-                      content: a.content,
-                      detail: result?.detail,
-                      receipt: result?.receipt,
-                    })
-                  )
-                  .catch(() => {
-                    /* the action's own error surface is the next increment;
-                       a rejected copy must not take the tile down. */
-                  });
+                // §34c: an action that declares consequences asks first, in
+                // the banner — never in a popover, so the tile it is about
+                // stays visible and a click elsewhere cannot dismiss it.
+                if (confirmSpec) {
+                  setError(null);
+                  setPending({ action, spec: confirmSpec });
+                  return;
+                }
+                runAction(action);
               }}
             />
           );
@@ -376,55 +440,33 @@ export function ArtifactTile({
               </button>
             ) : null}
           </span>
-        ) : a.publishable && a.onPublish ? (
-          <>
-            <Button
-              size="sm"
-              className="h-[22px] shrink-0 rounded-[5px] bg-[var(--brand)] px-2 text-[10px] font-bold text-[var(--on-brand)] hover:opacity-90"
-              onClick={(e) => {
-                e.stopPropagation();
-                setConfirming(true);
-              }}
-            >
-              Publish
-            </Button>
-            {confirming ? (
-              <div
-                className="absolute right-2 top-full z-10 mt-1 w-[280px] rounded-[9px] border border-[var(--border)] bg-[var(--surface)] p-[10px] shadow-[0_10px_24px_rgba(0,0,0,.4)]"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <p className="mb-2 text-[11px] leading-[1.5] text-[var(--foreground)]">
-                  Publish as{" "}
-                  <code className="text-[var(--muted-foreground)]">
-                    {a.publishConfirmLabel || a.label}
-                  </code>
-                  ? Anyone with directory access can fetch it.
-                </p>
-                <div className="flex justify-end gap-1.5">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-[24px] rounded-[5px] px-2.5 text-[10.5px]"
-                    onClick={() => setConfirming(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="h-[24px] rounded-[5px] bg-[var(--brand)] px-2.5 text-[10.5px] font-bold text-[var(--on-brand)] hover:opacity-90"
-                    onClick={() => {
-                      setConfirming(false);
-                      void a.onPublish?.();
-                    }}
-                  >
-                    Publish
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-          </>
         ) : null}
       </div>
+
+      {/* §43d: inline, directly under the action row. The tile grows; nothing
+          overlays. A floating layer that closes when you click away trains
+          dismissal, and the context — which tile, which artifact — is exactly
+          what a consequence question needs kept on screen. */}
+      {pending ? (
+        <ConsequenceBanner
+          className="mt-1 rounded-[6px]"
+          spec={pending.spec}
+          busy={busy}
+          error={error}
+          onCancel={() => {
+            setPending(null);
+            setError(null);
+          }}
+          onConfirm={() => runAction(pending.action)}
+        />
+      ) : null}
+      {/* An error from an action that asked nothing still has to land
+          somewhere, and the tile is where it belongs (§33f). */}
+      {!pending && error ? (
+        <p className="text-[length:10px] text-[var(--error)]" data-action-error>
+          {error}
+        </p>
+      ) : null}
       {masked ? (
         <span className="flex flex-col gap-1 pl-[1px]">
           {/* §35d: a masked private key is no longer a blank tile — its

@@ -51,6 +51,12 @@ export {
 } from "./ConnectionsPanel";
 export { TypeCard } from "./TypeCard";
 export { ApprovalBanner } from "./ApprovalBanner";
+export { GateBanner, GateFact } from "./GateBanner";
+export {
+  ConsequenceBanner,
+  type ConsequenceSpec,
+  type ConsequenceFact,
+} from "./ConsequenceBanner";
 export { ShareCards, type ShareCardArtifact, type ShareCardsProps } from "./ShareCards";
 export { ShareCheck, type ShareCheckProps } from "./ShareCheck";
 export { IntegrityPanel, type IntegrityPanelProps } from "./IntegrityPanel";

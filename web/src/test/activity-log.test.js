@@ -96,9 +96,18 @@ describe("every tier is recorded, not only the dramatic ones", () => {
   it("records only what actually happened", () => {
     // Logged in `.then`, never in `.catch`: an action that threw moved
     // nothing, and recording it as though it had is the least forgivable
-    // direction for this log to lie in.
+    // direction for this log to lie in. Asserted as *position* in the chain
+    // rather than as one literal expression — the `.then` body grew a
+    // `setPending(null)` when §34c gave outward actions a confirmation to
+    // dismiss, and a regex pinned to the old one-liner would have failed on a
+    // change that kept the property exactly.
     const code = stripComments(OUTPUT_LIST);
-    expect(code).toMatch(/\.then\(\(result\) =>\s*recordActivity/);
+    const then = code.indexOf(".then((result)");
+    const log = code.indexOf("recordActivity(", then);
+    const caught = code.indexOf(".catch(", then);
+    expect(then, ".then((result) not found").toBeGreaterThan(-1);
+    expect(log, "recordActivity not inside the .then").toBeGreaterThan(then);
+    expect(log, "recordActivity is not before the .catch").toBeLessThan(caught);
     expect(code).not.toMatch(/catch\([\s\S]{0,200}recordActivity/);
   });
 });

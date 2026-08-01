@@ -27,6 +27,20 @@ import { formatFingerprint } from "../utils.js";
 /**
  * @typedef {true | { disabled: string }} Availability
  * @typedef {{ receipt: string, detail?: string }} ActionResult
+ *
+ * @typedef {object} ConsequenceFact
+ * @property {string} term
+ * @property {string} detail
+ * @property {string} [sub]
+ * @property {boolean} [mono]
+ *
+ * @typedef {object} ConsequenceSpec
+ *   What an outward or overwriting action must state before it runs (§34c).
+ *   Built here, from data held at the moment of the click, so the sentences
+ *   are asserted in one place rather than written into a widget.
+ * @property {string} title
+ * @property {ConsequenceFact[]} facts
+ * @property {string} confirmLabel
  */
 
 /** Parse an artifact's JWK body, or null when it is not one. */
@@ -132,6 +146,72 @@ export const ARTIFACT_ACTIONS = Object.freeze([
       }
       await services.clipboard.write(id.publicLine);
       return { receipt: "Public line copied", detail: id.publicLine };
+    },
+  },
+  {
+    /**
+     * The one outward action there is (§34a). Declared on exactly one kind —
+     * `openpgp-public`, which matches `role: "public-key"` — and
+     * `publishArtifact` throws on any other role, so the registry and the
+     * function agree in two places instead of one. `artifact-actions.test.js`
+     * asserts no second kind declares it.
+     */
+    id: "key.publish",
+    label: "Publish",
+    tier: "outward",
+    available: ({ services }) =>
+      services?.directory?.publish
+        ? true
+        : // Not "declared but broken": the tile renders this action for every
+          // public key, and whether a route to the directory exists is a fact
+          // about the environment, which is exactly what §33d says belongs in
+          // a reason string rather than in the kind's declaration.
+          { disabled: ACTION_REASONS.offline },
+    /**
+     * Every line is data held at the moment of the click (§34c).
+     *
+     * The key is named by the artifact's own label and its fingerprint in
+     * display format, not by a user id: `traits` carries only `fingerprint`,
+     * and the uid would have to come from a second parse of the armor — which
+     * the tile's own card, two lines above the banner, has already done and
+     * already shows. Restating it here would mean two parses that can
+     * disagree, to repeat something visible without scrolling.
+     *
+     * "Where" names this site and can never name a keyserver: `upstream-hkp.js`
+     * is lookup-only and there is no upstream write path at all (§38b).
+     */
+    confirm: ({ artifact, services }) => ({
+      title: "Publish this key to the directory",
+      facts: [
+        {
+          term: "Key",
+          detail: artifact.label,
+          sub: formatFingerprint(String(artifact.traits?.fingerprint || "")) || undefined,
+        },
+        {
+          term: "Where",
+          detail: services?.directory?.host || "this site",
+          sub: "this site's directory — not an upstream keyserver",
+        },
+        {
+          term: "Becomes public",
+          detail:
+            "The key, its user IDs, and every signature on it — readable by anyone with directory access, including the email addresses in its user IDs.",
+        },
+        {
+          term: "Permanent",
+          detail:
+            "A published key cannot be withdrawn. You can publish a revocation later; you cannot make this copy go away.",
+        },
+      ],
+      confirmLabel: "Publish",
+    }),
+    run: async ({ services }) => {
+      const result = await services.directory.publish();
+      return {
+        receipt: "Published",
+        detail: result?.directoryUrl || result?.fingerprint || undefined,
+      };
     },
   },
 ]);
