@@ -1083,15 +1083,20 @@ input[type="file"][data-basilisk-file-picker] {
 /*
  * One-time code tile (OtpCodeCard).
  *
- * Three tones, one closed set: `ok` (this is the current code), `warn` (its
- * step is nearly over), `error` (it is not the current code any more).
- * Enumerated here rather than computed inline because `style-src 'self'`
- * refuses an inline style.
+ * Four tones, one closed set: `ok` (this is the current code), `warn` (its
+ * step is nearly over), `error` (it is not the current code any more), and
+ * `muted` for the two objects that have no countdown to colour — a HOTP code,
+ * which answers to a counter rather than a clock, and a code pinned with `at=`,
+ * whose instant the recipe named. Enumerated here rather than computed inline
+ * because `style-src 'self'` refuses an inline style.
  *
  * The digits stay legible when the step has passed — muted, never hidden and
  * never struck through. An expired code is still the value the recipe produced
  * and the value the receipt digested; the tile reports that it is no longer
- * current, which is a different claim from the value being wrong.
+ * current, which is a different claim from the value being wrong. `muted` gets
+ * no `.otp-code` rule at all for the sharper version of the same point: a
+ * pinned code has not lost anything, so its digits are the plain foreground at
+ * full weight.
  */
 .otp-code {
   font-size: 27px;

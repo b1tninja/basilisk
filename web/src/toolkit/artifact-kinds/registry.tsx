@@ -772,6 +772,14 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
      * recipe and nothing the receipt could describe. The card answers the
      * question that button was for as a *view*: the countdown keeps ticking
      * honestly toward zero and then says so.
+     *
+     * One kind, three shapes, and that is the point rather than a compromise —
+     * a live TOTP code counts down, a HOTP code shows its counter, and a code
+     * pinned with `at=` states its instant and does not tick. Same badge, same
+     * actions, same digits at the same weight; the value varies, the type does
+     * not. `traits.otpMode` and `traits.otpPinnedAt` are what tell them apart,
+     * which is why both had to be on the artifact rather than inferred by the
+     * widget from a body that is six characters long.
      */
     id: "otp-code",
     match: { role: "text", tags: ["otp-code"] },

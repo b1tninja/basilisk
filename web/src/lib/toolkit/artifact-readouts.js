@@ -227,6 +227,15 @@ export function groupOtpCode(code) {
  * missing feature: an event counter has no clock, so a HOTP code does not
  * expire — it gets spent. The tile says which counter, and nothing about time.
  *
+ * `pinnedAt` is the one field here that is not arithmetic on the others. It is
+ * the instant the *recipe* named with `at=`, and it is absent when the recipe
+ * meant "now". Without it the two cases arrive identically — same trait shape,
+ * same absolute expiry — and a code computed for 2023 draws the same draining
+ * bar as one computed a second ago, lands on **expired**, and tells its reader
+ * to re-run the cell for the current one. Re-running a pinned step produces
+ * the same digits forever, so that instruction was the one guaranteed to fail.
+ * TOTP only: `at=` is a claim about a clock and HOTP has none.
+ *
  * Total, like everything here: a body that is not digits, or an artifact
  * carrying no OTP facts at all, returns null and the tile renders the raw
  * body it would have rendered anyway (§32d).
@@ -236,7 +245,7 @@ export function groupOtpCode(code) {
  * @returns {{ code: string, groups: string[], mode: "totp"|"hotp",
  *   digits: number, label: string, period: number|null, step: string|null,
  *   counter: number|null, expiresAt: number|null,
- *   snapshotSeconds: number|null } | null}
+ *   snapshotSeconds: number|null, pinnedAt: number|null } | null}
  */
 export function otpCodeReadout(content, traits) {
   const code = String(content ?? "").trim();
@@ -255,6 +264,7 @@ export function otpCodeReadout(content, traits) {
     Number.isInteger(Number(t.otpCounter)) && Number(t.otpCounter) >= 0
       ? Number(t.otpCounter)
       : null;
+  const pinned = Number(t.otpPinnedAt);
   return {
     code,
     groups: groupOtpCode(code),
@@ -268,6 +278,7 @@ export function otpCodeReadout(content, traits) {
     snapshotSeconds: Number.isFinite(Number(t.otpExpiresIn))
       ? Number(t.otpExpiresIn)
       : null,
+    pinnedAt: mode === "totp" && Number.isFinite(pinned) && pinned > 0 ? pinned : null,
   };
 }
 
@@ -278,11 +289,30 @@ export function otpCodeReadout(content, traits) {
  * of the countdown with a decision in it, and a test can walk it past zero in
  * a millisecond where a real code takes half a minute.
  *
- * @param {{ expiresAt: number|null, period: number|null }|null} readout
+ * **It is also the one place that decides whether a clock applies at all**, and
+ * null is that answer for two different objects. A HOTP code has no clock to
+ * measure against: an event counter does not expire, it gets spent. A *pinned*
+ * code has a clock, but not this one — the recipe named the instant, and:
+ *
+ * > A card may tick only against an instant the recipe did not choose. If the
+ * > recipe named the instant, the card states it. If the recipe meant *now*,
+ * > the run fixed an instant and the card may count from it.
+ *
+ * Counting a pinned code down against wall-clock now answers a question nobody
+ * asked — it expired relative to the instant `at=` named, which is a different
+ * statement — and it is what produced *"expired — run the cell again for the
+ * current one"* over a value that is identical on every run by construction.
+ * Refusing the arithmetic here rather than branching in the widget is why the
+ * rule is testable in node, and why a second card reading these fields cannot
+ * reintroduce the same claim.
+ *
+ * @param {{ expiresAt: number|null, period: number|null,
+ *   pinnedAt?: number|null }|null} readout
  * @param {number} nowSeconds  Unix seconds
  * @returns {{ seconds: number, expired: boolean, fraction: number }|null}
  */
 export function otpTimeLeft(readout, nowSeconds) {
+  if (readout?.pinnedAt) return null;
   if (!readout?.expiresAt || !readout.period) return null;
   const seconds = Math.ceil(readout.expiresAt - Number(nowSeconds));
   return {

@@ -35,6 +35,7 @@ import "../lib/toolkit/registry.js";
 import { ARTIFACT_ROLES } from "../lib/toolkit/types.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
+import { digestArtifact, RECEIPT_VERSION } from "../lib/toolkit/receipt.js";
 import { ARTIFACT_KINDS, FALLBACK_KIND } from "../toolkit/artifact-kinds/registry.tsx";
 import { resolveArtifactKind } from "../toolkit/artifact-kinds/resolve.ts";
 import { actionsFor } from "../lib/toolkit/artifact-actions.js";
@@ -52,6 +53,7 @@ const stripComments = (t) =>
 
 const CARD_SRC = read("../toolkit/widgets/OtpCodeCard.tsx");
 const SHELL_SRC = read("../toolkit/ToolkitShell.tsx");
+const CATALOG_SRC = read("../pages/toolkit-widgets.tsx");
 
 const kindById = (id) => ARTIFACT_KINDS.find((k) => k.id === id);
 
@@ -222,6 +224,132 @@ describe("the countdown is honest about a stale artifact", () => {
     expect(readout.counter).toBe(2);
     expect(readout.expiresAt).toBeNull();
     expect(otpTimeLeft(readout, Date.now() / 1000)).toBeNull();
+  });
+});
+
+describe("a code the recipe pinned is not measured against now", () => {
+  // The defect this block exists to close: `otp.code at=<past>` rendered
+  // "expired — run the cell again for the current one", and re-running produced
+  // the identical code forever, because `at=` is what pins it. The two cases
+  // were indistinguishable — byte-identical trait shapes — so the card was
+  // doing the only thing it could with what it had.
+
+  it("records that the recipe named the instant, and stays silent when it did not", async () => {
+    const [pinned] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out @code`);
+    expect(pinned.artifact.traits.otpPinnedAt).toBe(AT);
+
+    const [live] = await tilesOf("random 20 | base32 | otp.code | out @code");
+    // Absent, not `null` or `0`. Absent already meant "the recipe meant now"
+    // for every artifact ever produced, which is why this needs no migration.
+    expect("otpPinnedAt" in live.artifact.traits).toBe(false);
+    expect(live.artifact.traits.otpMode).toBe("totp");
+  });
+
+  it("says nothing about pinning on a HOTP code, which has no clock to pin", async () => {
+    // `at=` is a claim about a wall clock. `hotp()` never sees one — it answers
+    // to `counter=` — so recording an instant here would be recording a
+    // parameter that did not participate in the value.
+    const [tile] = await tilesOf(
+      `random 20 | base32 | otp.code mode=hotp counter=2 at=${AT} | out @code`
+    );
+    expect(tile.artifact.traits.otpMode).toBe("hotp");
+    expect("otpPinnedAt" in tile.artifact.traits).toBe(false);
+    expect(otpCodeReadout(tile.artifact.content, tile.artifact.traits).pinnedAt).toBeNull();
+  });
+
+  it("re-running a pinned cell produces the same digits, which is why the old advice was false", async () => {
+    const src = `"JBSWY3DPEHPK3PXP" | otp.code at=1700000000 | out @code`;
+    const [a] = await tilesOf(src);
+    const [b] = await tilesOf(src);
+    expect(a.artifact.content).toBe(b.artifact.content);
+    expect(a.artifact.traits.otpStep).toBe(b.artifact.traits.otpStep);
+  });
+
+  it("refuses the countdown arithmetic outright, rather than branching in the widget", () => {
+    // The rule lives in `lib/`: *a card may tick only against an instant the
+    // recipe did not choose*. Because `otpTimeLeft` returns null, every branch
+    // downstream of it — the seconds, the draining bar, the word "expired" and
+    // the sentence telling you to re-run — is unreachable for a pinned code,
+    // and a second reader of these traits cannot reintroduce the claim.
+    const traits = {
+      otpMode: "totp",
+      otpDigits: 6,
+      otpPeriod: 30,
+      otpStep: "41152263",
+      otpExpiresIn: 21,
+      otpPinnedAt: 1234567899,
+    };
+    const readout = otpCodeReadout("228746", traits);
+    expect(readout.pinnedAt).toBe(1234567899);
+    // The absolute expiry is still computed — it is a true fact about the step
+    // — but nothing counts against it.
+    expect(readout.expiresAt).toBe(STEP_END);
+    expect(otpTimeLeft(readout, STEP_END - 21)).toBeNull();
+    expect(otpTimeLeft(readout, STEP_END + 3600)).toBeNull();
+    // And the digits are untouched: the value never varies with the sentence.
+    expect(readout.code).toBe("228746");
+
+    // The same traits without the intent are the live case, unchanged.
+    const { otpPinnedAt: _drop, ...liveTraits } = traits;
+    expect(otpTimeLeft(otpCodeReadout("228746", liveTraits), STEP_END - 21).seconds).toBe(21);
+  });
+
+  it("moves no receipt digest, which is why the intent is a trait at all", async () => {
+    // The property the whole design rests on: `digestArtifact` reads label,
+    // filename, role, stepName, sensitive, length and a digest of content —
+    // never `traits`. A role carrying the same distinction would have moved
+    // every row and cost a RECEIPT_VERSION bump, as v1 → v2 did.
+    const [tile] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out @code`);
+    const withIntent = await digestArtifact(tile.artifact);
+    const { otpPinnedAt: _drop, ...rest } = tile.artifact.traits;
+    const withoutIntent = await digestArtifact({ ...tile.artifact, traits: rest });
+    expect(withIntent).toEqual(withoutIntent);
+    expect(Object.keys(withIntent)).not.toContain("traits");
+    expect(RECEIPT_VERSION).toBe(2);
+  });
+
+  it("keeps the clock branches under otpTimeLeft, including the interval", () => {
+    const code = stripComments(CARD_SRC);
+    // The timer asks the same function the sentence does, so a pinned code
+    // cannot tick however the render below is later edited.
+    expect(code).toMatch(/const ticks = otpTimeLeft\(readout, 0\) != null;/);
+    expect(code).toMatch(/if \(!ticks\) return undefined;/);
+    expect(code).toMatch(/const left = otpTimeLeft\(readout, tick \/ 1000\);/);
+
+    // Neither false claim appears anywhere in what a pinned code renders.
+    const branches = code
+      .split(/pinnedAt != null \? \(/)
+      .slice(1)
+      .map((s) => s.split(/\) : /)[0]);
+    expect(branches.length, "the chip and the sentence").toBe(2);
+    for (const branch of branches) {
+      expect(branch).not.toMatch(/expired/);
+      expect(branch).not.toMatch(/run the cell again/);
+    }
+    expect(branches[0]).toMatch(/pinned/);
+    expect(branches[1]).toMatch(/Pinned by/);
+  });
+});
+
+describe("the catalog shows both states on purpose", () => {
+  it("derives the live row's step from the clock instead of freezing one", () => {
+    // `otpStep: "59520075"` was the step current the afternoon it was written,
+    // so the one row whose job is to demonstrate a draining countdown could
+    // only ever render its end state.
+    const code = stripComments(CATALOG_SRC);
+    expect(code).toMatch(/const liveStep = Math\.floor\(nowSeconds \/ 30\)/);
+    expect(code).toMatch(/otpStep: String\(liveStep\)/);
+    expect(code).not.toMatch(/otpStep: "59520075"/);
+  });
+
+  it("pins the pinned row to what a real run actually stamps", async () => {
+    // A hand-written fixture is a claim about the engine. This one is checked.
+    const [tile] = await tilesOf(`"JBSWY3DPEHPK3PXP" | otp.code at=1700000000 | out @code`);
+    const t = tile.artifact.traits;
+    const code = stripComments(CATALOG_SRC);
+    expect(code).toContain(`otpStep: "${t.otpStep}"`);
+    expect(code).toContain(`otpExpiresIn: ${t.otpExpiresIn},\n        otpPinnedAt: ${t.otpPinnedAt},`);
+    expect(code).toContain(`content: "${tile.artifact.content}"`);
   });
 });
 

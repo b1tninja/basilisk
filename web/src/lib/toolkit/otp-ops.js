@@ -57,6 +57,28 @@ function secondsFrom(params) {
 }
 
 /**
+ * The instant the *recipe* named, or null when it meant "now".
+ *
+ * `secondsFrom` collapses the two — `at=0 → Date.now()` — and that collapse
+ * used to be the end of the distinction: both paths emitted the same traits, so
+ * a tile could not tell a code computed for 2023 from one computed a second
+ * ago, and drew the same expiring countdown over both. A pinned code therefore
+ * rendered *expired* and advised re-running the cell, which is the one thing
+ * `at=` guarantees will not help.
+ *
+ * So the intent is recorded rather than only the value, and it is recorded here
+ * because this is the only place that still knows it. Call it *after*
+ * `secondsFrom`, which owns the validation — this reads a number it has already
+ * accepted.
+ *
+ * @param {Record<string, *>} params
+ * @returns {number|null}
+ */
+function pinnedFrom(params) {
+  return Number(params?.at ?? 0) || null;
+}
+
+/**
  * The Base32 secret behind a pipeline value: raw bytes are encoded, text is
  * taken as Base32 and checked.
  * @param {import("./engine.js").PipelineValue|null|undefined} value
@@ -172,6 +194,7 @@ export async function execOtpParse(value, params = {}) {
 export async function execOtpCode(value, params = {}) {
   const s = otpSettings(value, params, "otp.code");
   const seconds = secondsFrom(params);
+  const pinnedAt = pinnedFrom(params);
   const code =
     s.mode === "hotp"
       ? await hotp(s.secret, s.counter, s)
@@ -191,6 +214,13 @@ export async function execOtpCode(value, params = {}) {
             otpPeriod: s.period,
             otpExpiresIn: secondsRemaining({ period: s.period, seconds }),
             otpStep: String(timeCounter(seconds, s.period, 0)),
+            // Sparse on purpose, the way `otpCounter` is present only for
+            // HOTP: absent means "the recipe meant now", which is both the
+            // common case and what an absent field already meant, so nothing
+            // needs migrating. Present only on the TOTP branch because `at=`
+            // is a claim about a *clock* — a HOTP code answers to a counter,
+            // and `hotp()` never sees `seconds` at all.
+            ...(pinnedAt ? { otpPinnedAt: pinnedAt } : {}),
           }),
       ...(s.label ? { otpLabel: s.label } : {}),
     },

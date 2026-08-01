@@ -2292,6 +2292,10 @@ const DEMO_PGP_FINGERPRINT = "5CDED0558B178A17DFD085AB06FF9593C0BD1C7B";
 
 /** Every key-badge role as a tile row, in the order a user meets them. */
 function demoKeyArtifacts(): React.ComponentProps<typeof OutputList>["outputs"] {
+  // The live OTP row's step, taken at render rather than written down. See the
+  // row itself for why a fixture that names a step is a fixture that expires.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const liveStep = Math.floor(nowSeconds / 30);
   const row = (o: Partial<OutputArtifact> & { label: string; role: string }) =>
     ({
       kind: o.role,
@@ -2383,19 +2387,51 @@ function demoKeyArtifacts(): React.ComponentProps<typeof OutputList>["outputs"] 
     }),
     row({
       // `"JBSWY3DPEHPK3PXP" | utf8 | otp.code` — role `text`, claimed by a tag.
-      label: "code",
+      //
+      // The step is taken from the clock, and that is the fix rather than the
+      // shortcut. It was hard-coded to `59520075` — the step that was current
+      // the afternoon the fixture was written — so `(59520075 + 1) × 30` sat in
+      // the past from the next minute onward and the one row on this page whose
+      // job is to demonstrate a draining countdown could only ever render its
+      // end state. A derived step shows the whole life of a live code: it opens
+      // mid-step, drains, turns amber under five seconds, and then reads
+      // *expired* and stays there — which is the honest thing a live code does,
+      // and reloading starts it over. The pinned row below never rots, so
+      // between them the two states are both on the surface on purpose.
+      label: "code · live",
       role: "text",
       tags: ["otp-code"],
       traits: {
         otpMode: "totp",
         otpDigits: 6,
         otpPeriod: 30,
-        otpStep: "59520075",
-        otpExpiresIn: 17,
+        otpStep: String(liveStep),
+        otpExpiresIn: (liveStep + 1) * 30 - nowSeconds,
       },
       revealable: true,
       filename: "code.txt",
       content: "133042",
+    }),
+    row({
+      // `"JBSWY3DPEHPK3PXP" | utf8 | otp.code at=1700000000` — the traits a real
+      // run stamps for that step, printed off the engine: step 56666666, ten
+      // seconds left at the named instant, and `otpPinnedAt` saying the recipe
+      // named it. The card states the instant and does not tick, because it
+      // may tick only against an instant the recipe did not choose.
+      label: "code · pinned by at=",
+      role: "text",
+      tags: ["otp-code"],
+      traits: {
+        otpMode: "totp",
+        otpDigits: 6,
+        otpPeriod: 30,
+        otpStep: "56666666",
+        otpExpiresIn: 10,
+        otpPinnedAt: 1700000000,
+      },
+      revealable: true,
+      filename: "pinned.txt",
+      content: "324550",
     }),
   ];
 }

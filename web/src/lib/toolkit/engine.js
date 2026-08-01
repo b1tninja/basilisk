@@ -4249,6 +4249,15 @@ const OTP_META_TRAITS = Object.freeze([
   "otpExpiresIn",
   "otpCounter",
   "otpLabel",
+  // Not a computed value but an *intent*: whether the recipe named the instant
+  // with `at=` or meant "now". It belongs in this bag rather than in a role or
+  // a reference back to the step because `digestArtifact` reads `label`,
+  // `filename`, `role`, `stepName`, `sensitive`, `length` and a digest of
+  // `content` — and neither `traits` nor `tags`. So a trait moves no receipt
+  // digest and needs no `RECEIPT_VERSION` bump, where a role would have needed
+  // both; that is exactly why v1 → v2 happened. The mechanism, not the
+  // convention, is why intent lands here.
+  "otpPinnedAt",
 ]);
 
 /**

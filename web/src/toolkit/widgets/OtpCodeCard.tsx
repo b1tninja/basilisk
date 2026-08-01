@@ -35,6 +35,27 @@ import { otpCodeReadout, otpTimeLeft } from "../../lib/toolkit/artifact-readouts
  * rather than offering to do it — that sentence is the *view* answer to what
  * would otherwise be a forbidden action.
  *
+ * ## A pinned code has a clock, but not this one
+ *
+ * `otp.code at=1700000000` names an instant, and the code for that instant is
+ * the same six digits on every run, forever. This card used to draw the same
+ * draining bar over it, land on **expired**, and finish with *run the cell
+ * again for the current one* — advice that `at=` guarantees cannot work. The
+ * two cases were indistinguishable because the op emitted identical traits for
+ * both; `traits.otpPinnedAt` now records the intent, and:
+ *
+ * > A card may tick only against an instant the recipe did not choose.
+ *
+ * So a pinned code does not tick, draws no bar, and never says *expired* —
+ * that word is about wall-clock now, and a pinned code's relationship to now
+ * was never the question. It states the instant instead, plus the fact that
+ * makes pinning worth doing: this is the reproducible case, the one a receipt
+ * can be checked against with `run.verify`, where a live code is not.
+ *
+ * The digits are untouched by any of it. A live artifact may vary its value,
+ * never its type — same card, same weight, same actions, one sentence
+ * different.
+ *
  * ## HOTP has no countdown
  *
  * Not a disabled one, not a zeroed one: none. A HOTP code answers to an event
@@ -103,17 +124,28 @@ export function OtpCodeCard({
   className?: string;
   nowMs?: number;
 }) {
+  // Read before the hooks, not after, so the interval can ask whether this
+  // artifact has a clock at all. `otpTimeLeft` is the single place that
+  // decides — null for HOTP, which has no clock, and null for a pinned code,
+  // whose instant the recipe chose — so the timer honours the same rule the
+  // sentence below does instead of re-deriving the condition and drifting from
+  // it. A plain function call is not a hook; the hooks that follow stay
+  // unconditional.
+  const readout = otpCodeReadout(content, traits);
+  const ticks = otpTimeLeft(readout, 0) != null;
+  const pinnedAt = readout?.pinnedAt ?? null;
+
   const [tick, setTick] = useState(() => nowMs ?? Date.now());
   useEffect(() => {
     if (nowMs != null) {
       setTick(nowMs);
       return undefined;
     }
+    if (!ticks) return undefined;
     const id = setInterval(() => setTick(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [nowMs]);
+  }, [nowMs, ticks]);
 
-  const readout = otpCodeReadout(content, traits);
   // Nothing to add to the digits the tile already shows (§32d) — a body that
   // is not a code, or an artifact carrying no OTP facts.
   if (!readout) return null;
@@ -134,6 +166,7 @@ export function OtpCodeCard({
       data-otp-card
       data-otp-mode={readout.mode}
       data-otp-expired={left?.expired ? "true" : "false"}
+      data-otp-pinned={pinnedAt != null ? "true" : "false"}
     >
       {readout.label ? (
         <span className="truncate text-[10.5px] text-[var(--muted-foreground)]">
@@ -157,6 +190,13 @@ export function OtpCodeCard({
         {left ? (
           <span className="otp-remaining font-mono text-[11px] font-semibold" data-otp-tone={tone}>
             {left.expired ? "expired" : `${left.seconds}s`}
+          </span>
+        ) : pinnedAt != null ? (
+          // Where a live code says how long it has, a pinned one says what it
+          // is. Never "expired": that word is a claim about now, and this code
+          // was never about now.
+          <span className="otp-remaining font-mono text-[11px] font-semibold" data-otp-tone="muted">
+            pinned
           </span>
         ) : readout.mode === "hotp" && readout.counter != null ? (
           <span className="font-mono text-[11px] text-[var(--muted-foreground)]">
@@ -199,6 +239,16 @@ export function OtpCodeCard({
             )}
           </span>
         </>
+      ) : pinnedAt != null ? (
+        // No bar above this line, deliberately: there is nothing draining. The
+        // second sentence is the useful one — a pinned code is the reproducible
+        // case, which is what `at=` is for, and it is the honest replacement
+        // for the advice that used to sit here.
+        <span className="text-[9.5px] text-[var(--muted-foreground)]">
+          The code for the {readout.period ? `${readout.period}s ` : ""}step at{" "}
+          <span className="font-mono">{fmtClock(pinnedAt)}</span>. Pinned by{" "}
+          <span className="font-mono">at=</span>, so every run of this recipe produces it.
+        </span>
       ) : readout.mode === "hotp" ? (
         <span className="text-[9.5px] text-[var(--muted-foreground)]">
           A HOTP code answers to a counter, not a clock — it does not expire, it
