@@ -73,6 +73,49 @@ green, and a reinstall can disrupt a concurrent session working in this tree.
   `ToolboxDot.Shapes` renders it (the component supports it) while
   `ToolboxDot.InAPipeline` uses only real registry outputs.
 
+## Findings from the artifact-card pass
+
+- **A card that parses its own `content` cannot be previewed with a
+  placeholder.** Every card in the second batch (`KeyCard`, `SshKeyCard`,
+  `PacketMapCard`, `ReceiptCard`, …) returns null or falls to its `empty` state
+  for a body it cannot parse — which is the *same* floor card an unauthored
+  preview draws, so the fix looks like the bug. The props have to be real
+  artifacts, and they were obtained by running the real thing:
+  - `basilisk run` (`web/cli/basilisk.js`) for anything headless — `genkey`,
+    `gpg.genkey`, `qr`, `run.receipt`, `ssh.encode`.
+  - `lib/pgp/encrypt.js` and `openpgp` directly for ciphertext and for the
+    recipients list, so `encryptCapable` is *asked* of a real key rather than
+    asserted (the false row is a real signing-only key).
+  - The checked-in `web/src/test/fixtures/ssh/` fixtures for SSH keys and
+    sshsig. `fingerprints.txt` beside them is an independent check: the
+    `SHA256:` lines `SshKeyCard` renders match `ssh-keygen -lf` character for
+    character, which is stronger verification than the screenshot.
+- **WebRTC bodies needed a real browser, and got one.** `rtc.*` and
+  `stun.check` have no headless path (`RTCPeerConnection` is browser-only, and
+  the CLI refuses those toolboxes). The recipe that worked: esbuild-bundle
+  `rtc-ops.js` + `quorum-ops.js` to an IIFE, serve it over `http://127.0.0.1`
+  (WebCrypto needs a **secure context** — `about:blank` and `setContent` both
+  fail with "The WebCrypto API is not available"), and drive it with the
+  Playwright already in `.ds-sync/node_modules`. Candidate-pair and
+  data-channel stats came from two `RTCPeerConnection`s wired to each other in
+  the same page.
+- **The reflexive address a STUN probe returns is the machine's real public
+  IP.** It is redacted to 198.51.100.7 (RFC 5737) in `NetworkArtifact.tsx`, and
+  the file says so. Anyone re-running that probe must redact again before
+  committing — this content ships to claude.ai.
+- **A `display: grid` wrapper crops truncating children.** Grid items default
+  to `min-width: auto`, so a `truncate`d SSH public line inside one runs past
+  the card and trips `[GRID_OVERFLOW]`. Every multi-card preview here uses
+  `gridTemplateColumns: "minmax(0, 1fr)"`; that is the fix, not `cardMode`.
+- **`OtpCodeCard.nowMs` is the only way to photograph a countdown**, and it
+  works: one fixed artifact at three injected instants gives full / urgent /
+  expired, because a TOTP step ends at an absolute `(step + 1) × period`.
+- **`GateFact` is exported from `ds-entry.ts` but deliberately absent from
+  `componentSrcMap`.** `GateBanner.facts` needs `<dt>`/`<dd>` pairs as *direct*
+  grid children, so the banner is unusable without it — but it is a fragment
+  with no standalone rendering and would only ever draw a floor card of its
+  own. An export without a map entry is fine; `buttonVariants` already was one.
+
 ## Re-sync risks
 
 - **`web/.ds-styles.css` goes stale silently.** It is a copy, gitignored, and

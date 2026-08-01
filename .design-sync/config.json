@@ -18,7 +18,18 @@
     "Glyph": "src/toolkit/widgets/Glyph.tsx",
     "CastDot": "src/toolkit/widgets/Glyph.tsx",
     "ToolboxDot": "src/toolkit/widgets/Glyph.tsx",
-    "KindGlyph": "src/toolkit/widgets/kind-glyphs.tsx"
+    "KindGlyph": "src/toolkit/widgets/kind-glyphs.tsx",
+    "KeyCard": "src/toolkit/widgets/KeyCard.tsx",
+    "OpenPgpKeyCard": "src/toolkit/widgets/OpenPgpKeyCard.tsx",
+    "SshKeyCard": "src/toolkit/widgets/SshKeyCard.tsx",
+    "SshSigCard": "src/toolkit/widgets/SshSigCard.tsx",
+    "OtpCodeCard": "src/toolkit/widgets/OtpCodeCard.tsx",
+    "NetworkArtifact": "src/toolkit/widgets/NetworkArtifact.tsx",
+    "PacketMapCard": "src/toolkit/widgets/PacketMapCard.tsx",
+    "ReceiptCard": "src/toolkit/widgets/ReceiptCard.tsx",
+    "RecipientsCard": "src/toolkit/widgets/RecipientsCard.tsx",
+    "QrArtifact": "src/toolkit/widgets/QrArtifact.tsx",
+    "GateBanner": "src/toolkit/widgets/GateBanner.tsx"
   },
   "readmeHeader": ".design-sync/conventions.md"
 }
