@@ -179,6 +179,29 @@ export function stepsWithNestStepRemoved(
   return { steps: next, droppedBranch: false, droppedStem: false };
 }
 
+/**
+ * Replace one cell's steps, growing the notebook if the index is past the end.
+ *
+ * Exported and pure because it is the seam every chip mutation crosses. The
+ * cell index arrives as an argument here and in every mutation that calls it —
+ * *never* read from `focusedCell` — because `setFocusedCell` is a React state
+ * setter and does not take effect until the next render. A handler that did
+ * `setFocusedCell(i); removeStep(n)` therefore edited whichever cell was
+ * focused *before* the click, so clicking a chip's × in one cell silently
+ * deleted a step from another. Threading the cell makes that unrepresentable:
+ * there is no ambient "current cell" for a mutation to read stale.
+ */
+export function chainsWithCellSteps(
+  chains: RecipeChain[],
+  cellIndex: number,
+  nextSteps: RecipeStep[]
+): RecipeChain[] {
+  const copy = chains.map((c) => ({ steps: [...(c.steps || [])] }));
+  while (copy.length <= cellIndex) copy.push({ steps: [] });
+  copy[cellIndex] = { steps: nextSteps };
+  return copy;
+}
+
 export function useNotebook() {
   const kernelRef = useRef(createKernel());
   const [title, setTitle] = useState("Untitled notebook");
@@ -313,8 +336,6 @@ export function useNotebook() {
   const source = useMemo(() => serializeRecipe({ chains }), [chains]);
 
   const compiled = useMemo(() => compileRecipe(source), [source]);
-
-  const steps = chains[focusedCell]?.steps || [];
 
   const unmetForCell = useCallback(
     (cellIndex: number): string[] => {
@@ -505,13 +526,21 @@ export function useNotebook() {
   }, []);
 
   const setCellSteps = useCallback((cellIndex: number, nextSteps: RecipeStep[]) => {
-    setChains((prev) => {
-      const copy = prev.map((c) => ({ steps: [...(c.steps || [])] }));
-      while (copy.length <= cellIndex) copy.push({ steps: [] });
-      copy[cellIndex] = { steps: nextSteps };
-      return copy;
-    });
+    setChains((prev) => chainsWithCellSteps(prev, cellIndex, nextSteps));
   }, []);
+
+  /**
+   * The steps of a *named* cell. Every mutation below starts here rather than
+   * from a `steps` projection of `focusedCell`: the caller says which cell it
+   * means, so a mutation can no longer land on whichever cell happened to be
+   * focused when its closure was made. Callers that genuinely mean "wherever
+   * the caret is" pass `focusedCell` themselves, at the call site, where it is
+   * read from the current render rather than from a setter that has not run.
+   */
+  const stepsAt = useCallback(
+    (cell: number): RecipeStep[] => chains[cell]?.steps || [],
+    [chains]
+  );
 
   const makeStep = useCallback(
     (opName: string, opts?: { decode?: boolean; params?: Record<string, unknown> }) => {
@@ -530,32 +559,39 @@ export function useNotebook() {
   );
 
   const appendOp = useCallback(
-    (opName: string, opts?: { decode?: boolean; params?: Record<string, unknown> }) => {
+    (
+      cell: number,
+      opName: string,
+      opts?: { decode?: boolean; params?: Record<string, unknown> }
+    ) => {
       const step = makeStep(opName, opts);
       if (!step) return;
-      setCellSteps(focusedCell, [...steps, step]);
+      setCellSteps(cell, [...stepsAt(cell), step]);
     },
-    [focusedCell, makeStep, setCellSteps, steps]
+    [makeStep, setCellSteps, stepsAt]
   );
 
   const insertOpAt = useCallback(
     (
+      cell: number,
       index: number,
       opName: string,
       opts?: { decode?: boolean; params?: Record<string, unknown> }
     ) => {
       const step = makeStep(opName, opts);
       if (!step) return;
+      const steps = stepsAt(cell);
       const at = Math.max(0, Math.min(steps.length, index));
       const next = [...steps.slice(0, at), step, ...steps.slice(at)];
-      setCellSteps(focusedCell, next);
+      setCellSteps(cell, next);
     },
-    [focusedCell, makeStep, setCellSteps, steps]
+    [makeStep, setCellSteps, stepsAt]
   );
 
   /** Append (or insert at body index) inside a tee/foreach nest. */
   const nestOp = useCallback(
     (
+      cell: number,
       stem: number,
       branch: number | null,
       opName: string,
@@ -566,7 +602,7 @@ export function useNotebook() {
       if (opName === "tee" || opName === "foreach") return;
       const step = makeStep(opName, opts);
       if (!step) return;
-      const next = steps.map((s, i) => {
+      const next = stepsAt(cell).map((s, i) => {
         if (i !== stem) return s;
         const clone: RecipeStep = {
           ...s,
@@ -597,9 +633,9 @@ export function useNotebook() {
         }
         return clone;
       });
-      setCellSteps(focusedCell, next);
+      setCellSteps(cell, next);
     },
-    [focusedCell, makeStep, setCellSteps, steps]
+    [makeStep, setCellSteps, stepsAt]
   );
 
   /**
@@ -610,6 +646,7 @@ export function useNotebook() {
    */
   const addBranchWithStep = useCallback(
     (
+      cell: number,
       stem: number,
       selector: string,
       opName: string,
@@ -617,7 +654,7 @@ export function useNotebook() {
     ) => {
       const step = makeStep(opName, opts);
       if (!step) return;
-      const next = steps.map((s, i) => {
+      const next = stepsAt(cell).map((s, i) => {
         if (i !== stem) return s;
         const branches = [...(s.branches || [])];
         branches.push({
@@ -627,33 +664,35 @@ export function useNotebook() {
         });
         return { ...s, branches };
       });
-      setCellSteps(focusedCell, next);
+      setCellSteps(cell, next);
     },
-    [focusedCell, makeStep, setCellSteps, steps]
+    [makeStep, setCellSteps, stepsAt]
   );
 
   /** Swap one stem step for another op ("peek instead of an empty tee"). */
   const replaceStep = useCallback(
-    (stem: number, opName: string) => {
+    (cell: number, stem: number, opName: string) => {
+      const steps = stepsAt(cell);
       const step = makeStep(opName);
       if (!step || !steps[stem]) return;
       setCellSteps(
-        focusedCell,
+        cell,
         steps.map((s, i) => (i === stem ? step : s))
       );
     },
-    [focusedCell, makeStep, setCellSteps, steps]
+    [makeStep, setCellSteps, stepsAt]
   );
 
   const updateNestStepParams = useCallback(
     (
+      cell: number,
       stem: number,
       branch: number | null,
       bodyIndex: number,
       name: string,
       value: string | number | boolean
     ) => {
-      const next = steps.map((s, i) => {
+      const next = stepsAt(cell).map((s, i) => {
         if (i !== stem) return s;
         const clone: RecipeStep = {
           ...s,
@@ -672,9 +711,9 @@ export function useNotebook() {
         };
         return clone;
       });
-      setCellSteps(focusedCell, next);
+      setCellSteps(cell, next);
     },
-    [focusedCell, setCellSteps, steps]
+    [setCellSteps, stepsAt]
   );
 
   /**
@@ -683,13 +722,14 @@ export function useNotebook() {
    * `stepsWithNestStepRemoved`) and the caller says so out loud.
    */
   const removeNestStep = useCallback(
-    (stem: number, branch: number | null, bodyIndex: number) => {
+    (cell: number, stem: number, branch: number | null, bodyIndex: number) => {
+      const steps = stepsAt(cell);
       const next = stepsWithNestStepRemoved(steps, stem, branch, bodyIndex);
       if (next.steps === steps) return { droppedBranch: false, droppedStem: false };
-      setCellSteps(focusedCell, next.steps);
+      setCellSteps(cell, next.steps);
       return { droppedBranch: next.droppedBranch, droppedStem: next.droppedStem };
     },
-    [focusedCell, setCellSteps, steps]
+    [setCellSteps, stepsAt]
   );
 
   /**
@@ -698,17 +738,19 @@ export function useNotebook() {
    * the caller can say that out loud and offer the undo.
    */
   const removeBranch = useCallback(
-    (stem: number, branch: number) => {
+    (cell: number, stem: number, branch: number) => {
+      const steps = stepsAt(cell);
       const next = stepsWithBranchRemoved(steps, stem, branch);
       if (next.steps === steps) return false;
-      setCellSteps(focusedCell, next.steps);
+      setCellSteps(cell, next.steps);
       return next.droppedStem;
     },
-    [focusedCell, setCellSteps, steps]
+    [setCellSteps, stepsAt]
   );
 
   const reorderStem = useCallback(
-    (from: number, to: number) => {
+    (cell: number, from: number, to: number) => {
+      const steps = stepsAt(cell);
       if (from === to || from < 0 || from >= steps.length) return;
       const next = [...steps];
       const [moved] = next.splice(from, 1);
@@ -716,16 +758,22 @@ export function useNotebook() {
       if (from < to) insertAt = to - 1;
       insertAt = Math.max(0, Math.min(next.length, insertAt));
       next.splice(insertAt, 0, moved);
-      setCellSteps(focusedCell, next);
+      setCellSteps(cell, next);
     },
-    [focusedCell, setCellSteps, steps]
+    [setCellSteps, stepsAt]
   );
 
   /** Reorder within a tee/foreach body or selector branch. `toBody` is gap splice index. */
   const reorderNest = useCallback(
-    (stem: number, branch: number | null, fromBody: number, toBody: number) => {
+    (
+      cell: number,
+      stem: number,
+      branch: number | null,
+      fromBody: number,
+      toBody: number
+    ) => {
       if (fromBody === toBody) return;
-      const next = steps.map((s, i) => {
+      const next = stepsAt(cell).map((s, i) => {
         if (i !== stem) return s;
         const clone: RecipeStep = {
           ...s,
@@ -751,31 +799,36 @@ export function useNotebook() {
         }
         return clone;
       });
-      setCellSteps(focusedCell, next);
+      setCellSteps(cell, next);
     },
-    [focusedCell, setCellSteps, steps]
+    [setCellSteps, stepsAt]
   );
 
   const updateStepParams = useCallback(
-    (stepIndex: number, name: string, value: string | number | boolean) => {
-      const next = steps.map((s, i) =>
+    (
+      cell: number,
+      stepIndex: number,
+      name: string,
+      value: string | number | boolean
+    ) => {
+      const next = stepsAt(cell).map((s, i) =>
         i === stepIndex
           ? { ...s, params: { ...(s.params || {}), [name]: value } }
           : s
       );
-      setCellSteps(focusedCell, next);
+      setCellSteps(cell, next);
     },
-    [focusedCell, setCellSteps, steps]
+    [setCellSteps, stepsAt]
   );
 
   const removeStep = useCallback(
-    (stepIndex: number) => {
+    (cell: number, stepIndex: number) => {
       setCellSteps(
-        focusedCell,
-        steps.filter((_, i) => i !== stepIndex)
+        cell,
+        stepsAt(cell).filter((_, i) => i !== stepIndex)
       );
     },
-    [focusedCell, setCellSteps, steps]
+    [setCellSteps, stepsAt]
   );
 
   const insertMessaging = useCallback((kind: "encrypt" | "decrypt" | "symencrypt") => {
@@ -1246,18 +1299,18 @@ export function useNotebook() {
     []
   );
 
-  /** Insert/replace `in @label` at the start of the focused cell. */
+  /** Insert/replace `in @label` at the start of `cell`. */
   const insertSlotRef = useCallback(
-    (label: string) => {
+    (cell: number, label: string) => {
       const clean = String(label || "").replace(/^@/, "");
       if (!clean) return;
-      if (steps[0]?.name === "in") {
-        updateStepParams(0, "ref", `@${clean}`);
+      if (stepsAt(cell)[0]?.name === "in") {
+        updateStepParams(cell, 0, "ref", `@${clean}`);
       } else {
-        insertOpAt(0, "in", { params: { ref: `@${clean}` } });
+        insertOpAt(cell, 0, "in", { params: { ref: `@${clean}` } });
       }
     },
-    [steps, updateStepParams, insertOpAt]
+    [stepsAt, updateStepParams, insertOpAt]
   );
 
   const clearSlot = useCallback((label: string) => {
@@ -1311,7 +1364,6 @@ export function useNotebook() {
     chains,
     focusedCell,
     setFocusedCell,
-    steps,
     inputText,
     setInputText,
     ciphertext,

@@ -1098,7 +1098,7 @@ export function ToolkitShell() {
                   if (armedBranch && armedBranch.cell === nb.focusedCell) {
                     const ab = armedBranch;
                     setArmedBranch(null);
-                    nb.addBranchWithStep(ab.stem, ab.selector, name, opts);
+                    nb.addBranchWithStep(ab.cell, ab.stem, ab.selector, name, opts);
                     // Keep building in the branch that just landed.
                     const branchIndex = (
                       nb.chains[ab.cell]?.steps?.[ab.stem]?.branches || []
@@ -1115,7 +1115,7 @@ export function ToolkitShell() {
                     const path = pendingInsert;
                     setPendingInsert(null);
                     if (path.body != null) {
-                      nb.nestOp(path.stem, path.branch ?? null, name, {
+                      nb.nestOp(path.cell, path.stem, path.branch ?? null, name, {
                         ...opts,
                         at: path.body,
                       });
@@ -1123,12 +1123,16 @@ export function ToolkitShell() {
                       setPendingInsert({ ...path, body: path.body + 1 });
                       return;
                     }
-                    nb.insertOpAt(path.stem, name, opts);
+                    nb.insertOpAt(path.cell, path.stem, name, opts);
                     focusNestAfterInsert(path.cell, name, path.stem);
                     return;
                   }
+                  // The shelf's plain append is one of the few mutations that
+                  // genuinely means "wherever the caret is". It says so by
+                  // passing `focusedCell` explicitly — read from this render,
+                  // not from a setter that has not run yet.
                   const endStem = nb.chains[nb.focusedCell]?.steps?.length ?? 0;
-                  nb.appendOp(name, opts);
+                  nb.appendOp(nb.focusedCell, name, opts);
                   focusNestAfterInsert(nb.focusedCell, name, endStem);
                 }}
               />
@@ -1175,6 +1179,7 @@ export function ToolkitShell() {
               const parsed = parseStepMime(raw);
               if (!parsed?.name) return;
               nb.appendOp(
+                nb.focusedCell,
                 parsed.name,
                 parsed.decode ? { decode: true } : undefined
               );
@@ -1564,7 +1569,7 @@ export function ToolkitShell() {
                                   onAddBranchStep={(stem, selector, name, opts) => {
                                     nb.setFocusedCell(i);
                                     setArmedBranch(null);
-                                    nb.addBranchWithStep(stem, selector, name, opts);
+                                    nb.addBranchWithStep(i, stem, selector, name, opts);
                                     const branchIndex = (
                                       nb.chains[i]?.steps?.[stem]?.branches || []
                                     ).length;
@@ -1579,7 +1584,7 @@ export function ToolkitShell() {
                                     nb.setFocusedCell(i);
                                     setArmedBranch(null);
                                     setPendingInsert(null);
-                                    nb.replaceStep(stem, "peek");
+                                    nb.replaceStep(i, stem, "peek");
                                   }}
                                   onRemoveBranch={(stem, branch) => {
                                     nb.setFocusedCell(i);
@@ -1594,7 +1599,7 @@ export function ToolkitShell() {
                                     // and the tee went with it. More was
                                     // removed than the × named, so say it and
                                     // put it back within one click.
-                                    if (nb.removeBranch(stem, branch)) {
+                                    if (nb.removeBranch(i, stem, branch)) {
                                       setUndoSnapshot({
                                         ...before,
                                         note: "Removed the last branch — the empty tee went with it.",
@@ -1616,6 +1621,7 @@ export function ToolkitShell() {
                                         return;
                                       }
                                       nb.reorderNest(
+                                        i,
                                         from.stem,
                                         from.branch ?? null,
                                         from.body,
@@ -1623,7 +1629,7 @@ export function ToolkitShell() {
                                       );
                                       return;
                                     }
-                                    nb.reorderStem(from.stem, to.stem);
+                                    nb.reorderStem(i, from.stem, to.stem);
                                   }}
                                   onDropStep={(path, name, opts) => {
                                     nb.setFocusedCell(i);
@@ -1631,6 +1637,7 @@ export function ToolkitShell() {
                                     setArmedBranch(null);
                                     if (path.body != null) {
                                       nb.nestOp(
+                                        path.cell,
                                         path.stem,
                                         path.branch ?? null,
                                         name,
@@ -1638,7 +1645,7 @@ export function ToolkitShell() {
                                       );
                                       return;
                                     }
-                                    nb.insertOpAt(path.stem, name, opts);
+                                    nb.insertOpAt(path.cell, path.stem, name, opts);
                                     focusNestAfterInsert(i, name, path.stem);
                                     setChipEdit(null);
                                   }}
@@ -1650,6 +1657,7 @@ export function ToolkitShell() {
                                         chains: nb.chains,
                                       };
                                       const gone = nb.removeNestStep(
+                                        path.cell,
                                         path.stem,
                                         path.branch ?? null,
                                         path.body
@@ -1657,7 +1665,7 @@ export function ToolkitShell() {
                                       const note = cascadeNote(gone);
                                       if (note) setUndoSnapshot({ ...before, note });
                                     } else {
-                                      nb.removeStep(path.stem);
+                                      nb.removeStep(path.cell, path.stem);
                                     }
                                     setChipEdit((prev) =>
                                       prev &&
@@ -1694,6 +1702,7 @@ export function ToolkitShell() {
                                               };
                                               const note = cascadeNote(
                                                 nb.removeNestStep(
+                                                  selected.cell,
                                                   selected.stem,
                                                   selected.branch ?? null,
                                                   selected.body
@@ -1702,7 +1711,7 @@ export function ToolkitShell() {
                                               if (note)
                                                 setUndoSnapshot({ ...before, note });
                                             } else {
-                                              nb.removeStep(selected.stem);
+                                              nb.removeStep(selected.cell, selected.stem);
                                             }
                                             setChipEdit(null);
                                           }}
@@ -1729,6 +1738,7 @@ export function ToolkitShell() {
                                         if (!selected) return;
                                         if (selected.body != null) {
                                           nb.updateNestStepParams(
+                                            selected.cell,
                                             selected.stem,
                                             selected.branch ?? null,
                                             selected.body,
@@ -1737,6 +1747,7 @@ export function ToolkitShell() {
                                           );
                                         } else {
                                           nb.updateStepParams(
+                                            selected.cell,
                                             selected.stem,
                                             name,
                                             value
@@ -2267,7 +2278,10 @@ export function ToolkitShell() {
                             <Button
                               variant="secondary"
                               className="h-auto rounded-md px-[9px] py-[4px] text-[10.5px] font-semibold"
-                              onClick={() => nb.insertSlotRef(m.label)}
+                              /* Tray action with no cell of its own — the
+                                 focused cell is what "Insert" means here, and
+                                 it is named rather than assumed. */
+                              onClick={() => nb.insertSlotRef(nb.focusedCell, m.label)}
                             >
                               Insert
                             </Button>

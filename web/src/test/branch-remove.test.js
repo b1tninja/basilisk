@@ -183,7 +183,9 @@ describe("the chip flow offers the ×", () => {
 describe("the shell wires it to the notebook", () => {
   it("routes the × to removeBranch", () => {
     expect(SHELL).toMatch(/onRemoveBranch=\{\(stem, branch\) => \{/);
-    expect(SHELL).toMatch(/nb\.removeBranch\(stem, branch\)/);
+    // `i` first: the cell the × was clicked in, named rather than inherited
+    // from `focusedCell` — see cell-targeted-mutations.test.js.
+    expect(SHELL).toMatch(/nb\.removeBranch\(i, stem, branch\)/);
   });
 
   it("cancels the armed branch with client state only", () => {
