@@ -21,6 +21,7 @@ import { NetworkArtifact } from "../widgets/NetworkArtifact";
 import { InspectorArtifact } from "../widgets/InspectorArtifact";
 import { JwtArtifact, hasJoseRenderer } from "../widgets/JwtArtifact";
 import { KeyCard } from "../widgets/KeyCard";
+import { OpenPgpKeyCard } from "../widgets/OpenPgpKeyCard";
 import type { ArtifactKind } from "./resolve";
 
 /** What a view is handed. Kept small on purpose; kinds read the artifact. */
@@ -78,7 +79,50 @@ const keyCardFor = (publicOnly: boolean) =>
     );
   };
 
+const pgpCardFor = (publicOnly: boolean) =>
+  function OpenPgpView({ artifact }: ArtifactViewContext) {
+    const traits = (artifact.traits || {}) as { fingerprint?: string };
+    return (
+      <OpenPgpKeyCard
+        content={artifact.content}
+        fingerprint={traits.fingerprint}
+        publicOnly={publicOnly}
+      />
+    );
+  };
+
 export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
+  {
+    /**
+     * The armored public key `gpg.genkey` emits. The only kind that gets
+     * Publish (§35f) — and Publish stays on the tile's existing confirm
+     * flow until §34c's ConsequenceBanner lands, rather than being declared
+     * here twice.
+     */
+    id: "openpgp-public",
+    match: { role: "public-key" },
+    label: "OpenPGP public key",
+    glyph: "openpgp-key",
+    view: pgpCardFor(true),
+    empty: "Not a readable OpenPGP key — showing the armor.",
+    actions: ["copy", "key.copyFingerprint"],
+  },
+  {
+    /**
+     * The armored private half. No Publish, ever — it is not declared, so
+     * there is no button and nothing to reason about at runtime.
+     */
+    id: "openpgp-private",
+    match: { role: "key", tags: ["openpgp", "private"] },
+    label: "OpenPGP private key",
+    glyph: "openpgp-key",
+    view: pgpCardFor(false),
+    // Uid, fingerprint and dates are public facts about the key, so they
+    // render while the secret stays masked (§34b).
+    publicView: pgpCardFor(true),
+    empty: "Not a readable OpenPGP key — showing the armor.",
+    actions: ["copy", "key.copyFingerprint"],
+  },
   {
     id: "keypair-public",
     match: { role: "key", tags: ["keypair", "public"] },

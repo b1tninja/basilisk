@@ -16,6 +16,7 @@ import {
   FALLBACK_KIND,
 } from "../toolkit/artifact-kinds/registry.tsx";
 import { ambiguousPairs, resolveArtifactKind } from "../toolkit/artifact-kinds/resolve.ts";
+import { KIND_GLYPHS } from "../toolkit/widgets/kind-glyphs.tsx";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 
@@ -38,8 +39,8 @@ const CODE_ONLY = TABLE_SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(
 const UNCLAIMED_ROLES = [
   "text",
   "secret",
-  // "key" is claimed by keypair-public / keypair-private (§35).
-  "public-key",
+  // "key" is claimed by keypair-public / keypair-private (§35);
+  // "public-key" by openpgp-public (§35e).
   "share",
   "recipients",
   "ciphertext",
@@ -66,6 +67,16 @@ describe("the table is unambiguous", () => {
       // produce it — never "N/A", which tells the reader nothing.
       expect(kind.empty.length, `${kind.id} empty`).toBeGreaterThan(20);
       expect(kind.empty, `${kind.id} empty`).not.toMatch(/^N\/A|^none$/i);
+    }
+  });
+
+  it("names only glyphs that exist", () => {
+    // §32d: a kind's glyph is a KIND_GLYPHS key, and omitting it renders no
+    // glyph rather than a guess. A name with no entry would render nothing
+    // while looking declared — the worst of both.
+    for (const kind of ARTIFACT_KINDS) {
+      if (!kind.glyph) continue;
+      expect(KIND_GLYPHS[kind.glyph], `${kind.id} names glyph "${kind.glyph}"`).toBeTruthy();
     }
   });
 
@@ -237,5 +248,39 @@ describe("key artifacts resolve to the right card (§35)", () => {
         FALLBACK_KIND
       ).id
     ).toBe("keypair-public");
+  });
+});
+
+describe("OpenPGP keys resolve to their own kinds (§35e)", () => {
+  it("splits gpg.genkey into openpgp-public and openpgp-private", async () => {
+    const { ast } = compileRecipe('gpg.genkey email="k@example.com" | out @priv');
+    const arts = await runRecipe(ast, {});
+    const byKind = arts.map((a) => ({
+      label: a.label,
+      kind: resolveArtifactKind(a, ARTIFACT_KINDS, FALLBACK_KIND).id,
+      sensitive: a.sensitive,
+    }));
+    const pub = byKind.find((k) => /public key/i.test(k.label));
+    const priv = byKind.find((k) => k.label === "priv");
+    expect(pub.kind).toBe("openpgp-public");
+    expect(pub.sensitive).toBe(false);
+    // The private half must NOT fall through to the generic key kind, whose
+    // card parses JWK and would render an empty read-out for armor.
+    expect(priv.kind).toBe("openpgp-private");
+    expect(priv.sensitive).toBe(true);
+  }, 60_000);
+
+  it("never offers Publish on a private key", () => {
+    // Not declared, so there is no button and nothing to reason about at
+    // runtime — the strongest form of "this cannot happen".
+    const priv = ARTIFACT_KINDS.find((k) => k.id === "openpgp-private");
+    expect(priv.actions).not.toContain("key.publish");
+    expect(priv.actions).not.toContain("keyring.publish");
+  });
+
+  it("gives the private half a publicView, so masked is not blank", () => {
+    const priv = ARTIFACT_KINDS.find((k) => k.id === "openpgp-private");
+    expect(typeof priv.publicView).toBe("function");
+    expect(priv.publicView).not.toBe(priv.view);
   });
 });
