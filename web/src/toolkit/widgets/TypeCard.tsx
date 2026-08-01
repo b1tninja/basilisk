@@ -206,7 +206,20 @@ function OriginPicker({
 export function TypeCard({ meta, onInsertLiteral, onPickOp, compact = false, className }: Props) {
   const producers = producersOf(meta.base);
   const consumers = consumersOf(meta.base);
-  const orphan = !producers.length && !consumers.length;
+  /**
+   * "Reserved" means you cannot make one — not that nothing touches it.
+   *
+   * This used to require no producers AND no consumers, which made the badge
+   * unreachable for every type it was written for: the generic sinks (`out`,
+   * `peek`, `inspect`, `tee`, `select`, `text`, `file.save`,
+   * `clipboard.write`) accept anything, so every declared type has eight
+   * consumers and the conjunction was only ever true for `none`. Producers
+   * are the honest signal — a type no step yields is one a recipe cannot
+   * obtain, however many sinks would swallow it.
+   *
+   * `int` never reaches here: it is `literal`, caught earlier in the chain.
+   */
+  const orphan = !producers.length;
 
   return (
     <div
@@ -239,7 +252,7 @@ export function TypeCard({ meta, onInsertLiteral, onPickOp, compact = false, cla
         ) : orphan ? (
           <span
             className="ml-auto rounded-[5px] bg-[var(--surface-raised)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--muted-foreground)]"
-            title="Declared in the type union, but no step uses it yet"
+            title="Declared in the type union, but no step produces one yet"
           >
             reserved
           </span>
