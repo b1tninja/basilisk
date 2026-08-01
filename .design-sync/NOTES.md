@@ -49,6 +49,30 @@ green, and a reinstall can disrupt a concurrent session working in this tree.
   on 2026-07-31, so this is legitimate — but it means the cards do not show the
   dark look the app usually wears.
 
+## Findings from the preview-authoring pass
+
+- **Headless capture never paints a scrollbar thumb.** `ScrollArea`'s entire
+  visible contribution is the `::-webkit-scrollbar` styling in `toolkit.css`,
+  and no sheet can show it — the region only reads as "bounded and clipped".
+  Its previews compose around that (a cut row plus a footnote, and a
+  short-content cell for contrast). Do not grade it `needs-work` and go
+  hunting; the thumb is unphotographable here.
+- **Renders-nothing is a real design state, and needs author scaffolding.**
+  `CastDot` renders nothing for toolboxes that make no self-test claim and
+  when `status` is null; `KindGlyph` renders nothing for unmapped kinds. The
+  house pattern established here: a dashed 12–16px slot plus a caption naming
+  the reason, so absence reads as intent rather than breakage.
+- **`Glyph`'s `size` prop survives only because the hard-width `.ops-glyph`
+  rules in the compiled CSS are ancestor-scoped.** The unscoped rule sets only
+  opacity/display/flex-shrink. If one of those width rules were ever
+  unscoped, every size would render identically — a `Glyph` sheet where 16,
+  18 and 22 look the same is that symptom.
+- **A dead value shape exists.** `shapeForType` handles `channel`, there is a
+  dedicated `[data-kind="channel"]` triangle rule, and `KIND_GLYPHS` maps it —
+  but no op declares `output: "channel"`, verified by grep. Tracked separately;
+  `ToolboxDot.Shapes` renders it (the component supports it) while
+  `ToolboxDot.InAPipeline` uses only real registry outputs.
+
 ## Re-sync risks
 
 - **`web/.ds-styles.css` goes stale silently.** It is a copy, gitignored, and

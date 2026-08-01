@@ -19,5 +19,6 @@
     "CastDot": "src/toolkit/widgets/Glyph.tsx",
     "ToolboxDot": "src/toolkit/widgets/Glyph.tsx",
     "KindGlyph": "src/toolkit/widgets/kind-glyphs.tsx"
-  }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
 }
