@@ -563,7 +563,18 @@ export function serializeStep(step) {
     const needsQuote = /[\s|=]/.test(String(v));
     const quoted = needsQuote ? JSON.stringify(String(v)) : String(v);
     if (p.positional && parts.length === 1) {
-      parts.push(quoted);
+      // …and it is not only those three characters. A *bare* positional has to
+      // begin the way `recipe-parse.js`'s argument loop expects one to begin —
+      // it dispatches on a letter, a digit, or `@` slot sugar, and nothing
+      // else. (`.` and `/` are recognised, but only for `out`/`in`, where they
+      // raise "File paths are not supported yet".) So `file.read accept=.pem`,
+      // which is the op's own documented example, serialized bare to
+      // `file.read .pem` and came back `Unexpected "."` — a round trip that
+      // destroys the recipe. That is not a rare path: the chip flow
+      // re-serializes on every mutation and Copy link serializes to build the
+      // URL, so editing any chip nearby, or sharing the notebook, handed back
+      // something that would not parse.
+      parts.push(/^[A-Za-z0-9@]/.test(String(v)) ? quoted : JSON.stringify(String(v)));
       continue;
     }
     parts.push(`${p.name}=${quoted}`);
