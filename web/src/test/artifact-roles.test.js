@@ -67,6 +67,8 @@ describe("the projection reaches the types that have a role", () => {
     [typeOf("shares"), "share"],
     [typeOf("recipients"), "recipients"],
     [typeOf("text", { kind: "sshsig" }), "sshsig"],
+    [typeOf("text", { kind: "ssh-public" }), "ssh-public"],
+    [typeOf("text", { kind: "ssh-private" }), "ssh-private"],
     [typeOf("text", { kind: "jws" }), "token"],
     [typeOf("text", { kind: "jwe" }), "token"],
     [typeOf("candidate"), "netvalue"],
@@ -122,7 +124,15 @@ describe("`text`/`secret` is a sensitivity ternary, not an identity (§32c)", ()
     // `pem`/`der` project to `key`, and the key card reads JWK — promoting
     // them today would swap a readable armor body for an emptier card. The
     // set is the place that choice is written down.
-    expect(ENGINE).toMatch(/const TYPE_OWNED_ROLES = new Set\(\["sshsig", "token"\]\)/);
+    //
+    // The SSH halves were written down there for the same reason the two
+    // above were, plus one the others did not have: `ssh.encode`'s formats
+    // are both `text`, so the sensitivity ternary gave one private block two
+    // roles — `secret` from `out @priv`, `text` from a dangling tip — and a
+    // kind matches `role` exactly, so it could only ever have claimed one.
+    expect(ENGINE).toMatch(
+      /const TYPE_OWNED_ROLES = new Set\(\[\s*"sshsig",\s*"token",\s*"ssh-public",\s*"ssh-private",?\s*\]\)/
+    );
   });
 
   it("lets an sshsig block be an sshsig, not text", async () => {

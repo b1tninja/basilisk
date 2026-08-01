@@ -2098,6 +2098,13 @@ async function execStepBody(step, value, bindings, artifacts) {
           : "artifact.svg",
         content: svg,
         sensitive: !!value.meta?.sensitive,
+        // Writing `qr` is the request to *see* this value as a code, exactly
+        // as `out` / `text` / `inspect` are — and a masked tile runs no view
+        // at all, so without this a QR of anything sensitive (an otpauth
+        // enrolment URI, a share card) is a permanently blank square. The
+        // mask still applies; what this grants is the Reveal that makes it
+        // openable.
+        revealable: true,
         shareIndex: value.meta?.shareIndex,
         mime: "image/svg+xml",
         disposition: "file",
@@ -2790,6 +2797,25 @@ async function execStepBody(step, value, bindings, artifacts) {
           return ssh.execSshSign(value, p, bindings);
         default:
           return ssh.execSshVerify(value, p, bindings);
+      }
+    }
+    case "otp.uri":
+    case "otp.parse":
+    case "otp.code":
+    case "otp.verify": {
+      // Lazy for the same reason as age and ssh: a whole format family most
+      // recipes never touch.
+      const otp = await import("./otp-ops.js");
+      const p = step.params || {};
+      switch (step.name) {
+        case "otp.uri":
+          return otp.execOtpUri(value, p);
+        case "otp.parse":
+          return otp.execOtpParse(value, p);
+        case "otp.code":
+          return otp.execOtpCode(value, p);
+        default:
+          return otp.execOtpVerify(value, p, bindings);
       }
     }
     case "rtc.gather":
@@ -4121,11 +4147,20 @@ function safeOutputStem(raw) {
  * would swap a readable armor body for an emptier card. That widening belongs
  * with a KeyCard that can read PEM (§35e), not here.
  *
- * Role rides inside `digestArtifact`, so this moves the digests of sshsig and
- * JOSE artifacts. It is the same change RECEIPT_VERSION 2 was bumped for
- * (§38c) and lands before v2 has shipped, so it needs no second boundary.
+ * The SSH halves join for the sshsig reason and one more. `ssh.encode`'s two
+ * formats are both `text`, so the ternary gave the same private block `secret`
+ * through `out @priv` and `text` through a dangling tip — one artifact with
+ * two identities, and `ArtifactMatch.role` is exact, so a kind could only ever
+ * claim one of them. The half is a fact about the *type*
+ * (`text/ssh-private`), which is what makes it this set's business rather than
+ * a second tag the emit sites would have to remember.
+ *
+ * Role rides inside `digestArtifact`, so this moves the digests of sshsig,
+ * JOSE and SSH-key artifacts. It is the same change RECEIPT_VERSION 2 was
+ * bumped for (§38c) and lands before v2 has shipped, so it needs no second
+ * boundary.
  */
-const TYPE_OWNED_ROLES = new Set(["sshsig", "token"]);
+const TYPE_OWNED_ROLES = new Set(["sshsig", "token", "ssh-public", "ssh-private"]);
 
 /**
  * Stamp refined pipeline type (and raw bytes when available) onto an artifact.

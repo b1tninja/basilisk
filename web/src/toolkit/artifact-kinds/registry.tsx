@@ -27,6 +27,7 @@ import { QrArtifact } from "../widgets/QrArtifact";
 import { ReceiptCard } from "../widgets/ReceiptCard";
 import { RecipientsCard } from "../widgets/RecipientsCard";
 import { ShareIdentity } from "../widgets/ShareIdentity";
+import { SshKeyCard } from "../widgets/SshKeyCard";
 import { SshSigCard } from "../widgets/SshSigCard";
 import type { ArtifactKind } from "./resolve";
 
@@ -203,6 +204,92 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
       "key.copyPublicLine",
       "keyring.add",
     ],
+  },
+  {
+    /**
+     * The one-line public form `ssh.encode` emits — `type base64 comment`.
+     *
+     * It had no kind at all until now, so it resolved as `text`: a tile whose
+     * whole body was one unreadable base64 run, and a Download that wrote
+     * `pub.txt` because a kind is the only thing allowed to correct an
+     * extension. The card answers the question the line cannot — *which key is
+     * this* — with the `SHA256:…` fingerprint `ssh-keygen -lf` prints.
+     *
+     * No `publicView`: a public line is never masked, so a body that renders
+     * while masked would be a claim about a state this kind cannot reach.
+     */
+    id: "ssh-public",
+    match: { role: "ssh-public" },
+    label: "SSH public key",
+    glyph: "ssh-public",
+    view: ({ artifact }) => <SshKeyCard content={artifact.content} />,
+    empty:
+      "This line did not parse as an SSH public key — showing it as text instead.",
+    /**
+     * *Copy public line* is not declared, and its absence is the §33d answer
+     * rather than an oversight: this artifact **is** the public line, so Copy
+     * already copies it. Two buttons for one motion is how they start
+     * disagreeing about what "the line" means.
+     */
+    actions: ["copy", "download", "key.copyFingerprint"],
+    /**
+     * The extension every SSH tool expects, and the one the pipeline could not
+     * have known: the line is `text` on the wire, so `out` named it `.txt`.
+     * `ssh-copy-id`, `ssh-add` and every "paste your public key" field are
+     * indifferent to the name, but the file beside `id_ed25519` has been
+     * `id_ed25519.pub` since 1999, and a download called `pub.txt` is one
+     * rename away from being the file you meant.
+     */
+    download: { ext: "pub" },
+  },
+  {
+    /**
+     * The openssh-key-v1 block — the private half, masked by default (§29f).
+     *
+     * `publicView` is the reason this kind exists at all. The key type, the
+     * fingerprint and the comment all come off the *public* blob the container
+     * carries, so they render while the secret stays masked — the same
+     * correction §35d made for `keypair-private`, on the one tile where a
+     * blank body is most expensive: a private key you cannot identify without
+     * revealing it.
+     *
+     * A passphrase-protected block cannot be parsed at all (bcrypt-KDF, which
+     * this build does not run), and that is not an error to raise at anyone —
+     * the read-out returns null, the view draws nothing, and the sentence
+     * below stands in.
+     *
+     * No `key.publish`, ever. Publishing a private key is not a thing, so by
+     * §33d it is an omission and not a disabled button — there is nothing to
+     * reason about at runtime and nothing to teach the wrong lesson.
+     */
+    id: "ssh-private",
+    match: { role: "ssh-private" },
+    label: "SSH private key",
+    glyph: "ssh-private",
+    view: ({ artifact }) => <SshKeyCard content={artifact.content} />,
+    publicView: ({ artifact }) => (
+      <SshKeyCard content={artifact.content} withRaw={false} />
+    ),
+    empty:
+      "This block is passphrase-protected or not an OpenSSH key, so there is nothing to read from it — the armor is below.",
+    /**
+     * Copy fingerprint stays enabled while masked, because a fingerprint is a
+     * public fact (§34b). So does Add to My Keys, for the opposite reason: it
+     * moves the secret into storage without ever displaying it, and
+     * `keyring-service.js` already decodes an openssh-key-v1 block through
+     * `ssh.decode` — the same route `agent.save` takes, so a key added by a
+     * click lands under the id a recipe would have given it.
+     */
+    actions: ["copy", "download", "key.copyFingerprint", "keyring.add"],
+    /**
+     * `ssh-keygen` writes the private half with **no** extension at all
+     * (`id_ed25519`, beside `id_ed25519.pub`), and the namer always produces
+     * one — so this is the closest honest name rather than a copy of what the
+     * tool does. `.txt` is the lie worth removing: it hands a private key to a
+     * text editor by default. `.pem` was rejected as the worse lie — it claims
+     * PKCS#8, which this block is not.
+     */
+    download: { ext: "key" },
   },
   {
     id: "network-value",

@@ -1599,6 +1599,28 @@ export const ARTIFACT_ROLES = Object.freeze([
   "ciphertext", // an encrypted message
   "envelope", // the recovery envelope of a ceremony (not a share)
   "sshsig", // an sshsig signature block
+  /**
+   * The two halves of an SSH key, as they exist *on the wire* — a one-line
+   * `type base64 comment` public line, and an openssh-key-v1 private block.
+   *
+   * Two words rather than one for the same reason `public-key` is not
+   * `key`: what may be done with an artifact is a property of which half it
+   * is. One is written into `authorized_keys` and pasted into GitHub; the
+   * other is the secret that must never leave masked, downloads under a
+   * different name, and is the one artifact where "publish" must not exist
+   * even as a disabled button (§33d).
+   *
+   * They are not served by `text`/`secret` plus a tag, which was tried
+   * first: `role` is stamped from *sensitivity* at both text emit sites, so
+   * the same private block came out `secret` through `out @priv` and `text`
+   * through a dangling tip, and `ArtifactMatch.role` is exact. A kind
+   * matching one spelling silently disowned the other — a masked private key
+   * rendering as untyped text, which is the tile §35d already fixed once.
+   * `sshsig` and `token` hit precisely this and were fixed precisely this
+   * way (engine.js's `TYPE_OWNED_ROLES`); this follows them.
+   */
+  "ssh-public", // an SSH public line — `ssh-ed25519 AAAA… comment`
+  "ssh-private", // an openssh-key-v1 private block
   "token", // JOSE: jws / jwe
   "netvalue", // candidate / sdp / stats / connstate / endpoint / certificate / session
   "diagnostic", // stun.check and friends — a read-out with a verdict
@@ -1632,6 +1654,14 @@ export function artifactMetaFromType(t) {
   // through to `text`, which is what forced the UI to grow parallel
   // discriminators (`jose`, `netType`) for a discriminator it already had.
   if (t.kind === "sshsig") return { role: "sshsig", tags: ["ssh", "signature"] };
+  // The tags are the ones `ssh.encode` already produced through the fallback
+  // branch below, and `ssh-format.test.js` pins that the two halves share
+  // **none** — a single tag on both is the whole failure mode (7d563cd), so
+  // no common "ssh" tag is added here however tempting the symmetry with
+  // sshsig above is. What changes is the role: it is the type's to give, not
+  // the emit site's to guess from sensitivity.
+  if (t.kind === "ssh-public") return { role: "ssh-public", tags: ["ssh-public"] };
+  if (t.kind === "ssh-private") return { role: "ssh-private", tags: ["ssh-private"] };
   if (t.kind === "jws") return { role: "token", tags: ["jose", "jws"] };
   if (t.kind === "jwe") return { role: "token", tags: ["jose", "jwe"] };
   if (NETWORK_BASES.includes(t.base)) {

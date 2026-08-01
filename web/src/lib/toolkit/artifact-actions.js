@@ -23,6 +23,7 @@
 import { ACTION_REASONS } from "./artifact-reasons.js";
 import { shortKeyId } from "./approval-gate.js";
 import { sshIdentityFromJwk } from "./ssh-ops.js";
+import { sshKeySummary } from "./artifact-readouts.js";
 import { formatFingerprint } from "../utils.js";
 import { sanitizeFilename } from "../zip-store.js";
 
@@ -74,6 +75,31 @@ export function hasPrivateKeyMaterial(artifact) {
   if (/-----BEGIN [A-Z0-9 ]*PRIVATE KEY/.test(body)) return true;
   if (body.startsWith("-----BEGIN")) return false;
   return !!jwkOf(artifact)?.d;
+}
+
+/**
+ * Whether a body is an SSH key in one of the two wire forms.
+ *
+ * Cheap and shape-only, because `available()` is synchronous and the real
+ * answer — the fingerprint — is a digest. The prefixes are
+ * `keyring-service.js`'s, so the button and the vault recognise an OpenSSH
+ * public line by the same rule.
+ *
+ * This is what lets Copy fingerprint work on an SSH tile at all. The action's
+ * other two routes are a JWK body and `traits.fingerprint`, and an SSH line is
+ * neither: the fingerprint is a digest of the wire blob, which no step
+ * computed on the way past, so nothing could have stamped it. Deriving it here
+ * — from `sshKeySummary`, the same function the tile's card draws from — is
+ * one derivation with two consumers rather than a trait stamped at one emit
+ * site and missing at the other (a dangling `ssh.encode` tip is built by the
+ * synchronous `valueToArtifacts`, which cannot await a digest).
+ *
+ * @param {string} body
+ */
+function looksLikeSshKey(body) {
+  const text = String(body || "").trim();
+  if (text.includes("BEGIN OPENSSH PRIVATE KEY")) return true;
+  return /^(ssh-|ecdsa-sha2-|sk-ssh-|sk-ecdsa-)\S+\s+\S/.test(text);
 }
 
 /** The public half only — never let a private field reach a derivation. */
@@ -242,7 +268,9 @@ export const ARTIFACT_ACTIONS = Object.freeze([
     // Enabled while masked: a fingerprint is a public fact about the key, and
     // it does not derive from the masked material (§34b).
     available: ({ artifact }) =>
-      jwkOf(artifact) || artifact.traits?.fingerprint
+      jwkOf(artifact) ||
+      artifact.traits?.fingerprint ||
+      looksLikeSshKey(artifact?.content)
         ? true
         : { disabled: "This artifact carries no key to fingerprint." },
     run: async ({ artifact, services }) => {
@@ -252,6 +280,18 @@ export const ARTIFACT_ACTIONS = Object.freeze([
         if (id) {
           await services.clipboard.write(id.fingerprint);
           return { receipt: "Fingerprint copied", detail: id.fingerprint };
+        }
+      }
+      // An SSH body carries its own fingerprint — a digest of the wire blob,
+      // which is public material even inside a private block, so this works on
+      // a masked private-key tile exactly as §34b intends. Copied in the
+      // `SHA256:…` form, unaltered: it is what `ssh-keygen -lf` prints and what
+      // an `allowed_signers` line is compared against character for character.
+      if (looksLikeSshKey(artifact?.content)) {
+        const summary = await sshKeySummary(String(artifact.content));
+        if (summary) {
+          await services.clipboard.write(summary.fingerprint);
+          return { receipt: "Fingerprint copied", detail: summary.fingerprint };
         }
       }
       // OpenPGP and friends: copy what is displayed, in display format —

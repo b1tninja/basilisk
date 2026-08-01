@@ -378,8 +378,12 @@ describe("the filename is the feature: one namer, corrected per kind", () => {
   it("declares an extension only where it is true of the whole kind", () => {
     // Not a pile of special cases: every other kind's bodies are named
     // correctly by the pipeline already.
+    // The SSH halves joined for exactly the stated reason: both wire forms are
+    // `text`, so `out` named them `.txt` — and `.pub` is the name every SSH
+    // tool and every "paste your key" field expects, while a private block
+    // called `.txt` opens in a text editor by default.
     const withExt = ARTIFACT_KINDS.filter((k) => k.download).map((k) => k.id);
-    expect(withExt.sort()).toEqual(["qr", "sshsig"]);
+    expect(withExt.sort()).toEqual(["qr", "ssh-private", "ssh-public", "sshsig"]);
   });
 });
 
@@ -795,10 +799,19 @@ describe("Add to My Keys is local, masked-safe, and refuses by default (§34a/§
     const kinds = ARTIFACT_KINDS.filter((k) => (k.actions || []).includes("keyring.add")).map(
       (k) => k.id
     );
-    expect(kinds.sort()).toEqual(["key", "keypair-private", "openpgp-private"]);
+    // `ssh-private` is the fourth: `keyring-service.js` decodes an
+    // openssh-key-v1 block through `ssh.decode`, so the button has somewhere
+    // to put it — and the tile is masked by default, which is the case this
+    // action stays enabled for.
+    expect(kinds.sort()).toEqual([
+      "key",
+      "keypair-private",
+      "openpgp-private",
+      "ssh-private",
+    ]);
     // Omission, not a disabled state (§33d): a dead button on a public-key
     // tile would teach that public keys belong in My Keys.
-    for (const id of ["keypair-public", "openpgp-public"]) {
+    for (const id of ["keypair-public", "openpgp-public", "ssh-public"]) {
       expect(ARTIFACT_KINDS.find((k) => k.id === id).actions, id).not.toContain("keyring.add");
     }
   });

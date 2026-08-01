@@ -22,7 +22,8 @@
 
 import { dearmorToBytes, mapPacketSpans } from "../packet-map.js";
 import { parseSshsig } from "../ssh/sshsig.js";
-import { parsePublicBlob } from "../ssh/wire.js";
+import { parseOpensshPrivateKey } from "../ssh/openssh-key-v1.js";
+import { parsePublicBlob, parsePublicLine } from "../ssh/wire.js";
 import { sshFingerprint } from "../ssh/fingerprint.js";
 import { parseReceipt } from "./receipt.js";
 import { bytesToBase64 } from "./encode.js";
@@ -127,6 +128,51 @@ export async function sshsigSummary(armor) {
       sigType,
       keyType,
       fingerprint: await sshFingerprint(publicBlob),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * What an SSH key artifact says about itself: key type, fingerprint, comment.
+ *
+ * One function for both halves on purpose. The three facts are identical
+ * questions of a public line and of an openssh-key-v1 block — and for the
+ * private block they are exactly the facts that stay drawable while the secret
+ * is masked (§33e/§34b), because every one of them comes off the *public*
+ * blob the container carries or off the comment beside it. Nothing derived
+ * from the private scalar is read, and none of the private fields
+ * `parseOpensshPrivateKey` returns is retained here: the summary is three
+ * strings.
+ *
+ * The fingerprint is `sshFingerprint`'s, so it is the `SHA256:…` line
+ * `ssh-keygen -lf` prints (§28a) and the one `ssh.fingerprint` puts on the
+ * tile beside it — a tile and an op that disagreed about a key's identity
+ * would be worse than a tile that showed nothing.
+ *
+ * Total, like everything here. A passphrase-protected block throws
+ * `ENCRYPTED_KEY_MESSAGE` inside the parser — bcrypt-KDF material this build
+ * cannot open — and that is a body with no read-out, not an error to raise at
+ * someone: null, and the kind's `empty` sentence stands in.
+ *
+ * @param {string} text
+ * @returns {Promise<{ form: "public"|"private", keyType: string,
+ *   comment: string, fingerprint: string } | null>}
+ */
+export async function sshKeySummary(text) {
+  const body = String(text || "").trim();
+  if (!body) return null;
+  try {
+    const isPrivate = body.includes("BEGIN OPENSSH PRIVATE KEY");
+    const material = isPrivate ? parseOpensshPrivateKey(body) : parsePublicLine(body);
+    const blob = isPrivate ? material.publicBlob : material.blob;
+    if (!blob) return null;
+    return {
+      form: isPrivate ? "private" : "public",
+      keyType: String(material.type || ""),
+      comment: String(material.comment || ""),
+      fingerprint: await sshFingerprint(blob),
     };
   } catch (_) {
     return null;

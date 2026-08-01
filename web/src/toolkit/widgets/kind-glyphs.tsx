@@ -37,6 +37,12 @@ export const KIND_GLYPHS: Record<string, LucideIcon> = {
   key: KeyRound,
   keypair: KeyRound,
   "openpgp-key": KeyRound,
+  // The badge string is the artifact's *role*, so the two SSH halves need
+  // their own entries or they would be the only key artifacts wearing a
+  // badge with no pictogram. Same key, so the same glyph: which half it is
+  // the badge already says in words, and the `sensitive` badge beside it.
+  "ssh-public": KeyRound,
+  "ssh-private": KeyRound,
   share: Users,
   shares: Users,
   recipients: Users,

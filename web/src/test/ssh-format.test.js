@@ -241,7 +241,13 @@ describe("the two ssh.encode formats never share a tag", () => {
     // Unchanged by the fix, and worth pinning: the mask never depended on the
     // tag being right, which is why this shipped without a visibly broken tile.
     expect(art.sensitive).toBe(true);
-    expect(art.role).toBe("secret");
+    // The role was `secret` when this was written — the sensitivity ternary's
+    // answer, not an identity. It is now the type's own word, because the
+    // ternary gave the *same* block `secret` here and `text` on a dangling
+    // tip, and an artifact kind matches `role` exactly. Pinned here rather
+    // than only in the kind table, for the reason this whole file exists:
+    // this is where the artifact is, and the table is downstream of it.
+    expect(art.role).toBe("ssh-private");
   });
 
   it("tags a public line ssh-public, not ssh-private", async () => {
