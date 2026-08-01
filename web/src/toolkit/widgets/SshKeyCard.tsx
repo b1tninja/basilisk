@@ -72,7 +72,11 @@ export function SshKeyCard({
         <div className="flex flex-col gap-1">
           <button
             type="button"
-            className="self-start text-[10px] text-[var(--brand)] underline"
+            /* `artifact-inline-toggle` raises the box to the 22px the action
+               row uses. It measured 16px — the smallest hit target on the
+               page by 3px — for no reason but that it is a bare word rather
+               than a button-shaped control. */
+            className="artifact-inline-toggle self-start text-[10px] text-[var(--brand)] underline"
             onClick={() => setShowRaw((v) => !v)}
           >
             {showRaw

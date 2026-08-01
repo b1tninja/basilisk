@@ -32,6 +32,48 @@
   --warn: #e3b341;
 
   /*
+   * Secret material — the axis, not a hue (§35, sensitivity pass).
+   *
+   * Named for what it means because that is the only thing about it that must
+   * not drift: a PUBLIC-KEY and an SSH-PRIVATE were the same rgb(76,222,130)
+   * one commit ago, correctly tinted as one *family* and therefore identical
+   * on the one axis where being identical is a disclosure. This is the second
+   * axis. It is a modifier — a badge keeps its family's hue until the artifact
+   * carries a secret, and then it takes this one.
+   *
+   * Chosen by measurement, not taste, against four constraints:
+   *
+   *  - **Legible.** 7.69:1 on rgb(13,17,23), 6.49:1 on its own 12% tint;
+   *    6.32:1 on white and 5.74:1 on its own 6% tint in light. Everything in
+   *    a tile is small text, so 4.5:1 is the floor, not 3:1.
+   *  - **Separable from the family it splits.** ΔE from `--brand` is 144.5
+   *    normal, and 98.5 / 72.2 / 90.2 under simulated protanopia,
+   *    deuteranopia and tritanopia. Deuteranopia is the binding case and the
+   *    one where a green/red split would collapse; 72.2 is more than twice
+   *    the 32.7 this palette already ships as a distinct pair
+   *    (`--caret`/`--decode`).
+   *  - **Not `--error`.** ΔE 75.7 in dark, 86.6 in light. Red is reserved for
+   *    things that failed, and a secret key has not failed. The near-misses
+   *    that were rejected are on this line: coral #ffa198 collapses to ΔE 6.7
+   *    from `--brand` under deuteranopia, and rose #ff8fab sits ΔE 25.6 from
+   *    `--error`.
+   *  - **Not amber.** `--warn` already means "this leaves the machine" and
+   *    `--accent` gold is documented above as the shared-secret surface while
+   *    sitting ΔE 9.6 from `--warn`. A third amber was the defect this pass
+   *    was sent to remove, not a colour it could spend.
+   *
+   * Its one weak separation is from `--decode` (ΔE 31.6 dark, 25.1 light).
+   * They never co-occur — `--decode` dresses the ops-shelf drag chip and
+   * nothing in an artifact list — and the two collisions that would have been
+   * read as a claim, green and red, are the two this maximises.
+   *
+   * Colour is not the whole signal, by design: `.artifact-badge` also gains a
+   * ring and a heavier weight at this tier, so the axis survives greyscale
+   * (WCAG 1.4.1).
+   */
+  --secret: #e879f9;
+
+  /*
    * How strongly a hue tints a small surface — kind badges, the active format
    * tab (§39c, design_handoff_artifact_actions/visual).
    *
@@ -119,6 +161,10 @@
     --caret: #0969da;
     --decode: #8250df;
     --warn: #9a6700;
+    /* Same hue (~293°), darkened for AA on white: 6.32:1 on #ffffff and
+     * 5.74:1 on its own 6% tint, against the 4.5:1 floor small text sets.
+     * ΔE from the light `--brand` #2e7d4f is 122.5 normal / 58.8 deuteranopic. */
+    --secret: #a21caf;
 
     /* Darkened for AA on white, same as the semantic accents above. */
     --interactive: #3b5bdb;

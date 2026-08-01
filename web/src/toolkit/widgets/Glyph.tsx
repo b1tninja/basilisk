@@ -3,7 +3,16 @@ import { TOOLBOX_META, SHELF_META, getShelfMeta } from "../../lib/toolkit/regist
 import { toolboxVerification } from "../../lib/toolkit/suite-gate.js";
 import { cn } from "@/lib/cn";
 
-export type GlyphSize = 16 | 18 | 22;
+/**
+ * 12 and 14 joined the set for the kind badge and the type card.
+ *
+ * 12 is not a rounding of 16: it is the size the artifact badge actually
+ * draws at, inside a 9px-caps chip, and the sensitivity glyphs were measured
+ * there — a filled bow carries 1.77× the ink of a hollow one at 12, 16 and
+ * 24px, where a gap-in-the-bow and a dot both collapsed at 12. The 16px in
+ * the ops drawer is a different surface.
+ */
+export type GlyphSize = 12 | 14 | 16 | 18 | 22;
 
 type Props = {
   id: string;

@@ -1778,6 +1778,131 @@ input[type="file"][data-basilisk-file-picker] {
 }
 
 /*
+ * Sensitivity tier (§35, sensitivity pass) — the second axis, over the first.
+ *
+ * The family rules above are correct and stay: six key roles wear one glyph,
+ * so they are one family, and until an hour ago four of them were tinted as
+ * plain text. But one axis was all the badge had, and on the axis that costs
+ * something a PUBLIC-KEY and an SSH-PRIVATE were the same rgb(76,222,130).
+ * The only thing telling them apart was a 9px uppercase word — which two of
+ * the six roles do not have, because `KEY` and `KEYPAIR` name no half.
+ *
+ * So a *modifier*, declared as its own attribute and enumerated the same way.
+ * It applies across families rather than inside the key one: the user's ask
+ * was "the PRIVATE or SECRET key **or SENSITIVE output**", and a masked `TEXT`
+ * tile holds a secret exactly as much as a `SECRET-KEY` does. `public` and
+ * `unstated` are declared and deliberately empty — the family's own hue is
+ * already the right answer for both, and a rule that restated it would be a
+ * second place for the family tints to drift.
+ *
+ * **Colour is not the whole signal (WCAG 1.4.1).** Two more channels ride
+ * this rule, and both survive greyscale:
+ *
+ *  - a 1px inset ring, drawn as `box-shadow` rather than `border` so the two
+ *    tiers stay the same size and a row does not reflow by 2px when a value
+ *    turns out to be secret (measured: both 18.4px tall). It is the axis'
+ *    only non-colour carrier, so 1.4.11's 3:1 is held on **both** of its
+ *    sides — 4.21:1 against the page and 3.56:1 against the badge's own tint
+ *    in dark, 3.48:1 and 3.16:1 in light. 60% was the first try and failed
+ *    the inside edge in light at 2.87:1, which is the edge a ring is most
+ *    easily wrong on and the theme it is most easily wrong in.
+ *  - font-weight 500 → 600, which at 9px uppercase is a legible step.
+ *
+ * Plus the word, in the `sensitive` chip on the same row, for the two roles
+ * whose own name does not carry it.
+ */
+.artifact-badge[data-badge-tier="secret"] {
+  background: color-mix(in srgb, var(--secret) var(--tile-tint), transparent);
+  color: var(--secret);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--secret) 65%, transparent);
+  font-weight: 600;
+}
+
+/*
+ * The `sensitive` chip, in the tier's voice.
+ *
+ * It is `<Badge variant="warn">`, whose tone is `--accent` gold — and gold
+ * sits ΔE 9.6 from `--warn`, so on one artifact row this chip, `Reveal` and
+ * `Publish` read as three ambers meaning three different things. That was the
+ * standing complaint, and the fix is not a fourth colour: this chip and the
+ * badge beside it state one fact, so they state it in one hue.
+ *
+ * Unlayered on purpose. The variant's tone arrives as Tailwind arbitrary-value
+ * utilities in `@layer utilities`, and an unlayered rule beats a layered one
+ * whatever the specificity — the same cascade this file already documents for
+ * `.suggest-chip.border-dashed` and `[data-output-list] code.artifact-label`.
+ */
+.artifact-sensitive {
+  /* 55%, up from the variant's 45%: that tone was mixed against `--accent`
+     gold and measured 2.92:1 in light once the hue changed under it. 3.89:1
+     dark, 3.43:1 light. */
+  border-color: color-mix(in srgb, var(--secret) 55%, var(--border));
+  background: color-mix(in srgb, var(--secret) var(--tile-tint), transparent);
+  color: var(--secret);
+}
+
+/*
+ * Reveal — an operation on secret material, in secret material's colour.
+ *
+ * It was an amber outline: `--warn` text inside a `--warn` 45% border, which
+ * is `.artifact-action[data-action-tier="outward"]` to within 10% of one
+ * border-colour. Outward means "this leaves the machine" and is the tier
+ * `Publish` wears. Reveal does not leave the machine — it unmasks a value in
+ * place, and `OutputList`'s 15s timer re-masks it — so the row was teaching
+ * that unmasking and publishing are the same weight of act. They are the two
+ * ends of the range.
+ *
+ * Amber is left meaning exactly one thing. Reveal takes the hue of the thing
+ * it acts on, which also links it to the badge and to the disabled Copy and
+ * Download above it, whose stated reason is "Reveal this value first".
+ *
+ * `min-height` is the target-size half: it measured 19.3px, an odd size
+ * matching nothing, and 22px is the action row's own.
+ */
+.artifact-reveal {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 6px;
+  /*
+   * 65%, not the 45% it inherited from its amber days. The outline is this
+   * control's whole boundary, so 1.4.11's 3:1 applies to it: 45% measured
+   * **2.44:1** against rgb(13,17,23) and 2.23:1 against white — the tone was
+   * carried over from a hue with a different luminance and never re-measured.
+   * 65% gives 3.85:1 dark and 3.34:1 light. It stays deliberately below the
+   * outward tier's 55% amber (3.66:1) in *weight*, because Reveal is the
+   * lesser act, but a floor is a floor and this one was under it in both
+   * themes before the hue ever changed.
+   */
+  border: 1px solid color-mix(in srgb, var(--secret) 65%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--secret);
+}
+.artifact-reveal:hover {
+  background: color-mix(in srgb, var(--secret) var(--tile-tint), transparent);
+}
+
+/*
+ * A bare-word toggle inside a card, given the action row's box.
+ *
+ * `SshKeyCard`'s "show line" / "show block" measured 16px tall — the smallest
+ * target in the artifact list, 6px under the 22px every button beside it
+ * uses, and undersized only because it is styled as text. The 38 targets in
+ * that list all pass WCAG 2.2 SC 2.5.8 by the spacing exception (measured:
+ * the closest centre-to-centre pair is 29px at a 250px container width,
+ * against the 24px the exception asks for), so this is not a conformance fix.
+ * It is the outlier removed.
+ */
+.artifact-inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+}
+
+/*
  * Artifact action tiers (§33b/§41, design_handoff_artifact_actions).
  *
  * Three weights, one hue. Inert is quiet text, local is a filled bordered
@@ -1808,7 +1933,24 @@ input[type="file"][data-basilisk-file-picker] {
   color: var(--brand);
 }
 .artifact-action[data-action-tier="outward"] {
-  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  /*
+   * 80%, up from 55%.
+   *
+   * The comment above chose an outline over a fill on a *measured* argument —
+   * the `--warn` fill is 3.76:1 in light — and then did not measure the
+   * outline it chose instead: 55% of the light `--warn` #9a6700 on white is
+   * **2.20:1**, under the 3:1 an outline that is a control's whole boundary
+   * has to clear. It passed in dark (3.66:1), which is the theme it was
+   * written in. 80% measures 6.53:1 dark and 3.37:1 light.
+   *
+   * It can afford the weight it just gained. Amber used to appear three times
+   * on one artifact row meaning three different things — this outline, the
+   * `sensitive` chip's gold, and Reveal's outline, which was this outline to
+   * within 10% of one colour. The other two moved to `--secret`, so this is
+   * now the only amber a tile can show, and it means one thing: what it is
+   * attached to leaves the machine.
+   */
+  border-color: color-mix(in srgb, var(--warn) 80%, transparent);
   background: transparent;
   color: var(--warn);
 }

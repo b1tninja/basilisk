@@ -40,13 +40,58 @@ export type ArtifactKind<A = unknown, S = unknown> = {
   /** Stable id — rides `data-artifact-kind` and names the catalog fixture. */
   id: string;
   match: ArtifactMatch;
-  /** Human name for the kind badge ("Keypair", "Token"). */
+  /** Human name for this kind, in prose ("OpenPGP public key", "Token"). */
   label: string;
-  /** KIND_GLYPHS key. Omitted renders no glyph, never a guess. */
+  /**
+   * What the tile's chip calls this artifact, when the role is the wrong name.
+   *
+   * The chip rendered `artifact.role` — the string the *resolver matches on* —
+   * so a TOTP code badged **TEXT**. It is not wrong (a code is text, and the
+   * role can only be `text` because a code is never sensitive), it is just the
+   * least useful true thing available. Roles are for matching; this is for
+   * naming, and conflating them meant naming problems got fixed by growing the
+   * matching vocabulary — three roles were added in one day partly to make
+   * badges read correctly.
+   *
+   * **The role stays the default, and `label` is deliberately not it.** Both
+   * were measured against the row: in a 320px panel beside a real engine
+   * filename (`openpgp-secret-subkey.asc`), the role `public-key` costs 79px
+   * and leaves the filename intact, while `OpenPGP public key` costs 124px and
+   * truncates it. The filename is the more specific thing on that line, so a
+   * prose name that eats it is a worse row. Roles are already short and mostly
+   * right; a kind that has a better *short* name says so here.
+   *
+   * A function where the useful name is a property of the artifact rather than
+   * of the kind — `otp-code` covers both TOTP and HOTP and `traits.otpMode`
+   * says which, the same trait `OtpCodeCard` already reads to draw "counter N".
+   * Returning undefined falls back to the role, as does throwing.
+   */
+  badge?: string | ((artifact: A) => string | undefined);
+  /**
+   * The glyph this kind draws — a `KIND_GLYPHS` key or a `GLYPH_PATHS` id.
+   * Omitted falls back to the artifact's role, and an unmapped role renders
+   * no glyph rather than a guessed one.
+   */
   glyph?: string;
   view: (ctx: { artifact: A; masked: boolean; services: S }) => ReactNode | null;
   /** Shown when `view` returns null — a sentence, not "N/A". */
   empty: string;
+  /**
+   * Whether this kind's artifacts carry secret material (§35, sensitivity pass).
+   *
+   * Declared here rather than derived at the badge, for the reason the tint
+   * itself moved into a table one commit ago: the six key roles were split by
+   * a ternary that named two of them, and every role added afterwards fell
+   * through it silently. This is the same closed vocabulary one axis over.
+   *
+   * **Optional on purpose, and the omission is a statement.** The
+   * least-specific `key` kind leaves it undeclared because it by construction
+   * does not know which half it holds — that is what makes it least specific,
+   * and its own view already "says nothing rather than captioning every lone
+   * key". A kind that declares nothing defers to the engine's `sensitive`
+   * flag on the artifact, which is the only party that does know.
+   */
+  sensitivity?: "secret" | "public";
   /** Shown when `view` throws; the raw body still renders beneath. */
   failed?: (err: Error) => string;
   /** Action ids, resolved against the action table (§33c). */
@@ -64,6 +109,34 @@ export type ArtifactKind<A = unknown, S = unknown> = {
    */
   download?: { ext: string; mime?: string };
 };
+
+/**
+ * What the tile's chip says — the kind's own name for it, or the role.
+ *
+ * Kept beside the resolver rather than in the tile, for the reason the badge
+ * tint moved out of the tile a commit ago: a conditional at the call site is
+ * where the next kind added will not find it.
+ *
+ * A thrown `badge` falls back rather than propagating, matching
+ * `renderKindView` — a kind that miscomputes its own name must not turn a
+ * computation that succeeded into a blank row.
+ */
+export function badgeNameFor(
+  kind: { badge?: string | ((artifact: never) => string | undefined) } | null | undefined,
+  artifact: unknown,
+  fallback: string
+): string {
+  const badge = kind?.badge;
+  if (typeof badge === "string") return badge || fallback;
+  if (typeof badge === "function") {
+    try {
+      return (badge as (a: unknown) => string | undefined)(artifact) || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
 
 /**
  * Does this kind claim this artifact, and by how many tags?

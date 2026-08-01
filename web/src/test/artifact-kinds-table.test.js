@@ -15,13 +15,18 @@ import {
   ARTIFACT_KINDS,
   FALLBACK_KIND,
 } from "../toolkit/artifact-kinds/registry.tsx";
-import { ambiguousPairs, resolveArtifactKind } from "../toolkit/artifact-kinds/resolve.ts";
+import {
+  ambiguousPairs,
+  badgeNameFor,
+  resolveArtifactKind,
+} from "../toolkit/artifact-kinds/resolve.ts";
 import { actionsFor } from "../lib/toolkit/artifact-actions.js";
-import { KeyRound } from "lucide-react";
 import {
   KEY_BADGE_KINDS,
+  KEY_GLYPH_TIERS,
   KIND_GLYPHS,
   badgeFamily,
+  glyphExists,
 } from "../toolkit/widgets/kind-glyphs.tsx";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
@@ -69,12 +74,80 @@ describe("the table is unambiguous", () => {
   });
 
   it("names only glyphs that exist", () => {
-    // §32d: a kind's glyph is a KIND_GLYPHS key, and omitting it renders no
-    // glyph rather than a guess. A name with no entry would render nothing
-    // while looking declared — the worst of both.
+    // §32d: omitting a glyph renders none rather than a guess. A name with no
+    // entry would render nothing while looking declared — the worst of both.
+    //
+    // `glyphExists` spans both vocabularies, because a kind's glyph may name a
+    // `KIND_GLYPHS` key or a `GLYPH_PATHS` id and the key kinds now name the
+    // latter. Conflating the two namespaces is part of how the defect below
+    // survived: while every key kind pointed at one lucide icon there was
+    // nothing to notice.
     for (const kind of ARTIFACT_KINDS) {
       if (!kind.glyph) continue;
-      expect(KIND_GLYPHS[kind.glyph], `${kind.id} names glyph "${kind.glyph}"`).toBeTruthy();
+      expect(glyphExists(kind.glyph), `${kind.id} names glyph "${kind.glyph}"`).toBe(true);
+    }
+  });
+
+  /**
+   * The defect this exists for, found while splitting the glyph channel:
+   * `openpgp-public` and `openpgp-private` both declared `glyph: "openpgp-key"`,
+   * and `keypair-public`, `public-key`, `keypair-private`, `secret-key` and
+   * `key` all declared `glyph: "key"`. A card labelled "Public key" and a card
+   * labelled "Private key" named the same pictogram — the colour defect from
+   * one commit ago, in the other channel, and invisible for the same reason:
+   * nothing compared the two declarations.
+   */
+  it("never draws a secret kind and a public kind with the same glyph", () => {
+    const byGlyph = new Map();
+    for (const kind of ARTIFACT_KINDS) {
+      if (!kind.glyph || !kind.sensitivity) continue;
+      const seen = byGlyph.get(kind.glyph);
+      expect(
+        seen === undefined || seen.sensitivity === kind.sensitivity,
+        `${kind.id} (${kind.sensitivity}) and ${seen?.id} (${seen?.sensitivity}) both draw "${kind.glyph}"`
+      ).toBe(true);
+      byGlyph.set(kind.glyph, kind);
+    }
+    // And a kind that *declares* a side must draw that side's bow, so nothing
+    // can be tinted secret while wearing the hollow one.
+    //
+    // Undeclared is skipped rather than failed, and `key` is the whole reason:
+    // it declines to say which half it holds, so its tier is the engine's
+    // `sensitive` flag at runtime. Its glyph still has to pick a side at build
+    // time, and it picks `key-secret` — asserted below, where the argument for
+    // over-warning lives.
+    for (const kind of ARTIFACT_KINDS) {
+      const tier = KEY_GLYPH_TIERS[kind.glyph];
+      if (!tier || !kind.sensitivity) continue;
+      expect(kind.sensitivity, `${kind.id} draws ${kind.glyph}`).toBe(tier);
+    }
+  });
+
+  it("badges a one-time code as what it is, from the trait that knows", () => {
+    // The user's report: "to label this more advanced TOTP artifact as TEXT is
+    // not wrong, but i think TOTP is a more useful label". `match` can only be
+    // `role: "text"` here — the engine's role ternary turns on secrecy and a
+    // code that exists to be typed never is — so the tag claims the kind and
+    // the role was what the chip rendered.
+    const otp = ARTIFACT_KINDS.find((k) => k.id === "otp-code");
+    expect(otp.match).toEqual({ role: "text", tags: ["otp-code"] });
+    expect(badgeNameFor(otp, { traits: { otpMode: "totp" } }, "text")).toBe("TOTP");
+    expect(badgeNameFor(otp, { traits: { otpMode: "hotp" } }, "text")).toBe("HOTP");
+    // No trait at all still beats TEXT: TOTP is the overwhelmingly common
+    // shape and `OtpCodeCard` already treats a missing mode the same way.
+    expect(badgeNameFor(otp, {}, "text")).toBe("TOTP");
+  });
+
+  it("keeps every badge name short enough not to eat the row", () => {
+    // Measured on the built page: a 320px panel beside a real engine filename
+    // truncates the filename once the chip passes ~100px, which the prose
+    // `label` does ("OpenPGP public key" is 124px) and the role does not
+    // ("public-key" is 79px, the widest key role). So a declared badge is a
+    // *short* name, not the label — 12 characters is the role vocabulary's
+    // own longest (`ssh-private`) plus one.
+    for (const kind of ARTIFACT_KINDS) {
+      if (typeof kind.badge !== "string") continue;
+      expect(kind.badge.length, `${kind.id} badge "${kind.badge}"`).toBeLessThanOrEqual(12);
     }
   });
 
@@ -100,13 +173,9 @@ describe("the key badge family", () => {
    * These two directions are the comparison. A role added to one and forgotten
    * in the other now fails here rather than in a screenshot nobody takes.
    */
-  it("tints every KeyRound-glyphed role as a key", () => {
+  it("tints every key-glyphed role as a key", () => {
     for (const [kind, glyph] of Object.entries(KIND_GLYPHS)) {
-      if (glyph !== KeyRound) continue;
-      // `openpgp-key` is a kind's declared glyph name, not a role, so it is
-      // never a badge string — the badge is the artifact's role, and an
-      // OpenPGP key's is `public-key` or `key`, both of which are covered.
-      if (kind === "openpgp-key") continue;
+      if (!KEY_GLYPH_TIERS[glyph]) continue;
       expect(badgeFamily(kind), `${kind} wears a key glyph`).toBe("key");
     }
   });
@@ -116,8 +185,43 @@ describe("the key badge family", () => {
       expect(ARTIFACT_ROLES, `${kind} is a badge string, so it is a role`).toContain(
         kind
       );
-      expect(KIND_GLYPHS[kind], `${kind} draws a key`).toBe(KeyRound);
+      expect(KEY_GLYPH_TIERS[KIND_GLYPHS[kind]], `${kind} draws a key`).toBeTruthy();
     }
+  });
+
+  /**
+   * The two channels have to agree, and this is where they are compared.
+   *
+   * Colour and glyph now both carry sensitivity, from two different sources —
+   * `sensitivity` on the kind table, and the bow on the asset. A role whose
+   * badge is tinted secret while its glyph is the hollow public bow would be
+   * two marks contradicting each other on the same 63px chip, which is worse
+   * than either channel alone.
+   *
+   * `key` is the interesting row: it declares no `sensitivity` (it does not
+   * know which half it holds), so its tier comes from the engine's flag at
+   * runtime — but its *glyph* is fixed at build time and must pick a side.
+   * It draws `key-secret`, because the role means "private, or unknown", and
+   * unknown over-warns.
+   */
+  it("draws the same side of the axis the tint paints", () => {
+    for (const role of KEY_BADGE_KINDS) {
+      const tier = KEY_GLYPH_TIERS[KIND_GLYPHS[role]];
+      // A role whose *kind* declares a sensitivity must match its glyph.
+      const kinds = ARTIFACT_KINDS.filter((k) => k.match.role === role && k.sensitivity);
+      for (const k of kinds) {
+        expect(k.sensitivity, `role ${role} → kind ${k.id} vs glyph ${KIND_GLYPHS[role]}`).toBe(
+          tier
+        );
+      }
+    }
+    // And nothing public may be drawn with a filled bow, in either direction.
+    expect(KEY_GLYPH_TIERS[KIND_GLYPHS["public-key"]]).toBe("public");
+    expect(KEY_GLYPH_TIERS[KIND_GLYPHS["ssh-public"]]).toBe("public");
+    expect(KEY_GLYPH_TIERS[KIND_GLYPHS["secret-key"]]).toBe("secret");
+    expect(KEY_GLYPH_TIERS[KIND_GLYPHS["ssh-private"]]).toBe("secret");
+    expect(KEY_GLYPH_TIERS[KIND_GLYPHS["keypair"]]).toBe("secret");
+    expect(KEY_GLYPH_TIERS[KIND_GLYPHS["key"]]).toBe("secret");
   });
 
   it("keeps the vocabulary closed, so one rule set covers it", () => {

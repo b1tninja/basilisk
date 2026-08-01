@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
-import { KindGlyph, badgeFamily } from "./kind-glyphs";
+import { KindGlyph, badgeFamily, badgeTier } from "./kind-glyphs";
 import { ArtifactAction, type ActionTier } from "./ArtifactAction";
 import { ConsequenceBanner, type ConsequenceSpec } from "./ConsequenceBanner";
 import { actionsFor } from "../../lib/toolkit/artifact-actions.js";
@@ -17,7 +17,7 @@ import {
   FALLBACK_KIND,
   type ToolkitArtifactKind,
 } from "../artifact-kinds/registry";
-import { resolveArtifactKind } from "../artifact-kinds/resolve";
+import { badgeNameFor, resolveArtifactKind } from "../artifact-kinds/resolve";
 import {
   bytesToBase32,
   bytesToBase64,
@@ -378,19 +378,56 @@ export function ArtifactTile({
             `keypair` by hand — so the four key roles added after it were
             tinted as though they were plain text, which is what the catalog's
             key section makes visible. Where the family lives is the fix; a
-            fifth branch would have been the same defect one role later. */}
+            fifth branch would have been the same defect one role later.
+
+            `data-badge-tier` is the second axis, added the same way rather
+            than folded into the first: the family says *what* (one hue for
+            all six key roles, which is right — they wear one glyph), the tier
+            says *whether it is secret*. Making the family answer both was the
+            old defect's shape, where "which two roles existed when the tint
+            was written" stood in for a real axis. The kind declares the tier
+            where it knows; `key` does not, and defers to the artifact.
+
+            Both attributes stay keyed on `a.kind` — the **role** — on purpose.
+            What the chip *says* moved to the kind below, and these two answer
+            a different question ("is this key material", "is it secret") that
+            the role is still the right input for. Repointing them at the
+            rendered string would tie a colour to a name. */}
         <span
           className="artifact-badge inline-flex shrink-0 items-center gap-1 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider"
           data-badge-family={badgeFamily(a.kind)}
+          data-badge-tier={badgeTier(resolvedKind.sensitivity, a.sensitive)}
         >
-          <KindGlyph kind={a.kind} />
-          {a.kind}
+          {/* The kind's declared glyph, falling back to the role's.
+              `resolvedKind.glyph` was declared on fourteen kinds, validated by
+              a test, and rendered by nothing — so a `token` (role `token`,
+              unmapped) drew no glyph at all while declaring `signature`, and
+              an OTP code drew AlignLeft. */}
+          <KindGlyph kind={resolvedKind.glyph || a.kind} />
+          {/* Not `a.kind`. The role is what the *resolver* matched on, so a
+              TOTP code badged TEXT: true, and the least useful true thing on
+              the row. `badgeNameFor` falls back to the role, which is already
+              short and mostly right — see `ArtifactKind.badge` for why the
+              prose `label` is not the default. */}
+          {badgeNameFor(resolvedKind, a, a.kind)}
         </span>
         <code className="artifact-label min-w-0 flex-1 truncate font-mono font-medium text-[var(--foreground)]">
           {a.label}
         </code>
+        {/* Kept, and recoloured into the tier rather than dropped.
+
+            It is redundant with the badge on four of the six key roles, and
+            the tempting cut was to delete it there. The other two are why it
+            stays: `KEY` and `KEYPAIR` name no half, so on those tiles this
+            chip is the only place the word "sensitive" appears at all — the
+            only carrier for a screen reader, and the only non-colour channel
+            for a reader who cannot see the hue split. Redundancy on the four
+            is the WCAG 1.4.1 belt beside the braces; absence on the two would
+            be a hole. What it stops being is a *third amber*: it now speaks
+            the same `--secret` the badge does, so a secret row says one thing
+            in one colour twice instead of three things in one colour. */}
         {a.sensitive ? (
-          <Badge variant="warn" className="normal-case tracking-normal">
+          <Badge variant="warn" className="artifact-sensitive normal-case tracking-normal">
             sensitive
           </Badge>
         ) : null}
@@ -505,24 +542,48 @@ export function ArtifactTile({
           {/* §35d: a masked private key is no longer a blank tile — its
               algorithm, fingerprint and public line are public facts. */}
           {renderKindView(resolvedKind, a, true)}
-          <span className="flex items-center gap-2">
-            <span className="font-mono text-[10px] italic text-[var(--muted-foreground)]">
-              sensitive — value not shown
+          {/* The masked line is about a *body*, so a tile with no body does
+              not get one.
+
+              The keypair tile said "nothing here" twice, stacked, in the same
+              10px italic mono muted: its own withheld line ("private half not
+              shown — add `out @kp` …") and then this. The second was not a
+              quieter restatement of the first, it was false — `keypair` has
+              no body to mask, `view` and `publicView` are the same function
+              for exactly that reason, and there is no reveal that could ever
+              change what this tile shows. A mask drawn over nothing teaches
+              that something is behind it.
+
+              `a.content` is the right gate rather than `revealable`, because
+              the sentence is a claim about the body, not about permission —
+              and the Reveal button below already requires both, so no tile
+              loses a control it had. */}
+          {a.content ? (
+            <span className="flex items-center gap-2">
+              <span className="font-mono text-[10px] italic text-[var(--muted-foreground)]">
+                sensitive — value not shown
+              </span>
+              {/* Only tiles produced by an explicit `out` / `text` / `inspect`
+                  offer this. A value that merely passed through was never
+                  asked to be displayed, so there is nothing to reveal.
+
+                  Its amber moved to `--secret` (see `.artifact-reveal`): this
+                  is a local, reversible unmask that the list re-hides after
+                  15s, and it was wearing the outward tier's exact outline —
+                  the one `Publish` wears to promise "this leaves the
+                  machine". */}
+              {a.revealable && a.content ? (
+                <button
+                  type="button"
+                  className="artifact-reveal"
+                  title="Show this value in the clear"
+                  onClick={onReveal}
+                >
+                  Reveal
+                </button>
+              ) : null}
             </span>
-            {/* Only tiles produced by an explicit `out` / `text` / `inspect`
-                offer this. A value that merely passed through was never
-                asked to be displayed, so there is nothing to reveal. */}
-            {a.revealable && a.content ? (
-              <button
-                type="button"
-                className="rounded-[4px] border border-[color-mix(in_srgb,var(--warn)_45%,transparent)] px-1.5 py-px text-[10px] font-semibold text-[var(--warn)] hover:bg-[color-mix(in_srgb,var(--warn)_var(--tile-tint),transparent)]"
-                title="Show this value in the clear"
-                onClick={onReveal}
-              >
-                Reveal
-              </button>
-            ) : null}
-          </span>
+          ) : null}
         </span>
       ) : kindBody ? (
         /* §32e: one resolver call where three bespoke predicates used to

@@ -175,7 +175,8 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
      */
     match: { role: "public-key", tags: ["openpgp"] },
     label: "OpenPGP public key",
-    glyph: "openpgp-key",
+    glyph: "key-public",
+    sensitivity: "public",
     view: pgpCardFor(true),
     empty: "Not a readable OpenPGP key — showing the armor.",
     actions: ["copy", "download", "key.copyFingerprint", "key.publish"],
@@ -188,7 +189,8 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "openpgp-private",
     match: { role: "key", tags: ["openpgp", "private"] },
     label: "OpenPGP private key",
-    glyph: "openpgp-key",
+    glyph: "key-secret",
+    sensitivity: "secret",
     view: pgpCardFor(false),
     // Uid, fingerprint and dates are public facts about the key, so they
     // render while the secret stays masked (§34b).
@@ -219,7 +221,28 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "keypair",
     match: { role: "keypair" },
     label: "Keypair",
-    glyph: "keypair",
+    glyph: "key-pair",
+    /**
+     * **Secret, and this is the one that had an argument on both sides.**
+     *
+     * The case for public is real: everything this tile *draws* is a public
+     * fact. `view` and `publicView` are the same function, deliberately, and
+     * the body it renders is the algorithm, the fingerprint and the public
+     * JWK. Read as a rendering, it is the most public tile in the section.
+     *
+     * It is still secret, because the badge names the **artifact** and not
+     * the view. `@kp` holds both halves; Copy and Download move both; the
+     * withheld line exists precisely to say that the half you cannot see is
+     * in there. A tier that described what is currently painted would flip
+     * from public to secret the moment a recipe added `out @kp`, which is the
+     * definition of a label that does not name its object.
+     *
+     * And the two errors are not the same size. Tinting a keypair public is a
+     * disclosure — the user hands over a file believing it is a public half.
+     * Tinting it secret costs a magenta chip on a tile whose contents are
+     * genuinely half-secret. The asymmetric one loses.
+     */
+    sensitivity: "secret",
     view: KeypairCard,
     publicView: KeypairCard,
     empty:
@@ -230,7 +253,8 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "keypair-public",
     match: { role: "public-key", tags: ["keypair", "public"] },
     label: "Public key",
-    glyph: "key",
+    glyph: "key-public",
+    sensitivity: "public",
     view: keyCardFor(true, "public"),
     empty: "No exportable public half — the key was generated non-extractable.",
     actions: ["copy", "download", "key.copyFingerprint", "key.copyPublicLine"],
@@ -247,7 +271,8 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "public-key",
     match: { role: "public-key" },
     label: "Public key",
-    glyph: "key",
+    glyph: "key-public",
+    sensitivity: "public",
     view: keyCardFor(true, "public"),
     empty: "No exportable public key — the key was generated non-extractable.",
     actions: ["copy", "download", "key.copyFingerprint", "key.copyPublicLine"],
@@ -256,7 +281,8 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "keypair-private",
     match: { role: "key", tags: ["keypair", "private"] },
     label: "Private key",
-    glyph: "key",
+    glyph: "key-secret",
+    sensitivity: "secret",
     view: keyCardFor(false, "private"),
     // §35d: a masked private-key tile is no longer blank. Algorithm,
     // fingerprint and public line derive from public material, so they render
@@ -292,7 +318,8 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "secret-key",
     match: { role: "secret-key" },
     label: "Secret key",
-    glyph: "key",
+    glyph: "key-secret",
+    sensitivity: "secret",
     view: keyCardFor(false, "secret"),
     // Masked, the algorithm still shows — it is a public fact about the key,
     // which is the §34b rule the private-key tile already follows.
@@ -310,7 +337,21 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "key",
     match: { role: "key" },
     label: "Key",
-    glyph: "key",
+    glyph: "key-secret",
+    /**
+     * **`sensitivity` is undeclared here, and the omission is the answer.**
+     *
+     * This kind by construction does not know which half it holds — the same
+     * fact its `view` already acts on by passing no `half` and captioning
+     * nothing. Declaring `"secret"` would tint every PEM export and every
+     * auto-emitted pipeline tip as live key material; declaring `"public"`
+     * would do the reverse on a body that is usually private. Either is the
+     * least-specific kind pretending to be specific.
+     *
+     * So it defers, and `badgeTier` falls through to the artifact's own
+     * `sensitive` flag — the engine's claim about *this* value, which is the
+     * only claim anyone here is entitled to make.
+     */
     // No half passed, and the omission is the §33d answer in the card's own
     // vocabulary: this kind by construction does not know which half it holds
     // — that is what makes it the least specific — so it says nothing rather
@@ -352,7 +393,8 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "ssh-public",
     match: { role: "ssh-public" },
     label: "SSH public key",
-    glyph: "ssh-public",
+    glyph: "key-public",
+    sensitivity: "public",
     view: ({ artifact }) => <SshKeyCard content={artifact.content} />,
     empty:
       "This line did not parse as an SSH public key — showing it as text instead.",
@@ -396,7 +438,8 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "ssh-private",
     match: { role: "ssh-private" },
     label: "SSH private key",
-    glyph: "ssh-private",
+    glyph: "key-secret",
+    sensitivity: "secret",
     view: ({ artifact }) => <SshKeyCard content={artifact.content} />,
     publicView: ({ artifact }) => (
       <SshKeyCard content={artifact.content} withRaw={false} />
@@ -733,6 +776,33 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "otp-code",
     match: { role: "text", tags: ["otp-code"] },
     label: "One-time code",
+    /**
+     * The badge said **TEXT**, which is true and useless.
+     *
+     * `match` can only be `role: "text"` — the engine's role ternary turns on
+     * whether a value is secret, and a code that exists to be typed into a
+     * prompt never is — so the tag is what claims this kind, and the role is
+     * what the chip was rendering. That is the whole defect, and it is why the
+     * name is declared here rather than by inventing an `otp` role: the role
+     * is correct, it is just not a name.
+     *
+     * TOTP or HOTP rather than the static `label`, because the artifact is
+     * genuinely one or the other and `traits.otpMode` says which — the same
+     * trait `OtpCodeCard` reads to draw "counter N" for the HOTP shape. Four
+     * characters, so it costs the row nothing: measured at 49px against
+     * TEXT's 48px, where `One-time code` would have been 100px and truncates
+     * a real filename in a 320px panel.
+     */
+    badge: (artifact) =>
+      (artifact?.traits as { otpMode?: string } | undefined)?.otpMode === "hotp"
+        ? "HOTP"
+        : "TOTP",
+    /**
+     * `otp`, not the `text` its role would have found. The glyph channel had
+     * the same conflation as the name: this kind drew AlignLeft — lines of
+     * prose — for a six-digit code with a countdown.
+     */
+    glyph: "otp",
     view: ({ artifact }) =>
       hasOtpReadout(artifact.content, artifact.traits as Record<string, unknown>) ? (
         <OtpCodeCard
@@ -774,6 +844,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     match: { role: "secret" },
     label: "Secret",
     glyph: "secret",
+    sensitivity: "secret",
     view: () => null,
     // No `publicView`. A scalar or a master secret has no public half to
     // draw — unlike a keypair, where the algorithm and fingerprint are facts

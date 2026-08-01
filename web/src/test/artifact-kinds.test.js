@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   AmbiguousArtifactKindError,
   ambiguousPairs,
+  badgeNameFor,
   matchScore,
   resolveArtifactKind,
 } from "../toolkit/artifact-kinds/resolve.ts";
@@ -113,5 +114,53 @@ describe("the fallback is a kind, not a crash", () => {
     // its content rather than blanking the cell.
     expect(resolveArtifactKind({}, [kind("k", "key")], FALLBACK).id).toBe("raw");
     expect(() => resolveArtifactKind({}, [], FALLBACK)).not.toThrow();
+  });
+});
+
+/**
+ * What the chip says (§35, naming pass).
+ *
+ * The badge rendered `artifact.role` — the string the resolver *matches* on —
+ * so a TOTP code badged TEXT. True, and the least useful true thing on the
+ * row. It also meant naming problems got fixed by growing the matching
+ * vocabulary: three roles were added in one day partly so badges would read
+ * correctly, and the next one would have wanted a fourth.
+ */
+describe("a kind may name its own badge", () => {
+  it("falls back to the role, which is the default and not the label", () => {
+    // Measured on the built page: in a 320px panel beside a real filename
+    // (`openpgp-secret-subkey.asc`), the role `public-key` costs a 79px chip
+    // and truncates nothing; the prose label `OpenPGP public key` costs 124px
+    // and truncates the filename — the more specific string on that line.
+    expect(badgeNameFor(kind("k", "key"), {}, "key")).toBe("key");
+    expect(badgeNameFor(undefined, {}, "key")).toBe("key");
+    expect(badgeNameFor({ badge: "" }, {}, "key")).toBe("key");
+  });
+
+  it("takes a static name where the kind has a better short one", () => {
+    expect(badgeNameFor({ badge: "TOTP" }, {}, "text")).toBe("TOTP");
+  });
+
+  it("takes a per-artifact name where the useful one is a property of the value", () => {
+    const otp = { badge: (a) => (a?.traits?.otpMode === "hotp" ? "HOTP" : "TOTP") };
+    expect(badgeNameFor(otp, { traits: { otpMode: "totp" } }, "text")).toBe("TOTP");
+    expect(badgeNameFor(otp, { traits: { otpMode: "hotp" } }, "text")).toBe("HOTP");
+  });
+
+  it("falls back rather than blanking the row when a kind miscomputes its name", () => {
+    // Same rule `renderKindView` follows: a kind that throws must not turn a
+    // computation that succeeded into a user-visible failure.
+    expect(
+      badgeNameFor(
+        {
+          badge: () => {
+            throw new Error("nope");
+          },
+        },
+        {},
+        "text"
+      )
+    ).toBe("text");
+    expect(badgeNameFor({ badge: () => undefined }, {}, "text")).toBe("text");
   });
 });
