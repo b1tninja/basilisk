@@ -1703,6 +1703,50 @@ in @msg | ssh.verify key=@pub signature=@sig | out @ok`,
       },
     },
     {
+      // §29f (b): the passphrase is *named* by the recipe, never lifted out of
+      // the Inputs panel — so this case proves the whole channel, from an
+      // `@slot` the notebook registered through to a container `ssh.decode`
+      // has to be given the same passphrase to reopen.
+      id: "ssh.encode.format=private.passphrase",
+      recipe: `"correct horse" | out @pw
+
+genkey ed25519 | out @id
+
+in @id | ssh.encode format=private comment="verb@smoke" passphrase=@pw | out @enc
+
+in @enc | ssh.decode | out @again
+
+in @again | ssh.fingerprint | out @fp
+
+in @id | ssh.fingerprint | out @fp2`,
+      mode: "run",
+      timeoutMs: 30_000,
+      // `ssh.decode` reads the panel, because on that side a passphrase only
+      // decides whether the run gets off the ground — it cannot change what
+      // the recipe emits. Encoding is the direction where it can, which is
+      // why only this half takes an explicit param.
+      bindings: { inputs: { gpg: { passphrase: "correct horse" } } },
+      assert(arts) {
+        const tok = (a, n) => String(a.label || "").split(/[^A-Za-z0-9]+/).includes(n);
+        const enc = String(arts.find((a) => tok(a, "enc"))?.content || "");
+        const b64 = enc.match(
+          /-----BEGIN OPENSSH PRIVATE KEY-----([\s\S]*?)-----END/
+        )?.[1];
+        if (!b64) throw new Error("ssh.encode passphrase= did not emit an openssh-key-v1 block");
+        // The cipher and KDF names sit in the clear at the head of the
+        // container, so this reads the artifact rather than trusting the op.
+        const head = atob(b64.replace(/\s+/g, "")).slice(0, 64);
+        if (!head.includes("aes256-ctr") || !head.includes("bcrypt")) {
+          throw new Error(`ssh.encode passphrase= wrote an unprotected container: ${head}`);
+        }
+        const fp = arts.find((a) => tok(a, "fp"))?.content;
+        const fp2 = arts.find((a) => tok(a, "fp2"))?.content;
+        if (!String(fp).startsWith("SHA256:") || String(fp) !== String(fp2)) {
+          throw new Error("the key that came back out of the protected block is not the one that went in");
+        }
+      },
+    },
+    {
       id: "age.armor.passphrase",
       recipe: `"armored" | utf8 | age.encrypt passphrase="correct horse" armor=true | out @armored
 

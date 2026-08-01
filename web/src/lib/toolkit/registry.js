@@ -145,7 +145,7 @@ export const TOOLBOX_META = {
   // its wire format is an `otpauth://` URI, and filing `otp.verify` under
   // WebCrypto's Sign shelf would imply it and `verify` are two settings of
   // one op when they share nothing but a verb.
-  otp: { label: "OTP", badge: "OTP", order: 11, glyph: "password", color: "#db61a2" },
+  otp: { label: "OTP", badge: "OTP", order: 11, glyph: "otp", color: "#db61a2" },
   webrtc: { label: "WebRTC", badge: "WebRTC", order: 12, glyph: "agent", color: "#58a6ff" },
   jose: { label: "JOSE", badge: "JOSE", order: 13, glyph: "jose", color: "#ffa657" },
 };
@@ -281,8 +281,14 @@ export const SHELF_META = {
   // OTP splits enrolment from use, because they happen months apart and only
   // one of them puts the shared secret on screen: `otp.uri`/`otp.parse` move
   // the credential, `otp.code`/`otp.verify` never emit it.
+  // `enrolment` keeps `qr` on purpose — a QR code is not a stand-in for what
+  // enrolment is, it *is* what enrolment is, and `otp.uri`'s own example ends
+  // in the `qr` sink. `otpcode` had been borrowing OpenPGP's `password` key,
+  // which said "a shared secret" and nothing about the half that matters here:
+  // the code is only good for one period. `otp` is the same key with a
+  // countdown dial for a bow, so the two shelves now read as one toolbox.
   enrolment: { label: "Enrolment", order: 0, glyph: "qr" },
-  otpcode: { label: "Code", order: 1, glyph: "password" },
+  otpcode: { label: "Code", order: 1, glyph: "otp" },
   ice: { label: "ICE / STUN", order: 0, glyph: "ports" },
   peer: { label: "Peer & signaling", order: 1, glyph: "agent" },
   channel: { label: "Data channel", order: 2, glyph: "agent" },
@@ -2045,7 +2051,7 @@ export const STEPS = [
     conjugate: "ssh.decode",
     pairCaption: "Encode / decode",
     glyph: "ssh-key",
-    doc: "Encode a keypair/key as OpenSSH — `format=public` (default) emits the one-line public form (`ssh-ed25519 AAAA… comment`) for authorized_keys / GitHub; `format=private` emits an **unencrypted** openssh-key-v1 block and warns. ed25519, ec/p256|384|521, rsa. The leading key-type name is fixed by the key's algorithm and curve, not chosen here: a P-256 key is always `ecdsa-sha2-nistp256` (RFC 5656), where the `sha2` is part of that name rather than a digest you can set. The bytes match `ssh-keygen`. Example: `genkey ed25519 | ssh.encode comment=\"you@host\" | out @pub`.",
+    doc: "Encode a keypair/key as OpenSSH — `format=public` (default) emits the one-line public form (`ssh-ed25519 AAAA… comment`) for authorized_keys / GitHub; `format=private` emits an openssh-key-v1 block, **unencrypted unless you bind `passphrase=@slot`** (`aes256-ctr` + `bcrypt_pbkdf` at 24 rounds, the pair `ssh-keygen` writes). The passphrase is never taken from the Inputs panel behind your back: the same recipe must always emit the same kind of file, so the encryption has to be named in the recipe (`… | ssh.encode format=private passphrase=@pw`). ed25519, ec/p256|384|521, rsa. The leading key-type name is fixed by the key's algorithm and curve, not chosen here: a P-256 key is always `ecdsa-sha2-nistp256` (RFC 5656), where the `sha2` is part of that name rather than a digest you can set. The bytes match `ssh-keygen`. Example: `genkey ed25519 | ssh.encode comment=\"you@host\" | out @pub`.",
     input: "keypair",
     output: "text",
     params: [
@@ -2054,13 +2060,31 @@ export const STEPS = [
         type: "enum",
         default: "public",
         enum: ["public", "private"],
-        doc: "public = one-line public key; private = unencrypted openssh-key-v1 (explicit only, never a default)",
+        doc: "public = one-line public key; private = openssh-key-v1 (explicit only, never a default) — bare unless passphrase= is bound",
       },
       {
         name: "comment",
         type: "string",
         default: "",
         doc: "Trailing comment on the public line (openssh-key-v1 carries it too)",
+      },
+      {
+        // `slot` + `secret`, the shape `rtc.ice credential=` uses, and for its
+        // reason: the UI offers only "Bind a value from Inputs…", and
+        // `serializeStep` drops anything that is not an `@ref` before a recipe
+        // becomes a share link. So the passphrase is *named* in the recipe
+        // while its bytes stay in the session.
+        //
+        // Named, and never implicit. `ssh.decode` may read the Inputs panel
+        // because a passphrase there only decides whether a run gets off the
+        // ground; here it decides what the file *is*. Sourcing it from panel
+        // state would mean one recipe emitting a protected key on one machine
+        // and a bare one on the next, with nothing in the text to say which.
+        name: "passphrase",
+        type: "slot",
+        secret: true,
+        default: "",
+        doc: "format=private only: @slot holding the passphrase to encrypt the block with (aes256-ctr + bcrypt_pbkdf, 24 rounds). Empty = an unencrypted block, as before.",
       },
     ],
     overloads: [
@@ -2276,7 +2300,7 @@ export const STEPS = [
     conjugate: "otp.verify",
     pairCaption: "Code / verify",
     pairLabels: { forward: "Code", reverse: "Verify" },
-    glyph: "password",
+    glyph: "otp",
     doc: "The code showing right now, from a Base32 secret, raw secret bytes, **or** a whole `otpauth://` URI. Handed a URI it takes `mode`, `algorithm`, `digits`, `period` and `counter` from the URI and ignores its own — the URI is what the other side is holding. `at=` pins the instant, which is how the RFC 6238 vectors are stated. The code itself is *not* masked: it expires in one step and exists to be read. Example: `in @secret | otp.code | out @code`.",
     input: "text",
     output: "text",
@@ -2292,7 +2316,7 @@ export const STEPS = [
     toolbox: "otp",
     shelf: "otpcode",
     conjugateOf: "otp.code",
-    glyph: "password",
+    glyph: "otp",
     doc: "Check the code on the stem against the secret in `secret=@slot` (a Base32 secret or a whole `otpauth://` URI). `window=` is the part naive implementations get wrong: clocks drift and users type slowly, so a TOTP code is accepted within **±window** steps — while a HOTP window only ever looks *ahead*, because a server counter that went backwards would accept a code already spent. Fail-loud; `-q` emits bool false instead. Example: `input | otp.verify secret=@enrol window=1 | out @ok`.",
     input: "text",
     output: "bool",
@@ -3773,8 +3797,8 @@ export const STEP_GLYPHS = {
   "ssh.verify": "sshsig-sign",
   "otp.uri": "qr",
   "otp.parse": "qr",
-  "otp.code": "password",
-  "otp.verify": "password",
+  "otp.code": "otp",
+  "otp.verify": "otp",
   "gpg.encrypt": "gpg-encrypt",
   "gpg.decrypt": "gpg-decrypt",
   "gpg.sign": "gpg-sign",

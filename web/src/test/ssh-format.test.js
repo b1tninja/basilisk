@@ -6,6 +6,7 @@
  * tripping through our own code, which would happily agree with its own
  * bugs. The fixtures' provenance is in fixtures/ssh/README.md.
  */
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -27,7 +28,7 @@ import { parseSshsig, sshsigSign, sshsigVerify } from "../lib/ssh/sshsig.js";
 import { STEPS } from "../lib/toolkit/registry.js";
 import { matchOverload } from "../lib/toolkit/types.js";
 import { execSshEncode } from "../lib/toolkit/ssh-ops.js";
-import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 
 const fixture = (name) =>
@@ -219,6 +220,91 @@ describe("openssh-key-v1, passphrase-protected", () => {
   });
 });
 
+/**
+ * The other direction: containers **we** encrypted (§29f).
+ *
+ * The block above proves the reader — those fixtures came out of `ssh-keygen`.
+ * Nothing proved the writer, and a round trip through our own encryptor and our
+ * own decryptor cannot: two mistakes that cancel look exactly like none.
+ *
+ * So `ours_*_enc` are checked in as *frozen output*. Each was produced by
+ * `encodeOpensshPrivateKey` from the plaintext fixture beside it, and each was
+ * then handed to `ssh-keygen -y -P "correct horse"`, which printed the matching
+ * public key — see `make-ours-enc.mjs`, which is the script that wrote them and
+ * ran that check, and README.md, which records the transcript.
+ *
+ * What is machine-checked *here* is narrower and worth stating plainly: these
+ * exact bytes decrypt to exactly the key that went in. That is a regression
+ * gate on the writer — change the salt layout, the counter width, the padding
+ * or the kdfoptions nesting and these files stop opening — but it is not the
+ * interop assertion itself. The interop assertion is reproducible by running
+ * the script on any machine with `ssh-keygen`, and is asserted live below when
+ * one is present.
+ */
+describe("openssh-key-v1 we encrypted, frozen and re-read", () => {
+  const PASSPHRASE = "correct horse";
+  const OURS = [
+    ["ours_ed25519_enc", "id_ed25519"],
+    ["ours_ecdsa256_enc", "id_ecdsa256"],
+    ["ours_rsa_enc", "id_rsa"],
+  ];
+
+  it.each(OURS)("%s opens to exactly the material in %s", async (encName, plainName) => {
+    const opened = await parseOpensshPrivateKey(fixture(encName), { passphrase: PASSPHRASE });
+    const plain = await parseOpensshPrivateKey(fixture(plainName));
+    expect(opened.encrypted).toBe(true);
+    // Written at the ssh-keygen default, not at whatever was cheapest to test:
+    // a container we wrote at 16 rounds would open fine and be quietly weaker
+    // than the one `ssh-keygen -p` beside it produces.
+    expect(opened.kdfRounds).toBe(DEFAULT_KDF_ROUNDS);
+    const strip = ({ encrypted, kdfRounds, ...rest }) => rest;
+    expect(strip(opened)).toEqual(strip(plain));
+  });
+
+  it.each(OURS)("%s names aes256-ctr + bcrypt in the clear, as ssh-keygen does", (encName) => {
+    const head = Buffer.from(unarmorBytes(fixture(encName))).toString("latin1").slice(0, 64);
+    expect(head).toContain("aes256-ctr");
+    expect(head).toContain("bcrypt");
+  });
+
+  it.each(OURS)(
+    "%s carries the public blob of %s outside the encrypted section",
+    async (encName, plainName) => {
+      // This is the field `ssh-keygen -y` prints, so agreeing here is the part
+      // of that check the suite can make without a local ssh-keygen.
+      const opened = await parseOpensshPrivateKey(fixture(encName), { passphrase: PASSPHRASE });
+      const witness = parsePublicLine(fixture(`${plainName}.pub`));
+      expect(Buffer.from(opened.publicBlob).toString("base64")).toBe(
+        Buffer.from(witness.blob).toString("base64")
+      );
+    }
+  );
+
+  /**
+   * And when there *is* a local `ssh-keygen`, stop taking the README's word
+   * for it. Skipped rather than failed where the binary is absent: the
+   * fixtures exist precisely so the suite does not require one.
+   */
+  const sshKeygen = (() => {
+    const probe = spawnSync("ssh", ["-V"], { encoding: "utf8" });
+    return probe.error ? null : String(probe.stderr || "").trim();
+  })();
+
+  it.runIf(sshKeygen).each(OURS)(
+    "%s is opened by the real ssh-keygen -y -P, deriving the public key of %s",
+    (encName, plainName) => {
+      const path = fileURLToPath(new URL(`./fixtures/ssh/${encName}`, import.meta.url));
+      const derived = spawnSync("ssh-keygen", ["-y", "-P", PASSPHRASE, "-f", path], {
+        encoding: "utf8",
+      });
+      expect(derived.status, `ssh-keygen refused ${encName}: ${derived.stderr}`).toBe(0);
+      // `-y` prints `type base64` with no comment; the fixture .pub has one.
+      const pair = (s) => String(s).trim().split(/\s+/).slice(0, 2).join(" ");
+      expect(pair(derived.stdout)).toBe(pair(fixture(`${plainName}.pub`)));
+    }
+  );
+});
+
 describe("fingerprints", () => {
   const lines = fixture("fingerprints.txt").trim().split("\n");
   for (let i = 0; i < KEYS.length; i++) {
@@ -323,6 +409,136 @@ describe("ssh.decode opens a protected key with the Inputs-panel passphrase", ()
     await expect(
       runRecipe(ast, { inputs: { text: { value: fixture("id_ed25519_enc1") } } })
     ).rejects.toThrow(ENCRYPTED_KEY_MESSAGE);
+  });
+});
+
+/**
+ * `ssh.encode format=private passphrase=@slot` (§29f).
+ *
+ * The asymmetry with `ssh.decode` above is the whole design and is asserted
+ * here rather than only written down: decoding may read the Inputs panel,
+ * because a passphrase there decides whether a run starts. Encoding may not,
+ * because there it decides what the file *is* — and a recipe whose output is a
+ * protected key on one machine and a bare one on the next, with nothing in its
+ * text to say which, is not a recipe. So the secret is named, as an `@slot`.
+ */
+describe("ssh.encode passphrase=", () => {
+  const PASSPHRASE = "correct horse";
+
+  /** One text slot named @pw, the way a notebook cell would register it. */
+  const withPw = (pw = PASSPHRASE) => ({
+    resolveSlot: (ref) => (ref === "@pw" ? { type: "text", data: pw } : null),
+  });
+
+  /** A live keypair value, since execSshEncode reads CryptoKey handles. */
+  const keypair = async () => {
+    const pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    return { type: "keypair", data: pair };
+  };
+
+  it("encrypts the block, at the rounds ssh-keygen writes today", async () => {
+    const out = await execSshEncode(
+      await keypair(),
+      { format: "private", passphrase: "@pw" },
+      withPw()
+    );
+    expect(out.meta.kind).toBe("ssh-private");
+    expect(out.meta.encrypted).toBe(true);
+    const opened = await parseOpensshPrivateKey(out.data, { passphrase: PASSPHRASE });
+    expect(opened.encrypted).toBe(true);
+    expect(opened.kdfRounds).toBe(DEFAULT_KDF_ROUNDS);
+  });
+
+  it("leaves the block bare when no passphrase is named, exactly as before", async () => {
+    const out = await execSshEncode(await keypair(), { format: "private" }, withPw());
+    expect(out.meta.encrypted).toBe(false);
+    expect((await parseOpensshPrivateKey(out.data)).encrypted).toBe(false);
+  });
+
+  it("never reads the Inputs panel — a panel passphrase alone changes nothing", async () => {
+    // The regression this guards is silent: an export that quietly became
+    // encrypted (or stopped being) because of state the recipe cannot see.
+    const out = await execSshEncode(
+      await keypair(),
+      { format: "private" },
+      { inputs: { gpg: { passphrase: PASSPHRASE } }, ...withPw() }
+    );
+    expect((await parseOpensshPrivateKey(out.data)).encrypted).toBe(false);
+  });
+
+  it("refuses a literal, which would be a passphrase living in recipe text", async () => {
+    await expect(
+      execSshEncode(await keypair(), { format: "private", passphrase: PASSPHRASE }, withPw())
+    ).rejects.toThrow(/takes an @slot/);
+  });
+
+  it("refuses an empty slot rather than quietly exporting the key bare", async () => {
+    await expect(
+      execSshEncode(await keypair(), { format: "private", passphrase: "@pw" }, withPw(""))
+    ).rejects.toThrow(/empty passphrase is not encryption/);
+  });
+
+  it("refuses passphrase= on the public half instead of ignoring it", async () => {
+    await expect(
+      execSshEncode(await keypair(), { format: "public", passphrase: "@pw" }, withPw())
+    ).rejects.toThrow(/only applies to format=private/);
+  });
+
+  it("names the secret in the recipe, and never serializes it", () => {
+    const src = `"${PASSPHRASE}" | out @pw
+
+genkey ed25519 | ssh.encode format=private passphrase=@pw | out @k`;
+    const { ast, validation } = compileRecipe(src);
+    expect(validation.errors).toEqual([]);
+    // The `@ref` survives a share link — that is what makes the recipe honest
+    // about what it emits — while `p.secret` keeps a literal from ever doing so.
+    expect(serializeRecipe({ chains: ast.chains })).toContain("passphrase=@pw");
+  });
+
+  it("will not even parse a literal, so one cannot reach the recipe text", () => {
+    // `p.secret` drops a literal at *serialization*; making the param `slot`
+    // stops it a step earlier, at the parser, where the user still gets told.
+    const { validation } = compileRecipe(
+      `genkey ed25519 | ssh.encode format=private passphrase="hunter2" | out @k`
+    );
+    expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
+      /ssh\.encode passphrase=.*require @/i
+    );
+  });
+
+  it("round-trips end to end through the engine", async () => {
+    const { ast, validation } = compileRecipe(`"${PASSPHRASE}" | out @pw
+
+genkey ed25519 | out @id
+
+in @id | ssh.encode format=private passphrase=@pw | out @enc
+
+in @enc | ssh.decode | ssh.fingerprint | out @fp
+
+in @id | ssh.fingerprint | out @fp2`);
+    expect(validation.errors).toEqual([]);
+    const arts = await runRecipe(ast, {
+      // ssh.decode's channel, unchanged: the panel opens a protected file.
+      inputs: { gpg: { passphrase: PASSPHRASE } },
+    });
+    const at = (n) => arts.find((a) => String(a.label || "").split(/[^A-Za-z0-9]+/).includes(n));
+    expect(String(at("enc").content)).toContain("BEGIN OPENSSH PRIVATE KEY");
+    expect(Buffer.from(unarmorBytes(String(at("enc").content))).toString("latin1")).toContain(
+      "aes256-ctr"
+    );
+    expect(String(at("fp").content)).toMatch(/^SHA256:/);
+    expect(String(at("fp").content)).toBe(String(at("fp2").content));
+  });
+
+  it("refuses to reopen with the wrong passphrase, so the block really is sealed", async () => {
+    const out = await execSshEncode(
+      await keypair(),
+      { format: "private", passphrase: "@pw" },
+      withPw()
+    );
+    await expect(
+      parseOpensshPrivateKey(out.data, { passphrase: "wrong horse" })
+    ).rejects.toThrow(WRONG_PASSPHRASE_MESSAGE);
   });
 });
 

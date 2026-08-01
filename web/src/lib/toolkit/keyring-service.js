@@ -54,6 +54,34 @@ function nameTheForm(body) {
 }
 
 /**
+ * What "Add to My Keys" can say about a passphrase-protected OpenSSH block.
+ *
+ * Not a prompt, deliberately. The codec's own §29f sentence
+ * (`ENCRYPTED_KEY_MESSAGE`) is right everywhere it is normally read — a recipe
+ * step, where Inputs → passphrase is exactly the channel `ssh.decode` reads —
+ * and wrong at *this* door, because a tile action is handed
+ * `{ content, alg }` and no bindings. It never sees the Inputs panel, so
+ * pointing someone at the panel sends them to type a passphrase that changes
+ * nothing.
+ *
+ * Adding a passphrase channel here is a UI decision, not a code detail: it
+ * means a modal that collects a secret, on a button whose entire promise is
+ * that it moves key material into storage without ever displaying it, and a
+ * refusal sentence in `ACTION_REASONS` for the state before that modal opens.
+ * Neither exists, and inventing them from inside the service — which is one
+ * layer below the action table and two below the tile — would be building the
+ * affordance in the one place that cannot render it.
+ *
+ * So the button keeps refusing, and the refusal names the two doors that do
+ * work today. `hasPrivateKeyMaterial` still lets the click through, because it
+ * matches on the armor and an encrypted block *is* private key material; the
+ * honest answer arrives when the decode is attempted, which is also the only
+ * moment anything here can tell the two forms apart.
+ */
+export const ENCRYPTED_SSH_KEY_MESSAGE =
+  "This OpenSSH block is passphrase-protected, and this button has nowhere to ask you for the passphrase. Open it in a recipe instead — `ssh.decode` reads Inputs → passphrase, and `agent.save` stores what comes out — or decrypt the file outside with `ssh-keygen -p -N \"\"`.";
+
+/**
  * The private JWK behind a tile body, whatever shape it arrived in.
  *
  * openssh-key-v1 armor goes back through `ssh.decode` rather than being
@@ -67,7 +95,19 @@ function nameTheForm(body) {
 async function privateJwkFrom(body) {
   if (body.includes("BEGIN OPENSSH PRIVATE KEY")) {
     const { execSshDecode } = await import("./ssh-ops.js");
-    const decoded = await execSshDecode({ type: "text", data: body });
+    let decoded;
+    try {
+      decoded = await execSshDecode({ type: "text", data: body });
+    } catch (err) {
+      // Compared against the constant rather than pattern-matched: §29f says
+      // the wording is the feature, and a regex over it would keep passing
+      // after someone improved the sentence.
+      const { ENCRYPTED_KEY_MESSAGE } = await import("../ssh/openssh-key-v1.js");
+      if (String(err?.message) === ENCRYPTED_KEY_MESSAGE) {
+        throw new Error(ENCRYPTED_SSH_KEY_MESSAGE);
+      }
+      throw err;
+    }
     const privateKey = decoded?.data?.privateKey;
     if (!privateKey) {
       throw new Error(

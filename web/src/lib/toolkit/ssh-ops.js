@@ -216,6 +216,50 @@ function payloadBytes(value) {
   throw new Error("SSH: payload must be text or bytes (pipe through `utf8` first)");
 }
 
+/**
+ * The passphrase `ssh.encode format=private passphrase=@slot` names.
+ *
+ * Deliberately *not* `panelPassphrase`. `ssh.decode` reads the Inputs panel
+ * because a passphrase there only decides whether an already-protected file
+ * opens; on this side it decides what the emitted file *is*, and a recipe that
+ * writes an encrypted key on one machine and a bare one on the next — with
+ * nothing in its text to say which — is not a recipe. So the secret is named,
+ * and only ever as an `@slot`: a literal here would be a passphrase sitting in
+ * recipe text, which `serializeStep` would drop from the share link anyway,
+ * turning a protected export into a bare one for whoever opened the link.
+ *
+ * @param {import("./engine.js").RuntimeBindings} bindings
+ * @param {*} raw
+ * @returns {string} the passphrase, or "" when none was named
+ */
+function encodePassphrase(bindings, raw) {
+  const ref = String(raw ?? "").trim();
+  if (!ref) return "";
+  if (!/^@[^\s|=]+$/.test(ref)) {
+    throw new Error(
+      "ssh.encode passphrase= takes an @slot (bind one from Inputs) — a literal passphrase would travel in the recipe text"
+    );
+  }
+  const value = slotValue(bindings, ref, "passphrase= (slot holding the passphrase)");
+  if (!value) throw new Error(`ssh.encode passphrase=${ref}: unknown slot`);
+  let text;
+  if (value.type === "text") text = String(value.data ?? "");
+  else if (value.type === "bytes" && value.data instanceof Uint8Array) {
+    text = new TextDecoder().decode(value.data);
+  } else {
+    throw new Error(`ssh.encode passphrase=${ref}: slot must hold text (or UTF-8 bytes)`);
+  }
+  if (!text) {
+    // The codec reads an empty passphrase as "no encryption" (deliberately —
+    // never "encrypted with nothing"). Silently taking that branch here would
+    // hand back a bare private key to a recipe that asked for a protected one.
+    throw new Error(
+      `ssh.encode passphrase=${ref}: that slot is empty — an empty passphrase is not encryption. Remove passphrase= to export the key bare on purpose.`
+    );
+  }
+  return text;
+}
+
 /** Resolve a slot ref to its raw pipeline value. */
 function slotValue(bindings, ref, what) {
   const r = String(ref || "").trim();
@@ -225,24 +269,34 @@ function slotValue(bindings, ref, what) {
   return resolve(r);
 }
 
-/** `ssh.encode` — keypair/key → public line, or (explicit) unencrypted private PEM. */
+/** `ssh.encode` — keypair/key → public line, or (explicit) private PEM. */
 export async function execSshEncode(value, params = {}, bindings = {}) {
   const format = String(params.format || "public");
   const comment = String(params.comment || "");
+  if (format !== "private" && String(params.passphrase ?? "").trim()) {
+    // Nothing about a public line is encryptable, and quietly ignoring the
+    // param would be the worst reading of it: the user asked for protection
+    // and got a file that has none.
+    throw new Error(
+      "ssh.encode passphrase= only applies to format=private — a public key is published, not protected"
+    );
+  }
   const m = await materialFromValue(value, format === "private" ? "private" : "public", bindings);
   if (format === "private") {
-    // Deliberately unencrypted: `ssh.encode` has no `passphrase=` param, and
-    // silently encrypting because the Inputs panel happens to hold a gpg
-    // passphrase would be a different artifact than the recipe asked for.
-    // `agent.save protection=passphrase` is the op that writes a protected
-    // container; the codec below takes a passphrase whenever one is wired.
-    const pem = await encodeOpensshPrivateKey(m, { comment });
+    // The rounds count is the codec's `DEFAULT_KDF_ROUNDS` and is not a param:
+    // 24 is what `ssh-keygen` writes today, and the only thing a knob here
+    // could usefully do is make a key weaker than the one the CLI beside it
+    // would have produced.
+    const passphrase = encodePassphrase(bindings, params.passphrase);
+    const pem = await encodeOpensshPrivateKey(m, { comment, passphrase });
     return {
       type: "text",
       data: pem,
-      // §29f: an unencrypted private block is masked like every private
-      // artifact; the tile-level warning rides the compile warning.
-      meta: { kind: "ssh-private", sensitive: true },
+      // §29f: a private block is masked like every private artifact whether or
+      // not it is encrypted — the passphrase protects the *file*, and the tile
+      // is not a file. `encrypted` records which of the two this is, so a
+      // read-out never has to re-parse the armor to find out.
+      meta: { kind: "ssh-private", sensitive: true, encrypted: !!passphrase },
     };
   }
   const blob = m.publicBlob || buildPublicBlob(m);

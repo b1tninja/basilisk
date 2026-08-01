@@ -17,9 +17,11 @@ import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { execAgentSave } from "../lib/toolkit/agent-ops.js";
 import {
+  ENCRYPTED_SSH_KEY_MESSAGE,
   addPrivateKeyToMyKeys,
   vaultAvailable,
 } from "../lib/toolkit/keyring-service.js";
+import { ENCRYPTED_KEY_MESSAGE } from "../lib/ssh/openssh-key-v1.js";
 import { listKeys, protectionDowngradeMessage, saveKey } from "../lib/vault.js";
 import { sessionClear } from "../lib/vault-session.js";
 
@@ -160,5 +162,39 @@ describe("a body it cannot store is refused by name", () => {
       /no body to store/
     );
     expect(await listKeys()).toHaveLength(0);
+  });
+
+  /**
+   * §29f (c). The codec's sentence points at Inputs → passphrase, which is
+   * right in a recipe and wrong here: this door is handed `{ content, alg }`
+   * and no bindings, so the panel it names is one it cannot read. A prompt is
+   * a UI affordance that does not exist; until it does, the least the refusal
+   * owes the user is not to send them somewhere that changes nothing.
+   */
+  it("does not send a protected OpenSSH key to a panel this button cannot read", async () => {
+    const { ast } = compileRecipe(`"correct horse" | out @pw
+
+genkey ed25519 | ssh.encode format=private passphrase=@pw | out @enc`);
+    const arts = await runRecipe(ast, {});
+    const enc = arts.find((a) => /enc/.test(String(a.label)));
+    expect(String(enc.content)).toContain("BEGIN OPENSSH PRIVATE KEY");
+
+    await expect(addPrivateKeyToMyKeys({ content: enc.content })).rejects.toThrow(
+      ENCRYPTED_SSH_KEY_MESSAGE
+    );
+    // And it is not the codec's sentence wearing a different hat.
+    await expect(addPrivateKeyToMyKeys({ content: enc.content })).rejects.not.toThrow(
+      ENCRYPTED_KEY_MESSAGE
+    );
+    expect(await listKeys()).toHaveLength(0);
+  });
+
+  it("still stores an unprotected OpenSSH block, so the refusal is about the passphrase", async () => {
+    const { ast } = compileRecipe("genkey ed25519 | ssh.encode format=private | out @bare");
+    const arts = await runRecipe(ast, {});
+    const bare = arts.find((a) => /bare/.test(String(a.label)));
+    const res = await addPrivateKeyToMyKeys({ content: bare.content, alg: "ed25519" });
+    expect(res.kind).toBe("ssh");
+    expect((await listKeys())[0].publicLine).toMatch(/^ssh-ed25519 /);
   });
 });
