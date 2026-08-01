@@ -269,11 +269,26 @@ Four things a cold reader should know:
   has. Reading that as "it does, so the shell can" would have added focus theft
   and an Escape binding to a signing gate as a side effect of a refactor. When
   a doc attributes existing behaviour to shipped code, grep for it.
-- **The Radix `Sheet` trips a real CSP block in the build.** Opening one
-  inserts an inline `<style>` (react-remove-scroll's scroll-lock) that
-  `style-src-elem` blocks with disposition `enforce`, so the lock silently does
-  not apply in production. Invisible in `serve`, where the policy is weaker.
-  Reproducible on any artifact tile's Expand; not yet fixed.
+- **The scroll lock was CSP-blocked on every menu, not just the `Sheet`** —
+  fixed in `34b3a2f`. `react-remove-scroll-bar` injected an inline `<style>`
+  that `style-src-elem` blocked with disposition `enforce`, so the lock
+  silently did not apply in production. It was invisible in `serve` (weaker
+  policy) and looked cosmetic on `/toolkit` (masked by
+  `body.layout-app { overflow: hidden }`) — but `@radix-ui/react-menu` pulls
+  in the same package, so on `/my-keys`, where `<body>` genuinely scrolls, the
+  page scrolled behind every open dropdown. The fix aliases the package to
+  `src/lib/scroll-lock.js`, which sets a reference-counted
+  `body[data-scroll-locked]` and injects nothing; the rules live in
+  `site.css`. **No CSP exemption was added, and none may be** — a test asserts
+  no `sha256-` appears in any page's `style-src`.
+
+  Two dead ends, both measured, both worth not rediscovering:
+  `scrollbar-gutter: stable` reserves the gutter even where the platform draws
+  overlay scrollbars that took no width, turning a zero-shift case into a
+  7.5px shift on every open; and porting the library's own compensation
+  rewrites `<body>`'s margins into padding, which throws this app's centred
+  `max-width: 1000px` body against one edge for as long as a menu is open.
+  Padding the scroll container by the measured gap is what holds it still.
 
 ## What is outstanding
 
