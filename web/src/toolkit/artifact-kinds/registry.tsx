@@ -22,6 +22,7 @@ import { InspectorArtifact } from "../widgets/InspectorArtifact";
 import { JwtArtifact, hasJoseRenderer } from "../widgets/JwtArtifact";
 import { KeyCard } from "../widgets/KeyCard";
 import { OpenPgpKeyCard } from "../widgets/OpenPgpKeyCard";
+import { OtpCodeCard, hasOtpReadout } from "../widgets/OtpCodeCard";
 import { PacketMapCard } from "../widgets/PacketMapCard";
 import { QrArtifact } from "../widgets/QrArtifact";
 import { ReceiptCard } from "../widgets/ReceiptCard";
@@ -559,6 +560,59 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
      * format cannot be broken that way.
      */
     download: { ext: "svg", mime: "image/svg+xml" },
+  },
+  {
+    /**
+     * The code `otp.code` produced — role `text`, claimed by a tag.
+     *
+     * **No new role, and the probe is why.** The SSH halves needed two words
+     * because `role` is stamped from *sensitivity* at the text emit sites, so
+     * one private block arrived as `secret` through `out @priv` and `text`
+     * through a dangling tip, and `ArtifactMatch.role` is exact. A code is
+     * never sensitive — that is `otp-ops.js`'s deliberate decision, since it
+     * expires in one step and exists to be read — so both paths stamp `text`,
+     * every time. Running the enrolment template and the bare tip through
+     * `runRecipe` says so: `role: "text"`, `tags: ["otp-code"]`, both. There is
+     * no second spelling to disown, so there is nothing for a role to fix, and
+     * `ARTIFACT_ROLES` is frozen precisely so a word is added when the
+     * vocabulary is short of one rather than when a tile wants a badge.
+     *
+     * The tag carries it instead, which is what `matchScore`'s specificity is
+     * for: this entry scores 1 against a code and the `text` entry scores 0, so
+     * the code gets the card and every other text artifact is untouched.
+     *
+     * No glyph declared. The badge string is the artifact's *role*, and this
+     * kind shares `text` with the kind below it — a glyph named here could only
+     * ever render as `text`'s, so declaring one would be a decoration that
+     * looks like a decision. `network-value` omits it for the same class of
+     * reason.
+     *
+     * No `publicView`. A code is never masked, so a body that renders while
+     * masked would be a claim about a state this kind cannot reach — the
+     * `ssh-public` argument, and the counterpart to `ssh-private`, which needs
+     * one badly. If an OTP tile ever wants a masked read-out it will be the
+     * `otpauth://` URI's, not this one's.
+     *
+     * Actions: Copy and Download, and nothing else. There is no "publish an
+     * OTP code", and *refresh* is the action §37a exists to refuse — a
+     * recomputed code would be a value with no step behind it, no place in the
+     * recipe and nothing the receipt could describe. The card answers the
+     * question that button was for as a *view*: the countdown keeps ticking
+     * honestly toward zero and then says so.
+     */
+    id: "otp-code",
+    match: { role: "text", tags: ["otp-code"] },
+    label: "One-time code",
+    view: ({ artifact }) =>
+      hasOtpReadout(artifact.content, artifact.traits as Record<string, unknown>) ? (
+        <OtpCodeCard
+          content={artifact.content}
+          traits={artifact.traits as Record<string, unknown> | undefined}
+        />
+      ) : null,
+    empty:
+      "The digits are the whole value, and this run did not record which token or which step they belong to — the code is below.",
+    actions: ["copy", "download"],
   },
   {
     /**

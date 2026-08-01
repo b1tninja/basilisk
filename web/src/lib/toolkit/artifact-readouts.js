@@ -180,6 +180,118 @@ export async function sshKeySummary(text) {
 }
 
 /**
+ * How an authenticator groups the digits it shows — `123 456`, not `123456`.
+ *
+ * A grouping, never a different value: the string the artifact carries is
+ * untouched, Copy still copies the code, and this exists only because six
+ * unbroken digits are read one at a time and three plus three are read as two
+ * chunks. Eight digits split evenly; seven takes the odd digit on the left,
+ * which is where every 7-digit token puts it.
+ *
+ * @param {string} code
+ * @returns {string[]}
+ */
+export function groupOtpCode(code) {
+  const s = String(code || "");
+  if (s.length === 6) return [s.slice(0, 3), s.slice(3)];
+  if (s.length === 7) return [s.slice(0, 4), s.slice(4)];
+  if (s.length === 8) return [s.slice(0, 4), s.slice(4)];
+  return [s];
+}
+
+/**
+ * What an `otp.code` tile shows (§37b): the code, whose it is, and — for TOTP
+ * — the instant it stops being the current one.
+ *
+ * The one piece of arithmetic here is the reason this function exists.
+ * `otpExpiresIn` is a **snapshot taken while the op ran**, so a tile that
+ * printed it would say "23s left" about a code computed four minutes ago. But
+ * a TOTP step has an *absolute* end: step number `T` covers `[T·period,
+ * (T+1)·period)` from the Unix epoch, so `otpStep` and `otpPeriod` together
+ * pin the expiry to a wall-clock instant that does not care when the artifact
+ * was made, when the tab was opened, or how long it sat there. That is what
+ * makes an honest countdown possible without recomputing anything: the widget
+ * ticks a clock against `expiresAt` and the *value* stays the value the recipe
+ * produced — which is what the receipt digested, and the only value that has a
+ * derivation behind it (§37a).
+ *
+ * `snapshotSeconds` is carried alongside so the two can be compared: at run
+ * time `expiresAt - now` is exactly `otpExpiresIn`, which is what the test
+ * asserts, and the moment they disagree one of them is wrong.
+ *
+ * HOTP gets no `expiresAt`, and that is the honest answer rather than a
+ * missing feature: an event counter has no clock, so a HOTP code does not
+ * expire — it gets spent. The tile says which counter, and nothing about time.
+ *
+ * Total, like everything here: a body that is not digits, or an artifact
+ * carrying no OTP facts at all, returns null and the tile renders the raw
+ * body it would have rendered anyway (§32d).
+ *
+ * @param {string} content
+ * @param {Record<string, *>|null|undefined} traits
+ * @returns {{ code: string, groups: string[], mode: "totp"|"hotp",
+ *   digits: number, label: string, period: number|null, step: string|null,
+ *   counter: number|null, expiresAt: number|null,
+ *   snapshotSeconds: number|null } | null}
+ */
+export function otpCodeReadout(content, traits) {
+  const code = String(content ?? "").trim();
+  if (!/^[0-9]{6,8}$/.test(code)) return null;
+  const t = traits || {};
+  // No OTP facts at all — an artifact from a build that did not carry them, or
+  // one restored from somewhere that dropped them. The digits are already on
+  // the tile; inventing a period would be worse than saying nothing.
+  if (!t.otpMode) return null;
+  const mode = String(t.otpMode) === "hotp" ? "hotp" : "totp";
+  const period = Number.isInteger(Number(t.otpPeriod)) && Number(t.otpPeriod) > 0
+    ? Number(t.otpPeriod)
+    : null;
+  const step = /^[0-9]+$/.test(String(t.otpStep ?? "")) ? String(t.otpStep) : null;
+  const counter =
+    Number.isInteger(Number(t.otpCounter)) && Number(t.otpCounter) >= 0
+      ? Number(t.otpCounter)
+      : null;
+  return {
+    code,
+    groups: groupOtpCode(code),
+    mode,
+    digits: Number(t.otpDigits) || code.length,
+    label: String(t.otpLabel || ""),
+    period,
+    step,
+    counter,
+    expiresAt: mode === "totp" && period && step ? (Number(step) + 1) * period : null,
+    snapshotSeconds: Number.isFinite(Number(t.otpExpiresIn))
+      ? Number(t.otpExpiresIn)
+      : null,
+  };
+}
+
+/**
+ * Seconds of life left in a code, right now — negative once it is over.
+ *
+ * Split out and exported for the reason `expiryTone` is: it is the one piece
+ * of the countdown with a decision in it, and a test can walk it past zero in
+ * a millisecond where a real code takes half a minute.
+ *
+ * @param {{ expiresAt: number|null, period: number|null }|null} readout
+ * @param {number} nowSeconds  Unix seconds
+ * @returns {{ seconds: number, expired: boolean, fraction: number }|null}
+ */
+export function otpTimeLeft(readout, nowSeconds) {
+  if (!readout?.expiresAt || !readout.period) return null;
+  const seconds = Math.ceil(readout.expiresAt - Number(nowSeconds));
+  return {
+    seconds,
+    expired: seconds <= 0,
+    // Clamped, because a stale artifact is arbitrarily far past its expiry and
+    // a bar that ran backwards off the end would be a drawing bug reporting
+    // itself as data.
+    fraction: Math.min(1, Math.max(0, seconds / readout.period)),
+  };
+}
+
+/**
  * A run receipt reduced to what `run.verify` compares (§37b).
  *
  * The tile shows the digest table and nothing else — no "verify this" button,

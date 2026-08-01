@@ -1081,6 +1081,86 @@ input[type="file"][data-basilisk-file-picker] {
 .jwt-fill[data-jwt-fill="12"] { width: 100%; }
 
 /*
+ * One-time code tile (OtpCodeCard).
+ *
+ * Three tones, one closed set: `ok` (this is the current code), `warn` (its
+ * step is nearly over), `error` (it is not the current code any more).
+ * Enumerated here rather than computed inline because `style-src 'self'`
+ * refuses an inline style.
+ *
+ * The digits stay legible when the step has passed — muted, never hidden and
+ * never struck through. An expired code is still the value the recipe produced
+ * and the value the receipt digested; the tile reports that it is no longer
+ * current, which is a different claim from the value being wrong.
+ */
+.otp-code {
+  font-size: 27px;
+  line-height: 1.05;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  color: var(--foreground);
+}
+.otp-code[data-otp-tone="warn"] {
+  color: var(--warn);
+}
+.otp-code[data-otp-tone="error"] {
+  color: var(--muted-foreground);
+}
+
+.otp-remaining[data-otp-tone="ok"] {
+  color: var(--success);
+}
+.otp-remaining[data-otp-tone="warn"] {
+  color: var(--warn);
+}
+.otp-remaining[data-otp-tone="error"] {
+  color: var(--error);
+}
+.otp-remaining[data-otp-tone="muted"] {
+  color: var(--muted-foreground);
+}
+
+/*
+ * The draining step. Twelfths, not a computed percentage — the same CSP
+ * constraint and the same answer as the JWT validity bar, and finer than the
+ * eye resolves at this height. What drains is the clock; the value above it
+ * never changes (§37a).
+ */
+.otp-track {
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+}
+.otp-fill {
+  border-radius: 999px;
+}
+.otp-fill[data-otp-tone="ok"] {
+  background: var(--success);
+}
+.otp-fill[data-otp-tone="warn"] {
+  background: var(--warn);
+}
+.otp-fill[data-otp-tone="error"] {
+  background: var(--error);
+}
+.otp-fill[data-otp-tone="muted"] {
+  background: var(--muted-foreground);
+}
+.otp-fill[data-otp-fill="0"] { width: 0%; }
+.otp-fill[data-otp-fill="1"] { width: 8.33%; }
+.otp-fill[data-otp-fill="2"] { width: 16.67%; }
+.otp-fill[data-otp-fill="3"] { width: 25%; }
+.otp-fill[data-otp-fill="4"] { width: 33.33%; }
+.otp-fill[data-otp-fill="5"] { width: 41.67%; }
+.otp-fill[data-otp-fill="6"] { width: 50%; }
+.otp-fill[data-otp-fill="7"] { width: 58.33%; }
+.otp-fill[data-otp-fill="8"] { width: 66.67%; }
+.otp-fill[data-otp-fill="9"] { width: 75%; }
+.otp-fill[data-otp-fill="10"] { width: 83.33%; }
+.otp-fill[data-otp-fill="11"] { width: 91.67%; }
+.otp-fill[data-otp-fill="12"] { width: 100%; }
+
+/*
  * Custodian share check (ShareCheck).
  *
  * Four tones, one closed set, enumerated rather than computed: `ok` (the share

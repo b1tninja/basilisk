@@ -4163,6 +4163,33 @@ function safeOutputStem(raw) {
 const TYPE_OWNED_ROLES = new Set(["sshsig", "token", "ssh-public", "ssh-private"]);
 
 /**
+ * What `otp.code` knew and its body cannot say, carried onto the artifact.
+ *
+ * A code is six digits. *Whose* account it is, *which* time step it belongs to
+ * and *how long* that step had left are all facts the op computed and the
+ * string does not contain — and unlike a fingerprint or a packet map, none of
+ * them can be re-derived from the body, because re-deriving them would mean
+ * knowing the secret. `execOtpCode` emits them for exactly this reason; before
+ * this they reached nothing.
+ *
+ * They ride `traits` rather than a field of their own because `traits` is the
+ * one bag that already survives every projection between here and a tile — the
+ * shell's two `OutputList` mappings list it, and a field a mapping does not
+ * list is dropped silently on the way in, which has made a shipped tile inert
+ * twice. `jose` above is the same decision made once already: a run-time fact
+ * travels with the artifact instead of being recomputed by a widget.
+ */
+const OTP_META_TRAITS = Object.freeze([
+  "otpMode",
+  "otpDigits",
+  "otpPeriod",
+  "otpStep",
+  "otpExpiresIn",
+  "otpCounter",
+  "otpLabel",
+]);
+
+/**
  * Stamp refined pipeline type (and raw bytes when available) onto an artifact.
  *
  * Keeping `artifact.bytes` is a memory-safety requirement for file sinks:
@@ -4207,6 +4234,19 @@ function attachPipeMeta(artifact, value) {
   // only ever report "unverified".
   if (value?.meta?.jose) {
     artifact.jose = value.meta.jose;
+  }
+  // The OTP facts, for the same reason and by the same route (see
+  // OTP_META_TRAITS). Copied field by field rather than spreading `meta`, so
+  // an op cannot widen what reaches a tile by adding a key.
+  if (value?.meta) {
+    /** @type {Record<string, *>} */
+    const otp = {};
+    for (const key of OTP_META_TRAITS) {
+      if (value.meta[key] !== undefined) otp[key] = value.meta[key];
+    }
+    if (Object.keys(otp).length) {
+      artifact.traits = { ...(artifact.traits || {}), ...otp };
+    }
   }
   const metaTags = Array.isArray(value?.meta?.tags) ? value.meta.tags : [];
   if (metaTags.length) {
