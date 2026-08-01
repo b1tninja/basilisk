@@ -15,7 +15,11 @@ import {
   execAgentUnlock,
 } from "../lib/toolkit/agent-ops.js";
 import { NON_PGP_PASSPHRASE_MESSAGE } from "../lib/toolkit/agent-ops.js";
-import { listKeys, saveKey } from "../lib/vault.js";
+import {
+  ENCRYPTED_KEY_MESSAGE,
+  parseOpensshPrivateKey,
+} from "../lib/ssh/openssh-key-v1.js";
+import { listKeys, saveKey, unlockKey } from "../lib/vault.js";
 import { sessionClear } from "../lib/vault-session.js";
 
 beforeEach(async () => {
@@ -66,10 +70,62 @@ describe("agent.save on a keypair", () => {
     expect(list[0].publicLine).toBeUndefined();
   });
 
-  it("refuses passphrase protection for non-pgp kinds with the §28b message", async () => {
+  it("saves an ssh-kind key at passphrase protection, in an encrypted container", async () => {
+    // §28b used to refuse this outright. It works now because openssh-key-v1
+    // has a passphrase form (bcrypt_pbkdf + aes256-ctr) and we can write it —
+    // and the check that matters is that the *stored payload* is actually
+    // encrypted, not merely that a row appeared with the label on it.
+    const saved = await execAgentSave(
+      await genEd25519(),
+      { protection: "passphrase", email: "fixture@basilisk" },
+      { inputs: { gpg: { passphrase: "correct horse" } } }
+    );
+    expect(saved.meta.vaultKind).toBe("ssh");
+
+    const [record] = await listKeys();
+    expect(record.protection).toBe("passphrase");
+    const stored = await unlockKey(record.fingerprint, {});
+    expect(stored).toContain("BEGIN OPENSSH PRIVATE KEY");
+    await expect(parseOpensshPrivateKey(stored)).rejects.toThrow(ENCRYPTED_KEY_MESSAGE);
+    const opened = await parseOpensshPrivateKey(stored, { passphrase: "correct horse" });
+    expect(opened.encrypted).toBe(true);
+    expect(opened.type).toBe("ssh-ed25519");
+  });
+
+  it("refuses passphrase protection where no container can hold one (kind raw)", async () => {
+    // x25519 stores as a bare JWK, which has no passphrase form — the §28b
+    // refusal survives for exactly the kinds that still cannot honour it.
+    const pair = await crypto.subtle.generateKey("X25519", true, ["deriveBits", "deriveKey"]);
+    await expect(
+      execAgentSave(
+        { type: "keypair", data: pair, meta: { alg: "x25519" } },
+        { protection: "passphrase" },
+        { inputs: { gpg: { passphrase: "correct horse" } } }
+      )
+    ).rejects.toThrow(NON_PGP_PASSPHRASE_MESSAGE);
+  });
+
+  it("still asks for the passphrase it needs before touching the vault", async () => {
     await expect(
       execAgentSave(await genEd25519(), { protection: "passphrase" })
-    ).rejects.toThrow(NON_PGP_PASSPHRASE_MESSAGE);
+    ).rejects.toThrow(/needs a key passphrase/);
+    expect(await listKeys()).toHaveLength(0);
+  });
+
+  it("round-trips a passphrase-protected ssh key through agent.unlock", async () => {
+    const bindings = { inputs: { gpg: { passphrase: "correct horse" } } };
+    const saved = await execAgentSave(
+      await genEd25519(),
+      { protection: "passphrase" },
+      bindings
+    );
+    const unlocked = await execAgentUnlock({ fpr: saved.meta.fingerprint }, bindings);
+    expect(unlocked.type).toBe("keypair");
+    expect(unlocked.data.privateKey.algorithm.name).toBe("Ed25519");
+    // The key that comes back must be the key that went in.
+    const back = await crypto.subtle.exportKey("jwk", unlocked.data.publicKey);
+    const orig = await crypto.subtle.exportKey("jwk", saved.data.publicKey);
+    expect(back.x).toBe(orig.x);
   });
 
   it("still replaces a passkey record, because the recipe said so out loud", async () => {

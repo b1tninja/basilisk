@@ -152,9 +152,13 @@ export async function sshsigSummary(armor) {
  * would be worse than a tile that showed nothing.
  *
  * Total, like everything here. A passphrase-protected block throws
- * `ENCRYPTED_KEY_MESSAGE` inside the parser — bcrypt-KDF material this build
- * cannot open — and that is a body with no read-out, not an error to raise at
- * someone: null, and the kind's `empty` sentence stands in.
+ * `ENCRYPTED_KEY_MESSAGE` inside the parser — the read-out has no passphrase
+ * to offer it, and a tile is the wrong place to prompt for one — and that is
+ * a body with no read-out, not an error to raise at someone: null, and the
+ * kind's `empty` sentence stands in. (The three facts *are* all readable
+ * from the container's cleartext public blob; showing them would mean
+ * teaching this function that a key it cannot open is still describable,
+ * which is a change to what the tile claims, not a bug fix.)
  *
  * @param {string} text
  * @returns {Promise<{ form: "public"|"private", keyType: string,
@@ -165,7 +169,7 @@ export async function sshKeySummary(text) {
   if (!body) return null;
   try {
     const isPrivate = body.includes("BEGIN OPENSSH PRIVATE KEY");
-    const material = isPrivate ? parseOpensshPrivateKey(body) : parsePublicLine(body);
+    const material = isPrivate ? await parseOpensshPrivateKey(body) : parsePublicLine(body);
     const blob = isPrivate ? material.publicBlob : material.blob;
     if (!blob) return null;
     return {

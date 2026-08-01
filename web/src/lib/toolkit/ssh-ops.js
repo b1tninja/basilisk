@@ -160,8 +160,21 @@ function importParamsFor(type, hash = "sha512") {
   return { alg: "rsa", params: { name: "RSASSA-PKCS1-v1_5", hash: digest } };
 }
 
+/**
+ * The passphrase for a protected openssh-key-v1 block, from the Inputs panel.
+ *
+ * Same channel the gpg ops read (`execAgentSave`, `readOpenPgpPrivate`) — a
+ * second one would mean a user who typed their passphrase into the panel
+ * still got refused by whichever op happened to look somewhere else.
+ *
+ * @param {import("./engine.js").RuntimeBindings} [bindings]
+ */
+function panelPassphrase(bindings) {
+  return String(bindings?.inputs?.gpg?.passphrase || bindings?.inputs?.agent?.passphrase || "");
+}
+
 /** Typed wire material for one pipeline value (keypair/key handles, or SSH text). */
-async function materialFromValue(value, need) {
+async function materialFromValue(value, need, bindings) {
   if (!value) throw new Error("SSH: empty value where a key was expected");
   if (value.type === "keypair" || value.type === "key") {
     const handles = pipelineKeyHandles(value);
@@ -188,7 +201,9 @@ async function materialFromValue(value, need) {
   }
   if (value.type === "text") {
     const text = String(value.data || "");
-    if (text.includes("BEGIN OPENSSH PRIVATE KEY")) return parseOpensshPrivateKey(text);
+    if (text.includes("BEGIN OPENSSH PRIVATE KEY")) {
+      return parseOpensshPrivateKey(text, { passphrase: panelPassphrase(bindings) });
+    }
     return parsePublicLine(text);
   }
   throw new Error(`SSH: cannot read a key from a ${value.type} value`);
@@ -211,12 +226,17 @@ function slotValue(bindings, ref, what) {
 }
 
 /** `ssh.encode` — keypair/key → public line, or (explicit) unencrypted private PEM. */
-export async function execSshEncode(value, params = {}) {
+export async function execSshEncode(value, params = {}, bindings = {}) {
   const format = String(params.format || "public");
   const comment = String(params.comment || "");
-  const m = await materialFromValue(value, format === "private" ? "private" : "public");
+  const m = await materialFromValue(value, format === "private" ? "private" : "public", bindings);
   if (format === "private") {
-    const pem = encodeOpensshPrivateKey(m, { comment });
+    // Deliberately unencrypted: `ssh.encode` has no `passphrase=` param, and
+    // silently encrypting because the Inputs panel happens to hold a gpg
+    // passphrase would be a different artifact than the recipe asked for.
+    // `agent.save protection=passphrase` is the op that writes a protected
+    // container; the codec below takes a passphrase whenever one is wired.
+    const pem = await encodeOpensshPrivateKey(m, { comment });
     return {
       type: "text",
       data: pem,
@@ -233,14 +253,25 @@ export async function execSshEncode(value, params = {}) {
   };
 }
 
-/** `ssh.decode` — public line or openssh-key-v1 → live key/keypair value. */
-export async function execSshDecode(value, params_ = {}) {
+/**
+ * `ssh.decode` — public line or openssh-key-v1 → live key/keypair value.
+ *
+ * A passphrase-protected block opens when the Inputs panel holds its
+ * passphrase (or `opts.passphrase` is passed directly, which is how the
+ * vault hands one over); without it the codec names what is missing.
+ *
+ * @param {import("./engine.js").PipelineValue} value
+ * @param {Record<string, *>} [params_]
+ * @param {import("./engine.js").RuntimeBindings & { passphrase?: string }} [bindings]
+ */
+export async function execSshDecode(value, params_ = {}, bindings = {}) {
   if (value?.type !== "text") {
     throw new Error("ssh.decode expects text (a public line or an OPENSSH PRIVATE KEY block)");
   }
   const text = String(value.data || "");
   const isPrivate = text.includes("BEGIN OPENSSH PRIVATE KEY");
-  const m = isPrivate ? parseOpensshPrivateKey(text) : parsePublicLine(text);
+  const passphrase = String(bindings?.passphrase || "") || panelPassphrase(bindings);
+  const m = isPrivate ? await parseOpensshPrivateKey(text, { passphrase }) : parsePublicLine(text);
   const { pub, priv } = jwksFromSshMaterial(m);
   const { alg, params } = importParamsFor(m.type, String(params_.hash || "sha512"));
   // Extractable on purpose: these keys exist to be re-encoded, exported and
@@ -262,8 +293,8 @@ export async function execSshDecode(value, params_ = {}) {
 }
 
 /** `ssh.fingerprint` — SHA256:… of the public key, matching `ssh-keygen -lf`. */
-export async function execSshFingerprint(value) {
-  const m = await materialFromValue(value, "public");
+export async function execSshFingerprint(value, params = {}, bindings = {}) {
+  const m = await materialFromValue(value, "public", bindings);
   const blob = m.publicBlob || buildPublicBlob(m);
   return { type: "text", data: await sshFingerprint(blob) };
 }
@@ -272,7 +303,7 @@ export async function execSshFingerprint(value) {
 export async function execSshSign(value, params = {}, bindings = {}) {
   const payload = payloadBytes(value);
   const keyVal = slotValue(bindings, params.key, "key= (private key slot)");
-  const m = await materialFromValue(keyVal, "private");
+  const m = await materialFromValue(keyVal, "private", bindings);
   const armor = await sshsigSign(payload, m, {
     namespace: String(params.namespace || "file"),
     hash: /** @type {"sha512"|"sha256"} */ (String(params.hash || "sha512")),
@@ -286,7 +317,7 @@ export async function execSshVerify(value, params = {}, bindings = {}) {
   const sigVal = slotValue(bindings, params.signature, "signature= (sshsig slot)");
   if (sigVal?.type !== "text") throw new Error("ssh.verify: signature slot must hold sshsig text");
   const keyVal = slotValue(bindings, params.key, "key= (signer's public key)");
-  const m = await materialFromValue(keyVal, "public");
+  const m = await materialFromValue(keyVal, "public", bindings);
   const publicBlob = m.publicBlob || buildPublicBlob(m);
   const namespace = String(params.namespace || "file");
   try {

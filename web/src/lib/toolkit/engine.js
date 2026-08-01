@@ -2788,11 +2788,13 @@ async function execStepBody(step, value, bindings, artifacts) {
       const p = step.params || {};
       switch (step.name) {
         case "ssh.encode":
-          return ssh.execSshEncode(value, p);
+          return ssh.execSshEncode(value, p, bindings);
         case "ssh.decode":
-          return ssh.execSshDecode(value, p);
+          // bindings, so a passphrase-protected openssh-key-v1 block can be
+          // opened with the Inputs-panel passphrase the gpg ops already read.
+          return ssh.execSshDecode(value, p, bindings);
         case "ssh.fingerprint":
-          return ssh.execSshFingerprint(value);
+          return ssh.execSshFingerprint(value, p, bindings);
         case "ssh.sign":
           return ssh.execSshSign(value, p, bindings);
         default:

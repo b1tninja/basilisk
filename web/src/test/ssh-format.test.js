@@ -16,7 +16,9 @@ import {
   formatPublicLine,
 } from "../lib/ssh/wire.js";
 import {
+  DEFAULT_KDF_ROUNDS,
   ENCRYPTED_KEY_MESSAGE,
+  WRONG_PASSPHRASE_MESSAGE,
   encodeOpensshPrivateKey,
   parseOpensshPrivateKey,
 } from "../lib/ssh/openssh-key-v1.js";
@@ -37,6 +39,30 @@ const fixtureBytes = (name) =>
 
 const KEYS = ["id_ed25519", "id_ecdsa256", "id_ecdsa384", "id_ecdsa521", "id_rsa"];
 const PAYLOAD = fixtureBytes("payload.txt");
+
+/** The raw container bytes inside OPENSSH PRIVATE KEY armor. */
+const unarmorBytes = (pem) =>
+  Buffer.from(
+    pem.match(/-----BEGIN OPENSSH PRIVATE KEY-----\n([\s\S]*?)-----END/)[1].replace(/\s+/g, ""),
+    "base64"
+  );
+
+/**
+ * Replace a length-prefixed string inside a container, fixing its prefix.
+ * Only used to reach error branches that need a field no fixture carries.
+ */
+function patchString(bytes, from, to) {
+  const at = bytes.indexOf(Buffer.from(from, "latin1"));
+  if (at < 4) throw new Error(`patchString: "${from}" not found`);
+  const head = bytes.subarray(0, at - 4);
+  const tail = bytes.subarray(at + from.length);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(to.length);
+  return Buffer.concat([head, len, Buffer.from(to, "latin1"), tail]);
+}
+
+const reArmor = (bytes) =>
+  `-----BEGIN OPENSSH PRIVATE KEY-----\n${(bytes.toString("base64").match(/.{1,70}/g) || []).join("\n")}\n-----END OPENSSH PRIVATE KEY-----\n`;
 
 describe("public lines (RFC 4253)", () => {
   for (const name of KEYS) {
@@ -66,9 +92,10 @@ describe("public lines (RFC 4253)", () => {
 
 describe("openssh-key-v1 container", () => {
   for (const name of KEYS) {
-    it(`decodes ${name} to material matching its public line`, () => {
-      const key = parseOpensshPrivateKey(fixture(name));
+    it(`decodes ${name} to material matching its public line`, async () => {
+      const key = await parseOpensshPrivateKey(fixture(name));
       expect(key.comment).toBe("fixture@basilisk");
+      expect(key.encrypted).toBe(false);
       const pubLine = parsePublicLine(fixture(`${name}.pub`));
       // The container's embedded public blob and the .pub file must agree.
       expect(Buffer.from(key.publicBlob).toString("base64")).toBe(
@@ -76,9 +103,9 @@ describe("openssh-key-v1 container", () => {
       );
     });
 
-    it(`re-encodes ${name} to a container that parses to the same material`, () => {
-      const key = parseOpensshPrivateKey(fixture(name));
-      const again = parseOpensshPrivateKey(encodeOpensshPrivateKey(key));
+    it(`re-encodes ${name} to a container that parses to the same material`, async () => {
+      const key = await parseOpensshPrivateKey(fixture(name));
+      const again = await parseOpensshPrivateKey(await encodeOpensshPrivateKey(key));
       expect(again.type).toBe(key.type);
       expect(again.comment).toBe(key.comment);
       expect(Buffer.from(again.publicBlob).toString("base64")).toBe(
@@ -86,13 +113,109 @@ describe("openssh-key-v1 container", () => {
       );
     });
   }
+});
 
-  it("refuses a passphrase-protected file with the §29f message, verbatim", () => {
-    // The wording is the feature (share-check.js precedent): it names the
-    // KDF we lack and the exact command that removes it.
-    expect(() => parseOpensshPrivateKey(fixture("id_ed25519_enc"))).toThrow(
+/**
+ * Passphrase-protected containers (§29f).
+ *
+ * Every encrypted fixture here is `ssh-keygen -p` applied to the *plaintext*
+ * fixture beside it, so the bar is not "our decryptor agrees with our
+ * encryptor" — it is "the private scalar we recover is byte-identical to the
+ * one in the file ssh-keygen encrypted", which only a correct `bcrypt_pbkdf`
+ * and a correct aes256-ctr can produce. The rounds counts differ on purpose
+ * (1, 4, 16, 24): the KDF's round loop and its output interleave are separate
+ * mistakes, and a single rounds count can hide either.
+ */
+describe("openssh-key-v1, passphrase-protected", () => {
+  const PASSPHRASE = "correct horse";
+  /** encrypted fixture → the plaintext fixture it was made from, and its rounds */
+  const ENCRYPTED = [
+    ["id_ed25519_enc1", "id_ed25519", 1],
+    ["id_ecdsa256_enc", "id_ecdsa256", 4],
+    ["id_rsa_enc", "id_rsa", 16],
+  ];
+
+  it.each(ENCRYPTED)(
+    "%s decrypts to exactly the material in %s (ssh-keygen wrote both)",
+    async (encName, plainName, rounds) => {
+      const opened = await parseOpensshPrivateKey(fixture(encName), { passphrase: PASSPHRASE });
+      const plain = await parseOpensshPrivateKey(fixture(plainName));
+      expect(opened.encrypted).toBe(true);
+      expect(opened.kdfRounds).toBe(rounds);
+      // Every field, not just the public blob — the public half survives a
+      // wrong key derivation intact (it is outside the encrypted section),
+      // so comparing only it would pass on a broken KDF.
+      const strip = ({ encrypted, kdfRounds, ...rest }) => rest;
+      expect(strip(opened)).toEqual(strip(plain));
+    }
+  );
+
+  it("decrypts the 24-round fixture to the public key ssh-keygen recorded", async () => {
+    // id_ed25519_enc is its own key (not a copy of id_ed25519), so its .pub
+    // is the independent witness here.
+    const key = await parseOpensshPrivateKey(fixture("id_ed25519_enc"), {
+      passphrase: PASSPHRASE,
+    });
+    expect(key.kdfRounds).toBe(24);
+    expect(key.comment).toBe("fixture@basilisk");
+    const witness = parsePublicLine(fixture("id_ed25519_enc.pub"));
+    expect(Buffer.from(key.publicBlob).toString("base64")).toBe(
+      Buffer.from(witness.blob).toString("base64")
+    );
+    // The seed the container held must generate that public key — which the
+    // parser checks by comparing the private field's redundant public half.
+    expect(Buffer.from(key.pub).toString("base64")).toBe(
+      Buffer.from(witness.pub).toString("base64")
+    );
+    // The seed's public half is re-derived and checked inside the parser, so
+    // reaching here at all means the 32 secret bytes are the right ones.
+    expect(key.priv).toHaveLength(32);
+  });
+
+  it("names the passphrase it needs rather than failing as corruption", async () => {
+    await expect(parseOpensshPrivateKey(fixture("id_ed25519_enc"))).rejects.toThrow(
       ENCRYPTED_KEY_MESSAGE
     );
+  });
+
+  it("tells a wrong passphrase apart from a corrupt file", async () => {
+    // Both surface at the checkint pair; conflating them sends someone who
+    // simply mistyped off to hunt for file damage.
+    await expect(
+      parseOpensshPrivateKey(fixture("id_ed25519_enc"), { passphrase: "wrong horse" })
+    ).rejects.toThrow(WRONG_PASSPHRASE_MESSAGE);
+  });
+
+  it("names an unsupported cipher instead of failing on a length", async () => {
+    // aes256-gcm is legal in this container and carries an auth tag we do not
+    // parse. Swap the cipher name in a real fixture to reach the branch.
+    const swapped = reArmor(
+      patchString(unarmorBytes(fixture("id_ed25519_enc")), "aes256-ctr", "aes256-gcm@openssh.com")
+    );
+    await expect(
+      parseOpensshPrivateKey(swapped, { passphrase: PASSPHRASE })
+    ).rejects.toThrow(/unsupported cipher "aes256-gcm@openssh\.com"/);
+  });
+
+  it("round-trips through our own encryptor at the ssh-keygen default", async () => {
+    const plain = await parseOpensshPrivateKey(fixture("id_ed25519"));
+    const pem = await encodeOpensshPrivateKey(plain, { passphrase: "our passphrase" });
+    // The header must be the pair ssh-keygen writes, or the file is ours alone.
+    const header = unarmorBytes(pem);
+    expect(Buffer.from(header).toString("latin1")).toContain("aes256-ctr");
+    expect(Buffer.from(header).toString("latin1")).toContain("bcrypt");
+    const again = await parseOpensshPrivateKey(pem, { passphrase: "our passphrase" });
+    expect(again.kdfRounds).toBe(DEFAULT_KDF_ROUNDS);
+    expect(Buffer.from(again.priv).toString("hex")).toBe(
+      Buffer.from(plain.priv).toString("hex")
+    );
+  });
+
+  it("treats an empty passphrase as no encryption, never as encryption with nothing", async () => {
+    const plain = await parseOpensshPrivateKey(fixture("id_ed25519"));
+    const pem = await encodeOpensshPrivateKey(plain, { passphrase: "" });
+    expect(Buffer.from(unarmorBytes(pem)).toString("latin1")).not.toContain("bcrypt");
+    expect((await parseOpensshPrivateKey(pem)).encrypted).toBe(false);
   });
 });
 
@@ -149,20 +272,57 @@ describe("sshsig", () => {
   });
 
   it("signs ed25519 byte-identically to ssh-keygen (RFC 8032 is deterministic)", async () => {
-    const key = parseOpensshPrivateKey(fixture("id_ed25519"));
+    const key = await parseOpensshPrivateKey(fixture("id_ed25519"));
     const ours = await sshsigSign(PAYLOAD, key, { namespace: "file" });
     expect(ours).toBe(fixture("payload.id_ed25519.file.sshsig"));
   });
 
   it("round-trips a fresh ECDSA and RSA signature through its own verify", async () => {
     for (const name of ["id_ecdsa256", "id_ecdsa384", "id_ecdsa521", "id_rsa"]) {
-      const key = parseOpensshPrivateKey(fixture(name));
+      const key = await parseOpensshPrivateKey(fixture(name));
       const sig = await sshsigSign(PAYLOAD, key, { namespace: "file", hash: "sha256" });
       expect(parseSshsig(sig).hashAlg).toBe("sha256");
       await expect(
         sshsigVerify(PAYLOAD, sig, { namespace: "file", publicBlob: key.publicBlob })
       ).resolves.toBe(true);
     }
+  });
+
+  it("signs with a key that arrived passphrase-protected, matching the plaintext signature", async () => {
+    // End-to-end proof that the decrypted scalar is the right one: an
+    // ed25519 sshsig is deterministic (RFC 8032), so the signature made from
+    // the encrypted fixture must be the exact bytes ssh-keygen produced from
+    // the plaintext one. A near-miss key would verify against nothing.
+    const opened = await parseOpensshPrivateKey(fixture("id_ed25519_enc1"), {
+      passphrase: "correct horse",
+    });
+    const ours = await sshsigSign(PAYLOAD, opened, { namespace: "file" });
+    expect(ours).toBe(fixture("payload.id_ed25519.file.sshsig"));
+  });
+});
+
+describe("ssh.decode opens a protected key with the Inputs-panel passphrase", () => {
+  // The passphrase channel is the one the gpg ops already read; a second one
+  // would mean the panel worked for some ops and not others.
+  const recipe = "input | ssh.decode | ssh.fingerprint | out @fp";
+
+  it("decodes when the passphrase is present", async () => {
+    const { ast, validation } = compileRecipe(recipe);
+    expect(validation.errors).toEqual([]);
+    const artifacts = await runRecipe(ast, {
+      inputs: { text: { value: fixture("id_ed25519_enc1") }, gpg: { passphrase: "correct horse" } },
+    });
+    const fp = artifacts.find((a) => a.label === "fp" || /^SHA256:/.test(String(a.content)));
+    expect(String(fp.content).trim()).toBe(
+      fixture("fingerprints.txt").trim().split("\n")[0].split(/\s+/)[1]
+    );
+  });
+
+  it("names the missing passphrase when it is absent", async () => {
+    const { ast } = compileRecipe(recipe);
+    await expect(
+      runRecipe(ast, { inputs: { text: { value: fixture("id_ed25519_enc1") } } })
+    ).rejects.toThrow(ENCRYPTED_KEY_MESSAGE);
   });
 });
 

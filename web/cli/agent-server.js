@@ -35,10 +35,15 @@ export function defaultAgentPath() {
  * classic way an ssh-agent reimplementation fails against real clients.
  *
  * @param {string} path
- * @param {{ confirm?: boolean }} [opts]
+ * @param {{ confirm?: boolean, passphrase?: string }} [opts]
+ *   A passphrase-protected file opens with `passphrase`; without one the
+ *   codec says so by name. The CLI has no prompt wired for it yet, so the
+ *   practical route is still an unencrypted file or `ssh-keygen -p`.
  */
 export async function agentKeyFromFile(path, opts = {}) {
-  const material = parseOpensshPrivateKey(readFileSync(path, "utf8"));
+  const material = await parseOpensshPrivateKey(readFileSync(path, "utf8"), {
+    passphrase: String(opts.passphrase || ""),
+  });
   const publicBlob = buildPublicBlob(material);
   const fingerprint = await sshFingerprint(publicBlob);
   return {

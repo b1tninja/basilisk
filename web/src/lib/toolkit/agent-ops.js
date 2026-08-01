@@ -130,7 +130,7 @@ export async function execAgentList() {
  */
 export async function execAgentSave(value, params = {}, bindings = {}) {
   if (value?.type === "keypair" || value?.type === "key") {
-    return saveKeypairKind(value, params);
+    return saveKeypairKind(value, params, bindings);
   }
   if (
     !value ||
@@ -217,9 +217,18 @@ export async function execAgentSave(value, params = {}, bindings = {}) {
   });
 }
 
-/** §28b, verbatim — the honest constraint, not a silent downgrade. */
+/**
+ * §28b, verbatim — the honest constraint, narrowed to what is still true.
+ *
+ * SSH-mappable keys now take a passphrase: they store as openssh-key-v1, and
+ * that container has a passphrase form (`bcrypt_pbkdf` + `aes256-ctr`). Keys
+ * of kind `raw` — x25519 today — store as a bare private JWK, which has no
+ * standard passphrase form to write, so the refusal survives for exactly
+ * those. Naming the kind matters: "SSH keys are not supported" was the
+ * sentence, and it is now the wrong one.
+ */
 export const NON_PGP_PASSPHRASE_MESSAGE =
-  "Passphrase protection for SSH keys needs an encryption this browser build does not ship yet — use passkey or device protection.";
+  "Passphrase protection needs a container that can hold one — this key stores as a bare JWK (kind raw), which has none. Use passkey or device protection.";
 
 const b64u = (bytes) => bytesToBase64(bytes).replace(/=+$/, "");
 
@@ -282,23 +291,28 @@ function sshMaterialOrNull(jwk) {
  * one key grows two rows in My Keys and neither is wrong.
  *
  * @param {JsonWebKey} jwk  The private half.
- * @param {{ comment?: string, publicKey?: CryptoKey }} [opts]
+ * @param {{ comment?: string, publicKey?: CryptoKey, passphrase?: string }} [opts]
  *   `publicKey` short-circuits the spki id when the caller already holds the
  *   handle; without one it is re-imported from the JWK's public fields.
+ *   `passphrase` encrypts the openssh-key-v1 payload (§28b) — it reaches only
+ *   the `ssh` branch, and a `raw` key handed one is refused rather than
+ *   stored bare under a label that claims protection.
  * @returns {Promise<{ kind: "ssh"|"raw", id: string, payload: string, publicLine: string }>}
  */
 export async function vaultMaterialFromPrivateJwk(jwk, opts = {}) {
   const comment = String(opts.comment || "");
+  const passphrase = String(opts.passphrase || "");
   const material = sshMaterialOrNull(jwk);
   if (material) {
     const blob = buildPublicBlob(material);
     return {
       kind: "ssh",
       id: await sshFingerprint(blob),
-      payload: encodeOpensshPrivateKey(material, { comment }),
+      payload: await encodeOpensshPrivateKey(material, { comment, passphrase }),
       publicLine: formatPublicLine(blob, comment),
     };
   }
+  if (passphrase) throw new Error(NON_PGP_PASSPHRASE_MESSAGE);
   const publicKey = opts.publicKey || (await publicKeyFromPrivateJwk(jwk));
   const spki = new Uint8Array(await crypto.subtle.exportKey("spki", publicKey));
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", spki));
@@ -350,16 +364,21 @@ async function publicKeyFromPrivateJwk(jwk) {
  * @param {{ type?: string, data?: *, meta?: * }} value
  * @param {Record<string, *>} params
  */
-async function saveKeypairKind(value, params) {
+async function saveKeypairKind(value, params, bindings = {}) {
   const protection = String(params.protection || "device").toLowerCase();
   if (!["device", "passphrase", "passkey"].includes(protection)) {
     throw new Error("agent.save protection= must be device|passphrase|passkey");
   }
-  if (protection === "passphrase") {
-    // §28b: today's passphrase mode is OpenPGP S2K on the armor, which a
-    // non-PGP payload does not have; encrypted openssh-key-v1 needs
-    // bcrypt_pbkdf (deferred). Refuse, never silently downgrade.
-    throw new Error(NON_PGP_PASSPHRASE_MESSAGE);
+  // §28b: the pgp path wraps the armor in OpenPGP S2K; the ssh path wraps the
+  // openssh-key-v1 container in bcrypt_pbkdf + aes256-ctr. Both are "the
+  // payload protects itself", which is what makes the vault row honest.
+  // `raw` payloads have no such form and are refused in
+  // `vaultMaterialFromPrivateJwk` — never silently downgraded.
+  const panelPass = String(
+    bindings?.inputs?.gpg?.passphrase || bindings?.inputs?.agent?.passphrase || ""
+  );
+  if (protection === "passphrase" && !panelPass) {
+    throw new Error("agent.save protection=passphrase needs a key passphrase (Inputs panel)");
   }
 
   const handles = pipelineKeyHandles(value);
@@ -388,6 +407,7 @@ async function saveKeypairKind(value, params) {
   const { kind, id, payload, publicLine } = await vaultMaterialFromPrivateJwk(jwk, {
     comment,
     publicKey: handles.publicKey,
+    ...(protection === "passphrase" ? { passphrase: panelPass } : {}),
   });
 
   /** @type {Uint8Array|undefined} */
@@ -407,7 +427,7 @@ async function saveKeypairKind(value, params) {
       email: emailParam,
       name: nameParam,
       expires: expiryIsoFromPreset(String(params.expiry || "none")),
-      protection: /** @type {"device"|"passkey"} */ (protection),
+      protection: /** @type {"device"|"passphrase"|"passkey"} */ (protection),
       prfIkm,
       mds,
       kind,
@@ -447,7 +467,13 @@ async function saveKeypairKind(value, params) {
  */
 export async function materializeUnlockedKey(result) {
   if (result.kind === "ssh") {
-    const v = await execSshDecode({ type: "text", data: result.armored });
+    // `openPgpPassphrase` is the Inputs-panel passphrase, whatever the key's
+    // kind — the field is named for the first op that read it, not for the
+    // only one. A protection=passphrase ssh key needs it to open its
+    // container; a device/passkey one ignores an empty string.
+    const v = await execSshDecode({ type: "text", data: result.armored }, {}, {
+      passphrase: result.openPgpPassphrase,
+    });
     return {
       ...v,
       meta: {
@@ -604,7 +630,9 @@ export async function execAgentSign(value, params = {}, bindings = {}) {
   }
 
   // ssh / raw: sshsig over the payload, key materialized in this frame only.
-  const keyPair = await execSshDecode({ type: "text", data: result.armored });
+  const keyPair = await execSshDecode({ type: "text", data: result.armored }, {}, {
+    passphrase: result.openPgpPassphrase,
+  });
   const { execSshSign } = await import("./ssh-ops.js");
   const signed = await execSshSign(
     { type: "bytes", data: payload },

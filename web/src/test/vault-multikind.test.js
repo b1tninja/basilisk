@@ -113,8 +113,16 @@ describe("the §28b passphrase constraint", () => {
   it("states the exact refusal, and names the alternatives", () => {
     // The wording is the feature: no silent downgrade, and the user learns
     // which protections do work.
+    //
+    // This sentence shrank when bcrypt_pbkdf landed. It used to say SSH keys
+    // could not take a passphrase at all; openssh-key-v1 has a passphrase
+    // form and we write it now, so the constraint is no longer about SSH —
+    // it is about `raw` payloads, which are a bare JWK with nowhere to put
+    // one. A refusal that outlives its reason is worse than no refusal: it
+    // sends people to a workaround they no longer need.
     expect(NON_PGP_PASSPHRASE_MESSAGE).toBe(
-      "Passphrase protection for SSH keys needs an encryption this browser build does not ship yet — use passkey or device protection."
+      "Passphrase protection needs a container that can hold one — this key stores as a bare JWK (kind raw), which has none. Use passkey or device protection."
     );
+    expect(NON_PGP_PASSPHRASE_MESSAGE).not.toMatch(/SSH/);
   });
 });
