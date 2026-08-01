@@ -71,6 +71,7 @@ export const GLYPH_PATHS = {
   "lock": "<rect x=\"3.5\" y=\"9\" width=\"13\" height=\"9\" rx=\"1.5\"/><path d=\"M6.5 9V6.5a3.5 3.5 0 017 0V9\"/><path d=\"M10 12v3\"/>",
   "more": "<circle cx=\"5\" cy=\"10\" r=\"1.3\"/><circle cx=\"10\" cy=\"10\" r=\"1.3\"/><circle cx=\"15\" cy=\"10\" r=\"1.3\"/>",
   "openpgp": "<rect x=\"3\" y=\"8\" width=\"14\" height=\"10\" rx=\"1.5\"/><path d=\"M3 9.5l7 4.5 7-4.5\"/><path d=\"M7 8V6.5a3 3 0 016 0V8\"/>",
+  "otp": "<path d=\"M8.4 6.9A3.4 3.4 0 1 1 5.6 6.9\"/> <path d=\"M7 7.7v2.3l-1.7 1\"/> <path d=\"M10.4 10h6.2\"/> <path d=\"M13.9 10v2.1\"/> <path d=\"M16.6 10v2.8\"/>",
   "out": "<path d=\"M4 5h12v10H4z\"/><path d=\"M7 8h6M7 11h4\"/><path d=\"M17.5 8v4\"/>",
   "passphrase": "<path d=\"M5 9.5a2.5 2.5 0 014.3-1.7L14 12.5V14h-1.5v1.5H11V14H9.5\"/><circle cx=\"6.2\" cy=\"8.8\" r=\"0.8\"/><path d=\"M4 16.5h12\"/>",
   "password": "<circle cx=\"7\" cy=\"10\" r=\"2.5\"/><path d=\"M9.2 10H17v2.5h-2V15h-2v-2.5H11\"/>",

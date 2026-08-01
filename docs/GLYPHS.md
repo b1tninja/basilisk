@@ -41,6 +41,7 @@ cd web && npm run glyphs
 | `hkp` | HKP | Keyserver hub with radiating spokes | HTTP Keyserver Protocol lookup/search — a central node with compass spokes (directory + fetch). <br><small>OpenPGP HKP</small> |
 | `sss` | SSS / BLIP39 | Stacked share cards | Shamir secret sharing / BLIP39 — offset stacked cards as K-of-N fragments (any threshold recovers; a single share is useless alone). <br><small>Shamir 1979; puzzle/share UX metaphor</small> |
 | `webauthn` | WebAuthn | FIDO passkey (person + overlapping key) | Official passkey layout: person on the left, simplified key on the right slightly overlapping (create, prf, caps). <br><small>FIDO Alliance Passkey Icon Usage Guidelines</small> |
+| `otp` | OTP | Key whose bow is a countdown dial | A TOTP secret is a key that expires. The shank is the `password` shelf glyph's, because the shared secret underneath is the same kind of thing; the bow is a dial with hands and a gap at twelve where the period has run off. Two cues rather than one on purpose — at 16px the gap alone reads as a broken circle and the hands alone read as a plain clock, and it has to stay distinct from `password` right beside it in the drawer. <br><small>RFC 6238 (TOTP)</small> |
 | `jose` | JOSE | Three dot-separated segments | A compact JOSE serialization is header.payload.signature - three blocks with the separators between them, plus the signature spark (jose.sign, jose.verify). <br><small>RFC 7515 - JSON Web Signature</small> |
 
 ## Shelves
