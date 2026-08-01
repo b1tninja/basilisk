@@ -283,3 +283,32 @@ export async function execSshVerify(value, params = {}, bindings = {}) {
   }
   return { type: "bool", data: true };
 }
+
+/**
+ * SSH identity for a JWK, or null when SSH has no key type for it (§35c).
+ *
+ * The key tiles need a fingerprint and a public line without running an op.
+ * This is the same codec path `ssh.encode` and `ssh.fingerprint` take — no new
+ * crypto, and the bytes match what a recipe would emit — but it returns null
+ * instead of throwing for x25519/AES/HMAC, because "SSH has no key type for
+ * this" is an ordinary answer for a tile to render (the row is simply absent)
+ * rather than an error to handle.
+ *
+ * @param {JsonWebKey} jwk
+ * @param {string} [comment]
+ * @returns {Promise<{ publicLine: string, fingerprint: string, type: string } | null>}
+ */
+export async function sshIdentityFromJwk(jwk, comment = "") {
+  let material;
+  try {
+    material = sshMaterialFromJwk(jwk);
+  } catch (_) {
+    return null;
+  }
+  const blob = buildPublicBlob(material);
+  return {
+    publicLine: formatPublicLine(blob, comment),
+    fingerprint: await sshFingerprint(blob),
+    type: material.type,
+  };
+}

@@ -1818,6 +1818,11 @@ export function ToolkitShell() {
                                 // already says "public-key"; the ternary was
                                 // re-deriving it and disagreeing.
                                 kind: a.role === "diagnostic" ? "diag" : a.role || "text",
+                                // The kind registry matches on these (§32b); without them
+                                // every tile resolves to the fallback.
+                                role: a.role,
+                                tags: a.tags,
+                                traits: a.traits,
                                 diagnosticAction,
                                 sizeBytes: new TextEncoder().encode(a.content).length,
                                 sensitive: a.sensitive,
@@ -2275,6 +2280,11 @@ export function ToolkitShell() {
                             outputs={rows.map(({ artifact: a, index: oi }) => ({
                               label: a.label || a.filename || `output ${oi + 1}`,
                               kind: a.role === "diagnostic" ? "diag" : a.role || "text",
+                              // The kind registry matches on these (§32b); without them
+                              // every tile resolves to the fallback.
+                              role: a.role,
+                              tags: a.tags,
+                              traits: a.traits,
                               sizeBytes: new TextEncoder().encode(a.content).length,
                               sensitive: a.sensitive,
                               revealable: a.revealable,

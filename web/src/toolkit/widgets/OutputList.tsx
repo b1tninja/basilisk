@@ -30,6 +30,18 @@ export type OutputArtifact = {
   label: string;
   /** Value kind badge — "text", "bytes", "key"… uppercased in the row. */
   kind: string;
+  /**
+   * What the artifact *is* — the identity the kind registry matches on (§32b).
+   *
+   * Distinct from `kind` above, which is the badge string. These were missing
+   * from this type, so the resolver saw role-less objects and every artifact
+   * fell through to the fallback kind in the live UI, while an engine-backed
+   * test resolved real artifacts and passed. A mapped-shape gap between the
+   * two is invisible to both ends unless something carries it.
+   */
+  role?: string;
+  tags?: string[];
+  traits?: Record<string, unknown>;
   sizeBytes: number;
   sensitive?: boolean;
   onCopy: () => void;
@@ -198,7 +210,13 @@ function renderKindView(
   masked: boolean
 ) {
   try {
-    return kind.view({ artifact, masked });
+    // §33e/§35d: while masked, only a kind's declared `publicView` may draw —
+    // the body it renders derives solely from public material. Without one,
+    // a masked tile shows nothing but the masked line, as before. The full
+    // `view` never runs on a masked value; that is the mask, not a styling
+    // choice.
+    const render = masked ? kind.publicView : kind.view;
+    return render ? render({ artifact, masked }) : null;
   } catch {
     return null;
   }
@@ -406,7 +424,11 @@ export function OutputList({ outputs, className }: Props) {
           ) : null}
         </div>
           {a.sensitive && !revealed.has(a.label) ? (
-            <span className="flex items-center gap-2 pl-[1px]">
+            <span className="flex flex-col gap-1 pl-[1px]">
+              {/* §35d: a masked private key is no longer a blank tile — its
+                  algorithm, fingerprint and public line are public facts. */}
+              {renderKindView(resolvedKind, a, true)}
+              <span className="flex items-center gap-2">
               <span className="font-mono text-[10px] italic text-[var(--muted-foreground)]">
                 sensitive — value not shown
               </span>
@@ -425,6 +447,7 @@ export function OutputList({ outputs, className }: Props) {
                   Reveal
                 </button>
               ) : null}
+              </span>
             </span>
           ) : kindBody ? (
             /* §32e: one resolver call where three bespoke predicates used to

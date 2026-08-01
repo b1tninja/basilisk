@@ -20,6 +20,7 @@ import type { ArtifactTile } from "../notebook-types";
 import { NetworkArtifact } from "../widgets/NetworkArtifact";
 import { InspectorArtifact } from "../widgets/InspectorArtifact";
 import { JwtArtifact, hasJoseRenderer } from "../widgets/JwtArtifact";
+import { KeyCard } from "../widgets/KeyCard";
 import type { ArtifactKind } from "./resolve";
 
 /** What a view is handed. Kept small on purpose; kinds read the artifact. */
@@ -33,6 +34,14 @@ export type ToolkitArtifactKind = ArtifactKind<
   never
 > & {
   view: (ctx: ArtifactViewContext) => React.ReactNode | null;
+  /**
+   * A body that renders *while masked* (§33e), because it derives only from
+   * public material. This is not a hole in the mask: the rule is stated once —
+   * a masked tile may render only what does not derive from the masked value —
+   * and `publicView` is where a kind asserts it, in code review, per kind,
+   * rather than by each tile deciding for itself.
+   */
+  publicView?: (ctx: ArtifactViewContext) => React.ReactNode | null;
 };
 
 /**
@@ -56,7 +65,58 @@ export const FALLBACK_KIND: ToolkitArtifactKind = {
   empty: "",
 };
 
+const keyCardFor = (publicOnly: boolean) =>
+  function KeyCardView({ artifact }: ArtifactViewContext) {
+    const traits = (artifact.traits || {}) as { alg?: string; fingerprint?: string };
+    return (
+      <KeyCard
+        content={artifact.content}
+        alg={traits.alg}
+        fingerprint={traits.fingerprint}
+        publicOnly={publicOnly}
+      />
+    );
+  };
+
 export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
+  {
+    id: "keypair-public",
+    match: { role: "key", tags: ["keypair", "public"] },
+    label: "Public key",
+    glyph: "key",
+    view: keyCardFor(true),
+    empty: "No exportable public half — the key was generated non-extractable.",
+    actions: ["copy", "download", "expand"],
+  },
+  {
+    id: "keypair-private",
+    match: { role: "key", tags: ["keypair", "private"] },
+    label: "Private key",
+    glyph: "key",
+    view: keyCardFor(false),
+    // §35d: a masked private-key tile is no longer blank. Algorithm,
+    // fingerprint and public line derive from public material, so they render
+    // while the secret stays masked; the masked line sits under them.
+    publicView: keyCardFor(true),
+    empty: "No exportable private half — the key was generated non-extractable.",
+    actions: ["copy", "download", "expand"],
+  },
+  {
+    /**
+     * Any key with no half declared — the auto-emitted pipeline tip, a single
+     * `key` handle, a PEM/DER export (§35e). Least specific, so the tagged
+     * keypair kinds above still win when the `out` path named a half; that
+     * ordering is the resolver's job, not declaration order's.
+     */
+    id: "key",
+    match: { role: "key" },
+    label: "Key",
+    glyph: "key",
+    view: keyCardFor(false),
+    publicView: keyCardFor(true),
+    empty: "No exportable key material — the key was generated non-extractable.",
+    actions: ["copy", "download", "expand"],
+  },
   {
     id: "network-value",
     match: { role: "netvalue" },

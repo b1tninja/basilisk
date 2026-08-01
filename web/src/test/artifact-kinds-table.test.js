@@ -38,7 +38,7 @@ const CODE_ONLY = TABLE_SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(
 const UNCLAIMED_ROLES = [
   "text",
   "secret",
-  "key",
+  // "key" is claimed by keypair-public / keypair-private (§35).
   "public-key",
   "share",
   "recipients",
@@ -195,5 +195,47 @@ describe("real engine artifacts resolve to the right kind", () => {
 
 "y" | utf8 | out @t`);
     expect(rows.length).toBeGreaterThan(3);
+  });
+});
+
+describe("key artifacts resolve to the right card (§35)", () => {
+  it("splits a keypair into public and private kinds", async () => {
+    const { ast } = compileRecipe("genkey ed25519 | out @kp");
+    const arts = await runRecipe(ast, {});
+    const kinds = arts.map((a) => ({
+      label: a.label,
+      kind: resolveArtifactKind(a, ARTIFACT_KINDS, FALLBACK_KIND).id,
+      alg: a.traits?.alg,
+    }));
+    const priv = kinds.find((k) => /private/.test(k.label));
+    const pub = kinds.find((k) => /public/.test(k.label));
+    expect(priv.kind).toBe("keypair-private");
+    expect(pub.kind).toBe("keypair-public");
+    // traits.alg is what KeyCard shows as the algorithm — the tag the recipe
+    // named, not a value re-derived from the JWK.
+    expect(priv.alg).toBe("ed25519");
+    expect(pub.alg).toBe("ed25519");
+  });
+
+  it("gives the private half a publicView so a masked tile is not blank", () => {
+    const priv = ARTIFACT_KINDS.find((k) => k.id === "keypair-private");
+    expect(typeof priv.publicView).toBe("function");
+    // The full view must never be the masked renderer.
+    expect(priv.publicView).not.toBe(priv.view);
+  });
+
+  it("falls to the general key kind when no half is declared", () => {
+    // The auto-emitted pipeline tip carries role "key" with no keypair tags.
+    expect(
+      resolveArtifactKind({ role: "key" }, ARTIFACT_KINDS, FALLBACK_KIND).id
+    ).toBe("key");
+    // …and the tagged halves still win, regardless of declaration order.
+    expect(
+      resolveArtifactKind(
+        { role: "key", tags: ["keypair", "public"] },
+        ARTIFACT_KINDS,
+        FALLBACK_KIND
+      ).id
+    ).toBe("keypair-public");
   });
 });
