@@ -1038,13 +1038,21 @@ export function inferParamDrivenType(name, current, params = {}) {
   }
 
   if (name === "agent.save") {
+    // §28 gave `agent.save` the multi-kind path — a WebCrypto keypair saves as
+    // vault kind ssh/raw (see execAgentSave, agent-multikind.test.js) and the
+    // registry declares the `keypair → keypair` overload. This table was never
+    // told, so the op's own documented example (`genkey ed25519 | agent.save`)
+    // failed validation while running fine.
+    if (current.base === "keypair") {
+      return { ok: true, output: typeOf("keypair", { alg: current.alg }) };
+    }
     if (
       current.base !== "openpgp-key" &&
       current.base !== "text"
     ) {
       return {
         ok: false,
-        error: `"agent.save" expects openpgp-key/private, got ${formatType(current)}`,
+        error: `"agent.save" expects openpgp-key/private or a keypair, got ${formatType(current)}`,
       };
     }
     return { ok: true, output: typeOf("openpgp-key", { which: "private" }) };
@@ -1461,8 +1469,10 @@ export function stepAcceptsRefined(spec, from) {
   }
   if (spec.name === "agent.save") {
     return (
-      current.base === "openpgp-key" && current.which === "private"
-    ) || (current.base === "text" && !!current);
+      (current.base === "openpgp-key" && current.which === "private") ||
+      current.base === "keypair" ||
+      (current.base === "text" && !!current)
+    );
   }
   if (
     spec.name === "digest" ||

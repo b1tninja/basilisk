@@ -1565,9 +1565,19 @@ export function registryIssues() {
  */
 export const PRESET_GROUP_ORDER = Object.freeze([
   "Keys",
+  // Directly after Keys, not down among the named ecosystems: every SSH
+  // template is a key task, and "make me an SSH key for GitHub" is the errand
+  // people arrive with. Ordering here is by what a user reaches for — the same
+  // rationale as WebRTC below — not by how deep the format sits in the stack.
+  "SSH",
   "Secrets",
   "Digest & MAC",
   "Encrypt",
+  // Its own shelf rather than more rows under Encrypt: half the age arc
+  // (keygen, recipient) is key management, and the group is the whole
+  // keygen → recipient → encrypt → decrypt story. Lowercase because the tool
+  // is — `age`, not "Age".
+  "age",
   "Keys wrap / agree",
   "Split & recover",
   // The key-ceremony kit: the guided flow's stages as templates, so the same
@@ -1640,6 +1650,93 @@ export const PRESETS = [
     title: "Ed25519 key (JWK)",
     blurb: "Signing key as JSON Web Key.",
     recipe: "genkey ed25519 | export jwk | out @jwk",
+  },
+  // ── SSH. The toolbox shipped with byte-exact ssh-keygen interop and no way
+  // to find it from the Templates menu; these are the seven errands people
+  // actually arrive with, in the order they arrive with them.
+  {
+    id: "ssh-github",
+    group: "SSH",
+    title: "An SSH key for GitHub",
+    blurb:
+      "The one line you paste into Settings → SSH keys — `ssh.encode` writes the same `ssh-ed25519 AAAA… comment` bytes as `ssh-keygen -t ed25519`, comment and all.",
+    recipe: `genkey ed25519 | ssh.encode comment="you@host" | out @pub`,
+  },
+  {
+    id: "ssh-key-vault",
+    group: "SSH",
+    title: "SSH key, saved to My Keys",
+    blurb:
+      "Fork the public line off the stem and let the private half go on to `agent.save` — one run gives you the text to paste and a vault key the `agent.*` ops can sign with (it writes to whoever runs it).",
+    recipe: `genkey ed25519 | tee
+  - ssh.encode comment="you@host" | out @pub
+| agent.save | out @id`,
+  },
+  {
+    id: "ssh-fingerprint",
+    group: "SSH",
+    title: "Fingerprint a public key",
+    blurb:
+      "Paste an authorized_keys line and read back the `SHA256:…` string byte-for-byte identical to `ssh-keygen -lf` — the one GitHub prints beside the key.",
+    recipe: "input | ssh.decode | ssh.fingerprint | out @fp",
+  },
+  {
+    id: "ssh-sign-git",
+    group: "SSH",
+    // No `pair` with ssh-verify-git, though they are conjugates. The stitch
+    // bridges the forward's last output into the reverse's first source, and
+    // for sshsig that bridge would be the *signature* — but a verifier needs
+    // the message on the stem and the signature in a slot, so the stitched
+    // preview would bind the wrong thing. `hmac-sign-verify` and
+    // `gpg-sign-verify` are unpaired for the same reason.
+    title: "Sign a file the way git does",
+    blurb:
+      "sshsig, the envelope `ssh-keygen -Y sign` and `git commit -S` both write — `namespace=` is inside what gets signed, so a `git` signature can never verify as a `file` one no matter how good the key is.",
+    recipe: `genkey ed25519 | out @id
+
+input | utf8 | ssh.sign key=@id namespace=git | out @sig`,
+  },
+  {
+    id: "ssh-verify-git",
+    group: "SSH",
+    title: "Verify an SSH signature",
+    blurb:
+      "Both halves in one notebook so the check is readable: swap `@pub` and `@sig` for a signer's public line and their `BEGIN SSH SIGNATURE` block, and keep `namespace=` equal or a perfectly good signature fails.",
+    recipe: `genkey ed25519 | tee
+  - :public | ssh.encode | out @pub
+| out @id
+
+input | utf8 | out @msg
+
+in @msg | ssh.sign key=@id namespace=git | out @sig
+
+in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok`,
+  },
+  {
+    id: "ssh-to-pem",
+    group: "SSH",
+    pair: "ssh-pem",
+    title: "SSH private key → PKCS#8 PEM",
+    blurb:
+      "The conversion chore, without `ssh-keygen -p -m PKCS8` overwriting your file: paste an unencrypted openssh-key-v1 block and get PEM (passphrase-protected files are refused by name — bcrypt).",
+    recipe: "input | ssh.decode | export pkcs8 | pem | out @pem",
+  },
+  {
+    id: "pem-to-ssh",
+    group: "SSH",
+    pair: "ssh-pem",
+    title: "PKCS#8 PEM → SSH public line",
+    blurb:
+      "The way back. `import` has to be told `alg=` because PEM armor alone does not say — change it to `ec/p256` and the emitted key type changes with it, not with anything you write on `ssh.encode`.",
+    recipe: `input | der | import pkcs8 alg=ed25519 | ssh.encode comment="you@host" | out @pub`,
+  },
+  {
+    id: "ssh-p521",
+    group: "SSH",
+    title: "A P-521 SSH key",
+    blurb:
+      "The key type comes out `ecdsa-sha2-nistp521` and there is no knob for the `sha2`: RFC 5656 fixes the name from the curve, and the curve alone picks the digest — P-256→SHA-256, P-384→SHA-384, P-521→SHA-512.",
+    recipe: `genkey ec/p521 | ssh.encode comment="you@host" | out @pub`,
   },
   {
     id: "secret-b64url",
@@ -1772,6 +1869,42 @@ in @ct | decode hex | aes-cbc -d key=@cek | utf8 | out @plain`,
 input | utf8 | aes-ctr key=@cek | encode hex | out @ct
 
 in @ct | decode hex | aes-ctr -d key=@cek | utf8 | out @plain`,
+  },
+  // ── age. Not another AEAD row above: this is a whole file format with its
+  // own key strings, and the arc keygen → recipient → encrypt → decrypt is the
+  // thing worth showing.
+  {
+    id: "age-identity",
+    group: "age",
+    title: "An age identity and its recipient",
+    blurb:
+      "`age-keygen` in two chains — the `AGE-SECRET-KEY-1…` half stays masked until you reveal it, the `age1…` half is what you hand out, and the arrow between them only points one way.",
+    recipe: `age.keygen | out @id
+
+in @id | age.recipient | out @pub`,
+  },
+  {
+    id: "age-encrypt",
+    group: "age",
+    pair: "age-file",
+    title: "Encrypt to an age recipient",
+    blurb:
+      "Real `age-encryption.org/v1`, not a lookalike — `armor=true` gives the PEM-style block, and `age -d -i key.txt` on the command line reads exactly this back.",
+    recipe: `age.keygen | out @id
+in @id | age.recipient | out @pub
+
+input | utf8 | age.encrypt to=@pub armor=true | out @ct`,
+  },
+  {
+    id: "age-decrypt",
+    group: "age",
+    pair: "age-file",
+    title: "Decrypt an age file",
+    blurb:
+      "`age -d -i key.txt doc.age`, one picker each — `key=` is slot-typed precisely so the identity never lands in recipe text, which Copy link and Export would carry off.",
+    recipe: `file.read | out @id
+
+file.read | age.decrypt key=@id | file.save`,
   },
   {
     id: "hkdf-as-aes-kw-wrap",
