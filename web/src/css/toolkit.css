@@ -311,6 +311,9 @@ body.layout-app:has(#app > .toolkit-shell) {
 .toolbox-dot[data-toolbox-dot="webauthn"] {
   background: #79c0ff;
 }
+.toolbox-dot[data-toolbox-dot="otp"] {
+  background: #db61a2;
+}
 
 /*
  * ToolboxDot shapes (§25a) — the same closed TOOLBOX_META palette, applied to
@@ -356,6 +359,9 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 .toolbox-shape[data-toolbox="webauthn"] {
   color: #79c0ff;
+}
+.toolbox-shape[data-toolbox="otp"] {
+  color: #db61a2;
 }
 .toolbox-shape[data-toolbox="jose"] {
   color: #ffa657;

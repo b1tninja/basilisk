@@ -1726,6 +1726,110 @@ in @id2 | age.recipient | out @pub2
       mode: "run",
       timeoutMs: 20000,
     },
+    // ── OTP (RFC 4226 / RFC 6238) ──
+    // All real `run` cases: HMAC over a counter is pure SubtleCrypto, and the
+    // `otpauth://` codec is string work, so nothing here needs a browser.
+    {
+      id: "otp.enrol.code.verify",
+      recipe: `random 20 | tee
+  - base32 | out @secret
+| otp.uri issuer="Verb Smoke" account=smoke@example.com | tee
+  - qr
+| out @uri
+
+in @secret | otp.code | out @code
+
+in @code | otp.verify secret=@uri window=1 | out @ok`,
+      mode: "run",
+      timeoutMs: 20000,
+      assert(arts) {
+        // Exact labels, not the token match the other cases use: this recipe
+        // emits a `qr`, whose tile is called "QR code" and would answer to a
+        // search for "code".
+        const tok = (a, n) => String(a.label || "") === n;
+        const uri = arts.find((a) => tok(a, "uri"));
+        if (!/^otpauth:\/\/totp\/Verb%20Smoke:smoke%40example\.com\?/.test(uri?.content)) {
+          throw new Error(`otp.uri did not emit a Key URI: ${uri?.content}`);
+        }
+        // The URI is the shared secret plus a label, so the tile is masked —
+        // the same contract `ssh.encode format=private` holds.
+        if (!uri?.sensitive) throw new Error("otp.uri output was not marked sensitive");
+        const code = arts.find((a) => tok(a, "code"));
+        if (!/^\d{6}$/.test(String(code?.content))) {
+          throw new Error(`otp.code did not emit six digits: ${code?.content}`);
+        }
+        const ok = arts.find((a) => tok(a, "ok"));
+        if (String(ok?.content) !== "true") throw new Error("otp.verify rejected its own code");
+        const qr = arts.find((a) => a.role === "qr");
+        if (!qr?.revealable) throw new Error("a masked QR with no Reveal is a blank square");
+      },
+    },
+    {
+      id: "otp.hotp.counter.parse.fields",
+      recipe: `random 20 | base32 | tee
+  - out @secret
+| otp.uri mode=hotp counter=3 algorithm=sha256 digits=8 issuer=Acme account=token-7 | out @uri
+
+in @uri | tee
+  - otp.parse secret | out @fsecret
+| tee
+  - otp.parse issuer | out @fissuer
+| tee
+  - otp.parse account | out @faccount
+| tee
+  - otp.parse algorithm | out @falgorithm
+| tee
+  - otp.parse digits | out @fdigits
+| tee
+  - otp.parse period | out @fperiod
+| tee
+  - otp.parse counter | out @fcounter
+| otp.parse mode | out @fmode
+
+in @secret | otp.code mode=hotp counter=3 algorithm=sha256 digits=8 | out @code
+
+in @code | otp.verify -q secret=@secret mode=hotp counter=0 algorithm=sha256 digits=8 window=5 | out @resync`,
+      mode: "run",
+      timeoutMs: 20000,
+      assert(arts) {
+        const tok = (a, n) => String(a.label || "").split(/[^A-Za-z0-9]+/).includes(n);
+        const at = (n) => String(arts.find((a) => tok(a, n))?.content);
+        if (at("fmode") !== "hotp") throw new Error(`otp.parse mode: ${at("fmode")}`);
+        if (at("fcounter") !== "3") throw new Error(`otp.parse counter: ${at("fcounter")}`);
+        if (at("falgorithm") !== "SHA256") throw new Error(`otp.parse algorithm: ${at("falgorithm")}`);
+        if (at("fdigits") !== "8") throw new Error(`otp.parse digits: ${at("fdigits")}`);
+        if (at("fissuer") !== "Acme") throw new Error(`otp.parse issuer: ${at("fissuer")}`);
+        if (at("faccount") !== "token-7") throw new Error(`otp.parse account: ${at("faccount")}`);
+        if (at("fsecret") !== at("secret")) throw new Error("otp.parse lost the secret");
+        // The look-ahead resynchronises a token pressed three times.
+        if (at("resync") !== "true") throw new Error("hotp look-ahead did not resynchronise");
+      },
+    },
+    {
+      id: "otp.sha512.digits7.period60",
+      recipe: `random 32 | base32 | tee
+  - out @s3
+| otp.uri algorithm=sha512 digits=7 period=60 issuer=Long account=ops@example.com | out @u3
+
+in @s3 | otp.code algorithm=sha512 digits=7 period=60 at=1111111111 | out @c3
+
+in @c3 | otp.verify secret=@s3 algorithm=sha512 digits=7 period=60 at=1111111111 window=0 | out @ok3`,
+      mode: "run",
+      timeoutMs: 20000,
+      assert(arts) {
+        const tok = (a, n) => String(a.label || "").split(/[^A-Za-z0-9]+/).includes(n);
+        const c3 = arts.find((a) => tok(a, "c3"));
+        if (!/^\d{7}$/.test(String(c3?.content))) {
+          throw new Error(`digits=7 did not emit seven digits: ${c3?.content}`);
+        }
+        const u3 = arts.find((a) => tok(a, "u3"));
+        if (!String(u3?.content).includes("period=60")) {
+          throw new Error("otp.uri dropped period=60");
+        }
+        const ok3 = arts.find((a) => tok(a, "ok3"));
+        if (String(ok3?.content) !== "true") throw new Error("sha512/7-digit verify failed");
+      },
+    },
     // ── JOSE (RFC 7515 / 7516 / 7519) ──
     // All real `run` cases: these are pure WebCrypto, so unlike the WebRTC and
     // clipboard ops there is nothing here that needs a browser the test does

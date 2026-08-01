@@ -1586,6 +1586,13 @@ export const PRESET_GROUP_ORDER = Object.freeze([
   "OpenPGP",
   "Directory",
   "WebAuthn",
+  // Straight after WebAuthn, for the reason the `otp` toolbox sits beside the
+  // `webauthn` one: both answer "set up my second factor", and a user who
+  // came looking for one is often choosing between them. Not filed under
+  // Keys, because nothing here is a keypair — a TOTP secret is a shared
+  // secret, and putting it among the asymmetric templates would teach the
+  // wrong mental model of what an authenticator holds.
+  "OTP",
   "JOSE",
   // ICE/STUN diagnostics and hand-carried signalling. Ordered before the live
   // mesh templates a user reaches for later, because when a connection fails
@@ -2243,6 +2250,74 @@ in @ct | base64url.decode | aes-gcm -d key=@cek | utf8 | out @plain`,
     recipe: `input | webauthn.attest | out @att
 
 in @att | webauthn.mds | out @mds`,
+  },
+  // ── OTP. One template carries the whole enrolment arc; the other three are
+  // the three questions people arrive with about it — what is in this URI
+  // somebody sent me, why does my hardware token not use a clock, and what
+  // happens if I change the parameters.
+  {
+    id: "otp-enrol",
+    group: "OTP",
+    title: "Enrol an authenticator app",
+    blurb:
+      "The whole arc in one notebook: 20 random bytes become a Base32 secret, the secret becomes an `otpauth://` URI, the URI becomes a QR your phone can scan — and the last cell checks a code against it, which is the step that proves the enrolment worked rather than merely looking pretty.",
+    recipe: `random 20 | tee
+  - base32 | out @secret
+| otp.uri issuer="Basilisk" account=you@example.com | tee
+  - qr
+| out @uri
+
+in @secret | otp.code | out @code
+
+in @code | otp.verify secret=@uri window=1 | out @ok`,
+  },
+  {
+    id: "otp-read-uri",
+    group: "OTP",
+    title: "Read a Key URI someone sent you",
+    blurb:
+      "Paste an `otpauth://` string (or scan it with `qr.scan`) and take it apart field by field — the URI carries the algorithm and the digit count as well as the secret, which is why a code computed with the defaults can be right in every respect and still wrong.",
+    recipe: `input | tee
+  - otp.parse issuer | out @issuer
+| tee
+  - otp.parse account | out @account
+| tee
+  - otp.parse algorithm | out @algorithm
+| tee
+  - otp.parse digits | out @digits
+| otp.code | out @code`,
+  },
+  {
+    id: "otp-hotp-counter",
+    group: "OTP",
+    title: "HOTP — a counter, not a clock",
+    blurb:
+      "What a hardware token does: each press advances a counter, so codes do not expire, they get spent. The verify here allows a look-ahead of three, because a token in a drawer gets pressed by accident — and it looks *only* ahead, since a server counter that stepped backwards would accept a code already used.",
+    recipe: `random 20 | base32 | tee
+  - out @secret
+| otp.uri mode=hotp counter=0 issuer="Basilisk" account=token-7 | out @uri
+
+in @secret | otp.code mode=hotp counter=0 | out @first
+
+in @secret | otp.code mode=hotp counter=2 | out @third
+
+in @third | otp.verify -q secret=@secret mode=hotp counter=0 window=3 | out @resync`,
+  },
+  {
+    id: "otp-parameters",
+    group: "OTP",
+    title: "The parameters are part of the secret",
+    blurb:
+      "One secret, three sets of parameters, three different codes — none of which verify against each other. RFC 6238 allows SHA-256 and SHA-512 and 6-to-8 digits, so a URI that omits `algorithm=` is trusting both ends to guess the same default; this is why `otp.uri` always writes them down.",
+    recipe: `random 32 | base32 | tee
+  - out @secret
+| otp.uri algorithm=sha512 digits=8 issuer="Long Corp" account=ops@example.com | out @uri
+
+in @secret | otp.code | out @plain6
+
+in @secret | otp.code algorithm=sha512 digits=8 | out @long8
+
+in @secret | otp.code algorithm=sha256 digits=7 period=60 at=1111111111 | out @odd7`,
   },
   {
     id: "jwt-decode",

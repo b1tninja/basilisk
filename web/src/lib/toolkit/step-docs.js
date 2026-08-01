@@ -148,6 +148,20 @@ const STEP_DOCS = {
   "jose.decrypt": { url: `${RFC}/rfc7516#section-5.2`, label: "RFC 7516 §5.2 · Decrypting a JWE" },
   "jose.decode": { url: `${RFC}/rfc7519`, label: "RFC 7519 · JSON Web Token" },
 
+  // ── OTP. The two ops that *compute* point at the RFC for the algorithm
+  // they run; the two that move the credential point at the Key URI Format,
+  // which is the enrolment wire format and has no RFC of its own.
+  "otp.uri": {
+    url: "https://github.com/google/google-authenticator/wiki/Key-Uri-Format",
+    label: "Google Authenticator · Key Uri Format",
+  },
+  "otp.parse": {
+    url: "https://github.com/google/google-authenticator/wiki/Key-Uri-Format",
+    label: "Google Authenticator · Key Uri Format",
+  },
+  "otp.code": { url: `${RFC}/rfc6238`, label: "RFC 6238 · TOTP" },
+  "otp.verify": { url: `${RFC}/rfc6238#section-5.2`, label: "RFC 6238 §5.2 · Validation" },
+
   // ── WebRTC ──
   "rtc.ice": {
     url: `${MDN}/RTCPeerConnection/RTCPeerConnection#iceservers`,

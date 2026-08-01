@@ -137,8 +137,17 @@ export const TOOLBOX_META = {
   hkp: { label: "HKP", badge: "HKP", order: 8, glyph: "hkp", color: "#f0883e" },
   sss: { label: "SSS / BLIP39", badge: "SSS", order: 9, glyph: "sss", color: "#e3b341" },
   webauthn: { label: "WebAuthn", badge: "WebAuthn", order: 10, glyph: "webauthn", color: "#79c0ff" },
-  webrtc: { label: "WebRTC", badge: "WebRTC", order: 11, glyph: "agent", color: "#58a6ff" },
-  jose: { label: "JOSE", badge: "JOSE", order: 12, glyph: "jose", color: "#ffa657" },
+  // Next to WebAuthn because that is where a user looking for "the second
+  // factor" arrives, and the two are the same errand answered by different
+  // hardware — a passkey held by an authenticator, or a shared secret held by
+  // a phone. Its own toolbox rather than a WebCrypto shelf for the `ssh`
+  // reason (§29b): TOTP's key container is a Base32 string, not a CryptoKey,
+  // its wire format is an `otpauth://` URI, and filing `otp.verify` under
+  // WebCrypto's Sign shelf would imply it and `verify` are two settings of
+  // one op when they share nothing but a verb.
+  otp: { label: "OTP", badge: "OTP", order: 11, glyph: "password", color: "#db61a2" },
+  webrtc: { label: "WebRTC", badge: "WebRTC", order: 12, glyph: "agent", color: "#58a6ff" },
+  jose: { label: "JOSE", badge: "JOSE", order: 13, glyph: "jose", color: "#ffa657" },
 };
 
 /**
@@ -269,10 +278,76 @@ export const SHELF_META = {
   // different objects with different failure modes, not two directions of one.
   token: { label: "Token (JWS / JWT)", order: 0, glyph: "jose" },
   envelope: { label: "Envelope (JWE)", order: 1, glyph: "jose-jwe" },
+  // OTP splits enrolment from use, because they happen months apart and only
+  // one of them puts the shared secret on screen: `otp.uri`/`otp.parse` move
+  // the credential, `otp.code`/`otp.verify` never emit it.
+  enrolment: { label: "Enrolment", order: 0, glyph: "qr" },
+  otpcode: { label: "Code", order: 1, glyph: "password" },
   ice: { label: "ICE / STUN", order: 0, glyph: "ports" },
   peer: { label: "Peer & signaling", order: 1, glyph: "agent" },
   channel: { label: "Data channel", order: 2, glyph: "agent" },
   rtcstats: { label: "Stats", order: 3, glyph: "ports" },
+};
+
+/**
+ * The OTP parameters that describe a token, shared by `otp.uri`, `otp.code`
+ * and `otp.verify` so the three cannot drift apart.
+ *
+ * Every one of them is also a field of the `otpauth://` URI, which is why
+ * `otp.code` and `otp.verify` ignore these when a URI arrives on the stem:
+ * the URI is what the other side is holding, and two answers to `digits=`
+ * cannot both be obeyed. `otp.parse` is the way to override — strip the URI
+ * to its secret and these take over again.
+ * @type {ParamSpec[]}
+ */
+const OTP_TOKEN_PARAMS = [
+  {
+    name: "mode",
+    type: "enum",
+    default: "totp",
+    enum: ["totp", "hotp"],
+    doc: "totp counts time steps (RFC 6238); hotp counts events with counter= (RFC 4226)",
+  },
+  {
+    name: "algorithm",
+    type: "enum",
+    default: "sha1",
+    enum: ["sha1", "sha256", "sha512"],
+    doc: "HMAC digest. sha1 is RFC 4226's and what every authenticator assumes — the collision story that condemns bare SHA-1 does not reach HMAC",
+  },
+  {
+    name: "digits",
+    type: "enum",
+    default: "6",
+    enum: ["6", "7", "8"],
+    doc: "Code length. RFC 4226 allows 6–8; most apps only display 6",
+  },
+  {
+    name: "period",
+    type: "int",
+    default: 30,
+    min: 1,
+    doc: "Seconds per time step (totp only). 30 is universal; 60 exists",
+  },
+  {
+    name: "counter",
+    type: "int",
+    default: 0,
+    min: 0,
+    doc: "Event counter (hotp only) — the number this code is for",
+  },
+];
+
+/**
+ * `at=` — the instant to compute for. Shared by the two ops that read a clock.
+ * @type {ParamSpec}
+ */
+const OTP_AT_PARAM = {
+  name: "at",
+  type: "int",
+  default: 0,
+  min: 0,
+  doc: "Unix seconds to compute for; 0 is now. Pin it to make a run reproducible (RFC 6238's vectors are times)",
 };
 
 /** @type {StepSpec[]} */
@@ -2124,6 +2199,132 @@ export const STEPS = [
       { when: { base: "bytes" }, output: { base: "bool" } },
     ],
   },
+  // ── OTP — HOTP (RFC 4226) and TOTP (RFC 6238) over the primitives already
+  // on the shelf: an HMAC, RFC 4648 Base32, and the `qr` sink. No new
+  // dependency, and every op runs headlessly in the CLI.
+  {
+    name: "otp.uri",
+    kind: "transform",
+    toolbox: "otp",
+    shelf: "enrolment",
+    conjugate: "otp.parse",
+    pairCaption: "Build / read a Key URI",
+    pairLabels: { forward: "Build", reverse: "Read" },
+    glyph: "qr",
+    doc: "Build the `otpauth://` enrolment URI an authenticator scans, from a Base32 secret (or raw secret bytes, which are encoded for you). `algorithm=`, `digits=` and `period=` are always written into the URI even at their defaults — they are optional in the format, but the defaults readers assume are not uniform, and a URI that states them cannot be read two ways. The output is **masked**: this string is the shared secret plus a label, so it is a credential exactly as a private key is. Example: `random 20 | otp.uri issuer=\"Big Corp\" account=you@example.com | qr`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "issuer",
+        type: "string",
+        default: "",
+        doc: "Who the account is with — shown as the heading in the authenticator, and written into both the label and issuer=",
+      },
+      {
+        name: "account",
+        type: "string",
+        default: "",
+        doc: "The account name (required) — the line listed under the issuer",
+      },
+      ...OTP_TOKEN_PARAMS,
+    ],
+    overloads: [
+      { when: { base: "bytes" }, output: { base: "text", kind: "otpauth-uri" } },
+      { when: { base: "text" }, output: { base: "text", kind: "otpauth-uri" } },
+    ],
+  },
+  {
+    name: "otp.parse",
+    kind: "transform",
+    toolbox: "otp",
+    shelf: "enrolment",
+    conjugateOf: "otp.uri",
+    glyph: "qr",
+    doc: "Read one field out of a pasted `otpauth://` URI — `field=secret` (default) is the conjugate of `otp.uri` and round-trips. The ambiguous URIs are refused rather than guessed: an `issuer=` that disagrees with the label's issuer is two accounts, and an `hotp` URI with no `counter=` cannot make a code at all. The label is split on the *encoded* separator, so an account name containing `%3A` does not sprout a phantom issuer. Only `field=secret` comes out masked. Example: `qr.scan | otp.parse | out @secret`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "field",
+        type: "enum",
+        positional: true,
+        default: "secret",
+        enum: [
+          "secret",
+          "issuer",
+          "account",
+          "algorithm",
+          "digits",
+          "period",
+          "counter",
+          "mode",
+        ],
+        doc: "Which part of the URI to emit",
+      },
+    ],
+    overloads: [
+      { when: { base: "text", kind: "otpauth-uri" }, output: { base: "text" } },
+      { when: { base: "text" }, output: { base: "text" } },
+    ],
+  },
+  {
+    name: "otp.code",
+    kind: "transform",
+    toolbox: "otp",
+    shelf: "otpcode",
+    conjugate: "otp.verify",
+    pairCaption: "Code / verify",
+    pairLabels: { forward: "Code", reverse: "Verify" },
+    glyph: "password",
+    doc: "The code showing right now, from a Base32 secret, raw secret bytes, **or** a whole `otpauth://` URI. Handed a URI it takes `mode`, `algorithm`, `digits`, `period` and `counter` from the URI and ignores its own — the URI is what the other side is holding. `at=` pins the instant, which is how the RFC 6238 vectors are stated. The code itself is *not* masked: it expires in one step and exists to be read. Example: `in @secret | otp.code | out @code`.",
+    input: "text",
+    output: "text",
+    params: [...OTP_TOKEN_PARAMS, OTP_AT_PARAM],
+    overloads: [
+      { when: { base: "bytes" }, output: { base: "text", kind: "otp-code" } },
+      { when: { base: "text" }, output: { base: "text", kind: "otp-code" } },
+    ],
+  },
+  {
+    name: "otp.verify",
+    kind: "transform",
+    toolbox: "otp",
+    shelf: "otpcode",
+    conjugateOf: "otp.code",
+    glyph: "password",
+    doc: "Check the code on the stem against the secret in `secret=@slot` (a Base32 secret or a whole `otpauth://` URI). `window=` is the part naive implementations get wrong: clocks drift and users type slowly, so a TOTP code is accepted within **±window** steps — while a HOTP window only ever looks *ahead*, because a server counter that went backwards would accept a code already spent. Fail-loud; `-q` emits bool false instead. Example: `input | otp.verify secret=@enrol window=1 | out @ok`.",
+    input: "text",
+    output: "bool",
+    params: [
+      {
+        name: "secret",
+        type: "slot",
+        default: "",
+        doc: "Slot holding the Base32 secret or the otpauth:// URI",
+      },
+      {
+        name: "window",
+        type: "int",
+        default: 1,
+        min: 0,
+        doc: "Steps of drift to allow — ±window for totp, look-ahead only for hotp. 0 accepts only the current step",
+      },
+      ...OTP_TOKEN_PARAMS,
+      OTP_AT_PARAM,
+      {
+        name: "soft",
+        type: "bool",
+        flag: "-q",
+        default: false,
+        doc: "Soft mode: emit bool true|false (never throw on a wrong code)",
+      },
+    ],
+    overloads: [
+      { when: { base: "text" }, output: { base: "bool" } },
+      { when: { base: "int" }, output: { base: "bool" } },
+    ],
+  },
   // ── Boundary (§26f) — the key is used without entering the pipeline.
   {
     name: "agent.sign",
@@ -3570,6 +3771,10 @@ export const STEP_GLYPHS = {
   "ssh.fingerprint": "fingerprint",
   "ssh.sign": "sshsig-sign",
   "ssh.verify": "sshsig-sign",
+  "otp.uri": "qr",
+  "otp.parse": "qr",
+  "otp.code": "password",
+  "otp.verify": "password",
   "gpg.encrypt": "gpg-encrypt",
   "gpg.decrypt": "gpg-decrypt",
   "gpg.sign": "gpg-sign",

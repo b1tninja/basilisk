@@ -23,7 +23,7 @@ import {
 } from "../lib/toolkit/registry.js";
 
 describe("toolbox shelf taxonomy", () => {
-  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → age → SSH → Agent → HKP → SSS → WebAuthn → WebRTC → JOSE", () => {
+  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → age → SSH → Agent → HKP → SSS → WebAuthn → OTP → WebRTC → JOSE", () => {
     const ordered = Object.entries(TOOLBOX_META)
       .sort((a, b) => a[1].order - b[1].order)
       .map(([k]) => k);
@@ -43,6 +43,10 @@ describe("toolbox shelf taxonomy", () => {
       "hkp",
       "sss",
       "webauthn",
+      // Beside WebAuthn, not among the formats: both answer "set up my second
+      // factor", and a user weighing a passkey against an authenticator app
+      // should meet them together.
+      "otp",
       "webrtc",
       "jose",
     ]);
