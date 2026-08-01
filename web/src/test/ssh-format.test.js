@@ -387,9 +387,23 @@ describe("sshsig", () => {
   });
 });
 
-describe("ssh.decode opens a protected key with the Inputs-panel passphrase", () => {
-  // The passphrase channel is the one the gpg ops already read; a second one
-  // would mean the panel worked for some ops and not others.
+/**
+ * `ssh.decode` opens a protected key when a passphrase reaches it *somehow*.
+ *
+ * The two tests below write `inputs.gpg.passphrase` **by hand**, and that is
+ * the only way they can: `buildBindings` composes `inputs.gpg` from
+ * `armoredMessages` alone and never constructs `inputs.agent`, so no notebook
+ * run populates either field. They are kept because the codec path they cover
+ * is real and `panelPassphrase` is deliberately retained as the fallback for
+ * when a panel field is finally wired (`agent.save protection=passphrase`
+ * shares the same gap and would light up with it).
+ *
+ * The name of this block used to claim the panel was how a user did this. It
+ * is not, and the reachable route — `passphrase=@slot` — is covered by the
+ * block that follows. A test whose title names a mechanism that does not
+ * exist is how the next reader learns something false.
+ */
+describe("ssh.decode opens a protected key when a passphrase reaches it", () => {
   const recipe = "input | ssh.decode | ssh.fingerprint | out @fp";
 
   it("decodes when the passphrase is present", async () => {
