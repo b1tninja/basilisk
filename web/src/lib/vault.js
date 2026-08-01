@@ -525,7 +525,34 @@ export async function patchKeyMeta(fingerprint, patch) {
 }
 
 /**
+ * Relative strength of the vault's outer protection layers.
+ *
+ * The `keys` store keyPath is `fingerprint`, so every save is an upsert. Without
+ * a guard, re-saving an already-stored key replaces its protection wholesale —
+ * a passkey record saved again as `device` loses `outerWrapped`/`outerIv` and the
+ * authenticator requirement with it, silently. Saves that would lower this rank
+ * are refused; see `saveKey`.
+ *
+ * @type {Record<string, number>}
+ */
+const PROTECTION_RANK = { device: 1, passphrase: 2, passkey: 3 };
+
+/**
+ * @param {string|undefined} protection
+ * @returns {number} 0 for missing / unrecognized values, which never blocks a save
+ */
+function protectionRank(protection) {
+  return PROTECTION_RANK[String(protection || "")] || 0;
+}
+
+/**
  * Save a private key into the vault.
+ *
+ * Refuses to weaken an existing entry's protection (passkey > passphrase >
+ * device) unless `allowProtectionDowngrade` is set — the store upserts on
+ * `fingerprint`, so an unguarded re-save would strip the outer wrap without
+ * surfacing anything. Re-saves at equal or greater strength are allowed and
+ * carry `created` / `lastUsedAt` forward from the existing record.
  *
  * @param {object} opts
  * @param {string} opts.fingerprint
@@ -539,6 +566,9 @@ export async function patchKeyMeta(fingerprint, patch) {
  * @param {import("./webauthn/mds.js").MdsLookupResult} [opts.mds]  Soft MDS result from PRF create
  * @param {string[]} [opts.keyIds]  Optional; extracted from armoredPrivate when omitted
  * @param {string} [opts.publicArmored]  Optional armored public; derived from private when omitted
+ * @param {boolean} [opts.allowProtectionDowngrade]  Permit replacing a stronger
+ *   protection with a weaker one. Only for callers that have shown the user what
+ *   is being given up and had it acknowledged; never wire this to a recipe param.
  * @returns {Promise<VaultKeyMeta>}
  */
 export async function saveKey(opts) {
@@ -546,6 +576,20 @@ export async function saveKey(opts) {
     .toUpperCase()
     .replace(/[^0-9A-F]/g, "");
   if (fpr.length < 40) throw new Error("Invalid fingerprint");
+
+  // Read before write: decides the downgrade refusal and preserves history.
+  // Checked ahead of any key derivation so a refusal costs nothing.
+  const prior = await withStore(STORE_KEYS, "readonly", (s) => s.get(fpr));
+  if (prior && !opts.allowProtectionDowngrade) {
+    if (protectionRank(prior.protection) > protectionRank(opts.protection)) {
+      throw new Error(
+        `Refusing to save ${fpr} with "${opts.protection}" protection: the vault ` +
+          `already holds this key with stronger "${prior.protection}" protection, ` +
+          `and overwriting it would discard that requirement. Delete the vault ` +
+          `entry first if you really intend to downgrade it.`
+      );
+    }
+  }
 
   /** @type {string[]} */
   let keyIds = Array.isArray(opts.keyIds) ? [...opts.keyIds] : [];
@@ -582,12 +626,12 @@ export async function saveKey(opts) {
     uid: opts.uid || "",
     email: opts.email || "",
     name: opts.name || "",
-    created: new Date().toISOString(),
+    created: prior?.created || new Date().toISOString(),
     expires: opts.expires || null,
     protection: opts.protection,
     keyIds,
     publicArmored,
-    lastUsedAt: null,
+    lastUsedAt: prior?.lastUsedAt || null,
     wrapped: ciphertext,
     iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength),
   };
