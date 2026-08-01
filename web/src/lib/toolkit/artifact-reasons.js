@@ -26,6 +26,21 @@ export const ACTION_REASONS = Object.freeze({
     "This value was not asked for. Add `out @label` to the recipe to see or copy it.",
   /** Anything vault-backed, in a browser without IndexedDB. */
   noVault: "My Keys is unavailable in this browser (no IndexedDB).",
+  /**
+   * Add to My Keys on a key tile with no body — the non-extractable case the
+   * key kinds already name in their `empty` line. The remedy is a regenerate,
+   * so it names that rather than a recipe edit that would not help.
+   */
+  noKeyBody:
+    "This tile carries no key material to store — regenerate the key as extractable to save it.",
+  /**
+   * Add to My Keys on the least-specific `key` kind, whose body turned out to
+   * be a public half. There is no remedy because nothing is wrong: a public
+   * key needs no vault, which is what the sentence says instead of inventing
+   * a step to take.
+   */
+  noPrivateHalf:
+    "This body carries no private key — My Keys stores private keys, and a public half needs no vault.",
   /** Publish, with no route to the directory. */
   offline: "Publishing needs a connection to this site's directory.",
 });

@@ -47,6 +47,7 @@ import { encodeShareSet } from "../lib/slip39/blip39.js";
 import type { DeploymentVerdict } from "../lib/toolkit/deployment-check.js";
 import type { DkgParticipant } from "../lib/quorum/dkg-session.js";
 import { getTypeMeta } from "../lib/toolkit/type-registry.js";
+import { protectionDowngradeMessage } from "../lib/vault.js";
 import type { CeremonyStageId } from "../lib/toolkit/ceremony.js";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -1248,28 +1249,37 @@ function CatalogApp() {
             </div>
             <div>
               <StateLabel>
-                Overwrite (§34d) — the shape the one confirming local mutation will use.
-                Not reachable yet: <code>keyring.add</code> is blocked on{" "}
-                <code>saveKey(&#123; onConflict &#125;)</code>, because a button whose
-                failure mode is silently weakening a key's protection must not ship first
+                Local (§34d) — <code>keyring.add</code>, the one confirming local
+                mutation. It ships without a Replace: <code>saveKey</code> defaults to{" "}
+                <code>onConflict: &quot;refuse&quot;</code>, and a single click is exactly
+                what that default exists for, so a key already held behind a passkey gets
+                the vault's refusal here rather than an overwrite to agree to
               </StateLabel>
               <ConsequenceBanner
                 spec={{
-                  title: "This key is already in My Keys",
+                  title: "Add this key to My Keys",
                   facts: [
+                    { term: "Key", detail: "k", sub: "3F2A B19C 4D7E 0518" },
                     {
-                      term: "In the vault",
-                      detail: "Justin Capella <justin@basilisk.dev>",
-                      sub: "added 2026-04-02 · passkey",
+                      term: "Where",
+                      detail: "My Keys, in this browser",
+                      sub: "storage on this device — it is not synced anywhere",
                     },
                     {
-                      term: "Replacing",
+                      term: "Protection",
                       detail:
-                        "re-wraps it with device protection and clears its usage history. Its passkey binding is discarded; you would enrol a new one to restore passkey protection.",
+                        "Device protection: no passkey, no passphrase. Anyone who can reach this browser profile can use the key without being asked for anything.",
+                      sub: "Enrol a passkey from My Keys afterwards, or write agent.save protection=passkey in the recipe.",
+                    },
+                    {
+                      term: "Reversible",
+                      detail:
+                        "Deleting the key from My Keys removes it. Nothing leaves this device, so this is not the one-way door publishing is.",
                     },
                   ],
-                  confirmLabel: "Replace",
+                  confirmLabel: "Add to My Keys",
                 }}
+                error={protectionDowngradeMessage("passkey", "device")}
                 onConfirm={() => {}}
                 onCancel={() => {}}
               />

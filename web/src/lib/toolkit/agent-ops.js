@@ -272,6 +272,71 @@ function sshMaterialOrNull(jwk) {
 }
 
 /**
+ * How the vault files a private JWK (§28a): the kind it stores as, the id it
+ * is filed under, the payload it holds, and the public line when there is one.
+ *
+ * Split out of `saveKeypairKind` so the *button* (`keyring.add`) and the *op*
+ * (`agent.save`) share one encoder. Two encoders that can disagree about a
+ * key's identity is the failure mode worth engineering against here: the same
+ * key added by a click and saved by a recipe has to land under the same id, or
+ * one key grows two rows in My Keys and neither is wrong.
+ *
+ * @param {JsonWebKey} jwk  The private half.
+ * @param {{ comment?: string, publicKey?: CryptoKey }} [opts]
+ *   `publicKey` short-circuits the spki id when the caller already holds the
+ *   handle; without one it is re-imported from the JWK's public fields.
+ * @returns {Promise<{ kind: "ssh"|"raw", id: string, payload: string, publicLine: string }>}
+ */
+export async function vaultMaterialFromPrivateJwk(jwk, opts = {}) {
+  const comment = String(opts.comment || "");
+  const material = sshMaterialOrNull(jwk);
+  if (material) {
+    const blob = buildPublicBlob(material);
+    return {
+      kind: "ssh",
+      id: await sshFingerprint(blob),
+      payload: encodeOpensshPrivateKey(material, { comment }),
+      publicLine: formatPublicLine(blob, comment),
+    };
+  }
+  const publicKey = opts.publicKey || (await publicKeyFromPrivateJwk(jwk));
+  const spki = new Uint8Array(await crypto.subtle.exportKey("spki", publicKey));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", spki));
+  return {
+    kind: "raw",
+    id: `spki:SHA256:${b64u(digest)}`,
+    payload: JSON.stringify(jwk),
+    publicLine: "",
+  };
+}
+
+/**
+ * The public half of a private JWK as a CryptoKey — needed only for the spki
+ * id of a `raw` key, and only when the caller has no handle to hand over.
+ *
+ * X25519 is the one raw algorithm the vault round-trips (`materializeUnlockedKey`
+ * imports nothing else), so refusing anything else here keeps both ends honest
+ * rather than storing a key no unlock can read back.
+ *
+ * @param {JsonWebKey} jwk
+ * @returns {Promise<CryptoKey>}
+ */
+async function publicKeyFromPrivateJwk(jwk) {
+  if (jwk?.kty === "OKP" && jwk.crv === "X25519") {
+    return crypto.subtle.importKey(
+      "jwk",
+      { kty: jwk.kty, crv: jwk.crv, x: jwk.x },
+      "X25519",
+      true,
+      []
+    );
+  }
+  throw new Error(
+    `My Keys has no storage form for a ${jwk?.kty || "?"}/${jwk?.crv || "?"} key — SSH-mappable keys (ed25519, ec/p256, rsa) and x25519 can be stored.`
+  );
+}
+
+/**
  * `agent.save` on a WebCrypto keypair (§28a): SSH-mappable algorithms save
  * as kind "ssh" (payload openssh-key-v1, id the SSH SHA256 fingerprint);
  * everything else asymmetric saves as kind "raw" (payload the private JWK,
@@ -315,31 +380,15 @@ async function saveKeypairKind(value, params) {
   const nameParam = String(params.name || "").trim();
   const comment = emailParam || nameParam || "";
 
-  /** @type {"ssh"|"raw"} */
-  let kind;
-  /** @type {string} */
-  let id;
-  /** @type {string} */
-  let payload;
-  let publicLine = "";
-
-  const material = sshMaterialOrNull(jwk);
-  if (material) {
-    kind = "ssh";
-    const blob = buildPublicBlob(material);
-    id = await sshFingerprint(blob);
-    publicLine = formatPublicLine(blob, comment);
-    payload = encodeOpensshPrivateKey(material, { comment });
-  } else {
-    kind = "raw";
-    if (!handles.publicKey) {
-      throw new Error("agent.save: raw keypairs need their public half to fingerprint (spki)");
-    }
-    const spki = new Uint8Array(await crypto.subtle.exportKey("spki", handles.publicKey));
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", spki));
-    id = `spki:SHA256:${b64u(digest)}`;
-    payload = JSON.stringify(jwk);
+  if (!sshMaterialOrNull(jwk) && !handles.publicKey) {
+    throw new Error("agent.save: raw keypairs need their public half to fingerprint (spki)");
   }
+  // One encoder, shared with the `keyring.add` button — see the function's own
+  // note on why a second one is the thing to avoid.
+  const { kind, id, payload, publicLine } = await vaultMaterialFromPrivateJwk(jwk, {
+    comment,
+    publicKey: handles.publicKey,
+  });
 
   /** @type {Uint8Array|undefined} */
   let prfIkm;

@@ -21,6 +21,7 @@
  */
 
 import { ACTION_REASONS } from "./artifact-reasons.js";
+import { shortKeyId } from "./approval-gate.js";
 import { sshIdentityFromJwk } from "./ssh-ops.js";
 import { formatFingerprint } from "../utils.js";
 
@@ -51,6 +52,27 @@ function jwkOf(artifact) {
   } catch (_) {
     return null;
   }
+}
+
+/**
+ * Whether a body has a private half at all.
+ *
+ * Exported because `keyring-service.js` gates on the same predicate before it
+ * encodes: the button's disabled state and the service's refusal must agree
+ * about what "private" means, and the one place they can disagree is if each
+ * decides for itself. The service is still the authority — it names the form
+ * it could not store — but it never contradicts this.
+ *
+ * @param {{ content?: string }} artifact
+ */
+export function hasPrivateKeyMaterial(artifact) {
+  const body = String(artifact?.content ?? "").trim();
+  if (!body) return false;
+  // Armored: OpenPGP says "PRIVATE KEY BLOCK", OpenSSH and PKCS#8 say
+  // "PRIVATE KEY". Any other armor is a public half or not a key at all.
+  if (/-----BEGIN [A-Z0-9 ]*PRIVATE KEY/.test(body)) return true;
+  if (body.startsWith("-----BEGIN")) return false;
+  return !!jwkOf(artifact)?.d;
 }
 
 /** The public half only — never let a private field reach a derivation. */
@@ -146,6 +168,104 @@ export const ARTIFACT_ACTIONS = Object.freeze([
       }
       await services.clipboard.write(id.publicLine);
       return { receipt: "Public line copied", detail: id.publicLine };
+    },
+  },
+  {
+    /**
+     * "Add to My Keys" (§34a's local tier) — the button that closes the loop
+     * on dispositions: how a key gets stored becomes a UX choice rather than a
+     * line a shared recipe has to carry.
+     *
+     * The label says "My Keys" because that is what the app calls the vault
+     * everywhere else, including in `ACTION_REASONS.noVault`; the id stays
+     * `keyring.add`, and id ≠ label is already true elsewhere (`key.publish` →
+     * "Publish").
+     */
+    id: "keyring.add",
+    label: "Add to My Keys",
+    tier: "local",
+    /**
+     * **Enabled while masked, deliberately.** Copy is disabled on a masked
+     * value (§34b) because copying is how a secret leaves the notebook; this
+     * is the opposite motion — it moves the secret *into* storage without ever
+     * displaying it. Gating it on reveal would force a private key onto the
+     * screen as the price of storing it safely, and private-key tiles are
+     * masked by default, so the gate would disable the button in exactly the
+     * case it exists for.
+     *
+     * What it does need is a body to store, and a private half in it — the
+     * second is a runtime question precisely on the least-specific `key` kind,
+     * which by construction does not know which half it holds (§33d).
+     */
+    available: ({ artifact, services }) => {
+      if (!services?.vault?.add) return { disabled: ACTION_REASONS.noVault };
+      if (!String(artifact?.content ?? "").trim()) {
+        return { disabled: ACTION_REASONS.noKeyBody };
+      }
+      if (!hasPrivateKeyMaterial(artifact)) {
+        return { disabled: ACTION_REASONS.noPrivateHalf };
+      }
+      return true;
+    },
+    /**
+     * §34c. It writes a secret into storage that outlives the session, at a
+     * protection level the user did not choose, so it says all four things
+     * before it runs — built here, from data held at the moment of the click.
+     *
+     * The fingerprint is `sub` only when `traits` carries one, which is the
+     * OpenPGP case. A JWK key's id is derived asynchronously and is already on
+     * screen in the key card two lines above the banner; re-deriving it here
+     * would mean a second computation that can disagree with the first, to
+     * repeat something visible without scrolling — the same call `key.publish`
+     * makes about the uid.
+     */
+    confirm: ({ artifact }) => ({
+      title: "Add this key to My Keys",
+      facts: [
+        {
+          term: "Key",
+          detail: artifact.label,
+          sub: formatFingerprint(String(artifact.traits?.fingerprint || "")) || undefined,
+        },
+        {
+          term: "Where",
+          detail: "My Keys, in this browser",
+          sub: "storage on this device — it is not synced anywhere",
+        },
+        {
+          term: "Protection",
+          detail:
+            "Device protection: no passkey, no passphrase. Anyone who can reach this browser profile can use the key without being asked for anything.",
+          sub: "Enrol a passkey from My Keys afterwards, or write agent.save protection=passkey in the recipe.",
+        },
+        {
+          term: "Reversible",
+          detail:
+            "Deleting the key from My Keys removes it. Nothing leaves this device, so this is not the one-way door publishing is.",
+        },
+      ],
+      confirmLabel: "Add to My Keys",
+    }),
+    run: async ({ artifact, services }) => {
+      /**
+       * **No `onConflict`.** `agent.save` passes `"replace"` and says why: a
+       * recipe that writes `agent.save protection=device` said it out loud,
+       * with the fingerprint in front of it. A button click is precisely the
+       * single click the vault's default refusal exists for, so a key already
+       * held behind a passkey refuses here — in the vault's own sentence,
+       * which `runAction` surfaces unaltered.
+       */
+      const saved = await services.vault.add({
+        content: artifact.content,
+        alg: artifact.traits?.alg,
+      });
+      return {
+        // A re-save at *equal* protection is not refused — the guard only
+        // rejects a weakening — so it succeeds and overwrites the row it
+        // already had. "Added" would be a lie about what changed.
+        receipt: saved.already ? "Already in My Keys" : "Added to My Keys",
+        detail: `My Keys ${shortKeyId(saved.fingerprint)}`,
+      };
     },
   },
   {

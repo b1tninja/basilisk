@@ -361,6 +361,159 @@ describe("outward confirmation shares §27's shell (§34c/§43a/§43b)", () => {
   });
 });
 
+describe("Add to My Keys is local, masked-safe, and refuses by default (§34a/§34d)", () => {
+  const add = actionById("keyring.add");
+  const KEYRING = read("../lib/toolkit/keyring-service.js");
+  /**
+   * Comments stripped before any assertion about an *absent* symbol. The
+   * absence of `onConflict` is explained in prose right beside the call it is
+   * absent from, so a naive grep finds the explanation and calls it the bug.
+   */
+  const stripComments = (t) =>
+    t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const privateJwk = JSON.stringify({ kty: "OKP", crv: "Ed25519", x: "aa", d: "bb" });
+  const publicJwk = JSON.stringify({ kty: "OKP", crv: "Ed25519", x: "aa" });
+  const vault = {
+    add: async () => ({ fingerprint: "SHA256:Ur1hXXXXXXXXXXXX", kind: "ssh", already: false }),
+  };
+
+  it("is a local action, named for the vault the rest of the app names", () => {
+    // The id keeps the table's vocabulary; the label uses the user's. Both
+    // already diverge elsewhere (`key.publish` → "Publish").
+    expect(add.id).toBe("keyring.add");
+    expect(add.tier).toBe("local");
+    expect(add.label).toBe("Add to My Keys");
+  });
+
+  it("stays enabled while masked, where Copy is not", () => {
+    // §34b disables Copy on a masked value because copying is how a secret
+    // leaves the notebook. This is the opposite motion — it moves the secret
+    // into storage without ever displaying it — and since private-key tiles
+    // are masked by default, a reveal gate would disable the button in
+    // exactly the case it exists for.
+    const artifact = { content: privateJwk, revealable: true };
+    expect(add.available({ artifact, masked: true, services: { vault } })).toBe(true);
+    expect(actionById("copy").available({ artifact, masked: true })).not.toBe(true);
+  });
+
+  it("disables with the environment's reason when no vault is injected", () => {
+    expect(add.available({ artifact: { content: privateJwk }, services: {} })).toEqual({
+      disabled: ACTION_REASONS.noVault,
+    });
+  });
+
+  it("names the remedy when the tile has no body to store", () => {
+    expect(add.available({ artifact: { content: "" }, services: { vault } })).toEqual({
+      disabled: ACTION_REASONS.noKeyBody,
+    });
+  });
+
+  it("answers the least-specific kind's runtime question with a sentence (§33d)", () => {
+    // `key` cannot know which half it holds — that is what makes it least
+    // specific — so the question is answered here, with a reason, rather than
+    // by the kind refusing to declare the action.
+    const disabled = { disabled: ACTION_REASONS.noPrivateHalf };
+    expect(add.available({ artifact: { content: publicJwk }, services: { vault } })).toEqual(
+      disabled
+    );
+    expect(
+      add.available({
+        artifact: { content: "-----BEGIN PGP PUBLIC KEY BLOCK-----\nxx\n" },
+        services: { vault },
+      })
+    ).toEqual(disabled);
+    for (const armor of [
+      "-----BEGIN PGP PRIVATE KEY BLOCK-----\nxx\n",
+      "-----BEGIN OPENSSH PRIVATE KEY-----\nxx\n",
+    ]) {
+      expect(add.available({ artifact: { content: armor }, services: { vault } })).toBe(true);
+    }
+  });
+
+  it("is declared on the private key kinds and on no public one", () => {
+    const kinds = ARTIFACT_KINDS.filter((k) => (k.actions || []).includes("keyring.add")).map(
+      (k) => k.id
+    );
+    expect(kinds.sort()).toEqual(["key", "keypair-private", "openpgp-private"]);
+    // Omission, not a disabled state (§33d): a dead button on a public-key
+    // tile would teach that public keys belong in My Keys.
+    for (const id of ["keypair-public", "openpgp-public"]) {
+      expect(ARTIFACT_KINDS.find((k) => k.id === id).actions, id).not.toContain("keyring.add");
+    }
+  });
+
+  it("states where it lands, how weakly it is protected, and that it undoes", () => {
+    const spec = add.confirm({ artifact: { label: "kp · private JWK", traits: {} } });
+    const fact = (t) => spec.facts.find((f) => f.term === t);
+    expect(spec.confirmLabel).toBe("Add to My Keys");
+    expect(fact("Where").detail).toBe("My Keys, in this browser");
+    expect(fact("Where").sub).toMatch(/not synced anywhere/);
+    // What device protection *means* for someone with the browser profile,
+    // plus the remedy — a reason with no way forward just gets clicked again.
+    expect(fact("Protection").detail).toMatch(/no passkey, no passphrase/);
+    expect(fact("Protection").detail).toMatch(/without being asked for anything/);
+    expect(fact("Protection").sub).toMatch(/Enrol a passkey from My Keys/);
+    expect(fact("Protection").sub).toMatch(/agent\.save protection=passkey/);
+    // The contrast with Publish's "Permanent" is the useful information.
+    expect(fact("Reversible").detail).toMatch(/Deleting the key from My Keys removes it/);
+    const publishTerms = actionById("key.publish")
+      .confirm({
+        artifact: { label: "p", traits: {} },
+        services: { directory: { host: "h", publish: () => {} } },
+      })
+      .facts.map((f) => f.term);
+    expect(publishTerms).toContain("Permanent");
+    expect(spec.facts.map((f) => f.term)).not.toContain("Permanent");
+  });
+
+  it("shows an OpenPGP fingerprint in display shape on the Key line", () => {
+    const spec = add.confirm({
+      artifact: {
+        label: "k",
+        traits: { fingerprint: "3F2AB19C4D7E0518A2B6C93D4E7F0A1B2C3D4E5F" },
+      },
+    });
+    expect(spec.facts.find((f) => f.term === "Key").sub).toBe(
+      "3F2A B19C 4D7E 0518 A2B6 C93D 4E7F 0A1B 2C3D 4E5F"
+    );
+    // A JWK key's id is derived asynchronously and already sits in the key
+    // card two lines above the banner; a second derivation here could
+    // disagree with the first.
+    expect(
+      add.confirm({ artifact: { label: "kp", traits: { alg: "ed25519" } } }).facts.find(
+        (f) => f.term === "Key"
+      ).sub
+    ).toBeUndefined();
+  });
+
+  it("passes no onConflict, so the vault's default refusal stands", () => {
+    // `agent.save` passes "replace" because a recipe said it out loud with
+    // the fingerprint in front of it. A button click is the single click the
+    // default exists for — and the asymmetry is explained in a comment right
+    // beside the call, which is why this reads the stripped source.
+    const code = stripComments(SRC);
+    expect(code).toMatch(/services\.vault\.add\(/);
+    expect(code).not.toMatch(/onConflict/);
+    expect(stripComments(KEYRING)).not.toMatch(/onConflict/);
+  });
+
+  it("reports the destination the Activity log prints on its own line", async () => {
+    const res = await add.run({ artifact: { content: privateJwk }, services: { vault } });
+    expect(res.receipt).toBe("Added to My Keys");
+    expect(res.detail).toMatch(/^My Keys SHA256:/);
+  });
+
+  it("says 'already' rather than 'added' when the row was already there", async () => {
+    const res = await add.run({
+      artifact: { content: privateJwk },
+      services: {
+        vault: { add: async () => ({ fingerprint: "SHA256:x", kind: "ssh", already: true }) },
+      },
+    });
+    expect(res.receipt).toBe("Already in My Keys");
+  });
+});
+
 describe("Publish is outward, declared once, and states its consequences (§34a/§38b)", () => {
   const publish = actionById("key.publish");
 

@@ -6,6 +6,10 @@ import { KindGlyph } from "./kind-glyphs";
 import { ArtifactAction, type ActionTier } from "./ArtifactAction";
 import { ConsequenceBanner, type ConsequenceSpec } from "./ConsequenceBanner";
 import { actionsFor } from "../../lib/toolkit/artifact-actions.js";
+import {
+  addPrivateKeyToMyKeys,
+  vaultAvailable,
+} from "../../lib/toolkit/keyring-service.js";
 import { recordActivity } from "../../lib/toolkit/activity-log.js";
 import {
   ARTIFACT_KINDS,
@@ -292,6 +296,14 @@ export function ArtifactTile({
     // deciding by omission whether the button exists at all.
     directory: a.onPublish
       ? { host: a.directoryHost || "this site", publish: () => a.onPublish!() }
+      : undefined,
+    // Same shape, same reason: injected only where a vault can exist, so
+    // `available()` reports the environment fact ("My Keys is unavailable in
+    // this browser") instead of the tile deciding by omission whether the
+    // button is there at all. The service does the storing; the table below
+    // never imports a vault.
+    vault: vaultAvailable()
+      ? { add: (body: { content?: string; alg?: unknown }) => addPrivateKeyToMyKeys(body as never) }
       : undefined,
   };
 

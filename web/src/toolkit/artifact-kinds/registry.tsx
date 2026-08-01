@@ -136,7 +136,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     // render while the secret stays masked (§34b).
     publicView: pgpCardFor(true),
     empty: "Not a readable OpenPGP key — showing the armor.",
-    actions: ["copy", "key.copyFingerprint"],
+    actions: ["copy", "key.copyFingerprint", "keyring.add"],
   },
   {
     id: "keypair-public",
@@ -160,8 +160,10 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     empty: "No exportable private half — the key was generated non-extractable.",
     // No public line here: the private tile's job is the secret, and the
     // public half is one tile over. Copy fingerprint stays — it is a public
-    // fact and works while masked (§35d).
-    actions: ["copy", "key.copyFingerprint"],
+    // fact and works while masked (§35d). So does Add to My Keys, for the
+    // opposite reason: it moves the secret into storage without showing it,
+    // and this tile is masked by default.
+    actions: ["copy", "key.copyFingerprint", "keyring.add"],
   },
   {
     /**
@@ -177,7 +179,17 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     view: keyCardFor(false),
     publicView: keyCardFor(true),
     empty: "No exportable key material — the key was generated non-extractable.",
-    actions: ["copy", "key.copyFingerprint", "key.copyPublicLine"],
+    /**
+     * Add to My Keys is declared here even though this kind cannot know
+     * whether its body has a private half — that is what makes it the least
+     * specific kind. "Is this meaningful for a key" is answered yes, by the
+     * declaration; "does *this* body have something to store" is answered at
+     * runtime, with a sentence, by `available()`. That is the §33d split
+     * working, not a compromise around it. The two public key kinds omit it
+     * outright, because a disabled button on a public tile would teach that
+     * public keys belong in a vault.
+     */
+    actions: ["copy", "key.copyFingerprint", "key.copyPublicLine", "keyring.add"],
   },
   {
     id: "network-value",
