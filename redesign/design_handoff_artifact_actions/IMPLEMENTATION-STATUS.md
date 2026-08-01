@@ -7,13 +7,28 @@ motivated the request. Every unit lists acceptance criteria measurable by test
 or by browser measurement (`getComputedStyle` / DOM, per HANDOFF — screenshots
 are unreliable here).
 
-**Status as of 2026-07-31: units 1, 2 and part of 3 are built.** Shipped:
-`ARTIFACT_ROLES` + the projection floor + keypair/recipients role stamping +
-`RECEIPT_VERSION` 2 (unit 1); the resolver, the kind table with the three
-existing renderers folded in unmodified, and `OutputList` wired to both
-(unit 2); the two §39 foundations and the three-tier action row with
-disabled-with-reason (part of unit 3). `ArtifactTile` proper, the §35 key
-tiles, §36 Activity, §37 inventory and §38 migration are NOT built.
+**Status as of 2026-07-31: units 1, 2, most of 3, part of 4, and §35/§36 are
+built.** Shipped: the role vocabulary, projection floor, keypair/recipients
+role stamping and `RECEIPT_VERSION` 2 (unit 1); the resolver, the kind table
+with the three existing renderers folded in unmodified, and `OutputList` wired
+to both (unit 2); the two §39 foundations, the three-tier action row and
+disabled-with-reason (unit 3); the global action table with injected services
+and the `copy` / `key.copyFingerprint` / `key.copyPublicLine` actions (unit 4,
+partial); the §35 key tiles (`keypair-public`, `keypair-private`, `key`,
+`openpgp-public`, `openpgp-private`) with `publicView` so a masked private key
+is not blank; and the §36 Activity log with its tray tab.
+
+Not built: `ArtifactTile` as an extracted component (§33a — the anatomy is in
+place inside `OutputList`, but not lifted out), the §34c `ConsequenceBanner`
+and the migration of Publish onto it, §37's remaining kinds (in progress),
+§38 migration, and `keyring.add`.
+
+**`keyring.add` is blocked, not merely unscheduled.** It needs
+`saveKey({onConflict})` — the fix for a live bug where re-saving a key
+silently replaces its protection, so a passkey-protected key can be
+downgraded to device-only with no warning. Shipping the button first would
+mean its failure mode is weakening a key. Check `grep onConflict
+web/src/lib/vault.js` before starting it.
 
 Two corrections to this document's own premises, found by measuring:
 `artifactMetaFromType` had **zero callers**, so "the type system can already
