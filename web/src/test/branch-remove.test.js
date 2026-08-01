@@ -19,7 +19,10 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { stepsWithBranchRemoved } from "../toolkit/useNotebook";
+import {
+  stepsWithBranchRemoved,
+  stepsWithNestStepRemoved,
+} from "../toolkit/useNotebook";
 import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -192,5 +195,77 @@ describe("the shell wires it to the notebook", () => {
       /note: "Removed the last branch — the empty tee went with it\."/
     );
     expect(SHELL).toMatch(/\{undoSnapshot\.note \|\| "Replaced the notebook with a template\."\}/);
+  });
+});
+
+/**
+ * The hole the branch × did not close.
+ *
+ * A branch × removes the whole branch, but the *step* × can empty one a step at
+ * a time, and a branch with no steps serializes to `- :public |`, which does not
+ * parse — "Expected a step name". The cascade exists so a delete the user asked
+ * for can never hand back a recipe that no longer compiles.
+ */
+describe("emptying a branch by removing its last step", () => {
+  const one = `genkey ec/p256 | tee
+  - :public | inspect
+| export pkcs8 | pem`;
+  const two = `genkey ec/p256 | tee
+  - :public | inspect
+  - :private | inspect
+| export pkcs8 | pem`;
+
+  it("is what the recipe language actually forbids", () => {
+    // Pin the reason, not just the behaviour: if an empty branch ever became
+    // legal text, the cascade below is worth revisiting rather than keeping
+    // out of habit.
+    const { validation } = compileRecipe("genkey ec/p256 | tee\n  - :public |");
+    expect(validation.errors.map((e) => e.message)).toContain("Expected a step name");
+  });
+
+  it("takes the branch, and the recipe still compiles", () => {
+    const out = stepsWithNestStepRemoved(stepsOf(two), 1, 0, 0);
+    expect(out.droppedBranch).toBe(true);
+    expect(out.droppedStem).toBe(false);
+    expect(out.steps[1].branches.map((b) => b.selector)).toEqual([":private"]);
+    expect(recompile(out.steps).validation.errors).toEqual([]);
+  });
+
+  it("takes the tee too when that was the last branch", () => {
+    const out = stepsWithNestStepRemoved(stepsOf(one), 1, 0, 0);
+    expect(out.droppedStem).toBe(true);
+    expect(out.steps.map((s) => s.name)).toEqual(["genkey", "export", "pem"]);
+    expect(recompile(out.steps).validation.errors).toEqual([]);
+  });
+
+  it("does not cascade while other steps remain in the branch", () => {
+    const src = `genkey ec/p256 | tee
+  - :public | inspect | out @a
+| export pkcs8 | pem`;
+    const out = stepsWithNestStepRemoved(stepsOf(src), 1, 0, 1);
+    expect(out.droppedBranch).toBe(false);
+    expect(out.steps[1].branches[0].body).toHaveLength(1);
+    expect(recompile(out.steps).validation.errors).toEqual([]);
+  });
+
+  it("leaves a foreach body alone — an empty loop body is still a recipe", () => {
+    const src = `file.read | qr.scan count=all | foreach
+  - out @code`;
+    const steps = stepsOf(src);
+    const out = stepsWithNestStepRemoved(steps, 2, null, 0);
+    expect(out.droppedBranch).toBe(false);
+    expect(out.droppedStem).toBe(false);
+  });
+
+  it("is a no-op on an index that is not there", () => {
+    const steps = stepsOf(one);
+    expect(stepsWithNestStepRemoved(steps, 1, 0, 9).steps).toBe(steps);
+    expect(stepsWithNestStepRemoved(steps, 9, 0, 0).steps).toBe(steps);
+  });
+
+  it("says out loud when more went than the × named", () => {
+    expect(SHELL).toMatch(/cascadeNote/);
+    expect(SHELL).toMatch(/the empty branch and its tee went with it/);
+    expect(SHELL).toMatch(/the empty branch went with it/);
   });
 });

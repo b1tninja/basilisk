@@ -320,6 +320,22 @@ function workspaceStepCount(recipe: string): number {
   }
 }
 
+/**
+ * What to say when a step's × removed more than the step.
+ *
+ * A branch with no steps cannot be serialized, so removing the last one takes
+ * the branch — and the tee, if that was its last branch. That is more than the
+ * × named, so it gets said out loud and undone in one click, on the same rule
+ * the branch × already follows. `null` when nothing else went.
+ */
+function cascadeNote(gone: { droppedBranch: boolean; droppedStem: boolean }) {
+  if (gone.droppedStem)
+    return "Removed the branch's last step — the empty branch and its tee went with it.";
+  if (gone.droppedBranch)
+    return "Removed the branch's last step — the empty branch went with it.";
+  return null;
+}
+
 export function ToolkitShell() {
   const nb = useNotebook();
   const [chipEdit, setChipEdit] = useState<ChipPath | null>(null);
@@ -1629,11 +1645,17 @@ export function ToolkitShell() {
                                   onRemove={(path) => {
                                     nb.setFocusedCell(i);
                                     if (path.body != null) {
-                                      nb.removeNestStep(
+                                      const before = {
+                                        title: nb.title,
+                                        chains: nb.chains,
+                                      };
+                                      const gone = nb.removeNestStep(
                                         path.stem,
                                         path.branch ?? null,
                                         path.body
                                       );
+                                      const note = cascadeNote(gone);
+                                      if (note) setUndoSnapshot({ ...before, note });
                                     } else {
                                       nb.removeStep(path.stem);
                                     }
@@ -1666,11 +1688,19 @@ export function ToolkitShell() {
                                           onClick={() => {
                                             if (!selected) return;
                                             if (selected.body != null) {
-                                              nb.removeNestStep(
-                                                selected.stem,
-                                                selected.branch ?? null,
-                                                selected.body
+                                              const before = {
+                                                title: nb.title,
+                                                chains: nb.chains,
+                                              };
+                                              const note = cascadeNote(
+                                                nb.removeNestStep(
+                                                  selected.stem,
+                                                  selected.branch ?? null,
+                                                  selected.body
+                                                )
                                               );
+                                              if (note)
+                                                setUndoSnapshot({ ...before, note });
                                             } else {
                                               nb.removeStep(selected.stem);
                                             }

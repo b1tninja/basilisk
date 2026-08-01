@@ -128,6 +128,57 @@ export function stepsWithBranchRemoved(
   };
 }
 
+/**
+ * Remove one step from a tee/foreach body or a selector branch.
+ *
+ * The cascade is the point. A selector branch whose last step is removed
+ * serializes to `- :public |`, which does not parse — "Expected a step name".
+ * So deleting the last step of a branch takes the branch, and if that was the
+ * tee's last branch `stepsWithBranchRemoved` takes the tee, on the same rule it
+ * already applies. A delete the user asked for may never hand back a recipe
+ * that no longer compiles.
+ *
+ * Body steps do not cascade: `tee` with an empty body but live branches is
+ * valid, and `foreach` owns its body — an empty loop body is a recipe the user
+ * can still finish typing.
+ */
+export function stepsWithNestStepRemoved(
+  steps: RecipeStep[],
+  stem: number,
+  branch: number | null,
+  bodyIndex: number
+): { steps: RecipeStep[]; droppedBranch: boolean; droppedStem: boolean } {
+  const target = steps[stem];
+  if (!target) return { steps, droppedBranch: false, droppedStem: false };
+  if (branch != null) {
+    const body = target.branches?.[branch]?.body;
+    if (!body?.[bodyIndex]) return { steps, droppedBranch: false, droppedStem: false };
+    if (body.length === 1) {
+      const dropped = stepsWithBranchRemoved(steps, stem, branch);
+      return { ...dropped, droppedBranch: true };
+    }
+  } else if (!target.body?.[bodyIndex]) {
+    return { steps, droppedBranch: false, droppedStem: false };
+  }
+  const next = steps.map((s, i) => {
+    if (i !== stem) return s;
+    const clone: RecipeStep = {
+      ...s,
+      body: s.body ? [...s.body] : undefined,
+      branches: s.branches?.map((b) => ({ ...b, body: b.body ? [...b.body] : [] })),
+    };
+    if (branch != null) {
+      const br = clone.branches?.[branch];
+      if (!br?.body) return s;
+      br.body = br.body.filter((_, j) => j !== bodyIndex);
+    } else if (clone.body) {
+      clone.body = clone.body.filter((_, j) => j !== bodyIndex);
+    }
+    return clone;
+  });
+  return { steps: next, droppedBranch: false, droppedStem: false };
+}
+
 export function useNotebook() {
   const kernelRef = useRef(createKernel());
   const [title, setTitle] = useState("Untitled notebook");
@@ -626,28 +677,17 @@ export function useNotebook() {
     [focusedCell, setCellSteps, steps]
   );
 
+  /**
+   * Remove one nested step. Returns what else went with it — a branch left with
+   * no steps cannot be serialized, so it cascades (see
+   * `stepsWithNestStepRemoved`) and the caller says so out loud.
+   */
   const removeNestStep = useCallback(
     (stem: number, branch: number | null, bodyIndex: number) => {
-      const next = steps.map((s, i) => {
-        if (i !== stem) return s;
-        const clone: RecipeStep = {
-          ...s,
-          body: s.body ? [...s.body] : undefined,
-          branches: s.branches?.map((b) => ({
-            ...b,
-            body: b.body ? [...b.body] : [],
-          })),
-        };
-        if (branch != null) {
-          const br = clone.branches?.[branch];
-          if (!br?.body) return s;
-          br.body = br.body.filter((_, j) => j !== bodyIndex);
-        } else if (clone.body) {
-          clone.body = clone.body.filter((_, j) => j !== bodyIndex);
-        }
-        return clone;
-      });
-      setCellSteps(focusedCell, next);
+      const next = stepsWithNestStepRemoved(steps, stem, branch, bodyIndex);
+      if (next.steps === steps) return { droppedBranch: false, droppedStem: false };
+      setCellSteps(focusedCell, next.steps);
+      return { droppedBranch: next.droppedBranch, droppedStem: next.droppedStem };
     },
     [focusedCell, setCellSteps, steps]
   );
