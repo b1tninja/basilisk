@@ -344,7 +344,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
           sideVal.type !== "artifact"
         ) {
           const before = artifacts.length;
-          artifacts.push(...valueToArtifacts(sideVal));
+          artifacts.push(...(await valueToArtifacts(sideVal)));
           stampNew(before, node.step);
         }
       };
@@ -544,7 +544,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
     // Terminal `out` / `text` already pushed tiles; later transforms clear this flag.
     if (!lastStepEmitted) {
       const before = artifacts.length;
-      artifacts.push(...valueToArtifacts(value));
+      artifacts.push(...(await valueToArtifacts(value)));
       stampNew(before, steps[steps.length - 1]);
     }
   }
@@ -4199,13 +4199,35 @@ const OTP_META_TRAITS = Object.freeze([
  * and force Encrypt to decode `content` strings — immutable strings cannot be
  * zeroed (see `src/lib/memory-safety.js`).
  *
+ * `refine` narrows the *artifact's* copy of the refined type where one value
+ * produces several artifacts that are not all the same type. The keypair
+ * branch of `materializeOutArtifacts` is the case that forced it: one
+ * `keypair` value becomes a private JWK and a public JWK, and both used to
+ * inherit the value's `which: "private"` verbatim — so the public tile's tags
+ * said `public` while its type said `private`. Nothing matched on `which`, so
+ * nothing was visibly wrong, which is exactly what was true of `ssh-public`
+ * before it bit (7d563cd). The value's type is untouched; only the artifact's
+ * copy is narrowed.
+ *
  * @param {ToolkitArtifact} artifact
  * @param {PipelineValue} [value]
+ * @param {Partial<import("./types.js").RefinedType>} [refine]
  * @returns {ToolkitArtifact}
  */
-function attachPipeMeta(artifact, value) {
+function attachPipeMeta(artifact, value, refine) {
   if (value?.meta?.type) {
-    artifact.pipeType = value.meta.type;
+    let pipeType = value.meta.type;
+    if (refine) {
+      pipeType = { ...pipeType, ...refine };
+      // An explicit `undefined` *removes* a refinement rather than setting one
+      // to nothing — `{ which: undefined }` is how the whole-keypair tip stops
+      // claiming a half, and a key left present with an undefined value would
+      // still print in `formatType` and still be enumerable to a test.
+      for (const k of Object.keys(refine)) {
+        if (refine[k] === undefined) delete pipeType[k];
+      }
+    }
+    artifact.pipeType = pipeType;
     // §32c: the projection is the *floor*, the emit site is the override.
     //
     // Role is a property of the artifact, not of the value: the same `text`
@@ -4215,7 +4237,7 @@ function attachPipeMeta(artifact, value) {
     // declares a role keeps it; a site that declares none stops being
     // role-less. That is what turns a keypair emitted by `out` from
     // "text"/"secret" into role `key`, which is the whole of §35.
-    const projected = artifactMetaFromType(value.meta.type);
+    const projected = artifactMetaFromType(pipeType);
     if (!artifact.role && projected.role) artifact.role = projected.role;
     else if (
       (artifact.role === "text" || artifact.role === "secret") &&
@@ -4539,7 +4561,10 @@ async function materializeOutArtifacts(value, params) {
               tags: ["keypair", "private"],
               traits: value.meta?.alg ? { alg: value.meta.alg } : undefined,
             },
-            value
+            value,
+            // The half this artifact *is*, not the half the value's type
+            // happened to name. See `attachPipeMeta`.
+            { which: "private" }
           )
         );
       } catch (err) {
@@ -4569,7 +4594,8 @@ async function materializeOutArtifacts(value, params) {
               tags: ["keypair", "public"],
               traits: value.meta?.alg ? { alg: value.meta.alg } : undefined,
             },
-            value
+            value,
+            { which: "public" }
           )
         );
       } catch (_) {
@@ -4577,17 +4603,31 @@ async function materializeOutArtifacts(value, params) {
       }
     }
     if (!parts.length) {
-      parts.push({
-        label,
-        filename: `${stem}.txt`,
-        content:
-          value.type === "key"
-            ? "[key — no extractable material]"
-            : "[keypair — no extractable material]",
-        sensitive: value.type !== "key" || value.meta?.which !== "public",
-        mime: "text/plain",
-        encoding: "text",
-      });
+      // A recipe that wrote `out` *did* ask for this one, and there is
+      // genuinely nothing to hand over — so unlike the dangling tip below,
+      // the body is a sentence rather than nothing at all. What goes is the
+      // bracket syntax: `[keypair — no extractable material]` reads as a
+      // token some other layer is meant to substitute, and it was the whole
+      // of the tile. Stamped with a role too, so it lands on a key tile
+      // instead of the fallback's untyped one.
+      parts.push(
+        attachPipeMeta(
+          {
+            label,
+            filename: `${stem}.txt`,
+            content:
+              value.type === "key"
+                ? "No extractable key material — this key was generated non-extractable."
+                : "No extractable key material — this keypair was generated non-extractable.",
+            sensitive: value.type !== "key" || value.meta?.which !== "public",
+            mime: "text/plain",
+            encoding: "text",
+            role: "key",
+            traits: value.meta?.alg ? { alg: value.meta.alg } : undefined,
+          },
+          value
+        )
+      );
     }
     return parts;
   }
@@ -4596,11 +4636,36 @@ async function materializeOutArtifacts(value, params) {
 }
 
 /**
+ * The public JWK of a key handle, as text — or undefined when there is none.
+ *
+ * The one derivation a dangling key tip is allowed to make. §34b's rule is
+ * about *where a value lands*, not how sensitive its neighbour is: the public
+ * half of a keypair is publishable material, so exporting it to describe the
+ * tile is the same permission `openpgp-key` already exercises when it stamps a
+ * fingerprint onto a masked private key. The private half is never exported
+ * here — `out`/`export` is the only thing that materializes it, which is
+ * `ACTION_REASONS.neverAskedFor`'s whole position.
+ *
+ * @param {CryptoKey|null} pub
+ * @returns {Promise<string|undefined>}
+ */
+async function publicJwkText(pub) {
+  if (!pub) return undefined;
+  try {
+    return JSON.stringify(await crypto.subtle.exportKey("jwk", pub), null, 2);
+  } catch (_) {
+    // Non-extractable, or an algorithm WebCrypto will not export. The tile
+    // simply has less to say; it is not an error to raise at anyone.
+    return undefined;
+  }
+}
+
+/**
  * @param {PipelineValue} value
  * @param {string} [name]
- * @returns {ToolkitArtifact[]}
+ * @returns {Promise<ToolkitArtifact[]>}
  */
-function valueToArtifacts(value, name = "artifact") {
+async function valueToArtifacts(value, name = "artifact") {
   if (value.type === "int") {
     return [
       attachPipeMeta(
@@ -4738,23 +4803,66 @@ function valueToArtifacts(value, name = "artifact") {
   }
   if (value.type === "keypair" || value.type === "key") {
     const which = value.meta?.which === "public" ? "public" : "private";
+    const handles = pipelineKeyHandles(value);
+    const pub = handles.publicKey;
+    /**
+     * Both halves present is what makes this a *keypair* rather than a key,
+     * and it is a runtime fact rather than a projection of the type: `genkey`
+     * types its tip `keypair/…/private` and an `import pkcs8` may or may not
+     * carry a public half, so only the handles know. `role` is the emit
+     * site's to declare for exactly this class of question (§32c) — the same
+     * licence `receipt` and `envelope` already use.
+     *
+     * Symmetric algorithms (aes, hmac) also arrive as `keypair` values, with
+     * `publicKey: null`. They are not keypairs and must not be drawn as one,
+     * so they keep the least-specific `key` role they had.
+     */
+    const bothHalves = value.type === "keypair" && !!(handles.privateKey && pub);
     return [
       attachPipeMeta(
         {
           label: name,
           filename: `${name}.txt`,
-          content:
-            value.type === "key"
-              ? `[${which} key — use out or export before emitting]`
-              : "[keypair — use out or export before emitting]",
+          /**
+           * **No body, on purpose.** This tip is the value the recipe never
+           * asked to see, and materializing it would reverse
+           * `ACTION_REASONS.neverAskedFor` — the position §34b is built on.
+           * What went is the bracketed instruction that used to *be* the
+           * tile: `[keypair — use out or export before emitting]` was a
+           * placeholder standing where a value goes, so Copy handed out a
+           * sentence about writing more recipe and Download wrote it to a
+           * file. An empty body is the honest shape of "nothing was asked
+           * for": Copy and Download refuse, in the sentences the action
+           * table already owns, and the kind draws the public facts instead.
+           */
+          content: "",
           sensitive: value.type === "keypair" || which !== "public",
           mime: "text/plain",
           encoding: "text",
           disposition: "file",
-          role: "key",
+          role: bothHalves ? "keypair" : "key",
           tags: value.type === "key" ? [which] : ["keypair"],
+          /**
+           * The public facts, carried where the tile can reach them.
+           *
+           * `traits` rather than a field of its own because `traits` is the
+           * one bag both projections copy wholesale (`useNotebook` and both
+           * of the shell's mappings) — the OTP tile learned that the hard
+           * way, with three named fields that reached nothing.
+           */
+          traits: {
+            ...(value.meta?.alg ? { alg: value.meta.alg } : null),
+            ...(pub ? { publicJwk: await publicJwkText(pub) } : null),
+          },
         },
-        value
+        value,
+        // `genkey` types its output `keypair/…/private`, which is a claim
+        // about a value that has both halves. Nothing matches on `which`, so
+        // nothing was visibly wrong — the same silence `ssh-public` sat in
+        // before it bit. The *value's* type is left alone (the validator's
+        // overloads never read `which` on a keypair); the artifact's copy
+        // stops claiming a half it does not have.
+        bothHalves ? { which: undefined } : undefined
       ),
     ];
   }

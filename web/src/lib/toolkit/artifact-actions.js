@@ -57,6 +57,32 @@ function jwkOf(artifact) {
 }
 
 /**
+ * The JWK an artifact's *identity* can be derived from — its body, or the
+ * public half `traits` carries when there is no body.
+ *
+ * The keypair tip is the case: a bare `genkey` emits a tile with both halves
+ * and no content, because materializing the private one is what `out` is for
+ * (`ACTION_REASONS.neverAskedFor`). Its algorithm, fingerprint and public line
+ * are still public facts about it — the same §34b permission that keeps Copy
+ * fingerprint live on a masked private key — so the two identity actions read
+ * through to `traits.publicJwk` rather than reporting "carries no key to
+ * fingerprint" about a key whose fingerprint the tile is displaying.
+ *
+ * Body first: where there is one it is the artifact, and `publicJwk()` strips
+ * the private fields off it before anything is derived either way.
+ */
+function identityJwkOf(artifact) {
+  const fromBody = jwkOf(artifact);
+  if (fromBody) return fromBody;
+  try {
+    const j = JSON.parse(String(artifact?.traits?.publicJwk ?? ""));
+    return j && typeof j === "object" && j.kty ? j : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
  * Whether a body has a private half at all.
  *
  * Exported because `keyring-service.js` gates on the same predicate before it
@@ -268,13 +294,13 @@ export const ARTIFACT_ACTIONS = Object.freeze([
     // Enabled while masked: a fingerprint is a public fact about the key, and
     // it does not derive from the masked material (§34b).
     available: ({ artifact }) =>
-      jwkOf(artifact) ||
+      identityJwkOf(artifact) ||
       artifact.traits?.fingerprint ||
       looksLikeSshKey(artifact?.content)
         ? true
         : { disabled: "This artifact carries no key to fingerprint." },
     run: async ({ artifact, services }) => {
-      const jwk = jwkOf(artifact);
+      const jwk = identityJwkOf(artifact);
       if (jwk) {
         const id = await sshIdentityFromJwk(publicJwk(jwk));
         if (id) {
@@ -315,11 +341,11 @@ export const ARTIFACT_ACTIONS = Object.freeze([
      * runtime case where the body is not a key at all.
      */
     available: ({ artifact }) =>
-      jwkOf(artifact)
+      identityJwkOf(artifact)
         ? true
         : { disabled: "This artifact carries no key to encode." },
     run: async ({ artifact, services }) => {
-      const jwk = jwkOf(artifact);
+      const jwk = identityJwkOf(artifact);
       const id = await sshIdentityFromJwk(publicJwk(jwk));
       if (!id) {
         throw new Error(

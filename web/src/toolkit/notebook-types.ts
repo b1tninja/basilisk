@@ -46,7 +46,14 @@ export type ArtifactTile = {
   content: string;
   sensitive?: boolean;
   role?: string;
-  traits?: { fingerprint?: string };
+  /**
+   * Facts a step computed that the body cannot say — a fingerprint, the
+   * genkey-style algorithm tag, the public JWK of a keypair whose body is
+   * deliberately withheld. Open-ended because `traits` is the one bag every
+   * projection copies wholesale, which is why named fields added beside it
+   * have twice reached nothing.
+   */
+  traits?: Record<string, unknown> & { fingerprint?: string };
   /** Directory slot once published (design v2 §21b) — persists on the kernel-held tile. */
   publishedAs?: string;
   directoryUrl?: string;

@@ -89,18 +89,52 @@ export const FALLBACK_KIND: ToolkitArtifactKind = {
   actions: ["copy", "download"],
 };
 
-const keyCardFor = (publicOnly: boolean) =>
+type KeyTraits = { alg?: string; fingerprint?: string; publicJwk?: string };
+
+const keyCardFor = (publicOnly: boolean, half?: "public" | "private" | "both") =>
   function KeyCardView({ artifact }: ArtifactViewContext) {
-    const traits = (artifact.traits || {}) as { alg?: string; fingerprint?: string };
+    const traits = (artifact.traits || {}) as KeyTraits;
     return (
       <KeyCard
         content={artifact.content}
+        jwk={traits.publicJwk}
         alg={traits.alg}
         fingerprint={traits.fingerprint}
+        half={half}
         publicOnly={publicOnly}
       />
     );
   };
+
+/**
+ * The whole-keypair card — the tip of a bare `genkey`, drawn from its public
+ * half alone.
+ *
+ * The same component the halves use, given the two things that make it
+ * unmistakable at a glance: a caption that names *both* halves, and a sentence
+ * saying the private one is held back and what to write to get it. `publicOnly`
+ * is passed because there is no body to toggle open — not because this is a
+ * public key, which is the conflation that produced the bug.
+ *
+ * `view` and `publicView` are the same function deliberately. A tile with no
+ * body has nothing a reveal could add, so masked and unmasked must render
+ * identically — and making that structural means no future reveal path can
+ * turn into a leak here.
+ */
+function KeypairCard({ artifact }: ArtifactViewContext) {
+  const traits = (artifact.traits || {}) as KeyTraits;
+  return (
+    <KeyCard
+      content=""
+      jwk={traits.publicJwk}
+      alg={traits.alg}
+      fingerprint={traits.fingerprint}
+      half="both"
+      publicOnly
+      withheld="private half not shown — add `out @kp` to the recipe to write both halves"
+    />
+  );
+}
 
 const pgpCardFor = (publicOnly: boolean) =>
   function OpenPgpView({ artifact }: ArtifactViewContext) {
@@ -148,11 +182,41 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     actions: ["copy", "download", "key.copyFingerprint", "keyring.add"],
   },
   {
+    /**
+     * Both halves, body withheld (§35g).
+     *
+     * Its own role rather than a tag on `key`, because the badge on a tile is
+     * its role and the confusion this fixes is a glance-level one: `genkey
+     * ed25519` with no `out` used to fall to the least-specific `key` kind,
+     * whose masked body is `keyCardFor(true)` — the *public half* card. The
+     * type was never wrong; the rendering was. Side by side with
+     * `keypair-public` this now differs in the badge (KEYPAIR, not KEY), the
+     * caption ("public + private halves", not "public half"), the withheld
+     * line, and the absence of a JWK body.
+     *
+     * `keyring.add` is not declared. It needs a private half in the *body*,
+     * and this tile's body is empty by design — a disabled button whose stated
+     * reason is "carries no key material" would be true of the artifact and
+     * false of the keypair, which is the worst kind of accurate.
+     * `key.copyFingerprint` and `key.copyPublicLine` are declared, and work,
+     * because both derive from the public JWK on `traits` (§34b).
+     */
+    id: "keypair",
+    match: { role: "keypair" },
+    label: "Keypair",
+    glyph: "keypair",
+    view: KeypairCard,
+    publicView: KeypairCard,
+    empty:
+      "This keypair was generated non-extractable, so even its public half cannot be shown — regenerate it to see the algorithm and fingerprint.",
+    actions: ["copy", "download", "key.copyFingerprint", "key.copyPublicLine"],
+  },
+  {
     id: "keypair-public",
     match: { role: "key", tags: ["keypair", "public"] },
     label: "Public key",
     glyph: "key",
-    view: keyCardFor(true),
+    view: keyCardFor(true, "public"),
     empty: "No exportable public half — the key was generated non-extractable.",
     actions: ["copy", "download", "key.copyFingerprint", "key.copyPublicLine"],
   },
@@ -161,11 +225,15 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     match: { role: "key", tags: ["keypair", "private"] },
     label: "Private key",
     glyph: "key",
-    view: keyCardFor(false),
+    view: keyCardFor(false, "private"),
     // §35d: a masked private-key tile is no longer blank. Algorithm,
     // fingerprint and public line derive from public material, so they render
     // while the secret stays masked; the masked line sits under them.
-    publicView: keyCardFor(true),
+    //
+    // The half is stated on both, and stating it is the fix: `publicOnly` used
+    // to caption the card as well as hide the raw toggle, so this — the masked
+    // *private* tile — said "public half" about itself.
+    publicView: keyCardFor(true, "private"),
     empty: "No exportable private half — the key was generated non-extractable.",
     // No public line here: the private tile's job is the secret, and the
     // public half is one tile over. Copy fingerprint stays — it is a public
@@ -185,6 +253,10 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     match: { role: "key" },
     label: "Key",
     glyph: "key",
+    // No half passed, and the omission is the §33d answer in the card's own
+    // vocabulary: this kind by construction does not know which half it holds
+    // — that is what makes it the least specific — so it says nothing rather
+    // than captioning every lone key "keypair", which is what it used to do.
     view: keyCardFor(false),
     publicView: keyCardFor(true),
     empty: "No exportable key material — the key was generated non-extractable.",

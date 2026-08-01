@@ -1593,6 +1593,24 @@ export const ARTIFACT_ROLES = Object.freeze([
   "text", // anything with no better description
   "secret", // sensitive bytes with no richer identity (scalars, masters)
   "key", // keypair / key / openpgp-key, public or private
+  /**
+   * A key handle that holds **both** halves — the tip of a bare `genkey`,
+   * before any `out` has asked for either.
+   *
+   * A third word rather than `key` plus a tag, for the reason `ssh-public`
+   * and `ssh-private` are two words: the badge on a tile *is* its role, and
+   * the confusion this fixes is a glance-level one. Tagged `key` it resolved
+   * to the least-specific `key` kind, whose masked body is the public-half
+   * card — so a keypair was drawn by the card that means "the public half",
+   * and read as a public key. A keypair is none of `keypair-public`,
+   * `keypair-private` or `key`: it is the one key artifact whose identity is
+   * fully showable while its body is deliberately withheld.
+   *
+   * Declared at the emit site, never projected from the type: whether both
+   * halves are present is a fact about the handles, and `genkey`'s own
+   * refined type says `which: "private"` about a value that has both.
+   */
+  "keypair", // both halves, body withheld until `out` asks
   "public-key", // an armored OpenPGP *public* key — the publishable one
   "share", // one share of a split
   "recipients", // a recipient list

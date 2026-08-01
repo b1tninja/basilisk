@@ -599,7 +599,10 @@ describe("the table is the single definition (§33c)", () => {
     ).map((k) => k.id);
     // Absent on the private tile: the public half is one tile over, and on
     // non-key kinds entirely — SSH has no key type for a token or an sdp.
-    expect(withPublicLine.sort()).toEqual(["key", "keypair-public"]);
+    // Present on `keypair`, whose body is withheld: the public line derives
+    // from the public JWK on `traits`, which is the same §34b permission that
+    // keeps Copy fingerprint live on a masked private key.
+    expect(withPublicLine.sort()).toEqual(["key", "keypair", "keypair-public"]);
   });
 });
 

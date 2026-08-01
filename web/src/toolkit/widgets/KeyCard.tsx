@@ -30,22 +30,44 @@ import { sshIdentityFromJwk } from "../../lib/toolkit/ssh-ops.js";
  * blank. Algorithm, fingerprint and public line are all derived from public
  * material, so they may render while the secret stays masked — that is the
  * §34b rule, which is about *where a value lands*, not how sensitive it is.
+ *
+ * **`half` is not `publicOnly`.** They were one flag, and the flag was doing
+ * two unrelated jobs: hiding the raw toggle, and captioning the card. So the
+ * masked private-key tile — `publicView: keyCardFor(true)` — captioned itself
+ * "public half", and the least-specific `key` kind captioned every lone key
+ * "keypair". Both are the same defect as the one this file's card was written
+ * to fix, one layer up. `publicOnly` now means only "do not offer the raw
+ * body"; `half` says what the artifact *is*, and a kind that cannot know says
+ * nothing rather than guessing.
  */
 export function KeyCard({
   content,
+  jwk: jwkSource,
   alg,
   fingerprint,
   comment,
+  half,
+  withheld,
   publicOnly = false,
   className,
 }: {
   /** The JWK text the artifact carries. */
   content: string;
+  /**
+   * The public JWK to derive the id and public line from, when it is not the
+   * body. A keypair tip has no body at all — its public half rides `traits`,
+   * because materializing the private one is what `out` is for.
+   */
+  jwk?: string;
   /** `traits.alg` — the genkey-style tag the recipe named. */
   alg?: string;
   /** Pre-computed id (OpenPGP hex); SSH ids are derived from the JWK below. */
   fingerprint?: string;
   comment?: string;
+  /** Which half this artifact holds. Omitted where the kind cannot know. */
+  half?: "public" | "private" | "both";
+  /** What is deliberately not shown, and the recipe edit that would show it. */
+  withheld?: string;
   publicOnly?: boolean;
   className?: string;
 }) {
@@ -58,7 +80,7 @@ export function KeyCard({
     let live = true;
     let jwk: Record<string, unknown> | null = null;
     try {
-      jwk = JSON.parse(content);
+      jwk = JSON.parse(jwkSource || content);
     } catch {
       jwk = null;
     }
@@ -89,7 +111,7 @@ export function KeyCard({
     return () => {
       live = false;
     };
-  }, [content, comment]);
+  }, [content, jwkSource, comment]);
 
   const shownFingerprint = ssh?.fingerprint || (fingerprint ? formatFingerprint(fingerprint) : null);
 
@@ -99,9 +121,14 @@ export function KeyCard({
         <span className="font-mono text-[11px] font-semibold text-[var(--foreground)]">
           {alg || "key"}
         </span>
-        <span className="text-[10px] text-[var(--muted-foreground)]">
-          {publicOnly ? "public half" : "keypair"}
-        </span>
+        {half ? (
+          <span
+            className="text-[10px] text-[var(--muted-foreground)]"
+            data-key-half={half}
+          >
+            {half === "both" ? "public + private halves" : `${half} half`}
+          </span>
+        ) : null}
       </div>
 
       {shownFingerprint ? (
@@ -116,8 +143,21 @@ export function KeyCard({
         </code>
       ) : null}
 
+      {/* Absence with a stated reason, never silent absence: the private half
+          is here, it is deliberately not shown, and the sentence names the
+          recipe edit that would show it — `ACTION_REASONS.neverAskedFor`'s
+          register, on the tile rather than on a disabled button's tooltip. */}
+      {withheld ? (
+        <p
+          className="font-mono text-[10px] italic text-[var(--muted-foreground)]"
+          data-key-withheld
+        >
+          {withheld}
+        </p>
+      ) : null}
+
       {/* The JWK is still here — one toggle down rather than the whole tile. */}
-      {publicOnly ? null : (
+      {publicOnly || !content ? null : (
         <div className="flex flex-col gap-1">
           <button
             type="button"

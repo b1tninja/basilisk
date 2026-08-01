@@ -377,7 +377,10 @@ export function ArtifactTile({
             "inline-flex shrink-0 items-center gap-1 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider",
             a.kind === "diag"
               ? "bg-[color-mix(in_srgb,var(--warn)_var(--tile-tint),transparent)] text-[var(--warn)]"
-              : a.kind === "key"
+              : // `keypair` is a key badge, in the key badge's colour. It is a
+                // separate role because the *word* is the fix (a keypair read
+                // as a public key), not because it is a different family.
+                a.kind === "key" || a.kind === "keypair"
                 ? "bg-[color-mix(in_srgb,var(--brand)_var(--tile-tint),transparent)] text-[var(--brand)]"
                 : "bg-[color-mix(in_srgb,var(--caret)_var(--tile-tint),transparent)] text-[var(--caret)]"
           )}
