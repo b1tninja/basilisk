@@ -178,6 +178,55 @@ body {
   font-size: 15px;
 }
 
+/*
+ * Modal scroll lock — every Sheet, Dialog and dropdown in the app.
+ *
+ * Radix wraps modal content in `react-remove-scroll`. Its script half works
+ * under our policy; its CSS half arrived as a `<style>` element created at
+ * runtime, which `style-src 'self'` refuses outright. On the built site that
+ * meant a `style-src-elem` violation with disposition `enforce` on every open
+ * and, on any page whose body scrolls, no lock at all — /my-keys scrolled
+ * happily behind an open menu. `lib/scroll-lock` is aliased over the package
+ * so nothing is injected, and the declarations live here, where a stylesheet
+ * served from 'self' can carry them. Same bargain as `.scroll-area` in
+ * toolkit.css. site.css rather than toolkit.css because dropdowns are on every
+ * page, and only toolkit pages load the other one.
+ *
+ * Hiding the scrollbar hands its width back to the page, so something has to
+ * hold that width or every centred page jumps sideways when a menu opens. The
+ * library did it by rewriting body's margins into padding and setting
+ * `margin-right: <measured gap>` — which on this app, where `body` is
+ * `max-width: 1000px; margin: 0 auto`, would have zeroed the centring margin
+ * and pinned the content to one edge for as long as the menu was open. Padding
+ * the scroll container instead shrinks the containing block by exactly what
+ * the scrollbar occupied, so a centred box does not move at all.
+ *
+ * `scrollbar-gutter: stable` was the tempting shortcut and is measurably
+ * wrong here: Chromium reserves the gutter even where the platform draws
+ * overlay scrollbars that never took any width, which turned a zero-shift case
+ * into a 7.5px one. The gap is measured instead, in `lib/scroll-lock`, and
+ * published through `lib/css-vars` — a constructed stylesheet, the only route
+ * for a continuous value that `style-src 'self'` does not refuse. It is 0 on
+ * overlay platforms, which is the whole point of measuring. Measured on the
+ * built site with a 15px scrollbar: `clientWidth` 1385 → 1400 as the lock goes
+ * on, `padding-right` 0 → 15px with it, and a centred `<body>` sits at the
+ * same 192.5px through three open/close cycles.
+ *
+ * `--scroll-lock-gutter` and not the library's
+ * `--removed-body-scroll-bar-size`: that name was scoped to the locked body and
+ * meant to be absent otherwise, while `lib/css-vars` writes to `:root` and
+ * never clears. See `gutterVariable` in `lib/scroll-lock`.
+ */
+html:has(> body[data-scroll-locked]) {
+  overflow: hidden;
+  padding-right: var(--scroll-lock-gutter, 0px);
+}
+body[data-scroll-locked] {
+  overflow: hidden !important;
+  /* Keeps a trackpad fling inside the open panel from chaining to the page. */
+  overscroll-behavior: contain;
+}
+
 /* ===== App shell (full-viewport workspace pages, e.g. Toolkit) ===== */
 body.layout-app {
   max-width: none;
