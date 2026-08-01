@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { cn } from "@/lib/cn";
 
 /**
@@ -53,7 +54,28 @@ export function ArtifactAction({
   className,
 }: Props) {
   const disabled = !!reason;
-  const reasonId = disabled ? `artifact-action-why-${slug(label)}` : undefined;
+  /**
+   * Unique per mounted action, because the id was built from the *label*.
+   *
+   * `artifact-action-why-download` is the same string on every tile, so a list
+   * of nine key artifacts emitted the id thirteen times and every
+   * `aria-describedby` on the page resolved to the **first** one. Measured on
+   * the catalog's key section: 9 of 10 disabled actions pointed at a sentence
+   * belonging to a different artifact — every disabled Download announced
+   * "This artifact has no body to save" about a 927-byte armored private key
+   * whose real reason was "Reveal this value first".
+   *
+   * That is precisely what `artifact-reasons.js` exists to prevent — one
+   * condition acquiring two explanations — arriving through the DOM rather
+   * than through the strings, and invisible to `tsc` and to the suite because
+   * neither renders two tiles into one document.
+   *
+   * `useId` rather than a counter: it is stable across renders, so the
+   * association does not break when a reason changes, and it is unique per
+   * mount by construction rather than by everyone remembering to pass a key.
+   */
+  const uid = useId();
+  const reasonId = disabled ? `artifact-action-why-${slug(label)}-${uid}` : undefined;
   return (
     <>
       <button
