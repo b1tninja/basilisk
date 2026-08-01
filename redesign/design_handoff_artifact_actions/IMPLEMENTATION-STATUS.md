@@ -18,10 +18,31 @@ partial); the §35 key tiles (`keypair-public`, `keypair-private`, `key`,
 `openpgp-public`, `openpgp-private`) with `publicView` so a masked private key
 is not blank; and the §36 Activity log with its tray tab.
 
+**§37 is now built too.** Every role in `ARTIFACT_ROLES` is claimed:
+`ciphertext` and `envelope` share a packet read-out over `packet-map.js`;
+`recipients`, `sshsig`, `receipt` and `qr` have their own cards; `diagnostic`
+draws through `NetworkArtifact`; `share` contributes a `publicView` so a masked
+share tile says which share it is; `text` and `secret` are claimed with no view
+at all, which is the honest answer rather than a widget invented to fill a row.
+`UNCLAIMED_ROLES` in `artifact-kinds-table.test.js` is empty and the coverage
+gate now has teeth in both directions.
+
+Two things §37 turned up that this document assumed away. **`role: "sshsig"`
+was unreachable** — the `out` text branch stamped `text`/`secret` from
+sensitivity, and that outranked the projection, so the role sat in the
+vocabulary with nothing able to claim it. **The same bug made the shipped
+`jose-token` kind inert**: it matches `role: "token"`, nothing emitted it, and
+the JWT reader was unreachable from a notebook while every test passed — the
+exact "resolvable but absent from the page" failure HANDOFF warns about, one
+layer down. Both are fixed by `TYPE_OWNED_ROLES` in `attachPipeMeta`: a
+projected `sshsig`/`token` outranks an emit site's `text`/`secret`, which are
+the sensitivity ternary and not a claim about identity. Deliberately a closed
+set — `pem`/`der` project to `key`, and the key card reads JWK, so promoting
+them would swap a readable armor body for an emptier card (see 5.6).
+
 Not built: `ArtifactTile` as an extracted component (§33a — the anatomy is in
 place inside `OutputList`, but not lifted out), the §34c `ConsequenceBanner`
-and the migration of Publish onto it, §37's remaining kinds (in progress),
-§38 migration, and `keyring.add`.
+and the migration of Publish onto it, §38 migration, and `keyring.add`.
 
 **`keyring.add` is blocked, not merely unscheduled.** It needs
 `saveKey({onConflict})` — the fix for a live bug where re-saving a key
@@ -104,10 +125,14 @@ directly observable headlessly, before any widget exists.
   `ARTIFACT_ROLES` is claimed by at least one entry; no two entries can both
   match any `(role, tags)` the engine emits. Accept: the test fails when a role
   is added without a kind, and when a duplicate matcher is introduced.
-- [ ] **2.4 Catalog section `#artifactkinds`** on `/toolkit-widgets` rendering
-  one tile per kind plus the fallback. Accept: section present; every kind's
-  `empty` and `failed` state has a fixture (the catalog is how design fit is
-  judged here, and it has caught two real defects per HANDOFF).
+- [x] **2.4 Catalog section — `#artifacttiles`** on `/toolkit-widgets`,
+  rendering one row per §37 kind plus a deliberately unknown role so the
+  fallback is visible beside them. Fixtures are captured from `runRecipe`
+  rather than written by hand: a fixture that merely *looks* like what the
+  engine emits is how a tile passes its catalog and falls through to the
+  fallback in production. Still owed: an `empty`/`failed` state per kind —
+  neither is rendered by `OutputList` yet (they arrive with §33a's
+  `ArtifactTile`), so there is nothing to show them in.
 
 ## 3. `ArtifactTile` and the common base — §33
 
@@ -194,18 +219,40 @@ directly observable headlessly, before any widget exists.
 - [ ] **5.2 `openpgp-public` / `openpgp-private`** (§35e). Accept: Publish
   declared on `openpgp-public` only; the private kind masks and offers no
   Publish at any state.
-- [ ] **5.3 `ciphertext` / `envelope` view** over `packet-map.js` /
-  `packet-hex-view.js`. Accept: catalog state; the envelope tile keeps the
-  engine's "required for recovery (not a share)" label.
-- [ ] **5.4 `share` kind → `ShareCards`.** Accept: a split's outputs render as
-  cards from the cell list, not only from `CeremonySheet`; the amber
-  `share-only` tone rules are untouched (HANDOFF: "`share-only` must never
-  render green").
-- [ ] **5.5 `recipients`, `sshsig`, `qr`, `receipt` kinds** (§37b). Accept: one
-  catalog state each; the QR tile renders via a `data:image/svg+xml;base64,`
-  `<img>` and a CSP check on the live page shows no violation (add the
-  report-only header check to the catalog page, which is already measured
-  there).
+- [x] **5.3 `ciphertext` / `envelope` view** over `packet-map.js`.
+  `PacketMapCard` maps the framing — SKESK vs PKESK, the SEIPD, byte spans —
+  with the armor one toggle down. `packet-hex-view.js` is *not* used: a hex
+  dump of a sealed body is the decrypt inspector's job, and in a list row it
+  would be the same wall of characters the armor already was. The envelope
+  tile keeps the engine's "required for recovery (not a share)" label, which
+  is the artifact's own label and needed no help.
+- [x] **5.4 `share` kind — and it is not `ShareCards`.** Deviation, argued:
+  `ShareCards` is the *set's* surface, with its own per-mount reveal and its
+  own print warning, and mounting it per-tile would put a second reveal gate
+  behind the tile's first and print one card at a time. What the tile was
+  missing is not a card, it is the one public fact a masked share tile could
+  not state — which share, and how many recover the secret — so the kind
+  declares a `publicView` (`ShareIdentity`) and **no `view`**. A revealed
+  share therefore keeps the tile's own format bar, Hide button and 15s
+  auto-hide, all three of which a body widget would have silently removed.
+  `ShareCards` and the `share-only` tone rules are untouched.
+- [x] **5.5 `recipients`, `sshsig`, `qr`, `receipt` kinds** (§37b). One catalog
+  state each under `#artifacttiles`; the QR tile renders via a
+  `data:image/svg+xml;base64,` `<img>` (measured live: 95×95 natural, no
+  console error, and the page's own policy reads `img-src 'self' data:`).
+  No per-row *Import to key cache* on `recipients` and no *Print* on `qr`:
+  neither service is injected into a tile action yet, and a button whose
+  handler does not exist is worse than the absence.
+- [x] **5.6 `text` and `secret` claimed with no view.** The raw body, its
+  format bar and its reveal gate are already the right rendering of an opaque
+  value. Claiming them buys `data-artifact-kind="text"` instead of
+  `"fallback"`, a label for the badge, and a sentence for the no-body case —
+  and it puts the fallback back to meaning what §32f says it means: an
+  artifact the table does not know about. **Known gap kept honest here:** a
+  `pem`/`der` export still lands as `text`. The projection calls it `key`
+  (§35e), but `KeyCard` parses JWK, so promoting it today would replace a
+  readable armor body with a nearly empty card. That widening waits on a
+  `KeyCard` that can read PEM.
 
 ## 6. Auditability — §36
 

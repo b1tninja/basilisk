@@ -24,6 +24,7 @@ import {
   TopBar,
   ReadinessBar,
   OutputList,
+  type OutputArtifact,
   JwtArtifact,
   NetworkArtifact,
   SessionStrip,
@@ -39,6 +40,7 @@ import {
   CeremonySheet,
 } from "../toolkit/widgets/index";
 import { execVssCommitments, execVssSplit } from "../lib/toolkit/vss-ops.js";
+import { qrSvg } from "../lib/qr.js";
 import { encodeShareSet } from "../lib/slip39/blip39.js";
 import type { DeploymentVerdict } from "../lib/toolkit/deployment-check.js";
 import type { DkgParticipant } from "../lib/quorum/dkg-session.js";
@@ -132,6 +134,7 @@ function CatalogApp() {
               "topbar",
               "readinessbar",
               "outputlist",
+              "artifacttiles",
               "networkartifact",
               "jwtartifact",
               "typecard",
@@ -1030,6 +1033,30 @@ function CatalogApp() {
           </div>
         </Section>
 
+        <Section id="artifacttiles" title="Artifact tiles — the §37 inventory, resolved by role">
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            One row per kind in the registry, fed the same <code>role</code> and{" "}
+            <code>tags</code> the engine really emits — the armor, the sshsig block and
+            the receipt below were captured from <code>runRecipe</code> rather than
+            written by hand. This is the section that answers the question a unit test
+            cannot: whether the resolver, the view and the action row agree in the built
+            page. Each row carries <code>data-artifact-kind</code>; if one reads{" "}
+            <code>fallback</code>, its artifact is not carrying the tags its{" "}
+            <code>match</code> requires.
+          </p>
+          <p className="mb-1 text-[11px] text-[var(--muted-foreground)]">
+            §37a decided most of what is <em>absent</em> here: a button may move an
+            artifact, never compute a new one. So there is no <em>Decrypt with…</em> on
+            the ciphertext, no <em>Verify threshold</em> on the share, and no{" "}
+            <em>verify</em> on the signature or the receipt — each would produce a value
+            or a verdict with no derivation behind it. What those rows show instead is
+            the read-out the action was standing in for.
+          </p>
+          <div className="max-w-md">
+            <OutputList outputs={demoArtifactTiles()} />
+          </div>
+        </Section>
+
         <Section
           id="connections"
           title="ConnectionsPanel — live sessions, separate from Outputs (§34)"
@@ -1653,6 +1680,204 @@ function useDemoSplit(threshold = 2, shares = 3) {
     const { mnemonics } = encodeShareSet(set.data as never);
     return { mnemonics, commitments };
   }, [threshold, shares]);
+}
+
+/* ── §37 artifact-tile fixtures ───────────────────────────────────────────
+ *
+ * Captured from `runRecipe`, not written by hand. A fixture that merely looks
+ * like what the engine emits is how a tile passes its catalog and falls
+ * through to the fallback in production — the roles and tags below are the
+ * ones a real run stamps, checked by printing them off the engine first.
+ */
+
+/** `"…" | utf8 | gpg.symencrypt mode=passphrase passphrase="hunter2"` */
+const DEMO_ARMOR = `-----BEGIN PGP MESSAGE-----
+
+w1gGJgkCFATbgLG36Fi6JP04xyre+pV/AwQQSjtkirG2GKp49PAFfX2yw2w1
+z/xCJfxmKLBbNvkC/OAJmObwiE6FKdwW79Bv2s8kcCgNbnJcg/SqmE5cs5cn
+0nICCQIMXBGGvd0t7HNI4IHKhzwohOfUXUtkGf/Kbgwey61VoM22vdHvnJyM
+2KCRjbk3OJNQ6EfAulYKlchZtISfekj3Xi5YE/D3sEmEd3pHH4LxWf2P6rHe
+39m1UXj4UDKsVOixKKmxNvsKlv9BkH2GAXE=
+-----END PGP MESSAGE-----
+`;
+
+/** `"release-2026.07" | utf8 | ssh.sign key=@id namespace=git` */
+const DEMO_SSHSIG = `-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgLvt5SVIUF1g6+jpuSMZQ20lsuX
+HEUQU66zrrzhf59eUAAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
+AAAAQPOqks5X4nDEGmajCv07dYYvauDXo7VX+yOTQp+/uXPSWQeEA6QZJ3TBHmNLp9NSZM
+ysLuLEsFSvAtr4TEBMjQs=
+-----END SSH SIGNATURE-----
+`;
+
+/** A v2 receipt in `run.receipt`'s exact shape, with two cells to fill the table. */
+const DEMO_RECEIPT = JSON.stringify({
+  cells: [
+    {
+      index: 0,
+      inputs: [],
+      outputs: [
+        {
+          digest: "09cfa680dc9c72fe6cbfda867e8a193efce63573e92fc8b758cf516021ef6b99",
+          filename: "msg.bin.b64",
+          label: "msg",
+          length: 8,
+          role: "text",
+          sensitive: false,
+          stepName: "out",
+        },
+      ],
+      recipe: '"plain" | utf8 | out @msg',
+      startedAt: "2026-08-01T03:01:48.042Z",
+    },
+    {
+      index: 1,
+      inputs: [],
+      outputs: [
+        {
+          digest: "44ffee0186c30b3c2e0c0d9b1e2f5a6d7c8b9a0f1e2d3c4b5a69788796a5b4c3",
+          filename: "share-1.bin.b64",
+          label: "s · share 1",
+          length: 44,
+          role: "share",
+          sensitive: true,
+          shareIndex: 1,
+          stepName: "out",
+        },
+        {
+          digest: "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+          filename: "s.asc",
+          label: "envelope",
+          length: 892,
+          role: "envelope",
+          sensitive: false,
+          stepName: "gpg.symencrypt",
+        },
+      ],
+      recipe: "random 32 | sss.split threshold=2 shares=3 | out @s",
+      startedAt: "2026-08-01T03:01:49.101Z",
+    },
+  ],
+  createdAt: "2026-08-01T03:01:48.042Z",
+  kind: "basilisk.run-receipt",
+  label: "Board key ceremony",
+  recipeDigest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  recipeSource: "",
+  registry: "ops-114-12853301",
+  v: 2,
+});
+
+const DEMO_RECIPIENTS = JSON.stringify(
+  [
+    {
+      fingerprint: "AABBCCDD11223344AABBCCDD11223344AABBCCDD",
+      label: "Dana Okonkwo",
+      email: "dana@example.org",
+      approvalState: "approved",
+      encryptCapable: true,
+    },
+    {
+      fingerprint: "99887766554433229988776655443322998877 66",
+      label: "Sam Reyes",
+      email: "sam@example.org",
+      approvalState: "unverified",
+      encryptCapable: false,
+    },
+  ],
+  null,
+  2
+);
+
+/** Every §37 kind as a tile row, in the order the design lists them. */
+function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"] {
+  const row = (o: Partial<OutputArtifact> & { label: string; role: string }) => ({
+    kind: o.role === "diagnostic" ? "diag" : o.role,
+    sizeBytes: new TextEncoder().encode(o.content || "").length,
+    onCopy: () => {},
+    ...o,
+  }) as OutputArtifact;
+
+  return [
+    row({
+      label: "message.asc",
+      role: "ciphertext",
+      tags: ["encrypted", "openpgp"],
+      content: DEMO_ARMOR,
+    }),
+    row({
+      label: "OpenPGP envelope — required for recovery (not a share)",
+      role: "envelope",
+      tags: ["openpgp", "skesk"],
+      content: DEMO_ARMOR,
+    }),
+    row({
+      // Masked, which is the state that matters: the identity line is the
+      // whole point of the share kind, and it only renders while masked.
+      label: "s · share 2",
+      role: "share",
+      tags: ["sss", "raw"],
+      traits: { shareOf: 2, threshold: 2 } as Record<string, unknown>,
+      sensitive: true,
+      revealable: true,
+      content: "D3JWAl1SMNOsjyiSUp5TfOdXE5Jl3Nop3DxOXmWvf1U=",
+    }),
+    row({
+      label: "alices",
+      role: "recipients",
+      tags: ["openpgp", "recipients"],
+      content: DEMO_RECIPIENTS,
+    }),
+    row({
+      label: "sig",
+      role: "sshsig",
+      tags: ["ssh", "signature"],
+      content: DEMO_SSHSIG,
+    }),
+    row({
+      label: "nat",
+      role: "diagnostic",
+      tags: ["webrtc", "endpoint"],
+      netType: "endpoint",
+      netData: {
+        v: 1,
+        server: "stun:stun.cloudflare.com:3478",
+        ok: false,
+        publicAddress: null,
+        candidates: { host: 4 },
+        ms: 1180,
+        note: "no srflx candidate — STUN blocked or all-host network; consider a TURN relay (rtc.ice turn=)",
+      },
+      content: "{…}",
+      diagnosticAction: { label: "Configure TURN", onClick: () => {} },
+    }),
+    row({ label: "r", role: "receipt", tags: ["opaque"], content: DEMO_RECEIPT }),
+    row({
+      label: "share-2.svg",
+      role: "qr",
+      tags: ["qr"],
+      content: qrSvg("away manual curious become aluminum headset", {
+        ecl: "L",
+        moduleSize: 3,
+        margin: 4,
+      }),
+    }),
+    row({ label: "msg", role: "text", tags: ["opaque"], content: "cGxhaW4=" }),
+    row({
+      label: "cek",
+      role: "secret",
+      tags: ["master"],
+      sensitive: true,
+      revealable: true,
+      content: "Gds11DxAR4gimt+jS5a4UEPp+iuQbpldaLC+PrBFJxI=",
+    }),
+    row({
+      // Nothing claims this role, so it lands on the fallback — which is a
+      // kind with a real view, not a crash (§32f), and still offers Copy.
+      label: "from-a-later-build",
+      role: "something-later",
+      content: "a value this build has no description for",
+    }),
+  ];
 }
 
 function ShareCheckStates() {

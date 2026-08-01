@@ -203,12 +203,14 @@ Outstanding here:
 
 `redesign/design_handoff_artifact_actions/` (plus `visual/VISUAL-DESIGN.md`).
 Shipped: the role vocabulary and projection floor, the kind resolver and
-table, `OutputList` wired to it, the two tile foundations, and the action
-tiers. Not yet built: `ArtifactTile` proper (§33a anatomy), the key tiles
-(§35 — the case that motivated the work), the Activity log (§36), the rest of
-the inventory (§37), and migration (§38).
+table, `OutputList` wired to it, the two tile foundations, the action tiers,
+the key tiles (§35), the Activity log (§36), and the rest of the inventory
+(§37 — every role in `ARTIFACT_ROLES` is claimed, and `UNCLAIMED_ROLES` in
+`artifact-kinds-table.test.js` is empty). Not yet built: `ArtifactTile` proper
+(§33a anatomy), migration (§38), and `keyring.add`, which is blocked on the
+`saveKey({onConflict})` fix.
 
-Three things a cold reader should know:
+Four things a cold reader should know:
 
 - **`artifactMetaFromType` had zero callers** before this work. Two role
   vocabularies existed and could not produce each other's words. There is now
@@ -222,6 +224,13 @@ Three things a cold reader should know:
 - **`RECEIPT_VERSION` is 2** because `role` is inside `digestArtifact`. A v1
   receipt gets a sentence saying the description changed and the run did not —
   not "digest mismatch".
+- **An emit site's `text`/`secret` is the sensitivity ternary, not an
+  identity**, and `TYPE_OWNED_ROLES` in `attachPipeMeta` is what stops it
+  outranking the projection. Without it `role: "sshsig"` was unclaimable and
+  the shipped `jose-token` kind matched nothing at all — the JWT reader was
+  unreachable from a notebook while 1618 tests passed. The set is closed on
+  purpose: `pem`/`der` project to `key`, and `KeyCard` reads JWK, so widening
+  it would trade a readable armor body for an emptier card.
 
 ## Traps learned the hard way (2026-07-31)
 

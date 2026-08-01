@@ -16,6 +16,7 @@ import {
   FALLBACK_KIND,
 } from "../toolkit/artifact-kinds/registry.tsx";
 import { ambiguousPairs, resolveArtifactKind } from "../toolkit/artifact-kinds/resolve.ts";
+import { actionsFor } from "../lib/toolkit/artifact-actions.js";
 import { KIND_GLYPHS } from "../toolkit/widgets/kind-glyphs.tsx";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
@@ -35,21 +36,13 @@ const CODE_ONLY = TABLE_SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(
  * of the design fill it in, and until then an honest test records the gap
  * rather than asserting a coverage that does not exist. A role added without
  * a kind fails here, which is the point.
+ *
+ * Empty since §37 — every role in the vocabulary is claimed. The constant
+ * stays because it is the shape of the gate: a role added to ARTIFACT_ROLES
+ * without a kind lands here as a failure, and a future role that is
+ * deliberately unclaimed has somewhere to be written down with its reason.
  */
-const UNCLAIMED_ROLES = [
-  "text",
-  "secret",
-  // "key" is claimed by keypair-public / keypair-private (§35);
-  // "public-key" by openpgp-public (§35e).
-  "share",
-  "recipients",
-  "ciphertext",
-  "envelope",
-  "sshsig",
-  "diagnostic",
-  "receipt",
-  "qr",
-];
+const UNCLAIMED_ROLES = [];
 
 describe("the table is unambiguous", () => {
   it("has no two entries that could both claim the same artifact", () => {
@@ -102,6 +95,93 @@ describe("role coverage", () => {
     const unclaimed = ARTIFACT_ROLES.filter((r) => !claimed.has(r));
     expect([...unclaimed].sort()).toEqual([...UNCLAIMED_ROLES].sort());
   });
+
+  it("declares Copy on every kind, because every artifact can be copied", () => {
+    // A kind that declares no actions renders no buttons. That is correct for
+    // a kind's *own* actions and wrong for the universal one — omitting it
+    // once already took Copy off the majority of tiles the moment the bespoke
+    // button was replaced by the table.
+    for (const kind of ARTIFACT_KINDS) {
+      expect(kind.actions, kind.id).toContain("copy");
+    }
+  });
+});
+
+describe("§37 pruned the actions it was offered", () => {
+  const declared = new Set(ARTIFACT_KINDS.flatMap((k) => k.actions || []));
+
+  it("declares no action that would compute a new value (§37a)", () => {
+    // "A button may move an artifact. It may never compute a new one."
+    // Decrypt with…, Verify threshold, Trust…, Send to peer and Save as group
+    // all produce a value or a verdict that would exist in the notebook with
+    // no derivation behind it, no type, and no place in the recipe or the
+    // receipt — a value the CLI cannot reproduce.
+    for (const id of [
+      "ciphertext.decrypt",
+      "share.verifyThreshold",
+      "recipients.saveGroup",
+      "netvalue.send",
+      "sshsig.verify",
+      "receipt.verify",
+    ]) {
+      expect(declared.has(id), id).toBe(false);
+    }
+  });
+
+  it("names no action the table does not define", () => {
+    // A kind naming an action with no definition renders one fewer button and
+    // says nothing about it. The tile must not be where that is discovered.
+    for (const kind of ARTIFACT_KINDS) {
+      expect(actionsFor(kind).length, kind.id).toBe(kind.actions.length);
+    }
+  });
+
+  it("keeps Publish on exactly one kind (§38b)", () => {
+    const withPublish = ARTIFACT_KINDS.filter((k) =>
+      (k.actions || []).includes("key.publish")
+    );
+    expect(withPublish.length).toBeLessThanOrEqual(1);
+    for (const k of withPublish) expect(k.match.role).toBe("public-key");
+  });
+});
+
+describe("§37 kinds show a read-out where there is one, and say so where there is not", () => {
+  const kindById = (id) => ARTIFACT_KINDS.find((k) => k.id === id);
+
+  it("gives share the identity line as a publicView, and no view", () => {
+    // The share's value *is* its own words, and the tile renders words with a
+    // format bar, a Hide button and the auto-hide timer. A widget redrawing
+    // the body would have removed all three to add nothing. What was missing
+    // is which share this is — public, and therefore drawable while masked.
+    const share = kindById("share");
+    expect(share.view({ artifact: { content: "away manual" }, masked: false })).toBeNull();
+    expect(typeof share.publicView).toBe("function");
+  });
+
+  it("gives text and secret no view at all, and an honest sentence instead", () => {
+    for (const id of ["text", "secret"]) {
+      const kind = kindById(id);
+      expect(kind.view({ artifact: { content: "x" }, masked: false }), id).toBeNull();
+      expect(kind.empty.length, id).toBeGreaterThan(20);
+    }
+    // A secret has no public half to draw — unlike a keypair, whose algorithm
+    // and fingerprint are facts about the public side. Inventing a line would
+    // mean deriving it from the masked material.
+    expect(kindById("secret").publicView).toBeUndefined();
+  });
+
+  it("never draws a QR while it is masked", () => {
+    // A QR *is* the secret, in a form a camera across the room can read.
+    expect(kindById("qr").publicView).toBeUndefined();
+  });
+
+  it("draws ciphertext and envelope through the same packet read-out", () => {
+    // Same body, different artifact: the envelope keeps its "required for
+    // recovery (not a share)" label, which the engine already writes.
+    for (const id of ["ciphertext", "envelope"]) {
+      expect(typeof kindById(id).view, id).toBe("function");
+    }
+  });
 });
 
 describe("the fallback is a kind, not a crash (§32f)", () => {
@@ -123,13 +203,18 @@ describe("the fallback is a kind, not a crash (§32f)", () => {
     expect(FALLBACK_KIND.view({ artifact: { content: "x" }, masked: false })).toBeNull();
   });
 
-  it("catches an unclaimed role today", () => {
+  it("catches an artifact the table does not know about", () => {
+    // Since §37 every role in the vocabulary is claimed, so the fallback is
+    // reached only by an artifact whose role is outside it — a role-less tile
+    // from a path that has not been through `attachPipeMeta`, or a word from a
+    // future build. Both must still render their content.
     const kind = resolveArtifactKind(
-      { role: "receipt" },
+      { role: "something-later" },
       ARTIFACT_KINDS,
       FALLBACK_KIND
     );
     expect(kind.id).toBe("fallback");
+    expect(resolveArtifactKind({}, ARTIFACT_KINDS, FALLBACK_KIND).id).toBe("fallback");
   });
 });
 
@@ -199,10 +284,59 @@ describe("real engine artifacts resolve to the right kind", () => {
     expect(snap.kind).toBe("inspect-snapshot");
   });
 
-  it("leaves a plain text artifact to the fallback, which still renders it", async () => {
+  it("claims a plain text artifact, and still draws no widget for it", async () => {
+    // §37: `text` is claimed rather than left to the fallback, but with no
+    // view of its own — the raw body, its format bar and its reveal gate are
+    // already the right rendering of an opaque value. What changed is that the
+    // table now says so instead of shrugging.
     const rows = await kindsFor('"plain" | utf8 | out @msg');
-    expect(rows.every((r) => r.kind === "fallback")).toBe(true);
+    expect(rows.every((r) => r.kind === "text")).toBe(true);
+    const text = ARTIFACT_KINDS.find((k) => k.id === "text");
+    expect(text.view({ artifact: { content: "plain" }, masked: false })).toBeNull();
   });
+
+  it("resolves the §37 roles the engine really emits", async () => {
+    // The design's description of emitted metadata has been wrong before, so
+    // these are asserted against a run rather than against the prose. Each one
+    // was checked by printing role/tags off `runRecipe` first.
+    const shares = await kindsFor("random 32 | sss.split threshold=2 shares=3 | out @s");
+    expect(shares.every((r) => r.role === "share" && r.kind === "share")).toBe(true);
+
+    const qr = await kindsFor('"hello" | qr');
+    expect(qr.find((r) => r.role === "qr").kind).toBe("qr");
+
+    const env = await kindsFor(
+      '"secret data" | utf8 | gpg.symencrypt mode=passphrase passphrase="hunter2"'
+    );
+    expect(env.find((r) => r.role === "envelope").kind).toBe("envelope");
+
+    const receipt = await kindsFor('run.receipt label="ceremony" | out @r');
+    expect(receipt.find((r) => r.role === "receipt").kind).toBe("receipt");
+  }, 60_000);
+
+  it("resolves an sshsig block as one, now that the engine says so", async () => {
+    // It did not before: the `out` text branch stamped `text`/`secret` from
+    // sensitivity, which outranked the type projection, so `role: "sshsig"`
+    // sat in the vocabulary with nothing able to claim it (§32c/§37).
+    const rows = await kindsFor(
+      'genkey ed25519 | out @id\n\n"msg" | utf8 | ssh.sign key=@id namespace=file | out @sig'
+    );
+    const sig = rows.find((r) => r.label === "sig");
+    expect(sig.role).toBe("sshsig");
+    expect(sig.kind).toBe("sshsig");
+  }, 60_000);
+
+  it("resolves a JOSE token as one, which makes the shipped kind reachable", async () => {
+    // Same cause, and the visible symptom was worse: `jose-token` matched
+    // `role: "token"`, nothing emitted it, and the JWT reader was unreachable
+    // from a notebook while every test passed.
+    const rows = await kindsFor(
+      'genkey ec/p256 | out @k\n\n"hello" | utf8 | jose.sign key=@k | out @tok'
+    );
+    const tok = rows.find((r) => r.label === "tok");
+    expect(tok.role).toBe("token");
+    expect(tok.kind).toBe("jose-token");
+  }, 60_000);
 
   it("never throws on anything the engine emits", async () => {
     // Ambiguity is a build error by design; this is the guard that no real
