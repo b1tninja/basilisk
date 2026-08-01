@@ -7,6 +7,7 @@ import {
   KeyRound,
   LayoutGrid,
   ArrowDownToLine,
+  History,
   ArrowUpFromLine,
   SlidersHorizontal,
   Cable,
@@ -37,6 +38,13 @@ import {
   type ApprovalRequest,
 } from "../lib/toolkit/approval-gate.js";
 import { ApprovalBanner } from "./widgets/ApprovalBanner";
+import {
+  activityAsText,
+  clearActivity,
+  formatActivityTime,
+  listActivity,
+  onActivityChange,
+} from "../lib/toolkit/activity-log.js";
 import { execFileRead } from "../lib/toolkit/file-ops.js";
 import { execQrScan } from "../lib/toolkit/qr-scan.js";
 import { setCssVar } from "../lib/css-vars.js";
@@ -412,7 +420,7 @@ export function ToolkitShell() {
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const [trayOpen, setTrayOpen] = useState(true);
   const [trayTab, setTrayTab] = useState<
-    "keys" | "slots" | "connections" | "outputs" | "inputs" | "params"
+    "keys" | "slots" | "connections" | "outputs" | "activity" | "inputs" | "params"
   >("keys");
   /** One-shot Load-template undo — set right before a destructive replace, cleared once used or superseded. */
   const [undoSnapshot, setUndoSnapshot] = useState<{
@@ -502,6 +510,13 @@ export function ToolkitShell() {
     () => exposureTrace(nb.chains).steps,
     [nb.chains]
   );
+  /**
+   * The Activity log (§36). Session-scoped and never persisted: it names key
+   * ids and destinations, and localStorage is XSS-readable.
+   */
+  const [activity, setActivity] = useState(() => listActivity());
+  useEffect(() => onActivityChange(() => setActivity(listActivity())), []);
+
   const approvalGrants = useMemo(() => {
     void now;
     void approvalAsk;
@@ -1916,6 +1931,17 @@ export function ToolkitShell() {
                     count: allOutputs.length,
                     Icon: ArrowDownToLine,
                   },
+                  // §36 — Activity sits after Outputs, continuing the same
+                  // read-to-write order: what a run just made, then what was
+                  // done with it. Dispositions are not derivations, so they
+                  // get their own record rather than being folded into the
+                  // recipe or its receipts.
+                  {
+                    id: "activity" as const,
+                    label: "Activity",
+                    count: activity.length,
+                    Icon: History,
+                  },
                   { id: "inputs" as const, label: "Inputs", Icon: ArrowUpFromLine },
                   { id: "params" as const, label: "Params", Icon: SlidersHorizontal },
                 ]
@@ -2242,6 +2268,83 @@ export function ToolkitShell() {
                     onClose={() => nb.cancelQuorum()}
                     onRestartIce={() => void restartLiveIce()}
                   />
+                </ScrollArea>
+              </>
+            ) : null}
+
+            {trayTab === "activity" ? (
+              <>
+                <div className="flex items-start gap-2 border-b border-[var(--border)] p-3">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-bold">Activity</h3>
+                    <p className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
+                      What was done with this run's artifacts. Recipes record
+                      what a value <em>is</em>; this records what you did with
+                      it. Session-only — it never leaves this tab.
+                    </p>
+                  </div>
+                  {activity.length ? (
+                    <div className="flex shrink-0 gap-1">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-[22px] rounded-[5px] px-2 text-[10px]"
+                        onClick={() => void navigator.clipboard.writeText(activityAsText())}
+                      >
+                        Copy log
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-[22px] rounded-[5px] px-2 text-[10px]"
+                        onClick={() => clearActivity()}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                <ScrollArea className="flex-1 px-3">
+                  {!activity.length ? (
+                    <p className="py-4 text-sm text-[var(--muted-foreground)]">
+                      Nothing yet. Copying, downloading or publishing an
+                      artifact records it here.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2 py-3" data-activity-log>
+                      {activity.map((e, i) => (
+                        <li
+                          key={`${e.at}-${i}`}
+                          className="rounded-[7px] border border-[var(--border)] bg-[var(--surface-raised)] px-2.5 py-1.5"
+                          data-action-tier={e.tier}
+                        >
+                          <div className="flex items-baseline gap-2">
+                            <code className="artifact-meta font-mono text-[var(--muted-foreground)]">
+                              {formatActivityTime(e.at)}
+                            </code>
+                            <span className="text-[11px] font-semibold text-[var(--foreground)]">
+                              {e.label}
+                            </span>
+                            <code className="artifact-meta min-w-0 flex-1 truncate font-mono text-[var(--muted-foreground)]">
+                              {e.artifact}
+                            </code>
+                          </div>
+                          {/* Digest, never the value — the same function
+                              receipts use, so the two records cross-read. */}
+                          {e.digest ? (
+                            <code className="artifact-meta block font-mono text-[var(--muted-foreground)]">
+                              sha256 {e.digest}…
+                            </code>
+                          ) : null}
+                          {e.detail ? (
+                            <code className="artifact-meta block break-all font-mono text-[var(--brand)]">
+                              → {e.detail}
+                            </code>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </ScrollArea>
               </>
             ) : null}

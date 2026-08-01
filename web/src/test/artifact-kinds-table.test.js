@@ -109,6 +109,13 @@ describe("the fallback is a kind, not a crash (§32f)", () => {
     expect(ARTIFACT_ROLES).not.toContain(FALLBACK_KIND.match.role);
   });
 
+  it("still offers Copy — every artifact can be copied", () => {
+    // The fallback claims most artifacts. Without this, replacing the
+    // bespoke Copy button with the action table silently removed Copy from
+    // the majority of tiles.
+    expect(FALLBACK_KIND.actions).toContain("copy");
+  });
+
   it("renders no view of its own, leaving the raw body to show", () => {
     // Deliberately not an error tile and not a warning: the value is real and
     // correct, and only our description of it is missing. Converting an engine

@@ -64,6 +64,14 @@ export const FALLBACK_KIND: ToolkitArtifactKind = {
   label: "",
   view: () => null,
   empty: "",
+  /**
+   * Copy is not a kind's privilege — every artifact can be copied, and the
+   * fallback claims most of them. Omitting this took the Copy button off the
+   * majority of tiles the moment the bespoke one was replaced by the table:
+   * a kind that declares no actions renders no buttons, which is correct for
+   * a kind's *own* actions and wrong for the universal one.
+   */
+  actions: ["copy"],
 };
 
 const keyCardFor = (publicOnly: boolean) =>

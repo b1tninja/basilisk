@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createKernel } from "../lib/toolkit/kernel.js";
-import { beginApprovalRun } from "../lib/toolkit/approval-gate.js";
+import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
+import { clearActivity } from "../lib/toolkit/activity-log.js";
 import {
   PRESETS,
   compileRecipe,
@@ -1054,6 +1055,11 @@ export function useNotebook() {
   const clearSensitive = useCallback(() => {
     kernelRef.current.clearSensitive?.();
     for (const e of sessionList()) sessionEvict(e.fingerprint);
+    // §36: the Activity log holds no values, but it names key ids and
+    // destinations — which is exactly the shape of thing this button exists
+    // to remove. It goes with the outputs, not after them.
+    clearActivity();
+    clearApprovalGrants();
     setInputText("");
     setCiphertext("");
     setShareRows([""]);

@@ -11,6 +11,7 @@ import { cn } from "@/lib/cn";
 import { KindGlyph } from "./kind-glyphs";
 import { ArtifactAction } from "./ArtifactAction";
 import { actionsFor } from "../../lib/toolkit/artifact-actions.js";
+import { recordActivity } from "../../lib/toolkit/activity-log.js";
 import {
   ARTIFACT_KINDS,
   FALLBACK_KIND,
@@ -358,10 +359,28 @@ export function OutputList({ outputs, className }: Props) {
                 tier={action.tier}
                 reason={reason}
                 onClick={() => {
-                  void Promise.resolve(action.run(ctx)).catch(() => {
-                    /* the action's own error surface is the next increment;
-                       a rejected copy must not take the tile down. */
-                  });
+                  void Promise.resolve(action.run(ctx))
+                    .then((result) =>
+                      // §36: logged here, in the one place every action
+                      // passes through, so a newly declared action cannot
+                      // forget. Only on success — an action that threw moved
+                      // nothing, and recording it as though it had would make
+                      // the log lie in the direction that matters least
+                      // forgivably.
+                      recordActivity({
+                        action: action.id,
+                        label: action.label,
+                        artifact: a.label,
+                        tier: action.tier,
+                        content: a.content,
+                        detail: result?.detail,
+                        receipt: result?.receipt,
+                      })
+                    )
+                    .catch(() => {
+                      /* the action's own error surface is the next increment;
+                         a rejected copy must not take the tile down. */
+                    });
                 }}
               />
             );
