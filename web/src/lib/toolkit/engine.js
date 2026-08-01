@@ -4102,6 +4102,31 @@ function safeOutputStem(raw) {
 }
 
 /**
+ * Roles that outrank an emit site's `text`/`secret` (§32c, §37).
+ *
+ * Those two words are not a claim about identity — they are the sensitivity
+ * ternary the text and bytes branches have always written (`sensitive ?
+ * "secret" : "text"`), and `text` is defined in ARTIFACT_ROLES as "anything
+ * with no better description". When the type system *has* a better
+ * description, the ternary must not outrank it. Without this, an `out` of an
+ * sshsig block wore role `text` while carrying tags `["ssh","signature"]`, so
+ * `role: "sshsig"` sat in the vocabulary with nothing able to claim it — and a
+ * JWS/JWE landed as `text`/`secret`, which left the shipped `jose-token` kind
+ * (§32e) matching nothing at all and the JWT reader unreachable from a
+ * notebook.
+ *
+ * Deliberately a closed set rather than "any projected role wins". `pem`/`der`
+ * project to `key`, and the key card reads JWK — promoting a PEM export today
+ * would swap a readable armor body for an emptier card. That widening belongs
+ * with a KeyCard that can read PEM (§35e), not here.
+ *
+ * Role rides inside `digestArtifact`, so this moves the digests of sshsig and
+ * JOSE artifacts. It is the same change RECEIPT_VERSION 2 was bumped for
+ * (§38c) and lands before v2 has shipped, so it needs no second boundary.
+ */
+const TYPE_OWNED_ROLES = new Set(["sshsig", "token"]);
+
+/**
  * Stamp refined pipeline type (and raw bytes when available) onto an artifact.
  *
  * Keeping `artifact.bytes` is a memory-safety requirement for file sinks:
@@ -4127,6 +4152,12 @@ function attachPipeMeta(artifact, value) {
     // "text"/"secret" into role `key`, which is the whole of §35.
     const projected = artifactMetaFromType(value.meta.type);
     if (!artifact.role && projected.role) artifact.role = projected.role;
+    else if (
+      (artifact.role === "text" || artifact.role === "secret") &&
+      TYPE_OWNED_ROLES.has(projected.role)
+    ) {
+      artifact.role = projected.role;
+    }
     if (projected.tags?.length) {
       const prev = Array.isArray(artifact.tags) ? artifact.tags : [];
       const seen = new Set(prev.map(String));

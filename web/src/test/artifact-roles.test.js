@@ -25,6 +25,8 @@ import {
   artifactMetaFromType,
   typeOf,
 } from "../lib/toolkit/types.js";
+import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { runRecipe } from "../lib/toolkit/engine.js";
 
 const ENGINE = readFileSync(
   fileURLToPath(new URL("../lib/toolkit/engine.js", import.meta.url)),
@@ -103,6 +105,54 @@ describe("the floor does not overwrite a declaration (§32c)", () => {
       expect(ENGINE, role).toMatch(new RegExp(`role(?::|\\s*=)\\s*"${role}"`));
     }
   });
+});
+
+describe("`text`/`secret` is a sensitivity ternary, not an identity (§32c)", () => {
+  /** Run a recipe and hand back label → role. */
+  const rolesFor = async (src) => {
+    const { ast, validation } = compileRecipe(src);
+    expect(validation.ok, (validation.errors || []).map((e) => e.message).join(" · ")).toBe(
+      true
+    );
+    const arts = await runRecipe(ast, {});
+    return Object.fromEntries(arts.map((a) => [a.label, a.role]));
+  };
+
+  it("keeps the deference set closed, so widening it is a decision", () => {
+    // `pem`/`der` project to `key`, and the key card reads JWK — promoting
+    // them today would swap a readable armor body for an emptier card. The
+    // set is the place that choice is written down.
+    expect(ENGINE).toMatch(/const TYPE_OWNED_ROLES = new Set\(\["sshsig", "token"\]\)/);
+  });
+
+  it("lets an sshsig block be an sshsig, not text", async () => {
+    // It was `text` while carrying tags ["ssh","signature"], which left
+    // `role: "sshsig"` in the vocabulary with nothing able to claim it.
+    const roles = await rolesFor(
+      'genkey ed25519 | out @id\n\n"msg" | utf8 | ssh.sign key=@id namespace=file | out @sig'
+    );
+    expect(roles.sig).toBe("sshsig");
+  }, 60_000);
+
+  it("lets a JOSE token be a token, even though it is sensitive", async () => {
+    // A JWS came out `secret` because the payload was, which is a fact about
+    // *handling* and not about what the artifact is — `sensitive` already
+    // carries that, and carries it without costing the artifact its identity.
+    const roles = await rolesFor(
+      'genkey ec/p256 | out @k\n\n"hello" | utf8 | jose.sign key=@k | out @tok'
+    );
+    expect(roles.tok).toBe("token");
+  }, 60_000);
+
+  it("leaves the ordinary text and secret cases exactly where they were", async () => {
+    expect((await rolesFor('"plain" | utf8 | out @msg')).msg).toBe("text");
+    expect((await rolesFor("random 32 | out @s")).s).toBe("secret");
+    // The known gap, asserted so it is a decision rather than a surprise: a
+    // PEM export still lands as `text`, waiting on a KeyCard that reads PEM.
+    expect((await rolesFor("genkey ec/p256 | export spki | pem | out @pub")).pub).toBe(
+      "text"
+    );
+  }, 60_000);
 });
 
 describe("the cellOutputs projection does not silently drop fields (§32/1.4)", () => {
