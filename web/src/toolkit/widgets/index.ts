@@ -50,6 +50,7 @@ export {
   type ConnectionsSession,
 } from "./ConnectionsPanel";
 export { TypeCard } from "./TypeCard";
+export { ApprovalBanner } from "./ApprovalBanner";
 export { ShareCards, type ShareCardArtifact, type ShareCardsProps } from "./ShareCards";
 export { ShareCheck, type ShareCheckProps } from "./ShareCheck";
 export { IntegrityPanel, type IntegrityPanelProps } from "./IntegrityPanel";

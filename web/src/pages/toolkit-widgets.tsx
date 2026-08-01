@@ -38,6 +38,7 @@ import {
   IntegrityPanel,
   DkgPanel,
   CeremonySheet,
+  ApprovalBanner,
 } from "../toolkit/widgets/index";
 import { execVssCommitments, execVssSplit } from "../lib/toolkit/vss-ops.js";
 import { qrSvg } from "../lib/qr.js";
@@ -135,6 +136,7 @@ function CatalogApp() {
               "readinessbar",
               "outputlist",
               "artifacttiles",
+              "gatebanners",
               "networkartifact",
               "jwtartifact",
               "typecard",
@@ -1054,6 +1056,91 @@ function CatalogApp() {
           </p>
           <div className="max-w-md">
             <OutputList outputs={demoArtifactTiles()} />
+          </div>
+        </Section>
+
+        <Section id="gatebanners" title="Gate banners — the approval moment (§27b/§27c)">
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            The banner that stands between <code>agent</code> and a rubber stamp. It had
+            no catalog section until now, which mattered more than it sounds: the shell
+            only renders it while a real <code>agent.sign</code> is suspended mid-run, so
+            its states were unreachable without driving a key through the vault, and
+            "renders identically after the refactor" was a claim nothing could check.
+            Every line is data the engine held at the moment of the request.
+          </p>
+          <div className="max-w-lg space-y-4" data-catalog-approval>
+            <div>
+              <StateLabel>
+                sshsig — one request, no loop, so no batch offer (§27d)
+              </StateLabel>
+              <ApprovalBanner
+                request={{
+                  use: "sign",
+                  stepName: "agent.sign",
+                  stepText: "agent.sign fpr=SHA256:Ur1hPKBrJC3z namespace=git",
+                  cellIndex: 2,
+                  keyId: "SHA256:Ur1hPKBrJC3zQ8mB7vXsK2dN4pT6wY9aE1cF3gH5iJ0",
+                  keyLabel: "justin@basilisk.dev",
+                  keyKind: "ssh",
+                  keyProtection: "passkey",
+                  payloadBytes: 412,
+                  payloadSha256: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+                  payloadPreview: "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n",
+                  namespace: "git",
+                  requestIndex: 1,
+                  runTotal: null,
+                }}
+                onDecide={() => {}}
+              />
+            </div>
+            <div>
+              <StateLabel>
+                Inside a foreach — the batch appears only now, after one real payload and
+                the loop's true count have been shown
+              </StateLabel>
+              <ApprovalBanner
+                request={{
+                  use: "sign",
+                  stepName: "agent.sign",
+                  stepText: "agent.sign fpr=3F2A…C81 mode=detached",
+                  cellIndex: 4,
+                  keyId: "3f2ab19c4d7e0518a2b6c93d4e7f0a1b2c3d4e5f",
+                  keyLabel: "Dana Reyes <dana@example.org>",
+                  keyKind: "pgp",
+                  keyProtection: "passphrase",
+                  payloadBytes: 1024,
+                  payloadSha256: "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c",
+                  payloadPreview: null,
+                  mode: "detached",
+                  requestIndex: 1,
+                  runTotal: 12,
+                }}
+                onDecide={() => {}}
+              />
+            </div>
+            <div>
+              <StateLabel>
+                agent.decrypt — no preview, because previewing ciphertext is noise
+              </StateLabel>
+              <ApprovalBanner
+                request={{
+                  use: "decrypt",
+                  stepName: "agent.decrypt",
+                  stepText: "agent.decrypt fpr=3F2A…C81",
+                  cellIndex: 0,
+                  keyId: "3f2ab19c4d7e0518a2b6c93d4e7f0a1b2c3d4e5f",
+                  keyLabel: "Dana Reyes <dana@example.org>",
+                  keyKind: "pgp",
+                  keyProtection: "device",
+                  payloadBytes: 892,
+                  payloadSha256: "c0ffee1234567890abcdef0987654321c0ffee12",
+                  payloadPreview: null,
+                  requestIndex: 3,
+                  runTotal: null,
+                }}
+                onDecide={() => {}}
+              />
+            </div>
           </div>
         </Section>
 
