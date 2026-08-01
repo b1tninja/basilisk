@@ -132,8 +132,22 @@ function jwksFromSshMaterial(m) {
   throw new Error(`SSH: unsupported key type "${m.type}"`);
 }
 
-/** WebCrypto import parameters per SSH type, matching what genkey produces. */
-function importParamsFor(type) {
+/**
+ * WebCrypto import parameters per SSH type, matching what genkey produces.
+ *
+ * The `hash` only reaches the RSA case, and it is not cosmetic: WebCrypto binds
+ * the digest into an RSA key handle at import, so whatever is chosen here is
+ * what a later `sign`/`verify` on this key is stuck with. The SSH wire type
+ * `ssh-rsa` names no digest — the signature algorithms built on it do
+ * (rsa-sha2-256, rsa-sha2-512) — so there is a choice to make, and `ssh.decode
+ * hash=` is where the user makes it. sshsig does not depend on it either way:
+ * `sshsigSign` re-imports the raw material under SHA-512 itself, deliberately
+ * matching `ssh-keygen -Y sign`.
+ *
+ * @param {string} type
+ * @param {string} [hash]  recipe token — `sha512` (default) or `sha256`
+ */
+function importParamsFor(type, hash = "sha512") {
   if (type === "ssh-ed25519") return { alg: "ed25519", params: "Ed25519" };
   if (type in ECDSA_CURVES) {
     const curve = NIST_CURVE_WEB[ECDSA_CURVES[/** @type {keyof typeof ECDSA_CURVES} */ (type)]];
@@ -142,8 +156,8 @@ function importParamsFor(type) {
       params: { name: "ECDSA", namedCurve: curve },
     };
   }
-  // rsa-sha2-512 is what sshsig signs, so import for that use.
-  return { alg: "rsa", params: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" } };
+  const digest = /256/.test(String(hash)) ? "SHA-256" : "SHA-512";
+  return { alg: "rsa", params: { name: "RSASSA-PKCS1-v1_5", hash: digest } };
 }
 
 /** Typed wire material for one pipeline value (keypair/key handles, or SSH text). */
@@ -220,7 +234,7 @@ export async function execSshEncode(value, params = {}) {
 }
 
 /** `ssh.decode` — public line or openssh-key-v1 → live key/keypair value. */
-export async function execSshDecode(value) {
+export async function execSshDecode(value, params_ = {}) {
   if (value?.type !== "text") {
     throw new Error("ssh.decode expects text (a public line or an OPENSSH PRIVATE KEY block)");
   }
@@ -228,7 +242,7 @@ export async function execSshDecode(value) {
   const isPrivate = text.includes("BEGIN OPENSSH PRIVATE KEY");
   const m = isPrivate ? parseOpensshPrivateKey(text) : parsePublicLine(text);
   const { pub, priv } = jwksFromSshMaterial(m);
-  const { alg, params } = importParamsFor(m.type);
+  const { alg, params } = importParamsFor(m.type, String(params_.hash || "sha512"));
   // Extractable on purpose: these keys exist to be re-encoded, exported and
   // moved — the vault, not extractability, is the at-rest protection story.
   const publicKey = await crypto.subtle.importKey("jwk", pub, params, true, ["verify"]);

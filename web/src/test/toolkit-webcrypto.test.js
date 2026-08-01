@@ -6,6 +6,11 @@ import { bytesToBase64Url, bytesToHex, textToBytes } from "../lib/toolkit/encode
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { compileRecipe, PRESETS, registryIssues } from "../lib/toolkit/recipe.js";
 import { getStep } from "../lib/toolkit/registry.js";
+import {
+  boundHashMessage,
+  ED25519_HASH_MESSAGE,
+  jwkAlgHashMessage,
+} from "../lib/toolkit/webcrypto-ops.js";
 
 describe("webcrypto toolkit registry", () => {
   it("has no registry issues and every step has a toolbox", () => {
@@ -256,6 +261,153 @@ describe("sign / verify", () => {
       },
     });
     expect(verified[0].content).toBe("true");
+  }, 60_000);
+});
+
+// WebCrypto binds the digest into the key handle for RSA and HMAC — it lives in
+// `key.algorithm.hash`, and the sign/verify params carry no field that could
+// override it. SubtleCrypto does not complain about a hash it was handed and
+// cannot use; it discards it. So a `hash=` that disagrees with the handle used
+// to produce a signature under a digest the author never chose, silently, which
+// is the worst direction for this to fail in. It is now refused by name.
+describe("sign / verify: a hash= the key cannot honour", () => {
+  /** @param {Promise<unknown>} p */
+  async function messageOf(p) {
+    try {
+      await p;
+      return null;
+    } catch (err) {
+      return String(err?.message || err);
+    }
+  }
+
+  it("refuses a hash= that contradicts an RSA-PSS key, naming both digests", async () => {
+    const kp = await crypto.subtle.generateKey(
+      {
+        name: "RSA-PSS",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA-256",
+      },
+      true,
+      ["sign", "verify"]
+    );
+    const inputs = {
+      text: { value: "rsa-pss" },
+      key: { privateKey: kp.privateKey, publicKey: kp.publicKey },
+    };
+    const { ast } = compileRecipe("input | utf8 | sign hash=sha-512 | base64url");
+    const msg = await messageOf(runRecipe(ast, { inputs }));
+    expect(msg).toBe(boundHashMessage("RSA-PSS", "SHA-256", "SHA-512"));
+    // Both the digest in force and the one asked for are in the sentence, and
+    // the remedy is the parameter to move, not "unsupported".
+    expect(msg).toContain("SHA-256");
+    expect(msg).toContain("sha-512");
+
+    // The same digest is not a conflict — it proceeds, silently.
+    const { ast: same } = compileRecipe("input | utf8 | sign hash=sha-256 | base64url");
+    const signed = await runRecipe(same, { inputs });
+    expect(signed[0].content).toMatch(/^[A-Za-z0-9_-]+$/);
+  }, 60_000);
+
+  it("refuses a hash= that contradicts an HMAC key, on verify as well as sign", async () => {
+    const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, [
+      "sign",
+      "verify",
+    ]);
+    const inputs = { text: { value: "hmac" }, key: { secretKey: key } };
+    const { ast: signAst } = compileRecipe("input | utf8 | sign hash=sha-512 | base64url");
+    expect(await messageOf(runRecipe(signAst, { inputs }))).toBe(
+      boundHashMessage("HMAC", "SHA-256", "SHA-512")
+    );
+
+    const { ast: plain } = compileRecipe("input | utf8 | sign | base64url");
+    const sig = (await runRecipe(plain, { inputs }))[0].content;
+    // `-q` softens a bad signature, not a recipe that cannot mean what it says:
+    // before this, the mismatched hash was dropped and verify answered `true`.
+    const { ast: verAst } = compileRecipe(
+      `input | utf8 | verify hash=sha-512 signature=${sig} -q`
+    );
+    expect(await messageOf(runRecipe(verAst, { inputs }))).toBe(
+      boundHashMessage("HMAC", "SHA-256", "SHA-512")
+    );
+  }, 60_000);
+
+  it("refuses hash= on Ed25519, which has no digest to pick", async () => {
+    const kp = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const inputs = {
+      text: { value: "ed" },
+      key: { privateKey: kp.privateKey, publicKey: kp.publicKey },
+    };
+    const { ast } = compileRecipe("input | utf8 | sign hash=sha-256 | base64url");
+    expect(await messageOf(runRecipe(ast, { inputs }))).toBe(ED25519_HASH_MESSAGE);
+  }, 30_000);
+
+  it("still lets ECDSA choose its digest — there the hash is a call-time param", async () => {
+    const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+      "sign",
+      "verify",
+    ]);
+    const inputs = {
+      text: { value: "ecdsa" },
+      key: { privateKey: kp.privateKey, publicKey: kp.publicKey },
+    };
+    const { ast } = compileRecipe("input | utf8 | sign hash=sha-512 | base64url");
+    const sig = (await runRecipe(ast, { inputs }))[0].content;
+    const { ast: same } = compileRecipe(
+      `input | utf8 | verify hash=sha-512 signature=${sig} -q`
+    );
+    expect((await runRecipe(same, { inputs }))[0].content).toBe("true");
+    // Proof the override reached the math rather than being cosmetic.
+    const { ast: other } = compileRecipe(
+      `input | utf8 | verify hash=sha-256 signature=${sig} -q`
+    );
+    expect((await runRecipe(other, { inputs }))[0].content).toBe("false");
+  }, 30_000);
+});
+
+describe("import hash=: bound at import, so honoured there", () => {
+  const rsaKey = () =>
+    crypto.subtle.generateKey(
+      {
+        name: "RSA-PSS",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA-256",
+      },
+      true,
+      ["sign", "verify"]
+    );
+
+  it("refuses a hash= that contradicts the JWK's own alg member", async () => {
+    const kp = await rsaKey();
+    const jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    expect(jwk.alg).toBe("PS256");
+    const { ast } = compileRecipe("input | import jwk alg=rsa/2048 hash=sha-512 | out @k");
+    let msg = null;
+    try {
+      await runRecipe(ast, { inputs: { text: { value: JSON.stringify(jwk) } } });
+    } catch (err) {
+      msg = String(err?.message || err);
+    }
+    expect(msg).toBe(jwkAlgHashMessage("PS256", "SHA-256", "SHA-512"));
+  }, 60_000);
+
+  it("honours hash= on a JWK that names no digest of its own", async () => {
+    const kp = await rsaKey();
+    const jwk = { ...(await crypto.subtle.exportKey("jwk", kp.privateKey)) };
+    delete jwk.alg;
+    const { ast } = compileRecipe("input | import jwk alg=rsa/2048 hash=sha-512 | out @k");
+    const out = await runRecipe(ast, { inputs: { text: { value: JSON.stringify(jwk) } } });
+    expect(JSON.parse(out[0].content).alg).toBe("PS512");
+  }, 60_000);
+
+  it("keeps the JWK's alg when no hash= is written (auto)", async () => {
+    const kp = await rsaKey();
+    const jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    const { ast } = compileRecipe("input | import jwk alg=rsa/2048 | out @k");
+    const out = await runRecipe(ast, { inputs: { text: { value: JSON.stringify(jwk) } } });
+    expect(JSON.parse(out[0].content).alg).toBe("PS256");
   }, 60_000);
 });
 

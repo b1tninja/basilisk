@@ -1637,6 +1637,31 @@ in @msg | ssh.verify key=@pub signature=@sig | out @ok`,
       },
     },
     {
+      // `ssh-rsa` names no digest, so the handle ssh.decode builds has to pick
+      // one — and WebCrypto binds it for good at import. hash= is where the
+      // user picks, and the generic sign/verify then honour it rather than
+      // signing under an unasked-for digest.
+      id: "ssh.decode.hash=sha256.rsa",
+      recipe: `genkey rsa/2048 padding=pkcs1 | out @gen
+
+in @gen | ssh.encode format=private | out @pem
+
+in @pem | ssh.decode hash=sha256 | out @id
+
+"rsa handle" | utf8 | out @msg | sign key=@id hash=sha-256 | base64url | out @sig
+
+in @msg | verify key=@id signature=@sig hash=sha-256 | out @ok`,
+      mode: "run",
+      timeoutMs: 60_000,
+      assert(arts) {
+        const tok = (a, n) => String(a.label || "").split(/[^A-Za-z0-9]+/).includes(n);
+        const ok = arts.find((a) => tok(a, "ok"));
+        if (String(ok?.content) !== "true") {
+          throw new Error("sha-256 sign/verify over an ssh.decode hash=sha256 handle failed");
+        }
+      },
+    },
+    {
       id: "ssh.sign.verify.namespace",
       recipe: `genkey ed25519 | out @id
 

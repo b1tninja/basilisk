@@ -2783,7 +2783,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         case "ssh.encode":
           return ssh.execSshEncode(value, p);
         case "ssh.decode":
-          return ssh.execSshDecode(value);
+          return ssh.execSshDecode(value, p);
         case "ssh.fingerprint":
           return ssh.execSshFingerprint(value);
         case "ssh.sign":
@@ -3767,6 +3767,7 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
       jwkText: String(value.data),
       alg: hint,
       padding: usePkcs1Sign ? "pkcs1" : undefined,
+      hash,
     });
     const sensitive = !!(bound.privateKey || bound.secretKey);
     return {

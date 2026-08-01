@@ -300,7 +300,24 @@ export async function resolveSlotKey(bindings, ref, need, algHint) {
 }
 
 /**
- * @param {{ jwk?: JsonWebKey, jwkText?: string, alg?: string }} raw
+ * Verbatim — the JWK's own `alg` member fixes the digest, so a `hash=` that
+ * disagrees with it is refused rather than dropped on the floor.
+ * @param {string} jwkAlg
+ * @param {string} bound
+ * @param {string} want
+ */
+export function jwkAlgHashMessage(jwkAlg, bound, want) {
+  return `This JWK names alg "${jwkAlg}", which fixes its digest at ${bound} — hash=${hashToken(want)} cannot take effect. Drop hash=, or edit the JWK's alg member before importing.`;
+}
+
+/** The digest a JWK's `alg` member names, or null when it names none. */
+function jwkAlgHash(jwkAlg) {
+  const m = /(256|384|512)/.exec(String(jwkAlg || ""));
+  return m ? `SHA-${m[1]}` : null;
+}
+
+/**
+ * @param {{ jwk?: JsonWebKey, jwkText?: string, alg?: string, hash?: string }} raw
  * @returns {Promise<BoundWebCryptoKey>}
  */
 export async function importBoundJwk(raw) {
@@ -439,8 +456,20 @@ export async function importBoundJwk(raw) {
       (raw.alg === "rsassa-pkcs1" ||
         String(raw.padding || "").toLowerCase() === "pkcs1" ||
         /^RS(256|384|512)$/i.test(jwkAlg));
-    const hash =
-      /512/i.test(jwkAlg) ? "SHA-512" : /384/i.test(jwkAlg) ? "SHA-384" : "SHA-256";
+    // The digest is bound here, at import — so an explicit `hash=` is honoured
+    // rather than discarded. The JWK's own `alg` wins when it names one (it is
+    // part of the key material, and SubtleCrypto rejects the contradiction
+    // anyway); the disagreement is refused by name instead of silently taking
+    // the JWK's side.
+    const fromAlg = jwkAlgHash(jwkAlg);
+    const wanted =
+      raw.hash && String(raw.hash).toLowerCase() !== "auto"
+        ? normalizeHashName(raw.hash)
+        : null;
+    if (wanted && fromAlg && wanted !== fromAlg) {
+      throw new Error(jwkAlgHashMessage(jwkAlg, fromAlg, wanted));
+    }
+    const hash = fromAlg || wanted || "SHA-256";
     const algo = {
       name: isOaep
         ? "RSA-OAEP"
@@ -560,6 +589,51 @@ export async function subtleVerify(key, signature, data, opts = {}) {
   return crypto.subtle.verify(algo, key, signature, data);
 }
 
+/** Recipe token for a SubtleCrypto digest name, so a remedy can be pasted. */
+function hashToken(name) {
+  return String(name || "").toLowerCase();
+}
+
+/**
+ * Verbatim — asserted by tests; the wording is the feature.
+ *
+ * WebCrypto binds the digest into the key handle for RSA and HMAC: it lives in
+ * `key.algorithm.hash` and the sign/verify params have no field to override it.
+ * Passing a different one is not an error to SubtleCrypto — it is discarded, and
+ * the signature comes out under the bound digest with nothing said. Refusing is
+ * the only honest answer; re-importing the key here would change *which key
+ * object* signed, and cannot be done at all for a non-extractable handle.
+ *
+ * @param {string} algName  the key's WebCrypto algorithm
+ * @param {string} bound    the digest the key already binds
+ * @param {string} want     the digest the recipe asked for
+ */
+export function boundHashMessage(algName, bound, want) {
+  return `${algName} takes its digest from the key, and this key binds ${bound} — hash=${hashToken(want)} cannot take effect. Generate or import the key with hash=${hashToken(want)}, or drop hash= to sign under ${bound}.`;
+}
+
+/** Verbatim — Ed25519 has no digest to choose. */
+export const ED25519_HASH_MESSAGE =
+  "Ed25519 has no selectable digest — it hashes with SHA-512 inside the signature, by definition. Drop hash= to sign with this key.";
+
+/**
+ * Refuse a `hash=` the key handle cannot honour (rather than signing under the
+ * bound one and saying nothing). Equal digests are not a conflict.
+ * @param {CryptoKey} key
+ * @param {string|undefined} requested
+ */
+function assertKeyHashHonoured(key, requested) {
+  if (!requested) return;
+  const name = key.algorithm.name;
+  if (name === "Ed25519") throw new Error(ED25519_HASH_MESSAGE);
+  const bound = /** @type {{ hash?: string | { name: string } }} */ (key.algorithm).hash;
+  const boundName = typeof bound === "string" ? bound : bound?.name;
+  if (!boundName) return;
+  const want = normalizeHashName(requested);
+  if (want === boundName) return;
+  throw new Error(boundHashMessage(name, boundName, want));
+}
+
 /**
  * @param {CryptoKey} key
  * @param {{ saltLength?: number, hash?: string }} [opts]
@@ -567,12 +641,14 @@ export async function subtleVerify(key, signature, data, opts = {}) {
 function signAlgorithmForKey(key, opts = {}) {
   const name = key.algorithm.name;
   if (name === "ECDSA") {
+    // The one family where the digest really is a call-time parameter.
     const curve = /** @type {EcKeyAlgorithm} */ (key.algorithm).namedCurve;
     const defaultHash =
       curve === "P-384" ? "SHA-384" : curve === "P-521" ? "SHA-512" : "SHA-256";
     const hash = opts.hash ? normalizeHashName(opts.hash) : defaultHash;
     return { name: "ECDSA", hash };
   }
+  assertKeyHashHonoured(key, opts.hash);
   if (name === "RSA-PSS") {
     const saltLength =
       Number(opts.saltLength) > 0 ? Number(opts.saltLength) : 32;

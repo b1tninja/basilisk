@@ -589,9 +589,9 @@ export const STEPS = [
       {
         name: "hash",
         type: "enum",
-        default: "sha-256",
-        enum: RSA_HASH_ENUM,
-        doc: "Hash for RSA import (ignored for other algs)",
+        default: "auto",
+        enum: ["auto", ...RSA_HASH_ENUM],
+        doc: "Hash the imported RSA key binds (`auto` = the JWK's own `alg`, else sha-256; ignored for other algs)",
       },
     ],
     effectiveIo(params) {
@@ -653,7 +653,7 @@ export const STEPS = [
         type: "enum",
         default: "auto",
         enum: ["auto", ...RSA_HASH_ENUM],
-        doc: "ECDSA hash override (`auto` = curve default: P-256→SHA-256, P-384→SHA-384, P-521→SHA-512)",
+        doc: "ECDSA hash override (`auto` = curve default: P-256→SHA-256, P-384→SHA-384, P-521→SHA-512). RSA and HMAC keys bind their digest at generate/import; naming a different one here is refused, not applied",
       },
     ],
   },
@@ -700,7 +700,7 @@ export const STEPS = [
         type: "enum",
         default: "auto",
         enum: ["auto", ...RSA_HASH_ENUM],
-        doc: "ECDSA hash override (`auto` = curve default; must match sign)",
+        doc: "ECDSA hash override (`auto` = curve default; must match sign). RSA and HMAC keys bind their digest at import; naming a different one here is refused, not applied",
       },
     ],
   },
@@ -1773,8 +1773,8 @@ export const STEPS = [
       {
         name: "hash",
         type: "string",
-        default: "sha-256",
-        doc: "Hash for RSA materializing casts",
+        default: "auto",
+        doc: "Hash an RSA materializing cast binds (`auto` = the JWK's own `alg`, else sha-256)",
       },
     ],
     effectiveIo(params) {
@@ -1970,7 +1970,7 @@ export const STEPS = [
     conjugate: "ssh.decode",
     pairCaption: "Encode / decode",
     glyph: "ssh-key",
-    doc: "Encode a keypair/key as OpenSSH — `format=public` (default) emits the one-line public form (`ssh-ed25519 AAAA… comment`) for authorized_keys / GitHub; `format=private` emits an **unencrypted** openssh-key-v1 block and warns. ed25519, ec/p256|384|521, rsa. Example: `genkey ed25519 | ssh.encode comment=\"you@host\" | out @pub`.",
+    doc: "Encode a keypair/key as OpenSSH — `format=public` (default) emits the one-line public form (`ssh-ed25519 AAAA… comment`) for authorized_keys / GitHub; `format=private` emits an **unencrypted** openssh-key-v1 block and warns. ed25519, ec/p256|384|521, rsa. The leading key-type name is fixed by the key's algorithm and curve, not chosen here: a P-256 key is always `ecdsa-sha2-nistp256` (RFC 5656), where the `sha2` is part of that name rather than a digest you can set. The bytes match `ssh-keygen`. Example: `genkey ed25519 | ssh.encode comment=\"you@host\" | out @pub`.",
     input: "keypair",
     output: "text",
     params: [
@@ -2008,7 +2008,15 @@ export const STEPS = [
       { when: { base: "text", kind: "ssh-private" }, output: { base: "keypair" } },
       { when: { base: "text" }, output: { base: "keypair" } },
     ],
-    params: [],
+    params: [
+      {
+        name: "hash",
+        type: "enum",
+        default: "sha512",
+        enum: ["sha512", "sha256"],
+        doc: "Digest an RSA key binds on import — `ssh-rsa` names none, so `sign`/`verify` on the result are stuck with this one (ignored for ed25519/ECDSA)",
+      },
+    ],
   },
   {
     name: "ssh.fingerprint",
