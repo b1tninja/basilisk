@@ -10,6 +10,7 @@ import {
   addPrivateKeyToMyKeys,
   vaultAvailable,
 } from "../../lib/toolkit/keyring-service.js";
+import { downloadArtifactFile } from "../../lib/toolkit/download-service.js";
 import { recordActivity } from "../../lib/toolkit/activity-log.js";
 import {
   ARTIFACT_KINDS,
@@ -42,6 +43,18 @@ export type OutputArtifact = {
   role?: string;
   tags?: string[];
   traits?: Record<string, unknown>;
+  /**
+   * The name the engine already gave this artifact — `public.asc`,
+   * `kp-private.jwk.json`, `share-2.txt`. Download's filename comes from here
+   * rather than from a second namer in the widget layer (see
+   * `downloadNameFor`); the two could only ever disagree about the same
+   * object. It was missing from this type, which is why it also had to be
+   * added to both of the shell's mappings — a field this projection does not
+   * list is dropped, silently, on the way in.
+   */
+  filename?: string;
+  /** The engine's content type, used to build the download blob. */
+  mime?: string;
   sizeBytes: number;
   sensitive?: boolean;
   onCopy: () => void;
@@ -291,6 +304,13 @@ export function ArtifactTile({
     // makes its *gating* uniform.
     copyArtifact: () => a.onCopy(),
     clipboard: { write: (t: string) => navigator.clipboard.writeText(t) },
+    // Injected, never imported by the table: the action decides the *name*,
+    // the service decides how bytes reach the disk. Unconditional, like
+    // `clipboard` and unlike `vault` — a rendered tile implies a document, so
+    // there is no environment fact for `available()` to report, and the
+    // service says so itself in the one case there is.
+    download: (file: { name: string; content?: string; mime?: string }) =>
+      downloadArtifactFile(file),
     // Injected only when the caller supplied a publish route, so `available()`
     // reports "no connection to this site's directory" rather than the tile
     // deciding by omission whether the button exists at all.

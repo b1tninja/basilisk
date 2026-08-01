@@ -52,6 +52,17 @@ export type ArtifactKind<A = unknown, S = unknown> = {
   /** Action ids, resolved against the action table (§33c). */
   actions?: string[];
   expandable?: boolean;
+  /**
+   * How Download names this kind's bodies.
+   *
+   * A *correction*, never a scheme. The stem always comes from the engine's
+   * own `artifact.filename` (`downloadNameFor`); this exists only for kinds
+   * whose bodies are one format the pipeline could not name — an sshsig block
+   * is `text` on the wire, so `out` calls it `.txt`. Declared only where it is
+   * true of the *whole* kind: `receipt` omits it because a run receipt is JSON
+   * until `gpg.sign` makes it a clearsigned block, and both are still receipts.
+   */
+  download?: { ext: string; mime?: string };
 };
 
 /**

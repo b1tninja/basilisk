@@ -24,6 +24,15 @@ export const ACTION_REASONS = Object.freeze({
    */
   neverAskedFor:
     "This value was not asked for. Add `out @label` to the recipe to see or copy it.",
+  /**
+   * Download on a tile with no body at all — the `text` kind's own `empty`
+   * line, said as a refusal. There is no remedy to name because nothing is
+   * wrong with the recipe: the step ran and produced nothing to write, and a
+   * 0-byte file that looks like a successful export is the outcome worth
+   * refusing.
+   */
+  nothingToSave:
+    "This artifact has no body to save — the step that produced it emitted nothing.",
   /** Anything vault-backed, in a browser without IndexedDB. */
   noVault: "My Keys is unavailable in this browser (no IndexedDB).",
   /**

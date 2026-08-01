@@ -96,14 +96,24 @@ describe("role coverage", () => {
     expect([...unclaimed].sort()).toEqual([...UNCLAIMED_ROLES].sort());
   });
 
-  it("declares Copy on every kind, because every artifact can be copied", () => {
+  it("declares Download on every kind, because every body is a file", () => {
     // A kind that declares no actions renders no buttons. That is correct for
-    // a kind's *own* actions and wrong for the universal one — omitting it
-    // once already took Copy off the majority of tiles the moment the bespoke
-    // button was replaced by the table.
+    // a kind's *own* actions and wrong for a universal one — omitting Copy
+    // once already took it off the majority of tiles the moment the bespoke
+    // button was replaced by the table. Download is universal by the same
+    // test: §33d's "is this meaningful for this object" is yes for any body.
     for (const kind of ARTIFACT_KINDS) {
-      expect(kind.actions, kind.id).toContain("copy");
+      expect(kind.actions, kind.id).toContain("download");
     }
+  });
+
+  it("declares Copy everywhere but on the QR, whose source nobody wants", () => {
+    // §37b called this and deferred it until there was a second affordance to
+    // leave behind: nobody reads a QR by reading its path data, but a tile
+    // with no button at all is worse than one with an odd button. Download
+    // landed, so Copy went — as an omission, not a disabled state.
+    const withoutCopy = ARTIFACT_KINDS.filter((k) => !(k.actions || []).includes("copy"));
+    expect(withoutCopy.map((k) => k.id)).toEqual(["qr"]);
   });
 });
 

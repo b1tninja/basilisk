@@ -9,19 +9,40 @@
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTION_REASONS } from "../lib/toolkit/artifact-reasons.js";
-import { ARTIFACT_ACTIONS, actionById, actionsFor } from "../lib/toolkit/artifact-actions.js";
+import {
+  ARTIFACT_ACTIONS,
+  actionById,
+  actionsFor,
+  downloadMimeFor,
+  downloadNameFor,
+} from "../lib/toolkit/artifact-actions.js";
+import { downloadArtifactFile } from "../lib/toolkit/download-service.js";
 import "../lib/toolkit/registry.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
-import { ARTIFACT_KINDS } from "../toolkit/artifact-kinds/registry.tsx";
+import { ARTIFACT_KINDS, FALLBACK_KIND } from "../toolkit/artifact-kinds/registry.tsx";
+import { resolveArtifactKind } from "../toolkit/artifact-kinds/resolve.ts";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const ACTION = read("../toolkit/widgets/ArtifactAction.tsx");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
 const CSS = read("../css/toolkit.css");
 const SRC = read("../lib/toolkit/artifact-actions.js");
+const TOOLKIT_HTML = read("../../toolkit.html");
+const DOWNLOAD = read("../lib/toolkit/download-service.js");
+
+/**
+ * Comments stripped before any assertion about an *absent* symbol.
+ *
+ * This has now cost this feature area four separate false passes: the prose
+ * explaining why a symbol is absent sits next to the absence and satisfies the
+ * naive grep. `activity-log.test.js` established the helper; this is the same
+ * one.
+ */
+const stripComments = (t) =>
+  t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
 
 describe("a disabled action always carries a reason (§33d)", () => {
   it("derives disabled from the reason, so the two cannot drift apart", () => {
@@ -166,6 +187,350 @@ describe("Copy is gated on the mask, never bypasses it (§34b)", () => {
     let called = 0;
     await copy.run({ services: { copyArtifact: () => { called++; } } });
     expect(called).toBe(1);
+  });
+});
+
+describe("Download is Copy's other destination, gated the same way (§34b)", () => {
+  const download = actionById("download");
+
+  it("is inert, like the tier doc has always said it would be", () => {
+    // `ArtifactAction.tsx` has documented the inert tier as "(Copy, Download)"
+    // since the tiers landed, while no download button existed anywhere. The
+    // sentence is now true rather than aspirational, which is what makes it
+    // worth pinning.
+    expect(download.tier).toBe("inert");
+    expect(download.label).toBe("Download");
+    expect(ACTION).toMatch(/inert\s+— local, reversible, no state changes \(Copy, Download\)/);
+  });
+
+  it("is available on an unmasked artifact with a body", () => {
+    expect(download.available({ artifact: { content: "x" }, masked: false })).toBe(true);
+  });
+
+  it("refuses a masked value in Copy's own words, not paraphrased", () => {
+    // The same refusal, so the same two sentences: writing a masked secret to
+    // disk is the same exfiltration as copying it, and revealing on the user's
+    // behalf to permit it is the same mask bypass.
+    for (const artifact of [
+      { content: "secret", revealable: true },
+      { content: "secret", revealable: false },
+      { content: "" },
+    ]) {
+      expect(download.available({ artifact, masked: true })).toEqual(
+        actionById("copy").available({ artifact, masked: true })
+      );
+    }
+    expect(
+      download.available({ artifact: { content: "s", revealable: true }, masked: true }).disabled
+    ).toBe(ACTION_REASONS.maskedButRevealable);
+    expect(
+      download.available({ artifact: { content: "s", revealable: false }, masked: true }).disabled
+    ).toBe(ACTION_REASONS.neverAskedFor);
+  });
+
+  it("does not invert the contrast with Add to My Keys", () => {
+    // `keyring.add` is *enabled* while masked, deliberately: it moves the
+    // secret into storage without ever displaying it. Download leaves, so it
+    // is gated. Getting these two the same way round is the whole of §34b.
+    const jwk = JSON.stringify({ kty: "OKP", crv: "Ed25519", x: "aa", d: "bb" });
+    const artifact = { content: jwk, revealable: true };
+    const vault = { add: async () => ({ fingerprint: "SHA256:x", already: false }) };
+    expect(actionById("keyring.add").available({ artifact, masked: true, services: { vault } })).toBe(
+      true
+    );
+    expect(download.available({ artifact, masked: true })).not.toBe(true);
+  });
+
+  it("refuses an empty body rather than writing a 0-byte file", () => {
+    // A 0-byte download that looks like a successful key export is the outcome
+    // worth refusing — Copy can silently write "" to the clipboard and nobody
+    // keeps it; a file gets kept.
+    expect(download.available({ artifact: { content: "" }, masked: false })).toEqual({
+      disabled: ACTION_REASONS.nothingToSave,
+    });
+    expect(ACTION_REASONS.nothingToSave).toBe(
+      "This artifact has no body to save — the step that produced it emitted nothing."
+    );
+  });
+
+  it("asks nothing first — §34c's banner is for what leaves the machine", () => {
+    // A confirmation on every save would teach that the banner is decorative,
+    // which is the one thing that would make the Publish banner worthless.
+    expect(download.confirm).toBeUndefined();
+  });
+
+  it("reports the filename, so the Activity log can name where it went", async () => {
+    const calls = [];
+    const res = await download.run({
+      artifact: { content: "body", filename: "public.asc", mime: "application/pgp-keys" },
+      kind: FALLBACK_KIND,
+      services: { download: (f) => calls.push(f) },
+    });
+    expect(res).toEqual({ receipt: "Downloaded", detail: "public.asc" });
+    expect(calls).toEqual([
+      { name: "public.asc", content: "body", mime: "application/pgp-keys" },
+    ]);
+  });
+
+  it("reaches no browser surface of its own — the service is injected", () => {
+    const code = stripComments(SRC);
+    expect(code).not.toMatch(/document\./);
+    expect(code).not.toMatch(/createObjectURL/);
+    expect(code).not.toMatch(/new Blob/);
+    expect(code).toMatch(/services\.download\(/);
+  });
+});
+
+describe("the filename is the feature: one namer, corrected per kind", () => {
+  /** Run a recipe and pair every artifact with the kind that claims it. */
+  const tiles = async (src, bindings = {}) => {
+    const { ast } = compileRecipe(src);
+    const arts = await runRecipe(ast, bindings);
+    return arts.map((a) => ({
+      artifact: a,
+      kind: resolveArtifactKind(a, ARTIFACT_KINDS, FALLBACK_KIND),
+    }));
+  };
+  const nameOf = (rows, kindId) => {
+    const row = rows.find((r) => r.kind.id === kindId);
+    expect(row, `no ${kindId} tile in this run`).toBeTruthy();
+    return downloadNameFor(row.artifact, row.kind);
+  };
+
+  it("uses the engine's own name rather than a second scheme", () => {
+    // `materializeOutArtifacts` already computes `filename` for everything it
+    // emits. Two namers that can disagree about the same object is the failure
+    // mode; the stem is always the engine's.
+    expect(SRC).toMatch(/artifact\?\.filename/);
+    expect(downloadNameFor({ filename: "kp-private.jwk.json" })).toBe("kp-private.jwk.json");
+    // Multi-part extensions are the whole extension, not a dotted stem.
+    expect(downloadNameFor({ filename: "msg.bin.b64" })).toBe("msg.bin.b64");
+    expect(downloadNameFor({ filename: "peek.inspect.txt" })).toBe("peek.inspect.txt");
+  });
+
+  it("names an OpenPGP pair public.asc and k.asc, as the engine did", async () => {
+    const rows = await tiles('gpg.genkey email="a@b.c" | out @k');
+    expect(nameOf(rows, "openpgp-public")).toBe("public.asc");
+    expect(nameOf(rows, "openpgp-private")).toBe("k.asc");
+  });
+
+  it("keeps a JWK a .jwk.json on both halves", async () => {
+    const rows = await tiles("genkey ed25519 | out @kp");
+    expect(nameOf(rows, "keypair-private")).toBe("kp-private.jwk.json");
+    expect(nameOf(rows, "keypair-public")).toBe("kp-public.jwk.json");
+  });
+
+  it("corrects an sshsig block from .txt to .sig, which is the point", async () => {
+    // An sshsig block is `text` on the wire, so `out` can only call it
+    // `sig.txt`. `ssh-keygen -Y verify` wants a `.sig` beside the file it
+    // signed — the rename this action exists to save.
+    const rows = await tiles(
+      'genkey ed25519 | tee\n  - :public | ssh.encode | out @pub\n| out @id\n\n"msg" | ssh.sign key=@id namespace=git | out @sig'
+    );
+    expect(nameOf(rows, "sshsig")).toBe("sig.sig");
+    expect(ARTIFACT_KINDS.find((k) => k.id === "sshsig").download).toEqual({ ext: "sig" });
+  });
+
+  it("gives a QR an .svg and the SVG content type", async () => {
+    const rows = await tiles('"hello" | qr');
+    expect(nameOf(rows, "qr")).toBe("artifact.svg");
+    const row = rows.find((r) => r.kind.id === "qr");
+    expect(downloadMimeFor(row.artifact, row.kind)).toBe("image/svg+xml");
+  });
+
+  it("leaves a receipt .txt, because a signed one is not JSON", async () => {
+    // `run.receipt` is JSON; `run.receipt | gpg.sign` is a clearsigned block,
+    // and both are role `receipt`. A declared `.json` would be wrong for the
+    // half the ceremony actually produces — which is why `download` on a kind
+    // is a correction and not a naming scheme.
+    const rows = await tiles('"hi" | out @msg\nrun.receipt | out @receipt');
+    expect(nameOf(rows, "receipt")).toBe("receipt.txt");
+    expect(ARTIFACT_KINDS.find((k) => k.id === "receipt").download).toBeUndefined();
+  });
+
+  it("names ordinary text and an inspect dump after the slot that asked", async () => {
+    expect(nameOf(await tiles('"hi" | out @msg'), "text")).toBe("msg.txt");
+    expect(nameOf(await tiles('"hi" | inspect'), "inspect-snapshot")).toBe("inspect.txt");
+  });
+
+  it("falls back to the label, never to a bare 'artifact.txt', where it can", () => {
+    // Catalog fixtures and any future emit site that forgets a filename.
+    expect(downloadNameFor({ label: "kp · private JWK" })).toBe("kp-private-jwk.txt");
+    expect(downloadNameFor({})).toBe("artifact.txt");
+    // A kind's extension still applies to the fallback stem.
+    expect(downloadNameFor({ label: "sig" }, { download: { ext: "sig" } })).toBe("sig.sig");
+  });
+
+  it("keeps a path out of the download name", () => {
+    // `sanitizeFilename` is the existing helper, not a fourth one.
+    expect(downloadNameFor({ filename: "../../etc/passwd" })).not.toContain("/");
+    expect(downloadNameFor({ label: "a/b\\c" })).toBe("a-b-c.txt");
+  });
+
+  it("takes the content type from the engine, corrected only where the name is", () => {
+    expect(downloadMimeFor({ mime: "application/pgp-keys" })).toBe("application/pgp-keys");
+    expect(downloadMimeFor({})).toBe("text/plain; charset=utf-8");
+    expect(downloadMimeFor({ mime: "text/plain" }, { download: { ext: "svg", mime: "image/svg+xml" } })).toBe(
+      "image/svg+xml"
+    );
+  });
+
+  it("declares an extension only where it is true of the whole kind", () => {
+    // Not a pile of special cases: every other kind's bodies are named
+    // correctly by the pipeline already.
+    const withExt = ARTIFACT_KINDS.filter((k) => k.download).map((k) => k.id);
+    expect(withExt.sort()).toEqual(["qr", "sshsig"]);
+  });
+});
+
+describe("the download mechanism: a blob, a click, and a revoke", () => {
+  afterEach(async () => {
+    // Drain the pending revoke before tearing the stubs down: the revoke is
+    // deliberately on the next turn (it races the download start in Chromium
+    // otherwise), so without this it lands in the *next* test's spy.
+    await new Promise((r) => setTimeout(r, 1));
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** A `document`/`window`/`URL` triple, the `file-ops.test.js` shape. */
+  function fakeDom() {
+    const created = [];
+    const attached = [];
+    const saves = [];
+    const revoked = [];
+    vi.stubGlobal("document", {
+      createElement: (tag) => {
+        const el = {
+          tagName: tag.toUpperCase(),
+          clicked: 0,
+          removed: false,
+          click() {
+            el.clicked++;
+          },
+          remove() {
+            el.removed = true;
+            const i = attached.indexOf(el);
+            if (i >= 0) attached.splice(i, 1);
+          },
+        };
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: (el) => attached.push(el) },
+    });
+    vi.stubGlobal("window", {
+      dispatchEvent(ev) {
+        if (ev?.type === "basilisk:file-saved") saves.push(ev.detail);
+        return true;
+      },
+    });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:stub");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation((u) => revoked.push(u));
+    return { created, attached, saves, revoked, last: () => created[created.length - 1] };
+  }
+
+  it("clicks an anchor with the name on it and detaches it again", async () => {
+    const dom = fakeDom();
+    await downloadArtifactFile({ name: "public.asc", content: "armor", mime: "application/pgp-keys" });
+    const a = dom.last();
+    expect(a.tagName).toBe("A");
+    expect(a.download).toBe("public.asc");
+    expect(a.href).toBe("blob:stub");
+    expect(a.clicked).toBe(1);
+    expect(a.removed).toBe(true);
+    expect(dom.attached).toEqual([]);
+  });
+
+  it("revokes the object URL, because a leaked one is a live handle", async () => {
+    // An un-revoked blob: URL to a private key is readable for the lifetime of
+    // the document by anything that can reach the href.
+    const dom = fakeDom();
+    await downloadArtifactFile({ name: "kp-private.jwk.json", content: '{"d":"x"}' });
+    await new Promise((r) => setTimeout(r, 1));
+    expect(dom.revoked).toEqual(["blob:stub"]);
+  });
+
+  it("revokes even when the click throws", async () => {
+    const dom = fakeDom();
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        click() {
+          throw new Error("blocked");
+        },
+        remove() {},
+      }),
+      body: { appendChild: () => {} },
+    });
+    await expect(downloadArtifactFile({ name: "a.txt", content: "x" })).rejects.toThrow("blocked");
+    await new Promise((r) => setTimeout(r, 1));
+    expect(dom.revoked).toEqual(["blob:stub"]);
+  });
+
+  it("announces on file.save's channel rather than inventing a third weight", async () => {
+    // The browser draws its own download UI, so the app's part is the same
+    // light toast `file.save` uses — a modal would restate what just happened.
+    const dom = fakeDom();
+    await downloadArtifactFile({ name: "msg.txt", content: "hello" });
+    expect(dom.saves).toEqual([{ name: "msg.txt", bytes: 5 }]);
+    expect(SHELL).toMatch(/basilisk:file-saved/);
+    expect(stripComments(DOWNLOAD)).not.toMatch(/basilisk:(?!file-saved)[a-z-]+/);
+  });
+
+  it("did not buy itself a CSP exemption", () => {
+    // A `download` anchor starts a download, which no fetch directive governs
+    // — so `default-src 'none'` stands and no `blob:` grant was needed. If a
+    // future change makes one look necessary, that is the moment to stop.
+    const policy = (TOOLKIT_HTML.match(/Content-Security-Policy"\s+content="([^"]+)"/) || [
+      "",
+      "",
+    ])[1];
+    expect(policy).toContain("default-src 'none'");
+    expect(policy).not.toContain("blob:");
+    expect(policy).not.toContain("sha256-");
+  });
+});
+
+describe("the two user-visible promises of Download are now kept", () => {
+  const TILE = read("../toolkit/widgets/ArtifactTile.tsx");
+
+  it("backs the Activity panel's empty state with an action that exists", () => {
+    // "Nothing yet. Copying, downloading or publishing an artifact records it
+    // here." That sentence shipped before any download existed — a promise of
+    // a feature that was not there. Both halves are asserted together so
+    // neither can be edited into agreement with the other by deleting it.
+    expect(SHELL).toMatch(/Copying, downloading or publishing an\s*\n?\s*artifact records it here/);
+    const declared = new Set(ARTIFACT_KINDS.flatMap((k) => k.actions || []));
+    expect(declared.has("download")).toBe(true);
+    expect(actionById("download")).toBeTruthy();
+    // And the logging it promises is the runner's, in one place, for every
+    // action — nothing in the table logs for itself.
+    expect(stripComments(SRC)).not.toMatch(/recordActivity/);
+    expect((stripComments(TILE).match(/recordActivity\(/g) || []).length).toBe(1);
+  });
+
+  it("carries the engine's filename through both of the shell's mappings", () => {
+    // This projection copies named fields, so a field it does not list is
+    // dropped silently — which is exactly how `role`/`tags` went missing and
+    // every tile resolved to the fallback in the live UI while the tests
+    // passed. The tray and the cell list are both mappings.
+    expect((SHELL.match(/filename: a\.filename,/g) || []).length).toBe(2);
+    expect((SHELL.match(/mime: a\.mime,/g) || []).length).toBe(2);
+    expect(read("../toolkit/useNotebook.ts")).toMatch(/filename: a\.filename,/);
+    // And the tile type has to admit them, or TypeScript drops them again.
+    expect(TILE).toMatch(/filename\?: string;/);
+    expect(TILE).toMatch(/mime\?: string;/);
+  });
+
+  it("says nowhere that Download is still a tile-level affordance", () => {
+    // Three comments in the kind table claimed it was, in a codebase where no
+    // download button existed anywhere. Comments stripped is not the move
+    // here — the false sentence *is* a comment, so this reads the raw file.
+    const REGISTRY = read("../toolkit/artifact-kinds/registry.tsx");
+    expect(REGISTRY).not.toMatch(/Expand and Download remain tile-level affordances/);
+    expect(REGISTRY).not.toMatch(/It goes when\s*\n?\s*\* Download lands/);
+    // The Expand half was accurate and stays.
+    expect(REGISTRY).toMatch(/Expand remains a tile-level affordance/);
   });
 });
 
@@ -364,13 +729,9 @@ describe("outward confirmation shares §27's shell (§34c/§43a/§43b)", () => {
 describe("Add to My Keys is local, masked-safe, and refuses by default (§34a/§34d)", () => {
   const add = actionById("keyring.add");
   const KEYRING = read("../lib/toolkit/keyring-service.js");
-  /**
-   * Comments stripped before any assertion about an *absent* symbol. The
-   * absence of `onConflict` is explained in prose right beside the call it is
-   * absent from, so a naive grep finds the explanation and calls it the bug.
-   */
-  const stripComments = (t) =>
-    t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // `stripComments` is the file-level helper: the absence of `onConflict` is
+  // explained in prose right beside the call it is absent from, so a naive
+  // grep finds the explanation and calls it the bug.
   const privateJwk = JSON.stringify({ kty: "OKP", crv: "Ed25519", x: "aa", d: "bb" });
   const publicJwk = JSON.stringify({ kty: "OKP", crv: "Ed25519", x: "aa" });
   const vault = {

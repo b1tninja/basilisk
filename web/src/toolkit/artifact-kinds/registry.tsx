@@ -76,8 +76,15 @@ export const FALLBACK_KIND: ToolkitArtifactKind = {
    * majority of tiles the moment the bespoke one was replaced by the table:
    * a kind that declares no actions renders no buttons, which is correct for
    * a kind's *own* actions and wrong for the universal one.
+   *
+   * Download is universal for the same reason and by the same test. §33d asks
+   * "is this meaningful for this object", and for a body the answer is yes
+   * wherever Copy's is: the two are one motion — a value leaving the notebook
+   * — with two destinations, one to paste once and one to keep. Whether *this*
+   * body can be written here and now is the other question, and `available()`
+   * answers it with a sentence.
    */
-  actions: ["copy"],
+  actions: ["copy", "download"],
 };
 
 const keyCardFor = (publicOnly: boolean) =>
@@ -120,7 +127,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     glyph: "openpgp-key",
     view: pgpCardFor(true),
     empty: "Not a readable OpenPGP key — showing the armor.",
-    actions: ["copy", "key.copyFingerprint", "key.publish"],
+    actions: ["copy", "download", "key.copyFingerprint", "key.publish"],
   },
   {
     /**
@@ -136,7 +143,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     // render while the secret stays masked (§34b).
     publicView: pgpCardFor(true),
     empty: "Not a readable OpenPGP key — showing the armor.",
-    actions: ["copy", "key.copyFingerprint", "keyring.add"],
+    actions: ["copy", "download", "key.copyFingerprint", "keyring.add"],
   },
   {
     id: "keypair-public",
@@ -145,7 +152,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     glyph: "key",
     view: keyCardFor(true),
     empty: "No exportable public half — the key was generated non-extractable.",
-    actions: ["copy", "key.copyFingerprint", "key.copyPublicLine"],
+    actions: ["copy", "download", "key.copyFingerprint", "key.copyPublicLine"],
   },
   {
     id: "keypair-private",
@@ -163,7 +170,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     // fact and works while masked (§35d). So does Add to My Keys, for the
     // opposite reason: it moves the secret into storage without showing it,
     // and this tile is masked by default.
-    actions: ["copy", "key.copyFingerprint", "keyring.add"],
+    actions: ["copy", "download", "key.copyFingerprint", "keyring.add"],
   },
   {
     /**
@@ -189,7 +196,13 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
      * outright, because a disabled button on a public tile would teach that
      * public keys belong in a vault.
      */
-    actions: ["copy", "key.copyFingerprint", "key.copyPublicLine", "keyring.add"],
+    actions: [
+      "copy",
+      "download",
+      "key.copyFingerprint",
+      "key.copyPublicLine",
+      "keyring.add",
+    ],
   },
   {
     id: "network-value",
@@ -209,11 +222,12 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
       />
     ),
     empty: "No structured body for this value — showing the raw text.",
-    // Expand and Download remain tile-level affordances for now (the tile
-    // derives Expand from the kind's `expandable`), so they are not declared
-    // here — a declared action that duplicates a shipped button is worse than
-    // one not yet migrated.
-    actions: ["copy"],
+    // Expand remains a tile-level affordance (the tile derives it from the
+    // kind's `expandable`), so it is not declared here — a declared action
+    // that duplicates a shipped button is worse than one not yet migrated.
+    // Download is no longer in that sentence: it was never a shipped button,
+    // only a comment saying it was, and it is a declared action now.
+    actions: ["copy", "download"],
     expandable: true,
   },
   {
@@ -229,11 +243,12 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     // would retain raw private JWK fields the masked text dump does not.
     empty:
       "This value is sensitive, so no structured snapshot was kept — the text dump is below.",
-    // Expand and Download remain tile-level affordances for now (the tile
-    // derives Expand from the kind's `expandable`), so they are not declared
-    // here — a declared action that duplicates a shipped button is worse than
-    // one not yet migrated.
-    actions: ["copy"],
+    // Expand remains a tile-level affordance (the tile derives it from the
+    // kind's `expandable`), so it is not declared here — a declared action
+    // that duplicates a shipped button is worse than one not yet migrated.
+    // Download is no longer in that sentence: it was never a shipped button,
+    // only a comment saying it was, and it is a declared action now.
+    actions: ["copy", "download"],
     expandable: true,
   },
   {
@@ -244,11 +259,12 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     view: ({ artifact }) =>
       hasJoseRenderer(artifact.jose) ? <JwtArtifact data={artifact.jose} /> : null,
     empty: "No decoded token body — run jose.verify to read and check it.",
-    // Expand and Download remain tile-level affordances for now (the tile
-    // derives Expand from the kind's `expandable`), so they are not declared
-    // here — a declared action that duplicates a shipped button is worse than
-    // one not yet migrated.
-    actions: ["copy"],
+    // Expand remains a tile-level affordance (the tile derives it from the
+    // kind's `expandable`), so it is not declared here — a declared action
+    // that duplicates a shipped button is worse than one not yet migrated.
+    // Download is no longer in that sentence: it was never a shipped button,
+    // only a comment saying it was, and it is a declared action now.
+    actions: ["copy", "download"],
     expandable: true,
   },
 
@@ -263,11 +279,12 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
   // turned a list of actions nobody would click into a set of tiles worth
   // looking at, which is what these are.
   //
-  // Every entry declares `copy` and nothing else, for the same reason the rest
-  // of the table does: `download`, `expand` and `shares.print` are still tile
-  // affordances or unbuilt services, and a declared action that duplicates a
-  // shipped button — or names a service that is not injected — is worse than
-  // one not yet migrated.
+  // Every entry declares `copy` and `download` and nothing else, for the same
+  // reason the rest of the table does: `expand` is still a tile affordance and
+  // `shares.print` is an unbuilt service, and a declared action that duplicates
+  // a shipped button — or names a service that is not injected — is worse than
+  // one not yet migrated. `download` left that list when it stopped being a
+  // comment and became an action with a service behind it.
   {
     /**
      * The armored message `gpg.encrypt` produces. §37b's read-out: the packet
@@ -282,7 +299,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     view: ({ artifact }) => <PacketMapCard content={artifact.content} />,
     empty:
       "This body is not OpenPGP-framed, so there are no packets to map — the armor is below.",
-    actions: ["copy"],
+    actions: ["copy", "download"],
   },
   {
     /**
@@ -298,7 +315,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     view: ({ artifact }) => <PacketMapCard content={artifact.content} />,
     empty:
       "This body is not OpenPGP-framed, so there are no packets to map — the armor is below.",
-    actions: ["copy"],
+    actions: ["copy", "download"],
   },
   {
     /**
@@ -330,7 +347,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     // *Verify threshold* is rejected by §37a (it computes a verdict), and
     // *Check a share…* already exists under More ▸ — a second copy on the
     // tile is how one of them starts drifting from the other.
-    actions: ["copy"],
+    actions: ["copy", "download"],
   },
   {
     /**
@@ -345,7 +362,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     view: ({ artifact }) => <RecipientsCard content={artifact.content} />,
     empty:
       "No recipients in this list — hkp.filter may have removed them all, or the search found none.",
-    actions: ["copy"],
+    actions: ["copy", "download"],
     expandable: true,
   },
   {
@@ -361,7 +378,16 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     view: ({ artifact }) => <SshSigCard content={artifact.content} />,
     empty:
       "This armor did not parse as an sshsig envelope — showing it as text instead.",
-    actions: ["copy"],
+    actions: ["copy", "download"],
+    /**
+     * The one extension the pipeline could not have got right. An sshsig block
+     * is `text` on the wire, so `out` names it `${stem}.txt`, and `ssh-keygen
+     * -Y verify` wants a `.sig` beside the file it signed — a download called
+     * `sig.txt` is one rename away from being usable, which is exactly the
+     * friction this action exists to remove. The MIME stays the engine's:
+     * `.sig` is a name, and the body really is armored ASCII.
+     */
+    download: { ext: "sig" },
   },
   {
     /**
@@ -389,7 +415,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
       />
     ),
     empty: "No structured diagnostic body — showing the raw report.",
-    actions: ["copy"],
+    actions: ["copy", "download"],
     expandable: true,
   },
   {
@@ -398,6 +424,13 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
      * and no "verify this" button, because verifying means re-running the
      * recipe and comparing, which is an op with a receipt as its input. A
      * button here could only ever re-run *this* notebook.
+     *
+     * No `download` extension, deliberately. A receipt is JSON until
+     * `gpg.sign` makes it a clearsigned block, and the ceremony's own recipe
+     * signs it — both are still this kind, so a declared `.json` would be
+     * wrong for the half that matters most. The engine's `.txt` is honest
+     * about both, and this is the case that keeps `download` a correction
+     * rather than a naming scheme.
      */
     id: "receipt",
     match: { role: "receipt" },
@@ -405,7 +438,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     view: ({ artifact }) => <ReceiptCard content={artifact.content} />,
     empty:
       "This is not a receipt this build can read — a v1 receipt predates the artifact-role change; run.verify explains it.",
-    actions: ["copy"],
+    actions: ["copy", "download"],
     expandable: true,
   },
   {
@@ -413,11 +446,15 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
      * An SVG QR rendering of another artifact — the one artifact whose raw
      * form is useless: nobody reads a QR by reading its path data.
      *
-     * §37b drops Copy here ("copying SVG source is not a thing anyone wants").
-     * It stays, for now, because `download` and `shares.print` are not actions
-     * yet: dropping Copy first would leave this tile with no affordance at all,
-     * which is a worse tile than one with a slightly odd button. It goes when
-     * Download lands.
+     * §37b drops Copy here ("copying SVG source is not a thing anyone wants"),
+     * and this is the moment it named: Copy stayed only because dropping it
+     * before Download existed would have left this tile with no affordance at
+     * all, which is a worse tile than one with a slightly odd button. Download
+     * exists, so Copy goes — the only kind in the table that does not declare
+     * it, and the absence is the §33d answer rather than a disabled state.
+     *
+     * `shares.print` is still unbuilt, and the ceremony's own card printer is
+     * where a share's QR gets printed anyway.
      */
     id: "qr",
     match: { role: "qr" },
@@ -426,7 +463,15 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
       <QrArtifact content={artifact.content} label={artifact.label} />
     ),
     empty: "This body is not an SVG, so there is no code to draw — showing it as text.",
-    actions: ["copy"],
+    actions: ["download"],
+    /**
+     * The engine already names these `.svg`, so this changes nothing today.
+     * It is declared because this is now the one kind whose *only* affordance
+     * is the download: an emit site that ever named a QR body something else
+     * would break the one thing this tile can do, and a kind that states its
+     * format cannot be broken that way.
+     */
+    download: { ext: "svg", mime: "image/svg+xml" },
   },
   {
     /**
@@ -451,7 +496,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     glyph: "text",
     view: () => null,
     empty: "This artifact has no body — the step that produced it emitted nothing.",
-    actions: ["copy"],
+    actions: ["copy", "download"],
   },
   {
     id: "secret",
@@ -465,6 +510,6 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     // from the masked material, which is the one thing §34b forbids.
     empty:
       "This secret has no body to show — reveal it, if the recipe asked for it, to see the value.",
-    actions: ["copy"],
+    actions: ["copy", "download"],
   },
 ];

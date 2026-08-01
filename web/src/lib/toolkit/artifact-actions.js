@@ -24,6 +24,7 @@ import { ACTION_REASONS } from "./artifact-reasons.js";
 import { shortKeyId } from "./approval-gate.js";
 import { sshIdentityFromJwk } from "./ssh-ops.js";
 import { formatFingerprint } from "../utils.js";
+import { sanitizeFilename } from "../zip-store.js";
 
 /**
  * @typedef {true | { disabled: string }} Availability
@@ -88,6 +89,72 @@ function publicJwk(jwk) {
 }
 
 /**
+ * A label, reduced to something a filesystem will take. The last resort only —
+ * every artifact the engine emits already carries a `filename`.
+ * @param {unknown} label
+ */
+function stemFromLabel(label) {
+  return String(label ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[-.]+|-+$/g, "")
+    .slice(0, 64);
+}
+
+/**
+ * The name a Download lands under.
+ *
+ * **The engine's namer, not a second one.** `materializeOutArtifacts` already
+ * computes a `filename` for every artifact it emits — `public.asc`,
+ * `kp-private.jwk.json`, `artifact.svg`, `share-2.txt` — and that name rides
+ * through `useNotebook`'s projection to the tile. Re-deriving one here from
+ * role and traits would be two namers that can disagree about the same object,
+ * which is the failure mode `keyring.add` avoided by sharing `agent-ops.js`'s
+ * encoder rather than re-encoding.
+ *
+ * So the **stem is always the engine's**. What a kind may correct is the
+ * *extension*, and only where the pipeline could not have known better: an
+ * sshsig block is `text` on the wire, so `out` names it `${stem}.txt`, and
+ * `.txt` is a lie about a body whose default handler should never be a text
+ * editor. That is one namer with a declared per-kind correction, not two
+ * schemes racing.
+ *
+ * Everything after the *first* dot is the extension, because the engine's
+ * stems never contain one (`safeOutputStem`) and its extensions frequently do
+ * — `jwk.json`, `bin.b64`, `inspect.txt` are each the whole extension, and
+ * splitting on the last dot would shorten them.
+ *
+ * @param {{ filename?: string, label?: string }} artifact
+ * @param {{ download?: { ext?: string } }} [kind]
+ */
+export function downloadNameFor(artifact, kind) {
+  const engineName = sanitizeFilename(artifact?.filename, "");
+  const dot = engineName.indexOf(".");
+  const stem =
+    (dot > 0 ? engineName.slice(0, dot) : engineName) ||
+    stemFromLabel(artifact?.label) ||
+    "artifact";
+  const ext = kind?.download?.ext || (dot > 0 ? engineName.slice(dot + 1) : "") || "txt";
+  return sanitizeFilename(`${stem}.${ext}`, "artifact.txt");
+}
+
+/**
+ * The content type the blob is built with. The engine stamps one on every
+ * artifact; a kind overrides it only where it also overrides the extension, so
+ * the two can never describe different formats.
+ *
+ * @param {{ mime?: string }} artifact
+ * @param {{ download?: { mime?: string } }} [kind]
+ */
+export function downloadMimeFor(artifact, kind) {
+  return (
+    kind?.download?.mime ||
+    String(artifact?.mime || "").trim() ||
+    "text/plain; charset=utf-8"
+  );
+}
+
+/**
  * Copy is the one action whose *behaviour* already existed and is worth
  * preserving byte for byte — it fires the shipped `basilisk:clipboard-wrote`
  * toast and knows the artifact's own serialization rules. So the service is
@@ -113,6 +180,59 @@ export const ARTIFACT_ACTIONS = Object.freeze([
     run: async ({ services }) => {
       await services.copyArtifact();
       return { receipt: "Copied" };
+    },
+  },
+  {
+    /**
+     * The other half of Copy: same tier, same gate, a different destination.
+     * The clipboard is where a value goes to be pasted once; a file is where it
+     * goes to be kept — which is precisely why `activity-log.js` names Copy and
+     * Download together as "how a secret leaves the notebook" and logs both.
+     * `runAction` does that logging centrally, so nothing here has to.
+     */
+    id: "download",
+    label: "Download",
+    tier: "inert",
+    available: ({ artifact, masked }) => {
+      if (masked) {
+        // §34b, and Copy's branch verbatim — deliberately the same two
+        // sentences, because it is the same refusal. Writing a masked secret
+        // to disk is the same exfiltration as copying it, and revealing on the
+        // user's behalf to permit it is the same mask bypass.
+        //
+        // The contrast is with `keyring.add`, which stays *enabled* while
+        // masked because it moves the secret into storage without ever
+        // displaying it. This one displays nothing either — but it leaves, and
+        // that is the axis §34b gates on.
+        return {
+          disabled:
+            artifact.revealable && artifact.content
+              ? ACTION_REASONS.maskedButRevealable
+              : ACTION_REASONS.neverAskedFor,
+        };
+      }
+      if (!String(artifact?.content ?? "")) {
+        return { disabled: ACTION_REASONS.nothingToSave };
+      }
+      return true;
+    },
+    /**
+     * No `confirm`. §34c's banner is for what leaves the machine or overwrites
+     * something; a download is neither, and asking before every save would
+     * teach that the banner is decorative — which is the one thing that would
+     * make the Publish banner worthless.
+     */
+    run: async ({ artifact, kind, services }) => {
+      const name = downloadNameFor(artifact, kind);
+      await services.download({
+        name,
+        content: artifact.content,
+        mime: downloadMimeFor(artifact, kind),
+      });
+      // The name is the detail worth logging: the Activity log's job is to
+      // answer "what left, and where did it go" at 2am, and for a download the
+      // destination is a filename in the browser's downloads.
+      return { receipt: "Downloaded", detail: name };
     },
   },
   {

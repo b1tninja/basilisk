@@ -1893,6 +1893,12 @@ export function ToolkitShell() {
                                 role: a.role,
                                 tags: a.tags,
                                 traits: a.traits,
+                                // What Download saves the file as, and as what
+                                // content type. The engine named the artifact
+                                // when it emitted it; nothing downstream gets
+                                // to invent a second name for it.
+                                filename: a.filename,
+                                mime: a.mime,
                                 diagnosticAction,
                                 sizeBytes: new TextEncoder().encode(a.content).length,
                                 sensitive: a.sensitive,
@@ -2445,6 +2451,10 @@ export function ToolkitShell() {
                               role: a.role,
                               tags: a.tags,
                               traits: a.traits,
+                              // Same mapping as the cell list's, for the same
+                              // reason: Download's name is the engine's name.
+                              filename: a.filename,
+                              mime: a.mime,
                               sizeBytes: new TextEncoder().encode(a.content).length,
                               sensitive: a.sensitive,
                               revealable: a.revealable,
