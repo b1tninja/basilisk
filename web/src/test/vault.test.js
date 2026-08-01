@@ -10,6 +10,7 @@ import {
   derivePrfKek,
   expiryIsoFromPreset,
   listKeys,
+  patchKeyMeta,
   purgeExpired,
   saveKey,
   sortKeysByLastUsed,
@@ -129,6 +130,124 @@ describe("vault — passkey (PRF) protection", () => {
     expect(kek).toBeInstanceOf(CryptoKey);
     expect(kek.extractable).toBe(false);
     expect(kek.algorithm.name).toBe("AES-GCM");
+  });
+});
+
+describe("vault — re-save protection guard", () => {
+  /**
+   * @param {string} uid
+   * @param {import("../lib/vault.js").VaultProtection} protection
+   * @param {object} [extra]
+   */
+  const save = (uid, protection, extra = {}) =>
+    saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: SAMPLE_ARMORED,
+      uid,
+      email: "guard@example.com",
+      protection,
+      ...extra,
+    });
+
+  it("refuses to replace passkey protection with device", async () => {
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await save("pk", "passkey", { prfIkm: ikm });
+
+    await expect(save("downgraded", "device")).rejects.toThrow(
+      /already holds this key with stronger "passkey" protection/i
+    );
+    // The message names the incoming protection too, so the user can see both sides.
+    await expect(save("downgraded", "device")).rejects.toThrow(
+      /with "device" protection/i
+    );
+  });
+
+  it("leaves the stored record untouched when a downgrade is refused", async () => {
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await save("pk", "passkey", { prfIkm: ikm });
+
+    await expect(save("downgraded", "device")).rejects.toThrow();
+
+    const meta = (await listKeys())[0];
+    expect(meta.protection).toBe("passkey");
+    expect(meta.uid).toBe("pk");
+    // Still gated on the authenticator, and the outer wrap still decrypts.
+    await expect(unlockKey(FPR_A, {})).rejects.toThrow(/passkey/i);
+    expect(await unlockKey(FPR_A, { prfIkm: ikm })).toBe(SAMPLE_ARMORED);
+  });
+
+  it("refuses passkey → passphrase and passphrase → device", async () => {
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await save("pk", "passkey", { prfIkm: ikm });
+    await expect(save("pw", "passphrase")).rejects.toThrow(/stronger "passkey"/i);
+
+    await deleteKey(FPR_A);
+    await save("pw", "passphrase");
+    await expect(save("dev", "device")).rejects.toThrow(/stronger "passphrase"/i);
+  });
+
+  it("allows a re-save at the same protection", async () => {
+    await save("first", "device");
+    const rotated = SAMPLE_ARMORED.replace("Example", "Rotated0");
+    await save("second", "device", { armoredPrivate: rotated });
+
+    const keys = await listKeys();
+    expect(keys).toHaveLength(1);
+    expect(keys[0].uid).toBe("second");
+    expect(await unlockKey(FPR_A)).toBe(rotated);
+  });
+
+  it("allows strengthening protection without an opt-in", async () => {
+    await save("dev", "device");
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await save("upgraded", "passkey", { prfIkm: ikm });
+
+    expect((await listKeys())[0].protection).toBe("passkey");
+    expect(await unlockKey(FPR_A, { prfIkm: ikm })).toBe(SAMPLE_ARMORED);
+  });
+
+  it("performs the downgrade when the caller explicitly opts in", async () => {
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await save("pk", "passkey", { prfIkm: ikm });
+
+    await save("acknowledged", "device", { allowProtectionDowngrade: true });
+
+    expect((await listKeys())[0].protection).toBe("device");
+    expect(await unlockKey(FPR_A)).toBe(SAMPLE_ARMORED);
+  });
+
+  it("carries created and lastUsedAt across an allowed re-save", async () => {
+    await save("first", "device");
+    await touchKeyUsed(FPR_A);
+    const before = (await listKeys())[0];
+    expect(before.lastUsedAt).toBeTruthy();
+
+    await new Promise((r) => setTimeout(r, 5));
+    await save("second", "device");
+
+    const after = (await listKeys())[0];
+    expect(after.created).toBe(before.created);
+    expect(after.lastUsedAt).toBe(before.lastUsedAt);
+  });
+
+  it("does not affect patchKeyMeta / touchKeyUsed on a passkey record", async () => {
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await save("pk", "passkey", { prfIkm: ikm });
+
+    // Both do their own read-modify-write and never route through saveKey,
+    // so the guard must not stand in the way of metadata backfill.
+    await patchKeyMeta(FPR_A, {
+      publicArmored: "-----BEGIN PGP PUBLIC KEY BLOCK-----",
+      keyIds: ["DEADBEEFDEADBEEF"],
+    });
+    await touchKeyUsed(FPR_A);
+
+    const meta = (await listKeys())[0];
+    expect(meta.protection).toBe("passkey");
+    expect(meta.publicArmored).toContain("PUBLIC KEY");
+    expect(meta.keyIds).toContain("DEADBEEFDEADBEEF");
+    expect(meta.lastUsedAt).toBeTruthy();
+    expect(await unlockKey(FPR_A, { prfIkm: ikm })).toBe(SAMPLE_ARMORED);
   });
 });
 
