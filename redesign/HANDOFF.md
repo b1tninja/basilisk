@@ -204,11 +204,14 @@ Outstanding here:
 `redesign/design_handoff_artifact_actions/` (plus `visual/VISUAL-DESIGN.md`).
 Shipped: the role vocabulary and projection floor, the kind resolver and
 table, `OutputList` wired to it, the two tile foundations, the action tiers,
-the key tiles (§35), the Activity log (§36), and the rest of the inventory
-(§37 — every role in `ARTIFACT_ROLES` is claimed, and `UNCLAIMED_ROLES` in
-`artifact-kinds-table.test.js` is empty). Not yet built: `ArtifactTile` proper
-(§33a anatomy), migration (§38), and `keyring.add`, which is blocked on the
-`saveKey({onConflict})` fix.
+the key tiles (§35), the Activity log (§36), the rest of the inventory (§37 —
+every role in `ARTIFACT_ROLES` is claimed, and `UNCLAIMED_ROLES` in
+`artifact-kinds-table.test.js` is empty), `ArtifactTile` as its own component
+(§33a), the `GateBanner` / `ConsequenceBanner` pair with Publish moved onto it
+(§34c), and migration (§38, asserted in `artifact-migration.test.js`). Not yet
+built: `keyring.add`, blocked on the `saveKey({onConflict})` fix, and with it
+§34d's overwrite confirmation — the banner shape and its catalog state exist,
+nothing raises it.
 
 Four things a cold reader should know:
 
@@ -253,6 +256,24 @@ Four things a cold reader should know:
 - **`disabled:opacity-50` renders a reason at 2.20:1.** Since a disabled
   action's whole feature is its reason string, that is an absent reason. The
   artifact actions remove the *affordance* instead and keep the label legible.
+- **A widget with no catalog section cannot be refactored safely.**
+  `ApprovalBanner` had none — the shell mounts it only while a real
+  `agent.sign` is suspended mid-run — so "renders identically afterwards", the
+  literal acceptance criterion for extracting its shell, was a claim nothing
+  could check. Adding the states came first, and the measurement was worth it
+  twice over: it caught two places `VISUAL-DESIGN.md` §43a describes the
+  shipped banner and the shipped banner disagrees. **Before extracting
+  anything, check the component has states someone can look at.**
+- **Design docs describe behaviour components do not have.** §33g says
+  `ApprovalBanner` moves focus on open and resolves Escape as cancel. It never
+  has. Reading that as "it does, so the shell can" would have added focus theft
+  and an Escape binding to a signing gate as a side effect of a refactor. When
+  a doc attributes existing behaviour to shipped code, grep for it.
+- **The Radix `Sheet` trips a real CSP block in the build.** Opening one
+  inserts an inline `<style>` (react-remove-scroll's scroll-lock) that
+  `style-src-elem` blocks with disposition `enforce`, so the lock silently does
+  not apply in production. Invisible in `serve`, where the policy is weaker.
+  Reproducible on any artifact tile's Expand; not yet fixed.
 
 ## What is outstanding
 

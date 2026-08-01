@@ -2226,7 +2226,15 @@ export const STEPS = [
     kind: "transform",
     toolbox: "agent",
     shelf: "vault",
-    doc: "Save the pipeline's private key into My Keys. OpenPGP armor saves as kind pgp; a WebCrypto keypair saves as kind ssh (ed25519/ec/rsa — id is the SSH SHA256 fingerprint) or raw (x25519). `protection=device|passphrase|passkey`; passphrase applies to pgp only (non-PGP payloads have no S2K yet). Example: `genkey ed25519 | agent.save | out @id`.",
+    // §38a: the steer goes first, following `agent.unlock`'s precedent (§26f).
+    // A recipe is a portable object — shared as a link, saved as a workspace,
+    // re-run by someone else — and this op is the only one in the toolbox that
+    // writes durable state on whoever runs it. That belongs at the top of the
+    // doc rather than as a footnote nobody scrolls to. The charter's other
+    // claim, that this op exists "for CLI runs", is simply false and is not
+    // repeated here: `basilisk run` refuses the whole `agent` toolbox at
+    // pre-flight with exit 4, verified.
+    doc: "Writes to the keyring of *whoever runs the recipe* — a shared link containing `agent.save` saves into the reader's vault, and nothing in the recipe undoes it. Reach for it when the write is the point: a `foreach` over generated keys, or a workspace you re-run yourself. Not available headlessly — `basilisk run` refuses the `agent` toolbox at pre-flight (exit 4), because Node has no vault. Save the pipeline's private key into My Keys. OpenPGP armor saves as kind pgp; a WebCrypto keypair saves as kind ssh (ed25519/ec/rsa — id is the SSH SHA256 fingerprint) or raw (x25519). `protection=device|passphrase|passkey`; passphrase applies to pgp only (non-PGP payloads have no S2K yet). Example: `genkey ed25519 | agent.save | out @id`.",
     input: "openpgp-key",
     output: "openpgp-key",
     overloads: [

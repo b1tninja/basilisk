@@ -40,9 +40,50 @@ the sensitivity ternary and not a claim about identity. Deliberately a closed
 set — `pem`/`der` project to `key`, and the key card reads JWK, so promoting
 them would swap a readable armor body for an emptier card (see 5.6).
 
-Not built: `ArtifactTile` as an extracted component (§33a — the anatomy is in
-place inside `OutputList`, but not lifted out), the §34c `ConsequenceBanner`
-and the migration of Publish onto it, §38 migration, and `keyring.add`.
+**§33a, §34c and §38 are built as well.** `ArtifactTile` is its own component;
+`GateBanner` is `ApprovalBanner`'s chrome extracted with no behavioural change
+and `ConsequenceBanner` is its second user; `key.publish` is an entry in the
+action table at `tier: "outward"`, declared by `openpgp-public` alone, and it
+confirms in the banner rather than the popover. §38's clauses are asserted in
+`artifact-migration.test.js` — the section is all negatives (an op not added, a
+name not retired, a store not bumped), and negatives do not fail loudly on
+their own.
+
+Not built: `keyring.add`, still blocked, and with it §34d's overwrite
+confirmation — the banner *shape* exists and has a catalog state so its wording
+can be argued, but nothing raises it. The `Add to keyring` half of §38a's doc
+steer is held back for the same reason: pointing a doc at a button that does
+not exist is the failure HANDOFF records as "the card was telling custodians to
+run the wrong op". The steer ships with its *reason* (a recipe containing
+`agent.save` writes to the reader's keyring) and gains its second sentence when
+the button does.
+
+Four places the design and the code disagreed, found by measuring:
+
+- **§43a's shell spec is not what shipped.** It says "1px `--border`
+  elsewhere" — the other three edges have no border at all; `border-l-2` sets
+  only the left width, and the `border-[var(--border)]` beside it colours edges
+  with zero width. It says the buttons are "both 22px at 10.5px" — they are the
+  `Button` primitive's `sm` height, 24.79px (ghost) and 26.13px (secondary),
+  which differ from each other. `GateBanner` reproduces what shipped.
+- **§33g says `ApprovalBanner` moves focus on open and resolves Escape as
+  cancel.** It has never done either. Both are opt-in on the shell and the
+  approval banner does not opt in — unit 4.4's contract is that its behaviour
+  does not change, and a keystroke that used to do nothing must not start
+  denying a signing request.
+- **Unit 4.4's acceptance criterion referred to `ApprovalBanner`'s "existing
+  catalog states".** There were none: the shell renders it only while a real
+  `agent.sign` is suspended mid-run. Three states were added first, so
+  "renders identically" became checkable.
+- **§34c's mock shows a user id on the publish banner's Key line.** `traits`
+  carries only `fingerprint`; the uid would need a second parse of the armor
+  that the tile's own card, two lines above, has already done. The banner names
+  the artifact and the fingerprint in display shape instead.
+
+One defect found in passing and filed rather than fixed: opening any Radix
+`Sheet` in the *built* app inserts an inline `<style>` that `style-src-elem`
+blocks with disposition `enforce`, so the dialog's scroll-lock silently does
+not apply in production. Reproducible on any tile's Expand.
 
 **`keyring.add` is blocked, not merely unscheduled.** It needs
 `saveKey({onConflict})` — the fix for a live bug where re-saving a key
@@ -136,11 +177,16 @@ directly observable headlessly, before any widget exists.
 
 ## 3. `ArtifactTile` and the common base — §33
 
-- [ ] **3.1 `ArtifactTile` component** — identity line, body, action row,
-  receipt line (§33a). Accept: measured on `/toolkit-widgets`, row padding
-  `8px 10px`, row gap `4px`, list radius `10px`, 1px `--border` on `--surface`,
-  action buttons 22px high at 10px — i.e. unchanged from the shipped tile
-  (baseline measured 2026-07-31).
+- [x] **3.1 `ArtifactTile` component** — identity line, body, action row,
+  receipt line (§33a). Measured before and after at 1026x1258 across all four
+  `OutputList` mounts, 16 rows: list radius `10px`, padding `4px`, 1px
+  `--border` on `--surface`; row padding `8px 10px`, row gap `4px`; divider
+  0.667px `--border` @55% and absent on the last row; actions 22px at 10px,
+  radius 5px. Every row height matched to three decimals, as did every
+  `data-artifact-kind`, button label, tier, disabled state and reason string.
+  The reveal set and its 15s timer stayed in `OutputList` deliberately: the
+  timer re-masks every revealed row at once, and N per-tile timers would be a
+  different behaviour wearing the same code.
 - [ ] **3.2 Both `OutputList` call sites feed the same tile** — the cell list
   (`ToolkitShell.tsx:1788`) and the tray Outputs tab (`:2274`) currently compute
   *different* badge mappings for the same artifact. Accept: a test renders one
@@ -182,17 +228,32 @@ directly observable headlessly, before any widget exists.
   verbatim reason; Download enabled; fingerprint/public-line enabled. Accept:
   the three cases asserted on one fixture; a test asserts *no* code path sets
   `revealed` from an action handler.
-- [ ] **4.4 `GateBanner` extraction + `ConsequenceBanner`** (§34c) — one shell,
-  `ApprovalBanner` re-expressed over it with no behaviour change. Accept:
-  `ApprovalBanner`'s existing catalog states render identically
-  (`getComputedStyle` on the `--warn` left border and the button weights, the
-  same measurements §27's build used); `ConsequenceBanner` gets its own catalog
-  states for publish and overwrite.
-- [ ] **4.5 `key.publish`** — outward, confirmation per §34c, replaced by
-  `publishedAs` + link on success (existing behaviour). Accept: declared on
-  exactly one kind (asserted); the "Where" line names this site's directory and
-  never an upstream host; failure renders the thrown message verbatim and leaves
-  the button enabled.
+- [x] **4.4 `GateBanner` extraction + `ConsequenceBanner`** (§34c). The
+  approval banner had *no* catalog states — it renders only while a real
+  `agent.sign` is suspended mid-run — so three were added first and measured,
+  then re-measured after the extraction: container 2px `--warn` / 0px on the
+  other three edges / `color(srgb .890196 .701961 .254902 / .08)` / padding
+  `10px 14px`; heights 203.917 / 187.125 / 163.167; header 11.5px/600; the
+  meta's computed `margin-left` 207.583 / 174.594 / 187.010; `<dl>`
+  `68px 406px` with 8px/4px gaps at 10.5px; Deny 24.792x42.583 ghost, Approve
+  once 26.125x85.729 secondary, the batch 24.792x139.417; innerText
+  byte-identical in all three. `ConsequenceBanner` has three states — publish,
+  publish-failed, and §34d's overwrite shape — and measures identically on
+  every shared figure, with the checkbox, the meta and the batch simply absent
+  (§43b).
+- [x] **4.5 `key.publish`** — outward, confirming in the banner, replaced by
+  `publishedAs` + link on success. Declared on `openpgp-public` alone
+  (asserted, twice: no other kind declares it, and no other action is
+  `outward`). Publish stops being brand-filled per §34a — it renders through
+  `data-action-tier="outward"`, measured `rgb(227,179,65)` on a
+  `color(srgb ... / 0.55)` border with no fill. The `publishable` flag and
+  `publishConfirmLabel` are gone: the kind table already said which artifacts
+  are publishable and the shell was recomputing it beside `publishArtifact`'s
+  own throw, three statements of one fact. The tray's Outputs tab had to be
+  given the route too, or a public key there would render a disabled Publish
+  whose stated reason was not the true one. Verified live on /toolkit.html
+  against a dev server with no directory: "Request failed (404)" verbatim in
+  `--error`, banner open, button live.
 - [ ] **4.6 `keyring.add`** — §35f. Accept: an ed25519 keypair tile save lists
   in My Keys as kind `ssh` with a fingerprint equal to `ssh-keygen -lf`'s; an
   x25519 keypair saves as `raw`; a symmetric key never renders the action at
