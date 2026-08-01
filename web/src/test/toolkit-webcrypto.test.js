@@ -86,7 +86,7 @@ describe("digest", () => {
     );
     expect(validation.ok).toBe(true);
     expect(
-      validation.warnings.some((w) => /sha-1.*discouraged/i.test(w))
+      validation.warnings.some((w) => /sha-1.*discouraged/i.test(w.message))
     ).toBe(true);
     const out = await runRecipe(ast, {
       inputs: { text: { value: "abc" } },
@@ -719,7 +719,7 @@ input | utf8 | rsa-pkcs1 key=@rk | encode hex | out @ct
 in @ct | decode hex | rsa-pkcs1 -d key=@rk | utf8 | out @plain`);
     expect(validation.ok).toBe(true);
     expect(
-      validation.warnings.some((w) => /rsa-pkcs1.*discouraged/i.test(w))
+      validation.warnings.some((w) => /rsa-pkcs1.*discouraged/i.test(w.message))
     ).toBe(true);
     const out = await runRecipe(ast, {
       inputs: { text: { value: "pkcs1 hello" } },
@@ -816,7 +816,7 @@ in @msg | sign key=@kp | base64url | out @sig
 in @msg | verify key=@kp signature=@sig | out @result`);
     expect(validation.ok).toBe(true);
     expect(
-      validation.warnings.some((w) => /padding=pkcs1.*discouraged/i.test(w))
+      validation.warnings.some((w) => /padding=pkcs1.*discouraged/i.test(w.message))
     ).toBe(true);
     const out = await runRecipe(ast, {
       inputs: { text: { value: "pkcs1-sign" } },
@@ -880,7 +880,9 @@ describe("usage= honesty", () => {
     const { validation } = compileRecipe("genkey aes/256 usage=sign | export jwk");
     expect(validation.ok).toBe(true);
     expect(
-      validation.warnings.some((w) => /usage=sign is ignored for aes\/256/i.test(w))
+      validation.warnings.some((w) =>
+        /usage=sign is ignored for aes\/256/i.test(w.message)
+      )
     ).toBe(true);
   });
 });

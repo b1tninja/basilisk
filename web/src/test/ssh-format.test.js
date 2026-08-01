@@ -535,12 +535,12 @@ describe("ssh.encode passphrase=", () => {
     // worse than no warning: it teaches that the warnings are noise.
     const warn = (src) => compileRecipe(src).validation.warnings || [];
     const bare = warn("genkey ed25519 | ssh.encode format=private | out @k");
-    expect(bare.some((w) => /emits an unencrypted private key/.test(w))).toBe(true);
+    expect(bare.some((w) => /emits an unencrypted private key/.test(w.message))).toBe(true);
 
     const protectedOut = warn(
       "genkey ed25519 | ssh.encode format=private passphrase=@pw | out @k"
     );
-    expect(protectedOut.some((w) => /emits an unencrypted private key/.test(w))).toBe(
+    expect(protectedOut.some((w) => /emits an unencrypted private key/.test(w.message))).toBe(
       false
     );
   });

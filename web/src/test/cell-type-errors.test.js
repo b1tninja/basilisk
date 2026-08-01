@@ -10,7 +10,8 @@ import { describe, expect, it } from "vitest";
 import { expectedTypeFrom } from "../lib/toolkit/type-error-hints.js";
 import { producersOf } from "../lib/toolkit/type-registry.js";
 import { PRESETS, compileRecipe, parseRecipe } from "../lib/toolkit/recipe.js";
-import { cellErrorsForChains } from "../toolkit/useNotebook";
+import { cellErrorsForChains, cellWarningsForChains } from "../toolkit/useNotebook";
+import { warningDismissKey } from "../toolkit/CellWarnings";
 
 describe("expectedTypeFrom", () => {
   it("reads the wanted type out of the registry's real phrasings", () => {
@@ -155,5 +156,109 @@ genkey ec/p256 | out @kp`);
     expect(cellErrorsForChains(chains)).toEqual([[], [], []]);
     expect(cellErrorsForChains([])).toEqual([]);
     expect(cellErrorsForChains([{ steps: [] }])).toEqual([[]]);
+  });
+});
+
+/**
+ * `validateRecipe` produced warnings from the start and nothing ever read one —
+ * ten `warnings.push` sites, no consumer anywhere in `src/` outside these
+ * tests. The §29f notice that `ssh.encode format=private` writes a usable
+ * private key to the page was among them, including the hour someone spent
+ * gating it on `passphrase=`.
+ *
+ * Making them visible required giving them a `stepIndex`; they used to be bare
+ * strings. That is what these pin: the anchor exists, it survives the
+ * whole-notebook rebasing, and it lands on the cell that earned it rather than
+ * piling onto cell 1 — which is exactly what an unanchored string would have
+ * done.
+ */
+describe("cellWarningsForChains", () => {
+  const chainsOf = (src) => parseRecipe(src).ast.chains || [];
+  const SSH_BARE = /emits an unencrypted private key/;
+
+  it("surfaces the §29f unencrypted-private-key warning at all", () => {
+    const cells = cellWarningsForChains(
+      chainsOf("genkey ed25519 | ssh.encode format=private | out @k")
+    );
+    expect(cells[0].some((w) => SSH_BARE.test(w.message))).toBe(true);
+  });
+
+  it("clears it when passphrase= actually encrypts the block", () => {
+    // The gate is the whole reason the message is trustworthy: it must not
+    // claim "unencrypted" about a file that is encrypted.
+    const cells = cellWarningsForChains(
+      chainsOf("genkey ed25519 | ssh.encode format=private passphrase=@pw | out @k")
+    );
+    expect(cells.flat().some((w) => SSH_BARE.test(w.message))).toBe(false);
+  });
+
+  it("lands the warning on the cell that earned it, not the first one", () => {
+    // The failure an unanchored string guarantees. `ssh.encode` is in cell 2.
+    const chains = chainsOf(`genkey ed25519 | out @k
+
+@k | ssh.encode format=private | out @priv`);
+    const cells = cellWarningsForChains(chains);
+    expect(cells[0].some((w) => SSH_BARE.test(w.message))).toBe(false);
+    const hit = cells[1].find((w) => SSH_BARE.test(w.message));
+    expect(hit).toBeTruthy();
+    // …and on the offending chip within that cell, so the banner can name it.
+    expect(chains[1].steps[hit.stepIndex].name).toBe("ssh.encode");
+  });
+
+  it("anchors the trailing-value warning to the last step", () => {
+    const chains = chainsOf(`genkey ec/p256 | out @kp
+
+@kp | export scalar`);
+    const cells = cellWarningsForChains(chains);
+    const hit = cells[1].find((w) => /Trailing /i.test(w.message));
+    expect(hit).toBeTruthy();
+    expect(chains[1].steps[hit.stepIndex].name).toBe("export");
+  });
+
+  it("stays clear of errors — a warning never blocks the run", () => {
+    // `validation.ok` is errors-only, and a warning-only recipe still runs.
+    const src = "genkey ed25519 | ssh.encode format=private | out @k";
+    const { validation } = compileRecipe(src);
+    expect(validation.ok).toBe(true);
+    expect(validation.warnings.length).toBeGreaterThan(0);
+    expect(cellErrorsForChains(chainsOf(src))).toEqual([[]]);
+  });
+
+  it("leaves every shipped template free of warnings it cannot act on", () => {
+    // Not an assertion that presets are warning-free — several legitimately
+    // warn. This pins that whatever they raise is anchored, so none of it can
+    // land unplaced on cell 1 the way a bare string would have.
+    for (const p of PRESETS) {
+      const chains = chainsOf(p.recipe);
+      cellWarningsForChains(chains).forEach((cell, ci) => {
+        for (const w of cell) {
+          expect(w.stepIndex, `${p.id} cell ${ci}: ${w.message}`).toBeGreaterThanOrEqual(0);
+          expect(chains[ci].steps[w.stepIndex], `${p.id}: ${w.message}`).toBeTruthy();
+        }
+      });
+    }
+  });
+
+  it("returns one array per cell, like the error side", () => {
+    expect(cellWarningsForChains([])).toEqual([]);
+    expect(cellWarningsForChains([{ steps: [] }])).toEqual([[]]);
+  });
+});
+
+describe("warningDismissKey", () => {
+  it("is per cell and per message", () => {
+    const w = { message: "trailing bytes", stepIndex: 1 };
+    expect(warningDismissKey(0, w)).not.toBe(warningDismissKey(1, w));
+    expect(warningDismissKey(0, w)).not.toBe(
+      warningDismissKey(0, { message: "other", stepIndex: 1 })
+    );
+  });
+
+  it("survives renumbering, so adding a step above does not un-dismiss", () => {
+    // stepIndex deliberately absent from the key: a complaint you have read and
+    // accepted should not return because a chip moved.
+    expect(warningDismissKey(2, { message: "same", stepIndex: 0 })).toBe(
+      warningDismissKey(2, { message: "same", stepIndex: 7 })
+    );
   });
 });

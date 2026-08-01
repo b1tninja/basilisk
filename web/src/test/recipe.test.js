@@ -362,7 +362,7 @@ describe("export which= policy", () => {
     );
     expect(validation.ok).toBe(true);
     expect(
-      validation.warnings.some((w) => /export which=/i.test(w))
+      validation.warnings.some((w) => /export which=/i.test(w.message))
     ).toBe(false);
   });
 
@@ -373,7 +373,7 @@ describe("export which= policy", () => {
     expect(validation.ok).toBe(true);
     expect(
       validation.warnings.some((w) =>
-        /export which= is discouraged.*\:public/i.test(w)
+        /export which= is discouraged.*\:public/i.test(w.message)
       )
     ).toBe(true);
   });

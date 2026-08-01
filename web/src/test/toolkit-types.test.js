@@ -345,13 +345,15 @@ describe("refined types", () => {
     const dangling = compileRecipe("genkey ec/p256 | export scalar");
     expect(dangling.validation.ok).toBe(true);
     expect(
-      dangling.validation.warnings.some((w) => /Trailing bytes\/scalar/i.test(w))
+      dangling.validation.warnings.some((w) =>
+        /Trailing bytes\/scalar/i.test(w.message)
+      )
     ).toBe(true);
 
     const handled = compileRecipe("genkey ec/p256 | export scalar | inspect");
     expect(handled.validation.ok).toBe(true);
     expect(
-      handled.validation.warnings.some((w) => /Trailing /i.test(w))
+      handled.validation.warnings.some((w) => /Trailing /i.test(w.message))
     ).toBe(false);
   });
 

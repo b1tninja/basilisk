@@ -43,22 +43,42 @@ function hasSlotParam(step, name) {
 }
 
 /**
+ * Anchor a warning to the step that earned it.
+ * @param {RecipeStep} step
+ * @param {number} stepIndex
+ * @param {string} message
+ * @returns {RecipeWarning}
+ */
+function stepWarning(step, stepIndex, message) {
+  return { message, start: step.start, end: step.end, stepIndex };
+}
+
+/**
  * Compile-time warnings for discouraged algorithms (still allowed).
  * @param {RecipeStep} step
- * @param {string[]} warnings
+ * @param {RecipeWarning[]} warnings
+ * @param {number} stepIndex
  */
-function pushDiscouragedAlgoWarnings(step, warnings) {
+function pushDiscouragedAlgoWarnings(step, warnings, stepIndex) {
   if (
     step.name === "digest" &&
     String(step.params?.alg || "sha-256").toLowerCase() === "sha-1"
   ) {
     warnings.push(
-      `digest alg=sha-1 is discouraged (collision-prone); prefer sha-256 — outputs tagged legacy/discouraged`
+      stepWarning(
+        step,
+        stepIndex,
+        `digest alg=sha-1 is discouraged (collision-prone); prefer sha-256 — outputs tagged legacy/discouraged`
+      )
     );
   }
   if (step.name === "rsa-pkcs1") {
     warnings.push(
-      `rsa-pkcs1 (RSAES-PKCS1-v1_5) is discouraged; prefer rsa-oaep — outputs tagged legacy/discouraged`
+      stepWarning(
+        step,
+        stepIndex,
+        `rsa-pkcs1 (RSAES-PKCS1-v1_5) is discouraged; prefer rsa-oaep — outputs tagged legacy/discouraged`
+      )
     );
   }
   if (
@@ -75,7 +95,11 @@ function pushDiscouragedAlgoWarnings(step, warnings) {
     // travel with an export. Warned at compile so it reads before the run,
     // not after the key is already on screen.
     warnings.push(
-      `ssh.encode format=private emits an unencrypted private key — anything that can read the output can use the key. Prefer keeping it in My Keys and signing with agent.sign`
+      stepWarning(
+        step,
+        stepIndex,
+        `ssh.encode format=private emits an unencrypted private key — anything that can read the output can use the key. Prefer keeping it in My Keys and signing with agent.sign`
+      )
     );
   }
   if (
@@ -85,7 +109,11 @@ function pushDiscouragedAlgoWarnings(step, warnings) {
     String(step.params?.padding || "pss").toLowerCase() === "pkcs1"
   ) {
     warnings.push(
-      `${step.name} padding=pkcs1 (RSASSA-PKCS1-v1_5) is discouraged; prefer padding=pss — outputs tagged legacy/discouraged`
+      stepWarning(
+        step,
+        stepIndex,
+        `${step.name} padding=pkcs1 (RSASSA-PKCS1-v1_5) is discouraged; prefer padding=pss — outputs tagged legacy/discouraged`
+      )
     );
   }
 }
@@ -93,9 +121,10 @@ function pushDiscouragedAlgoWarnings(step, warnings) {
 /**
  * Warn when usage= is set but ignored for fixed-usage algorithms.
  * @param {RecipeStep} step
- * @param {string[]} warnings
+ * @param {RecipeWarning[]} warnings
+ * @param {number} stepIndex
  */
-function pushUsageHonestyWarnings(step, warnings) {
+function pushUsageHonestyWarnings(step, warnings, stepIndex) {
   if (step.name !== "genkey" && step.name !== "import") return;
   const usage = String(step.params?.usage || "auto");
   if (usage === "auto" || usage === "") return;
@@ -107,7 +136,11 @@ function pushUsageHonestyWarnings(step, warnings) {
     alg.startsWith("hmac/");
   if (fixed) {
     warnings.push(
-      `${step.name} usage=${usage} is ignored for ${alg || "this algorithm"} (usage is fixed)`
+      stepWarning(
+        step,
+        stepIndex,
+        `${step.name} usage=${usage} is ignored for ${alg || "this algorithm"} (usage is fixed)`
+      )
     );
   }
 }
@@ -127,7 +160,7 @@ function stepSourceHasWhich(step, source) {
  * Discourage `export which=` — prefer `:public` / `:private` (openssl pkey -pubout).
  * @param {RecipeStep} step
  * @param {import("./types.js").RefinedType} current
- * @param {{ warnings: string[], errors: RecipeError[], source?: string, stepIndex: number }} ctx
+ * @param {{ warnings: RecipeWarning[], errors: RecipeError[], source?: string, stepIndex: number }} ctx
  */
 function pushExportWhichPolicy(step, current, ctx) {
   if (step.name !== "export") return;
@@ -136,7 +169,11 @@ function pushExportWhichPolicy(step, current, ctx) {
   const m = slice.match(/\bwhich\s*=\s*([A-Za-z]+)/);
   const written = m?.[1]?.toLowerCase() || "";
   ctx.warnings.push(
-    `export which= is discouraged — prefer :public / :private before export (like openssl pkey -pubout)`
+    stepWarning(
+      step,
+      ctx.stepIndex,
+      `export which= is discouraged — prefer :public / :private before export (like openssl pkey -pubout)`
+    )
   );
   if (
     current.base === "key" &&
@@ -469,10 +506,29 @@ export function recipeChains(astOrSteps) {
  */
 
 /**
+ * A validator complaint that does not block the run.
+ *
+ * Structurally identical to `RecipeError` on purpose. Warnings used to be bare
+ * strings, which was fine while nothing rendered them and fatal the moment
+ * something did: the notebook validates every cell in one pass (see
+ * `cellErrorsForChains`), so an unanchored string cannot be dealt back to the
+ * cell that earned it — ten warnings about cell 4 would all have piled onto
+ * cell 1. `stepIndex` is what makes a warning placeable, and it is the same
+ * continuous top-level numbering errors already carry, so both travel the same
+ * rebasing path and cannot drift apart.
+ *
+ * @typedef {object} RecipeWarning
+ * @property {string} message
+ * @property {number} [start]
+ * @property {number} [end]
+ * @property {number} [stepIndex]
+ */
+
+/**
  * @typedef {object} ValidationResult
  * @property {boolean} ok
  * @property {RecipeError[]} errors
- * @property {string[]} warnings
+ * @property {RecipeWarning[]} warnings
  * @property {number} [recipientSlots]  how many GPG recipient slots Run needs
  * @property {boolean} [foreachGpg]  gpg.encrypt is inside foreach
  * @property {("shares"|"gpg"|"text"|"envelope"|"key"|"keypair")[]} [inputNeeds]  runtime input panels required
@@ -815,7 +871,7 @@ export function projectTypeForMember(current, memberOrSelector) {
  * @param {import("./types.js").RefinedType} startType
  * @param {{
  *   errors: RecipeError[],
- *   warnings: string[],
+ *   warnings: RecipeWarning[],
  *   stepIndex: number,
  *   inForeach: boolean,
  *   source?: string,
@@ -924,8 +980,11 @@ function validateBodySteps(body, startType, ctx) {
       inputNeeds.push("gpgPass");
     }
     if (ctx.warnings) {
-      pushDiscouragedAlgoWarnings(step, ctx.warnings);
-      pushUsageHonestyWarnings(step, ctx.warnings);
+      // Body steps carry their stem's index, exactly as body *errors* do —
+      // the chip that can be clicked is the `foreach`/`tee`, not a nested step
+      // the chip row never draws.
+      pushDiscouragedAlgoWarnings(step, ctx.warnings, ctx.stepIndex);
+      pushUsageHonestyWarnings(step, ctx.warnings, ctx.stepIndex);
       pushExportWhichPolicy(step, current, ctx);
     }
     if (step.name === "gpg.encrypt" && !String(step.params?.to || "").trim()) {
@@ -981,7 +1040,7 @@ function validateBodySteps(body, startType, ctx) {
 export function validateRecipe(ast) {
   /** @type {RecipeError[]} */
   const errors = [];
-  /** @type {string[]} */
+  /** @type {RecipeWarning[]} */
   const warnings = [];
   const chains = recipeChains(ast);
   if (!chains.length || !chains.some((c) => c.steps?.length)) {
@@ -1198,7 +1257,11 @@ export function validateRecipe(ast) {
       }
       if (i > 0 && current.base !== "none") {
         warnings.push(
-          `Source step "in" in chain ${ci + 1} discards prior pipeline value`
+          stepWarning(
+            step,
+            stepIndex,
+            `Source step "in" at position ${i + 1} discards prior pipeline value`
+          )
         );
       }
       current = { ...loaded };
@@ -1212,8 +1275,8 @@ export function validateRecipe(ast) {
       inputNeeds.push("key");
     }
 
-    pushDiscouragedAlgoWarnings(step, warnings);
-    pushUsageHonestyWarnings(step, warnings);
+    pushDiscouragedAlgoWarnings(step, warnings, stepIndex);
+    pushUsageHonestyWarnings(step, warnings, stepIndex);
     pushExportWhichPolicy(step, current, {
       warnings,
       errors,
@@ -1392,7 +1455,11 @@ export function validateRecipe(ast) {
     if (spec.kind === "source") {
       if (i > 0 && current.base !== "none") {
         warnings.push(
-          `Source step "${step.name}" at position ${i + 1} discards prior pipeline value`
+          stepWarning(
+            step,
+            stepIndex,
+            `Source step "${step.name}" at position ${i + 1} discards prior pipeline value`
+          )
         );
       }
     }
@@ -1444,7 +1511,11 @@ export function validateRecipe(ast) {
       current.length !== 32
     ) {
       warnings.push(
-        `export scalar produced ${current.length}-byte material — sss only accepts 16/32; use gpg.symencrypt for larger scalars`
+        stepWarning(
+          step,
+          stepIndex,
+          `export scalar produced ${current.length}-byte material — sss only accepts 16/32; use gpg.symencrypt for larger scalars`
+        )
       );
     }
 
@@ -1486,8 +1557,15 @@ export function validateRecipe(ast) {
       current.base === "shares"
         ? "append sss.combine (→ bytes/master) or foreach, or inspect to dump"
         : "append inspect to dump, or out/text to emit a named tile";
+    // Anchored to the last step rather than the chain: the locator used to be
+    // the prose ("Chain 3:"), which in a notebook restates the cell you are
+    // already looking at. `stepIndex` says it once, and clickably.
     warnings.push(
-      `Chain ${ci + 1}: trailing ${formatType(current)} is unhandled — ${tip}.`
+      stepWarning(
+        last,
+        globalStepIndex - 1,
+        `Trailing ${formatType(current)} is unhandled — ${tip}.`
+      )
     );
   }
   } // end chains

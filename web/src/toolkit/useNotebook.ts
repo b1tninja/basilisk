@@ -205,6 +205,9 @@ export function chainsWithCellSteps(
 /** One validator complaint, anchored to a chip *within its own cell*. */
 export type CellError = { message: string; stepIndex: number };
 
+/** Same shape, lower weight: advisory, does not block Run. */
+export type CellWarning = CellError;
+
 /**
  * Per-cell validation errors for a whole notebook (§33c).
  *
@@ -235,6 +238,39 @@ export type CellError = { message: string; stepIndex: number };
  * recovers the very index a per-cell call produced — the same chip lights up.
  */
 export function cellErrorsForChains(chains: RecipeChain[]): CellError[][] {
+  return dealByCell(chains, (v) => v.errors);
+}
+
+/**
+ * Per-cell validation *warnings* for a whole notebook.
+ *
+ * The same pass, the same rebasing, one weight down. Warnings were computed on
+ * every keystroke and read by nobody — including the §29f one that says an
+ * `ssh.encode format=private` export is a bare private key on screen. Routing
+ * them through `dealByCell` rather than a second hand-written walk is the
+ * point: errors and warnings cannot land on different cells for the same
+ * recipe, because there is only one implementation of "which cell is this".
+ *
+ * Warnings never gate Run — `validation.ok` is errors-only and stays that way.
+ */
+export function cellWarningsForChains(chains: RecipeChain[]): CellWarning[][] {
+  return dealByCell(chains, (v) => v.warnings);
+}
+
+/**
+ * Validate the whole notebook once and deal one complaint list back per cell.
+ *
+ * `pick` chooses which list (errors or warnings); both carry the same
+ * `{ message, stepIndex }` shape and the same continuous top-level step
+ * numbering, so the rebasing arithmetic is identical and lives here only.
+ */
+function dealByCell(
+  chains: RecipeChain[],
+  pick: (v: {
+    errors?: { message: string; stepIndex?: number }[];
+    warnings?: { message: string; stepIndex?: number }[];
+  }) => { message: string; stepIndex?: number }[] | undefined
+): CellError[][] {
   const out: CellError[][] = (chains || []).map(() => []);
   if (!chains?.some((c) => c?.steps?.length)) return out;
 
@@ -247,16 +283,17 @@ export function cellErrorsForChains(chains: RecipeChain[]): CellError[][] {
   }
   const firstFilled = chains.findIndex((c) => !!c?.steps?.length);
 
-  let errors: { message: string; stepIndex?: number }[];
+  let items: { message: string; stepIndex?: number }[];
   try {
-    errors =
-      validateRecipe({ chains, steps: chains[firstFilled]?.steps || [], source: "" })
-        .errors || [];
+    items =
+      pick(
+        validateRecipe({ chains, steps: chains[firstFilled]?.steps || [], source: "" })
+      ) || [];
   } catch {
     return out;
   }
 
-  for (const e of errors) {
+  for (const e of items) {
     const global = typeof e.stepIndex === "number" ? e.stepIndex : -1;
     let cell = -1;
     if (global >= 0) {
@@ -268,7 +305,7 @@ export function cellErrorsForChains(chains: RecipeChain[]): CellError[][] {
         }
       }
     }
-    // An error the validator did not anchor ("Empty recipe") still has to be
+    // A complaint the validator did not anchor ("Empty recipe") still has to be
     // seen — parking it unanchored on the first real cell beats dropping it.
     if (cell < 0) {
       out[firstFilled]?.push({ message: String(e.message), stepIndex: -1 });
@@ -525,6 +562,19 @@ export function useNotebook() {
   const cellErrors: CellError[][] = useMemo(() => {
     void kernelEpoch;
     return cellErrorsForChains(chains);
+  }, [chains, kernelEpoch]);
+
+  /**
+   * Advisory warnings per cell — the same validator pass, one weight down.
+   *
+   * Deliberately *not* folded into `cellErrors`: an error blocks Run and a
+   * warning does not, and a channel that shows both at the same weight teaches
+   * that neither needs reading. Kept as its own list so the presentation can
+   * differ and so nothing here can ever reach `validation.ok`.
+   */
+  const cellWarnings: CellWarning[][] = useMemo(() => {
+    void kernelEpoch;
+    return cellWarningsForChains(chains);
   }, [chains, kernelEpoch]);
 
   const cellOutputs: ArtifactTile[][] = useMemo(() => {
@@ -1481,6 +1531,7 @@ export function useNotebook() {
     cellTimings,
     cellOutputs,
     cellErrors,
+    cellWarnings,
     publishArtifact,
     readinessBlocker,
     unmetForCell,

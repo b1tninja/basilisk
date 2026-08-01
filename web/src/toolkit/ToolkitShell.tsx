@@ -51,6 +51,7 @@ import { setCssVar } from "../lib/css-vars.js";
 import { cn } from "@/lib/cn";
 import { useNotebook } from "./useNotebook";
 import { RecipientBinderHost } from "./RecipientBinderHost";
+import { CellWarnings, warningDismissKey } from "./CellWarnings";
 import {
   OpsShelf,
   DocsFooter,
@@ -433,6 +434,16 @@ export function ToolkitShell() {
   }, [fileSaved]);
   const [cellViews, setCellViews] = useState<Record<number, CellView>>({});
   const [rawDrafts, setRawDrafts] = useState<Record<number, string>>({});
+  /**
+   * Warnings the user has read and cleared, keyed by cell + message.
+   *
+   * Session state on purpose: it is not part of the notebook, so saving and
+   * reopening a recipe — or handing it to someone else — brings its advice
+   * back. Muting a security notice should not be a property of the file.
+   */
+  const [dismissedWarnings, setDismissedWarnings] = useState<Set<string>>(
+    () => new Set()
+  );
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const [trayOpen, setTrayOpen] = useState(true);
   const [trayTab, setTrayTab] = useState<
@@ -1369,6 +1380,27 @@ export function ToolkitShell() {
                               nb.setFocusedCell(i);
                               setChipEdit({ cell: i, stem: si, branch: null, body: null });
                             }}
+                          />
+                          {/* Below the errors, and below them in weight: a
+                              warning that a run will still succeed does not
+                              belong above the reason it will not run. */}
+                          <CellWarnings
+                            className="mb-2"
+                            warnings={(nb.cellWarnings[i] || []).filter(
+                              (w) => !dismissedWarnings.has(warningDismissKey(i, w))
+                            )}
+                            steps={chain.steps || []}
+                            onFocusStep={(si) => {
+                              nb.setFocusedCell(i);
+                              setChipEdit({ cell: i, stem: si, branch: null, body: null });
+                            }}
+                            onDismiss={(w) =>
+                              setDismissedWarnings((prev) => {
+                                const next = new Set(prev);
+                                next.add(warningDismissKey(i, w));
+                                return next;
+                              })
+                            }
                           />
                           {cellView(i) === "source" ? (
                             <div className="space-y-2">
