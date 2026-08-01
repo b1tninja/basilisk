@@ -755,6 +755,36 @@
    "label": "Decode",
    "metaphor": "Double chevron left",
    "description": "Reverse direction of a conjugate pair - decode, unwrap, verify. Mirrors encode exactly so direction reads without labels."
+  },
+  {
+   "id": "key-public",
+   "group": "kind",
+   "label": "Public key",
+   "metaphor": "Key with an open bow",
+   "description": "The unmarked member of the sensitivity pair: an ordinary key, bow hollow. You can see through it, because there is nothing in it to hide. Identical to key-secret in every other respect - same bow radius, same shank, same two bits - so the one thing that differs is the one thing that matters.",
+   "refs": [
+    "WCAG 2.1 SC 1.4.1 Use of Colour"
+   ]
+  },
+  {
+   "id": "key-secret",
+   "group": "kind",
+   "label": "Secret key",
+   "metaphor": "Key with a filled bow",
+   "description": "The same key as key-public with its bow filled in: solid, opaque, something inside. Fill rather than a second mark because the badge renders at 12-16px, where a gap, a dot or an extra tooth all close up - at 12px a rasterised disc against a rasterised ring is still unmistakable, which no finer cue survives. This is the shape channel that carries the sensitivity split beside the badge tint, so a reader who cannot separate the two hues still can.",
+   "refs": [
+    "WCAG 2.1 SC 1.4.1 Use of Colour"
+   ]
+  },
+  {
+   "id": "key-pair",
+   "group": "kind",
+   "label": "Keypair",
+   "metaphor": "Two bows on one shank, one filled and one hollow",
+   "description": "Both halves on a single key: the filled bow is the secret one, the hollow bow the public one. It reads on the secret side of the split because a filled bow is present, which is the honest claim - a keypair holds secret material even though its identity is showable.",
+   "refs": [
+    "WCAG 2.1 SC 1.4.1 Use of Colour"
+   ]
   }
  ]
 }

@@ -91,6 +91,14 @@ cd web && npm run glyphs
 | `unlock` | Unlock | Open padlock | Unlock vault key into session — shackle open. <br><small>ModernPGP open lock</small> |
 | `lock` | Lock | Closed padlock | Lock / clear session material — shackle closed. <br><small>ModernPGP closed lock</small> |
 
+## kind
+
+| Id | Label | Metaphor | Description |
+|----|-------|----------|-------------|
+| `key-public` | Public key | Key with an open bow | The unmarked member of the sensitivity pair: an ordinary key, bow hollow. You can see through it, because there is nothing in it to hide. Identical to key-secret in every other respect - same bow radius, same shank, same two bits - so the one thing that differs is the one thing that matters. <br><small>WCAG 2.1 SC 1.4.1 Use of Colour</small> |
+| `key-secret` | Secret key | Key with a filled bow | The same key as key-public with its bow filled in: solid, opaque, something inside. Fill rather than a second mark because the badge renders at 12-16px, where a gap, a dot or an extra tooth all close up - at 12px a rasterised disc against a rasterised ring is still unmistakable, which no finer cue survives. This is the shape channel that carries the sensitivity split beside the badge tint, so a reader who cannot separate the two hues still can. <br><small>WCAG 2.1 SC 1.4.1 Use of Colour</small> |
+| `key-pair` | Keypair | Two bows on one shank, one filled and one hollow | Both halves on a single key: the filled bow is the secret one, the hollow bow the public one. It reads on the secret side of the split because a filled bow is present, which is the honest claim - a keypair holds secret material even though its identity is showable. <br><small>WCAG 2.1 SC 1.4.1 Use of Colour</small> |
+
 ## op
 
 | Id | Label | Metaphor | Description |
