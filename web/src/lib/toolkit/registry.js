@@ -1989,6 +1989,17 @@ export const STEPS = [
       },
     ],
     overloads: [
+      // `format=private` first — matchOverload takes the first hit, and the
+      // runtime has always stamped `kind: "ssh-private"` here (execSshEncode).
+      // Without this guard the table called an openssh-key-v1 block
+      // "ssh-public", so `ssh.encode format=private | ssh.decode` typed as a
+      // public `key` while producing a keypair, and ssh.decode's own
+      // `ssh-private → keypair` overload was unreachable.
+      {
+        when: { base: "keypair" },
+        whenParams: { format: "private" },
+        output: { base: "text", kind: "ssh-private" },
+      },
       { when: { base: "keypair" }, output: { base: "text", kind: "ssh-public" } },
       { when: { base: "key" }, output: { base: "text", kind: "ssh-public" } },
     ],

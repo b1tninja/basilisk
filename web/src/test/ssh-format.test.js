@@ -22,6 +22,9 @@ import {
 } from "../lib/ssh/openssh-key-v1.js";
 import { sshFingerprint } from "../lib/ssh/fingerprint.js";
 import { parseSshsig, sshsigSign, sshsigVerify } from "../lib/ssh/sshsig.js";
+import { STEPS } from "../lib/toolkit/registry.js";
+import { matchOverload } from "../lib/toolkit/types.js";
+import { execSshEncode } from "../lib/toolkit/ssh-ops.js";
 
 const fixture = (name) =>
   readFileSync(fileURLToPath(new URL(`./fixtures/ssh/${name}`, import.meta.url)), "utf8");
@@ -158,5 +161,47 @@ describe("sshsig", () => {
         sshsigVerify(PAYLOAD, sig, { namespace: "file", publicBlob: key.publicBlob })
       ).resolves.toBe(true);
     }
+  });
+});
+
+/**
+ * The type table must agree with what `execSshEncode` actually stamps.
+ *
+ * `ssh.encode format=private` returns `meta.kind: "ssh-private"` and always
+ * has. The overload table said "ssh-public" for every input, so the compiler
+ * believed an openssh-key-v1 block was a public line: `| ssh.decode` then took
+ * the `ssh-public → key` branch and typed a keypair as a public key, and
+ * `ssh.decode`'s own `ssh-private → keypair` overload could never be reached
+ * from the op that produces the thing it names.
+ */
+describe("ssh.encode declares the half it actually emits", () => {
+  const outOf = (params) => {
+    const spec = STEPS.find((s) => s.name === "ssh.encode");
+    return matchOverload(spec.overloads, { base: "keypair" }, params)?.output;
+  };
+
+  it("types format=private as ssh-private", () => {
+    expect(outOf({ format: "private" })?.kind).toBe("ssh-private");
+  });
+
+  it("still types the default as ssh-public", () => {
+    expect(outOf({})?.kind).toBe("ssh-public");
+    expect(outOf({ format: "public" })?.kind).toBe("ssh-public");
+  });
+
+  it("matches what the runtime stamps, so the two cannot drift", async () => {
+    const pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const value = { type: "keypair", data: pair, meta: {} };
+    for (const params of [{ format: "private" }, {}]) {
+      const ran = await execSshEncode(value, params);
+      expect(ran.meta.kind).toBe(outOf(params)?.kind);
+    }
+  });
+
+  it("makes ssh.decode's ssh-private branch reachable", () => {
+    const dec = STEPS.find((s) => s.name === "ssh.decode");
+    const priv = matchOverload(dec.overloads, { base: "text", kind: "ssh-private" }, {})?.output;
+    expect(priv?.base).toBe("keypair");
+    expect(outOf({ format: "private" })?.kind).toBe("ssh-private");
   });
 });
