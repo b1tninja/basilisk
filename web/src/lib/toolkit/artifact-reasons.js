@@ -15,12 +15,31 @@
  */
 
 export const ACTION_REASONS = Object.freeze({
-  /** Copy on a masked value that *can* be revealed. */
-  maskedButRevealable: "Reveal this value first — a masked value cannot be copied.",
   /**
-   * Copy on a masked value with no Reveal, because the engine only marks
-   * `revealable` for values an explicit `out` / `text` / `inspect` asked for.
-   * The remedy is a recipe edit, so it names the edit.
+   * Copy *or* Download on a masked value that can be revealed.
+   *
+   * It named Copy alone until Download landed in `2dda2af` and took the same
+   * branch, at which point a user clicking a disabled **Download** was told
+   * the value "cannot be copied" — a sentence about a button they had not
+   * pressed. The fix is to name neither action rather than to split the
+   * reason in two, for the reason stated at the top of this file: the same
+   * condition must not acquire two explanations. Copy and Download are one
+   * gate here — `artifact-actions.js` calls Download's branch "Copy's branch
+   * verbatim" and a test asserts the two `available()` results are `toEqual`
+   * — so two strings would be two places for one refusal to drift, and a
+   * third destination would want a third.
+   *
+   * "Leave the notebook" is not a euphemism chosen to dodge the naming
+   * problem; it is this codebase's existing name for exactly this pair.
+   * `activity-log.js` records Copy and Download together as "how a secret
+   * leaves the notebook", and it is the axis §34b gates on — which is why
+   * `keyring.add` stays enabled while masked and these two do not.
+   */
+  maskedButRevealable: "Reveal this value first — a masked value cannot leave the notebook.",
+  /**
+   * Copy or Download on a masked value with no Reveal, because the engine
+   * only marks `revealable` for values an explicit `out` / `text` / `inspect`
+   * asked for. The remedy is a recipe edit, so it names the edit.
    */
   neverAskedFor:
     "This value was not asked for. Add `out @label` to the recipe to see or copy it.",

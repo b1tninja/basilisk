@@ -19,7 +19,9 @@ genkey ec/p256 | export spki | pem | out @pub
 random 32 | encode base64 | out @cek
 ```
 
-114 steps across 13 toolboxes, 23 pipeline types, 32 widgets.
+118 steps across 14 toolboxes, 23 pipeline types, 32 widgets.
+(Counted from the registry: `STEPS.length` and `Object.keys(TOOLBOX_META)`. If
+you change either, recount rather than adjusting by hand.)
 
 ---
 
@@ -87,9 +89,68 @@ states being correct.
   by construction. Now only a *parse* failure is refused. If you find yourself
   unable to reproduce a validation state, check whether the editor is refusing
   the input.
+- **`OutputList` resolves kinds against a *mapped* `OutputArtifact`, not the
+  engine's artifact — and a field the mapper drops makes a feature silently
+  inert while engine-backed tests stay green.** This is the single most
+  expensive trap in this codebase: **four separate defects** so far. Read the
+  next entry with it; they are one trap seen from two ends.
+
+  There are **three** hops between an engine artifact and a tile, and each is
+  an explicit field list that drops anything not named in it:
+
+  1. `engine.js` emits a `ToolkitArtifact`.
+  2. `useNotebook.ts`'s `cellOutputs` maps it to `ArtifactTile`
+     (`notebook-types.ts`).
+  3. **`ToolkitShell.tsx` maps *that* to `OutputArtifact`, twice** — the cell
+     list and the tray Outputs tab, both `outputs={rows.map(...)}` on an
+     `<OutputList>` — and it is this third shape that `resolveArtifactKind(...)`
+     and every kind's `view` / `publicView` actually receive. (Grep
+     `<OutputList` rather than trusting a line number; the file moves.)
+
+  Every kind-matching test in the suite builds artifacts from `runRecipe` and
+  resolves against the **engine** shape, which is the right call for the
+  resolver and completely blind to hops 2 and 3. So a kind can match, render,
+  and be asserted green in vitest while the shipped page resolves the same
+  artifact to `FALLBACK_KIND` because hop 3 never copied the field it matched
+  on. Nothing fails. The tile just quietly becomes the wrong tile.
+
+  What survives by construction: **`traits`**, which is the one open bag every
+  hop copies wholesale, and `tags` / `role`, which the registry matches on and
+  which were added to all three lists when §32 landed. That is why
+  `OTP_META_TRAITS` puts `otpStep`/`otpPeriod`/`otpLabel` in `traits` rather
+  than in fields of their own, and why `notebook-types.ts` widened `traits` to
+  `Record<string, unknown>`. **Put new artifact metadata in `traits` unless you
+  have a reason not to** — and if you must add a named field, add it to all
+  three lists in the same commit and then look at the page.
+
+  Latent right now, as an example of the shape: `ShareIdentity` reads
+  `artifact.shareIndex`, and **neither** `ToolkitShell` mapping copies it. It
+  is harmless only because the engine also stamps `traits.shareOf`, which
+  `shareIdentity()` prefers — the field is dead, and the bag saved it.
+
 - **`useNotebook`'s `cellOutputs` projection copies named fields.** Anything the
-  engine adds is silently dropped until listed there. Cost me two debugging
-  rounds (`revealable`, `inspectSnapshot`).
+  engine adds is silently dropped until listed there. Cost two debugging rounds
+  on its own (`revealable`, `inspectSnapshot`) before `pipeType` — which had
+  ridden on every artifact since the type system landed and was dropped here —
+  turned out to be why the UI had grown `netType` / `jose` / `inspectSnapshot`
+  as parallel discriminators for a discriminator it already had.
+
+- **`runRecipe` and `compileRecipe` do not return what their names suggest, and
+  both produced false passes this session.**
+
+  - `runRecipe(ast, bindings)` returns **the artifact array directly**, not
+    `{ artifacts }`. `const { artifacts } = await runRecipe(...)` gives
+    `undefined`, and `(artifacts || []).find(...)` then finds nothing — which
+    reads as "the recipe produced no such artifact" rather than as a typo.
+  - `compileRecipe(source)` returns `{ ast, validation }`, and the errors are
+    at **`result.validation.errors`**, not `result.errors`. Any "there are no
+    errors" check written against the shallow path — `!result.errors?.length`,
+    `expect(result.errors ?? []).toEqual([])`, a truthiness guard — passes
+    vacuously on a recipe that does not compile at all.
+
+  Both failure modes look identical from the test output: **an empty array read
+  as "nothing wrong."** When a test asserting an absence passes on the first
+  try, check the path it read before believing it.
 - **`vitest.config.js` now mirrors vite's `@` alias.** Before, importing any
   component failed on `@/lib/cn`, so helpers had to be relocated to `lib/` just
   to be testable. They no longer do.
@@ -99,6 +160,27 @@ states being correct.
 - **The engine withholds `inspectSnapshot` for sensitive values on purpose** —
   a snapshot retains raw private JWK fields the masked text dump does not. Its
   absence is a decision, not a gap.
+- **No cell-writing mutation may read an ambient "current cell"** — `49cd286`.
+  Every chip handler used to do `setFocusedCell(i)` and then call a mutation;
+  the setter is React state and does not land until the next render, so the
+  mutation ran in a closure where `steps` was still the *previously* focused
+  cell's. With cell [0] focused, the x on cell [1]'s first chip deleted a step
+  from cell [0]. Every cell-writing mutation now takes the cell as its **first
+  argument** and reads through `stepsAt`; the two callers that genuinely mean
+  "wherever the caret is" (the shelf append, the slot-tray Insert) pass
+  `focusedCell` out loud at the call site, where it is a fact rather than a
+  pending setter. If you add a mutation, give it the cell — do not reintroduce
+  the ambient one.
+- **A recipe that compiles must serialize back to a recipe that compiles** —
+  `6d2faf8`. `serializeStep` quoted a positional only for whitespace, `|` or
+  `=`, but a bare positional also has to *begin* the way the parser's argument
+  loop expects: a letter, a digit, or `@`. So `file.read accept=.pem` — the
+  op's own documented example — serialized bare and came back `Unexpected "."`.
+  Not a rare path: the chip flow re-serializes on **every** mutation and Copy
+  link serializes to build the URL. The durable half of the fix is a sweep that
+  round-trips every self-contained `Example:` in the registry, so the next op is
+  covered the day it lands. Verify a serializer change by removing the fix and
+  watching the sweep fail, not by reading it.
 
 ---
 
@@ -181,20 +263,56 @@ pipe on Windows). It signs the raw RFC 4253 format the agent protocol carries,
 the classic way an ssh-agent reimplementation passes its own tests and fails
 against `ssh`.
 
+**`saveKey` no longer downgrades key protection silently** — fixed in
+`6b0ec96`. It used to `put` on a `fingerprint` keyPath without reading the
+existing record, so re-saving a passkey-protected key as `device` produced a
+record with **no outer PRF wrap at all**: the vault listed it as device and
+`unlockKey` handed back the armored private key with no authenticator in the
+loop. Nothing warned. `saveKey` now takes `onConflict`, and **the default is
+the refusal** — an unspecified option must not be the one that weakens a key,
+so a caller that means to has to say the word, and an unrecognized value throws
+rather than falling through to the safe branch. Two details that are load-
+bearing and easy to undo by "simplifying":
+
+- **The read and the write share one transaction.** A check-then-save in the
+  caller leaves open exactly the window a second tab enrols the passkey in,
+  which is the case the guard exists for. The `put` is issued from the `get`'s
+  success callback, and IndexedDB gives the atomicity for free.
+- **Protection is read off the record's outer wrap, not its `protection`
+  label.** The wrap is the property that actually holds; a hand-edited label
+  must not be able to argue it away.
+
+Only a genuine weakening counts (passkey > passphrase > device). Equal-protection
+re-saves stay routine, because that is how `publicArmored` and the key-id
+backfill land. `patchKeyMeta`, `touchKeyUsed` and `unlockKey`'s backfill never
+rebuild the record, so they do not go through the guard — pinned by a test
+rather than left as an assumption. `agent.save` passes `"replace"` on both its
+paths; the `keyring.add` button passes nothing, and that asymmetry is the point.
+
+**`bcrypt_pbkdf` is built** (`8ce5544`): `web/src/lib/ssh/bcrypt-pbkdf.js` over
+its own `blowfish.js`, so encrypted `openssh-key-v1` blocks both **read and
+write** (`aes256-ctr`, 48 derived bytes), with real `ssh-keygen` fixtures for
+ed25519/ecdsa/rsa under `web/src/test/fixtures/ssh/`. Two things a cold reader
+gets wrong here:
+
+- **Passphrase protection now works for vault kind `ssh`, not for `raw`.** An
+  ssh-mappable key stores as openssh-key-v1, which has a passphrase form; a
+  `raw` key (x25519) stores as a bare private JWK, which has none. So the
+  refusal survives for exactly that case, and `NON_PGP_PASSPHRASE_MESSAGE`
+  names the kind rather than saying "SSH keys are not supported" — which was
+  the old sentence and is now the wrong one.
+- **`ssh.encode` still writes unencrypted, deliberately.** It has no
+  `passphrase=` param: a recipe that silently produced a protected container
+  would be a different artifact than the one it asked for. `agent.save
+  protection=passphrase` is the op that writes a protected block.
+
 Outstanding here:
 
-- **`saveKey` silently downgrades key protection.** It writes with `put` on a
-  `fingerprint` keyPath and never reads the existing record, so re-saving an
-  already-stored key replaces its protection — a passkey-protected key saved
-  again as `device` loses the authenticator with no warning. Reachable from a
-  recipe today. A fix was in flight in a separate session as of 2026-07-31;
-  check `grep onConflict web/src/lib/vault.js` before starting.
 - **`agent.list` has no typed tile** (§28c). The op emits `kind`/`publicLine`
-  and the CLI shape is done; only the widget is missing.
+  and the CLI shape is done; only the widget is missing. Confirmed still true:
+  no kind in `artifact-kinds/registry.tsx` claims it.
 - **Mesh forwarding of approvals** (§30d) is designed and unbuilt, blocked on
   the live two-browser mesh check that was already open.
-- **`bcrypt_pbkdf`** — encrypted `openssh-key-v1` read/write, and with it
-  passphrase protection for ssh/raw vault kinds. Refused by name today.
 - **CLI `--approve`** is deliberately *not* shipped: `basilisk run` refuses the
   whole `agent` toolbox at pre-flight (exit 4, verified) because Node has no
   vault, so the flag could never fire. Do not add it before the CLI key store.
@@ -208,10 +326,26 @@ the key tiles (§35), the Activity log (§36), the rest of the inventory (§37 �
 every role in `ARTIFACT_ROLES` is claimed, and `UNCLAIMED_ROLES` in
 `artifact-kinds-table.test.js` is empty), `ArtifactTile` as its own component
 (§33a), the `GateBanner` / `ConsequenceBanner` pair with Publish moved onto it
-(§34c), and migration (§38, asserted in `artifact-migration.test.js`). Not yet
-built: `keyring.add`, blocked on the `saveKey({onConflict})` fix, and with it
-§34d's overwrite confirmation — the banner shape and its catalog state exist,
-nothing raises it.
+(§34c), and migration (§38, asserted in `artifact-migration.test.js`).
+
+**`keyring.add` and Download are built too**, so unit 4 is nearly closed:
+Download (`2dda2af`) through `download-service.js` — not `file.save`, whose
+File System Access path opens a picker a tile should not — under the filename
+the *engine* gave the artifact, corrected only where a kind declares
+`download.ext`. `keyring.add` (`f800a9b`) once `saveKey({onConflict})` landed.
+Three kinds arrived after the checklist was written because real artifacts were
+landing on the wrong tile: `ssh-public` / `ssh-private` (`d379b3d`), `keypair`
+(`83ef038`, the tip of a bare `genkey`, which used to be drawn by the card that
+means "the public half"), and `otp-code` (`51a8cb1`).
+
+**§34d's overwrite confirmation is not built and is no longer blocked** — what
+shipped has no Replace to confirm. The vault refuses a weakening re-save
+outright and the tile shows `protectionDowngradeMessage` verbatim; a re-save at
+*equal* protection is not a conflict and goes through, with the receipt saying
+"Already in My Keys". `ConsequenceBanner`'s overwrite shape and its catalog
+state still exist, and nothing reaches them. Adding Replace to the button would
+mean offering the single click the vault's default exists to refuse — treat it
+as a decision to revisit, not a gap to fill.
 
 Four things a cold reader should know:
 
@@ -439,9 +573,27 @@ Roughly in value order:
    keys for e2e**: dev-only `window.__basiliskE2E.mintSessionKey()`
    (`lib/e2e-hooks.js`, tree-shaken from production), resolved by
    `unlockVaultForUse` via the session cache without vault membership.
-4. **TOTP (turn 43) deserves its own scope.** A value that mutates on a local
-   timer is new for this engine — every current value is fixed at run time.
-   That is an engine change, not polish.
+4. ~~**TOTP (turn 43) deserves its own scope.**~~ — done, and the premise was
+   wrong in a useful way. This entry said "a value that mutates on a local timer
+   is new for this engine", and treated that as the engine change to budget for.
+   **No such change was needed, and making it would have been the defect.** The
+   `otp.*` toolbox (`74fdf3d` — `lib/otp/hotp.js`, `lib/otp/uri.js`,
+   `lib/toolkit/otp-ops.js`, RFC vectors + `otpauth://` round trips) computes a
+   code exactly once, at run time, like every other value. What ticks is the
+   **clock**, in the widget (`51a8cb1` — `OtpCodeCard`, kind `otp-code`): the
+   run stamps `otpStep`/`otpPeriod` into `traits`, the card turns them into an
+   absolute expiry instant, and a one-second tick against `Date.now()` drains
+   the bar and then says **expired** while still showing the value the run
+   receipt digested. A Refresh button is what §37a exists to refuse — a
+   recomputed code would be a value with no step behind it in the recipe,
+   nothing in the receipt describing it, and nothing the CLI could reproduce.
+   Re-running the cell is what produces the next code, and the tile says so
+   instead of offering to do it. Two policy calls worth not re-litigating: the
+   `otpauth://` URI is **sensitive** (the URI *is* the secret, plus a label)
+   and the code is **not** (six digits that expire in half a minute and exist
+   to be read off the screen); and HOTP gets no countdown at all — not a
+   disabled one, not a zeroed one — because it answers to a counter, not a
+   clock, and §33d answers "is this meaningful for this object" by omission.
 5. **Work down the inline-style baseline** — now 11 sites in 7 files. TopBar
    (was 6) and OpsShelf (was 4) are converted: `data-suite-tone` /
    `data-toolbox-dot` plus enumerated rules in toolkit.css.
@@ -456,9 +608,31 @@ Roughly in value order:
    Fixed in `basilisk-dev-server.js`; verified the predicted-violation banner
    fires on `/`.
 
-Unverified: the `CellTypeErrors` banner is confirmed in the catalog and in a
-live cell, but the RunBar blocker and the banner still word type errors
-independently in one path.
+The `CellTypeErrors` banner and the RunBar blocker no longer word type errors
+independently — `b57e64c`. `cellErrors` used to call
+`validateRecipe({ chains: [chain] })` **per cell**, which throws away the slot
+table each cell builds for the ones below it, so 33 shipped multi-cell templates
+opened under a wall of red (`in @kp: unknown slot`, plus the cascade behind it)
+before any run and still after a successful one. Every word of it was fiction:
+`@kp` is written one cell up. The notebook is now validated **whole, once**
+(`cellErrorsForChains`, pure and exported so the node suite can call it), and
+the errors are dealt back to the cell they came from. Three things about that
+choice are worth not undoing:
+
+- It is the **same** validation the run gate performs, so the banner and the
+  Run button can no longer hold two opinions about whether a cell is wired.
+- Filtering the cascade afterwards was rejected: recognising a downstream
+  message would mean matching it by its wording, which this codebase asserts
+  verbatim elsewhere and which would rot on the first rephrasing.
+- **Nothing is suppressed.** `in @typo` that nothing ever writes still reports,
+  and so does a slot written only *below* the cell that reads it. Suppressing
+  unknown slots outside the first cell would trade a false positive for a false
+  negative, which is the worse direction.
+
+`stepIndex` anchoring survives because `validateRecipe` numbers top-level steps
+continuously across cells, so subtracting the cell's start offset recovers the
+per-cell index exactly — the same chip lights up, including from inside a
+`foreach` body.
 
 ---
 

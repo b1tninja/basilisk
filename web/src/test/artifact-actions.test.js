@@ -69,9 +69,16 @@ describe("a disabled action always carries a reason (§33d)", () => {
   });
 
   it("keeps the wording verbatim, because the wording is the feature", () => {
+    // Names neither action on purpose: Download shares this branch, so a
+    // sentence saying "cannot be copied" was a sentence about a button the
+    // user had not pressed. "Leave the notebook" is `activity-log.js`'s own
+    // name for the Copy/Download pair and the axis §34b gates on.
     expect(ACTION_REASONS.maskedButRevealable).toBe(
-      "Reveal this value first — a masked value cannot be copied."
+      "Reveal this value first — a masked value cannot leave the notebook."
     );
+    // The reason a *shared* refusal has one string: two would be two places
+    // for one sentence to drift, which is what this module exists to prevent.
+    expect(ACTION_REASONS.maskedButRevealable).not.toMatch(/\bcopie?d?\b|\bdownload/i);
     expect(ACTION_REASONS.neverAskedFor).toBe(
       "This value was not asked for. Add `out @label` to the recipe to see or copy it."
     );

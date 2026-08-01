@@ -7,16 +7,26 @@ motivated the request. Every unit lists acceptance criteria measurable by test
 or by browser measurement (`getComputedStyle` / DOM, per HANDOFF — screenshots
 are unreliable here).
 
-**Status as of 2026-07-31: units 1, 2, most of 3, part of 4, and §35/§36 are
-built.** Shipped: the role vocabulary, projection floor, keypair/recipients
+**Status as of 2026-08-01: units 1, 2, most of 3, most of 4, and §35/§36/§37
+are built.** Shipped: the role vocabulary, projection floor, keypair/recipients
 role stamping and `RECEIPT_VERSION` 2 (unit 1); the resolver, the kind table
 with the three existing renderers folded in unmodified, and `OutputList` wired
 to both (unit 2); the two §39 foundations, the three-tier action row and
 disabled-with-reason (unit 3); the global action table with injected services
-and the `copy` / `key.copyFingerprint` / `key.copyPublicLine` actions (unit 4,
-partial); the §35 key tiles (`keypair-public`, `keypair-private`, `key`,
+and the `copy` / `download` / `key.copyFingerprint` / `key.copyPublicLine` /
+`keyring.add` / `key.publish` actions, mask gating and `saveKey({onConflict})`
+(unit 4 — 4.3 through 4.7, leaving 4.1's own acceptance test, the rest of 4.2
+and 4.8); the §35 key tiles (`keypair-public`, `keypair-private`, `key`,
 `openpgp-public`, `openpgp-private`) with `publicView` so a masked private key
 is not blank; and the §36 Activity log with its tray tab.
+
+Checkboxes below are ticked **only where the unit's own acceptance criteria
+were checked against the code**, and a tick that carries a deviation says so
+in the entry. Several unticked units are covered by the prose above — the
+prose describes what exists, the boxes record what was verified against the
+list, and where the two disagree the box is the conservative one. A blanket
+find-replace over this file once ticked three unbuilt items and had to be
+walked back; do not repeat it.
 
 **§37 is now built too.** Every role in `ARTIFACT_ROLES` is claimed:
 `ciphertext` and `envelope` share a packet read-out over `packet-map.js`;
@@ -49,14 +59,29 @@ confirms in the banner rather than the popover. §38's clauses are asserted in
 name not retired, a store not bumped), and negatives do not fail loudly on
 their own.
 
-Not built: `keyring.add`, still blocked, and with it §34d's overwrite
-confirmation — the banner *shape* exists and has a catalog state so its wording
-can be argued, but nothing raises it. The `Add to keyring` half of §38a's doc
-steer is held back for the same reason: pointing a doc at a button that does
-not exist is the failure HANDOFF records as "the card was telling custodians to
-run the wrong op". The steer ships with its *reason* (a recipe containing
-`agent.save` writes to the reader's keyring) and gains its second sentence when
-the button does.
+**`keyring.add` is built** (`f800a9b`), and with it the last of unit 4's load-
+bearing gates. It became possible when `saveKey({ onConflict })` landed in
+`6b0ec96` — see unit 4.7 — and it deliberately passes *no* `onConflict`, so the
+vault's default refusal stands: one click may not throw away a passkey binding,
+and a key already held behind one gets `protectionDowngradeMessage` verbatim
+through the banner's footnote. It is **enabled while masked**, which is the
+opposite call from Copy and for the same reason (§34b gates on *leaving*, and
+this stores without displaying).
+
+**§34d's overwrite confirmation is therefore not built, and no longer waiting
+on anything** — the design imagined a Replace path to agree to, and what
+shipped has none. The vault refuses a weakening re-save outright and the tile
+states the refusal; a re-save at *equal* protection is not a conflict at all and
+goes through, with the receipt saying "Already in My Keys" rather than claiming
+to have added something. `ConsequenceBanner`'s overwrite shape still exists and
+still has its catalog state (unit 4.4), and it is now a state nothing reaches.
+That is a decision to revisit, not an omission to fill: adding Replace to the
+button would mean the single click the vault's default exists to refuse.
+
+The `Add to keyring` half of §38a's doc steer was held back because the button
+did not exist. It does now, so the steer can gain its second sentence — **still
+owed**, and the one thing on this page that `f800a9b` made possible without
+doing.
 
 Four places the design and the code disagreed, found by measuring:
 
@@ -80,23 +105,31 @@ Four places the design and the code disagreed, found by measuring:
   that the tile's own card, two lines above, has already done. The banner names
   the artifact and the fingerprint in display shape instead.
 
-One defect found in passing and filed rather than fixed: opening any Radix
-`Sheet` in the *built* app inserts an inline `<style>` that `style-src-elem`
-blocks with disposition `enforce`, so the dialog's scroll-lock silently does
-not apply in production. Reproducible on any tile's Expand.
+One defect found in passing was filed here rather than fixed, and **has since
+been fixed in `34b3a2f`**: opening any Radix `Sheet` in the *built* app inserted
+an inline `<style>` that `style-src-elem` blocked with disposition `enforce`, so
+the dialog's scroll-lock silently did not apply in production. It was wider than
+this page said — `@radix-ui/react-menu` pulls in the same
+`react-remove-scroll-bar`, so every dropdown was affected too, and on `/my-keys`
+(where `<body>` genuinely scrolls) the page scrolled behind them. `vite.config.js`
+now aliases the package to `src/lib/scroll-lock.js`, which sets a
+reference-counted `body[data-scroll-locked]` and injects nothing; the rules live
+in `site.css`. **No CSP exemption was added, and none may be.** HANDOFF carries
+the two measured dead ends.
 
-**`keyring.add` is blocked, not merely unscheduled.** It needs
-`saveKey({onConflict})` — the fix for a live bug where re-saving a key
-silently replaces its protection, so a passkey-protected key can be
-downgraded to device-only with no warning. Shipping the button first would
-mean its failure mode is weakening a key. Check `grep onConflict
-web/src/lib/vault.js` before starting it.
+**`saveKey({ onConflict })` landed in `6b0ec96`, and `keyring.add` with it in
+`f800a9b`.** The bug this page recorded as blocking both was real and is fixed:
+`saveKey` built a fresh record and `put` it into a store keyed on the
+fingerprint, so re-saving a passkey-protected key at `protection=device`
+produced a record with no outer PRF wrap and `unlockKey` returned the private
+key with no authenticator in the loop. The guard reads and writes in **one**
+transaction — a check-then-save in the UI would leave open the window a second
+tab enrols the passkey in, which is the case the guard exists for — and only a
+genuine weakening (passkey > passphrase > device) counts, so the equal-protection
+re-saves that `publicArmored` and the key-id backfill depend on stay routine.
 
-Two corrections to this document's own premises, found by measuring:
-`artifactMetaFromType` had **zero callers**, so "the type system can already
-drive it" was aspirational; and unit 4.7's `saveKey({onConflict})` is blocked
-on a live protection-downgrade bug being fixed in a separate session — check
-`grep onConflict web/src/lib/vault.js` before starting it.
+One correction to this document's own premises stands: `artifactMetaFromType`
+had **zero callers**, so "the type system can already drive it" was aspirational.
 
 Engine/registry capabilities this design needs that do not exist today are
 marked ⚙ — do not discover them mid-implementation. There are nine of them, and
@@ -224,10 +257,42 @@ directly observable headlessly, before any widget exists.
   toast fires (clipboard test needs a *real* input event — a scripted click has
   no transient activation, per HANDOFF); Download routes through `file-ops.js`
   and fires `basilisk:file-saved`.
-- [ ] **4.3 Mask gating** (§34b) — Copy disabled on a masked value with the
-  verbatim reason; Download enabled; fingerprint/public-line enabled. Accept:
-  the three cases asserted on one fixture; a test asserts *no* code path sets
-  `revealed` from an action handler.
+
+  **Partial, so still open.** In the table: `copy`, `download` (`2dda2af`),
+  `key.copyFingerprint`, `key.copyPublicLine`. Not in the table:
+  `artifact.showQr` and `diag.configureTurn` — the latter is still passed into
+  `OutputList` as a `diagnosticAction` prop by both shell call sites rather than
+  declared. `expand` is not a table entry by design: it is the tile's own
+  affordance and its Sheet renders the same widget the row does. **Download
+  deviates on its route** — it goes through a new `download-service.js`, not
+  `file-ops.js`, because `file.save`'s File System Access path opens a picker
+  and a tile Download should not; it fires the same `basilisk:file-saved` event,
+  so the notification weight is unchanged. The filename is the engine's
+  (`downloadNameFor`), corrected per kind only where a kind declares
+  `download.ext` — `ssh-private` claims `.key`, and the reasoning against
+  `.txt` (hands a private key to a text editor) and `.pem` (claims PKCS#8 it is
+  not) is recorded on that kind.
+- [x] **4.3 Mask gating** (§34b) — **one deviation, argued.** Copy is disabled
+  on a masked value with the verbatim reason, and fingerprint/public-line are
+  enabled (both derive from public material — a fingerprint is a digest of the
+  wire blob, public even inside a private block). **Download is disabled, where
+  this unit said enabled.** The design read Download as "no display, therefore
+  no exposure"; §34b gates on whether the value *leaves*, and a file is where a
+  secret goes to be kept where the clipboard is where it goes to be pasted once.
+  `activity-log.js` had already named the two together as "how a secret leaves
+  the notebook" and logs both. The contrast that keeps the axis legible is
+  `keyring.add`, which stays *enabled* while masked because it moves the secret
+  into storage without ever displaying it. Asserted on one fixture, plus a test
+  that Download's `available()` is `toEqual` Copy's across all three masked
+  cases; `expect(SRC).not.toMatch(/setRevealed|revealed\s*=\s*true/)` pins that
+  no code path lifts the mask from inside an action.
+
+  A consequence of the shared branch, recorded because it was a live untruth for
+  a while: `ACTION_REASONS.maskedButRevealable` used to say "a masked value
+  cannot be **copied**", which was a sentence about a button a Download user had
+  not pressed. It now says "cannot **leave the notebook**" and names neither
+  action — one reason for one condition, which is what `artifact-reasons.js`
+  exists to enforce.
 - [x] **4.4 `GateBanner` extraction + `ConsequenceBanner`** (§34c). The
   approval banner had *no* catalog states — it renders only while a real
   `agent.sign` is suspended mid-run — so three were added first and measured,
@@ -254,17 +319,39 @@ directly observable headlessly, before any widget exists.
   whose stated reason was not the true one. Verified live on /toolkit.html
   against a dev server with no directory: "Request failed (404)" verbatim in
   `--error`, banner open, button live.
-- [ ] **4.6 `keyring.add`** — §35f. Accept: an ed25519 keypair tile save lists
-  in My Keys as kind `ssh` with a fingerprint equal to `ssh-keygen -lf`'s; an
-  x25519 keypair saves as `raw`; a symmetric key never renders the action at
-  all; the receipt line shows the vault id in kind shape.
-- [ ] ⚙ **4.7 `saveKey({ onConflict })`** — `"refuse"` for the tile path,
-  `"replace"` for `agent.save` (§34d). Today `store.put` clobbers silently,
-  resetting `created`/`lastUsedAt` and downgrading protection. Accept: a
-  conflicting tile save refuses and raises the overwrite banner; `agent.save`'s
-  behaviour is unchanged (assert against the existing agent-ops tests);
-  Replace re-wraps and the banner's stated consequences are what actually
-  happen (passkey binding discarded).
+- [x] **4.6 `keyring.add`** — §35f, `f800a9b`. Every criterion met, against a
+  real `fake-indexeddb` vault with bodies taken from real `runRecipe` output
+  rather than fixtures (`keyring-add.test.js`): `genkey ed25519` files as kind
+  `ssh` under a `SHA256:…` id with a listable `ssh-ed25519 AAAAC3…` public line;
+  `genkey x25519` files as `raw` under an `spki:SHA256:` id; a symmetric key
+  never renders the action, by omission and not as a disabled button — the four
+  kinds that declare it are `key`, `keypair-private`, `openpgp-private` and
+  `ssh-private`, asserted, and the three public kinds are asserted not to; the
+  receipt reports `My Keys SHA256:…`, which is the line the Activity log prints.
+  Two things beyond the criteria are worth knowing: the encoder is `agent.save`'s
+  own, lifted out as `vaultMaterialFromPrivateJwk` and shared, with a test
+  pinning the click-path and recipe-path ids **equal** (two encoders would mean
+  one key growing two rows); and the least-specific `key` kind answers "does
+  this body have a private half" at runtime with a sentence, because it is the
+  one kind that by construction cannot know.
+- [x] ⚙ **4.7 `saveKey({ onConflict })`** — `6b0ec96`. `"refuse"` is the
+  **default**, so the tile path gets it without asking, and `agent.save` passes
+  `"replace"` on both its paths. The judgement worth preserving: an unspecified
+  option must not be the one that weakens a key, so a caller that means to has
+  to say the word — and an unrecognized value throws rather than falling through
+  to the safe branch, which is how a caller ends up believing it asked for
+  replace. Protection is read off the record's **outer wrap**, not its label,
+  since the wrap is the property that actually holds. `agent.save`'s behaviour
+  is unchanged and asserted (`agent-multikind.test.js`); `patchKeyMeta`,
+  `touchKeyUsed` and `unlockKey`'s backfill do read-modify-write, never rebuild
+  the record, and never reach the guard — pinned by a test rather than assumed.
+
+  **Deviation on the last criterion.** "A conflicting tile save refuses and
+  raises the overwrite banner" — it refuses, and the refusal is terminal. There
+  is no Replace to raise a banner for, because offering one would put the single
+  click the default exists to refuse behind one more click (`f800a9b`). Replace
+  re-wraps correctly and is exercised by `agent.save`; what is not built is a
+  UI that asks for it. See the §34d note above.
 - [ ] **4.8 `pubkey.import`, `shares.print`, `key.copyPublicLine`.** Accept:
   import writes through `cachePut` and the row reflects it without a reload;
   Print cards opens `ShareCards` with its own reveal still armed (the tile must
@@ -314,6 +401,42 @@ directly observable headlessly, before any widget exists.
   (§35e), but `KeyCard` parses JWK, so promoting it today would replace a
   readable armor body with a nearly empty card. That widening waits on a
   `KeyCard` that can read PEM.
+
+### Kinds that shipped outside this checklist
+
+Three arrived after the list was written, each because a real artifact was
+landing on the wrong tile. They are recorded here rather than given unit
+numbers, because the design did not ask for them.
+
+- **`ssh-public` / `ssh-private`** (`d379b3d`, typed by `7d563cd`) —
+  `SshKeyCard`. The one-line public form had **no kind at all**: it resolved as
+  `text`, so its whole body was one unreadable base64 run and Download wrote
+  `pub.txt`, a kind being the only thing allowed to correct an extension. Two
+  *roles* rather than `text`/`secret` plus a tag, and the reason is recorded in
+  `types.js`: `role` is stamped from **sensitivity** at both text emit sites, so
+  the same private block came out `secret` through `out @priv` and `text`
+  through a dangling tip, while `ArtifactMatch.role` is exact — a kind matching
+  one spelling silently disowned the other. This is the same failure
+  `TYPE_OWNED_ROLES` fixed for `sshsig` and `token`, met a second time.
+  `ssh-private` downloads as `.key` and declares no `key.publish` at any state.
+- **`keypair`** (`83ef038`) — the tip of a bare `genkey`, before any `out` has
+  asked for a half. It resolved to the least-specific `key` kind, **whose masked
+  body is the public-half card** — so a keypair was drawn by the card that means
+  "the public half" and read as a public key. The type was never wrong; the
+  rendering was. It declares no `keyring.add`: the body is empty by design, so a
+  disabled button reading "carries no key material" would be true of the
+  artifact and false of the keypair, which is the worst kind of accurate.
+- **`otp-code`** (`51a8cb1`, over `74fdf3d`'s `otp.*` ops) — `OtpCodeCard`,
+  matching `role: "text"` + tag `otp-code`. The design decision worth keeping is
+  a refusal: **the countdown recomputes nothing.** A Refresh button is exactly
+  what §37a forbids — a freshly computed code would be a value with no step
+  behind it in the recipe and nothing in the receipt describing it — so what
+  ticks is the *clock*, against an absolute expiry derived from the run's own
+  `otpStep`/`otpPeriod`. The tile drains, says **expired**, and keeps showing
+  the value the receipt covers. The facts it needs ride `traits`, which is the
+  one bag every projection copies wholesale (see HANDOFF's `OutputList` trap).
+  The code is deliberately **not** `sensitive`; the `otpauth://` URI is, because
+  the URI *is* the secret.
 
 ## 6. Auditability — §36
 
