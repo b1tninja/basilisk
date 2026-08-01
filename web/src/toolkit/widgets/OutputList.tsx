@@ -10,7 +10,7 @@ import {
 import { cn } from "@/lib/cn";
 import { KindGlyph } from "./kind-glyphs";
 import { ArtifactAction } from "./ArtifactAction";
-import { ACTION_REASONS } from "../../lib/toolkit/artifact-reasons.js";
+import { actionsFor } from "../../lib/toolkit/artifact-actions.js";
 import {
   ARTIFACT_KINDS,
   FALLBACK_KIND,
@@ -222,20 +222,6 @@ function renderKindView(
   }
 }
 
-/**
- * Why Copy is unavailable, or undefined when it is fine (§34b).
- *
- * Deliberately not "reveal, then copy": an action that lifts the mask on the
- * user's behalf is the mask bypass, however convenient. The tile asks them to
- * reveal first, which is a decision they make with the value on screen.
- */
-function copyReason(a: OutputArtifact, isRevealed: boolean): string | undefined {
-  if (!a.sensitive || isRevealed) return undefined;
-  return a.revealable && a.content
-    ? ACTION_REASONS.maskedButRevealable
-    : ACTION_REASONS.neverAskedFor;
-}
-
 export function OutputList({ outputs, className }: Props) {
   const [confirming, setConfirming] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -345,17 +331,41 @@ export function OutputList({ outputs, className }: Props) {
           {canExpand(a) ? (
             <ArtifactAction label="Expand" tier="inert" onClick={() => setExpanded(i)} />
           ) : null}
-          {/* §34b: Copy is gated on the mask, not silently allowed through it.
-              A masked value that *can* be revealed says so; one the recipe
-              never asked for names the edit that would ask. Revealing is not
-              done on the user's behalf — that would be the mask bypass this
-              rule exists to prevent. */}
-          <ArtifactAction
-            label="Copy"
-            tier="inert"
-            onClick={() => a.onCopy()}
-            reason={copyReason(a, revealed.has(a.label))}
-          />
+          {/* §33c: the kind names its actions, the table defines them once,
+              and this row renders them. "Copy" gates the same way on every
+              tile because there is only one Copy — the churn this whole
+              abstraction exists to stop is each tile growing its own. */}
+          {actionsFor(resolvedKind).map((action) => {
+            const ctx = {
+              artifact: a,
+              kind: resolvedKind,
+              masked: !!a.sensitive && !revealed.has(a.label),
+              services: {
+                // The existing handler, not a re-implementation: it fires the
+                // shipped clipboard toast and knows this artifact's own
+                // serialization. The table makes its *gating* uniform.
+                copyArtifact: () => a.onCopy(),
+                clipboard: { write: (t: string) => navigator.clipboard.writeText(t) },
+              },
+            };
+            const availability = action.available(ctx);
+            const reason =
+              availability === true ? undefined : availability.disabled;
+            return (
+              <ArtifactAction
+                key={action.id}
+                label={action.label}
+                tier={action.tier}
+                reason={reason}
+                onClick={() => {
+                  void Promise.resolve(action.run(ctx)).catch(() => {
+                    /* the action's own error surface is the next increment;
+                       a rejected copy must not take the tile down. */
+                  });
+                }}
+              />
+            );
+          })}
           {a.publishedAs ? (
             <span className="flex shrink-0 items-center gap-1">
               <code className="artifact-meta font-mono text-[var(--brand)]">{a.publishedAs}</code>

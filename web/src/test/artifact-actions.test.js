@@ -11,12 +11,18 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ACTION_REASONS } from "../lib/toolkit/artifact-reasons.js";
+import { ARTIFACT_ACTIONS, actionById, actionsFor } from "../lib/toolkit/artifact-actions.js";
+import "../lib/toolkit/registry.js";
+import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { runRecipe } from "../lib/toolkit/engine.js";
+import { ARTIFACT_KINDS } from "../toolkit/artifact-kinds/registry.tsx";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const ACTION = read("../toolkit/widgets/ArtifactAction.tsx");
 const OUTPUT_LIST = read("../toolkit/widgets/OutputList.tsx");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
 const CSS = read("../css/toolkit.css");
+const SRC = read("../lib/toolkit/artifact-actions.js");
 
 describe("a disabled action always carries a reason (§33d)", () => {
   it("derives disabled from the reason, so the two cannot drift apart", () => {
@@ -122,19 +128,45 @@ describe("in-flight is busy, not disabled (§41e)", () => {
 });
 
 describe("Copy is gated on the mask, never bypasses it (§34b)", () => {
+  // Asserted against the table, which is where the decision lives now —
+  // behaviourally, so a refactor of the tile cannot silently drop it.
+  const copy = actionById("copy");
+
+  it("is available on an unmasked artifact", () => {
+    expect(copy.available({ artifact: { content: "x" }, masked: false })).toBe(true);
+  });
+
   it("disables rather than revealing on the user's behalf", () => {
-    expect(OUTPUT_LIST).toMatch(/reason=\{copyReason\(a, revealed\.has\(a\.label\)\)\}/);
-    // No code path may set `revealed` from inside an action handler — that is
-    // the bypass, however convenient.
-    const helper = OUTPUT_LIST.match(/function copyReason[\s\S]*?\n\}/);
-    expect(helper[0]).not.toMatch(/setRevealed/);
+    const out = copy.available({
+      artifact: { content: "secret", revealable: true },
+      masked: true,
+    });
+    expect(out).not.toBe(true);
+    expect(out.disabled).toBe(ACTION_REASONS.maskedButRevealable);
+    // No code path may lift the mask from inside an action.
+    expect(SRC).not.toMatch(/setRevealed|revealed\s*=\s*true/);
   });
 
   it("distinguishes 'reveal it first' from 'the recipe never asked'", () => {
-    const helper = OUTPUT_LIST.match(/function copyReason[\s\S]*?\n\}/);
-    expect(helper[0]).toMatch(/maskedButRevealable/);
-    expect(helper[0]).toMatch(/neverAskedFor/);
-    expect(helper[0]).toMatch(/a\.revealable && a\.content/);
+    const revealable = copy.available({
+      artifact: { content: "secret", revealable: true },
+      masked: true,
+    });
+    const never = copy.available({
+      artifact: { content: "secret", revealable: false },
+      masked: true,
+    });
+    expect(revealable.disabled).toBe(ACTION_REASONS.maskedButRevealable);
+    expect(never.disabled).toBe(ACTION_REASONS.neverAskedFor);
+  });
+
+  it("copies through the artifact's own handler, not a re-implementation", async () => {
+    // The shipped handler fires the clipboard toast and knows this
+    // artifact's serialization; the table exists to make gating uniform,
+    // not to rewrite behaviour.
+    let called = 0;
+    await copy.run({ services: { copyArtifact: () => { called++; } } });
+    expect(called).toBe(1);
   });
 });
 
@@ -153,5 +185,109 @@ describe("both panes badge an artifact the same way (§33a)", () => {
     // `role` already says "public-key"; the ternary was re-deriving it and
     // disagreeing with the other pane.
     expect(SHELL).not.toMatch(/\? "share"[\s\S]{0,120}publishable\s*\n?\s*\? "key"/);
+  });
+});
+
+describe("the table is the single definition (§33c)", () => {
+  it("never returns a bare false — unavailable always carries a sentence", () => {
+    // An action that cannot say why it is unavailable should not have been
+    // declared by the kind at all; that is the kind's question, not this one's.
+    for (const action of ARTIFACT_ACTIONS) {
+      const out = action.available({ artifact: {}, masked: false });
+      expect(out === true || typeof out?.disabled === "string", action.id).toBe(true);
+      if (out !== true) expect(out.disabled.length, action.id).toBeGreaterThan(20);
+    }
+  });
+
+  it("declares a tier for every action", () => {
+    for (const a of ARTIFACT_ACTIONS) {
+      expect(["inert", "local", "outward"], a.id).toContain(a.tier);
+    }
+  });
+
+  it("imports no clipboard, vault, network or filesystem of its own", () => {
+    // Services are injected so the table is testable with stubs and cannot
+    // acquire a hidden dependency on a browser surface.
+    expect(SRC).not.toMatch(/from "\.\.\/vault/);
+    expect(SRC).not.toMatch(/navigator\./);
+    expect(SRC).not.toMatch(/fetch\(/);
+    expect(SRC).not.toMatch(/indexedDB/);
+  });
+
+  it("resolves every id a kind names", () => {
+    // A kind naming an action with no definition is a silently missing
+    // button — the tile must not be where that is discovered.
+    for (const kind of ARTIFACT_KINDS) {
+      for (const id of kind.actions || []) {
+        expect(actionById(id), `${kind.id} names unknown action "${id}"`).toBeTruthy();
+      }
+      expect(actionsFor(kind).length).toBe((kind.actions || []).length);
+    }
+  });
+
+  it("offers the key actions on key kinds and nowhere else", () => {
+    const withPublicLine = ARTIFACT_KINDS.filter((k) =>
+      (k.actions || []).includes("key.copyPublicLine")
+    ).map((k) => k.id);
+    // Absent on the private tile: the public half is one tile over, and on
+    // non-key kinds entirely — SSH has no key type for a token or an sdp.
+    expect(withPublicLine.sort()).toEqual(["key", "keypair-public"]);
+  });
+});
+
+describe("the key actions against a real artifact", () => {
+  /** The public half of a real generated keypair, as the engine emits it. */
+  const publicHalf = async (alg) => {
+    const { ast } = compileRecipe(`genkey ${alg} | out @kp`);
+    const arts = await runRecipe(ast, {});
+    return arts.find((a) => /public/.test(a.label));
+  };
+
+  it("copies a public line that is a real ssh-ed25519 line", async () => {
+    const art = await publicHalf("ed25519");
+    const action = actionById("key.copyPublicLine");
+    expect(action.available({ artifact: art, masked: false })).toBe(true);
+    let written = "";
+    const res = await action.run({
+      artifact: art,
+      services: { clipboard: { write: (t) => { written = t; } } },
+    });
+    expect(written).toMatch(/^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5/);
+    expect(res.receipt).toBe("Public line copied");
+  });
+
+  it("copies a fingerprint in ssh-keygen's own shape", async () => {
+    const art = await publicHalf("ed25519");
+    let written = "";
+    await actionById("key.copyFingerprint").run({
+      artifact: art,
+      services: { clipboard: { write: (t) => { written = t; } } },
+    });
+    // SHA256: + 43 chars of unpadded base64 — comparable against a server's
+    // log line character for character (§28a).
+    expect(written).toMatch(/^SHA256:[A-Za-z0-9+/]{43}$/);
+  });
+
+  it("refuses a public line for an algorithm SSH has no key type for", async () => {
+    // x25519 does ECDH; SSH user keys sign. The action explains that rather
+    // than emitting something that would not work.
+    const art = await publicHalf("x25519");
+    await expect(
+      actionById("key.copyPublicLine").run({
+        artifact: art,
+        services: { clipboard: { write: () => {} } },
+      })
+    ).rejects.toThrow(/SSH has no key type for this algorithm/);
+  });
+
+  it("still fingerprints while the private half is masked", async () => {
+    // The fingerprint is a public fact; masking it would be theatre (§34b).
+    const { ast } = compileRecipe("genkey ed25519 | out @kp");
+    const arts = await runRecipe(ast, {});
+    const priv = arts.find((a) => /private/.test(a.label));
+    expect(priv.sensitive).toBe(true);
+    expect(actionById("key.copyFingerprint").available({ artifact: priv, masked: true })).toBe(
+      true
+    );
   });
 });

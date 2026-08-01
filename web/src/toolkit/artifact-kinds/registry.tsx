@@ -86,7 +86,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     glyph: "key",
     view: keyCardFor(true),
     empty: "No exportable public half — the key was generated non-extractable.",
-    actions: ["copy", "download", "expand"],
+    actions: ["copy", "key.copyFingerprint", "key.copyPublicLine"],
   },
   {
     id: "keypair-private",
@@ -99,7 +99,10 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     // while the secret stays masked; the masked line sits under them.
     publicView: keyCardFor(true),
     empty: "No exportable private half — the key was generated non-extractable.",
-    actions: ["copy", "download", "expand"],
+    // No public line here: the private tile's job is the secret, and the
+    // public half is one tile over. Copy fingerprint stays — it is a public
+    // fact and works while masked (§35d).
+    actions: ["copy", "key.copyFingerprint"],
   },
   {
     /**
@@ -115,7 +118,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     view: keyCardFor(false),
     publicView: keyCardFor(true),
     empty: "No exportable key material — the key was generated non-extractable.",
-    actions: ["copy", "download", "expand"],
+    actions: ["copy", "key.copyFingerprint", "key.copyPublicLine"],
   },
   {
     id: "network-value",
@@ -135,7 +138,11 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
       />
     ),
     empty: "No structured body for this value — showing the raw text.",
-    actions: ["copy", "download", "expand"],
+    // Expand and Download remain tile-level affordances for now (the tile
+    // derives Expand from the kind's `expandable`), so they are not declared
+    // here — a declared action that duplicates a shipped button is worse than
+    // one not yet migrated.
+    actions: ["copy"],
     expandable: true,
   },
   {
@@ -151,7 +158,11 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     // would retain raw private JWK fields the masked text dump does not.
     empty:
       "This value is sensitive, so no structured snapshot was kept — the text dump is below.",
-    actions: ["copy", "download", "expand"],
+    // Expand and Download remain tile-level affordances for now (the tile
+    // derives Expand from the kind's `expandable`), so they are not declared
+    // here — a declared action that duplicates a shipped button is worse than
+    // one not yet migrated.
+    actions: ["copy"],
     expandable: true,
   },
   {
@@ -162,7 +173,11 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     view: ({ artifact }) =>
       hasJoseRenderer(artifact.jose) ? <JwtArtifact data={artifact.jose} /> : null,
     empty: "No decoded token body — run jose.verify to read and check it.",
-    actions: ["copy", "download", "expand"],
+    // Expand and Download remain tile-level affordances for now (the tile
+    // derives Expand from the kind's `expandable`), so they are not declared
+    // here — a declared action that duplicates a shipped button is worse than
+    // one not yet migrated.
+    actions: ["copy"],
     expandable: true,
   },
 ];
