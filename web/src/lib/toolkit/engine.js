@@ -96,7 +96,9 @@ import {
 } from "./rsaes-pkcs1.js";
 import {
   NETWORK_TYPES as NETWORK_VALUE_TYPES,
+  algTokenForKey,
   artifactMetaFromType,
+  genkeyOutputBase,
   resolveStepType,
   typeOf,
 } from "./types.js";
@@ -925,16 +927,28 @@ async function execStepBody(step, value, bindings, artifacts) {
       }
       const alg = String(step.params?.alg || "ec/p256");
       const usage = String(step.params?.usage || "auto");
+      // Same declaration `inferSourceType` types this step from. Without it the
+      // paste decided the type: `keypair alg=ec/p256` fed an `oct` JWK, or
+      // `keypair format=pem` fed an SPKI block alone, both compiled clean and
+      // then `export pkcs8` shipped raw key bytes / SPKI DER under a recipe
+      // that said pkcs8. The material may now only agree with the recipe.
+      const wantPublic = String(step.params?.which || "private").toLowerCase() === "public";
       if (String(step.params?.format || "jwk").toLowerCase() === "jwk") {
         return importKey(
           { type: "text", data: material, meta: { kind: "jwk", encoding: "jwk" } },
           "jwk",
           alg,
-          usage
+          usage,
+          "pss",
+          "sha-256",
+          { step: "keypair jwk", which: wantPublic ? "public" : "private" }
         );
       }
       // The PEM label already says which half each block is, so the caller
       // does not have to declare pkcs8 vs spki a second time and get it wrong.
+      // `which=` is not that second declaration: it says which *tip* the
+      // recipe wants, which the label cannot, because a paste of both blocks
+      // could serve either.
       //
       // Both halves are accepted together (the design's "PKCS8 private + SPKI
       // public") because importing PKCS#8 alone leaves `publicKey` null —
@@ -960,15 +974,24 @@ async function execStepBody(step, value, bindings, artifacts) {
           pair = imported;
         }
       }
-      if (!pair) {
-        // Only a public block was pasted — a public-key tip, same as
-        // `import spki` produces.
-        if (!publicKey) throw new Error("Could not import any PEM block");
+      if (wantPublic) {
+        // The public half, from an SPKI block or off a pasted pair — the tip
+        // `keypair which=public` declared, and never the pair itself.
+        const pub = publicKey || pair?.data?.publicKey || null;
+        if (!pub) throw new Error(noPublicHalfMessage("keypair pem"));
         return {
           type: "key",
-          data: publicKey,
+          data: pub,
           meta: { alg, which: "public", sensitive: false },
         };
+      }
+      // Only a public block was pasted. This used to return a `key/public`
+      // tip while `inferSourceType` had already declared `keypair/private`,
+      // which is how `keypair alg=ed25519 format=pem | export pkcs8` emitted
+      // SPKI DER under a recipe that said pkcs8.
+      if (!pair) {
+        if (!publicKey) throw new Error("Could not import any PEM block");
+        throw new Error(noPrivateHalfMessage("keypair pem"));
       }
       if (publicKey && !pair.data.publicKey) pair.data.publicKey = publicKey;
       return pair;
@@ -980,7 +1003,17 @@ async function execStepBody(step, value, bindings, artifacts) {
         String(step.params.alg || "ec/p256"),
         String(step.params.usage || "auto"),
         String(step.params.padding || "pss"),
-        String(step.params.hash || "sha-256")
+        String(step.params.hash || "sha-256"),
+        // The declaration `inferParamDrivenType` typed this step from. Passing
+        // it is what turns "whatever the JWK held" into "the tip the recipe
+        // named, or a refusal".
+        {
+          step: "import jwk",
+          which:
+            String(step.params.which || "private").toLowerCase() === "public"
+              ? "public"
+              : "private",
+        }
       );
     case "pem": {
       if (!value || value.type !== "bytes") throw new Error("pem expects bytes");
@@ -3785,14 +3818,110 @@ async function exportKey(value, format, which) {
 }
 
 /**
+ * What a key-import step says when the material is not the key it declared.
+ *
+ * `alg=` and `which=` are written in the recipe and fix the tip's type before
+ * the picker opens; the pasted body arrives afterwards and may only agree. It
+ * used to decide instead — `kty` chose `key` or `keypair`, `crv` chose the
+ * curve, `d`'s absence chose the half — so `import jwk alg=ec/p256` fed an
+ * `oct` JWK compiled clean and then `export pkcs8` shipped 32 raw AES bytes
+ * under a recipe that said pkcs8, and `keypair alg=ec/p256` did the same from
+ * the Inputs panel.
+ *
+ * Verbatim, in the `ENCRYPTED_KEY_MESSAGE` register: what was declared, what
+ * turned up, and the word that reconciles them. `step` is the clause naming
+ * the op, because both `import jwk` and `keypair` reach here.
+ * @param {string} step
+ * @param {string} declared
+ * @param {string} found
+ * @param {string} fix
+ */
+export function keyDeclarationMessage(step, declared, found, fix) {
+  return `${step} declares alg=${declared}, but this key material holds ${found}. The tip's type is fixed by the recipe before the material is read, so it cannot be taken from the paste — ${fix}`;
+}
+
+/** A step that declared a keypair, handed material with no private half. */
+export function noPrivateHalfMessage(step) {
+  return `${step} declares a keypair, but this material carries no private half (a JWK with no \`d\`, or an SPKI block alone). Write \`${step.split(" ")[0]} … which=public\` to read the public half as a key tip.`;
+}
+
+/** …and the mirror: `which=public` against material with no public half. */
+export function noPublicHalfMessage(step) {
+  return `${step} which=public, but no public half could be read from this material.`;
+}
+
+/**
+ * Hold imported JWK material to the `alg=` / `which=` the recipe wrote.
+ *
+ * Passed a `step` only by the two ops whose declared type is computed from
+ * those params — the `import` transform and the `keypair` source. `as` does
+ * its own shape handling around `importKey` (`as key` legitimately accepts a
+ * public-only JWK and projects it), so it is left alone.
+ *
+ * @param {import("./webcrypto-ops.js").BoundWebCryptoKey} bound
+ * @param {string} step
+ * @param {string} alg
+ * @param {"private"|"public"} which
+ */
+function assertJwkMatchesDeclaration(bound, step, alg, which) {
+  const declared = String(alg || "").toLowerCase();
+  const key = bound.secretKey || bound.privateKey || bound.publicKey;
+  const found = algTokenForKey(key);
+  if (found && found !== declared) {
+    throw new Error(
+      keyDeclarationMessage(
+        step,
+        declared,
+        found,
+        `write alg=${found}, or paste a ${declared} key.`
+      )
+    );
+  }
+  if (genkeyOutputBase(declared) === "key") {
+    // Symmetric: one key, and `which=` was already refused at compile time.
+    if (!bound.secretKey) {
+      throw new Error(
+        keyDeclarationMessage(step, declared, "an asymmetric key", "write the alg= it really is.")
+      );
+    }
+    return;
+  }
+  if (bound.secretKey) {
+    throw new Error(
+      keyDeclarationMessage(
+        step,
+        declared,
+        'a symmetric key (kty "oct")',
+        "a symmetric key is one key and not a pair — use `import jwk alg=aes/256` (or the hmac/… it really is)."
+      )
+    );
+  }
+  if (which === "public") {
+    if (!bound.publicKey) throw new Error(noPublicHalfMessage(step));
+    return;
+  }
+  if (!bound.privateKey) throw new Error(noPrivateHalfMessage(step));
+}
+
+/**
  * @param {PipelineValue|null} value
  * @param {string} format
  * @param {string} alg
  * @param {string} usage
  * @param {string} [padding]
  * @param {string} [hash]
+ * @param {{ step: string, which: "private"|"public" }|null} [declared]
+ *   set by the ops whose output type is computed from `alg=` / `which=`
  */
-async function importKey(value, format, alg, usage, padding = "pss", hash = "sha-256") {
+async function importKey(
+  value,
+  format,
+  alg,
+  usage,
+  padding = "pss",
+  hash = "sha-256",
+  declared = null
+) {
   const useDerive = usage === "derive";
   const useEncrypt = usage === "encrypt";
   const fmt = String(format || "pkcs8").toLowerCase();
@@ -3816,6 +3945,20 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
       padding: usePkcs1Sign ? "pkcs1" : undefined,
       hash,
     });
+    if (declared) assertJwkMatchesDeclaration(bound, declared.step, alg, declared.which);
+    if (declared?.which === "public") {
+      return {
+        type: "key",
+        data: /** @type {CryptoKey} */ (bound.publicKey),
+        meta: {
+          alg: bound.alg || alg,
+          algorithm: bound.alg || alg,
+          symmetric: false,
+          sensitive: false,
+          which: "public",
+        },
+      };
+    }
     const sensitive = !!(bound.privateKey || bound.secretKey);
     // An `oct` JWK is one key. It used to be filed on `privateKey` *and*
     // `secretKey` of a `keypair` bag, which is how a symmetric key came to be

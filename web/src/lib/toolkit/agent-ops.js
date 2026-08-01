@@ -471,7 +471,9 @@ export async function materializeUnlockedKey(result) {
     // kind — the field is named for the first op that read it, not for the
     // only one. A protection=passphrase ssh key needs it to open its
     // container; a device/passkey one ignores an empty string.
-    const v = await execSshDecode({ type: "text", data: result.armored }, {}, {
+    // `format: "private"` explicitly: the vault only ever stores openssh-key-v1
+    // blocks here, and `ssh.decode`'s default is `public` like its conjugate's.
+    const v = await execSshDecode({ type: "text", data: result.armored }, { format: "private" }, {
       passphrase: result.openPgpPassphrase,
     });
     return {
@@ -630,7 +632,7 @@ export async function execAgentSign(value, params = {}, bindings = {}) {
   }
 
   // ssh / raw: sshsig over the payload, key materialized in this frame only.
-  const keyPair = await execSshDecode({ type: "text", data: result.armored }, {}, {
+  const keyPair = await execSshDecode({ type: "text", data: result.armored }, { format: "private" }, {
     passphrase: result.openPgpPassphrase,
   });
   const { execSshSign } = await import("./ssh-ops.js");

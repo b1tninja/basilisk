@@ -11,7 +11,12 @@
  */
 
 import { BASE_ENCODINGS, CIPHER_DISPATCH_TARGETS } from "./step-names.js";
-import { POLYMORPHIC_STEPS, stepAcceptsRefined, typeOf } from "./types.js";
+import {
+  POLYMORPHIC_STEPS,
+  genkeyOutputBase,
+  stepAcceptsRefined,
+  typeOf,
+} from "./types.js";
 
 /**
  * Pipeline value types.
@@ -473,9 +478,15 @@ export const STEPS = [
     shelf: "types",
     instantiates: "keypair",
     unresolvedInputs: "keypair",
-    doc: "Import a keypair you already have, pasted at run time (never stored in the recipe). PKCS#8 PEM or JWK yields the full pair; an SPKI PEM yields a public-key tip. Example: `keypair jwk alg=ed25519 | export spki | pem | out @pub`. To make a new one instead, use `genkey`.",
+    doc: "Import a keypair you already have, pasted at run time (never stored in the recipe). `which=private` (default) wants a PKCS#8 PEM or a JWK with `d` and yields the full pair; `which=public` reads an SPKI PEM or a public JWK and yields a public-key tip. The recipe names which, because the tip's type is fixed before the paste is read — material of the other half is refused by name rather than typed as whatever it turned out to be. Example: `keypair jwk alg=ed25519 | export spki | pem | out @pub`. To make a new one instead, use `genkey`.",
     input: "none",
     output: "keypair",
+    effectiveIo(params) {
+      return {
+        input: "none",
+        output: String(params?.which || "private") === "public" ? "key" : "keypair",
+      };
+    },
     params: [
       {
         name: "format",
@@ -484,6 +495,19 @@ export const STEPS = [
         default: "jwk",
         enum: ["jwk", "pem"],
         doc: "How the pasted material is encoded",
+      },
+      {
+        /**
+         * The half being pasted. `import`'s `which=` is the same param for the
+         * same reason, and the two ops share the check behind it: the PEM
+         * label and the JWK's `d` are both read *after* the type is settled,
+         * so neither can be what settles it.
+         */
+        name: "which",
+        type: "enum",
+        default: "private",
+        enum: ["private", "public"],
+        doc: "private (default) = a PKCS#8 PEM or a JWK with `d` → keypair; public = an SPKI PEM or a public JWK → a public `key` tip.",
       },
       {
         name: "alg",
@@ -624,7 +648,7 @@ export const STEPS = [
     shelf: "keys",
     conjugateOf: "export",
     kitOnly: true,
-    doc: "Import DER/raw/scalar/JWK. `import spki` yields a public `key` tip; other formats yield a full keypair. Example: `… | export jwk | import jwk alg=ed25519` or `import scalar alg=ec/p256`.",
+    doc: "Import DER/raw/scalar/JWK. `import spki` yields a public `key` tip; other formats yield a full keypair, and `import jwk which=public` yields a public `key` tip from JWK. The tip's type is fixed by `format=`, `alg=` and `which=` — a JWK that turns out to hold something else (a symmetric `oct`, another curve, no `d`) is refused by name rather than imported as whatever it happens to be. Example: `… | export jwk | import jwk alg=ed25519` or `import scalar alg=ec/p256`.",
     input: "bytes",
     output: "keypair",
     params: [
@@ -635,6 +659,23 @@ export const STEPS = [
         default: "pkcs8",
         enum: ["pkcs8", "spki", "raw", "scalar", "jwk"],
         doc: "Import format (jwk = JSON text; spki = public key tip; scalar = EC/OKP private bytes)",
+      },
+      {
+        /**
+         * The half a JWK is being read for — `spki` / `pkcs8` say it in the
+         * format name, and JWK is the one format that carries either.
+         *
+         * Named rather than sniffed from `d` for the reason the whole class
+         * exists: the compiler declares the tip before the picker opens and
+         * has no JWK to look at, so a body-driven answer would be a type the
+         * recipe never wrote. `export jwk which=public` is the conjugate, and
+         * this reads back what that writes.
+         */
+        name: "which",
+        type: "enum",
+        default: "private",
+        enum: ["private", "public"],
+        doc: "jwk only: `private` (default) needs a JWK with `d` and yields a keypair; `public` reads the public half alone and yields a public `key` tip (`export jwk which=public` is what writes one). Refused on the DER formats, which already name their half.",
       },
       {
         name: "alg",
@@ -677,7 +718,16 @@ export const STEPS = [
     ],
     effectiveIo(params) {
       const format = String(params?.format || "pkcs8").toLowerCase();
-      if (format === "jwk") return { input: "text", output: "keypair" };
+      if (format === "jwk") {
+        // Must agree with `inferParamDrivenType`: the caret reads this and the
+        // type walker reads that, and a disagreement is how an op gets offered
+        // after a step that really produced the other shape. A symmetric `alg=`
+        // and `which=public` both make this one key.
+        const single =
+          String(params?.which || "private").toLowerCase() === "public" ||
+          genkeyOutputBase(String(params?.alg || "ec/p256")) === "key";
+        return { input: "text", output: single ? "key" : "keypair" };
+      }
       if (format === "spki") return { input: "bytes", output: "key" };
       return { input: "bytes", output: "keypair" };
     },
@@ -2110,15 +2160,45 @@ export const STEPS = [
     shelf: "sshwire",
     conjugateOf: "ssh.encode",
     glyph: "ssh-key",
-    doc: "Decode an OpenSSH public line or an openssh-key-v1 private block into a live key/keypair. Passphrase-protected blocks open too — bind the passphrase to a slot and name it with `passphrase=@slot`; a wrong one is named as such rather than reported as a corrupt file. Example: `input | ssh.decode | ssh.fingerprint | out @fp`, or `input | out @pw` then `… | ssh.decode passphrase=@pw`.",
+    doc: "Decode OpenSSH key text into a live key/keypair — `format=public` (default) reads a one-line public key and yields a public `key`; `format=private` reads an openssh-key-v1 block and yields a keypair. The recipe names which, because the two produce different types and the file cannot be consulted before the run: a block handed to `format=public` is refused rather than quietly typed as the other thing. Passphrase-protected blocks open too — bind the passphrase to a slot and name it with `passphrase=@slot`; a wrong one is named as such rather than reported as a corrupt file. Example: `input | ssh.decode | ssh.fingerprint | out @fp`, or `input | out @pw` then `… | ssh.decode format=private passphrase=@pw`.",
     input: "text",
-    output: "keypair",
+    output: "key",
+    effectiveIo(params) {
+      return {
+        input: "text",
+        output: String(params?.format || "public") === "private" ? "keypair" : "key",
+      };
+    },
     overloads: [
-      { when: { base: "text", kind: "ssh-public" }, output: { base: "key" } },
-      { when: { base: "text", kind: "ssh-private" }, output: { base: "keypair" } },
-      { when: { base: "text" }, output: { base: "keypair" } },
+      // Keyed on the *param*, not on the input's `kind` — the kind is known
+      // only when the text came from `ssh.encode`, and every other route in
+      // (a paste, `file.read`, a slot) arrives as plain text. The table used
+      // to fall back to `keypair` there, so `input | ssh.decode | export
+      // pkcs8` compiled clean on a public line and shipped SPKI under a
+      // recipe that said pkcs8. `format=` is the one thing present in every
+      // case, so it is the only honest source for the type.
+      //
+      // A `kind` that contradicts the param is caught earlier, in
+      // `inferParamDrivenType`, where it can say so in a sentence.
+      { when: { base: "text" }, whenParams: { format: "private" }, output: { base: "keypair" } },
+      { when: { base: "text" }, output: { base: "key", which: "public" } },
     ],
     params: [
+      {
+        /**
+         * Mirrors `ssh.encode format=`, values and default alike: the two are
+         * conjugates and a round trip should read the same word twice.
+         *
+         * `public` is the default on both sides for the same reason — a
+         * public line is the form that gets pasted around, and reading a
+         * private key is the act that should have to be written down.
+         */
+        name: "format",
+        type: "enum",
+        default: "public",
+        enum: ["public", "private"],
+        doc: "public = a one-line public key → `key` (the default); private = an openssh-key-v1 block → `keypair`. The output type follows this word, so a file of the other form is refused by name rather than decoded into a type the recipe did not declare.",
+      },
       {
         name: "hash",
         type: "enum",

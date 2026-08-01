@@ -97,7 +97,9 @@ async function privateJwkFrom(body) {
     const { execSshDecode } = await import("./ssh-ops.js");
     let decoded;
     try {
-      decoded = await execSshDecode({ type: "text", data: body });
+      // The `includes(...)` above already established which form this is, so
+      // the word is written rather than sniffed a second time inside the op.
+      decoded = await execSshDecode({ type: "text", data: body }, { format: "private" });
     } catch (err) {
       // Compared against the constant rather than pattern-matched: §29f says
       // the wording is the feature, and a regex over it would keep passing

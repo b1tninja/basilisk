@@ -303,6 +303,37 @@ function baseCases() {
         }
       },
     },
+    {
+      // A lone PUBLIC KEY block, which is the paste that used to make a
+      // `keypair/private` tip out of material with no private half. `export
+      // spki` is the only export a `key/public` tip compiles against, so the
+      // recipe running at all is the assertion that the declared type is real.
+      id: "keypair.which=public",
+      recipe: "keypair pem alg=ec/p256 which=public | export spki | encode hex | out @pub",
+      mode: "run",
+      bindings: async () => {
+        const kp = await crypto.subtle.generateKey(
+          { name: "ECDSA", namedCurve: "P-256" },
+          true,
+          ["sign", "verify"]
+        );
+        const der = new Uint8Array(await crypto.subtle.exportKey("spki", kp.publicKey));
+        expectedSpkiHex = bytesToHex(der);
+        const b64 = bytesToBase64(der).replace(/(.{64})/g, "$1\n");
+        return {
+          inputs: {
+            keypair: {
+              value: `-----BEGIN PUBLIC KEY-----\n${b64}\n-----END PUBLIC KEY-----`,
+            },
+          },
+        };
+      },
+      assert: (a) => {
+        if (!a.some((x) => String(x.content).trim() === expectedSpkiHex)) {
+          throw new Error("keypair which=public did not yield the pasted public key");
+        }
+      },
+    },
     // The remaining alg/usage values are compile-only: they are the same enum
     // `import` already declares, and generating an RSA-4096 pair per value
     // would dominate the suite's runtime without testing anything the two
@@ -829,6 +860,23 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
       id: "export.which=public",
       recipe: "genkey ec/p256 | export jwk which=public | out @j",
       mode: "compile",
+    },
+    {
+      // The conjugate of the line above, and the only way to bring a public
+      // JWK in: `import jwk` without it declares a keypair, so a body with no
+      // `d` is refused rather than typed as one. Runs, because the point is
+      // that the declared `key/public` tip is what actually turns up — the
+      // `export spki` at the end only compiles against a public tip.
+      id: "import.which=public",
+      recipe:
+        "genkey ec/p256 | export jwk which=public | import jwk alg=ec/p256 which=public | export spki | pem | out @pub",
+      mode: "run",
+      assert(arts) {
+        const pem = arts.find((a) => String(a.label || "").includes("pub"));
+        if (!String(pem?.content).includes("BEGIN PUBLIC KEY")) {
+          throw new Error(`import jwk which=public did not yield a public key tip: ${pem?.content}`);
+        }
+      },
     },
     {
       id: "import.spki",
@@ -1609,7 +1657,7 @@ in @id | ssh.fingerprint | out @fp2`,
 
 in @id | ssh.encode format=private comment="verb@smoke" | out @pem
 
-in @pem | ssh.decode | out @again
+in @pem | ssh.decode format=private | out @again
 
 "private round trip" | utf8 | out @msg | ssh.sign key=@again | out @sig
 
@@ -1640,7 +1688,7 @@ in @msg | ssh.verify key=@pub signature=@sig | out @ok`,
 
 in @gen | ssh.encode format=private | out @pem
 
-in @pem | ssh.decode hash=sha256 | out @id
+in @pem | ssh.decode format=private hash=sha256 | out @id
 
 "rsa handle" | utf8 | out @msg | sign key=@id hash=sha-256 | base64url | out @sig
 
@@ -1708,7 +1756,7 @@ genkey ed25519 | out @id
 
 in @id | ssh.encode format=private comment="verb@smoke" passphrase=@pw | out @enc
 
-in @enc | ssh.decode | out @again
+in @enc | ssh.decode format=private | out @again
 
 in @again | ssh.fingerprint | out @fp
 

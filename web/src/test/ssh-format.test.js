@@ -26,8 +26,17 @@ import {
 import { sshFingerprint } from "../lib/ssh/fingerprint.js";
 import { parseSshsig, sshsigSign, sshsigVerify } from "../lib/ssh/sshsig.js";
 import { STEPS } from "../lib/toolkit/registry.js";
-import { matchOverload } from "../lib/toolkit/types.js";
-import { execSshEncode } from "../lib/toolkit/ssh-ops.js";
+import {
+  SSH_DECODE_KIND_CONFLICT,
+  inferParamDrivenType,
+  matchOverload,
+  typeOf,
+} from "../lib/toolkit/types.js";
+import {
+  SSH_DECODE_FORMAT_MISMATCH,
+  execSshDecode,
+  execSshEncode,
+} from "../lib/toolkit/ssh-ops.js";
 import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 
@@ -280,23 +289,73 @@ describe("openssh-key-v1 we encrypted, frozen and re-read", () => {
     }
   );
 
+  const fixturePath = (name) =>
+    fileURLToPath(new URL(`./fixtures/ssh/${name}`, import.meta.url));
+
+  /** `ssh-keygen -y -P` against a fixture — the exact call the test makes. */
+  const derivePublic = (encName) =>
+    spawnSync("ssh-keygen", ["-y", "-P", PASSPHRASE, "-f", fixturePath(encName)], {
+      encoding: "utf8",
+    });
+
   /**
    * And when there *is* a local `ssh-keygen`, stop taking the README's word
-   * for it. Skipped rather than failed where the binary is absent: the
-   * fixtures exist precisely so the suite does not require one.
+   * for it.
+   *
+   * The guard asks the question the test needs answered — "will ssh-keygen
+   * read this file?" — by making the call and looking, rather than asking the
+   * weaker "is there an ssh-keygen?" and hoping. Two ways the answer is no
+   * and neither is news about our encoding:
+   *
+   *  - no binary, which is the whole reason the fixtures are checked in;
+   *  - a binary that refuses the file before reading a byte of it, because
+   *    the checkout's ACL is wider than `ssh-keygen` will tolerate
+   *    (`UNPROTECTED PRIVATE KEY FILE`). That is what a fresh clone looks
+   *    like on Windows, and it is why this used to fail on one machine and
+   *    pass on the next within the hour.
+   *
+   * Not fixed by chmod-ing the fixtures: a mode bit on a checked-in file is
+   * something the repository would then be asserting, on a platform where git
+   * does not carry it faithfully, to satisfy a tool that is optional here.
+   *
+   * Any *other* nonzero exit falls through to the test and fails there —
+   * "ssh-keygen rejected our container" is exactly the news this unit exists
+   * to deliver, and a guard that swallowed it would be worse than no guard.
    */
-  const sshKeygen = (() => {
-    const probe = spawnSync("ssh", ["-V"], { encoding: "utf8" });
-    return probe.error ? null : String(probe.stderr || "").trim();
-  })();
+  const willRead = (probe) => {
+    if (probe.error) return false;
+    if (probe.status === 0) return true;
+    return !/UNPROTECTED PRIVATE KEY FILE|bad permissions|are too open/i.test(
+      String(probe.stderr || "")
+    );
+  };
 
-  it.runIf(sshKeygen).each(OURS)(
+  const sshKeygenReadsFixtures = willRead(derivePublic(OURS[0][0]));
+
+  // The guard's own branches, since the environment only ever exercises one of
+  // them and the interesting one is the branch that must *not* swallow a real
+  // refusal. Strings are OpenSSH's, from sshkey_perm_ok.
+  it("skips on an absent or permission-refusing ssh-keygen, and only then", () => {
+    expect(willRead({ error: new Error("ENOENT") })).toBe(false);
+    expect(willRead({ status: 0, stderr: "" })).toBe(true);
+    expect(
+      willRead({
+        status: 1,
+        stderr:
+          "@         WARNING: UNPROTECTED PRIVATE KEY FILE!          @\n" +
+          "Permissions for 'ours_ed25519_enc' are too open.\n" +
+          'Load key "ours_ed25519_enc": bad permissions',
+      })
+    ).toBe(false);
+    // An actual interop failure still runs the test, so it can fail there.
+    expect(willRead({ status: 1, stderr: 'Load key "x": error in libcrypto' })).toBe(true);
+    expect(willRead({ status: 1, stderr: 'Load key "x": incorrect passphrase' })).toBe(true);
+  });
+
+  it.runIf(sshKeygenReadsFixtures).each(OURS)(
     "%s is opened by the real ssh-keygen -y -P, deriving the public key of %s",
     (encName, plainName) => {
-      const path = fileURLToPath(new URL(`./fixtures/ssh/${encName}`, import.meta.url));
-      const derived = spawnSync("ssh-keygen", ["-y", "-P", PASSPHRASE, "-f", path], {
-        encoding: "utf8",
-      });
+      const derived = derivePublic(encName);
       expect(derived.status, `ssh-keygen refused ${encName}: ${derived.stderr}`).toBe(0);
       // `-y` prints `type base64` with no comment; the fixture .pub has one.
       const pair = (s) => String(s).trim().split(/\s+/).slice(0, 2).join(" ");
@@ -404,7 +463,7 @@ describe("sshsig", () => {
  * exist is how the next reader learns something false.
  */
 describe("ssh.decode opens a protected key when a passphrase reaches it", () => {
-  const recipe = "input | ssh.decode | ssh.fingerprint | out @fp";
+  const recipe = "input | ssh.decode format=private | ssh.fingerprint | out @fp";
 
   it("decodes when the passphrase is present", async () => {
     const { ast, validation } = compileRecipe(recipe);
@@ -441,7 +500,7 @@ describe("ssh.decode opens a protected key when a passphrase reaches it", () => 
     // which is the machinery `passphrase=` gets for free by being a `slot`
     // param rather than a string one.
     const { ast, validation } = compileRecipe(
-      `"correct horse" | out @pw\n\ninput | ssh.decode passphrase=@pw | ssh.fingerprint | out @fp`
+      `"correct horse" | out @pw\n\ninput | ssh.decode format=private passphrase=@pw | ssh.fingerprint | out @fp`
     );
     expect(validation.errors).toEqual([]);
     const artifacts = await runRecipe(ast, {
@@ -460,7 +519,7 @@ describe("ssh.decode opens a protected key when a passphrase reaches it", () => 
 
   it("names an unregistered slot at compile time, before the run", () => {
     const { validation } = compileRecipe(
-      "input | ssh.decode passphrase=@pw | ssh.fingerprint | out @fp"
+      "input | ssh.decode format=private passphrase=@pw | ssh.fingerprint | out @fp"
     );
     expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
       /passphrase=@pw: unknown slot/
@@ -586,7 +645,7 @@ genkey ed25519 | out @id
 
 in @id | ssh.encode format=private passphrase=@pw | out @enc
 
-in @enc | ssh.decode | ssh.fingerprint | out @fp
+in @enc | ssh.decode format=private | ssh.fingerprint | out @fp
 
 in @id | ssh.fingerprint | out @fp2`);
     expect(validation.errors).toEqual([]);
@@ -649,11 +708,131 @@ describe("ssh.encode declares the half it actually emits", () => {
     }
   });
 
-  it("makes ssh.decode's ssh-private branch reachable", () => {
+  it("makes ssh.decode's keypair branch reachable, by the word the recipe writes", () => {
     const dec = STEPS.find((s) => s.name === "ssh.decode");
-    const priv = matchOverload(dec.overloads, { base: "text", kind: "ssh-private" }, {})?.output;
-    expect(priv?.base).toBe("keypair");
+    const out = (params) =>
+      matchOverload(dec.overloads, { base: "text", kind: "ssh-private" }, params)?.output;
+    expect(out({ format: "private" })?.base).toBe("keypair");
     expect(outOf({ format: "private" })?.kind).toBe("ssh-private");
+  });
+});
+
+/**
+ * `ssh.decode`'s output type is the recipe's word, never the file's content.
+ *
+ * The measured defect: `input | ssh.decode | export pkcs8 | encode hex`
+ * compiled with zero errors, and a real `ssh-ed25519` public line ran through
+ * it to SPKI DER (`302a300506032b6570…`) under a recipe that said `pkcs8`. The
+ * fallback overload declared `keypair` because the input's `kind` is known
+ * only when the text came from `ssh.encode`, while `execSshDecode` picked
+ * `key` or `keypair` by looking for `BEGIN OPENSSH PRIVATE KEY` — so the two
+ * disagreed for every pasted key, and the disagreement was silent.
+ *
+ * `format=` is now the single answer both sides read.
+ */
+describe("ssh.decode types from format=, and the file may only agree", () => {
+  const publicLine = fixture("id_ed25519.pub");
+  const block = fixture("id_ed25519");
+
+  it("declares a public key for the default, and refuses the pkcs8 export that used to lie", () => {
+    const { validation } = compileRecipe("input | ssh.decode | export pkcs8 | encode hex | out @k");
+    expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
+      /"export pkcs8" needs a private key — tip is key\/public/
+    );
+  });
+
+  it("declares a keypair for format=private, and exports real pkcs8", async () => {
+    const { ast, validation } = compileRecipe(
+      "input | ssh.decode format=private | export pkcs8 | encode hex | out @k"
+    );
+    expect(validation.errors).toEqual([]);
+    const arts = await runRecipe(ast, { inputs: { text: { value: block } } });
+    // PKCS#8 PrivateKeyInfo for Ed25519 — SEQUENCE, version 0, OID 1.3.101.112.
+    expect(String(arts.at(-1).content)).toMatch(/^302e020100300506032b657004220420/);
+  });
+
+  it("still fingerprints a public line under the default", async () => {
+    const { ast, validation } = compileRecipe("input | ssh.decode | ssh.fingerprint | out @fp");
+    expect(validation.errors).toEqual([]);
+    const arts = await runRecipe(ast, { inputs: { text: { value: publicLine } } });
+    expect(String(arts.at(-1).content).trim()).toBe(
+      fixture("fingerprints.txt").trim().split("\n")[0].split(/\s+/)[1]
+    );
+  });
+
+  it("refuses a private block handed to the public reading, naming the word that fixes it", async () => {
+    const { ast, validation } = compileRecipe("input | ssh.decode | ssh.fingerprint | out @fp");
+    expect(validation.errors).toEqual([]);
+    await expect(runRecipe(ast, { inputs: { text: { value: block } } })).rejects.toThrow(
+      SSH_DECODE_FORMAT_MISMATCH.public
+    );
+  });
+
+  it("refuses a public line handed to format=private", async () => {
+    const { ast, validation } = compileRecipe(
+      "input | ssh.decode format=private | ssh.fingerprint | out @fp"
+    );
+    expect(validation.errors).toEqual([]);
+    await expect(runRecipe(ast, { inputs: { text: { value: publicLine } } })).rejects.toThrow(
+      SSH_DECODE_FORMAT_MISMATCH.private
+    );
+  });
+
+  /**
+   * And where the compiler *can* tell — text stamped by `ssh.encode` — it
+   * says so before the run rather than letting the refusal above happen.
+   */
+  it("catches a format= that contradicts a known kind, at compile time", () => {
+    const priv = compileRecipe(
+      `genkey ed25519 | ssh.encode format=private | out @pem\n\nin @pem | ssh.decode | out @k`
+    );
+    expect(priv.validation.errors.map((e) => e.message)).toContain(
+      SSH_DECODE_KIND_CONFLICT.private
+    );
+    const pub = compileRecipe(
+      `genkey ed25519 | ssh.encode | out @pub\n\nin @pub | ssh.decode format=private | out @k`
+    );
+    expect(pub.validation.errors.map((e) => e.message)).toContain(SSH_DECODE_KIND_CONFLICT.public);
+  });
+
+  /**
+   * The tip `format=private` declares carries no `alg` — the wire format names
+   * the key type, and only at run time. `export scalar` used to fill that gap
+   * with `ec/p256` and so declare `length: 32`, while a P-521 SSH key hands
+   * back 66 bytes. An unknown algorithm now declares neither.
+   */
+  it("declares no scalar length for a key whose algorithm it cannot know", async () => {
+    const declared = (current) =>
+      inferParamDrivenType("export", current, { format: "scalar" }).output;
+    expect(declared(typeOf("keypair"))).toEqual({
+      base: "bytes",
+      kind: "scalar",
+      which: "private",
+    });
+    expect(declared(typeOf("keypair", { alg: "ec/p521" })).length).toBe(66);
+
+    const { ast, validation } = compileRecipe(
+      `genkey ec/p521 | ssh.encode format=private | out @pem\n\nin @pem | ssh.decode format=private | export scalar | encode hex | out @s`
+    );
+    expect(validation.errors).toEqual([]);
+    const arts = await runRecipe(ast, {});
+    // 66, which is what the old declaration of 32 would have been wrong about.
+    expect(String(arts.at(-1).content).length / 2).toBe(66);
+  }, 30_000);
+
+  it("agrees with the runtime on both readings, so the two cannot drift", async () => {
+    const dec = STEPS.find((s) => s.name === "ssh.decode");
+    for (const [params, text] of [
+      [{}, publicLine],
+      [{ format: "public" }, publicLine],
+      [{ format: "private" }, block],
+    ]) {
+      const declared = matchOverload(dec.overloads, { base: "text" }, params)?.output;
+      const ran = await execSshDecode({ type: "text", data: text }, params);
+      expect(ran.type, JSON.stringify(params)).toBe(declared.base);
+      if (declared.which) expect(ran.meta.which).toBe(declared.which);
+      expect(dec.effectiveIo(params).output).toBe(declared.base);
+    }
   });
 });
 

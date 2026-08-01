@@ -322,6 +322,49 @@ export function genkeyOutputBase(alg) {
   return GENKEY_KEY_SHAPES[String(alg || "").toLowerCase()] || "keypair";
 }
 
+/**
+ * The `alg=` token a live `CryptoKey` answers to, read off the platform.
+ *
+ * The inverse of `GENKEY_KEY_SHAPES`' key set, and the run-time half of the
+ * same idea: a declaration is only worth something if something checks it
+ * against the object that actually turned up. `CryptoKey.algorithm` is
+ * read-only and filled in by the implementation — `namedCurve`,
+ * `modulusLength`, `length`, `hash.name` — so it cannot be talked into
+ * agreeing.
+ *
+ * Lives beside the shape table rather than in `webcrypto-ops.js` for the
+ * reason that table does: this is what a recipe's `alg=` *means*, and the
+ * meaning belongs next to the type it produces. `import-jwk-alg.test.js`
+ * generates every member of `import`'s enum and checks the token round-trips,
+ * so a family missing here fails there rather than on a tile.
+ *
+ * Returns null for an algorithm no `alg=` names, which is not an error: the
+ * caller then has nothing to compare and lets the key through.
+ *
+ * @param {CryptoKey|null|undefined} key
+ * @returns {string|null}
+ */
+export function algTokenForKey(key) {
+  const a = /** @type {*} */ (key)?.algorithm;
+  const name = String(a?.name || "");
+  if (!name) return null;
+  if (name === "ECDSA" || name === "ECDH") {
+    const curve = String(a.namedCurve || "").toLowerCase();
+    return curve ? `ec/${curve.replace("p-", "p")}` : null;
+  }
+  if (name === "Ed25519") return "ed25519";
+  if (name === "X25519") return "x25519";
+  if (name.startsWith("RSA")) {
+    return a.modulusLength ? `rsa/${Number(a.modulusLength)}` : null;
+  }
+  if (name.startsWith("AES")) return a.length ? `aes/${Number(a.length)}` : null;
+  if (name === "HMAC") {
+    const hash = String(a.hash?.name || a.hash || "").toLowerCase();
+    return hash ? `hmac/${hash.replace("-", "")}` : null;
+  }
+  return null;
+}
+
 export function inferSourceType(name, params = {}) {
   switch (name) {
     case "genkey": {
@@ -356,9 +399,15 @@ export function inferSourceType(name, params = {}) {
     }
     case "keypair": {
       // An SPKI PEM only carries the public half, so the tip is a lone `key`
-      // — the same distinction `import` already draws for its formats.
+      // — the same distinction `import` already draws for its formats, and
+      // `which=` is how the recipe says which it is pasting. It used to be
+      // read off the material at run time while this declared `keypair`
+      // regardless, so a pasted PUBLIC KEY block became a keypair tip and
+      // `export pkcs8` on it quietly emitted SPKI.
       const alg = String(params.alg || "ec/p256");
-      return typeOf("keypair", { alg, which: "private" });
+      return String(params.which || "private").toLowerCase() === "public"
+        ? typeOf("key", { alg, which: "public" })
+        : typeOf("keypair", { alg, which: "private" });
     }
     case "passphrase":
       return typeOf("text", { kind: "opaque" });
@@ -522,7 +571,46 @@ function qrScanOutput(params) {
   return count === "1" ? typeOf("text", { kind: "opaque" }) : typeOf("bundle");
 }
 
+/**
+ * `ssh.decode format=` against a tip whose OpenSSH form is already known.
+ *
+ * Only reachable from `ssh.encode`, the one step that stamps `ssh-public` /
+ * `ssh-private` — a pasted key is plain text and the compiler has nothing to
+ * compare. Verbatim constants because the tests pin the sentence, in the
+ * register `ENCRYPTED_KEY_MESSAGE` set: what is in force, what was asked for,
+ * and the word that fixes it.
+ * @type {Readonly<Record<"public"|"private", string>>}
+ */
+export const SSH_DECODE_KIND_CONFLICT = Object.freeze({
+  private:
+    'This text is an openssh-key-v1 private block, which decodes to a keypair, but ssh.decode is reading it as a public line. Write `ssh.decode format=private`.',
+  public:
+    'This text is a one-line public key, which decodes to a public key, but ssh.decode format=private expects an openssh-key-v1 block. Drop `format=private`.',
+});
+
 export function inferParamDrivenType(name, current, params = {}) {
+  if (name === "ssh.decode") {
+    // Types nothing — the overload table still does that, keyed on `format=`.
+    // This exists only for the case the compiler *can* see: text that came
+    // out of `ssh.encode` carries `kind`, so a `format=` naming the other
+    // form is a recipe that could never run, and saying so here beats letting
+    // the runtime discover it. Everything else falls through to the table.
+    const kind = String(current?.kind || "");
+    const format = String(params.format || "public").toLowerCase();
+    if (kind === "ssh-private" && format !== "private") {
+      return {
+        ok: false,
+        error: SSH_DECODE_KIND_CONFLICT.private,
+      };
+    }
+    if (kind === "ssh-public" && format === "private") {
+      return {
+        ok: false,
+        error: SSH_DECODE_KIND_CONFLICT.public,
+      };
+    }
+    return null;
+  }
   if (name === "qr.scan") {
     // Accepts an image from any of its realistic sources: raw bytes off
     // `file.read`, or SVG markup (`text`) — including the markup `qr` itself
@@ -596,12 +684,20 @@ export function inferParamDrivenType(name, current, params = {}) {
       };
     }
     if (format === "scalar" || format === "d") {
-      const length = scalarLengthForAlg(alg);
+      // `alg` here is `current.alg || "ec/p256"`, and that default is a guess
+      // everywhere except the scalar branch, where it is a *measurement*: it
+      // fixes the declared byte length. A tip that carries no algorithm — an
+      // `ssh.decode format=private` keypair, whose algorithm the wire format
+      // only reveals at run time — would be declared 32 bytes and hand back
+      // 66 for a P-521 key. So an unknown algorithm declares neither, which
+      // is the honest answer and the one `bytes` literals already give.
+      const known = current.alg ? alg : null;
+      const length = known ? scalarLengthForAlg(known) : null;
       return {
         ok: true,
         output: typeOf("bytes", {
           kind: "scalar",
-          alg,
+          alg: known ?? undefined,
           length: length ?? undefined,
           which: "private",
         }),
@@ -632,6 +728,13 @@ export function inferParamDrivenType(name, current, params = {}) {
   if (name === "import") {
     const format = String(params.format || "pkcs8").toLowerCase();
     const alg = String(params.alg || "ec/p256");
+    const wantPublic = String(params.which || "private").toLowerCase() === "public";
+    if (wantPublic && format !== "jwk" && format !== "spki") {
+      return {
+        ok: false,
+        error: `"import ${format} which=public" is a contradiction — ${format} carries a private key. Use import spki for public DER, or drop which=public.`,
+      };
+    }
     if (format === "jwk") {
       if (current.base !== "text") {
         return {
@@ -639,15 +742,27 @@ export function inferParamDrivenType(name, current, params = {}) {
           error: `"import jwk" expects text, got ${formatType(current)}`,
         };
       }
-      // `alg=` is written in the recipe, so the same table `genkey` uses
-      // answers here: an `oct` JWK under `alg=aes/256` is one key, and the
-      // engine now hands back one.
+      if (wantPublic) {
+        if (genkeyOutputBase(alg) === "key") {
+          return {
+            ok: false,
+            error: `"import jwk which=public" is for asymmetric keys — ${alg} is symmetric and has no public half. Drop which=public.`,
+          };
+        }
+        return { ok: true, output: typeOf("key", { alg, which: "public" }) };
+      }
+      // `alg=` and `which=` are written in the recipe, so nothing here has to
+      // open the JWK: the same table `genkey` uses answers the shape, and
+      // `importKey` refuses any JWK that turns out to be something else.
+      // Before that it read `kty` and `d` at run time, so one recipe typed
+      // `keypair` and produced a lone AES key, a public key, or a curve other
+      // than the one it named.
       return {
         ok: true,
         output:
           genkeyOutputBase(alg) === "key"
             ? typeOf("key", { alg, which: "secret" })
-            : typeOf("keypair", { alg }),
+            : typeOf("keypair", { alg, which: "private" }),
       };
     }
     if (current.base !== "bytes") {

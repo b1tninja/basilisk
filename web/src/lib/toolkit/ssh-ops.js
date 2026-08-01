@@ -353,7 +353,31 @@ export async function execSshEncode(value, params = {}, bindings = {}) {
 }
 
 /**
+ * What `ssh.decode` says when the file is not the form the recipe named.
+ *
+ * The recipe's `format=` fixes the output type before the run — that is the
+ * whole point of the parameter — so the file cannot be allowed to overrule
+ * it. Sniffing the text and switching is what produced SPKI bytes under a
+ * recipe that said `export pkcs8`, and a wrong answer is worse than a
+ * refusal because nothing announces it.
+ *
+ * Verbatim constants: the sentence names what the recipe declared, what
+ * arrived, and the word that reconciles them.
+ * @type {Readonly<Record<"public"|"private", string>>}
+ */
+export const SSH_DECODE_FORMAT_MISMATCH = Object.freeze({
+  public:
+    "ssh.decode format=public was given an openssh-key-v1 private block. A block decodes to a keypair and a public line decodes to a key, so the recipe names which one it means before the run — write `ssh.decode format=private`.",
+  private:
+    "ssh.decode format=private was given something that is not an openssh-key-v1 block (no BEGIN OPENSSH PRIVATE KEY line). A one-line public key decodes to a public key, not a keypair — drop `format=private`.",
+});
+
+/**
  * `ssh.decode` — public line or openssh-key-v1 → live key/keypair value.
+ *
+ * `format=` decides which, and the file only gets to agree or be refused:
+ * the compiler declared `key` or `keypair` from that word alone (registry
+ * overloads, keyed on `whenParams`) and has no file to consult.
  *
  * A passphrase-protected block opens when the Inputs panel holds its
  * passphrase (or `opts.passphrase` is passed directly, which is how the
@@ -368,7 +392,14 @@ export async function execSshDecode(value, params_ = {}, bindings = {}) {
     throw new Error("ssh.decode expects text (a public line or an OPENSSH PRIVATE KEY block)");
   }
   const text = String(value.data || "");
-  const isPrivate = text.includes("BEGIN OPENSSH PRIVATE KEY");
+  // Default `public`, matching the registry spec and `ssh.encode`'s own
+  // `format=`. The two must agree: this branch is what makes the declared
+  // type true, so a default that drifted from the table would put the lie
+  // straight back.
+  const isPrivate = String(params_.format || "public").toLowerCase() === "private";
+  if (isPrivate !== text.includes("BEGIN OPENSSH PRIVATE KEY")) {
+    throw new Error(SSH_DECODE_FORMAT_MISMATCH[isPrivate ? "private" : "public"]);
+  }
   const passphrase =
     String(bindings?.passphrase || "") ||
     decodePassphrase(bindings, params_.passphrase) ||
