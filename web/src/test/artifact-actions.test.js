@@ -19,7 +19,6 @@ import { ARTIFACT_KINDS } from "../toolkit/artifact-kinds/registry.tsx";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const ACTION = read("../toolkit/widgets/ArtifactAction.tsx");
-const OUTPUT_LIST = read("../toolkit/widgets/OutputList.tsx");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
 const CSS = read("../css/toolkit.css");
 const SRC = read("../lib/toolkit/artifact-actions.js");

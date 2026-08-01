@@ -20,7 +20,15 @@ export { PresetMenu, type PresetMenuItem } from "./PresetMenu";
 export { RunBar, type RunBarState } from "./RunBar";
 export { TopBar, type SuiteTone, type SuiteDetail } from "./TopBar";
 export { ReadinessBar, type ReadinessBlocker } from "./ReadinessBar";
-export { OutputList, type OutputArtifact } from "./OutputList";
+export { OutputList, REVEAL_TIMEOUT_MS } from "./OutputList";
+export {
+  ArtifactTile,
+  canExpand,
+  formatArtifact,
+  ARTIFACT_FORMATS,
+  type ArtifactFormat,
+  type OutputArtifact,
+} from "./ArtifactTile";
 export { NetworkArtifact, hasNetworkRenderer } from "./NetworkArtifact";
 export {
   JwtArtifact,

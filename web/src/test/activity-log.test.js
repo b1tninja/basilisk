@@ -30,10 +30,20 @@ const SRC = readFileSync(
 const stripComments = (t) =>
   t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
 const SRC_CODE = stripComments(SRC);
-const OUTPUT_LIST = readFileSync(
-  fileURLToPath(new URL("../toolkit/widgets/OutputList.tsx", import.meta.url)),
-  "utf8"
-);
+/**
+ * The render path, across both files it spans since §33a split the tile out
+ * of the list. "Appended from exactly one place" is a claim about the path,
+ * not about `OutputList.tsx`, and reading only the file the runner *used* to
+ * live in would turn that assertion into a tautology the moment it moved.
+ */
+const OUTPUT_LIST = ["ArtifactTile", "OutputList"]
+  .map((f) =>
+    readFileSync(
+      fileURLToPath(new URL(`../toolkit/widgets/${f}.tsx`, import.meta.url)),
+      "utf8"
+    )
+  )
+  .join("\n");
 const HOOK = readFileSync(
   fileURLToPath(new URL("../toolkit/useNotebook.ts", import.meta.url)),
   "utf8"

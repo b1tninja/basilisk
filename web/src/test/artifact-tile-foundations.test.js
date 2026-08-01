@@ -16,7 +16,15 @@ import { describe, expect, it } from "vitest";
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const SITE_CSS = read("../css/site.css");
 const TOOLKIT_CSS = read("../css/toolkit.css");
-const OUTPUT_LIST = read("../toolkit/widgets/OutputList.tsx");
+/**
+ * The tile's markup, wherever it lives. §33a lifted the anatomy out of
+ * `OutputList` into `ArtifactTile`; reading both is what keeps these
+ * assertions about the *rendered tile* rather than about a filename, so a
+ * later move cannot quietly take their teeth out by leaving an empty file
+ * behind that still matches nothing.
+ */
+const OUTPUT_LIST =
+  read("../toolkit/widgets/ArtifactTile.tsx") + read("../toolkit/widgets/OutputList.tsx");
 
 describe("the tile's mono text obeys a type scale (§39b)", () => {
   it("sizes tile code by scoped rule, because the global one outranks utilities", () => {
