@@ -134,6 +134,13 @@ function KeypairCard({ artifact }: ArtifactViewContext) {
       fingerprint={traits.fingerprint}
       half="both"
       publicOnly
+      /*
+       * Stays a literal here, and the tail of `artifact-reasons.js` says why:
+       * it shares `neverAskedFor`'s *condition* but not its voice — a caption
+       * in the lowercase register of the two beside it on this card, not a
+       * refusal spoken by a control. It is pinned verbatim in
+       * `artifact-kinds-table.test.js`, which is the thing it was missing.
+       */
       withheld="private half not shown — add `out @kp` to the recipe to write both halves"
     />
   );

@@ -17,7 +17,12 @@ import {
 } from "../toolkit/artifact-kinds/registry.tsx";
 import { ambiguousPairs, resolveArtifactKind } from "../toolkit/artifact-kinds/resolve.ts";
 import { actionsFor } from "../lib/toolkit/artifact-actions.js";
-import { KIND_GLYPHS } from "../toolkit/widgets/kind-glyphs.tsx";
+import { KeyRound } from "lucide-react";
+import {
+  KEY_BADGE_KINDS,
+  KIND_GLYPHS,
+  badgeFamily,
+} from "../toolkit/widgets/kind-glyphs.tsx";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 
@@ -77,6 +82,89 @@ describe("the table is unambiguous", () => {
     for (const kind of ARTIFACT_KINDS) {
       expect(ARTIFACT_ROLES, kind.id).toContain(kind.match.role);
     }
+  });
+});
+
+describe("the key badge family", () => {
+  /**
+   * The check that could not exist while the answer lived in a ternary inside
+   * `ArtifactTile`.
+   *
+   * Six roles wear a key badge, added over six commits by as many briefs, and
+   * two of them landed in the tint condition while four did not — so
+   * `PUBLIC-KEY`, `SECRET-KEY`, `SSH-PUBLIC` and `SSH-PRIVATE` rendered in the
+   * same `--caret` as `TEXT` and `RECEIPT` while carrying the same `KeyRound`
+   * glyph as `KEY` and `KEYPAIR`. The glyph map asserted one family and the
+   * colour asserted two, and nothing could compare them.
+   *
+   * These two directions are the comparison. A role added to one and forgotten
+   * in the other now fails here rather than in a screenshot nobody takes.
+   */
+  it("tints every KeyRound-glyphed role as a key", () => {
+    for (const [kind, glyph] of Object.entries(KIND_GLYPHS)) {
+      if (glyph !== KeyRound) continue;
+      // `openpgp-key` is a kind's declared glyph name, not a role, so it is
+      // never a badge string — the badge is the artifact's role, and an
+      // OpenPGP key's is `public-key` or `key`, both of which are covered.
+      if (kind === "openpgp-key") continue;
+      expect(badgeFamily(kind), `${kind} wears a key glyph`).toBe("key");
+    }
+  });
+
+  it("claims no role that is not key material", () => {
+    for (const kind of KEY_BADGE_KINDS) {
+      expect(ARTIFACT_ROLES, `${kind} is a badge string, so it is a role`).toContain(
+        kind
+      );
+      expect(KIND_GLYPHS[kind], `${kind} draws a key`).toBe(KeyRound);
+    }
+  });
+
+  it("keeps the vocabulary closed, so one rule set covers it", () => {
+    // Three values, matching the enumerated `.artifact-badge[data-badge-family]`
+    // rules in toolkit.css. A fourth would render untinted rather than fall
+    // back, which is the failure a stylesheet cannot report.
+    for (const role of [...ARTIFACT_ROLES, "diag", "something-later"]) {
+      expect(["key", "diag", "plain"], role).toContain(badgeFamily(role));
+    }
+  });
+});
+
+describe("the keypair's withheld line, verbatim", () => {
+  /**
+   * The one sentence on a key tile that no test held.
+   *
+   * `ACTION_REASONS` is asserted word for word in `artifact-actions.test.js`
+   * because wording is the feature; this line says the same *thing* as
+   * `neverAskedFor` — the value was never asked for, here is the edit — and
+   * had none of that protection, because it is a caption rather than a
+   * refusal and so is not in that module. The polish pass tried moving it
+   * there and the module's own contract rejected it: every reason is a
+   * capitalised, full-stopped sentence spoken by a control, and this is a
+   * lowercase fragment in the register of the captions beside it. So it stays
+   * where it is rendered, and is pinned where it is rendered.
+   */
+  it("names the recipe edit, in the card's caption register", () => {
+    const kp = ARTIFACT_KINDS.find((k) => k.id === "keypair");
+    const withheld = kp.view({ artifact: { traits: {} }, masked: false }).props.withheld;
+    expect(withheld).toBe(
+      "private half not shown — add `out @kp` to the recipe to write both halves"
+    );
+    // Lowercase and unpunctuated, matching "public + private halves" and
+    // "symmetric — no public half" on the same card — which is exactly what
+    // makes it a caption and not an `ACTION_REASONS` entry.
+    expect(withheld[0]).toBe(withheld[0].toLowerCase());
+    expect(withheld).not.toMatch(/[.!]$/);
+    // The remedy is named, which is the half of §33d a caption still owes.
+    expect(withheld).toMatch(/out @kp/);
+  });
+
+  it("is rendered by the keypair kind in both mask states", () => {
+    // `view` and `publicView` are the same function on purpose — a tile with
+    // no body has nothing a reveal could add — so the sentence cannot go
+    // missing in one of them.
+    const kp = ARTIFACT_KINDS.find((k) => k.id === "keypair");
+    expect(kp.publicView).toBe(kp.view);
   });
 });
 

@@ -72,3 +72,23 @@ export const ACTION_REASONS = Object.freeze({
   /** Publish, with no route to the directory. */
   offline: "Publishing needs a connection to this site's directory.",
 });
+
+/**
+ * **Not here on purpose: the keypair tile's withheld line.**
+ *
+ * `KeypairCard` renders "private half not shown — add `out @kp` to the recipe
+ * to write both halves", and moving it into the table above was tried in the
+ * polish pass and reverted — by the test three lines of contract below, which
+ * was right. Everything in `ACTION_REASONS` is a *sentence*, capitalised and
+ * full-stopped, because it is spoken by a control that refused: "a disabled
+ * action always carries a reason". The withheld line is a caption, in the
+ * lowercase-fragment register of the two that sit beside it on the same card
+ * ("public + private halves", "symmetric — no public half"), and it explains
+ * a tile rather than a refusal.
+ *
+ * They share a condition — the value was never asked for — and that is what
+ * made the move tempting. They do not share a voice, and this module's job is
+ * one voice for one kind of statement. The wording is pinned verbatim in
+ * `artifact-kinds-table.test.js` instead, which is what it was actually
+ * missing.
+ */

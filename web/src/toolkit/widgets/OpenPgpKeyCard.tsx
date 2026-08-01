@@ -85,9 +85,26 @@ export function OpenPgpKeyCard({
         <span className="font-mono text-[11px] font-semibold text-[var(--foreground)]">
           {parsed?.uid || "OpenPGP key"}
         </span>
-        <span className="text-[10px] text-[var(--muted-foreground)]">
-          {parsed?.isPrivate ? "private" : "public"}
-        </span>
+        {/* Nothing rather than a guess, which is `KeyCard.half`'s rule applied
+            one card over. This read `parsed?.isPrivate ? "private" : "public"`,
+            and `parsed` is null for the whole of the lazy `openpgp` import and
+            permanently for armor that does not parse — so an OpenPGP *private*
+            key captioned itself **public**, in the window before the module
+            landed and forever after on a truncated block. Measured on the
+            catalog's key section: the private row read "OpenPGP key · public ·
+            5CDE D055 …" until the parse resolved.
+
+            It is the same defect §35g fixed in `KeyCard`, where `publicOnly`
+            captioned as well as hid: a two-state caption driven by a
+            three-state fact, whose null case defaults to the wrong half. The
+            armor's own header would answer it synchronously, but the card
+            already keeps `isPrivate` from the parse, and a second source for
+            one fact is how the two start disagreeing. So the caption waits. */}
+        {parsed ? (
+          <span className="text-[10px] text-[var(--muted-foreground)]">
+            {parsed.isPrivate ? "private" : "public"}
+          </span>
+        ) : null}
       </div>
 
       {shownFingerprint ? (
