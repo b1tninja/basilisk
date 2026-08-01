@@ -210,7 +210,11 @@ describe("small tinted surfaces clear the contrast floor in both themes (§39c)"
     // this underline — same colour, no border, no fill — so it is the "visual
     // information required to identify the state" 1.4.11 sets a floor for.
     // Measured on rgb(13,17,23): 60% gave 2.96:1, 78% gives 4.18:1.
-    const rule = TOOLKIT_CSS.match(/\.artifact-action:disabled\s*\{[\s\S]*?\n\}/);
+    // Keyed on `aria-disabled` since the refusal became keyboard-reachable —
+    // `disabled` was what removed the button from the tab order, and with it
+    // the `aria-describedby` sentence that is the whole feature. The treatment
+    // is unchanged; only the selector moved.
+    const rule = TOOLKIT_CSS.match(/\.artifact-action\[aria-disabled="true"\]\s*\{[\s\S]*?\n\}/);
     expect(rule, "disabled rule not found").toBeTruthy();
     const pct = rule[0].match(/var\(--muted-foreground\)\s+(\d+)%/);
     expect(pct, "underline tint not found").toBeTruthy();

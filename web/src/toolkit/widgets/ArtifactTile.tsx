@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
 import { KindGlyph, badgeFamily, badgeTier } from "./kind-glyphs";
 import { ArtifactAction, type ActionTier } from "./ArtifactAction";
 import { ConsequenceBanner, type ConsequenceSpec } from "./ConsequenceBanner";
-import { actionsFor } from "../../lib/toolkit/artifact-actions.js";
+import { actionsFor, gatedRowReason } from "../../lib/toolkit/artifact-actions.js";
 import {
   addPrivateKeyToMyKeys,
   vaultAvailable,
@@ -292,6 +292,16 @@ export function ArtifactTile({
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Unique per mounted tile, for the row-gate sentence's id.
+   *
+   * `useId` for `ArtifactAction`'s reason: the tray mounts a **second copy** of
+   * every row, so any id derived from the artifact's own label would collide
+   * across the document and every `aria-describedby` would resolve to whichever
+   * pane rendered first. That is not hypothetical here — it is the defect
+   * `501cf4f` fixed, in the same feature, one component down.
+   */
+  const uid = useId();
   // §32e: one resolver call, computed once. The kind is decided by the
   // artifact's identity; `kindBody` is null when this kind has no body
   // to draw, and the raw path below renders instead.
@@ -326,6 +336,26 @@ export function ArtifactTile({
       ? { add: (body: { content?: string; alg?: unknown }) => addPrivateKeyToMyKeys(body as never) }
       : undefined,
   };
+  const ctx = { artifact: a, kind: resolvedKind, masked, services };
+
+  /**
+   * The row as it will actually render, and whether all of it refuses.
+   *
+   * §33f drops an outward action once its result exists — a published key has
+   * no Publish button — so the filter runs *before* the gate is computed: an
+   * action nobody can see is not a refusal the row should speak for.
+   *
+   * Expand and the diagnostic button are the other two things in this row, and
+   * neither comes from the action table. Where either is present the row is not
+   * dead, so there is nothing to explain and the buttons keep their own private
+   * descriptions.
+   */
+  const rowActions = actionsFor(resolvedKind).filter(
+    (action) => !(action.tier === "outward" && a.publishedAs)
+  ) as ArtifactActionSpec[];
+  const rowGate =
+    onExpand || a.diagnosticAction ? null : gatedRowReason(rowActions, ctx);
+  const rowGateId = rowGate ? `artifact-row-gate-${uid}` : undefined;
 
   /**
    * Run an action, log it, and surface what it did (§33f, §36).
@@ -336,7 +366,6 @@ export function ArtifactTile({
    * the direction that matters least forgivably.
    */
   const runAction = (action: ArtifactActionSpec) => {
-    const ctx = { artifact: a, kind: resolvedKind, masked, services };
     setBusy(true);
     setError(null);
     void Promise.resolve(action.run(ctx))
@@ -473,13 +502,12 @@ export function ArtifactTile({
             and this row renders them. "Copy" gates the same way on every
             tile because there is only one Copy — the churn this whole
             abstraction exists to stop is each tile growing its own. */}
-        {actionsFor(resolvedKind).map((action) => {
-          // §33f: an outward action is replaced by its result. Once the key is
-          // published the button is gone, which is the only one of the three
-          // receipt weights that makes re-firing an irreversible action
-          // structurally impossible.
-          if (action.tier === "outward" && a.publishedAs) return null;
-          const ctx = { artifact: a, kind: resolvedKind, masked, services };
+        {/* §33f: an outward action is replaced by its result. Once the key is
+            published the button is gone, which is the only one of the three
+            receipt weights that makes re-firing an irreversible action
+            structurally impossible. That filter is `rowActions`, above, so the
+            row gate is computed against the buttons that render. */}
+        {rowActions.map((action) => {
           const availability = action.available(ctx);
           const reason = availability === true ? undefined : availability.disabled;
           const confirmSpec = availability === true ? action.confirm?.(ctx) : null;
@@ -489,6 +517,7 @@ export function ArtifactTile({
               label={action.label}
               tier={action.tier}
               reason={reason}
+              describedBy={rowGateId}
               busy={busy && pending?.action.id === action.id}
               busyLabel={`${action.label}…`}
               onClick={() => {
@@ -525,6 +554,23 @@ export function ArtifactTile({
           </span>
         ) : null}
       </div>
+
+      {/* A row that refuses in its entirety, for one reason, says it once.
+          `secret-key` is the tile this exists for: Copy and Download are its
+          whole row, both gate on the mask, and the control that lifts the gate
+          — Reveal — is drawn *below* the row it unlocks, so a masked symmetric
+          key showed two dead buttons and no visible account of why. It is
+          guarded, not broken.
+
+          Not a new string: it is `ACTION_REASONS`' own sentence, the one both
+          buttons were already carrying in a `title`. And both point their
+          `aria-describedby` at this element rather than emitting private
+          copies, so one refusal is announced once rather than three times. */}
+      {rowGate ? (
+        <p className="artifact-row-gate" id={rowGateId} data-row-gate>
+          {rowGate}
+        </p>
+      ) : null}
 
       {/* §43d: inline, directly under the action row. The tile grows; nothing
           overlays. A floating layer that closes when you click away trains

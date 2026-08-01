@@ -25,7 +25,13 @@ import { cn } from "@/lib/cn";
  * 2. **Disabled does not dim.** The shipped `disabled:opacity-50` puts the
  *    reason at 2.20:1 in light, and a reason nobody can read is the same as no
  *    reason. The affordance is removed instead; the label stays legible. See
- *    the `.artifact-action:disabled` rule in toolkit.css.
+ *    the `.artifact-action[aria-disabled="true"]` rule in toolkit.css.
+ * 3. **A refused action is still focusable.** `aria-disabled`, never the
+ *    `disabled` attribute — see the comment on `refuse` below. This is the one
+ *    of the three that was written down here as a known defect and shipped
+ *    anyway: the comment beside `aria-describedby` said `title` alone is
+ *    unreachable by keyboard, while `disabled` took the button out of the tab
+ *    order and made the description unreachable by keyboard too.
  */
 export type ActionTier = "inert" | "local" | "outward";
 
@@ -41,6 +47,16 @@ type Props = {
   /** Progressive label while the action runs ("Adding…"). */
   busyLabel?: string;
   busy?: boolean;
+  /**
+   * The id of an element that already states this reason **visibly**, for the
+   * case where every action in a row refuses for the same reason and the row
+   * says it once (`gatedRowReason`). Given one, this component points at it
+   * instead of emitting a private `sr-only` copy — two buttons and one visible
+   * sentence would otherwise be three announcements of one refusal, which is
+   * `artifact-reasons.js`'s "one condition, one explanation" arriving through
+   * the DOM the same way the label-derived id defect did.
+   */
+  describedBy?: string;
   className?: string;
 };
 
@@ -51,6 +67,7 @@ export function ArtifactAction({
   reason,
   busyLabel,
   busy = false,
+  describedBy,
   className,
 }: Props) {
   const disabled = !!reason;
@@ -75,7 +92,34 @@ export function ArtifactAction({
    * mount by construction rather than by everyone remembering to pass a key.
    */
   const uid = useId();
-  const reasonId = disabled ? `artifact-action-why-${slug(label)}-${uid}` : undefined;
+  /** Only when the row has not already put the sentence on screen for us. */
+  const ownReasonId =
+    disabled && !describedBy ? `artifact-action-why-${slug(label)}-${uid}` : undefined;
+  const reasonId = describedBy || ownReasonId;
+  /**
+   * **The refusal, which is what buys the reason its reachability.**
+   *
+   * `disabled` removes a button from the tab order, so `aria-describedby` fires
+   * for nobody who navigates by keyboard: the sentence reached mouse users
+   * through `title`, and screen-reader users only in browse mode, where you
+   * have to already be reading the button to find out why it is dead. The
+   * feature of a disabled action is its reason, and the attribute that made it
+   * look disabled was the thing hiding it.
+   *
+   * `aria-disabled` announces the state and keeps the button focusable — and
+   * keeps it **clickable**, which is why this handler exists rather than the
+   * old `onClick={disabled ? undefined : onClick}`. An undefined handler on an
+   * aria-disabled button is not a refusal: the click still happens, it still
+   * bubbles, and anything listening above it still fires. So the refusal is
+   * explicit and it stops the event, because `ArtifactTile` draws these inside
+   * a row and the tray draws that row inside a list.
+   *
+   * Busy takes the same branch. It was already never `disabled` (an in-flight
+   * control that loses its accessible name is the worst moment to lose it),
+   * and it was already refusing by the same `undefined` — which had the same
+   * hole, one double-click wide.
+   */
+  const refuse = disabled || busy;
   return (
     <>
       <button
@@ -85,22 +129,29 @@ export function ArtifactAction({
           className
         )}
         data-action-tier={tier}
-        disabled={disabled}
+        aria-disabled={disabled || undefined}
         // Busy is `aria-busy`, never `disabled`: a disabled control loses its
         // accessible name in some screen-reader pairings at exactly the moment
         // the user most wants to know what is happening.
         aria-busy={busy || undefined}
         aria-describedby={reasonId}
         title={reason || undefined}
-        onClick={disabled || busy ? undefined : onClick}
+        onClick={(e) => {
+          if (refuse) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          onClick();
+        }}
       >
         {busy ? <span className="artifact-action-spin" aria-hidden /> : null}
         {busy && busyLabel ? busyLabel : label}
       </button>
-      {reasonId ? (
+      {ownReasonId ? (
         // Visually hidden but read: the sentence is the feature, and `title`
         // alone is unreachable by keyboard and by touch.
-        <span id={reasonId} className="sr-only">
+        <span id={ownReasonId} className="sr-only">
           {reason}
         </span>
       ) : null}

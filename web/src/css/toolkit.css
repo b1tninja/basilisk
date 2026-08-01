@@ -1891,6 +1891,28 @@ input[type="file"][data-basilisk-file-picker] {
 }
 
 /*
+ * The expiry verdict beside a date (§48b/D5).
+ *
+ * Two tones, closed and enumerated, exactly as `.jwt-value[data-jwt-tone]`
+ * already does for the token card's `exp` — the same fact, the same two
+ * colours, one seam apart. `expiryNote` emits `warn` past a week and `error`
+ * inside it, so there is no third value to style and a typo is a rule that
+ * matches nothing rather than an inline write `style-src 'self'` refuses.
+ *
+ * Colour is never the only carrier: the sentence itself escalates — "expires
+ * in 9 days" → "expires today" → "expired" — which is 1.4.1 satisfied by the
+ * text a screen reader gets anyway.
+ */
+.artifact-expiry[data-expiry-tone="warn"] {
+  color: var(--warn);
+  font-weight: 600;
+}
+.artifact-expiry[data-expiry-tone="error"] {
+  color: var(--error);
+  font-weight: 600;
+}
+
+/*
  * A bare-word toggle inside a card, given the action row's box.
  *
  * `SshKeyCard`'s "show line" / "show block" measured 16px tall — the smallest
@@ -1949,7 +1971,7 @@ input[type="file"][data-basilisk-file-picker] {
   background: transparent;
   color: var(--muted-foreground);
 }
-.artifact-action[data-action-tier="inert"]:hover:not(:disabled) {
+.artifact-action[data-action-tier="inert"]:hover:not([aria-disabled="true"]) {
   color: var(--foreground);
 }
 .artifact-action[data-action-tier="local"] {
@@ -1957,7 +1979,7 @@ input[type="file"][data-basilisk-file-picker] {
   background: var(--surface-raised);
   color: var(--foreground);
 }
-.artifact-action[data-action-tier="local"]:hover:not(:disabled) {
+.artifact-action[data-action-tier="local"]:hover:not([aria-disabled="true"]) {
   border-color: var(--brand);
   color: var(--brand);
 }
@@ -1983,7 +2005,7 @@ input[type="file"][data-basilisk-file-picker] {
   background: transparent;
   color: var(--warn);
 }
-.artifact-action[data-action-tier="outward"]:hover:not(:disabled) {
+.artifact-action[data-action-tier="outward"]:hover:not([aria-disabled="true"]) {
   background: color-mix(in srgb, var(--warn) var(--tile-tint), transparent);
 }
 
@@ -1999,8 +2021,16 @@ input[type="file"][data-basilisk-file-picker] {
  * A disabled local or outward action therefore drops to inert weight: a
  * Publish button that cannot publish should not still wear the colour that
  * promises "this leaves the machine".
+ *
+ * **Keyed on `aria-disabled`, not on `:disabled`, and the selector is the
+ * whole of the change here.** The `disabled` attribute took the button out of
+ * the tab order, so the `aria-describedby` sentence — the feature — fired for
+ * no keyboard user at all, which is the defect `ArtifactAction`'s own comment
+ * described one line above the attribute causing it. The component now sets
+ * `aria-disabled` and refuses the click itself; nothing else about the
+ * treatment moved, including the measured 78% underline below.
  */
-.artifact-action:disabled {
+.artifact-action[aria-disabled="true"] {
   opacity: 1;
   cursor: not-allowed;
   border-color: transparent;
@@ -2025,6 +2055,29 @@ input[type="file"][data-basilisk-file-picker] {
    */
   text-decoration: underline dotted color-mix(in srgb, var(--muted-foreground) 78%, transparent);
   text-underline-offset: 3px;
+}
+
+/*
+ * A row where **every** action refuses, for one reason, says it out loud.
+ *
+ * `secret-key` is the tile that made this necessary: both its actions are Copy
+ * and Download, both gate on the mask, so a masked symmetric key draws a row
+ * that is 100% dead. It is guarded, not broken — but nothing on screen said so,
+ * because the sentence lived in a `title` and an `sr-only` span, and the
+ * control that lifts the guard (Reveal) sits *below* the row it unlocks.
+ *
+ * This is not a fourth tier and not a banner. It is the reason string the
+ * buttons already carry, promoted from a tooltip to the one place it is true of
+ * everything beside it — and `aria-describedby` on both buttons points *here*
+ * rather than at private copies, so the refusal is announced once.
+ *
+ * Muted rather than `--warn`: nothing has gone wrong. The row is quiet because
+ * the value is masked, which is the state the user asked for.
+ */
+.artifact-row-gate {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
 }
 
 /* In-flight is aria-busy, never disabled: a disabled control loses its

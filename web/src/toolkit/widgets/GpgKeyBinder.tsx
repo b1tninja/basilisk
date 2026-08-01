@@ -1,5 +1,6 @@
 import { KeyRound } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { expiryNote } from "../../lib/toolkit/artifact-readouts.js";
 import type { VaultKeyRow } from "../notebook-types";
 
 /**
@@ -29,34 +30,15 @@ type Props = {
   className?: string;
 };
 
-/** Days until `expires`, or null when it never expires. */
-export function daysUntilExpiry(expires: number | null | undefined, now = Date.now()): number | null {
-  if (expires == null) return null;
-  return Math.ceil((expires - now) / 86_400_000);
-}
-
 /**
- * Expiry note for a key row, or null when it is not worth saying.
+ * `expiryNote` and `daysUntilExpiry` are `artifact-readouts.js`' now.
  *
- * Only speaks up inside a month. A key expiring in a year is not news, and a
- * warning shown on every row would train people to ignore the one that counts.
+ * They were written here, for this list, and were view-local while this was
+ * their only consumer. `OpenPgpKeyCard` and the certificate panel now ask the
+ * same question of the same instant — three consumers of one derivation — and
+ * the representation layer is where that answer is allowed to live. Nothing in
+ * the verdict changed; this file just stopped owning it.
  */
-export function expiryNote(expires: number | null | undefined, now = Date.now()): {
-  text: string;
-  severity: "warn" | "error";
-} | null {
-  const days = daysUntilExpiry(expires, now);
-  if (days == null) return null;
-  if (days < 0) return { text: "expired", severity: "error" };
-  if (days === 0) return { text: "expires today", severity: "error" };
-  if (days <= 30) {
-    return {
-      text: `expires in ${days} day${days === 1 ? "" : "s"}`,
-      severity: days <= 7 ? "error" : "warn",
-    };
-  }
-  return null;
-}
 
 function shortFpr(fpr: string): string {
   const clean = String(fpr || "").replace(/\s+/g, "");

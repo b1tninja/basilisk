@@ -806,14 +806,40 @@ function CatalogApp() {
                 data={{ ok: true, publicAddress: "203.0.113.9:60122", ms: 127, note: "STUN reachable — reflexive address discovered" }}
               />
             </div>
+            {/**
+             * Two certificates, both dated **relative to now** (§48b/D5).
+             *
+             * This row was pinned to `2026-08-29T00:00:00.000Z`, which is D3's
+             * mistake in the other artifact: an absolute instant written down
+             * on the day the fixture was, so the one section that exists to
+             * show the expiry verdict would have shown `expired` for the life
+             * of the repo from the day it passed. `RTCCertificate.expires`
+             * defaults to about thirty days out, so a relative date is also
+             * the *truer* fixture — a real one is never a fixed calendar day.
+             *
+             * Two of them because the verdict has two tones and a catalog that
+             * shows one state by accident shows nothing on purpose.
+             */}
             <div>
-              <StateLabel>certificate — DTLS identity (§29a)</StateLabel>
+              <StateLabel>certificate — DTLS identity, verdict at warn (§29a/§48b)</StateLabel>
               <NetworkArtifact
                 netType="certificate"
                 data={{
                   algorithm: "ECDSA/P-256",
-                  expires: "2026-08-29T00:00:00.000Z",
+                  expires: new Date(Date.now() + 20 * 86_400_000).toISOString(),
                   fingerprints: [{ algorithm: "sha-256", value: "3F:2A:9C:1B:44:D0:81:E6:B8" }],
+                  note: "ephemeral unless pinned",
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>certificate — inside a week, so the verdict escalates</StateLabel>
+              <NetworkArtifact
+                netType="certificate"
+                data={{
+                  algorithm: "ECDSA/P-256",
+                  expires: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+                  fingerprints: [{ algorithm: "sha-256", value: "7B:11:E4:0A:52:CC:93:6D:2F" }],
                   note: "ephemeral unless pinned",
                 }}
               />

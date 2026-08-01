@@ -14,6 +14,8 @@ import "../lib/toolkit/registry.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import {
+  expiryInstant,
+  expiryNote,
   filterRecipientRows,
   openpgpKeyForm,
   openpgpKeySummary,
@@ -217,12 +219,97 @@ describe("openpgpKeySummary", () => {
     }
   });
 
+  /**
+   * The whole D5 path for the OpenPGP card, from a key this build generated.
+   *
+   * `expiresAt` was added to the summary for exactly this and had no consumer
+   * until now. Asserting it against `expiryNote` here rather than against a
+   * hand-written armor fixture is what stops the card's verdict rotting: the
+   * key is minted `expiry=` seconds from *this* run, so the arithmetic is
+   * re-proved every time the suite runs instead of on the day it was written
+   * (D3's lesson, applied to the other card).
+   */
+  it("hands the card an instant a verdict can be read off", async () => {
+    const arts = await run(
+      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" expiry=777600 | out @k'
+    );
+    const pub = arts.find((a) => a.role === "public-key");
+    const summary = await openpgpKeySummary(pub.content);
+    // 9 days: the date is still drawn, and the verdict sits beside it.
+    expect(summary.expires).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(summary.expiresAt).toBeGreaterThan(Date.now());
+    expect(expiryNote(summary.expiresAt)).toEqual({
+      text: "expires in 9 days",
+      severity: "warn",
+    });
+    // And the card asks for no second parse: the instant is on the summary it
+    // already has, which is why `expires` and the verdict cannot disagree.
+    expect(new Date(summary.expiresAt).toISOString().slice(0, 10)).toBe(summary.expires);
+  }, 60_000);
+
+  it("says nothing about a key that does not expire", async () => {
+    const arts = await run('gpg.genkey email="dana@example.org" | out @k');
+    const pub = arts.find((a) => a.role === "public-key");
+    const summary = await openpgpKeySummary(pub.content);
+    // The card's "does not expire" stands alone — a verdict here would be a
+    // warning about a deadline that does not exist.
+    expect(expiryNote(summary.expiresAt)).toBeNull();
+  }, 60_000);
+
   it("returns null for armor that will not parse, rather than throwing", async () => {
     expect(
       await openpgpKeySummary("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nnot base64\n")
     ).toBeNull();
     expect(await openpgpKeySummary("not armor at all")).toBeNull();
     expect(await openpgpKeySummary("")).toBeNull();
+  });
+});
+
+/**
+ * The verdict half of §48b/D5. The thresholds and the wording are asserted in
+ * `gpg-key-binder.test.js`, unchanged by the move; what is new here is the
+ * *instant*, because the three things that expire in this app state it three
+ * different ways and only one of them is a number.
+ */
+describe("expiryInstant — one reading of 'when does this stop being valid'", () => {
+  const AT = Date.UTC(2026, 7, 31, 12, 0, 0);
+
+  it("takes the ISO string a DTLS certificate carries", async () => {
+    // `rtc-ops.js` serializes `cert.expires` through `toISOString()`, so the
+    // certificate panel's value is a string where the key card's is a number.
+    // A panel that reached for `Date.parse` itself would be the second
+    // derivation of one fact, which is the thing the boundary calls a bug.
+    expect(expiryInstant(new Date(AT).toISOString())).toBe(AT);
+    expect(expiryInstant(AT)).toBe(AT);
+    expect(expiryInstant(new Date(AT))).toBe(AT);
+  });
+
+  it("calls an unreadable date no known expiry, never an expired one", () => {
+    // The dangerous rounding: a date we cannot parse must not fall to 0 and
+    // read as 1970. A certificate we cannot describe has not expired.
+    expect(expiryInstant("soon")).toBeNull();
+    expect(expiryInstant("")).toBeNull();
+    expect(expiryInstant(null)).toBeNull();
+    expect(expiryInstant(undefined)).toBeNull();
+    expect(expiryInstant(NaN)).toBeNull();
+    expect(expiryNote("soon", AT)).toBeNull();
+  });
+
+  it("gives a string and a number the same verdict", async () => {
+    const in9 = AT + 9 * 86_400_000;
+    expect(expiryNote(new Date(in9).toISOString(), AT)).toEqual(
+      expiryNote(in9, AT)
+    );
+    expect(expiryNote(in9, AT)).toEqual({ text: "expires in 9 days", severity: "warn" });
+  });
+
+  it("stays tier 1 — a verdict that cannot differ one second later", () => {
+    // §47b's test for which tier a live fact belongs in: if re-rendering a
+    // second later cannot change the text, it needs no timer. This is what
+    // licenses `OpenPgpKeyCard` and `CertificatePanel` to call it at render
+    // and hold no interval.
+    const in9 = AT + 9 * 86_400_000;
+    expect(expiryNote(in9, AT)).toEqual(expiryNote(in9, AT + 1000));
   });
 });
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatFingerprint } from "../../lib/utils.js";
 import {
+  expiryNote,
   openpgpKeyForm,
   openpgpKeySummary,
 } from "../../lib/toolkit/artifact-readouts.js";
@@ -73,6 +74,23 @@ export function OpenPgpKeyCard({
 
   const shownFingerprint = formatFingerprint(parsed?.fingerprint || fingerprint || "");
 
+  /**
+   * The verdict beside the date (§48b) — **tier 1, so no timer.**
+   *
+   * `expires 2027-08-01` answers a question nobody asked. A reader wants to
+   * know whether the key is still usable, and was being handed two dates and a
+   * subtraction. `expiryNote` is silent past thirty days, which is what makes
+   * this safe on every key rather than only on the ones someone remembered, and
+   * it is recomputed on each render against `Date.now()` — days is the
+   * resolution, so a second-by-second tick would buy nothing and cost an
+   * interval per mounted card.
+   *
+   * `expiresAt` rather than a second parse of `expires`: `openpgpKeySummary`
+   * already resolved the instant, and re-deriving it from the string it just
+   * formatted is the two-derivations bug in miniature.
+   */
+  const expiry = expiryNote(parsed?.expiresAt);
+
   return (
     <div className={cn("flex flex-col gap-1 pl-[1px]", className)} data-openpgp-card>
       <div className="flex items-baseline gap-2">
@@ -111,6 +129,14 @@ export function OpenPgpKeyCard({
         <span className="text-[10px] text-[var(--muted-foreground)]">
           created {parsed.created}
           {parsed.expires ? ` · expires ${parsed.expires}` : " · does not expire"}
+          {expiry ? (
+            <>
+              {" · "}
+              <span className="artifact-expiry" data-expiry-tone={expiry.severity}>
+                {expiry.text}
+              </span>
+            </>
+          ) : null}
         </span>
       ) : null}
 

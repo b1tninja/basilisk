@@ -471,11 +471,91 @@ and what is now true. All five were measured in the built page at
 - **The two stray disabled reasons** are `ACTION_REASONS.noKeyToFingerprint`
   and `.noKeyToEncode`; `artifact-actions.test.js` now fails on any
   `disabled: "…"` literal in the table (comments stripped first).
-- **Skipped, deliberately:** D5 (expiry verdicts — `expiryNote` exists and is
-  tested, two call sites, no representation work in it), D3 and D1 (the OTP
-  agent's), D8 (filed, recipe layer). The `envelope` row still truncates its
-  label; it now carries `title={a.label}` so the clause that matters — "(not a
-  share)" — is reachable, which is the fix that does not restructure the row.
+- **D5 — every expiry date now carries a verdict.** Landed after the pass
+  above skipped it; see the next section for where it lives and why.
+- **Skipped, deliberately:** D3 and D1 (the OTP agent's), D8 (filed, recipe
+  layer). The `envelope` row still truncates its label; it now carries
+  `title={a.label}` so the clause that matters — "(not a share)" — is
+  reachable, which is the fix that does not restructure the row.
+
+### The three findings the representation pass reported rather than built
+
+All three were deferred as "a behaviour change, not polish", which was right at
+the time and stopped being right once the boundary above was written down.
+Measured in the built page, and in a **real run** at `/toolkit`
+(`genkey aes/256 | out @k`), not only in the catalog.
+
+- **A disabled action's reason was unreachable by keyboard, and now is not.**
+  `ArtifactAction` carried the `disabled` attribute and, one line above it, a
+  comment stating that `title` alone is unreachable by keyboard — while
+  `disabled` removed the button from the tab order and made the
+  `aria-describedby` sentence unreachable by keyboard too. The whole feature of
+  a disabled artifact action is its reason string; the attribute that made it
+  *look* disabled was the thing hiding it.
+
+  It is `aria-disabled` now, plus an explicit refusal in the click handler,
+  because **an aria-disabled button is still clickable** and the old
+  `onClick={disabled ? undefined : onClick}` is not a refusal — the click still
+  fires and still bubbles. Measured on the same page, one click each: the
+  refused Download reaches neither `document` nor `window` and writes nothing;
+  an enabled Copy fingerprint reaches both and writes once. Nothing above the
+  button was ever listening anyway — no ancestor of a tile carries a React
+  `onClick`, checked live — so the `stopPropagation` is the belt, not the fix.
+  The stylesheet moved with it: `.artifact-action:disabled` →
+  `.artifact-action[aria-disabled="true"]`, including the three
+  `:hover:not(:disabled)` guards, which would otherwise have silently stopped
+  matching and lit a refused Publish on hover.
+
+  Note the near miss. `501cf4f` — the same day — fixed 9 of 10 disabled actions
+  announcing *another artifact's* reason, because the description id was derived
+  from the label. That was latent **only because nothing could reach the
+  descriptions**. Fixing reachability first would have made it loud and wrong.
+
+- **A row that refuses in its entirety states its guard.** `secret-key` is the
+  case and the decision was: **no third action belongs there.** A symmetric key
+  has no public half, so `key.copyFingerprint` and `key.copyPublicLine` would be
+  permanently disabled — a *third* dead button — and `keyring.add` would be a
+  button the vault refuses outright, since a `raw` record is indexed by
+  `spki:SHA256:` off a public half. The suggested "third ungated action" would
+  have been a control that exists to make a stylesheet look better.
+
+  So the row says what guards it. `gatedRowReason(actions, ctx)` in
+  `artifact-actions.js` — beside the table, because "is this available, and why
+  not" is the table's question — returns the sentence only when **every**
+  rendered action refuses and they all give the **same** one; anything else is
+  null and each button keeps its own private description. It invents no string:
+  it is `ACTION_REASONS`' own sentence, promoted from a `title` to the screen,
+  and both buttons' `aria-describedby` point at *that* element rather than at
+  private `sr-only` copies, so one refusal is announced once. Measured on the
+  catalog: 4 tiles fully gated (`secret-key`, `share`, `secret`, the masked
+  `fallback`), 11 mixed rows unchanged, and in the tray's second copy of a row
+  the ids stay unique and each pane resolves within itself.
+
+- **Expiry dates get a verdict, in the representation layer.** §47b tier 1:
+  recomputed at render against `Date.now()`, resolution in days, **no timer** —
+  the text cannot differ one second later, which is the whole test.
+
+  `expiryNote` and `daysUntilExpiry` moved out of `GpgKeyBinder.tsx` into
+  `artifact-readouts.js`, unchanged, and `gpg-key-binder.test.js` still passes
+  every assertion verbatim — which is the point of moving rather than rewriting.
+  They were view-local while the binder was the only consumer; `OpenPgpKeyCard`
+  and `NetworkArtifact`'s `CertificatePanel` make three, which is check 3.
+  `expiryInstant` is the new part and the reason a widget must not do this:
+  the key card holds milliseconds and `rtc-ops.js` serializes the DTLS
+  certificate's expiry as an **ISO string**, so a `Date.parse` in the panel
+  would have been the second derivation of one fact on day one. An unreadable
+  date is *no known expiry*, never `expired`.
+
+  The card keeps its date and gains the verdict beside it, in
+  `.artifact-expiry[data-expiry-tone]` — two enumerated values mirroring
+  `.jwt-value[data-jwt-tone]`, no inline write. Measured (black-on-white sanity
+  = 21.00 first): warn **9.01** dark / **4.61** light, error **6.95** / **5.07**,
+  the gate sentence 6.15 / 6.39, and the disabled label and its dotted mark
+  unchanged at 6.15 and 4.18 dark. The catalog's certificate fixture was pinned
+  to `2026-08-29T00:00:00.000Z` — D3's mistake in another artifact — and is now
+  two rows dated relative to `Date.now()`, at +20 days and +3 days, so both
+  tones are on the page on purpose and neither rots. A gate in
+  `artifact-kinds-table.test.js` keeps it that way.
 
 ## Traps learned the hard way (2026-07-31)
 

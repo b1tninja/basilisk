@@ -536,3 +536,54 @@ export function actionById(id) {
 export function actionsFor(kind) {
   return (kind?.actions || []).map(actionById).filter(Boolean);
 }
+
+/**
+ * The one sentence a whole action row refuses for — or null.
+ *
+ * **The `secret-key` row is why this exists.** A symmetric key declares Copy and
+ * Download and nothing else, deliberately: `key.copyFingerprint` and
+ * `key.copyPublicLine` derive from public material and a symmetric key has
+ * none, and `keyring.add` is refused by the vault outright for the same reason
+ * — there is no public half to index it by. Every one of those omissions is
+ * §33d working. But both remaining actions gate on the mask, so a masked
+ * symmetric key renders a row that is 100% disabled, and a row of dead buttons
+ * reads as *broken* when it is merely *guarded*.
+ *
+ * The suggested fix was a third, ungated action. There is no honest one — the
+ * three that a key tile could offer are each absent for a stated reason, and
+ * inventing one to fill the row would be a button that exists to make a
+ * stylesheet look better. So the row states its guard instead, and this is the
+ * derivation that decides whether it has one: it belongs beside the table
+ * because "is this action available, and why not" is the table's question, and
+ * a tile that answered it a second way is the shape of defect this whole
+ * module exists to stop.
+ *
+ * Deliberately strict. **All** of them, and **one** sentence: two actions
+ * refusing for two different reasons are two facts, and collapsing them into a
+ * summary line would be the tile paraphrasing `ACTION_REASONS` — which is
+ * exactly what "the same condition must not acquire two explanations" forbids.
+ * Where it returns null, every button keeps its own private description and
+ * nothing changes.
+ *
+ * @param {{ available: (ctx: *) => Availability }[]} actions  Already filtered
+ *   to what the row will render — an action the tile drops is not a refusal.
+ * @param {*} ctx
+ * @returns {string | null}
+ */
+export function gatedRowReason(actions, ctx) {
+  const list = Array.isArray(actions) ? actions : [];
+  if (!list.length) return null;
+  let shared = null;
+  for (const action of list) {
+    const availability = action?.available?.(ctx);
+    // `true` is the whole vocabulary for "available", so anything that is not
+    // it must carry a sentence — and an entry that somehow does not is a table
+    // bug, not a row-wide refusal to announce.
+    if (availability === true) return null;
+    const reason = availability && availability.disabled;
+    if (!reason) return null;
+    if (shared === null) shared = reason;
+    else if (shared !== reason) return null;
+  }
+  return shared;
+}

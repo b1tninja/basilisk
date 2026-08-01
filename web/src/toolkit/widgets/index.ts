@@ -43,7 +43,7 @@ export {
 export { SessionStrip, type SessionStripState } from "./SessionStrip";
 export { InspectorArtifact, hasInspectorRenderer, type InspectSnapshot } from "./InspectorArtifact";
 export { CellTypeErrors, type CellTypeError } from "./CellTypeErrors";
-export { GpgKeyBinder, expiryNote, daysUntilExpiry } from "./GpgKeyBinder";
+export { GpgKeyBinder } from "./GpgKeyBinder";
 export {
   ConnectionsPanel,
   type ConnectionPeer,

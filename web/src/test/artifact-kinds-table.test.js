@@ -747,3 +747,34 @@ describe("OpenPGP keys resolve to their own kinds (§35e)", () => {
     expect(priv.publicView).not.toBe(priv.view);
   });
 });
+
+/**
+ * The catalog's own expiry states (§48b/D5, and D3's lesson applied).
+ *
+ * D3 is the precedent that makes this a gate rather than a preference: the OTP
+ * row hard-coded a step number that was current on the day it was written, so
+ * the one section that exists to show a live countdown read **expired** for the
+ * life of the repo. The certificate row had the same shape — an absolute ISO
+ * date — and the verdict it now carries is exactly the kind of thing that
+ * silently rots into a single permanent state.
+ */
+describe("the certificate rows show both verdicts, and cannot rot into one", () => {
+  const certs = [...CATALOG_SRC.matchAll(/netType="certificate"[\s\S]*?expires:\s*([^,\n]+)/g)].map(
+    (m) => m[1].trim()
+  );
+
+  it("draws two, because the verdict has two tones", () => {
+    expect(certs.length).toBe(2);
+  });
+
+  it("dates them relative to now, never to the day the fixture was written", () => {
+    // `RTCCertificate.expires` is about thirty days out by default, so a
+    // relative date is the *truer* fixture as well as the durable one — a real
+    // certificate is never a fixed calendar day.
+    for (const c of certs) expect(c, c).toMatch(/Date\.now\(\)/);
+    for (const c of certs) expect(c, c).not.toMatch(/20\d\d-\d\d-\d\d/);
+    // One inside a month and one inside a week, so both tones are on the page.
+    expect(certs.join(" ")).toMatch(/20 \* 86_400_000/);
+    expect(certs.join(" ")).toMatch(/3 \* 86_400_000/);
+  });
+});

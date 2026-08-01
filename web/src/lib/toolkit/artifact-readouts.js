@@ -396,6 +396,95 @@ export async function openpgpKeySummary(armored) {
 }
 
 /**
+ * When a validity window ends, as a Unix millisecond instant — or null.
+ *
+ * One normalizer because the three things that expire around here state it
+ * three ways: `openpgpKeySummary` hands back `expiresAt` in milliseconds, the
+ * vault's `VaultKeyRow.expires` is milliseconds, and `rtc.cert`'s DTLS
+ * certificate carries an **ISO string** (`rtc-ops.js` — `new Date(cert.expires)
+ * .toISOString()`). Left to the call sites that is a `Date.parse` inside a
+ * widget and a bare subtraction in another, which is a fact with two spellings
+ * before anyone has written the second one.
+ *
+ * Total: anything unparseable is *no known expiry*, not zero — a certificate
+ * whose date we cannot read has not expired, it is undescribed, and the caller
+ * says nothing rather than "expired".
+ *
+ * @param {number|string|Date|null|undefined} expires
+ * @returns {number|null}
+ */
+export function expiryInstant(expires) {
+  if (expires == null || expires === "") return null;
+  if (expires instanceof Date) {
+    return Number.isFinite(expires.getTime()) ? expires.getTime() : null;
+  }
+  if (typeof expires === "number") return Number.isFinite(expires) ? expires : null;
+  const parsed = Date.parse(String(expires));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Days until a validity window closes, rounded up. Null when nothing expires.
+ *
+ * @param {number|string|Date|null|undefined} expires
+ * @param {number} [now]  Unix milliseconds
+ * @returns {number|null}
+ */
+export function daysUntilExpiry(expires, now = Date.now()) {
+  const at = expiryInstant(expires);
+  if (at == null) return null;
+  return Math.ceil((at - now) / 86_400_000);
+}
+
+/**
+ * **Is this still good** — the verdict a reader wants where a card prints a
+ * date (§48b, D5).
+ *
+ * `expires 2027-08-01` answers a question nobody asked. The question is
+ * whether the thing is usable *now*, and every card that showed a bare date
+ * was handing its reader two dates and a subtraction. This is §47b's **tier
+ * 1**: recomputed at render against `Date.now()`, resolution in days, and
+ * therefore **no timer** — the text cannot differ if it re-renders a second
+ * later, which is the whole test for which tier a live fact belongs in.
+ *
+ * Only speaks up inside a month. A key expiring in a year is not news, and a
+ * warning shown on every row would train people to ignore the one that counts.
+ * That discipline is what makes it safe to add to *every* card that shows an
+ * expiry rather than to the ones someone remembered.
+ *
+ * **It lived in `GpgKeyBinder.tsx`** and was correct there under the boundary's
+ * own exception — one consumer, output only laid out, view-local. It stopped
+ * being one the moment `OpenPgpKeyCard` and `NetworkArtifact`'s certificate
+ * panel needed the same verdict: three consumers of one derivation, which is
+ * check 3 in this module's header, and a widget is where the two copies would
+ * have gone. Nothing about the answer changed in the move — the strings and the
+ * thresholds are the shipped ones, asserted verbatim in `gpg-key-binder.test.js`
+ * — because a "while I am here" rewording is how a tested sentence rots.
+ *
+ * `now` is a parameter for the reason `otpTimeLeft`'s is: the boundaries are
+ * 30 days, 7 days, today and past, and a test that had to wait for one of them
+ * would be a test nobody runs. It is also D3's lesson — a fixture pinned to the
+ * day it was written reads *expired* forever.
+ *
+ * @param {number|string|Date|null|undefined} expires
+ * @param {number} [now]  Unix milliseconds
+ * @returns {{ text: string, severity: "warn"|"error" }|null}
+ */
+export function expiryNote(expires, now = Date.now()) {
+  const days = daysUntilExpiry(expires, now);
+  if (days == null) return null;
+  if (days < 0) return { text: "expired", severity: "error" };
+  if (days === 0) return { text: "expires today", severity: "error" };
+  if (days <= 30) {
+    return {
+      text: `expires in ${days} day${days === 1 ? "" : "s"}`,
+      severity: days <= 7 ? "error" : "warn",
+    };
+  }
+  return null;
+}
+
+/**
  * How an authenticator groups the digits it shows — `123 456`, not `123456`.
  *
  * A grouping, never a different value: the string the artifact carries is

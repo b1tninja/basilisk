@@ -17,6 +17,7 @@ import {
   actionsFor,
   downloadMimeFor,
   downloadNameFor,
+  gatedRowReason,
 } from "../lib/toolkit/artifact-actions.js";
 import { downloadArtifactFile } from "../lib/toolkit/download-service.js";
 import "../lib/toolkit/registry.js";
@@ -27,6 +28,7 @@ import { resolveArtifactKind } from "../toolkit/artifact-kinds/resolve.ts";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const ACTION = read("../toolkit/widgets/ArtifactAction.tsx");
+const TILE = read("../toolkit/widgets/ArtifactTile.tsx");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
 const CSS = read("../css/toolkit.css");
 const SRC = read("../lib/toolkit/artifact-actions.js");
@@ -49,7 +51,7 @@ describe("a disabled action always carries a reason (§33d)", () => {
     // Not two independent props. "Disabled but no reason" should be
     // unrepresentable, because that state is the thing the rule forbids.
     expect(ACTION).toMatch(/const disabled = !!reason;/);
-    expect(ACTION).toMatch(/disabled=\{disabled\}/);
+    expect(ACTION).toMatch(/aria-disabled=\{disabled \|\| undefined\}/);
   });
 
   it("exposes the reason to assistive tech, not only as a title", () => {
@@ -57,6 +59,43 @@ describe("a disabled action always carries a reason (§33d)", () => {
     // is a reason most affected users never get.
     expect(ACTION).toMatch(/aria-describedby=\{reasonId\}/);
     expect(ACTION).toMatch(/className="sr-only"/);
+  });
+
+  /**
+   * **The reason was unreachable by keyboard, which is most of who it is for.**
+   *
+   * The component carried the `disabled` attribute and, one line above it, a
+   * comment stating that `title` alone is unreachable by keyboard — while
+   * `disabled` removed the button from the tab order and made
+   * `aria-describedby` unreachable by keyboard too. So the sentence reached
+   * mouse users and, in browse mode, a screen-reader user already reading the
+   * button. Everyone navigating by Tab got a button that skipped.
+   *
+   * `aria-disabled` fixes the reachability and creates the obligation: the
+   * button is still clickable, so the refusal has to be real. Both halves are
+   * asserted here, because either alone is worse than what shipped — a
+   * focusable button that runs its action is a gate that does not gate.
+   */
+  it("stays in the tab order, because the description is the feature", () => {
+    const code = stripComments(ACTION);
+    // No `disabled` *attribute* anywhere: it is the thing that took the button
+    // out of the tab order, and `busy` never set it either (§41e).
+    expect(code).not.toMatch(/\sdisabled=\{/);
+    expect(code).toMatch(/aria-disabled=/);
+  });
+
+  it("refuses the click itself, since aria-disabled does not", () => {
+    const code = stripComments(ACTION);
+    // The old form was `onClick={disabled || busy ? undefined : onClick}`,
+    // which is not a refusal on an aria-disabled button: the click still
+    // fires and still bubbles into the tile's row and the tray's list.
+    expect(code).not.toMatch(/onClick=\{disabled/);
+    expect(code).toMatch(/const refuse = disabled \|\| busy;/);
+    const handler = code.match(/onClick=\{\(e\)\s*=>\s*\{[\s\S]*?\n\s*\}\}/);
+    expect(handler, "click handler not found").toBeTruthy();
+    expect(handler[0]).toMatch(/if \(refuse\)/);
+    expect(handler[0]).toMatch(/e\.preventDefault\(\)/);
+    expect(handler[0]).toMatch(/e\.stopPropagation\(\)/);
   });
 
   it("writes every reason as a sentence with a remedy where one exists", () => {
@@ -122,8 +161,8 @@ describe("disabled does not dim (§41d)", () => {
     // A reason nobody can read is the same as no reason — the exact failure
     // §33d exists to prevent, and the same class of defect the last polish
     // pass found here at 1.97:1 and 1.59:1.
-    const rule = CSS.match(/\.artifact-action:disabled\s*\{[^}]*\}/);
-    expect(rule, ".artifact-action:disabled rule not found").toBeTruthy();
+    const rule = CSS.match(/\.artifact-action\[aria-disabled="true"\]\s*\{[^}]*\}/);
+    expect(rule, ".artifact-action[aria-disabled] rule not found").toBeTruthy();
     expect(rule[0]).toMatch(/opacity:\s*1/);
     expect(rule[0]).toMatch(/color:\s*var\(--muted-foreground\)/);
     expect(rule[0]).toMatch(/cursor:\s*not-allowed/);
@@ -133,8 +172,22 @@ describe("disabled does not dim (§41d)", () => {
   });
 
   it("marks that a reason is attached, so it reads as explained not broken", () => {
-    const rule = CSS.match(/\.artifact-action:disabled\s*\{[^}]*\}/);
+    const rule = CSS.match(/\.artifact-action\[aria-disabled="true"\]\s*\{[^}]*\}/);
     expect(rule[0]).toMatch(/text-decoration:\s*underline dotted/);
+  });
+
+  it("keeps hover off the refused states, now that :disabled no longer matches", () => {
+    // The three tier rules suppressed their hover with `:not(:disabled)`. A
+    // button that is `aria-disabled` is not `:disabled`, so leaving those
+    // alone would have lit a refused Publish on hover — the affordance the
+    // rule above spends twenty lines removing, handed back by a pseudo-class
+    // that silently stopped matching.
+    const hovers = [...CSS.matchAll(/\.artifact-action\[data-action-tier="[a-z]+"\]:hover([^{]*)\{/g)];
+    expect(hovers.length).toBe(3);
+    for (const [, guard] of hovers) {
+      expect(guard, guard).toMatch(/:not\(\[aria-disabled="true"\]\)/);
+    }
+    expect(CSS).not.toMatch(/\.artifact-action[^{\n]*:not\(:disabled\)/);
   });
 });
 
@@ -176,6 +229,115 @@ describe("in-flight is busy, not disabled (§41e)", () => {
     expect(rm, "reduced-motion rule not found").toBeTruthy();
     expect(rm[0]).toMatch(/animation-duration:\s*2\.4s/);
     expect(rm[0]).not.toMatch(/animation:\s*none/);
+  });
+});
+
+/**
+ * **The row that is 100% disabled — guarded, not broken.**
+ *
+ * `secret-key` is the case. Its row is Copy and Download and nothing else, and
+ * each omission beside them is §33d working rather than a gap:
+ * `key.copyFingerprint` and `key.copyPublicLine` derive from public material
+ * and a symmetric key has none; `keyring.add` is refused by the vault for the
+ * same reason, since a `raw` record is indexed by `spki:SHA256:` off a public
+ * half. So both remaining actions gate on the mask and a masked symmetric key
+ * draws a row of two dead buttons.
+ *
+ * The suggested fix was "a third ungated action". **There is no honest one**,
+ * and these assertions are how that decision is kept: the row says what
+ * guards it instead, in the sentence its buttons already carried.
+ */
+describe("a fully refused row states its guard (§33d, the secret-key row)", () => {
+  const maskedSecretKey = {
+    artifact: { content: '{"kty":"oct","k":"…"}', revealable: true, traits: {} },
+    masked: true,
+    services: {},
+  };
+
+  it("names one shared reason where every action refuses for it", () => {
+    const kind = ARTIFACT_KINDS.find((k) => k.id === "secret-key");
+    expect(kind, "secret-key kind not found").toBeTruthy();
+    const actions = actionsFor(kind);
+    // The premise: two actions, and both of them refuse.
+    expect(actions.map((a) => a.id)).toEqual(["copy", "download"]);
+    for (const a of actions) expect(a.available(maskedSecretKey)).not.toBe(true);
+    expect(gatedRowReason(actions, maskedSecretKey)).toBe(
+      ACTION_REASONS.maskedButRevealable
+    );
+  });
+
+  it("says nothing where any action is live", () => {
+    // One working button is not a guarded row, it is a row. The sentence would
+    // then be a claim about buttons beside it that is false of one of them.
+    const kind = ARTIFACT_KINDS.find((k) => k.id === "secret-key");
+    expect(
+      gatedRowReason(actionsFor(kind), { ...maskedSecretKey, masked: false })
+    ).toBeNull();
+  });
+
+  it("says nothing where two actions refuse for two different reasons", () => {
+    // Collapsing two refusals into one line would be the tile paraphrasing
+    // ACTION_REASONS — exactly what "one condition, one explanation" forbids.
+    // A masked, never-revealable body with no content refuses Copy with
+    // `neverAskedFor` and Download with the same; give them different ones and
+    // the row must fall silent and let each button keep its own description.
+    const two = [
+      { available: () => ({ disabled: ACTION_REASONS.neverAskedFor }) },
+      { available: () => ({ disabled: ACTION_REASONS.nothingToSave }) },
+    ];
+    expect(gatedRowReason(two, {})).toBeNull();
+  });
+
+  it("invents no sentence — it can only ever return one from the table", () => {
+    const reasons = new Set(Object.values(ACTION_REASONS));
+    const gated = gatedRowReason(actionsFor(ARTIFACT_KINDS.find((k) => k.id === "secret-key")), maskedSecretKey);
+    expect(reasons.has(gated)).toBe(true);
+    // And no literal crept into the derivation itself.
+    expect(stripComments(SRC).match(/return\s+["'`]/g) || []).toEqual([]);
+  });
+
+  it("has an empty row say nothing rather than something", () => {
+    expect(gatedRowReason([], {})).toBeNull();
+    expect(gatedRowReason(null, {})).toBeNull();
+  });
+
+  it("declares no third action on secret-key to fill the row", () => {
+    // The decision, pinned. A symmetric key has no public half, so the two
+    // identity actions would be permanently disabled — a *third* dead button —
+    // and `keyring.add` would be a button the vault refuses outright. A button
+    // that exists to make a row look less empty is worse than the empty row.
+    const kind = ARTIFACT_KINDS.find((k) => k.id === "secret-key");
+    expect(kind.actions).toEqual(["copy", "download"]);
+  });
+
+  it("is spoken once, not once per button", () => {
+    // Two `sr-only` copies plus the visible line would be three announcements
+    // of one refusal — the label-derived-id defect's shape, arriving through
+    // duplication instead of collision.
+    expect(TILE).toMatch(/describedBy=\{rowGateId\}/);
+    expect(ACTION).toMatch(/const reasonId = describedBy \|\| ownReasonId;/);
+    expect(ACTION).toMatch(/\{ownReasonId \? \(/);
+  });
+
+  it("computes the gate against the buttons that actually render", () => {
+    // §33f drops a published key's Publish button; an action nobody can see is
+    // not a refusal the row should speak for. Expand and the diagnostic button
+    // come from outside the table and are live, so their presence means the
+    // row is not dead at all.
+    const tile = stripComments(TILE);
+    expect(tile).toMatch(/rowActions = actionsFor\(resolvedKind\)\.filter\(/);
+    expect(tile).toMatch(/action\.tier === "outward" && a\.publishedAs/);
+    expect(tile).toMatch(/onExpand \|\| a\.diagnosticAction \? null : gatedRowReason\(rowActions, ctx\)/);
+  });
+
+  it("styles the line from the stylesheet, in the muted voice of a guard", () => {
+    // Nothing has gone wrong — the value is masked, which is the state the
+    // user asked for. `--warn` here would make every masked secret look like
+    // a problem, and `--warn` on a tile means "this leaves the machine".
+    const rule = CSS.match(/\.artifact-row-gate\s*\{[^}]*\}/);
+    expect(rule, ".artifact-row-gate rule not found").toBeTruthy();
+    expect(rule[0]).toMatch(/color:\s*var\(--muted-foreground\)/);
+    expect(rule[0]).not.toMatch(/var\(--warn\)|var\(--error\)/);
   });
 });
 

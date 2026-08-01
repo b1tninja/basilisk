@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { expiryNote } from "../../lib/toolkit/artifact-readouts.js";
 
 /**
  * Manager widgets for network/WebRTC artifacts (design v2 §23a/23b/26a/26b/
@@ -441,6 +442,19 @@ function EndpointPanel({ data }: { data: any }) {
 
 function CertificatePanel({ data }: { data: any }) {
   const prints: any[] = Array.isArray(data?.fingerprints) ? data.fingerprints : [];
+  /**
+   * The same verdict the key card gets, for the same reason (§48b) — and this
+   * is the panel where a bare date is *least* defensible: `RTCCertificate`
+   * expires about thirty days out by default, so the answer can change inside
+   * the life of one debugging session, and it sits permanently inside the
+   * window `expiryNote` speaks in.
+   *
+   * The stored value is an ISO string (`rtc-ops.js` serializes it), which is
+   * why `expiryInstant` normalizes rather than each caller parsing — this panel
+   * doing its own `Date.parse` is precisely the second derivation the boundary
+   * calls a bug.
+   */
+  const expiry = expiryNote(data?.expires);
   return (
     <div>
       <Row>
@@ -449,6 +463,14 @@ function CertificatePanel({ data }: { data: any }) {
         {data?.expires ? (
           <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
             expires {String(data.expires).slice(0, 10)}
+            {expiry ? (
+              <>
+                {" · "}
+                <span className="artifact-expiry" data-expiry-tone={expiry.severity}>
+                  {expiry.text}
+                </span>
+              </>
+            ) : null}
           </span>
         ) : null}
       </Row>
