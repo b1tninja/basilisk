@@ -1633,6 +1633,43 @@ function CatalogApp() {
             onPeekInstead={() => {}}
             onReorder={() => {}}
           />
+          <StateLabel>
+            A landed :public branch — × on the selector deletes the whole branch
+          </StateLabel>
+          <RecipeChipFlow
+            cell={1}
+            stems={[
+              {
+                step: { name: "genkey", label: sample?.label || "genkey", op: sample },
+                hasNest: false,
+              },
+              {
+                step: { name: "tee", label: "tee" },
+                hasNest: true,
+                nestKind: "tee",
+                nestAdd: [":private"],
+                branches: [
+                  {
+                    selector: ":public",
+                    steps: [
+                      {
+                        name: "base64",
+                        label: base64?.label || "base64",
+                        op: base64,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ]}
+            selected={null}
+            onSelect={() => {}}
+            onGap={() => {}}
+            onBranchHit={() => {}}
+            onArmBranch={() => {}}
+            onRemoveBranch={() => {}}
+            onReorder={() => {}}
+          />
           <StateLabel>Armed :public branch — lands with its first step (turn 47)</StateLabel>
           <RecipeChipFlow
             cell={2}
@@ -1655,6 +1692,7 @@ function CatalogApp() {
             onBranchHit={() => {}}
             onArmBranch={() => {}}
             onAddBranchStep={() => {}}
+            onCancelArmed={() => {}}
             onReorder={() => {}}
           />
           <StateLabel>

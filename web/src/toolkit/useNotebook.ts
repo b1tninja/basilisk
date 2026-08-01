@@ -93,6 +93,41 @@ function cellRecipientSlots(chain: RecipeChain): number {
   }
 }
 
+/**
+ * Drop a selector branch from a `tee` stem — the pure half of `removeBranch`,
+ * exported so the last-branch rule can be tested without a renderer.
+ *
+ * The rule: **when the last branch goes and there is no unselected body left,
+ * the `tee` goes with it.** A `tee` exists only to host what hangs off it, and
+ * an empty one is not merely pointless but a hard parse error ("tee requires a
+ * body"), so keeping it would answer a delete the user asked for with a broken
+ * recipe. Dropping it is safe because `tee` is transparent to the main chain —
+ * `validateRecipe` leaves the stem type unchanged across a tee — so nothing
+ * downstream can notice. The caller is expected to say so and offer an undo;
+ * this is more than was clicked on, and silence would be the wrong answer.
+ *
+ * `peek` is deliberately *not* substituted here. It is a different op with its
+ * own output, and the chip flow already offers it as an explicit choice on an
+ * empty tee ("peek instead"); performing it as the side effect of a delete
+ * would put an op on the canvas that nobody picked.
+ */
+export function stepsWithBranchRemoved(
+  steps: RecipeStep[],
+  stem: number,
+  branch: number
+): { steps: RecipeStep[]; droppedStem: boolean } {
+  const target = steps[stem];
+  if (!target?.branches?.[branch]) return { steps, droppedStem: false };
+  const branches = target.branches.filter((_, j) => j !== branch);
+  if (!branches.length && !target.body?.length) {
+    return { steps: steps.filter((_, i) => i !== stem), droppedStem: true };
+  }
+  return {
+    steps: steps.map((s, i) => (i === stem ? { ...s, branches } : s)),
+    droppedStem: false,
+  };
+}
+
 export function useNotebook() {
   const kernelRef = useRef(createKernel());
   const [title, setTitle] = useState("Untitled notebook");
@@ -613,6 +648,21 @@ export function useNotebook() {
         return clone;
       });
       setCellSteps(focusedCell, next);
+    },
+    [focusedCell, setCellSteps, steps]
+  );
+
+  /**
+   * Remove a whole selector branch from a tee. Returns true when the tee stem
+   * was dropped along with its last branch (see `stepsWithBranchRemoved`), so
+   * the caller can say that out loud and offer the undo.
+   */
+  const removeBranch = useCallback(
+    (stem: number, branch: number) => {
+      const next = stepsWithBranchRemoved(steps, stem, branch);
+      if (next.steps === steps) return false;
+      setCellSteps(focusedCell, next.steps);
+      return next.droppedStem;
     },
     [focusedCell, setCellSteps, steps]
   );
@@ -1286,6 +1336,7 @@ export function useNotebook() {
     updateNestStepParams,
     removeStep,
     removeNestStep,
+    removeBranch,
     insertMessaging,
     loadPreset,
     restoreNotebook,

@@ -422,10 +422,16 @@ export function ToolkitShell() {
   const [trayTab, setTrayTab] = useState<
     "keys" | "slots" | "connections" | "outputs" | "activity" | "inputs" | "params"
   >("keys");
-  /** One-shot Load-template undo — set right before a destructive replace, cleared once used or superseded. */
+  /**
+   * One-shot undo — set right before an edit that removes more than the click
+   * named, cleared once used or superseded. Load-a-template was the first such
+   * edit; deleting a tee's last branch, which takes the emptied tee with it,
+   * is the second, and `note` is how it says which one happened.
+   */
   const [undoSnapshot, setUndoSnapshot] = useState<{
     title: string;
     chains: RecipeChain[];
+    note?: string;
   } | null>(null);
   useEffect(() => {
     if (!undoSnapshot) return;
@@ -988,7 +994,7 @@ export function ToolkitShell() {
         {undoSnapshot ? (
           <div className="flex items-center gap-2 border-b border-[var(--border)] bg-[var(--surface-raised)] px-3.5 py-1.5">
             <span className="text-[length:11.5px] text-[var(--muted-foreground)]">
-              Replaced the notebook with a template.
+              {undoSnapshot.note || "Replaced the notebook with a template."}
             </span>
             <Button
               size="sm"
@@ -1559,6 +1565,27 @@ export function ToolkitShell() {
                                     setPendingInsert(null);
                                     nb.replaceStep(stem, "peek");
                                   }}
+                                  onRemoveBranch={(stem, branch) => {
+                                    nb.setFocusedCell(i);
+                                    setChipEdit(null);
+                                    setPendingInsert(null);
+                                    setArmedBranch(null);
+                                    const before = {
+                                      title: nb.title,
+                                      chains: nb.chains,
+                                    };
+                                    // True when that was the tee's last branch
+                                    // and the tee went with it. More was
+                                    // removed than the × named, so say it and
+                                    // put it back within one click.
+                                    if (nb.removeBranch(stem, branch)) {
+                                      setUndoSnapshot({
+                                        ...before,
+                                        note: "Removed the last branch — the empty tee went with it.",
+                                      });
+                                    }
+                                  }}
+                                  onCancelArmed={() => setArmedBranch(null)}
                                   onReorder={(from, to) => {
                                     if (from.cell !== i || to.cell !== i) return;
                                     nb.setFocusedCell(i);

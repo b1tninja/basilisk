@@ -1,4 +1,4 @@
-import { useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { SuggestChip } from "./SuggestChip";
 import { InsertGap } from "./InsertGap";
@@ -103,6 +103,10 @@ export type RecipeChipFlowProps = {
   ) => void;
   /** Swap an empty tee for peek — RECIPE.md's documented side-inspect alternative. */
   onPeekInstead?: (stem: number) => void;
+  /** Delete a whole selector branch — the × on its selector chip. */
+  onRemoveBranch?: (stem: number, branch: number) => void;
+  /** Drop the armed branch before it lands — the × on its chip, and Escape. */
+  onCancelArmed?: () => void;
   onReorder: (from: ChipPath, to: ChipPath) => void;
   onDropStep?: (
     path: ChipPath,
@@ -336,12 +340,39 @@ export function RecipeChipFlow({
   onArmBranch,
   onAddBranchStep,
   onPeekInstead,
+  onRemoveBranch,
+  onCancelArmed,
   onReorder,
   onDropStep,
   onRemove,
   className,
 }: RecipeChipFlowProps) {
   const [stemDrop, setStemDrop] = useState<number | null>(null);
+
+  /*
+   * Escape drops an armed branch. The row is pure client state — nothing has
+   * been written to the recipe yet — and it is on screen because the user just
+   * clicked a ghost chip, which is `ConsequenceBanner`'s situation (§43d)
+   * rather than `ApprovalBanner`'s: the approval banner refuses Escape because
+   * it appears unbidden mid-run and a keystroke that used to do nothing must
+   * not start denying a signing request. Nothing of that kind is at stake here.
+   *
+   * The listener is on the window because arming unmounts the ghost chip that
+   * was clicked, so focus is back on the body and no ancestor of the armed row
+   * would ever see the key. The two guards keep it from eating an Escape that
+   * belongs to a layer above — Escape resolves one layer at a time, so an open
+   * dialog or a pending gate answers first and this waits its turn.
+   */
+  useEffect(() => {
+    if (!armedBranch || !onCancelArmed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      onCancelArmed();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [armedBranch, onCancelArmed]);
 
   const stemGap = (stem: number) => {
     const path: ChipPath = { cell, stem };
@@ -503,8 +534,11 @@ export function RecipeChipFlow({
             label={br.selector}
             variant="selector"
             className="cell-recipe-branch-hit"
-            title="Add to this side chain"
+            title="Click to add to this side chain · × to delete the branch"
             onClick={() => onBranchHit(i, bi)}
+            onRemove={
+              onRemoveBranch ? () => onRemoveBranch(i, bi) : undefined
+            }
           />
           {br.steps.length ? (
             <span className="builder-branch-pipe muted" aria-hidden>
@@ -549,7 +583,8 @@ export function RecipeChipFlow({
             label={armedHere.selector}
             variant="selector"
             className="cell-recipe-branch-hit"
-            title="New branch — lands with its first step"
+            title="New branch — lands with its first step · × or Escape to cancel"
+            onRemove={onCancelArmed}
           />
           <InsertGap
             label={`Insert first step in ${armedHere.selector}`}
