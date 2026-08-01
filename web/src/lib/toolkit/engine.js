@@ -4694,6 +4694,20 @@ function valueToArtifacts(value, name = "artifact") {
           disposition: "file",
           role: "key",
           tags: ["openpgp", which],
+          // The same traits `materializeOutArtifacts` stamps. Without them the
+          // auto-emitted tip of a bare `gpg.genkey` and the tile from
+          // `| out @priv` were the same key described two different ways, and
+          // the difference was visible: Copy fingerprint sat disabled on the
+          // tip, reading "This artifact carries no key to fingerprint" about a
+          // key whose fingerprint the step had already computed and put on the
+          // public tile beside it. A fingerprint is a public fact about a key,
+          // which is exactly what §34b keeps available while the private half
+          // stays masked — the rule is about where a value lands, not how
+          // sensitive its neighbour is.
+          traits: {
+            which,
+            fingerprint: value.meta?.fingerprint,
+          },
         },
         value
       ),

@@ -3,6 +3,8 @@ import { decrypt, generateKey, readMessage } from "openpgp";
 import { base32ToBytes, bytesToBase32 } from "../lib/toolkit/encode.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { digestArtifact } from "../lib/toolkit/receipt.js";
+import { actionById } from "../lib/toolkit/artifact-actions.js";
 
 describe("gpg.genkey", () => {
   it("emits armored private + public artifact", async () => {
@@ -15,6 +17,87 @@ describe("gpg.genkey", () => {
     const pub = arts.find((a) => /public/i.test(a.filename || a.label || ""));
     expect(String(priv?.content || "")).toMatch(/BEGIN PGP PRIVATE KEY BLOCK/);
     expect(String(pub?.content || "")).toMatch(/BEGIN PGP PUBLIC KEY BLOCK/);
+  }, 60_000);
+});
+
+/**
+ * The private half's fingerprint.
+ *
+ * A fingerprint is a public fact about a key, so it is what §34b keeps
+ * available while the secret stays masked — the rule is about where a value
+ * lands, not how sensitive the thing next to it is. The public tile carried it
+ * from the start, because `gpg.genkey` pushes that artifact itself with the
+ * fingerprint it had just computed. The private half does not go through that
+ * push: it is the pipeline value, and its tile is built downstream.
+ *
+ * Which meant there were two of them, and only one was right. `| out @priv`
+ * lands in `materializeOutArtifacts`, which copies `meta.fingerprint` into
+ * traits; a bare `gpg.genkey` lands in `valueToArtifacts`, which did not. Same
+ * key, same run, same kind — and on the second one Copy fingerprint sat
+ * disabled saying the artifact carried no key to fingerprint, next to a public
+ * tile displaying that very fingerprint.
+ */
+describe("gpg.genkey's private half carries its fingerprint", () => {
+  const bare = async () => {
+    const { ast } = compileRecipe('gpg.genkey email="fp@example.com"');
+    const arts = await runRecipe(ast);
+    return {
+      arts,
+      pub: arts.find((a) => a.role === "public-key"),
+      priv: arts.find((a) => (a.tags || []).includes("private")),
+    };
+  };
+
+  it("stamps it on the auto-emitted tip, not only on `out`", async () => {
+    const { pub, priv } = await bare();
+    expect(priv.traits?.fingerprint).toBeTruthy();
+    // The same key, so necessarily the same fingerprint — a private tile
+    // showing a different one would be worse than showing none.
+    expect(priv.traits.fingerprint).toBe(pub.traits.fingerprint);
+    expect(priv.traits.fingerprint).toMatch(/^[0-9A-F]{40}$/);
+  }, 60_000);
+
+  it("agrees with what `| out @priv` produces", async () => {
+    const { ast } = compileRecipe('gpg.genkey email="fp@example.com" | out @priv');
+    const arts = await runRecipe(ast);
+    const priv = arts.find((a) => a.label === "priv");
+    const pub = arts.find((a) => a.role === "public-key");
+    expect(priv.traits.fingerprint).toBe(pub.traits.fingerprint);
+    expect(priv.traits.which).toBe("private");
+  }, 60_000);
+
+  it("enables Copy fingerprint on the masked private tile", async () => {
+    // Masked is the state this is *for*: the action is declared by the kind
+    // and gated by `available`, and before the trait existed it answered with
+    // a disabled reason about a key it was holding.
+    const { priv } = await bare();
+    const action = actionById("key.copyFingerprint");
+    expect(action.available({ artifact: priv, masked: true })).toBe(true);
+  }, 60_000);
+
+  it("changes nothing a reader can see — only what the tile knows", async () => {
+    const { arts, priv } = await bare();
+    expect(arts).toHaveLength(2);
+    expect(arts.map((a) => a.label)).toEqual(["OpenPGP public key", "artifact"]);
+    expect(arts.map((a) => a.filename)).toEqual(["public.asc", "artifact.asc"]);
+    expect(String(priv.content)).toMatch(/^-----BEGIN PGP PRIVATE KEY BLOCK-----/);
+    expect(priv.sensitive).toBe(true);
+  }, 60_000);
+
+  it("leaves receipt digests where they were", async () => {
+    // `traits` is not in `digestArtifact`'s row and is not in
+    // SAFE_ARTIFACT_FIELDS, so this is metadata a receipt never described. It
+    // matters because RECEIPT_VERSION 2 is on this branch and unshipped: a
+    // change that *did* move digests would have to land inside that boundary
+    // or open a second one, and `run.verify` would call an honest receipt a
+    // mismatch in between. Asserted by digesting the same artifact with and
+    // without the new trait rather than by reading the field list, which is
+    // the thing that would drift.
+    const { priv } = await bare();
+    const { traits, ...withoutTraits } = priv;
+    expect(traits.fingerprint).toBeTruthy();
+    expect(await digestArtifact(priv)).toEqual(await digestArtifact(withoutTraits));
+    expect(Object.keys(await digestArtifact(priv))).not.toContain("traits");
   }, 60_000);
 });
 
