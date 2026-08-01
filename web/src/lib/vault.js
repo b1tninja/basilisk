@@ -529,7 +529,100 @@ export async function patchKeyMeta(fingerprint, patch) {
 }
 
 /**
+ * Protection strength, weakest first. The vault's whole claim is that a key
+ * saved behind an authenticator stays behind one, so the ordering is the
+ * thing we enforce on re-save (§34d).
+ * @type {Record<string, number>}
+ */
+const PROTECTION_RANK = { device: 0, passphrase: 1, passkey: 2 };
+
+/**
+ * @param {string} protection
+ * @returns {number}
+ */
+function protectionRank(protection) {
+  const rank = PROTECTION_RANK[String(protection || "").toLowerCase()];
+  return typeof rank === "number" ? rank : 0;
+}
+
+/**
+ * What a stored record's protection actually *is*, which is not always what
+ * its label says: the security property is the outer PRF wrap, so a record
+ * carrying one requires the authenticator whatever the label reads. Trusting
+ * the label alone would let a corrupted or hand-edited record argue that
+ * dropping the wrap is harmless.
+ *
+ * @param {VaultKeyRecord} record
+ * @returns {string}
+ */
+function effectiveProtection(record) {
+  if (record?.outerWrapped?.byteLength) return "passkey";
+  return String(record?.protection || "device").toLowerCase();
+}
+
+/**
+ * §34d, verbatim — asserted by tests; the wording is the feature. It names
+ * both protections because "already saved" alone does not tell you what you
+ * were about to lose, and it names a remedy because a refusal with no way
+ * forward just gets clicked again.
+ *
+ * @param {string} existing
+ * @param {string} next
+ * @returns {string}
+ */
+export function protectionDowngradeMessage(existing, next) {
+  return `This key is already in the vault with ${existing} protection, and saving it with ${next} protection would weaken it — delete it from My Keys first, or save it again with ${existing} protection.`;
+}
+
+/**
+ * Write a record, refusing a protection downgrade unless the caller has
+ * explicitly asked to replace.
+ *
+ * The read and the write share one readwrite transaction rather than the
+ * obvious check-then-call in the caller: two tabs are one vault, and the
+ * window between a UI's "is it already there?" query and its save is exactly
+ * the window in which the other tab enrols the passkey this guard exists to
+ * protect. IndexedDB gives us the atomicity for free as long as the `put` is
+ * issued from the `get`'s success callback, so it is issued from there.
+ *
+ * @param {VaultKeyRecord} record
+ * @param {"refuse"|"replace"} onConflict
+ * @returns {Promise<void>}
+ */
+function putGuardingProtection(record, onConflict) {
+  return withStore(
+    STORE_KEYS,
+    "readwrite",
+    (store) =>
+      new Promise((resolve, reject) => {
+        const read = store.get(record.fingerprint);
+        read.onerror = () => reject(read.error);
+        read.onsuccess = () => {
+          const prior = read.result;
+          if (prior && onConflict !== "replace") {
+            const from = effectiveProtection(prior);
+            const to = String(record.protection || "").toLowerCase();
+            if (protectionRank(to) < protectionRank(from)) {
+              reject(new Error(protectionDowngradeMessage(from, to)));
+              return;
+            }
+          }
+          const write = store.put(record);
+          write.onerror = () => reject(write.error);
+          write.onsuccess = () => resolve(undefined);
+        };
+      })
+  );
+}
+
+/**
  * Save a private key into the vault.
+ *
+ * The store's keyPath is the fingerprint, so this is an upsert. Re-saving at
+ * the same or a stronger protection is routine — it is how publicArmored and
+ * key-id backfill land — but re-saving at a weaker one silently threw away a
+ * passkey binding until `onConflict` existed. The default is therefore the
+ * refusal: a caller that means to weaken a key has to say so.
  *
  * @param {object} opts
  * @param {string} opts.fingerprint
@@ -546,10 +639,17 @@ export async function patchKeyMeta(fingerprint, patch) {
  * @param {"pgp"|"ssh"|"raw"} [opts.kind]  Defaults pgp; non-pgp payloads are opaque text (§28a)
  * @param {string} [opts.publicLine]  ssh kind: OpenSSH public line
  * @param {string} [opts.alg]  Non-pgp kinds: algorithm tag for re-import on unlock
+ * @param {"refuse"|"replace"} [opts.onConflict]  Default "refuse": reject a weakening re-save
  * @returns {Promise<VaultKeyMeta>}
  */
 export async function saveKey(opts) {
   const kind = opts.kind || "pgp";
+  const onConflict = opts.onConflict || "refuse";
+  if (onConflict !== "refuse" && onConflict !== "replace") {
+    // A typo would otherwise fall through to the safe branch and look like it
+    // worked, which is how a caller ends up believing it asked for replace.
+    throw new Error(`saveKey onConflict must be "refuse" or "replace"`);
+  }
   // The id is kind-shaped (§28a): hex OpenPGP fingerprint, or `SHA256:` /
   // `spki:SHA256:` base64 where hex normalization would destroy it.
   const fpr =
@@ -642,7 +742,7 @@ export async function saveKey(opts) {
     record.wrapped = new ArrayBuffer(0);
   }
 
-  await withStore(STORE_KEYS, "readwrite", (s) => s.put(record));
+  await putGuardingProtection(record, onConflict);
   return {
     fingerprint: fpr,
     uid: record.uid,

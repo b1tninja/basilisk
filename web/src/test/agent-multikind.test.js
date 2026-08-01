@@ -15,6 +15,7 @@ import {
   execAgentUnlock,
 } from "../lib/toolkit/agent-ops.js";
 import { NON_PGP_PASSPHRASE_MESSAGE } from "../lib/toolkit/agent-ops.js";
+import { listKeys, saveKey } from "../lib/vault.js";
 import { sessionClear } from "../lib/vault-session.js";
 
 beforeEach(async () => {
@@ -69,6 +70,34 @@ describe("agent.save on a keypair", () => {
     await expect(
       execAgentSave(await genEd25519(), { protection: "passphrase" })
     ).rejects.toThrow(NON_PGP_PASSPHRASE_MESSAGE);
+  });
+
+  it("still replaces a passkey record, because the recipe said so out loud", async () => {
+    // The vault refuses a weakening re-save by default (§34d), but
+    // `agent.save protection=device` is an explicit instruction with the
+    // fingerprint in front of it — the multi-kind path must keep replacing.
+    const pair = await genEd25519();
+    const first = await execAgentSave(pair, { protection: "device" });
+    const id = first.meta.fingerprint;
+
+    // Upgrade it behind agent.save's back, the way enrolling a passkey would.
+    await saveKey({
+      fingerprint: id,
+      armoredPrivate: "-----BEGIN OPENSSH PRIVATE KEY-----\nZg==\n-----END OPENSSH PRIVATE KEY-----\n",
+      uid: "seeded",
+      email: "",
+      protection: "passkey",
+      prfIkm: crypto.getRandomValues(new Uint8Array(32)),
+      kind: "ssh",
+      alg: "ed25519",
+    });
+    expect((await listKeys())[0].protection).toBe("passkey");
+
+    const again = await execAgentSave(pair, { protection: "device" });
+    expect(again.meta.fingerprint).toBe(id);
+    const list = await listKeys();
+    expect(list).toHaveLength(1);
+    expect(list[0].protection).toBe("device");
   });
 
   it("refuses symmetric keys rather than half-storing them", async () => {

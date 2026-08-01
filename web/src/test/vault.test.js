@@ -10,6 +10,8 @@ import {
   derivePrfKek,
   expiryIsoFromPreset,
   listKeys,
+  patchKeyMeta,
+  protectionDowngradeMessage,
   purgeExpired,
   saveKey,
   sortKeysByLastUsed,
@@ -229,6 +231,168 @@ describe("vault — schema v2 publicArmored / lastUsedAt", () => {
       },
     ]);
     expect(sorted[0].fingerprint).toBe("B");
+  });
+});
+
+describe("vault — protection downgrade on re-save", () => {
+  it("refuses a passkey record re-saved as device, naming both protections", async () => {
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: SAMPLE_ARMORED,
+      uid: "Bob <b@example.com>",
+      email: "b@example.com",
+      protection: "passkey",
+      prfIkm: ikm,
+    });
+
+    await expect(
+      saveKey({
+        fingerprint: FPR_A,
+        armoredPrivate: SAMPLE_ARMORED,
+        uid: "Bob <b@example.com>",
+        email: "b@example.com",
+        protection: "device",
+      })
+    ).rejects.toThrow(protectionDowngradeMessage("passkey", "device"));
+
+    // The stored record is untouched: still passkey, still needs the IKM.
+    const meta = (await listKeys())[0];
+    expect(meta.protection).toBe("passkey");
+    await expect(unlockKey(FPR_A, {})).rejects.toThrow(/passkey/i);
+    expect(await unlockKey(FPR_A, { prfIkm: ikm })).toBe(SAMPLE_ARMORED);
+  });
+
+  it("states the exact refusal, and names the remedy", () => {
+    // The wording is the feature: both protections by name, and a way out
+    // that is not "click it again harder".
+    expect(protectionDowngradeMessage("passkey", "device")).toBe(
+      "This key is already in the vault with passkey protection, and saving it with device protection would weaken it — delete it from My Keys first, or save it again with passkey protection."
+    );
+  });
+
+  it("refuses passphrase → device too, not only passkey", async () => {
+    await saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: SAMPLE_ARMORED,
+      uid: "p",
+      email: "p@example.com",
+      protection: "passphrase",
+    });
+    await expect(
+      saveKey({
+        fingerprint: FPR_A,
+        armoredPrivate: SAMPLE_ARMORED,
+        uid: "p",
+        email: "p@example.com",
+        protection: "device",
+      })
+    ).rejects.toThrow(protectionDowngradeMessage("passphrase", "device"));
+  });
+
+  it("allows a re-save at the same protection", async () => {
+    await saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: SAMPLE_ARMORED,
+      uid: "s",
+      email: "s@example.com",
+      protection: "device",
+    });
+    const updated = SAMPLE_ARMORED.replace("Example", "Rewritten");
+    await saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: updated,
+      uid: "s",
+      email: "s@example.com",
+      protection: "device",
+      publicArmored: "-----BEGIN PGP PUBLIC KEY BLOCK-----\nZg==\n-----END PGP PUBLIC KEY BLOCK-----",
+    });
+    const keys = await listKeys();
+    expect(keys).toHaveLength(1);
+    expect(keys[0].publicArmored).toContain("PUBLIC KEY");
+    expect(await unlockKey(FPR_A)).toBe(updated);
+  });
+
+  it("allows an upgrade from device to passkey", async () => {
+    await saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: SAMPLE_ARMORED,
+      uid: "u",
+      email: "u@example.com",
+      protection: "device",
+    });
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: SAMPLE_ARMORED,
+      uid: "u",
+      email: "u@example.com",
+      protection: "passkey",
+      prfIkm: ikm,
+    });
+    expect((await listKeys())[0].protection).toBe("passkey");
+    expect(await unlockKey(FPR_A, { prfIkm: ikm })).toBe(SAMPLE_ARMORED);
+  });
+
+  it("replaces when the caller says so, discarding the passkey binding", async () => {
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: SAMPLE_ARMORED,
+      uid: "r",
+      email: "r@example.com",
+      protection: "passkey",
+      prfIkm: ikm,
+    });
+    await saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: SAMPLE_ARMORED,
+      uid: "r",
+      email: "r@example.com",
+      protection: "device",
+      onConflict: "replace",
+    });
+    expect((await listKeys())[0].protection).toBe("device");
+    expect(await unlockKey(FPR_A)).toBe(SAMPLE_ARMORED);
+  });
+
+  it("leaves the read-modify-write helpers alone", async () => {
+    // patchKeyMeta and touchKeyUsed never rebuild the record and never touch
+    // `protection`, so they do not go through the guard and must not start
+    // failing on a passkey record.
+    const ikm = crypto.getRandomValues(new Uint8Array(32));
+    await saveKey({
+      fingerprint: FPR_A,
+      armoredPrivate: SAMPLE_ARMORED,
+      uid: "m",
+      email: "m@example.com",
+      protection: "passkey",
+      prfIkm: ikm,
+    });
+    await patchKeyMeta(FPR_A, {
+      publicArmored: "-----BEGIN PGP PUBLIC KEY BLOCK-----\nZg==\n-----END PGP PUBLIC KEY BLOCK-----",
+      keyIds: ["DEADBEEFDEADBEEF"],
+    });
+    await touchKeyUsed(FPR_A);
+    const meta = (await listKeys())[0];
+    expect(meta.protection).toBe("passkey");
+    expect(meta.publicArmored).toContain("PUBLIC KEY");
+    expect(meta.keyIds).toContain("DEADBEEFDEADBEEF");
+    expect(meta.lastUsedAt).toBeTruthy();
+    expect(await unlockKey(FPR_A, { prfIkm: ikm })).toBe(SAMPLE_ARMORED);
+  });
+
+  it("rejects an unrecognized onConflict rather than falling back", async () => {
+    await expect(
+      saveKey({
+        fingerprint: FPR_A,
+        armoredPrivate: SAMPLE_ARMORED,
+        uid: "z",
+        email: "z@example.com",
+        protection: "device",
+        onConflict: /** @type {*} */ ("overwrite"),
+      })
+    ).rejects.toThrow(/onConflict/);
   });
 });
 

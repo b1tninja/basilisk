@@ -195,6 +195,10 @@ export async function execAgentSave(value, params = {}, bindings = {}) {
       protection: /** @type {"device"|"passphrase"|"passkey"} */ (protection),
       prfIkm,
       mds,
+      // A recipe that says `agent.save protection=device` said it out loud,
+      // with the fingerprint in front of it; the vault's default refusal is
+      // for the paths where a single click could weaken a key by accident.
+      onConflict: "replace",
     });
   } finally {
     try {
@@ -360,6 +364,8 @@ async function saveKeypairKind(value, params) {
       kind,
       publicLine,
       alg,
+      // Same reasoning as the pgp branch: an explicit op replaces.
+      onConflict: "replace",
     });
   } finally {
     try {
