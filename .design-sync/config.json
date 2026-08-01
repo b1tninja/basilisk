@@ -1,0 +1,23 @@
+{
+  "projectId": "d3de7c06-ebda-491b-aa8c-b160763476e5",
+  "shape": "package",
+  "pkg": "basilisk-portal",
+  "globalName": "Basilisk",
+  "srcDir": "src",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": ".ds-styles.css",
+  "componentSrcMap": {
+    "Button": "src/components/ui/button.tsx",
+    "Badge": "src/components/ui/badge.tsx",
+    "Input": "src/components/ui/input.tsx",
+    "Textarea": "src/components/ui/textarea.tsx",
+    "Separator": "src/components/ui/separator.tsx",
+    "ScrollArea": "src/components/ui/scroll-area.tsx",
+    "SuggestChip": "src/toolkit/widgets/SuggestChip.tsx",
+    "ArtifactAction": "src/toolkit/widgets/ArtifactAction.tsx",
+    "Glyph": "src/toolkit/widgets/Glyph.tsx",
+    "CastDot": "src/toolkit/widgets/Glyph.tsx",
+    "ToolboxDot": "src/toolkit/widgets/Glyph.tsx",
+    "KindGlyph": "src/toolkit/widgets/kind-glyphs.tsx"
+  }
+}
