@@ -138,6 +138,7 @@ function CatalogApp() {
               "readinessbar",
               "outputlist",
               "artifacttiles",
+              "keyartifacts",
               "gatebanners",
               "networkartifact",
               "jwtartifact",
@@ -1091,6 +1092,27 @@ function CatalogApp() {
           </p>
           <div className="max-w-md">
             <OutputList outputs={demoArtifactTiles()} />
+          </div>
+        </Section>
+
+        <Section id="keyartifacts" title="Key artifacts — the whole badge family, side by side (§35)">
+          <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
+            Six roles wear a key badge — <code>KEYPAIR</code>, <code>KEY</code>,{" "}
+            <code>PUBLIC-KEY</code>, <code>SECRET-KEY</code>, <code>SSH-PUBLIC</code>,{" "}
+            <code>SSH-PRIVATE</code> — and each was added against its own brief, months
+            of session apart. They had never been rendered in one list. Every row below
+            carries the <code>role</code>, <code>tags</code> and <code>traits</code> a
+            real <code>runRecipe</code> stamps, printed off the engine first; the armor,
+            the JWKs and the openssh block are that run&rsquo;s actual bytes.
+          </p>
+          <p className="mb-1 text-[11px] text-[var(--muted-foreground)]">
+            This is the section that answers &ldquo;do they read as one family&rdquo;.
+            It is also where the three ways of saying <em>there is nothing here</em>{" "}
+            meet: the keypair&rsquo;s withheld line, the masked line under a private
+            half, and a kind&rsquo;s <code>empty</code> sentence.
+          </p>
+          <div className="max-w-md">
+            <OutputList outputs={demoKeyArtifacts()} />
           </div>
         </Section>
 
@@ -2144,6 +2166,236 @@ function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"]
       label: "from-a-later-build",
       role: "something-later",
       content: "a value this build has no description for",
+    }),
+  ];
+}
+
+/* ── §35 key-artifact fixtures ────────────────────────────────────────────
+ *
+ * Printed off `runRecipe` and pasted, same rule as the §37 set above: a key
+ * fixture that merely looks right is how a badge passes its catalog and
+ * resolves to `fallback` in the page. Every `role`/`tags`/`traits` below is
+ * what the engine stamped for the recipe named beside it.
+ */
+
+/** `genkey ed25519` — the tip, both halves, no body at all. */
+const DEMO_KP_PUBLIC_JWK = JSON.stringify(
+  {
+    key_ops: ["verify"],
+    ext: true,
+    alg: "Ed25519",
+    crv: "Ed25519",
+    x: "sQIiq4gvkUFV3jHYS-rsDXSGH8KF0Z20bv7eSgT3IjE",
+    kty: "OKP",
+  },
+  null,
+  2
+);
+
+/** `genkey ed25519 | out @kp` — the private half. */
+const DEMO_KP_PRIVATE = JSON.stringify(
+  {
+    key_ops: ["sign"],
+    ext: true,
+    alg: "Ed25519",
+    crv: "Ed25519",
+    d: "Fbs3cc3d5hXK_o0JGsbb1-4iTlltGS5AlROJfuV02HM",
+    x: "WjL4F4L1ZpA3hFYGwAQEzYwDKGx7ZtbeB7a0560UtXc",
+    kty: "OKP",
+  },
+  null,
+  2
+);
+
+/** …and its public one. */
+const DEMO_KP_PUBLIC = JSON.stringify(
+  {
+    key_ops: ["verify"],
+    ext: true,
+    alg: "Ed25519",
+    crv: "Ed25519",
+    x: "WjL4F4L1ZpA3hFYGwAQEzYwDKGx7ZtbeB7a0560UtXc",
+    kty: "OKP",
+  },
+  null,
+  2
+);
+
+/** `genkey aes/256 | out @k` — a symmetric key, which has no halves. */
+const DEMO_SECRET_JWK = JSON.stringify(
+  {
+    key_ops: ["encrypt", "decrypt"],
+    ext: true,
+    alg: "A256GCM",
+    kty: "oct",
+    k: "mFND-klPD2cYlHskuRVvr5OAsIE94MtyWxvZJT--9FI",
+  },
+  null,
+  2
+);
+
+/** `genkey ed25519 | ssh.encode comment=dana@laptop | out @pub` */
+const DEMO_SSH_PUBLIC =
+  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOTy7eoXFoeHUYSj7bup7fa6mPizYsdZ8gMg2vlmNxoX dana@laptop";
+
+/** `genkey ed25519 | ssh.encode format=private comment=dana@laptop | out @priv` */
+const DEMO_SSH_PRIVATE = `-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACBkGd5qUSLxUpm08/42114C0nW31Ya22yktOxPtCEVrGgAAAJBa8dS1WvHU
+tQAAAAtzc2gtZWQyNTUxOQAAACBkGd5qUSLxUpm08/42114C0nW31Ya22yktOxPtCEVrGg
+AAAEDheiBMJcccafqYnsaU2VBZ3VpvX0wbV+HCPheFhAfljmQZ3mpRIvFSmbTz/jbXXgLS
+dbfVhrbbKS07E+0IRWsaAAAAC2RhbmFAbGFwdG9wAQI=
+-----END OPENSSH PRIVATE KEY-----
+`;
+
+/** `gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out @k` */
+const DEMO_PGP_PUBLIC = `-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+xjMEam4g9hYJKwYBBAHaRw8BAQdAPegJfKCCwBHtEslsjVuJrxBHoXf335px
+LzhMtOZNr8DNH0RhbmEgT2tvbmt3byA8ZGFuYUBleGFtcGxlLm9yZz7CwBME
+ExYKAIUFgmpuIPYDCwkHCRAG/5WTwL0ce0UUAAAAAAAcACBzYWx0QG5vdGF0
+aW9ucy5vcGVucGdwanMub3JnSoPT6dRmk0A0P6NaEYP0CY2Pqpo/ENh+YKDZ
+ZNaOtOAFFQoIDgwEFgACAQIZAQKbAwIeARYhBFze0FWLF4oX39CFqwb/lZPA
+vRx7AABrtQEA/pUuQgSco65TN7jl/A52itGU7kkiHnG5fXb/lRwqinoBAMjK
+p4Mk9C05mY2eHIMmkX/8d6aZa9FRchjDj/Wz04YEzjgEam4g9hIKKwYBBAGX
+VQEFAQEHQC+BEv9axBI/a5qrJ9p5BiVh/tJE1LsGDosM6T4UGFBgAwEIB8K+
+BBgWCgBwBYJqbiD2CRAG/5WTwL0ce0UUAAAAAAAcACBzYWx0QG5vdGF0aW9u
+cy5vcGVucGdwanMub3JnThp71BS2fi+gwN9BFNRH0Kj7E1oUER/TQGcK/xm+
+Cq8CmwwWIQRc3tBVixeKF9/QhasG/5WTwL0cewAAbxoBAKHVV6dETeA/jWnu
+vOTPmplY7C6wbkyNqlmjmvoD7hWVAP4xJcn2H9Zbab3AjPo/bKKl8jd6Bskc
+AtfiE8eeeQsNDg==
+=ipoj
+-----END PGP PUBLIC KEY BLOCK-----
+`;
+
+const DEMO_PGP_PRIVATE = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+
+xVgEam4g9hYJKwYBBAHaRw8BAQdAPegJfKCCwBHtEslsjVuJrxBHoXf335px
+LzhMtOZNr8AAAP4nkeu1g+S55FyuDR/kJuvFwnKbwQp+Q/xdQ6/E58nRIBNV
+zR9EYW5hIE9rb25rd28gPGRhbmFAZXhhbXBsZS5vcmc+wsATBBMWCgCFBYJq
+biD2AwsJBwkQBv+Vk8C9HHtFFAAAAAAAHAAgc2FsdEBub3RhdGlvbnMub3Bl
+bnBncGpzLm9yZ0qD0+nUZpNAND+jWhGD9AmNj6qaPxDYfmCg2WTWjrTgBRUK
+CA4MBBYAAgECGQECmwMCHgEWIQRc3tBVixeKF9/QhasG/5WTwL0cewAAa7UB
+AP6VLkIEnKOuUze45fwOdorRlO5JIh5xuX12/5UcKop6AQDIyqeDJPQtOZmN
+nhyDJpF//HemmWvRUXIYw4/1s9OGBMddBGpuIPYSCisGAQQBl1UBBQEBB0Av
+gRL/WsQSP2uaqyfaeQYlYf7SRNS7Bg6LDOk+FBhQYAMBCAcAAP9zQmpFoz43
+Jmyl0jjCz4Y+emLlx9D57aVKRIelC7tOwBGCwr4EGBYKAHAFgmpuIPYJEAb/
+lZPAvRx7RRQAAAAAABwAIHNhbHRAbm90YXRpb25zLm9wZW5wZ3Bqcy5vcmdO
+GnvUFLZ+L6DA30EU1EfQqPsTWhQRH9NAZwr/Gb4KrwKbDBYhBFze0FWLF4oX
+39CFqwb/lZPAvRx7AABvGgEAodVXp0RN4D+Nae685M+amVjsLrBuTI2qWaOa
++gPuFZUA/jElyfYf1ltpvcCM+j9soqXyN3oGyRwC1+ITx555Cw0O
+=xKur
+-----END PGP PRIVATE KEY BLOCK-----
+`;
+
+const DEMO_PGP_FINGERPRINT = "5CDED0558B178A17DFD085AB06FF9593C0BD1C7B";
+
+/** Every key-badge role as a tile row, in the order a user meets them. */
+function demoKeyArtifacts(): React.ComponentProps<typeof OutputList>["outputs"] {
+  const row = (o: Partial<OutputArtifact> & { label: string; role: string }) =>
+    ({
+      kind: o.role,
+      sizeBytes: new TextEncoder().encode(o.content || "").length,
+      onCopy: () => {},
+      ...o,
+    }) as OutputArtifact;
+
+  return [
+    row({
+      // `genkey ed25519` — no `out`. The one key tile with no body by design.
+      label: "artifact",
+      role: "keypair",
+      tags: ["keypair"],
+      traits: { alg: "ed25519", publicJwk: DEMO_KP_PUBLIC_JWK },
+      sensitive: true,
+      content: "",
+    }),
+    row({
+      label: "kp · private JWK",
+      role: "key",
+      tags: ["keypair", "private"],
+      traits: { alg: "ed25519" },
+      sensitive: true,
+      revealable: true,
+      filename: "kp-private.jwk.json",
+      mime: "application/json",
+      content: DEMO_KP_PRIVATE,
+    }),
+    row({
+      label: "kp · public JWK",
+      role: "public-key",
+      tags: ["keypair", "public"],
+      traits: { alg: "ed25519" },
+      revealable: true,
+      filename: "kp-public.jwk.json",
+      mime: "application/json",
+      content: DEMO_KP_PUBLIC,
+    }),
+    row({
+      label: "k · secret JWK",
+      role: "secret-key",
+      tags: ["secret"],
+      traits: { alg: "aes/256" },
+      sensitive: true,
+      revealable: true,
+      filename: "k-secret.jwk.json",
+      mime: "application/json",
+      content: DEMO_SECRET_JWK,
+    }),
+    row({
+      label: "pub",
+      role: "ssh-public",
+      tags: ["ssh-public"],
+      revealable: true,
+      filename: "pub.txt",
+      content: DEMO_SSH_PUBLIC,
+    }),
+    row({
+      label: "priv",
+      role: "ssh-private",
+      tags: ["ssh-private"],
+      sensitive: true,
+      revealable: true,
+      filename: "priv.txt",
+      content: DEMO_SSH_PRIVATE,
+    }),
+    row({
+      label: "OpenPGP public key",
+      role: "public-key",
+      tags: ["openpgp", "public-key"],
+      traits: { fingerprint: DEMO_PGP_FINGERPRINT },
+      filename: "public.asc",
+      mime: "application/pgp-keys",
+      content: DEMO_PGP_PUBLIC,
+      onPublish: async () => ({ fingerprint: DEMO_PGP_FINGERPRINT }),
+      directoryHost: "keys.example.com",
+    }),
+    row({
+      label: "k",
+      role: "key",
+      tags: ["openpgp", "private"],
+      traits: { which: "private", fingerprint: DEMO_PGP_FINGERPRINT },
+      sensitive: true,
+      revealable: true,
+      filename: "k.asc",
+      mime: "application/pgp-keys",
+      content: DEMO_PGP_PRIVATE,
+    }),
+    row({
+      // `"JBSWY3DPEHPK3PXP" | utf8 | otp.code` — role `text`, claimed by a tag.
+      label: "code",
+      role: "text",
+      tags: ["otp-code"],
+      traits: {
+        otpMode: "totp",
+        otpDigits: 6,
+        otpPeriod: 30,
+        otpStep: "59520075",
+        otpExpiresIn: 17,
+      },
+      revealable: true,
+      filename: "code.txt",
+      content: "133042",
     }),
   ];
 }
