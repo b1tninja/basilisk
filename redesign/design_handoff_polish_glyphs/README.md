@@ -1,5 +1,39 @@
 # Handoff: First-Class Polish, New Tools, and the Glyph System
 
+> ## ⚠️ Correction: `glyphs-redesigned.js` is gone, and its merge instruction was wrong
+>
+> This document's central glyph recommendation — *"the actual task is
+> finishing this merge"* of `web/src/lib/toolkit/glyphs-redesigned.js` into
+> `glyphs.js` — **must not be followed**, and the file it names has been
+> deleted. Nothing imported it; it was a hand-written alternative icon map
+> whose own header told the reader to merge its entries into `GLYPH_PATHS`
+> after generation.
+>
+> That hand-edit is exactly what `docs/GLYPHS.md` and
+> `web/src/test/glyphs-assets.test.js` forbid. **`glyphs.js` is generated**
+> by `npm run glyphs` from `web/glyphs/manifest.json` + `web/glyphs/svg/*.svg`,
+> and the test asserts manifest ↔ SVG ↔ module parity — a hand-merged entry
+> fails it, and is overwritten by the next generation run either way.
+>
+> Its house style also conflicted with the shipped set: stroke-width 1 and
+> 1.75 against the set's **1.6**, and `stroke="currentColor"` hardcoded on
+> every child rather than inherited.
+>
+> **The correct route for any design in here** is a new
+> `web/glyphs/svg/<id>.svg` (20×20, `currentColor`, stroke 1.6), a
+> `manifest.json` entry, then `npm run glyphs`. Commit `8d7e151` (the `otp`
+> glyph) and `a0a81c1` (`key-public` / `key-secret` / `key-pair`) are worked
+> examples. Note `a0a81c1` also found that `glyphIdFor` resolves
+> **op → shelf → toolbox**, so a toolbox-level glyph is invisible when the ops
+> declare their own.
+>
+> Two specifics below are now stale: the `totp` glyph it calls "genuinely
+> absent" shipped as `otp` in `8d7e151`, and the sensitivity distinction the
+> icon section reaches for shipped in `a0a81c1`.
+>
+> Everything else here — the interaction-level polish, the capability work,
+> the house-style *principles* — stands.
+
 ## Overview
 A cross-cutting polish pass after every feature-inventory item and checklist
 row was designed (prior handoffs). Covers interaction-level craft (empty
