@@ -609,7 +609,16 @@ describe("the table is the single definition (§33c)", () => {
     // Present on `keypair`, whose body is withheld: the public line derives
     // from the public JWK on `traits`, which is the same §34b permission that
     // keeps Copy fingerprint live on a masked private key.
-    expect(withPublicLine.sort()).toEqual(["key", "keypair", "keypair-public"]);
+    // `public-key` joins as the least-specific of the three public-key kinds
+    // (a lone public half — an `import spki` tip, a projected `:public`).
+    // `secret-key` deliberately does *not*: a symmetric key has no public
+    // material, so there is no line to copy and no disabled button to explain.
+    expect(withPublicLine.sort()).toEqual([
+      "key",
+      "keypair",
+      "keypair-public",
+      "public-key",
+    ]);
   });
 });
 

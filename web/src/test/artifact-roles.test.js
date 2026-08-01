@@ -62,7 +62,15 @@ describe("one vocabulary", () => {
 describe("the projection reaches the types that have a role", () => {
   const cases = [
     [typeOf("keypair"), "key"],
-    [typeOf("key", { which: "public" }), "key"],
+    // The half names the role, because the badge on a tile *is* the role and
+    // a public key that badges the same word as the private half beside it
+    // fails at the only job a badge has.
+    [typeOf("key", { which: "public" }), "public-key"],
+    [typeOf("key", { which: "private" }), "key"],
+    // Symmetric is not a half at all — WebCrypto's own `key.type === "secret"`.
+    [typeOf("key", { which: "secret" }), "secret-key"],
+    // Unchanged: the OpenPGP halves are told apart by their `openpgp` tag and
+    // their own two kinds, not by the role.
     [typeOf("openpgp-key", { which: "public" }), "key"],
     [typeOf("shares"), "share"],
     [typeOf("recipients"), "recipients"],
@@ -130,8 +138,14 @@ describe("`text`/`secret` is a sensitivity ternary, not an identity (§32c)", ()
     // are both `text`, so the sensitivity ternary gave one private block two
     // roles — `secret` from `out @priv`, `text` from a dangling tip — and a
     // kind matches `role` exactly, so it could only ever have claimed one.
+    //
+    // `public-key` and `secret-key` were written down for the third variant
+    // of the same reason: which half a key handle is — or that it is no half,
+    // being symmetric — is a fact about the *type* (`key/…/public`,
+    // `key/…/secret`), and leaving the sensitivity ternary in charge of it
+    // meant the two halves of one `out` wore the same badge.
     expect(ENGINE).toMatch(
-      /const TYPE_OWNED_ROLES = new Set\(\[\s*"sshsig",\s*"token",\s*"ssh-public",\s*"ssh-private",?\s*\]\)/
+      /const TYPE_OWNED_ROLES = new Set\(\[\s*"sshsig",\s*"token",\s*"ssh-public",\s*"ssh-private",\s*"public-key",\s*"secret-key",?\s*\]\)/
     );
   });
 

@@ -64,8 +64,13 @@ export function KeyCard({
   /** Pre-computed id (OpenPGP hex); SSH ids are derived from the JWK below. */
   fingerprint?: string;
   comment?: string;
-  /** Which half this artifact holds. Omitted where the kind cannot know. */
-  half?: "public" | "private" | "both";
+  /**
+   * Which half this artifact holds. Omitted where the kind cannot know.
+   *
+   * `secret` is not a half — it is a symmetric key, which has none — and the
+   * caption says so in words rather than calling it the "secret half".
+   */
+  half?: "public" | "private" | "both" | "secret";
   /** What is deliberately not shown, and the recipe edit that would show it. */
   withheld?: string;
   publicOnly?: boolean;
@@ -126,7 +131,11 @@ export function KeyCard({
             className="text-[10px] text-[var(--muted-foreground)]"
             data-key-half={half}
           >
-            {half === "both" ? "public + private halves" : `${half} half`}
+            {half === "both"
+              ? "public + private halves"
+              : half === "secret"
+                ? "symmetric — no public half"
+                : `${half} half`}
           </span>
         ) : null}
       </div>

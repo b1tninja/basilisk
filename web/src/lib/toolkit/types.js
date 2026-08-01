@@ -270,11 +270,68 @@ function literalByteLength(raw, encoding) {
   return hex.length / 2;
 }
 
+/**
+ * How many keys each `genkey` algorithm yields — `"key"` for one, `"keypair"`
+ * for two.
+ *
+ * At run time this question needs no table: `generateKey()` fulfils with a
+ * `CryptoKey` for symmetric algorithms and a `CryptoKeyPair` for public-key
+ * ones, and every handle carries a read-only `type` of `"secret"`, `"private"`
+ * or `"public"`. Compile time has no key object, so the shape has to be
+ * declared — and this is the *only* place it is declared, rather than
+ * re-derived at each site from whether the name starts with `AES`.
+ *
+ * Total over `genkey`'s `alg` enum on purpose, with **no default**: a name-
+ * prefix rule is non-exhaustive by construction, so the first symmetric
+ * algorithm not literally called `aes/…` or `hmac/…` would be silently typed
+ * a keypair. `genkey-key-shape.test.js` generates every member of the enum
+ * for real and checks each row against `CryptoKey.type`, so a row that drifts
+ * — or an enum member with no row — fails there rather than on a tile.
+ *
+ * @type {Readonly<Record<string, "key"|"keypair">>}
+ */
+export const GENKEY_KEY_SHAPES = Object.freeze({
+  "ec/p256": "keypair",
+  "ec/p384": "keypair",
+  "ec/p521": "keypair",
+  ed25519: "keypair",
+  x25519: "keypair",
+  "rsa/2048": "keypair",
+  "rsa/3072": "keypair",
+  "rsa/4096": "keypair",
+  "aes/128": "key",
+  "aes/192": "key",
+  "aes/256": "key",
+  "hmac/sha256": "key",
+  "hmac/sha384": "key",
+  "hmac/sha512": "key",
+});
+
+/**
+ * The `IoType` a `genkey` of this algorithm produces.
+ *
+ * Unknown algorithms fall to `keypair` because the engine will refuse them
+ * anyway (`Unsupported algorithm:`), and a type is not the place to raise
+ * that. The enum is kept total by the test, so "unknown" here means "not a
+ * thing `genkey` can be asked for" rather than "not yet listed".
+ *
+ * @param {string} alg
+ * @returns {"key"|"keypair"}
+ */
+export function genkeyOutputBase(alg) {
+  return GENKEY_KEY_SHAPES[String(alg || "").toLowerCase()] || "keypair";
+}
+
 export function inferSourceType(name, params = {}) {
   switch (name) {
     case "genkey": {
       const alg = String(params.alg || "ec/p256");
-      return typeOf("keypair", { alg, which: "private" });
+      // A symmetric key is not the private half of anything — it is one key,
+      // and `which: "secret"` is the word the type system already uses for
+      // that (`hkdf as=aes/256`, `unwrap`, `ecdh as=…` all produce it).
+      return genkeyOutputBase(alg) === "key"
+        ? typeOf("key", { alg, which: "secret" })
+        : typeOf("keypair", { alg, which: "private" });
     }
     case "random": {
       const length = Number(params.length) || 32;
@@ -581,9 +638,15 @@ export function inferParamDrivenType(name, current, params = {}) {
           error: `"import jwk" expects text, got ${formatType(current)}`,
         };
       }
+      // `alg=` is written in the recipe, so the same table `genkey` uses
+      // answers here: an `oct` JWK under `alg=aes/256` is one key, and the
+      // engine now hands back one.
       return {
         ok: true,
-        output: typeOf("keypair", { alg }),
+        output:
+          genkeyOutputBase(alg) === "key"
+            ? typeOf("key", { alg, which: "secret" })
+            : typeOf("keypair", { alg }),
       };
     }
     if (current.base !== "bytes") {
@@ -617,6 +680,15 @@ export function inferParamDrivenType(name, current, params = {}) {
       return {
         ok: true,
         output: typeOf("key", { alg, which: "public" }),
+      };
+    }
+    // `import raw alg=aes/256` imports one symmetric key, not a pair — and a
+    // symmetric tip is not "private DER", so the public/private check above
+    // does not apply to it either.
+    if (genkeyOutputBase(alg) === "key") {
+      return {
+        ok: true,
+        output: typeOf("key", { alg, which: "secret" }),
       };
     }
     if (current.which === "public") {
@@ -1611,7 +1683,32 @@ export const ARTIFACT_ROLES = Object.freeze([
    * refined type says `which: "private"` about a value that has both.
    */
   "keypair", // both halves, body withheld until `out` asks
-  "public-key", // an armored OpenPGP *public* key — the publishable one
+  /**
+   * A public half — armored OpenPGP, or the public JWK of a WebCrypto pair.
+   *
+   * It used to mean the OpenPGP one alone, and the badge on a tile *is* the
+   * role, so a WebCrypto public key wore the same `KEY` badge as the private
+   * half sitting next to it: the one distinction that matters at a glance was
+   * the one the badge did not draw. Nothing about the word was OpenPGP's — the
+   * mechanism was built and applied to one producer.
+   *
+   * **Not a licence to publish.** `key.publish` is declared on the
+   * `openpgp-public` *kind*, not on this role, which is the §33d split working
+   * as designed: the role says what an artifact is, the kind says what may be
+   * done with it. `publishArtifact` checks the armor tag alongside the role
+   * for the same reason.
+   */
+  "public-key",
+  /**
+   * A symmetric key — AES, HMAC — which is neither half of anything.
+   *
+   * WebCrypto's own word for it is `key.type === "secret"`, and until the
+   * shape fix a symmetric key was typed as the *private half of a keypair*, so
+   * it badged `KEY` and rendered on the `keypair-private` card captioned
+   * "private half". A key with no counterpart needs its own word or it borrows
+   * one that is false.
+   */
+  "secret-key",
   "share", // one share of a split
   "recipients", // a recipient list
   "ciphertext", // an encrypted message
@@ -1707,16 +1804,12 @@ export function artifactMetaFromType(t) {
     return { role: "key", tags: ["keypair"] };
   }
   if (t.base === "key") {
-    return {
-      role: "key",
-      tags: [
-        t.which === "public"
-          ? "public"
-          : t.which === "secret"
-            ? "secret"
-            : "private",
-      ],
-    };
+    // The half *is* the identity here, so it names the role rather than only
+    // a tag. `key` stays for a handle whose half is unknown — the
+    // least-specific word, which is what the `key` kind is for.
+    if (t.which === "public") return { role: "public-key", tags: ["public"] };
+    if (t.which === "secret") return { role: "secret-key", tags: ["secret"] };
+    return { role: "key", tags: ["private"] };
   }
   if (t.base === "recipients") {
     return { role: "recipients", tags: ["openpgp", "directory"] };

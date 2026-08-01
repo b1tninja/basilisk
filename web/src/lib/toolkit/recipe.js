@@ -63,7 +63,13 @@ function pushDiscouragedAlgoWarnings(step, warnings) {
   }
   if (
     step.name === "ssh.encode" &&
-    String(step.params?.format || "public") === "private"
+    String(step.params?.format || "public") === "private" &&
+    // …and only when the block really will be bare. `passphrase=@slot` now
+    // encrypts it (aes256-ctr + bcrypt_pbkdf), so warning regardless said
+    // "emits an unencrypted private key" about a file that is encrypted —
+    // and a warning that is false where it is most specific is worse than
+    // none, because it teaches that the warnings are noise.
+    !String(step.params?.passphrase ?? "").trim()
   ) {
     // §29f: the block has no passphrase, and vault protection does not
     // travel with an export. Warned at compile so it reads before the run,

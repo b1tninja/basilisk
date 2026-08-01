@@ -82,8 +82,13 @@ describe("§38b — publishing stays a UI path, and never becomes an op", () => 
     const kinds = ARTIFACT_KINDS.filter((k) => (k.actions || []).includes("key.publish"));
     expect(kinds.map((k) => k.id)).toEqual(["openpgp-public"]);
     expect(kinds[0].match.role).toBe("public-key");
+    // `public-key` is every public half's role now, not OpenPGP's alone, so
+    // the hook's guard checks the `openpgp` tag as well — the role on its own
+    // stopped implying "armored". Both halves of that guard are pinned here,
+    // because loosening either one would make a WebCrypto JWK publishable.
     const HOOK = read("../toolkit/useNotebook.ts");
-    expect(HOOK).toMatch(/only public-key exports are publishable/);
+    expect(HOOK).toMatch(/only OpenPGP public keys are publishable/);
+    expect(HOOK).toMatch(/tile\.role !== "public-key" \|\| !\(tile\.tags \|\| \[\]\)\.includes\("openpgp"\)/);
   });
 });
 

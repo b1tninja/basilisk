@@ -91,7 +91,10 @@ export const FALLBACK_KIND: ToolkitArtifactKind = {
 
 type KeyTraits = { alg?: string; fingerprint?: string; publicJwk?: string };
 
-const keyCardFor = (publicOnly: boolean, half?: "public" | "private" | "both") =>
+const keyCardFor = (
+  publicOnly: boolean,
+  half?: "public" | "private" | "both" | "secret"
+) =>
   function KeyCardView({ artifact }: ArtifactViewContext) {
     const traits = (artifact.traits || {}) as KeyTraits;
     return (
@@ -158,7 +161,12 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
      * recomputes — the same consolidation the badge mapping needed.
      */
     id: "openpgp-public",
-    match: { role: "public-key" },
+    /**
+     * The `openpgp` tag is required now that `public-key` is every public
+     * half's role rather than OpenPGP's alone. Without it this kind would
+     * claim a WebCrypto public JWK at specificity 0 and draw armor for it.
+     */
+    match: { role: "public-key", tags: ["openpgp"] },
     label: "OpenPGP public key",
     glyph: "openpgp-key",
     view: pgpCardFor(true),
@@ -213,11 +221,28 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
   },
   {
     id: "keypair-public",
-    match: { role: "key", tags: ["keypair", "public"] },
+    match: { role: "public-key", tags: ["keypair", "public"] },
     label: "Public key",
     glyph: "key",
     view: keyCardFor(true, "public"),
     empty: "No exportable public half — the key was generated non-extractable.",
+    actions: ["copy", "download", "key.copyFingerprint", "key.copyPublicLine"],
+  },
+  {
+    /**
+     * A public half with no pair beside it — an `import spki` tip, a projected
+     * `:public`. Least specific of the three `public-key` kinds, so the
+     * OpenPGP and paired ones win where they apply.
+     *
+     * No `publicView`: a public key is never masked, so a body that rendered
+     * while masked would be a claim about a state this kind cannot reach.
+     */
+    id: "public-key",
+    match: { role: "public-key" },
+    label: "Public key",
+    glyph: "key",
+    view: keyCardFor(true, "public"),
+    empty: "No exportable public key — the key was generated non-extractable.",
     actions: ["copy", "download", "key.copyFingerprint", "key.copyPublicLine"],
   },
   {
@@ -241,6 +266,32 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     // opposite reason: it moves the secret into storage without showing it,
     // and this tile is masked by default.
     actions: ["copy", "download", "key.copyFingerprint", "keyring.add"],
+  },
+  {
+    /**
+     * A symmetric key — `genkey aes/256`, `genkey hmac/sha256`, an `hkdf` or
+     * `unwrap` tip. Its own kind because it is its own *kind of thing*: not a
+     * half, not one of a pair, and nothing about it is publishable.
+     *
+     * Until the shape fix this artifact was typed the private half of a
+     * keypair, so it landed on `keypair-private` and captioned itself "private
+     * half" — of a pair with no public one. `key.copyFingerprint` and
+     * `key.copyPublicLine` are **not declared**, and that is §33d rather than
+     * an oversight: both derive from public material, a symmetric key has
+     * none, and a disabled button would teach that one exists. `keyring.add`
+     * is omitted for the same reason `agent.save` refuses these outright —
+     * there is no public half to list.
+     */
+    id: "secret-key",
+    match: { role: "secret-key" },
+    label: "Secret key",
+    glyph: "key",
+    view: keyCardFor(false, "secret"),
+    // Masked, the algorithm still shows — it is a public fact about the key,
+    // which is the §34b rule the private-key tile already follows.
+    publicView: keyCardFor(true, "secret"),
+    empty: "No exportable key material — the key was generated non-extractable.",
+    actions: ["copy", "download"],
   },
   {
     /**

@@ -410,6 +410,48 @@ describe("ssh.decode opens a protected key with the Inputs-panel passphrase", ()
       runRecipe(ast, { inputs: { text: { value: fixture("id_ed25519_enc1") } } })
     ).rejects.toThrow(ENCRYPTED_KEY_MESSAGE);
   });
+
+  /**
+   * …and the refusal has to name a control that exists.
+   *
+   * `buildBindings` composes `inputs.gpg` from `armoredMessages` alone and
+   * never constructs `inputs.agent` at all, so the panel channel the two
+   * tests above exercise is reachable only from a test that writes the
+   * binding by hand. The message used to say "Inputs → passphrase" about a
+   * field no page renders. `passphrase=@slot` is the path a user can
+   * actually take, so that is what the sentence names and what these pin.
+   */
+  it("takes the passphrase from a named slot", async () => {
+    // Written the way the recipe language actually works: the slot is
+    // registered by an earlier cell, and the compiler checks that it was —
+    // which is the machinery `passphrase=` gets for free by being a `slot`
+    // param rather than a string one.
+    const { ast, validation } = compileRecipe(
+      `"correct horse" | out @pw\n\ninput | ssh.decode passphrase=@pw | ssh.fingerprint | out @fp`
+    );
+    expect(validation.errors).toEqual([]);
+    const artifacts = await runRecipe(ast, {
+      inputs: { text: { value: fixture("id_ed25519_enc1") } },
+    });
+    const fp = artifacts.find((a) => a.label === "fp");
+    expect(String(fp.content).trim()).toBe(
+      fixture("fingerprints.txt").trim().split("\n")[0].split(/\s+/)[1]
+    );
+  });
+
+  it("points the refusal at the slot, not at a panel field that does not exist", () => {
+    expect(ENCRYPTED_KEY_MESSAGE).toMatch(/passphrase=@pw/);
+    expect(ENCRYPTED_KEY_MESSAGE).not.toMatch(/Inputs → passphrase/);
+  });
+
+  it("names an unregistered slot at compile time, before the run", () => {
+    const { validation } = compileRecipe(
+      "input | ssh.decode passphrase=@pw | ssh.fingerprint | out @fp"
+    );
+    expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
+      /passphrase=@pw: unknown slot/
+    );
+  });
 });
 
 /**
@@ -470,6 +512,23 @@ describe("ssh.encode passphrase=", () => {
     await expect(
       execSshEncode(await keypair(), { format: "private", passphrase: PASSPHRASE }, withPw())
     ).rejects.toThrow(/takes an @slot/);
+  });
+
+  it("stops warning about an unencrypted export once one is encrypted", () => {
+    // The §29f warning was written when `format=private` could only ever emit
+    // a bare block, and was not gated when `passphrase=` made that false. A
+    // warning that is wrong precisely where the user did the careful thing is
+    // worse than no warning: it teaches that the warnings are noise.
+    const warn = (src) => compileRecipe(src).validation.warnings || [];
+    const bare = warn("genkey ed25519 | ssh.encode format=private | out @k");
+    expect(bare.some((w) => /emits an unencrypted private key/.test(w))).toBe(true);
+
+    const protectedOut = warn(
+      "genkey ed25519 | ssh.encode format=private passphrase=@pw | out @k"
+    );
+    expect(protectedOut.some((w) => /emits an unencrypted private key/.test(w))).toBe(
+      false
+    );
   });
 
   it("refuses an empty slot rather than quietly exporting the key bare", async () => {

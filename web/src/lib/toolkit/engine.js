@@ -3640,6 +3640,11 @@ async function generateKeyValue(alg, usage, padding = "pss", hash = "sha-256") {
       },
     };
   }
+  // Symmetric: `generateKey` fulfils with one `CryptoKey`, whose `type` is
+  // `"secret"`. It was packed as `{ privateKey: key, publicKey: null }` under
+  // a `keypair` value — a keypair missing its public half — which is what put
+  // `tags: ["keypair"]` and a meaningless `which: "private"` on an AES tile.
+  // One key, typed `key`, marked the half it is: none.
   if (alg.startsWith("aes/")) {
     const length = aesLengthFromAlg(alg);
     const key = await crypto.subtle.generateKey(
@@ -3648,9 +3653,16 @@ async function generateKeyValue(alg, usage, padding = "pss", hash = "sha-256") {
       ["encrypt", "decrypt"]
     );
     return {
-      type: "keypair",
-      data: { privateKey: key, publicKey: null },
-      meta: { alg, algorithm: "AES-GCM", symmetric: true, sensitive: true },
+      type: "key",
+      data: key,
+      meta: {
+        alg,
+        algorithm: "AES-GCM",
+        symmetric: true,
+        sensitive: true,
+        which: "secret",
+        type: typeOf("key", { alg, which: "secret" }),
+      },
     };
   }
   if (alg.startsWith("hmac/")) {
@@ -3661,9 +3673,16 @@ async function generateKeyValue(alg, usage, padding = "pss", hash = "sha-256") {
       ["sign", "verify"]
     );
     return {
-      type: "keypair",
-      data: { privateKey: key, publicKey: null },
-      meta: { alg, algorithm: "HMAC", symmetric: true, sensitive: true },
+      type: "key",
+      data: key,
+      meta: {
+        alg,
+        algorithm: "HMAC",
+        symmetric: true,
+        sensitive: true,
+        which: "secret",
+        type: typeOf("key", { alg, which: "secret" }),
+      },
     };
   }
   throw new Error(`Unsupported algorithm: ${alg}`);
@@ -3798,17 +3817,32 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
       hash,
     });
     const sensitive = !!(bound.privateKey || bound.secretKey);
+    // An `oct` JWK is one key. It used to be filed on `privateKey` *and*
+    // `secretKey` of a `keypair` bag, which is how a symmetric key came to be
+    // read as the private half of a pair.
+    if (bound.secretKey) {
+      return {
+        type: "key",
+        data: bound.secretKey,
+        meta: {
+          alg: bound.alg || alg,
+          algorithm: bound.alg || alg,
+          symmetric: true,
+          sensitive,
+          which: "secret",
+        },
+      };
+    }
     return {
       type: "keypair",
       data: {
-        privateKey: bound.privateKey || bound.secretKey || null,
+        privateKey: bound.privateKey || null,
         publicKey: bound.publicKey || null,
-        secretKey: bound.secretKey || null,
       },
       meta: {
         alg: bound.alg || alg,
         algorithm: bound.alg || alg,
-        symmetric: !!bound.secretKey,
+        symmetric: false,
         sensitive,
       },
     };
@@ -3968,6 +4002,7 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
     };
   }
 
+  // Symmetric imports are one key, for the same reason `genkey` is.
   if (alg.startsWith("aes/")) {
     const length = aesLengthFromAlg(alg);
     const key = await crypto.subtle.importKey(
@@ -3978,9 +4013,15 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
       ["encrypt", "decrypt"]
     );
     return {
-      type: "keypair",
-      data: { privateKey: key, publicKey: null },
-      meta: { alg, algorithm: "AES-GCM", symmetric: true, sensitive: true },
+      type: "key",
+      data: key,
+      meta: {
+        alg,
+        algorithm: "AES-GCM",
+        symmetric: true,
+        sensitive: true,
+        which: "secret",
+      },
     };
   }
 
@@ -3994,9 +4035,15 @@ async function importKey(value, format, alg, usage, padding = "pss", hash = "sha
       ["sign", "verify"]
     );
     return {
-      type: "keypair",
-      data: { privateKey: key, publicKey: null },
-      meta: { alg, algorithm: "HMAC", symmetric: true, sensitive: true },
+      type: "key",
+      data: key,
+      meta: {
+        alg,
+        algorithm: "HMAC",
+        symmetric: true,
+        sensitive: true,
+        which: "secret",
+      },
     };
   }
 
@@ -4161,8 +4208,21 @@ function safeOutputStem(raw) {
  * JOSE and SSH-key artifacts. It is the same change RECEIPT_VERSION 2 was
  * bumped for (§38c) and lands before v2 has shipped, so it needs no second
  * boundary.
+ *
+ * `public-key` and `secret-key` join for the same reason as the SSH halves:
+ * which half a key handle is (or that it is no half at all) is a fact about
+ * the *type* — `key/…/public`, `key/…/secret` — and the badge on a tile is the
+ * role, so leaving the sensitivity ternary in charge means a public JWK and
+ * the private one beside it wear the same word.
  */
-const TYPE_OWNED_ROLES = new Set(["sshsig", "token", "ssh-public", "ssh-private"]);
+const TYPE_OWNED_ROLES = new Set([
+  "sshsig",
+  "token",
+  "ssh-public",
+  "ssh-private",
+  "public-key",
+  "secret-key",
+]);
 
 /**
  * What `otp.code` knew and its body cannot say, carried onto the artifact.
@@ -4575,11 +4635,24 @@ async function materializeOutArtifacts(value, params) {
   if (value.type === "keypair" || value.type === "key") {
     const parts = [];
     const handles = pipelineKeyHandles(value);
-    const priv = handles.privateKey || handles.secretKey;
+    /**
+     * A symmetric key is not a half, so it is not labelled as one.
+     *
+     * `handles.privateKey || handles.secretKey` used to collapse the two, and
+     * everything downstream inherited the collapse: `genkey aes/256 | out @k`
+     * wrote a tile called "k · private JWK", tagged `["keypair", "private"]`,
+     * which resolved to the `keypair-private` kind and captioned itself
+     * "private half" — of a pair that does not exist. The handles know the
+     * difference (`key.type`), so the word does too.
+     */
+    const secret = handles.secretKey;
+    const priv = handles.privateKey;
     const pub = handles.publicKey;
-    if (priv) {
+    const held = secret || priv;
+    const heldWhich = secret ? "secret" : "private";
+    if (held) {
       try {
-        const jwk = await crypto.subtle.exportKey("jwk", priv);
+        const jwk = await crypto.subtle.exportKey("jwk", held);
         // §32c/1.5: declare the role and which half this is. Before this the
         // branch returned bare parts with no `attachPipeMeta` at all, so the
         // `out` fallback stamped both halves `secret` from the *value's*
@@ -4588,27 +4661,30 @@ async function materializeOutArtifacts(value, params) {
         parts.push(
           attachPipeMeta(
             {
-              label: `${label} · private JWK`,
-              filename: `${stem}-private.${extOverride || "jwk.json"}`,
+              label: `${label} · ${heldWhich} JWK`,
+              filename: `${stem}-${heldWhich}.${extOverride || "jwk.json"}`,
               content: JSON.stringify(jwk, null, 2),
               sensitive: true,
               mime: mimeOverride || "application/json",
               encoding: "jwk",
-              role: "key",
-              tags: ["keypair", "private"],
+              role: secret ? "secret-key" : "key",
+              // No `keypair` tag on a lone symmetric key: the tag is what the
+              // `keypair-private` / `keypair-public` kinds match on, and a
+              // key with no counterpart belongs to neither.
+              tags: secret ? ["secret"] : ["keypair", "private"],
               traits: value.meta?.alg ? { alg: value.meta.alg } : undefined,
             },
             value,
             // The half this artifact *is*, not the half the value's type
             // happened to name. See `attachPipeMeta`.
-            { which: "private" }
+            { which: heldWhich }
           )
         );
       } catch (err) {
         parts.push({
-          label: `${label} · private`,
-          filename: `${stem}-private.txt`,
-          content: `Private key present but not exportable: ${err?.message || err}`,
+          label: `${label} · ${heldWhich}`,
+          filename: `${stem}-${heldWhich}.txt`,
+          content: `${heldWhich === "secret" ? "Secret" : "Private"} key present but not exportable: ${err?.message || err}`,
           sensitive: true,
           mime: "text/plain",
           encoding: "text",
@@ -4627,7 +4703,11 @@ async function materializeOutArtifacts(value, params) {
               sensitive: false,
               mime: mimeOverride || "application/json",
               encoding: "jwk",
-              role: "key",
+              // The badge is the role, so the two halves of one `out` have to
+              // differ here or the glance cannot tell them apart. Not a
+              // licence to publish — that is the `openpgp-public` kind's
+              // declaration, not this word.
+              role: "public-key",
               tags: ["keypair", "public"],
               traits: value.meta?.alg ? { alg: value.meta.alg } : undefined,
             },
@@ -4839,22 +4919,31 @@ async function valueToArtifacts(value, name = "artifact") {
     );
   }
   if (value.type === "keypair" || value.type === "key") {
-    const which = value.meta?.which === "public" ? "public" : "private";
     const handles = pipelineKeyHandles(value);
     const pub = handles.publicKey;
     /**
-     * Both halves present is what makes this a *keypair* rather than a key,
-     * and it is a runtime fact rather than a projection of the type: `genkey`
-     * types its tip `keypair/…/private` and an `import pkcs8` may or may not
-     * carry a public half, so only the handles know. `role` is the emit
-     * site's to declare for exactly this class of question (§32c) — the same
-     * licence `receipt` and `envelope` already use.
-     *
-     * Symmetric algorithms (aes, hmac) also arrive as `keypair` values, with
-     * `publicKey: null`. They are not keypairs and must not be drawn as one,
-     * so they keep the least-specific `key` role they had.
+     * Which half this artifact holds, read off the handle rather than off
+     * `meta.which`. A symmetric key answers `"secret"` — the platform's own
+     * word, and neither half of anything.
      */
-    const bothHalves = value.type === "keypair" && !!(handles.privateKey && pub);
+    const which = handles.secretKey
+      ? "secret"
+      : pub && !handles.privateKey
+        ? "public"
+        : "private";
+    /**
+     * Both halves present is what makes this a *keypair* rather than a key,
+     * and it is a runtime fact rather than a projection of the type: an
+     * `import pkcs8` may or may not carry a public half, so only the handles
+     * know. `role` is the emit site's to declare for exactly this class of
+     * question (§32c) — the same licence `receipt` and `envelope` already use.
+     *
+     * The symmetric caveat that used to live here is gone: AES and HMAC keys
+     * no longer arrive as half-empty `keypair` values, so there is nothing to
+     * exclude. `key.type === "secret"` files them under `secretKey`, and
+     * `secretKey && privateKey` cannot both be set for one handle.
+     */
+    const bothHalves = !!(handles.privateKey && pub);
     return [
       attachPipeMeta(
         {
@@ -4877,7 +4966,15 @@ async function valueToArtifacts(value, name = "artifact") {
           mime: "text/plain",
           encoding: "text",
           disposition: "file",
-          role: bothHalves ? "keypair" : "key",
+          // Both halves → `keypair`; otherwise the half names the role, and
+          // `key` is left for the one case that genuinely does not know.
+          role: bothHalves
+            ? "keypair"
+            : which === "secret"
+              ? "secret-key"
+              : which === "public"
+                ? "public-key"
+                : "key",
           tags: value.type === "key" ? [which] : ["keypair"],
           /**
            * The public facts, carried where the tile can reach them.

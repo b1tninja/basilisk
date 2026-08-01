@@ -392,13 +392,46 @@ describe("key artifacts resolve to the right card (§35)", () => {
       resolveArtifactKind({ role: "key" }, ARTIFACT_KINDS, FALLBACK_KIND).id
     ).toBe("key");
     // …and the tagged halves still win, regardless of declaration order.
+    // The public half's role is `public-key` now — the badge is the role, and
+    // a public key badged KEY beside a private one badged KEY told the reader
+    // nothing.
     expect(
       resolveArtifactKind(
-        { role: "key", tags: ["keypair", "public"] },
+        { role: "public-key", tags: ["keypair", "public"] },
         ARTIFACT_KINDS,
         FALLBACK_KIND
       ).id
     ).toBe("keypair-public");
+  });
+
+  it("orders the three public-key kinds by specificity, not declaration", () => {
+    // One role, three producers. OpenPGP armor and a paired WebCrypto half
+    // each carry a tag that narrows them; a lone public key (an `import spki`
+    // tip, a projected `:public`) carries neither and must still land on a
+    // key card rather than on the OpenPGP one or the fallback.
+    const id = (a) => resolveArtifactKind(a, ARTIFACT_KINDS, FALLBACK_KIND).id;
+    expect(id({ role: "public-key", tags: ["openpgp", "public-key"] })).toBe(
+      "openpgp-public"
+    );
+    expect(id({ role: "public-key", tags: ["keypair", "public"] })).toBe(
+      "keypair-public"
+    );
+    expect(id({ role: "public-key", tags: ["public"] })).toBe("public-key");
+    expect(id({ role: "public-key" })).toBe("public-key");
+  });
+
+  it("gives a symmetric key its own kind, with no public-material actions", () => {
+    // A secret key has no public half, so a fingerprint and a public line are
+    // not "disabled" for it — they do not exist (§33d).
+    const kind = resolveArtifactKind(
+      { role: "secret-key", tags: ["secret"] },
+      ARTIFACT_KINDS,
+      FALLBACK_KIND
+    );
+    expect(kind.id).toBe("secret-key");
+    expect(kind.actions).not.toContain("key.copyPublicLine");
+    expect(kind.actions).not.toContain("key.copyFingerprint");
+    expect(kind.actions).not.toContain("keyring.add");
   });
 });
 

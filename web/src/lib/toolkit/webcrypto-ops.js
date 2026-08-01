@@ -145,31 +145,58 @@ export function isCryptoKey(v) {
 }
 
 /**
+ * File a live handle under the half it *is*, per the platform.
+ *
+ * `CryptoKey.type` is a read-only `"secret" | "private" | "public"` on every
+ * key `generateKey`, `importKey`, `deriveKey` and `unwrapKey` hand back, and
+ * `"secret"` is WebCrypto's word for symmetric. So the question "is this one
+ * key or half of two" has an exhaustive answer available for free, for every
+ * algorithm the platform will ever add — which a rule that matches `AES*` or
+ * `HMAC` by name can never be.
+ *
+ * @param {{ privateKey: CryptoKey|null, publicKey: CryptoKey|null, secretKey: CryptoKey|null }} out
+ * @param {unknown} key
+ */
+function fileHandleByType(out, key) {
+  if (!isCryptoKey(key)) return;
+  if (key.type === "secret") out.secretKey = key;
+  else if (key.type === "public") out.publicKey = key;
+  else out.privateKey = key;
+}
+
+/**
  * Unwrap key/keypair pipeline data (bare CryptoKey or { privateKey, publicKey, secretKey } bag).
+ *
+ * Classification comes from the handles, never from `meta.which`. It used to
+ * be the other way round, and the fallback was the whole bug: an *unmarked*
+ * single handle was assumed to be a private key, so a symmetric key with no
+ * `meta.which` became the private half of a keypair with no public one, and
+ * seventeen sites downstream re-derived symmetry from algorithm names to undo
+ * the guess. `meta.which` remains meaningful as a label on a *projection*
+ * (`:public` names which half of a pair was taken), but a projected public key
+ * already answers `type === "public"` for itself — the platform never needed
+ * to be told.
+ *
+ * A bag is sorted the same way, so a producer that parks a secret key on
+ * `privateKey` (an oct JWK import, say) is corrected here rather than
+ * compensated for at every reader.
+ *
  * @param {import("./engine.js").PipelineValue|null|undefined} value
  * @returns {{ privateKey: CryptoKey|null, publicKey: CryptoKey|null, secretKey: CryptoKey|null }}
  */
 export function pipelineKeyHandles(value) {
-  if (!value || (value.type !== "key" && value.type !== "keypair")) {
-    return { privateKey: null, publicKey: null, secretKey: null };
-  }
+  /** @type {{ privateKey: CryptoKey|null, publicKey: CryptoKey|null, secretKey: CryptoKey|null }} */
+  const out = { privateKey: null, publicKey: null, secretKey: null };
+  if (!value || (value.type !== "key" && value.type !== "keypair")) return out;
   const d = value.data;
   if (isCryptoKey(d)) {
-    const which = String(value.meta?.which || "");
-    if (which === "public") {
-      return { privateKey: null, publicKey: d, secretKey: null };
-    }
-    if (which === "secret") {
-      return { privateKey: null, publicKey: null, secretKey: d };
-    }
-    // Projected private key tip (or unmarked single handle).
-    return { privateKey: d, publicKey: null, secretKey: null };
+    fileHandleByType(out, d);
+    return out;
   }
-  return {
-    privateKey: d?.privateKey || null,
-    publicKey: d?.publicKey || null,
-    secretKey: d?.secretKey || null,
-  };
+  fileHandleByType(out, d?.privateKey);
+  fileHandleByType(out, d?.publicKey);
+  fileHandleByType(out, d?.secretKey);
+  return out;
 }
 
 /**
@@ -184,18 +211,17 @@ function pickBoundCryptoKey(bound, need) {
   }
   if (need === "public") {
     if (bound.publicKey) return bound.publicKey;
-    // HMAC verifies with the same oct key (stored as secretKey or privateKey).
-    if (bound.secretKey?.algorithm?.name === "HMAC") return bound.secretKey;
-    if (bound.privateKey?.algorithm?.name === "HMAC") return bound.privateKey;
+    // A secret key is symmetric — it *is* both halves, so it answers here
+    // too, and the op that receives it refuses on algorithm if it wanted an
+    // ECDH peer. This used to name HMAC specifically, in two places, because
+    // a symmetric key could arrive on either `secretKey` or `privateKey`
+    // depending on which producer made it; the handles are sorted by
+    // `key.type` now, so there is one place it can be and no name to match.
+    if (bound.secretKey) return bound.secretKey;
     throw new Error("Bound key has no public key (need public JWK for verify / encrypt / ECDH peer)");
   }
   if (need === "secret") {
     if (bound.secretKey) return bound.secretKey;
-    // Symmetric AES often lives on privateKey after genkey aes/*
-    if (bound.privateKey) {
-      const n = bound.privateKey.algorithm?.name || "";
-      if (n.startsWith("AES") || n === "HMAC") return bound.privateKey;
-    }
     throw new Error("Bound key has no secret key (need oct JWK for AES-GCM / HMAC / wrap)");
   }
   if (bound.secretKey) return bound.secretKey;

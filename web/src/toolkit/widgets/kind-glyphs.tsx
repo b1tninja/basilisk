@@ -43,6 +43,12 @@ export const KIND_GLYPHS: Record<string, LucideIcon> = {
   // the badge already says in words, and the `sensitive` badge beside it.
   "ssh-public": KeyRound,
   "ssh-private": KeyRound,
+  // Same reason again: `public-key` and `secret-key` are roles, so they are
+  // badge strings, and without an entry they would be the only key artifacts
+  // wearing a badge with no pictogram. `public-key` was already reachable via
+  // OpenPGP and already missing one.
+  "public-key": KeyRound,
+  "secret-key": KeyRound,
   share: Users,
   shares: Users,
   recipients: Users,

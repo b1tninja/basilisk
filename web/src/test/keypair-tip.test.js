@@ -99,12 +99,17 @@ describe("a bare genkey tip is a keypair, and says so", () => {
   });
 
   it("leaves a symmetric key alone — it is not a keypair", async () => {
-    // aes and hmac arrive as `keypair` values with `publicKey: null`. Calling
-    // them keypairs would be the same class of mislabel this fixes, so they
-    // keep the least-specific `key` role and get no public-half read-out.
+    // aes and hmac used to arrive as `keypair` values with `publicKey: null`,
+    // and this test pinned the mitigation: they were held back at the `key`
+    // role so the keypair card could not claim them. The shape is honest now
+    // — `generateKey` returns one `CryptoKey` whose `type` is `"secret"`, and
+    // the value is a `key` — so they get the word for what they are instead
+    // of the least-specific one that merely was not wrong.
     for (const alg of ["aes/256", "hmac/sha256"]) {
       const [tip] = await artifactsOf(`genkey ${alg}`);
-      expect(tip.role, alg).toBe("key");
+      expect(tip.role, alg).toBe("secret-key");
+      expect(tip.pipeType.base, alg).toBe("key");
+      expect(tip.tags, alg).not.toContain("keypair");
       expect(tip.traits.publicJwk, alg).toBeUndefined();
     }
   });

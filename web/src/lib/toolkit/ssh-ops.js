@@ -167,10 +167,55 @@ function importParamsFor(type, hash = "sha512") {
  * second one would mean a user who typed their passphrase into the panel
  * still got refused by whichever op happened to look somewhere else.
  *
+ * **Nothing populates this today.** `useNotebook`'s `buildBindings` builds
+ * `inputs.gpg` with `armoredMessages` alone and never sets `passphrase`, and
+ * `inputs.agent` is not constructed at all — so this returns `""` for every
+ * run the notebook makes. It is kept as the fallback rather than deleted
+ * because `agent.save protection=passphrase` reads the same two fields and
+ * has the same gap; when a field is finally wired, both light up at once.
+ * The reachable path is `passphrase=@slot`, below.
+ *
  * @param {import("./engine.js").RuntimeBindings} [bindings]
  */
 function panelPassphrase(bindings) {
   return String(bindings?.inputs?.gpg?.passphrase || bindings?.inputs?.agent?.passphrase || "");
+}
+
+/**
+ * The passphrase `ssh.decode passphrase=@slot` names.
+ *
+ * `ssh.encode`'s side of this is `encodePassphrase`, and the asymmetry in
+ * their *reasoning* is deliberate: on encode the passphrase decides what the
+ * emitted file **is**, so it must be named in the recipe or one text would
+ * write two different files. Here it only decides whether an
+ * already-protected file opens, so a panel would have been defensible — and
+ * the original design said so. It is a slot anyway, because the panel field
+ * that design assumed does not exist, and a refusal that points at a control
+ * nobody can find is worse than one that names a slot.
+ *
+ * Empty is not an error here, unlike on encode: a recipe that decodes a
+ * *bare* block with `passphrase=` bound to an empty slot is asking for
+ * nothing and gets nothing, and the codec reads `""` as "not encrypted".
+ *
+ * @param {import("./engine.js").RuntimeBindings} bindings
+ * @param {*} raw
+ * @returns {string}
+ */
+function decodePassphrase(bindings, raw) {
+  const ref = String(raw ?? "").trim();
+  if (!ref) return "";
+  if (!/^@[^\s|=]+$/.test(ref)) {
+    throw new Error(
+      "ssh.decode passphrase= takes an @slot (bind one from Inputs) — a literal passphrase would travel in the recipe text"
+    );
+  }
+  const value = slotValue(bindings, ref, "passphrase= (slot holding the passphrase)");
+  if (!value) throw new Error(`ssh.decode passphrase=${ref}: unknown slot`);
+  if (value.type === "text") return String(value.data ?? "");
+  if (value.type === "bytes" && value.data instanceof Uint8Array) {
+    return new TextDecoder().decode(value.data);
+  }
+  throw new Error(`ssh.decode passphrase=${ref}: slot must hold text (or UTF-8 bytes)`);
 }
 
 /** Typed wire material for one pipeline value (keypair/key handles, or SSH text). */
@@ -324,7 +369,10 @@ export async function execSshDecode(value, params_ = {}, bindings = {}) {
   }
   const text = String(value.data || "");
   const isPrivate = text.includes("BEGIN OPENSSH PRIVATE KEY");
-  const passphrase = String(bindings?.passphrase || "") || panelPassphrase(bindings);
+  const passphrase =
+    String(bindings?.passphrase || "") ||
+    decodePassphrase(bindings, params_.passphrase) ||
+    panelPassphrase(bindings);
   const m = isPrivate ? await parseOpensshPrivateKey(text, { passphrase }) : parsePublicLine(text);
   const { pub, priv } = jwksFromSshMaterial(m);
   const { alg, params } = importParamsFor(m.type, String(params_.hash || "sha512"));

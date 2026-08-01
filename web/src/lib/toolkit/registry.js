@@ -2110,7 +2110,7 @@ export const STEPS = [
     shelf: "sshwire",
     conjugateOf: "ssh.encode",
     glyph: "ssh-key",
-    doc: "Decode an OpenSSH public line or an openssh-key-v1 private block into a live key/keypair. Passphrase-protected blocks open too — put the passphrase in the Inputs panel; a wrong one is named as such rather than reported as a corrupt file. Example: `input | ssh.decode | ssh.fingerprint | out @fp`.",
+    doc: "Decode an OpenSSH public line or an openssh-key-v1 private block into a live key/keypair. Passphrase-protected blocks open too — bind the passphrase to a slot and name it with `passphrase=@slot`; a wrong one is named as such rather than reported as a corrupt file. Example: `input | ssh.decode | ssh.fingerprint | out @fp`, or `input | out @pw` then `… | ssh.decode passphrase=@pw`.",
     input: "text",
     output: "keypair",
     overloads: [
@@ -2125,6 +2125,28 @@ export const STEPS = [
         default: "sha512",
         enum: ["sha512", "sha256"],
         doc: "Digest an RSA key binds on import — `ssh-rsa` names none, so `sign`/`verify` on the result are stuck with this one (ignored for ed25519/ECDSA)",
+      },
+      {
+        /**
+         * The conjugate of `ssh.encode passphrase=`, and a slot for the same
+         * mechanical reason: `serializeStep` drops anything that is not an
+         * `@ref` before a recipe becomes a share link, so a literal would
+         * either travel in the text or vanish from it.
+         *
+         * The *design* reason differs from encode's, and the difference is
+         * why this took until now to exist. On encode the passphrase decides
+         * what the file is, so it must be named. Here it only decides whether
+         * an already-protected file opens, so the Inputs panel would have
+         * been legitimate — and `ssh.decode`'s doc told people to use it.
+         * There is no such field: `buildBindings` never sets
+         * `inputs.gpg.passphrase`, so the panel path was unreachable and the
+         * refusal pointed at a control that does not exist.
+         */
+        name: "passphrase",
+        type: "slot",
+        secret: true,
+        default: "",
+        doc: "@slot holding the passphrase for a protected openssh-key-v1 block (`input | out @pw` then `passphrase=@pw`). Ignored for public lines and unencrypted blocks.",
       },
     ],
   },

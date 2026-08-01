@@ -579,8 +579,13 @@ export function useNotebook() {
       | ArtifactTile
       | undefined;
     if (!tile) throw new Error("publishArtifact: unknown output");
-    if (tile.role !== "public-key") {
-      throw new Error("publishArtifact: only public-key exports are publishable");
+    // `public-key` is now every public half's role, not OpenPGP's alone, so
+    // the role on its own no longer implies "armored and publishable". The
+    // `openpgp` tag is what narrows it back to the one kind that declares
+    // `key.publish`; `publishArmoredKey` refuses non-armor after this, so the
+    // two guards still agree in two places rather than one.
+    if (tile.role !== "public-key" || !(tile.tags || []).includes("openpgp")) {
+      throw new Error("publishArtifact: only OpenPGP public keys are publishable");
     }
     const { publishArmoredKey } = await import("../lib/toolkit/hkp-ops.js");
     const { fingerprint, directoryUrl } = await publishArmoredKey(tile.content);
