@@ -4302,6 +4302,66 @@ function attachPipeMeta(artifact, value, refine) {
 }
 
 /**
+ * The one artifact a network / WebRTC value becomes, wherever it is emitted.
+ *
+ * Shared by `materializeOutArtifacts` and `valueToArtifacts` because one value
+ * described two ways is the failure this exists to prevent: an SDP offer
+ * written by `out @offer` and the same offer left dangling at the end of a
+ * pipeline are the same value, and `ArtifactMatch.role` is exact — so a kind
+ * can only ever claim one of two spellings, and the other silently renders as
+ * untyped text (7d563cd, and §35d before it).
+ *
+ * **No role is declared here, and that is the point.** The seven network bases
+ * *are* the definition of `role: "netvalue"` in `artifactMetaFromType`, so the
+ * projection supplies it; a second list in this file would be exactly the
+ * parallel vocabulary the kind table's header records as deliberately deleted
+ * (`hasNetworkRenderer`). `stun.check` is the one exception, and it is an
+ * exception about *why* the artifact exists rather than what it is — a
+ * reachability verdict carrying the "Configure TURN" affordance, which no
+ * projection of `endpoint` could know.
+ *
+ * The `NETWORK_TYPES` predicate its two callers gate on is wider than those
+ * seven: `host`, `channel` and `peer` are IoType vocabulary that **no step
+ * outputs**, so this is unreachable for them. If one ever gains a producer it
+ * lands as `text` rather than `netvalue`, which is the honest answer — a live
+ * `channel` handle has no read-out, and inventing one is the decision to take
+ * then, with the base added to `NETWORK_BASES`, not pre-empted here.
+ *
+ * @param {PipelineValue} value
+ * @param {string} label
+ * @param {string} fallbackName  filename to use when the op named none
+ * @returns {ToolkitArtifact}
+ */
+function networkArtifact(value, label, fallbackName) {
+  // SDP is already text on the wire; the rest carry structured data that
+  // renders as JSON, exactly the way `recipients` already does.
+  const isSdp = value.type === "sdp";
+  return attachPipeMeta(
+    {
+      label,
+      filename: String(value.meta?.filename || "") || fallbackName,
+      content: isSdp ? String(value.data) : JSON.stringify(value.data, null, 2),
+      sensitive: !!value.meta?.sensitive,
+      mime: isSdp ? "application/sdp" : "application/json",
+      encoding: "text",
+      // stun.check keeps its 22b "Configure TURN" affordance.
+      role: value.meta?.stunCheck ? "diagnostic" : undefined,
+      tags: ["webrtc", value.type],
+      // The pipeline type doubles as the UI's renderer discriminator — a
+      // `candidate` artifact draws the typed candidate list, a
+      // `stats/candidate-pairs` one draws the pair matrix, and so on. All
+      // three ride to the tile through `traits`' neighbours in both of
+      // `ToolkitShell`'s `OutputList` mappings and `useNotebook`'s, which is
+      // the projection a new field has silently failed to survive four times.
+      netType: value.type,
+      netKind: value.meta?.kind || value.meta?.statsKind || undefined,
+      netData: value.data,
+    },
+    value
+  );
+}
+
+/**
  * Build downloadable tiles from a pipeline value for `out`.
  * @param {PipelineValue} value
  * @param {Record<string, *>} params
@@ -4382,37 +4442,14 @@ async function materializeOutArtifacts(value, params) {
     ];
   }
 
-  // Network / WebRTC values (design v2 §25a). SDP is already text on the
-  // wire; the rest carry structured data that renders as JSON, exactly the
-  // way `recipients` below already does.
+  // Network / WebRTC values (design v2 §25a). One shape, built in one place —
+  // see `networkArtifact`, which the dangling-tip path shares.
   if (NETWORK_VALUE_TYPES.has(value.type)) {
-    const isSdp = value.type === "sdp";
-    const content = isSdp
-      ? String(value.data)
-      : JSON.stringify(value.data, null, 2);
     return [
-      attachPipeMeta(
-        {
-          label,
-          filename:
-            String(value.meta?.filename || "") ||
-            `${stem}${shareSuffix}.${isSdp ? "sdp" : "json"}`,
-          content,
-          sensitive: !!value.meta?.sensitive,
-          mime: isSdp ? "application/sdp" : "application/json",
-          encoding: "text",
-          // stun.check keeps its 22b "Configure TURN" affordance; the rest are
-          // ordinary text rows.
-          role: value.meta?.stunCheck ? "diagnostic" : "text",
-          tags: ["webrtc", value.type],
-          // The pipeline type doubles as the UI's renderer discriminator —
-          // a `candidate` artifact draws the typed candidate list, a
-          // `stats/candidate-pairs` one draws the pair matrix, and so on.
-          netType: value.type,
-          netKind: value.meta?.kind || value.meta?.statsKind || undefined,
-          netData: value.data,
-        },
-        value
+      networkArtifact(
+        value,
+        label,
+        `${stem}${shareSuffix}.${value.type === "sdp" ? "sdp" : "json"}`
       ),
     ];
   }
@@ -4916,6 +4953,33 @@ async function valueToArtifacts(value, name = "artifact") {
         },
         value
       ),
+    ];
+  }
+  /**
+   * A network value that fell off the end of a pipeline (§25a).
+   *
+   * There was no branch at all, so `rtc.gather`, `rtc.offer`, `stun.check`,
+   * `rtc.certificate`, `rtc.ice`, `rtc.state`, `rtc.check` and friends with no
+   * `out` after them returned `[]` — **no tile whatsoever**, which reads as a
+   * step that failed rather than one whose result was thrown away. Every one
+   * of these is a value a user runs the op specifically to read.
+   *
+   * The **body is emitted in full**, which is where this parts company with
+   * the keypair tip. That tip withholds its body because materializing a
+   * private half is what `out` is for, and `ACTION_REASONS.neverAskedFor` is
+   * the sentence Copy and Download refuse with. None of that applies here:
+   * these values are `sensitive: false` at every emit site, nothing is being
+   * held back, and a tile that rendered the whole candidate list from
+   * `netData` while Copy said "this value was not asked for" would be an
+   * incoherent pair. `recipients` above — the other structured, non-secret
+   * dangling tip — already emits its body for exactly this reason.
+   *
+   * Built by `networkArtifact` rather than here, so this tile and the one
+   * `out @label` produces cannot drift into two descriptions of one value.
+   */
+  if (NETWORK_VALUE_TYPES.has(value.type)) {
+    return [
+      networkArtifact(value, name, `${name}.${value.type === "sdp" ? "sdp" : "json"}`),
     ];
   }
   return [];
