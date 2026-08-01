@@ -458,9 +458,23 @@ export async function execJoseSign(value, params = {}, bindings = {}) {
     type: "text",
     data: token,
     meta: {
-      // A signed token is a bearer credential: whoever holds it can use it.
-      // Masked like any other secret, revealable when the recipe asked for it
-      // with `out`.
+      /**
+       * A signed token is a bearer credential: whoever holds it can use it.
+       * Masked like any other secret, revealable when the recipe asked for it
+       * with `out`.
+       *
+       * The tempting correction is that a JWS is *signed, not encrypted*, so
+       * its header and payload are not confidential — true, and it is not the
+       * question this flag answers. `sensitive` is the *displayability* axis
+       * (`keyring.add` moves a secret while masked precisely because storing
+       * is not displaying), and a compact JWS on screen is a live credential
+       * on screen. What the readable half is owed is a **read-out that draws
+       * while masked**, and the `jose-token` kind now declares one: the
+       * `publicView` there renders this `jose` body — header, claims,
+       * validity — and never the third segment, so the mask withholds exactly
+       * the signature. Flipping this flag was the wrong lever; the missing
+       * `publicView` was the defect.
+       */
       sensitive: true,
       kind: "jws",
       jose: {

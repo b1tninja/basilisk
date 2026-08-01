@@ -1774,6 +1774,11 @@ async function execStepBody(step, value, bindings, artifacts) {
       const armored = arts[0].armored;
       const cryptoSummary = await summarizeEncryption(armored);
       const stem = safeOutputStem(step.params.name || "envelope");
+      // Hoisted out of the `role:` line below rather than written inline,
+      // because `artifact-roles.test.js` reads the role literals off that line
+      // to check them against the vocabulary — and `mode === "passphrase"`
+      // would have put a string on it that is not a role.
+      const ceremonyEnvelope = mode !== "passphrase";
       artifacts.push({
         label:
           mode === "passphrase"
@@ -1785,7 +1790,28 @@ async function execStepBody(step, value, bindings, artifacts) {
         mime: "application/pgp-encrypted",
         cryptoSummary,
         disposition: "file",
-        role: "envelope",
+        /**
+         * **The mode decides the role, because the two modes make two
+         * different objects.**
+         *
+         * Both branches said `envelope`, so a `mode=passphrase` message —
+         * whose own label calls it "OpenPGP symmetric ciphertext" — wore the
+         * **ENVELOPE** badge. That word is not decoration here. `envelope` is
+         * a role the ceremony vocabulary owns: the master-key wrap that a
+         * witness must keep and must *not* count toward the threshold, which
+         * is the whole reason the kind exists separately from `ciphertext`
+         * when both draw the same packet read-out. A badge that says
+         * "envelope" over an ordinary passphrase-encrypted message spends
+         * that word on something that is not one, and the label and the badge
+         * disagreed on the same tile.
+         *
+         * `mode=master` is the ceremony's own branch — it is the one that
+         * mints the random master key the shares reconstruct — so it keeps
+         * the role. Nothing else about the artifact moves: same body, same
+         * filename, same `.asc`, same tags, and both roles resolve to a kind
+         * whose view is `PacketMapCard`.
+         */
+        role: ceremonyEnvelope ? "envelope" : "ciphertext",
         tags:
           mode === "passphrase"
             ? ["openpgp", "skesk", "passphrase"]

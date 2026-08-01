@@ -446,11 +446,14 @@ The actions are the ones §35d specifies, and their visual states are the whole
 point:
 
 - **Copy** — declared, disabled, reason `"Reveal this value first — a masked
-  value cannot be copied."` It renders at inert weight with the dotted
+  value cannot leave the notebook."` It renders at inert weight with the dotted
   underline. Declared rather than omitted because §33d's first question
   ("meaningful for this object?") is yes — the JWK is copyable once revealed.
-- **Copy fingerprint**, **Download** — enabled while masked. What they emit
-  derives from the public half, or never appears on screen.
+- **Copy fingerprint** — enabled while masked. What it emits derives from the
+  public half. **Download is not**: it takes Copy's branch verbatim and shares
+  its sentence, which is why that sentence names neither action. (This bullet
+  said Download was enabled; what shipped disables it, because §34b gates on
+  whether a value *leaves* and a file is where a secret goes to be kept.)
 - **Add to keyring** — enabled while masked, at full local weight. This is the
   clearest case in the design for the mask rule being about *where a value
   lands*: the vault's whole job is to hold the value without showing it, and

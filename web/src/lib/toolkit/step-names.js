@@ -456,11 +456,30 @@ export function migrateRecipe(text) {
     apply(from, to, re);
   }
 
+  /**
+   * A readable target for every count key this function can set.
+   *
+   * The keys that are not `LEGACY_STEP_MIGRATE` names live here, and three of
+   * them were **missing** — `to`, `from` and `bare-slot-@` produced a change
+   * whose `to` was `undefined`. Nothing noticed for as long as `changes` was
+   * returned to nobody: `migrateRecipe` had no UI caller at all, so the list
+   * was only ever read by tests that checked the entries they cared about.
+   * Wiring **Upgrade recipe** made it a sentence on the status line, and an
+   * undefined target reads there as "to → undefined".
+   *
+   * Kept as the *displayed* form rather than the regex's replacement string:
+   * `to` rewrites to the token `encode`, but what the user typed was `to
+   * base64` and what they now have is `encode base64`, so naming the alphabet
+   * slot is the honest description of the edit.
+   */
   /** @type {Record<string, string>} */
   const EXTRA_MIGRATE_TO = {
     hex: "encode hex",
     unhex: "decode hex",
+    to: "encode <alphabet>",
+    from: "decode <alphabet>",
     "from (slot)": "in",
+    "bare-slot-@": "@label",
     "encrypt gpg": "gpg.encrypt",
     "decrypt gpg": "gpg.decrypt",
     "encrypt/decrypt": "aes-gcm / …",

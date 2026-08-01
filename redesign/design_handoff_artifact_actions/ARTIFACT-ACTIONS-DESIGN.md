@@ -419,7 +419,7 @@ Reason strings are written as sentences with a remedy where one exists, and are
 asserted verbatim in tests (the `share-check.js` precedent — wording is the
 feature):
 
-- `"Reveal this value first — a masked value cannot be copied."`
+- `"Reveal this value first — a masked value cannot leave the notebook."`
 - `"This value was not asked for. Add `out @label` to the recipe to see or copy it."`
 - `"My Keys is unavailable in this browser (no IndexedDB)."`
 - `"Publishing needs a connection to this site's directory."`
@@ -520,7 +520,14 @@ across the whole app is worth more than the extra emphasis here.
 ### §34b What Copy does on a masked private key
 
 **Decision: Copy is disabled, with the reason `"Reveal this value first — a
-masked value cannot be copied."`** It does not reveal-then-copy.
+masked value cannot leave the notebook."`** It does not reveal-then-copy.
+
+(The sentence named Copy alone until Download landed and took the same branch,
+at which point a user clicking a disabled *Download* was told the value "cannot
+be copied" — a sentence about a button they had not pressed. It now names
+neither action, because one condition may not acquire two explanations. The
+axis it gates on is *leaving*, which is also why `keyring.add` stays enabled
+while masked and these two do not.)
 
 The argument is short. The reveal gate exists so that cleartext appears on
 screen deliberately, under a 15-second timer, in a place the user is looking. A

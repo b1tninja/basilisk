@@ -37,14 +37,19 @@ const run = async (src) => {
 };
 
 describe("packetSummary — the framing, never the contents", () => {
-  it("maps a real OpenPGP envelope into its packets", async () => {
+  it("maps a real OpenPGP symmetric ciphertext into its packets", async () => {
     const arts = await run(
       '"secret data" | utf8 | gpg.symencrypt mode=passphrase passphrase="hunter2"'
     );
-    const env = arts.find((a) => a.role === "envelope");
+    // `role: "ciphertext"`, which is what this artifact has always been: it
+    // stamped `envelope` on both modes until the ceremony word was given back
+    // to the master-key wrap alone. The read-out is the same either way —
+    // `ciphertext` and `envelope` both draw `PacketMapCard` — so nothing about
+    // this test's subject moved, only the word it looks the artifact up by.
+    const env = arts.find((a) => a.role === "ciphertext");
     const summary = packetSummary(env.content);
     expect(summary.rows.length).toBeGreaterThan(0);
-    // A passphrase envelope is protected by an SKESK, not a PKESK. That
+    // A passphrase-sealed body is protected by an SKESK, not a PKESK. That
     // distinction is the whole reason the tile draws packets: it is the
     // difference between "a key can open this" and "a passphrase can".
     expect(summary.rows.map((r) => r.name)).toContain("SKESK");

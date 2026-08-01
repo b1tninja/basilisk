@@ -49,7 +49,7 @@ import { execFileRead } from "../lib/toolkit/file-ops.js";
 import { execQrScan } from "../lib/toolkit/qr-scan.js";
 import { setCssVar } from "../lib/css-vars.js";
 import { cn } from "@/lib/cn";
-import { useNotebook } from "./useNotebook";
+import { recipeUpgrade, useNotebook } from "./useNotebook";
 import { RecipientBinderHost } from "./RecipientBinderHost";
 import { CellWarnings, warningDismissKey } from "./CellWarnings";
 import {
@@ -804,6 +804,28 @@ export function ToolkitShell() {
     return false;
   };
 
+  /**
+   * **Upgrade recipe**, from either of the two places that offer it.
+   *
+   * One handler for both so the source view and the error banner cannot come
+   * to disagree about what the button does — the same reason the action table
+   * exists one layer down. The rewrite, and the status line naming it, are
+   * `upgradeCellRecipe`'s; all this owns is the draft.
+   *
+   * `rawDrafts` is cleared for the cell because the draft it held is now
+   * stale — the textarea re-reads `cellRecipeSource`, which is the migrated
+   * text round-tripped through the parser, so what is on screen afterwards is
+   * what the notebook actually holds.
+   */
+  const applyRecipeUpgrade = (i: number, text?: string) => {
+    if (!nb.upgradeCellRecipe(i, text)) return;
+    setRawDrafts((prev) => {
+      const next = { ...prev };
+      delete next[i];
+      return next;
+    });
+  };
+
   const cellView = (i: number): CellView => cellViews[i] || "pipeline";
   const setCellView = (i: number, view: CellView) => {
     setCellViews((prev) => ({ ...prev, [i]: view }));
@@ -1380,6 +1402,16 @@ export function ToolkitShell() {
                               nb.setFocusedCell(i);
                               setChipEdit({ cell: i, stem: si, branch: null, body: null });
                             }}
+                            /* Passed only where the migrator would rewrite
+                               something — the banner renders the button when
+                               it is passed *and* the message offers it, so a
+                               retired name with no rewrite behind it is a
+                               sentence and not a dead control. */
+                            onUpgradeRecipe={
+                              recipeUpgrade(nb.cellRecipeSource(i))
+                                ? () => applyRecipeUpgrade(i)
+                                : undefined
+                            }
                           />
                           {/* Below the errors, and below them in weight: a
                               warning that a run will still succeed does not
@@ -1427,9 +1459,33 @@ export function ToolkitShell() {
                                 spellCheck={false}
                                 placeholder="random 32 | base64 | out @secret"
                               />
-                              <p className="text-xs text-[var(--muted-foreground)]">
-                                Edit the cell recipe as text — applies on blur.
-                              </p>
+                              <div className="flex flex-wrap items-baseline gap-2">
+                                <p className="text-xs text-[var(--muted-foreground)]">
+                                  Edit the cell recipe as text — applies on blur.
+                                </p>
+                                {/* The other half of the wiring. A legacy
+                                    token in this box is *refused* by
+                                    `applyCellRecipeText`, so it never reaches
+                                    `chains` and the banner above cannot see
+                                    it — the draft is the only copy, which is
+                                    why the draft is what gets migrated. */}
+                                {recipeUpgrade(rawDrafts[i] ?? nb.cellRecipeSource(i)) ? (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    className="h-[22px] px-2 text-[10px]"
+                                    data-upgrade-recipe
+                                    onClick={() =>
+                                      applyRecipeUpgrade(
+                                        i,
+                                        rawDrafts[i] ?? nb.cellRecipeSource(i)
+                                      )
+                                    }
+                                  >
+                                    Upgrade recipe
+                                  </Button>
+                                ) : null}
+                              </div>
                             </div>
                           ) : null}
                           {cellView(i) !== "source" && (chain.steps || []).length === 0 ? (

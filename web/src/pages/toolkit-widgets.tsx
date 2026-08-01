@@ -2278,15 +2278,28 @@ function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"]
        * `JwtArtifact` is the most complete read-out in the codebase — verdict,
        * claims in RFC order, a draining bar, tones withheld when the signature
        * was not checked — and it had a section of its own that mounts it
-       * **bare**. Inside a tile it looks like this: `sensitive: true`, no
-       * `publicView`, so a reader gets "sensitive — value not shown" and a
-       * Reveal that the list re-masks fifteen seconds later.
+       * **bare**. Inside a tile it used to look like nothing: `sensitive:
+       * true`, no `publicView`, so a reader got "sensitive — value not shown"
+       * and a Reveal that the list re-masks fifteen seconds later.
        *
-       * That is *correct* under §34b — every fact on the card is decoded from
-       * the token, so it derives from the masked material — and the fix is to
-       * the reveal timer, which is list-scoped and shared with shares and
-       * private keys. Recorded here rather than "fixed" with a `publicView`,
-       * which would be a hole in the mask.
+       * **The row now draws the card while masked, and the earlier reading
+       * here was wrong.** It said every fact on the card "derives from the
+       * masked material", so a `publicView` would be a hole in the mask. That
+       * is not the rule as the table practises it: `ssh-private` reads the
+       * *masked openssh block* to draw a key type and a fingerprint, because
+       * what matters is whether the drawn material is public, not whether the
+       * masked bytes were touched. A JWS is signed, not encrypted — its header
+       * and payload are base64url and readable by anyone holding it — and the
+       * **signature** is the part that makes it a bearer credential. So the
+       * kind keeps `sensitive: true` (a compact token on screen is a
+       * credential on screen) and declares a `publicView` that draws header,
+       * claims and validity and has no path to the third segment: it is handed
+       * `meta.jose`, and the compact token is not in it.
+       *
+       * Keep this row masked. It is the one place the masked state of the
+       * best read-out in the codebase is visible at all, and the reason it
+       * was missing for so long is that the section above mounts the widget
+       * bare, where a mask cannot be seen.
        */
       label: "t",
       role: "token",

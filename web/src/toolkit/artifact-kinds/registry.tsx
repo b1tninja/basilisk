@@ -146,6 +146,20 @@ function KeypairCard({ artifact }: ArtifactViewContext) {
   );
 }
 
+/**
+ * The JOSE reader, drawn from the engine's own `meta.jose` body.
+ *
+ * A single function so `view` and `publicView` can be *the same reference*
+ * rather than two copies that agree today — the `KeypairCard` arrangement, and
+ * the property `artifact-kinds-table.test.js` pins there. Nothing here parses
+ * the token: `header`, `claims`, `payloadText` and `timing` were computed by
+ * the op that ran, which is the only party that knows whether a signature was
+ * checked. A view that re-derived them could only ever report "unverified".
+ */
+function JoseTokenCard({ artifact }: ArtifactViewContext) {
+  return hasJoseRenderer(artifact.jose) ? <JwtArtifact data={artifact.jose} /> : null;
+}
+
 const pgpCardFor = (publicOnly: boolean) =>
   function OpenPgpView({ artifact }: ArtifactViewContext) {
     const traits = (artifact.traits || {}) as { fingerprint?: string };
@@ -517,8 +531,47 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     match: { role: "token" },
     label: "Token",
     glyph: "signature",
-    view: ({ artifact }) =>
-      hasJoseRenderer(artifact.jose) ? <JwtArtifact data={artifact.jose} /> : null,
+    view: JoseTokenCard,
+    /**
+     * **A JWS stays `sensitive`, and this is what it withholds instead.**
+     *
+     * The question was whether a signed token is a secret at all, and both
+     * readings are defensible. A JWS is *signed, not encrypted*: its header
+     * and payload are base64url, so nobody holding the token learns anything
+     * from reading them that they did not already have. But a signed token is
+     * almost always a **bearer credential**, and possessing one is using it —
+     * which is the reading `jose-ops.js` took when it stamped `sensitive:
+     * true`, and it is the right one. `sensitive` here means *displayability*
+     * (that is the axis `keyring.add` stays enabled on while Copy and
+     * Download do not), and a compact JWS on screen is a credential on screen.
+     *
+     * So the flag is correct and the **absence of a `publicView` was the
+     * defect**: the best read-out in the codebase was behind a Reveal that
+     * the list re-masks after fifteen seconds, on the only tile that ever
+     * renders it. This is `ssh-private`'s shape exactly — that kind draws the
+     * key type, fingerprint and comment while withholding the openssh block —
+     * and the split lands in the same place. The header and the claims say
+     * *which* token this is; the **signature** is what makes it usable, and
+     * `JwtArtifact` has no path that renders it: `meta.jose` carries
+     * `header`, `claims`, `payloadText` and `timing`, and the third segment
+     * is not among them. The compact token stays behind the mask, where
+     * Reveal is still what lets Copy and Download move it.
+     *
+     * Same function as `view` for that reason, like `KeypairCard` — there is
+     * no raw toggle to withhold, so masked and unmasked must draw
+     * identically, and making that structural means no future edit to the
+     * reader can turn this into a leak.
+     *
+     * **A JWE is the other case and needs no exception.** It really is
+     * encrypted, and it arrives here with `claims: null`, so the same reader
+     * draws its `alg`/`enc` header — in the clear on the wire, it is the
+     * AEAD's own AAD — and says the payload is encrypted. The decrypted
+     * plaintext is a *different artifact*: `jose.decrypt` emits `text/json`
+     * or `text/opaque`, which projects to `secret`, not `token`, so it lands
+     * on the `secret` kind, which declares no `publicView` and draws nothing
+     * while masked. The two are not being treated as one thing.
+     */
+    publicView: JoseTokenCard,
     empty: "No decoded token body — run jose.verify to read and check it.",
     // Expand remains a tile-level affordance (the tile derives it from the
     // kind's `expandable`), so it is not declared here — a declared action
@@ -573,7 +626,40 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
     id: "envelope",
     match: { role: "envelope" },
     label: "Envelope",
-    view: ({ artifact }) => <PacketMapCard content={artifact.content} />,
+    /**
+     * **The clause that prevents the accident, where it cannot be cut.**
+     *
+     * The engine's label already says it — "OpenPGP envelope — required for
+     * recovery (not a share)" — and the row gives that label a `title`, so
+     * the full sentence is reachable on hover. In a narrow panel the row
+     * still cuts it at "OpenPGP envelope — required f…", and the half that
+     * gets cut is the load-bearing half. Hover is not an answer for the one
+     * artifact where being misread costs a ceremony: a witness who counts
+     * this toward the threshold has destroyed it, and they will be reading a
+     * printed sheet or a phone, neither of which has a pointer.
+     *
+     * Restructuring the identity row was the other candidate and is the wrong
+     * size of fix — it would change every tile's measured anatomy to serve one
+     * label. A caption in the card's own register costs one line on one kind,
+     * and unlike the label it has the full row width and no `truncate`.
+     *
+     * Not a duplicated *fact* either: the label is the artifact's **name**,
+     * this is the **instruction**, and after the role fix in `engine.js` this
+     * kind claims only the master-key wrap — a `mode=passphrase` message is a
+     * `ciphertext` and never reaches this sentence.
+     */
+    view: ({ artifact }) => (
+      <>
+        <p
+          className="font-mono text-[10px] italic text-[var(--muted-foreground)]"
+          data-envelope-note
+        >
+          not a share — required to recover the secret, and never counted toward
+          the threshold
+        </p>
+        <PacketMapCard content={artifact.content} />
+      </>
+    ),
     empty:
       "This body is not OpenPGP-framed, so there are no packets to map — the armor is below.",
     actions: ["copy", "download"],

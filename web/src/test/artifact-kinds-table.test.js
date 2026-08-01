@@ -323,10 +323,15 @@ describe("role coverage", () => {
    * `network-value` and `jose-token` — had sections that mount their widget
    * **bare**, outside a tile. So `JwtArtifact`, the most complete read-out in
    * the codebase, had never been seen inside the thing that masks it: `jose.sign`
-   * emits `sensitive: true`, the kind declares no `publicView`, and the card is
-   * therefore behind a Reveal that the list re-masks after fifteen seconds.
-   * That is invisible in a section that renders the card directly, and it is
-   * the class of thing this page exists to make visible.
+   * emits `sensitive: true`, the kind declared no `publicView`, and the card
+   * was therefore behind a Reveal that the list re-masks after fifteen
+   * seconds. That is invisible in a section that renders the card directly,
+   * and it is the class of thing this page exists to make visible.
+   *
+   * **That one is now fixed** — `jose-token` declares a `publicView`, argued
+   * on the kind and pinned by "draws a JOSE token while it is masked" below —
+   * but the finding is left standing here because it is the gate's own
+   * justification, not a status line.
    *
    * **What this gate is and is not.** It is a *source* check — the catalog
    * cannot be imported (see `CATALOG_SRC`), so this asserts that a fixture
@@ -471,6 +476,65 @@ describe("§37 kinds show a read-out where there is one, and say so where there 
       expect(typeof kindById(id).view, id).toBe("function");
     }
   });
+
+  it("says 'not a share' where a narrow panel cannot cut it", () => {
+    // The engine's label carries the clause and the row gives it a `title`,
+    // but a narrow panel still truncates it at "OpenPGP envelope — required
+    // f…" and hover is not an answer for a witness reading a printed sheet.
+    // The caption sits in the card, at full row width, with no `truncate`.
+    // Comment-stripped: the argument for this line is written on the kind
+    // right above it, and a source scan that counted the prose would pass
+    // whether or not the element is rendered.
+    const SRC = CODE_ONLY;
+    const envelope = SRC.slice(SRC.indexOf('id: "envelope"'), SRC.indexOf('id: "share"'));
+    expect(envelope).toMatch(/data-envelope-note/);
+    expect(envelope).toMatch(/not a share/);
+    expect(envelope).toMatch(/threshold/);
+    // Never on the ciphertext kind: `gpg.encrypt`'s output and a
+    // `mode=passphrase` message are not envelopes and must not be told they
+    // are one, which is the same confusion in the other direction.
+    const ciphertext = SRC.slice(
+      SRC.indexOf('id: "ciphertext"'),
+      SRC.indexOf('id: "envelope"')
+    );
+    expect(ciphertext).not.toMatch(/data-envelope-note/);
+  });
+
+  it("draws a JOSE token while it is masked, withholding the signature", () => {
+    // The defect the D7 catalog gate turned up: `jose.sign` emits
+    // `sensitive: true` — right, a signed token is a bearer credential — and
+    // `jose-token` declared no `publicView`, so the best read-out in the
+    // codebase was behind a Reveal the list undoes after fifteen seconds, on
+    // the only tile that ever renders it.
+    const jose = kindById("jose-token");
+    // The same *reference*, like `keypair` — there is no raw toggle here to
+    // withhold, so masked and unmasked must draw identically by construction
+    // rather than by two copies that happen to agree.
+    expect(jose.publicView).toBe(jose.view);
+
+    // What the mask still withholds is the third segment. The reader is fed
+    // `artifact.jose`, which the op built, and a compact token is not in it.
+    const body = {
+      kind: "jws",
+      verified: true,
+      signed: true,
+      header: { alg: "ES256" },
+      claims: { sub: "alice" },
+      timing: { exp: null, nbf: null, iat: null, expired: false, notYetValid: false },
+    };
+    expect(Object.keys(body)).not.toContain("token");
+    expect(
+      jose.publicView({
+        artifact: { content: "a.b.c", jose: body },
+        masked: true,
+      })
+    ).toBeTruthy();
+    // No body, no card — a token whose op left no `jose` falls through to the
+    // raw path rather than rendering an empty reader over a masked value.
+    expect(
+      jose.publicView({ artifact: { content: "a.b.c" }, masked: true })
+    ).toBeNull();
+  });
 });
 
 describe("the fallback is a kind, not a crash (§32f)", () => {
@@ -534,7 +598,12 @@ describe("the existing renderers were folded in, not rewritten (§32e)", () => {
     // question for it — but it is no longer what decides the kind.
     const jose = ARTIFACT_KINDS.find((k) => k.id === "jose-token");
     expect(jose.match.role).toBe("token");
-    expect(TABLE_SRC).toMatch(/view: \(\{ artifact \}\) =>\s*hasJoseRenderer/);
+    // The view is a named function now (`JoseTokenCard`), so that `view` and
+    // `publicView` can be one reference rather than two copies — see "draws a
+    // JOSE token while it is masked". The property this test is about is
+    // unchanged: the predicate is *inside* the body, not in `match`.
+    expect(CODE_ONLY).toMatch(/function JoseTokenCard[\s\S]{0,200}hasJoseRenderer/);
+    expect(CODE_ONLY).not.toMatch(/match: \{[^}]*hasJoseRenderer/);
   });
 
   it("renders the empty state rather than a different kind when a body is missing", () => {
@@ -594,10 +663,24 @@ describe("real engine artifacts resolve to the right kind", () => {
     const qr = await kindsFor('"hello" | qr');
     expect(qr.find((r) => r.role === "qr").kind).toBe("qr");
 
+    // `mode=master`, not `mode=passphrase`. Both branches of `gpg.symencrypt`
+    // used to stamp `role: "envelope"`, so this assertion passed against the
+    // wrong artifact: a passphrase-encrypted message — whose own label calls
+    // it "OpenPGP symmetric ciphertext" — badged **ENVELOPE**, the one word
+    // the ceremony vocabulary needs to mean the master-key wrap a witness must
+    // keep and must not count toward the threshold.
     const env = await kindsFor(
-      '"secret data" | utf8 | gpg.symencrypt mode=passphrase passphrase="hunter2"'
+      "genkey ec/p256 | export pkcs8 | pem | gpg.symencrypt mode=master"
     );
     expect(env.find((r) => r.role === "envelope").kind).toBe("envelope");
+    expect(env.find((r) => r.role === "envelope").label).toMatch(/not a share/);
+
+    const sym = await kindsFor(
+      '"secret data" | utf8 | gpg.symencrypt mode=passphrase passphrase="hunter2"'
+    );
+    const symTile = sym.find((r) => r.label === "OpenPGP symmetric ciphertext");
+    expect(symTile.role).toBe("ciphertext");
+    expect(symTile.kind).toBe("ciphertext");
 
     const receipt = await kindsFor('run.receipt label="ceremony" | out @r');
     expect(receipt.find((r) => r.role === "receipt").kind).toBe("receipt");

@@ -5,6 +5,7 @@ import { clearActivity } from "../lib/toolkit/activity-log.js";
 import {
   PRESETS,
   compileRecipe,
+  migrateRecipe,
   serializeRecipe,
   validateRecipe,
   unresolvedRecipients,
@@ -200,6 +201,26 @@ export function chainsWithCellSteps(
   while (copy.length <= cellIndex) copy.push({ steps: [] });
   copy[cellIndex] = { steps: nextSteps };
   return copy;
+}
+
+/**
+ * What **Upgrade recipe** would do to this text, or `null` for nothing.
+ *
+ * Pure, and separate from the hook, so the button's *availability* is one
+ * node-testable question rather than a predicate each render site invents. The
+ * rule is "the migrator would change something", not "the message mentioned
+ * upgrading": the six messages that name the button are written by hand and a
+ * seventh could be added without a rewrite behind it, which would put a button
+ * on screen that does nothing when pressed — the failure this wiring exists to
+ * remove, reintroduced one message later.
+ */
+export function recipeUpgrade(
+  text: string
+): { recipe: string; changes: { from: string; to: string; count: number }[] } | null {
+  const before = String(text ?? "");
+  const { recipe, changes } = migrateRecipe(before);
+  if (recipe === before || !changes.length) return null;
+  return { recipe, changes };
 }
 
 /** One validator complaint, anchored to a chip *within its own cell*. */
@@ -1066,6 +1087,48 @@ export function useNotebook() {
     return true;
   }, []);
 
+  /**
+   * Apply **Upgrade recipe** to one cell, from either view.
+   *
+   * `migrateRecipe` had no caller in the UI at all, while six error messages
+   * — `legacyRemovalHint`'s five and `RETIRED_PARAM_VALUES`' one — told the
+   * reader to "Upgrade recipe to migrate". That is the defect `723b95b` fixed
+   * for the SSH passphrase message, which named a field in the Inputs panel
+   * that did not exist: a remedy pointing at a control nobody can press is
+   * worse than no remedy, because the reader spends their time hunting for it.
+   *
+   * `text` is passed when the source view holds an unapplied draft — the
+   * legacy tokens are in the textarea and were *refused* by
+   * `applyCellRecipeText`, so they are not in `chains` and `cellRecipeSource`
+   * cannot see them. Omit it in the chip view, where the cell parsed and the
+   * complaint is a retired *param value* (`file.read as=auto`) that survives
+   * a round trip through `serializeRecipe`.
+   *
+   * Returns the changes so the caller can say what it did; `null` when there
+   * was nothing to rewrite, so the button is never offered on a recipe the
+   * migrator would leave alone.
+   */
+  const upgradeCellRecipe = useCallback(
+    (cellIndex: number, text?: string) => {
+      const before =
+        text ?? serializeRecipe({ chains: [chains[cellIndex] || { steps: [] }] });
+      const upgrade = recipeUpgrade(before);
+      if (!upgrade) return null;
+      if (!applyCellRecipeText(cellIndex, upgrade.recipe)) return null;
+      // Named, not silent. A migration that renamed four steps and said
+      // nothing is indistinguishable from a button that did not work, and the
+      // rewrite is exactly the kind of change a reader wants to audit before
+      // pressing Run — `migrateRecipe` returns the counts for this.
+      setRunStatus(
+        `Upgraded: ${upgrade.changes
+          .map((c) => `${c.from} → ${c.to}${c.count > 1 ? ` ×${c.count}` : ""}`)
+          .join(", ")}`
+      );
+      return upgrade;
+    },
+    [chains, applyCellRecipeText]
+  );
+
   const cellRecipeSource = useCallback(
     (cellIndex: number) =>
       serializeRecipe({ chains: [chains[cellIndex] || { steps: [] }] }),
@@ -1561,6 +1624,7 @@ export function useNotebook() {
     applyCellRecipeText,
     loadRecipeText,
     cellRecipeSource,
+    upgradeCellRecipe,
     addCell,
     deleteCell,
     runFrom,

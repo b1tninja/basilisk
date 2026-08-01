@@ -33,11 +33,30 @@ const ENGINE = readFileSync(
   "utf8"
 );
 
+/**
+ * Every string literal the engine writes as a `role:` value.
+ *
+ * Reads the **whole line** rather than only the literal immediately after the
+ * colon, because a role is often a ternary — `role: isShare ? "share" :
+ * "ciphertext"` — and the narrower pattern silently saw neither branch. That
+ * blindness was invisible until `gpg.symencrypt`'s two modes stopped sharing
+ * one role and the guard had nothing to say about either word.
+ *
+ * The corollary is a constraint on `engine.js`, stated where it can be read:
+ * the `role:` line carries role literals and nothing else. A condition that
+ * needs a string of its own is hoisted to a variable above the push, which is
+ * exactly what `ceremonyEnvelope` is.
+ */
+const ENGINE_ROLE_LITERALS = [
+  ...ENGINE.matchAll(/\brole(?::|\s*=)([^\n]*)/g),
+].flatMap((m) => [...m[1].matchAll(/"([a-z-]+)"/g)].map((lit) => lit[1]));
+
 describe("one vocabulary", () => {
   it("covers every role literal the engine emits", () => {
-    const emitted = [...ENGINE.matchAll(/\brole: "([a-z-]+)"/g)].map((m) => m[1]);
-    expect(emitted.length).toBeGreaterThan(10);
-    const unknown = [...new Set(emitted)].filter((r) => !ARTIFACT_ROLES.includes(r));
+    expect(ENGINE_ROLE_LITERALS.length).toBeGreaterThan(10);
+    const unknown = [...new Set(ENGINE_ROLE_LITERALS)].filter(
+      (r) => !ARTIFACT_ROLES.includes(r)
+    );
     expect(unknown, `engine emits roles absent from ARTIFACT_ROLES: ${unknown}`).toEqual(
       []
     );
@@ -111,9 +130,24 @@ describe("the floor does not overwrite a declaration (§32c)", () => {
   });
 
   it("still declares the roles a projection could never derive", () => {
+    // Against the extracted literals, not a per-role regex over the file: an
+    // engine that stopped writing `envelope` as a bare `role: "envelope"` —
+    // which is what happened when the ceremony wrap and a passphrase message
+    // stopped sharing a role — would still be declaring it, and a pattern
+    // pinned to the old shape failed on a change that kept the property.
     for (const role of ["receipt", "diagnostic", "qr", "envelope", "inspect"]) {
-      expect(ENGINE, role).toMatch(new RegExp(`role(?::|\\s*=)\\s*"${role}"`));
+      expect(ENGINE_ROLE_LITERALS, role).toContain(role);
     }
+  });
+
+  it("gives the ceremony envelope its word back, and the passphrase mode its own", () => {
+    // Both `gpg.symencrypt` modes stamped `role: "envelope"`, so a
+    // `mode=passphrase` message badged **ENVELOPE** while its own label called
+    // it "OpenPGP symmetric ciphertext" — the badge and the label disagreeing
+    // on one tile, in the one word that tells a witness what not to count
+    // toward a threshold.
+    expect(ENGINE).toMatch(/const ceremonyEnvelope = mode !== "passphrase"/);
+    expect(ENGINE).toMatch(/role: ceremonyEnvelope \? "envelope" : "ciphertext"/);
   });
 });
 

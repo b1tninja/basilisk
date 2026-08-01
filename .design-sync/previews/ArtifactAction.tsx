@@ -48,7 +48,7 @@ export const DisabledWithReason = () => (
       label="Copy"
       tier="inert"
       onClick={noop}
-      reason="Reveal this value first — a masked value cannot be copied."
+      reason="Reveal this value first — a masked value cannot leave the notebook."
     />
     <ArtifactAction
       label="Add to keyring"

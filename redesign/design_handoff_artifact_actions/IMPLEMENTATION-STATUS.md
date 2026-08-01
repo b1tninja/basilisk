@@ -28,6 +28,31 @@ list, and where the two disagree the box is the conservative one. A blanket
 find-replace over this file once ticked three unbuilt items and had to be
 walked back; do not repeat it.
 
+Six were ticked in a later pass — **1.1, 2.1, 2.2, 2.3, 4.1, 6.1** — each with
+the evidence written into its entry. Two that looked ready were deliberately
+left open, and their near-misses are worth knowing rather than rediscovering:
+
+- **1.4** is *built* — `cellOutputs` carries every field the registry needs and
+  a test names them — but its acceptance asks for the projection's key set to
+  **equal** a declared list, so that a future engine field is a failure rather
+  than an invisible omission. The shipped test checks a subset, which catches
+  a field being removed and not a field never being added. That is the exact
+  trap HANDOFF says has cost two debugging rounds, so the box stays open until
+  the guard is the one the unit asked for.
+- **6.2** holds its property by a *stronger* mechanism than its criterion
+  names. The criterion is a test that runs every action with stubs and asserts
+  one entry each; what shipped asserts `recordActivity` appears exactly once in
+  the tile, inside the `.then` and before the `.catch`. That makes "a new
+  action cannot forget" structural rather than sampled — but it is not the
+  stated criterion, and this file's rule is that the box records what was
+  checked against the list.
+
+Several remaining units (3.3, 3.5, 3.6, 3.7, part of 6.3) have acceptance
+criteria written as `getComputedStyle` / DOM-query measurements, and this suite
+runs in node with no renderer. Source assertions stand in for them today, which
+is a real gap and not a bookkeeping one — see the verification notes at the end
+about the catalog and the built page.
+
 **§37 is now built too.** Every role in `ARTIFACT_ROLES` is claimed:
 `ciphertext` and `envelope` share a packet read-out over `packet-map.js`;
 `recipients`, `sshsig`, `receipt` and `qr` have their own cards; `diagnostic`
@@ -49,6 +74,24 @@ projected `sshsig`/`token` outranks an emit site's `text`/`secret`, which are
 the sensitivity ternary and not a claim about identity. Deliberately a closed
 set — `pem`/`der` project to `key`, and the key card reads JWK, so promoting
 them would swap a readable armor body for an emptier card (see 5.6).
+
+**The JWT reader was still unreachable after that, and the second half is now
+fixed too.** Making `jose-token` resolve got the kind a tile; what it did not
+get was a *visible* card, because `jose.sign` emits `sensitive: true` and the
+kind declared no `publicView` — so the most complete read-out in the codebase
+sat behind a Reveal the list undoes fifteen seconds later, on the only tile
+that ever renders it. The question that deferred it was whether a JWS is a
+secret at all, and the answer is **both, on different axes**: a JWS is signed,
+not encrypted, so its header and payload are readable by anyone holding it —
+but a signed token is a bearer credential and `sensitive` is the
+*displayability* axis (the same axis on which `keyring.add` stays enabled while
+masked). So the flag stays and the kind declares a `publicView`, which is
+`ssh-private`'s shape exactly: header, claims and validity are drawn, the
+**signature** is withheld, and the reader has no path to it — it is handed
+`meta.jose`, and the compact token is not in it. A JWE needs no exception:
+`jose.decrypt`'s plaintext is a different artifact that projects to `secret`,
+so decrypted claims never reach this kind. Argued on the kind, pinned in
+`artifact-kinds-table.test.js`, and seen masked in the built catalog.
 
 **§33a, §34c and §38 are built as well.** `ArtifactTile` is its own component;
 `GateBanner` is `ApprovalBanner`'s chrome extracted with no behavioural change
@@ -140,11 +183,20 @@ off a field that half the artifacts do not carry.
 
 ## 1. Types and engine plumbing (no UI) — §32
 
-- [ ] ⚙ **1.1 `ARTIFACT_ROLES` in `types.js`** — the one frozen list of the
+- [x] ⚙ **1.1 `ARTIFACT_ROLES` in `types.js`** — the one frozen list of the
   fifteen roles in §32c, exported. Accept: a unit test asserts every `role:`
   string literal appearing in `engine.js` is a member (a source grep in the
   test, the `toolbox-dot-css.test.js` style of guarding a duplication
   mechanically); adding an unlisted role fails.
+
+  **Checked**: `ARTIFACT_ROLES` is exported and `Object.isFrozen`, asserted;
+  `artifact-roles.test.js`' first test greps `engine.js` and fails on a literal
+  outside the list. One gap found and closed while verifying: the grep read
+  only the literal immediately after `role:`, so a **ternary** — `role: isShare
+  ? "share" : "ciphertext"`, and four more like it — was seen as neither
+  branch. It now reads the whole line, which puts a small constraint on
+  `engine.js` in return (a `role:` line carries role literals and nothing
+  else).
 - [ ] ⚙ **1.2 `artifactMetaFromType` gains the missing branches** — `text/sshsig`
   → `sshsig`; `text/jws` and `text/jwe` → `token`; the seven network bases
   (`candidate`, `sdp`, `stats`, `connstate`, `endpoint`, `certificate`,
@@ -186,19 +238,37 @@ directly observable headlessly, before any widget exists.
 
 ## 2. The kind registry and the resolver — §32
 
-- [ ] **2.1 `toolkit/artifact-kinds/resolve.ts`** — matcher per §32b (most
+- [x] **2.1 `toolkit/artifact-kinds/resolve.ts`** — matcher per §32b (most
   matched tags wins) plus `FALLBACK_KIND`. Accept: unit tests for exact match,
   tag-subset match, specificity ordering, and fallback; a resolver call on an
   artifact with an unknown role returns the fallback and never throws.
-- [ ] **2.2 `artifact-kinds/registry.tsx`** with the three existing renderers as
+
+  **Checked**: `artifact-kinds.test.js` covers all four — exact role match, tag
+  subset scored by count, specificity beating declaration order, and the
+  fallback for both an unknown role and an artifact with no role at all. Ties
+  throw *by design* and are their own describe block, and
+  `artifact-kinds-table.test.js`' "never throws on anything the engine emits"
+  is the guard that no real artifact reaches one.
+- [x] **2.2 `artifact-kinds/registry.tsx`** with the three existing renderers as
   entries (§32e). Accept: `NetworkArtifact`, `InspectorArtifact` and
   `JwtArtifact` are imported unmodified — a diff touching their internals means
   the abstraction is wrong; the seven network types are matched via the role
   projection, not via `hasNetworkRenderer`.
-- [ ] **2.3 `artifact-kinds.test.js` — the coverage gate.** Every role in
+
+  **Checked**: all three are imported and asserted unmodified; `CODE_ONLY` (the
+  comment-stripped table) is asserted not to mention `hasNetworkRenderer` at
+  all, and `NETWORK_BASES` in `types.js` is what defines `role: "netvalue"`.
+  `hasJoseRenderer` survives as a *body* check inside the view, which is the
+  question it answers.
+- [x] **2.3 `artifact-kinds.test.js` — the coverage gate.** Every role in
   `ARTIFACT_ROLES` is claimed by at least one entry; no two entries can both
   match any `(role, tags)` the engine emits. Accept: the test fails when a role
   is added without a kind, and when a duplicate matcher is introduced.
+
+  **Checked**: `UNCLAIMED_ROLES` is `[]` and the assertion is an equality
+  against it, so a role added without a kind fails; `ambiguousPairs` over
+  the table alone covers the duplicate-matcher half. The gate has teeth in both
+  directions, as the §37 note above says.
 - [x] **2.4 Catalog section — `#artifacttiles`** on `/toolkit-widgets`,
   rendering one row per §37 kind plus a deliberately unknown role so the
   fallback is visible beside them. Fixtures are captured from `runRecipe`
@@ -248,9 +318,17 @@ directly observable headlessly, before any widget exists.
 
 ## 4. Actions, by tier — §33c, §34
 
-- [ ] **4.1 Action table + injected `ActionServices`** (§33c). Accept: the table
+- [x] **4.1 Action table + injected `ActionServices`** (§33c). Accept: the table
   imports no vault, clipboard, network or file module; a unit test drives every
   action with stub services and asserts the `ActionResult`.
+
+  **Checked**: "imports no clipboard, vault, network or filesystem of its own"
+  asserts the first half against the source. All six entries — `copy`,
+  `download`, `key.copyFingerprint`, `key.copyPublicLine`, `keyring.add`,
+  `key.publish` — are run with stubs and their results asserted (the last two
+  against a real `fake-indexeddb` vault and a stub directory). Two structural
+  guards beside them: every `available()` returns a sentence rather than a bare
+  `false`, and every id a kind names resolves in the table.
 - [ ] **4.2 Inert actions** — `copy`, `download`, `expand`,
   `key.copyFingerprint`, `artifact.showQr`, `diag.configureTurn`. Accept: Copy
   routes through the existing `basilisk:clipboard-wrote` event so the shipped
@@ -373,7 +451,23 @@ directly observable headlessly, before any widget exists.
   dump of a sealed body is the decrypt inspector's job, and in a list row it
   would be the same wall of characters the armor already was. The envelope
   tile keeps the engine's "required for recovery (not a share)" label, which
-  is the artifact's own label and needed no help.
+  is the artifact's own label.
+
+  **Two corrections since, both about that label.** It *did* need help: in a
+  narrow panel the row cuts it at "OpenPGP envelope — required f…", and the
+  half that gets cut is the half that stops a witness counting the envelope
+  toward the threshold. The row's `title` makes it reachable on hover, which
+  is not an answer for someone reading a printed sheet or a phone.
+  Restructuring the identity row was rejected as the wrong size of fix — it
+  would change every tile's measured anatomy to serve one label — so the kind
+  states the instruction as a caption in the card, at full width, with no
+  `truncate`. And it could only be unconditional once the second correction
+  landed: **both `gpg.symencrypt` modes stamped `role: "envelope"`**, so a
+  `mode=passphrase` message badged **ENVELOPE** while its own label called it
+  "OpenPGP symmetric ciphertext". `mode=master` is the ceremony's branch and
+  keeps the role; the passphrase branch is a `ciphertext`, which is what it
+  always was. Nothing about either artifact moves — same body, same `.asc`,
+  same `PacketMapCard` — only the word the badge says.
 - [x] **5.4 `share` kind — and it is not `ShareCards`.** Deviation, argued:
   `ShareCards` is the *set's* surface, with its own per-mount reveal and its
   own print warning, and mounting it per-tile would put a second reveal gate
@@ -440,9 +534,16 @@ numbers, because the design did not ask for them.
 
 ## 6. Auditability — §36
 
-- [ ] **6.1 Activity log store** — session-scoped, append-only, digests only.
+- [x] **6.1 Activity log store** — session-scoped, append-only, digests only.
   Accept: a unit test asserts no entry can carry `content`; entries clear with
   Clear session / Clear sensitive data.
+
+  **Checked**: `activity-log.test.js` asserts an entry records a digest and
+  never the content, that it is the *same* digest function receipts use so the
+  two cross-read, that the module names no `localStorage` / `sessionStorage` /
+  `indexedDB` (asserted comment-stripped, and again in
+  `artifact-migration.test.js` §38d), and that Clear sensitive data empties it
+  alongside the outputs.
 - [ ] **6.2 Appended by the action runner, not by handlers.** Accept: a test
   runs every action in the table with stub services and asserts each produced
   exactly one entry — so a new action cannot forget to log.
