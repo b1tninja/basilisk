@@ -13,22 +13,9 @@ export default defineConfig({
   root: ".",
   publicDir: "public",
   resolve: {
-    // Array form because one of these has to be anchored: a bare
-    // `react-remove-scroll-bar` is ours, but `react-remove-scroll-bar/constants`
-    // must still reach the real package, and a string alias would rewrite both.
-    alias: [
-      { find: "@", replacement: resolve(__dirname, "src") },
-      {
-        // Radix's Dialog and Menu pull in `react-remove-scroll`, whose
-        // scrollbar half delivers its CSS by appending a `<style>` element at
-        // runtime — refused by `style-src 'self'`, so in production the modal
-        // scroll lock never applied and every open logged a violation.
-        // `lib/scroll-lock` keeps the attribute and drops the injection; the
-        // rules it stands in for are declared in `css/site.css`.
-        find: /^react-remove-scroll-bar$/,
-        replacement: resolve(__dirname, "src/lib/scroll-lock.js"),
-      },
-    ],
+    alias: {
+      "@": resolve(__dirname, "src"),
+    },
   },
   // crypto-worker → toolkit/engine uses dynamic import(); IIFE cannot code-split.
   // All Worker() call sites already pass { type: "module" }.
