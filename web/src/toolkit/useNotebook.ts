@@ -202,6 +202,83 @@ export function chainsWithCellSteps(
   return copy;
 }
 
+/** One validator complaint, anchored to a chip *within its own cell*. */
+export type CellError = { message: string; stepIndex: number };
+
+/**
+ * Per-cell validation errors for a whole notebook (§33c).
+ *
+ * Validated **in situ**: one `validateRecipe` over every cell at once, then the
+ * errors are dealt back to the cell they came from. Cell-by-cell validation —
+ * what this used to do — threw away the slot table each cell builds for the
+ * ones below it, so a shipped multi-cell template greeted you with
+ * `in @kp: unknown slot` on every `in` plus the cascade behind it (`"export"
+ * needs an input`, …), before you had run anything and still after a wholly
+ * successful run. That was the notebook's worst first impression, and it was
+ * pure fiction: `@kp` is written one cell up.
+ *
+ * Validating the whole notebook is preferred over patching a producing context
+ * into a per-cell call because it is *the same validation the run gate already
+ * performs* (`compileRecipe(source).validation`) — so the banner and the Run
+ * button can no longer hold two opinions about whether a cell is wired. It is
+ * also what the engine does: `createSlotRegistry` is notebook-wide, for labels
+ * and for numeric `in 1` alike, so cross-cell resolution here is not a
+ * convenience but a match to runtime.
+ *
+ * Nothing is suppressed. A slot nothing ever writes still reports, with the
+ * same wording, on the same chip: the validator sees every producer and still
+ * does not find it.
+ *
+ * `stepIndex` anchoring is preserved exactly. `validateRecipe` numbers
+ * top-level steps continuously across cells (nested body/branch errors carry
+ * their top-level stem's number), so subtracting the cell's start offset
+ * recovers the very index a per-cell call produced — the same chip lights up.
+ */
+export function cellErrorsForChains(chains: RecipeChain[]): CellError[][] {
+  const out: CellError[][] = (chains || []).map(() => []);
+  if (!chains?.some((c) => c?.steps?.length)) return out;
+
+  /** Global index of each cell's first step; empty cells consume none. */
+  const starts: number[] = [];
+  let acc = 0;
+  for (const c of chains) {
+    starts.push(acc);
+    acc += c?.steps?.length || 0;
+  }
+  const firstFilled = chains.findIndex((c) => !!c?.steps?.length);
+
+  let errors: { message: string; stepIndex?: number }[];
+  try {
+    errors =
+      validateRecipe({ chains, steps: chains[firstFilled]?.steps || [], source: "" })
+        .errors || [];
+  } catch {
+    return out;
+  }
+
+  for (const e of errors) {
+    const global = typeof e.stepIndex === "number" ? e.stepIndex : -1;
+    let cell = -1;
+    if (global >= 0) {
+      for (let i = 0; i < chains.length; i++) {
+        const len = chains[i]?.steps?.length || 0;
+        if (len && global >= starts[i] && global < starts[i] + len) {
+          cell = i;
+          break;
+        }
+      }
+    }
+    // An error the validator did not anchor ("Empty recipe") still has to be
+    // seen — parking it unanchored on the first real cell beats dropping it.
+    if (cell < 0) {
+      out[firstFilled]?.push({ message: String(e.message), stepIndex: -1 });
+      continue;
+    }
+    out[cell].push({ message: String(e.message), stepIndex: global - starts[cell] });
+  }
+  return out;
+}
+
 export function useNotebook() {
   const kernelRef = useRef(createKernel());
   const [title, setTitle] = useState("Untitled notebook");
@@ -442,21 +519,12 @@ export function useNotebook() {
    * pipeline was ill-typed, but nothing surfaced it until the engine threw.
    * `stepIndex` anchors each error to the chip that caused it, so the banner
    * can name the step rather than describing the cell.
+   *
+   * See `cellErrorsForChains` for why the notebook is validated whole.
    */
-  const cellErrors: { message: string; stepIndex: number }[][] = useMemo(() => {
+  const cellErrors: CellError[][] = useMemo(() => {
     void kernelEpoch;
-    return chains.map((chain) => {
-      if (!chain?.steps?.length) return [];
-      try {
-        const v = validateRecipe({ chains: [chain], steps: chain.steps, source: "" });
-        return (v.errors || []).map((e: { message: string; stepIndex?: number }) => ({
-          message: String(e.message),
-          stepIndex: typeof e.stepIndex === "number" ? e.stepIndex : -1,
-        }));
-      } catch {
-        return [];
-      }
-    });
+    return cellErrorsForChains(chains);
   }, [chains, kernelEpoch]);
 
   const cellOutputs: ArtifactTile[][] = useMemo(() => {
