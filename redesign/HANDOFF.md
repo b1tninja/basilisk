@@ -19,7 +19,7 @@ genkey ec/p256 | export spki | pem | out @pub
 random 32 | encode base64 | out @cek
 ```
 
-83 steps across 10 toolboxes, 23 pipeline types, 24 widgets.
+114 steps across 13 toolboxes, 23 pipeline types, 32 widgets.
 
 ---
 
@@ -137,6 +137,113 @@ smoke catalog, and `no-inline-styles.test.js` is a ratchet with a per-file
 baseline that may go down but never up.
 
 ---
+
+## The agent boundary and SSH (§26–§31) — shipped, and what it changed
+
+`redesign/design_handoff_agent_ssh/` is built end to end. Read that folder's
+`IMPLEMENTATION-STATUS.md` for the unit-by-unit state and the four recorded
+deviations; this section is only what a cold reader would otherwise get wrong.
+
+**The vault is multi-kind now.** Records carry `kind: "pgp" | "ssh" | "raw"`
+(absent means pgp — legacy records predate it). The id shape follows the kind:
+hex for pgp, `SHA256:` + unpadded base64 for ssh, `spki:SHA256:` for raw.
+**Two functions used to destroy the non-hex ids** by stripping non-hex
+characters — `normalizeVaultFingerprint` and `formatFingerprint` — and four
+more inline copies inside `vault.js` were the same bug waiting. They all route
+through one normalizer now. If you add a vault lookup, do not hand-roll the
+hex cleanup; `SHA256:Ur1h…` becomes `A256` and every lookup silently misses.
+
+**`agent.sign` / `agent.decrypt` are the boundary ops, and the boundary is
+literal**: the unlocked key lives in one call frame and is never bound to a
+slot. That is why they resolve their own OpenPGP material instead of reusing
+the engine's slot-based key path — do not "simplify" that into
+`resolveGpgPrivateKey`, it would put the key in the pipeline and delete the
+feature.
+
+**The approval gate is designed against a malicious recipe, not a clumsy
+user.** Nothing in recipe syntax can pre-grant approval; the per-run batch
+cannot be offered until the first real payload and the loop's true count have
+been shown; session grants are scoped to key × sign-vs-decrypt and are
+visible, counting and revocable. `approval-gate.test.js` is adversarial on
+purpose — if a change there makes a test feel pedantic, that test is the
+feature.
+
+**`ssh.*` interop is byte-asserted, not round-tripped.** Fixtures under
+`web/src/test/fixtures/ssh/` came from real `ssh-keygen`; the directory is
+pinned `-text` in its own `.gitattributes` because a CRLF conversion would be
+silent test corruption. ed25519 sshsig output is compared byte-for-byte
+against `ssh-keygen`'s (RFC 8032 is deterministic), so a change that still
+"round-trips" can still be wrong.
+
+**`basilisk agent --ssh` is a real ssh-agent** over `$SSH_AUTH_SOCK` (a named
+pipe on Windows). It signs the raw RFC 4253 format the agent protocol carries,
+**not sshsig** — sshsig is the detached-file envelope. Conflating the two is
+the classic way an ssh-agent reimplementation passes its own tests and fails
+against `ssh`.
+
+Outstanding here:
+
+- **`saveKey` silently downgrades key protection.** It writes with `put` on a
+  `fingerprint` keyPath and never reads the existing record, so re-saving an
+  already-stored key replaces its protection — a passkey-protected key saved
+  again as `device` loses the authenticator with no warning. Reachable from a
+  recipe today. A fix was in flight in a separate session as of 2026-07-31;
+  check `grep onConflict web/src/lib/vault.js` before starting.
+- **`agent.list` has no typed tile** (§28c). The op emits `kind`/`publicLine`
+  and the CLI shape is done; only the widget is missing.
+- **Mesh forwarding of approvals** (§30d) is designed and unbuilt, blocked on
+  the live two-browser mesh check that was already open.
+- **`bcrypt_pbkdf`** — encrypted `openssh-key-v1` read/write, and with it
+  passphrase protection for ssh/raw vault kinds. Refused by name today.
+- **CLI `--approve`** is deliberately *not* shipped: `basilisk run` refuses the
+  whole `agent` toolbox at pre-flight (exit 4, verified) because Node has no
+  vault, so the flag could never fire. Do not add it before the CLI key store.
+
+## Artifact kinds and actions (§32–§46) — in progress
+
+`redesign/design_handoff_artifact_actions/` (plus `visual/VISUAL-DESIGN.md`).
+Shipped: the role vocabulary and projection floor, the kind resolver and
+table, `OutputList` wired to it, the two tile foundations, and the action
+tiers. Not yet built: `ArtifactTile` proper (§33a anatomy), the key tiles
+(§35 — the case that motivated the work), the Activity log (§36), the rest of
+the inventory (§37), and migration (§38).
+
+Three things a cold reader should know:
+
+- **`artifactMetaFromType` had zero callers** before this work. Two role
+  vocabularies existed and could not produce each other's words. There is now
+  one frozen `ARTIFACT_ROLES` list, and `artifact-roles.test.js` greps the
+  engine — both `role: "x"` and `a.role = "x"` — to keep them reconciled.
+- **The projection is a floor, the emit site is the override.** Role is a
+  property of the artifact, not of the value: the same `text` from `inspect`
+  and from `out @msg` are one type and two different artifacts. Do not make
+  the projection authoritative; `receipt` and `diagnostic` encode *why* an
+  artifact exists and no type can know that.
+- **`RECEIPT_VERSION` is 2** because `role` is inside `digestArtifact`. A v1
+  receipt gets a sentence saying the description changed and the run did not —
+  not "digest mismatch".
+
+## Traps learned the hard way (2026-07-31)
+
+- **`site.css` is unlayered and beat every Tailwind utility.** Five element
+  rules (`code`, `label`, `pre`, `input`, `textarea`) are now wrapped in
+  `@layer base` *at their source*. Layering the `@import` in `toolkit.css`
+  does **not** work: `Layout.tsx` imports `site.css` for every page, so the
+  toolkit pages get it as a separate unlayered stylesheet too. The build showed
+  correct layer geometry while the page rendered unchanged — trusting the
+  artifact over the browser would have shipped a no-op.
+- **tsc can resolve a symbol the bundle cannot.** Removing an import from
+  `OutputList.tsx` left one caller behind; `widgets/index.ts` re-exports the
+  symbol, so tsc and all 1555 tests passed while the widgets catalog threw
+  `hasNetworkRenderer is not defined` and rendered an empty root. Nothing in
+  the suite looks at that page. Verify render-path changes in the built page.
+- **Contrast probes need their own sanity check.** A probe reporting 4.04 was
+  wrong: badge backgrounds are `color(srgb …)` with 0-1 components and an
+  alpha, and the probe assumed `rgb(0-255)` and skipped compositing. Assert
+  black-on-white returns exactly 21.00 before believing any figure.
+- **`disabled:opacity-50` renders a reason at 2.20:1.** Since a disabled
+  action's whole feature is its reason string, that is an absent reason. The
+  artifact actions remove the *affordance* instead and keep the label legible.
 
 ## What is outstanding
 

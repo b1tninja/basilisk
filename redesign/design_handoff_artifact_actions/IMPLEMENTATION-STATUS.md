@@ -7,8 +7,19 @@ motivated the request. Every unit lists acceptance criteria measurable by test
 or by browser measurement (`getComputedStyle` / DOM, per HANDOFF — screenshots
 are unreliable here).
 
-**Status: nothing is started.** No file under `web/` was touched by this design
-pass.
+**Status as of 2026-07-31: units 1, 2 and part of 3 are built.** Shipped:
+`ARTIFACT_ROLES` + the projection floor + keypair/recipients role stamping +
+`RECEIPT_VERSION` 2 (unit 1); the resolver, the kind table with the three
+existing renderers folded in unmodified, and `OutputList` wired to both
+(unit 2); the two §39 foundations and the three-tier action row with
+disabled-with-reason (part of unit 3). `ArtifactTile` proper, the §35 key
+tiles, §36 Activity, §37 inventory and §38 migration are NOT built.
+
+Two corrections to this document's own premises, found by measuring:
+`artifactMetaFromType` had **zero callers**, so "the type system can already
+drive it" was aspirational; and unit 4.7's `saveKey({onConflict})` is blocked
+on a live protection-downgrade bug being fixed in a separate session — check
+`grep onConflict web/src/lib/vault.js` before starting it.
 
 Engine/registry capabilities this design needs that do not exist today are
 marked ⚙ — do not discover them mid-implementation. There are nine of them, and
