@@ -88,6 +88,31 @@ describe("a disabled action always carries a reason (§33d)", () => {
     expect(ACTION_REASONS.offline).toBe(
       "Publishing needs a connection to this site's directory."
     );
+    // Two of these were literals inside the action table until the
+    // representation pass. Same words, one home — the module exists so a
+    // condition cannot acquire two explanations.
+    expect(ACTION_REASONS.noKeyToFingerprint).toBe(
+      "This artifact carries no key to fingerprint."
+    );
+    expect(ACTION_REASONS.noKeyToEncode).toBe(
+      "This artifact carries no key to encode."
+    );
+  });
+
+  /**
+   * The mechanical half of the rule above, and the reason the two strays were
+   * findable at all: a reason written at the point of refusal is a reason no
+   * test can find by name, and both of these sat in the table for the whole of
+   * §33–§38 while a module whose entire purpose is to hold them sat beside it.
+   *
+   * Comments stripped first — the prose above each `available()` quotes the
+   * sentences it refuses with, which is exactly the false pass `stripComments`
+   * exists for.
+   */
+  it("keeps every reason in the table, never at the point of refusal", () => {
+    const code = stripComments(SRC);
+    const literals = code.match(/disabled:\s*["'`]/g) || [];
+    expect(literals).toEqual([]);
   });
 });
 

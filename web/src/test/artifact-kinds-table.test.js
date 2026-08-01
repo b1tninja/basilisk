@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import "../lib/toolkit/registry.js";
-import { ARTIFACT_ROLES } from "../lib/toolkit/types.js";
+import { ARTIFACT_ROLES, artifactMetaFromType } from "../lib/toolkit/types.js";
 import {
   ARTIFACT_KINDS,
   FALLBACK_KIND,
@@ -53,6 +53,32 @@ const CODE_ONLY = TABLE_SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(
  * deliberately unclaimed has somewhere to be written down with its reason.
  */
 const UNCLAIMED_ROLES = [];
+
+/**
+ * The catalog page, for the coverage gate below.
+ *
+ * Read as source rather than imported: `toolkit-widgets.tsx` mounts itself at
+ * module scope (`createRoot(host).render(…)`), so importing it in a node test
+ * throws before a single fixture is reachable.
+ */
+const CATALOG_SRC = readFileSync(
+  fileURLToPath(new URL("../pages/toolkit-widgets.tsx", import.meta.url)),
+  "utf8"
+).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+/**
+ * Kinds whose catalog row takes its `role` and `tags` from
+ * `artifactMetaFromType` rather than from literals, so the row-scan gate below
+ * cannot see them and a second assertion checks them properly instead.
+ *
+ * Both are here for the same reason: **no shipped step emits either shape**.
+ * The keypair emit sites tag `keypair`, so `keypair-public` always outscores
+ * `public-key`; PEM/DER exports keep the emit site's `text`/`secret` because
+ * `key` is not in `TYPE_OWNED_ROLES`. Writing those shapes by hand would be
+ * writing a claim about the engine that nothing checks — the exact failure the
+ * §37 fixtures' header warns about — so the catalog calls the projection.
+ */
+const PROJECTION_BUILT = ["key", "public-key"];
 
 describe("the table is unambiguous", () => {
   it("has no two entries that could both claim the same artifact", () => {
@@ -286,6 +312,67 @@ describe("role coverage", () => {
     // without a kind and this is where that is caught.
     const unclaimed = ARTIFACT_ROLES.filter((r) => !claimed.has(r));
     expect([...unclaimed].sort()).toEqual([...UNCLAIMED_ROLES].sort());
+  });
+
+  /**
+   * **Every kind gets a row on the design surface (D7).**
+   *
+   * A role gate already existed and a kind gate did not, and the difference
+   * cost a real finding: `#artifacttiles` and `#keyartifacts` between them
+   * rendered 19 of 24 kinds, and two of the five missing ones —
+   * `network-value` and `jose-token` — had sections that mount their widget
+   * **bare**, outside a tile. So `JwtArtifact`, the most complete read-out in
+   * the codebase, had never been seen inside the thing that masks it: `jose.sign`
+   * emits `sensitive: true`, the kind declares no `publicView`, and the card is
+   * therefore behind a Reveal that the list re-masks after fifteen seconds.
+   * That is invisible in a section that renders the card directly, and it is
+   * the class of thing this page exists to make visible.
+   *
+   * **What this gate is and is not.** It is a *source* check — the catalog
+   * cannot be imported (see `CATALOG_SRC`), so this asserts that a fixture
+   * carrying each kind's `match` exists in the file, not that it resolves. What
+   * proves resolution is the built page, where every tile carries
+   * `data-artifact-kind`; a row whose tags are wrong reads `fallback` there.
+   * Both are needed and neither substitutes: nine defects this session passed
+   * the whole suite while broken in the page.
+   */
+  it("puts a fixture for every kind on the catalog", () => {
+    // Per *row*, not per file. A whole-file scan passes as soon as some other
+    // fixture happens to mention the role and some third one happens to
+    // mention the tag, which is a gate that cannot fail.
+    const rows = CATALOG_SRC.split(/\brow\(\{/).slice(1);
+    const covered = (kind) =>
+      rows.some(
+        (r) =>
+          r.includes(`role: "${kind.match.role}"`) &&
+          (kind.match.tags || []).every((t) => r.includes(`"${t}"`))
+      );
+    const missing = ARTIFACT_KINDS.filter(
+      (k) => !PROJECTION_BUILT.includes(k.id) && !covered(k)
+    ).map((k) => k.id);
+    expect(missing).toEqual([]);
+  });
+
+  /**
+   * The two rows whose identity is computed rather than written, checked by
+   * running the same computation.
+   *
+   * This is the stronger half of the gate and the reason the exemption above
+   * is not a hole: it does not look at the catalog's text at all, it calls the
+   * projection with the arguments the catalog calls it with and resolves the
+   * result. If `artifactMetaFromType` ever stops producing a shape these kinds
+   * claim, the rows stop rendering them and this fails — which a source scan
+   * for a literal could never notice.
+   */
+  it("resolves the projection-built rows to the kinds they exist for", () => {
+    const kindOf = (t) =>
+      resolveArtifactKind(artifactMetaFromType(t), ARTIFACT_KINDS, FALLBACK_KIND).id;
+    expect(kindOf({ base: "openpgp-key", which: "public" })).toBe("key");
+    expect(kindOf({ base: "key", which: "public" })).toBe("public-key");
+    for (const id of PROJECTION_BUILT) {
+      expect(CATALOG_SRC).toContain(`...artifactMetaFromType(`);
+      expect(ARTIFACT_KINDS.some((k) => k.id === id)).toBe(true);
+    }
   });
 
   it("declares Download on every kind, because every body is a file", () => {

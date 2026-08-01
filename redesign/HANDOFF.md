@@ -78,6 +78,56 @@ states being correct.
   type docs cannot claim an op that no longer exists.
 - **Reference links live in `step-docs.js`**, not the registry — a URL is
   documentation, not part of a step's contract.
+- **Three layers own an artifact, and a fact derived in two places is a bug.**
+  The boundary is stated in full in the header of
+  `lib/toolkit/artifact-readouts.js`; this is the short form.
+
+  | Layer | Owns | Where |
+  | --- | --- | --- |
+  | **Engine** | *facts* — content, filename, mime, role, tags, traits, sensitive. Computed once, at emit. Digested by the receipt. | `engine.js` and the ops |
+  | **Representation** | *read-outs* — what a human reads off those facts (fingerprint, key type, packet map, code + expiry instant), and how they are shaped. Pure, total, node-testable. Called by the card **and** by the action. | `lib/toolkit/artifact-readouts.js` |
+  | **View** | *layout only* — where a read-out sits, what is masked, what a `publicView` may draw. No parsing, no derivation. | `toolkit/widgets/**`, `artifact-kinds/registry.tsx` |
+
+  This was not a new idea; it was written down in one file and applied nowhere
+  else, and **six defects in one session are traceable to its absence**:
+  `publicOnly` captioning as well as hiding (a masked *private* tile said
+  "public half"), `OpenPgpKeyCard` captioning a private key "public" whenever
+  the lazy `openpgp` import had not resolved, the badge rendering the role while
+  `resolvedKind.label` sat one line above (three roles were added partly to fix
+  badge text), `glyph` declared on fourteen kinds and rendered by nothing, a
+  second download namer nearly shipping, and two disabled reasons living as
+  literals in `artifact-actions.js` beside the module that exists to hold them.
+
+  **How a reviewer enforces it — three checks, in order.**
+
+  1. **Does a widget parse?** Grep `toolkit/widgets/**` for `JSON.parse`,
+     `atob`, `TextDecoder`, `readKey`, `await import(` of a codec, or a regex
+     over `content`. Every hit is either a call into `artifact-readouts.js` or
+     a defect. `InspectorArtifact`, `JwtArtifact` and `NetworkArtifact` render
+     structured data the *engine* attached (`inspectSnapshot`, `jose`,
+     `netData`) — there is nothing there to parse, so they are not exceptions.
+  2. **Does one fact have two spellings?** Name the fact, then grep for it.
+     "Which half is this OpenPGP armor" was answered in three places — the
+     card's parse, `hasPrivateKeyMaterial`, and the engine's `openpgp`/`private`
+     tags — which is how a private key captioned itself public. If two sites
+     answer one question, one of them calls the other.
+  3. **Does an action need what the card shows?** If a card displays a fact and
+     an action's `available()` or `run()` needs the same fact, both reach it
+     through the same exported function. `sshKeySummary` is the worked example:
+     `SshKeyCard` draws it and `key.copyFingerprint` copies it.
+
+  **A read-out reads `content`, `traits`, `role` and `tags`, and nothing else.**
+  That is the boundary's answer to the mapped-shape trap below: those four are
+  what all three hops carry, `traits` because it is the one open bag copied
+  wholesale. A read-out that reaches for a named field can be silently
+  disconnected by a projection nobody edited — `shareIdentity` reads
+  `artifact.shareIndex`, no `ToolkitShell` mapping copies it, and the share tile
+  only works because the function prefers `traits.shareOf`.
+
+  **What it does not mean.** Not every parse in a widget is misplaced. A
+  derivation with one consumer, whose output is only ever laid out, is view-local
+  and moving it "on principle" would be a worse codebase than the scattering.
+  The test is check 3: two consumers, or a fact an action also needs.
 
 ---
 
@@ -368,6 +418,64 @@ Four things a cold reader should know:
   unreachable from a notebook while 1618 tests passed. The set is closed on
   purpose: `pem`/`der` project to `key`, and `KeyCard` reads JWK, so widening
   it would trade a readable armor body for an emptier card.
+
+### The representation pass (§47–§53's D2, D4, D6, D7)
+
+The boundary above is the headline; these are the defects its absence caused,
+and what is now true. All five were measured in the built page at
+`/toolkit-widgets`, not only in vitest.
+
+- **D2 — `inspect | out @x` keeps its card.** `materializeOutArtifacts`' text
+  branch derived `role` from sensitivity alone and never asked whether the
+  value was a snapshot, so identical bytes had two identities: bare it resolved
+  `inspect-snapshot`, named it resolved `text` (or `secret`). It now honours
+  `value.meta.inspect` the way the dangling-tip branch always has, and carries
+  `inspectSnapshot` / `inspectFormat` through. `share` still outranks it.
+- **D4 — the QR is scannable, and Expand gives it room.** It was `max-h-40
+  max-w-40` against a 95px intrinsic SVG, so the cap was decoration and the
+  rendered code was 103px in the row **and 103px in a 560px Sheet**. The size
+  is the tile's now (`QR_TILE_EDGE`, 192px) and the Sheet overrides it with a
+  descendant rule. Measured: 192px in the row, 527px in the Sheet, against a
+  29-module code at `devicePixelRatio` 1.5 — 9.9 and 27 device pixels per
+  module against the ~3 phone scanning wants. **Note the research's arithmetic
+  was off**: it read the 95px SVG edge as 95 modules; a `moduleSize: 3`,
+  `margin: 4` code of that size is 29 modules. The defect was real, the ratio
+  was not.
+- **D6 — both tables have a ceiling; recipients has a filter.** `max-h-44` with
+  `overflow-y: auto` on the scroll box (a `max-height` on a `<table>` is
+  ignored by the table layout algorithm — it reads as capped and renders
+  unbounded). Past `FILTER_ROWS` (8) the recipient card offers a search box;
+  the receipt table gets neither filter nor sort, because it is read in
+  `run.verify`'s order and "cell 1 · output 2" is a coordinate into it.
+  `filterRecipientRows` owns *which rows match* — a fingerprint is displayed
+  grouped and pasted rather than typed, so an inline `includes` matches nothing
+  on the one field it matters for. Measured with a 14-row fixture: 266px of
+  table inside a 176px box, 14 → 3 on `ingrid`, 14 → 1 on `3322 9988`.
+- **D7 — every kind now has a catalog row**, gated in
+  `artifact-kinds-table.test.js`. Measured on the built page: 24 distinct
+  `data-artifact-kind` values, no new row falling to `fallback`. Two findings
+  came out of closing it:
+  - **`jose-token` is masked in a tile**, and the catalog now shows it that
+    way. `jose.sign` emits `sensitive: true`, the kind declares no
+    `publicView`, so the best read-out in the codebase sits behind a Reveal
+    the list re-masks after 15s. That is *correct* under §34b — every fact on
+    the card is decoded from the token — and the honest fix is to the reveal
+    timer, which is list-scoped. **Do not "fix" it with a `publicView`.**
+  - **`key` and `public-key` are unreachable from a real run.** The keypair
+    emit sites tag `keypair`, so `keypair-public` always outscores
+    `public-key`; PEM/DER exports keep the emit site's `text`/`secret` because
+    `key` is not in `TYPE_OWNED_ROLES`. Their catalog rows are built by calling
+    `artifactMetaFromType`, so they cannot be a hand-written claim about an
+    engine that does not agree, and the gate resolves that projection rather
+    than scanning for a literal.
+- **The two stray disabled reasons** are `ACTION_REASONS.noKeyToFingerprint`
+  and `.noKeyToEncode`; `artifact-actions.test.js` now fails on any
+  `disabled: "…"` literal in the table (comments stripped first).
+- **Skipped, deliberately:** D5 (expiry verdicts — `expiryNote` exists and is
+  tested, two call sites, no representation work in it), D3 and D1 (the OTP
+  agent's), D8 (filed, recipe layer). The `envelope` row still truncates its
+  label; it now carries `title={a.label}` so the clause that matters — "(not a
+  share)" — is reachable, which is the fix that does not restructure the row.
 
 ## Traps learned the hard way (2026-07-31)
 

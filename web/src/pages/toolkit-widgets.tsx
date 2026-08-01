@@ -47,6 +47,7 @@ import { encodeShareSet } from "../lib/slip39/blip39.js";
 import type { DeploymentVerdict } from "../lib/toolkit/deployment-check.js";
 import type { DkgParticipant } from "../lib/quorum/dkg-session.js";
 import { getTypeMeta } from "../lib/toolkit/type-registry.js";
+import { artifactMetaFromType } from "../lib/toolkit/types.js";
 import { protectionDowngradeMessage } from "../lib/vault.js";
 import type { CeremonyStageId } from "../lib/toolkit/ceremony.js";
 import { Button } from "@/components/ui/button";
@@ -2078,6 +2079,71 @@ const DEMO_RECIPIENTS = JSON.stringify(
   2
 );
 
+/**
+ * `hkp.search "example.org"` against a real keyserver — the case the ceiling
+ * and the filter exist for.
+ *
+ * The short list above is the local cache and it is the *unrepresentative*
+ * one: a keyserver search returns tens of rows, and at 16px a row that was
+ * several hundred pixels of table inside a single artifact row, with no cap,
+ * no scroll and no way to find anyone in it. Fourteen rows is past
+ * `FILTER_ROWS`, so this is the state where the search box appears, and past
+ * the eleven the box can show, so it is also the state where it scrolls.
+ *
+ * The odd ones are the point: row 7 carries its fingerprint *with* grouping
+ * spaces, which is what a real hkp response looks like and what a naive
+ * `includes` on a typed query silently fails to match.
+ */
+const DEMO_RECIPIENTS_MANY = JSON.stringify(
+  Array.from({ length: 14 }, (_, i) => ({
+    fingerprint:
+      i === 6
+        ? "99887766554433229988776655443322998877 66"
+        : `${(i + 10).toString(16).repeat(2).toUpperCase()}BBCCDD11223344AABBCCDD11223344AABBCC${(i + 10)
+            .toString(16)
+            .toUpperCase()}`,
+    label: ["Dana Okonkwo", "Sam Reyes", "Ingrid Vasquez", "Tomas Bergqvist"][i % 4],
+    email: `${["dana", "sam", "ingrid", "tomas"][i % 4]}${i}@example.org`,
+    approvalState: i % 3 === 0 ? "approved" : "unverified",
+    encryptCapable: i % 5 !== 3,
+  })),
+  null,
+  2
+);
+
+/** `"hello world" | utf8 | inspect` — the snapshot and the text dump beside it. */
+const DEMO_INSPECT_SNAPSHOT = {
+  type: "bytes",
+  meta: { type: { base: "bytes", kind: "opaque" }, sensitive: false },
+  bytes: [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100],
+};
+
+const DEMO_INSPECT_TEXT = `type: bytes
+sensitive: no
+length: 11 bytes
+
+00000000  68 65 6c 6c 6f 20 77 6f 72 6c 64                 |hello world|
+
+--- utf-8 preview ---
+hello world
+`;
+
+/** `'{"sub":"me"}' | utf8 | jose.sign key=@k alg=ES256 | out @t` */
+const DEMO_JWS =
+  "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJtZSJ9." +
+  "6AeMiatcldxFVP8JEN3i6vlFxrlrlesdexBW-A43exaFIHA03CgB7C7OrpgG4lZerDlE8M5xoDerd76cy083Rw";
+
+/** The verdict the op computed and the token text cannot carry. */
+const DEMO_JOSE = {
+  kind: "jws",
+  verified: true,
+  signed: true,
+  header: { alg: "ES256", typ: "JWT" },
+  claims: { sub: "me" },
+  payloadText: null,
+  timing: { exp: null, nbf: null, iat: null, expired: false, notYetValid: false },
+};
+
 /** Every §37 kind as a tile row, in the order the design lists them. */
 function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"] {
   const row = (o: Partial<OutputArtifact> & { label: string; role: string }) => ({
@@ -2118,6 +2184,15 @@ function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"]
       content: DEMO_RECIPIENTS,
     }),
     row({
+      // The same kind at keyserver length — capped, scrolling, and filterable.
+      // Two rows rather than one because the short list is the one that must
+      // *not* grow a search box it does not need.
+      label: "found",
+      role: "recipients",
+      tags: ["openpgp", "recipients"],
+      content: DEMO_RECIPIENTS_MANY,
+    }),
+    row({
       label: "sig",
       role: "sshsig",
       tags: ["ssh", "signature"],
@@ -2150,6 +2225,90 @@ function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"]
         moduleSize: 3,
         margin: 4,
       }),
+    }),
+    row({
+      /**
+       * `"hello world" | utf8 | inspect` — the structured snapshot, in a tile.
+       *
+       * It had no row, and `inspect-snapshot` is the kind that most needed one:
+       * its view is the only one gated on a *parallel field* (`inspectSnapshot`)
+       * rather than on the body, so a mapping that dropped the field would leave
+       * a tile whose card silently became a text dump. Now visible.
+       */
+      label: "inspect",
+      role: "inspect",
+      tags: ["inspect", "opaque"],
+      revealable: true,
+      filename: "inspect.txt",
+      content: DEMO_INSPECT_TEXT,
+      inspectSnapshot: DEMO_INSPECT_SNAPSHOT,
+    }),
+    row({
+      /**
+       * `jose.sign key=@k alg=ES256 | out @t` — **masked, because that is what
+       * the engine emits**, and that is the finding this row exists to make
+       * visible (§48d).
+       *
+       * `JwtArtifact` is the most complete read-out in the codebase — verdict,
+       * claims in RFC order, a draining bar, tones withheld when the signature
+       * was not checked — and it had a section of its own that mounts it
+       * **bare**. Inside a tile it looks like this: `sensitive: true`, no
+       * `publicView`, so a reader gets "sensitive — value not shown" and a
+       * Reveal that the list re-masks fifteen seconds later.
+       *
+       * That is *correct* under §34b — every fact on the card is decoded from
+       * the token, so it derives from the masked material — and the fix is to
+       * the reveal timer, which is list-scoped and shared with shares and
+       * private keys. Recorded here rather than "fixed" with a `publicView`,
+       * which would be a hole in the mask.
+       */
+      label: "t",
+      role: "token",
+      tags: ["jose", "jws"],
+      sensitive: true,
+      revealable: true,
+      filename: "t.txt",
+      content: DEMO_JWS,
+      jose: DEMO_JOSE,
+    }),
+    row({
+      /**
+       * `rtc.state | out @s` — a network value in a tile rather than bare.
+       *
+       * `#networkartifact` mounts `NetworkArtifact` directly, so the *tile*
+       * level of this kind — badge, actions, Expand, the mask gate — had never
+       * been seen. The panel is the same one that section draws.
+       */
+      label: "s",
+      role: "netvalue",
+      tags: ["webrtc", "connstate"],
+      netType: "connstate",
+      // The same peer shape `#networkartifact` feeds `ConnStateStrip` — the
+      // panel reads `data.peers`, and a fixture built from the *op's* other
+      // fields draws "No peers in this exchange", which is the empty state
+      // rather than the card. Measured on the built page before this.
+      netData: {
+        peers: [
+          {
+            peer: "AABBCCDDEEFF0011",
+            connectionState: "connected",
+            iceConnectionState: "connected",
+            signalingState: "stable",
+            channelState: "open",
+            verified: true,
+          },
+          {
+            peer: "1122334455667788",
+            connectionState: "connecting",
+            iceConnectionState: "checking",
+            signalingState: "have-local-offer",
+            channelState: "connecting",
+          },
+        ],
+      },
+      filename: "s.json",
+      mime: "application/json",
+      content: "{…}",
     }),
     row({ label: "msg", role: "text", tags: ["opaque"], content: "cGxhaW4=" }),
     row({
@@ -2384,6 +2543,46 @@ function demoKeyArtifacts(): React.ComponentProps<typeof OutputList>["outputs"] 
       filename: "k.asc",
       mime: "application/pgp-keys",
       content: DEMO_PGP_PRIVATE,
+    }),
+    /**
+     * The two least-specific key kinds, which had no row on this page at all.
+     *
+     * Their `role` and `tags` come from `artifactMetaFromType` rather than from
+     * a literal, and that is not fussiness — it is the only honest way to draw
+     * them. **No shipped step emits either shape through `out` today**: the
+     * keypair emit sites tag `keypair`, so `keypair-public` always outscores
+     * `public-key`, and PEM/DER exports keep the sensitivity ternary's
+     * `text`/`secret` because `key` is not in `TYPE_OWNED_ROLES`. The kinds are
+     * not dead — `key` is the declared fallback for any key with no half stated
+     * and `public-key` is waiting for an `import spki` tip — but a fixture
+     * written by hand for a shape nothing produces is a fixture that can only
+     * be wrong. Built from the projection, it is wrong only if the projection is.
+     */
+    row({
+      // `artifactMetaFromType({ base: "openpgp-key", which: "public" })` — the
+      // shape `valueToArtifacts` stamps on a dangling openpgp-key tip. It lands
+      // on `key` and draws `KeyCard`, which reads JWK and not armor, so the
+      // tile shows the algorithm and a raw toggle and no fingerprint. That is
+      // §35e's stated gap, on the page rather than in a comment.
+      label: "openpgp tip",
+      ...artifactMetaFromType({ base: "openpgp-key", which: "public" }),
+      traits: { fingerprint: DEMO_PGP_FINGERPRINT },
+      revealable: true,
+      filename: "artifact.asc",
+      mime: "application/pgp-keys",
+      content: DEMO_PGP_PUBLIC,
+    }),
+    row({
+      // `artifactMetaFromType({ base: "key", which: "public" })` — a public half
+      // with no pair beside it. The `key` kind above says nothing about which
+      // half it holds; this one says "public half" and offers the public line.
+      label: "spki",
+      ...artifactMetaFromType({ base: "key", which: "public" }),
+      traits: { alg: "ed25519" },
+      revealable: true,
+      filename: "spki-public.jwk.json",
+      mime: "application/json",
+      content: DEMO_KP_PUBLIC,
     }),
     row({
       // `"JBSWY3DPEHPK3PXP" | utf8 | otp.code` — role `text`, claimed by a tag.

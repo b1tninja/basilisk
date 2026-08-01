@@ -140,3 +140,53 @@ describe("inspect / tee", () => {
     expect(out).toMatch(/not OpenPGP armor/);
   });
 });
+
+/**
+ * `inspect | out @x` keeps the identity `inspect` gave it (D2, §52).
+ *
+ * The bug was that `out` re-derived the role from *sensitivity* — the emit
+ * site's `text`/`secret` ternary — and never asked whether the value was a
+ * snapshot. Same bytes, two identities: bare, the tip resolved
+ * `inspect-snapshot`; named, it resolved `text`, or `secret` if the value was
+ * sensitive. It failed by producing a worse tile rather than an error, which
+ * is how it survived a whole design turn about tiles.
+ */
+describe("inspect survives being named", () => {
+  const run = async (src) => {
+    const { ast, validation } = compileRecipe(src);
+    expect(validation.ok, JSON.stringify(validation.errors || [])).toBe(true);
+    // `runRecipe` returns the artifact array directly, not `{ artifacts }`.
+    return runRecipe(ast, {});
+  };
+
+  it("gives the same role and tag through `out` as through the bare tip", async () => {
+    const [tip] = await run('"hello" | utf8 | inspect');
+    const [named] = await run('"hello" | utf8 | inspect | out @i');
+    expect(tip.role).toBe("inspect");
+    expect(named.role).toBe("inspect");
+    expect(named.tags).toContain("inspect");
+    expect(named.content).toBe(tip.content);
+  });
+
+  it("carries the structured snapshot, which is what the tile draws", async () => {
+    const [named] = await run('"hello" | utf8 | inspect | out @i');
+    expect(named.inspectSnapshot).toBeTruthy();
+    expect(named.inspectFormat).toBe("auto");
+  });
+
+  it("still withholds the snapshot for a sensitive value", async () => {
+    // The absence is a decision, not a gap: a snapshot retains raw private
+    // fields the masked text dump does not. `out` must not undo it.
+    const [named] = await run("random 8 | inspect | out @i");
+    expect(named.role).toBe("inspect");
+    expect(named.sensitive).toBe(true);
+    expect(named.inspectSnapshot).toBeUndefined();
+  });
+
+  it("leaves a plain `out` alone", async () => {
+    const [named] = await run('"hello" | utf8 | out @m');
+    expect(named.role).toBe("text");
+    expect(named.tags).not.toContain("inspect");
+    expect(named.inspectSnapshot).toBeUndefined();
+  });
+});

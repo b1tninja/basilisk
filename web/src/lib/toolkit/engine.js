@@ -4464,6 +4464,35 @@ async function materializeOutArtifacts(value, params) {
       ext = extOverride || "b64";
       mime = mimeOverride || "text/plain";
     }
+    /**
+     * An `inspect` snapshot keeps its identity through `out`.
+     *
+     * `valueToArtifacts`' text branch has honoured `value.meta.inspect` since
+     * `inspect` shipped; this one did not, so naming the output changed what
+     * the artifact *was*:
+     *
+     *     "hello" | utf8 | inspect          → role "inspect", tags ["inspect"]
+     *     "hello" | utf8 | inspect | out @i → role "text",    tags []
+     *
+     * Identical bytes, two identities — the `inspect-snapshot` kind claims
+     * `role: "inspect"`, so the second one resolved as `text` and lost its
+     * structured inspector, and a sensitive value degraded further still to
+     * `secret`. It failed by producing a worse tile rather than an error,
+     * which is why it survived: nothing was missing, only downgraded.
+     *
+     * The role is a property of the *artifact*, not of the value, and this is
+     * exactly the case that rule exists for — the same text from `inspect` and
+     * from `out @msg` is one type and two different artifacts. What `out` adds
+     * is a name and a file; what it must not do is forget why the value was
+     * asked for. `peek` was never affected, because it pushes `role: "inspect"`
+     * itself.
+     *
+     * The re-encodings above are left alone deliberately. `out encoding=hex`
+     * on a snapshot is still a snapshot — the identity is what the step was for
+     * — and `inspectSnapshot` is structured data the inspector draws rather
+     * than a second copy of the body, so it cannot disagree with the hex.
+     */
+    const isInspect = !!value.meta?.inspect;
     return [
       attachPipeMeta(
         {
@@ -4476,10 +4505,30 @@ async function materializeOutArtifacts(value, params) {
           mime,
           encoding: encodingUsed,
           shareIndex: value.meta?.shareIndex,
-          role: value.meta?.shareIndex ? "share" : value.meta?.sensitive ? "secret" : "text",
-          tags: value.meta?.shareIndex ? ["mnemonic", "blip39"] : [],
+          // A share still wins: `sss.split | inspect | out` is not a thing, and
+          // if it ever were, which share this is would be the more useful of
+          // the two identities by a wide margin.
+          role: value.meta?.shareIndex
+            ? "share"
+            : isInspect
+              ? "inspect"
+              : value.meta?.sensitive
+                ? "secret"
+                : "text",
+          tags: value.meta?.shareIndex
+            ? ["mnemonic", "blip39"]
+            : isInspect
+              ? ["inspect"]
+              : [],
           traits: value.meta?.shareIndex
             ? { shareOf: value.meta.shareIndex, threshold: value.meta.threshold }
+            : undefined,
+          // Omitted by the op for a sensitive value, on purpose — a snapshot
+          // retains raw private JWK fields the masked text dump does not — so
+          // this carries whatever `inspect` decided rather than deciding again.
+          inspectSnapshot: value.meta?.inspectSnapshot,
+          inspectFormat: isInspect
+            ? String(value.meta.inspectFormat || "auto")
             : undefined,
         },
         value

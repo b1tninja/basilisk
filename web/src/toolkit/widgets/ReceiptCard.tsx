@@ -21,6 +21,20 @@ import { receiptSummary } from "../../lib/toolkit/artifact-readouts.js";
  * beside the digest — measured in the real pane, the two together truncated
  * each other, and a truncated digest that *looks* complete is the one failure
  * mode a digest table must not have.
+ *
+ * ## The table has a ceiling and deliberately no filter
+ *
+ * It rendered unbounded at 16px a row, one row per output across every cell —
+ * so a ceremony receipt is 640px of table inside one artifact row of a list
+ * that has no reason to expect one. The scroll box caps it at `max-h-44`,
+ * about eleven rows at the pitch these measure; Expand is already declared on
+ * this kind for the reader who wants the whole thing at once.
+ *
+ * **No filter and no sort, unlike `RecipientsCard`.** §47c permits either as a
+ * view — neither changes what Copy copies — but this table is read in
+ * `run.verify`'s own order, and "cell 1 · output 2" is a coordinate into that
+ * order. Re-ordering or hiding rows would break the one property the table
+ * has, which is that a mismatch reported by an op can be found by counting.
  */
 export function ReceiptCard({
   content,
@@ -50,31 +64,37 @@ export function ReceiptCard({
         recipe sha256 {summary.recipeDigest.slice(0, 12)}…
       </code>
 
-      <table className="w-full table-fixed border-collapse text-left">
-        <tbody>
-          {summary.cells.flatMap((cell) =>
-            cell.outputs.map((o, oi) => (
-              <tr key={`${cell.index}-${oi}`} className="align-baseline">
-                <td className="w-[14%] truncate pr-2 font-mono text-[9px] text-[var(--muted-foreground)]">
-                  cell {cell.index}
-                </td>
-                <td className="w-[36%] truncate pr-2 font-mono text-[10px] text-[var(--foreground)]">
-                  {o.label}
-                </td>
-                <td className="w-[18%] truncate pr-2 font-mono text-[9px] text-[var(--muted-foreground)]">
-                  {o.role}
-                </td>
-                <td
-                  className="w-[32%] truncate font-mono text-[9px] text-[var(--muted-foreground)]"
-                  title={`${o.digest} · ${o.length} bytes`}
-                >
-                  {o.digest.slice(0, 12)}…
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+      {/* The scroll box, not the table, carries the ceiling: a `max-height` on
+          a `<table>` is ignored by the table layout algorithm, which is how
+          this reads as "capped" in a stylesheet and renders unbounded in a
+          browser. */}
+      <div className="max-h-44 overflow-y-auto" data-receipt-rows>
+        <table className="w-full table-fixed border-collapse text-left">
+          <tbody>
+            {summary.cells.flatMap((cell) =>
+              cell.outputs.map((o, oi) => (
+                <tr key={`${cell.index}-${oi}`} className="align-baseline">
+                  <td className="w-[14%] truncate pr-2 font-mono text-[9px] text-[var(--muted-foreground)]">
+                    cell {cell.index}
+                  </td>
+                  <td className="w-[36%] truncate pr-2 font-mono text-[10px] text-[var(--foreground)]">
+                    {o.label}
+                  </td>
+                  <td className="w-[18%] truncate pr-2 font-mono text-[9px] text-[var(--muted-foreground)]">
+                    {o.role}
+                  </td>
+                  <td
+                    className="w-[32%] truncate font-mono text-[9px] text-[var(--muted-foreground)]"
+                    title={`${o.digest} · ${o.length} bytes`}
+                  >
+                    {o.digest.slice(0, 12)}…
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
       <div className="flex flex-col gap-1">
         <span className="font-mono text-[9px] text-[var(--muted-foreground)]">
           {summary.cells.length} cell{summary.cells.length === 1 ? "" : "s"} ·{" "}

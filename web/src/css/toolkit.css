@@ -1908,6 +1908,30 @@ input[type="file"][data-basilisk-file-picker] {
 }
 
 /*
+ * The recipient filter, given the same box as everything else in a tile.
+ *
+ * `site.css` sets an unlayered `input { font-size: … }`, which is the cascade
+ * this file already documents twice (`.suggest-chip.border-dashed`,
+ * `[data-output-list] code.artifact-label`) — a Tailwind utility in
+ * `@layer utilities` loses to it whatever the specificity, so the size is set
+ * here rather than asked for on the element.
+ *
+ * 22px is the action row's height and `.artifact-inline-toggle`'s, so the one
+ * control in this card that takes typing is not also the one control that is
+ * a different size from its neighbours.
+ */
+.artifact-filter {
+  min-height: 22px;
+  /* `site.css`'s `input[type=search]` sets `padding: .55rem .85rem` — sensible
+     for a page-level search box and 8.8px of vertical padding on a control
+     that has to sit inside a 22px tile row. Measured before this: 35px tall,
+     the largest control in the artifact list by 13px. The whole box is set
+     here, in one unlayered rule, rather than half here and half in utilities. */
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+/*
  * Artifact action tiers (§33b/§41, design_handoff_artifact_actions).
  *
  * Three weights, one hue. Inert is quiet text, local is a filled bordered

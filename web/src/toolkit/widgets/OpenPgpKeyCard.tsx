@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatFingerprint } from "../../lib/utils.js";
+import {
+  openpgpKeyForm,
+  openpgpKeySummary,
+} from "../../lib/toolkit/artifact-readouts.js";
 
 /**
  * The OpenPGP key read-out (§35e, design_handoff_artifact_actions).
@@ -14,19 +18,19 @@ import { formatFingerprint } from "../../lib/utils.js";
  * creation and expiry dates. The armor stays available underneath — nothing
  * is taken away, it stops being the only thing offered.
  *
+ * **This file no longer parses anything.** The armor parse was the largest
+ * derivation still living inside a widget, and inside one it had no test: the
+ * suite is `environment: "node"`, so nothing in it could reach a `useEffect`.
+ * It is `openpgpKeySummary` now, and what is left here is layout — which is
+ * the whole of the boundary stated in `artifact-readouts.js`'s header.
+ *
  * The parse is lazy and its failure is ordinary. A malformed or truncated
  * armor renders the raw body with no card rather than an error tile: the
  * value came from a computation that succeeded, and our inability to
  * describe it is not the user's problem to debug (§32f's reasoning, applied
  * one level down).
  */
-type Parsed = {
-  uid: string;
-  fingerprint: string;
-  created: string;
-  expires: string | null;
-  isPrivate: boolean;
-};
+type Summary = Awaited<ReturnType<typeof openpgpKeySummary>>;
 
 export function OpenPgpKeyCard({
   content,
@@ -40,42 +44,32 @@ export function OpenPgpKeyCard({
   publicOnly?: boolean;
   className?: string;
 }) {
-  const [parsed, setParsed] = useState<Parsed | null>(null);
+  const [parsed, setParsed] = useState<Summary>(null);
   const [showRaw, setShowRaw] = useState(false);
 
   useEffect(() => {
     let live = true;
-    const armored = String(content || "");
-    if (!armored.includes("BEGIN PGP")) {
-      setParsed(null);
-      return;
-    }
-    (async () => {
-      try {
-        // Lazy: openpgp is a large module and most tiles are not keys.
-        const { readKey } = await import("openpgp");
-        const key = await readKey({ armoredKey: armored });
-        const primary = await key.getPrimaryUser().catch(() => null);
-        const exp = await key.getExpirationTime().catch(() => null);
-        if (!live) return;
-        setParsed({
-          uid: primary?.user?.userID?.userID || "",
-          fingerprint: key.getFingerprint().toUpperCase(),
-          created: key.getCreationTime().toISOString().slice(0, 10),
-          expires:
-            exp instanceof Date && Number.isFinite(exp.getTime())
-              ? exp.toISOString().slice(0, 10)
-              : null,
-          isPrivate: armored.includes("PRIVATE KEY BLOCK"),
-        });
-      } catch (_) {
+    openpgpKeySummary(content)
+      .then((s) => {
+        if (live) setParsed(s);
+      })
+      .catch(() => {
         if (live) setParsed(null);
-      }
-    })();
+      });
     return () => {
       live = false;
     };
   }, [content]);
+
+  /**
+   * The half, on the first frame and forever after.
+   *
+   * Synchronous, total, and the *same* derivation `openpgpKeySummary` reports
+   * in `form` — it calls this — so the caption cannot disagree with the card
+   * under it, which was the whole of the defect the previous fix worked around
+   * by making the caption wait for a parse that may never land.
+   */
+  const form = openpgpKeyForm(content);
 
   const shownFingerprint = formatFingerprint(parsed?.fingerprint || fingerprint || "");
 
@@ -86,23 +80,23 @@ export function OpenPgpKeyCard({
           {parsed?.uid || "OpenPGP key"}
         </span>
         {/* Nothing rather than a guess, which is `KeyCard.half`'s rule applied
-            one card over. This read `parsed?.isPrivate ? "private" : "public"`,
-            and `parsed` is null for the whole of the lazy `openpgp` import and
-            permanently for armor that does not parse — so an OpenPGP *private*
-            key captioned itself **public**, in the window before the module
-            landed and forever after on a truncated block. Measured on the
-            catalog's key section: the private row read "OpenPGP key · public ·
-            5CDE D055 …" until the parse resolved.
+            one card over — but "nothing" is now only for armor that states
+            neither half, not for every frame before a lazy import lands.
 
-            It is the same defect §35g fixed in `KeyCard`, where `publicOnly`
-            captioned as well as hid: a two-state caption driven by a
-            three-state fact, whose null case defaults to the wrong half. The
-            armor's own header would answer it synchronously, but the card
-            already keeps `isPrivate` from the parse, and a second source for
-            one fact is how the two start disagreeing. So the caption waits. */}
-        {parsed ? (
-          <span className="text-[10px] text-[var(--muted-foreground)]">
-            {parsed.isPrivate ? "private" : "public"}
+            This read `parsed?.isPrivate ? "private" : "public"`, and `parsed`
+            is null for the whole of the `openpgp` import and permanently for a
+            block that does not parse, so an OpenPGP *private* key captioned
+            itself **public**: measured on the catalog's key section, the
+            private row read "OpenPGP key · public · 5CDE D055 …" until the
+            module landed. The first fix made the caption wait for the parse,
+            which stopped it lying and left it silent on exactly the tiles that
+            most need it. `openpgpKeyForm` is the derivation instead — the
+            armor's own header, which states this for every key OpenPGP emits —
+            and `openpgpKeySummary` calls the same function, so this is one
+            source with two consumers rather than two sources for one fact. */}
+        {form ? (
+          <span className="text-[10px] text-[var(--muted-foreground)]" data-openpgp-form={form}>
+            {form}
           </span>
         ) : null}
       </div>

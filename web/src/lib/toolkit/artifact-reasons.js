@@ -69,6 +69,37 @@ export const ACTION_REASONS = Object.freeze({
    */
   noPrivateHalf:
     "This body carries no private key — My Keys stores private keys, and a public half needs no vault.",
+  /**
+   * Copy fingerprint on a tile whose body is not a key in any form this build
+   * recognises — no JWK, no `traits.fingerprint`, no SSH wire form.
+   *
+   * It was a literal inside `artifact-actions.js` until the representation
+   * pass, and its being one is the argument for this module rather than an
+   * oversight worth apologising for: the sentence explains a *derivation* that
+   * could not run, and the derivation now lives in `artifact-readouts.js` with
+   * two consumers. A refusal spoken by one of them and not the other is how
+   * the card and the button start describing the same body differently.
+   *
+   * No remedy, because there is nothing wrong to fix: a tile that holds no key
+   * is not a key tile with a problem. The kinds that declare this action are
+   * the ones for which a key is *meaningful* (§33d); whether this particular
+   * body has one is what the sentence answers.
+   */
+  noKeyToFingerprint: "This artifact carries no key to fingerprint.",
+  /**
+   * Copy public line, where the body is not a key this build can encode.
+   *
+   * A separate string from `noKeyToFingerprint` because it is a separate
+   * *condition*, not a separate voice for one: fingerprinting reads a JWK, a
+   * stamped fingerprint **or** an SSH wire form, and encoding reads a JWK
+   * alone — so a `.pub` line refuses this action while answering the other,
+   * and one shared sentence would be wrong on exactly that tile.
+   *
+   * The neighbouring failure — a real key whose algorithm SSH has no key type
+   * for — is not this. The kind omits the action outright there (§33d), and
+   * `run()` throws a sentence naming the algorithms that would work.
+   */
+  noKeyToEncode: "This artifact carries no key to encode.",
   /** Publish, with no route to the directory. */
   offline: "Publishing needs a connection to this site's directory.",
 });

@@ -411,7 +411,20 @@ export function ArtifactTile({
               prose `label` is not the default. */}
           {badgeNameFor(resolvedKind, a, a.kind)}
         </span>
-        <code className="artifact-label min-w-0 flex-1 truncate font-mono font-medium text-[var(--foreground)]">
+        {/* `title` on the label, not only on the row.
+            The row's title is the *preview* — the body — and the label is a
+            different fact that also truncates. Most labels are short slot
+            names, but not all are sentences by accident: the engine names the
+            recovery envelope "OpenPGP envelope — required for recovery (not a
+            share)", and in a narrow panel the row cut it at "OpenPGP envelope
+            — required f…", losing the clause the label exists for. A witness
+            who reads that as a share destroys a ceremony by counting it toward
+            the threshold, so the half that gets cut is the load-bearing half.
+            Same treatment `RecipientsCard` gives a truncated fingerprint. */}
+        <code
+          className="artifact-label min-w-0 flex-1 truncate font-mono font-medium text-[var(--foreground)]"
+          title={a.label}
+        >
           {a.label}
         </code>
         {/* Kept, and recoloured into the tier rather than dropped.

@@ -1,5 +1,6 @@
 /**
- * Derivations behind the §37 artifact tiles (design_handoff_artifact_actions).
+ * **The representation layer.** Derivations behind the §37 artifact tiles
+ * (design_handoff_artifact_actions).
  *
  * §37a's corollary is that several of the brief's candidate *actions* are
  * really *views*: "inspect packets" on a ciphertext is not a button, it is
@@ -18,6 +19,79 @@
  * envelope, not a verdict. Verification takes a key and a payload, which a
  * tile does not have — that is `ssh.verify` and `run.verify`, and §37a is why
  * they stay ops.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * ## The boundary this module is one third of
+ *
+ * `sshKeySummary` was written with a rule in its own docstring — *one
+ * derivation, used by the card and by the action, so an op and a tile cannot
+ * disagree about the same fact* — and the rule was true in exactly this file.
+ * Everywhere else, formatting and derivation were scattered across the engine,
+ * the kind table, the cards and the actions, and **six defects in one session
+ * are traceable to that**: `publicOnly` doing two jobs so a masked *private*
+ * tile captioned itself "public half"; `OpenPgpKeyCard` captioning a private
+ * key "public" for the whole of a lazy import; the badge rendering the `role`
+ * while `resolvedKind.label` sat one line above, so naming problems were fixed
+ * by growing the *matching* vocabulary; `glyph` declared on fourteen kinds and
+ * rendered by nothing; a second download namer that was avoided only because
+ * someone noticed; and two disabled reasons living as literals beside the
+ * module that exists to hold them. So the boundary gets written down.
+ *
+ * | Layer | Owns | Where |
+ * | --- | --- | --- |
+ * | **Engine** | *facts* — content, filename, mime, role, tags, traits, sensitive. Computed once, at emit, by the step that produced the value; digested by the receipt. Nothing downstream recomputes one. | `engine.js` and the ops |
+ * | **Representation** | *read-outs* — what a human reads **off** those facts, and how it is shaped: a fingerprint in the form the matching CLI prints, a key type, a comment, a packet map, a code and the instant its step ends. | this module |
+ * | **View** | *layout only* — where a read-out sits, what is masked, what a `publicView` may draw, how a fraction becomes a CSS bucket. No parsing, no derivation. | `toolkit/widgets/**`, `artifact-kinds/registry.tsx` |
+ *
+ * ### The rule: a fact derived in two places is a bug
+ *
+ * Not "avoid duplication" — the stronger claim, that two derivations of one
+ * fact are a **defect already**, whether or not they currently agree. Every
+ * item in the list above is two answers to one question that had not yet been
+ * asked in a state where they differ.
+ *
+ * ### How a reviewer checks it — three passes, in order
+ *
+ * 1. **Does a widget parse?** Grep `toolkit/widgets/**` for `JSON.parse`,
+ *    `atob`, `TextDecoder`, `readKey`, `await import(` of a codec, or a regex
+ *    over `content`. Every hit is either a call into this module or a defect.
+ *    `InspectorArtifact`, `JwtArtifact` and `NetworkArtifact` draw structured
+ *    data the **engine** attached (`inspectSnapshot`, `jose`, `netData`), so
+ *    there is nothing there to parse; they are not exceptions to the rule.
+ * 2. **Does one fact have two spellings?** Name the fact, then grep for it.
+ *    "Which half is this OpenPGP armor" was answered in three places — the
+ *    card's own parse, `hasPrivateKeyMaterial`, and the engine's
+ *    `openpgp`/`private` tags — which is how a private key captioned itself
+ *    public. If two sites answer one question, one of them calls the other.
+ *    (`openpgpKeyForm` is now that one place, and `openpgpKeySummary` calls
+ *    it rather than reading the fact a second way off its own parse.)
+ * 3. **Does an action need what the card shows?** If a card displays a fact
+ *    and an action's `available()` or `run()` needs the same fact, both reach
+ *    it through the same exported function here. `sshKeySummary` is the worked
+ *    example: `SshKeyCard` draws it, `key.copyFingerprint` copies it.
+ *
+ * ### What a read-out is allowed to read
+ *
+ * **`content`, `traits`, `role` and `tags` — and nothing else.** There are
+ * three hops between an engine artifact and a tile (`engine` → `useNotebook`'s
+ * `cellOutputs` → each of `ToolkitShell`'s two `OutputArtifact` mappings), each
+ * an explicit field list that silently drops what it does not name; `traits` is
+ * the only open bag copied wholesale. A read-out that reaches for a named field
+ * is a read-out a projection nobody edited can disconnect. `shareIdentity` is
+ * the standing example and the reason this is a rule rather than a preference:
+ * it reads `artifact.shareIndex`, **no** shell mapping copies it, and the share
+ * tile works only because the function prefers `traits.shareOf`. The field is
+ * dead and the bag saved it. Put a new fact in `traits`, and derive from
+ * `traits`.
+ *
+ * ### What the boundary does not say
+ *
+ * It does not say every parse in a widget is misplaced. A derivation with one
+ * consumer whose output is only ever laid out is view-local, and a refactor
+ * that moved everything here on principle would be worse than the scattering:
+ * it would put layout decisions behind a function boundary and buy nothing.
+ * The test is pass 3 — two consumers, or a fact an action also needs.
  */
 
 import { dearmorToBytes, mapPacketSpans } from "../packet-map.js";
@@ -92,6 +166,44 @@ export function recipientRows(json) {
       encryptCapable: r.encryptCapable !== false,
     }));
   return rows.length ? rows : null;
+}
+
+/**
+ * The rows of a recipient list that match what someone typed.
+ *
+ * A filter is a *view* — §47c's test is "could this interaction change what
+ * Copy copies", and it cannot: the artifact keeps every row, the raw toggle
+ * shows the whole JSON, and Copy copies the body. So the input box belongs to
+ * the card. **Which rows match does not**, for the one reason that decides it:
+ * a fingerprint is stored and displayed in grouped-hex, and a user typing one
+ * copies it from wherever they have it — a `gpg --list-keys` line, an email,
+ * this tile — so the spaces are arbitrary on both sides. `formatFingerprint`
+ * puts them in; this takes them out of both the haystack and the needle. A
+ * card that compared the strings as typed would silently match nothing for the
+ * one field people paste rather than type, which is a filter that looks broken
+ * and reads as "no such recipient".
+ *
+ * Empty query returns the rows unchanged (the same array, not a copy) so the
+ * unfiltered case costs nothing. Order is never touched: it is the order the
+ * engine serialized, which is the order `gpg.encrypt` will walk.
+ *
+ * @param {{ fingerprint: string, label: string, email: string,
+ *   approvalState: string, encryptCapable: boolean }[]} rows
+ * @param {string} query
+ */
+export function filterRecipientRows(rows, query) {
+  const list = Array.isArray(rows) ? rows : [];
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return list;
+  const bare = q.replace(/\s+/g, "");
+  return list.filter((r) => {
+    const fpr = String(r?.fingerprint || "").toLowerCase().replace(/\s+/g, "");
+    return (
+      String(r?.label || "").toLowerCase().includes(q) ||
+      String(r?.email || "").toLowerCase().includes(q) ||
+      fpr.includes(bare)
+    );
+  });
 }
 
 /**
@@ -177,6 +289,106 @@ export async function sshKeySummary(text) {
       keyType: String(material.type || ""),
       comment: String(material.comment || ""),
       fingerprint: await sshFingerprint(blob),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Which half an OpenPGP armor block holds — **the one place that answers it.**
+ *
+ * The fact had three spellings. `materializeOutArtifacts` tags the artifact
+ * `openpgp` + `public`/`private`; `hasPrivateKeyMaterial` in
+ * `artifact-actions.js` asks a regex whether any armor carries a private half;
+ * and `OpenPgpKeyCard` used to take it off `readKey`'s result. The third one is
+ * what bit: `parsed` is null for the whole of the lazy `openpgp` import and
+ * permanently for armor that will not parse, so `parsed?.isPrivate ? "private"
+ * : "public"` captioned a **private** key *public* — a two-state caption
+ * driven by a three-state fact, whose null case defaults to the wrong half.
+ *
+ * The fix that shipped first was to make the caption *wait* for the parse,
+ * which is correct about the disagreement and wrong about the answer: the
+ * armor's own header states this synchronously, always, for every key OpenPGP
+ * will ever emit, and a tile that knows which half it is holding should say so
+ * on the first frame. What made waiting look like the only option was that
+ * there was nowhere to put a second derivation that was not a *second source*.
+ * There is now: this is the source, and `openpgpKeySummary` calls it rather
+ * than reading the fact off its own parse, so the two cannot differ.
+ *
+ * Header-only on purpose. RFC 9580 §6.2 fixes both labels, and the alternative
+ * — deciding from packet tags — would need the parse this exists to precede.
+ * Anything that is not one of the two returns null and the caller says nothing,
+ * which is `KeyCard.half`'s rule and the reason it exists.
+ *
+ * @param {string} armored
+ * @returns {"public"|"private"|null}
+ */
+export function openpgpKeyForm(armored) {
+  const text = String(armored || "");
+  if (text.includes("-----BEGIN PGP PRIVATE KEY BLOCK-----")) return "private";
+  if (text.includes("-----BEGIN PGP PUBLIC KEY BLOCK-----")) return "public";
+  return null;
+}
+
+/**
+ * What an OpenPGP key artifact says about itself: whose it is, its fingerprint,
+ * and the two dates.
+ *
+ * An armored key is base64 packets — unreadable as text and actively
+ * misleading as a preview, because the first lines are identical for every key
+ * ever generated. The one question a reader has is *whose is this*, and the
+ * armor answers it only after parsing.
+ *
+ * This lived inside `OpenPgpKeyCard` and moved here for the reason the module
+ * header gives: it is a parse of a body, it is the third-largest derivation in
+ * the tile layer, and inside a component it had **no test at all** — the suite
+ * is `environment: "node"`, so nothing could reach it. It is also the parse
+ * `key.publish`'s confirmation deliberately declines to repeat ("the uid would
+ * have to come from a second parse of the armor"); that decision stands, and it
+ * is now a decision about *what to say* rather than one forced by there being
+ * only one place the answer existed.
+ *
+ * The import stays lazy. `openpgp` is a large module and most tiles are not
+ * keys, so this awaits it rather than pulling it into every bundle that touches
+ * a read-out — the same call the card made, kept.
+ *
+ * `expiresAt` rides alongside the formatted date because a reader's question is
+ * "is it still good", not "when does it expire" (§48b), and `expiryNote` in
+ * `GpgKeyBinder.tsx` already turns an instant into that verdict. Handing back a
+ * pre-formatted string alone would have forced whoever wires that up to parse
+ * the date this function already had.
+ *
+ * Total, like everything here: malformed or truncated armor returns null and
+ * the tile renders the armor it would have rendered anyway (§32d). Our
+ * inability to describe a value is not the user's problem to debug.
+ *
+ * @param {string} armored
+ * @returns {Promise<{ form: "public"|"private", uid: string,
+ *   fingerprint: string, created: string, expires: string|null,
+ *   expiresAt: number|null } | null>}
+ */
+export async function openpgpKeySummary(armored) {
+  const text = String(armored || "");
+  const form = openpgpKeyForm(text);
+  if (!form) return null;
+  try {
+    const { readKey } = await import("openpgp");
+    const key = await readKey({ armoredKey: text });
+    const primary = await key.getPrimaryUser().catch(() => null);
+    const exp = await key.getExpirationTime().catch(() => null);
+    // `getExpirationTime` answers `Infinity` for a key that does not expire,
+    // which is not a Date — so the guard is the null branch and "does not
+    // expire" is said in words by the caller rather than drawn as a date.
+    const expiresAt =
+      exp instanceof Date && Number.isFinite(exp.getTime()) ? exp.getTime() : null;
+    return {
+      form,
+      uid: primary?.user?.userID?.userID || "",
+      fingerprint: key.getFingerprint().toUpperCase(),
+      created: key.getCreationTime().toISOString().slice(0, 10),
+      expires: expiresAt ? new Date(expiresAt).toISOString().slice(0, 10) : null,
+      expiresAt,
     };
   } catch (_) {
     return null;

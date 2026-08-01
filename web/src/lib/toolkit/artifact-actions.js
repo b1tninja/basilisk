@@ -298,7 +298,7 @@ export const ARTIFACT_ACTIONS = Object.freeze([
       artifact.traits?.fingerprint ||
       looksLikeSshKey(artifact?.content)
         ? true
-        : { disabled: "This artifact carries no key to fingerprint." },
+        : { disabled: ACTION_REASONS.noKeyToFingerprint },
     run: async ({ artifact, services }) => {
       const jwk = identityJwkOf(artifact);
       if (jwk) {
@@ -343,7 +343,7 @@ export const ARTIFACT_ACTIONS = Object.freeze([
     available: ({ artifact }) =>
       identityJwkOf(artifact)
         ? true
-        : { disabled: "This artifact carries no key to encode." },
+        : { disabled: ACTION_REASONS.noKeyToEncode },
     run: async ({ artifact, services }) => {
       const jwk = identityJwkOf(artifact);
       const id = await sshIdentityFromJwk(publicJwk(jwk));

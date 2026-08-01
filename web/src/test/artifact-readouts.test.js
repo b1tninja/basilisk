@@ -14,6 +14,9 @@ import "../lib/toolkit/registry.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import {
+  filterRecipientRows,
+  openpgpKeyForm,
+  openpgpKeySummary,
   packetSummary,
   qrDataUri,
   receiptSummary,
@@ -86,6 +89,140 @@ describe("recipientRows", () => {
   it("returns null for a body that is not a list", () => {
     expect(recipientRows("{}")).toBeNull();
     expect(recipientRows("not json")).toBeNull();
+  });
+});
+
+describe("filterRecipientRows — which rows match, not how they are drawn", () => {
+  const rows = [
+    {
+      fingerprint: "AABBCCDD11223344AABBCCDD11223344AABBCCDD",
+      label: "Dana Okonkwo",
+      email: "dana@example.org",
+      approvalState: "approved",
+      encryptCapable: true,
+    },
+    {
+      fingerprint: "99887766554433229988776655443322998877 66",
+      label: "Sam Reyes",
+      email: "sam@example.org",
+      approvalState: "unverified",
+      encryptCapable: false,
+    },
+  ];
+
+  it("returns the rows untouched for an empty query", () => {
+    // The same array, not a copy — the unfiltered case is every case until
+    // someone types, and it should cost nothing.
+    expect(filterRecipientRows(rows, "")).toBe(rows);
+    expect(filterRecipientRows(rows, "   ")).toBe(rows);
+  });
+
+  it("matches label and email, case-insensitively", () => {
+    expect(filterRecipientRows(rows, "DANA").map((r) => r.label)).toEqual([
+      "Dana Okonkwo",
+    ]);
+    expect(filterRecipientRows(rows, "sam@example").map((r) => r.label)).toEqual([
+      "Sam Reyes",
+    ]);
+  });
+
+  /**
+   * The reason this is a read-out and not a `String.includes` in the card.
+   *
+   * A fingerprint is *displayed* grouped and copied from wherever the user has
+   * it — a `gpg --list-keys` line, an email, this tile — so the spaces are
+   * arbitrary on both sides. The second fixture row carries one *inside* the
+   * stored value, which is what a real hkp response looks like. A card
+   * comparing the strings as typed matches nothing here and reads as "no such
+   * recipient" for the one field people paste rather than type.
+   */
+  it("ignores grouping spaces on both sides of a fingerprint", () => {
+    expect(filterRecipientRows(rows, "AABB CCDD").map((r) => r.label)).toEqual([
+      "Dana Okonkwo",
+    ]);
+    expect(filterRecipientRows(rows, "998877665544").map((r) => r.label)).toEqual([
+      "Sam Reyes",
+    ]);
+    expect(filterRecipientRows(rows, "3322 9988").map((r) => r.label)).toEqual([
+      "Sam Reyes",
+    ]);
+  });
+
+  it("never reorders, because the order is the one gpg.encrypt will walk", () => {
+    expect(filterRecipientRows(rows, "example").map((r) => r.label)).toEqual([
+      "Dana Okonkwo",
+      "Sam Reyes",
+    ]);
+  });
+
+  it("is total on rubbish", () => {
+    expect(filterRecipientRows(null, "x")).toEqual([]);
+    expect(filterRecipientRows([{}], "x")).toEqual([]);
+  });
+});
+
+/**
+ * The armor parse, which had no test at all while it lived inside
+ * `OpenPgpKeyCard` — the suite is `environment: "node"`, so nothing in it could
+ * reach a `useEffect`. That is the module header's stated reason for existing,
+ * and this is the case that proves it: the caption defect below shipped, was
+ * fixed, and was fixed *again*, without a single assertion ever running.
+ */
+describe("openpgpKeyForm — one source for which half the armor holds", () => {
+  it("reads both halves off the header, synchronously", async () => {
+    const arts = await run(
+      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out @k'
+    );
+    const pub = arts.find((a) => a.role === "public-key");
+    const priv = arts.find((a) => (a.tags || []).includes("private"));
+    expect(openpgpKeyForm(pub.content)).toBe("public");
+    // The defect: `parsed?.isPrivate ? "private" : "public"` said **public**
+    // here for the whole of the lazy import, and forever on armor that will
+    // not parse. Nothing about this answer waits for anything.
+    expect(openpgpKeyForm(priv.content)).toBe("private");
+  });
+
+  it("says nothing rather than guessing at armor that is neither", () => {
+    expect(openpgpKeyForm("-----BEGIN PGP MESSAGE-----\n\nxxxx\n")).toBeNull();
+    expect(openpgpKeyForm("ssh-ed25519 AAAA nobody@nowhere")).toBeNull();
+    expect(openpgpKeyForm("")).toBeNull();
+    expect(openpgpKeyForm(undefined)).toBeNull();
+  });
+});
+
+describe("openpgpKeySummary", () => {
+  it("reads uid, fingerprint and dates off a key this build produced", async () => {
+    const arts = await run(
+      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out @k'
+    );
+    const pub = arts.find((a) => a.role === "public-key");
+    const summary = await openpgpKeySummary(pub.content);
+    expect(summary.uid).toBe("Dana Okonkwo <dana@example.org>");
+    expect(summary.form).toBe("public");
+    expect(summary.fingerprint).toMatch(/^[0-9A-F]{40}$/);
+    expect(summary.created).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // `gpg.genkey` sets no expiry, and `getExpirationTime` answers Infinity
+    // for that — not a Date, so it is null here and the card says "does not
+    // expire" in words rather than drawing a date nobody chose.
+    expect(summary.expires).toBeNull();
+    expect(summary.expiresAt).toBeNull();
+  });
+
+  it("reports the same half `openpgpKeyForm` does, because it calls it", async () => {
+    const arts = await run(
+      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out @k'
+    );
+    for (const a of arts.filter((x) => String(x.content).includes("BEGIN PGP"))) {
+      expect((await openpgpKeySummary(a.content)).form).toBe(openpgpKeyForm(a.content));
+    }
+  });
+
+  it("returns null for armor that will not parse, rather than throwing", async () => {
+    expect(
+      await openpgpKeySummary("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nnot base64\n")
+    ).toBeNull();
+    expect(await openpgpKeySummary("not armor at all")).toBeNull();
+    expect(await openpgpKeySummary("")).toBeNull();
   });
 });
 

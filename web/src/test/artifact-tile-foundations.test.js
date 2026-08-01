@@ -43,7 +43,11 @@ describe("the tile's mono text obeys a type scale (§39b)", () => {
   });
 
   it("marks the elements that need the scale", () => {
-    expect(OUTPUT_LIST).toMatch(/code className="artifact-label/);
+    // `\s+` rather than one space: the assertion is that a `<code>` element
+    // carries the class, and the element grew a second attribute (`title`, so
+    // a truncated label is still readable) and with it a line break. A regex
+    // that also pins the formatting is a regex that fails on a prettier run.
+    expect(OUTPUT_LIST).toMatch(/<code\s+className="artifact-label/);
     expect(OUTPUT_LIST).toMatch(/artifact-body/);
     // The body must not also carry a utility size — it would lose to the
     // global rule and reintroduce the inversion it just fixed, silently.
