@@ -14,6 +14,12 @@
  * consent, the user names the exact file inside it, and nothing is read until
  * they do. Adding a second prompt in front of the browser's would be theatre.
  *
+ * **The type comes from the recipe, not the file.** `file.read` emits `bytes`
+ * unless the author writes `as=text`; nothing is sniffed. A source that chose
+ * its own output type from the octets it happened to meet would make every
+ * compile-time answer downstream a guess — see `execFileRead` for the recipe
+ * that used to compile clean and then throw.
+ *
  * Both directions prefer the **File System Access API** (`showOpenFilePicker` /
  * `showSaveFilePicker`) and fall back to an `<input type=file>` / download
  * anchor where it is absent (Firefox, Safari, and any non-secure context).
@@ -89,26 +95,14 @@ function pickFileLegacy(accept) {
 }
 
 /**
- * MIME → a pipeline-honest type. Text files become `text` so `utf8`-shaped
- * recipes keep working; everything else stays `bytes`, because guessing an
- * encoding for arbitrary octets is how you corrupt a key file.
- * @param {string} mime
- * @param {string} name
- */
-export function fileLooksTextual(mime, name) {
-  const m = String(mime || "").toLowerCase();
-  if (m.startsWith("text/")) return true;
-  if (/^application\/(json|xml|x-pem-file|pgp-(keys|signature))$/.test(m)) return true;
-  return /\.(txt|json|xml|md|pem|asc|sig|csv|recipe|key|pub)$/i.test(String(name || ""));
-}
-
-/**
  * @param {Record<string, unknown>} [params]
  * @returns {Promise<{ type: string, data: unknown, meta: Record<string, unknown> }>}
  */
 export async function execFileRead(params = {}) {
   const accept = String(params.accept ?? "").trim();
-  const as = String(params.as ?? "auto").toLowerCase();
+  // `as` is the whole of the type decision, and it is read from the recipe —
+  // never from the file. See the block below for why.
+  const as = String(params.as ?? "bytes").toLowerCase();
 
   /** @type {File|null} */
   let file = null;
@@ -144,16 +138,31 @@ export async function execFileRead(params = {}) {
     lastModified: file.lastModified || 0,
     fileRead: true,
   };
-  const textual =
-    as === "text" || (as === "auto" && fileLooksTextual(file.type, file.name));
-  if (as === "bytes" || !textual) {
-    return { type: "bytes", data: buf, meta: { ...meta, kind: "opaque" } };
+  // The pipeline type is a function of `as` alone — a total one, over an enum
+  // the compiler can see. That is the whole point.
+  //
+  // It used to be a function of the *file*: `as=auto` sniffed MIME and
+  // extension and handed back `text` for anything that looked textual. But
+  // `types.js` and this op's `effectiveIo` both declared `bytes` for `auto`,
+  // because a picker that has not opened yet cannot be sniffed — so the
+  // declaration and the run disagreed for every `.pem`, `.txt` and `.json`.
+  // `file.read accept=.pem | base64` compiled with zero errors and then threw
+  // `base64 expects bytes`, and `bytes` is not a permissive top type here
+  // (`"hello" | stream.seal` is correctly rejected), so nothing coerced.
+  //
+  // A declared type is a promise the ops drawer, the chip underlining and
+  // `cellErrorsForChains` all spend before the run. The sniff was the one
+  // shipped mechanism that broke it, so the sniff is gone rather than the
+  // promise: a file cannot answer "octets or UTF-8 text?" — only the recipe
+  // author can, and now they must, in a word the compiler reads.
+  if (as === "text") {
+    return {
+      type: "text",
+      data: new TextDecoder().decode(buf),
+      meta: { ...meta, kind: "opaque" },
+    };
   }
-  return {
-    type: "text",
-    data: new TextDecoder().decode(buf),
-    meta: { ...meta, kind: "opaque" },
-  };
+  return { type: "bytes", data: buf, meta: { ...meta, kind: "opaque" } };
 }
 
 /**

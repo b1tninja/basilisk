@@ -419,6 +419,31 @@ export function migrateRecipe(text) {
     if (n) counts.set("export/import d", (counts.get("export/import d") || 0) + n);
   }
 
+  // `file.read as=auto` → `as=bytes`. A retired *param value*, which is new
+  // here — everything above retires a step token — and it is retired for the
+  // reason the others were kept: `auto` sniffed the chosen file's MIME and
+  // extension to pick `text` or `bytes`, while the compiler, holding no file,
+  // declared `bytes`. `bytes` is what the declaration always said, so this
+  // rewrite changes the recipe's text without changing its type.
+  //
+  // Scoped to the step: `as=` is `file.read`'s alone, but `auto` is a live
+  // value on `out encoding=`, `jwt.verify alg=`, `pem label=` and more, and a
+  // bare `as=auto` rewrite would be one step away from touching those.
+  {
+    let n = 0;
+    recipe = recipe.replace(
+      /(\bfile\.read\b)([^|;\n]*)/gi,
+      (m, verb, args) => {
+        const next = args.replace(/\bas=auto\b/gi, () => {
+          n += 1;
+          return "as=bytes";
+        });
+        return `${verb}${next}`;
+      }
+    );
+    if (n) counts.set("file.read as=auto", (counts.get("file.read as=auto") || 0) + n);
+  }
+
   // Longer keys first so wa-create beats nothing overlapping; sort by length desc.
   const keys = Object.keys(LEGACY_STEP_MIGRATE).sort((a, b) => b.length - a.length);
   for (const from of keys) {
@@ -443,6 +468,7 @@ export function migrateRecipe(text) {
     ":selector-short": ":public/:private",
     hexdump: "inspect format=hexdump",
     "export/import d": "export/import scalar",
+    "file.read as=auto": "file.read as=bytes",
   };
   const changes = [...counts.entries()].map(([from, count]) => ({
     from,

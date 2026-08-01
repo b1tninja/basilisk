@@ -455,10 +455,11 @@ export function inferSourceType(name, params = {}) {
       // the thing you keep.
       return typeOf("text", { kind: "opaque" });
     case "file.read": {
-      // `auto` is only resolvable once a file is chosen, so the compile-time
-      // answer is the conservative one. Claiming `text` for an unopened picker
-      // would type-check a recipe that then meets a PNG.
-      const as = String(params.as || "auto").toLowerCase();
+      // `as` decides, and nothing else does — `execFileRead` reads the same
+      // param and makes the same call, so this is a promise rather than a
+      // guess. The retired `auto` was the guess: it sniffed the chosen file
+      // while this line, with no file to sniff, said `bytes`.
+      const as = String(params.as || "bytes").toLowerCase();
       if (as === "text") return typeOf("text", { kind: "opaque" });
       return typeOf("bytes", { kind: "opaque" });
     }

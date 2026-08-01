@@ -34,6 +34,25 @@ import {
 export { migrateRecipe } from "./step-names.js";
 
 /**
+ * Retired *param values* — the `legacyRemovalHint` of the param world.
+ *
+ * An enum value that is dropped from a spec becomes an ordinary "invalid"
+ * error, which is true but useless: it lists what is allowed and says nothing
+ * about what happened or that `migrateRecipe` will do it for you. Keyed
+ * `"<step> <param>=<value>"`, valued with the replacement clause.
+ *
+ * Kept here rather than in `registry.js` because a retired value is by
+ * definition absent from the spec it used to live in.
+ * @type {Record<string, string>}
+ */
+const RETIRED_PARAM_VALUES = {
+  // Sniffed the chosen file to pick `text` or `bytes` while the compiler,
+  // holding no file, declared `bytes` — so `file.read accept=.pem | base64`
+  // compiled clean and threw at run time.
+  "file.read as=auto": "use as=bytes, or as=text to decode as UTF-8",
+};
+
+/**
  * @param {RecipeStep} step
  * @param {string} name
  */
@@ -1103,8 +1122,11 @@ export function validateRecipe(ast) {
       const v = step.params[p.name];
       if (v === undefined) continue;
       if (p.type === "enum" && p.enum && !p.enum.includes(String(v))) {
+        const retired = RETIRED_PARAM_VALUES[`${step.name} ${p.name}=${String(v)}`];
         errors.push({
-          message: `${step.name}: invalid ${p.name}="${v}" (allowed: ${p.enum.join(", ")})`,
+          message: retired
+            ? `${step.name}: ${p.name}="${v}" was removed — ${retired} (or Upgrade recipe to migrate)`
+            : `${step.name}: invalid ${p.name}="${v}" (allowed: ${p.enum.join(", ")})`,
           start: step.start,
           end: step.end,
           stepIndex,
@@ -2003,8 +2025,8 @@ input | utf8 | age.encrypt to=@pub armor=true | out @ct`,
     pair: "age-file",
     title: "Decrypt an age file",
     blurb:
-      "`age -d -i key.txt doc.age`, one picker each — `key=` is slot-typed precisely so the identity never lands in recipe text, which Copy link and Export would carry off.",
-    recipe: `file.read | out @id
+      "`age -d -i key.txt doc.age`, one picker each — `key=` is slot-typed precisely so the identity never lands in recipe text, which Copy link and Export would carry off. The identity file is read `as=text` and the ciphertext as bytes, because `file.read` takes its type from the recipe and not from what the picker happened to return.",
+    recipe: `file.read as=text | out @id
 
 file.read | age.decrypt key=@id | file.save`,
   },

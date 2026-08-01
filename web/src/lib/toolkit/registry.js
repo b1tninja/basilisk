@@ -2926,7 +2926,7 @@ export const STEPS = [
     conjugate: "file.save",
     pairCaption: "File",
     pairLabels: { forward: "Read", reverse: "Save" },
-    doc: "Open a file from disk into the pipeline. The browser's own picker is the consent — no extra prompt (unlike `clipboard.read`, where the page chooses when to look). Text-ish files arrive as `text`, everything else as `bytes`; force with `as=`. Filename and MIME ride along in meta, so `file.read | age.encrypt to=@pub | file.save` names the output for you. Main-thread only. Example: `file.read accept=.pem | inspect`.",
+    doc: "Open a file from disk into the pipeline. The browser's own picker is the consent — no extra prompt (unlike `clipboard.read`, where the page chooses when to look). Arrives as `bytes`; write `as=text` when the recipe wants it decoded as UTF-8. **The type is read from the recipe, never sniffed from the file** — a source that picked its own type would make every compile-time answer downstream a guess. Filename and MIME ride along in meta, so `file.read | age.encrypt to=@pub | file.save` names the output for you. Main-thread only. Example: `file.read accept=.pem | inspect`.",
     input: "none",
     output: "bytes",
     params: [
@@ -2940,16 +2940,18 @@ export const STEPS = [
       {
         name: "as",
         type: "enum",
-        default: "auto",
-        enum: ["auto", "text", "bytes"],
-        doc: "Pipeline type: auto sniffs MIME/extension; bytes never guesses an encoding",
+        default: "bytes",
+        // Two values, and no third. `auto` was retired (migrateRecipe rewrites
+        // it to `bytes`) because it sniffed MIME/extension at run time while
+        // this `effectiveIo` — which has no file to sniff — declared `bytes`,
+        // so `file.read accept=.pem | base64` compiled clean and threw.
+        enum: ["bytes", "text"],
+        doc: "Pipeline type — bytes never guesses an encoding; text decodes as UTF-8. Read from the recipe, never from the file",
       },
     ],
     effectiveIo(params) {
-      // `auto` cannot be resolved until a file is chosen, so the declared type
-      // is the safe one — bytes flows into everything text does via `utf8`,
-      // and claiming `text` for an unopened picker would type-check recipes
-      // that then break on a PNG.
+      // Total over the enum, so the declared type is a promise the run keeps:
+      // `execFileRead` makes exactly this decision from exactly this param.
       return { input: "none", output: String(params?.as) === "text" ? "text" : "bytes" };
     },
   },

@@ -1524,12 +1524,6 @@ run.receipt "verb smoke ceremony" | out @receipt`,
       skipReason: "needs a file picker (main-thread browser only)",
     },
     {
-      id: "file.read.auto.compile",
-      recipe: "file.read as=auto | out @blob",
-      mode: "compile",
-      skipReason: "needs a file picker (main-thread browser only)",
-    },
-    {
       id: "file.save.compile",
       recipe: "random 32 | file.save name=key.bin mime=application/octet-stream | out @saved",
       mode: "compile",

@@ -329,13 +329,21 @@ file.read | age.encrypt to=@pub | file.save
 # Decrypt one, keeping the round trip symmetric
 file.read | age.decrypt key=@id | file.save
 
-# Filter the picker, and force the pipeline type
+# Filter the picker, and name the pipeline type
 file.read ".pem,.asc" as=text | gpg.inspect | out @report
 file.read as=bytes | digest | encode hex | out @sha
 ```
 
-`file.read` emits `bytes` unless the MIME/extension says text (or `as=text`
-forces it), and carries the filename and MIME in meta — which is why
+`file.read` emits `bytes`; `as=text` decodes the file as UTF-8 instead. Those
+are the only two answers, and the recipe gives them — **the file is never
+sniffed**. It cannot be: the type has to be known before the picker opens,
+because that is when the drawer filters ops, the chips underline and the chain
+is checked. A `as=auto` that read the MIME at run time used to disagree with
+its own declaration, so `file.read accept=.pem | base64` compiled with no
+errors and then threw `base64 expects bytes`. `as=auto` is retired; Upgrade
+recipe rewrites it to `as=bytes`, which is what the declaration always said.
+
+The filename and MIME ride along in meta — which is why
 `file.read | age.encrypt | file.save` names the output `<original>.age` without
 being told. `file.save name=` overrides; `mime=` overrides the type.
 
