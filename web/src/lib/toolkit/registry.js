@@ -2086,7 +2086,7 @@ export const STEPS = [
     shelf: "sshwire",
     conjugateOf: "ssh.encode",
     glyph: "ssh-key",
-    doc: "Decode an OpenSSH public line or (unencrypted) openssh-key-v1 private block into a live key/keypair. Passphrase-protected private files are refused by name — the KDF is bcrypt, which Basilisk cannot run yet. Example: `input | ssh.decode | ssh.fingerprint | out @fp`.",
+    doc: "Decode an OpenSSH public line or an openssh-key-v1 private block into a live key/keypair. Passphrase-protected blocks open too — put the passphrase in the Inputs panel; a wrong one is named as such rather than reported as a corrupt file. Example: `input | ssh.decode | ssh.fingerprint | out @fp`.",
     input: "text",
     output: "keypair",
     overloads: [

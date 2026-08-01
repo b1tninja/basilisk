@@ -247,9 +247,10 @@ the agent stays up, because one refused request is not a reason to drop every
 other client. Keys without `--confirm` sign silently, exactly as OpenSSH's own
 agent does.
 
-**Passphrase-protected key files are refused by name.** Their KDF is
-`bcrypt_pbkdf`, which no Web API provides. Decrypt outside
-(`ssh-keygen -p -N ""`) or serve a different key.
+**Passphrase-protected key files open.** Their KDF is `bcrypt_pbkdf`, which no
+Web API provides, so Basilisk ships its own — verified against `ssh-keygen`'s
+own output at several rounds counts, not against itself. A wrong passphrase is
+named as a wrong passphrase rather than reported as a corrupt file.
 
 **Keys come from files, not from the browser vault.** There is no IndexedDB in
 Node, and the capability layer exists precisely so that this kind of gap is

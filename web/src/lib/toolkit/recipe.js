@@ -1736,7 +1736,7 @@ in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok`,
     pair: "ssh-pem",
     title: "SSH private key → PKCS#8 PEM",
     blurb:
-      "The conversion chore, without `ssh-keygen -p -m PKCS8` overwriting your file: paste an unencrypted openssh-key-v1 block and get PEM (passphrase-protected files are refused by name — bcrypt).",
+      "The conversion chore, without `ssh-keygen -p -m PKCS8` overwriting your file: paste an openssh-key-v1 block and get PEM. Passphrase-protected blocks work — put the passphrase in the Inputs panel.",
     recipe: "input | ssh.decode | export pkcs8 | pem | out @pem",
   },
   {
