@@ -25,6 +25,8 @@ import { parseSshsig, sshsigSign, sshsigVerify } from "../lib/ssh/sshsig.js";
 import { STEPS } from "../lib/toolkit/registry.js";
 import { matchOverload } from "../lib/toolkit/types.js";
 import { execSshEncode } from "../lib/toolkit/ssh-ops.js";
+import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { runRecipe } from "../lib/toolkit/engine.js";
 
 const fixture = (name) =>
   readFileSync(fileURLToPath(new URL(`./fixtures/ssh/${name}`, import.meta.url)), "utf8");
@@ -203,5 +205,61 @@ describe("ssh.encode declares the half it actually emits", () => {
     const priv = matchOverload(dec.overloads, { base: "text", kind: "ssh-private" }, {})?.output;
     expect(priv?.base).toBe("keypair");
     expect(outOf({ format: "private" })?.kind).toBe("ssh-private");
+  });
+});
+
+/**
+ * The same claim, asserted where it is actually consumed (§32c).
+ *
+ * The overload tests above pin the *table*. This pins the **artifact**, which
+ * is a different thing and is where the bug was reported: `attachPipeMeta`
+ * projects `value.meta.type` into both `pipeType` and `tags`, so a wrong
+ * overload silently becomes a wrong tag on a real tile.
+ *
+ * It matters because `artifact-kinds/registry.tsx` matches kinds on role +
+ * tags. Nothing claims `ssh-public` today, so no tile is wrong yet — but the
+ * obvious next unit is a kind for SSH public lines (the download feature wanted
+ * a `.pub` extension and could not have one for exactly this reason), and such
+ * a kind would have claimed the private block too and labelled a private key
+ * "SSH public key".
+ */
+describe("the two ssh.encode formats never share a tag", () => {
+  const artifactsOf = async (src) => {
+    const { ast, validation } = compileRecipe(src);
+    expect(validation.errors, `fixture should compile: ${src}`).toEqual([]);
+    return runRecipe(ast, {});
+  };
+
+  it("tags a private block ssh-private, not ssh-public", async () => {
+    const [art] = await artifactsOf(
+      "genkey ed25519 | ssh.encode format=private | out @priv"
+    );
+    expect(art.content).toContain("BEGIN OPENSSH PRIVATE KEY");
+    expect(art.tags).toContain("ssh-private");
+    expect(art.tags).not.toContain("ssh-public");
+    expect(art.pipeType).toMatchObject({ base: "text", kind: "ssh-private" });
+    // Unchanged by the fix, and worth pinning: the mask never depended on the
+    // tag being right, which is why this shipped without a visibly broken tile.
+    expect(art.sensitive).toBe(true);
+    expect(art.role).toBe("secret");
+  });
+
+  it("tags a public line ssh-public, not ssh-private", async () => {
+    const [art] = await artifactsOf("genkey ed25519 | ssh.encode | out @pub");
+    expect(art.content).toMatch(/^ssh-ed25519 /);
+    expect(art.tags).toContain("ssh-public");
+    expect(art.tags).not.toContain("ssh-private");
+    expect(art.pipeType).toMatchObject({ base: "text", kind: "ssh-public" });
+    expect(art.sensitive).toBe(false);
+  });
+
+  it("shares no tag between the two, whatever else they carry", async () => {
+    // Asserted as set disjointness rather than as two literals: a tag added to
+    // both halves later would pass the tests above and still reintroduce the
+    // defect, because one kind matching both is the whole failure mode.
+    const [priv] = await artifactsOf("genkey ed25519 | ssh.encode format=private | out @a");
+    const [pub] = await artifactsOf("genkey ed25519 | ssh.encode | out @b");
+    const shared = (priv.tags || []).filter((t) => (pub.tags || []).includes(t));
+    expect(shared, `private and public share tags: ${shared.join(", ")}`).toEqual([]);
   });
 });
