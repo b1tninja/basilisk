@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
-import { KindGlyph } from "./kind-glyphs";
+import { KindGlyph, badgeFamily } from "./kind-glyphs";
 import { ArtifactAction, type ActionTier } from "./ArtifactAction";
 import { ConsequenceBanner, type ConsequenceSpec } from "./ConsequenceBanner";
 import { actionsFor } from "../../lib/toolkit/artifact-actions.js";
@@ -371,19 +371,17 @@ export function ArtifactTile({
       <div className="flex items-center gap-2.5" title={a.preview}>
         {/* §35 — glyph in front of the existing label. `a.kind` is already
             the lookup key, so no new prop; the same map backs TypeCard and
-            the Types shelf so one kind never shows two icons. */}
+            the Types shelf so one kind never shows two icons.
+
+            The tint is `badgeFamily`'s answer, rendered by an enumerated rule
+            set in toolkit.css. It was a ternary here, naming `key` and
+            `keypair` by hand — so the four key roles added after it were
+            tinted as though they were plain text, which is what the catalog's
+            key section makes visible. Where the family lives is the fix; a
+            fifth branch would have been the same defect one role later. */}
         <span
-          className={cn(
-            "inline-flex shrink-0 items-center gap-1 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider",
-            a.kind === "diag"
-              ? "bg-[color-mix(in_srgb,var(--warn)_var(--tile-tint),transparent)] text-[var(--warn)]"
-              : // `keypair` is a key badge, in the key badge's colour. It is a
-                // separate role because the *word* is the fix (a keypair read
-                // as a public key), not because it is a different family.
-                a.kind === "key" || a.kind === "keypair"
-                ? "bg-[color-mix(in_srgb,var(--brand)_var(--tile-tint),transparent)] text-[var(--brand)]"
-                : "bg-[color-mix(in_srgb,var(--caret)_var(--tile-tint),transparent)] text-[var(--caret)]"
-          )}
+          className="artifact-badge inline-flex shrink-0 items-center gap-1 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider"
+          data-badge-family={badgeFamily(a.kind)}
         >
           <KindGlyph kind={a.kind} />
           {a.kind}

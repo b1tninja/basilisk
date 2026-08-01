@@ -67,6 +67,53 @@ export const KIND_GLYPHS: Record<string, LucideIcon> = {
 };
 
 /**
+ * The roles that wear a key badge (§35, polish pass).
+ *
+ * Six of them, added over six commits by as many briefs, and until they were
+ * rendered in one list nobody had seen what that cost: the *glyph* map above
+ * says they are one family — every entry is `KeyRound`, and the two comments
+ * in it are each an agent noticing that its role "would be the only key
+ * artifact wearing a badge with no pictogram" — while the badge *tint* said
+ * they were two. `key` and `keypair` were tinted `--brand`; `public-key`,
+ * `secret-key`, `ssh-public` and `ssh-private` fell to the same `--caret` as
+ * TEXT, SHARE and RECEIPT, measured at rgb(88,166,255) against the key
+ * badge's rgb(76,222,130). The split was not public-versus-private — SSH-PRIVATE
+ * and SECRET-KEY are both secret and both fell through — it was simply which
+ * two roles existed when the tint was first written.
+ *
+ * So the family is declared once, here, beside the map that already assumes
+ * it. A role added to `KIND_GLYPHS` as `KeyRound` and forgotten here is what
+ * `kind-glyphs.test.js` fails on, which is the check that could not exist
+ * while the answer lived in a ternary inside a tile.
+ */
+export const KEY_BADGE_KINDS: ReadonlySet<string> = new Set([
+  "key",
+  "keypair",
+  "public-key",
+  "secret-key",
+  "ssh-public",
+  "ssh-private",
+]);
+
+/** How a kind's badge is tinted — a closed three-value vocabulary. */
+export type BadgeFamily = "key" | "diag" | "plain";
+
+/**
+ * Which tint a badge takes.
+ *
+ * Three values, so `toolkit.css` covers them with one enumerated rule set and
+ * `style-src 'self'` never sees an inline write — the same shape as
+ * `.artifact-action[data-action-tier]`, and for the same reason: a closed
+ * vocabulary belongs in a stylesheet, not in a conditional at the call site
+ * where the next role to be added will not find it.
+ */
+export function badgeFamily(kind: string | undefined | null): BadgeFamily {
+  const k = String(kind || "").toLowerCase();
+  if (k === "diag") return "diag";
+  return KEY_BADGE_KINDS.has(k) ? "key" : "plain";
+}
+
+/**
  * Glyph for a value kind, or null when none applies.
  * @param kind `OutputArtifact.kind`, a pipeline type name, or a role
  */

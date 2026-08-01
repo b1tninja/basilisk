@@ -68,10 +68,55 @@ describe("small tinted surfaces clear the contrast floor in both themes (§39c)"
     // Measured in light: badges went 4.38 → 4.77 against a 4.5 floor, and the
     // format tab's 18% measured 4.01. A literal left behind at any call site
     // is a tone that still fails, in the theme nobody develops in.
-    const tinted = OUTPUT_LIST.match(/bg-\[color-mix\(in_srgb,var\(--[a-z-]+\)_[^)]*\)/g) || [];
-    expect(tinted.length).toBeGreaterThan(3);
-    for (const t of tinted) {
-      expect(t, t).toMatch(/var\(--tile-tint\)/);
+    //
+    // Both spellings count, because the tints live in two places now and the
+    // invariant is about the *token*, not about which file says it. The three
+    // badge tints moved to enumerated `.artifact-badge[data-badge-family]`
+    // rules in the polish pass — a ternary naming `key` and `keypair` by hand
+    // had left the four key roles added after it tinted as plain text — so
+    // reading only the TSX would have quietly stopped guarding them.
+    const utilities =
+      OUTPUT_LIST.match(/bg-\[color-mix\(in_srgb,var\(--[a-z-]+\)_[^)]*\)/g) || [];
+    // The tile's own badge rules, backgrounds only — `toolkit.css` dresses the
+    // whole toolkit, and this assertion is about the tile. A *border* may
+    // carry a literal anyway: `.artifact-action[data-action-tier="outward"]`
+    // sets 55% deliberately, and its contrast argument is about an outline
+    // against a surface, not about a tint sitting under text.
+    const rules = (TOOLKIT_CSS.match(/\.artifact-badge\[[^{]*\{[^}]*\}/g) || [])
+      .flatMap((block) => block.match(/background:\s*color-mix\([^)]*\)[^;]*/g) || []);
+    expect(utilities.length + rules.length).toBeGreaterThan(3);
+    for (const t of utilities) expect(t, t).toMatch(/var\(--tile-tint\)/);
+    for (const r of rules) expect(r, r).toMatch(/var\(--tile-tint\)/);
+  });
+
+  it("tints the whole key badge family as one, in one rule set", () => {
+    // The defect this guards: `KIND_GLYPHS` gives all six key roles the same
+    // `KeyRound`, but the tint was a ternary that named two of them, so
+    // PUBLIC-KEY, SECRET-KEY, SSH-PUBLIC and SSH-PRIVATE rendered in the same
+    // rgb(88,166,255) as TEXT and RECEIPT while wearing a key. Measured after:
+    // all six at rgb(76,222,130), 8.74:1 on rgb(13,17,23).
+    for (const family of ["key", "diag", "plain"]) {
+      expect(TOOLKIT_CSS, family).toMatch(
+        new RegExp(`\\.artifact-badge\\[data-badge-family="${family}"\\]`)
+      );
     }
+    // The tile asks the shared helper rather than deciding for itself — which
+    // is what makes a newly added key role impossible to miss.
+    expect(OUTPUT_LIST).toMatch(/data-badge-family=\{badgeFamily\(a\.kind\)\}/);
+  });
+
+  it("keeps the disabled mark above the 3:1 floor it is the sole carrier of", () => {
+    // A disabled inert action is pixel-identical to an enabled one apart from
+    // this underline — same colour, no border, no fill — so it is the "visual
+    // information required to identify the state" 1.4.11 sets a floor for.
+    // Measured on rgb(13,17,23): 60% gave 2.96:1, 78% gives 4.18:1.
+    const rule = TOOLKIT_CSS.match(/\.artifact-action:disabled\s*\{[\s\S]*?\n\}/);
+    expect(rule, "disabled rule not found").toBeTruthy();
+    const pct = rule[0].match(/var\(--muted-foreground\)\s+(\d+)%/);
+    expect(pct, "underline tint not found").toBeTruthy();
+    expect(Number(pct[1])).toBeGreaterThanOrEqual(78);
+    // And it still does not dim: the label is the reason's carrier, and the
+    // last polish pass found it at 2.20:1 behind `disabled:opacity-50`.
+    expect(rule[0]).toMatch(/opacity:\s*1/);
   });
 });

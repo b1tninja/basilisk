@@ -1750,6 +1750,34 @@ input[type="file"][data-basilisk-file-picker] {
 }
 
 /*
+ * Artifact badge tints (§35, polish pass).
+ *
+ * Three families, one rule set — the shape `.artifact-action[data-action-tier]`
+ * below already uses, and adopted here for the same reason: this was a ternary
+ * inside `ArtifactTile`, naming `key` and `keypair` by hand, so each of the
+ * four key roles added afterwards (`public-key`, `secret-key`, `ssh-public`,
+ * `ssh-private`) was tinted `--caret` — the *same* tint as TEXT, SHARE and
+ * RECEIPT — while carrying the same `KeyRound` glyph as the two that were not.
+ * The glyph map said one family and the colour said two, and the catalog's key
+ * section is where that finally became visible.
+ *
+ * `--tile-tint` stays the shared alpha it already was; only which hue is
+ * chosen moved. Nothing here identity-maps a token name.
+ */
+.artifact-badge[data-badge-family="key"] {
+  background: color-mix(in srgb, var(--brand) var(--tile-tint), transparent);
+  color: var(--brand);
+}
+.artifact-badge[data-badge-family="diag"] {
+  background: color-mix(in srgb, var(--warn) var(--tile-tint), transparent);
+  color: var(--warn);
+}
+.artifact-badge[data-badge-family="plain"] {
+  background: color-mix(in srgb, var(--caret) var(--tile-tint), transparent);
+  color: var(--caret);
+}
+
+/*
  * Artifact action tiers (§33b/§41, design_handoff_artifact_actions).
  *
  * Three weights, one hue. Inert is quiet text, local is a filled bordered
@@ -1807,7 +1835,24 @@ input[type="file"][data-basilisk-file-picker] {
   border-color: transparent;
   background: transparent;
   color: var(--muted-foreground);
-  text-decoration: underline dotted color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  /*
+   * The underline is the *whole* signal, so it is held to 3:1.
+   *
+   * Keeping the label readable means a disabled inert action and an enabled
+   * one are otherwise pixel-identical — both `--muted-foreground` at 6.15:1,
+   * both transparent, both borderless. Everything that says "this one will
+   * not do anything" is this one dotted rule, which makes it exactly the
+   * "visual information required to identify the state of a component" that
+   * 1.4.11 sets a floor for. At 60% it measured **2.96:1** against the tile's
+   * rgb(13,17,23) — under the floor, on the only mark there is.
+   *
+   * WCAG exempts inactive components from 1.4.11, and that exemption is the
+   * one this design has already refused once: the rule above it exists because
+   * `disabled:opacity-50` put the *reason* at 2.20:1, and a guard nobody can
+   * perceive is the same as no guard. Dimming the mark for the same reason we
+   * stopped dimming the label would be the same mistake one property over.
+   */
+  text-decoration: underline dotted color-mix(in srgb, var(--muted-foreground) 78%, transparent);
   text-underline-offset: 3px;
 }
 
