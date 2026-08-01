@@ -37,7 +37,7 @@ cd web && npm run glyphs
 | `encoding` | Encoding | Bidirectional transform arrows | Bytes ↔ text transforms (pem, base64, hex, …) — folded rails with encode/decode arrowheads. |
 | `io` | Input / output | Panel with header and body | Runtime ports and tiles (input, out, random, qr) — a simple content panel. |
 | `flow` | Flow | Branching corner forks | Pipeline control (foreach, tee, in, as) — two L-shaped forks suggesting stem/branch flow. |
-| `agent` | Agent | Vault key with TTL arc | My Keys vault agent (unlock, save, list) — classic key plus a circular timer/TTL arc, distinct from bare Keys. |
+| `agent` | Agent | Keyhole | The Agent toolbox and the vault shelf: a key is used inside, and never comes out. The keyhole is the mark `agent-boundary`, `agent-decrypt` and `agent-sign` already carry inside their vault wall, drawn here on its own and large — the toolbox is the keyhole, the shelf is the keyhole put behind a wall, so the two differ by a whole silhouette (round-with-a-skirt against square) rather than by a detail. It replaces a key crossed by an r=5.5 TTL arc that was unreadable at both shipping sizes: rasterised at 12px the old bow region held 3.73 of ink with one clear pixel in sixteen, against 0.36 and four for this ring. TTL is not what separates the agent from Keys — that the key stays inside is, and that is what a keyhole says. |
 | `hkp` | HKP | Keyserver hub with radiating spokes | HTTP Keyserver Protocol lookup/search — a central node with compass spokes (directory + fetch). <br><small>OpenPGP HKP</small> |
 | `sss` | SSS / BLIP39 | Stacked share cards | Shamir secret sharing / BLIP39 — offset stacked cards as K-of-N fragments (any threshold recovers; a single share is useless alone). <br><small>Shamir 1979; puzzle/share UX metaphor</small> |
 | `webauthn` | WebAuthn | FIDO passkey (person + overlapping key) | Official passkey layout: person on the left, simplified key on the right slightly overlapping (create, prf, caps). <br><small>FIDO Alliance Passkey Icon Usage Guidelines</small> |
@@ -50,7 +50,7 @@ cd web && npm run glyphs
 |----|-------|----------|-------------|
 | `agent-boundary` | Boundary | Vault wall with a keyhole inside it | The wall is the subject: a rounded vault outline with the keyhole centred inside, for ops that use a key without letting it out (agent.sign, agent.decrypt). |
 | `ssh-key` | Keys & wire | Key whose shank trails into three linked blocks | The RFC 4253 blob is literally a chain of length-prefixed fields — a key head trailing chained blocks reads as 'wire format' at 20px (ssh.encode, ssh.decode, ssh.fingerprint). |
-| `keys` | Keys | Key | WebCrypto key material — genkey, export, import. |
+| `keys` | Keys | Key, bow hollow, teeth up the shank | WebCrypto key material — genkey, export, import; the base drawing for `genkey`, `gpg-genkey` and `passphrase`. The bow is a plain ring rather than the old outlined silhouette with an r=1 hole punched in it: at 12px that hole filled solid, and the silhouette's closing chord ran straight through the bow, so the whole thing read as a diagonal lozenge. Measured in a 4x4 window on the bow centre at 12px the old drawing carried 1.89 of ink, where `key-public` carries 0 and the deliberately filled `key-secret` carries 4 — it sat halfway into the range the sensitivity split reserves. This one measures 0, four clear pixels of four, the same as `key-public`. It runs bow-low to teeth-high so it cannot be read as `inspect`'s magnifier, whose handle falls the other way, and stays off the horizontal axis `password` and the `key-*` kind badges use. |
 | `digest` | Digest | Input lines collapsing into hash bars | Cryptographic hash — long input lines beside a “#”-like pair of bars (digest). |
 | `sign` | Sign | Quill / pen stroke | Digital signature — a pen tip stroke (WebCrypto sign/verify or OpenPGP gpgsign shelf). |
 | `aead` | AEAD | Shield | Authenticated encryption (AES-GCM) — protective shield. |
@@ -72,7 +72,7 @@ cd web && npm run glyphs
 | `attestation` | Attestation / MDS | Shield with check | Soft attestation / FIDO MDS — shield containing a checkmark. |
 | `directory` | Directory | People / contacts | HKP directory search — two contact silhouettes (alias of recipients). |
 | `recipients` | Recipients | People / contacts | Recipients list / merge — two contact silhouettes. |
-| `jose-jwe` | JWE envelope | Sealed envelope | A JWE carries an encrypted payload rather than a signed one - the envelope glyph with a lock shackle (jose.encrypt, jose.decrypt). <br><small>RFC 7516 - JSON Web Encryption</small> |
+| `jose-jwe` | JWE envelope | Token whose middle segment is filled | A JWE carries an encrypted payload rather than a signed one, so it is the `jose` token with the payload segment blacked out — the part you cannot read. Segment ink at 12px is 5.89 against `jose`'s 2.58, a 2.28x difference. It was an envelope with a lock shackle, which at badge size was the same silhouette as `pubkey` and `openpgp`; staying inside the JOSE token family says more, and says it at 12px. <br><small>RFC 7516 - JSON Web Encryption</small> |
 
 ## Toolbar / kernel
 
@@ -115,13 +115,13 @@ cd web && npm run glyphs
 | `base64` | Base64 | Stacked encoded rows with 64 marks | Base64 / Base64url — two full code rows and a truncated third with twin hash marks. |
 | `base32` | Base32 | Stacked rows with downward chevron | Base32 — three encoding rows with a small expand chevron (5-bit alphabet). |
 | `pem` | PEM | Armored document | PEM / DER armor — framed document with BEGIN/END-style text lines. |
-| `genkey` | Generate key | Key with spark rays | WebCrypto genkey — classic key with creation rays. |
+| `genkey` | Generate key | Key with a plus | WebCrypto genkey — the `keys` key with a plus in the free lower-right quadrant, the same 'and one more' mark `agent-list` and `wa-get` use. The old spark rays were three 1.2-unit ticks, 0.7px of noise at 12px beside a bow that had already filled in. |
 | `export` | Export | Arrow up out of tray | Export key material — upload arrow from tray. |
 | `import` | Import | Arrow down into tray | Import key material — download arrow into tray. |
 | `random` | Random | Dice / bit cells | CSPRNG random bytes — irregular bit cells. |
-| `input` | Input | Panel with inbound rail | Runtime input — content panel with left inbound mark. |
-| `out` | Out | Panel with outbound rail | Emit / slot out — content panel with right outbound mark. |
-| `passphrase` | Passphrase | Key over baseline | Passphrase source — key above a text baseline. |
+| `input` | Input | Panel with an arrow entering | Runtime input — content panel pushed right, with a full arrow (shaft and head) crossing its left edge. The old inbound mark was a bare 4-unit rail, which left `input` and `out` differing by which side a nub sat on. |
+| `out` | Out | Panel with an arrow leaving | Emit / slot out — the conjugate of `input`: panel pushed left, full arrow leaving the right edge. Direction is carried by an arrowhead that survives 12px, not by the side a rail sits on. |
+| `passphrase` | Passphrase | Key over a baseline | Passphrase source (io / ports) — the `keys` key, lifted and shortened, over a full-width text baseline: a secret that is typed. The old drawing's bow was an open arc that never closed, so it read as a hook over a line; this bow measures 0.11 of ink in the 4x4 bow window at 12px against the old 2.79, four clear pixels against none. |
 | `clipboard` | Clipboard | Clipboard with clip | Clipboard source/sink - board with binder clip (clipboard.read, clipboard.write). |
 | `file-read` | File read | Document with outbound arrow | file.read - a document on disk feeding the pipeline; the arrow leaves the page because bytes flow out of the file. |
 | `file-save` | File save | Document with downward arrow | file.save - the pipeline value coming to rest on disk; down is the universal save direction. |
@@ -129,28 +129,28 @@ cd web && npm run glyphs
 | `age-key` | age identity | Key | age.keygen / age.recipient - an X25519 identity and the recipient derived from it. |
 | `age-lock` | age file | Padlock | age.encrypt / age.decrypt - a padlocked age-encryption.org/v1 file. |
 | `qr` | QR | QR finder squares | QR code sink — three finder patterns plus modules. |
-| `inspect` | Inspect | Magnifier with crosshair | Inspect / dump — magnifying glass with focus cross. |
+| `inspect` | Inspect | Magnifier | Inspect / dump — a plain magnifier, lens enlarged to r=5 and the crosshair dropped. The cross was the detail that made this and `hkp-search` the same drawing described twice; the magnifier stays here because inspect is the generic 'look at this', and `hkp-search` now says what it looks through. |
 | `peek` | Peek | Eye | Peek side snapshot — eye outline. |
-| `text-sink` | Text sink | T with outbound mark | text / print sink — typography T with outbound tick. |
+| `text-sink` | Text sink | T falling to a floor | text / print sink — a typographic T whose stem carries an arrowhead down onto a floor line. The old outbound tick was a 2-unit stroke invisible at 12px, which left this and the `text` encoding glyph as the same drawing; the arrow and the floor are a silhouette apart from it. |
 | `foreach` | Foreach | Mapped tiles | foreach — three tiles suggesting map-over-items. |
 | `tee` | Tee | T junction forks | tee — stem with left/right branch forks. |
 | `in` | In | Arrow into slot rail | in @slot — arrow into a vertical slot rail. |
 | `as` | As | Cast chevron A | as cast — A-shaped chevron over a baseline. |
 | `select` | Select | Document with fold | select / .public — folded document page. |
 | `at` | At | @ spiral | at / [n] index — @-like spiral. |
-| `gpg-encrypt` | OpenPGP encrypt | Locked envelope | gpg.encrypt / gpg.decrypt — flap envelope with lock. |
+| `gpg-encrypt` | OpenPGP encrypt | Padlock, body filled | gpg.encrypt — a padlock whose body is solid, because what it produces is opaque. Filled rather than a finer mark: `age-lock` is already a closed hollow padlock on age.encrypt, and at 12px this carries 41.6 of ink against its 28.3, a 1.47x difference no detail at this size could match. Its conjugate `gpg-decrypt` is the same body hollow with the shackle open, so the pair reads as one act in two directions. |
 | `gpg-sign` | OpenPGP sign | Quill stroke | gpg.sign / gpg.verify — pen tip stroke. |
-| `gpg-genkey` | OpenPGP genkey | Key with OpenPGP bar | gpg.genkey — key plus a small header bar. |
+| `gpg-genkey` | OpenPGP genkey | Key with an armour bar | gpg.genkey — the `keys` key under a single bold armour bar, top left, where the key leaves the box empty. One 6-unit rule rather than the old 4x1.5 block, which at 12px was a 2.4x0.9px nub. Position as well as shape separates it from `genkey`: bar high left against plus low right. |
 | `gpg-inspect` | OpenPGP inspect | Message with magnifier | gpg.inspect — message panel with lens. |
 | `gpg-sym` | OpenPGP symmetric | Password key under panel | gpg.symencrypt / gpg.symdecrypt — passphrase key under a panel. |
 | `blip39` | BLIP39 | Mnemonic word rows | blip39 — stacked word rows for share mnemonics. |
 | `shares` | Shares | Offset share cards | shares input — stacked offset cards. |
 | `agent-list` | Agent list | List with plus | agent.list — list lines with a plus mark. |
 | `agent-save` | Agent save | Diskette / save card | agent.save — save card with top flap. |
-| `hkp-search` | HKP search | Magnifier with plus | hkp.search — lens with focus cross. |
+| `hkp-search` | HKP search | Directory lines under a lens | hkp.search — a keyserver listing with a lens over it. Searching a directory is not the same act as inspecting a value, and drawing the directory is what separates it from `inspect`: two full-width rules give it a rectangular mass at the top that a bare magnifier has nowhere, 25.2 of ink at 12px against 19.1. |
 | `hkp-get` | HKP get | Download arrow | hkp.get — arrow down to baseline. |
 | `hkp-filter` | HKP filter | Funnel | hkp.filter — funnel / filter shape. |
-| `hkp-cache` | HKP cache | Drawer stack | hkp.cache — stacked cache drawers. |
+| `hkp-cache` | HKP cache | Folder | hkp.cache — a folder, not a panel. Its old drawing was a bordered panel with a small tab, one of four panels in the drawer separated by a unit or two of interior mark; the folder's stepped top edge is a silhouette difference instead. |
 | `hkdf` | HKDF | Extract box then expand | hkdf — extract rectangle feeding an expand fan. |
 | `pbkdf2` | PBKDF2 | Passphrase into KDF box | pbkdf2 — password key under an extract panel. |
 | `wa-create` | WebAuthn create | Passkey with key | webauthn.create — person plus overlapping key. |
@@ -160,7 +160,7 @@ cd web && npm run glyphs
 | `wa-attest` | WebAuthn attest | Shield with check | webauthn.attest — attestation shield. |
 | `wa-mds` | WebAuthn MDS | Directory document | webauthn.mds — MDS document with lens. |
 | `jose-decode` | Decode token | Segments under a lens | Reading a token without verifying it - the three segments with an inspection lens, deliberately not the signature spark (jose.decode). <br><small>RFC 7519 - JSON Web Token</small> |
-| `gpg-decrypt` | OpenPGP decrypt | Envelope, shackle open | The conjugate of gpg-encrypt - same envelope, padlock open, so the two directions are distinguishable at a glance. |
+| `gpg-decrypt` | OpenPGP decrypt | Padlock, open, body hollow | gpg.decrypt — the conjugate of `gpg-encrypt`: same square body, hollow, shackle swung open. The shackle hinges on the right and opens left, the mirror of `unlock`, which is the only other open padlock the drawer renders; the square body keeps both off `lock` / `age-lock`, which are round-cornered. |
 | `encode` | Encode | Double chevron right | Forward direction of a conjugate pair - encode, wrap, sign. |
 | `decode` | Decode | Double chevron left | Reverse direction of a conjugate pair - decode, unwrap, verify. Mirrors encode exactly so direction reads without labels. |
 
