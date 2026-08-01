@@ -269,11 +269,39 @@ Four things a cold reader should know:
   has. Reading that as "it does, so the shell can" would have added focus theft
   and an Escape binding to a signing gate as a side effect of a refactor. When
   a doc attributes existing behaviour to shipped code, grep for it.
-- **The Radix `Sheet` trips a real CSP block in the build.** Opening one
-  inserts an inline `<style>` (react-remove-scroll's scroll-lock) that
-  `style-src-elem` blocks with disposition `enforce`, so the lock silently does
-  not apply in production. Invisible in `serve`, where the policy is weaker.
-  Reproducible on any artifact tile's Expand; not yet fixed.
+- **The Radix scroll lock tripped a real CSP block in the build — fixed, and
+  it was wider than the `Sheet`.** Confirmed on the built page at :4188:
+  `react-remove-scroll-bar` created a `<style>` element at runtime, and
+  `style-src 'self'` refused it with `violatedDirective: "style-src-elem"`,
+  `disposition: "enforce"`, `blockedURI: "inline"`. The element landed in
+  `<head>` with a null `.sheet`, so its rules never applied. The report named
+  the `Sheet`, but `@radix-ui/react-menu` pulls in the same package, so *every
+  dropdown on every page* did it too — and that is where the damage was
+  visible: /toolkit hides it behind `body.layout-app { overflow: hidden }`,
+  while on /my-keys the page went on scrolling behind an open menu with
+  `body` still computing `overflow: visible`. Invisible in `serve`, where the
+  policy is weaker.
+
+  Fixed the way the ScrollArea was: `lib/scroll-lock.js` is aliased over
+  `react-remove-scroll-bar` in `vite.config.js` (anchored regex — a string
+  alias would also capture the `/constants` subpath that `react-remove-scroll`
+  itself imports), keeps the reference-counted `data-scroll-locked` attribute,
+  and injects nothing. The rules live in `site.css`, not `toolkit.css`,
+  because dropdowns are on every page. Everything the library did in script —
+  wheel and touch capture, the shard that keeps the open panel scrollable —
+  is untouched and was never the problem. Pinned by `scroll-lock.test.js`.
+
+  Two things that only measurement would have told you. First,
+  `scrollbar-gutter: stable` looks like the free answer to the scrollbar the
+  lock removes, and it is wrong: Chromium reserves the gutter even where the
+  platform draws overlay scrollbars that never took any width, so it turned a
+  zero-shift case into a 7.5px one on every menu open. The gap is measured and
+  published through `lib/css-vars` instead — 0 where it should be 0. Second,
+  do not copy the library's compensation. It rewrote `<body>`'s margins into
+  padding, and our `body` is `max-width: 1000px; margin: 0 auto`, so that
+  would have thrown every ordinary page's content against one edge for as long
+  as a menu was open. Padding the scroll container is what keeps a centred box
+  still.
 
 ## What is outstanding
 
