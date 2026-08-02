@@ -46,7 +46,19 @@ import {
 } from "../lib/toolkit/artifact-readouts.js";
 import { otpTone, OTP_URGENT_SECONDS } from "../toolkit/widgets/OtpCodeCard.tsx";
 
-const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+/**
+ * Read source with line endings normalised to `\n`.
+ *
+ * `.gitattributes` does not pin these files, so a Windows checkout with
+ * `core.autocrlf` has CRLF in the working copy while the index holds LF —
+ * `git diff` is empty and the content is identical, but a multi-line literal
+ * asserted against the raw text cannot match. Without this the suite fails on
+ * Windows and passes in CI, which is the worst direction for a test to be
+ * wrong in: the machine that would catch a real regression is the one that
+ * stays green.
+ */
+const read = (rel) =>
+  readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
 /** Comments removed, for assertions about what the code *does* — never says. */
 const stripComments = (t) =>
   t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
