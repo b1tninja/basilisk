@@ -418,7 +418,7 @@ export const TYPE_META = {
     base: "stats",
     label: "stats",
     summary: "A WebRTC statistics report. Observe-only.",
-    doc: "Measurements from `getStats` — candidate pairs, round-trip time, packet loss, data-channel buffering. Refined by `kind` so the right reader renders it. Observe-only for the same reason as `connstate`: it is a measurement, not a value to compute with.",
+    doc: "Measurements from `getStats` — candidate pairs, round-trip time, byte and packet counters, data-channel buffering. Refined by `kind` so the right reader renders it. Observe-only for the same reason as `connstate`: it is a measurement, not a value to compute with.",
     ref: { url: `${MDN}/RTCPeerConnection/getStats`, label: "MDN · getStats()" },
   },
 };

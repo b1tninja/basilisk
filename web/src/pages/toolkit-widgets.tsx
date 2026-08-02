@@ -782,11 +782,21 @@ function CatalogApp() {
               />
             </div>
             <div>
-              <StateLabel>stats/quality — live RTT / loss / throughput (§29d)</StateLabel>
+              <StateLabel>stats/quality — live RTT / throughput, loss unmeasurable (§29d)</StateLabel>
+              {/**
+               * `packetLossPct: null` is what `rtc.quality` emits, always.
+               * Loss statistics come from RTP and this transport is SCTP data
+               * channels, so there is nothing to lose packets from — the row
+               * says "loss not measured" rather than the `0.2` this fixture
+               * used to claim, which was a number the op could never produce.
+               */}
               <NetworkArtifact
                 netType="stats"
                 netKind="quality"
-                data={{ peers: [{ peer: "AABBCCDDEEFF0011", rttMs: 38, packetLossPct: 0.2, bytesSent: 4300, bytesReceived: 12800 }] }}
+                data={{
+                  peers: [{ peer: "AABBCCDDEEFF0011", rttMs: 38, packetLossPct: null, bytesSent: 4300, bytesReceived: 12800, packetsSent: 214, packetsReceived: 190 }],
+                  notes: ["packet loss is not measured: this transport is SCTP data channels, so no RTP statistics exist to lose packets from"],
+                }}
               />
             </div>
             <div>

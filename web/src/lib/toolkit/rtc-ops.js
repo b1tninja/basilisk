@@ -512,7 +512,31 @@ export async function execRtcRestart() {
 
 /* ───────────────────────── rtc.quality (29d) ───────────────────────── */
 
-/** Live quality numbers — RTT, throughput, loss — per connected peer. */
+/**
+ * Live quality numbers — RTT and throughput — per connected peer.
+ *
+ * **Not loss.** This used to report a `packetLossPct`, and it was never a
+ * measurement. It read `packetsLost` off a `remote-inbound-rtp` stat and
+ * divided it by `packetsSent + packetsReceived` from the nominated
+ * `candidate-pair`, which is wrong twice over:
+ *
+ *  - `remote-inbound-rtp` does not exist on this connection, or any connection
+ *    this app makes. Measured against a live peer in Chromium, the complete
+ *    set of stat types on a data-channel-only connection is `candidate-pair`,
+ *    `certificate`, `data-channel`, `local-candidate`, `peer-connection`,
+ *    `remote-candidate` and `transport`. The quorum transport is SCTP over
+ *    DTLS and never carries media, so there is no RTP to lose. `packetsLost`
+ *    was therefore always its initial 0.
+ *  - The two counters are different populations anyway. `packetsLost` would
+ *    count RTP packets; the `candidate-pair` counters count STUN, DTLS and
+ *    SCTP packets on the ICE path. Even with media present, one over the other
+ *    is not a loss rate.
+ *
+ * So the figure was structurally 0, and `0% loss` is a claim — it reads as
+ * "measured, and none was lost" on the one panel someone opens when a call is
+ * going badly. `null` is the honest answer and the tile says so in words. The
+ * RTP branch is gone rather than left guarding a stat type that cannot appear.
+ */
 export async function execStatsReport() {
   const session = requireSession("rtc.quality");
   const peers = [];
@@ -523,7 +547,6 @@ export async function execStatsReport() {
     let bytesReceived = 0;
     let packetsSent = 0;
     let packetsReceived = 0;
-    let packetsLost = 0;
     const report = await peer.pc.getStats();
     report.forEach((s) => {
       if (s.type === "candidate-pair" && s.nominated) {
@@ -535,24 +558,32 @@ export async function execStatsReport() {
         packetsSent = s.packetsSent ?? packetsSent;
         packetsReceived = s.packetsReceived ?? packetsReceived;
       }
-      if (s.type === "remote-inbound-rtp" && s.packetsLost != null) {
-        packetsLost = s.packetsLost;
-      }
     });
-    const totalPackets = packetsSent + packetsReceived;
     peers.push({
       peer: fpr,
       rttMs,
       bytesSent,
       bytesReceived,
+      // ICE-path packets, which is what these are. Named as counters rather
+      // than folded into a rate, because the rate they would imply is one
+      // nothing here can compute.
       packetsSent,
       packetsReceived,
-      packetLossPct:
-        totalPackets > 0 ? Number(((packetsLost / totalPackets) * 100).toFixed(2)) : 0,
+      packetLossPct: null,
     });
   }
-  return netValue("stats", { v: 1, peers }, "stats-report.json", {
-    rtcStats: true,
-    statsKind: "quality",
-  });
+  return netValue(
+    "stats",
+    {
+      v: 1,
+      peers,
+      // Carried in the value, so a downloaded `stats-report.json` explains its
+      // own null instead of looking like a field that failed to serialize.
+      notes: [
+        "packet loss is not measured: this transport is SCTP data channels, so no RTP statistics exist to lose packets from",
+      ],
+    },
+    "stats-report.json",
+    { rtcStats: true, statsKind: "quality" }
+  );
 }

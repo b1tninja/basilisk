@@ -305,6 +305,7 @@ function ConnStateStrip({ data }: { data: any }) {
 function QualityStats({ data }: { data: any }) {
   const peers: any[] = Array.isArray(data?.peers) ? data.peers : [];
   if (!peers.length) return <Empty>No connected peers to measure.</Empty>;
+  const notes: string[] = Array.isArray(data?.notes) ? data.notes : [];
   return (
     <div>
       {peers.map((p, i) => (
@@ -315,13 +316,31 @@ function QualityStats({ data }: { data: any }) {
           <span className="shrink-0 font-mono text-[10px] text-[var(--caret)]">
             {p.rttMs != null ? `${p.rttMs}ms rtt` : "— rtt"}
           </span>
-          <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
-            {p.packetLossPct ?? 0}% loss
-          </span>
+          {/* Words, not a dash. The dash next door is the right shape for RTT,
+              which is a real measurement that is merely not in yet — it fills
+              in a beat later. Loss is never measurable on an SCTP-only
+              transport, so a placeholder that looks like a pending number would
+              have the reader waiting for one. `?? 0` was worse still: it
+              rendered the absence as a confident "0% loss" on the one panel
+              you open when a call is going badly. */}
+          {p.packetLossPct != null ? (
+            <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
+              {p.packetLossPct}% loss
+            </span>
+          ) : (
+            <span className="shrink-0 text-[10px] italic text-[var(--muted-foreground)]">
+              loss not measured
+            </span>
+          )}
           <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
             ↑{fmtBytes(p.bytesSent || 0)} ↓{fmtBytes(p.bytesReceived || 0)}
           </span>
         </Row>
+      ))}
+      {notes.map((n, i) => (
+        <p key={i} className="px-2.5 py-[6px] text-[10px] text-[var(--muted-foreground)]">
+          {n}
+        </p>
       ))}
     </div>
   );

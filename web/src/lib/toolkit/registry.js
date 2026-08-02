@@ -3799,7 +3799,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "rtcstats",
     glyph: "ports",
-    doc: "Live `getStats()` quality numbers for the exchange — round-trip time, bytes/packets each way, and packet loss per connected peer. Example: `rtc.quality | out @quality`.",
+    doc: "Live `getStats()` quality numbers for the exchange — round-trip time and bytes/packets each way, per connected peer. **Packet loss is not reported**: loss statistics come from RTP, and this transport is SCTP data channels, so there is no RTP on the connection to lose any. The panel says so rather than showing a zero. Example: `rtc.quality | out @quality`.",
     input: "none",
     output: "stats",
     params: [],

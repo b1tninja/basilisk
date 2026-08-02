@@ -229,12 +229,57 @@ describe("a network value that falls off the end of a pipeline renders a tile", 
     const [cert] = await artifactsOf("rtc.certificate");
     expect(cert.netData.fingerprints[0].value).toBe("AB:CD:EF:01");
 
+    const [quality] = await artifactsOf("rtc.quality");
+    expect(quality.netData.peers[0].rttMs).toBe(31);
+    expect(quality.netData.peers[0].bytesSent).toBe(2048);
+
     const [offer] = await artifactsOf("rtc.offer");
     // SDP is text on the wire, so the panel prints `content`, not `netData`.
     expect(offer.content).toContain("a=fingerprint:sha-256");
     expect(kindOf(offer).view({ artifact: offer, masked: false }).props.content).toBe(
       offer.content
     );
+  });
+});
+
+describe("rtc.quality reports no number it did not measure", () => {
+  /**
+   * `packetLossPct` used to be `packetsLost` from a `remote-inbound-rtp` report
+   * over `packetsSent + packetsReceived` from the nominated candidate pair.
+   * Neither half survives contact with this transport: loss statistics come
+   * from RTP and the quorum mesh is SCTP data channels, so the numerator's
+   * stat type is absent from every report — pinned exactly, against a live
+   * connection, in `e2e/rtc-transport.e2e.js`. The numerator was a constant 0
+   * and the denominator counted a different population of packets.
+   *
+   * A structural zero is worse than a gap here, because `0% loss` is where you
+   * look when a call is going badly and it reads as an all-clear.
+   */
+  it("reports loss as null, not zero, on a report with no RTP", async () => {
+    // FAKE_STATS is the shape a real connection has: a nominated candidate
+    // pair with packet counters, a data channel, and no RTP anywhere.
+    const [tip] = await artifactsOf("rtc.quality");
+    const peer = tip.netData.peers[0];
+    expect(peer.packetLossPct).toBe(null);
+    // The counters it *did* read are still real and still reported.
+    expect(peer.packetsSent).toBe(12);
+    expect(peer.packetsReceived).toBe(14);
+    expect(peer.rttMs).toBe(31);
+  });
+
+  it("explains the null in the value, so a downloaded report is self-describing", async () => {
+    const [tip] = await artifactsOf("rtc.quality");
+    expect(tip.netData.notes.join(" ")).toMatch(/packet loss is not measured/);
+    expect(tip.netData.notes.join(" ")).toMatch(/SCTP/);
+    // …and it survives serialization, which is what Download writes.
+    expect(JSON.parse(tip.content).peers[0].packetLossPct).toBe(null);
+  });
+
+  it("promises no loss figure in the step's own documentation", () => {
+    // The doc used to advertise "packet loss per connected peer", which is the
+    // same claim in the place a user reads before running it.
+    const doc = STEPS.find((s) => s.name === "rtc.quality").doc;
+    expect(doc).toMatch(/[Pp]acket loss is not reported/);
   });
 });
 

@@ -176,7 +176,15 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
             }
             if (s.type === "data-channel") dc = { ...s };
           });
-          return { pair, dc, states: window.__states, recv: window.__recv };
+          const types = new Set();
+          rep.forEach((s) => types.add(s.type));
+          return {
+            pair,
+            dc,
+            types: [...types].sort(),
+            states: window.__states,
+            recv: window.__recv,
+          };
         });
 
       // Counters are sampled after a beat: SCTP accounting trails the send.
@@ -233,6 +241,45 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
       for (const k of ["messagesSent", "messagesReceived", "bytesSent", "bytesReceived"]) {
         expect(result.a.dc[k]).toBeTypeOf("number");
       }
+    });
+
+    it("carries no RTP statistics at all, which is why loss is not reported", () => {
+      // The whole stat vocabulary of a live connection here, pinned. `rtc.quality`
+      // used to read `packetsLost` off a `remote-inbound-rtp` report and divide it
+      // by the ICE path's packet counters — two different populations, and the
+      // numerator's stat type does not exist on this connection or any this app
+      // makes. `packetsLost` was therefore always its initial 0, and the tile
+      // rendered that as a confident "0% loss".
+      //
+      // Listed exactly rather than as an absence, so the day a Chromium change
+      // adds a type this fails and gets read, instead of an added RTP report
+      // silently making the old arithmetic look defensible again.
+      expect(result.a.types).toEqual([
+        "candidate-pair",
+        "certificate",
+        "data-channel",
+        "local-candidate",
+        "peer-connection",
+        "remote-candidate",
+        "transport",
+      ]);
+      expect(result.a.types.filter((t) => /rtp|media|track|codec/.test(t))).toEqual([]);
+    });
+
+    it("reads loss off nothing, and says so rather than showing a zero", async () => {
+      // `rtc.quality` needs a live `quorum.*` exchange, so it cannot be called
+      // here — what is checked is the field it would have read. `packetsLost`
+      // exists on no report, so any expression over it is a constant.
+      const lossFields = await A.page.evaluate(async () => {
+        const rep = await window.__pc.getStats();
+        const found = [];
+        rep.forEach((s) => {
+          if ("packetsLost" in s) found.push(`${s.type}.packetsLost`);
+          if ("fractionLost" in s) found.push(`${s.type}.fractionLost`);
+        });
+        return found;
+      });
+      expect(lossFields).toEqual([]);
     });
   });
 
