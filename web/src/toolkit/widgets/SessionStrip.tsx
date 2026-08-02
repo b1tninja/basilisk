@@ -89,7 +89,11 @@ export function SessionStrip({
           : state === "failed"
             ? "border-[color-mix(in_srgb,var(--error)_30%,transparent)] bg-[color-mix(in_srgb,var(--error)_7%,transparent)]"
             : "border-[color-mix(in_srgb,var(--caret)_30%,transparent)] bg-[color-mix(in_srgb,var(--caret)_7%,transparent)]",
-        state === "closed" && "opacity-60",
+        // Not `opacity-60`. A closed session is over, not unreadable, and
+        // fading the whole strip took its text to 4.12:1 measured — the row
+        // you look at to confirm a ceremony ended cleanly. The muted border
+        // and background already say "past"; the words stay full strength.
+        state === "closed" && "session-strip-closed",
         className
       )}
       data-session-strip={state}
@@ -115,19 +119,18 @@ export function SessionStrip({
       {/* Partial failure has to surface on the summary line too — the roster
           below may be scrolled out of view, and "Connected" alone would read
           as success while a custodian's link is down. */}
+      {/* Both chips take their tint from `--tile-tint` rather than a
+          hand-written 14%: measured at 14% they read 3.77:1 and 3.59:1 in
+          light against a 4.5 bar, and these two are the summary line's whole
+          reason for existing — the warning that "Connected" is not the
+          complete story. */}
       {brokenPeers ? (
-        <span
-          className="rounded-[4px] bg-[color-mix(in_srgb,var(--error)_14%,transparent)] px-1.5 py-px text-[9.5px] font-semibold text-[var(--error)]"
-          data-session-degraded
-        >
+        <span className="peer-verdict" data-verdict="error" data-session-degraded>
           {brokenPeers} link{brokenPeers === 1 ? "" : "s"} down
         </span>
       ) : null}
       {unverifiedPeers ? (
-        <span
-          className="rounded-[4px] bg-[color-mix(in_srgb,var(--warn)_14%,transparent)] px-1.5 py-px text-[9.5px] font-semibold text-[var(--warn)]"
-          data-session-unverified
-        >
+        <span className="peer-verdict" data-verdict="warn" data-session-unverified>
           {unverifiedPeers} unverified
         </span>
       ) : null}
@@ -216,11 +219,12 @@ export function SessionStrip({
                   (only the dot), so an unqualified badge would be the only
                   thing a reader sees. */}
               {p.state === "connected" || p.state === "failed" ? (
+                // Same ink as the summary chip above, from the same rule —
+                // `text-[var(--brand)]`/`text-[var(--warn)]` straight from the
+                // token measured 4.42:1 and 4.26:1 at 9px in light.
                 <span
-                  className={cn(
-                    "shrink-0 text-[9px] font-semibold",
-                    p.authenticated ? "text-[var(--brand)]" : "text-[var(--warn)]"
-                  )}
+                  className="peer-ink shrink-0 text-[9px] font-semibold"
+                  data-verified={p.authenticated ? "1" : "0"}
                 >
                   {p.authenticated ? "verified" : "unverified"}
                 </span>

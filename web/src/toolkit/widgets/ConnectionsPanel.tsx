@@ -75,14 +75,12 @@ function PeerRow({ peer }: { peer: ConnectionPeer }) {
       {/* Authentication is reported separately from connectivity on purpose: a
           peer can be fully connected and completely unverified, and conflating
           the two is how you end up trusting the wrong end of a working pipe. */}
-      <span
-        className={cn(
-          "shrink-0 rounded-[4px] px-1.5 py-px text-[9.5px] font-semibold",
-          peer.authenticated
-            ? "bg-[color-mix(in_srgb,var(--brand)_16%,transparent)] text-[var(--brand)]"
-            : "bg-[color-mix(in_srgb,var(--warn)_14%,transparent)] text-[var(--warn)]"
-        )}
-      >
+      {/* Tint from `--tile-tint`, not a hand-written 14%/16%. The two were
+          written before the token existed and measured 3.90:1 and 3.92:1 in
+          light against a 4.5 bar — the token is 6% there precisely so an
+          accent keeps its contrast under its own wash. Same rule now as every
+          other badge in the app (`.peer-verdict` in toolkit.css). */}
+      <span className="peer-verdict shrink-0" data-verified={peer.authenticated ? "1" : "0"}>
         {peer.authenticated ? "verified" : "unverified"}
       </span>
       <span className="shrink-0 text-[9.5px] text-[var(--muted-foreground)]">{peer.state}</span>

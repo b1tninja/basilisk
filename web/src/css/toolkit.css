@@ -185,6 +185,57 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * "verified" / "unverified" / "N links down" — the verdict chips the session
+ * strip and the Connections tab both carry.
+ *
+ * One rule for both, on `--tile-tint`. Each widget used to write its own
+ * `color-mix(… 14%/16% …)` inline, which is two spellings of one badge and
+ * — measured in light theme — 3.59:1 to 3.92:1 against a 4.5:1 bar, because
+ * the light accents are chosen to clear 4.5 on the plain surface and a 14%
+ * wash of the accent beneath its own text spends that margin. The token is 6%
+ * in light for exactly this reason.
+ */
+.peer-verdict {
+  border-radius: 4px;
+  padding: 0 6px 1px;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+.peer-verdict[data-verified="1"],
+.peer-verdict[data-verdict="brand"] {
+  color: color-mix(in srgb, var(--brand) 84%, var(--foreground));
+  background: color-mix(in srgb, var(--brand) var(--tile-tint), transparent);
+}
+.peer-verdict[data-verified="0"],
+.peer-verdict[data-verdict="warn"] {
+  color: color-mix(in srgb, var(--warn) 84%, var(--foreground));
+  background: color-mix(in srgb, var(--warn) var(--tile-tint), transparent);
+}
+.peer-verdict[data-verdict="error"] {
+  color: color-mix(in srgb, var(--error) 84%, var(--foreground));
+  background: color-mix(in srgb, var(--error) var(--tile-tint), transparent);
+}
+
+/* The same verdict without a chip — the per-peer rows inside SessionStrip,
+   where the word sits on the strip's own tint rather than on a badge. */
+.peer-ink[data-verified="1"] {
+  color: color-mix(in srgb, var(--brand) 84%, var(--foreground));
+}
+.peer-ink[data-verified="0"] {
+  color: color-mix(in srgb, var(--warn) 84%, var(--foreground));
+}
+
+/*
+ * A closed session. Muted chrome, full-strength words: this is the row a
+ * custodian reads to confirm a ceremony ended, and the blanket `opacity: 0.6`
+ * it used to carry measured 4.12:1 on its own label.
+ */
+.session-strip-closed {
+  border-color: color-mix(in srgb, var(--muted-foreground) 30%, transparent);
+  background: color-mix(in srgb, var(--muted-foreground) 6%, transparent);
+}
+
+/*
  * SessionStrip status dot (§21a/33a) — same CSP conversion as the peer dots.
  * The live glow was a `boxShadow` computed from the tone in a style prop;
  * both are enumerated here now. `closed` is muted, `failed` takes the error
@@ -389,43 +440,141 @@ body.layout-app:has(#app > .toolkit-shell) {
  * six tones enumerate here and a typo is a TypeScript error instead of an
  * invisible transparent badge.
  */
+/*
+ * Network badges — the same tint alpha as every other badge in the app.
+ *
+ * These hard-coded `12%`. `--tile-tint` is 12% in dark and **6% in light**,
+ * which is the whole reason it is a token: the light accents are picked to
+ * clear 4.5:1 against the plain surface, and a 12% wash of the accent under
+ * its own text eats the margin. Measured on the catalog in light theme, every
+ * one of the twenty network badges landed between 3.96:1 and 4.20:1 while the
+ * identically-hued `.artifact-badge` passed — one rule set had opted out of
+ * the token and nothing said so. (Probe sanity: black on white = 21.00.)
+ */
 .net-badge {
   color: var(--muted-foreground);
-  background: color-mix(in srgb, var(--muted-foreground) 12%, transparent);
+  background: color-mix(in srgb, var(--muted-foreground) var(--tile-tint), transparent);
 }
 .net-badge[data-tone="brand"] {
-  color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  color: color-mix(in srgb, var(--brand) 84%, var(--foreground));
+  background: color-mix(in srgb, var(--brand) var(--tile-tint), transparent);
 }
 .net-badge[data-tone="caret"] {
-  color: var(--caret);
-  background: color-mix(in srgb, var(--caret) 12%, transparent);
+  color: color-mix(in srgb, var(--caret) 84%, var(--foreground));
+  background: color-mix(in srgb, var(--caret) var(--tile-tint), transparent);
 }
 .net-badge[data-tone="error"] {
-  color: var(--error);
-  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: color-mix(in srgb, var(--error) 84%, var(--foreground));
+  background: color-mix(in srgb, var(--error) var(--tile-tint), transparent);
 }
 .net-badge[data-tone="warn"] {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: color-mix(in srgb, var(--warn) 84%, var(--foreground));
+  background: color-mix(in srgb, var(--warn) var(--tile-tint), transparent);
 }
 .net-badge[data-tone="decode"] {
-  color: var(--decode);
-  background: color-mix(in srgb, var(--decode) 12%, transparent);
+  color: color-mix(in srgb, var(--decode) 84%, var(--foreground));
+  background: color-mix(in srgb, var(--decode) var(--tile-tint), transparent);
 }
 
-/* Connection-stage strip: reached, reached-but-broken, passed, still ahead. */
-.net-stage[data-stage="active"] {
-  background: var(--brand);
+/*
+ * The *absent* mark — a candidate type that was not gathered, a count of zero.
+ *
+ * Deliberately only the badge. This used to be `opacity-45`/`opacity-50` on
+ * the whole row, which dragged the explanation down with the badge: "none
+ * gathered — no TURN configured" measured 2.16:1 in light and 2.39:1 in dark,
+ * so the sentence that says *why the connection failed* was the least legible
+ * text on the panel a user opens when a connection has failed (WCAG 1.4.3).
+ * The badge alone carries "absent", which is all 26a asked for.
+ */
+.net-badge[data-faint="1"] {
+  color: var(--muted-foreground);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted-foreground) 45%, transparent);
 }
-.net-stage[data-stage="active-failed"] {
-  background: var(--error);
+
+/*
+ * Connection-stage strip (§30d).
+ *
+ * Three segments, not five: `new → connecting → connected` is a sequence and
+ * `disconnected`/`failed`/`closed` are outcomes, so an outcome gets its own
+ * terminal segment in its own tone rather than a slot on the track. `failed`
+ * was on no track at all before, which is how a failed connection came to draw
+ * exactly like one that had never started.
+ */
+.net-stage[data-stage="current"] {
+  background: var(--caret);
+}
+.net-stage[data-stage="current"][data-tone="brand"] {
+  background: var(--brand);
 }
 .net-stage[data-stage="past"] {
   background: color-mix(in srgb, var(--brand) 40%, transparent);
 }
 .net-stage[data-stage="ahead"] {
   background: var(--surface-raised);
+}
+.net-stage[data-stage="terminal"][data-tone="error"] {
+  background: var(--error);
+}
+.net-stage[data-stage="terminal"][data-tone="warn"] {
+  background: var(--warn);
+}
+.net-stage[data-stage="terminal"][data-tone="muted"] {
+  background: var(--muted-foreground);
+}
+
+/* The verdict line above the track — the first thing read, so it is the one
+   thing coloured. */
+.net-headline {
+  color: var(--foreground);
+}
+.net-headline[data-tone="brand"] {
+  color: var(--brand);
+}
+.net-headline[data-tone="caret"] {
+  color: var(--caret);
+}
+.net-headline[data-tone="warn"] {
+  color: var(--warn);
+}
+.net-headline[data-tone="error"] {
+  color: var(--error);
+}
+.net-headline[data-tone="muted"] {
+  color: var(--muted-foreground);
+}
+
+/*
+ * "Next …" — the instruction, one weight above the explanation beside it and
+ * below the verdict above it. Body colour rather than an accent: it is the
+ * sentence to act on, and an accent here would compete with the verdict it
+ * follows.
+ */
+.net-next {
+  color: var(--foreground);
+}
+
+/*
+ * A limit the platform imposes, stated on the artifact that has it — the SDP
+ * whose `RTCPeerConnection` was closed before the blob was handed back. Warn
+ * rather than error: nothing went wrong, the value is exactly what it claims,
+ * and what is missing is a capability that was never built.
+ */
+.net-limit {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--warn) var(--tile-tint), transparent);
+  border-top: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+}
+
+/*
+ * The nominated candidate pair, marked up instead of every other pair being
+ * marked down. 23b wanted the whole graph visible with the losers at 50%
+ * opacity; measured, that put a pair label at 3.16:1, which is "still in the
+ * DOM" rather than "visible". Same hierarchy, legible either way.
+ */
+.net-row-mark {
+  background: color-mix(in srgb, var(--brand) var(--tile-tint), transparent);
 }
 
 /*

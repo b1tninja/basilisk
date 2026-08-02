@@ -785,6 +785,36 @@
    "refs": [
     "WCAG 2.1 SC 1.4.1 Use of Colour"
    ]
+  },
+  {
+   "id": "webrtc",
+   "group": "toolbox",
+   "label": "WebRTC",
+   "metaphor": "A span carrying two ends",
+   "description": "A connection is a span the two ends stand on: an arch between two solid footings. Not a wire — ICE builds the route, it is not handed one. Distinct from ports (two sockets bridged, the ICE/STUN shelf) because the mass sits in the footings rather than the band.",
+   "refs": [
+    "W3C WebRTC 1.0"
+   ]
+  },
+  {
+   "id": "peer",
+   "group": "shelf",
+   "label": "Peer & signaling",
+   "metaphor": "Offer and answer facing each other",
+   "description": "Two solid wedges pointed at one another across a gap — the offer and the answer, not yet met. Signalling is exactly the part where the two halves are addressed to each other and have not arrived (quorum.offer/join/close, rtc.offer/answer/state/restart).",
+   "refs": [
+    "RFC 8829 (JSEP)"
+   ]
+  },
+  {
+   "id": "channel",
+   "group": "shelf",
+   "label": "Data channel",
+   "metaphor": "Two arrows, opposite directions",
+   "description": "An RTCDataChannel is bidirectional and both directions are the users job: an up arrow and a down arrow side by side (rtc.send, rtc.recv, rtc.stats). Vertical on purpose — the horizontal band belongs to ports.",
+   "refs": [
+    "W3C WebRTC 1.0 §6 RTCDataChannel"
+   ]
   }
  ]
 }

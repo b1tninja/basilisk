@@ -43,6 +43,7 @@ cd web && npm run glyphs
 | `webauthn` | WebAuthn | FIDO passkey (person + overlapping key) | Official passkey layout: person on the left, simplified key on the right slightly overlapping (create, prf, caps). <br><small>FIDO Alliance Passkey Icon Usage Guidelines</small> |
 | `otp` | OTP | Key whose bow is a countdown dial | A TOTP secret is a key that expires. The shank is the `password` shelf glyph's, because the shared secret underneath is the same kind of thing; the bow is a dial with hands and a gap at twelve where the period has run off. Two cues rather than one on purpose — at 16px the gap alone reads as a broken circle and the hands alone read as a plain clock, and it has to stay distinct from `password` right beside it in the drawer. <br><small>RFC 6238 (TOTP)</small> |
 | `jose` | JOSE | Three dot-separated segments | A compact JOSE serialization is header.payload.signature - three blocks with the separators between them, plus the signature spark (jose.sign, jose.verify). <br><small>RFC 7515 - JSON Web Signature</small> |
+| `webrtc` | WebRTC | A span carrying two ends | A connection is a span the two ends stand on: an arch between two solid footings. Not a wire — ICE builds the route, it is not handed one. Distinct from ports (two sockets bridged, the ICE/STUN shelf) because the mass sits in the footings rather than the band. <br><small>W3C WebRTC 1.0</small> |
 
 ## Shelves
 
@@ -73,6 +74,8 @@ cd web && npm run glyphs
 | `directory` | Directory | People / contacts | HKP directory search — two contact silhouettes (alias of recipients). |
 | `recipients` | Recipients | People / contacts | Recipients list / merge — two contact silhouettes. |
 | `jose-jwe` | JWE envelope | Token whose middle segment is filled | A JWE carries an encrypted payload rather than a signed one, so it is the `jose` token with the payload segment blacked out — the part you cannot read. Segment ink at 12px is 5.89 against `jose`'s 2.58, a 2.28x difference. It was an envelope with a lock shackle, which at badge size was the same silhouette as `pubkey` and `openpgp`; staying inside the JOSE token family says more, and says it at 12px. <br><small>RFC 7516 - JSON Web Encryption</small> |
+| `peer` | Peer & signaling | Offer and answer facing each other | Two solid wedges pointed at one another across a gap — the offer and the answer, not yet met. Signalling is exactly the part where the two halves are addressed to each other and have not arrived (quorum.offer/join/close, rtc.offer/answer/state/restart). <br><small>RFC 8829 (JSEP)</small> |
+| `channel` | Data channel | Two arrows, opposite directions | An RTCDataChannel is bidirectional and both directions are the users job: an up arrow and a down arrow side by side (rtc.send, rtc.recv, rtc.stats). Vertical on purpose — the horizontal band belongs to ports. <br><small>W3C WebRTC 1.0 §6 RTCDataChannel</small> |
 
 ## Toolbar / kernel
 

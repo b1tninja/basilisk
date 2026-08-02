@@ -151,7 +151,14 @@ export const TOOLBOX_META = {
   // WebCrypto's Sign shelf would imply it and `verify` are two settings of
   // one op when they share nothing but a verb.
   otp: { label: "OTP", badge: "OTP", order: 11, glyph: "otp", color: "#db61a2" },
-  webrtc: { label: "WebRTC", badge: "WebRTC", order: 12, glyph: "agent", color: "#58a6ff" },
+  // The toolbox, its `peer` shelf and its `channel` shelf all pointed at
+  // `agent` — a vault key standing for a peer connection. Enumerating all 118
+  // steps showed `agent` resolved for exactly seven ops, every one of them
+  // WebRTC, and for no `agent.*` op at all: the mark belonged to the toolbox
+  // that had never been drawn, not to the one it was named after. `webrtc` is
+  // a span on two footings, because a connection is something ICE *builds*
+  // between two ends rather than a wire it is handed.
+  webrtc: { label: "WebRTC", badge: "WebRTC", order: 12, glyph: "webrtc", color: "#58a6ff" },
   jose: { label: "JOSE", badge: "JOSE", order: 13, glyph: "jose", color: "#ffa657" },
 };
 
@@ -295,8 +302,13 @@ export const SHELF_META = {
   enrolment: { label: "Enrolment", order: 0, glyph: "qr" },
   otpcode: { label: "Code", order: 1, glyph: "otp" },
   ice: { label: "ICE / STUN", order: 0, glyph: "ports" },
-  peer: { label: "Peer & signaling", order: 1, glyph: "agent" },
-  channel: { label: "Data channel", order: 2, glyph: "agent" },
+  // Two shelves, two marks, neither of them a key. `peer` is the offer and the
+  // answer facing each other across a gap — signalling is precisely the phase
+  // where the two halves are addressed to each other and have not arrived.
+  // `channel` is the two directions an `RTCDataChannel` carries, drawn
+  // vertically so the horizontal band stays `ports`'.
+  peer: { label: "Peer & signaling", order: 1, glyph: "peer" },
+  channel: { label: "Data channel", order: 2, glyph: "channel" },
   rtcstats: { label: "Stats", order: 3, glyph: "ports" },
 };
 
@@ -3481,7 +3493,6 @@ export const STEPS = [
     kind: "source",
     toolbox: "webrtc",
     shelf: "peer",
-    glyph: "agent",
     doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `rtc.send`/`rtc.recv`/`quorum.close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
     input: "none",
     output: "session",
@@ -3525,7 +3536,6 @@ export const STEPS = [
     kind: "source",
     toolbox: "webrtc",
     shelf: "peer",
-    glyph: "agent",
     doc: "Join a run-scoped exchange as peer: verifies the creator's signed invite, then meshes with per-peer ephemeral ECDH (data-channel PFS). Pauses the run at this cell until connected. Same audience + site = same room, no code to paste. Example: `quorum.join to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
     input: "none",
     output: "session",
@@ -3569,7 +3579,6 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webrtc",
     shelf: "channel",
-    glyph: "agent",
     doc: "Write the pipeline text to the live data channel (per-peer session keys; key-confirmed channels only). `to=` addresses one peer by fingerprint; empty broadcasts to every verified peer, which is the exchange's own policy. Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run.",
     input: "text",
     output: "text",
@@ -3588,7 +3597,6 @@ export const STEPS = [
     kind: "source",
     toolbox: "webrtc",
     shelf: "channel",
-    glyph: "agent",
     doc: "Read from the live data channel. `count=1` (default) waits for one message and emits it as text (`meta.from` = sender fingerprint); `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `rtc.recv | gpg.verify`, or `rtc.recv count=all | foreach\\n  - gpg.verify`.",
     input: "none",
     output: "text",
@@ -3627,7 +3635,6 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webrtc",
     shelf: "peer",
-    glyph: "agent",
     doc: "End the exchange now: closes every peer connection and zeroizes session keys. Runs implicitly at Clear session — close early when the exchange is done mid-notebook. Passes the value through.",
     input: "text",
     output: "text",
@@ -3697,7 +3704,6 @@ export const STEPS = [
     kind: "source",
     toolbox: "webrtc",
     shelf: "peer",
-    glyph: "agent",
     doc: "Raw SDP offer — the escape hatch below `quorum.offer` for inspecting or hand-carrying the session description. Creates a peer connection with one data channel and emits its SDP as text. Does not signal anything; pair it with your own transport. Example: `rtc.offer | out @sdp`.",
     input: "none",
     output: "sdp",
@@ -3721,7 +3727,6 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webrtc",
     shelf: "peer",
-    glyph: "agent",
     doc: "Raw SDP answer for a piped offer — the `rtc.offer` conjugate. Takes the remote offer SDP as pipeline text, applies it as the remote description, and emits the local answer SDP. Example: `in @remoteOffer | rtc.answer | out @answer`.",
     input: "sdp",
     output: "sdp",

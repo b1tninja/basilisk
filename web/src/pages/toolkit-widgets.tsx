@@ -768,6 +768,46 @@ function CatalogApp() {
                 }}
               />
             </div>
+            {/**
+             * The states this panel exists for, and the ones the catalog never
+             * showed.
+             *
+             * `failed` is a real `RTCPeerConnection.connectionState` and was
+             * absent from the old five-stage track, so `indexOf` returned -1,
+             * nothing was lit and nothing was bolded — a failed connection drew
+             * pixel-identical to one that had never started, and no fixture
+             * here would have caught it because none of them had failed. That
+             * is the whole argument for this row: a catalog that shows the
+             * happy path by accident shows nothing on purpose.
+             *
+             * `connected` with a channel that is not open is the SCTP phase —
+             * the one state where "Connected" and "nothing works" are both
+             * true, and where telling someone to add TURN is the wrong advice.
+             */}
+            <div>
+              <StateLabel>connstate — failed, disconnected, closed (the reason the panel exists)</StateLabel>
+              <NetworkArtifact
+                netType="connstate"
+                data={{
+                  peers: [
+                    { peer: "AABBCCDDEEFF0011", connectionState: "failed", iceConnectionState: "failed", signalingState: "stable", channelState: "closed" },
+                    { peer: "1122334455667788", connectionState: "disconnected", iceConnectionState: "disconnected", signalingState: "stable", channelState: "open" },
+                    { peer: "99AABBCCDDEEFF00", connectionState: "closed", iceConnectionState: "closed", signalingState: "closed", channelState: "closed" },
+                  ],
+                }}
+              />
+            </div>
+            <div>
+              <StateLabel>connstate — connected, channel not open (the SCTP phase)</StateLabel>
+              <NetworkArtifact
+                netType="connstate"
+                data={{
+                  peers: [
+                    { peer: "AABBCCDDEEFF0011", connectionState: "connected", iceConnectionState: "connected", signalingState: "stable", channelState: "connecting", verified: true },
+                  ],
+                }}
+              />
+            </div>
             <div>
               <StateLabel>stats/data-channel — back-pressure bar (§30d)</StateLabel>
               <NetworkArtifact
@@ -810,10 +850,67 @@ function CatalogApp() {
               />
             </div>
             <div>
-              <StateLabel>endpoint — stun.check discovered address</StateLabel>
+              <StateLabel>endpoint — stun.check reached a server</StateLabel>
               <NetworkArtifact
                 netType="endpoint"
-                data={{ ok: true, publicAddress: "203.0.113.9:60122", ms: 127, note: "STUN reachable — reflexive address discovered" }}
+                data={{
+                  ok: true,
+                  publicAddress: "203.0.113.9:60122",
+                  ms: 127,
+                  candidates: { host: 1, srflx: 1 },
+                }}
+              />
+            </div>
+            {/**
+             * The verdict this op exists to deliver, and the one the catalog
+             * never showed. `host` candidates but no `srflx` is the whole
+             * diagnosis — the browser gathered fine and the STUN round trip
+             * never completed, which is a blocked UDP path and *not* the same
+             * problem as having no TURN. The relay row says it was not probed
+             * because `stun.check` builds its connection with no credential
+             * and can never attempt an allocation (b6a33a4, measured against a
+             * live coturn that was relaying at the time).
+             */}
+            <div>
+              <StateLabel>endpoint — stun.check blocked (host only, no srflx)</StateLabel>
+              <NetworkArtifact
+                netType="endpoint"
+                data={{ ok: false, publicAddress: "", ms: 5002, candidates: { host: 4, srflx: 0 } }}
+              />
+            </div>
+            {/**
+             * `sdp` had no fixture at all, which is how it stayed a bare
+             * `<pre>` for as long as it did. The blob below is a real
+             * `rtc.offer` output, and the panel's job is the sentence under it:
+             * both SDP ops close their `RTCPeerConnection` in a `finally`
+             * before returning, so the two shipped SDP templates describe a
+             * hand-carried exchange that cannot complete.
+             */}
+            <div className="md:col-span-2">
+              <StateLabel>sdp — the blob, and the transport that is already gone (§30d)</StateLabel>
+              <NetworkArtifact
+                netType="sdp"
+                content={[
+                  "v=0",
+                  "o=- 2102512630839861970 2 IN IP4 127.0.0.1",
+                  "s=-",
+                  "t=0 0",
+                  "a=group:BUNDLE 0",
+                  "m=application 60476 UDP/DTLS/SCTP webrtc-datachannel",
+                  "c=IN IP4 99.105.33.21",
+                  "a=candidate:1734501310 1 udp 2113937151 4a114678.local 60476 typ host generation 0",
+                  "a=candidate:908088438 1 udp 1677729535 99.105.33.21 60476 typ srflx raddr 0.0.0.0 rport 0",
+                  "a=ice-ufrag:OsG7",
+                  "a=ice-pwd:2Q3Gn94UvGaWF3YjbpPJZSMe",
+                  "a=ice-options:trickle",
+                  "a=fingerprint:sha-256 32:81:EB:EE:4A:8F:0B:63:40:33:F5:DD:55:DD:36:1D:79:94:A0:F6:86:3C:4F:F1:85:7D:22:65:82:84:37:AA",
+                  "a=setup:actpass",
+                  "a=mid:0",
+                  "a=sctp-port:5000",
+                  "a=max-message-size:262144",
+                  "",
+                ].join("\n")}
+                data={null}
               />
             </div>
             {/**

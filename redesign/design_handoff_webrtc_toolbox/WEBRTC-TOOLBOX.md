@@ -167,7 +167,14 @@ own params fall back to the tray default when left empty.
 - **State the platform's real limits plainly** — 28c's hexdump is the
   decrypted message payload, not a packet capture, because that's genuinely
   all `RTCDataChannel` can expose; design honesty over implying a capability
-  that doesn't exist.
+  that doesn't exist. The same rule now applies to the *transport*: `rtc.offer`
+  and `rtc.answer` close their own `RTCPeerConnection` before returning, so the
+  raw-SDP escape hatch in §2 hands back a blob whose connection is already
+  gone, and the hand-carried exchange two shipped templates describe cannot
+  complete. The `sdp` panel says so above the blob. See deviation 5 in
+  `IMPLEMENTATION-STATUS.md` — that is the one place in this bundle where a
+  designed capability turned out not to exist, and it needs a new op
+  (`rtc.accept`) plus a live-offer registry, not a UI change.
 - **Reuse the toolkit's own primitives before inventing new ones** — 29a
   mirrors `genkey`'s shape, 29c wraps `sss.split` instead of building a new
   group-session concept from scratch.

@@ -730,3 +730,286 @@ export function shareIdentity(artifact) {
         : "";
   return { index, threshold, flavour };
 }
+/* ══════════════════════════════════════════════════════════════════════════
+ *  WebRTC read-outs — the three panels a user lands on when a call fails
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * These exist because the WebRTC panels were the one family that rendered
+ * every field correctly and answered none of the reader's question. A user
+ * only opens `rtc.state`, `stun.check` or an SDP blob when a connection did
+ * not form, so the bar for each of them is **why did this not connect, and
+ * what do I do next** — not "is `iceConnectionState` shown".
+ *
+ * They live here rather than in `NetworkArtifact.tsx` for the reason the whole
+ * module exists: a verdict written inside a component is a verdict with no
+ * test, and these are the sentences most worth pinning.
+ */
+
+/**
+ * Verdict, cause and next step for one peer's connection state (§30d).
+ *
+ * **The strip had no state for `failed`.** Its five stages were
+ * `new → connecting → connected → disconnected → closed`, and
+ * `RTCPeerConnection.connectionState` also takes the value `"failed"` — which
+ * `rtc.state` emits verbatim. `indexOf("failed")` was `-1`, so no segment was
+ * marked reached and no label was bolded: **a peer connection that had failed
+ * rendered pixel-identical to one that had not started.** That is the single
+ * state the panel exists for.
+ *
+ * The fix is not a sixth segment. `disconnected`, `failed` and `closed` are
+ * not later milestones on the way to something — they are *outcomes*, and
+ * drawing them in line with `connecting` said a connection progresses toward
+ * being closed. So the track is the three stages that really are a sequence,
+ * and an outcome is a terminal verdict beside it.
+ *
+ * `iceConnectionState` and `channelState` refine the cause: ICE up with no
+ * open channel is the SCTP phase, which is a different problem from ICE never
+ * finding a route, and telling a reader to add TURN in that case wastes their
+ * afternoon.
+ *
+ * @param {{ connectionState?: string, iceConnectionState?: string,
+ *   signalingState?: string, channelState?: string }} peer
+ * @returns {{
+ *   stages: { name: string, state: "past"|"current"|"ahead" }[],
+ *   terminal: { name: string, tone: "warn"|"error"|"muted" } | null,
+ *   tone: "brand"|"caret"|"warn"|"error"|"muted",
+ *   headline: string,
+ *   why: string | null,
+ *   next: string | null,
+ * }}
+ */
+export function connStateReadout(peer) {
+  const conn = String(peer?.connectionState || "new");
+  const ice = String(peer?.iceConnectionState || "");
+  const chan = String(peer?.channelState || "");
+  const track = ["new", "connecting", "connected"];
+  /** @type {Record<string, "warn"|"error"|"muted">} */
+  const OUTCOMES = { disconnected: "warn", failed: "error", closed: "muted" };
+  const outcome = OUTCOMES[conn] || null;
+  // An outcome is reached *from* connected, so the track behind it stays lit —
+  // a failed call did get somewhere, and blanking the track would hide how far.
+  const at = outcome ? track.length - 1 : Math.max(0, track.indexOf(conn));
+  const stages = track.map((name, i) => ({
+    name,
+    state: /** @type {"past"|"current"|"ahead"} */ (
+      outcome ? (i <= at ? "past" : "ahead") : i < at ? "past" : i === at ? "current" : "ahead"
+    ),
+  }));
+
+  if (conn === "failed") {
+    return {
+      stages,
+      terminal: { name: "failed", tone: "error" },
+      tone: "error",
+      headline: "Could not connect",
+      why: "ICE checked every candidate pair it had and none of them worked, so there is no route between the two ends.",
+      next: "Add a TURN relay. Host and server-reflexive candidates only describe routes a peer can reach directly; with both ends behind symmetric NAT there is no such route to find.",
+    };
+  }
+  if (conn === "disconnected") {
+    return {
+      stages,
+      terminal: { name: "disconnected", tone: "warn" },
+      tone: "warn",
+      headline: "Connection lost",
+      why: "The transport stopped answering. ICE keeps rechecking for a while before it declares the connection failed, so this can recover on its own.",
+      next: "Wait, or restart the connection — that renegotiates ICE in place and keeps the room and the roster.",
+    };
+  }
+  if (conn === "closed") {
+    return {
+      stages,
+      terminal: { name: "closed", tone: "muted" },
+      tone: "muted",
+      headline: "Closed",
+      why: "This peer connection has been torn down. Nothing further will arrive on it.",
+      next: null,
+    };
+  }
+  if (conn === "connected") {
+    // ICE and DTLS are up but SCTP has not finished — the phase 28a put in the
+    // log and no panel ever named. Reported because "connected" beside a
+    // channel that will not open is the most confusing state in the set.
+    if (chan && chan !== "open") {
+      return {
+        stages,
+        terminal: null,
+        tone: "warn",
+        headline: "Connected, channel not open",
+        why: `The transport is up and DTLS completed, but the data channel is ${chan} — SCTP has not finished negotiating on top of it.`,
+        next: "Give it a moment. If it stays here, both ends have to agree the channel's label and negotiation mode; a channel opened on one side only never opens.",
+      };
+    }
+    return { stages, terminal: null, tone: "brand", headline: "Connected", why: null, next: null };
+  }
+  if (conn === "connecting") {
+    return {
+      stages,
+      terminal: null,
+      tone: "caret",
+      headline: ice === "checking" ? "Checking candidate pairs" : "Connecting",
+      why: null,
+      next: null,
+    };
+  }
+  return {
+    stages,
+    terminal: null,
+    tone: "muted",
+    headline: "Not started",
+    why: "Nothing has been negotiated on this connection yet.",
+    next: null,
+  };
+}
+
+/**
+ * What a `stun.check` result means, and what to do about it (§22b).
+ *
+ * `stun.check` reports the candidate mix it gathered (`host ×4 srflx ×0`) —
+ * added the day the transport was first driven against real browsers, because
+ * a "blocked" badge sent the reader to a screen that could not say *what* had
+ * been gathered. Which types arrived **is** the diagnosis:
+ *
+ *  - `srflx` present — the STUN round trip completed. STUN is not the problem.
+ *  - `srflx` absent but `host` present — the browser gathered fine and the
+ *    STUN server never answered. That is a blocked UDP path or a dead server,
+ *    and it is a different fix from "no TURN".
+ *  - nothing at all — the gather itself produced nothing, which is a config or
+ *    secure-context problem rather than a network one.
+ *
+ * **This function never mentions relay.** `stun.check` refuses any `server=`
+ * that is not `stun:`/`stuns:` and allocates with no credential, so it never
+ * attempts a TURN allocation and its relay count is a constant, not a
+ * measurement — verified against a live coturn that was relaying for two peers
+ * at the time. A "no TURN configured" verdict derived from a number the op
+ * never took would be the panel guessing, on the one screen a user reaches
+ * when a connection has already failed. Whether a relay candidate exists is
+ * `rtc.gather`'s question, and its own panel answers it.
+ *
+ * @param {{ ok?: boolean, publicAddress?: string,
+ *   candidates?: Record<string, number> }} data
+ * @returns {{ tone: "brand"|"warn"|"error", verdict: string,
+ *   why: string, next: string | null }}
+ */
+export function stunReachability(data) {
+  const mix = data?.candidates;
+  const host = Number(mix?.host || 0);
+  const srflx = Number(mix?.srflx || 0);
+
+  // No mix *reported* is not a mix of zeroes. `stun.check` only began counting
+  // candidates on the day the transport was first driven against real
+  // browsers, so an older result — or a replayed one — carries a verdict and
+  // an address and nothing else. Reading that absence as "gathered nothing"
+  // would print `nothing gathered` beside a discovered public address, which
+  // is the same class of mistake as the relay count next door: a number the op
+  // never took, rendered as a measurement.
+  if (!mix) {
+    const ok = data?.ok !== false && !!data?.publicAddress;
+    return {
+      tone: ok ? "brand" : "warn",
+      verdict: ok ? "reachable" : "blocked",
+      why: ok
+        ? `A reflexive address came back${data?.publicAddress ? ` at ${data.publicAddress}` : ""}. This result carries no candidate breakdown, so which types were gathered is not known.`
+        : "STUN did not report a reachable address, and this result carries no candidate breakdown to say how far it got.",
+      next: ok ? null : "Re-run stun.check — a current result reports the candidate mix, which is what separates a blocked STUN path from an empty ICE server list.",
+    };
+  }
+  if (!(host + srflx)) {
+    return {
+      tone: "error",
+      verdict: "nothing gathered",
+      why: "The browser produced no ICE candidates at all — not even a host one, which needs no network.",
+      next: "Check that the ICE server list is not empty and that the page is a secure context; RTCPeerConnection gathers nothing outside one.",
+    };
+  }
+  if (!srflx) {
+    return {
+      tone: "warn",
+      verdict: "STUN did not answer",
+      why: `Gathering worked — ${host} host candidate${host === 1 ? "" : "s"} — but no server-reflexive candidate came back, so the STUN round trip never completed.`,
+      next: "The usual cause is UDP blocked outbound. Try another server with rtc.ice stun=…; if that returns nothing either, the network is filtering and only a TURN relay over TCP/TLS will get out.",
+    };
+  }
+  return {
+    tone: "brand",
+    verdict: "STUN answered",
+    why: `A server-reflexive candidate came back${data?.publicAddress ? ` at ${data.publicAddress}` : ""}, so this network reaches a STUN server and a peer can learn where to send.`,
+    // No next step, and that is the honest answer: STUN working is as far as
+    // this op looks. If a connection still will not form, the next screen is
+    // `rtc.gather`'s candidate list, which is the one that can say whether a
+    // relay route exists.
+    next: null,
+  };
+}
+
+/** The one place the closed-transport limit is written down. */
+export const SDP_TRANSPORT_CLOSED =
+  "The connection this describes is already closed. rtc.offer and rtc.answer " +
+  "each close their RTCPeerConnection before returning, so the ICE credentials " +
+  "and fingerprint here name a transport that no longer exists — carrying this " +
+  "blob to a peer cannot complete a handshake. It is here to be read, and to " +
+  "feed rtc.answer in the same notebook.";
+
+/**
+ * What is actually in an SDP blob, and what can be done with it (§30d).
+ *
+ * Two jobs, and the second is the one that matters.
+ *
+ * **A read-out.** An SDP blob is 700 bytes of line-oriented text, and the
+ * three things a human reads it for are the DTLS fingerprint, the candidates
+ * it carries, and the transport line. Those are pulled out here; the raw text
+ * stays below them, because a fingerprint you have to hunt for is a
+ * fingerprint nobody checks.
+ *
+ * **A limit stated plainly.** `rtc.offer` and `rtc.answer` each close their
+ * `RTCPeerConnection` in a `finally` before returning. The SDP they hand back
+ * is well-formed and its transport is already gone. So the hand-carried flow
+ * the two SDP templates describe — copy this to the other side, paste their
+ * answer back — **cannot complete**, and the panel says so rather than letting
+ * a reader find out by watching a handshake time out. That is 28c's rule
+ * applied to the transport instead of the payload: state the platform's real
+ * limits, never imply a capability that is not there.
+ *
+ * This does **not** restate `sdpRole()`'s offer/answer rule (`rtc-ops.js`),
+ * which is what `rtc.answer` refuses on. It prints the `a=setup:` line — the
+ * datum that rule reads — and leaves the verdict where it is written.
+ * `rtc-ops.js` is deliberately not imported: it is loaded dynamically so that
+ * `RTCPeerConnection` stays out of the base bundle, and a static import here
+ * would pull it into every page that draws an artifact tile.
+ *
+ * Total: an unparseable blob yields empty fields and the same standing note,
+ * never a throw.
+ *
+ * @param {string} sdp
+ * @returns {{
+ *   fingerprint: { algorithm: string, value: string } | null,
+ *   setup: string,
+ *   transport: string,
+ *   candidates: { type: string, count: number }[],
+ *   lines: number,
+ *   liveTransport: false,
+ *   note: string,
+ * }}
+ */
+export function sdpReadout(sdp) {
+  const text = String(sdp || "");
+  const fpr = text.match(/^a=fingerprint:(\S+)\s+(\S+)/m);
+  const setup = text.match(/^a=setup:(\S+)/m);
+  const mline = text.match(/^m=(\S+)\s+\S+\s+(\S+)/m);
+  /** @type {Record<string, number>} */
+  const byType = {};
+  for (const m of text.matchAll(/^a=candidate:.*?\styp\s(\S+)/gm)) {
+    byType[m[1]] = (byType[m[1]] || 0) + 1;
+  }
+  return {
+    fingerprint: fpr ? { algorithm: fpr[1], value: fpr[2] } : null,
+    setup: setup ? setup[1] : "",
+    transport: mline ? `${mline[1]} ${mline[2]}` : "",
+    candidates: ["host", "srflx", "relay", "prflx"]
+      .filter((t) => byType[t])
+      .map((t) => ({ type: t, count: byType[t] })),
+    lines: text ? text.split(/\r?\n/).filter(Boolean).length : 0,
+    liveTransport: /** @type {false} */ (false),
+    note: SDP_TRANSPORT_CLOSED,
+  };
+}

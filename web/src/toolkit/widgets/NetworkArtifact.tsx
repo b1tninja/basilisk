@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-import { expiryNote } from "../../lib/toolkit/artifact-readouts.js";
+import {
+  connStateReadout,
+  expiryNote,
+  sdpReadout,
+  stunReachability,
+} from "../../lib/toolkit/artifact-readouts.js";
 
 /**
  * Manager widgets for network/WebRTC artifacts (design v2 §23a/23b/26a/26b/
@@ -47,24 +52,41 @@ const PAIR_STATE_TONE: Record<string, NetTone> = {
   frozen: "muted",
 };
 
-function TypeBadge({ label, tone }: { label: string; tone: NetTone }) {
+/**
+ * `faint` is the *absent* mark — a candidate type that was not gathered, or a
+ * count of zero. It fades the badge's tint and nothing else.
+ *
+ * It exists because the whole row used to carry `opacity-45`, which took the
+ * sentence beside the badge down with it: "none gathered — no TURN configured"
+ * measured 2.16:1 in light and 2.39:1 in dark, making the panel's actual
+ * diagnosis the least readable text on it. 26a's rule is that an absent type
+ * is informational rather than an error, and a muted badge says that on its
+ * own; the explanation has to stay legible to be worth writing.
+ */
+function TypeBadge({ label, tone, faint }: { label: string; tone: NetTone; faint?: boolean }) {
   return (
     <span
       className="net-badge shrink-0 rounded-[3px] px-[5px] py-[2px] text-[9px] font-medium uppercase tracking-wider"
       data-tone={tone}
+      data-faint={faint ? "1" : undefined}
     >
       {label}
     </span>
   );
 }
 
-function Row({ children, dim }: { children: ReactNode; dim?: boolean }) {
+function Row({
+  children,
+  mark,
+  ...rest
+}: { children: ReactNode; mark?: boolean } & Record<string, unknown>) {
   return (
     <div
       className={cn(
-        "flex items-center gap-2.5 border-b border-[color-mix(in_srgb,var(--border)_45%,transparent)] px-2.5 py-[6px] last:border-b-0",
-        dim && "opacity-50"
+        "net-row flex items-center gap-2.5 border-b border-[color-mix(in_srgb,var(--border)_45%,transparent)] px-2.5 py-[6px] last:border-b-0",
+        mark && "net-row-mark"
       )}
+      {...rest}
     >
       {children}
     </div>
@@ -101,7 +123,7 @@ function CandidateList({ data }: { data: any }) {
   const candidates: Candidate[] = Array.isArray(data?.candidates) ? data.candidates : [];
   const byType: Record<string, number> = data?.byType || {};
   // 26a: all four MDN types get a row — a missing one is informational, not a
-  // failure, so it renders dim rather than being hidden or shown as an error.
+  // failure, so its badge fades rather than the row being hidden or reddened.
   const order = ["host", "prflx", "srflx", "relay"];
   return (
     <div>
@@ -109,11 +131,23 @@ function CandidateList({ data }: { data: any }) {
         const rows = candidates.filter((c) => c.type === t);
         if (!rows.length) {
           return (
-            <Row key={t} dim>
-              <TypeBadge label={t} tone={CANDIDATE_TONE[t] || "muted"} />
-              <span className="text-[10.5px] italic text-[var(--muted-foreground)]">
+            // Not `dim`. The badge fades; the sentence does not — see
+            // `TypeBadge`'s `faint`. This row is where "no TURN is configured"
+            // gets said, which is the answer on the screen a user opens when a
+            // call did not happen.
+            <Row key={t} data-absent>
+              <TypeBadge label={t} tone="muted" faint />
+              <span className="text-[10.5px] italic leading-snug text-[var(--muted-foreground)]">
                 {t === "relay"
-                  ? "none gathered — no TURN configured"
+                  ? // Not "no TURN configured". A relay was verified end to end
+                    // against a live coturn on the day this was written, and the
+                    // same run showed that a wrong password and a dead server
+                    // both yield exactly this empty result — only
+                    // `icecandidateerror` code 401 tells them apart, and nothing
+                    // reads it. The gather's output carries no ICE server list,
+                    // so the panel cannot know which of the three happened and
+                    // says so rather than picking the flattering one.
+                    "no relay route — either no TURN is configured, or one is and it refused the credential or never answered. All three arrive here as nothing."
                   : t === "prflx"
                     ? "none — peer-reflexive only appears during negotiation"
                     : "none gathered"}
@@ -189,9 +223,14 @@ function PairMatrix({ data, onConfigureTurn }: { data: any; onConfigureTurn?: ()
             <Empty>No candidate pairs yet.</Empty>
           ) : (
             p.pairs.map((pair: any, i: number) => (
-              // 23b: non-nominated pairs stay visible at reduced opacity —
-              // debugging "why is this slow" needs the whole graph, not the winner.
-              <Row key={i} dim={!pair.nominated && pair.state !== "failed"}>
+              // 23b asked for the whole graph, with the losers at 50% opacity
+              // so the nominated pair stands out. Measured, 50% put a pair
+              // label at 3.16:1 — visible only in the sense that it is still
+              // in the DOM, which is the opposite of "never hidden: a user
+              // debugging a slow connection needs the whole graph". The
+              // hierarchy is the same either way, so the winner is marked *up*
+              // with a tint instead of every loser being marked down.
+              <Row key={i} mark={pair.nominated}>
                 <code className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-[var(--foreground)]">
                   {pair.local?.label || "?"}
                   <span className="mx-1 text-[var(--muted-foreground)]">→</span>
@@ -215,11 +254,18 @@ function PairMatrix({ data, onConfigureTurn }: { data: any; onConfigureTurn?: ()
           )}
         </div>
       ))}
-      {/* 23b: when every pair fails, the fallback CTA is a TURN relay. */}
+      {/* 23b: when every pair fails the fallback is a relay — and the reason
+          is the part worth writing down, because "every pair failed" is what
+          the reader can already see. The button is kept beside the sentence
+          rather than under it so the two are read as one instruction. */}
       {data?.allFailed && onConfigureTurn ? (
-        <div className="flex items-center gap-2 px-2.5 py-2">
-          <span className="text-[10.5px] text-[var(--warn)]">
-            Every candidate pair failed.
+        <div className="flex flex-wrap items-center gap-2 px-2.5 py-2">
+          <span className="min-w-0 flex-1 text-[10.5px] leading-snug text-[var(--muted-foreground)]">
+            <strong className="font-semibold text-[var(--warn)]">
+              No route between these two ends.
+            </strong>{" "}
+            Every candidate pair was checked and none succeeded, so neither peer
+            can reach the other directly — a relay has to carry the traffic.
           </span>
           <Button
             size="sm"
@@ -236,66 +282,121 @@ function PairMatrix({ data, onConfigureTurn }: { data: any; onConfigureTurn?: ()
 
 /* ─────────────────── connection-state strip (30d) ─────────────────── */
 
-const CONN_STAGES = ["new", "connecting", "connected", "disconnected", "closed"];
-
+/**
+ * The panel a user opens when a call did not happen — so it leads with the
+ * verdict, not with the enum.
+ *
+ * The old strip laid `new · connecting · connected · disconnected · closed`
+ * out as one five-step track and bolded whichever one `connectionState`
+ * matched. Two things were wrong with that and both showed up the moment a
+ * connection actually failed:
+ *
+ *  - `"failed"` is a real `RTCPeerConnection.connectionState` and was not on
+ *    the track, so `indexOf` returned `-1`, nothing was marked reached and
+ *    nothing was bolded — **a failed connection drew identically to one that
+ *    had never started.**
+ *  - `disconnected` and `closed` are outcomes, not milestones. Drawing them in
+ *    line after `connected` said a healthy connection is progressing toward
+ *    being closed.
+ *
+ * So the track is the three stages that really are a sequence, an outcome is a
+ * terminal chip beside it, and `connStateReadout` — which is where the verdict
+ * and the next step are written and tested — supplies both. The bar is
+ * `aria-hidden`: it is a picture of the headline above it, and a screen reader
+ * that read five stage words with only a font weight to say which one is
+ * current learned nothing (WCAG 1.3.1).
+ */
 function ConnStateStrip({ data }: { data: any }) {
   const peers: any[] = Array.isArray(data?.peers) ? data.peers : [];
   if (!peers.length) return <Empty>No peers in this exchange.</Empty>;
   return (
     <div>
       {peers.map((p, i) => {
-        const at = CONN_STAGES.indexOf(String(p.connectionState));
+        const read = connStateReadout(p);
         return (
           <div
             key={i}
             className="border-b border-[color-mix(in_srgb,var(--border)_45%,transparent)] px-2.5 py-2 last:border-b-0"
+            data-conn-state={p.connectionState || "new"}
           >
-            <div className="mb-1.5 flex items-center gap-2">
+            <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
               <code className="font-mono text-[10px] text-[var(--muted-foreground)]">
                 {String(p.peer || "").slice(0, 8)}…
               </code>
+              <span className="net-headline text-[11px] font-semibold" data-tone={read.tone}>
+                {read.headline}
+              </span>
+              {read.terminal ? (
+                <TypeBadge label={read.terminal.name} tone={read.terminal.tone} />
+              ) : null}
               {p.verified ? <TypeBadge label="verified" tone="brand" /> : null}
               <span className="ml-auto font-mono text-[9.5px] text-[var(--muted-foreground)]">
                 ice {p.iceConnectionState} · sig {p.signalingState} · ch {p.channelState}
               </span>
             </div>
-            {/* Same strip shape 26a's type row uses. */}
-            <div className="flex items-center gap-1">
-              {CONN_STAGES.map((s, si) => {
-                const active = si === at;
-                const past = at >= 0 && si < at;
-                const failed = s === "disconnected" || s === "closed";
-                return (
-                  <span key={s} className="flex flex-1 items-center gap-1">
-                    {/* Four-state segment, enumerated in CSS: the reached
-                        stage, the reached-but-broken stage, stages already
-                        passed, and stages still ahead. */}
-                    <span
-                      className="net-stage h-[3px] flex-1 rounded-full"
-                      data-stage={
-                        active ? (failed ? "active-failed" : "active") : past ? "past" : "ahead"
-                      }
-                    />
-                  </span>
-                );
-              })}
-            </div>
-            <div className="mt-1 flex justify-between text-[9px] text-[var(--muted-foreground)]">
-              {CONN_STAGES.map((s) => (
+            <div className="flex items-center gap-1" aria-hidden>
+              {read.stages.map((s) => (
                 <span
-                  key={s}
+                  key={s.name}
+                  className="net-stage h-[3px] flex-1 rounded-full"
+                  data-stage={s.state}
+                  data-tone={read.tone}
+                />
+              ))}
+              {read.terminal ? (
+                <span
+                  className="net-stage h-[3px] w-[22%] rounded-full"
+                  data-stage="terminal"
+                  data-tone={read.terminal.tone}
+                />
+              ) : null}
+            </div>
+            <div className="mt-1 flex text-[9px] text-[var(--muted-foreground)]" aria-hidden>
+              {read.stages.map((s) => (
+                <span
+                  key={s.name}
                   className={cn(
                     "flex-1 text-center",
-                    s === p.connectionState && "font-bold text-[var(--foreground)]"
+                    s.state === "current" && "font-bold text-[var(--foreground)]"
                   )}
                 >
-                  {s}
+                  {s.name}
                 </span>
               ))}
+              {read.terminal ? (
+                <span className="w-[22%] text-center font-bold text-[var(--foreground)]">
+                  {read.terminal.name}
+                </span>
+              ) : null}
             </div>
+            <Diagnosis why={read.why} next={read.next} />
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Why it did not connect, and what to do — the two sentences every panel in
+ * this file exists to deliver and none of them used to.
+ *
+ * Both are optional and both are omitted when the answer is "nothing is
+ * wrong": a healthy connection that explains itself anyway is a panel nobody
+ * reads when it finally has something to say.
+ */
+function Diagnosis({ why, next }: { why?: string | null; next?: string | null }) {
+  if (!why && !next) return null;
+  return (
+    <div className="mt-1.5 flex flex-col gap-1">
+      {why ? (
+        <p className="text-[10.5px] leading-snug text-[var(--muted-foreground)]">{why}</p>
+      ) : null}
+      {next ? (
+        <p className="net-next text-[10.5px] leading-snug">
+          <strong className="font-semibold">Next</strong> {next}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -438,13 +539,13 @@ function EndpointPanel({ data }: { data: any }) {
       </div>
     );
   }
-  const ok = data?.ok !== false;
   // `stun.check` has always counted the candidate mix it gathered and this
-  // panel has always thrown it away, so the one screen a "blocked" verdict
-  // sends you to could not say *what* it did get. Which types arrived is the
-  // whole diagnosis: host-only means the STUN round trip never completed,
-  // while host + srflx and no relay means STUN worked and TURN is what is
-  // missing. Same four rows and same vocabulary as the `candidate` panel above.
+  // panel used to throw it away, so the one screen a "blocked" verdict sends
+  // you to could not say *what* it did get. Which types arrived is the whole
+  // diagnosis, and `stunReachability` is where that reading is written and
+  // tested — host-only means the STUN round trip never completed, host+srflx
+  // means STUN is not the problem, and those are two different afternoons.
+  const read = stunReachability(data);
   const byType: Record<string, number> = data?.candidates || {};
   // Only the two types this op can actually observe. `relay` used to be drawn
   // here as a third count, and it was a constant rather than a measurement:
@@ -460,7 +561,7 @@ function EndpointPanel({ data }: { data: any }) {
   return (
     <div>
       <Row>
-        <TypeBadge label={ok ? "reachable" : "blocked"} tone={ok ? "brand" : "warn"} />
+        <TypeBadge label={read.verdict} tone={read.tone} />
         <code className="min-w-0 flex-1 truncate font-mono text-[11px]">
           {data?.publicAddress || "no public address discovered"}
         </code>
@@ -476,19 +577,25 @@ function EndpointPanel({ data }: { data: any }) {
             gathered
           </span>
           <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            {/* A zero count is dimmed on the *badge* only. Dropping the whole
+                pair to 45% measured 1.99:1 against the panel, and the zeroes
+                are the diagnosis — the least legible thing here was the thing
+                the row exists to report (WCAG 1.4.3). Same fix in the
+                candidate list's absent-type rows. */}
             {types.map((t) => (
-              <span
-                key={t}
-                className={cn("flex items-center gap-1", !byType[t] && "opacity-45")}
-              >
-                <TypeBadge label={t} tone={byType[t] ? CANDIDATE_TONE[t] : "muted"} />
+              <span key={t} className="flex items-center gap-1">
+                <TypeBadge
+                  label={t}
+                  tone={byType[t] ? CANDIDATE_TONE[t] : "muted"}
+                  faint={!byType[t]}
+                />
                 <span className="font-mono text-[9.5px] text-[var(--muted-foreground)]">
                   ×{byType[t] || 0}
                 </span>
               </span>
             ))}
-            <span className="flex items-center gap-1 opacity-45">
-              <TypeBadge label="relay" tone="muted" />
+            <span className="flex items-center gap-1">
+              <TypeBadge label="relay" tone="muted" faint />
               <span className="text-[9.5px] italic text-[var(--muted-foreground)]">
                 not probed — see rtc.gather
               </span>
@@ -496,9 +603,68 @@ function EndpointPanel({ data }: { data: any }) {
           </span>
         </Row>
       ) : null}
-      {data?.note ? (
-        <p className="px-2.5 py-[6px] text-[10px] text-[var(--muted-foreground)]">{data.note}</p>
+      <div className="px-2.5 py-[6px]">
+        <Diagnosis why={read.why} next={read.next} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * An SDP blob, and the thing about it nobody could see (§30d).
+ *
+ * This was a bare `<pre>`: 700 bytes of `a=` lines with the DTLS fingerprint
+ * buried at line 14, and — far worse — no hint that the transport it describes
+ * is already gone. `rtc.offer` and `rtc.answer` each close their
+ * `RTCPeerConnection` in a `finally` before returning, which the first run
+ * against two real browsers made plain, so the hand-carried exchange the two
+ * shipped SDP templates describe **cannot complete**. A panel that renders
+ * that blob beautifully and lets the reader try anyway has failed the only
+ * question it is ever asked.
+ *
+ * The header is the three things a human opens an SDP for — the DTLS
+ * fingerprint, the candidates, the transport line. The limit is stated once,
+ * from `sdpReadout`, above the raw text rather than below it: a caveat under
+ * 700 bytes of `a=` lines is a caveat nobody reaches.
+ */
+function SdpPanel({ content }: { content?: string }) {
+  const read = sdpReadout(content || "");
+  return (
+    <div>
+      <Row>
+        <TypeBadge label="sdp" tone="caret" />
+        {read.setup ? (
+          <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
+            setup:{read.setup}
+          </span>
+        ) : null}
+        {read.transport ? (
+          <code className="min-w-0 flex-1 truncate font-mono text-[10px] text-[var(--muted-foreground)]">
+            {read.transport}
+          </code>
+        ) : null}
+        <span className="ml-auto shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
+          {read.candidates.length
+            ? read.candidates.map((c) => `${c.type}×${c.count}`).join("  ")
+            : "no candidates"}
+        </span>
+      </Row>
+      {read.fingerprint ? (
+        <Row>
+          <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
+            {read.fingerprint.algorithm}
+          </span>
+          <code className="min-w-0 flex-1 break-all font-mono text-[10px] text-[var(--foreground)]">
+            {read.fingerprint.value}
+          </code>
+        </Row>
       ) : null}
+      <p className="net-limit px-2.5 py-[7px] text-[10.5px] leading-snug" data-sdp-limit>
+        {read.note}
+      </p>
+      <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-all px-2.5 py-2 font-mono text-[10px] leading-relaxed text-[var(--muted-foreground)]">
+        {content || ""}
+      </pre>
     </div>
   );
 }
@@ -643,11 +809,7 @@ export function NetworkArtifact({
       body = <SessionPanel data={data} />;
       break;
     case "sdp":
-      body = (
-        <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-all px-2.5 py-2 font-mono text-[10px] leading-relaxed text-[var(--muted-foreground)]">
-          {content || ""}
-        </pre>
-      );
+      body = <SdpPanel content={content} />;
       break;
     default:
       return null;
@@ -655,7 +817,13 @@ export function NetworkArtifact({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-[7px] border border-[color-mix(in_srgb,var(--border)_60%,transparent)] bg-[color-mix(in_srgb,var(--surface-raised)_55%,transparent)]",
+        // 30%, not 55%. The fill is a grouping cue and the border already
+        // carries it; in dark the raised surface is *lighter* than the page,
+        // so every wash of it spends contrast on the muted text inside — the
+        // pair matrix's `→` and its RTT figure both measured 4.47:1 at 55%,
+        // and this is the panel that has to stay readable when a call is going
+        // badly. Light theme is unaffected either way.
+        "net-panel overflow-hidden rounded-[7px] border border-[color-mix(in_srgb,var(--border)_60%,transparent)] bg-[color-mix(in_srgb,var(--surface-raised)_30%,transparent)]",
         className
       )}
       data-network-artifact={netType}
