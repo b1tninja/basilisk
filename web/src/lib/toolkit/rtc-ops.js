@@ -332,8 +332,42 @@ export async function execCreateOffer(params, bindings) {
 }
 
 /**
+ * Which half of the offer/answer exchange an SDP blob is, by its DTLS role.
+ *
+ * Pure, and exported, for the same reason `offerCollisionAction` is: the rule
+ * is the interesting part and it should be assertable without standing up an
+ * `RTCPeerConnection`.
+ *
+ * RFC 8842 §5.1 (and RFC 5763 before it) require an offerer to advertise
+ * `a=setup:actpass` — it does not yet know which side will be the DTLS client,
+ * so it offers both. Only an *answer* commits to `active` or `passive`. So an
+ * SDP whose every `a=setup:` line has already picked a side is an answer, and
+ * nothing else is: that is the one field in the blob that distinguishes them.
+ *
+ * Absent an `a=setup:` line there is nothing to go on, and the honest answer is
+ * `"unknown"` rather than a guess — a non-browser stack's offer must still be
+ * answerable, so only a *positive* identification refuses.
+ *
+ * @param {string} sdp
+ * @returns {"offer"|"answer"|"unknown"}
+ */
+export function sdpRole(sdp) {
+  const roles = String(sdp).match(/^a=setup:(\S+)/gm) || [];
+  if (!roles.length) return "unknown";
+  if (roles.every((l) => /actpass/.test(l))) return "offer";
+  if (roles.every((l) => /active|passive|holdconn/.test(l))) return "answer";
+  return "unknown";
+}
+
+/** Refusal text for `rtc.answer` handed the wrong half. Asserted by tests. */
+export const ANSWER_NOT_AN_OFFER =
+  "rtc.answer expects the remote *offer*, but this SDP is already an answer " +
+  "(a=setup:active/passive). Answering an answer produces a description no " +
+  "peer asked for. Pipe the offer from the other side instead.";
+
+/**
  * Raw SDP answer for a piped offer.
- * @param {{ type: string, data: unknown }} value
+ * @param {{ type: string, data: unknown, meta?: Record<string, unknown> }} value
  */
 export async function execCreateAnswer(value, params, bindings) {
   requireWebRtc("rtc.answer");
@@ -343,6 +377,17 @@ export async function execCreateAnswer(value, params, bindings) {
       : new TextDecoder().decode(/** @type {Uint8Array} */ (value?.data));
   if (!/^v=0/m.test(sdp)) {
     throw new Error("rtc.answer expects an SDP offer as pipeline text");
+  }
+  // An answer and an offer are the same grammar, so `setRemoteDescription`
+  // accepts either as `{ type: "offer" }` without complaint — measured, not
+  // assumed: `rtc.offer | rtc.answer | rtc.answer` used to emit a second,
+  // plausible-looking `answer.sdp` that no peer had asked for and that could
+  // never connect. The blob says which half it is; read it and refuse.
+  // `meta.which` is the same fact carried by an artifact rather than parsed
+  // out of it, and is trusted first when the value came from `rtc.offer`.
+  const declared = value?.meta?.which;
+  if (declared === "answer" || sdpRole(sdp) === "answer") {
+    throw new Error(ANSWER_NOT_AN_OFFER);
   }
   const iceServers = resolveIceServers(params, bindings, "rtc.answer");
   const pc = new RTCPeerConnection({ iceServers });
