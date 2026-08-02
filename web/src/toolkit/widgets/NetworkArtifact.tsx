@@ -420,6 +420,14 @@ function EndpointPanel({ data }: { data: any }) {
     );
   }
   const ok = data?.ok !== false;
+  // `stun.check` has always counted the candidate mix it gathered and this
+  // panel has always thrown it away, so the one screen a "blocked" verdict
+  // sends you to could not say *what* it did get. Which types arrived is the
+  // whole diagnosis: host-only means the STUN round trip never completed,
+  // while host + srflx and no relay means STUN worked and TURN is what is
+  // missing. Same four rows and same vocabulary as the `candidate` panel above.
+  const byType: Record<string, number> = data?.candidates || {};
+  const types = ["host", "srflx", "relay"];
   return (
     <div>
       <Row>
@@ -433,6 +441,26 @@ function EndpointPanel({ data }: { data: any }) {
           </span>
         ) : null}
       </Row>
+      {data?.candidates ? (
+        <Row>
+          <span className="shrink-0 text-[10px] text-[var(--muted-foreground)]">
+            gathered
+          </span>
+          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            {types.map((t) => (
+              <span
+                key={t}
+                className={cn("flex items-center gap-1", !byType[t] && "opacity-45")}
+              >
+                <TypeBadge label={t} tone={byType[t] ? CANDIDATE_TONE[t] : "muted"} />
+                <span className="font-mono text-[9.5px] text-[var(--muted-foreground)]">
+                  ×{byType[t] || 0}
+                </span>
+              </span>
+            ))}
+          </span>
+        </Row>
+      ) : null}
       {data?.note ? (
         <p className="px-2.5 py-[6px] text-[10px] text-[var(--muted-foreground)]">{data.note}</p>
       ) : null}

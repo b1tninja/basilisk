@@ -130,10 +130,15 @@ export function getLiveSession() {
 export function restartLiveIce() {
   const session = getLiveSession();
   if (!session) return 0;
-  const peers = session.peers || (session.pc ? [{ pc: session.pc }] : []);
   let n = 0;
-  for (const peer of peers) {
-    const pc = peer?.pc || peer;
+  // `.values()`, because `session.peers` is a Map keyed by fingerprint and
+  // iterating a Map directly yields `[fpr, peer]` entries. Reading `.pc` off an
+  // Array is `undefined`, so every peer failed the `restartIce` check and this
+  // returned 0 for every live exchange there has ever been — the Connections
+  // panel's Restart ICE button did nothing at all. `rtc.restart` destructures
+  // the entry and always worked, which is how the two could disagree unnoticed.
+  for (const peer of session.peers?.values?.() || []) {
+    const pc = peer?.pc;
     // `restartIce` is unavailable on older engines; a peer that cannot restart
     // should not abort the ones that can.
     if (typeof pc?.restartIce !== "function") continue;
@@ -205,15 +210,29 @@ export function execRtcIce(params) {
   }
   const turn = String(params?.turn || "").trim();
   if (turn) {
-    if (!/^turns?:/i.test(turn)) {
-      throw new Error(`rtc.ice: not a turn:/turns: URL — ${turn}`);
+    // Split like `stun=` does. It used to be taken whole, so `turn=turn:a,turn:b`
+    // passed the scheme test on its first character and shipped one server whose
+    // `urls` was two URLs — an artifact that reads as valid and then dies inside
+    // `quorum.offer` with Chromium's "ICE server parsing failed: Invalid port",
+    // a page away from the step that wrote it.
+    const turnUrls = turn.split(/[\s,]+/).filter(Boolean);
+    for (const url of turnUrls) {
+      if (!/^turns?:/i.test(url)) {
+        throw new Error(`rtc.ice: not a turn:/turns: URL — ${url}`);
+      }
     }
     const username = String(params?.username || "");
     const credential = String(params?.credential || "");
     if (!username || !credential) {
       throw new Error("rtc.ice: TURN needs username= and credential=");
     }
-    servers.push({ urls: turn, username, credential });
+    for (const url of turnUrls) servers.push({ urls: url, username, credential });
+  }
+  // An empty list is what `stun=","` used to produce: an `endpoint` artifact
+  // that renders as an empty panel and is refused by `parseIceConfig` at the
+  // far end of the pipeline. Refuse it where it is written instead.
+  if (!servers.length) {
+    throw new Error("rtc.ice: no ICE servers — stun= matched no stun:/stuns: URL");
   }
   return {
     type: "endpoint",
@@ -230,8 +249,19 @@ export function execRtcIce(params) {
 export function parseIceConfig(text) {
   // Accepts either an `endpoint`-typed value's structured data or the legacy
   // JSON string form (a hand-written config, or an older saved notebook).
-  const parsed =
-    text && typeof text === "object" ? text : JSON.parse(String(text));
+  let parsed;
+  if (text && typeof text === "object") {
+    parsed = text;
+  } else {
+    try {
+      parsed = JSON.parse(String(text));
+    } catch {
+      // Binding `ice=@somethingelse` is the common way to get here, and the
+      // raw `Unexpected token 'h', "hunter2" is not valid JSON` that used to
+      // surface named neither the parameter nor the step.
+      throw new Error("ice=@slot does not hold rtc.ice output");
+    }
+  }
   const list = parsed?.iceServers;
   if (!Array.isArray(list) || !list.length) {
     throw new Error("ice=@slot does not hold rtc.ice output");
@@ -247,10 +277,20 @@ export function parseIceConfig(text) {
  * @param {Record<string, unknown>} params
  */
 export async function execStunCheck(params) {
+  // Validated before the capability check, because a `server=` the step cannot
+  // use is a fact about the recipe rather than about the engine running it.
+  // Unvalidated, `stun.check server=http://x` reached the constructor and came
+  // back as Chromium's `SyntaxError: Failed to construct 'RTCPeerConnection'`
+  // — which names neither the step nor the parameter. `rtc.ice` has always
+  // checked the scheme; this is the same check on the other STUN-taking op.
+  const server =
+    String(params?.server ?? "").trim() || "stun:stun.cloudflare.com:3478";
+  if (!/^stuns?:/i.test(server)) {
+    throw new Error(`stun.check: not a stun:/stuns: URL — ${server}`);
+  }
   if (typeof RTCPeerConnection !== "function") {
     throw new Error("stun.check: WebRTC unavailable in this context");
   }
-  const server = String(params?.server || "stun:stun.cloudflare.com:3478");
   const timeout = Math.max(500, Number(params?.timeout) || 4000);
   const started = performance.now();
   const pc = new RTCPeerConnection({ iceServers: [{ urls: server }] });
@@ -403,14 +443,26 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     /** @type {((msg: { from: string, text: string }) => boolean)[]} */
     taps: [],
   };
+  const ex = current;
   emitState();
 
   try {
     await session.start();
-    patchState({ phase: "waiting" });
-    await waitForPeers(needPeers, wait);
+    // Only when the roster has not already taken us further. `start()` awaits
+    // the invite broadcast and the first meshing pass, and the signalling poll
+    // ticks inside those awaits — so a peer *can* mesh before `start()`
+    // returns. Announcing "waiting" unconditionally demoted a connected
+    // exchange, and nothing ever promoted it back: `onRoster` only fires again
+    // on the next roster change, and a meshed peer does not produce one. The
+    // strip then read "waiting" for the rest of a session the step had already
+    // returned from as connected.
+    if (ex.state.phase === "offering") patchState({ phase: "waiting" });
+    await waitForPeers(ex, needPeers, wait);
   } catch (err) {
-    closeQuorumExchange("failed");
+    // Only if this call still owns the exchange — a Cancel that already tore
+    // ours down may have been followed by someone else's `quorum.offer`, and
+    // failing must not close a session this run never opened.
+    if (current === ex) closeQuorumExchange("failed");
     throw err;
   }
 
@@ -433,15 +485,23 @@ function quorumHost() {
 }
 
 /**
+ * Wait for `ex` — the exchange this call opened — to mesh.
+ *
+ * Bound to the exchange rather than to whatever `current` happens to hold: the
+ * loop ticks every 250 ms, and Cancel clears `current` so a *second*
+ * `quorum.offer` may legitimately start inside that window. Reading the global
+ * meant the abandoned call would then wait on, time out against, and close the
+ * new exchange.
+ *
+ * @param {NonNullable<typeof current>} ex
  * @param {number} needPeers
  * @param {number} wait
  */
-function waitForPeers(needPeers, wait) {
+function waitForPeers(ex, needPeers, wait) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const tick = () => {
-      const ex = current;
-      if (!ex || ex.cancelled) {
+      if (current !== ex || ex.cancelled) {
         reject(new Error("quorum: exchange cancelled"));
         return;
       }
@@ -527,15 +587,23 @@ export async function execQuorumRecv(params) {
     }
     /** @type {{ from: string, text: string, ts: number } | null} */
     const msg = await new Promise((resolve) => {
+      // The waiter is removed by identity, so the queue must be searched for
+      // the function that was *pushed*. Looking for `resolve` instead never
+      // matched, so a timed-out `rtc.recv` left a settled waiter in the queue
+      // and `onChat` handed the next message to it — resolving an already
+      // resolved promise, which drops the message on the floor instead of
+      // queueing it for the next read.
+      /** @param {{ from: string, text: string, ts: number } | null} m */
+      const waiter = (m) => {
+        clearTimeout(timer);
+        resolve(m);
+      };
       const timer = setTimeout(() => {
-        const i = ex.recvWaiters.indexOf(resolve);
+        const i = ex.recvWaiters.indexOf(waiter);
         if (i >= 0) ex.recvWaiters.splice(i, 1);
         resolve(null);
       }, remaining);
-      ex.recvWaiters.push((m) => {
-        clearTimeout(timer);
-        resolve(m);
-      });
+      ex.recvWaiters.push(waiter);
     });
     if (msg === null) {
       if (!current || current.cancelled) {
