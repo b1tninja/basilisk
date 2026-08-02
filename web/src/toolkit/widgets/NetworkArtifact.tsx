@@ -446,7 +446,17 @@ function EndpointPanel({ data }: { data: any }) {
   // while host + srflx and no relay means STUN worked and TURN is what is
   // missing. Same four rows and same vocabulary as the `candidate` panel above.
   const byType: Record<string, number> = data?.candidates || {};
-  const types = ["host", "srflx", "relay"];
+  // Only the two types this op can actually observe. `relay` used to be drawn
+  // here as a third count, and it was a constant rather than a measurement:
+  // `stun.check` refuses any `server=` that is not `stun:`/`stuns:` and builds
+  // its peer connection with no username and no credential, so no allocation
+  // is ever attempted and the count is always zero. Measured against a live
+  // coturn that was relaying for two peers at the time — still zero, because
+  // the op never asked. Drawn beside two real counts as `RELAY ×0` that reads
+  // as "TURN was checked and is missing", on the one screen a user lands on
+  // when a connection fails. The row stays, because its absence is a fair
+  // question to have, but it says it was not probed and names the op that does.
+  const types = ["host", "srflx"];
   return (
     <div>
       <Row>
@@ -477,6 +487,12 @@ function EndpointPanel({ data }: { data: any }) {
                 </span>
               </span>
             ))}
+            <span className="flex items-center gap-1 opacity-45">
+              <TypeBadge label="relay" tone="muted" />
+              <span className="text-[9.5px] italic text-[var(--muted-foreground)]">
+                not probed — see rtc.gather
+              </span>
+            </span>
           </span>
         </Row>
       ) : null}
