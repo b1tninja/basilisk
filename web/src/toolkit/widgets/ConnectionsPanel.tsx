@@ -344,7 +344,7 @@ export function ConnectionsPanel({
         {session.invite && onCopyInvite ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded-[5px] border border-[var(--border)] bg-[var(--surface-raised)] px-2 py-1 text-[10px] font-semibold text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            className="session-action inline-flex items-center gap-1 rounded-[5px] border border-[var(--border)] bg-[var(--surface-raised)] px-2 text-[10px] font-semibold text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             onClick={onCopyInvite}
           >
             <Copy size={11} strokeWidth={2} aria-hidden />
@@ -354,7 +354,7 @@ export function ConnectionsPanel({
         {session.phase === "failed" && onRestartIce ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded-[5px] bg-[var(--error)] px-2 py-1 text-[10px] font-bold text-[#1a0505] hover:opacity-90"
+            className="session-action inline-flex items-center gap-1 rounded-[5px] bg-[var(--error)] px-2 text-[10px] font-bold text-[#1a0505] hover:opacity-90"
             onClick={onRestartIce}
           >
             <RotateCw size={11} strokeWidth={2.5} aria-hidden />
@@ -364,7 +364,7 @@ export function ConnectionsPanel({
         {onClose ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded-[5px] border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            className="session-action inline-flex items-center gap-1 rounded-[5px] border border-[var(--border)] px-2 text-[10px] font-semibold text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             onClick={onClose}
           >
             <X size={11} strokeWidth={2} aria-hidden />

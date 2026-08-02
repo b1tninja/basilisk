@@ -146,7 +146,7 @@ export function SessionStrip({
         <Button
           size="sm"
           variant="secondary"
-          className="h-[22px] shrink-0 rounded-[5px] px-2 text-[10px]"
+          className="session-action shrink-0 rounded-[5px] px-2 text-[10px]"
           onClick={(e) => {
             e.stopPropagation();
             onCopyInvite();
@@ -158,7 +158,7 @@ export function SessionStrip({
       {state === "failed" && onRestartIce ? (
         <Button
           size="sm"
-          className="h-[22px] shrink-0 rounded-[5px] bg-[var(--error)] px-2 text-[10px] font-bold text-[#1a0505] hover:opacity-90"
+          className="session-action shrink-0 rounded-[5px] bg-[var(--error)] px-2 text-[10px] font-bold text-[#1a0505] hover:opacity-90"
           onClick={(e) => {
             e.stopPropagation();
             onRestartIce();
@@ -171,7 +171,7 @@ export function SessionStrip({
         <Button
           size="sm"
           variant="ghost"
-          className="h-[22px] shrink-0 rounded-[5px] px-2 text-[10px] text-[var(--muted-foreground)]"
+          className="session-action shrink-0 rounded-[5px] px-2 text-[10px] text-[var(--muted-foreground)]"
           onClick={(e) => {
             e.stopPropagation();
             onCancel();

@@ -245,6 +245,26 @@ body.layout-app:has(#app > .toolkit-shell) {
   color: var(--foreground);
 }
 
+/**
+ * The session-level buttons the rule above called "the older finding" —
+ * Copy invite / Restart connection / Close session in `ConnectionsPanel`, and
+ * Copy invite / Restart connection / Cancel in `SessionStrip`.
+ *
+ * Only the target-size floor lives here. These six do not share a look — one is
+ * `--error`-filled, one is bordered, one is ghost — so folding them into
+ * `.link-action` would have flattened three deliberate weights to buy one
+ * property. The class carries the floor and nothing else, and each call site
+ * keeps its own colour.
+ *
+ * `min-height` rather than `height` because `SessionStrip` renders shadcn
+ * `<Button size="sm">`, whose size variant is `h-auto`; an explicit height here
+ * would fight it, and the `h-[22px]` those buttons carried was doing exactly
+ * that — pinning them *below* the floor.
+ */
+.session-action {
+  min-height: 24px;
+}
+
 /* The same verdict without a chip — the per-peer rows inside SessionStrip,
    where the word sits on the strip's own tint rather than on a badge. */
 .peer-ink[data-verified="1"] {
