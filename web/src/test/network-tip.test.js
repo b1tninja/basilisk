@@ -3,7 +3,7 @@
  *
  * `valueToArtifacts` — the path a pipeline tip takes when no `out` claimed it —
  * had **no branch at all** for the network types, so it returned `[]` and a
- * dangling `rtc.gather` / `rtc.offer` / `stun.check` / `rtc.certificate` /
+ * dangling `rtc.gather` / `peer.offer` / `stun.check` / `rtc.certificate` /
  * `rtc.ice` / `rtc.state` / `rtc.check` rendered *nothing whatsoever*: not a
  * stub, not a fallback tile, no row. A user who ran the op to read the answer
  * saw a cell that looked like it had failed.
@@ -28,12 +28,14 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 /**
- * A live exchange, for the three ops that read one.
+ * A live connection, for the ops that read one.
  *
- * Mocked at `getLiveSession` rather than at the op, so `rtc.state`,
- * `rtc.check`, `rtc.stats` and `rtc.quality` run their real bodies over a real
- * `getStats()` report — the values under test are the ones the ops actually
- * build, not fixtures written to match.
+ * Registered into the **link registry** rather than mocked at `getLiveSession`,
+ * because that is where the diagnostics now look (§57a). The ops still run
+ * their real bodies over a real `getStats()` report — the values under test are
+ * the ones the ops actually build, not fixtures written to match — and the
+ * fixture now covers the path a hand-carried `peer.*` link takes as well as the
+ * mesh's, which was the whole point of the move.
  */
 const FAKE_STATS = [
   { id: "cp1", type: "candidate-pair", state: "succeeded", nominated: true,
@@ -44,39 +46,36 @@ const FAKE_STATS = [
   { id: "dc1", type: "data-channel", messagesSent: 3, messagesReceived: 5, bytesSent: 300, bytesReceived: 500 },
 ];
 
-const fakeSession = () => ({
-  roomId: "room-abcdef",
-  peers: new Map([
-    [
-      "AAAABBBBCCCCDDDD",
-      {
-        pc: {
-          connectionState: "connected",
-          iceConnectionState: "completed",
-          iceGatheringState: "complete",
-          signalingState: "stable",
-          sctp: { transport: { iceTransport: { role: "controlling" } } },
-          getStats: async () => ({ forEach: (fn) => FAKE_STATS.forEach(fn) }),
-          restartIce: () => {},
-        },
-        channel: { readyState: "open", bufferedAmount: 0, bufferedAmountLowThreshold: 65535, ordered: true },
-        kcVerified: true,
-        status: "connected",
-      },
-    ],
-  ]),
+/** The holder a registered link reads `pc`/`channel` through. */
+const fakeHolder = () => ({
+  pc: {
+    connectionState: "connected",
+    iceConnectionState: "completed",
+    iceGatheringState: "complete",
+    signalingState: "stable",
+    sctp: { transport: { iceTransport: { role: "controlling" } } },
+    getStats: async () => ({ forEach: (fn) => FAKE_STATS.forEach(fn) }),
+    restartIce: () => {},
+    addEventListener: () => {},
+  },
+  channel: {
+    readyState: "open",
+    bufferedAmount: 0,
+    bufferedAmountLowThreshold: 65535,
+    ordered: true,
+  },
 });
 
-vi.mock("../lib/toolkit/quorum-ops.js", async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, getLiveSession: () => fakeSession() };
-});
+const { closeLinksByOrigin, registerLink, __resetLinks } = await import(
+  "../lib/quorum/link-registry.js"
+);
 
 const { compileRecipe } = await import("../lib/toolkit/recipe.js");
 const { runRecipe } = await import("../lib/toolkit/engine.js");
-const { NETWORK_TYPES, artifactMetaFromType, typeOf } = await import(
+const { NETWORK_TYPES, artifactMetaFromType, isObserveOnlyType, typeOf } = await import(
   "../lib/toolkit/types.js"
 );
+const { hasNetworkRenderer } = await import("../toolkit/widgets/NetworkArtifact.tsx");
 const { ARTIFACT_KINDS, FALLBACK_KIND } = await import(
   "../toolkit/artifact-kinds/registry.tsx"
 );
@@ -101,7 +100,21 @@ class StubPeerConnection {
     this.localDescription = { sdp: SDP };
     this.onicecandidate = null;
   }
-  createDataChannel() {}
+  createDataChannel(label) {
+    // Returns a channel now, because `peer.offer` keeps one: the manager wires
+    // `message` on it and holds it for `peer.send` / `peer.recv`. The old stub
+    // returned `undefined`, which was fine for an op that closed its own
+    // connection and never looked at the channel again.
+    this.__channel = {
+      label,
+      readyState: "open",
+      ordered: true,
+      addEventListener() {},
+      send() {},
+      close() {},
+    };
+    return this.__channel;
+  }
   async createOffer() {
     return { type: "offer", sdp: SDP };
   }
@@ -127,6 +140,13 @@ class StubPeerConnection {
     }, 0);
   }
   async setRemoteDescription() {}
+  // A connection that has only just been created really does report nothing —
+  // `rtc.check` reaches these now that a `peer.offer` link stays in the
+  // inventory, and an empty report is the truthful answer rather than a stub
+  // shaped to keep a test quiet.
+  async getStats() {
+    return { forEach: () => {} };
+  }
   addEventListener() {}
   removeEventListener() {}
   close() {}
@@ -140,9 +160,23 @@ class StubPeerConnection {
 
 beforeAll(() => {
   globalThis.RTCPeerConnection = StubPeerConnection;
+  __resetLinks();
+  registerLink({
+    id: "AAAABBBBCCCCDDDD",
+    origin: "quorum",
+    role: "offerer",
+    holder: fakeHolder(),
+    label: "quorum",
+    authenticated: true,
+  });
 });
 afterEach(() => {
   vi.clearAllMocks();
+  // Only the direct links. The quorum fixture above is registered once in
+  // `beforeAll` and has to survive, and `peer.offer tip` refuses a name that
+  // is already open — which is the op behaving correctly, and would otherwise
+  // make every tip assertion after the first one fail on its second run.
+  closeLinksByOrigin("peer");
 });
 
 const artifactsOf = async (src) => {
@@ -170,7 +204,8 @@ const TIPS = [
   ["endpoint", "rtc.ice", "network-value"],
   ["endpoint", "stun.check", "diagnostic"],
   ["candidate", "rtc.gather", "network-value"],
-  ["sdp", "rtc.offer", "network-value"],
+  ["sdp", "peer.offer tip", "network-value"],
+  ["channel", "peer.wait AAAABBBBCCCCDDDD", "network-value"],
   ["certificate", "rtc.certificate", "network-value"],
   ["connstate", "rtc.state", "network-value"],
   ["connstate", "rtc.restart", "network-value"],
@@ -233,7 +268,7 @@ describe("a network value that falls off the end of a pipeline renders a tile", 
     expect(quality.netData.peers[0].rttMs).toBe(31);
     expect(quality.netData.peers[0].bytesSent).toBe(2048);
 
-    const [offer] = await artifactsOf("rtc.offer");
+    const [offer] = await artifactsOf("peer.offer tip");
     // SDP is text on the wire, so the panel prints `content`, not `netData`.
     expect(offer.content).toContain("a=fingerprint:sha-256");
     expect(kindOf(offer).view({ artifact: offer, masked: false }).props.content).toBe(
@@ -343,7 +378,11 @@ describe("nothing is withheld, so nothing refuses", () => {
     // list is `sensitive: false` at its emit site — there is no held-back half
     // — so a tile that rendered the whole list while Copy said "this value was
     // not asked for" would be an incoherent pair.
-    for (const src of ["rtc.gather", "rtc.offer", "stun.check", "rtc.state"]) {
+    for (const src of ["rtc.gather", "peer.offer tip", "stun.check", "rtc.state"]) {
+      // `peer.offer` refuses a name that is already open, and these loops run
+      // several sources inside one `it` — so the per-test cleanup is not
+      // enough on its own.
+      closeLinksByOrigin("peer");
       const [tip] = await artifactsOf(src);
       expect(tip.sensitive, src).toBe(false);
       const ctx = { artifact: tip, masked: false };
@@ -357,9 +396,11 @@ describe("nothing is withheld, so nothing refuses", () => {
     // instructions rendered where a value goes. A body is a value or it is
     // absent; it is never a note to the reader about the recipe.
     for (const [, src] of TIPS) {
+      closeLinksByOrigin("peer");
       for (const a of await artifactsOf(src)) {
         expect(a.content, `${src} → ${a.label}`).not.toMatch(/^\[.*\]$/);
       }
+      closeLinksByOrigin("peer");
       for (const a of await artifactsOf(`${src} | out @x`)) {
         expect(a.content, `${src} | out → ${a.label}`).not.toMatch(/^\[.*\]$/);
       }
@@ -369,10 +410,19 @@ describe("nothing is withheld, so nothing refuses", () => {
 
 describe("the role comes from the type projection, not a second list", () => {
   it("gives every network base its role through artifactMetaFromType", () => {
-    // The seven bases *are* the definition of `netvalue`; re-declaring them in
+    // These bases *are* the definition of `netvalue`; re-declaring them in
     // the engine would undo the consolidation the kind table's header records
     // (`hasNetworkRenderer` was deleted for exactly this reason).
-    for (const base of ["candidate", "sdp", "stats", "connstate", "endpoint", "certificate", "session"]) {
+    for (const base of [
+      "candidate",
+      "sdp",
+      "stats",
+      "connstate",
+      "endpoint",
+      "certificate",
+      "session",
+      "channel",
+    ]) {
       expect(artifactMetaFromType(typeOf(base)).role, base).toBe("netvalue");
     }
   });
@@ -381,7 +431,8 @@ describe("the role comes from the type projection, not a second list", () => {
     // Asserted through behaviour rather than by grepping: if the emit site
     // stamped a role, the projection's `if (!artifact.role)` guard would leave
     // it alone and these would not be `netvalue`.
-    for (const src of ["rtc.ice", "rtc.gather", "rtc.offer", "rtc.state", "rtc.check"]) {
+    for (const src of ["rtc.ice", "rtc.gather", "peer.offer tip", "rtc.state", "rtc.check"]) {
+      closeLinksByOrigin("peer");
       const [tip] = await artifactsOf(src);
       expect(tip.role, src).toBe("netvalue");
     }
@@ -422,23 +473,48 @@ describe("the types with no tile have no producer either", () => {
       }
     }).map((s) => s.name);
 
-  it("has no step that outputs host, channel or peer", () => {
-    // These three are IoType vocabulary with nothing behind them, so there is
-    // no dangling tip to render and a branch for them would be dead code
-    // guarding dead code. `channel` and `peer` are also the two the handle
-    // argument bites hardest: an open data channel has no artifact form. If
-    // one ever gains a producer it lands as `text`, not `netvalue` — they are
-    // deliberately absent from the base list that defines the role.
-    for (const base of ["host", "channel", "peer"]) {
+  it("has no step that outputs host or peer", () => {
+    // Both are IoType vocabulary with nothing behind them, so there is no
+    // dangling tip to render and a branch for them would be dead code guarding
+    // dead code. If one ever gains a producer it lands as `text`, not
+    // `netvalue` — they are deliberately absent from the base list that
+    // defines the role.
+    //
+    // `channel` used to be on this list and is not any more: `peer.wait` gives
+    // it a producer (§56). Being a HANDLE is about what may *consume* a value,
+    // which `isObserveOnlyType` still refuses; it says nothing about whether
+    // the value may be drawn, and `session` — also a handle — has been drawn
+    // as a `netvalue` since §21a.
+    for (const base of ["host", "peer"]) {
       expect(producersOf(base), base).toEqual([]);
       expect(artifactMetaFromType(typeOf(base)).role, base).toBe("text");
     }
   });
 
+  it("gives the channel handle a producer, a role and a renderer, together", () => {
+    // The three had to move in one commit: a producer without the role stamps
+    // `text` on a live channel, and a role without a renderer resolves to
+    // `network-value` and then draws nothing — the shape of the defect that
+    // left `hasNetworkRenderer` undefined and the widgets catalog blank.
+    expect(producersOf("channel")).toContain("peer.wait");
+    expect(artifactMetaFromType(typeOf("channel")).role).toBe("netvalue");
+    expect(hasNetworkRenderer("channel")).toBe(true);
+    // And it is still refused as any computing op's input.
+    expect(isObserveOnlyType("channel")).toBe(true);
+  });
+
   it("has a producer for each of the six that can dangle", () => {
     // The counterpart, so the assertion above cannot rot into a tautology by
     // the whole registry losing its network ops.
-    for (const base of ["endpoint", "candidate", "sdp", "certificate", "connstate", "stats"]) {
+    for (const base of [
+      "endpoint",
+      "candidate",
+      "sdp",
+      "certificate",
+      "connstate",
+      "stats",
+      "channel",
+    ]) {
       expect(producersOf(base).length, base).toBeGreaterThan(0);
     }
   });

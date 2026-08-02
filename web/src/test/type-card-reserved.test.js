@@ -41,18 +41,22 @@ describe("reserved keys on producers", () => {
   });
 
   it("catches the types a recipe genuinely cannot obtain", () => {
-    // channel, item, peer, host — declared, documented, and unmakeable.
-    // `item` is reserved in its own doc text, so the badge agrees with the
-    // prose rather than contradicting it.
+    // item, peer, host — declared, documented, and unmakeable. `item` is
+    // reserved in its own doc text, so the badge agrees with the prose rather
+    // than contradicting it.
+    //
+    // `channel` left this list when `peer.wait` gave it a producer (§56). That
+    // is the assertion's whole job: a type stops being reserved the moment a
+    // step can make one, and the card must stop saying otherwise.
     const unmakeable = listTypes()
       .filter((t) => !t.literal && producersOf(t.base).length === 0)
       .map((t) => t.base)
       .sort();
-    expect(unmakeable).toEqual(["channel", "host", "item", "none", "peer"]);
+    expect(unmakeable).toEqual(["host", "item", "none", "peer"]);
   });
 
   it("does not claim a producible type is reserved", () => {
-    for (const base of ["keypair", "session", "candidate", "sdp", "text", "bytes"]) {
+    for (const base of ["keypair", "session", "channel", "candidate", "sdp", "text", "bytes"]) {
       expect(producersOf(base).length, base).toBeGreaterThan(0);
     }
   });

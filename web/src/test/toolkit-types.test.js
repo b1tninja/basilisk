@@ -392,10 +392,10 @@ describe("network / WebRTC types (design v2 §25a)", () => {
   });
 
   it("type-checks the offer → answer SDP exchange", () => {
-    const ok = compileRecipe("rtc.offer | rtc.answer | out @a");
+    const ok = compileRecipe("peer.offer | peer.answer | out @a");
     expect(ok.validation.ok, JSON.stringify(ok.validation.errors)).toBe(true);
 
-    const bad = compileRecipe("rtc.gather | rtc.answer | out @a");
+    const bad = compileRecipe("rtc.gather | peer.answer | out @a");
     expect(bad.validation.ok).toBe(false);
     expect(bad.validation.errors[0].message).toMatch(/expects sdp, got candidate/);
   });

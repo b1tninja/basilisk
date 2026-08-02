@@ -103,8 +103,12 @@ describe("48a naming audit — camelCase rtc ops renamed, not aliased", () => {
     "rtc.checkConnectivity": "rtc.check",
     "rtc.connectionState": "rtc.state",
     "rtc.dataChannelStats": "rtc.stats",
-    "rtc.createOffer": "rtc.offer",
-    "rtc.createAnswer": "rtc.answer",
+    // These two retarget past the names they used to migrate to: `rtc.offer`
+    // and `rtc.answer` are themselves retired now (§55c), and this table is
+    // applied in a single pass, so migrating one dead name to another would
+    // leave a recipe that still does not parse.
+    "rtc.createOffer": "peer.offer",
+    "rtc.createAnswer": "peer.answer",
     "rtc.statsReport": "rtc.quality",
   };
 
@@ -120,7 +124,12 @@ describe("48a naming audit — camelCase rtc ops renamed, not aliased", () => {
       migrateRecipe("rtc.gatherCandidates ice=@ice | out @cands").recipe
     ).toBe("rtc.gather ice=@ice | out @cands");
     expect(migrateRecipe("rtc.createOffer | rtc.createAnswer | out @a").recipe).toBe(
-      "rtc.offer | rtc.answer | out @a"
+      "peer.offer | peer.answer | out @a"
+    );
+    // And the one-hop rename lands in the same place, so a notebook saved at
+    // either vintage upgrades to a recipe that parses.
+    expect(migrateRecipe("rtc.offer | rtc.answer | out @a").recipe).toBe(
+      "peer.offer | peer.answer | out @a"
     );
     expect(migrateRecipe("rtc.statsReport | out @q").recipe).toBe(
       "rtc.quality | out @q"

@@ -2220,20 +2220,28 @@ rtc.gather ice=@ice | out @candidates`,
   {
     id: "sdp-hand-carried",
     group: "WebRTC",
-    title: "Hand-carried offer and answer",
+    title: "Connect two browsers by hand",
     blurb:
-      "The raw SDP exchange under `quorum.*`, both halves in one notebook so you can read them. In a real exchange the offer goes to the other side by any channel you like — this is what `clipboard.write` and a QR invite are carrying.",
-    recipe: `rtc.offer | out @offer
+      "A real connection with no PGP audience, no room and no relay — you are the signalling channel. As written both ends live in this notebook, so it connects to itself and you can watch the whole handshake; in a real exchange the `peer.answer` cell runs in the *other* browser and you carry `@offer` there and `@answer` back. `peer.wait` is the step that tells you ICE succeeded. The channel is DTLS-encrypted, but nothing proves who is on the far end — that is what `quorum.offer` is for.",
+    recipe: `peer.offer a | out @offer
 
-in @offer | rtc.answer | out @answer`,
+in @offer | peer.answer b | out @answer
+
+in @answer | peer.accept a | out @state
+
+peer.wait a | out @link
+
+"hello from a" | peer.send a
+
+peer.recv b | out @heard`,
   },
   {
     id: "sdp-to-clipboard",
     group: "WebRTC",
     title: "Offer, copied out of band",
     blurb:
-      "Signalling has to start somewhere outside WebRTC. The tee copies the offer to the clipboard while the pipeline keeps it, so you can paste it into chat and still hold it here.",
-    recipe: `rtc.offer | tee
+      "Signalling has to start somewhere outside WebRTC. The tee copies the offer to the clipboard while the pipeline keeps it, so you can paste it into chat and still hold it here. The connection stays open under the name `a` while you do.",
+    recipe: `peer.offer a | tee
   - clipboard.write
 | out @offer`,
   },

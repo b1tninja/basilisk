@@ -14,7 +14,7 @@ import {
   connStateReadout,
   sdpReadout,
   stunReachability,
-  SDP_TRANSPORT_CLOSED,
+  SDP_CARRY_NOTE,
 } from "../lib/toolkit/artifact-readouts.js";
 import { SHELF_META, TOOLBOX_META, listSteps } from "../lib/toolkit/registry.js";
 
@@ -165,19 +165,26 @@ describe("sdpReadout — the blob, and the transport that is already gone", () =
     ]);
   });
 
-  it("always states that the connection it describes is already closed", () => {
-    // `rtc.offer` and `rtc.answer` each close their `RTCPeerConnection` in a
-    // `finally` before returning. The blob is well-formed and its transport is
-    // gone, so `sdp-hand-carried` and `sdp-to-clipboard` describe a flow that
-    // cannot complete. The panel says so rather than letting a reader find out
-    // by watching a handshake time out.
+  it("says what to do with the blob, because the transport is live now", () => {
+    // This assertion used to be its exact opposite, and was right at the time:
+    // `rtc.offer`/`rtc.answer` closed their own `RTCPeerConnection` before
+    // returning, so the panel had to say the hand-carried flow could not
+    // complete. `peer.offer`/`peer.answer` keep the connection under a name
+    // (§55), so the same slot carries the instruction instead of the limit.
+    //
+    // The note names both halves of the round trip on purpose: an offer goes
+    // to `peer.answer` on the far side and the answer comes back to
+    // `peer.accept` here, and confusing those two is the mistake the ops
+    // themselves refuse on.
     for (const blob of [OFFER, "", "not an sdp at all"]) {
       const read = sdpReadout(blob);
-      expect(read.liveTransport).toBe(false);
-      expect(read.note).toBe(SDP_TRANSPORT_CLOSED);
+      expect(read.liveTransport).toBe(true);
+      expect(read.note).toBe(SDP_CARRY_NOTE);
     }
-    expect(SDP_TRANSPORT_CLOSED).toMatch(/already closed/i);
-    expect(SDP_TRANSPORT_CLOSED).toMatch(/cannot complete a handshake/i);
+    expect(SDP_CARRY_NOTE).toMatch(/live/i);
+    expect(SDP_CARRY_NOTE).toMatch(/peer\.answer/);
+    expect(SDP_CARRY_NOTE).toMatch(/peer\.accept/);
+    expect(SDP_CARRY_NOTE).not.toMatch(/cannot complete/i);
   });
 
   it("is total — a blob it cannot parse yields empty fields, never a throw", () => {
@@ -247,10 +254,22 @@ describe("the WebRTC glyph vocabulary", () => {
     // The seven that wore `agent`. `rtc.certificate` shares the `peer` shelf
     // and keeps its own `genkey` mark on purpose — it mints key material, and
     // that is a real reason to differ from the shelf rather than a leftover.
-    for (const name of ["quorum.offer", "quorum.join", "quorum.close", "rtc.offer", "rtc.answer"]) {
+    // `rtc.offer`/`rtc.answer` became `peer.offer`/`peer.answer` (§55c) and
+    // took the shelf with them — the mark belongs to the shelf, so the rename
+    // did not touch it.
+    for (const name of [
+      "quorum.offer",
+      "quorum.join",
+      "quorum.close",
+      "peer.offer",
+      "peer.answer",
+      "peer.accept",
+      "peer.wait",
+      "peer.close",
+    ]) {
       expect(byName.get(name)?.glyph, name).toBe("peer");
     }
-    for (const name of ["rtc.send", "rtc.recv"]) {
+    for (const name of ["rtc.send", "rtc.recv", "peer.send", "peer.recv"]) {
       expect(byName.get(name)?.glyph, name).toBe("channel");
     }
     expect(registry).not.toMatch(/glyph:\s*"agent",\s*\n\s*doc:/);

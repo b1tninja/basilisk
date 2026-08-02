@@ -958,6 +958,24 @@ function CatalogApp() {
                 data={{ room: "KJ8XW2PQZM4RT9FQ", role: "creator", connected: 1, audience: ["AABBCCDDEEFF00112233", "445566778899AABBCCDD"] }}
               />
             </div>
+            <div>
+              <StateLabel>channel — a direct link, and what it does not prove (§56)</StateLabel>
+              <NetworkArtifact
+                netType="channel"
+                data={{ link: "alice-laptop", origin: "peer", label: "basilisk", ordered: true, state: "open", via: "srflx" }}
+              />
+            </div>
+            <div>
+              <StateLabel>channel — the same handle from an identity-bound room</StateLabel>
+              {/* Side by side on purpose: these two are the same widget saying
+                  opposite things about who is on the far end, and the sentence
+                  is the only thing that distinguishes them. Both come from
+                  `linkOriginNote`, so neither can drift. */}
+              <NetworkArtifact
+                netType="channel"
+                data={{ link: "AABBCCDDEEFF0011", origin: "quorum", label: "quorum", ordered: true, state: "open", via: "relay" }}
+              />
+            </div>
           </div>
         </Section>
 
@@ -1504,6 +1522,101 @@ function CatalogApp() {
                 }}
                 onRestartIce={() => {}}
                 onClose={() => {}}
+              />
+            </div>
+            <div className="rounded-lg border border-[var(--border)]">
+              <StateLabel>Direct connections, no session at all (§58a)</StateLabel>
+              {/* The state the panel could not previously render: `peer.offer`
+                  made a real connection and no quorum exchange exists, so the
+                  old "No live session" empty state would have hidden it. */}
+              <ConnectionsPanel
+                session={{ phase: "idle" }}
+                links={[
+                  {
+                    id: "alice-laptop",
+                    origin: "peer",
+                    role: "offerer",
+                    connectionState: "connected",
+                    channelState: "open",
+                    via: "host",
+                  },
+                  {
+                    id: "b",
+                    origin: "peer",
+                    role: "answerer",
+                    connectionState: "connecting",
+                    channelState: "connecting",
+                  },
+                ]}
+                onCloseLink={() => {}}
+                onRestartLink={() => {}}
+              />
+            </div>
+            <div className="rounded-lg border border-[var(--border)]">
+              <StateLabel>A direct link that failed — verdict, and the one control that helps</StateLabel>
+              {/* Restart appears only here. On `new`/`connecting` ICE has not
+                  given up, so the button would have nothing to do — absent
+                  rather than dimmed, which is also how it keeps its reason out
+                  of a disabled attribute nobody can reach. */}
+              <ConnectionsPanel
+                session={{ phase: "idle" }}
+                links={[
+                  {
+                    id: "alice-laptop",
+                    origin: "peer",
+                    role: "offerer",
+                    connectionState: "failed",
+                    channelState: "closed",
+                  },
+                  {
+                    id: "flaky",
+                    origin: "peer",
+                    role: "answerer",
+                    connectionState: "disconnected",
+                    channelState: "open",
+                    via: "relay",
+                  },
+                ]}
+                onCloseLink={() => {}}
+                onRestartLink={() => {}}
+              />
+            </div>
+            <div className="rounded-lg border border-[var(--border)]">
+              <StateLabel>Both at once — a mesh above, a hand-carried link below</StateLabel>
+              <ConnectionsPanel
+                session={{
+                  phase: "connected",
+                  room: "KJ8X2M4P9FQ",
+                  role: "creator",
+                  connected: 1,
+                  expected: 1,
+                  peers: [
+                    { id: "dana@example.com", state: "connected", authenticated: true, via: "srflx" },
+                  ],
+                }}
+                links={[
+                  // The mesh's own link is in the same inventory and must not be
+                  // drawn twice — it is the roster row above.
+                  {
+                    id: "AABBCCDDEEFF0011",
+                    origin: "quorum",
+                    role: "offerer",
+                    connectionState: "connected",
+                    channelState: "open",
+                    authenticated: true,
+                  },
+                  {
+                    id: "alice-laptop",
+                    origin: "peer",
+                    role: "offerer",
+                    connectionState: "connected",
+                    channelState: "open",
+                    via: "host",
+                  },
+                ]}
+                onClose={() => {}}
+                onCloseLink={() => {}}
+                onRestartLink={() => {}}
               />
             </div>
             <div className="rounded-lg border border-[var(--border)]">

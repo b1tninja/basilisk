@@ -55,6 +55,30 @@ export type QuorumPeerRow = {
   via?: string;
 };
 
+/**
+ * One managed peer connection — arrives via `basilisk:peer-links` (§57a).
+ *
+ * Mirrors `linkRow` in `lib/quorum/link-registry.js`, and carries **every**
+ * link, mesh ones included: the registry is one inventory precisely so the
+ * panel does not have to ask two sources what is connected.
+ */
+export type PeerLinkRow = {
+  id: string;
+  origin: "peer" | "quorum";
+  role: "offerer" | "answerer";
+  label: string;
+  connectionState:
+    | "new"
+    | "connecting"
+    | "connected"
+    | "disconnected"
+    | "failed"
+    | "closed";
+  channelState: string;
+  authenticated: boolean;
+  via: string;
+};
+
 /** Mirror of quorum-ops' QuorumExchangeState — arrives via `basilisk:quorum-state`. */
 export type QuorumUiState = {
   phase: "idle" | "offering" | "waiting" | "connected" | "closed" | "failed";
@@ -371,6 +395,7 @@ export function useNotebook() {
     status: "",
     peers: [],
   });
+  const [peerLinks, setPeerLinks] = useState<PeerLinkRow[]>([]);
   /** Cell index currently executing — lets the shell pin SessionStrip to it. */
   const [runningCell, setRunningCell] = useState<number | null>(null);
   useEffect(() => {
@@ -380,6 +405,14 @@ export function useNotebook() {
     };
     window.addEventListener("basilisk:quorum-state", onState);
     return () => window.removeEventListener("basilisk:quorum-state", onState);
+  }, []);
+  useEffect(() => {
+    const onLinks = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ links?: PeerLinkRow[] }>).detail;
+      setPeerLinks(detail?.links || []);
+    };
+    window.addEventListener("basilisk:peer-links", onLinks);
+    return () => window.removeEventListener("basilisk:peer-links", onLinks);
   }, []);
   const cancelQuorum = useCallback(() => {
     window.dispatchEvent(new CustomEvent("basilisk:quorum-cancel"));
@@ -1577,6 +1610,7 @@ export function useNotebook() {
     stopRun,
     runningCell,
     quorumState,
+    peerLinks,
     cancelQuorum,
     sheet,
     setSheet,

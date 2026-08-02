@@ -4,6 +4,7 @@ import { cn } from "@/lib/cn";
 import {
   connStateReadout,
   expiryNote,
+  linkOriginNote,
   sdpReadout,
   stunReachability,
 } from "../../lib/toolkit/artifact-readouts.js";
@@ -744,6 +745,54 @@ function SessionPanel({ data }: { data: any }) {
   );
 }
 
+/**
+ * `peer.wait`'s live data channel (§56).
+ *
+ * The one question a reader has here that the quorum session panel never has
+ * to answer: *is the far end anybody in particular?* It is not, on a direct
+ * link — DTLS encrypts the wire and nothing proves who received the offer. The
+ * sentence comes from `linkOriginNote`, so this panel and the Connections tab
+ * cannot word that difference two ways.
+ */
+function ChannelPanel({ data }: { data: any }) {
+  const origin = String(data?.origin || "peer");
+  const note = linkOriginNote(origin);
+  return (
+    <div>
+      <Row>
+        <TypeBadge label="channel" tone="caret" />
+        <code className="min-w-0 flex-1 truncate font-mono text-[10.5px]">
+          {String(data?.link || "")}
+        </code>
+        <span className="peer-verdict shrink-0" data-verdict={note.tone}>
+          {note.label}
+        </span>
+        <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
+          {String(data?.state || "")}
+        </span>
+      </Row>
+      <Row>
+        <span className="min-w-0 flex-1 text-[10.5px] text-[var(--muted-foreground)]">
+          {note.why}
+        </span>
+      </Row>
+      <Row>
+        <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
+          label {String(data?.label || "—")}
+        </span>
+        <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
+          {data?.ordered === false ? "unordered" : "ordered"}
+        </span>
+        {data?.via ? (
+          <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
+            via {String(data.via)}
+          </span>
+        ) : null}
+      </Row>
+    </div>
+  );
+}
+
 /* ────────────────────────────── dispatcher ────────────────────────────── */
 
 export type NetworkArtifactProps = {
@@ -763,9 +812,16 @@ export type NetworkArtifactProps = {
 export function hasNetworkRenderer(netType?: string): boolean {
   return (
     !!netType &&
-    ["candidate", "stats", "connstate", "endpoint", "certificate", "session", "sdp"].includes(
-      netType
-    )
+    [
+      "candidate",
+      "stats",
+      "connstate",
+      "endpoint",
+      "certificate",
+      "session",
+      "channel",
+      "sdp",
+    ].includes(netType)
   );
 }
 
@@ -807,6 +863,9 @@ export function NetworkArtifact({
       break;
     case "session":
       body = <SessionPanel data={data} />;
+      break;
+    case "channel":
+      body = <ChannelPanel data={data} />;
       break;
     case "sdp":
       body = <SdpPanel content={content} />;

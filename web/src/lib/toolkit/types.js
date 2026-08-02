@@ -465,8 +465,23 @@ export function inferSourceType(name, params = {}) {
       return typeOf("candidate");
     case "rtc.certificate":
       return typeOf("certificate", { alg: String(params.alg || "ecdsa") });
-    case "rtc.offer":
+    case "peer.offer":
       return typeOf("sdp", { which: "offer" });
+    case "peer.wait":
+      // A LIVE handle (§56). This is the moment a channel exists to hand out —
+      // `peer.offer`'s postcondition is "an offer exists and nothing is
+      // connected yet", which is why the handle is not emitted there.
+      return typeOf("channel");
+    case "peer.accept":
+    case "peer.close":
+      return typeOf("connstate");
+    case "peer.recv": {
+      // Parameter-driven, exactly as `rtc.recv` is, and readable before the run.
+      const count = String(params.count ?? "1").trim().toLowerCase();
+      if (count === "1") return typeOf("text", { kind: "opaque" });
+      const n = count === "all" ? undefined : Number(count) || undefined;
+      return typeOf("bundle", n ? { length: n } : {});
+    }
     case "quorum.offer":
     case "quorum.join":
       // A LIVE handle — deliberately not text: it must never be consumable by
@@ -1614,9 +1629,9 @@ export function resolveStepType(spec, current, params = {}) {
           : `Type mismatch: "${name}" expects ${want}, got ${formatType(current)}.`,
     };
   }
-  // `rtc.answer` consumes an offer and produces the other half of the
+  // `peer.answer` consumes an offer and produces the other half of the
   // exchange — keep the two distinguishable rather than both being bare `sdp`.
-  if (name === "rtc.answer") {
+  if (name === "peer.answer") {
     return { ok: true, output: typeOf("sdp", { which: "answer" }) };
   }
   return {
@@ -1872,6 +1887,17 @@ const NETWORK_BASES = Object.freeze([
   "endpoint",
   "certificate",
   "session",
+  /**
+   * `peer.wait`'s tip (§56). Added the day it gained a producer — before that
+   * a `channel` artifact could not exist, so the role list correctly omitted
+   * it and `network-tip.test.js` pinned the absence.
+   *
+   * It is a HANDLE, and being a HANDLE is about what may *consume* it — which
+   * `isObserveOnlyType` enforces and nothing here weakens. What it may be is
+   * still *drawn*, and drawn as the network value it is: `session` is the
+   * precedent, also a handle, also on this list.
+   */
+  "channel",
 ]);
 
 /**

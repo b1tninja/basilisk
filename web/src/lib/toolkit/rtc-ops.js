@@ -1,16 +1,26 @@
 /**
  * WebRTC primitive ops (design v2 §23a/23b/26a/26b/29a/29d/30d).
  *
- * The raw layer beneath `quorum.*`: each op wraps one browser WebRTC
- * capability so ICE / DTLS / SCTP are inspectable outside a live session.
- * `quorum.offer`/`join` compose these internally; running them standalone is
- * what makes a later connectivity failure explainable.
+ * The raw layer beneath `peer.*` and `quorum.*`: each op wraps one browser
+ * WebRTC capability so ICE / DTLS / SCTP are inspectable outside a live
+ * session. Running them standalone is what makes a later connectivity failure
+ * explainable.
+ *
+ * **The diagnostics enumerate the link registry, not the quorum mesh (§57a).**
+ * They used to open with `requireSession()` and walk `session.peers`, which
+ * made the mesh the definition of "what is connected" — so a connection made
+ * any other way was invisible to every diagnostic in the app, and a
+ * hand-carried link got "no live exchange" from the five ops that exist to
+ * explain a connection. `getLiveSession()` survives for the callers that
+ * genuinely want the session object (the DKG transport, the roster
+ * projection); it is no longer how this file answers that question.
  *
  * Main-thread only — `RTCPeerConnection` does not exist in workers.
  * @module lib/toolkit/rtc-ops
  */
 
 import { DEFAULT_ICE_SERVERS } from "../quorum/rtc.js";
+import { listLinkRows, listLinks } from "../quorum/link-registry.js";
 import { getLiveSession, parseIceConfig } from "./quorum-ops.js";
 
 /** @param {string} op */
@@ -46,10 +56,18 @@ export function resolveIceServers(params, bindings, op) {
  * Resolve once ICE gathering completes (or `timeout` elapses) so an emitted
  * SDP actually carries its candidates — a hand-carried offer/answer with an
  * empty candidate list is useless to the far side.
+ *
+ * Exported for `peer-ops.js`, which inherited the two SDP ops: the rule about
+ * when a blob is carriable is the same rule wherever the blob is made, and a
+ * second copy of this promise is a second thing to get wrong. (`rtc.gather`
+ * originally awaited its gather promise *before* `setLocalDescription` and
+ * returned zero candidates — gathering does not start until the local
+ * description is set.)
+ *
  * @param {RTCPeerConnection} pc
  * @param {number} timeout
  */
-function waitForGathering(pc, timeout = 5000) {
+export function waitForGathering(pc, timeout = 5000) {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
   return new Promise((resolve) => {
     const done = () => {
@@ -176,10 +194,12 @@ export async function execGatherCandidates(params, bindings) {
  * chose the pair it did. Role is read-only: the protocol assigns it.
  */
 export async function execCheckConnectivity() {
-  const session = requireSession("rtc.check");
+  const links = requireLinks("rtc.check");
   /** @type {{ peer: string, role: string, pairs: object[] }[]} */
   const peers = [];
-  for (const [fpr, peer] of session.peers) {
+  for (const link of links) {
+    const fpr = link.id;
+    const peer = link;
     if (!peer.pc) continue;
     const pairs = [];
     let role = "";
@@ -214,7 +234,13 @@ export async function execCheckConnectivity() {
     } catch (_) {
       /* not connected yet — report nothing rather than guessing */
     }
-    peers.push({ peer: fpr, role, pairs, nominatedCount: pairs.filter((p) => p.nominated).length });
+    peers.push({
+      peer: fpr,
+      origin: link.origin,
+      role,
+      pairs,
+      nominatedCount: pairs.filter((p) => p.nominated).length,
+    });
   }
   const allFailed =
     peers.length > 0 &&
@@ -254,13 +280,25 @@ function describeCandidate(c) {
   };
 }
 
-/** @param {string} op */
-function requireSession(op) {
-  const session = getLiveSession();
-  if (!session) {
-    throw new Error(`${op}: no live exchange — run quorum.offer or quorum.join first`);
+/**
+ * Every live link, or a refusal naming both ways to get one (§57a).
+ *
+ * The refusal is the reason this helper replaced `requireSession`. "No live
+ * exchange — run quorum.offer or quorum.join first" was accurate when the mesh
+ * was the only thing that could be connected, and became a false instruction
+ * the moment `peer.offer` could produce a connection these ops can read. A
+ * diagnostic that names the wrong op is worse than one that says nothing.
+ *
+ * @param {string} op
+ */
+function requireLinks(op) {
+  const links = listLinks().filter((l) => l.pc);
+  if (!links.length) {
+    throw new Error(
+      `${op}: no live connection — open one with peer.offer / peer.answer, or a mesh with quorum.offer / quorum.join`
+    );
   }
-  return session;
+  return links;
 }
 
 /* ───────────────────────── rtc.certificate (29a) ───────────────────────── */
@@ -301,35 +339,24 @@ export async function execCertificate(params) {
   );
 }
 
-/* ──────────────────── rtc.offer / rtc.answer (30d) ──────────────────── */
+/* ──────────────────── SDP: moved to peer-ops (§55c) ──────────────────── */
 
-/**
- * Raw SDP offer — the escape hatch below `quorum.offer`. Signals nothing;
- * the caller carries the blob however they like.
+/*
+ * `rtc.offer` and `rtc.answer` used to live here. They are now `peer.offer` and
+ * `peer.answer` in `peer-ops.js`, retired and migrated rather than aliased.
+ *
+ * The reason is not tidiness. Both closed their own `RTCPeerConnection` in a
+ * `finally` before returning, so the ICE ufrag/pwd and DTLS fingerprint in the
+ * SDP named a transport that had already been torn down — two shipped templates
+ * described a hand-carried flow that could not complete. Making the connection
+ * outlive the op means something has to own it, and an op that allocates into a
+ * registry is not "one browser capability, inspectable standalone", which is
+ * what this module's header promises. So the layer boundary moved with them.
+ *
+ * `sdpRole` and `waitForGathering` stay here and are imported by `peer-ops`:
+ * which half a blob is, and when a blob is carriable, are facts about SDP
+ * rather than about the manager.
  */
-export async function execCreateOffer(params, bindings) {
-  requireWebRtc("rtc.offer");
-  const iceServers = resolveIceServers(params, bindings, "rtc.offer");
-  const label = String(params?.label || "basilisk");
-  const pc = new RTCPeerConnection({ iceServers });
-  try {
-    pc.createDataChannel(label);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await waitForGathering(pc);
-    return {
-      type: "sdp",
-      data: String(pc.localDescription?.sdp || offer.sdp || ""),
-      meta: { sensitive: false, filename: "offer.sdp", rtcSdp: "offer", which: "offer" },
-    };
-  } finally {
-    try {
-      pc.close();
-    } catch (_) {
-      /* ignore */
-    }
-  }
-}
 
 /**
  * Which half of the offer/answer exchange an SDP blob is, by its DTLS role.
@@ -359,92 +386,49 @@ export function sdpRole(sdp) {
   return "unknown";
 }
 
-/** Refusal text for `rtc.answer` handed the wrong half. Asserted by tests. */
-export const ANSWER_NOT_AN_OFFER =
-  "rtc.answer expects the remote *offer*, but this SDP is already an answer " +
-  "(a=setup:active/passive). Answering an answer produces a description no " +
-  "peer asked for. Pipe the offer from the other side instead.";
-
-/**
- * Raw SDP answer for a piped offer.
- * @param {{ type: string, data: unknown, meta?: Record<string, unknown> }} value
- */
-export async function execCreateAnswer(value, params, bindings) {
-  requireWebRtc("rtc.answer");
-  const sdp =
-    value?.type === "sdp" || value?.type === "text"
-      ? String(value.data)
-      : new TextDecoder().decode(/** @type {Uint8Array} */ (value?.data));
-  if (!/^v=0/m.test(sdp)) {
-    throw new Error("rtc.answer expects an SDP offer as pipeline text");
-  }
-  // An answer and an offer are the same grammar, so `setRemoteDescription`
-  // accepts either as `{ type: "offer" }` without complaint — measured, not
-  // assumed: `rtc.offer | rtc.answer | rtc.answer` used to emit a second,
-  // plausible-looking `answer.sdp` that no peer had asked for and that could
-  // never connect. The blob says which half it is; read it and refuse.
-  // `meta.which` is the same fact carried by an artifact rather than parsed
-  // out of it, and is trusted first when the value came from `rtc.offer`.
-  const declared = value?.meta?.which;
-  if (declared === "answer" || sdpRole(sdp) === "answer") {
-    throw new Error(ANSWER_NOT_AN_OFFER);
-  }
-  const iceServers = resolveIceServers(params, bindings, "rtc.answer");
-  const pc = new RTCPeerConnection({ iceServers });
-  try {
-    await pc.setRemoteDescription({ type: "offer", sdp });
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await waitForGathering(pc);
-    return {
-      type: "sdp",
-      data: String(pc.localDescription?.sdp || answer.sdp || ""),
-      meta: { sensitive: false, filename: "answer.sdp", rtcSdp: "answer", which: "answer" },
-    };
-  } finally {
-    try {
-      pc.close();
-    } catch (_) {
-      /* ignore */
-    }
-  }
-}
-
 /* ─────────────────────── rtc.state (30d) ─────────────────────── */
 
-/** Observe-only state snapshot — never bindable as a crypto op's input. */
+/**
+ * Observe-only state snapshot — never bindable as a crypto op's input.
+ *
+ * Reads the whole inventory (§57a), so a hand-carried `peer.*` link gets the
+ * same verdict, three-stage track and terminal outcome the mesh's peers get,
+ * with no new UI: `connStateReadout` keys off `connectionState`, and a link is
+ * a link.
+ */
 export function execConnectionState() {
-  const session = requireSession("rtc.state");
-  const peers = [];
-  for (const [fpr, peer] of session.peers) {
-    peers.push({
-      peer: fpr,
-      connectionState: peer.pc?.connectionState || "closed",
-      iceConnectionState: peer.pc?.iceConnectionState || "closed",
-      iceGatheringState: peer.pc?.iceGatheringState || "complete",
-      signalingState: peer.pc?.signalingState || "closed",
-      channelState: peer.channel?.readyState || "closed",
-      // Basilisk's own overlay on top of the browser states.
-      verified: !!peer.kcVerified,
-      status: peer.status,
-    });
-  }
-  return netValue("connstate", { v: 1, room: session.roomId, peers }, "connection-state.json", {
-    rtcConnState: true,
-  });
+  const links = requireLinks("rtc.state");
+  const peers = listLinkRows()
+    .filter((r) => links.some((l) => l.id === r.id))
+    .map((r) => ({
+      ...r,
+      // `peer` is the field name every existing consumer indexes on — the
+      // `connstate` renderer, the catalog fixtures, the e2e assertions. The row
+      // carries `id` too; this is the alias, not a second fact.
+      peer: r.id,
+      verified: r.authenticated,
+    }));
+  const session = getLiveSession();
+  return netValue(
+    "connstate",
+    { v: 1, room: session?.roomId || "", peers },
+    "connection-state.json",
+    { rtcConnState: true }
+  );
 }
 
 /* ─────────────────────── rtc.stats (30d) ─────────────────────── */
 
 /** Back-pressure + counters: is `rtc.send` queueing behind a slow link? */
 export async function execDataChannelStats() {
-  const session = requireSession("rtc.stats");
+  const links = requireLinks("rtc.stats");
   const peers = [];
-  for (const [fpr, peer] of session.peers) {
+  for (const peer of links) {
     const ch = peer.channel;
     /** @type {Record<string, unknown>} */
     const row = {
-      peer: fpr,
+      peer: peer.id,
+      origin: peer.origin,
       readyState: ch?.readyState || "closed",
       bufferedAmount: ch?.bufferedAmount ?? 0,
       bufferedAmountLowThreshold: ch?.bufferedAmountLowThreshold ?? 0,
@@ -488,9 +472,9 @@ export async function execDataChannelStats() {
  * still live, the mailbox where they are not.
  */
 export async function execRtcRestart() {
-  const session = requireSession("rtc.restart");
+  const links = requireLinks("rtc.restart");
   let restarted = 0;
-  for (const [, peer] of session.peers) {
+  for (const peer of links) {
     if (typeof peer.pc?.restartIce !== "function") continue;
     try {
       peer.pc.restartIce();
@@ -538,9 +522,10 @@ export async function execRtcRestart() {
  * RTP branch is gone rather than left guarding a stat type that cannot appear.
  */
 export async function execStatsReport() {
-  const session = requireSession("rtc.quality");
+  const links = requireLinks("rtc.quality");
   const peers = [];
-  for (const [fpr, peer] of session.peers) {
+  for (const peer of links) {
+    const fpr = peer.id;
     if (!peer.pc) continue;
     let rttMs = null;
     let bytesSent = 0;
@@ -561,6 +546,7 @@ export async function execStatsReport() {
     });
     peers.push({
       peer: fpr,
+      origin: peer.origin,
       rttMs,
       bytesSent,
       bytesReceived,

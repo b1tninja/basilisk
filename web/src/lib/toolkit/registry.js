@@ -3641,9 +3641,198 @@ export const STEPS = [
     params: [],
   },
 
+  // ── Peer connection manager (§55) ──
+  // The layer between raw `rtc.*` and the identity-bound `quorum.*` mesh: named
+  // connections that outlive the op that made them. `rtc.offer`/`rtc.answer`
+  // were retired into `peer.offer`/`peer.answer` because they closed the very
+  // `RTCPeerConnection` whose SDP they returned, which made the two shipped
+  // hand-carried templates describe a flow that could not complete.
+  {
+    name: "peer.offer",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    doc: "Open a **managed** peer connection and emit its SDP offer. Unlike the retired `rtc.offer`, the connection stays live under `name=` — carry the offer to the other browser, bring their answer back to `peer.accept`, and `peer.wait` for it to connect. No PGP audience, no room, no relay. The channel is DTLS-encrypted but the far end is **not authenticated**: whoever received the offer is on the other side. Use `quorum.offer` when the peer's identity has to be proven. Example: `peer.offer a | out @offer`.",
+    input: "none",
+    output: "sdp",
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "default",
+        doc: "Connection name — how later steps and cells refer to this link",
+      },
+      {
+        name: "ice",
+        type: "slot",
+        default: "",
+        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+      },
+      {
+        name: "label",
+        type: "string",
+        default: "basilisk",
+        doc: "Data-channel label carried in the SDP",
+      },
+      {
+        name: "timeout",
+        type: "int",
+        default: 5000,
+        doc: "How long to gather candidates before emitting the offer (ms) — a hand-carried offer with no candidates is useless to the far side",
+      },
+    ],
+  },
+  {
+    name: "peer.answer",
+    kind: "transform",
+    toolbox: "webrtc",
+    shelf: "peer",
+    doc: "Answer a remote **offer** and keep the resulting managed connection under `name=`. The conjugate of `peer.offer`: send the answer back, then `peer.wait` on both sides. Refuses an SDP that is already an answer — that one goes to `peer.accept`. Example: `in @remoteOffer | peer.answer b | out @answer`.",
+    input: "sdp",
+    output: "sdp",
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "default",
+        doc: "Connection name for the link this creates",
+      },
+      {
+        name: "ice",
+        type: "slot",
+        default: "",
+        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+      },
+      {
+        name: "timeout",
+        type: "int",
+        default: 5000,
+        doc: "Candidate-gathering timeout before the answer is emitted (ms)",
+      },
+    ],
+  },
+  {
+    name: "peer.accept",
+    kind: "transform",
+    toolbox: "webrtc",
+    shelf: "peer",
+    doc: "Apply the remote **answer** to a connection this notebook offered, completing the exchange. Signalling only — it does not wait for ICE, so that \"this is not an answer\" and \"no candidate pair worked\" stay separate errors with separate fixes; `peer.wait` owns the second. Example: `in @remoteAnswer | peer.accept a | out @state`.",
+    input: "sdp",
+    output: "connstate",
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "default",
+        doc: "Connection that made the offer this answers",
+      },
+    ],
+  },
+  {
+    name: "peer.wait",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    doc: "Pause the run until a managed connection is connected and its data channel open, then emit the live channel. This is the step that tells you ICE succeeded: if it fails, the error is the same sentence the Connections panel shows, including what to do about it. Example: `peer.wait a | out @link`.",
+    input: "none",
+    output: "channel",
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "default",
+        doc: "Connection to wait for",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 60000,
+        doc: "How long to wait for the connection to come up (ms)",
+      },
+    ],
+  },
+  {
+    name: "peer.send",
+    kind: "transform",
+    toolbox: "webrtc",
+    shelf: "channel",
+    doc: "Write the pipeline text to a managed connection's data channel, passing the value through. **Not `rtc.send`**: that op encrypts under the quorum exchange's pairwise session key, which a direct connection does not have. What protects this traffic is DTLS alone, and DTLS does not tell you who the far end is. Example: `\"ping\" | peer.send a`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "default",
+        doc: "Connection to write to",
+      },
+    ],
+  },
+  {
+    name: "peer.recv",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "channel",
+    doc: "Read from a managed connection's data channel. `count=1` (default) waits for one message and emits it as text; `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `peer.recv b | out @msg`.",
+    input: "none",
+    output: "text",
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "default",
+        doc: "Connection to read from",
+      },
+      {
+        name: "count",
+        type: "string",
+        default: "1",
+        doc: "How many to collect: 1 (text), a number, or `all` to drain the inbox (bundle)",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 60000,
+        doc: "Receive timeout (ms)",
+      },
+    ],
+    effectiveIo(params) {
+      // Same rule as `rtc.recv`: the output *type* changes with `count`, and it
+      // does so on a parameter the checker can read before the run — which is
+      // the permitted form of a varying type. A type that depended on what the
+      // run produced would not be.
+      const count = String(params?.count ?? "1").trim().toLowerCase();
+      return { input: "none", output: count === "1" ? "text" : "bundle" };
+    },
+  },
+  {
+    name: "peer.close",
+    kind: "source",
+    toolbox: "webrtc",
+    shelf: "peer",
+    doc: "Close a managed connection and forget it, or every direct connection when `name=` is empty. Never touches the quorum mesh's links even when closing everything — those belong to `quorum.close`, which also has session keys to zeroize. Example: `peer.close a | out @state`.",
+    input: "none",
+    output: "connstate",
+    params: [
+      {
+        name: "name",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Connection to close; empty (or `all`) closes every direct connection",
+      },
+    ],
+  },
+
   // ── WebRTC primitives (design v2 §23a/23b/26a/26b/29a/29d/30d) ──
-  // The raw layer under `quorum.*`: each wraps one browser WebRTC capability
-  // so ICE/DTLS/SCTP are debuggable outside a live session.
+  // The raw layer under `peer.*` and `quorum.*`: each wraps one browser WebRTC
+  // capability so ICE/DTLS/SCTP are debuggable outside a live session.
   {
     name: "rtc.gather",
     kind: "source",
@@ -3696,46 +3885,6 @@ export const STEPS = [
         default: "ecdsa",
         enum: ["ecdsa", "rsa"],
         doc: "Certificate key algorithm (ECDSA P-256 or RSASSA-PKCS1-v1_5 2048)",
-      },
-    ],
-  },
-  {
-    name: "rtc.offer",
-    kind: "source",
-    toolbox: "webrtc",
-    shelf: "peer",
-    doc: "Raw SDP offer — the escape hatch below `quorum.offer` for inspecting or hand-carrying the session description. Creates a peer connection with one data channel and emits its SDP as text. Does not signal anything; pair it with your own transport. Example: `rtc.offer | out @sdp`.",
-    input: "none",
-    output: "sdp",
-    params: [
-      {
-        name: "ice",
-        type: "slot",
-        default: "",
-        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
-      },
-      {
-        name: "label",
-        type: "string",
-        default: "basilisk",
-        doc: "Data-channel label carried in the SDP",
-      },
-    ],
-  },
-  {
-    name: "rtc.answer",
-    kind: "transform",
-    toolbox: "webrtc",
-    shelf: "peer",
-    doc: "Raw SDP answer for a piped offer — the `rtc.offer` conjugate. Takes the remote offer SDP as pipeline text, applies it as the remote description, and emits the local answer SDP. Example: `in @remoteOffer | rtc.answer | out @answer`.",
-    input: "sdp",
-    output: "sdp",
-    params: [
-      {
-        name: "ice",
-        type: "slot",
-        default: "",
-        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
       },
     ],
   },

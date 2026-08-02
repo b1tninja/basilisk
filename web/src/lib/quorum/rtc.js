@@ -25,6 +25,7 @@ import {
   sealSignalingEnvelope,
 } from "./crypto.js";
 import { canonicalAudience, isValidRoomId } from "./room.js";
+import { deregisterLink, patchLink, registerLink } from "./link-registry.js";
 import { classifyChannelFrame, createSeenSet, shouldRelay } from "./relay.js";
 import { postSignaling, startSignalingPoll } from "./signaling.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
@@ -183,6 +184,14 @@ export class QuorumSession {
     this._poll = null;
     this._inviteEcdh = null;
     this.inviteNonce = "";
+    for (const fpr of this.peers.keys()) {
+      // Out of the shared inventory before the transports go: the session owns
+      // these connections and is tearing them down itself, so `deregisterLink`
+      // (forget) rather than `closeLink` (close *and* forget) — closing twice is
+      // harmless, but routing a mesh teardown through the registry would put the
+      // registry in charge of a lifecycle it does not manage.
+      deregisterLink(fpr);
+    }
     for (const peer of this.peers.values()) {
       try {
         peer.channel?.close();
@@ -583,6 +592,24 @@ export class QuorumSession {
     const pc = new RTCPeerConnection({ iceServers: this.iceServers });
     peer.pc = pc;
     peer.status = "connecting";
+    // Into the shared inventory (§57a). The registry reads `pc`/`channel`
+    // *through* this peer record rather than copying them, which is why
+    // registering here — before the channel exists — is correct: `_wireChannel`
+    // assigns it later and `ondatachannel` may replace it, and a copied field
+    // would go stale in the direction that reads as "connected, no channel".
+    //
+    // Nothing about negotiation, key derivation or key confirmation moves. What
+    // the mesh gives up is being the sole answer to "what is connected", which
+    // it was never the right owner of: the five `rtc.*` diagnostics used to
+    // refuse outright for any connection made another way.
+    registerLink({
+      id: peerFpr,
+      origin: "quorum",
+      role: asOfferer ? "offerer" : "answerer",
+      holder: peer,
+      label: "quorum",
+      authenticated: !!peer.kcVerified,
+    });
     this._emitRoster();
 
     pc.onicecandidate = (ev) => {
@@ -653,6 +680,7 @@ export class QuorumSession {
     channel.onclose = () => {
       if (peer.status === "connected") peer.status = "failed";
       peer.kcVerified = false;
+      patchLink(peerFpr, { authenticated: false });
       this._emitRoster();
     };
     channel.onmessage = (ev) => {
@@ -688,6 +716,10 @@ export class QuorumSession {
           peer.kcVerified = true;
           peer.status = "connected";
           peer.pgpVerified = true;
+          // The inventory's `authenticated` is the mesh's own key-confirmation
+          // fact, not a second opinion about it — the panel and the `connstate`
+          // tile both read it from there.
+          patchLink(peerFpr, { authenticated: true });
           this._emitRoster();
           this.onStatus?.("Peer verified — secure channel ready");
           await this._maybeSendKeyConfirm(peerFpr);

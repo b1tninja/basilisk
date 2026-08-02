@@ -216,6 +216,35 @@ body.layout-app:has(#app > .toolkit-shell) {
   background: color-mix(in srgb, var(--error) var(--tile-tint), transparent);
 }
 
+/*
+ * Per-link Restart / Close in the Connections tab (§58d).
+ *
+ * A rule rather than a utility pile for one reason that is not taste:
+ * `min-height: 24px`. WCAG 2.1 AA 2.5.8 puts the floor for a pointer target at
+ * 24×24 CSS px, and the panel's older buttons — `px-2 py-1 text-[10px]` —
+ * measure about 22. Multiplying that by one per link is how a small existing
+ * miss becomes the panel's dominant one, so the new controls carry the floor
+ * in the stylesheet where it cannot be forgotten at the next call site.
+ *
+ * (The session-level buttons above are the older finding, recorded rather than
+ * swept into this change.)
+ */
+.link-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.link-action:hover {
+  color: var(--foreground);
+}
+
 /* The same verdict without a chip — the per-peer rows inside SessionStrip,
    where the word sits on the strip's own tint rather than on a badge. */
 .peer-ink[data-verified="1"] {

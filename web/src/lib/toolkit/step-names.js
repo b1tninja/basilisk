@@ -80,9 +80,22 @@ export const LEGACY_STEP_MIGRATE = {
   "rtc.checkconnectivity": "rtc.check",
   "rtc.connectionstate": "rtc.state",
   "rtc.datachannelstats": "rtc.stats",
-  "rtc.createoffer": "rtc.offer",
-  "rtc.createanswer": "rtc.answer",
   "rtc.statsreport": "rtc.quality",
+  // A connection now outlives the op that made it (§55c). `rtc.offer` and
+  // `rtc.answer` each closed their own `RTCPeerConnection` in a `finally`
+  // before returning, so the ICE credentials and DTLS fingerprint in the SDP
+  // named a transport that was already gone — the two shipped hand-carried
+  // templates described a flow that could not complete. `peer.*` keeps the
+  // connection under a name, which is a different contract and therefore a
+  // different op rather than a repaired one.
+  //
+  // The two camelCase forms retarget straight to the new names rather than
+  // through the retired ones: this table is applied in a single pass, so
+  // `rtc.createoffer → rtc.offer` would migrate one dead name to another.
+  "rtc.createoffer": "peer.offer",
+  "rtc.createanswer": "peer.answer",
+  "rtc.offer": "peer.offer",
+  "rtc.answer": "peer.answer",
   paste: "input",
   cat: "input",
   print: "text",

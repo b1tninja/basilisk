@@ -2882,8 +2882,6 @@ async function execStepBody(step, value, bindings, artifacts) {
     case "rtc.gather":
     case "rtc.check":
     case "rtc.certificate":
-    case "rtc.offer":
-    case "rtc.answer":
     case "rtc.state":
     case "rtc.restart":
     case "rtc.stats":
@@ -2898,10 +2896,6 @@ async function execStepBody(step, value, bindings, artifacts) {
           return rtc.execCheckConnectivity();
         case "rtc.certificate":
           return rtc.execCertificate(p);
-        case "rtc.offer":
-          return rtc.execCreateOffer(p, bindings);
-        case "rtc.answer":
-          return rtc.execCreateAnswer(value, p, bindings);
         case "rtc.state":
           return rtc.execConnectionState();
         case "rtc.restart":
@@ -2910,6 +2904,33 @@ async function execStepBody(step, value, bindings, artifacts) {
           return rtc.execDataChannelStats();
         default:
           return rtc.execStatsReport();
+      }
+    }
+    case "peer.offer":
+    case "peer.answer":
+    case "peer.accept":
+    case "peer.wait":
+    case "peer.send":
+    case "peer.recv":
+    case "peer.close": {
+      // Lazy + main-thread only: the manager holds real RTCPeerConnections.
+      const peer = await import("./peer-ops.js");
+      const p = step.params || {};
+      switch (step.name) {
+        case "peer.offer":
+          return peer.execPeerOffer(p, bindings);
+        case "peer.answer":
+          return peer.execPeerAnswer(value, p, bindings);
+        case "peer.accept":
+          return peer.execPeerAccept(value, p);
+        case "peer.wait":
+          return peer.execPeerWait(p);
+        case "peer.send":
+          return peer.execPeerSend(value, p);
+        case "peer.recv":
+          return peer.execPeerRecv(p);
+        default:
+          return peer.execPeerClose(p);
       }
     }
     default:

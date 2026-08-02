@@ -398,109 +398,28 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
     }
   });
 
-  /* ── the shipped ops, run in the page that ships them ── */
+  /* ── the SDP ops moved, and the defect they encoded is gone ── */
 
-  describe("rtc.offer and rtc.answer", () => {
-    /** @type {string} */
-    let offer;
-    /** @type {string} */
-    let answer;
-
-    beforeAll(async () => {
-      const v = await A.page.evaluate(() => window.__ops.execCreateOffer({}, {}));
-      offer = v.data;
-      const w = await B.page.evaluate(
-        (sdp) => window.__ops.execCreateAnswer({ type: "sdp", data: sdp }, {}, {}),
-        offer
-      );
-      answer = w.data;
-    });
-
-    it("emits an offer carrying gathered candidates and a DTLS fingerprint", () => {
-      expect(offer).toMatch(/^v=0/);
-      // `waitForGathering` exists so the blob is hand-carriable; an offer with
-      // no candidate lines is useless to whoever receives it.
-      expect(offer.match(/^a=candidate:/gm)?.length || 0).toBeGreaterThan(0);
-      expect(offer).toMatch(/^a=candidate:.* typ host/m);
-      expect(offer).toMatch(/^a=ice-ufrag:\S+/m);
-      expect(offer).toMatch(/^a=fingerprint:sha-256 (?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/m);
-      expect(offer).toMatch(/^a=setup:actpass/m);
-    });
-
-    it("answers an offer made in a different browser", () => {
-      // Cross-context is the only interesting version of this: an answer made
-      // in the same realm as its offer proves nothing about interoperation.
-      expect(answer).toMatch(/^v=0/);
-      expect(answer).toMatch(/^a=setup:active/m);
-      expect(answer.match(/^a=candidate:/gm)?.length || 0).toBeGreaterThan(0);
-    });
-
-    it("refuses to answer an SDP that is already an answer", async () => {
-      // Regression: Chromium accepts an answer's SDP as `{ type: "offer" }`
-      // without complaint — same grammar — so `rtc.offer | rtc.answer |
-      // rtc.answer` used to emit a second plausible `answer.sdp` that no peer
-      // had asked for. Measured against a real peer connection, not stubbed.
-      const outcome = await B.page.evaluate(async (sdp) => {
-        try {
-          await window.__ops.execCreateAnswer({ type: "sdp", data: sdp }, {}, {});
-          return { refused: false };
-        } catch (e) {
-          return { refused: true, message: e.message };
-        }
-      }, answer);
-      expect(outcome.refused).toBe(true);
-      expect(outcome.message).toMatch(/already an answer/);
-    });
-
-    it("still refuses text that is not SDP at all", async () => {
-      const outcome = await B.page.evaluate(async () => {
-        try {
-          await window.__ops.execCreateAnswer({ type: "text", data: "not sdp" }, {}, {});
-          return { refused: false };
-        } catch (e) {
-          return { refused: true, message: e.message };
-        }
-      });
-      expect(outcome.refused).toBe(true);
-      expect(outcome.message).toMatch(/expects an SDP offer/);
-    });
-
-    it("emits an offer whose peer connection is already gone", async () => {
-      // **This is the shipped behaviour, and it is why `sdp-hand-carried`
-      // cannot produce a connection.** `execCreateOffer` closes its
-      // `RTCPeerConnection` in a `finally` before returning, so the ufrag and
-      // certificate in the blob above belong to a transport that no longer
-      // exists, and no op can apply an answer to it.
-      //
-      // Asserted rather than merely noted, so that making the hand-carried
-      // flow connectable has to come here and delete this test on purpose.
-      const live = await B.page.evaluate(async (sdp) => {
-        const pc = new RTCPeerConnection({ iceServers: [] });
-        window.__dead = pc;
-        await pc.setRemoteDescription({ type: "offer", sdp });
-        await pc.setLocalDescription(await pc.createAnswer());
-        return pc.signalingState;
-      }, offer);
-      expect(live).toBe("stable");
-
-      // Give it far longer than the ~4ms a live host-candidate pair takes.
-      await new Promise((r) => setTimeout(r, 6000));
-      const state = await B.page.evaluate(() => window.__dead.connectionState);
-      expect(state).not.toBe("connected");
-      expect(["new", "connecting", "failed"]).toContain(state);
-      await B.page.evaluate(() => window.__dead.close());
-    });
-
-    it("names no op capable of applying an answer", async () => {
-      // The other half of the finding above, stated where it can rot loudly:
-      // the module has no `rtc.accept`, so the answer produced two tests up has
-      // nowhere to go.
-      const exports = await A.page.evaluate(() => Object.keys(window.__ops).sort());
-      expect(exports).toContain("execCreateOffer");
-      expect(exports).toContain("execCreateAnswer");
-      expect(exports.filter((k) => /accept|applyAnswer/i.test(k))).toEqual([]);
-    });
-  });
+  /*
+   * This is where `rtc.offer` / `rtc.answer` were exercised, and where two
+   * tests pinned the defect rather than the feature:
+   *
+   *   - "emits an offer whose peer connection is already gone" asserted that an
+   *     answer applied to a shipped offer never reaches `connected`, because
+   *     `execCreateOffer` closed its own `RTCPeerConnection` in a `finally`.
+   *   - "names no op capable of applying an answer" asserted that the module
+   *     had no `rtc.accept`, so the answer had nowhere to go.
+   *
+   * Both said, in as many words, that making the hand-carried flow connectable
+   * had to come here and delete them on purpose. That is what happened: the ops
+   * are `peer.offer` / `peer.answer` / `peer.accept` now (§55c), the connection
+   * survives the op, and `e2e/peer-manager.e2e.js` carries an offer between two
+   * real browsers and measures the connection those tests said was impossible.
+   *
+   * The refusal cases moved with them rather than being dropped — an answer fed
+   * to `peer.answer`, and text that is not SDP at all — and `sdpRole`'s pure
+   * rule is still pinned in `rtc-sdp-role.test.js`.
+   */
 
   /* ── certificates and gathering ── */
 
@@ -566,11 +485,12 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
   });
 
   it("refuses every live-session op when nothing is connected", async () => {
-    // `rtc.check`/`state`/`stats`/`restart`/`quality` read the live
-    // `quorum.*` exchange. Standing one up needs the relay and two OpenPGP
-    // identities, which is the session layer's fixture, not the transport's —
-    // so what the transport owes is that each refuses by name rather than
-    // returning an empty report that a tile would render as "all clear".
+    // `rtc.check`/`state`/`stats`/`restart`/`quality` read the live link
+    // inventory. What the transport owes is that each refuses by name when it
+    // is empty, rather than returning a report a tile would render as "all
+    // clear". The populated case is `e2e/peer-manager.e2e.js`, which drives all
+    // five against a real connection — something no test could do before,
+    // because standing one up needed the relay and two OpenPGP identities.
     const ops = {
       execConnectionState: "rtc.state",
       execCheckConnectivity: "rtc.check",
@@ -586,9 +506,15 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
             .then(() => ({ threw: false }), (e) => ({ threw: true, message: e.message })),
         fn
       );
-      expect(r.threw, `${name} did not refuse without a live exchange`).toBe(true);
+      expect(r.threw, `${name} did not refuse without a live connection`).toBe(true);
       expect(r.message).toContain(name);
-      expect(r.message).toMatch(/no live exchange/);
+      // The refusal names *both* ways to get a connection now. It used to say
+      // "run quorum.offer or quorum.join first", which stopped being true the
+      // moment `peer.offer` could produce one of these — a diagnostic that
+      // names the wrong op is worse than one that says nothing (§57a).
+      expect(r.message).toMatch(/no live connection/);
+      expect(r.message).toMatch(/peer\.offer/);
+      expect(r.message).toMatch(/quorum\.offer/);
     }
   });
 });

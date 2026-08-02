@@ -53,16 +53,44 @@ states being correct.
 
 ## Invariants someone will otherwise break
 
-- **`quorum.*` is the session manager; `rtc.*` is the transport.** `quorum` owns
-  `offer`/`join`/`close` only — room, roster, lifecycle. Channel traffic
-  (`rtc.send`/`rtc.recv`) lives with the connection primitives. This split is
-  what lets the transport work on any data channel rather than only inside a
-  quorum room, which the DKG plan depends on.
+- **Three layers, not two: `rtc.*` raw, `peer.*` managed, `quorum.*` the
+  identity-bound mesh.** `quorum` owns `offer`/`join`/`close` — room, roster,
+  lifecycle — and its channel traffic (`rtc.send`/`rtc.recv`) lives with the
+  connection primitives, which is what lets the transport work on any data
+  channel rather than only inside a quorum room. **`peer.*` is the middle layer
+  added in §55**: named connections that outlive the op that made them, so two
+  browsers can connect with no PGP audience and no relay.
+
+  Two consequences that bite if you do not know them:
+
+  - **`rtc.offer`/`rtc.answer` no longer exist.** They are `peer.offer` /
+    `peer.answer`, retired and migrated, because each closed the very
+    `RTCPeerConnection` whose SDP it returned — two shipped templates described
+    a flow that could not complete.
+  - **The five diagnostics enumerate the link registry, not the mesh.**
+    `rtc.state`/`check`/`stats`/`quality`/`restart` used to open with
+    `requireSession()`, so the mesh *was* the definition of "what is connected"
+    and they refused outright for anything else. `QuorumSession` registers its
+    peers into `lib/quorum/link-registry.js` now. `getLiveSession()` survives
+    for the DKG transport and the roster projection; it is no longer how the app
+    answers that question.
+
+  Full argument in `redesign/design_handoff_peer_connections/`.
+  **`rtc.send`/`rtc.recv` are deliberately not widened to `peer.*` links** —
+  they encrypt under the exchange's pairwise session key, which a direct link
+  has none of.
 - **Types are three-way.** DATA is inert and publishable; HANDLE (`session`,
   `channel`) is a live object meaningful only inside the run that made it;
   OBSERVE (`connstate`, `stats`) is a read-out that can be displayed but never
   consumed. `resolveStepType` enforces it. Designs that ignore this produce
   screens the type system refuses to render.
+
+  **Being a HANDLE is about what may consume a value, not about whether it may
+  be drawn.** `channel` gained its first producer in `peer.wait` (§56) and is on
+  `NETWORK_BASES` beside `session`, which has always been a handle with a tile.
+  If you give a type a producer, the role and the renderer move in the same
+  commit — a producer without the role stamps `text` on a live object, and a
+  role without a renderer resolves to `network-value` and draws nothing.
 - **`any` is a signature marker, not a value.** The universal passthroughs
   (`out`, `tee`, `peek`, `inspect`, `text`, `select`) declare `input: "any"`,
   stamped from `POLYMORPHIC_STEPS` in types.js. They previously claimed `bytes`

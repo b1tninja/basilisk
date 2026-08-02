@@ -27,7 +27,7 @@ doc will not find them in the registry:
 |---|---|
 | `rtc.gatherCandidates` | `rtc.gather` |
 | `rtc.checkConnectivity` | `rtc.check` |
-| `rtc.createOffer` / `rtc.createAnswer` | `rtc.offer` / `rtc.answer` |
+| `rtc.createOffer` / `rtc.createAnswer` | `peer.offer` / `peer.answer` (via `rtc.offer`/`rtc.answer`, both since retired) |
 | `rtc.connectionState` | `rtc.state` |
 | `rtc.dataChannelStats` | `rtc.stats` |
 | `rtc.statsReport` | `rtc.quality` |
@@ -41,8 +41,8 @@ doc will not find them in the registry:
 | `rtc.gather` | 23a, 26a | ✅ live — real `host` + `srflx`; `relay` proven 2026-08-01 against a coturn |
 | `rtc.check` | 23b, 26b | ✅ against a real connected pair (`succeeded`/`nominated`, rtt, bytes) |
 | `rtc.certificate` | 29a | ✅ live — ECDSA P-256 and RSA 2048, real SHA-256 fingerprints |
-| `rtc.offer` | 30d | ✅ live — SDP with 2 candidates + DTLS fingerprint. **See deviation 5.** |
-| `rtc.answer` | 30d | ✅ live — consumes an offer, refuses an answer (`a=setup:`) |
+| ~~`rtc.offer`~~ | 30d | retired → `peer.offer` (deviation 5) |
+| ~~`rtc.answer`~~ | 30d | retired → `peer.answer` (deviation 5) |
 | `rtc.state` | 30d | ✅ shape verified; clean error with no live exchange |
 | `rtc.stats` | 30d | ✅ `data-channel` stats + back-pressure fields confirmed real |
 | `rtc.quality` | 29d | ✅ candidate-pair rtt/bytes real. **Loss is not reported at all — deviation 6.** |
@@ -118,19 +118,22 @@ Re-running an op is the cell's own Run button.
    mixed-case op name was silently unresolvable. Registration now lower-cases
    its keys while `step.name` keeps authored casing.
 
-5. **`rtc.offer` and `rtc.answer` close their own `RTCPeerConnection`** in a
-   `finally` before returning. The SDP is well-formed and its transport is
-   already gone: the ICE ufrag/pwd and DTLS fingerprint in the blob name an
-   object that has been torn down.
+5. **~~`rtc.offer` and `rtc.answer` close their own `RTCPeerConnection`~~ —
+   RESOLVED 2026-08-02, and the ops are gone.** They closed their connection in
+   a `finally` before returning, so the ICE ufrag/pwd and DTLS fingerprint in
+   the blob named an object that had been torn down, and `sdp-hand-carried` /
+   `sdp-to-clipboard` described a flow that could not complete.
 
-   **Two shipped templates therefore describe a flow that cannot complete** —
-   `sdp-hand-carried` ("in a real exchange the offer goes to the other side by
-   any channel you like") and `sdp-to-clipboard` ("paste it into chat"). Making
-   them work needs a live-offer registry and an `rtc.accept` op, and neither is
-   built. The `sdp` panel states the limit above the blob rather than below it
-   — 28c's rule, applied to the transport instead of the payload. **The two
-   template blurbs in `lib/toolkit/recipe.js` still promise the hand-carried
-   flow and should be corrected.**
+   The predicted fix — "a live-offer registry and an `rtc.accept` op" — is what
+   landed, at a layer rather than as two ops: `redesign/design_handoff_peer_connections/`.
+   `rtc.offer`/`rtc.answer` are retired and migrated to **`peer.offer`** /
+   **`peer.answer`**, which keep the connection under a name in
+   `lib/quorum/link-registry.js`; **`peer.accept`** applies the remote answer
+   and **`peer.wait`** blocks until ICE completes. Both template blurbs are
+   corrected, and `sdp-hand-carried` now really connects. The `sdp` panel's note
+   (`SDP_CARRY_NOTE`, formerly `SDP_TRANSPORT_CLOSED`) says what to do with the
+   blob instead of why it cannot work. Measured between two real browsers in
+   `src/test/e2e/peer-manager.e2e.js`.
 
 6. **`rtc.quality` does not report packet loss, and cannot.** It used to print
    `0% loss`; the figure was RTP losses divided by ICE-path packet counts, two
@@ -209,8 +212,7 @@ These were filed under "not implemented" on 2026-07-30 and are wrong there.
   honest past ~8 participants). The k-of-n readiness idea is unbuilt.
 - **30a/30b storage** — no `basilisk_webrtc` IndexedDB database. Certificates
   are ephemeral (no pinning), no session log or peer-history persistence.
-- **`rtc.accept`** — the missing half of deviation 5. Not in the design turns
-  either; it is a new op the hand-carried templates need.
+- ~~**`rtc.accept`**~~ — built, as `peer.accept`. See deviation 5.
 - **A 401 signal** — nothing reads `icecandidateerror` (deviation 8).
 
 ## Glyphs

@@ -942,13 +942,51 @@ export function stunReachability(data) {
   };
 }
 
-/** The one place the closed-transport limit is written down. */
-export const SDP_TRANSPORT_CLOSED =
-  "The connection this describes is already closed. rtc.offer and rtc.answer " +
-  "each close their RTCPeerConnection before returning, so the ICE credentials " +
-  "and fingerprint here name a transport that no longer exists — carrying this " +
-  "blob to a peer cannot complete a handshake. It is here to be read, and to " +
-  "feed rtc.answer in the same notebook.";
+/**
+ * The one place the SDP-carrying instruction is written down.
+ *
+ * This constant used to say the opposite, and was correct at the time:
+ * `rtc.offer`/`rtc.answer` closed their own `RTCPeerConnection` before
+ * returning, so the ICE credentials and fingerprint named a transport that was
+ * already gone and no amount of carrying the blob could complete a handshake.
+ * `peer.offer`/`peer.answer` keep the connection under a name (§55), so the
+ * limit is lifted and the note becomes what to *do* with the blob instead of
+ * why it cannot work.
+ */
+export const SDP_CARRY_NOTE =
+  "The connection this describes is live, held under its peer.* name. Carry " +
+  "this blob to the other side by any channel you like: an offer goes into " +
+  "peer.answer there, and the answer that comes back goes into peer.accept " +
+  "here. peer.wait then blocks until ICE completes.";
+
+/**
+ * What a link's origin means for the traffic on it — the one place the
+ * authentication difference is worded (§58b).
+ *
+ * Two consumers on day one, which is why it is a read-out and not a string in
+ * a component: the Connections panel's section caution, and the `connstate`
+ * tile. Both must say the same thing, because the difference is a security
+ * property rather than a label — a `quorum` channel's far end proved possession
+ * of a PGP key and its traffic is sealed under a pairwise key bound to both
+ * DTLS fingerprints; a `peer` channel's far end is whoever received the offer.
+ *
+ * @param {string} origin
+ * @returns {{ label: string, tone: "brand"|"warn", why: string }}
+ */
+export function linkOriginNote(origin) {
+  if (String(origin) === "quorum") {
+    return {
+      label: "verified",
+      tone: /** @type {"brand"} */ ("brand"),
+      why: "Identity-bound: the far end proved possession of a key in this room's audience, and traffic is sealed under a pairwise key derived over a transcript that includes both DTLS fingerprints.",
+    };
+  }
+  return {
+    label: "unauthenticated",
+    tone: /** @type {"warn"} */ ("warn"),
+    why: "DTLS encrypts the wire, but nothing here proves who is on the other end — it is whoever received the offer. Use quorum.offer / quorum.join when the peer's identity has to be proven.",
+  };
+}
 
 /**
  * What is actually in an SDP blob, and what can be done with it (§30d).
@@ -961,17 +999,16 @@ export const SDP_TRANSPORT_CLOSED =
  * stays below them, because a fingerprint you have to hunt for is a
  * fingerprint nobody checks.
  *
- * **A limit stated plainly.** `rtc.offer` and `rtc.answer` each close their
- * `RTCPeerConnection` in a `finally` before returning. The SDP they hand back
- * is well-formed and its transport is already gone. So the hand-carried flow
- * the two SDP templates describe — copy this to the other side, paste their
- * answer back — **cannot complete**, and the panel says so rather than letting
- * a reader find out by watching a handshake time out. That is 28c's rule
- * applied to the transport instead of the payload: state the platform's real
- * limits, never imply a capability that is not there.
+ * **What to do with it, stated plainly.** This half used to be a refusal: the
+ * ops that made an SDP closed its transport before returning, so the panel said
+ * the hand-carried flow could not complete rather than letting a reader find
+ * out by watching a handshake time out. `peer.*` keeps the connection alive
+ * (§55), so the same slot now carries the instruction instead of the limit —
+ * 28c's rule either way: say what the platform really does, and never imply a
+ * capability that is not there.
  *
  * This does **not** restate `sdpRole()`'s offer/answer rule (`rtc-ops.js`),
- * which is what `rtc.answer` refuses on. It prints the `a=setup:` line — the
+ * which is what `peer.answer` refuses on. It prints the `a=setup:` line — the
  * datum that rule reads — and leaves the verdict where it is written.
  * `rtc-ops.js` is deliberately not imported: it is loaded dynamically so that
  * `RTCPeerConnection` stays out of the base bundle, and a static import here
@@ -987,7 +1024,7 @@ export const SDP_TRANSPORT_CLOSED =
  *   transport: string,
  *   candidates: { type: string, count: number }[],
  *   lines: number,
- *   liveTransport: false,
+ *   liveTransport: boolean,
  *   note: string,
  * }}
  */
@@ -1009,7 +1046,7 @@ export function sdpReadout(sdp) {
       .filter((t) => byType[t])
       .map((t) => ({ type: t, count: byType[t] })),
     lines: text ? text.split(/\r?\n/).filter(Boolean).length : 0,
-    liveTransport: /** @type {false} */ (false),
-    note: SDP_TRANSPORT_CLOSED,
+    liveTransport: true,
+    note: SDP_CARRY_NOTE,
   };
 }

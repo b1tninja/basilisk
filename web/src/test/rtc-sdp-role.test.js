@@ -1,7 +1,7 @@
 /**
  * Which half of the exchange an SDP blob is (§30d).
  *
- * The rule lives in `sdpRole` rather than inline in `execCreateAnswer` for the
+ * The rule lives in `sdpRole` rather than inline in `execPeerAnswer` for the
  * reason `offerCollisionAction` does: an `RTCPeerConnection` does not exist
  * under `environment: "node"`, and a rule that can only be checked in a browser
  * gets checked once. The browser half — that Chromium really does accept an
@@ -10,7 +10,11 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { ANSWER_NOT_AN_OFFER, sdpRole } from "../lib/toolkit/rtc-ops.js";
+import { sdpRole } from "../lib/toolkit/rtc-ops.js";
+// The refusal moved with the op it guards: `rtc.answer` became `peer.answer`
+// (§55c). `sdpRole` stayed in `rtc-ops` — which half a blob is, is a fact about
+// SDP rather than about the manager.
+import { ACCEPT_NOT_AN_ANSWER, ANSWER_NOT_AN_OFFER } from "../lib/toolkit/peer-ops.js";
 
 /** A real Chromium data-channel offer, trimmed to the lines that matter. */
 const OFFER = [
@@ -67,6 +71,20 @@ describe("sdpRole", () => {
     // between a fix and a puzzle.
     expect(ANSWER_NOT_AN_OFFER).toMatch(/already an answer/);
     expect(ANSWER_NOT_AN_OFFER).toMatch(/a=setup:active/);
-    expect(ANSWER_NOT_AN_OFFER).toMatch(/Pipe the offer from the other side/);
+    // Names the op that *does* take an answer, which is the fix. The two are
+    // now genuinely different destinations — `peer.answer` opens a second
+    // connection, `peer.accept` completes the one you already have — so
+    // sending a reader to the wrong one costs them a live link.
+    expect(ANSWER_NOT_AN_OFFER).toMatch(/peer\.accept/);
+  });
+
+  it("refuses the mirror mistake, and names the other op", () => {
+    // `peer.accept` handed an offer is the same error seen from the other end,
+    // and it was worth its own sentence rather than Chromium's "Called in
+    // wrong state": the reader has an offer and needs to be told that
+    // answering it opens a *new* connection.
+    expect(ACCEPT_NOT_AN_ANSWER).toMatch(/is an offer/);
+    expect(ACCEPT_NOT_AN_ANSWER).toMatch(/a=setup:actpass/);
+    expect(ACCEPT_NOT_AN_ANSWER).toMatch(/peer\.answer/);
   });
 });

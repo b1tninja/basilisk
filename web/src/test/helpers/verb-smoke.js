@@ -1437,14 +1437,37 @@ rtc.gather ice=@ice timeout=3000 | out @cands`,
       skipReason: "needs RTCPeerConnection.generateCertificate",
     },
     {
-      id: "rtc.offer.answer.compile",
+      // The manager's signalling half (§55b). Both halves live in one notebook
+      // here so the compile covers offer → answer → accept; a real exchange
+      // runs the middle cell in the *other* browser, which is the whole point
+      // and is what the e2e suite drives.
+      id: "peer.offer.answer.accept.compile",
       recipe: `rtc.ice | out @ice
 
-rtc.offer ice=@ice label=basilisk | out @offer
+peer.offer a ice=@ice label=basilisk timeout=3000 | out @offer
 
-in @offer | rtc.answer ice=@ice | out @answer`,
+in @offer | peer.answer b ice=@ice timeout=3000 | out @answer
+
+in @answer | peer.accept a | out @state`,
       mode: "compile",
       skipReason: "needs RTCPeerConnection (main-thread browser only)",
+    },
+    {
+      id: "peer.wait.send.recv.compile",
+      recipe: `peer.wait a wait=30000 | out @link
+
+input | peer.send a | out @sent
+
+peer.recv a count=all wait=30000 | out @msgs`,
+      mode: "compile",
+      inputText: "ping",
+      skipReason: "needs a live direct connection",
+    },
+    {
+      id: "peer.close.compile",
+      recipe: "peer.close a | out @state",
+      mode: "compile",
+      skipReason: "needs a live direct connection",
     },
     {
       id: "rtc.state.compile",

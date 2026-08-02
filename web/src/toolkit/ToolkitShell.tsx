@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { restartLiveIce } from "../lib/toolkit/quorum-ops.js";
+import { closeLink, restartLink } from "../lib/quorum/link-registry.js";
 import { setClipboardReadGate } from "../lib/toolkit/clipboard-ops.js";
 import {
   beginApprovalRun,
@@ -2427,11 +2428,14 @@ export function ToolkitShell() {
                       expected: nb.quorumState.expected,
                       peers: nb.quorumState.peers,
                     }}
+                    links={nb.peerLinks}
                     onCopyInvite={() =>
                       void navigator.clipboard.writeText(nb.quorumState.invite)
                     }
                     onClose={() => nb.cancelQuorum()}
                     onRestartIce={() => void restartLiveIce()}
+                    onCloseLink={(id) => void closeLink(id)}
+                    onRestartLink={(id) => void restartLink(id)}
                   />
                 </ScrollArea>
               </>

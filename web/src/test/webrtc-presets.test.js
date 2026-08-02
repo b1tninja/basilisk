@@ -75,8 +75,10 @@ describe("diagnostics read in the order you would actually debug", () => {
 describe("the hand-carried exchange demonstrates both halves", () => {
   it("offers and answers in one notebook, so the round trip is readable", () => {
     const p = byId("sdp-hand-carried");
-    expect(p.recipe).toContain("rtc.offer");
-    expect(p.recipe).toContain("rtc.answer");
+    expect(p.recipe).toContain("peer.offer");
+    expect(p.recipe).toContain("peer.answer");
+    // The step that makes the round trip a *connection* rather than two blobs.
+    expect(p.recipe).toContain("peer.accept");
     // The answer consumes the offer through a slot — the same wiring a real
     // out-of-band exchange does by hand.
     expect(p.recipe).toContain("in @offer");
