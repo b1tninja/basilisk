@@ -476,7 +476,7 @@ export function inferSourceType(name, params = {}) {
     case "peer.close":
       return typeOf("connstate");
     case "peer.recv": {
-      // Parameter-driven, exactly as `rtc.recv` is, and readable before the run.
+      // Parameter-driven, exactly as `quorum.recv` is, and readable before the run.
       const count = String(params.count ?? "1").trim().toLowerCase();
       if (count === "1") return typeOf("text", { kind: "opaque" });
       const n = count === "all" ? undefined : Number(count) || undefined;
@@ -489,7 +489,7 @@ export function inferSourceType(name, params = {}) {
       return typeOf("session", {
         which: name === "quorum.offer" ? "offer" : "answer",
       });
-    case "rtc.recv": {
+    case "quorum.recv": {
       // Received messages really are data — text, not a handle. `count` picks
       // the shape (§30c): one message stays text, several become a bundle so
       // `foreach` can walk them. Must agree with the step's `effectiveIo`.
@@ -575,7 +575,7 @@ function gpgSymModeTypeError(params, op) {
  */
 /**
  * `qr.scan`'s output shape, which its `count` param decides — mirroring
- * `rtc.recv` (§30c). Must agree with the step's `effectiveIo`: the caret
+ * `quorum.recv` (§30c). Must agree with the step's `effectiveIo`: the caret
  * consults one and the type walker the other, and disagreement is how an op
  * gets offered after a read that really produced a collection.
  * @param {Record<string, *>} params

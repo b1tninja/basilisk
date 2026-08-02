@@ -1309,11 +1309,11 @@ export function validateRecipe(ast) {
     if (step.name === "foreach") {
       // `bundle` is a collection too — and `foreach` is what produces one, so
       // refusing to consume it left the type with a producer and no consumer.
-      // `rtc.recv count=all` is the first source of a bundle that is not a
+      // `quorum.recv count=all` is the first source of a bundle that is not a
       // foreach result, which is what made the gap visible.
       if (current.base !== "shares" && current.base !== "bundle") {
         errors.push({
-          message: `foreach requires a collection (shares or bundle) — got ${formatType(current)}. Add sss, blip39, shares, or rtc.recv count=all before foreach.`,
+          message: `foreach requires a collection (shares or bundle) — got ${formatType(current)}. Add sss, blip39, shares, or quorum.recv count=all before foreach.`,
           start: step.start,
           end: step.end,
           stepIndex,

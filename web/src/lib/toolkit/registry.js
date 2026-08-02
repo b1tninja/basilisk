@@ -2844,7 +2844,7 @@ export const STEPS = [
       },
     ],
     effectiveIo(params) {
-      // Same count-driven shape `rtc.recv` established: one code stays `text`
+      // Same count-driven shape `quorum.recv` established: one code stays `text`
       // so the ordinary single-invite scan is unchanged, several become a
       // `bundle` so `foreach` can walk them. Claiming `text` for a photo of a
       // sheet of share cards would let a cipher op be appended to what is
@@ -3493,7 +3493,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "webrtc",
     shelf: "peer",
-    doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `rtc.send`/`rtc.recv`/`quorum.close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
+    doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `quorum.send`/`quorum.recv`/`quorum.close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
     input: "none",
     output: "session",
     params: [
@@ -3575,11 +3575,11 @@ export const STEPS = [
     ],
   },
   {
-    name: "rtc.send",
+    name: "quorum.send",
     kind: "transform",
     toolbox: "webrtc",
     shelf: "channel",
-    doc: "Write the pipeline text to the live data channel (per-peer session keys; key-confirmed channels only). `to=` addresses one peer by fingerprint; empty broadcasts to every verified peer, which is the exchange's own policy. Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run.",
+    doc: "Write the pipeline text to the exchange's data channels (per-peer session keys; key-confirmed channels only). `to=` addresses one peer by fingerprint; empty broadcasts to every verified peer, which is the exchange's own policy. Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run — for a channel with no exchange behind it, use `peer.send`.",
     input: "text",
     output: "text",
     params: [
@@ -3593,11 +3593,11 @@ export const STEPS = [
     ],
   },
   {
-    name: "rtc.recv",
+    name: "quorum.recv",
     kind: "source",
     toolbox: "webrtc",
     shelf: "channel",
-    doc: "Read from the live data channel. `count=1` (default) waits for one message and emits it as text (`meta.from` = sender fingerprint); `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `rtc.recv | gpg.verify`, or `rtc.recv count=all | foreach\\n  - gpg.verify`.",
+    doc: "Read from the exchange's data channels, decrypting under each peer's session key. `count=1` (default) waits for one message and emits it as text (`meta.from` = sender fingerprint); `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `quorum.recv | gpg.verify`, or `quorum.recv count=all | foreach\\n  - gpg.verify`.",
     input: "none",
     output: "text",
     params: [
@@ -3760,7 +3760,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webrtc",
     shelf: "channel",
-    doc: "Write the pipeline text to a managed connection's data channel, passing the value through. **Not `rtc.send`**: that op encrypts under the quorum exchange's pairwise session key, which a direct connection does not have. What protects this traffic is DTLS alone, and DTLS does not tell you who the far end is. Example: `\"ping\" | peer.send a`.",
+    doc: "Write the pipeline text to a managed connection's data channel, passing the value through. **Not `quorum.send`**: that op encrypts under the exchange's pairwise session key, which a direct connection does not have. What protects this traffic is DTLS alone, and DTLS does not tell you who the far end is. Example: `\"ping\" | peer.send a`.",
     input: "text",
     output: "text",
     params: [
@@ -3803,7 +3803,7 @@ export const STEPS = [
       },
     ],
     effectiveIo(params) {
-      // Same rule as `rtc.recv`: the output *type* changes with `count`, and it
+      // Same rule as `quorum.recv`: the output *type* changes with `count`, and it
       // does so on a parameter the checker can read before the run — which is
       // the permitted form of a varying type. A type that depended on what the
       // run produced would not be.
@@ -3942,7 +3942,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "channel",
     glyph: "ports",
-    doc: "Data-channel back-pressure and counters for the live exchange: `bufferedAmount` against its low-water threshold, ready state, and messages/bytes sent+received per peer. Use it to see whether `rtc.send` is queueing behind a slow link. Example: `rtc.stats | out @bp`.",
+    doc: "Data-channel back-pressure and counters for the live exchange: `bufferedAmount` against its low-water threshold, ready state, and messages/bytes sent+received per peer. Use it to see whether `quorum.send` is queueing behind a slow link. Example: `rtc.stats | out @bp`.",
     input: "none",
     output: "stats",
     params: [],

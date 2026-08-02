@@ -197,8 +197,8 @@ const STEP_DOCS = {
   },
   "quorum.offer": { url: `${MDN}/RTCDataChannel`, label: "MDN · RTCDataChannel" },
   "quorum.join": { url: `${MDN}/RTCDataChannel`, label: "MDN · RTCDataChannel" },
-  "rtc.send": { url: `${MDN}/RTCDataChannel/send`, label: "MDN · RTCDataChannel.send()" },
-  "rtc.recv": {
+  "quorum.send": { url: `${MDN}/RTCDataChannel/send`, label: "MDN · RTCDataChannel.send()" },
+  "quorum.recv": {
     url: `${MDN}/RTCDataChannel/message_event`,
     label: "MDN · RTCDataChannel message event",
   },

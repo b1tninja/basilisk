@@ -811,7 +811,7 @@
    "group": "shelf",
    "label": "Data channel",
    "metaphor": "Two arrows, opposite directions",
-   "description": "An RTCDataChannel is bidirectional and both directions are the users job: an up arrow and a down arrow side by side (rtc.send, rtc.recv, rtc.stats). Vertical on purpose — the horizontal band belongs to ports.",
+   "description": "An RTCDataChannel is bidirectional and both directions are the users job: an up arrow and a down arrow side by side (quorum.send, quorum.recv, peer.send, peer.recv, rtc.stats). Vertical on purpose — the horizontal band belongs to ports.",
    "refs": [
     "W3C WebRTC 1.0 §6 RTCDataChannel"
    ]

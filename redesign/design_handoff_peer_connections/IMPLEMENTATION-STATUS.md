@@ -157,13 +157,19 @@ measured live.
    has an inbox — `wireChannel` installs the listener that fills one — and a
    mesh link's traffic is decrypted under the pairwise session key and delivered
    through the session's own `onChat`. Found by the node test, which crashed on
-   `undefined.length`; it now says so and names `rtc.recv`.
+   `undefined.length`; it now says so and names `quorum.recv`.
 
-4. **`rtc.send`/`rtc.recv` were deliberately *not* widened** to reach managed
-   links. They encrypt under the exchange's pairwise session key, which a direct
-   link does not have. Reusing the names would either throw somewhere confusing
-   or — if anyone "fixed" the throw — put plaintext on an unauthenticated
-   channel under ops whose entire history is encrypted traffic.
+4. **The channel ops were deliberately *not* widened** to reach managed links.
+   They encrypt under the exchange's pairwise session key, which a direct link
+   does not have. Reusing the names would either throw somewhere confusing or —
+   if anyone "fixed" the throw — put plaintext on an unauthenticated channel
+   under ops whose entire history is encrypted traffic.
+
+   They were `rtc.send`/`rtc.recv` at the time, and this finding is what
+   retired that name afterwards: an op that must not be used at the transport
+   layer should not be named for it. They are `quorum.send`/`quorum.recv`
+   again, and `peer.send`/`peer.recv` — added in this same unit — are the verbs
+   that genuinely do work on any managed channel.
 
 5. **Chromium marks a candidate pair `nominated` while it is still
    `in-progress`.** Measured here: this e2e passed on its first run and failed on

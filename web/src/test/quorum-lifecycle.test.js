@@ -445,9 +445,9 @@ describe("closing an exchange", () => {
     await open();
     q.closeQuorumExchange("closed");
     await expect(q.execQuorumSend({ type: "text", data: "hi" }, {})).rejects.toThrow(
-      /rtc.send: no live exchange/
+      /quorum.send: no live exchange/
     );
-    await expect(q.execQuorumRecv({})).rejects.toThrow(/rtc.recv: no live exchange/);
+    await expect(q.execQuorumRecv({})).rejects.toThrow(/quorum.recv: no live exchange/);
     expect(() => q.createExchangeTransport("dkg.run")).toThrow(/no live exchange/);
     expect(q.getLiveSession()).toBe(null);
     expect(q.restartLiveIce()).toBe(0);
@@ -466,7 +466,7 @@ describe("closing an exchange", () => {
 
 /* ──────────────────────────── send and receive ──────────────────────────── */
 
-describe("rtc.send", () => {
+describe("quorum.send", () => {
   it("broadcasts without to=, and addresses one peer with it", async () => {
     const { session } = await open();
     await q.execQuorumSend({ type: "text", data: "hello" }, {});
@@ -490,7 +490,7 @@ describe("rtc.send", () => {
   });
 });
 
-describe("rtc.recv", () => {
+describe("quorum.recv", () => {
   it("takes a message already queued", async () => {
     const { session } = await open();
     session.chat(FPR_B, "queued");
@@ -561,7 +561,7 @@ describe("rtc.recv", () => {
 
   it("keeps protocol chatter out of a user's inbox", async () => {
     // The DKG tap consumes what it recognizes; everything else must still
-    // reach `rtc.recv`, or running a key generation fills the pipeline with
+    // reach `quorum.recv`, or running a key generation fills the pipeline with
     // JSON nobody asked for.
     const { session } = await open();
     const t = q.createExchangeTransport("dkg.run");

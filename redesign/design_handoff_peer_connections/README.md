@@ -43,10 +43,12 @@ shipped templates describe a flow that cannot complete.
   Repairing in place needs no migration and was rejected because it would leave
   a registry-allocating op inside the module whose header promises one browser
   capability per op (§55c).
-- `rtc.send`/`rtc.recv` are **not** widened to managed links. They encrypt under
-  a pairwise session key; a link has none, and reusing the name would eventually
-  put plaintext on an unauthenticated channel under an op whose whole history is
-  encrypted traffic (§55c).
+- `quorum.send`/`quorum.recv` are **not** widened to managed links. They encrypt
+  under a pairwise session key; a link has none, and reusing the name would
+  eventually put plaintext on an unauthenticated channel under an op whose whole
+  history is encrypted traffic (§55c). They were called `rtc.send`/`rtc.recv`
+  when this was written; that name was retired afterwards, because declining to
+  widen them is the same as saying they are not transport ops.
 - Links are referenced by `name=`, not by a piped handle — the two halves of an
   exchange are separate engine calls with a human in between, and a HANDLE in a
   slot can be consumed by nothing anyway (§55d).

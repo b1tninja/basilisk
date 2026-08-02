@@ -19,8 +19,9 @@
  * authenticates the far end — whoever received the offer is on the other side.
  * That is a real difference from `quorum.*`, whose channels carry a pairwise
  * key derived over a transcript binding both DTLS fingerprints, and it is why
- * `rtc.send`/`rtc.recv` are deliberately *not* widened to reach these links:
- * they encrypt under that pairwise key, and a link has none.
+ * `quorum.send`/`quorum.recv` do not reach these links: they encrypt under that
+ * pairwise key, and a link has none. `peer.send`/`peer.recv` are the verbs for
+ * a channel with no exchange behind it, and their name is the warning.
  *
  * Main-thread only — `RTCPeerConnection` does not exist in workers.
  * @module lib/toolkit/peer-ops
@@ -395,12 +396,13 @@ export async function execPeerWait(params) {
 /**
  * Write pipeline text to a link's channel, passing the value through.
  *
- * Not `rtc.send`. That op writes through `QuorumSession.sendChat`, which
+ * Not `quorum.send`. That op writes through `QuorumSession.sendChat`, which
  * encrypts under the pairwise session key before touching the channel; a
- * managed link has no such key. Reusing the name would either throw somewhere
- * confusing or — if anyone "fixed" the throw — put plaintext on an
- * unauthenticated channel under an op whose entire history is encrypted
- * traffic.
+ * managed link has no such key. Sharing one verb between the two would either
+ * throw somewhere confusing or — if anyone "fixed" the throw — put plaintext on
+ * an unauthenticated channel under an op whose entire history is encrypted
+ * traffic. The namespaces say which is which: `quorum.*` where a session key
+ * exists, `peer.*` where only DTLS does.
  *
  * @param {{ type?: string, data?: unknown, meta?: Record<string, unknown> }} value
  */
@@ -422,7 +424,7 @@ export async function execPeerSend(value, params) {
 }
 
 /**
- * Read from a link's inbox. `count` picks the shape, exactly as `rtc.recv` does.
+ * Read from a link's inbox. `count` picks the shape, exactly as `quorum.recv` does.
  *
  * Only a link this module opened has an inbox: `wireChannel` is what installs
  * the `message` listener that fills one. A **quorum** link is in the same
@@ -438,7 +440,7 @@ export async function execPeerRecv(params) {
     throw new Error(
       `peer.recv: "${link.id}" is a ${link.origin} connection and does not deliver through peer.recv` +
         (link.origin === "quorum"
-          ? " — its traffic is decrypted under the exchange's pairwise session key. Use rtc.recv."
+          ? " — its traffic is decrypted under the exchange's pairwise session key. Use quorum.recv."
           : ".")
     );
   }
@@ -466,7 +468,7 @@ export async function execPeerRecv(params) {
     const msg = await new Promise((resolve) => {
       // Removed by identity, so a timed-out read cannot leave a settled waiter
       // in the queue for the next message to be handed to and dropped — the
-      // defect `rtc.recv` carried until 45e4ca7.
+      // defect `quorum.recv` carried until 45e4ca7.
       const waiter = (m) => {
         clearTimeout(timer);
         resolve(m);

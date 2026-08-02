@@ -249,7 +249,7 @@ export class QuorumSession {
       // Silence here would be dangerous: the author asked to tell one peer and
       // would have no signal that nobody heard it.
       throw new Error(
-        `rtc.send to=${toFpr}: no verified peer with that fingerprint is connected`
+        `quorum.send to=${toFpr}: no verified peer with that fingerprint is connected`
       );
     }
     return n;

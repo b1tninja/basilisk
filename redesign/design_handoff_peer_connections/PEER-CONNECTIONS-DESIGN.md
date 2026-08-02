@@ -175,14 +175,21 @@ a lie on the day it landed, and the two-layer split the brief asks for would
 exist in the design document and nowhere a user could see it. The layer boundary
 is the feature; the names have to carry it.
 
-`rtc.send`/`rtc.recv` are **not** renamed and **not** widened to managed links.
-They write through `QuorumSession.sendChat`, which encrypts under the pairwise
-session key before touching the channel. Pointing them at a link that has no
-session key would either throw at a confusing place or — worse, if anyone
-"fixed" the throw — put plaintext on a channel whose far end is unauthenticated,
-under an op name whose whole history is encrypted traffic. `peer.send` /
-`peer.recv` are separate names for a different guarantee, and they say so in
-their `doc` strings.
+`rtc.send`/`rtc.recv` are **not** widened to managed links. They write through
+`QuorumSession.sendChat`, which encrypts under the pairwise session key before
+touching the channel. Pointing them at a link that has no session key would
+either throw at a confusing place or — worse, if anyone "fixed" the throw — put
+plaintext on a channel whose far end is unauthenticated, under an op name whose
+whole history is encrypted traffic. `peer.send` / `peer.recv` are separate names
+for a different guarantee, and they say so in their `doc` strings.
+
+> **Superseded, in part.** This section also said the two were **not renamed**.
+> That half did not survive: refusing to widen them is precisely the admission
+> that they are not transport ops, and an op named `rtc.*` that cannot be used
+> at the transport layer is a name arguing against its own module header. They
+> are `quorum.send`/`quorum.recv` again — retired and migrated, like every other
+> rename here. Everything above about *why they cannot reach a managed link*
+> stands unchanged, and is now also carried by the namespace itself.
 
 ### §55d Why `name=` and not a piped handle
 
@@ -200,7 +207,7 @@ peer.offer | out @offer
 ```
 
 This is the same arrangement `quorum.*` already uses and it is not a new idea:
-`quorum.offer` emits a `session` HANDLE artifact, and `rtc.send` downstream does
+`quorum.offer` emits a `session` HANDLE artifact, and `quorum.send` downstream does
 **not** read that artifact — it reaches the live session through the module-level
 `current` in `quorum-ops.js`. The artifact is a receipt that a live thing exists;
 the module is how the live thing is reached. `peer.*` copies that, with a keyed
@@ -242,7 +249,7 @@ is.
 
 Every one of the seven has a fixed output type independent of state. The one
 that varies is `peer.recv`, and it varies on a **parameter**, through
-`effectiveIo(params)` — precisely the mechanism `rtc.recv` already uses for
+`effectiveIo(params)` — precisely the mechanism `quorum.recv` already uses for
 `count=`, which the type checker and the caret both read before the run. That is
 the permitted form. The prohibited form — the one seven defects were closed for
 yesterday — is a type that depends on what the *run* turns out to produce, and

@@ -117,7 +117,7 @@ export async function execQrScan(value, params = {}) {
     );
   }
   // Multiple codes in one photo is a real case — a sheet of share cards. The
-  // shape follows `count` exactly as `rtc.recv` does (§30c): one code stays
+  // shape follows `count` exactly as `quorum.recv` does (§30c): one code stays
   // `text` so the ordinary single-invite scan is unchanged, several become a
   // `bundle` whose parts `foreach` can walk. Bundle parts mirror what
   // `foreach` itself produces, so the existing collection machinery needs no

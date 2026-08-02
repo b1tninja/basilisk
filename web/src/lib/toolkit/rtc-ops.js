@@ -419,7 +419,7 @@ export function execConnectionState() {
 
 /* ─────────────────────── rtc.stats (30d) ─────────────────────── */
 
-/** Back-pressure + counters: is `rtc.send` queueing behind a slow link? */
+/** Back-pressure + counters: is `quorum.send` queueing behind a slow link? */
 export async function execDataChannelStats() {
   const links = requireLinks("rtc.stats");
   const peers = [];

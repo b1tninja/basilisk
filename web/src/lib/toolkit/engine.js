@@ -368,7 +368,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
       lastStepEmitted = false;
       // A bundle is already a list of pipeline values, so iterating it needs
       // none of the share-specific unpacking below — run the body per part and
-      // re-bundle. This is what makes `rtc.recv count=all | foreach` work, and
+      // re-bundle. This is what makes `quorum.recv count=all | foreach` work, and
       // it closes the older gap where `foreach` produced a type it could not
       // then consume.
       if (value?.type === "bundle") {
@@ -2639,8 +2639,8 @@ async function execStepBody(step, value, bindings, artifacts) {
     case "stun.check":
     case "quorum.offer":
     case "quorum.join":
-    case "rtc.send":
-    case "rtc.recv":
+    case "quorum.send":
+    case "quorum.recv":
     case "quorum.close": {
       // Lazy: keeps WebRTC + the quorum mesh out of the base bundle.
       // Main-thread only — RTCPeerConnection does not exist in workers.
@@ -2663,8 +2663,8 @@ async function execStepBody(step, value, bindings, artifacts) {
         return q.execRtcIce(params);
       }
       if (step.name === "stun.check") return q.execStunCheck(step.params || {});
-      if (step.name === "rtc.send") return q.execQuorumSend(value, step.params || {});
-      if (step.name === "rtc.recv") return q.execQuorumRecv(step.params || {});
+      if (step.name === "quorum.send") return q.execQuorumSend(value, step.params || {});
+      if (step.name === "quorum.recv") return q.execQuorumRecv(step.params || {});
       if (step.name === "quorum.close") return q.execQuorumClose(value);
       const privateKey = await resolveGpgPrivateKey(bindings, step.params?.key);
       let ice = null;

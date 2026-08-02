@@ -4,7 +4,7 @@
  *
  * The run boundary is the session boundary: `quorum.offer`/`quorum.join`
  * create the exchange (pausing the run at that cell until peers mesh),
- * `rtc.send`/`rtc.recv` use it, and `quorum.close` — or the kernel's
+ * `quorum.send`/`quorum.recv` use it, and `quorum.close` — or the kernel's
  * Clear session — tears it down and zeroizes keys.
  *
  * Main-thread only: RTCPeerConnection does not exist in workers.
@@ -386,7 +386,7 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       if (!ex) return;
       // Protocol traffic gets first refusal. A tap that recognizes a message
       // consumes it, so DKG round chatter never lands in the inbox a user's
-      // `rtc.recv` is reading — otherwise running a key generation would fill
+      // `quorum.recv` is reading — otherwise running a key generation would fill
       // their pipeline with JSON they did not ask for.
       for (const tap of ex.taps) {
         try {
@@ -527,7 +527,7 @@ function waitForPeers(ex, needPeers, wait) {
  * @param {{ type: string, data: unknown, meta?: Record<string, unknown> }} value
  */
 export async function execQuorumSend(value, params) {
-  const ex = requireExchange("rtc.send");
+  const ex = requireExchange("quorum.send");
   const text =
     value?.type === "text"
       ? String(value.data)
@@ -542,7 +542,7 @@ export async function execQuorumSend(value, params) {
 
 /** @param {Record<string, unknown>} params */
 export async function execQuorumRecv(params) {
-  const ex = requireExchange("rtc.recv");
+  const ex = requireExchange("quorum.recv");
   const fromFilter = String(params?.from || "")
     .replace(/\s+/g, "")
     .toUpperCase();
@@ -583,13 +583,13 @@ export async function execQuorumRecv(params) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       if (got.length) break; // partial collection is still a result
-      throw new Error(`rtc.recv: no message within ${Math.round(wait / 1000)}s`);
+      throw new Error(`quorum.recv: no message within ${Math.round(wait / 1000)}s`);
     }
     /** @type {{ from: string, text: string, ts: number } | null} */
     const msg = await new Promise((resolve) => {
       // The waiter is removed by identity, so the queue must be searched for
       // the function that was *pushed*. Looking for `resolve` instead never
-      // matched, so a timed-out `rtc.recv` left a settled waiter in the queue
+      // matched, so a timed-out `quorum.recv` left a settled waiter in the queue
       // and `onChat` handed the next message to it — resolving an already
       // resolved promise, which drops the message on the floor instead of
       // queueing it for the next read.
@@ -607,7 +607,7 @@ export async function execQuorumRecv(params) {
     });
     if (msg === null) {
       if (!current || current.cancelled) {
-        throw new Error("rtc.recv: exchange closed while waiting");
+        throw new Error("quorum.recv: exchange closed while waiting");
       }
       continue; // timeout path re-checked at loop top
     }
@@ -663,7 +663,7 @@ export function execQuorumClose(value) {
  * needs: `sendChat` broadcasts to every verified peer, `sendChatTo` addresses
  * one over its own channel — which is why the rounds want a mesh rather than
  * an SFU — and the tap delivers inbound protocol messages without them
- * reaching a user's `rtc.recv`.
+ * reaching a user's `quorum.recv`.
  *
  * Participants are identified by the scalar derived from their PGP
  * fingerprint, so the polynomial is indexed by the identities the room was
@@ -693,7 +693,7 @@ export function createExchangeTransport(op = "dkg.run") {
     try {
       parsed = JSON.parse(String(msg?.text ?? ""));
     } catch {
-      return false; // ordinary chat — leave it for rtc.recv
+      return false; // ordinary chat — leave it for quorum.recv
     }
     if (!parsed || typeof parsed !== "object") return false;
     if (parsed.t !== DKG_COMMIT && parsed.t !== DKG_SHARE) return false;

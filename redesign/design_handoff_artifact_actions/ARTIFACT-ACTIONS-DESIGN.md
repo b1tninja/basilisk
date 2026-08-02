@@ -1053,7 +1053,7 @@ one-time inconvenience.
 ### §38e Ops that stay recipe-only
 
 Deliberately, and stated so absence reads as decision: `gpg.decrypt`,
-`ssh.verify`, `run.verify`, `sss.combine` / `vss.combine`, `rtc.send`,
+`ssh.verify`, `run.verify`, `sss.combine` / `vss.combine`, `quorum.send`,
 `age.decrypt`. Every one of them takes an input the tile does not have — a key,
 a payload, a peer, a second artifact — and every one produces a value that
 belongs in the recipe that will be re-run. §37a is the rule; these are the

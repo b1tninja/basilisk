@@ -64,14 +64,30 @@ export const LEGACY_STEP_MIGRATE = {
   "wa-mds": "webauthn.mds",
   "gpg.vault": "agent.unlock",
   "gpg.vault.pub": "agent.pub",
-  // Channel traffic moved from the session manager to the transport. `quorum.*`
-  // now covers only the exchange itself — room, roster, lifecycle — while
-  // `rtc.*` owns the connection primitives, which is where reading and writing
-  // a data channel always belonged (`rtc.stats` was already there).
-  // The practical payoff: `rtc.send`/`rtc.recv` work on any data channel rather
-  // than being married to a quorum room.
-  "quorum.send": "rtc.send",
-  "quorum.recv": "rtc.recv",
+  // Channel traffic belongs to whoever owns the key. These two were briefly
+  // `rtc.send`/`rtc.recv`, on the argument that reading and writing a data
+  // channel is a transport primitive and `quorum.*` should cover only the
+  // exchange — room, roster, lifecycle. The payoff claimed for that move was
+  // that the ops would then "work on any data channel rather than being
+  // married to a quorum room", and it never arrived: both dispatch to
+  // `execQuorumSend`/`execQuorumRecv`, which require a live exchange, address
+  // peers by PGP fingerprint, and encrypt under the pairwise session key
+  // `derivePairwiseSessionKey` mints in `lib/quorum/`. `rtc.send`'s own doc
+  // said "key-confirmed channels only" for the whole of its life.
+  //
+  // §55c settled it in the other direction: `peer.send`/`peer.recv` are the
+  // verbs that really do work on any managed channel, and they exist now. So
+  // the encrypted pair goes back to the namespace that owns the key, and the
+  // general names stay with the general ops.
+  //
+  // The inverse entries are **gone**, not kept alongside these. This table is
+  // applied in a single pass over its keys, longest first, so a surviving
+  // `quorum.send → rtc.send` would fire before `rtc.send → quorum.send` and
+  // rewrite a correct recipe out and back again — reporting two migrations
+  // that cancel, and one wrong `rtc.send` away from a recipe that no longer
+  // parses. Retired names are removed here, never aliased.
+  "rtc.send": "quorum.send",
+  "rtc.recv": "quorum.recv",
   // Recipe-language audit (design turn 48a): every real namespaced op is
   // `namespace.singlelowercaseword`; the WebRTC toolbox shipped seven that
   // camelCased instead. Keys are lowercase because hint lookup normalizes the

@@ -30,7 +30,7 @@ describe("registry shape", () => {
     expect(s?.shelf).toBe("ports");
   });
 
-  it("follows the count-driven shape rtc.recv established", () => {
+  it("follows the count-driven shape quorum.recv established", () => {
     const io = (count) => getStep("qr.scan").effectiveIo({ count });
     expect(io("1").output).toBe("text");
     expect(io(undefined).output).toBe("text");

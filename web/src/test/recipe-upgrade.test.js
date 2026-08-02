@@ -62,6 +62,12 @@ const OFFERS = [
   ['from @h | from base64', "from"],
   ['random 16 | encrypt aes-gcm key=@k', "encrypt"],
   ['file.read as=auto | out @b', "as=auto"],
+  // A retired *op* name, and the most recent one: the channel ops went back to
+  // `quorum.*` because they encrypt under the exchange's session key. Listed
+  // here rather than only in `channel-ops.test.js` so the button's promise is
+  // checked for it the same way it is for `hex` — the hint names the control,
+  // and the control has to resolve the complaint.
+  ["input | rtc.send", "rtc.send"],
 ];
 
 describe("every message that names the button has a rewrite behind it", () => {

@@ -269,7 +269,7 @@ Stated plainly, because they are assumptions:
 1. **Rounds are ordered and the session waits.** The protocol cannot tolerate a
    participant running round 1 while another is still finalizing, so the op
    wants the wait-for-peers machinery `quorum.offer` already has, not a bare
-   `rtc.recv`.
+   `quorum.recv`.
 2. **The roster is fixed before round 1.** Adding a participant afterwards is a
    different key, not a bigger room. The `assembling` phase exists to make that
    a moment rather than a race.

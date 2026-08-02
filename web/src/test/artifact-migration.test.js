@@ -26,7 +26,7 @@ const stripComments = (t) =>
 describe("§38a — agent.save stays, and its doc says why to prefer a button", () => {
   it("is still registered, because there is nothing to rewrite it to", () => {
     // The repo's rule is that retired names are removed and rewritten by
-    // `migrateRecipe` — `to`/`from`, `quorum.send/recv`, `hex`/`unhex`. This
+    // `migrateRecipe` — `to`/`from`, `rtc.send`/`rtc.recv`, `hex`/`unhex`. This
     // op's replacement is a click, and `migrateRecipe` cannot emit one, so
     // every saved workspace and shared link holding it would fail live parse.
     expect(getStep("agent.save")).toBeTruthy();
@@ -149,7 +149,7 @@ describe("§38e — the ops that stay recipe-only, listed so nobody re-proposes 
       "run.verify",
       "sss.combine",
       "vss.combine",
-      "rtc.send",
+      "quorum.send",
       "age.decrypt",
     ];
     const declared = new Set(ARTIFACT_KINDS.flatMap((k) => k.actions || []));

@@ -269,7 +269,7 @@ describe("the WebRTC glyph vocabulary", () => {
     ]) {
       expect(byName.get(name)?.glyph, name).toBe("peer");
     }
-    for (const name of ["rtc.send", "rtc.recv", "peer.send", "peer.recv"]) {
+    for (const name of ["quorum.send", "quorum.recv", "peer.send", "peer.recv"]) {
       expect(byName.get(name)?.glyph, name).toBe("channel");
     }
     expect(registry).not.toMatch(/glyph:\s*"agent",\s*\n\s*doc:/);

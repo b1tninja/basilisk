@@ -75,7 +75,7 @@ cd web && npm run glyphs
 | `recipients` | Recipients | People / contacts | Recipients list / merge — two contact silhouettes. |
 | `jose-jwe` | JWE envelope | Token whose middle segment is filled | A JWE carries an encrypted payload rather than a signed one, so it is the `jose` token with the payload segment blacked out — the part you cannot read. Segment ink at 12px is 5.89 against `jose`'s 2.58, a 2.28x difference. It was an envelope with a lock shackle, which at badge size was the same silhouette as `pubkey` and `openpgp`; staying inside the JOSE token family says more, and says it at 12px. <br><small>RFC 7516 - JSON Web Encryption</small> |
 | `peer` | Peer & signaling | Offer and answer facing each other | Two solid wedges pointed at one another across a gap — the offer and the answer, not yet met. Signalling is exactly the part where the two halves are addressed to each other and have not arrived (quorum.offer/join/close, rtc.offer/answer/state/restart). <br><small>RFC 8829 (JSEP)</small> |
-| `channel` | Data channel | Two arrows, opposite directions | An RTCDataChannel is bidirectional and both directions are the users job: an up arrow and a down arrow side by side (rtc.send, rtc.recv, rtc.stats). Vertical on purpose — the horizontal band belongs to ports. <br><small>W3C WebRTC 1.0 §6 RTCDataChannel</small> |
+| `channel` | Data channel | Two arrows, opposite directions | An RTCDataChannel is bidirectional and both directions are the users job: an up arrow and a down arrow side by side (quorum.send, quorum.recv, peer.send, peer.recv, rtc.stats). Vertical on purpose — the horizontal band belongs to ports. <br><small>W3C WebRTC 1.0 §6 RTCDataChannel</small> |
 
 ## Toolbar / kernel
 

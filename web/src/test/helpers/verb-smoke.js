@@ -1393,7 +1393,7 @@ rtc.ice stun=stun:stun.example.org:3478 turn=turn:relay.example.org:3478 usernam
 
 quorum.offer to="${"A".repeat(40)},${"B".repeat(40)}" key=@me wait=5000 | out @session
 
-rtc.recv wait=5000 | quorum.close | out @last`,
+quorum.recv wait=5000 | quorum.close | out @last`,
       mode: "compile",
       skipReason: "needs WebRTC mesh + a live peer",
     },
@@ -1403,7 +1403,7 @@ rtc.recv wait=5000 | quorum.close | out @last`,
 
 quorum.join to="${"A".repeat(40)},${"B".repeat(40)}" key=@me | out @session
 
-input | rtc.send | out @sent`,
+input | quorum.send | out @sent`,
       mode: "compile",
       skipReason: "needs WebRTC mesh + a live peer",
     },

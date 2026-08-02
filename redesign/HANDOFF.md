@@ -54,12 +54,13 @@ states being correct.
 ## Invariants someone will otherwise break
 
 - **Three layers, not two: `rtc.*` raw, `peer.*` managed, `quorum.*` the
-  identity-bound mesh.** `quorum` owns `offer`/`join`/`close` — room, roster,
-  lifecycle — and its channel traffic (`rtc.send`/`rtc.recv`) lives with the
-  connection primitives, which is what lets the transport work on any data
-  channel rather than only inside a quorum room. **`peer.*` is the middle layer
-  added in §55**: named connections that outlive the op that made them, so two
-  browsers can connect with no PGP audience and no relay.
+  identity-bound mesh — and an op lives in the layer that owns the key it
+  uses.** `quorum` owns `offer`/`join`/`close` — room, roster, lifecycle — *and*
+  `quorum.send`/`quorum.recv`, because that traffic is encrypted and decrypted
+  under the pairwise session key `derivePairwiseSessionKey` mints. **`peer.*` is
+  the middle layer added in §55**: named connections that outlive the op that
+  made them, so two browsers can connect with no PGP audience and no relay;
+  `peer.send`/`peer.recv` are its raw verbs, DTLS and nothing else.
 
   Two consequences that bite if you do not know them:
 
@@ -76,9 +77,22 @@ states being correct.
     answers that question.
 
   Full argument in `redesign/design_handoff_peer_connections/`.
-  **`rtc.send`/`rtc.recv` are deliberately not widened to `peer.*` links** —
-  they encrypt under the exchange's pairwise session key, which a direct link
-  has none of.
+
+  **Do not re-split the channel ops out of `quorum.*`; it was tried.** They were
+  `rtc.send`/`rtc.recv` for several turns, on the reasoning that reading and
+  writing a data channel is a transport primitive and `quorum.*` should cover
+  only the exchange. The stated payoff was that they would then "work on any
+  data channel rather than being married to a quorum room". That payoff never
+  existed: both names always dispatched to `execQuorumSend`/`execQuorumRecv`,
+  which open with `requireExchange`, address peers by PGP fingerprint, and
+  encrypt under the pairwise session key — `rtc.send`'s own doc string said
+  *key-confirmed channels only* for the whole of its life. §55c then made the
+  contradiction explicit by declining to widen them to `peer.*` links for
+  exactly that reason, which left a transport-named op that could not be used at
+  the transport layer. The names went back. What the split was reaching
+  for is real and now exists separately: `peer.send`/`peer.recv` are the verbs
+  that do work on any managed channel, and their namespace is the warning that
+  nothing authenticates the far end.
 - **Types are three-way.** DATA is inert and publishable; HANDLE (`session`,
   `channel`) is a live object meaningful only inside the run that made it;
   OBSERVE (`connstate`, `stats`) is a read-out that can be displayed but never
@@ -99,7 +113,7 @@ states being correct.
 - **Reveal is gated.** A sensitive artifact may be unmasked only when the author
   explicitly asked to see it — `out`, `text`, or `inspect` set `revealable`.
   Incidental tiles stay masked. Do not "fix" this by revealing everything.
-- **Retired names are removed, not aliased.** `to`/`from`, `quorum.send/recv`,
+- **Retired names are removed, not aliased.** `to`/`from`, `rtc.send`/`rtc.recv`,
   `hex`/`unhex` all fail live parse and are rewritten by `migrateRecipe` /
   Upgrade recipe. One name per operation.
 - **Producers/consumers are derived from STEPS**, never hand-listed, so the
@@ -757,7 +771,7 @@ Roughly in value order:
    deliver shares pairwise, wait for contributions, `finalize`. Two notes for
    whoever takes it — the protocol needs *ordered rounds*, so it wants the
    wait-for-peers machinery `quorum.offer` already has rather than a bare
-   `rtc.recv`; and there is **no complaint round**, so a bad share makes
+   `quorum.recv`; and there is **no complaint round**, so a bad share makes
    `finalize` refuse and name the dealer, with restart-without-them as the
    only remedy. The UI must say that plainly, and label the whole thing
    experimental: it produces a shared key, not threshold signing.

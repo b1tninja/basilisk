@@ -31,8 +31,21 @@ doc will not find them in the registry:
 | `rtc.connectionState` | `rtc.state` |
 | `rtc.dataChannelStats` | `rtc.stats` |
 | `rtc.statsReport` | `rtc.quality` |
-| `quorum.send` / `quorum.recv` | `rtc.send` / `rtc.recv` |
+| `quorum.send` / `quorum.recv` | `quorum.send` / `quorum.recv` — shipped as `rtc.send`/`rtc.recv` for several turns, then moved back; see the note below |
 | — (not in the design) | `rtc.restart`, `dkg.run` |
+
+**The one row that went out and came back.** `quorum.send`/`quorum.recv` were
+renamed to `rtc.send`/`rtc.recv` on the argument that channel traffic is a
+transport primitive and `quorum.*` should cover only the exchange — room,
+roster, lifecycle. The claimed payoff was that the ops would then work on any
+data channel. They never could: both dispatch to
+`execQuorumSend`/`execQuorumRecv`, which require a live exchange, address peers
+by PGP fingerprint, and encrypt under the pairwise session key derived in
+`lib/quorum/crypto.js`; `rtc.send`'s doc string said *key-confirmed channels
+only* throughout. §55c confirmed it from the other side by declining to widen
+them to `peer.*` links for exactly that reason. The design turn's name was the
+right one and has been restored; `peer.send`/`peer.recv` (§55) are what actually
+deliver "works on any data channel".
 
 | Op | Turn | Verified |
 |---|---|---|
@@ -190,7 +203,7 @@ These were filed under "not implemented" on 2026-07-30 and are wrong there.
   button has still never been exercised by a real user.
 - **30c `quorum.recv` array output** — resolved, but **not the way the handoff
   specified**. `cell.output` did not become an array; `cellOutputs` was already
-  `ArtifactTile[][]` per cell. Instead `rtc.recv` takes `count=` — `1` (default)
+  `ArtifactTile[][]` per cell. Instead `quorum.recv` takes `count=` — `1` (default)
   emits one message as text, `3`/`all` collects several and emits a `bundle` for
   `foreach`. The repetition became a parameter of the op rather than a shape
   change to the notebook, which is why the audit of `useNotebook.ts` the handoff

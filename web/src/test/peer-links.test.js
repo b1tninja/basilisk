@@ -305,7 +305,7 @@ describe("peer.recv shapes its output on a parameter, before the run", () => {
     await expect(execPeerRecv({ name: "MESHPEER" })).rejects.toThrow(
       /is a quorum connection/
     );
-    await expect(execPeerRecv({ name: "MESHPEER" })).rejects.toThrow(/Use rtc\.recv/);
+    await expect(execPeerRecv({ name: "MESHPEER" })).rejects.toThrow(/Use quorum\.recv/);
   });
 
   it("times out with the connection named", async () => {

@@ -299,7 +299,7 @@ fire twelve identical modals (that is click-through training). Design:
   shortcut.
 
 The buried-op attack in full: a shared recipe hides
-`… | foreach` / `- agent.sign SHA256:… namespace=file | rtc.send …` deep in
+`… | foreach` / `- agent.sign SHA256:… namespace=file | quorum.send …` deep in
 a chain. Defenses, in order: the boundary chip is visible in the pipeline
 like any chip (no invisible steps exist in this UI — Source view and chips
 both render every step); the *first* use still asks, naming key, payload,
