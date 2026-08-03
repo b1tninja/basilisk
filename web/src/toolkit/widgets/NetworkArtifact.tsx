@@ -434,8 +434,16 @@ function QualityStats({ data }: { data: any }) {
               loss not measured
             </span>
           )}
+          {/* Named `link`, because a candidate pair counts the *transport*:
+              STUN checks, the DTLS handshake and SCTP setup, not the bytes a
+              recipe sent. Measured — an 11-byte message over a fresh pair
+              reports ~2.2 kB here, so the unlabelled figure read as payload and
+              was wrong by two orders of magnitude. The payload number lives on
+              the data-channel panel, where it is labelled `payload`. Same
+              defect as `loss not measured` one span to the left: a figure that
+              looks like it measures your traffic and measures something else. */}
           <span className="shrink-0 font-mono text-[10px] text-[var(--muted-foreground)]">
-            ↑{fmtBytes(p.bytesSent || 0)} ↓{fmtBytes(p.bytesReceived || 0)}
+            link ↑{fmtBytes(p.bytesSent || 0)} ↓{fmtBytes(p.bytesReceived || 0)}
           </span>
         </Row>
       ))}
@@ -500,6 +508,15 @@ function ChannelStats({ data }: { data: any }) {
               <span>buffered {fmtBytes(p.bufferedAmount || 0)}</span>
               <span>
                 msgs ↑{p.messagesSent || 0} ↓{p.messagesReceived || 0}
+              </span>
+              {/* The bytes a recipe actually moved. `rtc.stats` has read these
+                  off the `data-channel` report since it shipped and nothing
+                  drew them, so the only byte figure on screen was the candidate
+                  pair's — transport, handshake included. Rendering both, each
+                  named, is what makes the two comparable instead of one
+                  standing in for the other. */}
+              <span>
+                payload ↑{fmtBytes(p.bytesSent || 0)} ↓{fmtBytes(p.bytesReceived || 0)}
               </span>
               <span className="ml-auto">{p.ordered === false ? "unordered" : "ordered"}</span>
             </div>

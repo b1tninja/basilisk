@@ -821,8 +821,8 @@ function CatalogApp() {
                 netKind="data-channel"
                 data={{
                   peers: [
-                    { peer: "AABBCCDDEEFF0011", readyState: "open", bufferedAmount: 655360, bufferedAmountLowThreshold: 65535, ordered: true, messagesSent: 42, messagesReceived: 17, backPressured: true },
-                    { peer: "1122334455667788", readyState: "open", bufferedAmount: 0, bufferedAmountLowThreshold: 65535, ordered: false, messagesSent: 3, messagesReceived: 3 },
+                    { peer: "AABBCCDDEEFF0011", readyState: "open", bufferedAmount: 655360, bufferedAmountLowThreshold: 65535, ordered: true, messagesSent: 42, messagesReceived: 17, bytesSent: 719872, bytesReceived: 4148, backPressured: true },
+                    { peer: "1122334455667788", readyState: "open", bufferedAmount: 0, bufferedAmountLowThreshold: 65535, ordered: false, messagesSent: 3, messagesReceived: 3, bytesSent: 33, bytesReceived: 33 },
                   ],
                 }}
               />
