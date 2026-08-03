@@ -7,7 +7,6 @@ import {
   derivePairwiseSessionKey,
   encryptSessionPayload,
   exportEcdhPublicJwk,
-  extractDtlsFingerprint,
   generateEcdhKeyPair,
   importEcdhPublicJwk,
   openSignalingEnvelope,
@@ -16,6 +15,9 @@ import {
   sealSignalingEnvelope,
 } from "../lib/quorum/crypto.js";
 import { deriveRoomId } from "../lib/quorum/room.js";
+// SDP parsing moved to the WebRTC layer with the driver; the *pairing* of two
+// fingerprints stayed here, because that is the transcript's wire format.
+import { extractDtlsFingerprint } from "../lib/webrtc/sdp.js";
 
 describe("extractDtlsFingerprint", () => {
   it("parses a=fingerprint lines", () => {

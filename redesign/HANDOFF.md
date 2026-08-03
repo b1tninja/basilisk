@@ -68,11 +68,30 @@ states being correct.
   whether an op is a WebRTC built-in, and quorum is a *consumer* of WebRTC
   rather than a division of it: design as though quorum did not exist and the
   WebRTC surface must still stand on its own. `lib/webrtc/` is the same
-  statement in code — link registry, ICE defaults, negotiation rule and
-  candidate stats live there and quorum imports them, where previously
-  `lib/toolkit/peer-ops.js` had to import `lib/quorum/` to run an op with no
-  PGP audience in it. `dkg.run` went to `sss`, beside the `vss.*` ops whose
-  Feldman VSS over P-256 it runs.
+  statement in code — link registry, ICE defaults, negotiation rule, candidate
+  stats, SDP parsing **and the peer-connection driver itself** live there and
+  quorum imports them, where previously `lib/toolkit/peer-ops.js` had to import
+  `lib/quorum/` to run an op with no PGP audience in it. `dkg.run` went to
+  `sss`, beside the `vss.*` ops whose Feldman VSS over P-256 it runs.
+
+  **The driver moved, and two earlier commits saying it could not are now
+  wrong — read why before citing them.** `f953fed` §59b and `27a9255` both
+  declined to lift `RTCPeerConnection` construction and negotiation out of
+  `QuorumSession`, on a real objection: `derivePairwiseSessionKey` binds both
+  DTLS fingerprints into the transcript, `peer.localDtls` is minted inside the
+  negotiation handler, and getting the timing subtly wrong makes key
+  confirmation *succeed* over a transcript bound to nothing — green tests,
+  broken binding. That objection was a **proof obligation, not a veto**, and it
+  was discharged rather than waived. `src/test/quorum-dtls-binding.test.js`
+  meshes two real `QuorumSession`s over a fake transport and was watched
+  *failing when tampered* against the untouched code before anything moved: a
+  mailbox that rewrites one peer's fingerprint and re-seals it under that
+  peer's own key — valid signature, right signer, right room — must leave both
+  ends unconfirmed, and stripping the binding turns it green. It was re-run
+  after the move, and against two mutations of the moved code. `lib/quorum/`
+  now drives no WebRTC built-in at all, which `src/test/quorum-layering.test.js`
+  keeps true. **The bar for the next deferral of this shape is the same one:
+  build the oracle, watch it fail, then move.**
 
   **No op was renamed and none should be.** `rtc.*` *is* the spec's prefix —
   `RTCPeerConnection`, `RTCCertificate`, `RTCDataChannel` — so inventing a
@@ -89,7 +108,7 @@ states being correct.
     `rtc.state`/`check`/`stats`/`quality`/`restart` used to open with
     `requireSession()`, so the mesh *was* the definition of "what is connected"
     and they refused outright for anything else. `QuorumSession` registers its
-    peers into `lib/quorum/link-registry.js` now. `getLiveSession()` survives
+    peers into `lib/webrtc/link-registry.js` now. `getLiveSession()` survives
     for the DKG transport and the roster projection; it is no longer how the app
     answers that question.
 

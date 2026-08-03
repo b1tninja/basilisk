@@ -64,13 +64,16 @@ shipped templates describe a flow that cannot complete.
 
 - Lifting negotiation out of `QuorumSession` is deferred, not skipped, and the
   reason is the DTLS-fingerprint transcript binding, whose failure mode is
-  silent and green (§59b).
+  silent and green (§59b). **Since done** — the deferral was a proof obligation
+  and it was discharged, not waived: `src/test/quorum-dtls-binding.test.js` was
+  written and watched fail-when-tampered against the untouched code first, and
+  the driver then moved to `src/lib/webrtc/peer-link.js`.
 - Perfect negotiation's glare handling is not what a hand-carried exchange
   needs; it stays where it is exercised (§59c).
 
-**Open / deferred**: unit 2 (quorum drives the manager); trickle ICE for
-`peer.*`; link persistence across runs; a `peer.*` path in the CLI. Reasons in
-§59b–c.
+**Open / deferred**: trickle ICE for `peer.*`; link persistence across runs; a
+`peer.*` path in the CLI. Reasons in §59c. (Unit 2 — quorum drives the manager
+— is built; §59b.)
 
 ## Conventions
 

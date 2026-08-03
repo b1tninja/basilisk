@@ -374,22 +374,15 @@ export async function decryptSessionPayload(aesKey, blob) {
 }
 
 /**
- * Extract DTLS fingerprint lines from SDP.
- * @param {string} sdp
- * @returns {string}
- */
-export function extractDtlsFingerprint(sdp) {
-  const lines = String(sdp || "").split(/\r?\n/);
-  const fps = [];
-  for (const line of lines) {
-    const m = line.match(/^a=fingerprint:(\S+)\s+(\S+)/i);
-    if (m) fps.push(`${m[1].toLowerCase()} ${m[2].toUpperCase()}`);
-  }
-  return fps.join("|");
-}
-
-/**
  * Canonical pairwise DTLS binding (sorted sides).
+ *
+ * Reading a fingerprint out of SDP is the transport's business and lives in
+ * `lib/webrtc/sdp.js`. Deciding how two of them become one transcript field is
+ * this protocol's: sorted, so both ends of a pair produce the same string
+ * without agreeing on who is who first, and `|`-joined so the field cannot be
+ * split differently by either side. Change this and every session key ever
+ * derived changes with it.
+ *
  * @param {string} a
  * @param {string} b
  * @returns {string}

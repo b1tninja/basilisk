@@ -214,16 +214,24 @@ measured live.
 
 ## Not implemented — remaining scope
 
-- **Unit 2: `QuorumSession` drives the manager.** Designed in §59b, not built,
-  and the reason is not effort. `derivePairwiseSessionKey` binds *both* DTLS
-  fingerprints into the transcript (the RFC 8844 shape), and `peer.localDtls` is
-  extracted from `pc.localDescription.sdp` inside the `onnegotiationneeded`
-  handler. A manager that owns negotiation owns the moment the local fingerprint
-  becomes known, so the key derivation has to be re-plumbed to it — and the
-  failure mode of getting that subtly wrong is *key confirmation succeeding
-  anyway* on a transcript no longer bound to the transport, with every existing
-  test green. Land the registry first, let it hold the mesh's links, then lift
-  negotiation with the transcript binding as the explicit acceptance criterion.
+- ~~**Unit 2: `QuorumSession` drives the manager.**~~ **Built.** The sequencing
+  this entry prescribed is what happened: the registry landed first, held the
+  mesh's links, and negotiation was lifted afterwards with the transcript
+  binding as the explicit acceptance criterion. The driver is
+  `src/lib/webrtc/peer-link.js`; `lib/quorum/` drives no WebRTC built-in and
+  `src/test/quorum-layering.test.js` holds that.
+
+  The acceptance criterion needed two halves rather than one, which is the part
+  worth carrying forward. `src/test/quorum-dtls-binding.test.js` meshes two real
+  sessions over a fake transport and (a) a mailbox that rewrites one peer's
+  fingerprint and re-seals it under that peer's *own* key must leave both ends
+  unconfirmed, and (b) each peer's `localDtls` must equal the fingerprint its
+  own connection minted. (a) alone is not enough: a driver that reports a
+  constant fingerprint to both peers leaves them agreeing, so confirmation
+  succeeds and every tamper assertion still passes. That mutation was run; only
+  (b) caught it. The test was watched failing-when-tampered against the
+  untouched code **before** the move, which is the whole reason the move was
+  defensible.
 - **A cell-level strip for `peer.wait`.** A cell paused inside `peer.wait` has
   no `SessionStrip` — that widget is wired to the quorum exchange only. The
   Connections tab answers "what is live"; nothing answers "what is *this cell*

@@ -20,6 +20,11 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromiumAvailability, openPeers, until } from "../helpers/browser-peers.js";
+// The extracted driver's SDP parser, and the transcript field it feeds. Run in
+// node against descriptions produced by a real engine — the one thing a fake
+// transport can never check.
+import { extractDtlsFingerprint } from "../../lib/webrtc/sdp.js";
+import { combineDtlsFingerprints } from "../../lib/quorum/crypto.js";
 
 const availability = await chromiumAvailability();
 
@@ -280,6 +285,46 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
         return found;
       });
       expect(lossFields).toEqual([]);
+    });
+
+    it("reads the DTLS fingerprint the quorum transcript binds, out of real Chromium SDP", async () => {
+      // `extractDtlsFingerprint` is the one piece of the extracted driver whose
+      // correctness depends on an engine's output rather than on this repo:
+      // every unit test around the binding feeds it SDP a fake minted, which
+      // proves the parser agrees with the fake. This feeds it Chromium's.
+      //
+      // The property is not "it returns something" — a parser that returned ""
+      // for everything would make both ends of a mesh agree on an empty
+      // transcript field and key confirmation would still succeed. So what is
+      // asserted is that each end reads its *own* certificate, that the two
+      // certificates differ, and that both ends read the same value for the
+      // same description whichever side is doing the reading.
+      const descs = {
+        a: await A.page.evaluate(() => ({
+          local: window.__pc.localDescription.sdp,
+          remote: window.__pc.remoteDescription.sdp,
+        })),
+        b: await B.page.evaluate(() => ({
+          local: window.__pc.localDescription.sdp,
+          remote: window.__pc.remoteDescription.sdp,
+        })),
+      };
+      const aLocal = extractDtlsFingerprint(descs.a.local);
+      const bLocal = extractDtlsFingerprint(descs.b.local);
+
+      expect(aLocal).toMatch(/^sha-256 (?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+      expect(bLocal).toMatch(/^sha-256 (?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+      expect(aLocal).not.toBe(bLocal);
+
+      // Each end's view of the other is the other's view of itself. This is the
+      // agreement `combineDtlsFingerprints` then folds into one transcript
+      // field, and it is what a signalling relay cannot forge without both
+      // sides noticing.
+      expect(extractDtlsFingerprint(descs.a.remote)).toBe(bLocal);
+      expect(extractDtlsFingerprint(descs.b.remote)).toBe(aLocal);
+      expect(combineDtlsFingerprints(aLocal, bLocal)).toBe(
+        combineDtlsFingerprints(bLocal, aLocal)
+      );
     });
   });
 

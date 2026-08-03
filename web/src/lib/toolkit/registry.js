@@ -3863,8 +3863,9 @@ export const STEPS = [
   // signed and posted through a relay, and the traffic is encrypted under a
   // pairwise key `derivePairwiseSessionKey` mints over a transcript binding
   // both DTLS fingerprints. WebRTC is what this layer *uses* — `lib/webrtc/`
-  // holds the link inventory, the ICE defaults and the negotiation rule, and
-  // quorum registers into them the same way `peer.*` does.
+  // holds the link inventory, the ICE defaults, the negotiation rule and the
+  // peer-connection driver itself, and quorum registers into them the same way
+  // `peer.*` does.
   //
   // The names do not change and were never in question: `quorum.send` owns its
   // name because it owns the key (4fe3322). That is a fact about the

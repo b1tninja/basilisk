@@ -5,27 +5,37 @@
  * after verifying that invite. Pairwise session keys use per-peer ephemeral
  * ECDH with transcript-bound HKDF and key confirmation (data-channel PFS).
  *
- * **This module is a consumer of `lib/webrtc/`, not a peer of it.** Four things
- * that are plain WebRTC used to live here or next door, which had the modules
- * implementing the *spec* ops — `lib/toolkit/rtc-ops.js` and `peer-ops.js` —
- * importing from the session layer that is supposed to sit on top of them:
- * the link inventory (`webrtc/link-registry.js`), the default `RTCIceServer[]`
- * (`webrtc/ice.js`), the perfect-negotiation glare rule
- * (`webrtc/negotiation.js`) and the selected-candidate stats read
- * (`webrtc/candidates.js`). Deleting `lib/quorum/` now leaves `peer.*` and
- * `rtc.*` standing.
+ * **This module is a consumer of `lib/webrtc/`, not a peer of it.** No WebRTC
+ * built-in is constructed or driven here. `RTCPeerConnection` construction,
+ * `onnegotiationneeded`, `setLocalDescription`, `setRemoteDescription`,
+ * `addIceCandidate`, `createDataChannel` and `ondatachannel` all live in
+ * `webrtc/peer-link.js`; SDP parsing in `webrtc/sdp.js`; the link inventory,
+ * the default `RTCIceServer[]`, the glare rule and the selected-candidate
+ * stats read in `webrtc/link-registry.js`, `ice.js`, `negotiation.js` and
+ * `candidates.js`. Deleting `lib/quorum/` leaves `peer.*` and `rtc.*` standing.
  *
- * **What deliberately did not move, and why.** The driver itself — the
- * `RTCPeerConnection` construction, `onnegotiationneeded`, `ondatachannel` and
- * everything downstream of them — stays inside `QuorumSession`. It is not
- * separable on safety grounds rather than on effort: `derivePairwiseSessionKey`
- * binds **both DTLS fingerprints** into the transcript, and `peer.localDtls` is
- * assigned from the local description *inside* the negotiation handler. Moving
- * negotiation moves the instant that fingerprint becomes known, and the failure
- * mode of getting it subtly wrong is key confirmation *succeeding anyway* over
- * a transcript no longer bound to the transport — green tests, broken binding.
- * Extracting the driver needs its own pass with that property as the thing
- * being demonstrated, not a suite run (§59b).
+ * What stays is the protocol: the PGP audience, the signed invite, the relay,
+ * the room, the roster, key derivation, key confirmation, and the mesh policy
+ * that decides *which* links exist and who offers. The one piece of transport
+ * this layer still touches directly is a live data channel's `send` and
+ * `readyState` — because the frames on it are quorum's own, sealed under a key
+ * this layer holds and the transport cannot read.
+ *
+ * **Why the driver could move, after two commits said it could not.**
+ * `derivePairwiseSessionKey` binds **both DTLS fingerprints** into the
+ * transcript, and the local one is minted from the local description *inside*
+ * negotiation. Moving negotiation moves the instant that fingerprint becomes
+ * known, and the failure mode of getting it subtly wrong is key confirmation
+ * *succeeding anyway* over a transcript no longer bound to the transport —
+ * green tests, broken binding (§59b). What made it safe was not care: it was
+ * `src/test/quorum-dtls-binding.test.js`, a test that **fails when tampered**.
+ * Two real sessions mesh over a fake transport; a signalling relay rewrites one
+ * peer's fingerprint and re-seals under that peer's own key, so nothing in the
+ * PGP layer can see it; both ends must end up unconfirmed. That test was
+ * written and watched fail-when-tampered *before* the extraction, and it holds
+ * the driver's return contract in place afterwards: `openPeerLink` and
+ * `answerRemoteOffer` hand back `{ sdp, dtlsFingerprint }` together, so an SDP
+ * cannot be signalled without the fingerprint that belongs to it.
  *
  * @module lib/quorum/rtc
  */
@@ -38,7 +48,6 @@ import {
   decryptSessionPayload,
   encryptSessionPayload,
   exportEcdhPublicJwk,
-  extractDtlsFingerprint,
   fetchAudienceKeys,
   generateEcdhKeyPair,
   importEcdhPublicJwk,
@@ -58,7 +67,14 @@ import {
   registerLink,
 } from "../webrtc/link-registry.js";
 import { DEFAULT_ICE_SERVERS } from "../webrtc/ice.js";
-import { offerCollisionAction } from "../webrtc/negotiation.js";
+import {
+  addRemoteCandidate,
+  answerRemoteOffer,
+  applyRemoteAnswer,
+  closePeerLink,
+  isPeerLinkLive,
+  openPeerLink,
+} from "../webrtc/peer-link.js";
 
 /**
  * @typedef {object} QuorumPeerState
@@ -202,11 +218,7 @@ export class QuorumSession {
       } catch (_) {
         /* ignore */
       }
-      try {
-        peer.pc?.close();
-      } catch (_) {
-        /* ignore */
-      }
+      closePeerLink(peer.pc);
       peer.channel = null;
       peer.pc = null;
       peer.sessionKey = null;
@@ -412,28 +424,34 @@ export class QuorumSession {
       const p = this.peers.get(signerFpr);
       const pc = p?.pc;
       if (!pc || !p) return;
-      // Perfect negotiation: on glare the impolite peer drops the incoming
-      // offer (its own is in flight and will win); the polite peer accepts —
-      // setRemoteDescription rolls its pending local offer back implicitly.
-      p.ignoreOffer =
-        offerCollisionAction({
+      p.ignoreOffer = false;
+      /** @type {import("../webrtc/peer-link.js").LocalDescriptionFacts|null} */
+      let answer = null;
+      try {
+        answer = await answerRemoteOffer(pc, {
+          sdp: payload.sdp,
           polite: p.polite,
           makingOffer: p.makingOffer,
-          signalingState: pc.signalingState,
-        }) === "ignore";
-      if (p.ignoreOffer) return;
-      try {
-        await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
-        await pc.setLocalDescription();
+        });
       } catch (err) {
         this.onError?.(err instanceof Error ? err : new Error(String(err)));
         return;
       }
-      p.localDtls = extractDtlsFingerprint(pc.localDescription?.sdp || "");
+      // Glare: our own offer is in flight and wins. Remembered because the
+      // candidates for the offer we just dropped will fail on arrival, by
+      // design.
+      if (!answer) {
+        p.ignoreOffer = true;
+        return;
+      }
+      // The answer SDP and the fingerprint of the description it came from
+      // arrive together and are signalled together — a peer that ever sent one
+      // without the other would be claiming a transport it is not using.
+      p.localDtls = answer.dtlsFingerprint;
       const local = await this._ensureLocalEcdh(signerFpr);
       await this._sendTo(signerFpr, {
         type: "answer",
-        sdp: pc.localDescription?.sdp || "",
+        sdp: answer.sdp,
         dtlsFingerprint: p.localDtls,
         ecdhPublicJwk: local.jwk,
         helloNonce: local.helloNonce,
@@ -448,11 +466,10 @@ export class QuorumSession {
       const p = this.peers.get(signerFpr);
       const pc = p?.pc;
       if (!pc || !p) return;
-      // An answer to an offer we rolled back arrives in a state that cannot
-      // take it — stale by construction, dropped rather than surfaced.
-      if (pc.signalingState !== "have-local-offer") return;
       try {
-        await pc.setRemoteDescription({ type: "answer", sdp: payload.sdp });
+        // An answer to an offer we rolled back arrives in a state that cannot
+        // take it — stale by construction, dropped rather than surfaced.
+        if (!(await applyRemoteAnswer(pc, payload.sdp))) return;
       } catch (err) {
         this.onError?.(err instanceof Error ? err : new Error(String(err)));
         return;
@@ -468,7 +485,7 @@ export class QuorumSession {
       const pc = p?.pc;
       if (!pc) return;
       try {
-        await pc.addIceCandidate(payload.candidate);
+        await addRemoteCandidate(pc, payload.candidate);
       } catch (err) {
         // Candidates for an offer we deliberately ignored fail by design.
         if (p?.ignoreOffer) return;
@@ -593,8 +610,53 @@ export class QuorumSession {
     if (!peer) return;
     if (peer.pc) return;
     const local = await this._ensureLocalEcdh(peerFpr);
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    peer.pc = pc;
+    // The transport is the driver's; what it is *for* is this layer's. Every
+    // callback below is either identity (which peer), protocol (what rides the
+    // signalling envelope) or projection (the roster) — none of it is WebRTC,
+    // and none of the WebRTC is here.
+    const link = openPeerLink({
+      iceServers: this.iceServers,
+      onIceCandidate: (candidate) => {
+        void this._sendTo(peerFpr, {
+          type: "ice",
+          candidate,
+          ecdhPublicJwk: local.jwk,
+          helloNonce: local.helloNonce,
+        });
+      },
+      onMakingOffer: (making) => {
+        peer.makingOffer = making;
+      },
+      // The offer and the fingerprint of the description it was made from
+      // arrive in one object, and this is the only place `localDtls` is set on
+      // the offering side. There is no window in which an offer has been
+      // signalled but the transcript does not yet know what transport it
+      // committed to — that ordering is what the DTLS binding rests on.
+      onLocalOffer: async ({ sdp, dtlsFingerprint }) => {
+        peer.localDtls = dtlsFingerprint;
+        await this._sendTo(peerFpr, {
+          type: "offer",
+          sdp,
+          dtlsFingerprint,
+          ecdhPublicJwk: local.jwk,
+          helloNonce: local.helloNonce,
+        });
+      },
+      onConnectionState: (st) => {
+        if (st === "connected") {
+          if (!peer.kcVerified) peer.status = "connecting";
+          else peer.status = "connected";
+        } else if (st === "failed" || st === "closed" || st === "disconnected") {
+          peer.status = st === "failed" ? "failed" : peer.status;
+        }
+        this._emitRoster();
+      },
+      onDataChannel: (channel) => {
+        this._wireChannel(peerFpr, channel);
+      },
+      onError: (err) => this.onError?.(err),
+    });
+    peer.pc = link.pc;
     peer.status = "connecting";
     // Into the shared inventory (§57a). The registry reads `pc`/`channel`
     // *through* this peer record rather than copying them, which is why
@@ -602,10 +664,9 @@ export class QuorumSession {
     // assigns it later and `ondatachannel` may replace it, and a copied field
     // would go stale in the direction that reads as "connected, no channel".
     //
-    // Nothing about negotiation, key derivation or key confirmation moves. What
-    // the mesh gives up is being the sole answer to "what is connected", which
-    // it was never the right owner of: the five `rtc.*` diagnostics used to
-    // refuse outright for any connection made another way.
+    // What the mesh gives up is being the sole answer to "what is connected",
+    // which it was never the right owner of: the five `rtc.*` diagnostics used
+    // to refuse outright for any connection made another way.
     registerLink({
       id: peerFpr,
       origin: "quorum",
@@ -616,57 +677,9 @@ export class QuorumSession {
     });
     this._emitRoster();
 
-    pc.onicecandidate = (ev) => {
-      if (!ev.candidate) return;
-      void this._sendTo(peerFpr, {
-        type: "ice",
-        candidate: ev.candidate.toJSON(),
-        ecdhPublicJwk: local.jwk,
-        helloNonce: local.helloNonce,
-      });
-    };
-    // One offer path for both the first negotiation and every renegotiation:
-    // creating the data channel below trips this, and so does restartIce()
-    // (which previously went nowhere — no handler meant no new offer, so
-    // "Restart connection" only ever cleared flags). No-arg
-    // setLocalDescription picks offer-or-answer from signalingState itself.
-    pc.onnegotiationneeded = async () => {
-      try {
-        peer.makingOffer = true;
-        await pc.setLocalDescription();
-        peer.localDtls = extractDtlsFingerprint(pc.localDescription?.sdp || "");
-        await this._sendTo(peerFpr, {
-          type: "offer",
-          sdp: pc.localDescription?.sdp || "",
-          dtlsFingerprint: peer.localDtls,
-          ecdhPublicJwk: local.jwk,
-          helloNonce: local.helloNonce,
-        });
-      } catch (err) {
-        this.onError?.(err instanceof Error ? err : new Error(String(err)));
-      } finally {
-        peer.makingOffer = false;
-      }
-    };
-    pc.onconnectionstatechange = () => {
-      const st = pc.connectionState;
-      if (st === "connected") {
-        if (!peer.kcVerified) peer.status = "connecting";
-        else peer.status = "connected";
-      } else if (st === "failed" || st === "closed" || st === "disconnected") {
-        peer.status = st === "failed" ? "failed" : peer.status;
-      }
-      this._emitRoster();
-    };
-    pc.ondatachannel = (ev) => {
-      this._wireChannel(peerFpr, ev.channel);
-    };
-
-    if (asOfferer) {
-      // The offer itself rides onnegotiationneeded, which this trips.
-      const channel = pc.createDataChannel("quorum", { ordered: true });
-      this._wireChannel(peerFpr, channel);
-    }
+    // Creating the channel is what starts negotiation, so it goes last —
+    // after the connection is in the inventory and the roster has been told.
+    if (asOfferer) link.openDataChannel("quorum");
   }
 
   /**
@@ -875,13 +888,10 @@ export class QuorumSession {
     const direct = this.peers.get(toFpr);
     // Direct link: any open channel on a *live* connection will do —
     // pre-verification traffic is exactly what signaling is, and the envelope
-    // carries its own proof. The connectionState check matters during ICE
-    // failure: a dying channel still reads "open" and would swallow the very
-    // restart offer meant to revive it — that case must reach the mailbox.
-    if (
-      direct?.channel?.readyState === "open" &&
-      direct.pc?.connectionState === "connected"
-    ) {
+    // carries its own proof. The liveness check matters during ICE failure: a
+    // dying channel still reads "open" and would swallow the very restart offer
+    // meant to revive it — that case must reach the mailbox.
+    if (direct?.channel?.readyState === "open" && isPeerLinkLive(direct.pc)) {
       try {
         direct.channel.send(frame);
         return true;
@@ -894,11 +904,7 @@ export class QuorumSession {
     let sent = false;
     for (const [fpr, p] of this.peers) {
       if (fpr === toFpr) continue;
-      if (
-        p.channel?.readyState === "open" &&
-        p.kcVerified &&
-        p.pc?.connectionState === "connected"
-      ) {
+      if (p.channel?.readyState === "open" && p.kcVerified && isPeerLinkLive(p.pc)) {
         try {
           p.channel.send(frame);
           sent = true;

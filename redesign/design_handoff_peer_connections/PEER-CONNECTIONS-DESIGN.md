@@ -465,9 +465,49 @@ buy little and cost a `prefers-reduced-motion` rule.
 7. e2e: two real browsers, an offer carried between them through the ops, ICE
    state transitions, nominated pair, bytes through the channel.
 
-### §59b Unit 2 — designed, not built
+### §59b Unit 2 — built, after the proof obligation below was discharged
 
 **`QuorumSession` drives the manager instead of owning `RTCPeerConnection`s.**
+
+> **Status: done.** The driver is `src/lib/webrtc/peer-link.js` and the SDP
+> parser is `src/lib/webrtc/sdp.js`. `lib/quorum/` constructs no
+> `RTCPeerConnection`, wires no negotiation handler and calls no
+> `set*Description` / `addIceCandidate` / `createDataChannel`;
+> `src/test/quorum-layering.test.js` asserts that against the source, with
+> comments stripped, so it cannot decay back.
+>
+> **The deferral below was right, and it is preserved because the reasoning is
+> what mattered — not the conclusion.** What it identified was a proof
+> obligation, and the obligation was met rather than waived. Read it as the
+> standard, not as a closed door.
+>
+> **What made it safe.** `src/test/quorum-dtls-binding.test.js`: two real
+> `QuorumSession`s mesh over a fake transport, with real OpenPGP keys, real
+> sealed envelopes, real ECDH and real key confirmation. The mailbox opens each
+> envelope, rewrites one peer's `dtlsFingerprint`, and **re-seals it with that
+> peer's own private key** — correct signer, correct room, correct audience,
+> valid signature, so nothing in the PGP layer can see it. The DTLS binding is
+> the only check that can, and both ends must end up unconfirmed.
+>
+> The order was the point. That test was written and **watched fail when
+> tampered against the untouched code, before anything moved**. Then it was
+> re-run after the move, and against two mutations of the moved driver. One
+> mutation is worth naming, because it is exactly the failure this section
+> feared: a driver that reports a *constant* fingerprint instead of the
+> transport's leaves both peers agreeing, so key confirmation **succeeds** and
+> every tamper assertion still passes. It is caught only by the separate
+> provenance assertion — that each peer's `localDtls` equals the fingerprint its
+> own connection minted. A tamper test alone would not have found it.
+>
+> The contract that keeps it true is in the driver's shape rather than in care:
+> `openPeerLink` and `answerRemoteOffer` return `{ sdp, dtlsFingerprint }`
+> **together**, read from the same description in the same expression, and there
+> is no other way to obtain either. A caller cannot signal an SDP without the
+> fingerprint that belongs to it.
+>
+> The transcript itself is pinned to its bytes by a golden vector over fixed
+> P-256 keys and fixed nonces — hash *and* derived key material — so a change to
+> the salt/info construction can never pass as a refactor.
 
 Deferred deliberately, and the reason is not effort. `QuorumSession`'s
 negotiation is entangled with its cryptography in a way that is correct and
@@ -484,6 +524,11 @@ The right sequencing is: land the registry, let it hold the mesh's links for a
 while, and lift negotiation afterwards with the transcript binding as the
 explicit acceptance criterion. A reviewed design plus that split is a better
 outcome than a half-lifted mesh.
+
+*(That sequencing is what happened. The "explicit acceptance criterion" turned
+out to need two halves, not one: a tamper test that must fail, **and** a
+provenance assertion that each side's fingerprint is its own transport's. The
+first alone is satisfied by a driver that lies consistently to both peers.)*
 
 ### §59c Deliberately not built, with reasons
 

@@ -33,6 +33,14 @@ confirmation that succeeds on a transcript no longer bound to the transport —
 with every existing test still green. Argued in §59b; the registry is the seam
 that lift would be built on, and it is what unit 1 lands.
 
+> **Later note — the lift happened, in that order.** The registry landed first;
+> negotiation moved to `src/lib/webrtc/peer-link.js` afterwards, once
+> `src/test/quorum-dtls-binding.test.js` existed and had been watched *failing
+> when tampered* against the untouched code. The brief's instinct was right and
+> its sequencing was wrong; this section's correction is what made the eventual
+> lift provable rather than hopeful. See §59b for what the acceptance criterion
+> turned out to require.
+
 **Perfect negotiation is also not what the hand-carried flow needs.** Glare is
 simultaneous offers on a persistent signalling channel. Carrying a blob between
 two browsers by hand is turn-taking by construction. The polite/impolite rule

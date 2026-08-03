@@ -44,7 +44,8 @@ are separate questions — see the note below, and `HANDOFF.md`.
 **`lib/webrtc/` now exists, and quorum consumes it.** Four things that are plain
 WebRTC were inside the session layer, which had `lib/toolkit/rtc-ops.js` and
 `peer-ops.js` — the modules implementing the *spec* ops — importing from the
-layer that is supposed to sit on top of them:
+layer that is supposed to sit on top of them (the driver and the SDP parser
+followed in a later pass; see the correction below the table):
 
 | Moved | From | Why it is not quorum's |
 |---|---|---|
@@ -55,15 +56,40 @@ layer that is supposed to sit on top of them:
 
 Delete `lib/quorum/` and `peer.*`/`rtc.*` still stand, which is the test.
 
-**What was deliberately not extracted.** The driver — `RTCPeerConnection`
-construction, `onnegotiationneeded`, `ondatachannel` and everything downstream
-— stays inside `QuorumSession`. Not effort: `derivePairwiseSessionKey` binds
-**both DTLS fingerprints** into the transcript and `peer.localDtls` is assigned
-from the local description *inside* the negotiation handler, so moving
-negotiation moves the instant that fingerprint becomes known. The failure mode
-of getting it subtly wrong is key confirmation **succeeding anyway** over a
-transcript no longer bound to the transport — green tests, broken binding. That
-extraction needs its own pass with the binding as the thing demonstrated (§59b).
+**What was deliberately not extracted *in this pass*.** The driver —
+`RTCPeerConnection` construction, `onnegotiationneeded`, `ondatachannel` and
+everything downstream — stayed inside `QuorumSession`. Not effort:
+`derivePairwiseSessionKey` binds **both DTLS fingerprints** into the transcript
+and `peer.localDtls` is assigned from the local description *inside* the
+negotiation handler, so moving negotiation moves the instant that fingerprint
+becomes known. The failure mode of getting it subtly wrong is key confirmation
+**succeeding anyway** over a transcript no longer bound to the transport — green
+tests, broken binding. That extraction needed its own pass with the binding as
+the thing demonstrated (§59b).
+
+> **That pass has since happened, and the table above is incomplete.** Two more
+> modules moved out of `lib/quorum/`:
+>
+> | Moved | From | Why it is not quorum's |
+> |---|---|---|
+> | `peer-link.js` | `lib/quorum/rtc.js` | The driver: `new RTCPeerConnection`, `onnegotiationneeded`, `set*Description`, `addIceCandidate`, `createDataChannel`, `ondatachannel` |
+> | `sdp.js` (`extractDtlsFingerprint`) | `lib/quorum/crypto.js` | Parsing `a=fingerprint:` is a fact about the description format. `combineDtlsFingerprints` stayed — *joining* two of them is the transcript's wire format |
+>
+> `lib/quorum/` now drives no WebRTC built-in at all, asserted against the
+> source (comments stripped) by `src/test/quorum-layering.test.js`. The line
+> drawn is construction and negotiation, not use: writing a quorum data channel
+> stays in quorum, because those frames are sealed under a key only that layer
+> holds — the same line commit 4fe3322 drew for the ops.
+>
+> **What made it safe, since "the tests pass" could not be the demonstration.**
+> `src/test/quorum-dtls-binding.test.js` was written first and watched *failing
+> when tampered against the untouched code*: two real `QuorumSession`s mesh over
+> a fake transport, a mailbox rewrites one peer's fingerprint and re-seals it
+> under that peer's own key, and both ends must end up unconfirmed. It was
+> re-run after the move, and against mutations of the moved driver — including
+> the one this section feared, where a constant fingerprint leaves both peers
+> agreeing and confirmation *succeeds*. That one is caught only by the separate
+> assertion that each peer's `localDtls` is its own transport's fingerprint.
 
 **The op names in the design turns are not the shipped names.** The camelCase
 originals were shortened during implementation; a reader following the design
