@@ -446,18 +446,24 @@ function CatalogApp() {
             Non-DATA outputs — the mark appears only here.
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
+            {/* Toolbox is per-entry, not a constant on the chip: `quorum.offer`
+                is the quorum toolbox and paints purple, while its neighbours
+                are WebRTC and paint blue. It was hardcoded `webrtc` for all
+                four, which drew the mesh op in the wrong identity colour the
+                moment quorum became its own category — and `rtc.open` had not
+                existed for several turns. */}
             {[
-              { name: "rtc.gather", output: "candidate" },
-              { name: "quorum.offer", output: "session" },
-              { name: "rtc.open", output: "channel" },
-              { name: "rtc.state", output: "connstate" },
+              { name: "rtc.gather", output: "candidate", toolbox: "webrtc" },
+              { name: "quorum.offer", output: "session", toolbox: "quorum" },
+              { name: "peer.wait", output: "channel", toolbox: "webrtc" },
+              { name: "rtc.state", output: "connstate", toolbox: "webrtc" },
             ].map((o) => (
               <SuggestChip
                 key={o.name}
                 label={o.name}
                 hint={o.output}
                 variant="placed"
-                op={{ toolbox: "webrtc", name: o.name, output: o.output }}
+                op={{ toolbox: o.toolbox, name: o.name, output: o.output }}
               />
             ))}
           </div>

@@ -16,9 +16,11 @@
  * @module lib/toolkit/quorum-ops
  */
 
-import { QuorumSession, DEFAULT_ICE_SERVERS } from "../quorum/rtc.js";
+import { QuorumSession } from "../quorum/rtc.js";
+import { DEFAULT_ICE_SERVERS } from "../webrtc/ice.js";
 import { deriveRoomId, canonicalAudience } from "../quorum/room.js";
-import { projectRosterPeers, selectedCandidateType } from "../quorum/roster.js";
+import { projectRosterPeers } from "../quorum/roster.js";
+import { selectedCandidateType } from "../webrtc/candidates.js";
 import { DKG_COMMIT, DKG_SHARE } from "../quorum/dkg-run.js";
 import { idFromFingerprint, scalarToHex } from "../quorum/vss.js";
 

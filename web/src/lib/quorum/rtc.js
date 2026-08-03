@@ -4,6 +4,29 @@
  * Creators post a PGP-signed invite proving key possession; joiners mesh only
  * after verifying that invite. Pairwise session keys use per-peer ephemeral
  * ECDH with transcript-bound HKDF and key confirmation (data-channel PFS).
+ *
+ * **This module is a consumer of `lib/webrtc/`, not a peer of it.** Four things
+ * that are plain WebRTC used to live here or next door, which had the modules
+ * implementing the *spec* ops — `lib/toolkit/rtc-ops.js` and `peer-ops.js` —
+ * importing from the session layer that is supposed to sit on top of them:
+ * the link inventory (`webrtc/link-registry.js`), the default `RTCIceServer[]`
+ * (`webrtc/ice.js`), the perfect-negotiation glare rule
+ * (`webrtc/negotiation.js`) and the selected-candidate stats read
+ * (`webrtc/candidates.js`). Deleting `lib/quorum/` now leaves `peer.*` and
+ * `rtc.*` standing.
+ *
+ * **What deliberately did not move, and why.** The driver itself — the
+ * `RTCPeerConnection` construction, `onnegotiationneeded`, `ondatachannel` and
+ * everything downstream of them — stays inside `QuorumSession`. It is not
+ * separable on safety grounds rather than on effort: `derivePairwiseSessionKey`
+ * binds **both DTLS fingerprints** into the transcript, and `peer.localDtls` is
+ * assigned from the local description *inside* the negotiation handler. Moving
+ * negotiation moves the instant that fingerprint becomes known, and the failure
+ * mode of getting it subtly wrong is key confirmation *succeeding anyway* over
+ * a transcript no longer bound to the transport — green tests, broken binding.
+ * Extracting the driver needs its own pass with that property as the thing
+ * being demonstrated, not a suite run (§59b).
+ *
  * @module lib/quorum/rtc
  */
 
@@ -25,16 +48,17 @@ import {
   sealSignalingEnvelope,
 } from "./crypto.js";
 import { canonicalAudience, isValidRoomId } from "./room.js";
-import { deregisterLink, patchLink, registerLink } from "./link-registry.js";
 import { classifyChannelFrame, createSeenSet, shouldRelay } from "./relay.js";
 import { postSignaling, startSignalingPoll } from "./signaling.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
-
-export const DEFAULT_ICE_SERVERS = [
-  { urls: "stun:stun.cloudflare.com:3478" },
-  { urls: "stun:stun.l.google.com:19302" },
-];
+import {
+  deregisterLink,
+  patchLink,
+  registerLink,
+} from "../webrtc/link-registry.js";
+import { DEFAULT_ICE_SERVERS } from "../webrtc/ice.js";
+import { offerCollisionAction } from "../webrtc/negotiation.js";
 
 /**
  * @typedef {object} QuorumPeerState
@@ -59,26 +83,6 @@ export const DEFAULT_ICE_SERVERS = [
  * @property {boolean} makingOffer
  * @property {boolean} ignoreOffer
  */
-
-/**
- * Perfect-negotiation collision rule (MDN pattern), pure so it is testable
- * without an RTCPeerConnection. A collision is an incoming offer while we are
- * mid-offer ourselves or otherwise not stable; the impolite peer ignores it,
- * the polite peer accepts (its own offer rolls back implicitly inside
- * `setRemoteDescription`).
- *
- * Politeness is assigned without coordination — each pair compares stable
- * identifiers and the lexicographically lower fingerprint is polite. Both
- * sides compute the same answer independently, which is the property that
- * makes this work with no negotiation about who negotiates.
- *
- * @param {{ polite: boolean, makingOffer: boolean, signalingState: string }} x
- * @returns {"accept"|"ignore"}
- */
-export function offerCollisionAction({ polite, makingOffer, signalingState }) {
-  const collision = makingOffer || signalingState !== "stable";
-  return !polite && collision ? "ignore" : "accept";
-}
 
 /**
  * @typedef {object} QuorumSessionOpts

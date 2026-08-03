@@ -23,7 +23,7 @@ import {
   patchLink,
   registerLink,
   restartLink,
-} from "../lib/quorum/link-registry.js";
+} from "../lib/webrtc/link-registry.js";
 import { linkOriginNote } from "../lib/toolkit/artifact-readouts.js";
 import {
   ACCEPT_NOT_AN_ANSWER,

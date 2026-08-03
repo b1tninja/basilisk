@@ -67,7 +67,7 @@ const fakeHolder = () => ({
 });
 
 const { closeLinksByOrigin, registerLink, __resetLinks } = await import(
-  "../lib/quorum/link-registry.js"
+  "../lib/webrtc/link-registry.js"
 );
 
 const { compileRecipe } = await import("../lib/toolkit/recipe.js");

@@ -14,10 +14,56 @@ was verified individually rather than swept.
 
 ## Landed — the ops layer
 
-All 17 WebRTC ops are registered, dispatched, and verified against real browser
+All 16 WebRTC ops are registered, dispatched, and verified against real browser
 WebRTC APIs. `lib/toolkit/rtc-ops.js` is the module; `quorum-ops.js` has a
 `getLiveSession()` accessor so the diagnostic ops can read live transports
 without importing the mesh.
+
+**The `quorum` toolbox is back, and this doc's own §8 is why.** For several
+turns the count above read 22, because an earlier pass renamed the `quorum`
+toolbox to `webrtc` "so all the ops live in one category" — a spec-named drawer
+absorbing a Basilisk-specific one. That put `quorum.offer`, `quorum.join`,
+`quorum.close`, `quorum.send`, `quorum.recv` and `dkg.run` under a header
+claiming they were WebRTC. `WEBRTC-TOOLBOX.md` §8 had already ruled on this
+before the code was written — it is titled *"not an MDN section — a
+Basilisk-specific fit"* — and the registry simply had not followed. The test is
+now whether an op is a WebRTC built-in:
+
+| Op | Now in | Because |
+|---|---|---|
+| `quorum.offer` / `quorum.join` / `quorum.close` | `quorum` toolbox, **Exchange** shelf | A room derived from an OpenPGP audience and a signed invite posted through a relay is not in any WebRTC specification |
+| `quorum.send` / `quorum.recv` | `quorum` toolbox, **Data channel** shelf | Encrypted under the pairwise session key; the shelf is deliberately the same one `peer.send`/`peer.recv` are on, so the two send verbs keep one header and one mark |
+| `dkg.run` | `sss` toolbox, **Split** shelf | Feldman VSS over P-256 — the same scheme and curve as the four `vss.*` ops it now sits with. A live exchange is its *transport*, and transport is not a filing rule: `rtc.check`/`state`/`stats`/`quality`/`restart` all need one and are WebRTC regardless |
+
+**No op was renamed.** `rtc.*` is the specification's own prefix
+(`RTCPeerConnection`, `RTCCertificate`, `RTCDataChannel`), `peer.*` names that
+central object, and `stun.check` is a gather against a STUN server; there is no
+`webrtc.*` namespace and `step-names.js` was not touched. Namespace and toolbox
+are separate questions — see the note below, and `HANDOFF.md`.
+
+**`lib/webrtc/` now exists, and quorum consumes it.** Four things that are plain
+WebRTC were inside the session layer, which had `lib/toolkit/rtc-ops.js` and
+`peer-ops.js` — the modules implementing the *spec* ops — importing from the
+layer that is supposed to sit on top of them:
+
+| Moved | From | Why it is not quorum's |
+|---|---|---|
+| `link-registry.js` | `lib/quorum/` | An inventory of `RTCPeerConnection`s. Holds no fingerprint, derives no key, drives no negotiation |
+| `DEFAULT_ICE_SERVERS` → `webrtc/ice.js` | `lib/quorum/rtc.js` | An `RTCIceServer[]` |
+| `offerCollisionAction` → `webrtc/negotiation.js` | `lib/quorum/rtc.js` | The MDN perfect-negotiation glare rule, already pure |
+| `selectedCandidateType` → `webrtc/candidates.js` | `lib/quorum/roster.js` | A `getStats()` read that knows which engines omit the `transport` stat |
+
+Delete `lib/quorum/` and `peer.*`/`rtc.*` still stand, which is the test.
+
+**What was deliberately not extracted.** The driver — `RTCPeerConnection`
+construction, `onnegotiationneeded`, `ondatachannel` and everything downstream
+— stays inside `QuorumSession`. Not effort: `derivePairwiseSessionKey` binds
+**both DTLS fingerprints** into the transcript and `peer.localDtls` is assigned
+from the local description *inside* the negotiation handler, so moving
+negotiation moves the instant that fingerprint becomes known. The failure mode
+of getting it subtly wrong is key confirmation **succeeding anyway** over a
+transcript no longer bound to the transport — green tests, broken binding. That
+extraction needs its own pass with the binding as the thing demonstrated (§59b).
 
 **The op names in the design turns are not the shipped names.** The camelCase
 originals were shortened during implementation; a reader following the design
@@ -47,6 +93,12 @@ them to `peer.*` links for exactly that reason. The design turn's name was the
 right one and has been restored; `peer.send`/`peer.recv` (§55) are what actually
 deliver "works on any data channel".
 
+That story is about the **name**, and it is settled: `quorum.send` is not
+becoming `rtc.send` a third time. The toolbox move above is a different axis —
+`quorum.send` keeps its name *and* its "Data channel" shelf, and only the
+category header above it changed. Anyone reading the two together should not
+conclude the channel ops are drifting back out of `quorum.*`; they are not.
+
 | Op | Turn | Verified |
 |---|---|---|
 | `rtc.ice` | 23c | ✅ live — STUN and TURN server lists, credential bound to a slot |
@@ -63,9 +115,9 @@ deliver "works on any data channel".
 | `quorum.offer/join/send/recv/close` | 21a | ✅ live between two browser contexts |
 | `dkg.run` | — | ✅ multi-party, but see "mesh" below |
 
-Also landed: **25a** as a real type system (deviation 1), **25b** the four-group
-WebRTC shelf tree (ICE / STUN · Peer & signaling · Data channel · Stats), and
-the `quorum` toolbox renamed to `webrtc`. Values carry *structured* data end to
+Also landed: **25a** as a real type system (deviation 1) and **25b** the
+four-group WebRTC shelf tree (ICE / STUN · Peer & signaling · Data channel ·
+Stats). Values carry *structured* data end to
 end (the `recipients` precedent) — the engine renders them as JSON only at
 `out`, so downstream ops read fields instead of re-parsing strings.
 

@@ -797,6 +797,16 @@
    ]
   },
   {
+   "id": "quorum",
+   "group": "toolbox",
+   "label": "Quorum",
+   "metaphor": "Three nodes closed into a mesh",
+   "description": "Built from webrtc's own vocabulary — the same solid endpoint nodes — with one more node and the span closed into a ring. That is exactly what the layer adds: WebRTC connects two ends, quorum meshes an audience. Also the Exchange shelf's mark, so a toolbox whose first shelf is its lifecycle reads as one thing.",
+   "refs": [
+    "WEBRTC-TOOLBOX.md §8"
+   ]
+  },
+  {
    "id": "peer",
    "group": "shelf",
    "label": "Peer & signaling",

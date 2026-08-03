@@ -62,6 +62,23 @@ states being correct.
   made them, so two browsers can connect with no PGP audience and no relay;
   `peer.send`/`peer.recv` are its raw verbs, DTLS and nothing else.
 
+  **The drawer now matches the layering, and this is a second axis — read it
+  as one.** `rtc.*`, `peer.*` and `stun.check` are the `webrtc` toolbox; the
+  five `quorum.*` ops are the `quorum` toolbox directly beneath it. The test is
+  whether an op is a WebRTC built-in, and quorum is a *consumer* of WebRTC
+  rather than a division of it: design as though quorum did not exist and the
+  WebRTC surface must still stand on its own. `lib/webrtc/` is the same
+  statement in code — link registry, ICE defaults, negotiation rule and
+  candidate stats live there and quorum imports them, where previously
+  `lib/toolkit/peer-ops.js` had to import `lib/quorum/` to run an op with no
+  PGP audience in it. `dkg.run` went to `sss`, beside the `vss.*` ops whose
+  Feldman VSS over P-256 it runs.
+
+  **No op was renamed and none should be.** `rtc.*` *is* the spec's prefix —
+  `RTCPeerConnection`, `RTCCertificate`, `RTCDataChannel` — so inventing a
+  `webrtc.*` namespace would move these names away from the specification's own
+  vocabulary, not toward it. `step-names.js` was untouched.
+
   Two consequences that bite if you do not know them:
 
   - **`rtc.offer`/`rtc.answer` no longer exist.** They are `peer.offer` /
@@ -93,6 +110,18 @@ states being correct.
   for is real and now exists separately: `peer.send`/`peer.recv` are the verbs
   that do work on any managed channel, and their namespace is the warning that
   nothing authenticates the far end.
+
+  **This block is about the op *namespace*. Do not read the toolbox split above
+  as a partial reversal of it.** They answer different questions and the
+  answers point in different directions, which is exactly why conflating them
+  re-derives the wrong lesson. The namespace question is *whose key protects
+  this traffic* — `quorum.send`'s, so it is `quorum.send`, permanently. The
+  toolbox question is *which drawer category does a user look in* — the
+  `webrtc` one is for WebRTC built-ins and a PGP-derived room is not one.
+  `quorum.send` therefore keeps its name **and** its "Data channel" shelf and
+  its two-arrow mark; only the category header above it changed. If a future
+  turn cites the toolbox move as precedent for renaming the channel ops back to
+  `rtc.*`, that is the mistake this paragraph exists to stop.
 - **Types are three-way.** DATA is inert and publishable; HANDLE (`session`,
   `channel`) is a live object meaningful only inside the run that made it;
   OBSERVE (`connstate`, `stats`) is a read-out that can be displayed but never

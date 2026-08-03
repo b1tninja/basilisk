@@ -86,6 +86,7 @@ export const GLYPH_PATHS = {
   "ports": "<path d=\"M4 7h5v6H4zM11 7h5v6h-5z\"/><path d=\"M9 10h2\"/>",
   "pubkey": "<path d=\"M3 9.5l7 4.5 7-4.5\"/><rect x=\"3\" y=\"8\" width=\"14\" height=\"9\" rx=\"1\"/><circle cx=\"10\" cy=\"5\" r=\"2\"/>",
   "qr": "<path d=\"M3.5 3.5h5v5h-5zM11.5 3.5h5v5h-5zM3.5 11.5h5v5h-5z\"/><path d=\"M11.5 11.5h2v2h-2zM14.5 11.5h2v2h-2zM11.5 14.5h2v2h-2zM15 15.5h1.5\"/>",
+  "quorum": "<path d=\"M10 4.6 4.4 14.6h11.2z\"/> <circle cx=\"10\" cy=\"4.6\" r=\"2.2\" fill=\"currentColor\"/> <circle cx=\"4.4\" cy=\"14.6\" r=\"2.2\" fill=\"currentColor\"/> <circle cx=\"15.6\" cy=\"14.6\" r=\"2.2\" fill=\"currentColor\"/>",
   "random": "<path d=\"M4 6h3v3H4zM9 6h3v3H9zM14 6h2v3h-2zM4 11h2v3H4zM8 11h3v3H8zM13 11h3v3h-3z\"/>",
   "recipients": "<circle cx=\"7\" cy=\"7\" r=\"2.2\"/><circle cx=\"13.5\" cy=\"7.5\" r=\"1.8\"/><path d=\"M3.5 15c.6-2.4 2.2-3.5 3.5-3.5s2.9 1.1 3.5 3.5\"/><path d=\"M11.2 14.5c.4-1.6 1.5-2.4 2.3-2.4s1.9.8 2.3 2.4\"/>",
   "recover": "<path d=\"M4 10h5l2-3 2 6 2-3h5\"/><path d=\"M16 6v4h4\"/>",

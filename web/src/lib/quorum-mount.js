@@ -5,7 +5,8 @@ import {
   primaryUidLabel,
 } from "../lib/key-hit.js";
 import { normalizeFingerprintInput, normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
-import { DEFAULT_ICE_SERVERS, QuorumSession } from "../lib/quorum/rtc.js";
+import { QuorumSession } from "../lib/quorum/rtc.js";
+import { DEFAULT_ICE_SERVERS } from "../lib/webrtc/ice.js";
 import {
   requireSelfInAudience,
   unlockPrivateKey,

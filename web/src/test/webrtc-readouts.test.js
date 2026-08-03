@@ -17,6 +17,7 @@ import {
   SDP_CARRY_NOTE,
 } from "../lib/toolkit/artifact-readouts.js";
 import { SHELF_META, TOOLBOX_META, listSteps } from "../lib/toolkit/registry.js";
+import { GLYPH_PATHS } from "../lib/toolkit/glyphs.js";
 
 /** Read a source file with line endings normalised — CI is LF, Windows is CRLF. */
 function source(rel) {
@@ -258,9 +259,6 @@ describe("the WebRTC glyph vocabulary", () => {
     // took the shelf with them — the mark belongs to the shelf, so the rename
     // did not touch it.
     for (const name of [
-      "quorum.offer",
-      "quorum.join",
-      "quorum.close",
       "peer.offer",
       "peer.answer",
       "peer.accept",
@@ -269,9 +267,38 @@ describe("the WebRTC glyph vocabulary", () => {
     ]) {
       expect(byName.get(name)?.glyph, name).toBe("peer");
     }
+    // The three that moved shelves, and therefore marks. This is the cost of
+    // the toolbox split stated as a fact rather than hidden: `glyphIdFor`
+    // resolves op → shelf → toolbox, so filing `quorum.offer` on `exchange`
+    // changes what it wears. The change is in the right direction — `peer` is
+    // two SDP halves addressed at each other, which is not what
+    // `quorum.offer` does; `quorum` is three nodes closed into a mesh, which
+    // is. None of them declares a glyph of its own, so the shelf is still the
+    // single source.
+    for (const name of ["quorum.offer", "quorum.join", "quorum.close"]) {
+      expect(byName.get(name)?.glyph, name).toBe("quorum");
+    }
+    // The pair that did *not* move shelves, which is the whole mitigation for
+    // splitting the toolbox: `quorum.send` and `peer.send` sit in different
+    // categories now but still under the same "Data channel" header wearing
+    // the same two-arrow mark, so the raw-vs-encrypted comparison survives the
+    // move intact.
     for (const name of ["quorum.send", "quorum.recv", "peer.send", "peer.recv"]) {
       expect(byName.get(name)?.glyph, name).toBe("channel");
     }
     expect(registry).not.toMatch(/glyph:\s*"agent",\s*\n\s*doc:/);
+  });
+
+  it("draws the quorum mesh from the webrtc mark's own vocabulary", () => {
+    // A new toolbox needs a mark that is not a recolour of its neighbour's,
+    // and not a borrow from an unrelated shelf. `webrtc` is an open span on
+    // two solid endpoint nodes; `quorum` is the same nodes, one more of them,
+    // and the span closed — which is precisely what the layer adds.
+    expect(TOOLBOX_META.quorum.glyph).toBe("quorum");
+    expect(SHELF_META.exchange.glyph).toBe("quorum");
+    expect(GLYPH_PATHS.quorum).toBeTruthy();
+    expect(GLYPH_PATHS.quorum).not.toBe(GLYPH_PATHS.webrtc);
+    // Three nodes, not two.
+    expect((GLYPH_PATHS.quorum.match(/<circle/g) || []).length).toBe(3);
   });
 });

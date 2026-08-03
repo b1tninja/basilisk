@@ -6,6 +6,14 @@
  * single place the transport's vocabulary ("unknown", kcVerified, …) is
  * translated into the panel's ("new", authenticated, …); if the two drift,
  * fix it here rather than teaching a widget transport terms.
+ *
+ * `selectedCandidateType` used to live here because the roster was its first
+ * caller. It reads `RTCPeerConnection.getStats()` and knows which engines omit
+ * the `transport` stat, which is a fact about browsers rather than about a
+ * quorum roster — and its second caller was `peer.*`, so answering an ICE
+ * question meant importing the mesh's projection module. It is
+ * `lib/webrtc/candidates.js` now.
+ *
  * @module lib/quorum/roster
  */
 
@@ -69,46 +77,3 @@ export function projectRosterPeers(peersByFpr, viaByFpr) {
   return rows;
 }
 
-/**
- * Read which ICE candidate type a live connection actually selected.
- *
- * Best-effort by design: stats shapes differ per engine, and a peer that
- * cannot answer just stays without a `via` badge. Reported as the local
- * candidate's type (`host`/`srflx`/`prflx`/`relay`) — the vocabulary the rest
- * of the toolkit (stun.check, NetworkArtifact) already uses.
- *
- * @param {RTCPeerConnection | null | undefined} pc
- * @returns {Promise<string>} candidate type, or "" when undeterminable
- */
-export async function selectedCandidateType(pc) {
-  if (!pc || typeof pc.getStats !== "function") return "";
-  let report;
-  try {
-    report = await pc.getStats();
-  } catch {
-    return "";
-  }
-  /** @type {Map<string, any>} */
-  const byId = new Map();
-  report.forEach((s) => byId.set(s.id, s));
-  let pair = null;
-  for (const s of byId.values()) {
-    if (s.type === "transport" && s.selectedCandidatePairId) {
-      pair = byId.get(s.selectedCandidatePairId);
-      break;
-    }
-  }
-  if (!pair) {
-    // Firefox has no `transport` stat linking the pair; fall back to the
-    // `selected`/`nominated` flags on the pairs themselves.
-    for (const s of byId.values()) {
-      if (s.type !== "candidate-pair") continue;
-      if (s.selected || (s.nominated && s.state === "succeeded")) {
-        pair = s;
-        break;
-      }
-    }
-  }
-  const local = pair ? byId.get(pair.localCandidateId) : null;
-  return String(local?.candidateType || "");
-}

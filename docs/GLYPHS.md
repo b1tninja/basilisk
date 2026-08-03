@@ -44,6 +44,7 @@ cd web && npm run glyphs
 | `otp` | OTP | Key whose bow is a countdown dial | A TOTP secret is a key that expires. The shank is the `password` shelf glyph's, because the shared secret underneath is the same kind of thing; the bow is a dial with hands and a gap at twelve where the period has run off. Two cues rather than one on purpose — at 16px the gap alone reads as a broken circle and the hands alone read as a plain clock, and it has to stay distinct from `password` right beside it in the drawer. <br><small>RFC 6238 (TOTP)</small> |
 | `jose` | JOSE | Three dot-separated segments | A compact JOSE serialization is header.payload.signature - three blocks with the separators between them, plus the signature spark (jose.sign, jose.verify). <br><small>RFC 7515 - JSON Web Signature</small> |
 | `webrtc` | WebRTC | A span carrying two ends | A connection is a span the two ends stand on: an arch between two solid footings. Not a wire — ICE builds the route, it is not handed one. Distinct from ports (two sockets bridged, the ICE/STUN shelf) because the mass sits in the footings rather than the band. <br><small>W3C WebRTC 1.0</small> |
+| `quorum` | Quorum | Three nodes closed into a mesh | Built from webrtc's own vocabulary — the same solid endpoint nodes — with one more node and the span closed into a ring. That is exactly what the layer adds: WebRTC connects two ends, quorum meshes an audience. Also the Exchange shelf's mark, so a toolbox whose first shelf is its lifecycle reads as one thing. <br><small>WEBRTC-TOOLBOX.md §8</small> |
 
 ## Shelves
 

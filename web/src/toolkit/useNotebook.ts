@@ -58,7 +58,7 @@ export type QuorumPeerRow = {
 /**
  * One managed peer connection — arrives via `basilisk:peer-links` (§57a).
  *
- * Mirrors `linkRow` in `lib/quorum/link-registry.js`, and carries **every**
+ * Mirrors `linkRow` in `lib/webrtc/link-registry.js`, and carries **every**
  * link, mesh ones included: the registry is one inventory precisely so the
  * panel does not have to ask two sources what is connected.
  */

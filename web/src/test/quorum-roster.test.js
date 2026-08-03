@@ -8,11 +8,8 @@
  * transcript-bound key confirmation — either alone is not identity.
  */
 import { describe, expect, it } from "vitest";
-import {
-  projectRosterPeers,
-  selectedCandidateType,
-  shortFpr,
-} from "../lib/quorum/roster.js";
+import { projectRosterPeers, shortFpr } from "../lib/quorum/roster.js";
+import { selectedCandidateType } from "../lib/webrtc/candidates.js";
 
 const FPR_A = "AAAA111122223333444455556666777788889999";
 const FPR_B = "BBBB111122223333444455556666777788889999";

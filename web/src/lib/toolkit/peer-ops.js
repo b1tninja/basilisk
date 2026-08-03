@@ -37,8 +37,8 @@ import {
   normalizeLinkId,
   patchLink,
   registerLink,
-} from "../quorum/link-registry.js";
-import { selectedCandidateType } from "../quorum/roster.js";
+} from "../webrtc/link-registry.js";
+import { selectedCandidateType } from "../webrtc/candidates.js";
 import { connStateReadout } from "./artifact-readouts.js";
 import { resolveIceServers, sdpRole, waitForGathering } from "./rtc-ops.js";
 

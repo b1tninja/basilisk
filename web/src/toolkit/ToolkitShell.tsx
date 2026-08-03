@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { restartLiveIce } from "../lib/toolkit/quorum-ops.js";
-import { closeLink, restartLink } from "../lib/quorum/link-registry.js";
+import { closeLink, restartLink } from "../lib/webrtc/link-registry.js";
 import { setClipboardReadGate } from "../lib/toolkit/clipboard-ops.js";
 import {
   beginApprovalRun,

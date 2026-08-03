@@ -75,8 +75,20 @@ export const BROWSER_CAPABILITIES = {
  * in one of these toolboxes inherits the requirement without an edit here.
  *
  * Only toolboxes that are *uniformly* browser-bound qualify. `webrtc` is (all
- * of it is documented main-thread-only in `quorum-ops.js` / `rtc-ops.js`), and
- * `agent` is (every op reads or writes the IndexedDB key vault). `webauthn` is
+ * of it is documented main-thread-only in `peer-ops.js` / `rtc-ops.js`),
+ * `quorum` is (every op needs a live `RTCPeerConnection` mesh — `quorum-ops.js`
+ * is as main-thread-only as the layer it sits on), and `agent` is (every op
+ * reads or writes the IndexedDB key vault).
+ *
+ * `quorum` is listed separately rather than covered by `webrtc` because the
+ * five ops used to *be* in the `webrtc` toolbox and inherited this rule by
+ * accident of filing. Splitting the drawer would otherwise have silently
+ * demoted them from pre-flight refusal to dispatch interception — still
+ * caught, but only after cells 1..n-1 had already run, which is the exact
+ * half-execution this layer exists to prevent. Nothing in the suite would have
+ * failed.
+ *
+ * `webauthn` is
  * deliberately absent: it also holds pure parsers — `webauthn.attest` decodes
  * pasted attestation bytes and works fine headlessly — so blocking the whole
  * toolbox on a family resemblance would be a lie in the other direction. The
@@ -86,6 +98,7 @@ export const BROWSER_CAPABILITIES = {
  */
 const TOOLBOX_CAPABILITY = {
   webrtc: "webrtc",
+  quorum: "webrtc",
   agent: "storage",
 };
 

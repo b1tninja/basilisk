@@ -98,8 +98,6 @@ const { FakeSession } = vi.hoisted(() => {
 
 vi.mock("../lib/quorum/rtc.js", async (importOriginal) => {
   const actual = await importOriginal();
-  // Only the class is replaced: `DEFAULT_ICE_SERVERS` stays the real list, so
-  // `rtc.ice`'s default is asserted against what ships rather than a copy.
   return { ...actual, QuorumSession: FakeSession };
 });
 
@@ -112,7 +110,10 @@ vi.mock("../lib/quorum/rtc.js", async (importOriginal) => {
 globalThis.window = /** @type {any} */ (new EventTarget());
 
 const q = await import("../lib/toolkit/quorum-ops.js");
-const { DEFAULT_ICE_SERVERS } = await import("../lib/quorum/rtc.js");
+// The real list, from the WebRTC layer the mesh consumes — `rtc.ice`'s
+// default is asserted against what ships rather than a copy, and the mock
+// above cannot reach it.
+const { DEFAULT_ICE_SERVERS } = await import("../lib/webrtc/ice.js");
 const { deriveRoomId } = await import("../lib/quorum/room.js");
 
 /** Enough of an OpenPGP private key for `execQuorumOpen`. */

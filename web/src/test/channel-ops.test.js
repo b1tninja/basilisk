@@ -1,7 +1,7 @@
 /**
- * The data-channel shelf, and the WebRTC toolbox's naming rules.
+ * The data-channel shelf, and two boundaries that are easy to conflate.
  *
- * The boundary being tested: an op lives in the namespace that owns the key it
+ * **The namespace boundary**: an op lives in the namespace that owns the key it
  * uses. `quorum.send`/`quorum.recv` encrypt and decrypt under the pairwise
  * session key `derivePairwiseSessionKey` mints, so they are `quorum.*`;
  * `peer.send`/`peer.recv` write raw bytes to a managed channel protected by
@@ -14,6 +14,18 @@
  * refuse without a live exchange, address peers by PGP fingerprint, and encrypt
  * under a key `lib/quorum/` derives. The payoff claimed for the move — "works
  * on any data channel" — is delivered by `peer.send`/`peer.recv` instead.
+ *
+ * **The toolbox boundary**, which is a different question with a different
+ * answer: which drawer category an op is filed under. The test there is
+ * whether it is a WebRTC built-in. It is not, for every `quorum.*` op — the
+ * room comes from an OpenPGP audience, the invite from a relay — so the five
+ * of them are their own toolbox, sitting on top of WebRTC rather than inside
+ * it. Nothing about that touches their names.
+ *
+ * Conflating the two is how the wrong lesson gets re-derived. "Do not re-split
+ * the channel ops out of `quorum.*`" is about the **name** and still holds
+ * absolutely; `quorum.send` is not becoming `rtc.send` again. Moving it out of
+ * the `webrtc` **toolbox** is not that move, and does not weaken it.
  */
 import { describe, expect, it } from "vitest";
 import { getStep, listSteps } from "../lib/toolkit/registry.js";
@@ -62,9 +74,12 @@ describe("prefix boundary", () => {
 
   it("keeps both send/recv pairs on the Data channel shelf", () => {
     // The shelf names the phase of the errand — getting bytes across a channel
-    // — not the namespace. Giving `quorum.*` its own shelf would split the two
-    // send verbs under different headers in the drawer and change the glyph one
-    // of them inherits, for nothing a user could act on.
+    // — not the namespace, and both pairs are still on it. The shelf key is
+    // what `glyphIdFor` resolves through (op → shelf → toolbox), so keeping it
+    // means `quorum.send` and `peer.send` carry the identical two-arrow mark
+    // under an identical "Data channel" header even though the drawer now
+    // files them one category apart. That parallel is free: SHELF_META is a
+    // global map while the drawer's grouping is per-toolbox.
     for (const name of [
       "quorum.send",
       "quorum.recv",
@@ -73,8 +88,75 @@ describe("prefix boundary", () => {
       "rtc.stats",
     ]) {
       expect(getStep(name)?.shelf, name).toBe("channel");
+    }
+  });
+
+  it("files the exchange in its own toolbox, and leaves the shelf alone", () => {
+    // The toolbox answers a different question from the shelf and from the
+    // namespace. `quorum.send` owns its *name* because it owns the key
+    // (4fe3322, and the header comment above) — that is not in question here
+    // and did not change. What changed is which drawer it is filed in: the
+    // `webrtc` category is for WebRTC built-ins, and a room derived from an
+    // OpenPGP audience is not one.
+    for (const name of ["quorum.offer", "quorum.join", "quorum.close"]) {
+      expect(getStep(name)?.toolbox, name).toBe("quorum");
+      expect(getStep(name)?.shelf, name).toBe("exchange");
+    }
+    for (const name of ["quorum.send", "quorum.recv"]) {
+      expect(getStep(name)?.toolbox, name).toBe("quorum");
+    }
+    for (const name of ["peer.send", "peer.recv", "rtc.stats"]) {
       expect(getStep(name)?.toolbox, name).toBe("webrtc");
     }
+  });
+
+  it("admits only WebRTC built-ins to the WebRTC toolbox", () => {
+    // The criterion, asserted rather than described: every op in the `webrtc`
+    // toolbox wraps something a browser ships. `rtc.*` is the specification's
+    // own prefix (`RTCPeerConnection`, `RTCCertificate`, `RTCDataChannel`),
+    // `peer.*` names that central object, and `stun.check` is a gather against
+    // a STUN server. Nothing else may be filed here — the previous occupants
+    // were five `quorum.*` ops and `dkg.run`, and `WEBRTC-TOOLBOX.md` §8 had
+    // already called that group "not an MDN section".
+    const webrtc = listSteps()
+      .filter((s) => s.toolbox === "webrtc")
+      .map((s) => s.name)
+      .sort();
+    expect(webrtc).toEqual([
+      "peer.accept",
+      "peer.answer",
+      "peer.close",
+      "peer.offer",
+      "peer.recv",
+      "peer.send",
+      "peer.wait",
+      "rtc.certificate",
+      "rtc.check",
+      "rtc.gather",
+      "rtc.ice",
+      "rtc.quality",
+      "rtc.restart",
+      "rtc.state",
+      "rtc.stats",
+      "stun.check",
+    ]);
+    for (const name of webrtc) {
+      expect(name, `${name} is not in a WebRTC namespace`).toMatch(
+        /^(rtc|peer|stun)\./
+      );
+    }
+  });
+
+  it("files dkg.run with the VSS family whose scheme it runs", () => {
+    // It was on the WebRTC toolbox's `peer` shelf because a live exchange is
+    // its transport. Transport is not a filing rule anywhere else here —
+    // `rtc.check`, `rtc.state`, `rtc.stats`, `rtc.quality` and `rtc.restart`
+    // all need one too. What it *is* is Feldman VSS over P-256, which is what
+    // the four `vss.*` ops are, and it was already wearing their mark.
+    const dkg = getStep("dkg.run");
+    expect(dkg?.toolbox).toBe("sss");
+    expect(dkg?.shelf).toBe("split");
+    expect(dkg?.glyph).toBe(getStep("vss.split")?.glyph);
   });
 
   it("retires the transport-layer names rather than aliasing them", () => {

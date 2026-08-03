@@ -19,8 +19,8 @@
  * @module lib/toolkit/rtc-ops
  */
 
-import { DEFAULT_ICE_SERVERS } from "../quorum/rtc.js";
-import { listLinkRows, listLinks } from "../quorum/link-registry.js";
+import { DEFAULT_ICE_SERVERS } from "../webrtc/ice.js";
+import { listLinkRows, listLinks } from "../webrtc/link-registry.js";
 import { getLiveSession, parseIceConfig } from "./quorum-ops.js";
 
 /** @param {string} op */

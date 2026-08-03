@@ -414,6 +414,17 @@ body.layout-app:has(#app > .toolkit-shell) {
 .toolbox-dot[data-toolbox-dot="otp"] {
   background: #db61a2;
 }
+/*
+ * Quorum is not another blue. It sits directly under WebRTC in the drawer and
+ * the whole point of the split is that the two are different layers, so
+ * inheriting `#58a6ff` would have undone in colour what the categories just
+ * said. Purple names what quorum actually adds to a peer connection — the
+ * OpenPGP identity binding — and is a shade off `openpgp`'s `#d2a8ff` rather
+ * than a copy, because it is the family, not the same toolbox.
+ */
+.toolbox-dot[data-toolbox-dot="quorum"] {
+  background: #bc8cff;
+}
 
 /*
  * ToolboxDot shapes (§25a) — the same closed TOOLBOX_META palette, applied to
@@ -462,6 +473,9 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 .toolbox-shape[data-toolbox="otp"] {
   color: #db61a2;
+}
+.toolbox-shape[data-toolbox="quorum"] {
+  color: #bc8cff;
 }
 .toolbox-shape[data-toolbox="jose"] {
   color: #ffa657;

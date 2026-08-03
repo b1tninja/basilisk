@@ -23,7 +23,7 @@ import {
 } from "../lib/toolkit/registry.js";
 
 describe("toolbox shelf taxonomy", () => {
-  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → age → SSH → Agent → HKP → SSS → WebAuthn → OTP → WebRTC → JOSE", () => {
+  it("orders toolboxes WebCrypto → Encoding → I/O → Flow → OpenPGP → age → SSH → Agent → HKP → SSS → WebAuthn → OTP → WebRTC → Quorum → JOSE", () => {
     const ordered = Object.entries(TOOLBOX_META)
       .sort((a, b) => a[1].order - b[1].order)
       .map(([k]) => k);
@@ -48,6 +48,10 @@ describe("toolbox shelf taxonomy", () => {
       // should meet them together.
       "otp",
       "webrtc",
+      // Directly after WebRTC because that is the layering, not because it is
+      // a variety of it: quorum is session management for RTC peers, so a
+      // reader who has just met `peer.offer` meets `quorum.offer` next.
+      "quorum",
       "jose",
     ]);
   });

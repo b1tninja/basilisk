@@ -19,6 +19,15 @@
  * draws a link — the panel, the `connstate` tile, an op's refusal — reads it
  * from here instead of deciding for itself.
  *
+ * **Why `lib/webrtc/` and not `lib/quorum/`, where it started.** An inventory
+ * of `RTCPeerConnection`s is not the mesh's, and this module holds no
+ * fingerprint, derives no key and drives no negotiation — `origin` is a label
+ * its registrants supply. Filed under `lib/quorum/` it made `peer.offer`, an op
+ * with no PGP audience and no relay, unable to run without the module that
+ * implements both; `lib/toolkit/peer-ops.js` imported the session layer that is
+ * supposed to sit on top of it. Quorum registers into this, the same way
+ * `peer.*` does.
+ *
  * **Why a holder instead of copied fields.** A record stores the object that
  * owns the connection and reads `pc`/`channel` *through* it, rather than
  * copying them at registration. A quorum peer's channel does not exist when its
@@ -27,7 +36,7 @@
  * first renegotiation onward, in the exact direction that reads as "connected
  * but no channel".
  *
- * @module lib/quorum/link-registry
+ * @module lib/webrtc/link-registry
  */
 
 /**

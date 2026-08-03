@@ -73,6 +73,23 @@ port of another MDN interface, it's the toolkit's own k-of-n secret sharing
 made literal as k-of-n peer connections. Readiness reads "quorum reachable"
 (k connected) rather than requiring all n.
 
+**The registry has caught up with this section.** For several turns it had not:
+an implementation pass renamed the `quorum` toolbox to `webrtc` so every network
+op would sit in one drawer category, which filed `quorum.offer`, `quorum.join`,
+`quorum.close`, `quorum.send`, `quorum.recv` and `dkg.run` under a header
+claiming they were WebRTC — the six ops this section had already said were *not
+an MDN section*. The heading was right when it was written and it is the rule
+now: **`quorum` is a toolbox of its own, sitting on top of `webrtc` rather than
+inside it**, and the WebRTC toolbox holds only what a browser ships. Quorum is
+session management for RTC peers, so the WebRTC surface has to be complete
+without it — `lib/webrtc/` (link registry, ICE defaults, negotiation rule,
+candidate stats) is that boundary in code, and quorum imports across it.
+
+Op names were not affected: `quorum.send` is `quorum.send` because it owns the
+key it encrypts under, which is a fact about the namespace and not about the
+drawer. See `IMPLEMENTATION-STATUS.md` and `HANDOFF.md` for why those two
+questions must be kept apart.
+
 ## The full handshake, phase by phase
 Two phases had no design owner through turn 26 despite sitting between "ICE
 connected" and "data channel open": **DTLS** (secures the nominated pair via

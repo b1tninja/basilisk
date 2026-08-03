@@ -10,7 +10,7 @@
  * roll back.
  */
 import { describe, expect, it } from "vitest";
-import { offerCollisionAction } from "../lib/quorum/rtc.js";
+import { offerCollisionAction } from "../lib/webrtc/negotiation.js";
 
 describe("offerCollisionAction", () => {
   it("accepts freely when there is no collision", () => {

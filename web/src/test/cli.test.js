@@ -227,6 +227,27 @@ describe("browser-only ops", () => {
     expect(err).not.toMatch(/undefined|at Object\.|TypeError/);
   });
 
+  it("refuses a quorum op at pre-flight too, not merely at dispatch", async () => {
+    // The five `quorum.*` ops used to sit in the `webrtc` toolbox and inherited
+    // the pre-flight rule by accident of filing. Moving them to their own
+    // toolbox would have demoted them to dispatch interception — still caught,
+    // but only after the earlier cells had run for real. Nothing in the suite
+    // failed when it happened, which is why this asserts the *stage*: cell 1 is
+    // runnable and must be shown not to have run.
+    const dir = workdir();
+    const recipe = file(
+      dir,
+      "quorum.txt",
+      "random 8 | encode hex | out @nonce\n\nquorum.recv | out @msg\n"
+    );
+    const { code, out, err } = await cli(["run", recipe]);
+    expect(code).toBe(EXIT.browserOnly);
+    expect(err).toContain('browser-only op: "quorum.recv"');
+    expect(err).toContain("cell 2, step 1");
+    expect(err).toContain("WebRTC (RTCPeerConnection)");
+    expect(out).toBe("");
+  });
+
   it("does not blanket-block a toolbox: webauthn.attest is a headless parser", async () => {
     const dir = workdir();
     // Garbage input, but the failure must be about the *bytes*, not about a

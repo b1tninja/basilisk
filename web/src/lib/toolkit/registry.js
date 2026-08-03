@@ -159,7 +159,22 @@ export const TOOLBOX_META = {
   // a span on two footings, because a connection is something ICE *builds*
   // between two ends rather than a wire it is handed.
   webrtc: { label: "WebRTC", badge: "WebRTC", order: 12, glyph: "webrtc", color: "#58a6ff" },
-  jose: { label: "JOSE", badge: "JOSE", order: 13, glyph: "jose", color: "#ffa657" },
+  // Quorum is a *consumer* of WebRTC, not a division of it. It held the drawer
+  // header for a while — `quorum` was renamed to `webrtc` so all the network
+  // ops lived in one category — and a spec-named drawer ended up containing
+  // five ops no specification describes: a room derived from a PGP audience, a
+  // signed invite posted through a relay, and traffic encrypted under a
+  // pairwise key. `WEBRTC-TOOLBOX.md` §8 had already said so, in a section
+  // titled "not an MDN section — a Basilisk-specific fit"; the registry is
+  // what lagged. The test is now simply whether an op is a WebRTC built-in.
+  //
+  // Filed immediately after `webrtc` because that is the layering: the mesh is
+  // session management for RTC peers, so a reader who has just met
+  // `peer.offer` meets `quorum.offer` next. Purple rather than another blue,
+  // because what quorum adds to a peer connection is the OpenPGP identity
+  // binding, and that is the family the colour should name.
+  quorum: { label: "Quorum", badge: "Quorum", order: 13, glyph: "quorum", color: "#bc8cff" },
+  jose: { label: "JOSE", badge: "JOSE", order: 14, glyph: "jose", color: "#ffa657" },
 };
 
 /**
@@ -310,6 +325,23 @@ export const SHELF_META = {
   peer: { label: "Peer & signaling", order: 1, glyph: "peer" },
   channel: { label: "Data channel", order: 2, glyph: "channel" },
   rtcstats: { label: "Stats", order: 3, glyph: "ports" },
+  /**
+   * Quorum's lifecycle shelf — open an exchange, join one, end one.
+   *
+   * Deliberately *not* `peer`: "Peer & signaling" names the phase where two
+   * ends address SDP halves at each other, and `quorum.offer` does not do that
+   * — it derives a room from an audience and publishes a signed invite. The
+   * mark is the mesh, three nodes closed into a ring, built from `webrtc`'s
+   * own vocabulary of filled endpoint nodes with one more node and no open
+   * span, because that is what the layer adds.
+   *
+   * `quorum.send`/`quorum.recv` are on `channel` — the same key, the same
+   * "Data channel" header and the same two-arrow mark `peer.send`/`peer.recv`
+   * carry one toolbox above. Shelf keys are global while the grouping is
+   * per-toolbox, so the parallel costs nothing and keeps the two send verbs
+   * legible as the same errand with different protection.
+   */
+  exchange: { label: "Exchange", order: 0, glyph: "quorum" },
 };
 
 /**
@@ -1572,6 +1604,51 @@ export const STEPS = [
     input: "shares",
     output: "bytes",
     params: [],
+  },
+  {
+    /**
+     * Filed with `vss.*` rather than with the mesh it runs over.
+     *
+     * It was in the WebRTC toolbox, on the `peer` shelf, because a live
+     * exchange is its transport — but that is not what it is *about*, and
+     * transport is not a filing rule anywhere else here: `rtc.check`,
+     * `rtc.state`, `rtc.stats`, `rtc.quality` and `rtc.restart` all require a
+     * live exchange too and are WebRTC ops regardless. What `dkg.run` does is
+     * Feldman VSS over P-256 — the same scheme, the same curve and the same
+     * commitments as the four `vss.*` ops directly above, which is why it was
+     * already wearing the `split` mark while sitting three toolboxes away from
+     * the shelf that owns it.
+     *
+     * The comparison it belongs to is the one this shelf now states in full:
+     * to get a k-of-n key you either split one you hold (`sss.split`,
+     * `vss.split`) or generate one nobody ever holds (`dkg.run`). Its doc
+     * string carries the exchange prerequisite, which is where a runtime
+     * requirement belongs.
+     */
+    name: "dkg.run",
+    kind: "source",
+    toolbox: "sss",
+    shelf: "split",
+    glyph: "split",
+    doc: "**Experimental.** Run a distributed key generation across the live exchange (Feldman VSS over P-256): every participant deals a contribution, verifies what they receive, and sums — so the private key is never assembled anywhere, and any `threshold` of the room can reconstruct it later. Needs a live `quorum.offer`/`quorum.join` with every participant present. There is no complaint round: a bad share aborts the run and names the dealer, and the group must restart without them. Produces a shared key, **not** threshold signing. Example: `dkg.run threshold=3 | out @dkg`.",
+    input: "none",
+    output: "text",
+    params: [
+      {
+        name: "threshold",
+        type: "int",
+        default: 2,
+        min: 1,
+        max: 16,
+        doc: "Participants required to reconstruct later (K)",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 120000,
+        doc: "How long to wait for the other participants (ms)",
+      },
+    ],
   },
   {
     name: "sss.split",
@@ -3429,7 +3506,7 @@ export const STEPS = [
       },
     ],
   },
-  // ── Quorum toolbox (design v2 §21a) — the run boundary is the session boundary ──
+  // ── WebRTC: ICE and STUN (design v2 §22b/23a/23c) ──
   {
     name: "rtc.ice",
     kind: "source",
@@ -3488,159 +3565,6 @@ export const STEPS = [
       },
     ],
   },
-  {
-    name: "quorum.offer",
-    kind: "source",
-    toolbox: "webrtc",
-    shelf: "peer",
-    doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `quorum.send`/`quorum.recv`/`quorum.close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
-    input: "none",
-    output: "session",
-    params: [
-      {
-        name: "to",
-        type: "string",
-        positional: true,
-        default: "",
-        doc: "Audience fingerprints (comma/space separated) — must include your own",
-      },
-      {
-        name: "key",
-        type: "slot",
-        secret: true,
-        default: "",
-        doc: "@slot holding your armored private key (`agent.unlock … | out @me`)",
-      },
-      {
-        name: "ice",
-        type: "string",
-        default: "",
-        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
-      },
-      {
-        name: "wait",
-        type: "int",
-        default: 120000,
-        doc: "How long to wait for the first peer (ms)",
-      },
-      {
-        name: "peers",
-        type: "int",
-        default: 1,
-        doc: "Peers that must connect before the run continues",
-      },
-    ],
-  },
-  {
-    name: "quorum.join",
-    kind: "source",
-    toolbox: "webrtc",
-    shelf: "peer",
-    doc: "Join a run-scoped exchange as peer: verifies the creator's signed invite, then meshes with per-peer ephemeral ECDH (data-channel PFS). Pauses the run at this cell until connected. Same audience + site = same room, no code to paste. Example: `quorum.join to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
-    input: "none",
-    output: "session",
-    params: [
-      {
-        name: "to",
-        type: "string",
-        positional: true,
-        default: "",
-        doc: "Audience fingerprints (comma/space separated) — must include your own",
-      },
-      {
-        name: "key",
-        type: "slot",
-        secret: true,
-        default: "",
-        doc: "@slot holding your armored private key",
-      },
-      {
-        name: "ice",
-        type: "string",
-        default: "",
-        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
-      },
-      {
-        name: "wait",
-        type: "int",
-        default: 120000,
-        doc: "How long to wait for invite + mesh (ms)",
-      },
-      {
-        name: "peers",
-        type: "int",
-        default: 1,
-        doc: "Peers that must connect before the run continues",
-      },
-    ],
-  },
-  {
-    name: "quorum.send",
-    kind: "transform",
-    toolbox: "webrtc",
-    shelf: "channel",
-    doc: "Write the pipeline text to the exchange's data channels (per-peer session keys; key-confirmed channels only). `to=` addresses one peer by fingerprint; empty broadcasts to every verified peer, which is the exchange's own policy. Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run — for a channel with no exchange behind it, use `peer.send`.",
-    input: "text",
-    output: "text",
-    params: [
-      {
-        name: "to",
-        type: "string",
-        positional: true,
-        default: "",
-        doc: "Recipient fingerprint (prefix ok); empty = every verified peer",
-      },
-    ],
-  },
-  {
-    name: "quorum.recv",
-    kind: "source",
-    toolbox: "webrtc",
-    shelf: "channel",
-    doc: "Read from the exchange's data channels, decrypting under each peer's session key. `count=1` (default) waits for one message and emits it as text (`meta.from` = sender fingerprint); `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `quorum.recv | gpg.verify`, or `quorum.recv count=all | foreach\\n  - gpg.verify`.",
-    input: "none",
-    output: "text",
-    params: [
-      {
-        name: "from",
-        type: "string",
-        default: "",
-        doc: "Only accept from this fingerprint (prefix ok); empty = any peer",
-      },
-      {
-        name: "count",
-        type: "string",
-        default: "1",
-        doc: "How many to collect: 1 (text), a number, or `all` to drain the inbox (bundle)",
-      },
-      {
-        name: "wait",
-        type: "int",
-        default: 120000,
-        doc: "Receive timeout (ms)",
-      },
-    ],
-    effectiveIo(params) {
-      // The output *type* changes with `count`, so the caret and the type
-      // checker see a bundle only when one is actually produced. Reporting
-      // `text` for a multi-message read would let `gpg.verify` be appended to
-      // something that is really a collection — exactly the mistake the type
-      // system exists to catch.
-      const count = String(params?.count ?? "1").trim().toLowerCase();
-      return { input: "none", output: count === "1" ? "text" : "bundle" };
-    },
-  },
-  {
-    name: "quorum.close",
-    kind: "transform",
-    toolbox: "webrtc",
-    shelf: "peer",
-    doc: "End the exchange now: closes every peer connection and zeroizes session keys. Runs implicitly at Clear session — close early when the exchange is done mid-notebook. Passes the value through.",
-    input: "text",
-    output: "text",
-    params: [],
-  },
-
   // ── Peer connection manager (§55) ──
   // The layer between raw `rtc.*` and the identity-bound `quorum.*` mesh: named
   // connections that outlive the op that made them. `rtc.offer`/`rtc.answer`
@@ -3900,32 +3824,6 @@ export const STEPS = [
     params: [],
   },
   {
-    name: "dkg.run",
-    kind: "source",
-    toolbox: "webrtc",
-    shelf: "peer",
-    glyph: "split",
-    doc: "**Experimental.** Run a distributed key generation across the live exchange (Feldman VSS over P-256): every participant deals a contribution, verifies what they receive, and sums — so the private key is never assembled anywhere, and any `threshold` of the room can reconstruct it later. Needs a live `quorum.offer`/`quorum.join` with every participant present. There is no complaint round: a bad share aborts the run and names the dealer, and the group must restart without them. Produces a shared key, **not** threshold signing. Example: `dkg.run threshold=3 | out @dkg`.",
-    input: "none",
-    output: "text",
-    params: [
-      {
-        name: "threshold",
-        type: "int",
-        default: 2,
-        min: 1,
-        max: 16,
-        doc: "Participants required to reconstruct later (K)",
-      },
-      {
-        name: "wait",
-        type: "int",
-        default: 120000,
-        doc: "How long to wait for the other participants (ms)",
-      },
-    ],
-  },
-  {
     name: "rtc.restart",
     kind: "source",
     toolbox: "webrtc",
@@ -3957,6 +3855,172 @@ export const STEPS = [
     input: "none",
     output: "stats",
     params: [],
+  },
+
+  // ── Quorum: session management for RTC peers (design v2 §21a, §8) ──
+  // Its own toolbox, not a shelf of WebRTC. Nothing below is a browser
+  // built-in: the room is derived from an OpenPGP audience, the invite is
+  // signed and posted through a relay, and the traffic is encrypted under a
+  // pairwise key `derivePairwiseSessionKey` mints over a transcript binding
+  // both DTLS fingerprints. WebRTC is what this layer *uses* — `lib/webrtc/`
+  // holds the link inventory, the ICE defaults and the negotiation rule, and
+  // quorum registers into them the same way `peer.*` does.
+  //
+  // The names do not change and were never in question: `quorum.send` owns its
+  // name because it owns the key (4fe3322). That is a fact about the
+  // *namespace*; which drawer the op is filed in is a different question, and
+  // this is the answer to the second one only.
+  {
+    name: "quorum.offer",
+    kind: "source",
+    toolbox: "quorum",
+    shelf: "exchange",
+    doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `quorum.send`/`quorum.recv`/`quorum.close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
+    input: "none",
+    output: "session",
+    params: [
+      {
+        name: "to",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Audience fingerprints (comma/space separated) — must include your own",
+      },
+      {
+        name: "key",
+        type: "slot",
+        secret: true,
+        default: "",
+        doc: "@slot holding your armored private key (`agent.unlock … | out @me`)",
+      },
+      {
+        name: "ice",
+        type: "string",
+        default: "",
+        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 120000,
+        doc: "How long to wait for the first peer (ms)",
+      },
+      {
+        name: "peers",
+        type: "int",
+        default: 1,
+        doc: "Peers that must connect before the run continues",
+      },
+    ],
+  },
+  {
+    name: "quorum.join",
+    kind: "source",
+    toolbox: "quorum",
+    shelf: "exchange",
+    doc: "Join a run-scoped exchange as peer: verifies the creator's signed invite, then meshes with per-peer ephemeral ECDH (data-channel PFS). Pauses the run at this cell until connected. Same audience + site = same room, no code to paste. Example: `quorum.join to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
+    input: "none",
+    output: "session",
+    params: [
+      {
+        name: "to",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Audience fingerprints (comma/space separated) — must include your own",
+      },
+      {
+        name: "key",
+        type: "slot",
+        secret: true,
+        default: "",
+        doc: "@slot holding your armored private key",
+      },
+      {
+        name: "ice",
+        type: "string",
+        default: "",
+        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 120000,
+        doc: "How long to wait for invite + mesh (ms)",
+      },
+      {
+        name: "peers",
+        type: "int",
+        default: 1,
+        doc: "Peers that must connect before the run continues",
+      },
+    ],
+  },
+  {
+    name: "quorum.close",
+    kind: "transform",
+    toolbox: "quorum",
+    shelf: "exchange",
+    doc: "End the exchange now: closes every peer connection and zeroizes session keys. Runs implicitly at Clear session — close early when the exchange is done mid-notebook. Passes the value through.",
+    input: "text",
+    output: "text",
+    params: [],
+  },
+  {
+    name: "quorum.send",
+    kind: "transform",
+    toolbox: "quorum",
+    shelf: "channel",
+    doc: "Write the pipeline text to the exchange's data channels (per-peer session keys; key-confirmed channels only). `to=` addresses one peer by fingerprint; empty broadcasts to every verified peer, which is the exchange's own policy. Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run — for a channel with no exchange behind it, use `peer.send`.",
+    input: "text",
+    output: "text",
+    params: [
+      {
+        name: "to",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Recipient fingerprint (prefix ok); empty = every verified peer",
+      },
+    ],
+  },
+  {
+    name: "quorum.recv",
+    kind: "source",
+    toolbox: "quorum",
+    shelf: "channel",
+    doc: "Read from the exchange's data channels, decrypting under each peer's session key. `count=1` (default) waits for one message and emits it as text (`meta.from` = sender fingerprint); `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `quorum.recv | gpg.verify`, or `quorum.recv count=all | foreach\\n  - gpg.verify`.",
+    input: "none",
+    output: "text",
+    params: [
+      {
+        name: "from",
+        type: "string",
+        default: "",
+        doc: "Only accept from this fingerprint (prefix ok); empty = any peer",
+      },
+      {
+        name: "count",
+        type: "string",
+        default: "1",
+        doc: "How many to collect: 1 (text), a number, or `all` to drain the inbox (bundle)",
+      },
+      {
+        name: "wait",
+        type: "int",
+        default: 120000,
+        doc: "Receive timeout (ms)",
+      },
+    ],
+    effectiveIo(params) {
+      // The output *type* changes with `count`, so the caret and the type
+      // checker see a bundle only when one is actually produced. Reporting
+      // `text` for a multi-message read would let `gpg.verify` be appended to
+      // something that is really a collection — exactly the mistake the type
+      // system exists to catch.
+      const count = String(params?.count ?? "1").trim().toLowerCase();
+      return { input: "none", output: count === "1" ? "text" : "bundle" };
+    },
   },
 ];
 
