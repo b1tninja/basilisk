@@ -22,7 +22,7 @@ E2E tests run real `gpg --send-keys` / `--recv-keys` against the basilisk contai
 
 ```bash
 cd web
-npx vitest run        # 139 files, node only, no browser, no sockets
+npx vitest run        # 143 files, node only, no browser, no sockets
 npm run test:e2e      # builds dist/, then drives it in real Chromium
 ```
 
@@ -34,8 +34,32 @@ first: the point is to drive the *shipped* bundle under the *production* CSP.
 | Suite | Needs |
 |-------|-------|
 | `rtc-transport.e2e.js` | Chromium |
+| `peer-manager.e2e.js` | Chromium |
+| `quorum-key-confirmation.e2e.js` | Chromium |
 | `stun-discovery.e2e.js` | Chromium; one spec also wants public STUN |
 | `turn-relay.e2e.js` | Chromium **and** Docker |
+
+### The key-confirmation suite
+
+`quorum-key-confirmation.e2e.js` is the browser half of
+`src/test/quorum-dtls-binding.test.js`. Two real `QuorumSession`s mesh over two
+real `RTCPeerConnection`s and confirm a pairwise key; the transcript is then
+checked against the DTLS fingerprints the two engines actually minted, read back
+out of Chromium's own SDP.
+
+It needs two things `browser-peers.js` did not serve — a signalling mailbox and
+a keyserver — so `src/test/helpers/quorum-room.js` supplies both in memory for
+exactly the two identities the test generates, and `serveDist` takes a `routes`
+hook that gets first refusal on each request. Both are same-origin, so
+`connect-src 'self'` covers them and no policy is relaxed.
+
+The mailbox opens every envelope and re-seals it under the **original signer's
+own private key**, which is what makes the negative half possible: one end's
+claimed fingerprint is rewritten while its SDP is left untouched, so the
+transport still comes up, every PGP check still passes, and only the transcript
+binding can notice. Delete `dtlsFingerprint` from the transcript in
+`lib/quorum/crypto.js` and that half goes red — which is the only reason the
+positive half means anything.
 
 ### The TURN relay suite
 

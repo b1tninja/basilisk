@@ -87,11 +87,20 @@ const MIME = {
  * the toolkit page ships its policy in a `<meta http-equiv>` tag, so serving
  * the bytes unmodified is what makes the production CSP the one under test.
  *
+ * One escape hatch: `routes`. A page can construct an `RTCPeerConnection` off
+ * static files alone, but it cannot run a *quorum session* — that bootstraps
+ * through an HTTP mailbox and a keyserver, both same-origin and therefore both
+ * inside `connect-src 'self'`. `routes` gets first refusal on every request and
+ * says whether it answered; anything it declines falls through to the files, so
+ * the default behaviour is byte-for-byte what it was.
+ *
  * @param {string} root absolute directory to serve
+ * @param {((req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => boolean)|null} [routes]
  * @returns {Promise<{ origin: string, close: () => Promise<void> }>}
  */
-export async function serveDist(root = DIST_ROOT) {
+export async function serveDist(root = DIST_ROOT, routes = null) {
   const server = createServer((req, res) => {
+    if (routes && routes(req, res)) return;
     const url = req.url || "/";
     const path = decodeURIComponent(url.split("?")[0].split("#")[0]);
     const mapped = CLEAN_URLS[path] || path;
@@ -239,13 +248,25 @@ function describe(err) {
  * network beyond the loopback interface. That connection is the test that must
  * always run.
  *
- * @param {{ path?: string, count?: number, root?: string, headless?: boolean }} [opts]
+ * @param {{
+ *   path?: string,
+ *   count?: number,
+ *   root?: string,
+ *   headless?: boolean,
+ *   routes?: ((req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => boolean)|null,
+ * }} [opts]
  * @returns {Promise<PeerFixture>}
  */
 export async function openPeers(opts = {}) {
-  const { path = "/toolkit", count = 2, root = DIST_ROOT, headless = true } = opts;
+  const {
+    path = "/toolkit",
+    count = 2,
+    root = DIST_ROOT,
+    headless = true,
+    routes = null,
+  } = opts;
   const { chromium } = await import("playwright");
-  const server = await serveDist(root);
+  const server = await serveDist(root, routes);
   const browser = await chromium.launch({ headless, args: WEBRTC_FLAGS });
 
   /** @type {Peer[]} */
