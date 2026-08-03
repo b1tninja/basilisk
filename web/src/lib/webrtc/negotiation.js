@@ -6,7 +6,7 @@
  * round. `QuorumSession` still calls it from inside its own
  * `onnegotiationneeded`/`ondescription` handlers; moving a pure function does
  * not move *when* those handlers run, which is the property §59b insists on
- * (see the note in `lib/quorum/rtc.js`).
+ * (see the note in `lib/quorum/session.js`).
  *
  * @module lib/webrtc/negotiation
  */

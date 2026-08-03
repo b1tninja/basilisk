@@ -1,7 +1,7 @@
 /**
  * ICE server configuration — the `RTCIceServer[]` every connection starts from.
  *
- * Lives here rather than in `lib/quorum/rtc.js`, where it used to, because
+ * Lives here rather than in `lib/quorum/session.js`, where it used to, because
  * `RTCIceServer` is a WebRTC dictionary and nothing about this list is
  * quorum's: `rtc.ice`, `rtc.gather`, `peer.offer` and the mesh all resolve
  * against it. It was the smallest of the three things that made

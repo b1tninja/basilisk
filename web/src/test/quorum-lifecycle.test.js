@@ -67,14 +67,14 @@ const { FakeSession } = vi.hoisted(() => {
 
     /* ── drivers ── */
 
-    /** Bring a peer up (optionally with a `pc` that can restart ICE). */
+    /** Bring a peer up (optionally with a `link` that can restart ICE). */
     connect(fpr, extra = {}) {
       this.peers.set(fpr, {
         fingerprint: fpr,
         status: "connected",
         pgpVerified: true,
         kcVerified: true,
-        pc: null,
+        link: null,
         channel: null,
         ...extra,
       });
@@ -96,7 +96,7 @@ const { FakeSession } = vi.hoisted(() => {
   return { FakeSession };
 });
 
-vi.mock("../lib/quorum/rtc.js", async (importOriginal) => {
+vi.mock("../lib/quorum/session.js", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, QuorumSession: FakeSession };
 });
@@ -584,22 +584,36 @@ describe("quorum.recv", () => {
 /* ───────────────────────────── ICE restart ───────────────────────────── */
 
 describe("restartLiveIce", () => {
+  /**
+   * A stand-in `PeerLink`: it reports whether it issued a restart, the way the
+   * real one does for an engine without `restartIce`, and answers the `via`
+   * lookup the roster projection makes on every connected peer.
+   */
   const withRestart = () => {
     const calls = [];
-    return { calls, pc: { restartIce: () => calls.push(1) } };
+    return {
+      calls,
+      link: {
+        restartIce: () => {
+          calls.push(1);
+          return true;
+        },
+        selectedCandidateType: async () => "",
+      },
+    };
   };
 
   it("restarts every peer connection of the live exchange", async () => {
     // `session.peers` is a Map. Iterating it directly yields `[fpr, peer]`
-    // entries, so `peer.pc` was `undefined` on every pass, every peer failed
-    // the `typeof restartIce === "function"` check, and this returned 0 for
-    // every exchange there has ever been — the Connections panel's Restart ICE
-    // button and its Session-strip twin were both no-ops.
+    // entries, so the link was `undefined` on every pass, every peer failed the
+    // restart check, and this returned 0 for every exchange there has ever been
+    // — the Connections panel's Restart ICE button and its Session-strip twin
+    // were both no-ops.
     const b = withRestart();
     const c = withRestart();
     FakeSession.onStart = (s) => {
-      s.connect(FPR_B, { pc: b.pc });
-      s.connect(FPR_C, { pc: c.pc });
+      s.connect(FPR_B, { link: b.link });
+      s.connect(FPR_C, { link: c.link });
     };
     await open({ to: `${FPR_A} ${FPR_B} ${FPR_C}` });
     expect(q.restartLiveIce()).toBe(2);
@@ -610,8 +624,8 @@ describe("restartLiveIce", () => {
   it("restarts the peers it can when one cannot", async () => {
     const b = withRestart();
     FakeSession.onStart = (s) => {
-      s.connect(FPR_B, { pc: b.pc });
-      s.connect(FPR_C, { pc: null }); // torn down already
+      s.connect(FPR_B, { link: b.link });
+      s.connect(FPR_C, { link: null }); // torn down already
     };
     await open({ to: `${FPR_A} ${FPR_B} ${FPR_C}` });
     expect(q.restartLiveIce()).toBe(1);
@@ -620,10 +634,11 @@ describe("restartLiveIce", () => {
   it("counts a peer whose restartIce throws as not restarted", async () => {
     FakeSession.onStart = (s) =>
       s.connect(FPR_B, {
-        pc: {
+        link: {
           restartIce() {
             throw new Error("InvalidStateError");
           },
+          selectedCandidateType: async () => "",
         },
       });
     await open();

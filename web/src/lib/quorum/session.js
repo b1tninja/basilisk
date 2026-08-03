@@ -6,13 +6,21 @@
  * ECDH with transcript-bound HKDF and key confirmation (data-channel PFS).
  *
  * **This module is a consumer of `lib/webrtc/`, not a peer of it.** No WebRTC
- * built-in is constructed or driven here. `RTCPeerConnection` construction,
- * `onnegotiationneeded`, `setLocalDescription`, `setRemoteDescription`,
- * `addIceCandidate`, `createDataChannel` and `ondatachannel` all live in
- * `webrtc/peer-link.js`; SDP parsing in `webrtc/sdp.js`; the link inventory,
- * the default `RTCIceServer[]`, the glare rule and the selected-candidate
- * stats read in `webrtc/link-registry.js`, `ice.js`, `negotiation.js` and
- * `candidates.js`. Deleting `lib/quorum/` leaves `peer.*` and `rtc.*` standing.
+ * built-in is constructed, driven, or *held* here. A peer's transport is a
+ * `PeerLink` — an opaque handle from `webrtc/peer-link.js` — and everything
+ * this layer does to it is a method on that handle. The connection inside it
+ * is never unwrapped: there is no `pc` on a peer record, and
+ * `src/test/quorum-layering.test.js` fails if one comes back.
+ *
+ * That is the difference between this and the first extraction, which moved the
+ * driver out and then took the connection straight back off the link it
+ * returned — nine `.pc` reads, `signalingState` and `close` among them, which is
+ * the transport with two helpers factored out rather than a layer above it.
+ *
+ * SDP parsing lives in `webrtc/sdp.js`; the link inventory, the default ICE
+ * server list, the glare rule and the selected-candidate stats in
+ * `webrtc/link-registry.js`, `ice.js`, `negotiation.js` and `candidates.js`.
+ * Deleting `lib/quorum/` leaves `peer.*` and `rtc.*` standing.
  *
  * What stays is the protocol: the PGP audience, the signed invite, the relay,
  * the room, the roster, key derivation, key confirmation, and the mesh policy
@@ -33,11 +41,11 @@
  * peer's fingerprint and re-seals under that peer's own key, so nothing in the
  * PGP layer can see it; both ends must end up unconfirmed. That test was
  * written and watched fail-when-tampered *before* the extraction, and it holds
- * the driver's return contract in place afterwards: `openPeerLink` and
+ * the driver's return contract in place afterwards: a link's offer and its
  * `answerRemoteOffer` hand back `{ sdp, dtlsFingerprint }` together, so an SDP
  * cannot be signalled without the fingerprint that belongs to it.
  *
- * @module lib/quorum/rtc
+ * @module lib/quorum/session
  */
 
 import {
@@ -67,14 +75,7 @@ import {
   registerLink,
 } from "../webrtc/link-registry.js";
 import { DEFAULT_ICE_SERVERS } from "../webrtc/ice.js";
-import {
-  addRemoteCandidate,
-  answerRemoteOffer,
-  applyRemoteAnswer,
-  closePeerLink,
-  isPeerLinkLive,
-  openPeerLink,
-} from "../webrtc/peer-link.js";
+import { openPeerLink } from "../webrtc/peer-link.js";
 
 /**
  * @typedef {object} QuorumPeerState
@@ -83,7 +84,8 @@ import {
  * @property {boolean} pgpVerified
  * @property {boolean} kcVerified
  * @property {boolean} isInitiator
- * @property {RTCPeerConnection|null} pc
+ * @property {import("../webrtc/peer-link.js").PeerLink|null} link
+ *   The transport, as a handle. What is inside it is the driver's business.
  * @property {RTCDataChannel|null} channel
  * @property {CryptoKey|null} sessionKey
  * @property {string|null} transcriptHash
@@ -218,9 +220,9 @@ export class QuorumSession {
       } catch (_) {
         /* ignore */
       }
-      closePeerLink(peer.pc);
+      peer.link?.close();
       peer.channel = null;
-      peer.pc = null;
+      peer.link = null;
       peer.sessionKey = null;
       peer.transcriptHash = null;
       peer.localEcdh = null;
@@ -422,13 +424,13 @@ export class QuorumSession {
     if (payload.type === "offer" && payload.sdp) {
       await this._ensurePeerConnection(signerFpr, false);
       const p = this.peers.get(signerFpr);
-      const pc = p?.pc;
-      if (!pc || !p) return;
+      const link = p?.link;
+      if (!link || !p) return;
       p.ignoreOffer = false;
       /** @type {import("../webrtc/peer-link.js").LocalDescriptionFacts|null} */
       let answer = null;
       try {
-        answer = await answerRemoteOffer(pc, {
+        answer = await link.answerRemoteOffer({
           sdp: payload.sdp,
           polite: p.polite,
           makingOffer: p.makingOffer,
@@ -464,12 +466,12 @@ export class QuorumSession {
 
     if (payload.type === "answer" && payload.sdp) {
       const p = this.peers.get(signerFpr);
-      const pc = p?.pc;
-      if (!pc || !p) return;
+      const link = p?.link;
+      if (!link || !p) return;
       try {
         // An answer to an offer we rolled back arrives in a state that cannot
         // take it — stale by construction, dropped rather than surfaced.
-        if (!(await applyRemoteAnswer(pc, payload.sdp))) return;
+        if (!(await link.applyRemoteAnswer(payload.sdp))) return;
       } catch (err) {
         this.onError?.(err instanceof Error ? err : new Error(String(err)));
         return;
@@ -482,10 +484,10 @@ export class QuorumSession {
 
     if (payload.type === "ice" && payload.candidate) {
       const p = this.peers.get(signerFpr);
-      const pc = p?.pc;
-      if (!pc) return;
+      const link = p?.link;
+      if (!link) return;
       try {
-        await addRemoteCandidate(pc, payload.candidate);
+        await link.addRemoteCandidate(payload.candidate);
       } catch (err) {
         // Candidates for an offer we deliberately ignored fail by design.
         if (p?.ignoreOffer) return;
@@ -564,7 +566,7 @@ export class QuorumSession {
       pgpVerified: false,
       kcVerified: false,
       isInitiator: fpr === this.initiatorFpr,
-      pc: null,
+      link: null,
       channel: null,
       sessionKey: null,
       transcriptHash: null,
@@ -608,7 +610,11 @@ export class QuorumSession {
   async _ensurePeerConnection(peerFpr, asOfferer) {
     let peer = this.peers.get(peerFpr);
     if (!peer) return;
-    if (peer.pc) return;
+    // A link whose transport the inventory closed out from under it (the
+    // Connections panel's Close nulls its holder's fields) is a husk, and this
+    // peer is re-connectable — which is the question `peer.pc === null` used to
+    // answer by reaching into the connection.
+    if (peer.link && !peer.link.isTornDown()) return;
     const local = await this._ensureLocalEcdh(peerFpr);
     // The transport is the driver's; what it is *for* is this layer's. Every
     // callback below is either identity (which peer), protocol (what rides the
@@ -656,13 +662,14 @@ export class QuorumSession {
       },
       onError: (err) => this.onError?.(err),
     });
-    peer.pc = link.pc;
+    peer.link = link;
     peer.status = "connecting";
-    // Into the shared inventory (§57a). The registry reads `pc`/`channel`
-    // *through* this peer record rather than copying them, which is why
-    // registering here — before the channel exists — is correct: `_wireChannel`
-    // assigns it later and `ondatachannel` may replace it, and a copied field
-    // would go stale in the direction that reads as "connected, no channel".
+    // Into the shared inventory (§57a). The **link** is the holder: the registry
+    // reads `pc`/`channel` through it rather than copying them, which is why
+    // registering here — before a channel exists — is correct, and why the peer
+    // record no longer has to carry a connection it is not allowed to use. A
+    // copied field would go stale from the first renegotiation onward, in the
+    // exact direction that reads as "connected, no channel".
     //
     // What the mesh gives up is being the sole answer to "what is connected",
     // which it was never the right owner of: the five `rtc.*` diagnostics used
@@ -671,7 +678,7 @@ export class QuorumSession {
       id: peerFpr,
       origin: "quorum",
       role: asOfferer ? "offerer" : "answerer",
-      holder: peer,
+      holder: link,
       label: "quorum",
       authenticated: !!peer.kcVerified,
     });
@@ -891,7 +898,7 @@ export class QuorumSession {
     // carries its own proof. The liveness check matters during ICE failure: a
     // dying channel still reads "open" and would swallow the very restart offer
     // meant to revive it — that case must reach the mailbox.
-    if (direct?.channel?.readyState === "open" && isPeerLinkLive(direct.pc)) {
+    if (direct?.channel?.readyState === "open" && direct.link?.isLive()) {
       try {
         direct.channel.send(frame);
         return true;
@@ -904,7 +911,7 @@ export class QuorumSession {
     let sent = false;
     for (const [fpr, p] of this.peers) {
       if (fpr === toFpr) continue;
-      if (p.channel?.readyState === "open" && p.kcVerified && isPeerLinkLive(p.pc)) {
+      if (p.channel?.readyState === "open" && p.kcVerified && p.link?.isLive()) {
         try {
           p.channel.send(frame);
           sent = true;

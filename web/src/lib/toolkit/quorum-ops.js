@@ -16,11 +16,10 @@
  * @module lib/toolkit/quorum-ops
  */
 
-import { QuorumSession } from "../quorum/rtc.js";
+import { QuorumSession } from "../quorum/session.js";
 import { DEFAULT_ICE_SERVERS } from "../webrtc/ice.js";
 import { deriveRoomId, canonicalAudience } from "../quorum/room.js";
 import { projectRosterPeers } from "../quorum/roster.js";
-import { selectedCandidateType } from "../webrtc/candidates.js";
 import { DKG_COMMIT, DKG_SHARE } from "../quorum/dkg-run.js";
 import { idFromFingerprint, scalarToHex } from "../quorum/vss.js";
 
@@ -70,7 +69,7 @@ let current = null;
  * Cached per exchange — the selected pair does not change without a
  * reconnection, and a reconnection makes a new exchange.
  *
- * @param {Map<string, import("../quorum/rtc.js").QuorumPeerState>} peersMap
+ * @param {Map<string, import("../quorum/session.js").QuorumPeerState>} peersMap
  * @returns {import("../quorum/roster.js").ConnectionPeerRow[]}
  */
 function projectPeers(peersMap) {
@@ -79,14 +78,17 @@ function projectPeers(peersMap) {
   for (const [fpr, peer] of peersMap) {
     if (
       peer.status !== "connected" ||
-      !peer.pc ||
+      !peer.link ||
       ex.viaByFpr.has(fpr) ||
       ex.viaPending.has(fpr)
     ) {
       continue;
     }
     ex.viaPending.add(fpr);
-    void selectedCandidateType(peer.pc).then((via) => {
+    // Asked of the link, not of a connection handle read off the peer record —
+    // the mesh has none. `peer.*` links answer the same question through the
+    // same code, so "host"/"srflx"/"relay" means one thing across the inventory.
+    void peer.link.selectedCandidateType().then((via) => {
       ex.viaPending.delete(fpr);
       if (!via || current !== ex || ex.cancelled) return;
       ex.viaByFpr.set(fpr, via);
@@ -134,19 +136,20 @@ export function restartLiveIce() {
   if (!session) return 0;
   let n = 0;
   // `.values()`, because `session.peers` is a Map keyed by fingerprint and
-  // iterating a Map directly yields `[fpr, peer]` entries. Reading `.pc` off an
-  // Array is `undefined`, so every peer failed the `restartIce` check and this
-  // returned 0 for every live exchange there has ever been — the Connections
-  // panel's Restart ICE button did nothing at all. `rtc.restart` destructures
-  // the entry and always worked, which is how the two could disagree unnoticed.
+  // iterating a Map directly yields `[fpr, peer]` entries. Reading the link off
+  // an Array entry is `undefined`, so every peer failed the restart check and
+  // this returned 0 for every live exchange there has ever been — the
+  // Connections panel's Restart ICE button did nothing at all. `rtc.restart`
+  // destructures the entry and always worked, which is how the two could
+  // disagree unnoticed.
   for (const peer of session.peers?.values?.() || []) {
-    const pc = peer?.pc;
-    // `restartIce` is unavailable on older engines; a peer that cannot restart
-    // should not abort the ones that can.
-    if (typeof pc?.restartIce !== "function") continue;
+    const link = peer?.link;
+    if (!link) continue;
     try {
-      pc.restartIce();
-      n += 1;
+      // The link says whether it issued one: `restartIce` is unavailable on
+      // older engines, and a peer that cannot restart must not abort the ones
+      // that can.
+      if (link.restartIce()) n += 1;
     } catch {
       /* peer already torn down — nothing to restart */
     }

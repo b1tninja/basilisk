@@ -25,7 +25,7 @@ import {
   sealSignalingEnvelope,
 } from "../../lib/quorum/crypto.js";
 import { deriveRoomId } from "../../lib/quorum/room.js";
-import { QuorumSession } from "../../lib/quorum/rtc.js";
+import { QuorumSession } from "../../lib/quorum/session.js";
 import { FakePeerConnection } from "./fake-peer-connection.js";
 
 /**

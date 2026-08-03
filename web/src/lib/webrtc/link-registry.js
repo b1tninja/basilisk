@@ -30,11 +30,13 @@
  *
  * **Why a holder instead of copied fields.** A record stores the object that
  * owns the connection and reads `pc`/`channel` *through* it, rather than
- * copying them at registration. A quorum peer's channel does not exist when its
- * `RTCPeerConnection` is created — `_wireChannel` assigns it later, and
- * `ondatachannel` may replace it — so a copied field would be stale from the
- * first renegotiation onward, in the exact direction that reads as "connected
- * but no channel".
+ * copying them at registration. A channel does not exist when its
+ * `RTCPeerConnection` is created, and `ondatachannel` may replace it on a
+ * renegotiation — so a copied field would be stale from that moment onward, in
+ * the exact direction that reads as "connected but no channel". `peer.*`
+ * registers a holder of its own (it keeps an inbox and waiters beside the pair);
+ * the mesh registers its `PeerLink`, which is a holder by construction and is
+ * the only thing on that side of the boundary allowed to hold a connection.
  *
  * @module lib/webrtc/link-registry
  */

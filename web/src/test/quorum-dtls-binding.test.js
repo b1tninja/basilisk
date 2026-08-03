@@ -66,6 +66,20 @@ afterEach(() => {
  */
 const peerOf = (p, peerFpr) => p.session.peers.get(peerFpr);
 
+/**
+ * The transport itself, reached past the link on purpose.
+ *
+ * The session cannot do this — it holds a `PeerLink` and `lib/quorum/` may not
+ * name a connection at all — and that is exactly why the test must. The
+ * provenance assertion below compares `localDtls` against the fingerprint the
+ * *connection* minted; asking the session for that number would compare it to
+ * itself, and a driver reporting one constant fingerprint would sail through
+ * every tamper case with both ends agreeing.
+ *
+ * @param {any} peer
+ */
+const transportOf = (peer) => peer.link.pc;
+
 /* ───────────────────────── the transcript bytes ───────────────────────── */
 
 describe("the pairwise transcript is pinned to its bytes", () => {
@@ -193,8 +207,8 @@ describe("two peers mesh, confirm keys, and pass data", () => {
 
     // The transport really is up — otherwise the negative case below could
     // "pass" because nothing connected at all.
-    expect(loPeer.pc.connectionState).toBe("connected");
-    expect(hiPeer.pc.connectionState).toBe("connected");
+    expect(loPeer.link.isLive()).toBe(true);
+    expect(hiPeer.link.isLive()).toBe(true);
     expect(loPeer.channel.readyState).toBe("open");
     expect(hiPeer.channel.readyState).toBe("open");
     expect(loPeer.status).toBe("connected");
@@ -204,15 +218,21 @@ describe("two peers mesh, confirm keys, and pass data", () => {
     // read out of its own local description. This is the assertion the driver
     // extraction has to keep true: move negotiation and this is the first
     // thing that can silently stop holding.
-    expect(loPeer.localDtls).toBe(loPeer.pc.dtlsFingerprint());
-    expect(hiPeer.localDtls).toBe(hiPeer.pc.dtlsFingerprint());
-    expect(loPeer.remoteDtls).toBe(hiPeer.pc.dtlsFingerprint());
-    expect(hiPeer.remoteDtls).toBe(loPeer.pc.dtlsFingerprint());
+    expect(loPeer.localDtls).toBe(transportOf(loPeer).dtlsFingerprint());
+    expect(hiPeer.localDtls).toBe(transportOf(hiPeer).dtlsFingerprint());
+    expect(loPeer.remoteDtls).toBe(transportOf(hiPeer).dtlsFingerprint());
+    expect(hiPeer.remoteDtls).toBe(transportOf(loPeer).dtlsFingerprint());
+
+    // …and the two are different numbers, so "both ends agree" is a fact about
+    // the exchange rather than about a driver that mints one constant.
+    expect(transportOf(loPeer).dtlsFingerprint()).not.toBe(
+      transportOf(hiPeer).dtlsFingerprint()
+    );
 
     // …and that is exactly what reached the KDF, on both sides.
     const expectedDtls = combineDtlsFingerprints(
-      loPeer.pc.dtlsFingerprint(),
-      hiPeer.pc.dtlsFingerprint()
+      transportOf(loPeer).dtlsFingerprint(),
+      transportOf(hiPeer).dtlsFingerprint()
     );
     expect(derived.length).toBeGreaterThanOrEqual(2);
     for (const call of derived) {
@@ -278,8 +298,8 @@ describe("key confirmation rejects a substituted DTLS fingerprint", () => {
 
       // The transport came up. The handshake is not failing for want of a
       // connection — it is failing because the transcripts disagree.
-      expect(loPeer.pc.connectionState).toBe("connected");
-      expect(hiPeer.pc.connectionState).toBe("connected");
+      expect(loPeer.link.isLive()).toBe(true);
+      expect(hiPeer.link.isLive()).toBe(true);
       expect(loPeer.channel.readyState).toBe("open");
       expect(hiPeer.channel.readyState).toBe("open");
 
