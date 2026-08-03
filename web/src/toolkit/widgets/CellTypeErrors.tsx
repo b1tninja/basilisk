@@ -3,7 +3,7 @@ import { cn } from "@/lib/cn";
 import { expectedTypeFrom } from "../../lib/toolkit/type-error-hints.js";
 
 /**
- * Per-cell type-error banner (design v2 §33c).
+ * Per-cell error banner (design v2 §33c).
  *
  * Type errors were the most common failure in the toolkit and had no designed
  * presentation: the validator knew a pipeline was ill-typed, but nothing said
@@ -14,12 +14,38 @@ import { expectedTypeFrom } from "../../lib/toolkit/type-error-hints.js";
  *
  * The offending step is named and clickable so the fix starts one gesture from
  * the complaint.
+ *
+ * **"and the engine threw mid-run" was still true of the throw itself.** The
+ * kernel recorded *that* a cell failed and dropped the reason, which surfaced
+ * once in the run bar — outside the cell, above the chip that caused it. Those
+ * rows arrive here now (`when: "run"`), through `cellErrorRows`, at the same
+ * weight and on the same anchor:
+ *
+ * | | compile | run |
+ * |---|---|---|
+ * | tone | `--error` | `--error` |
+ * | chrome | box | box |
+ * | step chip | filled | filled |
+ * | role | `alert` | `alert` |
+ * | tag | none | `at run` |
+ * | it clears when | the recipe is fixed | the cell runs again |
+ *
+ * Same weight, deliberately. `CellWarnings` sits a rung *below* this one
+ * because it does not block Run — the ladder is about consequence, and a run
+ * that died is never less consequential than one that was refused. There is no
+ * rung above `--error`, so a distinct tone would have to invent a severity the
+ * system does not have. The tag carries the difference instead, because the
+ * one thing a reader must not confuse is a prediction with a report: "this
+ * will not run" and "this ran and stopped here" have different next actions,
+ * and only one of them is fixed by editing the chip.
  */
 
 export type CellTypeError = {
   message: string;
   /** Index of the offending stem step, or -1 when the validator did not say. */
   stepIndex: number;
+  /** Where it came from. Absent means the validator, i.e. before any run. */
+  when?: "compile" | "run";
 };
 
 /**
@@ -75,8 +101,14 @@ export function CellTypeErrors({
           <div
             key={i}
             role="alert"
+            data-when={e.when === "run" ? "run" : "compile"}
             className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-[7px] border border-[color-mix(in_srgb,var(--error)_35%,transparent)] bg-[color-mix(in_srgb,var(--error)_8%,transparent)] px-2.5 py-1.5"
           >
+            {e.when === "run" ? (
+              <span className="shrink-0 text-[length:9.5px] font-bold uppercase tracking-wider text-[color-mix(in_srgb,var(--error)_78%,var(--foreground))]">
+                at run
+              </span>
+            ) : null}
             {step?.name ? (
               <button
                 type="button"

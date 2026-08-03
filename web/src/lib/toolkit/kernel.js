@@ -65,10 +65,61 @@ function wipeArtifacts(list) {
  */
 
 /**
+ * @typedef {object} CellRunError
+ * @property {string} message  The thrown message, verbatim.
+ * @property {number} stepIndex  Index of the failing step *within this cell*, or -1.
+ * @property {string} stepName  Name of the op that threw, or "".
+ */
+
+/**
+ * Read a throw as the row a cell can render (§33c, runtime half).
+ *
+ * `runCell` used to keep only the *fact* of a failure — `setCellStatus("error")`
+ * — and re-throw the reason to whoever called `runAll`, where it surfaced once
+ * in the run bar, roughly 130px above the cell that failed and outside it.
+ * `rtc-live-diagnostics` was the worked example: three empty cells and one red
+ * line at the top, none of it attached to `rtc.state`, which is the op that
+ * threw and the op whose message names both ways to fix it.
+ *
+ * Pure and exported because `vitest.config.js` is `environment: "node"`: this
+ * is the part that can be *wrong* — the anchor, the fallback wording — and it
+ * is pinnable without a renderer, the same seam `cellErrorsForChains` uses.
+ *
+ * The message is copied byte for byte. `requireLinks` and its neighbours spend
+ * real care naming the remedy ("open one with peer.offer / peer.answer, or a
+ * mesh with quorum.offer / quorum.join"); a layout that needed those words
+ * shortened would be the wrong layout.
+ *
+ * Anchoring comes from the engine, not from a guess here. `basiliskStep` (the
+ * op name) has existed since the CLI needed it and had no consumer in `src/`;
+ * `basiliskStepIndex` is its index, numbered the way `validateRecipe` numbers
+ * compile errors. `runCell` runs one chain, so the engine's continuous
+ * numbering starts at 0 for this cell and the index is already cell-relative —
+ * the same number `cellErrorsForChains` deals back after rebasing, so the two
+ * channels light the same chip.
+ *
+ * @param {unknown} err
+ * @returns {CellRunError}
+ */
+export function cellRunErrorFrom(err) {
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+  const anchor = /** @type {*} */ (err)?.basiliskStepIndex;
+  const name = /** @type {*} */ (err)?.basiliskStep;
+  return {
+    // A throw with no message at all still has to say something; "Run failed"
+    // is the honest floor, and it is never preferred over a real message.
+    message: raw || "Run failed",
+    stepIndex: Number.isInteger(anchor) && anchor >= 0 ? anchor : -1,
+    stepName: typeof name === "string" ? name : "",
+  };
+}
+
+/**
  * @typedef {object} ToolkitKernel
  * @property {ReturnType<typeof createSlotRegistry>} slots
  * @property {(i: number) => import("./engine.js").ToolkitArtifact[]} getCellOutputs
  * @property {(i: number) => CellStatus} getCellStatus
+ * @property {(i: number) => CellRunError|null} getCellRunError
  * @property {(i: number, status: CellStatus) => void} setCellStatus
  * @property {(i: number) => void} clearCellOutputs
  * @property {(fromIndex: number) => void} invalidateFrom
@@ -93,6 +144,15 @@ export function createKernel() {
   const cellStatus = new Map();
   /** @type {Map<number, { ranAt: number, durationMs: number }>} Last successful run, for the readiness/status line. */
   const cellTimings = new Map();
+  /**
+   * Why the last run of a cell failed, for the banner inside that cell.
+   *
+   * Held beside `cellStatus` rather than derived from it because `"error"` is
+   * a fact about the cell and the message is a fact about *one run of it*:
+   * they are written and cleared together, which is the whole staleness rule.
+   * @type {Map<number, CellRunError>}
+   */
+  const cellRunErrors = new Map();
   /**
    * Digested log of the cells run this session, in execution order — the prior
    * half of what `run.receipt` reports.
@@ -126,6 +186,12 @@ export function createKernel() {
 
   /**
    * @param {number} i
+   * @returns {CellRunError | null}
+   */
+  const getCellRunError = (i) => cellRunErrors.get(i) || null;
+
+  /**
+   * @param {number} i
    * @param {CellStatus} status
    */
   const setCellStatus = (i, status) => {
@@ -139,11 +205,22 @@ export function createKernel() {
     wipeArtifacts(cellOutputs.get(i) || []);
     cellOutputs.delete(i);
     cellTimings.delete(i);
+    // A cell reset to `idle` has no last run, so it has no reason for one.
+    cellRunErrors.delete(i);
     if (getCellStatus(i) !== "idle") setCellStatus(i, "idle");
   };
 
   /**
    * Mark cells at/after fromIndex as stale if they had outputs.
+   *
+   * Run errors are deliberately *not* swept here. Staleness says "what you are
+   * looking at was computed from something that has since changed", which only
+   * applies to a cell holding outputs; a failed cell holds none, and its
+   * message is a report of the last thing that happened in it, which an
+   * upstream re-run does not undo. It clears when this cell runs again — see
+   * `runCell` — and not before, because clearing it earlier would leave a red
+   * status dot with nothing beside it, which is the defect this fixed.
+   *
    * @param {number} fromIndex
    */
   const invalidateFrom = (fromIndex) => {
@@ -208,6 +285,10 @@ export function createKernel() {
       throw new Error("Empty cell");
     }
     setCellStatus(cellIndex, "running");
+    // The previous failure stops being the answer the moment this cell is
+    // running again: it clears here, on entry, rather than on success, so a
+    // re-run never shows a spinner next to the reason the *last* one died.
+    cellRunErrors.delete(cellIndex);
     const startedAt = Date.now();
     let cellRecipe = "";
     try {
@@ -246,6 +327,10 @@ export function createKernel() {
     } catch (err) {
       setCellStatus(cellIndex, "error");
       cellTimings.set(cellIndex, { ranAt: Date.now(), durationMs: Date.now() - startedAt });
+      // Keep the reason where the failure happened. Re-thrown unchanged: the
+      // run bar still answers "did the notebook run", and `runFrom` still
+      // stops the loop on it — this records *why*, it does not swallow.
+      cellRunErrors.set(cellIndex, cellRunErrorFrom(err));
       throw err;
     }
   };
@@ -275,6 +360,9 @@ export function createKernel() {
     cellOutputs.clear();
     cellStatus.clear();
     cellTimings.clear();
+    // A failure message names ops, slots and sometimes a key id — it goes with
+    // the statuses it belongs to, not after them.
+    cellRunErrors.clear();
     runLog = [];
     slots.clear();
     // A live quorum exchange is session state too — tear it down and zeroize
@@ -294,6 +382,7 @@ export function createKernel() {
     cellOutputs.clear();
     cellStatus.clear();
     cellTimings.clear();
+    cellRunErrors.clear();
     runLog = [];
     slots.evictSensitive();
   };
@@ -314,6 +403,8 @@ export function createKernel() {
     const nextStatus = new Map();
     /** @type {Map<number, { ranAt: number, durationMs: number }>} */
     const nextTimings = new Map();
+    /** @type {Map<number, CellRunError>} */
+    const nextRunErrors = new Map();
     for (const [i, arts] of cellOutputs) {
       const ni = mapFn(i);
       if (ni == null || ni < 0) continue;
@@ -329,12 +420,22 @@ export function createKernel() {
       if (ni == null || ni < 0) continue;
       nextTimings.set(ni, t);
     }
+    // Moved with the status it explains. A message left behind would sit in a
+    // cell that never ran — the misattribution `dealByCell` exists to prevent
+    // on the compile side, arriving through the runtime one.
+    for (const [i, e] of cellRunErrors) {
+      const ni = mapFn(i);
+      if (ni == null || ni < 0) continue;
+      nextRunErrors.set(ni, e);
+    }
     cellOutputs.clear();
     cellStatus.clear();
     cellTimings.clear();
+    cellRunErrors.clear();
     for (const [i, arts] of nextOut) cellOutputs.set(i, arts);
     for (const [i, st] of nextStatus) cellStatus.set(i, st);
     for (const [i, t] of nextTimings) cellTimings.set(i, t);
+    for (const [i, e] of nextRunErrors) cellRunErrors.set(i, e);
   };
 
   /** After reorder, keep tiles but mark every cell that has outputs as stale. */
@@ -349,6 +450,7 @@ export function createKernel() {
     getCellOutputs,
     getCellStatus,
     getCellTiming,
+    getCellRunError,
     setCellStatus,
     clearCellOutputs,
     invalidateFrom,

@@ -248,10 +248,79 @@ export function recipeUpgrade(
 }
 
 /** One validator complaint, anchored to a chip *within its own cell*. */
-export type CellError = { message: string; stepIndex: number };
+export type CellError = { message: string; stepIndex: number; when?: "compile" | "run" };
 
 /** Same shape, lower weight: advisory, does not block Run. */
 export type CellWarning = CellError;
+
+/** What the kernel kept from a throw — see `cellRunErrorFrom`. */
+export type CellRunError = { message: string; stepIndex: number; stepName: string };
+
+/**
+ * The rows a cell's error banner shows: what the run did, then what the
+ * validator says.
+ *
+ * One list, one component, one weight. Runtime and compile failures are
+ * different *sources* with the same destination — "this cell produced nothing,
+ * here is why" — and giving the runtime one its own banner would have been the
+ * third channel `dealByCell` was extracted to prevent: two surfaces free to
+ * disagree about which chip a step is.
+ *
+ * The run row leads. It reports something that *happened*; a validator
+ * complaint reports something that would happen. Ordering is close to
+ * academic, though — `runFrom` refuses to start unless `validation.ok`, so a
+ * cell that can show a run error has no compile errors to show beneath it.
+ *
+ * **The anchor is re-checked against the current recipe.** A compile error is
+ * recomputed on every keystroke; a run error is a fact about a past run, and
+ * chips renumber when you edit. So the chip lights only while the step at that
+ * index still holds the op that threw. Otherwise the message stays and loses
+ * its chip, which is the honest half: the run really did fail, and we no
+ * longer know which chip is to blame.
+ */
+export function cellErrorRows(
+  compileErrors: CellError[],
+  runError: CellRunError | null | undefined,
+  steps: StepTree[]
+): CellError[] {
+  if (!runError) return compileErrors || [];
+  const at = runError.stepIndex;
+  const host = at >= 0 ? steps?.[at] : undefined;
+  // No name means the throw never reached `execStep` — `in @nope` resolves its
+  // slot before dispatch. The engine's index is then the only word on the
+  // subject and there is nothing to contradict it, so a live index is enough.
+  const anchored = !!host && (!runError.stepName || holdsStep(host, runError.stepName));
+  return [
+    { message: runError.message, stepIndex: anchored ? at : -1, when: "run" },
+    ...(compileErrors || []),
+  ];
+}
+
+type StepTree = {
+  name?: string;
+  body?: StepTree[];
+  branches?: { body?: StepTree[] }[];
+};
+
+/**
+ * Does this top-level step still contain that op, at any depth?
+ *
+ * Recursive because the engine names the *innermost* thrower (`pem`) while
+ * anchoring to the stem it hangs off (`tee`) — deliberately, since that is how
+ * `validateRecipe` numbers a nested complaint, and the two channels have to
+ * agree about which chip a step is. A flat name comparison would refuse the
+ * anchor on every `foreach` and `tee` failure, which is most of the interesting
+ * ones.
+ */
+function holdsStep(step: StepTree, name: string): boolean {
+  if (!step) return false;
+  if (step.name === name) return true;
+  const nested = [
+    ...(step.body || []),
+    ...(step.branches || []).flatMap((b) => b?.body || []),
+  ];
+  return nested.some((k) => holdsStep(k, name));
+}
 
 /**
  * Per-cell validation errors for a whole notebook (§33c).
@@ -595,6 +664,16 @@ export function useNotebook() {
   const cellStatuses: CellStatus[] = useMemo(() => {
     void kernelEpoch;
     return chains.map((_, i) => kernelRef.current.getCellStatus(i) as CellStatus);
+  }, [chains, kernelEpoch]);
+
+  /**
+   * Why the last run of each cell failed — the runtime half of the cell's
+   * error banner. Read off the kernel on `kernelEpoch` like the statuses and
+   * timings beside it, which `runFrom` already bumps in its catch.
+   */
+  const cellRunErrors: (CellRunError | null)[] = useMemo(() => {
+    void kernelEpoch;
+    return chains.map((_, i) => kernelRef.current.getCellRunError?.(i) ?? null);
   }, [chains, kernelEpoch]);
 
   /** Last successful run's timestamp/duration per cell — drives the status-dot line. */
@@ -1262,6 +1341,14 @@ export function useNotebook() {
       // §27d: per-run approval state (request counter, batch grants) starts
       // fresh every run — a batch must never outlive the run that minted it.
       beginApprovalRun();
+      /**
+       * Which cell the loop is on, for the run bar's copy.
+       *
+       * A local, not `runningCell`: that is React state, so it is not readable
+       * in this closure until the next render (`49cd286` — every mutation here
+       * takes its cell index explicitly, and nothing reads an ambient one).
+       */
+      let at = -1;
       try {
         const bindings = buildBindings();
         for (let n = 0; n < runnable.length; n++) {
@@ -1291,13 +1378,22 @@ export function useNotebook() {
           setRunProgress({ cell: n + 1, total: runnable.length });
           setRunningCell(i);
           setRunStatus(`Running cell ${i}…`);
+          at = i;
           await kernelRef.current.runCell(i, chains[i], bindings);
         }
         setKernelEpoch((n) => n + 1);
         setRunStatus("Done");
       } catch (err) {
         setKernelEpoch((n) => n + 1);
-        setRunError(err instanceof Error ? err.message : String(err));
+        // The cell now carries this message too, and that repetition is the
+        // point: the run bar is the only line that is always on screen, so a
+        // failure in cell 9 of a long notebook must still be readable without
+        // scrolling. What it adds over the cell is *where* — the run bar
+        // answers "did the notebook run, and how far did it get", the cell
+        // answers "what happened here". Prefixed, never reworded: the thrown
+        // sentence is the part that names the remedy.
+        const msg = err instanceof Error ? err.message : String(err);
+        setRunError(at >= 0 ? `Cell [${at}] — ${msg}` : msg);
         setRunStatus("Failed");
       } finally {
         setBusy(false);
@@ -1629,6 +1725,7 @@ export function useNotebook() {
     cellOutputs,
     cellErrors,
     cellWarnings,
+    cellRunErrors,
     publishArtifact,
     readinessBlocker,
     unmetForCell,

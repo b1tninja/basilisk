@@ -3,7 +3,7 @@
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { generateKey, readKey } from "openpgp";
-import { createKernel, runChain } from "../lib/toolkit/kernel.js";
+import { cellRunErrorFrom, createKernel, runChain } from "../lib/toolkit/kernel.js";
 import { createSlotRegistry } from "../lib/toolkit/slot-registry.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { recipientsPipelineValue } from "../lib/toolkit/recipients-ops.js";
@@ -162,4 +162,125 @@ describe("kernel cell runs", () => {
     // Non-sensitive @x may remain; outputs are always wiped.
     expect(kernel.getCellOutputs(0)).toEqual([]);
   }, 60_000);
+});
+
+/**
+ * A cell that fails says why, in the cell.
+ *
+ * `runCell` used to keep only the *fact*: `setCellStatus("error")`, timings,
+ * and the reason thrown onward to the run bar — one red line above the
+ * notebook, outside the cell that failed. `rtc-live-diagnostics` rendered as
+ * three empty cells and that one line, none of it attached to `rtc.state`,
+ * which is the op that threw and whose message names both ways to fix it.
+ */
+describe("a failed cell keeps its reason", () => {
+  const failing = () => compileRecipe("random 8 | encode hex | pem").ast.chains[0];
+
+  it("records the message, the op and the chip it belongs to", async () => {
+    const kernel = createKernel();
+    await expect(kernel.runCell(0, failing())).rejects.toThrow(/pem expects bytes/);
+    expect(kernel.getCellStatus(0)).toBe("error");
+    expect(kernel.getCellRunError(0)).toEqual({
+      // Verbatim. A layout that needed this shortened would be the wrong layout.
+      message: "pem expects bytes",
+      stepIndex: 2,
+      stepName: "pem",
+    });
+    expect(kernel.getCellRunError(1)).toBeNull();
+  });
+
+  it("still re-throws, so the run bar and the run loop are unaffected", async () => {
+    // Recording the reason must not swallow it: `runFrom` stops the loop on
+    // this throw, and the always-visible run bar is what a failure in cell 9
+    // of a long notebook is read from.
+    const kernel = createKernel();
+    let caught = null;
+    try {
+      await kernel.runCell(0, failing());
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.message).toBe(kernel.getCellRunError(0).message);
+  });
+
+  it("anchors a nested failure to the stem, the way the validator numbers one", async () => {
+    const kernel = createKernel();
+    const chain = compileRecipe("random 8 | encode hex | tee\n  - pem\n| out @x").ast
+      .chains[0];
+    await expect(kernel.runCell(0, chain)).rejects.toThrow();
+    const err = kernel.getCellRunError(0);
+    // The innermost op is named; the chip is the top-level stem that holds it,
+    // because that is the only index a chip exists for.
+    expect(err.stepName).toBe("pem");
+    expect(err.stepIndex).toBe(2);
+    expect(chain.steps[err.stepIndex].name).toBe("tee");
+  });
+
+  it("clears the moment the cell runs again, before it is known to succeed", async () => {
+    const kernel = createKernel();
+    await expect(kernel.runCell(0, failing())).rejects.toThrow();
+    expect(kernel.getCellRunError(0)).toBeTruthy();
+    await kernel.runCell(0, compileRecipe("random 8 | encode hex | out @x").ast.chains[0]);
+    expect(kernel.getCellStatus(0)).toBe("ok");
+    expect(kernel.getCellRunError(0)).toBeNull();
+  });
+
+  it("survives an upstream re-run, which is not the same as being stale", async () => {
+    // Staleness says "computed from something that has since changed", which
+    // needs outputs to be stale about. A failed cell has none, and running the
+    // cell above it does not undo the last thing that happened in this one.
+    const kernel = createKernel();
+    await kernel.runCell(0, compileRecipe("random 8 | encode hex | out @x").ast.chains[0]);
+    await expect(kernel.runCell(1, failing())).rejects.toThrow();
+    await kernel.runCell(0, compileRecipe("random 8 | encode hex | out @x").ast.chains[0]);
+    expect(kernel.getCellStatus(1)).toBe("error");
+    expect(kernel.getCellRunError(1)?.message).toBe("pem expects bytes");
+  });
+
+  it("goes with the outputs on clear, lock and reset", async () => {
+    for (const wipe of ["clearCellOutputs", "clearSensitive", "lockSensitive"]) {
+      const kernel = createKernel();
+      await expect(kernel.runCell(0, failing())).rejects.toThrow();
+      expect(kernel.getCellRunError(0), wipe).toBeTruthy();
+      if (wipe === "clearCellOutputs") kernel.clearCellOutputs(0);
+      else kernel[wipe]();
+      expect(kernel.getCellRunError(0), wipe).toBeNull();
+    }
+  });
+
+  it("moves with the cell on remap, so it cannot land on one that never ran", async () => {
+    const kernel = createKernel();
+    await kernel.runCell(0, compileRecipe("random 8 | encode hex | out @a").ast.chains[0]);
+    await expect(kernel.runCell(1, failing())).rejects.toThrow();
+    kernel.remapCells((i) => (i === 0 ? 1 : i === 1 ? 0 : i));
+    expect(kernel.getCellRunError(0)?.stepName).toBe("pem");
+    expect(kernel.getCellRunError(1)).toBeNull();
+  });
+});
+
+describe("cellRunErrorFrom", () => {
+  it("reads the engine's attribution off the error", () => {
+    const err = new Error("boom");
+    Object.defineProperty(err, "basiliskStep", { value: "pem" });
+    Object.defineProperty(err, "basiliskStepIndex", { value: 3 });
+    expect(cellRunErrorFrom(err)).toEqual({ message: "boom", stepIndex: 3, stepName: "pem" });
+  });
+
+  it("says something rather than nothing when a throw carries no message", () => {
+    expect(cellRunErrorFrom(new Error(""))).toEqual({
+      message: "Run failed",
+      stepIndex: -1,
+      stepName: "",
+    });
+    expect(cellRunErrorFrom(undefined).message).toBe("Run failed");
+    expect(cellRunErrorFrom("plain string").message).toBe("plain string");
+  });
+
+  it("refuses an anchor the engine did not give", () => {
+    const err = new Error("boom");
+    Object.defineProperty(err, "basiliskStepIndex", { value: -1 });
+    expect(cellRunErrorFrom(err).stepIndex).toBe(-1);
+    expect(cellRunErrorFrom(new Error("boom")).stepIndex).toBe(-1);
+  });
 });

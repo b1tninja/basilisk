@@ -10,7 +10,11 @@ import { describe, expect, it } from "vitest";
 import { expectedTypeFrom } from "../lib/toolkit/type-error-hints.js";
 import { producersOf } from "../lib/toolkit/type-registry.js";
 import { PRESETS, compileRecipe, parseRecipe } from "../lib/toolkit/recipe.js";
-import { cellErrorsForChains, cellWarningsForChains } from "../toolkit/useNotebook";
+import {
+  cellErrorRows,
+  cellErrorsForChains,
+  cellWarningsForChains,
+} from "../toolkit/useNotebook";
 import { warningDismissKey } from "../toolkit/CellWarnings";
 
 describe("expectedTypeFrom", () => {
@@ -242,6 +246,100 @@ describe("cellWarningsForChains", () => {
   it("returns one array per cell, like the error side", () => {
     expect(cellWarningsForChains([])).toEqual([]);
     expect(cellWarningsForChains([{ steps: [] }])).toEqual([[]]);
+  });
+});
+
+/**
+ * The runtime half of the same banner.
+ *
+ * A cell that failed at run time used to record only *that* it failed:
+ * `setCellStatus("error")`, and the reason re-thrown to the run bar, ~130px
+ * above the cell and outside it. `rtc-live-diagnostics` was the worked case —
+ * three empty cells under one red line. These rows now ride the compile
+ * channel's component, which is what this function makes.
+ */
+describe("cellErrorRows", () => {
+  const steps = [{ name: "rtc.state" }, { name: "out" }];
+
+  it("passes compile errors straight through when nothing ran", () => {
+    const compile = [{ message: "boom", stepIndex: 1 }];
+    expect(cellErrorRows(compile, null, steps)).toBe(compile);
+    expect(cellErrorRows([], undefined, steps)).toEqual([]);
+  });
+
+  it("leads with the run failure and keeps its wording byte for byte", () => {
+    // `requireLinks` spends its whole message naming both ways to get a
+    // connection. That sentence is the reason this row exists; it is copied,
+    // never trimmed to fit.
+    const message =
+      "rtc.state: no live connection — open one with peer.offer / peer.answer, or a mesh with quorum.offer / quorum.join";
+    const rows = cellErrorRows([{ message: "later", stepIndex: 1 }], {
+      message,
+      stepIndex: 0,
+      stepName: "rtc.state",
+    }, steps);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ message, stepIndex: 0, when: "run" });
+    expect(rows[1].when).toBeUndefined();
+  });
+
+  it("keeps the chip only while that chip is still the step that threw", () => {
+    // A compile error is recomputed on every keystroke; this one is a fact
+    // about a past run, and chips renumber when the cell is edited. Insert a
+    // step above the failure and the anchor no longer matches by name.
+    const edited = [{ name: "input" }, { name: "rtc.state" }, { name: "out" }];
+    const err = { message: "no live connection", stepIndex: 0, stepName: "rtc.state" };
+    expect(cellErrorRows([], err, steps)[0].stepIndex).toBe(0);
+    // The message survives; only the anchor is dropped. Losing the sentence
+    // would be the original defect returning through the back door.
+    const moved = cellErrorRows([], err, edited)[0];
+    expect(moved.stepIndex).toBe(-1);
+    expect(moved.message).toBe("no live connection");
+  });
+
+  it("renders unanchored rather than guessing when there is no live chip", () => {
+    for (const err of [
+      { message: "x", stepIndex: -1, stepName: "rtc.state" },
+      { message: "x", stepIndex: 99, stepName: "rtc.state" },
+      { message: "x", stepIndex: 1, stepName: "rtc.state" },
+    ]) {
+      expect(cellErrorRows([], err, steps)[0].stepIndex, JSON.stringify(err)).toBe(-1);
+    }
+  });
+
+  it("anchors on the index alone when the engine named no op", () => {
+    // `in @nope` resolves its slot before dispatch, so it never reaches the
+    // attribution point and carries no name — but it does carry an index, and
+    // that index is the only word on the subject.
+    const rows = cellErrorRows(
+      [],
+      { message: "in @nope: unknown slot", stepIndex: 0, stepName: "" },
+      [{ name: "in" }]
+    );
+    expect(rows[0].stepIndex).toBe(0);
+  });
+
+  it("keeps the chip when the op that threw is nested inside it", () => {
+    // The engine names the innermost thrower and anchors to the stem it hangs
+    // off — the same rule `validateRecipe` uses for a nested complaint. A flat
+    // name comparison would refuse the anchor on every foreach and tee, which
+    // is most of the failures worth pointing at.
+    const nested = [
+      { name: "random" },
+      { name: "encode" },
+      { name: "tee", body: [{ name: "pem" }] },
+    ];
+    expect(
+      cellErrorRows([], { message: "pem expects bytes", stepIndex: 2, stepName: "pem" }, nested)[0]
+        .stepIndex
+    ).toBe(2);
+    const branched = [
+      { name: "foreach", branches: [{ body: [{ name: "sss.combine" }] }] },
+    ];
+    expect(
+      cellErrorRows([], { message: "boom", stepIndex: 0, stepName: "sss.combine" }, branched)[0]
+        .stepIndex
+    ).toBe(0);
   });
 });
 

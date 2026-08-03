@@ -313,7 +313,23 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
       }
     };
 
+    /**
+     * The top-level step the plan is currently on — the anchor a failure
+     * carries out to the banner.
+     *
+     * Numbered exactly the way `validateRecipe` numbers its `stepIndex`:
+     * continuous across cells, and a step inside a `foreach` body or a `tee`
+     * branch reports the stem it hangs off rather than a number no chip has.
+     * Matching that convention is the point — a runtime error and a compile
+     * error about the same pipeline must not light different chips.
+     */
+    let stemIndex = -1;
+    // The loop body below is deliberately left at its original indentation:
+    // re-indenting 230 lines to add an anchor would bury the change.
+    try {
+
   for (const node of plan) {
+    stemIndex = steps.indexOf(node.step);
     if (node.kind === "tee") {
       lastStepEmitted = false;
       if (!value) throw new Error("tee requires a pipeline value");
@@ -551,6 +567,11 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
     }
   }
 
+    } catch (err) {
+      attribute(err, "basiliskStepIndex", stemIndex < 0 ? -1 : stepOrdinal + stemIndex);
+      throw err;
+    }
+
   stepOrdinal += steps.length;
   } // end chains
 
@@ -664,6 +685,27 @@ export function projectSelector(value, selector) {
 }
 
 /**
+ * Stamp a thrown error with where it came from, leaving its message untouched.
+ *
+ * Non-enumerable and `configurable`, so attribution never shows up in a
+ * serialized error, never overwrites an inner attribution (the innermost
+ * thrower is the specific one), and never turns a failure into a second,
+ * different failure: a frozen error simply carries no anchor.
+ *
+ * @param {unknown} err
+ * @param {"basiliskStep"|"basiliskStepIndex"} key
+ * @param {string|number} value
+ */
+function attribute(err, key, value) {
+  if (!err || typeof err !== "object" || key in err) return;
+  try {
+    Object.defineProperty(err, key, { value, enumerable: false, configurable: true });
+  } catch (_) {
+    /* frozen error: attribution is best-effort */
+  }
+}
+
+/**
  * @param {import("./recipe.js").RecipeStep} step
  * @param {PipelineValue|null} value
  * @param {RuntimeBindings} bindings
@@ -682,20 +724,10 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
     result = await execStepBody(step, value, bindings, artifacts);
   } catch (err) {
     // Attribute the failure to its step without touching the message — callers
-    // (the headless CLI, and any future banner) can say *which* op died even
+    // (the headless CLI, and the per-cell banner) can say *which* op died even
     // when the throw came from a lazily imported module that never saw the
     // step. Messages are left byte-identical on purpose; tests assert them.
-    if (err && typeof err === "object" && !("basiliskStep" in err)) {
-      try {
-        Object.defineProperty(err, "basiliskStep", {
-          value: step.name,
-          enumerable: false,
-          configurable: true,
-        });
-      } catch (_) {
-        /* frozen error: attribution is best-effort */
-      }
-    }
+    attribute(err, "basiliskStep", step.name);
     throw err;
   }
   const spec = getStep(step.name);

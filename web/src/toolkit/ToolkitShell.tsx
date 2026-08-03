@@ -50,7 +50,7 @@ import { execFileRead } from "../lib/toolkit/file-ops.js";
 import { execQrScan } from "../lib/toolkit/qr-scan.js";
 import { setCssVar } from "../lib/css-vars.js";
 import { cn } from "@/lib/cn";
-import { recipeUpgrade, useNotebook } from "./useNotebook";
+import { cellErrorRows, recipeUpgrade, useNotebook } from "./useNotebook";
 import { RecipientBinderHost } from "./RecipientBinderHost";
 import { CellWarnings, warningDismissKey } from "./CellWarnings";
 import {
@@ -1397,7 +1397,15 @@ export function ToolkitShell() {
                               views never hides the complaint. */}
                           <CellTypeErrors
                             className="mb-2"
-                            errors={nb.cellErrors[i] || []}
+                            /* Runtime failures land here too, at the same
+                               weight and on the same anchor — one surface, so
+                               the two channels cannot disagree about which
+                               chip a step is (§33c, `cellErrorRows`). */
+                            errors={cellErrorRows(
+                              nb.cellErrors[i] || [],
+                              nb.cellRunErrors[i],
+                              chain.steps || []
+                            )}
                             steps={chain.steps || []}
                             onFocusStep={(si) => {
                               nb.setFocusedCell(i);

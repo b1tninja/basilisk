@@ -1729,13 +1729,16 @@ function CatalogApp() {
 
         <Section
           id="celltypeerrors"
-          title="CellTypeErrors — type failures as a surface, not a runtime throw (§33c)"
+          title="CellTypeErrors — why this cell produced nothing, in this cell (§33c)"
         >
           <p className="-mt-1 mb-1 text-[11px] text-[var(--muted-foreground)]">
             Sits under the chip row, where RunBar&rsquo;s blocked state already lives — a
             banner rather than a tooltip, because a message you must hover to find is not
             one you read before pressing Run. The fix hint only appears when the registry
-            knows an op that actually produces the wanted type.
+            knows an op that actually produces the wanted type. Runtime throws land here
+            too, at the same weight: a run that died is never less consequential than one
+            that was refused. The <code>at run</code> tag carries the difference, because
+            a prediction and a report have different next actions.
           </p>
           <div className="max-w-2xl">
             <StateLabel>
@@ -1769,6 +1772,23 @@ function CatalogApp() {
             <CellTypeErrors
               steps={[]}
               errors={[{ message: "Nested foreach is not allowed.", stepIndex: -1 }]}
+            />
+          </div>
+          <div className="max-w-2xl">
+            <StateLabel>
+              The run died here — same weight, tagged, anchored to the op that threw
+            </StateLabel>
+            <CellTypeErrors
+              steps={[{ name: "rtc.state" }, { name: "out" }]}
+              errors={[
+                {
+                  message:
+                    "rtc.state: no live connection — open one with peer.offer / peer.answer, or a mesh with quorum.offer / quorum.join",
+                  stepIndex: 0,
+                  when: "run",
+                },
+              ]}
+              onFocusStep={() => {}}
             />
           </div>
         </Section>
