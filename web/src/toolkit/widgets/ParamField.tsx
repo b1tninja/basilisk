@@ -27,6 +27,27 @@ function slotRefOf(val: unknown): string | null {
   return s.startsWith("@") && s.length > 1 ? s : null;
 }
 
+/**
+ * The effective default, shown exactly while it is in effect (§ParamSpec.emptyMeans).
+ *
+ * An empty field looks like nothing happening. For `rtc.ice stun=` it meant
+ * *contact Cloudflare and Google*, said only in a `title` tooltip — a
+ * behaviour-changing default that a user could neither see nor knowingly
+ * accept. The registry writes the phrase; this renders it, and stops rendering
+ * it the moment the field has a value, because then the default no longer
+ * applies and the line would be describing something that is not happening.
+ */
+function EmptyMeans({ param, value }: { param: ParamSpec; value: unknown }) {
+  const phrase = param.emptyMeans;
+  if (!phrase) return null;
+  if (String(value ?? "").trim() !== "") return null;
+  return (
+    <p className="param-empty-means mt-1 text-[10px] leading-snug text-[var(--text-muted)]">
+      <span className="param-empty-means-key">empty →</span> {phrase}
+    </p>
+  );
+}
+
 /** Single builder param — bool / enum / text / locked. Redesigned with uniform widget system. */
 export function ParamField({
   param,
@@ -90,6 +111,10 @@ export function ParamField({
             Bind a value from Inputs…
           </button>
         )}
+        {/* Unbound is the empty case for a secret: `ssh.encode passphrase=`
+            left alone writes the private block in the clear, which is the
+            same class of invisible default as `stun=`. */}
+        <EmptyMeans param={param} value={ref ? val : ""} />
       </div>
     );
   }
@@ -229,6 +254,10 @@ export function ParamField({
         className="w-full px-2.5 py-1.5 text-sm border border-[var(--border)] rounded-md bg-[var(--surface)] text-[var(--text)] font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand)] focus:ring-offset-1"
         type={param.type === "int" ? "number" : "text"}
         value={String(val ?? "")}
+        // The ghost text in the box says what the box is already doing. It is
+        // the same phrase as the hint below, from the same registry field —
+        // one is legible at a glance, the other survives a narrow column.
+        placeholder={param.emptyMeans || undefined}
         autoFocus={autoFocus}
         onChange={(e) =>
           onChange(
@@ -237,6 +266,7 @@ export function ParamField({
           )
         }
       />
+      <EmptyMeans param={param} value={val} />
     </div>
   );
 }

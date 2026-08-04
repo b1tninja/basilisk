@@ -11,7 +11,9 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
+  candidateAbsence,
   connStateReadout,
+  iceServerPolicy,
   sdpReadout,
   stunReachability,
   SDP_CARRY_NOTE,
@@ -144,6 +146,98 @@ describe("stunReachability — a verdict from what the op actually measured", ()
   });
 });
 
+describe("iceServerPolicy — what a config does to you, on the config", () => {
+  it("names the no-third-party config as a choice, not an empty panel", () => {
+    // `rtc.ice stun=none` emits a list with no rows. Without a reading, the
+    // panel for the one config that deliberately contacts nobody renders as
+    // blank space — indistinguishable from a step that failed.
+    const read = iceServerPolicy({ iceServers: [] });
+    expect(read.verdict).toMatch(/no third party/i);
+    expect(read.tone).toBe("muted");
+    expect(read.why).toMatch(/host candidates only/i);
+    // And it says the cost, because a config that cannot cross NAT must not
+    // be discovered as a mystery on the connection screen an hour later.
+    expect(read.next).toMatch(/NAT/);
+  });
+
+  it("says out loud who the defaults are and what they learn", () => {
+    // The instruction this whole change answers: the defaults must be
+    // obvious. A list of two URLs is not obvious about what contacting them
+    // discloses.
+    const read = iceServerPolicy({
+      iceServers: [{ urls: "stun:a.example:3478" }, { urls: "stun:b.example:3478" }],
+    });
+    expect(read.verdict).toBe("2 STUN");
+    expect(read.why).toMatch(/public address/i);
+    // Refusal is discoverable from the screen that shows the default, not
+    // only from a doc string in a tooltip.
+    expect(read.next).toMatch(/stun=none/);
+  });
+
+  it("distinguishes the server that learns an address from the one that carries traffic", () => {
+    const read = iceServerPolicy({
+      iceServers: [
+        { urls: "stun:a.example:3478" },
+        { urls: "turn:r.example:3478", username: "u", credential: "c" },
+      ],
+    });
+    expect(read.verdict).toBe("1 STUN · 1 TURN");
+    expect(read.tone).toBe("warn");
+    // Accurate about what a relay does and does not see: it forwards DTLS it
+    // cannot read, and that is a different exposure from a binding request.
+    expect(read.why).toMatch(/end-to-end encrypted|cannot read/i);
+    expect(read.why).toMatch(/timing|volume/i);
+  });
+
+  it("degrades to null rather than throwing on a shape it does not know", () => {
+    expect(iceServerPolicy({})).toBeNull();
+    expect(iceServerPolicy(null)).toBeNull();
+    expect(iceServerPolicy({ iceServers: "stun:x" })).toBeNull();
+  });
+});
+
+describe("candidateAbsence — a missing type is a choice or a fault, never both", () => {
+  it("reports a declined STUN server as the config that was run", () => {
+    // The consequence of making `none` expressible: a host-only gather is now
+    // a thing a user asks for, and reporting their own choice back as "none
+    // gathered" would send them to debug a network that is behaving.
+    const said = candidateAbsence("srflx", { ice: { stun: 0, turn: 0 } });
+    expect(said).toMatch(/no STUN server was configured/i);
+    expect(said).toMatch(/not a network failure/i);
+  });
+
+  it("still reports a configured STUN server that answered nothing as a fault", () => {
+    const said = candidateAbsence("srflx", { ice: { stun: 2, turn: 0 } });
+    expect(said).toMatch(/did not complete|no reflexive candidate came back/i);
+    expect(said).not.toMatch(/not a network failure/i);
+  });
+
+  it("can finally say which of the three relay causes happened", () => {
+    // The row used to name all three at once — correctly, because the gather
+    // carried no server list and the panel could not know. It carries one now.
+    expect(candidateAbsence("relay", { ice: { stun: 2, turn: 0 } })).toMatch(
+      /no TURN server was configured/i
+    );
+    const configured = candidateAbsence("relay", { ice: { stun: 0, turn: 1 } });
+    expect(configured).toMatch(/refused the credential|never answered/i);
+    expect(configured).not.toMatch(/no TURN is configured/i);
+  });
+
+  it("keeps the undecided sentence for an artifact that predates the fact", () => {
+    // An older `rtc.gather` result has no `ice` field. Guessing on its behalf
+    // would be the panel inventing a measurement, which is the mistake the
+    // relay count next door was removed for.
+    const said = candidateAbsence("relay", { byType: { relay: 0 } });
+    expect(said).toMatch(/either no TURN is configured, or one is/i);
+  });
+
+  it("leaves peer-reflexive alone — it is absent by definition here", () => {
+    expect(candidateAbsence("prflx", { ice: { stun: 2, turn: 0 } })).toMatch(
+      /only appears during negotiation/i
+    );
+  });
+});
+
 describe("sdpReadout — the blob, and the transport that is already gone", () => {
   const OFFER = [
     "v=0",
@@ -220,6 +314,17 @@ describe("the panels themselves", () => {
     const rules = css.slice(css.indexOf(".net-badge"), css.indexOf(".net-stage"));
     expect(rules).toMatch(/var\(--tile-tint\)/);
     expect(rules).not.toMatch(/\)\s+12%,\s*transparent/);
+  });
+
+  it("derives the absent-candidate sentences instead of writing them itself", () => {
+    // The rule at the head of `artifact-readouts.js`: a fact derived in two
+    // places is a bug. Which of the three relay causes happened now depends on
+    // the config the gather recorded, and a literal in the widget is a second
+    // answer that cannot see it.
+    const code = stripComments(widget);
+    expect(code).toMatch(/candidateAbsence\(/);
+    expect(code).not.toMatch(/no relay route —/);
+    expect(code).not.toMatch(/peer-reflexive only appears/);
   });
 
   it("keeps the connection-state bar out of the accessibility tree", () => {

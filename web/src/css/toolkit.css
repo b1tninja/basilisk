@@ -2315,3 +2315,41 @@ input[type="file"][data-basilisk-file-picker] {
     animation-duration: 2.4s;
   }
 }
+
+/*
+ * The effective default, where the choice is made (ParamSpec.emptyMeans).
+ *
+ * `rtc.ice stun=` defaulted to *contact Cloudflare and Google* and the only
+ * place that was said was a `title` tooltip, so the field that decides whether
+ * a third party learns your public IP looked exactly like a field that does
+ * nothing when empty. The placeholder and the hint below the box are the same
+ * registry phrase; both are here rather than on an element `style`, which
+ * `style-src 'self'` refuses in production.
+ *
+ * `opacity: 1` is not decoration — Firefox dims placeholders by default, and
+ * the dimmed value is what would have carried the sentence.
+ *
+ * Measured in the production build with `rtc.ice` open in a cell, both themes,
+ * against a black-on-white check at 21.00 first. The placeholder is
+ * `--text-muted` on the input's own `--surface`: 6.15:1 dark, 6.39:1 light.
+ * The hint sits on the step panel's tint rather than on `--surface`, which is
+ * the tighter case and the one that governs: 4.82:1 dark and 5.42:1 light,
+ * against the 4.5:1 floor small text sets.
+ *
+ * The placeholder truncates in a real cell column — "…write none fo" at 332px,
+ * which is where the argument for the hint below it stops being theoretical.
+ * They are one registry phrase at two fidelities, not two sentences.
+ */
+.param-field input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* The marker, not the sentence. Set apart by *shape* — monospace, like the
+   recipe text this line is describing — and not by fading, which was tried
+   first: `opacity: 0.8` measured 4.35:1 dark and 3.85:1 on the light raised
+   surface, under the 4.5:1 floor. Same mistake as the candidate badges'
+   `opacity-45`, which took the sentence beside them down too. */
+.param-empty-means-key {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}

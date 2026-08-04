@@ -126,6 +126,15 @@ production". Do not read a clean console in dev as a clean bill of health.
 - **Not defended:** traffic analysis and metadata. A network observer learns
   that you contacted a signalling relay and STUN/TURN servers, and roughly how
   much you sent. Basilisk hides content, not the fact of communication.
+- **The STUN default is refusable, and the refusal is kept.** An exchange with
+  no `ice=` uses two public STUN servers (Cloudflare and Google), and a STUN
+  binding request tells whoever answers it your public address. `rtc.ice
+  stun=none` names the opposite choice: no server of any kind, host candidates
+  only, no packet to anyone but the peer. That empty list is carried unchanged
+  through `parseIceConfig`, the raw ops and the session — the substitution
+  rule (`iceServersOrDefault`) fills in defaults for *absent*, never for
+  *empty*. The trade is stated where the choice is made: host candidates reach
+  peers on the same network and cannot cross NAT.
 - **Not defended:** a malicious *participant*. Anyone you invite into a room
   is inside it. Threshold schemes limit what one participant can do; they do
   not make a hostile participant harmless.

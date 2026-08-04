@@ -856,6 +856,41 @@ function CatalogApp() {
               />
             </div>
             <div>
+              {/**
+               * The state that had no fixture because it had no way to exist:
+               * `rtc.ice stun=none`, the config that contacts nobody. Rendered
+               * from the list alone it is an empty panel — no rows — which
+               * looks exactly like a step that failed. The reading is the
+               * whole panel here, and it says the trade out loud: host
+               * candidates reach the same network and nothing else.
+               */}
+              <StateLabel>endpoint — rtc.ice stun=none (no third party)</StateLabel>
+              <NetworkArtifact netType="endpoint" data={{ v: 1, iceServers: [] }} />
+            </div>
+            <div>
+              {/**
+               * A gather that ran against that config. The srflx row says the
+               * STUN server was declined rather than silent, and the relay row
+               * can finally name which of its three causes happened — both
+               * from the `ice` census the op now records.
+               */}
+              <StateLabel>candidate — host-only gather, by request</StateLabel>
+              <NetworkArtifact
+                netType="candidate"
+                data={{
+                  v: 1,
+                  candidates: [
+                    { type: "host", address: "192.168.1.24", port: 54321, protocol: "udp" },
+                    { type: "host", address: "fe80::1c2b", port: 54322, protocol: "udp" },
+                  ],
+                  byType: { host: 2, prflx: 0, srflx: 0, relay: 0 },
+                  total: 2,
+                  ms: 210,
+                  ice: { stun: 0, turn: 0, total: 0 },
+                }}
+              />
+            </div>
+            <div>
               <StateLabel>endpoint — stun.check reached a server</StateLabel>
               <NetworkArtifact
                 netType="endpoint"
@@ -2022,6 +2057,16 @@ function CatalogApp() {
               },
               { name: "usage", type: "enum", enum: ["auto", "sign", "encrypt"] },
               { name: "label", type: "string", doc: "Optional label" },
+              {
+                // The case this field was blind to: a blank box that is
+                // already doing something. `rtc.ice stun=` contacted
+                // Cloudflare and Google and said so only in a tooltip.
+                name: "stun",
+                type: "string",
+                default: "",
+                emptyMeans: "Cloudflare + Google STUN — write none for no third party",
+                doc: "Comma-separated stun: URLs, or `none` for no STUN server at all",
+              },
               { name: "decode", type: "bool", flag: "-d" },
             ]}
             values={params}
@@ -2051,6 +2096,24 @@ function CatalogApp() {
             <ParamField
               param={{ name: "key", type: "slot", secret: true, doc: "TURN credential" }}
               value="@dana-turn-pass"
+              onChange={() => {}}
+              onRequestBind={() => {}}
+            />
+          </div>
+          <StateLabel>
+            Unbound secret whose empty case is consequential — `ssh.encode passphrase=`
+          </StateLabel>
+          <div className="max-w-xs">
+            <ParamField
+              param={{
+                name: "passphrase",
+                type: "slot",
+                secret: true,
+                default: "",
+                emptyMeans: "the private block is written unencrypted",
+                doc: "format=private only: @slot holding the passphrase to encrypt the block with",
+              }}
+              value=""
               onChange={() => {}}
               onRequestBind={() => {}}
             />

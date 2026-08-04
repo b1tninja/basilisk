@@ -101,6 +101,9 @@ import { parsePublicBlob, parsePublicLine } from "../ssh/wire.js";
 import { sshFingerprint } from "../ssh/fingerprint.js";
 import { parseReceipt } from "./receipt.js";
 import { bytesToBase64 } from "./encode.js";
+// Counting third parties in a server list is the WebRTC layer's fact, not a
+// second regex here — the same census `rtc.gather` stamps into its output.
+import { iceServerCensus } from "../webrtc/ice.js";
 
 /**
  * The packet framing of an OpenPGP message, for the ciphertext and envelope
@@ -940,6 +943,99 @@ export function stunReachability(data) {
     // relay route exists.
     next: null,
   };
+}
+
+/**
+ * What an `rtc.ice` config *does to you*, read off the list itself (§22b).
+ *
+ * The defaults were invisible in both directions: a blank `stun=` contacted
+ * Cloudflare and Google, and the artifact that came out listed two URLs with
+ * nothing to say they were a fallback rather than a choice. This is the panel
+ * line that states the consequence — who learns what, when a connection is
+ * built from this config — and it is the same sentence whether the list came
+ * from the defaults, from typed URLs, or from `stun=none`.
+ *
+ * The empty case is not an error and is not drawn as one. It is the answer to
+ * a question the app previously would not let anyone answer.
+ *
+ * @param {{ iceServers?: unknown }} data
+ * @returns {{ tone: "brand"|"warn"|"muted", verdict: string,
+ *   why: string, next: string | null } | null}
+ */
+export function iceServerPolicy(data) {
+  if (!Array.isArray(data?.iceServers)) return null;
+  const { stun, turn } = iceServerCensus(
+    /** @type {RTCIceServer[]} */ (data.iceServers)
+  );
+  if (!stun && !turn) {
+    return {
+      tone: "muted",
+      verdict: "no third party",
+      why: "This config names no STUN and no TURN server. A connection built from it gathers host candidates only — your machine's own addresses — and no packet goes anywhere except to the peer.",
+      next: "Host candidates reach peers on the same network. Across NAT there is no reflexive address to offer and the connection will not form; that is the trade this config makes.",
+    };
+  }
+  if (turn) {
+    return {
+      tone: "warn",
+      verdict: `${stun} STUN · ${turn} TURN`,
+      why: `A relay carries the connection's packets. The channel stays end-to-end encrypted — a TURN server forwards DTLS it cannot read — but it sees both addresses, the timing and the volume, which a STUN server never does.`,
+      next: null,
+    };
+  }
+  return {
+    tone: "brand",
+    verdict: `${stun} STUN`,
+    why: `Each of these ${stun === 1 ? "server" : "servers"} learns this machine's public address when a connection is made, and nothing else — a STUN binding request carries no traffic.`,
+    next: "Write `rtc.ice stun=none` for a config that contacts nobody at all.",
+  };
+}
+
+/**
+ * Why a candidate type is missing — a choice, or a fault (§26a).
+ *
+ * `rtc.gather` now records the ICE config it gathered against, which is what
+ * makes this answerable at all. The relay row used to name all three possible
+ * causes at once and say so honestly, *because the output carried no server
+ * list and the panel could not know which had happened*. It knows now, for
+ * anything gathered since; an older artifact carries no `ice` field and gets
+ * the same undecided sentence it always did, because that one is still true.
+ *
+ * The distinction is `stunReachability`'s, one level down: *not probed* is not
+ * the same fact as *probed and absent*, and a deliberate no-third-party run is
+ * the first of those. Saying "none gathered" for a STUN server the user
+ * declined would report their own choice back to them as a fault.
+ *
+ * @param {string} type  one of host / prflx / srflx / relay
+ * @param {{ ice?: { stun?: number, turn?: number } }} data
+ * @returns {string}
+ */
+export function candidateAbsence(type, data) {
+  const ice = data?.ice;
+  if (type === "prflx") {
+    return "none — peer-reflexive only appears during negotiation";
+  }
+  if (type === "srflx") {
+    if (ice && !Number(ice.stun || 0)) {
+      return "none — no STUN server was configured for this gather, so no reflexive candidate could be asked for. This is the config you ran, not a network failure.";
+    }
+    return "none gathered — a STUN server was configured and no reflexive candidate came back, so the round trip did not complete";
+  }
+  if (type === "relay") {
+    if (ice && !Number(ice.turn || 0)) {
+      return "no relay route — no TURN server was configured for this gather. Informational, not a failure.";
+    }
+    if (ice) {
+      return "no relay route — a TURN server was configured and allocated nothing: it refused the credential, or never answered. Both arrive here as nothing, and only `icecandidateerror` 401 tells them apart.";
+    }
+    // Verified end to end against a live coturn on the day this was written,
+    // and the same run showed that a wrong password and a dead server both
+    // yield exactly this empty result. An artifact from before `rtc.gather`
+    // recorded its config cannot say which of the three happened, and says so
+    // rather than picking the flattering one.
+    return "no relay route — either no TURN is configured, or one is and it refused the credential or never answered. All three arrive here as nothing.";
+  }
+  return "none gathered";
 }
 
 /**

@@ -52,6 +52,22 @@ import {
  * @property {ParamType} type  enum | int | string | bool | flag | slot
  * @property {string} [doc]
  * @property {*} [default]  filled when omitted; omitted from serialize unless serialize:"always"
+ * @property {string} [emptyMeans]  what leaving this blank actually *does*, as a
+ *   short phrase — the effective default, rendered where the choice is made.
+ *
+ *   An empty default is the one default the UI cannot show: `default ""` draws
+ *   as an empty field, which reads as "nothing happens" whether or not
+ *   something does. `rtc.ice stun=` is the case that made this a field rather
+ *   than a habit — blank meant *contact Cloudflare and Google*, and the only
+ *   place that was written down was a doc string in a tooltip. A default that
+ *   changes behaviour is visible at the point of choosing or it is not a
+ *   default, it is a surprise.
+ *
+ *   Written once here and rendered three ways — the field's placeholder, the
+ *   hint under the field while it is empty (i.e. exactly while it is in
+ *   effect), and the tool card's parameter list, where `default ` used to
+ *   print with nothing after it. Not repeated in `doc`: two spellings of one
+ *   fact are a defect already.
  * @property {string[]} [enum]  allowed values when type === "enum"
  * @property {number} [min]  int lower bound (docs / UI; validate may enforce)
  * @property {number} [max]  int upper bound
@@ -853,7 +869,8 @@ export const STEPS = [
         name: "signature",
         type: "string",
         default: "",
-        doc: "Base64url signature, or `@slot` of bytes/text (empty = use runtime sig binding)",
+        emptyMeans: "use the signature bound at run time",
+        doc: "Base64url signature, or `@slot` of bytes/text",
       },
       {
         name: "soft",
@@ -1045,7 +1062,8 @@ export const STEPS = [
         name: "label",
         type: "string",
         default: "",
-        doc: "Optional OAEP label (UTF-8; empty = omit)",
+        emptyMeans: "no label — the label is omitted",
+        doc: "Optional OAEP label (UTF-8). Decryption must use the same label or it fails.",
       },
       {
         name: "hash",
@@ -1119,7 +1137,8 @@ export const STEPS = [
         name: "salt",
         type: "string",
         default: "",
-        doc: "Optional salt as UTF-8 string, or `@slot` of text/bytes (empty = zero-length salt)",
+        emptyMeans: "a zero-length salt",
+        doc: "Optional salt as UTF-8 string, or `@slot` of text/bytes",
       },
       {
         name: "info",
@@ -1273,7 +1292,8 @@ export const STEPS = [
         name: "label",
         type: "string",
         default: "",
-        doc: "OAEP label when mode=rsa-oaep (UTF-8; empty = omit)",
+        emptyMeans: "no label — the label is omitted",
+        doc: "OAEP label when mode=rsa-oaep (UTF-8). Unwrapping must use the same label.",
       },
       {
         name: "tagLength",
@@ -1681,7 +1701,8 @@ export const STEPS = [
         name: "passphrase",
         type: "string",
         default: "",
-        doc: "Optional share passphrase mask (Basilisk-specific; empty = none)",
+        emptyMeans: "no mask — the shares are unmasked",
+        doc: "Optional share passphrase mask (Basilisk-specific)",
       },
     ],
     overloads: [
@@ -2079,7 +2100,8 @@ export const STEPS = [
         name: "to",
         type: "string",
         default: "",
-        doc: "`@slot`, `fpr:…`, or email (resolve via lookup). Empty = Run binder",
+        emptyMeans: "the recipients picked in the Run binder",
+        doc: "`@slot`, `fpr:…`, or email (resolve via lookup)",
       },
       {
         name: "policy",
@@ -2167,7 +2189,8 @@ export const STEPS = [
         name: "signature",
         type: "string",
         default: "",
-        doc: "Detached armored signature or `@slot` (empty = cleartext on stem, or runtime sig binding)",
+        emptyMeans: "a cleartext signature on the stem, or the run-time binding",
+        doc: "Detached armored signature or `@slot`",
       },
       {
         name: "soft",
@@ -2223,7 +2246,8 @@ export const STEPS = [
         type: "slot",
         secret: true,
         default: "",
-        doc: "format=private only: @slot holding the passphrase to encrypt the block with (aes256-ctr + bcrypt_pbkdf, 24 rounds). Empty = an unencrypted block, as before.",
+        emptyMeans: "the private block is written unencrypted",
+        doc: "format=private only: @slot holding the passphrase to encrypt the block with (aes256-ctr + bcrypt_pbkdf, 24 rounds).",
       },
     ],
     overloads: [
@@ -2725,7 +2749,8 @@ export const STEPS = [
         name: "keyserver",
         type: "string",
         default: "",
-        doc: "Empty = This site (page origin `/pks/lookup`). Set to an allowlisted host to override on miss (signed-in + upstream enabled).",
+        emptyMeans: "This site only (page origin /pks/lookup)",
+        doc: "An allowlisted host to override on miss (signed-in + upstream enabled).",
       },
       {
         name: "refresh",
@@ -2762,7 +2787,8 @@ export const STEPS = [
         name: "keyserver",
         type: "string",
         default: "",
-        doc: "Empty = This site only (no silent upstream). Set to an allowlisted host to search upstream on miss.",
+        emptyMeans: "This site only — no silent upstream",
+        doc: "An allowlisted host to search upstream on miss.",
       },
     ],
     effectiveIo(params) {
@@ -3139,13 +3165,15 @@ export const STEPS = [
         type: "string",
         positional: true,
         default: "",
-        doc: "Filename to suggest (empty = inherit from the value's meta)",
+        emptyMeans: "inherit the name from the value",
+        doc: "Filename to suggest",
       },
       {
         name: "mime",
         type: "string",
         default: "",
-        doc: "MIME type override (empty = infer from the value)",
+        emptyMeans: "infer the type from the value",
+        doc: "MIME type override",
       },
     ],
   },
@@ -3201,13 +3229,15 @@ export const STEPS = [
         name: "ext",
         type: "string",
         default: "",
-        doc: "File extension (e.g. pem, asc, bin) — empty = infer",
+        emptyMeans: "infer the extension from the value",
+        doc: "File extension (e.g. pem, asc, bin)",
       },
       {
         name: "mime",
         type: "string",
         default: "",
-        doc: "MIME type override (empty = infer)",
+        emptyMeans: "infer the type from the value",
+        doc: "MIME type override",
       },
       {
         name: "label",
@@ -3293,7 +3323,8 @@ export const STEPS = [
         type: "string",
         positional: true,
         default: "",
-        doc: "AAGUID UUID (empty = read from prior JSON text)",
+        emptyMeans: "read the AAGUID from the JSON on the stem",
+        doc: "AAGUID UUID",
       },
     ],
   },
@@ -3513,7 +3544,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "ice",
     glyph: "ports",
-    doc: "ICE server config for a quorum exchange — STUN for reflexive discovery, optional TURN relay with credentials. Emits JSON consumed by `quorum.offer`/`quorum.join` via `ice=@slot`. `credential=` takes a **slot**, not a literal, so the secret never rides out through Copy link or an exported notebook. Example: `rtc.ice turn=turn:relay.example.org:3478 username=u credential=@turncred | out @ice`. Defaults: Cloudflare + Google STUN.",
+    doc: "ICE server config for a quorum exchange — STUN for reflexive discovery, optional TURN relay with credentials. Emits JSON consumed by `quorum.offer`/`quorum.join` via `ice=@slot`. `credential=` takes a **slot**, not a literal, so the secret never rides out through Copy link or an exported notebook. A STUN binding request tells whoever answers it your public address, so `stun=none` declines every third party — the exchange then gathers host candidates only, which reaches peers on your own network and not across NAT. Example: `rtc.ice turn=turn:relay.example.org:3478 username=u credential=@turncred | out @ice`.",
     input: "none",
     output: "endpoint",
     params: [
@@ -3522,7 +3553,8 @@ export const STEPS = [
         type: "string",
         positional: true,
         default: "",
-        doc: "Comma-separated stun: URLs. Empty = built-in defaults (Cloudflare + Google).",
+        emptyMeans: "Cloudflare + Google STUN — write none for no third party",
+        doc: "Comma-separated stun: URLs, or `none` for no STUN server at all (host candidates only).",
       },
       {
         name: "turn",
@@ -3591,7 +3623,8 @@ export const STEPS = [
         name: "ice",
         type: "slot",
         default: "",
-        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+        emptyMeans: "built-in Cloudflare + Google STUN",
+        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "label",
@@ -3627,7 +3660,8 @@ export const STEPS = [
         name: "ice",
         type: "slot",
         default: "",
-        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+        emptyMeans: "built-in Cloudflare + Google STUN",
+        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "timeout",
@@ -3749,7 +3783,8 @@ export const STEPS = [
         type: "string",
         positional: true,
         default: "",
-        doc: "Connection to close; empty (or `all`) closes every direct connection",
+        emptyMeans: "close every direct connection",
+        doc: "Connection to close — one name, or `all` for the same sweep the empty field does",
       },
     ],
   },
@@ -3771,7 +3806,8 @@ export const STEPS = [
         name: "ice",
         type: "slot",
         default: "",
-        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+        emptyMeans: "built-in Cloudflare + Google STUN",
+        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "timeout",
@@ -3898,7 +3934,8 @@ export const STEPS = [
         name: "ice",
         type: "string",
         default: "",
-        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+        emptyMeans: "built-in Cloudflare + Google STUN",
+        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "wait",
@@ -3941,7 +3978,8 @@ export const STEPS = [
         name: "ice",
         type: "string",
         default: "",
-        doc: "@slot holding `rtc.ice` JSON; empty = default STUN",
+        emptyMeans: "built-in Cloudflare + Google STUN",
+        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "wait",
@@ -3981,7 +4019,8 @@ export const STEPS = [
         type: "string",
         positional: true,
         default: "",
-        doc: "Recipient fingerprint (prefix ok); empty = every verified peer",
+        emptyMeans: "broadcast to every verified peer",
+        doc: "Recipient fingerprint (prefix ok) — one peer instead of all of them",
       },
     ],
   },
@@ -3998,7 +4037,8 @@ export const STEPS = [
         name: "from",
         type: "string",
         default: "",
-        doc: "Only accept from this fingerprint (prefix ok); empty = any peer",
+        emptyMeans: "accept from any verified peer",
+        doc: "Only accept from this fingerprint (prefix ok)",
       },
       {
         name: "count",

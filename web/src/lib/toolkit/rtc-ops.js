@@ -19,7 +19,7 @@
  * @module lib/toolkit/rtc-ops
  */
 
-import { DEFAULT_ICE_SERVERS } from "../webrtc/ice.js";
+import { iceServerCensus, iceServersOrDefault } from "../webrtc/ice.js";
 import { listLinkRows, listLinks } from "../webrtc/link-registry.js";
 import { getLiveSession, parseIceConfig } from "./quorum-ops.js";
 
@@ -31,8 +31,13 @@ function requireWebRtc(op) {
 }
 
 /**
- * Resolve an `ice=@slot` reference to RTCIceServer[], falling back to the
- * built-in STUN defaults.
+ * Resolve an `ice=@slot` reference to RTCIceServer[].
+ *
+ * No `ice=` is nobody saying anything, so the defaults fill it. A bound slot
+ * is somebody saying something — including `rtc.ice stun=none`, whose list is
+ * empty on purpose — so it goes through `iceServersOrDefault` unchanged rather
+ * than being length-tested here. Both routes end at the same rule.
+ *
  * @param {Record<string, unknown>} params
  * @param {{ resolveSlot?: (ref: string) => { type?: string, data?: unknown }|null }} bindings
  * @param {string} op
@@ -40,7 +45,7 @@ function requireWebRtc(op) {
  */
 export function resolveIceServers(params, bindings, op) {
   const ref = String(params?.ice || "").trim();
-  if (!ref) return DEFAULT_ICE_SERVERS;
+  if (!ref) return iceServersOrDefault(null);
   const resolve = bindings?.resolveSlot;
   if (typeof resolve !== "function") {
     throw new Error(`${op}: runtime slot resolver missing for ice=`);
@@ -49,7 +54,7 @@ export function resolveIceServers(params, bindings, op) {
   if (!slot) throw new Error(`${op}: unknown slot ${ref}`);
   // Structured `endpoint` data passes straight through; parseIceConfig still
   // accepts the legacy JSON-string form for older saved notebooks.
-  return parseIceConfig(slot.data);
+  return iceServersOrDefault(parseIceConfig(slot.data));
 }
 
 /**
@@ -161,13 +166,18 @@ export async function execGatherCandidates(params, bindings) {
   for (const c of candidates) {
     byType[c.type] = (byType[c.type] || 0) + 1;
   }
-  const notes = [];
-  if (!byType.srflx) {
-    notes.push("no srflx — STUN unreachable or all-host network");
-  }
-  if (!byType.relay) {
-    notes.push("no relay — no TURN configured (informational, not a failure)");
-  }
+  // What this gather was *asked* to reach, counted off the very list the
+  // connection was built with. Without it a reader cannot tell a STUN server
+  // that never answered from one that was never configured — and after
+  // `rtc.ice stun=none`, host-only is the requested outcome rather than a
+  // fault. `stunReachability` already draws that line for `stun.check` between
+  // "not probed" and "probed and absent"; this is the same line one level
+  // down, and the panel's sentences are derived from it in
+  // `candidateAbsence` rather than guessed at in the widget.
+  //
+  // The prose `notes` this used to carry are gone: nothing rendered them, and
+  // they were a second spelling of the sentences the candidate list draws.
+  const ice = iceServerCensus(iceServers);
   return netValue(
     "candidate",
     {
@@ -176,7 +186,7 @@ export async function execGatherCandidates(params, bindings) {
       byType,
       total: candidates.length,
       ms: Math.round(performance.now() - started),
-      notes,
+      ice,
     },
     "candidates.json",
     { rtcCandidates: true, count: candidates.length }

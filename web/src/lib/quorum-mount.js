@@ -6,7 +6,7 @@ import {
 } from "../lib/key-hit.js";
 import { normalizeFingerprintInput, normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
 import { QuorumSession } from "../lib/quorum/session.js";
-import { DEFAULT_ICE_SERVERS } from "../lib/webrtc/ice.js";
+import { DEFAULT_ICE_SERVERS, NO_ICE_SERVERS } from "../lib/webrtc/ice.js";
 import {
   requireSelfInAudience,
   unlockPrivateKey,
@@ -125,9 +125,15 @@ function render() {
       <details class="card">
         <summary class="card-title">Advanced — ICE servers</summary>
         <label class="field-label mt-md" for="ice-servers">STUN / TURN (one URI per line)</label>
-        <textarea id="ice-servers" class="text-input mono" rows="3">${escapeHtml(
+        <textarea id="ice-servers" class="text-input mono" rows="3" aria-describedby="ice-servers-hint">${escapeHtml(
           DEFAULT_ICE_SERVERS.map((s) => s.urls).join("\n")
         )}</textarea>
+        <p id="ice-servers-hint" class="muted fs-sm mt-sm">
+          These are the built-in defaults, prefilled so you can see them. A STUN
+          server tells a third party your public address. Clear this box to use
+          none — the exchange then has only host candidates and reaches peers on
+          your own network, not across NAT.
+        </p>
       </details>
 
       <div class="card quorum-session-card">
@@ -330,7 +336,11 @@ function parseIceServers() {
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
-  if (!lines.length) return DEFAULT_ICE_SERVERS;
+  // Cleared, not unset. The box ships prefilled with the defaults — they are
+  // right there to read — so emptying it is a deliberate act, and answering it
+  // with the very list that was just deleted is the app overruling the user.
+  // `NO_ICE_SERVERS` is that answer written down; the session honours it.
+  if (!lines.length) return NO_ICE_SERVERS;
   return lines.map((urls) => ({ urls }));
 }
 

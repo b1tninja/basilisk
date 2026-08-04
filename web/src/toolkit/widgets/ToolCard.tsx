@@ -40,7 +40,12 @@ function paramTypeBits(p: ParamSpec): string {
   if (p.flag) typeBits.push(p.flag);
   if (p.serialize === "always") typeBits.push("serialize always");
   if (p.enum?.length) typeBits.push(p.enum.join(" · "));
-  else if (p.default !== undefined && p.default !== null)
+  // `default ""` printed as `default ` with nothing after it — the one default
+  // that changes behaviour invisibly, described invisibly. `emptyMeans` is the
+  // registry's phrase for what blank actually does, and it is the same string
+  // the field's placeholder and hint show.
+  else if (p.default === "" && p.emptyMeans) typeBits.push(`empty → ${p.emptyMeans}`);
+  else if (p.default !== undefined && p.default !== null && p.default !== "")
     typeBits.push(`default ${String(p.default)}`);
   return typeBits.join(" · ");
 }

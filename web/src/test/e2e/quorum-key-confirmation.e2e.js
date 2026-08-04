@@ -124,9 +124,20 @@ const LOAD_SESSION = `(async () => {
 /**
  * Start one side of the mesh in its browser.
  *
- * `iceServers` is left to the session's own default on purpose — this is the
- * shipped configuration, and the connection that matters is made of host
- * candidates either way.
+ * `iceServers: []` — no third party, and it is honoured now.
+ *
+ * This used to leave the list to the session's default, with a note that the
+ * connection that matters is made of host candidates either way. That was
+ * true, and the reason for it was that an empty list *could not be requested*:
+ * the session read `?.length` and substituted Cloudflare and Google, so the
+ * only way to run was the shipped configuration and two public STUN servers
+ * were on the path of a key-confirmation test. Two browsers on one machine
+ * have never needed either of them.
+ *
+ * So it is also a gate. If the substitution rule ever regresses to a truthiness
+ * test, this suite starts sending binding requests to the public internet — and
+ * the assertion that no `srflx` candidate appears in either side's SDP fails
+ * loudly rather than the test quietly getting slower.
  *
  * @param {import("../helpers/browser-peers.js").Peer} peer
  * @param {{ roomId: string, audience: string[], fpr: string, armoredPrivate: string, role: string }} cfg
@@ -179,6 +190,7 @@ const startSession = (peer, cfg) =>
       privateKey,
       myFingerprint: c.fpr,
       role: c.role,
+      iceServers: [],
       onChat: (m) => window.__chats.push(m),
       onStatus: (s) => window.__statuses.push(s),
       onError: (e) => window.__errors.push(String((e && e.message) || e)),
@@ -384,6 +396,25 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
       expect(states.indexOf("ice:checking")).toBeLessThan(
         states.indexOf("ice:connected")
       );
+    }
+  });
+
+  it("connected without a packet to any third party", () => {
+    // `iceServers: []` was a request; this is the check that it was kept all
+    // the way down to the transport. A server-reflexive candidate in a
+    // description means something answered a STUN binding request, which means
+    // the empty list was replaced by the shipped defaults somewhere between
+    // the constructor argument and `new RTCPeerConnection` — the exact defect
+    // this suite used to run on top of, silently.
+    for (const side of [result.a, result.b]) {
+      const p = side.peers[0];
+      expect(p.localSdp, "a reflexive candidate means STUN was contacted").not.toMatch(
+        /\btyp srflx\b/
+      );
+      expect(p.remoteSdp).not.toMatch(/\btyp srflx\b/);
+      // And host candidates are there, so the absence above is a config that
+      // was honoured rather than a gather that produced nothing.
+      expect(p.localSdp).toMatch(/\btyp host\b/);
     }
   });
 

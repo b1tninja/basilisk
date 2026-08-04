@@ -2,8 +2,10 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import {
+  candidateAbsence,
   connStateReadout,
   expiryNote,
+  iceServerPolicy,
   linkOriginNote,
   sdpReadout,
   stunReachability,
@@ -135,23 +137,15 @@ function CandidateList({ data }: { data: any }) {
             // Not `dim`. The badge fades; the sentence does not — see
             // `TypeBadge`'s `faint`. This row is where "no TURN is configured"
             // gets said, which is the answer on the screen a user opens when a
-            // call did not happen.
+            // call did not happen — and, since `rtc.gather` began recording the
+            // config it gathered against, where a host-only run says it was
+            // asked for rather than implying a fault. The sentence itself is
+            // derived in `candidateAbsence`, not written here: it depends on
+            // what was configured, which is a fact the artifact carries.
             <Row key={t} data-absent>
               <TypeBadge label={t} tone="muted" faint />
               <span className="text-[10.5px] italic leading-snug text-[var(--muted-foreground)]">
-                {t === "relay"
-                  ? // Not "no TURN configured". A relay was verified end to end
-                    // against a live coturn on the day this was written, and the
-                    // same run showed that a wrong password and a dead server
-                    // both yield exactly this empty result — only
-                    // `icecandidateerror` code 401 tells them apart, and nothing
-                    // reads it. The gather's output carries no ICE server list,
-                    // so the panel cannot know which of the three happened and
-                    // says so rather than picking the flattering one.
-                    "no relay route — either no TURN is configured, or one is and it refused the credential or never answered. All three arrive here as nothing."
-                  : t === "prflx"
-                    ? "none — peer-reflexive only appears during negotiation"
-                    : "none gathered"}
+                {candidateAbsence(t, data)}
               </span>
             </Row>
           );
@@ -533,8 +527,26 @@ function EndpointPanel({ data }: { data: any }) {
   // Two shapes share the `endpoint` type: rtc.ice's server list and
   // stun.check's discovered reflexive address.
   if (Array.isArray(data?.iceServers)) {
+    // What this config does to you, stated on the artifact that decides it.
+    // The list alone never said whether two STUN URLs were a choice or a
+    // fallback, and an empty list — `rtc.ice stun=none` — has no rows at all,
+    // so without this the deliberate no-third-party config renders as a blank
+    // panel that reads exactly like a bug.
+    const policy = iceServerPolicy(data);
     return (
       <div>
+        {policy ? (
+          <Row>
+            <TypeBadge label={policy.verdict} tone={policy.tone} />
+            {/* The same `Diagnosis` the stun.check branch uses, because the
+                trade a config makes is a *next step* as much as a reading:
+                a no-third-party config cannot cross NAT, and finding that out
+                on the connection screen an hour later is not finding out. */}
+            <span className="min-w-0 flex-1">
+              <Diagnosis why={policy.why} next={policy.next} />
+            </span>
+          </Row>
+        ) : null}
         {data.iceServers.map((s: any, i: number) => {
           const url = String(Array.isArray(s.urls) ? s.urls[0] : s.urls);
           const isTurn = /^turns?:/i.test(url);

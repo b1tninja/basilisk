@@ -492,8 +492,35 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
       expect(["host", "srflx", "prflx", "relay"]).toContain(c.type);
       expect(["udp", "tcp"]).toContain(c.protocol);
     }
-    // A missing TURN relay is documented as informational, not a failure.
-    expect(g.data.notes.join(" ")).toMatch(/no relay/);
+    // A missing TURN relay is informational, not a failure — and it is now a
+    // *fact* on the artifact rather than a sentence: the gather records the
+    // config it ran against, so the panel can say whether a relay was even
+    // asked for. The prose it used to carry was rendered by nothing and was a
+    // second spelling of what `candidateAbsence` writes for the panel.
+    expect(g.data.byType.relay).toBe(0);
+    expect(g.data.ice).toEqual({ stun: 2, turn: 0, total: 2 });
+  });
+
+  it("records the empty config as an empty config, not as the defaults", async () => {
+    // `rtc.ice stun=none` reaches the transport as `[]`, and a gather against
+    // it must produce host candidates and nothing else. This is the raw-op end
+    // of the same rule the quorum suite checks through a session: no packet to
+    // anyone the user did not name.
+    // The slot value is what `rtc.ice stun=none` emits — that it emits exactly
+    // this is `quorum-lifecycle.test.js`'s assertion. What only two real
+    // browsers can show is that the empty list survives `resolveIceServers`
+    // and reaches `new RTCPeerConnection` without the defaults filling it in.
+    const g = await A.page.evaluate(async () => {
+      const v = await window.__ops.execGatherCandidates(
+        { timeout: 4000, ice: "@ice" },
+        { resolveSlot: () => ({ type: "endpoint", data: { v: 1, iceServers: [] } }) }
+      );
+      return v.data;
+    });
+    expect(g.ice).toEqual({ stun: 0, turn: 0, total: 0 });
+    expect(g.byType.srflx).toBe(0);
+    expect(g.byType.relay).toBe(0);
+    expect(g.byType.host).toBeGreaterThan(0);
   });
 
   it("reaches the default STUN servers, or says why it could not", async () => {
@@ -510,7 +537,9 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
     );
     expect(g.ok, `rtc.gather threw: ${g.message}`).toBe(true);
     if (!g.data.byType.srflx) {
-      expect(g.data.notes.join(" ")).toMatch(/no srflx/);
+      // The fact, not a sentence about it: STUN servers were configured and
+      // none answered. That is what makes this a skip rather than a pass.
+      expect(g.data.ice.stun).toBeGreaterThan(0);
       console.warn("[rtc-transport.e2e] skipped STUN reachability — no srflx candidate");
       return;
     }

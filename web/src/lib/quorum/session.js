@@ -74,7 +74,7 @@ import {
   patchLink,
   registerLink,
 } from "../webrtc/link-registry.js";
-import { DEFAULT_ICE_SERVERS } from "../webrtc/ice.js";
+import { iceServersOrDefault } from "../webrtc/ice.js";
 import { openPeerLink } from "../webrtc/peer-link.js";
 
 /**
@@ -110,6 +110,8 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  * @property {string} myFingerprint
  * @property {"creator"|"joiner"} [role]
  * @property {RTCIceServer[]} [iceServers]
+ *   Omitted (or null) takes the built-in STUN defaults; `[]` is a deliberate
+ *   *no third party* and is honoured as written — host candidates only.
  * @property {(peers: Map<string, QuorumPeerState>) => void} [onRoster]
  * @property {(msg: { from: string, text: string, ts: number }) => void} [onChat]
  * @property {(status: string) => void} [onStatus]
@@ -127,9 +129,10 @@ export class QuorumSession {
     this.audienceFprs = requireSelfInAudience(this.myFpr, opts.audienceFprs);
     this.privateKey = opts.privateKey;
     this.role = opts.role === "joiner" ? "joiner" : "creator";
-    this.iceServers = opts.iceServers?.length
-      ? opts.iceServers
-      : DEFAULT_ICE_SERVERS;
+    // `iceServersOrDefault`, not `?.length ?:` — an empty list is a user who
+    // asked for no third party, and this layer is the last one that could
+    // overrule them. It no longer can.
+    this.iceServers = iceServersOrDefault(opts.iceServers);
     this.onRoster = opts.onRoster;
     this.onChat = opts.onChat;
     this.onStatus = opts.onStatus;

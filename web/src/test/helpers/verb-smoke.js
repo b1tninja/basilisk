@@ -1364,6 +1364,24 @@ in @att | webauthn.mds | out @mds`,
       },
     },
     {
+      // The refusal, run rather than argued about. `stun=none` is the only way
+      // to say "no third party" — an empty `stun=` means nobody said, which
+      // the defaults fill — and the value has to survive compile, run, and
+      // serialization to be worth anything to a user writing a recipe.
+      id: "rtc.ice.none",
+      recipe: "rtc.ice none | out @ice",
+      mode: "run",
+      assert: (arts) => {
+        const body = arts.map((a) => String(a.content || "")).join("\n");
+        const json = JSON.parse(body.slice(body.indexOf("{")));
+        if (!Array.isArray(json.iceServers) || json.iceServers.length) {
+          throw new Error(
+            `rtc.ice none must emit an empty server list, got ${JSON.stringify(json.iceServers)}`
+          );
+        }
+      },
+    },
+    {
       id: "rtc.ice.turn",
       recipe: `passphrase | out @cred
 

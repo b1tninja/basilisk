@@ -17,7 +17,7 @@
  */
 
 import { QuorumSession } from "../quorum/session.js";
-import { DEFAULT_ICE_SERVERS } from "../webrtc/ice.js";
+import { iceServersOrDefault } from "../webrtc/ice.js";
 import { deriveRoomId, canonicalAudience } from "../quorum/room.js";
 import { projectRosterPeers } from "../quorum/roster.js";
 import { DKG_COMMIT, DKG_SHARE } from "../quorum/dkg-run.js";
@@ -195,6 +195,18 @@ if (typeof window !== "undefined") {
 
 /**
  * Build an ICE server list from step params (pure config, no network).
+ *
+ * `stun=none` is how a user declines every third party. It exists because the
+ * empty string could not mean it: empty is *nobody said*, which the defaults
+ * fill, so before this word the only way to ask for host candidates only was
+ * to write something that did not parse. A STUN binding request hands a public
+ * IP to whoever answers it, and refusing that is a decision this app has to
+ * let someone make and then keep — `iceServersOrDefault` is what stops the
+ * session layer taking it back.
+ *
+ * `stun=none turn=…` is coherent and allowed: a relay you chose, and no
+ * reflexive probe to anyone else.
+ *
  * @param {Record<string, unknown>} params
  * @returns {{ type: "text", data: string, meta: Record<string, unknown> }}
  */
@@ -202,11 +214,16 @@ export function execRtcIce(params) {
   /** @type {RTCIceServer[]} */
   const servers = [];
   const stunRaw = String(params?.stun || "").trim();
-  const stunUrls = stunRaw
-    ? stunRaw.split(/[\s,]+/).filter(Boolean)
-    : DEFAULT_ICE_SERVERS.flatMap((s) =>
-        Array.isArray(s.urls) ? s.urls : [s.urls]
-      );
+  const declined = /^none$/i.test(stunRaw);
+  const stunUrls = declined
+    ? []
+    : stunRaw
+      ? stunRaw.split(/[\s,]+/).filter(Boolean)
+      : // Through the same rule the session and the raw ops go through, so
+        // "empty means the built-in list" is stated once for the whole app.
+        iceServersOrDefault(null).flatMap((s) =>
+          Array.isArray(s.urls) ? s.urls : [s.urls]
+        );
   for (const url of stunUrls) {
     if (!/^stuns?:/i.test(url)) {
       throw new Error(`rtc.ice: not a stun:/stuns: URL — ${url}`);
@@ -233,11 +250,16 @@ export function execRtcIce(params) {
     }
     for (const url of turnUrls) servers.push({ urls: url, username, credential });
   }
-  // An empty list is what `stun=","` used to produce: an `endpoint` artifact
-  // that renders as an empty panel and is refused by `parseIceConfig` at the
-  // far end of the pipeline. Refuse it where it is written instead.
-  if (!servers.length) {
-    throw new Error("rtc.ice: no ICE servers — stun= matched no stun:/stuns: URL");
+  // `stun=","` splits to nothing and used to emit `{ iceServers: [] }` — an
+  // artifact that reads as an empty panel and dies at `parseIceConfig` a page
+  // later. The complaint still belongs at the step that wrote it. What changed
+  // is that an empty list is no longer *only* reachable by accident: after
+  // `stun=none` it is the requested answer, so the refusal is now for the
+  // accident specifically and says which word to write instead.
+  if (!servers.length && !declined) {
+    throw new Error(
+      "rtc.ice: no ICE servers — stun= matched no stun:/stuns: URL (write stun=none if that is what you meant)"
+    );
   }
   return {
     type: "endpoint",
@@ -268,7 +290,15 @@ export function parseIceConfig(text) {
     }
   }
   const list = parsed?.iceServers;
-  if (!Array.isArray(list) || !list.length) {
+  if (!Array.isArray(list)) {
+    throw new Error("ice=@slot does not hold rtc.ice output");
+  }
+  // An empty list used to be refused here as malformed. `rtc.ice stun=none`
+  // writes one deliberately, so it is now a legitimate config — but only from
+  // a value that says it *is* one. `{"hello":1}` and a bare `[]` still name
+  // the parameter rather than sliding through as "no third party", which
+  // would turn a mis-bound slot into a silent connectivity change.
+  if (!list.length && parsed?.v == null) {
     throw new Error("ice=@slot does not hold rtc.ice output");
   }
   return list;
@@ -385,7 +415,10 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     privateKey,
     myFingerprint: myFpr,
     role,
-    iceServers: iceServers || undefined,
+    // `??`, not `||` — an empty list is the caller declining every third
+    // party, and `undefined` is the session's cue to substitute defaults.
+    // The two must not be spelled the same on the way in.
+    iceServers: iceServers ?? undefined,
     onChat: (msg) => {
       const ex = current;
       if (!ex) return;

@@ -222,12 +222,50 @@ describe("rtc.ice emits a config a peer connection can actually take", () => {
     ).toThrow(/needs username= and credential=/);
   });
 
-  it("refuses to emit an empty server list", () => {
+  it("refuses an empty server list that was an accident", () => {
     // `stun=","` split to nothing and emitted `{ iceServers: [] }` — an
     // artifact that renders as an empty panel, constructs fine, gathers only
     // host candidates, and is then refused by `parseIceConfig` at the far end
-    // of the pipeline. The complaint belongs at the step that wrote it.
+    // of the pipeline. The complaint belongs at the step that wrote it, and it
+    // now names the word to write if the empty list was the point.
     expect(() => q.execRtcIce({ stun: "," })).toThrow(/no ICE servers/);
+    expect(() => q.execRtcIce({ stun: "," })).toThrow(/stun=none/);
+  });
+
+  it("emits an empty server list when the user asks for one", () => {
+    // The whole point. `stun=` empty means *nobody said*, which the defaults
+    // fill; `stun=none` means somebody said no. Before this word the second
+    // was inexpressible — the only way to reach an empty list was to write
+    // something that did not parse, and it was refused.
+    const out = q.execRtcIce({ stun: "none" });
+    expect(out.type).toBe("endpoint");
+    expect(out.data.iceServers).toEqual([]);
+    expect(out.meta.sensitive).toBe(false);
+    // Case is not a second spelling to remember.
+    expect(q.execRtcIce({ stun: "NONE" }).data.iceServers).toEqual([]);
+    expect(q.execRtcIce({ stun: " none " }).data.iceServers).toEqual([]);
+  });
+
+  it("lets a chosen relay stand with no STUN beside it", () => {
+    // `stun=none turn=…` is coherent: a relay you picked, and no reflexive
+    // probe to anyone else. Refusing it would make "no third party" mean
+    // "no third party except the one you cannot decline".
+    const out = q.execRtcIce({
+      stun: "none",
+      turn: "turn:relay.example:3478",
+      username: "u",
+      credential: "c",
+    });
+    expect(out.data.iceServers).toEqual([
+      { urls: "turn:relay.example:3478", username: "u", credential: "c" },
+    ]);
+  });
+
+  it("still refuses a URL that is not a STUN URL, none or not", () => {
+    // `none` is a word in the value, not a prefix that turns off validation.
+    expect(() => q.execRtcIce({ stun: "none,stun:a.example:3478" })).toThrow(
+      /not a stun/
+    );
   });
 
   it("marks the config sensitive exactly when it carries a credential", () => {
@@ -263,9 +301,21 @@ describe("parseIceConfig blames the binding, not the parser", () => {
   });
 
   it("refuses well-formed JSON that is not an ICE config", () => {
-    for (const bad of ['{"hello":1}', JSON.stringify({ v: 1, iceServers: [] }), "[]"]) {
+    for (const bad of ['{"hello":1}', "[]", '{"iceServers":[]}']) {
       expect(() => q.parseIceConfig(bad), bad).toThrow(/does not hold rtc.ice output/);
     }
+  });
+
+  it("carries a deliberately empty list through instead of blaming it", () => {
+    // An empty list used to be refused here as malformed, which is what made
+    // `stun=none` unreachable from the other end of the pipeline: a user could
+    // write the choice and the binding would reject it. It is accepted now —
+    // but only from a value that declares itself an rtc.ice config, so
+    // `ice=@somethingelse` still names the parameter rather than quietly
+    // becoming "no third party".
+    const none = q.execRtcIce({ stun: "none" });
+    expect(q.parseIceConfig(none.data)).toEqual([]);
+    expect(q.parseIceConfig(JSON.stringify(none.data))).toEqual([]);
   });
 });
 
