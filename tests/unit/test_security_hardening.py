@@ -48,11 +48,15 @@ def test_strip_uids_removes_email_from_binary(sample_armored):
 
 @pytest.mark.unit
 def test_sendtoken_response_has_no_bearer():
+    """HKP v2 §5.2.2: the keyserver responds with an empty document.
+
+    The token only ever leaves via the mailbox, so an empty body is both the
+    spec-conformant answer and the one that leaks nothing.
+    """
     reset_bus()
     body, status = sendtoken_response("user@example.com")
     assert status == 200
-    assert "token" not in body
-    assert body["status"] == "sent"
+    assert body == ""
     assert get_bus().messages[-1]["body"]["token"]
 
 

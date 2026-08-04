@@ -1,7 +1,17 @@
 """GET-only CORS for public key fetch endpoints (HKP / WKD / key JSON).
 
-Public key material is intentionally world-readable. Mutating endpoints
-(POST /pks/add, HKP v2 upload, claim, /api/v1/me/*) must NOT use these helpers.
+Public key material is intentionally world-readable. Legacy mutating endpoints
+(POST /pks/add, claim, /api/v1/me/*) must NOT use these helpers.
+
+The one exception is the HKP v2 API: draft-gallagher-openpgp-hkp §7.1 makes
+``Access-Control-Allow-Origin: *`` a MUST on every ``/pks/v2/*`` response,
+submissions included, so ``basilisk/hkp_v2/routes.py`` uses ``flask_cors`` on
+its write paths too. That is only defensible because this server holds no
+ambient credential — no cookie, no session — so ``*`` grants a cross-origin
+page nothing it could not obtain from its own backend. Note that
+``CORS_GET_HEADERS`` still advertises GET-only *methods*; the v2 preflight
+handler overrides ``Access-Control-Allow-Methods`` per category.
+
 Never pair Access-Control-Allow-Origin: * with Allow-Credentials.
 """
 

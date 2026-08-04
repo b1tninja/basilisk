@@ -3,27 +3,60 @@
 from __future__ import annotations
 
 import base64
+import re
+
+# RFC 9580 §6.2 Armor Headers: "Key: Value" lines between the header line and
+# the blank line that starts the base64 data.
+_ARMOR_HEADER = re.compile(r"^[A-Za-z][A-Za-z0-9-]*:[ \t]")
 
 
 def dearmor(data: bytes) -> bytes:
-    """Return raw OpenPGP binary, accepting armored or binary input."""
+    """Return raw OpenPGP binary, accepting armored or binary input.
+
+    Armor headers (``Comment:``, ``Version:``, ``Charset:`` …) and the CRC-24
+    checksum line are skipped per RFC 9580 §6.2. Every armored block in the
+    input is decoded and concatenated, so an armored certificate bundle
+    dearmors to the equivalent binary bundle.
+    """
     text = data.decode("utf-8", errors="replace")
     if "-----BEGIN PGP" not in text:
         return data
-    lines: list[str] = []
-    in_body = False
+    out = bytearray()
+    chunks: list[str] = []
+    in_block = False
+    in_headers = False
     for line in text.splitlines():
-        if line.startswith("-----BEGIN PGP"):
-            in_body = True
+        stripped = line.strip()
+        if stripped.startswith("-----BEGIN PGP"):
+            in_block = True
+            in_headers = True
+            chunks = []
             continue
-        if line.startswith("-----END PGP"):
-            break
-        if not in_body:
+        if stripped.startswith("-----END PGP"):
+            # Each block is padded independently, so decode before moving on.
+            if chunks:
+                out.extend(base64.b64decode("".join(chunks), validate=False))
+            in_block = False
+            in_headers = False
+            chunks = []
             continue
-        if not line or line.startswith("="):
+        if not in_block:
             continue
-        lines.append(line.strip())
-    return base64.b64decode("".join(lines), validate=False)
+        if in_headers:
+            # Headers end at the first blank line; tolerate producers that omit it.
+            if not stripped:
+                in_headers = False
+                continue
+            if _ARMOR_HEADER.match(stripped):
+                continue
+            in_headers = False
+        if not stripped or stripped.startswith("="):
+            continue
+        chunks.append(stripped)
+    if chunks:
+        # Unterminated block: decode what we have rather than dropping it.
+        out.extend(base64.b64decode("".join(chunks), validate=False))
+    return bytes(out)
 
 
 def armor_public_key(binary: bytes) -> bytes:
