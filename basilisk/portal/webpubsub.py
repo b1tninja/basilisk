@@ -190,6 +190,20 @@ def room_roles(group: str) -> tuple[str, ...]:
     the service also understands — a pattern covering a room *family* would
     hand one token every epoch that room will ever rotate through, which is
     precisely the grant this module exists not to make.
+
+    Verified against a real hub (basilisk-dev-wps, Free_F1, 2026-08-09), not
+    only against the local double, because "the service matches the suffix
+    literally" was read off a documentation table and never executed. With a
+    token minted here for one 26-character base32 group:
+
+        joinGroup(granted room)     allowed
+        sendToGroup(granted room)   allowed
+        joinGroup(other room)       refused (Forbidden)
+        sendToGroup(other room)     refused (Forbidden)
+
+    The handshake itself is the other half of that result: the service accepts
+    the hand-rolled JWT this module signs, so the ``aud`` claim built by
+    ``WebPubSubEndpoint.audience`` is the shape the service expects.
     """
     return (
         f"webpubsub.joinLeaveGroup.{group}",

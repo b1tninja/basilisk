@@ -50,9 +50,22 @@ const RETRY_MS = [1000, 2000, 4000, 8000, 15000];
  *    the new connection. In particular, the service won't terminate the
  *    connection if the access token expires after connection is connected."
  *
+ * Confirmed empirically against a real hub (basilisk-dev-wps, 2026-08-09), not
+ * only read: a 45-second token, socket held open 65 seconds, still publishing
+ * to its group 20 seconds after `exp`. So the recycle is load-bearing rather
+ * than belt-and-braces — nothing else would ever evict that connection.
+ *
  * If that ever changes and the service does drop expired connections, this
  * recycle becomes redundant rather than wrong — the socket would be torn down
  * for us, and the reconnect path here already handles that.
+ *
+ * **Why make-before-break is safe.** The replacement is opened and joined
+ * before the original closes, which assumes the service treats two connections
+ * sharing a `sub` as two independent connections rather than replacing one with
+ * the other. Also checked on the real hub: distinct connection ids, the first
+ * stays open, and it still receives group traffic published by the second. The
+ * cost of that assumption holding is that both connections count against the
+ * tier's concurrent ceiling for the length of the overlap.
  *
  * **Why a fraction of the grant rather than a constant.** The server states
  * the lifetime it is willing to grant (`expires_at`); the cycle follows it,
