@@ -42,6 +42,18 @@ const RETRY_MS = [1000, 2000, 4000, 8000, 15000];
  * cycle", which is the whole reason withholding a token can take effect at
  * all: the room is left by not being re-entered.
  *
+ * That premise is load-bearing, so here is where it comes from. The Web PubSub
+ * client protocol spec — Azure/azure-webpubsub, `protocols/client/client-spec.md`,
+ * not the learn.microsoft.com how-to pages, which do not say it:
+ *
+ *   "The `exp` of the access token is only checked at the time you're making
+ *    the new connection. In particular, the service won't terminate the
+ *    connection if the access token expires after connection is connected."
+ *
+ * If that ever changes and the service does drop expired connections, this
+ * recycle becomes redundant rather than wrong — the socket would be torn down
+ * for us, and the reconnect path here already handles that.
+ *
  * **Why a fraction of the grant rather than a constant.** The server states
  * the lifetime it is willing to grant (`expires_at`); the cycle follows it,
  * so changing `BASILISK_WEBPUBSUB_TOKEN_TTL_SEC` changes the cycle without a
