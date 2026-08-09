@@ -15,6 +15,12 @@ _DEFAULT_TOKEN_SECRET = "dev-secret"
 _DEFAULT_UPSTREAM_ALLOWLIST = ("keys.openpgp.org", "keys.mailvelope.com")
 _DEFAULT_UPSTREAM_DEFAULT = "keys.openpgp.org"
 
+# The local Web PubSub double, addressed exactly like the real service — same
+# connection-string shape, same token, same subprotocol. This is the azurite
+# pattern: unset means "use the local one" in dev, and setting the real
+# connection string is the only difference in production.
+_DEV_WEBPUBSUB_CONNECTION = "Endpoint=http://127.0.0.1:8081;AccessKey=dev-webpubsub-key;Version=1.0;"
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     val = os.environ.get(name, "").strip().lower()
@@ -41,6 +47,9 @@ class Settings:
     fd_base_url: str | None
     storage_connection: str | None
     service_bus_namespace: str | None
+    web_pubsub_connection: str | None
+    web_pubsub_hub: str
+    web_pubsub_token_ttl_sec: int
     max_upload_bytes: int
     max_uids: int
     max_subkey_blocks: int
@@ -89,6 +98,16 @@ class Settings:
             fd_base_url=os.environ.get("BASILISK_FD_BASE_URL") or None,
             storage_connection=os.environ.get("AZURE_STORAGE_CONNECTION_STRING") or None,
             service_bus_namespace=os.environ.get("SERVICE_BUS_NAMESPACE") or None,
+            web_pubsub_connection=(
+                os.environ.get("AZURE_WEBPUBSUB_CONNECTION_STRING")
+                or (_DEV_WEBPUBSUB_CONNECTION if _allow_insecure_default_secret() else None)
+            ),
+            web_pubsub_hub=os.environ.get("BASILISK_WEBPUBSUB_HUB", "quorum"),
+            # Minutes, not hours: the token buys a WebSocket handshake, and the
+            # whole signalling bootstrap — invite, hello, offer/answer, ICE —
+            # is seconds of work. Five matches BASILISK_PROOF_MAX_AGE_SEC, so
+            # a proof and the grant it bought expire together.
+            web_pubsub_token_ttl_sec=int(os.environ.get("BASILISK_WEBPUBSUB_TOKEN_TTL_SEC", "300")),
             max_upload_bytes=int(os.environ.get("BASILISK_MAX_UPLOAD_BYTES", str(64 * 1024))),
             max_uids=int(os.environ.get("BASILISK_MAX_UIDS", "20")),
             max_subkey_blocks=int(os.environ.get("BASILISK_MAX_SUBKEYS", "32")),
@@ -137,11 +156,31 @@ class Settings:
             "default": default,
         }
 
+    def signaling_ws_origin(self) -> str | None:
+        """``wss://host`` for quorum signalling, or None when unconfigured.
+
+        Per-deployment, so it can never be hardcoded into the policy string:
+        the hub lives at a hostname that comes out of the connection string.
+        """
+        if not self.web_pubsub_connection:
+            return None
+        from basilisk.portal.webpubsub import WebPubSubConfigError, parse_connection_string
+
+        try:
+            return parse_connection_string(self.web_pubsub_connection).ws_origin()
+        except WebPubSubConfigError:
+            logger.warning("AZURE_WEBPUBSUB_CONNECTION_STRING is malformed; quorum signalling is off")
+            return None
+
     def csp_connect_src(self) -> str:
-        """connect-src sources: self + allowlisted HTTPS keyserver hosts."""
+        """connect-src sources: self, allowlisted HTTPS keyserver hosts, and
+        the quorum signalling socket."""
         parts = ["'self'"]
         for host in self.upstream_allowlist:
             parts.append(f"https://{host}")
+        ws_origin = self.signaling_ws_origin()
+        if ws_origin:
+            parts.append(ws_origin)
         return " ".join(parts)
 
 

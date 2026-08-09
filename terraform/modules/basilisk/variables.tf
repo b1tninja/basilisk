@@ -81,6 +81,18 @@ variable "tags" {
   default     = {}
 }
 
+variable "web_pubsub_sku" {
+  type        = string
+  description = "Web PubSub SKU carrying quorum signalling. Free_F1 caps at 20 concurrent connections and 20000 messages/day."
+  default     = "Free_F1"
+}
+
+variable "web_pubsub_hub" {
+  type        = string
+  description = "Web PubSub hub name for quorum signalling. Must match BASILISK_WEBPUBSUB_HUB."
+  default     = "quorum"
+}
+
 variable "budget_contact_emails" {
   type        = list(string)
   description = "Optional email addresses for the resource-group spend budget alert (in addition to Owner role)."

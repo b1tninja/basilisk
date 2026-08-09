@@ -41,6 +41,15 @@ module servicebus 'modules/servicebus.bicep' = {
   }
 }
 
+module webpubsub 'modules/webpubsub.bicep' = {
+  name: 'webpubsub'
+  scope: rg
+  params: {
+    namePrefix: namePrefix
+    location: location
+  }
+}
+
 module functions 'modules/functions.bicep' = {
   name: 'functions'
   scope: rg
@@ -51,6 +60,8 @@ module functions 'modules/functions.bicep' = {
     storageAccountName: storage.outputs.storageAccountName
     storageConnectionString: storage.outputs.connectionString
     serviceBusConnectionString: servicebus.outputs.connectionString
+    webPubSubConnectionString: webpubsub.outputs.connectionString
+    webPubSubHub: webpubsub.outputs.hubName
     requireManagerApproval: requireManagerApproval
   }
 }

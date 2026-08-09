@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "15215098910192605205"
+      "templateHash": "6636103495750090813"
     }
   },
   "parameters": {
@@ -92,7 +92,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "4568772036416954195"
+              "templateHash": "3773800826274018082"
             }
           },
           "parameters": {
@@ -396,6 +396,115 @@
             {
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
+              "name": "webpubsub",
+              "resourceGroup": "[variables('rgName')]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "namePrefix": {
+                    "value": "[parameters('namePrefix')]"
+                  },
+                  "location": {
+                    "value": "[parameters('location')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "256347022822576211"
+                    }
+                  },
+                  "parameters": {
+                    "namePrefix": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Resource name prefix"
+                      }
+                    },
+                    "location": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Azure region"
+                      }
+                    },
+                    "hubName": {
+                      "type": "string",
+                      "defaultValue": "quorum",
+                      "metadata": {
+                        "description": "Hub name for quorum signalling; must match BASILISK_WEBPUBSUB_HUB"
+                      }
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.SignalRService/webPubSub",
+                      "apiVersion": "2023-02-01",
+                      "name": "[format('{0}-wps', parameters('namePrefix'))]",
+                      "location": "[parameters('location')]",
+                      "sku": {
+                        "name": "Free_F1",
+                        "tier": "Free",
+                        "capacity": 1
+                      },
+                      "properties": {
+                        "disableAadAuth": false,
+                        "disableLocalAuth": false,
+                        "publicNetworkAccess": "Enabled",
+                        "tls": {
+                          "clientCertEnabled": false
+                        }
+                      }
+                    },
+                    {
+                      "type": "Microsoft.SignalRService/webPubSub/hubs",
+                      "apiVersion": "2023-02-01",
+                      "name": "[format('{0}/{1}', format('{0}-wps', parameters('namePrefix')), parameters('hubName'))]",
+                      "properties": {
+                        "anonymousConnectPolicy": "deny",
+                        "eventHandlers": []
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.SignalRService/webPubSub', format('{0}-wps', parameters('namePrefix')))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "name": {
+                      "type": "string",
+                      "value": "[format('{0}-wps', parameters('namePrefix'))]"
+                    },
+                    "hostName": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.SignalRService/webPubSub', format('{0}-wps', parameters('namePrefix'))), '2023-02-01').hostName]"
+                    },
+                    "hubName": {
+                      "type": "string",
+                      "value": "[parameters('hubName')]"
+                    },
+                    "connectionString": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Connection string for AZURE_WEBPUBSUB_CONNECTION_STRING"
+                      },
+                      "value": "[listKeys(resourceId('Microsoft.SignalRService/webPubSub', format('{0}-wps', parameters('namePrefix'))), '2023-02-01').primaryConnectionString]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
               "name": "functions",
               "resourceGroup": "[variables('rgName')]",
               "properties": {
@@ -422,6 +531,12 @@
                   "serviceBusConnectionString": {
                     "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'servicebus'), '2025-04-01').outputs.connectionString.value]"
                   },
+                  "webPubSubConnectionString": {
+                    "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'webpubsub'), '2025-04-01').outputs.connectionString.value]"
+                  },
+                  "webPubSubHub": {
+                    "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'webpubsub'), '2025-04-01').outputs.hubName.value]"
+                  },
                   "requireManagerApproval": {
                     "value": "[parameters('requireManagerApproval')]"
                   }
@@ -433,7 +548,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.44.1.10279",
-                      "templateHash": "8047229004997221199"
+                      "templateHash": "3459248297718027874"
                     }
                   },
                   "parameters": {
@@ -466,6 +581,20 @@
                     },
                     "serviceBusConnectionString": {
                       "type": "securestring"
+                    },
+                    "webPubSubConnectionString": {
+                      "type": "securestring",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Web PubSub connection string used to mint room-scoped signalling tokens"
+                      }
+                    },
+                    "webPubSubHub": {
+                      "type": "string",
+                      "defaultValue": "quorum",
+                      "metadata": {
+                        "description": "Web PubSub hub carrying quorum signalling"
+                      }
                     },
                     "requireManagerApproval": {
                       "type": "bool",
@@ -521,6 +650,14 @@
                             {
                               "name": "AZURE_STORAGE_CONNECTION_STRING",
                               "value": "[parameters('storageConnectionString')]"
+                            },
+                            {
+                              "name": "AZURE_WEBPUBSUB_CONNECTION_STRING",
+                              "value": "[parameters('webPubSubConnectionString')]"
+                            },
+                            {
+                              "name": "BASILISK_WEBPUBSUB_HUB",
+                              "value": "[parameters('webPubSubHub')]"
                             },
                             {
                               "name": "BASILISK_CACHE_MODE",
@@ -602,7 +739,8 @@
               "dependsOn": [
                 "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
                 "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'servicebus')]",
-                "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage')]"
+                "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage')]",
+                "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'webpubsub')]"
               ]
             },
             {
@@ -889,7 +1027,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.44.1.10279",
-                      "templateHash": "9640032349490572436"
+                      "templateHash": "476052940032751418"
                     }
                   },
                   "parameters": {
@@ -1093,7 +1231,7 @@
                     {
                       "type": "Microsoft.Cdn/profiles/originGroups",
                       "apiVersion": "2023-05-01",
-                      "name": "[format('{0}/{1}', variables('fdProfile'), 'basilisk-function-origins')]",
+                      "name": "[format('{0}/{1}', variables('fdProfile'), 'basilisk-origins')]",
                       "properties": {
                         "loadBalancingSettings": {
                           "sampleSize": 4,
@@ -1113,7 +1251,7 @@
                     {
                       "type": "Microsoft.Cdn/profiles/originGroups/origins",
                       "apiVersion": "2023-05-01",
-                      "name": "[format('{0}/{1}/{2}', variables('fdProfile'), 'basilisk-function-origins', 'function-origin')]",
+                      "name": "[format('{0}/{1}/{2}', variables('fdProfile'), 'basilisk-origins', 'function-origin')]",
                       "properties": {
                         "hostName": "[parameters('functionHostName')]",
                         "httpPort": 80,
@@ -1124,7 +1262,7 @@
                         "enabledState": "Enabled"
                       },
                       "dependsOn": [
-                        "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-function-origins')]"
+                        "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-origins')]"
                       ]
                     },
                     {
@@ -1170,7 +1308,7 @@
                       "name": "[format('{0}/{1}/{2}', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')), 'api-route')]",
                       "properties": {
                         "originGroup": {
-                          "id": "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-function-origins')]"
+                          "id": "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-origins')]"
                         },
                         "supportedProtocols": [
                           "Http",
@@ -1198,8 +1336,8 @@
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')))]",
-                        "[resourceId('Microsoft.Cdn/profiles/originGroups/origins', variables('fdProfile'), 'basilisk-function-origins', 'function-origin')]",
-                        "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-function-origins')]"
+                        "[resourceId('Microsoft.Cdn/profiles/originGroups/origins', variables('fdProfile'), 'basilisk-origins', 'function-origin')]",
+                        "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-origins')]"
                       ]
                     },
                     {
@@ -1215,6 +1353,7 @@
                           "Https"
                         ],
                         "patternsToMatch": [
+                          "/",
                           "/*"
                         ],
                         "forwardingProtocol": "HttpsOnly",

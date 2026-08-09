@@ -224,13 +224,13 @@ def create_app() -> Flask:
 
     register_v2(app)
 
-    from basilisk.portal.quorum_routes import register_quorum_api
+    from basilisk.portal.quorum_signaling import register_quorum_signaling
     from basilisk.portal.routes import register_portal_api
     from basilisk.portal.static import register_static_portal
     from basilisk.portal.wkd_routes import register_wkd
 
     register_portal_api(app)
-    register_quorum_api(app)
+    register_quorum_signaling(app)
     register_wkd(app)
     register_static_portal(app)
     return app
@@ -243,7 +243,27 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
-    create_app().run(host=args.host, port=args.port, debug=False)
+    app = create_app()
+    # Quorum signalling lives in a service. When the connection string points
+    # at loopback, that service is the local double — start it alongside, so
+    # "run the server and quorum works" is true here as well as in production.
+    settings = get_settings()
+    conn = settings.web_pubsub_connection
+    if conn:
+        from basilisk.portal.webpubsub import WebPubSubConfigError, parse_connection_string
+
+        try:
+            endpoint = parse_connection_string(conn)
+        except WebPubSubConfigError:
+            endpoint = None
+        if endpoint is not None and endpoint.host.split(":")[0] in ("127.0.0.1", "localhost", "::1"):
+            from basilisk.portal.webpubsub_local import LocalWebPubSub
+
+            # Bound where the app is bound. The client is handed the endpoint's
+            # own URL verbatim, so in a container the double has to listen on
+            # the published interface or the browser dials a port nothing owns.
+            LocalWebPubSub(endpoint, hub=settings.web_pubsub_hub, host=args.host).start()
+    app.run(host=args.host, port=args.port, debug=False)
 
 
 if __name__ == "__main__":

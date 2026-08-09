@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "9259458798342067486"
+      "templateHash": "3773800826274018082"
     }
   },
   "parameters": {
@@ -83,7 +83,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "5250668699211885545"
+              "templateHash": "12707330199745887588"
             }
           },
           "parameters": {
@@ -135,7 +135,7 @@
             },
             {
               "type": "Microsoft.Storage/storageAccounts/blobServices",
-              "apiVersion": "2023-05-01",
+              "apiVersion": "2025-08-01",
               "name": "[format('{0}/{1}', take(variables('storageName'), 24), 'default')]",
               "properties": {
                 "deleteRetentionPolicy": {
@@ -145,6 +145,11 @@
                 "containerDeleteRetentionPolicy": {
                   "enabled": true,
                   "days": 7
+                },
+                "staticWebsite": {
+                  "enabled": true,
+                  "indexDocument": "index.html",
+                  "errorDocument404Path": "index.html"
                 }
               },
               "dependsOn": [
@@ -153,7 +158,7 @@
             },
             {
               "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
-              "apiVersion": "2023-05-01",
+              "apiVersion": "2025-08-01",
               "name": "[format('{0}/{1}/{2}', take(variables('storageName'), 24), 'default', 'certs')]",
               "properties": {
                 "publicAccess": "None",
@@ -176,7 +181,7 @@
             {
               "condition": "[parameters('enableWormImmutability')]",
               "type": "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies",
-              "apiVersion": "2023-05-01",
+              "apiVersion": "2025-08-01",
               "name": "[format('{0}/{1}/{2}/{3}', take(variables('storageName'), 24), 'default', 'certs', 'default')]",
               "properties": {
                 "immutabilityPeriodSinceCreationInDays": "[parameters('wormRetentionDays')]",
@@ -192,6 +197,10 @@
             "storageAccountName": {
               "type": "string",
               "value": "[take(variables('storageName'), 24)]"
+            },
+            "staticWebsiteHost": {
+              "type": "string",
+              "value": "[format('{0}.z.web.{1}', take(variables('storageName'), 24), environment().suffixes.storage)]"
             },
             "connectionString": {
               "type": "string",
@@ -229,7 +238,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "708073114207481004"
+              "templateHash": "7417024586488884760"
             }
           },
           "parameters": {
@@ -247,7 +256,7 @@
             }
           },
           "variables": {
-            "sbName": "[format('{0}-sb', parameters('namePrefix'))]",
+            "sbName": "[format('{0}-bus', parameters('namePrefix'))]",
             "ruleId": "RootManageSharedAccessKey"
           },
           "resources": [
@@ -271,6 +280,14 @@
             {
               "type": "Microsoft.ServiceBus/namespaces/queues",
               "apiVersion": "2022-10-01-preview",
+              "name": "[format('{0}/{1}', variables('sbName'), 'key-approved')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.ServiceBus/namespaces', variables('sbName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ServiceBus/namespaces/queues",
+              "apiVersion": "2022-10-01-preview",
               "name": "[format('{0}/{1}', variables('sbName'), 'sendtoken-events')]",
               "dependsOn": [
                 "[resourceId('Microsoft.ServiceBus/namespaces', variables('sbName'))]"
@@ -281,6 +298,115 @@
             "connectionString": {
               "type": "string",
               "value": "[format('Endpoint=sb://{0}.servicebus.windows.net/;SharedAccessKeyName={1};SharedAccessKey={2}', variables('sbName'), variables('ruleId'), listKeys(format('{0}/AuthorizationRules/{1}', resourceId('Microsoft.ServiceBus/namespaces', variables('sbName')), variables('ruleId')), '2022-10-01-preview').primaryKey)]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "webpubsub",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "256347022822576211"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource name prefix"
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region"
+              }
+            },
+            "hubName": {
+              "type": "string",
+              "defaultValue": "quorum",
+              "metadata": {
+                "description": "Hub name for quorum signalling; must match BASILISK_WEBPUBSUB_HUB"
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.SignalRService/webPubSub",
+              "apiVersion": "2023-02-01",
+              "name": "[format('{0}-wps', parameters('namePrefix'))]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Free_F1",
+                "tier": "Free",
+                "capacity": 1
+              },
+              "properties": {
+                "disableAadAuth": false,
+                "disableLocalAuth": false,
+                "publicNetworkAccess": "Enabled",
+                "tls": {
+                  "clientCertEnabled": false
+                }
+              }
+            },
+            {
+              "type": "Microsoft.SignalRService/webPubSub/hubs",
+              "apiVersion": "2023-02-01",
+              "name": "[format('{0}/{1}', format('{0}-wps', parameters('namePrefix')), parameters('hubName'))]",
+              "properties": {
+                "anonymousConnectPolicy": "deny",
+                "eventHandlers": []
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.SignalRService/webPubSub', format('{0}-wps', parameters('namePrefix')))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "name": {
+              "type": "string",
+              "value": "[format('{0}-wps', parameters('namePrefix'))]"
+            },
+            "hostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.SignalRService/webPubSub', format('{0}-wps', parameters('namePrefix'))), '2023-02-01').hostName]"
+            },
+            "hubName": {
+              "type": "string",
+              "value": "[parameters('hubName')]"
+            },
+            "connectionString": {
+              "type": "string",
+              "metadata": {
+                "description": "Connection string for AZURE_WEBPUBSUB_CONNECTION_STRING"
+              },
+              "value": "[listKeys(resourceId('Microsoft.SignalRService/webPubSub', format('{0}-wps', parameters('namePrefix'))), '2023-02-01').primaryConnectionString]"
             }
           }
         }
@@ -317,6 +443,15 @@
           },
           "serviceBusConnectionString": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'servicebus'), '2025-04-01').outputs.connectionString.value]"
+          },
+          "webPubSubConnectionString": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'webpubsub'), '2025-04-01').outputs.connectionString.value]"
+          },
+          "webPubSubHub": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'webpubsub'), '2025-04-01').outputs.hubName.value]"
+          },
+          "requireManagerApproval": {
+            "value": "[parameters('requireManagerApproval')]"
           }
         },
         "template": {
@@ -326,7 +461,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "11691483854744357081"
+              "templateHash": "3459248297718027874"
             }
           },
           "parameters": {
@@ -359,6 +494,27 @@
             },
             "serviceBusConnectionString": {
               "type": "securestring"
+            },
+            "webPubSubConnectionString": {
+              "type": "securestring",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Web PubSub connection string used to mint room-scoped signalling tokens"
+              }
+            },
+            "webPubSubHub": {
+              "type": "string",
+              "defaultValue": "quorum",
+              "metadata": {
+                "description": "Web PubSub hub carrying quorum signalling"
+              }
+            },
+            "requireManagerApproval": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Require manager approval before publishing keys"
+              }
             }
           },
           "variables": {
@@ -409,8 +565,20 @@
                       "value": "[parameters('storageConnectionString')]"
                     },
                     {
+                      "name": "AZURE_WEBPUBSUB_CONNECTION_STRING",
+                      "value": "[parameters('webPubSubConnectionString')]"
+                    },
+                    {
+                      "name": "BASILISK_WEBPUBSUB_HUB",
+                      "value": "[parameters('webPubSubHub')]"
+                    },
+                    {
                       "name": "BASILISK_CACHE_MODE",
                       "value": "redirect"
+                    },
+                    {
+                      "name": "BASILISK_REQUIRE_MANAGER_APPROVAL",
+                      "value": "[string(parameters('requireManagerApproval'))]"
                     }
                   ]
                 },
@@ -484,7 +652,8 @@
       "dependsOn": [
         "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'servicebus')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage')]"
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storage')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'webpubsub')]"
       ]
     },
     {
@@ -521,7 +690,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "6455515635266562536"
+              "templateHash": "13955737960313277534"
             }
           },
           "parameters": {
@@ -570,15 +739,29 @@
                     "mailProvider": {
                       "type": "String",
                       "defaultValue": "[parameters('mailProvider')]"
+                    },
+                    "$connections": {
+                      "type": "Object",
+                      "defaultValue": {}
                     }
                   },
                   "triggers": {
                     "When_message_in_queue": {
-                      "type": "ServiceBus",
+                      "recurrence": {
+                        "frequency": "Second",
+                        "interval": 30
+                      },
+                      "type": "ApiConnection",
                       "inputs": {
-                        "queueName": "key-events",
-                        "connection": {
-                          "name": "@parameters('$connections')['servicebus']['connectionId']"
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['servicebus']['connectionId']"
+                          }
+                        },
+                        "method": "get",
+                        "path": "/@{encodeURIComponent(encodeURIComponent('key-events'))}/messages/head",
+                        "queries": {
+                          "queueType": "Main"
                         }
                       }
                     }
@@ -587,7 +770,7 @@
                     "Parse_message": {
                       "type": "ParseJson",
                       "inputs": {
-                        "content": "@triggerBody()",
+                        "content": "@json(base64ToString(triggerBody()?['ContentData']))",
                         "schema": {
                           "type": "object"
                         }
@@ -653,9 +836,39 @@
                             }
                           }
                         },
-                        "key_approved": {
-                          "case": "key.approved",
-                          "actions": {}
+                        "claim_submitted": {
+                          "case": "claim.submitted",
+                          "actions": {
+                            "Build_approved": {
+                              "type": "Compose",
+                              "inputs": {
+                                "event": "key.approved",
+                                "fingerprint": "@body('Parse_message')?['fingerprint']",
+                                "approved_uids": "@body('Parse_message')?['matched_uids']"
+                              },
+                              "runAfter": {}
+                            },
+                            "Send_approved": {
+                              "type": "ApiConnection",
+                              "inputs": {
+                                "host": {
+                                  "connection": {
+                                    "name": "@parameters('$connections')['servicebus']['connectionId']"
+                                  }
+                                },
+                                "method": "post",
+                                "path": "/@{encodeURIComponent(encodeURIComponent('key-approved'))}/messages",
+                                "body": {
+                                  "ContentData": "@{base64(string(outputs('Build_approved')))}"
+                                }
+                              },
+                              "runAfter": {
+                                "Build_approved": [
+                                  "Succeeded"
+                                ]
+                              }
+                            }
+                          }
                         }
                       },
                       "default": {
@@ -727,7 +940,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "2078843020534199774"
+              "templateHash": "476052940032751418"
             }
           },
           "parameters": {
@@ -780,7 +993,8 @@
           },
           "variables": {
             "fdProfile": "[format('{0}-fd', parameters('namePrefix'))]",
-            "wafPolicyName": "[format('{0}waf', parameters('namePrefix'))]"
+            "wafPolicyName": "[format('{0}waf', parameters('namePrefix'))]",
+            "staticWebsiteHost": "[format('{0}.z.web.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
           },
           "resources": [
             {
@@ -965,9 +1179,46 @@
               ]
             },
             {
+              "type": "Microsoft.Cdn/profiles/originGroups",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', variables('fdProfile'), 'basilisk-static-origins')]",
+              "properties": {
+                "loadBalancingSettings": {
+                  "sampleSize": 4,
+                  "successfulSamplesRequired": 3
+                },
+                "healthProbeSettings": {
+                  "probePath": "/index.html",
+                  "probeRequestType": "GET",
+                  "probeProtocol": "Https",
+                  "probeIntervalInSeconds": 240
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles', variables('fdProfile'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/originGroups/origins",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', variables('fdProfile'), 'basilisk-static-origins', 'static-origin')]",
+              "properties": {
+                "hostName": "[variables('staticWebsiteHost')]",
+                "httpPort": 80,
+                "httpsPort": 443,
+                "originHostHeader": "[variables('staticWebsiteHost')]",
+                "priority": 1,
+                "weight": 1000,
+                "enabledState": "Enabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-static-origins')]"
+              ]
+            },
+            {
               "type": "Microsoft.Cdn/profiles/afdEndpoints/routes",
               "apiVersion": "2023-05-01",
-              "name": "[format('{0}/{1}/{2}', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')), 'default-route')]",
+              "name": "[format('{0}/{1}/{2}', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')), 'api-route')]",
               "properties": {
                 "originGroup": {
                   "id": "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-origins')]"
@@ -977,7 +1228,11 @@
                   "Https"
                 ],
                 "patternsToMatch": [
-                  "/*"
+                  "/pks/*",
+                  "/api/*",
+                  "/claim/*",
+                  "/.auth/*",
+                  "/health"
                 ],
                 "forwardingProtocol": "HttpsOnly",
                 "linkToDefaultDomain": "Enabled",
@@ -987,7 +1242,7 @@
                   "compressionSettings": {
                     "isCompressionEnabled": true,
                     "contentTypesToCompress": [
-                      "application/pgp-keys"
+                      "text/plain"
                     ]
                   }
                 }
@@ -996,6 +1251,43 @@
                 "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')))]",
                 "[resourceId('Microsoft.Cdn/profiles/originGroups/origins', variables('fdProfile'), 'basilisk-origins', 'function-origin')]",
                 "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-origins')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/afdEndpoints/routes",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')), 'static-route')]",
+              "properties": {
+                "originGroup": {
+                  "id": "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-static-origins')]"
+                },
+                "supportedProtocols": [
+                  "Http",
+                  "Https"
+                ],
+                "patternsToMatch": [
+                  "/",
+                  "/*"
+                ],
+                "forwardingProtocol": "HttpsOnly",
+                "linkToDefaultDomain": "Enabled",
+                "httpsRedirect": "Enabled",
+                "cacheConfiguration": {
+                  "queryStringCachingBehavior": "UseQueryString",
+                  "compressionSettings": {
+                    "isCompressionEnabled": true,
+                    "contentTypesToCompress": [
+                      "text/html",
+                      "text/css",
+                      "application/javascript"
+                    ]
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', variables('fdProfile'), format('{0}-endpoint', parameters('namePrefix')))]",
+                "[resourceId('Microsoft.Cdn/profiles/originGroups/origins', variables('fdProfile'), 'basilisk-static-origins', 'static-origin')]",
+                "[resourceId('Microsoft.Cdn/profiles/originGroups', variables('fdProfile'), 'basilisk-static-origins')]"
               ]
             }
           ],

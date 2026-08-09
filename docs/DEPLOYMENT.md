@@ -523,6 +523,45 @@ When `BASILISK_REQUIRE_PROOF=1`:
 
 3. Legacy `POST /pks/add` (`gpg --send-keys`) never requires proof
 
+4. `POST /api/v1/quorum/negotiate` requires it too — signalling is gated the same way uploads are
+
+
+
+## Quorum signalling (Azure Web PubSub)
+
+
+
+Quorum's WebRTC signalling runs over **Azure Web PubSub**. The Function App stores nothing: `POST /api/v1/quorum/negotiate` checks proof-of-work and the rate limits, validates the room id, and returns a **client access URL** whose JWT is scoped to that one room. The browser then opens a plain `WebSocket` with the `json.webpubsub.azure.v1` subprotocol — no npm dependency — and publishes sealed envelopes to the room. There is no server-side room record, no TTL to sweep and no global room cap.
+
+
+
+This replaced an in-process mailbox that could not work on Consumption Functions: instances share no memory and recycle when idle, so two peers only met when they happened to hit the same warm worker.
+
+
+
+| Setting | Where | Notes |
+|---------|-------|-------|
+| `AZURE_WEBPUBSUB_CONNECTION_STRING` | Function App | `Endpoint=…;AccessKey=…`. Terraform/Bicep wire it from the Web PubSub resource. Unset ⇒ negotiate returns **503**, and quorum is off. |
+| `BASILISK_WEBPUBSUB_HUB` | Function App | Default `quorum`; must match the hub resource. |
+| `BASILISK_WEBPUBSUB_TOKEN_TTL_SEC` | Function App | Default `300`. The token buys a handshake; the whole signalling bootstrap is seconds. |
+| `web_pubsub_sku` / `web_pubsub_hub` | Terraform vars | Default `Free_F1` / `quorum`. |
+
+
+
+**Token claims** (HS256, signed with the connection string's `AccessKey`): `sub` (an opaque per-connection id), `role` = `["webpubsub.joinLeaveGroup.<room>", "webpubsub.sendToGroup.<room>"]`, `webpubsub.group` = `["<room>"]`, plus `nbf`/`exp`/`iat`/`aud`. The unsuffixed `webpubsub.joinLeaveGroup` / `webpubsub.sendToGroup` roles — which would grant every room on the hub — are never minted.
+
+
+
+**CSP.** The signalling host is per-deployment, so it is never written into a policy string. `Settings.signaling_ws_origin()` derives `wss://<host>` from the connection string; `basilisk/serve.py` puts it in the response header, `basilisk/portal/static.py` merges it into each page's `<meta>` on the way out, and `terraform/…/frontdoor.tf` interpolates `local.signaling_wss_origin` into the header it overwrites. All three must allow it — the browser enforces the intersection. `tests/unit/test_csp_signaling.py` fails if they drift.
+
+
+
+**Free tier ceilings.** `Free_F1` allows **20 concurrent connections** and **20 000 messages/day**. One connection per peer per session, and signalling moves onto the peer data channels as soon as a pair meshes — so both numbers scale with *peers*, not with how long a conversation lasts. A deployment expecting more than a few simultaneous rooms should set `web_pubsub_sku = "Standard_S1"`; nothing in the application changes.
+
+
+
+**Locally and in CI**, leave `AZURE_WEBPUBSUB_CONNECTION_STRING` unset (or point it at loopback) and `python -m basilisk.serve` starts a local double that speaks the same subprotocol — the azurite pattern. `docker-compose.e2e.yml` publishes it on `8081`.
+
 
 
 ## Observability

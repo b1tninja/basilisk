@@ -117,6 +117,7 @@ Resolve order for Encrypt / Toolkit recipients: in-memory → pubkey cache → B
 | Capability | Status | Notes |
 |------------|--------|-------|
 | Signaling seal | Done | OpenPGP sign+encrypt to audience (`crypto.js`) — **not** PFS |
+| Signaling transport | Done | Azure Web PubSub group, joined with a server-minted JWT scoped to one room (`signaling.js` → `webpubsub.js`). The relay carries only sealed envelopes; it can read or alter none of them. |
 | Session keys | Done | Ephemeral ECDH P-256 → HKDF-SHA-256 → AES-GCM-256 |
 | Room / channel IDs | Done | SHA-256 / HKDF (`room.js`) |
 | Key confirmation | Done | Transcript-bound v2 (`rtc.js` + `crypto.js`) |

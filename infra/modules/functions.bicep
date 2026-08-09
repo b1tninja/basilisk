@@ -16,6 +16,13 @@ param storageConnectionString string
 @secure()
 param serviceBusConnectionString string
 
+@secure()
+@description('Web PubSub connection string used to mint room-scoped signalling tokens')
+param webPubSubConnectionString string = ''
+
+@description('Web PubSub hub carrying quorum signalling')
+param webPubSubHub string = 'quorum'
+
 @description('Require manager approval before publishing keys')
 param requireManagerApproval bool = false
 
@@ -49,6 +56,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
         { name: 'ServiceBusConnection', value: serviceBusConnectionString }
         { name: 'AZURE_STORAGE_CONNECTION_STRING', value: storageConnectionString }
+        { name: 'AZURE_WEBPUBSUB_CONNECTION_STRING', value: webPubSubConnectionString }
+        { name: 'BASILISK_WEBPUBSUB_HUB', value: webPubSubHub }
         { name: 'BASILISK_CACHE_MODE', value: 'redirect' }
         { name: 'BASILISK_REQUIRE_MANAGER_APPROVAL', value: string(requireManagerApproval) }
       ]

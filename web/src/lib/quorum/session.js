@@ -66,7 +66,7 @@ import {
 } from "./crypto.js";
 import { canonicalAudience, isValidRoomId } from "./room.js";
 import { classifyChannelFrame, createSeenSet, shouldRelay } from "./relay.js";
-import { postSignaling, startSignalingPoll } from "./signaling.js";
+import { openSignalingChannel } from "./signaling.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 import {
@@ -149,10 +149,15 @@ export class QuorumSession {
     this.initiatorFpr = this.role === "creator" ? this.myFpr : "";
     this.inviteVerified = this.role === "creator";
     this._meshing = this.role === "creator";
-    this._since = 0;
-    this._poll = null;
-    this._seenSeqs = new Set();
-    /** Relayed-envelope dedupe — one armored blob is handled once, ever. */
+    /** @type {import("./signaling.js").SignalingChannel|null} */
+    this._relay = null;
+    /**
+     * Envelope dedupe — one armored blob is handled once, ever, whichever wire
+     * delivered it. The mailbox's per-room sequence numbers used to serve this
+     * on the relay path and the seen-set on the channel path; a relay that
+     * echoes a publish back to its sender has no sequence to dedupe on, and
+     * the two paths were never deduped against each other anyway.
+     */
     this._envSeen = createSeenSet();
   }
 
@@ -175,15 +180,17 @@ export class QuorumSession {
     }
     this._emitRoster();
 
-    this._poll = startSignalingPoll({
+    this.onStatus?.("Joining signalling room…");
+    this._relay = openSignalingChannel({
       roomId: this.roomId,
-      getSince: () => this._since,
-      setSince: (s) => {
-        this._since = s;
-      },
-      onMessage: (m) => this._onMailbox(m),
+      onMessage: (payload) => this._onRelayEnvelope(payload),
       onError: (err) => this.onError?.(err),
+      onStatus: (status) => this.onStatus?.(status),
     });
+    // The creator's invite is the first thing on the wire, so the room has to
+    // be joined before it is published — otherwise the broadcast lands in a
+    // room this connection is not yet a member of and reaches nobody.
+    await this._relay.ready;
 
     if (this.role === "creator") {
       this.onStatus?.("Publishing signed invite…");
@@ -205,8 +212,8 @@ export class QuorumSession {
   }
 
   stop() {
-    this._poll?.stop();
-    this._poll = null;
+    this._relay?.stop();
+    this._relay = null;
     this._inviteEcdh = null;
     this.inviteNonce = "";
     for (const fpr of this.peers.keys()) {
@@ -309,14 +316,16 @@ export class QuorumSession {
     return sent;
   }
 
-  /** @param {{ seq: number, payload: string }} msg */
-  async _onMailbox(msg) {
-    if (this._seenSeqs.has(msg.seq)) return;
-    this._seenSeqs.add(msg.seq);
+  /**
+   * A sealed envelope off the signalling relay.
+   * @param {string} armored
+   */
+  async _onRelayEnvelope(armored) {
+    if (this._envSeen.seen(armored)) return;
     let opened;
     try {
       opened = await openSignalingEnvelope({
-        armored: msg.payload,
+        armored,
         decryptionKey: this.privateKey,
         audienceKeyByFpr: this.audienceKeys,
         audienceFprs: this.audienceFprs,
@@ -330,17 +339,17 @@ export class QuorumSession {
     }
     const { payload, signerFpr } = opened;
     if (signerFpr === this.myFpr) return;
-    // Everyone polls the mailbox themselves — a message for someone else is
-    // simply not ours; relaying is a channel-path concern.
+    // Everyone is in the same relay room — a message for someone else is
+    // simply not ours; forwarding is a channel-path concern.
     if (payload.to && payload.to !== this.myFpr) return;
     await this._handleSignal(payload, signerFpr);
   }
 
   /**
-   * A sealed envelope arriving over a data channel instead of the mailbox —
+   * A sealed envelope arriving over a data channel instead of the relay —
    * either addressed to us (channel-first signaling, mesh introductions) or
    * to be forwarded (we are the relaying member). Verification is identical
-   * to the mailbox path: same sealed envelope, same checks, only the wire
+   * to the relay path: same sealed envelope, same checks, only the wire
    * differs.
    * @param {string} fromFpr peer whose channel delivered the frame
    * @param {{ env: string, hops: number }} frame
@@ -853,7 +862,21 @@ export class QuorumSession {
       signingKey: this.privateKey,
       audienceKeys,
     });
-    await postSignaling(this.roomId, armored);
+    await this._publish(armored);
+  }
+
+  /**
+   * Put a sealed envelope on the relay.
+   *
+   * Our own copy is marked seen first: the relay may echo a publish back to
+   * the connection that made it, and re-handling our own invite would look
+   * like a second creator.
+   * @param {string} armored
+   */
+  async _publish(armored) {
+    this._envSeen.seen(armored);
+    if (!this._relay) throw new Error("Quorum signalling is not connected");
+    await this._relay.send(armored);
   }
 
   /**
@@ -877,13 +900,13 @@ export class QuorumSession {
       signingKey: this.privateKey,
       audienceKeys,
     });
-    // Channel-first: once links exist, signaling rides them and the mailbox
-    // becomes the bootstrap-only path — a renegotiation survives the mailbox
+    // Channel-first: once links exist, signaling rides them and the relay
+    // becomes the bootstrap-only path — a renegotiation survives the relay
     // dying, and a newcomer's introduction reaches peers it cannot signal
     // directly. The envelope is sealed end to end either way; the wire
     // carries nothing a relay can read or alter.
     if (this._sendEnvelopeViaChannel(toFpr, armored)) return;
-    await postSignaling(this.roomId, armored);
+    await this._publish(armored);
   }
 
   /**

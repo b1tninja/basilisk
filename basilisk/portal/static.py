@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from flask import Flask, Response, send_from_directory
+
+from basilisk.config import get_settings
+
+_CONNECT_SRC_RE = re.compile(r"(connect-src\s+)([^;\"]+)")
 
 # Prefer Vite build output; fall back to legacy web/static during local transition.
 _WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
@@ -51,8 +56,43 @@ def _static_root() -> Path:
     )
 
 
+def merge_connect_src(html: str, extra_sources: tuple[str, ...]) -> str:
+    """Add per-deployment sources to the page's own ``connect-src``.
+
+    The `<meta>` CSP and the response header intersect in the browser, so a
+    source the header allows is still blocked unless the meta allows it too.
+    Most of the policy is a build-time constant and stays in the HTML; the
+    quorum signalling host is not — it comes out of a connection string that
+    differs per deployment — so it is merged in on the way out rather than
+    hardcoded into ten static pages. Sources already present are left alone,
+    which keeps ``quorum.html``'s ``stun:`` entries intact.
+    """
+    if not extra_sources:
+        return html
+
+    def add(match: re.Match[str]) -> str:
+        prefix, existing = match.group(1), match.group(2)
+        parts = existing.split()
+        for source in extra_sources:
+            if source not in parts:
+                parts.append(source)
+        return f"{prefix}{' '.join(parts)}"
+
+    return _CONNECT_SRC_RE.sub(add, html, count=1)
+
+
 def _send_html(filename: str) -> Response:
-    resp = send_from_directory(_static_root(), filename)
+    ws_origin = get_settings().signaling_ws_origin()
+    if ws_origin:
+        # Read rather than stream: the bytes have to change, and a
+        # ``send_from_directory`` response is in passthrough mode with a
+        # validator computed from the file — both of which would be wrong for a
+        # document this deployment rewrote.
+        path = _static_root() / filename
+        html = merge_connect_src(path.read_text(encoding="utf-8"), (ws_origin,))
+        resp = Response(html, mimetype="text/html")
+    else:
+        resp = send_from_directory(_static_root(), filename)
     resp.headers["Cache-Control"] = _HTML_CACHE_CONTROL
     return resp
 

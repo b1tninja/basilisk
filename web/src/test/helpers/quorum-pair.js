@@ -3,16 +3,22 @@
  *
  * Nothing about the session is stubbed: real OpenPGP keys, real signed and
  * encrypted signalling envelopes, real ECDH, real key confirmation. Only the
- * two things that are genuinely outside the process are replaced — the
- * keyserver and mailbox HTTP endpoints (`globalThis.fetch`) and the transport
- * (`globalThis.RTCPeerConnection`, see `fake-peer-connection.js`).
+ * three things that are genuinely outside the process are replaced — the
+ * keyserver and the negotiate endpoint (`globalThis.fetch`), the signalling
+ * service (`globalThis.WebSocket`, see `webpubsub-double.js`) and the peer
+ * transport (`globalThis.RTCPeerConnection`, see `fake-peer-connection.js`).
  *
- * The mailbox delivers by opening each envelope and **re-sealing it with the
+ * The relay delivers by opening each envelope and **re-sealing it with the
  * original signer's own key**, which is what makes `tamper` meaningful: a
  * tampered payload is indistinguishable from an honest one to every check the
  * protocol makes — right signer, right room, right audience, valid signature.
  * The DTLS binding in the key transcript is the *only* thing that can catch it.
  * That is the oracle: weaken the binding and the tamper goes through unnoticed.
+ *
+ * The tamper sits in the relay's publish path rather than in a mailbox, which
+ * is where a hostile signalling service would actually be — the session's own
+ * `_envSeen` drops the copy echoed back to the sender, so a rewritten envelope
+ * reaches only the peer it was aimed at.
  *
  * Envelopes are re-sealed on the honest path too, so both runs go through
  * identical machinery and a difference in outcome can only come from the
@@ -27,6 +33,7 @@ import {
 import { deriveRoomId } from "../../lib/quorum/room.js";
 import { QuorumSession } from "../../lib/quorum/session.js";
 import { FakePeerConnection } from "./fake-peer-connection.js";
+import { installWebPubSubDouble } from "./webpubsub-double.js";
 
 /**
  * @typedef {object} PairSide
@@ -91,59 +98,43 @@ export async function makeQuorumPair({ tamper } = {}) {
 
   /** @type {PairSide[]} */
   const sides = [];
-  let seq = 0;
-  let queue = Promise.resolve();
   let stopped = false;
 
   /**
-   * One posted envelope, opened, optionally tampered, re-sealed by its own
-   * signer, and handed to everyone except the signer. Serialised through a
-   * promise chain so ordering on the wire is the ordering on the mailbox.
+   * One published envelope, opened, optionally tampered, and re-sealed by its
+   * own signer before the relay broadcasts it.
    * @param {string} armored
+   * @returns {Promise<string>}
    */
-  function enqueue(armored) {
-    queue = queue.then(async () => {
-      if (stopped) return;
-      /** @type {{ payload: any, signerFpr: string }} */
-      let opened;
-      try {
-        opened = await openSignalingEnvelope({
-          armored,
-          decryptionKey: a.privateKey,
-          audienceKeyByFpr: keyByFpr,
-          audienceFprs: audience,
-          expectedRoomId: roomId,
-        });
-      } catch (_) {
-        return; // an envelope the mailbox itself cannot read never happens here
-      }
-      const signer = opened.signerFpr;
-      const signingKey = privateByFpr.get(signer);
-      if (!signingKey) return;
-      const payload = tamper ? tamper(opened.payload, signer) : opened.payload;
-      const wire = await sealSignalingEnvelope({
-        payload,
-        signingKey,
-        audienceKeys: [...keyByFpr.values()],
+  async function relayTransform(armored) {
+    if (stopped) return armored;
+    /** @type {{ payload: any, signerFpr: string }} */
+    let opened;
+    try {
+      opened = await openSignalingEnvelope({
+        armored,
+        decryptionKey: a.privateKey,
+        audienceKeyByFpr: keyByFpr,
+        audienceFprs: audience,
+        expectedRoomId: roomId,
       });
-      for (const side of sides) {
-        if (side.fpr === signer || stopped) continue;
-        seq += 1;
-        // The poll loop's own seam. Driving it directly rather than waiting on
-        // the 1500 ms interval keeps a full handshake inside a test timeout;
-        // `_seenSeqs` dedupes, so the real poll running alongside is harmless.
-        await Promise.resolve(
-          side.session._onMailbox({ seq, payload: wire })
-        ).catch((err) => {
-          side.errors.push(err instanceof Error ? err : new Error(String(err)));
-        });
-      }
+    } catch (_) {
+      return armored; // an envelope the relay cannot read never happens here
+    }
+    const signer = opened.signerFpr;
+    const signingKey = privateByFpr.get(signer);
+    if (!signingKey) return armored;
+    const payload = tamper ? tamper(opened.payload, signer) : opened.payload;
+    return sealSignalingEnvelope({
+      payload,
+      signingKey,
+      audienceKeys: [...keyByFpr.values()],
     });
-    return queue;
   }
 
   const realFetch = globalThis.fetch;
   const realRtc = globalThis.RTCPeerConnection;
+  const relay = installWebPubSubDouble({ transform: relayTransform });
 
   globalThis.fetch = /** @type {any} */ (
     async (url, init) => {
@@ -157,15 +148,12 @@ export async function makeQuorumPair({ tamper } = {}) {
           headers: { "content-type": "application/pgp-keys" },
         });
       }
-      if (/\/api\/v1\/quorum\/room\//.test(href)) {
-        if (String(init?.method || "GET").toUpperCase() === "POST") {
-          const body = JSON.parse(String(init?.body || "{}"));
-          enqueue(String(body.payload || ""));
-          seq += 1;
-          return Response.json({ seq, room_id: roomId });
-        }
-        // The poll finds nothing: delivery already happened on POST.
-        return Response.json({ room_id: roomId, messages: [], next_since: 0 });
+      if (href.includes("/pks/v2/challenge")) {
+        return Response.json({ nonce: "n", timestamp: 0, difficulty: 0, hint: "n:0:sig" });
+      }
+      if (href.includes("/api/v1/quorum/negotiate")) {
+        const body = JSON.parse(String(init?.body || "{}"));
+        return Response.json(await relay.grantFor(String(body.room || roomId)));
       }
       return new Response(`unexpected ${href}`, { status: 500 });
     }
@@ -201,7 +189,7 @@ export async function makeQuorumPair({ tamper } = {}) {
   /** Let every queued envelope, and everything it causes, drain. */
   async function settle() {
     for (let i = 0; i < 40; i += 1) {
-      await queue;
+      await relay.settled();
       await new Promise((r) => setTimeout(r, 5));
     }
   }
@@ -226,6 +214,7 @@ export async function makeQuorumPair({ tamper } = {}) {
         }
       }
       FakePeerConnection.reset();
+      relay.restore();
       globalThis.fetch = realFetch;
       globalThis.RTCPeerConnection = realRtc;
     },

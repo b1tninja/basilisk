@@ -1,3 +1,26 @@
+# CSP must match basilisk/serve.py's `_CSP` and the `<meta>` the pages ship.
+# The browser enforces the *intersection* of the meta policy and this header,
+# and Front Door overwrites what the origin sent — so a source missing from any
+# one of the three is a source that does not exist. Everything here is a
+# build-time constant except the signalling socket, whose hostname is
+# per-deployment; `basilisk/portal/static.py` merges the same origin into the
+# meta on the way out. 'wasm-unsafe-eval' is OpenPGP.js Argon2 WASM only, not
+# JS eval; integrity of that WASM is SRI on the embedding chunk (see serve.py).
+locals {
+  content_security_policy = join(" ", [
+    "default-src 'none';",
+    "script-src 'self' 'wasm-unsafe-eval';",
+    "style-src 'self';",
+    "connect-src 'self' https://keys.openpgp.org https://keys.mailvelope.com ${local.signaling_wss_origin};",
+    "img-src 'self' data:;",
+    "font-src 'self';",
+    "frame-ancestors 'none';",
+    "object-src 'none';",
+    "base-uri 'self';",
+    "form-action 'self';",
+  ])
+}
+
 # RESIDUAL RISK: Standard SKU supports custom rate-limit rules only.
 # Microsoft Default Rule Set / Bot Manager require Premium_AzureFrontDoor.
 # Upgrade path: change both sku_name values below to Premium_AzureFrontDoor and
@@ -168,7 +191,7 @@ resource "azurerm_cdn_frontdoor_rule" "security_headers" {
     response_header_action {
       header_action = "Overwrite"
       header_name   = "Content-Security-Policy"
-      value         = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https://keys.openpgp.org https://keys.mailvelope.com; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+      value         = local.content_security_policy
     }
     response_header_action {
       header_action = "Overwrite"
@@ -272,7 +295,7 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
     response_header_action {
       header_action = "Overwrite"
       header_name   = "Content-Security-Policy"
-      value         = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https://keys.openpgp.org https://keys.mailvelope.com; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+      value         = local.content_security_policy
     }
     response_header_action {
       header_action = "Overwrite"
