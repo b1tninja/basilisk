@@ -97,17 +97,17 @@ variable "servicebus_sku" {
   type        = string
   description = "Service Bus tier. Basic bills per operation with no namespace base charge and carries queues only; Standard adds a fixed monthly fee and is required for topics, sessions, duplicate detection or scheduled delivery."
 
-  # Standard for now, deliberately. Basic is the cheaper and correct end state,
-  # but the downgrade is refused while any queue holds a TTL above Basic's
-  # 14-day ceiling, and these queues inherited Standard's TimeSpan.MaxValue
-  # default. The queues cannot be fixed in the same apply that moves the SKU:
-  # they depend on the namespace, so the namespace update runs first, 409s, and
-  # the queue updates never run.
+  # Basic, now that it is reachable. The downgrade is refused while any queue
+  # holds a TTL above Basic's 14-day ceiling, and these queues inherited
+  # Standard's TimeSpan.MaxValue default -- and could not be fixed in the same
+  # apply that moves the SKU, because they depend on the namespace, so the
+  # namespace update runs first and 409s before the queue updates run.
   #
-  # So it is two applies. This one lands `default_message_ttl = P14D` on the
-  # queues with the tier unchanged; flipping this default to "Basic" afterwards
-  # then succeeds. Do not flip it until an apply has landed the TTLs.
-  default = "Standard"
+  # Applied in order: run aec7083 landed `default_message_ttl = P14D` on all
+  # three queues with the tier unchanged, which is what makes this reachable.
+  # If the queue TTLs are ever raised past 14 days, this has to go back to
+  # Standard first -- the constraint is on the queues, not on the tier.
+  default = "Basic"
 
   validation {
     condition     = contains(["Basic", "Standard", "Premium"], var.servicebus_sku)

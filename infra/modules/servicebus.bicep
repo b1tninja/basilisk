@@ -17,9 +17,9 @@ var sbName = '${namePrefix}-bus'
 // deployment that moves the SKU -- they are children of the namespace, so the
 // namespace goes first and 409s. Land `defaultMessageTimeToLive` first, then
 // flip this to 'Basic' in a second deployment.
-@description('Service Bus tier. Basic has no namespace base charge and carries queues only. Do not set to Basic until a deployment has landed the queue TTLs below.')
+@description('Service Bus tier. Basic has no namespace base charge and carries queues only. Reachable only once a deployment has landed the queue TTLs below; if those are ever raised past 14 days this must go back to Standard first.')
 @allowed(['Basic', 'Standard', 'Premium'])
-param serviceBusSku string = 'Standard'
+param serviceBusSku string = 'Basic'
 
 resource namespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = {
   name: sbName

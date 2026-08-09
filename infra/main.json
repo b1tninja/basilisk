@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "11255146190808048997"
+      "templateHash": "12157254576438401948"
     }
   },
   "parameters": {
@@ -371,7 +371,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "6161674754473597721"
+              "templateHash": "12543917372579292186"
             }
           },
           "parameters": {
@@ -389,14 +389,14 @@
             },
             "serviceBusSku": {
               "type": "string",
-              "defaultValue": "Standard",
+              "defaultValue": "Basic",
               "allowedValues": [
                 "Basic",
                 "Standard",
                 "Premium"
               ],
               "metadata": {
-                "description": "Service Bus tier. Basic has no namespace base charge and carries queues only. Do not set to Basic until a deployment has landed the queue TTLs below."
+                "description": "Service Bus tier. Basic has no namespace base charge and carries queues only. Reachable only once a deployment has landed the queue TTLs below; if those are ever raised past 14 days this must go back to Standard first."
               }
             }
           },
