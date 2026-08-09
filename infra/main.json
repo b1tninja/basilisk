@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "3773800826274018082"
+      "templateHash": "5728397754738260359"
     }
   },
   "parameters": {
@@ -238,7 +238,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "7417024586488884760"
+              "templateHash": "15728433731962405977"
             }
           },
           "parameters": {
@@ -266,7 +266,7 @@
               "name": "[variables('sbName')]",
               "location": "[parameters('location')]",
               "sku": {
-                "name": "Standard"
+                "name": "Basic"
               }
             },
             {
@@ -461,7 +461,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "3459248297718027874"
+              "templateHash": "13026561988943419167"
             }
           },
           "parameters": {
@@ -514,6 +514,27 @@
               "defaultValue": false,
               "metadata": {
                 "description": "Require manager approval before publishing keys"
+              }
+            },
+            "maximumInstanceCount": {
+              "type": "int",
+              "defaultValue": 20,
+              "minValue": 1,
+              "maxValue": 1000,
+              "metadata": {
+                "description": "Hard ceiling on scaled-out instances. This is the cost stop: without it the platform default (100) applies and a traffic spike or an abuse burst scales out unbounded."
+              }
+            },
+            "instanceMemoryMB": {
+              "type": "int",
+              "defaultValue": 2048,
+              "allowedValues": [
+                512,
+                2048,
+                4096
+              ],
+              "metadata": {
+                "description": "Memory per instance in MB. Billed as instance-seconds x memory, so this multiplies the cost of every execution."
               }
             }
           },
@@ -593,12 +614,8 @@
                     }
                   },
                   "scaleAndConcurrency": {
-                    "alwaysReady": [
-                      {
-                        "name": "http",
-                        "instanceCount": 1
-                      }
-                    ]
+                    "maximumInstanceCount": "[parameters('maximumInstanceCount')]",
+                    "instanceMemoryMB": "[parameters('instanceMemoryMB')]"
                   }
                 }
               },

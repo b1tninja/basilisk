@@ -3,11 +3,15 @@ locals {
   servicebus_namespace_name = "${var.name_prefix}-bus"
 }
 
+# Basic bills per operation with no namespace base charge; Standard adds a fixed
+# monthly fee for topics, sessions, duplicate detection and scheduled delivery.
+# This namespace carries three plain queues and uses none of those, so Basic is
+# the cheaper tier with no loss. Raise to Standard if a topic is ever introduced.
 resource "azurerm_servicebus_namespace" "basilisk" {
   name                = local.servicebus_namespace_name
   location            = azurerm_resource_group.basilisk.location
   resource_group_name = azurerm_resource_group.basilisk.name
-  sku                 = "Standard"
+  sku                 = var.servicebus_sku
   tags                = var.tags
 }
 

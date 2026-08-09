@@ -93,6 +93,50 @@ variable "web_pubsub_hub" {
   default     = "quorum"
 }
 
+variable "servicebus_sku" {
+  type        = string
+  description = "Service Bus tier. Basic bills per operation with no namespace base charge and carries queues only; Standard adds a fixed monthly fee and is required for topics, sessions, duplicate detection or scheduled delivery."
+  default     = "Basic"
+
+  validation {
+    condition     = contains(["Basic", "Standard", "Premium"], var.servicebus_sku)
+    error_message = "servicebus_sku must be Basic, Standard or Premium."
+  }
+}
+
+variable "function_maximum_instance_count" {
+  type        = number
+  description = "Hard ceiling on scaled-out Function instances. This is the cost stop: without it the platform default (100) applies and a traffic spike or abuse burst scales out unbounded."
+  default     = 20
+
+  validation {
+    condition     = var.function_maximum_instance_count >= 1 && var.function_maximum_instance_count <= 1000
+    error_message = "function_maximum_instance_count must be between 1 and 1000."
+  }
+}
+
+variable "function_instance_memory_mb" {
+  type        = number
+  description = "Memory per Function instance. Billed as instance-seconds x memory, so this multiplies the cost of every execution."
+  default     = 2048
+
+  validation {
+    condition     = contains([512, 2048, 4096], var.function_instance_memory_mb)
+    error_message = "function_instance_memory_mb must be 512, 2048 or 4096."
+  }
+}
+
+variable "log_analytics_daily_quota_gb" {
+  type        = number
+  description = "Hard cap on Log Analytics ingestion per UTC day. Front Door access logs write one record per request, so ingestion scales with public traffic. -1 disables the cap."
+  default     = 1
+
+  validation {
+    condition     = var.log_analytics_daily_quota_gb == -1 || var.log_analytics_daily_quota_gb > 0
+    error_message = "log_analytics_daily_quota_gb must be positive, or -1 to disable the cap."
+  }
+}
+
 variable "budget_contact_emails" {
   type        = list(string)
   description = "Optional email addresses for the resource-group spend budget alert (in addition to Owner role)."

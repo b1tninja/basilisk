@@ -1,9 +1,15 @@
+# PerGB2018 bills per GB ingested. FrontDoorAccessLog below writes one record per
+# request, so ingestion scales with public traffic and is the line item most able
+# to surprise. daily_quota_gb is a hard stop: ingestion halts for the rest of the
+# UTC day once the cap is hit (data already ingested is retained, and the cap
+# resets daily). Losing the tail of a day's access logs is the intended trade.
 resource "azurerm_log_analytics_workspace" "basilisk" {
   name                = "${var.name_prefix}-logs"
   location            = azurerm_resource_group.basilisk.location
   resource_group_name = azurerm_resource_group.basilisk.name
   sku                 = "PerGB2018"
   retention_in_days   = 30
+  daily_quota_gb      = var.log_analytics_daily_quota_gb
   tags                = var.tags
 }
 

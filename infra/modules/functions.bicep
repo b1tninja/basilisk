@@ -26,6 +26,15 @@ param webPubSubHub string = 'quorum'
 @description('Require manager approval before publishing keys')
 param requireManagerApproval bool = false
 
+@description('Hard ceiling on scaled-out instances. This is the cost stop: without it the platform default (100) applies and a traffic spike or an abuse burst scales out unbounded.')
+@minValue(1)
+@maxValue(1000)
+param maximumInstanceCount int = 20
+
+@description('Memory per instance in MB. Billed as instance-seconds x memory, so this multiplies the cost of every execution.')
+@allowed([512, 2048, 4096])
+param instanceMemoryMB int = 2048
+
 var planName = '${namePrefix}-plan'
 var appName = '${namePrefix}-fn'
 
@@ -70,8 +79,13 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           authentication: { type: 'SystemAssignedIdentity' }
         }
       }
+      // No alwaysReady entry: an always-ready instance is billed continuously
+      // whether or not a request arrives, which is a standing charge on an app
+      // that otherwise scales to zero. The trade is a cold start on the first
+      // request after an idle period. maximumInstanceCount is the cost ceiling.
       scaleAndConcurrency: {
-        alwaysReady: [{ name: 'http', instanceCount: 1 }]
+        maximumInstanceCount: maximumInstanceCount
+        instanceMemoryMB: instanceMemoryMB
       }
     }
   }

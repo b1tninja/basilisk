@@ -564,6 +564,24 @@ This replaced an in-process mailbox that could not work on Consumption Functions
 
 
 
+## Cost ceilings
+
+Most of this deployment's cost is *readiness*, not usage. These are the knobs that bound it — each is a hard stop, not an alert.
+
+| Knob | Default | What it bounds |
+| --- | --- | --- |
+| `function_maximum_instance_count` / `maximumInstanceCount` | `20` | Scaled-out Function instances. Previously unset in Bicep and pinned to the platform default (100) in Terraform, so nothing was constrained: a traffic spike or an abuse burst scaled out unbounded. |
+| `function_instance_memory_mb` / `instanceMemoryMB` | `2048` | Billing is instance-seconds x memory, so this multiplies every execution. |
+| `log_analytics_daily_quota_gb` | `1` | Log Analytics ingestion per UTC day. `FrontDoorAccessLog` writes one record per request, so ingestion scales with public traffic. Ingestion halts for the rest of the day at the cap and resets; already-ingested data is retained. `-1` disables. |
+| `servicebus_sku` | `Basic` | Basic bills per operation with **no namespace base charge**. Standard adds a fixed monthly fee and is required only for topics, sessions, duplicate detection or scheduled delivery — none of which this namespace's three queues use. |
+| `web_pubsub_sku` | `Free_F1` | 20 concurrent connections, 20 000 messages/day. Cannot overspend. |
+
+**No always-ready Function instance is configured.** An always-ready instance is billed continuously whether or not a request arrives, which is a standing charge on an app that otherwise scales to zero. The trade is a cold start on the first request after an idle period. To buy it back, add an `alwaysReady` entry to `scaleAndConcurrency` — and note it is a per-second charge, not a one-off.
+
+A resource-group budget (`azurerm_consumption_budget_resource_group`, default $100/month, alerting at 80%) exists in Terraform. **Budgets alert; they do not stop anything** — enforcement is the table above. The subscription spending limit does not apply to pay-as-you-go subscriptions, so do not rely on it as a backstop.
+
+If throttling appears under legitimate load, raise `function_maximum_instance_count` deliberately rather than removing the ceiling.
+
 ## Observability
 
 

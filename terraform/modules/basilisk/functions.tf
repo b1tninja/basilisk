@@ -34,8 +34,12 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
   runtime_name    = "python"
   runtime_version = "3.13"
 
-  maximum_instance_count = 100
-  instance_memory_in_mb  = 2048
+  # The cost stop. 100 was the platform default restated, so it constrained
+  # nothing: a traffic spike or an abuse burst scaled out unbounded. No
+  # always-ready instance is configured, so this app scales to zero and pays
+  # a cold start on the first request after idle.
+  maximum_instance_count = var.function_maximum_instance_count
+  instance_memory_in_mb  = var.function_instance_memory_mb
 
   identity {
     type = "SystemAssigned"
