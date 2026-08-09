@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "14792201490954394813"
+      "templateHash": "10478200167680402956"
     }
   },
   "parameters": {
@@ -92,7 +92,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "10581472882492001168"
+              "templateHash": "11255146190808048997"
             }
           },
           "parameters": {
@@ -458,7 +458,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.44.1.10279",
-                      "templateHash": "15728433731962405977"
+                      "templateHash": "6161674754473597721"
                     }
                   },
                   "parameters": {
@@ -473,10 +473,23 @@
                       "metadata": {
                         "description": "Azure region"
                       }
+                    },
+                    "serviceBusSku": {
+                      "type": "string",
+                      "defaultValue": "Standard",
+                      "allowedValues": [
+                        "Basic",
+                        "Standard",
+                        "Premium"
+                      ],
+                      "metadata": {
+                        "description": "Service Bus tier. Basic has no namespace base charge and carries queues only. Do not set to Basic until a deployment has landed the queue TTLs below."
+                      }
                     }
                   },
                   "variables": {
                     "sbName": "[format('{0}-bus', parameters('namePrefix'))]",
+                    "queueTtl": "P14D",
                     "ruleId": "RootManageSharedAccessKey"
                   },
                   "resources": [
@@ -486,13 +499,16 @@
                       "name": "[variables('sbName')]",
                       "location": "[parameters('location')]",
                       "sku": {
-                        "name": "Basic"
+                        "name": "[parameters('serviceBusSku')]"
                       }
                     },
                     {
                       "type": "Microsoft.ServiceBus/namespaces/queues",
                       "apiVersion": "2022-10-01-preview",
                       "name": "[format('{0}/{1}', variables('sbName'), 'key-events')]",
+                      "properties": {
+                        "defaultMessageTimeToLive": "[variables('queueTtl')]"
+                      },
                       "dependsOn": [
                         "[resourceId('Microsoft.ServiceBus/namespaces', variables('sbName'))]"
                       ]
@@ -501,6 +517,9 @@
                       "type": "Microsoft.ServiceBus/namespaces/queues",
                       "apiVersion": "2022-10-01-preview",
                       "name": "[format('{0}/{1}', variables('sbName'), 'key-approved')]",
+                      "properties": {
+                        "defaultMessageTimeToLive": "[variables('queueTtl')]"
+                      },
                       "dependsOn": [
                         "[resourceId('Microsoft.ServiceBus/namespaces', variables('sbName'))]"
                       ]
@@ -509,6 +528,9 @@
                       "type": "Microsoft.ServiceBus/namespaces/queues",
                       "apiVersion": "2022-10-01-preview",
                       "name": "[format('{0}/{1}', variables('sbName'), 'sendtoken-events')]",
+                      "properties": {
+                        "defaultMessageTimeToLive": "[variables('queueTtl')]"
+                      },
                       "dependsOn": [
                         "[resourceId('Microsoft.ServiceBus/namespaces', variables('sbName'))]"
                       ]

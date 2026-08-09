@@ -611,8 +611,27 @@ Most of this deployment's cost is *readiness*, not usage. These are the knobs th
 | `function_maximum_instance_count` / `maximumInstanceCount` | `20` | Scaled-out Function instances. Previously unset in Bicep and pinned to the platform default (100) in Terraform, so nothing was constrained: a traffic spike or an abuse burst scaled out unbounded. |
 | `function_instance_memory_mb` / `instanceMemoryMB` | `2048` | Billing is instance-seconds x memory, so this multiplies every execution. |
 | `log_analytics_daily_quota_gb` | `1` | Log Analytics ingestion per UTC day. `FrontDoorAccessLog` writes one record per request, so ingestion scales with public traffic. Ingestion halts for the rest of the day at the cap and resets; already-ingested data is retained. `-1` disables. |
-| `servicebus_sku` | `Basic` | Basic bills per operation with **no namespace base charge**. Standard adds a fixed monthly fee and is required only for topics, sessions, duplicate detection or scheduled delivery — none of which this namespace's three queues use. |
+| `servicebus_sku` | `Standard` — **see below** | Basic bills per operation with **no namespace base charge** and is the intended end state; Standard adds a fixed monthly fee and is required only for topics, sessions, duplicate detection or scheduled delivery, none of which this namespace's three queues use. |
 | `web_pubsub_sku` | `Free_F1` | 20 concurrent connections, 20 000 messages/day. Cannot overspend. |
+
+### Moving Service Bus to Basic takes two applies
+
+Azure refuses a namespace downgrade while any queue holds a TTL above Basic's 14-day ceiling:
+
+```
+409 MessagingGatewayConflict: Namespace cannot be downgraded because at least one
+queue 'key-approved' has DefaultMessageTimeToLive set with an invalid value, the
+value need to be between 00:00:01 and 14.00:00:00
+```
+
+Left unset, a queue inherits Standard's default of `TimeSpan.MaxValue` (`P10675199DT2H48M5.4775807S`). The queues **cannot** be fixed in the same apply that moves the SKU — they depend on the namespace, so the namespace update runs first, 409s, and the queue updates never run. Terraform also stops everything downstream, which includes the Function App, since it takes the namespace connection string as an app setting.
+
+So:
+
+1. Apply with `servicebus_sku = "Standard"` and `default_message_ttl = "P14D"` on the queues. This is the committed state.
+2. Then set `servicebus_sku = "Basic"` (Terraform) / `serviceBusSku = 'Basic'` (Bicep) and apply again.
+
+Do not flip step 2 until an apply has landed the TTLs. 14 days is Basic's ceiling, chosen as the smallest change to existing behaviour — these queues carry key-ingest and mail events that Logic Apps consume within seconds.
 
 **No always-ready Function instance is configured.** An always-ready instance is billed continuously whether or not a request arrives, which is a standing charge on an app that otherwise scales to zero. The trade is a cold start on the first request after an idle period. To buy it back, add an `alwaysReady` entry to `scaleAndConcurrency` — and note it is a per-second charge, not a one-off.
 
