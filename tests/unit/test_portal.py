@@ -149,12 +149,25 @@ def test_static_search_page():
     from basilisk.serve import create_app
 
     client = create_app().test_client()
+    # The portal serves a single-page shell and the client router draws the rest.
+    # This asserts only what the server is answerable for: both paths return the
+    # same shell, carrying the mount point the bundle attaches to. It used to
+    # assert id="search-form" and id="auth-widget" were in the served bytes --
+    # true when the portal rendered server-side, false since those moved into
+    # React (web/src/pages/index.tsx renders the form; auth-widget is a class
+    # now, not an id). That assertion belongs in the browser suite, where a
+    # rendered DOM exists to make it of.
+    bodies = []
     for path in ("/", "/search"):
         r = client.get(path)
         assert r.status_code == 200
+        assert "text/html" in r.headers.get("Content-Type", "")
         body = r.get_data(as_text=True)
-        assert 'id="search-form"' in body
-        assert 'id="auth-widget"' in body
+        assert '<div id="app">' in body, "SPA mount point missing from the shell"
+        bodies.append(body)
+    # /search is an alias, not a page: it must serve the identical shell so a
+    # deep link lands on the client router rather than a 404 or a stale build.
+    assert bodies[0] == bodies[1]
 
     web_root = Path(__file__).resolve().parents[2] / "web"
     dist_index = web_root / "dist" / "index.html"
