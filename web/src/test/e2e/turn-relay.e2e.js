@@ -265,13 +265,23 @@ describe.runIf(status.ok)("the TURN relay path, against a real relay", () => {
       expect(out.data.byType.host).toBeGreaterThan(0);
     });
 
-    it("drops the 'no relay' note once a relay answers", () => {
-      // The note is the panel's informational row, and the only thing that
-      // distinguishes "no TURN configured" from "TURN configured and dead".
-      // Against a dead relay it is present; here it must be gone, or the panel
-      // would tell a user with a working relay that they have none.
-      expect(out.data.notes.join(" ")).not.toMatch(/no relay/);
-      expect(out.data.notes).toEqual([]);
+    it("records the relay it reached, so nothing can report it as absent", () => {
+      // This used to read `out.data.notes`, a prose row `rtc.gather` emitted.
+      // e48f607 deleted that field -- nothing rendered it, and it was a second
+      // spelling of what the candidate list already drew -- and replaced it
+      // with `candidateAbsence`, which the panel consults *only* for a type
+      // that gathered nothing. The test outlived the field by a commit and
+      // could not say so: it needs Docker, and while Docker was down it was
+      // skipped rather than failing. A skipped test reports nothing, including
+      // its own staleness.
+      expect(out.data.notes).toBeUndefined();
+
+      // What carries the meaning now. The census is what lets a reader tell
+      // "no TURN was configured" from "TURN was configured and stayed silent" --
+      // the distinction the old note existed to make. Here a relay was asked
+      // for and answered, so both halves must agree.
+      expect(out.data.ice.turn).toBeGreaterThan(0);
+      expect(out.data.byType.relay).toBeGreaterThan(0);
     });
 
     it("still marks the credential-bearing config sensitive", () => {
