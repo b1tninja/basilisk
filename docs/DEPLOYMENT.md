@@ -564,6 +564,38 @@ This replaced an in-process mailbox that could not work on Consumption Functions
 
 
 
+## TURN relay fallback (Cloudflare Realtime)
+
+
+
+Some pairs of peers cannot reach each other directly — both behind symmetric NAT, or a network that filters UDP outright. The fix is a **TURN relay**, and the deployment question it raises is not "which one" but *when it is contacted*.
+
+
+
+**The relay is not in the ICE server list.** Putting one there makes it last in ICE's priority order, but the agent still **allocates** on it during gathering, before any connectivity check has succeeded or failed — so a relay configured as a fallback learns this machine's address, and that a connection is being made, on **every** call, including the large majority that connect directly and never relay a byte. Basilisk therefore gathers and connects with STUN only, and escalates in a second phase: on a connection that reaches `failed`, the browser asks `POST /api/v1/turn/credentials` for a short-lived credential, calls `setConfiguration()` with the relay added and `restartIce()`, and re-gathers. Per W3C webrtc-pc ("set the configuration", step 9) and RFC 8829 §4.1.18, that pair is exactly what applies a new server list to a live connection — and the connection, its DTLS certificate and its data channel all survive, which matters because a quorum session key is derived over a transcript committing to that certificate. One escalation per connection; a second failure is reported, not retried.
+
+
+
+**Nothing is contacted unless a user asks.** The fallback is off by default in toolkit preferences and is stated there in full: a relay **cannot read the traffic** — the data channel is DTLS end-to-end between the peers and the relay forwards ciphertext it holds no key for — but it **can see** both peers' IP addresses, the timing and the volume. A deployment that configures a relay does not turn it on for anybody.
+
+
+
+**The key stays on the server.** Cloudflare's TURN key is a long-term secret that mints unlimited credentials; their documentation says to keep it server-side. `basilisk/portal/cloudflare_turn.py` is the only file that knows the vendor and makes the `POST …/credentials/generate-ice-servers` call with the bearer token; `turn_credentials.py` above it gates the route with `verify_proof` and the IP limiters and returns a credential and nothing else. This is also why the call is not made from the page: `connect-src` is built once per deployment by `Settings.csp_connect_src()`, and reaching Cloudflare's API from the browser would widen it permanently for a request that happens on the minority of connections that fail. `tests/unit/test_turn_credentials.py` pins that the policy stays untouched.
+
+
+
+| Setting | Where | Notes |
+|---------|-------|-------|
+| `CLOUDFLARE_TURN_KEY_ID` | Function App | Cloudflare Realtime TURN key id. Unset ⇒ the endpoint returns **503** and there is no relay. |
+| `CLOUDFLARE_TURN_API_TOKEN` | Function App | The long-term secret. Never sent to the browser. Half-configured (one of the two) is treated as unconfigured. |
+| `BASILISK_TURN_TTL_SEC` | Function App | Default `600`. The credential is spent within seconds of being minted; a long TTL only widens the window in which a leaked one is spendable. |
+
+
+
+**Free tier ceiling.** Cloudflare Realtime's free tier is **1 TB/month** of relayed egress, and every relayed byte is the operator's. The proof-of-work gate and the IP limiter are what keep the endpoint from being an open relay billed to this deployment. Nothing here stores or caches a credential, so there is no TTL bookkeeping and no secret at rest.
+
+
+
 ## Cost ceilings
 
 Most of this deployment's cost is *readiness*, not usage. These are the knobs that bound it — each is a hard stop, not an alert.

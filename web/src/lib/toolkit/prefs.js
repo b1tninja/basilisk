@@ -11,15 +11,26 @@ export const TOOLKIT_PREFS_KEY = "basilisk.toolkit.prefs";
  * @property {"ask"|"one"|"all"} defaultEncryptPolicy
  * @property {boolean} collapseAdvanced  collapse Cipher/Wrap/WebAuthn by default
  * @property {boolean} sessionOff  unlock without writing vault-session (per-run only)
+ * @property {boolean} relayFallback  after a connection fails outright, ask the
+ *   server for a short-lived TURN credential and retry through a relay
  */
 
-/** @type {ToolkitPrefs} */
+/**
+ * @type {ToolkitPrefs}
+ *
+ * `relayFallback` is **false**, and that is the one default in this object that
+ * is a security position rather than a taste. A relay carries every byte of a
+ * connection and sees both ends' addresses; a user gets one because they said
+ * so, never because a deployment configured one. Off here means no relay is
+ * contacted under any circumstances, including after a total failure.
+ */
 export const DEFAULT_TOOLKIT_PREFS = {
   idleClearMinutes: 5,
   defaultEncryptMode: "separate",
   defaultEncryptPolicy: "ask",
   collapseAdvanced: true,
   sessionOff: false,
+  relayFallback: false,
 };
 
 /** @type {ToolkitPrefs|null} */
@@ -42,6 +53,11 @@ export function normalizeToolkitPrefs(raw) {
     : "ask";
   base.collapseAdvanced = !!base.collapseAdvanced;
   base.sessionOff = !!base.sessionOff;
+  // A stored value from before this preference existed is `undefined`, which
+  // must read as off. `!!` is the whole rule and it is the right one here: the
+  // absent case and the declined case want the same answer, unlike an ICE
+  // server list, where telling them apart is the entire point.
+  base.relayFallback = !!base.relayFallback;
   return base;
 }
 

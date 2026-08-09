@@ -602,6 +602,106 @@ describe.runIf(status.ok)("the TURN relay path, against a real relay", () => {
     });
   });
 
+  /* ── the two-phase fallback, in a real engine ── */
+
+  describe("escalating a live connection onto a relay, without rebuilding it", () => {
+    /**
+     * The claim `relay-fallback.js` is built on, measured rather than trusted.
+     *
+     * The unit suite proves the *code* calls `setConfiguration` and then
+     * `restartIce`. What it cannot prove is that a browser honours the pair —
+     * that a connection which gathered with no TURN in its list will gather a
+     * relay candidate afterwards, on the same object, without being torn down
+     * and rebuilt. Rebuilding is not a neutral alternative: a fresh
+     * `RTCPeerConnection` mints a fresh DTLS certificate, and a quorum session
+     * key is derived over a transcript that commits to the old fingerprint.
+     *
+     * The specs say it works. W3C webrtc-pc, "set the configuration" step 9:
+     * a replaced ICE servers list takes effect at *the next gathering phase*,
+     * and "if a script wants this to happen immediately, it should do an ICE
+     * restart". RFC 8829 §4.1.18: changing the servers sets `needs-ice-restart`
+     * so the next offer carries fresh credentials and starts that phase. This
+     * is that sequence, run once, with the fingerprint compared across it.
+     */
+    /** @type {any} */
+    let out;
+
+    beforeAll(async () => {
+      out = await A.page.evaluate(async (relay) => {
+        const fingerprint = (sdp) => (sdp.match(/^a=fingerprint:(.+)$/m) || [])[1] || "";
+        const gather = (pc, ms) =>
+          new Promise((res) => {
+            const seen = [];
+            const t = setTimeout(() => res(seen), ms);
+            pc.onicecandidate = (ev) => {
+              if (!ev.candidate) {
+                clearTimeout(t);
+                res(seen);
+                return;
+              }
+              seen.push(ev.candidate.type);
+            };
+          });
+
+        // Phase one: exactly what this app ships — STUN only, no relay, no
+        // credential, nothing a relay operator could hear about.
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: `stun:127.0.0.1:${relay.port}` }],
+        });
+        pc.createDataChannel("probe");
+        let candidates = gather(pc, 8000);
+        await pc.setLocalDescription(await pc.createOffer());
+        const first = await candidates;
+        const firstPrint = fingerprint(pc.localDescription.sdp);
+        const firstUfrag = (pc.localDescription.sdp.match(/^a=ice-ufrag:(.+)$/m) || [])[1];
+
+        // Phase two: the two calls, in order, on the connection that already
+        // exists. No close, no replacement.
+        candidates = gather(pc, 8000);
+        const before = pc.getConfiguration();
+        pc.setConfiguration({
+          ...before,
+          iceServers: [
+            { urls: `stun:127.0.0.1:${relay.port}` },
+            { urls: relay.url, username: relay.username, credential: relay.credential },
+          ],
+        });
+        pc.restartIce();
+        await pc.setLocalDescription(await pc.createOffer({ iceRestart: true }));
+        const second = await candidates;
+        const secondPrint = fingerprint(pc.localDescription.sdp);
+        const secondUfrag = (pc.localDescription.sdp.match(/^a=ice-ufrag:(.+)$/m) || [])[1];
+
+        pc.close();
+        return { first, second, firstPrint, secondPrint, firstUfrag, secondUfrag };
+      }, publicRelay());
+    });
+
+    it("gathers no relay candidate in the first phase", () => {
+      // The property the whole arrangement exists for. Not "a relay was low
+      // priority" — no allocation happened, so coturn was never asked.
+      expect(out.first.length).toBeGreaterThan(0);
+      expect(out.first).not.toContain("relay");
+    });
+
+    it("gathers one in the second, after setConfiguration and restartIce", () => {
+      expect(out.second).toContain("relay");
+    });
+
+    it("kept the connection, and with it the DTLS certificate", () => {
+      // The reason this is an escalation rather than a reconnection. A rebuilt
+      // connection would show a different fingerprint here, and a quorum
+      // transcript that committed to the old one would no longer describe the
+      // transport — which is the exact substitution `quorum-dtls-binding`
+      // proves is caught.
+      expect(out.firstPrint).toBeTruthy();
+      expect(out.secondPrint).toBe(out.firstPrint);
+      // ICE credentials, by contrast, *must* differ: that is what makes it a
+      // restart rather than a re-offer.
+      expect(out.secondUfrag).not.toBe(out.firstUfrag);
+    });
+  });
+
   /* ── what the diagnostics say ── */
 
   describe("stun.check, pointed at a relay that does answer STUN", () => {
@@ -700,5 +800,8 @@ function publicRelay() {
     url: RELAY.url,
     username: RELAY.username,
     credential: RELAY.credential,
+    // coturn answers STUN Binding on the same port, so a phase-one list can be
+    // built from it without reaching the public internet.
+    port: RELAY.port,
   };
 }

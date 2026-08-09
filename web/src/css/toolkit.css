@@ -215,6 +215,35 @@ body.layout-app:has(#app > .toolkit-shell) {
   color: color-mix(in srgb, var(--error) 84%, var(--foreground));
   background: color-mix(in srgb, var(--error) var(--tile-tint), transparent);
 }
+/*
+ * The fourth tone, added with the relay readout. "No relay is configured and
+ * none will be contacted" is the *quiet* answer, not a warning — drawing it in
+ * `--warn` beside the states that mean a third party is involved would invert
+ * what the badge is for. Same construction as the three above so it inherits
+ * the `--tile-tint` contrast finding rather than re-deciding it.
+ */
+.peer-verdict[data-verdict="muted"] {
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--muted-foreground) var(--tile-tint), transparent);
+}
+
+/*
+ * What a TURN relay can and cannot observe, in the preferences sheet.
+ *
+ * The paragraph directly under the toggle that switches the relay fallback on,
+ * and the reason it has a rule of its own: it is the terms of the choice being
+ * made in that row, so it must not read as the ordinary grey helper text
+ * beneath it. `--warn` at full strength on a small paragraph is shouting, so
+ * this is the accent mixed toward the foreground — legible as a caution, not
+ * as an alarm — with a rule down the left to bind it to the control.
+ */
+.relay-disclosure {
+  margin-top: 4px;
+  padding-left: 7px;
+  border-left: 2px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  color: color-mix(in srgb, var(--warn) 62%, var(--foreground));
+  line-height: 1.45;
+}
 
 /*
  * Per-link Restart / Close in the Connections tab (§58d).

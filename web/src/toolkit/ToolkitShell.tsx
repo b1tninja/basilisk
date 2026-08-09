@@ -28,6 +28,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { restartLiveIce } from "../lib/toolkit/quorum-ops.js";
 import { closeLink, restartLink } from "../lib/webrtc/link-registry.js";
+import { RELAY_DISCLOSURE } from "../lib/webrtc/relay-fallback.js";
 import { setClipboardReadGate } from "../lib/toolkit/clipboard-ops.js";
 import {
   beginApprovalRun,
@@ -3092,6 +3093,50 @@ export function ToolkitShell() {
                       "inline-block h-[14px] w-[14px] rounded-full bg-[var(--success)] transition-transform",
                       nb.toolkitPrefs.sessionOff ? "translate-x-[17px]" : "translate-x-[2px]",
                       !nb.toolkitPrefs.sessionOff && "bg-[var(--muted-foreground)]"
+                    )}
+                  />
+                </button>
+              </label>
+
+              {/* The third party with the strongest terms gets the fullest
+                  statement, at the point where the choice is made — the
+                  pattern e48f607 set for STUN, applied to the one server that
+                  carries the traffic rather than just learning an address.
+                  Both halves of the disclosure are here because either one
+                  alone misleads: "cannot read it" invites waving it through,
+                  "sees your address" invites refusing a relay that genuinely
+                  cannot read a byte. */}
+              <label className="flex items-center justify-between gap-3 border-t border-[var(--border)] py-2.5">
+                <span>
+                  Relay fallback (TURN)
+                  <p className="text-xs font-normal text-[var(--muted-foreground)]">
+                    Off: a connection that cannot be made directly simply fails, and no
+                    relay operator ever hears of it. On: after ICE fails outright, ask
+                    this server for a short-lived relay credential and retry.
+                  </p>
+                  <p className="relay-disclosure text-xs font-normal">{RELAY_DISCLOSURE.summary}</p>
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={nb.toolkitPrefs.relayFallback}
+                  aria-label="Relay fallback (TURN)"
+                  onClick={() =>
+                    nb.updateToolkitPrefs({ relayFallback: !nb.toolkitPrefs.relayFallback })
+                  }
+                  className={cn(
+                    "relative inline-flex h-[19px] w-[34px] shrink-0 items-center rounded-full border transition-colors",
+                    nb.toolkitPrefs.relayFallback
+                      ? "border-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_22%,transparent)]"
+                      : "border-[var(--border)] bg-[var(--muted)]"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-[14px] w-[14px] rounded-full transition-transform",
+                      nb.toolkitPrefs.relayFallback
+                        ? "translate-x-[17px] bg-[var(--warn)]"
+                        : "translate-x-[2px] bg-[var(--muted-foreground)]"
                     )}
                   />
                 </button>

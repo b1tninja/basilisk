@@ -1,7 +1,11 @@
 import { Cable, Copy, RotateCw, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { meshHealth } from "@/lib/quorum/relay.js";
-import { connStateReadout, linkOriginNote } from "@/lib/toolkit/artifact-readouts.js";
+import {
+  connStateReadout,
+  linkOriginNote,
+  relayFallbackReadout,
+} from "@/lib/toolkit/artifact-readouts.js";
 import type { SessionStripState } from "./SessionStrip";
 
 /**
@@ -51,6 +55,18 @@ export type ConnectionLink = {
   channelState?: string;
   authenticated?: boolean;
   via?: string;
+  /**
+   * The two-phase relay fallback's state on this link (§22c). `off` — the
+   * shipped default — means no relay will be contacted for it under any
+   * circumstances.
+   */
+  relay?: {
+    phase: "off" | "armed" | "escalating" | "escalated" | "exhausted" | "unavailable";
+    configured?: boolean;
+    reason?: string;
+  };
+  /** Whether the relay ended up carrying the traffic — `via === "relay"`. */
+  relayed?: boolean;
 };
 
 type Props = {
@@ -140,6 +156,11 @@ function LinkRow({
   // with it (§47), and `SessionStrip` already gates its own Restart this way.
   const canRestart = state === "failed" || state === "disconnected";
   const read = settled ? null : connStateReadout(link);
+  // Drawn only once a relay is actually in the picture. On the default — the
+  // fallback off, no relay anywhere near this connection — a row saying "no
+  // relay" on every link would be noise about a third party that is not there,
+  // and the panel's job is to report the ones that are.
+  const relay = link.relay && link.relay.phase !== "off" ? relayFallbackReadout(link) : null;
   return (
     <li
       className="flex flex-col gap-1 rounded-[6px] border border-[color-mix(in_srgb,var(--border)_70%,transparent)] px-2 py-1.5"
@@ -173,6 +194,24 @@ function LinkRow({
         <p className="text-[10px] leading-snug text-[var(--muted-foreground)]">
           <span className="font-semibold">{read.headline}.</span>{" "}
           {read.next || read.why}
+        </p>
+      ) : null}
+
+      {/* The relay line. `relayFallbackReadout` keeps *configured*, *escalated*
+          and *carried the traffic* as three facts, so a relay that was added
+          and then not used is not reported as having seen anything. The
+          disclosure rides with it, in `RELAY_DISCLOSURE`'s words, because a
+          connection that is being relayed is exactly when the terms matter. */}
+      {relay ? (
+        <p
+          className="text-[10px] leading-snug text-[var(--muted-foreground)]"
+          data-relay-phase={link.relay?.phase}
+        >
+          <span className="peer-verdict mr-1" data-verdict={relay.tone}>
+            {relay.verdict}
+          </span>
+          {relay.why}
+          {relay.disclosure ? <span className="relay-disclosure block">{relay.disclosure}</span> : null}
         </p>
       ) : null}
 

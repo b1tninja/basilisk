@@ -14,10 +14,13 @@ import {
   candidateAbsence,
   connStateReadout,
   iceServerPolicy,
+  relayFallbackReadout,
+  relayNextStep,
   sdpReadout,
   stunReachability,
   SDP_CARRY_NOTE,
 } from "../lib/toolkit/artifact-readouts.js";
+import { RELAY_DISCLOSURE } from "../lib/webrtc/relay-fallback.js";
 import { SHELF_META, TOOLBOX_META, listSteps } from "../lib/toolkit/registry.js";
 import { GLYPH_PATHS } from "../lib/toolkit/glyphs.js";
 
@@ -92,6 +95,55 @@ describe("connStateReadout — the strip that could not draw a failure", () => {
       expect(read.terminal?.name).toBe(state);
       expect(read.stages.map((s) => s.name)).toEqual(["new", "connecting", "connected"]);
       expect(read.stages.some((s) => s.state === "current")).toBe(false);
+    }
+  });
+});
+
+describe("the relay readouts — three facts kept as three", () => {
+  it("stops telling a reader to add a relay once one has been added", () => {
+    // "Add a TURN relay" was the only sentence a failed connection had, and it
+    // is advice to do the thing that just did not work once the fallback has
+    // already tried it. The five phases are five situations.
+    const off = relayNextStep({ phase: "off" });
+    expect(off).toMatch(/TURN/);
+    expect(relayNextStep({ phase: "exhausted" })).toMatch(/failed anyway/i);
+    expect(relayNextStep({ phase: "exhausted" })).not.toMatch(/^Add a TURN/);
+    expect(relayNextStep({ phase: "unavailable", reason: "503" })).toMatch(/503/);
+    expect(relayNextStep({ phase: "escalating" })).toMatch(/until this moment/);
+    // The failed readout reads the phase off the row, so panel and tile cannot
+    // hold two opinions about what to do next.
+    expect(
+      connStateReadout({ connectionState: "failed", relay: { phase: "exhausted" } }).next
+    ).toBe(relayNextStep({ phase: "exhausted" }));
+  });
+
+  it("does not call an unused relay a relayed connection", () => {
+    // A link can escalate and then connect through a reflexive candidate the
+    // restart happened to find. The relay allocated and forwarded nothing, and
+    // reporting it as "relayed" overstates what a third party saw — the mirror
+    // image of the understatement this whole feature exists to avoid.
+    const added = relayFallbackReadout({ relay: { phase: "escalated" }, relayed: false });
+    expect(added.verdict).toBe("relay added");
+    expect(added.why).toMatch(/carrying nothing/);
+    const used = relayFallbackReadout({ relay: { phase: "escalated" }, relayed: true });
+    expect(used.verdict).toBe("relayed");
+    expect(used.why).toMatch(/forwarding every packet/);
+  });
+
+  it("says nothing was disclosed until something was", () => {
+    const off = relayFallbackReadout({ relay: { phase: "off" } });
+    expect(off.disclosure).toBeNull();
+    expect(off.why).toMatch(/none will be contacted/);
+    // Armed is the state the two phases exist to produce: connected, working,
+    // and no relay operator aware the connection happened.
+    const armed = relayFallbackReadout({ relay: { phase: "armed" } });
+    expect(armed.why).toMatch(/no relay operator has heard of it/);
+    // From the moment a relay is in the picture, its terms travel with it —
+    // and in one wording, not a paraphrase per surface.
+    for (const phase of ["armed", "escalating", "escalated", "exhausted", "unavailable"]) {
+      expect(relayFallbackReadout({ relay: { phase } }).disclosure).toBe(
+        RELAY_DISCLOSURE.summary
+      );
     }
   });
 });

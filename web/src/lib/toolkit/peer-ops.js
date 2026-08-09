@@ -195,7 +195,7 @@ export async function execPeerOffer(params, bindings) {
     }
     throw err;
   }
-  registerLink({ id, origin: "peer", role: "offerer", holder, label });
+  registerLink({ id, origin: "peer", role: "offerer", holder, label, iceServers });
   return {
     type: "sdp",
     data: String(pc.localDescription?.sdp || ""),
@@ -258,7 +258,7 @@ export async function execPeerAnswer(value, params, bindings) {
     }
     throw err;
   }
-  registerLink({ id, origin: "peer", role: "answerer", holder });
+  registerLink({ id, origin: "peer", role: "answerer", holder, iceServers });
   return {
     type: "sdp",
     data: String(pc.localDescription?.sdp || ""),

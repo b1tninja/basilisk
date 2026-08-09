@@ -34,6 +34,8 @@ import { listKeys } from "../lib/vault.js";
 import { unlockVaultForUse } from "../lib/vault-unlock.js";
 import { sessionEvict, sessionList } from "../lib/vault-session.js";
 import { getToolkitPrefs, setToolkitPrefs, type ToolkitPrefs } from "../lib/toolkit/prefs.js";
+import { configureRelayFallback } from "../lib/webrtc/relay-fallback.js";
+import { fetchRelayCredentials } from "../lib/webrtc/turn-credentials.js";
 import { formatFingerprint } from "../lib/utils.js";
 import type {
   ArtifactTile,
@@ -77,6 +79,13 @@ export type PeerLinkRow = {
   channelState: string;
   authenticated: boolean;
   via: string;
+  /** The relay fallback's state on this link — `off` when none will be used. */
+  relay?: {
+    phase: "off" | "armed" | "escalating" | "escalated" | "exhausted" | "unavailable";
+    configured?: boolean;
+    reason?: string;
+  };
+  relayed?: boolean;
 };
 
 /** Mirror of quorum-ops' QuorumExchangeState — arrives via `basilisk:quorum-state`. */
@@ -1537,6 +1546,20 @@ export function useNotebook() {
   const updateToolkitPrefs = useCallback((patch: Partial<ToolkitPrefs>) => {
     setToolkitPrefsState(setToolkitPrefs(patch));
   }, []);
+
+  // The relay fallback is armed by the preference and by nothing else. Both
+  // halves go through here together — consent, and the credential source it
+  // consents to — so a deployment that configures a relay cannot switch one on
+  // for a user who did not ask, and a user who asks on a deployment with no
+  // relay gets a 503 reported as "no relay available" rather than a failure.
+  // Links opened while it is off have no supervisor at all: turning it on
+  // arms the next connection, not the ones already up.
+  useEffect(() => {
+    configureRelayFallback({
+      enabled: toolkitPrefs.relayFallback,
+      source: toolkitPrefs.relayFallback ? fetchRelayCredentials : null,
+    });
+  }, [toolkitPrefs.relayFallback]);
 
   // Idle auto-scrub: wipe secrets/inputs/outputs (not the recipe) after N
   // minutes of no pointer/key activity, matching toolkit-legacy.js's

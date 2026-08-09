@@ -104,6 +104,9 @@ import { bytesToBase64 } from "./encode.js";
 // Counting third parties in a server list is the WebRTC layer's fact, not a
 // second regex here — the same census `rtc.gather` stamps into its output.
 import { iceServerCensus } from "../webrtc/ice.js";
+// Same rule: what a relay can and cannot observe is stated once, in the layer
+// that arranges for one, and quoted here rather than re-worded per surface.
+import { RELAY_DISCLOSURE } from "../webrtc/relay-fallback.js";
 
 /**
  * The packet framing of an OpenPGP message, for the ciphertext and envelope
@@ -806,7 +809,11 @@ export function connStateReadout(peer) {
       tone: "error",
       headline: "Could not connect",
       why: "ICE checked every candidate pair it had and none of them worked, so there is no route between the two ends.",
-      next: "Add a TURN relay. Host and server-reflexive candidates only describe routes a peer can reach directly; with both ends behind symmetric NAT there is no such route to find.",
+      // What to do next depends on whether a relay has already been tried, and
+      // this row now carries that. Telling someone to "add a TURN relay" after
+      // the fallback has added one and failed anyway is the same class of
+      // mistake as reporting a declined STUN server as a fault.
+      next: relayNextStep(peer?.relay),
     };
   }
   if (conn === "disconnected") {
@@ -988,6 +995,109 @@ export function iceServerPolicy(data) {
     verdict: `${stun} STUN`,
     why: `Each of these ${stun === 1 ? "server" : "servers"} learns this machine's public address when a connection is made, and nothing else — a STUN binding request carries no traffic.`,
     next: "Write `rtc.ice stun=none` for a config that contacts nobody at all.",
+  };
+}
+
+/* ───────────────────────── the relay fallback (§22c) ───────────────────── */
+
+/**
+ * What to say after a connection has failed, given what the relay fallback did.
+ *
+ * Five different sentences because they are five different situations, and the
+ * one that used to be printed for all of them — "Add a TURN relay" — is only
+ * right for the first. After the fallback has tried a relay and the connection
+ * failed anyway, that instruction is advice to do the thing that just did not
+ * work.
+ *
+ * @param {{ phase?: string, reason?: string } | null | undefined} relay
+ * @returns {string}
+ */
+export function relayNextStep(relay) {
+  const phase = String(relay?.phase || "off");
+  if (phase === "escalating") {
+    return "A relay credential is being minted now, and ICE will restart with the relay in place. Nothing was asked of a relay operator until this moment.";
+  }
+  if (phase === "escalated") {
+    return "A relay was added and ICE restarted. If it connects, the relay is carrying the traffic — it cannot read it, but it can see both addresses and the volume.";
+  }
+  if (phase === "exhausted") {
+    return "A relay was already added and the connection failed anyway, so there is nothing further to try automatically. The remaining causes are outside this page: the relay refused the credential, or the network blocks it too.";
+  }
+  if (phase === "unavailable") {
+    const why = String(relay?.reason || "").trim();
+    return `No relay was available${why ? ` — ${why}` : ""}. This deployment may have none configured; a relay you operate can be named directly with \`rtc.ice turn=\`.`;
+  }
+  return "Host and server-reflexive candidates only describe routes a peer can reach directly; with both ends behind symmetric NAT there is no such route to find. A TURN relay is the fix — name one with `rtc.ice turn=`, or turn on the relay fallback, which contacts one only after a failure like this one.";
+}
+
+/**
+ * The relay's status on one link, as a panel line — and the disclosure with it.
+ *
+ * `configured`, `escalated` and `relayed` are three facts and this keeps them
+ * three. A relay that was added and then not used carried nothing and is
+ * reported as such; saying "relayed" there would overstate what a third party
+ * saw, which is the same defect as understating it.
+ *
+ * The disclosure travels with every state except `off`, because the moment a
+ * relay is in the picture is the moment its terms matter — and the terms are
+ * `RELAY_DISCLOSURE`'s exact words, not a paraphrase per surface.
+ *
+ * @param {{ relay?: { phase?: string, configured?: boolean, reason?: string },
+ *   relayed?: boolean }} row
+ * @returns {{ tone: "brand"|"warn"|"muted"|"error", verdict: string,
+ *   why: string, disclosure: string | null }}
+ */
+export function relayFallbackReadout(row) {
+  const phase = String(row?.relay?.phase || "off");
+  const disclosure = phase === "off" ? null : RELAY_DISCLOSURE.summary;
+  if (phase === "off") {
+    return {
+      tone: /** @type {"muted"} */ ("muted"),
+      verdict: "no relay",
+      why: "No relay is configured for this connection and none will be contacted. Packets go between the two ends, or nowhere.",
+      disclosure: null,
+    };
+  }
+  if (phase === "armed") {
+    return {
+      tone: /** @type {"muted"} */ ("muted"),
+      verdict: "relay on standby",
+      why: "This connection gathered and connected with no relay in its list, so no relay operator has heard of it. One is asked for only if ICE fails outright.",
+      disclosure,
+    };
+  }
+  if (phase === "escalating") {
+    return {
+      tone: /** @type {"warn"} */ ("warn"),
+      verdict: "asking for a relay",
+      why: "ICE failed, so a short-lived relay credential is being minted. This is the first moment a relay operator learns this connection exists.",
+      disclosure,
+    };
+  }
+  if (phase === "unavailable") {
+    return {
+      tone: /** @type {"warn"} */ ("warn"),
+      verdict: "no relay available",
+      why: `The fallback asked for a relay and did not get one${row?.relay?.reason ? ` — ${row.relay.reason}` : ""}. Nothing was relayed, and nothing was disclosed beyond the request itself.`,
+      disclosure,
+    };
+  }
+  if (phase === "exhausted") {
+    return {
+      tone: /** @type {"error"} */ ("error"),
+      verdict: "relay did not help",
+      why: "A relay was added and ICE failed again. One escalation per connection is the rule, so nothing further will be tried on its own.",
+      disclosure,
+    };
+  }
+  // escalated
+  return {
+    tone: /** @type {"warn"} */ ("warn"),
+    verdict: row?.relayed ? "relayed" : "relay added",
+    why: row?.relayed
+      ? "This connection is going through the relay, which is forwarding every packet in both directions."
+      : "A relay was added and ICE restarted. The selected candidate pair is not a relay one, so the relay allocated and is carrying nothing.",
+    disclosure,
   };
 }
 

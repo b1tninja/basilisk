@@ -41,6 +41,8 @@
  * @module lib/webrtc/link-registry
  */
 
+import { RELAY_OFF, armRelayFallback, relayCarriedTraffic } from "./relay-fallback.js";
+
 /**
  * @typedef {object} LinkHolder
  * @property {RTCPeerConnection|null} pc
@@ -57,6 +59,10 @@
  * @property {number} createdAt
  * @property {boolean} authenticated  far end proved an identity (quorum only)
  * @property {string} via         nominated candidate pair type, when known
+ * @property {import("./relay-fallback.js").RelayFallback|null} relay
+ *   the two-phase escalation supervisor, or null when the fallback is off —
+ *   which is the shipped state, and means no relay will be contacted for this
+ *   link under any circumstances
  * @property {RTCPeerConnection|null} pc      read through `holder`
  * @property {RTCDataChannel|null} channel    read through `holder`
  */
@@ -123,6 +129,7 @@ export function emitLinks() {
  *   holder: LinkHolder,
  *   label?: string,
  *   authenticated?: boolean,
+ *   iceServers?: RTCIceServer[],
  * }} spec
  * @returns {LinkRecord}
  */
@@ -138,6 +145,8 @@ export function registerLink(spec) {
     createdAt: Date.now(),
     authenticated: !!spec.authenticated,
     via: "",
+    /** @type {import("./relay-fallback.js").RelayFallback|null} */
+    relay: null,
     get pc() {
       return this.holder?.pc || null;
     },
@@ -153,6 +162,13 @@ export function registerLink(spec) {
   if (pc && typeof pc.addEventListener === "function") {
     pc.addEventListener("connectionstatechange", emitLinks);
   }
+  // The two-phase relay fallback (see `relay-fallback.js`). Null unless a user
+  // has turned it on *and* a credential source exists, which is why registering
+  // a link contacts nobody: the supervisor only reaches for a relay once this
+  // connection has genuinely failed, and there is no supervisor at all by
+  // default. The inventory is where it belongs because "this link failed" is a
+  // fact about a link, and the inventory is what already watches for it.
+  rec.relay = armRelayFallback(pc, { iceServers: spec.iceServers, onChange: emitLinks });
   emitLinks();
   return rec;
 }
@@ -193,6 +209,11 @@ export function patchLink(id, patch) {
  * @param {string} id
  */
 export function deregisterLink(id) {
+  const rec = links.get(String(id));
+  // The transport stays up — that is what distinguishes this from `closeLink`
+  // — but a link nobody is holding must not still be escalating to a relay on
+  // its own. Nothing would be watching the outcome.
+  rec?.relay?.stop();
   if (links.delete(String(id))) emitLinks();
 }
 
@@ -210,6 +231,9 @@ export function deregisterLink(id) {
 export function closeLink(id) {
   const rec = links.get(String(id));
   if (!rec) return false;
+  // Before the transport goes: the supervisor holds listeners on it, and a
+  // closed connection reports `closed` rather than `failed` anyway.
+  rec.relay?.stop();
   try {
     rec.channel?.close();
   } catch (_) {
@@ -298,6 +322,14 @@ export function linkRow(rec) {
     channelState: ch ? String(ch.readyState) : "closed",
     authenticated: !!rec.authenticated,
     via: rec.via || "",
+    // Three separate facts, never collapsed into one: whether a relay is in
+    // this connection's list, whether the fallback escalated to it, and
+    // whether it ended up carrying the traffic. A link can escalate and then
+    // connect through a reflexive candidate the restart happened to find, in
+    // which case the relay allocated and forwarded nothing — reporting that as
+    // "relayed" would overstate what a third party saw.
+    relay: rec.relay ? rec.relay.status() : RELAY_OFF,
+    relayed: relayCarriedTraffic(rec),
     createdAt: rec.createdAt,
   };
 }
@@ -312,6 +344,7 @@ export function listLinkRows() {
  * the alternative is each suite reimplementing it against module internals.
  */
 export function __resetLinks() {
+  for (const rec of links.values()) rec.relay?.stop();
   links.clear();
   watchers.clear();
 }

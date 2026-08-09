@@ -227,10 +227,12 @@ def create_app() -> Flask:
     from basilisk.portal.quorum_signaling import register_quorum_signaling
     from basilisk.portal.routes import register_portal_api
     from basilisk.portal.static import register_static_portal
+    from basilisk.portal.turn_credentials import register_turn_credentials
     from basilisk.portal.wkd_routes import register_wkd
 
     register_portal_api(app)
     register_quorum_signaling(app)
+    register_turn_credentials(app)
     register_wkd(app)
     register_static_portal(app)
     return app

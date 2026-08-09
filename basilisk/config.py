@@ -50,6 +50,9 @@ class Settings:
     web_pubsub_connection: str | None
     web_pubsub_hub: str
     web_pubsub_token_ttl_sec: int
+    turn_key_id: str | None
+    turn_api_token: str | None
+    turn_credential_ttl_sec: int
     max_upload_bytes: int
     max_uids: int
     max_subkey_blocks: int
@@ -108,6 +111,18 @@ class Settings:
             # is seconds of work. Five matches BASILISK_PROOF_MAX_AGE_SEC, so
             # a proof and the grant it bought expire together.
             web_pubsub_token_ttl_sec=int(os.environ.get("BASILISK_WEBPUBSUB_TOKEN_TTL_SEC", "300")),
+            # There is no default relay, and unset is the shipped state: a TURN
+            # server carries every byte of a connection, so one that appears
+            # because a config file was left at its default is a third party
+            # nobody chose. Both halves must be present for the endpoint to
+            # answer at all — see `turn_credentials.py`.
+            turn_key_id=os.environ.get("CLOUDFLARE_TURN_KEY_ID") or None,
+            turn_api_token=os.environ.get("CLOUDFLARE_TURN_API_TOKEN") or None,
+            # Ten minutes. The credential is minted at the moment a connection
+            # has already failed and is used within seconds; a long TTL buys
+            # nothing and widens the window in which a leaked credential is
+            # spendable against the deployment's own egress quota.
+            turn_credential_ttl_sec=int(os.environ.get("BASILISK_TURN_TTL_SEC", "600")),
             max_upload_bytes=int(os.environ.get("BASILISK_MAX_UPLOAD_BYTES", str(64 * 1024))),
             max_uids=int(os.environ.get("BASILISK_MAX_UIDS", "20")),
             max_subkey_blocks=int(os.environ.get("BASILISK_MAX_SUBKEYS", "32")),
