@@ -558,6 +558,17 @@ describe.runIf(status.ok)("the TURN relay path, against a real relay", () => {
         (v) => v.recv.length >= 1,
         { timeout: 15000, what: "message through the relay" }
       );
+      // A nominated pair can still read `in-progress` for a moment after the
+      // first bytes move: ICE settles the pair state a little behind the data.
+      // Waiting only on the message caught that window and failed with
+      // `expected 'in-progress' to be 'succeeded'` -- intermittently, which is
+      // worse than always. Wait on the state the assertion is actually about,
+      // on both sides, rather than on a proxy for it.
+      await until(
+        async () => ({ a: await selected(A), b: await selected(B) }),
+        (v) => v.a.pair?.state === "succeeded" && v.b.pair?.state === "succeeded",
+        { timeout: 15000, what: "a nominated relay pair on both sides" }
+      );
       result = { a: await selected(A), b: await selected(B) };
       pumping = false;
       await pump;
