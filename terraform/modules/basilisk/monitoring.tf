@@ -42,13 +42,14 @@ resource "azurerm_consumption_budget_resource_group" "basilisk" {
   name              = "${var.name_prefix}-budget"
   resource_group_id = azurerm_resource_group.basilisk.id
 
-  amount     = 100
+  amount     = var.budget_amount
   time_grain = "Monthly"
 
   time_period {
     start_date = formatdate("YYYY-MM-01'T'00:00:00Z", timestamp())
   }
 
+  # Actual spend, early warning.
   notification {
     enabled        = true
     threshold      = 80
@@ -58,6 +59,31 @@ resource "azurerm_consumption_budget_resource_group" "basilisk" {
     # optional emails can be added via var.budget_contact_emails.
     contact_roles  = ["Owner"]
     contact_emails = var.budget_contact_emails
+    contact_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  # Actual spend, ceiling reached.
+  notification {
+    enabled        = true
+    threshold      = 100
+    operator       = "GreaterThan"
+    threshold_type = "Actual"
+    contact_roles  = ["Owner"]
+    contact_emails = var.budget_contact_emails
+    contact_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  # Forecast, which is the one that arrives in time to act on. An actual-spend
+  # alert says the money is already gone; a forecast alert fires while the month
+  # still has room to change course.
+  notification {
+    enabled        = true
+    threshold      = 100
+    operator       = "GreaterThan"
+    threshold_type = "Forecasted"
+    contact_roles  = ["Owner"]
+    contact_emails = var.budget_contact_emails
+    contact_groups = [azurerm_monitor_action_group.ops.id]
   }
 
   lifecycle {

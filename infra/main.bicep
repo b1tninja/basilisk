@@ -16,11 +16,27 @@ param mailProvider string = 'office365'
 @description('Require manager approval (O365 only)')
 param requireManagerApproval bool = false
 
+@description('Monthly cost ceiling in the billing currency. Alerts only; the hard stops live on the resources themselves.')
+param budgetAmount int = 100
+
+@description('Extra addresses to notify on budget thresholds. The Owner role is always notified.')
+param budgetContactEmails array = []
+
 var rgName = '${namePrefix}-rg'
 
 resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: rgName
   location: location
+}
+
+module budget 'modules/budget.bicep' = {
+  name: 'budget'
+  scope: rg
+  params: {
+    namePrefix: namePrefix
+    budgetAmount: budgetAmount
+    budgetContactEmails: budgetContactEmails
+  }
 }
 
 module storage 'modules/storage.bicep' = {

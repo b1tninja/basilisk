@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "5728397754738260359"
+      "templateHash": "10581472882492001168"
     }
   },
   "parameters": {
@@ -46,6 +46,20 @@
       "metadata": {
         "description": "Require manager approval (O365 only)"
       }
+    },
+    "budgetAmount": {
+      "type": "int",
+      "defaultValue": 100,
+      "metadata": {
+        "description": "Monthly cost ceiling in the billing currency. Alerts only; the hard stops live on the resources themselves."
+      }
+    },
+    "budgetContactEmails": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Extra addresses to notify on budget thresholds. The Owner role is always notified."
+      }
     }
   },
   "variables": {
@@ -57,6 +71,125 @@
       "apiVersion": "2024-03-01",
       "name": "[variables('rgName')]",
       "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "budget",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "budgetAmount": {
+            "value": "[parameters('budgetAmount')]"
+          },
+          "budgetContactEmails": {
+            "value": "[parameters('budgetContactEmails')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "7993079391104063399"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource name prefix"
+              }
+            },
+            "budgetAmount": {
+              "type": "int",
+              "defaultValue": 100,
+              "metadata": {
+                "description": "Monthly cost ceiling in the billing currency. Alerts only — a budget cannot stop spending. The hard stops are maximumInstanceCount, log_analytics_daily_quota_gb, and the Free/Basic SKUs; see docs/DEPLOYMENT.md."
+              }
+            },
+            "budgetContactEmails": {
+              "type": "array",
+              "defaultValue": [],
+              "metadata": {
+                "description": "Extra addresses to notify. The Owner role is always notified, so this may be empty."
+              }
+            },
+            "budgetStartDate": {
+              "type": "string",
+              "defaultValue": "[utcNow('yyyy-MM-01')]",
+              "metadata": {
+                "description": "First day of the month the budget starts tracking. Azure requires the first of a month and rejects dates more than three months in the past."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Consumption/budgets",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}-budget', parameters('namePrefix'))]",
+              "properties": {
+                "category": "Cost",
+                "amount": "[parameters('budgetAmount')]",
+                "timeGrain": "Monthly",
+                "timePeriod": {
+                  "startDate": "[format('{0}T00:00:00Z', parameters('budgetStartDate'))]"
+                },
+                "notifications": {
+                  "actual80": {
+                    "enabled": true,
+                    "operator": "GreaterThan",
+                    "threshold": 80,
+                    "thresholdType": "Actual",
+                    "contactEmails": "[parameters('budgetContactEmails')]",
+                    "contactRoles": [
+                      "Owner"
+                    ]
+                  },
+                  "actual100": {
+                    "enabled": true,
+                    "operator": "GreaterThan",
+                    "threshold": 100,
+                    "thresholdType": "Actual",
+                    "contactEmails": "[parameters('budgetContactEmails')]",
+                    "contactRoles": [
+                      "Owner"
+                    ]
+                  },
+                  "forecast100": {
+                    "enabled": true,
+                    "operator": "GreaterThan",
+                    "threshold": 100,
+                    "thresholdType": "Forecasted",
+                    "contactEmails": "[parameters('budgetContactEmails')]",
+                    "contactRoles": [
+                      "Owner"
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "budgetName": {
+              "type": "string",
+              "value": "[format('{0}-budget', parameters('namePrefix'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+      ]
     },
     {
       "type": "Microsoft.Resources/deployments",

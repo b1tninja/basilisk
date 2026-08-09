@@ -578,7 +578,17 @@ Most of this deployment's cost is *readiness*, not usage. These are the knobs th
 
 **No always-ready Function instance is configured.** An always-ready instance is billed continuously whether or not a request arrives, which is a standing charge on an app that otherwise scales to zero. The trade is a cold start on the first request after an idle period. To buy it back, add an `alwaysReady` entry to `scaleAndConcurrency` — and note it is a per-second charge, not a one-off.
 
-A resource-group budget (`azurerm_consumption_budget_resource_group`, default $100/month, alerting at 80%) exists in Terraform. **Budgets alert; they do not stop anything** — enforcement is the table above. The subscription spending limit does not apply to pay-as-you-go subscriptions, so do not rely on it as a backstop.
+A resource-group budget exists in **both** deployment paths — `infra/modules/budget.bicep` and `azurerm_consumption_budget_resource_group` in Terraform — at `budget_amount` / `budgetAmount`, default 100/month. Bicep previously had none, which mattered because `azure.yaml` deploys through those templates, so the azd path ran with no cost alerting at all.
+
+Three notifications fire, to the Owner role plus any `budget_contact_emails`:
+
+| Threshold | Type | Why |
+| --- | --- | --- |
+| 80% | Actual | early warning |
+| 100% | Actual | ceiling reached |
+| 100% | Forecasted | the only one that arrives in time to act on — actual-spend alerts tell you the money is already gone |
+
+**Budgets alert; they do not stop anything** — enforcement is the table above. The subscription spending limit does not apply to pay-as-you-go subscriptions, so do not rely on it as a backstop.
 
 If throttling appears under legitimate load, raise `function_maximum_instance_count` deliberately rather than removing the ceiling.
 

@@ -137,6 +137,17 @@ variable "log_analytics_daily_quota_gb" {
   }
 }
 
+variable "budget_amount" {
+  type        = number
+  description = "Monthly cost ceiling in the billing currency. Alerts only -- a budget cannot stop spending. The hard stops are function_maximum_instance_count, log_analytics_daily_quota_gb and the Free/Basic SKUs."
+  default     = 100
+
+  validation {
+    condition     = var.budget_amount > 0
+    error_message = "budget_amount must be positive."
+  }
+}
+
 variable "budget_contact_emails" {
   type        = list(string)
   description = "Optional email addresses for the resource-group spend budget alert (in addition to Owner role)."
