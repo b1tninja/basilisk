@@ -15,6 +15,13 @@ param hubName string = 'quorum'
 // count proportional to *peers* rather than to conversation length. A
 // deployment expecting more than a few simultaneous rooms should move to
 // Standard_S1 — nothing in the application changes.
+//
+// Two things now spend that connection budget on purpose. Clients recycle the
+// signalling connection at 80% of their grant's life, joining the replacement
+// before closing the original, so a peer counts twice for the length of one
+// handshake. And a room rotation moves everyone to a new group, which is a new
+// connection each. Both are bounded and short; neither raises the *steady*
+// count, which is still one connection per peer in a live room.
 resource webPubSub 'Microsoft.SignalRService/webPubSub@2023-02-01' = {
   name: '${namePrefix}-wps'
   location: location

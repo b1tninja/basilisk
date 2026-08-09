@@ -531,7 +531,13 @@ When `BASILISK_REQUIRE_PROOF=1`:
 
 
 
-Quorum's WebRTC signalling runs over **Azure Web PubSub**. The Function App stores nothing: `POST /api/v1/quorum/negotiate` checks proof-of-work and the rate limits, validates the room id, and returns a **client access URL** whose JWT is scoped to that one room. The browser then opens a plain `WebSocket` with the `json.webpubsub.azure.v1` subprotocol — no npm dependency — and publishes sealed envelopes to the room. There is no server-side room record, no TTL to sweep and no global room cap.
+Quorum's WebRTC signalling runs over **Azure Web PubSub**. The Function App stores nothing: `POST /api/v1/quorum/negotiate` checks proof-of-work and the rate limits, validates the room id, and returns a **client access URL** whose JWT is scoped to exactly one group. The browser then opens a plain `WebSocket` with the `json.webpubsub.azure.v1` subprotocol — no npm dependency — and publishes sealed envelopes to the group. There is no server-side room record, no TTL to sweep and no global room cap.
+
+**Lobby and room.** Proof of work is an anti-abuse gate and costs a stranger exactly what it costs a member, so it cannot be what decides admission. A request carrying only a `room` id gets a token for that room's **lobby**; a request that also carries `key` — the whole base32 room digest, of which the id is the first 16 characters — gets a token for the **room** group, where signalling is actually broadcast. Computing the key takes the relying party and the full audience, so holding it means having been told who is meeting rather than having guessed a short code. The endpoint checks only that the key starts with the id; the audience never goes over the wire. Both group names are truncated SHA-256 digests under different labels, so the two namespaces cannot collide and the service's own logs and metrics see nothing about the room.
+
+**Bounded connection lifetime.** A grant's expiry is checked when a connection is made and never again — the service does not hang up on a connection whose token has since expired — so a token that is not reissued only takes effect if the connection is re-made. The client therefore closes and re-opens the signalling connection at **80% of the grant's stated lifetime** (four minutes at the default 300 s TTL), joining the replacement before closing the original. Shortening `BASILISK_WEBPUBSUB_TOKEN_TTL_SEC` shortens the cycle with it; there is no second setting. Each cycle is a fresh negotiate and therefore a fresh proof of work. Note the cost: for the length of one handshake a peer holds two connections, which counts twice against the tier's concurrency ceiling.
+
+**Room rotation.** There is no eviction API — no membership to enumerate, and no connection this application can name — so a room that needs to drop a member *moves* instead. The remaining members re-derive their material at the next epoch and mint tokens for the group it names; the removed member keeps a valid token for a group nobody is in. The new name mixes a secret minted at rotation and sealed to the members who stay, because the epoch and the remaining audience are both things a removed member can compute. Rotation is announced by the peer whose invite the room locked onto, over links whose keys are already confirmed.
 
 
 
@@ -548,7 +554,7 @@ This replaced an in-process mailbox that could not work on Consumption Functions
 
 
 
-**Token claims** (HS256, signed with the connection string's `AccessKey`): `sub` (an opaque per-connection id), `role` = `["webpubsub.joinLeaveGroup.<room>", "webpubsub.sendToGroup.<room>"]`, `webpubsub.group` = `["<room>"]`, plus `nbf`/`exp`/`iat`/`aud`. The unsuffixed `webpubsub.joinLeaveGroup` / `webpubsub.sendToGroup` roles — which would grant every room on the hub — are never minted.
+**Token claims** (HS256, signed with the connection string's `AccessKey`): `sub` (an opaque per-connection id), `role` = `["webpubsub.joinLeaveGroup.<group>", "webpubsub.sendToGroup.<group>"]`, `webpubsub.group` = `["<group>"]`, plus `nbf`/`exp`/`iat`/`aud`. The unsuffixed `webpubsub.joinLeaveGroup` / `webpubsub.sendToGroup` roles — which would grant every group on the hub — are never minted, and neither are the wildcard `webpubsub.joinLeaveGroups.<pattern>` / `sendToGroups.<pattern>` roles the service also understands: a pattern covering a room family would hand out one token for every epoch that room will ever rotate through.
 
 
 

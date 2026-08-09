@@ -4,7 +4,9 @@ import {
   canonicalAudience,
   deriveChannelId,
   deriveRoomId,
+  deriveRoomMaterial,
   isValidRoomId,
+  isValidRoomKey,
   quorumRelyingPartyId,
 } from "../lib/quorum/room.js";
 
@@ -100,5 +102,68 @@ describe("deriveChannelId", () => {
       relyingPartyId: "other.example.org",
     });
     expect(a).not.toBe(b);
+  });
+});
+
+describe("room material", () => {
+  it("hands out the id as a prefix of the key, and nothing else", async () => {
+    const { roomId, roomKey, epoch } = await deriveRoomMaterial([ALICE, BOB], {
+      relyingPartyId: SCOPE,
+    });
+    expect(roomKey).toMatch(/^[A-Z2-7]{52}$/);
+    expect(roomId).toBe(roomKey.slice(0, 16));
+    expect(epoch).toBe(0);
+    expect(isValidRoomKey(roomKey)).toBe(true);
+    // The id is a truncation, which is what makes it cheap to say aloud and
+    // useless as a way back to the key: 80 bits out of 256.
+    expect(isValidRoomKey(roomId)).toBe(false);
+  });
+
+  it("leaves epoch 0 exactly where every existing room already is", async () => {
+    // Rotation must be additive. If epoch 0 mixed anything, every room id in
+    // circulation would move the day this shipped.
+    const material = await deriveRoomMaterial([ALICE, BOB], { relyingPartyId: SCOPE });
+    expect(material.roomId).toBe(await deriveRoomId([ALICE, BOB], { relyingPartyId: SCOPE }));
+  });
+
+  it("lands somewhere unrelated on every epoch", async () => {
+    const seen = new Set();
+    for (const epoch of [0, 1, 2, 3]) {
+      const { roomId, roomKey } = await deriveRoomMaterial([ALICE, BOB], {
+        relyingPartyId: SCOPE,
+        epoch,
+      });
+      seen.add(roomId);
+      seen.add(roomKey);
+    }
+    expect(seen.size).toBe(8);
+  });
+
+  it("needs the rotation secret, not just the epoch and the audience", async () => {
+    // The property that makes rotation an eviction rather than a rename. A
+    // removed member knows the audience it left behind and can count epochs;
+    // what it does not have is the secret sealed to the members who stayed.
+    const guessable = await deriveRoomMaterial([ALICE, BOB], {
+      relyingPartyId: SCOPE,
+      epoch: 1,
+    });
+    const actual = await deriveRoomMaterial([ALICE, BOB], {
+      relyingPartyId: SCOPE,
+      epoch: 1,
+      secret: "8f2b1c",
+    });
+    const wrongSecret = await deriveRoomMaterial([ALICE, BOB], {
+      relyingPartyId: SCOPE,
+      epoch: 1,
+      secret: "8f2b1d",
+    });
+    expect(actual.roomKey).not.toBe(guessable.roomKey);
+    expect(actual.roomKey).not.toBe(wrongSecret.roomKey);
+  });
+
+  it("moves the room when the audience shrinks, secret or not", async () => {
+    const three = await deriveRoomMaterial([ALICE, BOB, CAROL], { relyingPartyId: SCOPE });
+    const two = await deriveRoomMaterial([ALICE, BOB], { relyingPartyId: SCOPE });
+    expect(three.roomKey).not.toBe(two.roomKey);
   });
 });

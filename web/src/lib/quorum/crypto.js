@@ -24,10 +24,14 @@ export const INVITE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /**
  * @typedef {object} QuorumEnvelopePayload
  * @property {1} v
- * @property {"invite"|"hello"|"offer"|"answer"|"ice"} type
+ * @property {"invite"|"hello"|"offer"|"answer"|"ice"|"rotate"} type
  * @property {string} from
  * @property {string|null} [to]
  * @property {string} roomId
+ * @property {number} [epoch]     rotation: the epoch to move to
+ * @property {string[]} [remove]  rotation: who is not coming
+ * @property {string} [secret]    rotation: the material that names the new
+ *   room, sealed to the members who stay and to nobody else
  * @property {string} [sdp]
  * @property {RTCIceCandidateInit|null} [candidate]
  * @property {string} [dtlsFingerprint]

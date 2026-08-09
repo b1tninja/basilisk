@@ -234,3 +234,164 @@ describe("openSignalingChannel", () => {
     await expect(channel.send("x")).rejects.toThrow(/closed/);
   });
 });
+
+/* ─────────────────────── bounded connection lifetime ─────────────────────── */
+
+describe("the connection has a bounded life", () => {
+  /**
+   * Record every socket the double hands out, so "re-established" can be
+   * asserted as *a different socket*, which is the only form of the claim a
+   * scheduled callback cannot fake.
+   */
+  function watchSockets() {
+    const made = [];
+    const Base = globalThis.WebSocket;
+    globalThis.WebSocket = /** @type {any} */ (
+      class extends Base {
+        constructor(...args) {
+          super(...args);
+          made.push(this);
+        }
+      }
+    );
+    return { made, restore: () => (globalThis.WebSocket = Base) };
+  }
+
+  it("really re-connects on the cycle, and the new socket is the live one", async () => {
+    // The whole point of the cycle. A token's expiry is checked when a
+    // connection is made and never again, so a connection held open outlives
+    // every grant that would be refused today. Proving the *timer fired*
+    // would prove nothing: what has to be true is that a second socket exists,
+    // that it was bought with a second negotiate, that the first one is shut,
+    // and that traffic lands on the second.
+    stubServer((room) => relay.grantFor(room));
+    const watch = watchSockets();
+    const heard = [];
+    const channel = openSignalingChannel({
+      roomId: ROOM_A,
+      onMessage: (payload) => heard.push(payload),
+      recycleMs: 60,
+    });
+    try {
+      await channel.ready;
+      expect(watch.made).toHaveLength(1);
+      expect(negotiations).toHaveLength(1);
+      const first = watch.made[0];
+
+      expect(await until(() => watch.made.length >= 2, 3000)).toBe(true);
+      // A fresh negotiate, not a redial of a URL whose token is ageing — and
+      // therefore a fresh proof of work, which is the cost that makes lurking
+      // recurring rather than one-off.
+      expect(negotiations.length).toBeGreaterThanOrEqual(2);
+
+      // Make before break: the replacement was joined before the original was
+      // shut, so no window existed in which the room was unattended.
+      expect(await until(() => first.readyState === 3, 3000)).toBe(true);
+      const live = watch.made.at(-1);
+      expect(live.readyState).toBe(1);
+      expect(live).not.toBe(first);
+
+      // And the room still works — on the socket that replaced the one that
+      // was closed, not on a stale handle the channel forgot to swap.
+      const bob = openSignalingChannel({ roomId: ROOM_A, onMessage: () => {} });
+      await bob.ready;
+      await bob.send("after the cycle");
+      expect(await until(() => heard.includes("after the cycle"))).toBe(true);
+      bob.stop();
+    } finally {
+      channel.stop();
+      watch.restore();
+    }
+  });
+
+  it("takes the cycle from the grant's own lifetime when none is given", async () => {
+    // One knob, not two. The server states how long it is willing to grant and
+    // the client re-asserts inside that window, so a deployment that shortens
+    // BASILISK_WEBPUBSUB_TOKEN_TTL_SEC shortens the cycle with it and there is
+    // no second constant that can disagree.
+    stubServer(async (room) => ({
+      ...(await relay.grantFor(room)),
+      expires_at: Math.floor(Date.now() / 1000) + 10,
+    }));
+    const watch = watchSockets();
+    const channel = openSignalingChannel({ roomId: ROOM_A, onMessage: () => {} });
+    try {
+      await channel.ready;
+      // 80% of a ten-second grant is eight seconds, so nothing has recycled
+      // within the first second — the cycle is derived, not a fixed default.
+      await new Promise((r) => setTimeout(r, 1000));
+      expect(watch.made).toHaveLength(1);
+    } finally {
+      channel.stop();
+      watch.restore();
+    }
+  });
+
+  it("keeps the connection it has when the replacement cannot be bought", async () => {
+    // A re-negotiation that fails must not take the working connection down
+    // with it. That is why the cycle sits inside the grant's life rather than
+    // at the end of it: there is still a valid connection to keep.
+    let fail = false;
+    stubServer((room) => {
+      if (fail) throw new Error("negotiate is down");
+      return relay.grantFor(room);
+    });
+    const watch = watchSockets();
+    const errors = [];
+    const channel = openSignalingChannel({
+      roomId: ROOM_A,
+      onMessage: () => {},
+      onError: (err) => errors.push(err),
+      recycleMs: 60,
+    });
+    try {
+      await channel.ready;
+      const first = watch.made[0];
+      fail = true;
+      expect(await until(() => errors.length > 0, 3000)).toBe(true);
+      expect(first.readyState).toBe(1);
+      // And it is still usable, not merely open.
+      await expect(channel.send("still here")).resolves.toBeUndefined();
+    } finally {
+      channel.stop();
+      watch.restore();
+    }
+  });
+
+  it("asks for the room group when it holds the key, and the lobby otherwise", async () => {
+    stubServer((room) => relay.grantFor(room));
+    const roomKey = `${ROOM_A}MZXW6YTBOI5XG5DBOJUXA43UMFZGKZLB`;
+    expect(roomKey).toHaveLength(48);
+    const withKey = openSignalingChannel({
+      roomId: ROOM_A,
+      roomKey: `${roomKey}MFZG`,
+      onMessage: () => {},
+    });
+    await withKey.ready;
+    expect(negotiations.at(-1).body).toEqual({
+      room: ROOM_A,
+      key: `${roomKey}MFZG`,
+    });
+    withKey.stop();
+
+    const withoutKey = openSignalingChannel({ roomId: ROOM_A, onMessage: () => {} });
+    await withoutKey.ready;
+    expect(negotiations.at(-1).body).toEqual({ room: ROOM_A });
+    withoutKey.stop();
+  });
+
+  it("refuses a key that is not this room's, before any request", async () => {
+    stubServer((room) => relay.grantFor(room));
+    const before = negotiations.length;
+    for (const key of [
+      `${ROOM_B}MZXW6YTBOI5XG5DBOJUXA43UMFZGKZLBMFZG`, // another room
+      `${ROOM_A}MZXW6YTBOI5XG5DBOJUXA43UMFZGKZLBMFZ`, // too short
+      `${ROOM_A}MZXW6YTBOI5XG5DBOJUXA43UMFZGKZLBMF1G`, // not base32
+    ]) {
+      await expect(negotiateSignaling(ROOM_A, { roomKey: key })).rejects.toThrow(
+        /Invalid room key|does not match/
+      );
+    }
+    expect(negotiations).toHaveLength(before);
+  });
+});

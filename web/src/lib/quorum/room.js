@@ -46,23 +46,81 @@ export function quorumRelyingPartyId(override) {
   return "localhost";
 }
 
+/** Length of the public room id — the part that may be spoken aloud. */
+export const ROOM_ID_LEN = 16;
+
+/** Full base32 of a SHA-256 digest: ceil(256/5) characters, unpadded. */
+export const ROOM_KEY_LEN = 52;
+
 /**
+ * Room material: the whole digest, and the prefix of it that is the room id.
+ *
+ * `roomId` is what a person reads out and what the server rate-limits on. It is
+ * 80 bits of the digest and nothing more. `roomKey` is all 256 bits, and the
+ * only way to hold it is to have computed it — which takes the relying party
+ * and the full audience, i.e. *being told who is meeting*, not just being told
+ * the code.
+ *
+ * That gap is the admission boundary the negotiate endpoint enforces: an id
+ * alone buys a token for the room's lobby, and only the key buys a token for
+ * the group where signalling is broadcast. Truncation is what makes the two
+ * derivable from one computation and non-invertible in the other direction —
+ * the server can check `roomKey.startsWith(roomId)` without ever learning the
+ * audience, which is why the audience never goes over the wire.
+ *
+ * **Epoch.** Epoch 0 mixes nothing, so every room id that has ever been derived
+ * is unchanged. A later epoch appends a counter, so a rotation lands on an
+ * unrelated group whose name no earlier token carries a role for.
+ *
+ * **Secret.** The epoch alone would only move the room somewhere the party
+ * being removed can also compute — they know the audience and they can count.
+ * A rotation therefore also mixes a secret minted at the moment of rotation
+ * and delivered sealed to the members who stay, so the new name is not a
+ * function of anything the removed party holds. Rotation without a secret is
+ * still meaningful — it strands the token they already have — but it is not
+ * exclusion, and the two should not be confused.
+ *
  * @param {string[]} fingerprints
- * @param {{ relyingPartyId?: string }} [opts]
- * @returns {Promise<string>} 16-char base32 room id
+ * @param {{ relyingPartyId?: string, epoch?: number, secret?: string }} [opts]
+ * @returns {Promise<{ roomId: string, roomKey: string, epoch: number }>}
  */
-export async function deriveRoomId(fingerprints, opts = {}) {
+export async function deriveRoomMaterial(fingerprints, opts = {}) {
   const audience = canonicalAudience(fingerprints);
   if (audience.length < 2) {
     throw new Error("Quorum room requires at least two audience fingerprints");
   }
+  const epoch = Math.max(0, Math.trunc(Number(opts.epoch) || 0));
+  const secret = String(opts.secret || "");
   const rpId = quorumRelyingPartyId(opts.relyingPartyId);
-  const material = `${rpId}|${audience.join("|")}`;
+  const material =
+    `${rpId}|${audience.join("|")}` +
+    (epoch > 0 ? `|epoch:${epoch}` : "") +
+    (secret ? `|rot:${secret}` : "");
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(material)
   );
-  return bytesToBase32(new Uint8Array(digest)).slice(0, 16);
+  const roomKey = bytesToBase32(new Uint8Array(digest)).slice(0, ROOM_KEY_LEN);
+  return { roomId: roomKey.slice(0, ROOM_ID_LEN), roomKey, epoch };
+}
+
+/**
+ * @param {string[]} fingerprints
+ * @param {{ relyingPartyId?: string, epoch?: number }} [opts]
+ * @returns {Promise<string>} 16-char base32 room id
+ */
+export async function deriveRoomId(fingerprints, opts = {}) {
+  return (await deriveRoomMaterial(fingerprints, opts)).roomId;
+}
+
+/**
+ * @param {string} roomKey
+ * @returns {boolean}
+ */
+export function isValidRoomKey(roomKey) {
+  return new RegExp(`^[A-Z2-7]{${ROOM_KEY_LEN}}$`).test(
+    String(roomKey || "").trim().toUpperCase()
+  );
 }
 
 /**

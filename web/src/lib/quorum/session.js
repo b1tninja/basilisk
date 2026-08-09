@@ -22,6 +22,15 @@
  * `webrtc/link-registry.js`, `ice.js`, `negotiation.js` and `candidates.js`.
  * Deleting `lib/quorum/` leaves `peer.*` and `rtc.*` standing.
  *
+ * **The room is not a place, it is a name.** Membership in the signalling
+ * group is asserted by holding a token and re-asserted every time the relay
+ * recycles (`signaling.js`); it is *withdrawn* by the room moving somewhere
+ * the withdrawn party has no token and no way to derive one (`rotateRoom`).
+ * Neither mechanism asks the signalling service to do anything it has an API
+ * for, because it has none: no membership to list, no connection this
+ * application can name, and no reason to hang up on a connection whose token
+ * expired after it was already open.
+ *
  * What stays is the protocol: the PGP audience, the signed invite, the relay,
  * the room, the roster, key derivation, key confirmation, and the mesh policy
  * that decides *which* links exist and who offers. The one piece of transport
@@ -64,7 +73,7 @@ import {
   requireSelfInAudience,
   sealSignalingEnvelope,
 } from "./crypto.js";
-import { canonicalAudience, isValidRoomId } from "./room.js";
+import { canonicalAudience, deriveRoomMaterial, isValidRoomId } from "./room.js";
 import { classifyChannelFrame, createSeenSet, shouldRelay } from "./relay.js";
 import { openSignalingChannel } from "./signaling.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
@@ -152,6 +161,28 @@ export class QuorumSession {
     /** @type {import("./signaling.js").SignalingChannel|null} */
     this._relay = null;
     /**
+     * Rotation counter. Epoch 0 is the room the audience derives to, so a
+     * session that never rotates is byte-for-byte the room it always was.
+     */
+    this.epoch = 0;
+    /**
+     * The full room digest. `roomId` is its first 80 bits and is the part that
+     * can be read aloud; this is the part that buys a token for the group
+     * where signalling is broadcast, and it is never published — not in an
+     * envelope, not to the signalling service, not to the portal.
+     * @type {string}
+     */
+    this._roomKey = "";
+    /**
+     * Mixed into the room material from epoch 1 onward. Minted by whoever
+     * rotates and delivered sealed to the members who stay, so the group the
+     * room moves to is not derivable by the member it left behind.
+     * @type {string}
+     */
+    this._rotationSecret = "";
+    /** Set while `rotateRoom` is rearranging the room under us. */
+    this._rotating = false;
+    /**
      * Envelope dedupe — one armored blob is handled once, ever, whichever wire
      * delivered it. The mailbox's per-room sequence numbers used to serve this
      * on the relay path and the seen-set on the channel path; a relay that
@@ -159,12 +190,42 @@ export class QuorumSession {
      * the two paths were never deduped against each other anyway.
      */
     this._envSeen = createSeenSet();
+    /**
+     * Inbound envelopes are handled one at a time, in arrival order.
+     *
+     * Both wires deliver in order — a data channel is ordered by default and
+     * the relay serialises a group's broadcasts — and the handler used to
+     * throw that away by starting each envelope as its own detached promise.
+     * Mostly harmless, until an envelope *changes what the next one means*: a
+     * rotation announcement moves the room, and the very next frame is
+     * signalling for the room it moved to. Handled concurrently, that frame
+     * arrives while `roomId` is still the old one and is rejected as belonging
+     * to another room — after which nothing retries it.
+     * @type {Promise<void>}
+     */
+    this._inbound = Promise.resolve();
+  }
+
+  /**
+   * Run `work` after every envelope that arrived before it.
+   * @param {() => Promise<void>} work
+   * @returns {Promise<void>}
+   */
+  _enqueue(work) {
+    const next = this._inbound.then(work).catch((err) => {
+      this.onError?.(err instanceof Error ? err : new Error(String(err)));
+    });
+    this._inbound = next;
+    return next;
   }
 
   async start() {
     if (!this.audienceFprs.includes(this.myFpr)) {
       throw new Error("Local key must be in the room audience");
     }
+    // Ahead of the keyserver round trip rather than next to the join: see
+    // `_deriveRoom`.
+    await this._deriveRoom();
     this.onStatus?.("Loading audience keys…");
     this.audienceKeys = await fetchAudienceKeys(this.audienceFprs);
     const missing = this.audienceFprs.filter((f) => !this.audienceKeys.has(f));
@@ -181,16 +242,7 @@ export class QuorumSession {
     this._emitRoster();
 
     this.onStatus?.("Joining signalling room…");
-    this._relay = openSignalingChannel({
-      roomId: this.roomId,
-      onMessage: (payload) => this._onRelayEnvelope(payload),
-      onError: (err) => this.onError?.(err),
-      onStatus: (status) => this.onStatus?.(status),
-    });
-    // The creator's invite is the first thing on the wire, so the room has to
-    // be joined before it is published — otherwise the broadcast lands in a
-    // room this connection is not yet a member of and reaches nobody.
-    await this._relay.ready;
+    await this._openRelay();
 
     if (this.role === "creator") {
       this.onStatus?.("Publishing signed invite…");
@@ -211,9 +263,182 @@ export class QuorumSession {
     }
   }
 
+  /**
+   * Derive this epoch's room material.
+   *
+   * The room id is checked against the audience rather than trusted: it is a
+   * digest of exactly this audience under exactly this relying party, so a
+   * caller that hands over a room id belonging to some other audience is
+   * confused about which room it is in, and joining anyway would put sealed
+   * envelopes in a group whose members cannot open them.
+   *
+   * Separate from `_openRelay` and always called well before it, because the
+   * digest is an `await` and joining is a race the room can lose: a creator
+   * publishes its invite the moment *its* room is joined, and the invite is
+   * published once. Any await between "the peer decided to join" and "the peer
+   * is in the group" is a window in which the introduction happens without it.
+   */
+  async _deriveRoom() {
+    const material = await deriveRoomMaterial(this.audienceFprs, {
+      epoch: this.epoch,
+      secret: this._rotationSecret,
+    });
+    if (this.epoch === 0 && material.roomId !== this.roomId) {
+      throw new Error(
+        "Room id does not match this audience (hostname + fingerprints)"
+      );
+    }
+    this.roomId = material.roomId;
+    this._roomKey = material.roomKey;
+  }
+
+  /** Join the signalling group this epoch's material names. */
+  _openRelay() {
+    const previous = this._relay;
+    this._relay = openSignalingChannel({
+      roomId: this.roomId,
+      roomKey: this._roomKey,
+      onMessage: (payload) => this._enqueue(() => this._onRelayEnvelope(payload)),
+      onError: (err) => this.onError?.(err),
+      onStatus: (status) => this.onStatus?.(status),
+    });
+    previous?.stop();
+    // The creator's invite is the first thing on the wire, so the room has to
+    // be joined before it is published — otherwise the broadcast lands in a
+    // room this connection is not yet a member of and reaches nobody.
+    return this._relay.ready;
+  }
+
+  /**
+   * Move the room to its next epoch, leaving anyone in `remove` behind.
+   *
+   * **Why moving rather than evicting.** There is no eviction: the signalling
+   * service has no API this application can reach to close someone else's
+   * connection, no membership to enumerate, and no reason to hang up on a
+   * connection whose token has expired. What it does have is groups, and a
+   * group is only a name. So the room moves to a name derived from the epoch
+   * and the *remaining* audience, everyone who stays mints a token for it, and
+   * the party left behind holds a token whose two role strings name a group
+   * nobody is in. Nothing had to be revoked, because nothing was granted twice.
+   *
+   * **What composes with it.** The room id is bound into the pairwise key
+   * transcript (`derivePairwiseSessionKey`), so rotating it invalidates every
+   * session key in the room by construction. Clearing the per-peer key state
+   * below therefore does not *add* a verification step — it forces the one
+   * that already exists to re-run over the new room, and a peer that did not
+   * follow the rotation cannot produce a matching confirmation.
+   *
+   * @param {{ remove?: string[], announce?: boolean }} [opts]
+   * @returns {Promise<{ epoch: number, roomId: string, audience: string[] }>}
+   */
+  async rotateRoom({ remove = [], announce = true } = {}) {
+    if (this._rotating) throw new Error("Quorum room rotation is already running");
+    const removed = new Set(
+      (remove || []).map((f) => normalizeFingerprintInput(f)).filter(Boolean)
+    );
+    const next = this.audienceFprs.filter((f) => !removed.has(f));
+    if (!next.includes(this.myFpr)) {
+      throw new Error("Cannot rotate a room that no longer includes this key");
+    }
+    if (next.length < 2) {
+      throw new Error("Quorum room requires at least two audience fingerprints");
+    }
+    const epoch = this.epoch + 1;
+    const secret = randomNonceHex(32);
+
+    this._rotating = true;
+    try {
+      // Announced first and over the links as they stand, because after the
+      // move there is no shared group left to say it in. Sealed to the members
+      // who stay and to nobody else: this envelope carries the one piece of
+      // the new room's name that is not a function of public material, and a
+      // copy the removed party could open would hand back exactly what the
+      // rotation exists to take away.
+      if (announce) {
+        const staying = next.filter((f) => f !== this.myFpr);
+        for (const fpr of staying) {
+          try {
+            await this._sendTo(
+              fpr,
+              { type: "rotate", epoch, remove: [...removed], secret },
+              { recipients: next }
+            );
+          } catch (_) {
+            // A peer that cannot be told will find the room empty and drop;
+            // that is the same outcome as being removed, which is why one
+            // unreachable member cannot hold the rotation up.
+          }
+        }
+      }
+      await this._applyRotation(epoch, removed, secret);
+    } finally {
+      this._rotating = false;
+    }
+    return { epoch: this.epoch, roomId: this.roomId, audience: [...this.audienceFprs] };
+  }
+
+  /**
+   * @param {number} epoch
+   * @param {Set<string>} removed
+   * @param {string} secret
+   */
+  async _applyRotation(epoch, removed, secret) {
+    // Checked before anything is torn down. A remove list that would leave
+    // fewer than two members names a room that cannot be derived, and finding
+    // that out halfway through would leave this session with its links closed
+    // and no room to re-open them in.
+    const next = this.audienceFprs.filter((f) => !removed.has(f));
+    if (!next.includes(this.myFpr) || next.length < 2) {
+      throw new Error("Quorum room requires at least two audience fingerprints");
+    }
+    for (const fpr of removed) {
+      const peer = this.peers.get(fpr);
+      if (!peer) continue;
+      deregisterLink(fpr);
+      try {
+        peer.channel?.close();
+      } catch (_) {
+        /* ignore */
+      }
+      peer.link?.close();
+      this.peers.delete(fpr);
+    }
+    this.audienceFprs = this.audienceFprs.filter((f) => !removed.has(f));
+    this.epoch = epoch;
+    this._rotationSecret = String(secret || "");
+    for (const fpr of removed) this.audienceKeys.delete(fpr);
+
+    // Every pairwise key was derived over the old room id and the old
+    // audience. Both just changed, so the transcripts must be rebuilt — and
+    // until they are, nobody in this room is confirmed.
+    for (const [fpr, peer] of this.peers) {
+      peer.sessionKey = null;
+      peer.transcriptHash = null;
+      peer.kcSent = false;
+      peer.kcVerified = false;
+      peer.ecdhPublicJwk = null;
+      peer.helloNonce = null;
+      peer.localEcdh = null;
+      peer.localEcdhJwk = null;
+      peer.localHelloNonce = null;
+      if (peer.status === "connected") peer.status = "connecting";
+      patchLink(fpr, { authenticated: false });
+    }
+    this._emitRoster();
+
+    this.onStatus?.(`Rotating room (epoch ${epoch})…`);
+    await this._deriveRoom();
+    await this._openRelay();
+    // `_beginMeshing` re-announces and re-offers; the existing transports are
+    // kept (a live link is not torn down for a rename), so what actually
+    // re-runs is the ECDH exchange, the transcript and the key confirmation.
+    await this._beginMeshing();
+  }
+
   stop() {
     this._relay?.stop();
     this._relay = null;
+    this._roomKey = "";
     this._inviteEcdh = null;
     this.inviteNonce = "";
     for (const fpr of this.peers.keys()) {
@@ -422,6 +647,41 @@ export class QuorumSession {
     if (payload.ecdhPublicJwk) {
       peer.ecdhPublicJwk = payload.ecdhPublicJwk;
       await this._maybeDeriveSession(signerFpr);
+    }
+
+    if (payload.type === "rotate") {
+      // Who may move the room: the peer that published the invite this
+      // session locked onto, and only once we have confirmed a key with them.
+      // A PGP signature proves an audience member wrote it; key confirmation
+      // proves it is the audience member we are actually meshed with. Without
+      // the second, a member being removed could answer their own eviction by
+      // announcing a rotation of their own.
+      if (signerFpr !== this.initiatorFpr || !peer.kcVerified) return;
+      const epoch = Math.trunc(Number(payload.epoch) || 0);
+      // Monotonic: an epoch we have already left is a replay, and the room it
+      // names is one an old token still opens.
+      if (epoch <= this.epoch) return;
+      const removed = new Set(
+        (payload.remove || []).map((f) => normalizeFingerprintInput(f)).filter(Boolean)
+      );
+      // Being told to remove ourselves is not a rotation we can follow. The
+      // room leaves without us, which is what it means to be removed.
+      if (removed.has(this.myFpr)) return;
+      // Without the secret this peer would derive a different room and be
+      // rotated into a group of one. Silence is the right answer: the room it
+      // was in is still the room it is in until it is told where to go.
+      const secret = String(payload.secret || "");
+      if (!secret) return;
+      if (this._rotating) return;
+      this._rotating = true;
+      try {
+        await this._applyRotation(epoch, removed, secret);
+      } catch (err) {
+        this.onError?.(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        this._rotating = false;
+      }
+      return;
     }
 
     if (payload.type === "hello") {
@@ -720,7 +980,8 @@ export class QuorumSession {
       this._emitRoster();
     };
     channel.onmessage = (ev) => {
-      void this._onChannelMessage(peerFpr, String(ev.data || ""));
+      const raw = String(ev.data || "");
+      void this._enqueue(() => this._onChannelMessage(peerFpr, raw));
     };
   }
 
@@ -882,9 +1143,19 @@ export class QuorumSession {
   /**
    * @param {string} toFpr
    * @param {Partial<import("./crypto.js").QuorumEnvelopePayload>} fields
+   * @param {{ recipients?: string[] }} [opts] seal to these audience members
+   *   only. Signalling is sealed to the whole audience by default because a
+   *   relaying member has to open an envelope to learn who it is for; naming
+   *   recipients narrows that, at the cost of the envelope being unreadable
+   *   (and therefore unrelayable) by everyone else.
    */
-  async _sendTo(toFpr, fields) {
-    const audienceKeys = [...this.audienceKeys.values()];
+  async _sendTo(toFpr, fields, opts = {}) {
+    const only = opts.recipients
+      ? new Set(opts.recipients.map((f) => normalizeFingerprintInput(f)))
+      : null;
+    const audienceKeys = [...this.audienceKeys.entries()]
+      .filter(([fpr]) => !only || only.has(fpr))
+      .map(([, key]) => key);
     const payload = {
       v: 1,
       from: this.myFpr,

@@ -2,9 +2,10 @@
 
 Everything provider-specific about quorum signalling lives here (and in
 ``webpubsub_local.py``, which speaks the same wire): the connection-string
-format, the JWT claim names, the client URL shape, and the subprotocol name.
-``quorum_signaling.py`` above it deals in *rooms* and *grants*, so a second
-provider would be a sibling of this file rather than an edit to the route.
+format, the JWT claim names, the client URL shape, the subprotocol name, and
+the group names a room's two scopes map onto. ``quorum_signaling.py`` above it
+deals in *rooms* and *grants*, so a second provider would be a sibling of this
+file rather than an edit to the route.
 
 **Why the JWT is hand-rolled.** The alternative is
 ``azure-messaging-webpubsubservice``, which pulls ``azure-core``, ``PyJWT`` and
@@ -178,50 +179,93 @@ def verify_token(endpoint: WebPubSubEndpoint, hub: str, token: str, *, now: floa
     return claims
 
 
-def room_roles(room_id: str) -> tuple[str, ...]:
-    """The two role strings that scope a connection to exactly one room.
+def room_roles(group: str) -> tuple[str, ...]:
+    """The two role strings that scope a connection to exactly one group.
 
     A token carrying these cannot join or publish to any other group: the
     service matches the suffix literally, and the unsuffixed
     ``webpubsub.joinLeaveGroup`` / ``webpubsub.sendToGroup`` (which *would* be
-    room-wide) are never minted here.
+    hub-wide) are never minted here. Neither are the wildcard
+    ``webpubsub.joinLeaveGroups.<pattern>`` / ``sendToGroups.<pattern>`` roles
+    the service also understands — a pattern covering a room *family* would
+    hand one token every epoch that room will ever rotate through, which is
+    precisely the grant this module exists not to make.
     """
     return (
-        f"webpubsub.joinLeaveGroup.{room_id}",
-        f"webpubsub.sendToGroup.{room_id}",
+        f"webpubsub.joinLeaveGroup.{group}",
+        f"webpubsub.sendToGroup.{group}",
     )
+
+
+#: Group names are truncated base32 digests: legal group names, legal role
+#: suffixes, and — because they are digests — carrying nothing about the room
+#: into the service's own logs and metrics, which see every group name.
+GROUP_NAME_LEN = 26
+
+
+def _group_name(label: str, material: str) -> str:
+    digest = hashlib.sha256(f"{label}|{material}".encode("utf-8")).digest()
+    return base64.b32encode(digest).decode("ascii").rstrip("=")[:GROUP_NAME_LEN]
+
+
+def lobby_group(room_id: str) -> str:
+    """Where a caller who has only the room id is admitted.
+
+    Everything a knocker can compute leads here. Signalling is not broadcast in
+    the lobby, so guessing a short code reaches the doormat and stops.
+    """
+    return _group_name("basilisk-quorum-lobby", str(room_id).strip().upper())
+
+
+def room_group(room_key: str) -> str:
+    """Where signalling is actually broadcast.
+
+    The name is a function of the *whole* room digest, not the 80-bit id, so it
+    cannot be reached from the id alone. Domain separation from
+    ``lobby_group`` is in the label, so no room id can ever name another room's
+    group and no lobby can collide with a room.
+    """
+    return _group_name("basilisk-quorum-room", str(room_key).strip().upper())
 
 
 def room_grant(
     endpoint: WebPubSubEndpoint,
     hub: str,
-    room_id: str,
+    group: str,
     *,
+    room_id: str | None = None,
+    scope: str = "room",
     lifetime_sec: int = 300,
     user_id: str | None = None,
 ) -> dict:
-    """A room-scoped connection grant, in the provider-neutral shape the
+    """A group-scoped connection grant, in the provider-neutral shape the
     ``/api/v1/quorum/negotiate`` contract promises.
 
     Nothing is stored: the grant *is* the token, and the token expires on its
     own. There is no room record, no TTL sweep and no global room cap to fill.
+
+    ``group`` is what the connection may join and publish to; ``room`` is the
+    id the caller asked about, which is all the caller needs to correlate the
+    answer with its question. The client joins ``group``.
     """
     uid = user_id or secrets.token_hex(16)
     token = client_access_token(
         endpoint,
         hub,
         user_id=uid,
-        roles=room_roles(room_id),
+        roles=room_roles(group),
         # Auto-join on connect: one fewer round trip before the first offer,
         # and the client still sends an explicit joinGroup so that a token
         # without this claim behaves identically.
-        groups=(room_id,),
+        groups=(group,),
         lifetime_sec=lifetime_sec,
     )
     now = int(time.time())
     return {
         "v": 1,
-        "room": room_id,
+        "room": room_id or group,
+        "group": group,
+        "scope": scope,
         "transport": "webpubsub",
         "url": f"{endpoint.ws_scheme}://{endpoint.host}{endpoint.client_path(hub)}?access_token={token}",
         "protocol": CLIENT_SUBPROTOCOL,

@@ -25,14 +25,23 @@ import pytest
 from basilisk.portal.webpubsub import (
     CLIENT_SUBPROTOCOL,
     client_access_token,
+    lobby_group,
     parse_connection_string,
     room_grant,
+    room_group,
     room_roles,
 )
 from basilisk.portal.webpubsub_local import LocalWebPubSub, _Frames
 
 ROOM_A = "AAAA2345EFGH67YZ"
 ROOM_B = "BBBB7654VUTS32XY"
+
+#: Full room digests — the id is the first 16 characters of one of these. The
+#: two below stand for the same audience at two epochs; what matters here is
+#: only that a rotation produces a *different* digest, which is what the group
+#: name is a function of.
+ROOM_KEY_A = ROOM_A + "MZXW6YTBOI5XG5DBOJUXA43UMFZGKZLBMFZG"
+ROOM_KEY_A_EPOCH_1 = ROOM_A + "NB2HI4DTHIXS653XO4XHA5DINFXGO3TPMZXW"
 CONNECTION = "Endpoint=http://127.0.0.1:0;AccessKey=integration-key;"
 
 
@@ -231,6 +240,139 @@ def test_a_room_b_listener_never_sees_room_a_traffic(hub):
     finally:
         alice.close()
         eve.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.environ.get("BASILISK_SKIP_SOCKET_TESTS") == "1",
+    reason="sockets disabled in this environment",
+)
+def test_the_lobby_token_and_the_room_token_are_refused_by_each_other(hub):
+    """The doormat is not the hallway.
+
+    A caller who guessed the short code can negotiate — proof of work does not
+    tell a stranger from a member — and what it gets back is a token for the
+    lobby. This is that token, used: a real handshake, real frames, and a
+    refusal on the group where signalling is actually broadcast. The room
+    token is refused on the lobby by the same rule in the other direction,
+    which is what makes the two names a boundary rather than a convention.
+    """
+    _double, bound, port = hub
+    lobby = lobby_group(ROOM_A)
+    room = room_group(ROOM_KEY_A)
+    assert lobby != room
+
+    knocker = _connect(
+        bound,
+        port,
+        room_grant(bound, "quorum", lobby, room_id=ROOM_A, scope="lobby")["url"].split(
+            "access_token="
+        )[1],
+    )
+    member = _connect(
+        bound,
+        port,
+        room_grant(bound, "quorum", room, room_id=ROOM_A, scope="room")["url"].split(
+            "access_token="
+        )[1],
+    )
+    try:
+        for peer in (knocker, member):
+            assert peer.await_type("system")["event"] == "connected"
+
+        # Each is at home in its own group.
+        knocker.send_json({"type": "joinGroup", "group": lobby, "ackId": 1})
+        assert knocker.await_type("ack")["success"] is True
+        member.send_json({"type": "joinGroup", "group": room, "ackId": 1})
+        assert member.await_type("ack")["success"] is True
+
+        # And refused in the other's, to join and to publish alike.
+        for peer, other in ((knocker, room), (member, lobby)):
+            peer.send_json({"type": "joinGroup", "group": other, "ackId": 2})
+            refused = peer.await_type("ack")
+            assert refused["success"] is False
+            assert refused["error"]["name"] == "Forbidden"
+            peer.send_json(
+                {
+                    "type": "sendToGroup",
+                    "group": other,
+                    "ackId": 3,
+                    "dataType": "text",
+                    "data": "x",
+                }
+            )
+            assert peer.await_type("ack")["error"]["name"] == "Forbidden"
+
+        # Signalling in the room does not reach the lobby.
+        member.send_json(
+            {"type": "sendToGroup", "group": room, "ackId": 4, "dataType": "text", "data": "sealed"}
+        )
+        assert member.await_type("ack")["success"] is True
+        knocker.sock.settimeout(0.5)
+        assert knocker.drain() == [], "a lobby connection heard room traffic"
+    finally:
+        knocker.close()
+        member.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.environ.get("BASILISK_SKIP_SOCKET_TESTS") == "1",
+    reason="sockets disabled in this environment",
+)
+def test_a_rotated_room_leaves_the_old_token_holding_a_name(hub):
+    """Eviction without an eviction API.
+
+    The service will not close someone else's connection for us and will not
+    hang up on a token that expired after the handshake. So the room moves:
+    the members who stay mint tokens for the next epoch's group, and the one
+    left behind still holds a perfectly valid token — for a group nobody is
+    in. Nothing was revoked, because nothing was granted twice.
+    """
+    _double, bound, port = hub
+    before = room_group(ROOM_KEY_A)
+    after = room_group(ROOM_KEY_A_EPOCH_1)
+    assert before != after
+
+    stale = _connect(
+        bound, port, room_grant(bound, "quorum", before)["url"].split("access_token=")[1]
+    )
+    moved = _connect(
+        bound, port, room_grant(bound, "quorum", after)["url"].split("access_token=")[1]
+    )
+    try:
+        for peer in (stale, moved):
+            assert peer.await_type("system")["event"] == "connected"
+
+        # The token that was minted before the rotation cannot follow it.
+        stale.send_json({"type": "joinGroup", "group": after, "ackId": 1})
+        refused = stale.await_type("ack")
+        assert refused["success"] is False
+        assert refused["error"]["name"] == "Forbidden"
+
+        # It still works perfectly in the room it was minted for — which is
+        # the point: it was not revoked, it was left behind.
+        stale.send_json({"type": "joinGroup", "group": before, "ackId": 2})
+        assert stale.await_type("ack")["success"] is True
+
+        # And the room it can still speak in is empty.
+        moved.send_json({"type": "joinGroup", "group": after, "ackId": 2})
+        assert moved.await_type("ack")["success"] is True
+        stale.send_json(
+            {
+                "type": "sendToGroup",
+                "group": before,
+                "ackId": 3,
+                "dataType": "text",
+                "data": "anyone there",
+            }
+        )
+        assert stale.await_type("ack")["success"] is True
+        moved.sock.settimeout(0.5)
+        assert moved.drain() == [], "the rotated room still heard the old one"
+    finally:
+        stale.close()
+        moved.close()
 
 
 @pytest.mark.integration

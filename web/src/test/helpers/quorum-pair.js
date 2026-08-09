@@ -200,9 +200,20 @@ export async function makeQuorumPair({ tamper } = {}) {
     creator,
     joiner,
     settle,
+    /**
+     * The joiner first, deliberately.
+     *
+     * The invite is published exactly once, the moment the creator's own room
+     * is joined, and the relay does not replay. So "creator first" only ever
+     * worked here because the transform's OpenPGP round trip happened to
+     * outlast the joiner's handshake — a margin measured in milliseconds that
+     * any change to either side could spend. Starting the joiner first removes
+     * the race rather than winning it, and matches the only ordering in which
+     * a joiner is guaranteed to hear an invite at all.
+     */
     async start() {
-      await creator.session.start();
       await joiner.session.start();
+      await creator.session.start();
     },
     stop() {
       stopped = true;

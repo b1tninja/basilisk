@@ -1,8 +1,11 @@
 """The quorum negotiate endpoint and the tokens it mints.
 
-Two properties carry the change and are asserted here rather than assumed:
+Three properties carry the change and are asserted here rather than assumed:
 the endpoint is gated by proof of work (the mailbox it replaced was gated by
-nothing), and the token it returns is scoped to exactly one room.
+nothing), the token it returns is scoped to exactly one group, and *which*
+group depends on whether the caller could produce the room key or only the
+room id. Proof of work is an anti-abuse gate and costs a stranger exactly what
+it costs a member, so it decides how often anyone may ask — never who gets in.
 """
 
 from __future__ import annotations
@@ -20,8 +23,10 @@ from basilisk.portal.webpubsub import (
     WebPubSubConfigError,
     client_access_token,
     decode_token_claims,
+    lobby_group,
     parse_connection_string,
     room_grant,
+    room_group,
     room_roles,
     verify_token,
 )
@@ -30,6 +35,15 @@ from basilisk.security.rate_limit import reset_limiter
 CONNECTION = "Endpoint=https://basilisk.webpubsub.azure.com;AccessKey=super-secret-key;Version=1.0;"
 ROOM = "ABCD2345EFGH67YZ"
 OTHER_ROOM = "ZYXW7654VUTS32BA"
+
+#: A room key is the whole base32 digest and a room id is its first 16
+#: characters, so a key that belongs to `ROOM` has to start with it.
+ROOM_KEY = ROOM + "MZXW6YTBOI5XG5DBOJUXA43UMFZGKZLBMFZG"
+assert len(ROOM_KEY) == 52
+
+
+def _claims_of(grant: dict) -> dict:
+    return decode_token_claims(grant["url"].split("access_token=")[1])
 
 
 @pytest.fixture(autouse=True)
@@ -154,15 +168,71 @@ def test_the_grant_is_scoped_to_one_room_and_names_no_other():
 
 
 @pytest.mark.unit
-def test_negotiate_returns_a_room_scoped_grant(monkeypatch):
+def test_a_guessed_room_id_reaches_the_lobby_and_stops(monkeypatch):
+    """Proof of work costs a stranger exactly what it costs a member, so it
+    cannot be the thing that decides admission. A caller holding nothing but a
+    room id gets a token for that room's lobby — a real group, joinable, and
+    not the one signalling is broadcast in."""
     client = _client(monkeypatch)
     r = client.post("/api/v1/quorum/negotiate", json={"room": ROOM})
     assert r.status_code == 200
     body = r.get_json()
     assert body["room"] == ROOM
+    assert body["scope"] == "lobby"
+    assert body["group"] == lobby_group(ROOM)
     assert body["expires_at"] > time.time()
-    claims = decode_token_claims(body["url"].split("access_token=")[1])
-    assert set(claims["role"]) == set(room_roles(ROOM))
+
+    claims = _claims_of(body)
+    assert set(claims["role"]) == set(room_roles(lobby_group(ROOM)))
+    assert claims["webpubsub.group"] == [lobby_group(ROOM)]
+    # The hallway is not named anywhere in what the doormat was handed.
+    assert room_group(ROOM_KEY) not in json.dumps(claims)
+
+
+@pytest.mark.unit
+def test_the_room_key_is_what_buys_the_room(monkeypatch):
+    client = _client(monkeypatch)
+    r = client.post("/api/v1/quorum/negotiate", json={"room": ROOM, "key": ROOM_KEY})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["scope"] == "room"
+    assert body["group"] == room_group(ROOM_KEY)
+    # Same room, two scopes, two groups that share no role string.
+    assert room_group(ROOM_KEY) != lobby_group(ROOM)
+    claims = _claims_of(body)
+    assert set(claims["role"]) == set(room_roles(room_group(ROOM_KEY)))
+    assert not set(claims["role"]) & set(room_roles(lobby_group(ROOM)))
+
+
+@pytest.mark.unit
+def test_a_room_key_that_is_not_this_rooms_is_refused(monkeypatch):
+    client = _client(monkeypatch)
+    for key in (
+        OTHER_ROOM + ROOM_KEY[len(OTHER_ROOM) :],  # right shape, wrong room
+        ROOM_KEY[:-1],  # too short to be a digest
+        ROOM_KEY + "A",  # too long
+        ROOM_KEY[:-1] + "1",  # not base32
+    ):
+        r = client.post("/api/v1/quorum/negotiate", json={"room": ROOM, "key": key})
+        assert r.status_code == 400, key
+        assert "url" not in (r.get_json() or {})
+
+
+@pytest.mark.unit
+def test_the_lobby_and_the_room_are_never_the_same_group():
+    """Domain separation, not luck: the two names come from different labels
+    over different material, so no room id can name another room's group."""
+    seen = set()
+    for i in range(64):
+        room = f"ABCD2345EFGH67{chr(ord('A') + i % 26)}{chr(ord('A') + i // 26)}"
+        key = room + ROOM_KEY[len(room) :]
+        seen.add(lobby_group(room))
+        seen.add(room_group(key))
+    assert len(seen) == 128
+    # A lobby is a function of the id alone; a room is a function of the whole
+    # digest. Truncating one can never produce the other.
+    assert lobby_group(ROOM) != room_group(ROOM)
+    assert room_group(ROOM_KEY) != room_group(OTHER_ROOM + ROOM_KEY[16:])
 
 
 @pytest.mark.unit
