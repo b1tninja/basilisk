@@ -952,7 +952,7 @@ describe.skipIf(!python.ok || !chromium.ok)(
         expect(netGets()).toBe(2);
       });
 
-      it("DEFECT: refresh= cannot get new armor, because the armor is immutable for a year", async () => {
+      it("refresh= reaches the server, because the lookup revalidates", async () => {
         await clearCache();
         // `dave`, because no other spec in this file fetches his armor. The
         // browser's HTTP cache is per-run and never cleared, so a key any
@@ -965,8 +965,10 @@ describe.skipIf(!python.ok || !chromium.ok)(
             `${fixture.origin}/pks/lookup?op=get&search=0x${dave.fingerprint}`
           )
         ).headers;
-        // `_read_blob` sets this on every hit, keyed by the blob's digest.
-        expect(headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+        // `_read_blob` sets this on every hit. `no-cache` permits storage but
+        // requires revalidation, which is what lets the ETag beside it do any
+        // work at all.
+        expect(headers.get("cache-control")).toBe("no-cache");
         expect(headers.get("etag")).toMatch(/^"[0-9a-f]{64}"$/);
 
         basilisk.resetCounts();
@@ -975,20 +977,24 @@ describe.skipIf(!python.ok || !chromium.ok)(
           (await callOp(page, "execHkpGet", { fpr: dave.fingerprint, refresh: true })).ok
         ).toBe(true);
 
-        // Two resolves, two portal reads — and one armor read. `forceRefresh`
-        // skips the IndexedDB tier and reissues the request, and Chromium
-        // answers it out of the HTTP cache without asking the server.
+        // Two resolves, two portal reads, and **two** armor reads. `forceRefresh`
+        // skips the IndexedDB tier and reissues the request; under `no-cache`
+        // that request now leaves the machine instead of being answered out of
+        // Chromium's HTTP cache.
         //
-        // The URL is not immutable. `/pks/lookup?op=get&search=0x<fpr>` is keyed
-        // by fingerprint, and `ingest_keytext` → `refresh_approved` replaces the
-        // blob behind it whenever the key is re-uploaded — a new subkey, a new
-        // user id, **or a revocation**. So a browser that fetched a key once
-        // will keep handing out the pre-revocation certificate for up to a year,
-        // and the one control a person has for exactly this — "refresh" — cannot
-        // dislodge it. `max-age` belongs on the digest-addressed blob, not on the
-        // fingerprint-addressed lookup. Reported, not fixed.
+        // This asserted `1` when it was written, and that was the defect: the
+        // URL `/pks/lookup?op=get&search=0x<fpr>` is keyed by fingerprint, while
+        // `ingest_keytext` → `refresh_approved` replaces the blob behind it
+        // whenever the key is re-uploaded — a new subkey, a new user id, **or a
+        // revocation**. Marked `immutable` for a year, a browser that fetched a
+        // key once kept serving the pre-revocation certificate, and "refresh" —
+        // the one control a person has for exactly this — could not dislodge it.
+        //
+        // Revalidation is not free, but it is a conditional GET against a digest
+        // ETag: 304, no body, when nothing changed. `max-age` still belongs on
+        // the digest-addressed blob, which really is immutable.
         expect(basilisk.counts().key).toBe(2);
-        expect(basilisk.counts()["lookup.get"]).toBe(1);
+        expect(basilisk.counts()["lookup.get"]).toBe(2);
       });
 
       it("a cached key is searchable without the directory answering", async () => {

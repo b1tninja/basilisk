@@ -46,10 +46,29 @@ def _read_blob(
         _get_lru(settings).put(record.sha256, data)
     else:
         data = cached
+    # `no-cache` means "store it, but revalidate before every use" -- not "do
+    # not store it". The ETag below is the blob's digest, so revalidation is a
+    # conditional GET that comes back 304 with no body when nothing changed.
+    #
+    # This URL used to be `max-age=31536000, immutable`, which was wrong in the
+    # way that matters most for a keyserver. `immutable` tells a browser never
+    # to revalidate, so the ETag right here could never fire -- and the URL is
+    # keyed by *fingerprint* while its content is keyed by digest.
+    # `refresh_approved` replaces the blob behind that fingerprint whenever a
+    # key is re-uploaded: a new subkey, a new user id, **or a revocation**. So a
+    # browser that fetched a key once kept serving the pre-revocation
+    # certificate for up to a year, and `hkp.get refresh=true` -- the one
+    # control a person has for exactly this -- could not dislodge it, because
+    # the request never left the machine.
+    #
+    # `max-age` belongs on the digest-addressed blob (`certs/{fpr}/{sha}.asc`),
+    # which really is immutable, not on the fingerprint-addressed lookup that
+    # points at it. In `cache_mode = redirect` these same headers ride the 302,
+    # so the stale mapping was being pinned there too.
     headers = cors_get_headers(
         {
             "ETag": f'"{record.sha256}"',
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "no-cache",
         }
     )
     if if_none_match and if_none_match.strip('"') == record.sha256:
