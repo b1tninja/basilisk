@@ -36,8 +36,52 @@ first: the point is to drive the *shipped* bundle under the *production* CSP.
 | `rtc-transport.e2e.js` | Chromium |
 | `peer-manager.e2e.js` | Chromium |
 | `quorum-key-confirmation.e2e.js` | Chromium |
+| `hkp-directory.e2e.js` | Chromium for the browser half; the wire half needs nothing |
 | `stun-discovery.e2e.js` | Chromium; one spec also wants public STUN |
 | `turn-relay.e2e.js` | Chromium **and** Docker |
+
+### The HKP directory suite
+
+`hkp-directory.e2e.js` runs `hkp.get`, `hkp.search`, `hkp.filter`, `hkp.cache`
+and `publishArmoredKey` (what the `key.publish` artifact action calls) against a
+directory, which none of them had ever met in a test. It can, because those ops
+resolve against `${location.origin}/pks/lookup` — "This site" — so a directory
+served by the same loopback server that serves `dist/` is same-origin by
+construction and needs no CSP change.
+
+`src/test/helpers/keyserver.js` is that directory: in-process, seedable, and
+**not** an independent invention. Its response shapes are taken from the Python
+service this repo actually ships — `basilisk/hkp/lookup.py`, `basilisk/hkp/add.py`,
+`basilisk/portal/routes.py`, `basilisk/portal/search.py`,
+`basilisk/db/sqlite_store.py` — including the parts a cleaner design would
+change, because a stub that answers more helpfully than the server hides the
+defects it exists to find. `basilisk/hkp_v2/` does not need separate modelling:
+every one of its GET routes calls the same `lookup_get`.
+
+It is not only `/pks/lookup`. `hkp.get` resolves through
+`Promise.all([fetchJson("/api/v1/key/<fpr>"), fetchText("/pks/lookup?op=get…")])`
+and `hkp.search` never issues an HKP request at all — it reads
+`GET /api/v1/search?q=`. A lookup-only fake cannot run either op.
+
+`src/test/helpers/key-corpus.js` supplies the population: eight keys generated
+per run (~200ms, RSA-2048 included), sharing a surname and a domain so a search
+returns several, with one multi-uid key, one signing-only key, one genuinely
+expired key, one carrying a real revocation signature, one still pending, and
+both algorithms. Nothing is checked in — armored text in the repo needs a
+`.gitattributes` to survive a Windows checkout, and generation is cheaper than
+the trap.
+
+Keys are seeded **directly** (`keyserver.seed(corpus.list)`), never through
+`POST /pks/add`. Only the publish specs use the submission door, so a defect in
+publishing cannot fail every lookup test.
+
+Several specs are labelled **DEFECT**: they assert behaviour that is wrong, so a
+fix turns them red and has to be acknowledged rather than passing silently.
+
+This suite does **not** replace `tests/e2e/test_hkp_*.py`, which drive real
+`gpg --send-keys` / `--recv-keys` against the real server under
+`docker-compose.e2e.yml`. That stack proves the server; this one proves the
+browser client, without a second process in the Playwright path.
 
 ### The key-confirmation suite
 
