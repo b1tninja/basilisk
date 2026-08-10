@@ -4,6 +4,7 @@ import {
   type ParamSpec,
   type StepSpec,
 } from "../../lib/toolkit/registry.js";
+import { specInputNeeds } from "../../lib/toolkit/input-needs.js";
 import { decodeTwinToken } from "../../lib/toolkit/step-names.js";
 import { docsUrlFor } from "../../lib/toolkit/step-docs.js";
 import { cn } from "@/lib/cn";
@@ -186,11 +187,14 @@ export function ToolCard({
             Hands the private key to the pipeline
           </span>
         ) : null}
-        {op.unresolvedInputs ? (
-          <span className="text-xs text-[var(--muted-foreground)]">
-            Needs {String(op.unresolvedInputs)} input
+        {/* Derived, not read: `key` is no longer a step-level field, because
+            binding `key=$slot` retires the panel and only the param knows
+            that. Same walk the compiler uses, with nothing bound. */}
+        {specInputNeeds(op).map((need) => (
+          <span key={need} className="text-xs text-[var(--muted-foreground)]">
+            Needs {need} input
           </span>
-        ) : null}
+        ))}
         {op.unresolvedRecipients ? (
           <span className="text-xs text-[var(--muted-foreground)]">Needs recipients</span>
         ) : null}

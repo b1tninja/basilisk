@@ -20,6 +20,11 @@ import {
   listSteps,
 } from "./registry.js";
 import {
+  INPUT_PANELS,
+  stepInputDeclarations,
+  stepInputNeeds,
+} from "./input-needs.js";
+import {
   canonicalSelectorMember,
   DEFAULT_OUT_SLOT,
   parseRecipeSource,
@@ -55,15 +60,6 @@ const RETIRED_PARAM_VALUES = {
   // compiled clean and threw at run time.
   "file.read as=auto": "use as=bytes, or as=text to decode as UTF-8",
 };
-
-/**
- * @param {RecipeStep} step
- * @param {string} name
- */
-function hasSlotParam(step, name) {
-  const v = step.params?.[name];
-  return v != null && String(v).trim() !== "";
-}
 
 /**
  * Anchor a warning to the step that earned it.
@@ -214,69 +210,23 @@ function pushExportWhichPolicy(step, current, ctx) {
 }
 
 /**
- * Whether a WebCrypto op still needs the key/peer/wrap panels.
+ * Fold one step's declared input needs into the recipe's list.
+ *
+ * This replaces `stepNeedsKeyPanel` / `stepNeedsGpgPrivatePanel` /
+ * `stepNeedsGpgPassphrasePanel` — three `switch`es over op names that had to be
+ * hand-updated whenever an op grew a key param, and where forgetting failed
+ * *open*: the panel simply never appeared and the user saw a recipe that could
+ * not be run with no indication what was missing. `stream.seal` and
+ * `stream.open` sat in that gap. The answer now comes from the declarations, so
+ * an op that grows an `unresolvedInput` param grows a panel without any list
+ * being touched.
  * @param {RecipeStep} step
+ * @param {import("./input-needs.js").InputPanel[]} inputNeeds
  */
-export function stepNeedsKeyPanel(step) {
-  switch (step.name) {
-    case "aes-gcm":
-    case "aes-cbc":
-    case "aes-ctr":
-    case "rsa-oaep":
-    case "rsa-pkcs1":
-    case "sign":
-    case "verify":
-    case "unwrap":
-      return !hasSlotParam(step, "key");
-    case "ecdh":
-      return !(hasSlotParam(step, "private") && hasSlotParam(step, "peer"));
-    case "wrap":
-      return !(hasSlotParam(step, "key") && hasSlotParam(step, "target"));
-    default:
-      return false;
+function collectInputNeeds(step, inputNeeds) {
+  for (const need of stepInputNeeds(step)) {
+    if (!inputNeeds.includes(need)) inputNeeds.push(need);
   }
-}
-
-/**
- * Whether an OpenPGP op still needs the vault / paste private-key panel.
- * When `key=$slot` is bound, only the passphrase field may still be needed.
- * @param {RecipeStep} step
- */
-export function stepNeedsGpgPrivatePanel(step) {
-  switch (step.name) {
-    case "gpg.sign":
-    case "gpg.verify":
-      return !hasSlotParam(step, "key");
-    case "gpg.encrypt":
-      return !!step.params?.sign && !hasSlotParam(step, "key");
-    case "gpg.decrypt":
-      return true;
-    default:
-      return false;
-  }
-}
-
-/**
- * OpenPGP passphrase field after `key=$slot` (S2K) or agent.save passphrase wrap.
- * @param {RecipeStep} step
- */
-export function stepNeedsGpgPassphrasePanel(step) {
-  if (
-    (step.name === "gpg.sign" || step.name === "gpg.verify") &&
-    hasSlotParam(step, "key")
-  ) {
-    return true;
-  }
-  if (step.name === "gpg.encrypt" && step.params?.sign && hasSlotParam(step, "key")) {
-    return true;
-  }
-  if (
-    step.name === "agent.save" &&
-    String(step.params?.protection || "device") === "passphrase"
-  ) {
-    return true;
-  }
-  return false;
 }
 
 /**
@@ -511,7 +461,10 @@ export function recipeChains(astOrSteps) {
  * @property {RecipeWarning[]} warnings
  * @property {number} [recipientSlots]  how many GPG recipient slots Run needs
  * @property {boolean} [foreachGpg]  gpg.encrypt is inside foreach
- * @property {("shares"|"gpg"|"text"|"envelope"|"key"|"keypair")[]} [inputNeeds]  runtime input panels required
+ * @property {import("./input-needs.js").InputPanel[]} [inputNeeds]  runtime input panels
+ *   required — derived from the step and param declarations by `input-needs.js`,
+ *   never detected by op name. Panels, not types: `key` and `gpg` are two entries
+ *   because they open two trays, not because they are two kinds of value.
  */
 
 /**
@@ -871,14 +824,14 @@ export function projectTypeForMember(current, memberOrSelector) {
  * @returns {{
  *   final: import("./types.js").RefinedType,
  *   encryptInBody: boolean,
- *   inputNeeds: ("shares"|"gpg"|"text"|"envelope"|"key"|"keypair")[],
+ *   inputNeeds: import("./input-needs.js").InputPanel[],
  * }}
  */
 function validateBodySteps(body, startType, ctx) {
   /** @type {import("./types.js").RefinedType} */
   let current = startType;
   let encryptInBody = false;
-  /** @type {("shares"|"gpg"|"text"|"envelope"|"key")[]} */
+  /** @type {import("./input-needs.js").InputPanel[]} */
   const inputNeeds = [];
   /** @type {Map<string, import("./types.js").RefinedType>|undefined} */
   const slotTypes = ctx.slotTypes;
@@ -951,26 +904,7 @@ function validateBodySteps(body, startType, ctx) {
         ctx.stepIndex
       );
     }
-    if (stepNeedsKeyPanel(step) && !inputNeeds.includes("key")) {
-      inputNeeds.push("key");
-    }
-    if (
-      spec.unresolvedInputs &&
-      spec.unresolvedInputs !== "key" &&
-      spec.unresolvedInputs !== "gpg" &&
-      !inputNeeds.includes(spec.unresolvedInputs)
-    ) {
-      inputNeeds.push(spec.unresolvedInputs);
-    }
-    if (stepNeedsGpgPrivatePanel(step) && !inputNeeds.includes("gpg")) {
-      inputNeeds.push("gpg");
-    } else if (
-      stepNeedsGpgPassphrasePanel(step) &&
-      !inputNeeds.includes("gpg") &&
-      !inputNeeds.includes("gpgPass")
-    ) {
-      inputNeeds.push("gpgPass");
-    }
+    collectInputNeeds(step, inputNeeds);
     if (ctx.warnings) {
       // Body steps carry their stem's index, exactly as body *errors* do —
       // the chip that can be clicked is the `foreach`/`tee`, not a nested step
@@ -1052,7 +986,7 @@ export function validateRecipe(ast) {
   let sharesCount = 0;
   let gpgSlots = 0;
   let foreachGpg = false;
-  /** @type {("shares"|"gpg"|"text"|"envelope"|"key")[]} */
+  /** @type {import("./input-needs.js").InputPanel[]} */
   const inputNeeds = [];
   let sawInputShares = false;
   let sawInputText = false;
@@ -1159,7 +1093,6 @@ export function validateRecipe(ast) {
         });
       }
       sawInputShares = true;
-      if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
     }
 
     if (step.name === "input") {
@@ -1172,7 +1105,6 @@ export function validateRecipe(ast) {
         });
       }
       sawInputText = true;
-      if (!inputNeeds.includes("text")) inputNeeds.push("text");
     }
 
     if (step.name === "gpg.decrypt") {
@@ -1185,41 +1117,12 @@ export function validateRecipe(ast) {
         });
       }
       sawDecryptGpg = true;
-      if (!inputNeeds.includes("gpg")) inputNeeds.push("gpg");
-      // Share rows for mnemonics already decrypted outside the browser
-      // (Kleopatra/gpg/YubiKey — OpenPGP cards are not reachable from JS).
-      if (!inputNeeds.includes("shares")) inputNeeds.push("shares");
     }
 
-    // Spec-declared input panels (envelope / …).
-    // Skip "key" — gated by stepNeedsKeyPanel (honors key=$slot).
-    // Skip "gpg" — gated by stepNeedsGpgPrivatePanel / stepNeedsGpgPassphrasePanel.
-    // gpg.decrypt / input / shares already handled above.
-    // gpg.symdecrypt mode=passphrase does not need the envelope panel.
-    const skipEnvelope =
-      step.name === "gpg.symdecrypt" &&
-      String(step.params?.mode || "master").toLowerCase() === "passphrase";
-    if (
-      step.name !== "gpg.decrypt" &&
-      step.name !== "input" &&
-      step.name !== "shares" &&
-      !skipEnvelope &&
-      spec.unresolvedInputs &&
-      spec.unresolvedInputs !== "key" &&
-      spec.unresolvedInputs !== "gpg" &&
-      !inputNeeds.includes(spec.unresolvedInputs)
-    ) {
-      inputNeeds.push(spec.unresolvedInputs);
-    }
-    if (stepNeedsGpgPrivatePanel(step) && !inputNeeds.includes("gpg")) {
-      inputNeeds.push("gpg");
-    } else if (
-      stepNeedsGpgPassphrasePanel(step) &&
-      !inputNeeds.includes("gpg") &&
-      !inputNeeds.includes("gpgPass")
-    ) {
-      inputNeeds.push("gpgPass");
-    }
+    // Every panel this step needs, read off its declarations — the step's own
+    // `unresolvedInputs` for the value that arrives through the pipe, and its
+    // `unresolvedInput` params for the ones a `$slot` could have supplied.
+    collectInputNeeds(step, inputNeeds);
 
     if (step.name === "in") {
       const ref = String(step.params?.ref || "");
@@ -1264,10 +1167,6 @@ export function validateRecipe(ast) {
     }
 
     validateStepSlotParams(step, slotTypes, slotTypesByIndex, errors, stepIndex);
-
-    if (stepNeedsKeyPanel(step) && !inputNeeds.includes("key")) {
-      inputNeeds.push("key");
-    }
 
     pushDiscouragedAlgoWarnings(step, warnings, stepIndex);
     pushUsageHonestyWarnings(step, warnings, stepIndex);
@@ -1640,6 +1539,18 @@ export function registryIssues() {
           .join(", ")})`
       );
     }
+    for (const d of stepInputDeclarations(s.unresolvedInputs)) {
+      if (!INPUT_PANELS.includes(d.panel)) {
+        issues.push(
+          `${s.name}: unresolvedInputs panel must be one of ${INPUT_PANELS.join(", ")} (got ${JSON.stringify(d.panel)})`
+        );
+      }
+      for (const name of Object.keys(d.when || {})) {
+        if (!(s.params || []).some((p) => p.name === name)) {
+          issues.push(`${s.name}: unresolvedInputs when.${name} names no param`);
+        }
+      }
+    }
     for (const p of s.params || []) {
       if (!p.name) issues.push(`${s.name}: param missing name`);
       if (!p.type) issues.push(`${s.name}.${p.name}: missing type`);
@@ -1661,6 +1572,20 @@ export function registryIssues() {
       }
       if (p.allowIndex && !p.slot) {
         issues.push(`${s.name}.${p.name}: allowIndex without slot`);
+      }
+      // A panel stands in for a value a `$ref` would otherwise carry, so the
+      // param has to accept one; and the panel is rendered from `slotOf`, so
+      // there has to be one to render.
+      if (p.unresolvedInput && !p.slot) {
+        issues.push(`${s.name}.${p.name}: unresolvedInput without slot`);
+      }
+      if (p.unresolvedInput && !p.slotOf) {
+        issues.push(`${s.name}.${p.name}: unresolvedInput without slotOf`);
+      }
+      if (p.requiredWith && !(s.params || []).some((q) => q.name === p.requiredWith)) {
+        issues.push(
+          `${s.name}.${p.name}: requiredWith "${p.requiredWith}" names no param`
+        );
       }
     }
   }

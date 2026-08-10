@@ -193,7 +193,18 @@ Reference, and toolcards all read this schema — toolcards are views of
 | `slot` | no | How the value may be supplied: absent/`false` literal only, `true` literal or `$ref`, `"required"` `$ref` only. Defaults to literal-only, so a param that takes a ref has to say so |
 | `slotOf` | no | The pipeline type(s) a ref must resolve to — checked at compile time. Omit only where any type is honest (`in $x`) |
 | `allowIndex` | no | For slot params: allow 1-based index refs |
+| `unresolvedInput` | no | Leaving this unbound leaves an input the *run* asks for: the engine falls back to a panel instead of failing. Which panel is not declared — it is rendered from `slotOf` (`openpgp-key` in the set → the OpenPGP panel, otherwise the keys tray), so a panel is a view of the type and not a second vocabulary |
+| `requiredWith` | no | Names a sibling param whose truthiness arms the requirement (`gpg.encrypt key=` only when `sign` is set) |
 | `serialize` | no | `"always"` — emit `name=value` even when equal to default (e.g. `mode=`) |
+
+A recipe's runtime input needs are derived from these two fields plus the
+step-level `unresolvedInputs` (the panel a step's *pipeline* value arrives
+from, which no param can describe), by one walk in
+`lib/toolkit/input-needs.js`. There is no list of ops that need the key panel:
+adding an `unresolvedInput` param to an op makes the panel appear, and
+`input-needs-declared.test.js` fails if an op's engine reads a panel its
+registry entry does not declare — which is how `stream.seal` / `stream.open`
+were found silently unrunnable.
 
 Non-param parse mechanisms stay outside ParamSpec: JCE/sized verb forms →
 `keyBits` / `hash` via `step-names`; mid-token `@` emails; bare `$label` /

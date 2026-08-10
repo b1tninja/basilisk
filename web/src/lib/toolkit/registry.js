@@ -44,6 +44,13 @@ import {
 /** @typedef {string} Shelf */
 /** @typedef {import("./types.js").StepOverload} StepOverload */
 /** @typedef {import("./types.js").RefinedType} RefinedType */
+/** @typedef {import("./input-needs.js").InputPanel} InputPanel */
+/**
+ * A panel need gated on how the step is configured.
+ * @typedef {object} RuntimeInput
+ * @property {InputPanel} panel
+ * @property {Record<string, string|string[]>} when  sibling param settings that arm it
+ */
 
 /**
  * Parameter declaration for a step. Registry is the SSOT — parser, serialize,
@@ -71,6 +78,19 @@ import {
  *   have. Omitted means *any* registered slot (`in $x` is the honest case). Checked
  *   at compile time, which is the determinism rule — the type is known before the
  *   run — finally applied to inputs and not only to outputs.
+ * @property {boolean} [unresolvedInput]  leaving this param unbound leaves an input
+ *   the *run* has to ask for: the engine falls back to a panel instead of failing.
+ *   Which panel is not declared — it is rendered from `slotOf` (see
+ *   `input-needs.js`), because a panel is a view of the type a ref would have to
+ *   resolve to, not a second vocabulary alongside it.
+ *
+ *   This is the field that could not be derived. `stepNeedsKeyPanel` was a
+ *   hand-written switch over nine op names standing in for it, so `stream.seal`
+ *   and `stream.open` — declared `slot: "required"`, engine falling back to the
+ *   key panel — showed no panel and could not be run, and nothing failed.
+ * @property {string} [requiredWith]  names a sibling param whose truthiness arms
+ *   this requirement. `gpg.encrypt key=` is needed only when `sign` is set;
+ *   without the gate, every plain `gpg.encrypt` would ask for a signing key.
  * @property {string} [doc]
  * @property {*} [default]  filled when omitted; omitted from serialize unless serialize:"always"
  * @property {string} [emptyMeans]  what leaving this blank actually *does*, as a
@@ -125,7 +145,12 @@ import {
  * @property {ParamSpec[]} [params]
  * @property {boolean} [flowControl]
  * @property {boolean} [unresolvedRecipients]  needs runtime recipient binding
- * @property {"shares"|"gpg"|"text"|"envelope"|"key"|"peer"|"keypair"|null} [unresolvedInputs]  needs runtime input panel
+ * @property {InputPanel|RuntimeInput|(InputPanel|RuntimeInput)[]} [unresolvedInputs]  the panel(s)
+ *   this step's *pipeline value* comes from — the input that arrives through the pipe and so
+ *   has no param to be bound to (`input`, `shares`, `keypair`, `gpg.decrypt`). A `when:` guard
+ *   names the param settings that arm it. Panels for a step's *params* are not declared here:
+ *   they are derived from `ParamSpec.unresolvedInput`, which is what lets binding `key=$slot`
+ *   retire the panel without a second list saying so.
  * @property {IoType} [instantiates]  §31a — a type constructor: this source *is* how you write that type down
  * @property {string[]} [aliases]
  * @property {(params: Record<string, *>) => { input: IoType, output: IoType }} [effectiveIo]
@@ -683,7 +708,11 @@ export const STEPS = [
     doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext BLIP39 mnemonics. Browser vault keys only (no smartcard/YubiKey in-page). Example: `gpg.decrypt | blip39 -d | sss.combine | …`.",
     input: "none",
     output: "shares",
-    unresolvedInputs: "gpg",
+    // Two panels, not one: the ciphertext, and share rows for mnemonics
+    // already decrypted outside the browser (Kleopatra / gpg / YubiKey —
+    // OpenPGP cards are not reachable from JS). The second used to be pushed
+    // by hand in the validator, where the tool card could not see it.
+    unresolvedInputs: ["gpg", "shares"],
     params: [],
   },
   {
@@ -844,12 +873,12 @@ export const STEPS = [
     doc: "Sign pipeline bytes with a WebCrypto private/HMAC key. Prefer `sign key=$kp` (slot from `out`); else key panel. RSA-PSS `saltLength=` (default 32); ECDSA optional `hash=` override. Example: `input | utf8 | sign key=$kp | base64url`.",
     input: "bytes",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live key slot (`$kp`); omit to use the key panel",
@@ -880,12 +909,12 @@ export const STEPS = [
     doc: "Verify a signature over pipeline message bytes. Prefer `verify key=$pub`; else key panel. Default fail-loud; `soft` / `-q` emits `true`/`false` instead of throwing on bad sig. Signature via `signature=` or runtime binding. Same `saltLength=` / `hash=` as sign.",
     input: "bytes",
     output: "bool",
-    unresolvedInputs: "key",
     params: [
       {
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live public/HMAC key slot (`$pub`); omit to use the key panel",
@@ -935,7 +964,6 @@ export const STEPS = [
     doc: "AES-GCM encrypt (default) or decrypt with `-d`. Prefer `aes-gcm key=$cek`; else key panel. Optional `tagLength=` (default 128). Also accepts `aes-256-gcm` / `AES/GCM/NoPadding`. Bare `encrypt`/`decrypt` sugar is migrator-only — write the concrete op. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "decode",
@@ -948,6 +976,7 @@ export const STEPS = [
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`); omit to use the key panel",
@@ -990,7 +1019,6 @@ export const STEPS = [
     doc: "AES-CBC encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT. Prefer `aes-cbc key=$cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "decode",
@@ -1003,6 +1031,7 @@ export const STEPS = [
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`); omit to use the key panel",
@@ -1030,7 +1059,6 @@ export const STEPS = [
     doc: "AES-CTR encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT (128-bit counter block); `length=` is AesCtrParams.length (default 64), not IV size. Prefer `aes-ctr key=$cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "decode",
@@ -1043,6 +1071,7 @@ export const STEPS = [
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`); omit to use the key panel",
@@ -1078,7 +1107,6 @@ export const STEPS = [
     doc: "RSA-OAEP encrypt (default) or decrypt with `-d`. Prefer `rsa-oaep key=$rk`; else key panel. Optional `label=` (must match on decrypt). Also accepts JCE `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`. Distinct from OpenPGP `gpg.encrypt` and AES `aes-gcm`.",
     input: "bytes",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "decode",
@@ -1091,6 +1119,7 @@ export const STEPS = [
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live RSA-OAEP key slot (`$rk`); omit to use the key panel",
@@ -1125,7 +1154,6 @@ export const STEPS = [
     doc: "RSAES-PKCS1-v1_5 encrypt/decrypt (`-d`). Discouraged — prefer `rsa-oaep`. Pure-JS (not SubtleCrypto). Uses any RSA key (OAEP/PSS JWK) via `key=$rk`. Also accepts `RSA/ECB/PKCS1Padding`. Outputs tagged legacy/discouraged.",
     input: "bytes",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "decode",
@@ -1138,6 +1166,7 @@ export const STEPS = [
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live RSA key slot (`$rk`); omit to use the key panel",
@@ -1266,12 +1295,12 @@ export const STEPS = [
     doc: "ECDH/X25519 deriveBits (default) or deriveKey via `as=aes/256` / `as=aes-kw/256` → live `key` tip (`which: secret`). Prefer `genkey x25519` then `ecdh private=$local peer=$peer`. bits=0 auto-sizes from curve.",
     input: "none",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "private",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Local private key slot (`$local`); omit to use the key panel",
@@ -1280,6 +1309,7 @@ export const STEPS = [
         name: "peer",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Peer public key slot (`$peer`); omit to use the peer JWK panel",
@@ -1316,12 +1346,12 @@ export const STEPS = [
     doc: "Wrap a CEK. Default AES-KW; also `mode=aes-gcm|aes-cbc|aes-ctr` (IV||wrapped) or `mode=rsa-oaep`. Optional `label=` (RSA-OAEP), `tagLength=` (AES-GCM), `length=` (AES-CTR). Prefer `wrap key=$kek target=$cek`.",
     input: "none",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Wrapping key slot (`$kek` AES or `$rk` RSA); omit to use the key panel",
@@ -1330,6 +1360,7 @@ export const STEPS = [
         name: "target",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Key-to-wrap slot (`$cek`); omit to use the wrap panel",
@@ -1374,12 +1405,12 @@ export const STEPS = [
     doc: "Unwrap pipeline wrapped bytes into a live `key` tip (CryptoKey). Modes match `wrap`. Prefer `unwrap key=$kek`. Content modes expect IV||wrapped packing. Use `export raw` when you need bytes.",
     input: "bytes",
     output: "key",
-    unresolvedInputs: "key",
     params: [
       {
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Wrapping key slot (`$kek` AES or `$rk` RSA); omit to use the key panel",
@@ -1902,7 +1933,7 @@ export const STEPS = [
     doc: "Decrypt OpenPGP-symmetric ciphertext. Dual mode is explicit: default `mode=master` (tip is 16/32-byte master; bound `envelope.asc` decrypts with hex(master)); `mode=passphrase` + `passphrase=`/`$slot` (tip is armored ciphertext). Passphrase alone does not flip modes. Example: `in $msg | gpg.symdecrypt mode=passphrase passphrase=$pw | utf8`.",
     input: "bytes",
     output: "bytes",
-    unresolvedInputs: "envelope",
+    unresolvedInputs: { panel: "envelope", when: { mode: "master" } },
     params: [
       {
         name: "mode",
@@ -2193,6 +2224,8 @@ export const STEPS = [
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
+        requiredWith: "sign",
         slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
         default: "",
         doc: "Signing private-key slot when `-s` (`$me`); omit to use the vault key panel",
@@ -2210,12 +2243,12 @@ export const STEPS = [
     doc: "OpenPGP-sign pipeline text/bytes. Prefer `gpg.sign key=$me` (slot from `agent.unlock`); else vault key panel. Default cleartext; `format=detached` for detached sig. Distinct from WebCrypto `sign`.",
     input: "text",
     output: "text",
-    unresolvedInputs: "gpg",
     params: [
       {
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
         default: "",
         doc: "Live private-key slot (`$me`); omit to use the vault key panel",
@@ -2246,12 +2279,12 @@ export const STEPS = [
     doc: "Verify an OpenPGP cleartext or detached signature. Prefer `gpg.verify key=$pub`. Detached: `signature=$slot`. Fail-loud by default; `soft`/`-q` → bool true|false. Distinct from WebCrypto `verify`.",
     input: "text",
     output: "bool",
-    unresolvedInputs: "gpg",
     params: [
       {
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
         default: "",
         doc: "Live public (or private) key slot (`$pub`); omit to use vault key / recipients",
@@ -2785,6 +2818,9 @@ export const STEPS = [
       { when: { base: "openpgp-key" }, output: { base: "openpgp-key" } },
       { when: { base: "keypair" }, output: { base: "keypair" } },
     ],
+    // The passphrase this wrap is performed under is typed at run time and has
+    // no param to be bound to — it is the step, not a slot, that needs it.
+    unresolvedInputs: { panel: "gpgPass", when: { protection: "passphrase" } },
     params: [
       {
         name: "protection",
@@ -3074,12 +3110,12 @@ export const STEPS = [
     doc: "Chunked AES-GCM in the STREAM construction — the way to encrypt a *file*, since `SubtleCrypto.encrypt` is one-shot and its single tag only verifies after the last byte. Each 64 KiB chunk carries its own tag and its index in the nonce, so reorder, splice, and truncation are all detected. A fresh file key is wrapped under `key=$slot`, which is what makes counter nonces safe with a reused key. **Not age** — same construction, different AEAD and header (see `age.encrypt` for files the `age` CLI can read). Example: `file.read | stream.seal key=$cek | file.save name=doc.bskstrm`.",
     input: "bytes",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`) used to wrap the per-file key; omit to use the key panel",
@@ -3103,12 +3139,12 @@ export const STEPS = [
     doc: "Open a `stream.seal` file. Distinguishes its failures: a bad tag means the file was modified or its chunks reordered; a missing final-chunk flag means it was truncated. Chunk size is read from the header, so `chunk=` is not repeated here. Example: `file.read | stream.open key=$cek | file.save`.",
     input: "bytes",
     output: "bytes",
-    unresolvedInputs: "key",
     params: [
       {
         name: "key",
         type: "bytes",
         slot: "required",
+        unresolvedInput: true,
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`) the file was sealed under; omit to use the key panel",
