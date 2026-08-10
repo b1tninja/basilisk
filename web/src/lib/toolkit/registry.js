@@ -3201,6 +3201,41 @@ export const STEPS = [
     ],
   },
   {
+    name: "run.manifest",
+    kind: "source",
+    toolbox: "io",
+    shelf: "receipt",
+    doc: "Emit the run manifest for this notebook — the commitment `run.receipt` is the observation of: recipe source and its digest, one row per cell (index, `@peer`, publish, recipe text and digest), and the op-registry version. Sign it and hand it round *before* the run — `run.manifest | gpg.sign key=$me | out $manifest` — then check the receipt against it. Example: `run.manifest \"Thursday ceremony\" | out $manifest`.",
+    input: "none",
+    output: "text",
+    // none, on the same reading as `run.receipt`: canonical JSON over recipe
+    // text and digests, drawing nothing. It re-runs to a different document
+    // only where the recipe changed.
+    entropy: "none",
+    params: [
+      {
+        name: "title",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "Notebook title recorded in the manifest (defaults to the notebook title)",
+      },
+    ],
+  },
+  {
+    name: "run.attest",
+    kind: "transform",
+    toolbox: "io",
+    shelf: "receipt",
+    doc: "Attest a run manifest: takes manifest text (signed or plain) and emits a small document saying *I saw this manifest* — its digest and a claimed time, with no name and no fingerprint, because the signature around it is what says who. Attesting is not consenting to run, and a claimed time is nobody's evidence but the signer's. Example: `input | run.attest | gpg.sign key=$me | out $attestation`.",
+    input: "text",
+    output: "text",
+    // none — it digests text it was handed and stamps the clock. The clock is
+    // the manifest's other declared axis, not entropy.
+    entropy: "none",
+    params: [],
+  },
+  {
     name: "run.verify",
     kind: "transform",
     toolbox: "io",

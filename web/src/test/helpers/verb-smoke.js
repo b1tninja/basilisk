@@ -1568,6 +1568,72 @@ run.receipt "verb smoke ceremony" | out $receipt`,
       recipe: "run.receipt | run.verify -q | out $ok",
       mode: "run",
     },
+    {
+      id: "run.manifest",
+      // The commitment half. `bindings.receipt.recipeSource` is what the shell
+      // hands over (`useNotebook`'s buildBindings), and without it the op has
+      // only the cell it sits in — the same context `run.receipt` reads.
+      recipe: `@mara publish
+bytes deadbeef | encode hex | out $a
+
+run.manifest "verb smoke commitment" | out $manifest`,
+      mode: "run",
+      bindings: () => ({
+        receipt: {
+          recipeSource:
+            "@mara publish\nbytes deadbeef | encode hex | out $a\n\n" +
+            'run.manifest "verb smoke commitment" | out $manifest',
+          label: "verb smoke",
+        },
+      }),
+      assert: (arts) => {
+        const tile = arts.find((a) => /run-manifest/.test(String(a.content || "")));
+        if (!tile) throw new Error("expected a run manifest tile");
+        const manifest = JSON.parse(String(tile.content));
+        if (manifest.title !== "verb smoke commitment") {
+          throw new Error("manifest did not take the title argument");
+        }
+        if (manifest.cells?.length !== 2) {
+          throw new Error(
+            `manifest should name every cell of the notebook, got ${manifest.cells?.length}`
+          );
+        }
+        if (manifest.cells[0].peer !== "mara" || manifest.cells[0].publish !== true) {
+          throw new Error("manifest lost the cell's @peer header");
+        }
+        // A manifest carries labels and a digest of the binding, never a
+        // fingerprint — `630dc96`, and the reason `peersSha` exists.
+        if (/\b[0-9A-F]{40}\b/.test(String(tile.content))) {
+          throw new Error("manifest contains fingerprint-shaped hex");
+        }
+      },
+    },
+    {
+      id: "run.attest",
+      // A peer receives the manifest and says *I saw this*. The signature is
+      // the next step in a real recipe (`| gpg.sign key=$me`) and is exercised
+      // in manifest-attest.test.js, where a key is generated to sign with.
+      recipe: `run.manifest "verb smoke commitment" | out $manifest
+
+in $manifest | run.attest | out $attestation`,
+      mode: "run",
+      assert: (arts) => {
+        const tile = arts.find((a) =>
+          /manifest-attestation/.test(String(a.content || ""))
+        );
+        if (!tile) throw new Error("expected an attestation tile");
+        const attestation = JSON.parse(String(tile.content));
+        if (!/^[0-9a-f]{64}$/.test(String(attestation.manifest))) {
+          throw new Error("attestation should name a manifest digest");
+        }
+        const fields = Object.keys(attestation).sort().join(",");
+        if (fields !== "claimedAt,kind,manifest,v") {
+          throw new Error(
+            `an attestation carries four fields and no more, got ${fields}`
+          );
+        }
+      },
+    },
 
     // ── Clipboard as a signaling channel (§32d) — both need the browser's
     // clipboard plus (for read) the UI's permission gate, so compile-only.

@@ -2733,6 +2733,41 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: false, kind: "opaque", runReceipt: true },
       };
     }
+    case "run.manifest": {
+      const manifest = await currentRunManifest(bindings, step.params || {});
+      const { manifestToJson } = await import("./manifest.js");
+      return {
+        type: "text",
+        data: manifestToJson(manifest),
+        // A manifest is recipe text and digests — the document exists to be
+        // handed round, so masking it would be theatre, exactly as for a
+        // receipt. It carries no `role` of its own: a role is a UI vocabulary
+        // with a kind, a badge and a read-out behind it, and this unit is the
+        // documents. `out $manifest` gives it the ordinary text tile.
+        meta: { sensitive: false, kind: "opaque" },
+      };
+    }
+    case "run.attest": {
+      if (!value || value.type !== "text") {
+        throw new Error(
+          "run.attest expects manifest text (use `input` to paste one)"
+        );
+      }
+      const { manifestDigest, parseManifest } = await import("./manifest.js");
+      const { attestationToJson, buildAttestation } = await import("./attest.js");
+      // Parsed rather than digested as-is, so a signed manifest attests to the
+      // same digest as the plain one it wraps, and so text that is not a
+      // manifest is refused here rather than attested to.
+      const manifest = parseManifest(String(value.data));
+      const attestation = await buildAttestation({
+        manifestSha: await manifestDigest(manifest),
+      });
+      return {
+        type: "text",
+        data: attestationToJson(attestation),
+        meta: { sensitive: false, kind: "opaque" },
+      };
+    }
     case "run.verify": {
       if (!value || value.type !== "text") {
         throw new Error("run.verify expects receipt text (use `input` to paste one)");
@@ -3014,6 +3049,79 @@ async function currentRunReceipt(bindings, artifacts, params) {
     label,
     registry: opsRegistryVersion(),
     recipeSource: String(ctx.recipeSource || ctx.cellRecipe || ""),
+    cells,
+  });
+}
+
+/**
+ * Build the manifest for the notebook this call belongs to.
+ *
+ * The sibling of `currentRunReceipt`, and it reads the same `bindings.receipt`
+ * context — `recipeSource` when the shell supplies the notebook's text,
+ * this cell's text otherwise. The two ops are honest about the same notebook or
+ * neither is, so they share the fallback rather than each inventing one.
+ *
+ * The cells are *read from the recipe*, not accumulated from a run log: a
+ * manifest describes a run that has not happened, so there is no log to read.
+ * The reading is `recipeChains` + `serializeRecipe`, which is the spelling
+ * `appendRunLog` records — a manifest built any other way would compare
+ * unequal to an honest receipt on whitespace alone. `buildRunManifest` declines
+ * to do this itself for the reason its doc comment gives; doing it here, in the
+ * caller, is what that comment asks for.
+ *
+ * `peers` is deliberately empty. A manifest's `peersSha` commits to a
+ * label→fingerprint binding, and this build has no roster to bind: the session
+ * layer that would carry one does not exist yet. Passing the labels with blank
+ * fingerprints would commit to a binding that says nothing while looking like
+ * it says something. The cells still carry their `@peer` headers, which is what
+ * the recipe actually knows.
+ *
+ * `entropy` and `clock` are left at `buildRunManifest`'s fail-closed defaults
+ * (`local`, `free`), because they are true of every run this build performs: no
+ * op reads a pool and no op reads a pinned `t0`. `manifestReproducibility` will
+ * say so, which is the honest answer rather than a flattering one.
+ *
+ * @param {RuntimeBindings} bindings
+ * @param {Record<string, *>} params
+ */
+async function currentRunManifest(bindings, params) {
+  const { buildRunManifest } = await import("./manifest.js");
+  const { opsRegistryVersion } = await import("./receipt.js");
+  const { serializeRecipe } = await import("./recipe.js");
+  const { parseRecipeSource } = await import("./recipe-parse.js");
+  const ctx = /** @type {*} */ (bindings).receipt || {};
+  const recipeSource = String(ctx.recipeSource || ctx.cellRecipe || "");
+
+  const { ast } = parseRecipeSource(recipeSource);
+  /** @type {{ index: number, peer: string, publish: boolean, recipe: string }[]} */
+  const cells = [];
+  const chains = ast ? recipeChains(ast) : [];
+  for (let i = 0; i < chains.length; i++) {
+    const chain = chains[i];
+    if (!chain?.steps?.length) continue;
+    let recipe = "";
+    try {
+      recipe = serializeRecipe({ chains: [chain] });
+    } catch (_) {
+      // A cell that will not serialize is recorded as empty rather than
+      // dropped: a manifest that silently omitted a cell would be a commitment
+      // to a shorter notebook than the one about to run.
+      recipe = "";
+    }
+    cells.push({
+      index: i,
+      peer: String(chain.peer || ""),
+      publish: !!chain.publish,
+      recipe,
+    });
+  }
+
+  const title =
+    String(params?.title || "").trim() || String(ctx.label || "").trim() || undefined;
+  return buildRunManifest({
+    title,
+    registry: opsRegistryVersion(),
+    recipeSource,
     cells,
   });
 }

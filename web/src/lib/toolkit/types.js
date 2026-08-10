@@ -433,8 +433,13 @@ export function inferSourceType(name, params = {}) {
     case "input":
       return typeOf("text", { kind: "opaque" });
     case "run.receipt":
+    case "run.manifest":
+    case "run.attest":
       // Canonical JSON, so the tip is plain opaque text — exactly what
       // `gpg.sign` and `out` already consume. No new type is warranted for it.
+      // All three documents share this line on purpose: the moment a manifest
+      // or an attestation had a type of its own, `gpg.sign` would need to learn
+      // about it, and signing by composition is the whole idiom.
       return typeOf("text", { kind: "opaque" });
     case "lit": {
       const kind = String(params.kind || "text");
