@@ -240,6 +240,25 @@ export async function digestInputs(inputs) {
  */
 
 /**
+ * How this codebase writes a moment into a signed document: an ISO string,
+ * always, whatever the caller had in hand.
+ *
+ * Shared with `manifest.js` so a manifest's pinned `t0` and a receipt's
+ * `createdAt` are the same kind of string. A string is passed through as
+ * given — a caller who already has an ISO timestamp is not second-guessed,
+ * and a caller who has garbage gets a document that fails to parse as a date
+ * rather than one that silently records the moment it was assembled.
+ *
+ * @param {string|number|Date|null|undefined} value
+ * @returns {string}
+ */
+export function isoTimestamp(value) {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "number") return new Date(value).toISOString();
+  return String(value || new Date().toISOString());
+}
+
+/**
  * Assemble a receipt. Pure apart from the digest of `recipeSource`.
  *
  * @param {{
@@ -253,12 +272,7 @@ export async function digestInputs(inputs) {
  */
 export async function buildRunReceipt(spec = {}) {
   const recipeSource = String(spec.recipeSource ?? "");
-  const createdAt =
-    spec.createdAt instanceof Date
-      ? spec.createdAt.toISOString()
-      : typeof spec.createdAt === "number"
-        ? new Date(spec.createdAt).toISOString()
-        : String(spec.createdAt || new Date().toISOString());
+  const createdAt = isoTimestamp(spec.createdAt);
   return {
     v: RECEIPT_VERSION,
     kind: "basilisk.run-receipt",
@@ -288,28 +302,44 @@ export function receiptToJson(receipt) {
 }
 
 /**
- * Parse a receipt out of text, tolerating an OpenPGP cleartext wrapper.
+ * Find the JSON payload inside text that may be wrapped in an OpenPGP
+ * cleartext signature.
  *
- * A signed receipt arrives as `-----BEGIN PGP SIGNED MESSAGE-----` with the
- * JSON in the body, and asking the user to strip that by hand before
- * verifying would make the signed form less useful than the unsigned one.
- * Signature validity is `gpg.verify`'s job — this only finds the payload.
+ * A signed document arrives as `-----BEGIN PGP SIGNED MESSAGE-----` with the
+ * JSON in the body, and asking the user to strip that by hand before verifying
+ * would make the signed form less useful than the unsigned one. Signature
+ * validity is `gpg.verify`'s job — this only finds the payload.
+ *
+ * `what` names the document in the error text so the manifest parser can share
+ * the unwrapping without borrowing the word "receipt". One unwrapper, because
+ * two would be two answers to "which bytes were signed".
+ *
+ * @param {string} text
+ * @param {string} [what]  noun for error messages
+ * @returns {string}
+ */
+export function unwrapCleartext(text, what = "receipt") {
+  const raw = String(text ?? "").trim();
+  if (!raw) throw new Error(`${what}: empty`);
+  if (!/^-----BEGIN PGP SIGNED MESSAGE-----/.test(raw)) return raw;
+  const start = raw.indexOf("\n\n");
+  const sig = raw.indexOf("-----BEGIN PGP SIGNATURE-----");
+  if (start < 0 || sig < 0) throw new Error(`${what}: malformed cleartext signature`);
+  // Cleartext signatures dash-escape lines beginning with "-".
+  return raw
+    .slice(start + 2, sig)
+    .trim()
+    .replace(/^- /gm, "");
+}
+
+/**
+ * Parse a receipt out of text, tolerating an OpenPGP cleartext wrapper.
  *
  * @param {string} text
  * @returns {RunReceipt}
  */
 export function parseReceipt(text) {
-  const raw = String(text ?? "").trim();
-  if (!raw) throw new Error("receipt: empty");
-  let body = raw;
-  if (/^-----BEGIN PGP SIGNED MESSAGE-----/.test(raw)) {
-    const start = raw.indexOf("\n\n");
-    const sig = raw.indexOf("-----BEGIN PGP SIGNATURE-----");
-    if (start < 0 || sig < 0) throw new Error("receipt: malformed cleartext signature");
-    body = raw.slice(start + 2, sig).trim();
-    // Cleartext signatures dash-escape lines beginning with "-".
-    body = body.replace(/^- /gm, "");
-  }
+  const body = unwrapCleartext(text, "receipt");
   /** @type {*} */
   let parsed;
   try {
@@ -344,6 +374,56 @@ export function parseReceipt(text) {
  */
 
 /**
+ * A running tally of `{path, field, expected, actual}` disagreements — this
+ * module's one vocabulary for "two descriptions of a run do not match".
+ *
+ * Extracted so `manifest.js` can report a manifest a run failed to honour in
+ * exactly the words a receipt comparison uses. A second vocabulary for the
+ * same idea would mean a reader has to learn which kind of "mismatch" they are
+ * holding before they can read it, and the field a comparison names is the
+ * whole product here.
+ *
+ * `checked` counts every question asked, not every one that failed, so a
+ * verified result can say how much was looked at.
+ *
+ * @returns {{
+ *   assert: (path: string, field: string, ok: boolean, expected: *, actual: *) => void,
+ *   compare: (path: string, field: string, expected: *, actual: *) => void,
+ *   note: (path: string, field: string, expected: *, actual: *) => void,
+ *   result: () => { ok: boolean, mismatches: ReceiptMismatch[], checked: number },
+ * }}
+ */
+export function mismatchLog() {
+  /** @type {ReceiptMismatch[]} */
+  const mismatches = [];
+  let checked = 0;
+  /**
+   * @param {string} path @param {string} field @param {boolean} ok
+   * @param {*} expected @param {*} actual
+   */
+  const assert = (path, field, ok, expected, actual) => {
+    checked++;
+    if (!ok) {
+      mismatches.push({
+        path,
+        field,
+        expected: String(expected ?? ""),
+        actual: String(actual ?? ""),
+      });
+    }
+  };
+  return {
+    assert,
+    /** @param {string} path @param {string} field @param {*} a @param {*} b */
+    compare: (path, field, a, b) =>
+      assert(path, field, String(a ?? "") === String(b ?? ""), a, b),
+    /** @param {string} path @param {string} field @param {*} e @param {*} a */
+    note: (path, field, e, a) => assert(path, field, false, e, a),
+    result: () => ({ ok: mismatches.length === 0, mismatches, checked }),
+  };
+}
+
+/**
  * Compare a claimed receipt against one built from a re-run.
  *
  * Digests only — never values, and never timestamps. Two honest runs of the
@@ -357,21 +437,8 @@ export function parseReceipt(text) {
  * @returns {{ ok: boolean, mismatches: ReceiptMismatch[], checked: number }}
  */
 export function compareReceipts(claimed, actual) {
-  /** @type {ReceiptMismatch[]} */
-  const mismatches = [];
-  let checked = 0;
-  /** @param {string} path @param {string} field @param {*} a @param {*} b */
-  const cmp = (path, field, a, b) => {
-    checked++;
-    if (String(a ?? "") !== String(b ?? "")) {
-      mismatches.push({
-        path,
-        field,
-        expected: String(a ?? ""),
-        actual: String(b ?? ""),
-      });
-    }
-  };
+  const log = mismatchLog();
+  const cmp = log.compare;
 
   cmp("receipt", "recipeDigest", claimed?.recipeDigest, actual?.recipeDigest);
   cmp("receipt", "registry", claimed?.registry, actual?.registry);
@@ -379,13 +446,7 @@ export function compareReceipts(claimed, actual) {
   const a = claimed?.cells || [];
   const b = actual?.cells || [];
   if (a.length !== b.length) {
-    checked++;
-    mismatches.push({
-      path: "receipt",
-      field: "cells",
-      expected: String(a.length),
-      actual: String(b.length),
-    });
+    log.note("receipt", "cells", a.length, b.length);
   }
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i++) {
@@ -394,13 +455,7 @@ export function compareReceipts(claimed, actual) {
     const ai = a[i].inputs || [];
     const bi = b[i].inputs || [];
     if (ai.length !== bi.length) {
-      checked++;
-      mismatches.push({
-        path: label,
-        field: "inputs",
-        expected: String(ai.length),
-        actual: String(bi.length),
-      });
+      log.note(label, "inputs", ai.length, bi.length);
     }
     for (let j = 0; j < Math.min(ai.length, bi.length); j++) {
       cmp(`${label} · input ${j + 1}`, "digest", ai[j].digest, bi[j].digest);
@@ -408,19 +463,13 @@ export function compareReceipts(claimed, actual) {
     const ao = a[i].outputs || [];
     const bo = b[i].outputs || [];
     if (ao.length !== bo.length) {
-      checked++;
-      mismatches.push({
-        path: label,
-        field: "outputs",
-        expected: String(ao.length),
-        actual: String(bo.length),
-      });
+      log.note(label, "outputs", ao.length, bo.length);
     }
     for (let j = 0; j < Math.min(ao.length, bo.length); j++) {
       cmp(`${label} · output ${j + 1}`, "digest", ao[j].digest, bo[j].digest);
     }
   }
-  return { ok: mismatches.length === 0, mismatches, checked };
+  return log.result();
 }
 
 /**
