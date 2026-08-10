@@ -281,11 +281,18 @@ function recipientLiteralShape(raw) {
  * that the declaration now says *which* params get read that way, instead of
  * every string param being sniffed and six of them turning out to be slots by
  * accident.
+ *
+ * Exported because `plan.js` has to ask the same question — "which slots does
+ * this cell consume" is the input to placement inference — and a second
+ * spelling of it would be a second answer. `gpg.encrypt to=` is the reason
+ * that matters: a bare `to=cek` names a slot and `to=alice@example.com` names
+ * a recipient, and a reading that only looked for `$` would place a cell on
+ * the wrong peer by missing the dependency entirely.
  * @param {import("./registry.js").ParamSpec} p
  * @param {string} stepName
  * @param {string} raw
  */
-function boundAsSlotRef(p, stepName, raw) {
+export function boundAsSlotRef(p, stepName, raw) {
   if (!p.slot) return false;
   if (p.slot === "required") return true;
   if (stepName === "gpg.encrypt" && p.name === "to") return !recipientLiteralShape(raw);
