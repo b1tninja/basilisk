@@ -1,10 +1,10 @@
 /**
- * Quorum authenticated key exchange: PGP-signed/encrypted signaling +
+ * The notebook's authenticated key exchange: PGP-signed/encrypted signaling +
  * pairwise P-256 ECDH → HKDF-SHA-256 → AES-GCM-256 (transcript-bound v2).
  *
  * Signaling (mailbox) is encrypted to long-term audience keys and is not PFS.
  * Data-channel session keys use ephemeral ECDH and are discarded on leave.
- * @module lib/quorum/crypto
+ * @module lib/notebook/crypto
  */
 
 import {
@@ -22,7 +22,7 @@ import { canonicalAudience, deriveRoomId } from "./room.js";
 export const INVITE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
- * @typedef {object} QuorumEnvelopePayload
+ * @typedef {object} NotebookEnvelopePayload
  * @property {1} v
  * @property {"invite"|"hello"|"offer"|"answer"|"ice"|"rotate"} type
  * @property {string} from
@@ -121,7 +121,7 @@ export async function jwkThumbprint(jwk) {
  * @param {JsonWebKey} opts.ecdhPublicJwk
  * @param {string} [opts.nonce]
  * @param {string} [opts.note]
- * @returns {QuorumEnvelopePayload}
+ * @returns {NotebookEnvelopePayload}
  */
 export function buildInvitePayload({
   roomId,
@@ -152,7 +152,7 @@ export function buildInvitePayload({
 
 /**
  * Validate a decrypted invite payload (after signature verification).
- * @param {QuorumEnvelopePayload} payload
+ * @param {NotebookEnvelopePayload} payload
  * @param {object} opts
  * @param {string} opts.signerFpr
  * @param {string} opts.expectedRoomId
@@ -239,7 +239,7 @@ export function requireSelfInAudience(myFpr, audienceFprs) {
     throw new Error("Local key must be in the room audience");
   }
   if (audience.length < 2) {
-    throw new Error("Quorum room requires at least two audience fingerprints");
+    throw new Error("Notebook room requires at least two audience fingerprints");
   }
   return audience;
 }
@@ -294,6 +294,12 @@ export async function derivePairwiseSessionKey({
   );
 
   const infoStr = [
+    // Still spelled `quorum` after the session layer was renamed, and it must
+    // be. This string is HKDF `info` and the head of the transcript hash — a
+    // preimage, not an identifier. Both peers derive it independently and
+    // compare the result, so one byte changed here is a key disagreement: key
+    // confirmation fails and the pair never meshes. The `-v2` suffix is where a
+    // deliberate change goes, as a version bump both ends can reason about.
     "basilisk-quorum-session-v2",
     roomId,
     audience.join(","),
@@ -402,7 +408,7 @@ export function combineDtlsFingerprints(a, b) {
 /**
  * Sign + encrypt a signaling envelope to all audience public keys.
  * @param {object} opts
- * @param {QuorumEnvelopePayload} opts.payload
+ * @param {NotebookEnvelopePayload} opts.payload
  * @param {import("openpgp").PrivateKey} opts.signingKey
  * @param {import("openpgp").Key[]} opts.audienceKeys
  * @returns {Promise<string>} armored PGP message
@@ -428,7 +434,7 @@ export async function sealSignalingEnvelope({ payload, signingKey, audienceKeys 
  * @param {Map<string, import("openpgp").Key>} opts.audienceKeyByFpr
  * @param {string[]} opts.audienceFprs
  * @param {string} opts.expectedRoomId
- * @returns {Promise<{ payload: QuorumEnvelopePayload, signerFpr: string }>}
+ * @returns {Promise<{ payload: NotebookEnvelopePayload, signerFpr: string }>}
  */
 export async function openSignalingEnvelope({
   armored,
@@ -477,7 +483,7 @@ export async function openSignalingEnvelope({
   if (!signerFpr || !allowed.has(signerFpr)) {
     throw new Error("Signaling signer is not in the room audience");
   }
-  /** @type {QuorumEnvelopePayload} */
+  /** @type {NotebookEnvelopePayload} */
   let payload;
   try {
     payload = JSON.parse(String(data));

@@ -152,7 +152,7 @@ describe("closing is bounded by origin", () => {
   it("never lets peer.close reach the mesh's links", async () => {
     // The mesh's links are in the same inventory on purpose, and they belong to
     // `quorum.close`, which also has session keys to zeroize and a signalling
-    // poll to stop. Tearing one down from here would leave QuorumSession
+    // poll to stop. Tearing one down from here would leave NotebookSession
     // believing it still had a transport.
     add("direct-1");
     add("direct-2");

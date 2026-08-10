@@ -1,5 +1,5 @@
 /**
- * Mesh relay + health rules — pure decisions for QuorumSession's
+ * Mesh relay + health rules — pure decisions for NotebookSession's
  * channel-first signaling (p2p-dkg DESIGN §4: "existing members relay
  * introductions for newcomers over already-authenticated data channels, so
  * only the first join needs out-of-band signaling").
@@ -9,7 +9,7 @@
  * room + identities + nonces (the RFC 8844 shape). A relaying member can
  * delay or drop it, never read, forge, or replant it in another session.
  * The rules below are only about loops and floods, not trust.
- * @module lib/quorum/relay
+ * @module lib/notebook/relay
  */
 
 /**

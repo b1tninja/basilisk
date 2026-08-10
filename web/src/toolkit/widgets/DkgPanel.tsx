@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { meshHealth } from "@/lib/quorum/relay.js";
+import { meshHealth } from "@/lib/notebook/relay.js";
 import {
   DKG_EXPERIMENTAL_NOTE,
   DKG_STAGES,

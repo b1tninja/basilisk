@@ -19,10 +19,10 @@
  * draws a link — the panel, the `connstate` tile, an op's refusal — reads it
  * from here instead of deciding for itself.
  *
- * **Why `lib/webrtc/` and not `lib/quorum/`, where it started.** An inventory
+ * **Why `lib/webrtc/` and not the session layer, where it started.** An inventory
  * of `RTCPeerConnection`s is not the mesh's, and this module holds no
  * fingerprint, derives no key and drives no negotiation — `origin` is a label
- * its registrants supply. Filed under `lib/quorum/` it made `peer.offer`, an op
+ * its registrants supply. Filed under the session layer it made `peer.offer`, an op
  * with no PGP audience and no relay, unable to run without the module that
  * implements both; `lib/toolkit/peer-ops.js` imported the session layer that is
  * supposed to sit on top of it. Quorum registers into this, the same way
@@ -155,7 +155,7 @@ export function registerLink(spec) {
     },
   };
   links.set(id, rec);
-  // `addEventListener`, never `pc.onconnectionstatechange =` — QuorumSession
+  // `addEventListener`, never `pc.onconnectionstatechange =` — NotebookSession
   // already owns that property, and assigning it here would silently delete the
   // handler that drives the roster.
   const pc = rec.pc;
@@ -204,7 +204,7 @@ export function patchLink(id, patch) {
 }
 
 /**
- * Forget a link without touching its transport — for an owner (QuorumSession)
+ * Forget a link without touching its transport — for an owner (NotebookSession)
  * that is tearing its own connections down.
  * @param {string} id
  */

@@ -83,14 +83,14 @@ variable "tags" {
 
 variable "web_pubsub_sku" {
   type        = string
-  description = "Web PubSub SKU carrying quorum signalling. Free_F1 caps at 20 concurrent connections and 20000 messages/day."
+  description = "Web PubSub SKU carrying notebook signalling. Free_F1 caps at 20 concurrent connections and 20000 messages/day."
   default     = "Free_F1"
 }
 
 variable "web_pubsub_hub" {
   type        = string
-  description = "Web PubSub hub name for quorum signalling. Must match BASILISK_WEBPUBSUB_HUB."
-  default     = "quorum"
+  description = "Web PubSub hub name for notebook signalling. Must match BASILISK_WEBPUBSUB_HUB."
+  default     = "notebook"
 }
 
 variable "servicebus_sku" {

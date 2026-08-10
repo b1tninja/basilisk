@@ -48,7 +48,7 @@ export const TURN_CREDENTIAL_URL = "/api/v1/turn/credentials";
  * other moment.
  *
  * The proof-of-work header rides along because the endpoint is gated the way
- * `/api/v1/quorum/negotiate` and the upload routes are. `proofHeaders` is
+ * `/api/v1/notebook/negotiate` and the upload routes are. `proofHeaders` is
  * best-effort by design: the server, not the page, decides whether a proof was
  * required.
  *

@@ -1,11 +1,11 @@
 """Azure Web PubSub client access tokens — the one file that knows the vendor.
 
-Everything provider-specific about quorum signalling lives here (and in
+Everything provider-specific about notebook signalling lives here (and in
 ``webpubsub_local.py``, which speaks the same wire): the connection-string
 format, the JWT claim names, the client URL shape, the subprotocol name, and
-the group names a room's two scopes map onto. ``quorum_signaling.py`` above it
-deals in *rooms* and *grants*, so a second provider would be a sibling of this
-file rather than an edit to the route.
+the group names a room's two scopes map onto. ``notebook_signaling.py`` above
+it deals in *rooms* and *grants*, so a second provider would be a sibling of
+this file rather than an edit to the route.
 
 **Why the JWT is hand-rolled.** The alternative is
 ``azure-messaging-webpubsubservice``, which pulls ``azure-core``, ``PyJWT`` and
@@ -222,6 +222,18 @@ def _group_name(label: str, material: str) -> str:
     return base64.b32encode(digest).decode("ascii").rstrip("=")[:GROUP_NAME_LEN]
 
 
+#: The two domain-separation labels below still read ``quorum`` after the
+#: session layer was renamed to *notebook*, and they must. They are hash
+#: preimages, not identifiers: every group name in existence is a digest over
+#: one of these strings, so editing a byte of either renames every group at
+#: once. A client on the old spelling and a client on the new one would derive
+#: different names for the same room and never meet — and because the local
+#: double imports this module, it would agree with whichever half was broken
+#: and the tests would stay green. The strings are versioned by their content,
+#: so if they ever do need to change it is as a deliberate epoch bump, not as
+#: part of a rename.
+
+
 def lobby_group(room_id: str) -> str:
     """Where a caller who has only the room id is admitted.
 
@@ -253,7 +265,7 @@ def room_grant(
     user_id: str | None = None,
 ) -> dict:
     """A group-scoped connection grant, in the provider-neutral shape the
-    ``/api/v1/quorum/negotiate`` contract promises.
+    ``/api/v1/notebook/negotiate`` contract promises.
 
     Nothing is stored: the grant *is* the token, and the token expires on its
     own. There is no room record, no TTL sweep and no global room cap to fill.

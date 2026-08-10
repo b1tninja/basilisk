@@ -1,4 +1,4 @@
-# Quorum signalling.
+# Notebook signalling.
 #
 # Signalling used to be a process-global dict in the Function App, which on a
 # Consumption plan is per-instance and dies when the instance recycles: two
@@ -31,7 +31,7 @@ resource "azurerm_web_pubsub" "basilisk" {
   tags = var.tags
 }
 
-resource "azurerm_web_pubsub_hub" "quorum" {
+resource "azurerm_web_pubsub_hub" "notebook" {
   name          = var.web_pubsub_hub
   web_pubsub_id = azurerm_web_pubsub.basilisk.id
 

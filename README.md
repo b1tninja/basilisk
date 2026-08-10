@@ -47,7 +47,7 @@ gpg --keyserver http://localhost:8080 --recv-keys YOURKEYID
 
 ## Portal cryptography
 
-The browser portal combines OpenPGP.js (messaging), WebCrypto (vault, quorum, toolkit keygen), and custom SSS/BLIP39. See [docs/CRYPTOGRAPHY.md](docs/CRYPTOGRAPHY.md) for the module inventory and WebCrypto toolkit gap tracker.
+The browser portal combines OpenPGP.js (messaging), WebCrypto (vault, shared notebook, toolkit keygen), and custom SSS/BLIP39. See [docs/CRYPTOGRAPHY.md](docs/CRYPTOGRAPHY.md) for the module inventory and WebCrypto toolkit gap tracker.
 
 ## Ingest security
 

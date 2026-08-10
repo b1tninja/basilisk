@@ -1,9 +1,9 @@
 /**
- * Quorum room / channel identity from audience fingerprints + site scope.
+ * Notebook room / channel identity from audience fingerprints + site scope.
  * Scope defaults to the WebAuthn relying-party id (`location.hostname`) so
  * the same audience on different deployments gets different room ids —
- * no separate Quorum config required.
- * @module lib/quorum/room
+ * no separate notebook config required.
+ * @module lib/notebook/room
  */
 
 import { bytesToBase32 } from "../toolkit/encode.js";
@@ -27,12 +27,12 @@ export function canonicalAudience(fingerprints) {
 }
 
 /**
- * Relying-party / deployment scope for Quorum derivation.
+ * Relying-party / deployment scope for room derivation.
  * Matches vault WebAuthn RP id: `location.hostname` (no scheme/port).
  * @param {string} [override] explicit hostname for tests or advanced callers
  * @returns {string} lowercase hostname
  */
-export function quorumRelyingPartyId(override) {
+export function notebookRelyingPartyId(override) {
   if (override != null && String(override).trim()) {
     return String(override).trim().toLowerCase();
   }
@@ -87,11 +87,11 @@ export const ROOM_KEY_LEN = 52;
 export async function deriveRoomMaterial(fingerprints, opts = {}) {
   const audience = canonicalAudience(fingerprints);
   if (audience.length < 2) {
-    throw new Error("Quorum room requires at least two audience fingerprints");
+    throw new Error("Notebook room requires at least two audience fingerprints");
   }
   const epoch = Math.max(0, Math.trunc(Number(opts.epoch) || 0));
   const secret = String(opts.secret || "");
-  const rpId = quorumRelyingPartyId(opts.relyingPartyId);
+  const rpId = notebookRelyingPartyId(opts.relyingPartyId);
   const material =
     `${rpId}|${audience.join("|")}` +
     (epoch > 0 ? `|epoch:${epoch}` : "") +
@@ -131,8 +131,13 @@ export function isValidRoomKey(roomKey) {
  * @returns {Promise<string>}
  */
 export async function deriveChannelId(roomId, label, opts = {}) {
-  const rpId = quorumRelyingPartyId(opts.relyingPartyId);
+  const rpId = notebookRelyingPartyId(opts.relyingPartyId);
   const ikm = new TextEncoder().encode(String(roomId || ""));
+  // `basilisk-quorum-channel` keeps its old spelling deliberately: it is HKDF
+  // `info`, so every channel id ever derived is a function of these exact
+  // bytes. Renaming it with the layer would move every channel at once, and
+  // two peers on different spellings would derive different ids for the same
+  // label and quietly talk past each other.
   const info = new TextEncoder().encode(
     `basilisk-quorum-channel|${rpId}|${label || ""}`
   );

@@ -1,6 +1,6 @@
 import { Cable, Copy, RotateCw, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { meshHealth } from "@/lib/quorum/relay.js";
+import { meshHealth } from "@/lib/notebook/relay.js";
 import {
   connStateReadout,
   linkOriginNote,

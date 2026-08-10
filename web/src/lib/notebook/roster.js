@@ -1,7 +1,7 @@
 /**
- * Roster projection — QuorumSession peer state → the UI's ConnectionPeer rows.
+ * Roster projection — NotebookSession peer state → the UI's ConnectionPeer rows.
  *
- * Pure on purpose: quorum-ops feeds it live `QuorumPeerState`s, tests feed it
+ * Pure on purpose: quorum-ops feeds it live `NotebookPeerState`s, tests feed it
  * literals, and neither side drags in WebRTC or OpenPGP to do so. This is the
  * single place the transport's vocabulary ("unknown", kcVerified, …) is
  * translated into the panel's ("new", authenticated, …); if the two drift,
@@ -10,11 +10,11 @@
  * `selectedCandidateType` used to live here because the roster was its first
  * caller. It reads `RTCPeerConnection.getStats()` and knows which engines omit
  * the `transport` stat, which is a fact about browsers rather than about a
- * quorum roster — and its second caller was `peer.*`, so answering an ICE
+ * notebook roster — and its second caller was `peer.*`, so answering an ICE
  * question meant importing the mesh's projection module. It is
  * `lib/webrtc/candidates.js` now.
  *
- * @module lib/quorum/roster
+ * @module lib/notebook/roster
  */
 
 /**

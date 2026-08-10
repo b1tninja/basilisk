@@ -1,4 +1,4 @@
-"""The quorum negotiate endpoint and the tokens it mints.
+"""The notebook negotiate endpoint and the tokens it mints.
 
 Three properties carry the change and are asserted here rather than assumed:
 the endpoint is gated by proof of work (the mailbox it replaced was gated by
@@ -62,7 +62,7 @@ def _client(monkeypatch, env: dict[str, str] | None = None):
     from basilisk.serve import create_app
 
     monkeypatch.setenv("AZURE_WEBPUBSUB_CONNECTION_STRING", CONNECTION)
-    monkeypatch.setenv("BASILISK_WEBPUBSUB_HUB", "quorum")
+    monkeypatch.setenv("BASILISK_WEBPUBSUB_HUB", "notebook")
     for name, value in (env or {}).items():
         monkeypatch.setenv(name, value)
     get_settings.cache_clear()
@@ -75,7 +75,7 @@ def test_connection_string_is_parsed_like_the_sdk_parses_it():
     assert endpoint.endpoint == "https://basilisk.webpubsub.azure.com"
     assert endpoint.access_key == "super-secret-key"
     assert endpoint.ws_origin() == "wss://basilisk.webpubsub.azure.com"
-    assert endpoint.audience("quorum") == "https://basilisk.webpubsub.azure.com/client/hubs/quorum"
+    assert endpoint.audience("notebook") == "https://basilisk.webpubsub.azure.com/client/hubs/notebook"
 
     # A local endpoint keeps its port and drops to ws:// — the double is
     # addressed exactly like the service.
@@ -92,7 +92,7 @@ def test_token_is_a_jws_the_service_would_accept():
     endpoint = parse_connection_string(CONNECTION)
     token = client_access_token(
         endpoint,
-        "quorum",
+        "notebook",
         user_id="u1",
         roles=room_roles(ROOM),
         groups=(ROOM,),
@@ -117,7 +117,7 @@ def test_token_is_a_jws_the_service_would_accept():
     assert claims["webpubsub.group"] == [ROOM]
     assert claims["iat"] == claims["nbf"] == 1_700_000_000
     assert claims["exp"] == 1_700_000_300
-    assert claims["aud"] == "https://basilisk.webpubsub.azure.com/client/hubs/quorum"
+    assert claims["aud"] == "https://basilisk.webpubsub.azure.com/client/hubs/notebook"
 
     expected = hmac.new(
         b"super-secret-key", f"{header_b64}.{payload_b64}".encode("ascii"), hashlib.sha256
@@ -128,30 +128,30 @@ def test_token_is_a_jws_the_service_would_accept():
 @pytest.mark.unit
 def test_verify_rejects_a_tampered_or_stale_or_misaudienced_token():
     endpoint = parse_connection_string(CONNECTION)
-    token = client_access_token(endpoint, "quorum", user_id="u1", lifetime_sec=300)
-    assert verify_token(endpoint, "quorum", token)["sub"] == "u1"
+    token = client_access_token(endpoint, "notebook", user_id="u1", lifetime_sec=300)
+    assert verify_token(endpoint, "notebook", token)["sub"] == "u1"
 
     header, payload, sig = token.split(".")
     with pytest.raises(WebPubSubConfigError):
-        verify_token(endpoint, "quorum", f"{header}.{payload}.{'A' * len(sig)}")
+        verify_token(endpoint, "notebook", f"{header}.{payload}.{'A' * len(sig)}")
     # Same key, different hub — the audience binds the token to one endpoint.
     with pytest.raises(WebPubSubConfigError):
         verify_token(endpoint, "other-hub", token)
     expired = client_access_token(
-        endpoint, "quorum", user_id="u1", lifetime_sec=1, issued_at=int(time.time()) - 3600
+        endpoint, "notebook", user_id="u1", lifetime_sec=1, issued_at=int(time.time()) - 3600
     )
     with pytest.raises(WebPubSubConfigError):
-        verify_token(endpoint, "quorum", expired)
+        verify_token(endpoint, "notebook", expired)
 
 
 @pytest.mark.unit
 def test_the_grant_is_scoped_to_one_room_and_names_no_other():
     endpoint = parse_connection_string(CONNECTION)
-    grant = room_grant(endpoint, "quorum", ROOM, lifetime_sec=300)
+    grant = room_grant(endpoint, "notebook", ROOM, lifetime_sec=300)
     assert grant["transport"] == "webpubsub"
     assert grant["protocol"] == "json.webpubsub.azure.v1"
     assert grant["url"].startswith(
-        "wss://basilisk.webpubsub.azure.com/client/hubs/quorum?access_token="
+        "wss://basilisk.webpubsub.azure.com/client/hubs/notebook?access_token="
     )
     claims = decode_token_claims(grant["url"].split("access_token=")[1])
     # The wide roles would let a holder read and write every room on the hub.
@@ -163,7 +163,7 @@ def test_the_grant_is_scoped_to_one_room_and_names_no_other():
 
     # Nothing is stored, so two grants for the same room are independent
     # connections rather than a shared record.
-    other = room_grant(endpoint, "quorum", ROOM)
+    other = room_grant(endpoint, "notebook", ROOM)
     assert other["user_id"] != grant["user_id"]
 
 
@@ -174,7 +174,7 @@ def test_a_guessed_room_id_reaches_the_lobby_and_stops(monkeypatch):
     room id gets a token for that room's lobby — a real group, joinable, and
     not the one signalling is broadcast in."""
     client = _client(monkeypatch)
-    r = client.post("/api/v1/quorum/negotiate", json={"room": ROOM})
+    r = client.post("/api/v1/notebook/negotiate", json={"room": ROOM})
     assert r.status_code == 200
     body = r.get_json()
     assert body["room"] == ROOM
@@ -192,7 +192,7 @@ def test_a_guessed_room_id_reaches_the_lobby_and_stops(monkeypatch):
 @pytest.mark.unit
 def test_the_room_key_is_what_buys_the_room(monkeypatch):
     client = _client(monkeypatch)
-    r = client.post("/api/v1/quorum/negotiate", json={"room": ROOM, "key": ROOM_KEY})
+    r = client.post("/api/v1/notebook/negotiate", json={"room": ROOM, "key": ROOM_KEY})
     assert r.status_code == 200
     body = r.get_json()
     assert body["scope"] == "room"
@@ -213,7 +213,7 @@ def test_a_room_key_that_is_not_this_rooms_is_refused(monkeypatch):
         ROOM_KEY + "A",  # too long
         ROOM_KEY[:-1] + "1",  # not base32
     ):
-        r = client.post("/api/v1/quorum/negotiate", json={"room": ROOM, "key": key})
+        r = client.post("/api/v1/notebook/negotiate", json={"room": ROOM, "key": key})
         assert r.status_code == 400, key
         assert "url" not in (r.get_json() or {})
 
@@ -242,13 +242,13 @@ def test_negotiate_rejects_a_missing_or_invalid_proof(monkeypatch):
         {"BASILISK_REQUIRE_PROOF": "1", "BASILISK_PROOF_DIFFICULTY": "0"},
     )
 
-    missing = client.post("/api/v1/quorum/negotiate", json={"room": ROOM})
+    missing = client.post("/api/v1/notebook/negotiate", json={"room": ROOM})
     assert missing.status_code == 403
     assert "proof" in missing.get_json()["error"].lower()
 
     for bad in ("garbage", "nonce:notanumber:sig", f"nonce:{int(time.time())}:deadbeef"):
         r = client.post(
-            "/api/v1/quorum/negotiate",
+            "/api/v1/notebook/negotiate",
             json={"room": ROOM},
             headers={"X-Basilisk-Proof": bad},
         )
@@ -259,7 +259,7 @@ def test_negotiate_rejects_a_missing_or_invalid_proof(monkeypatch):
     from basilisk.security.proof import issue_challenge
 
     good = client.post(
-        "/api/v1/quorum/negotiate",
+        "/api/v1/notebook/negotiate",
         json={"room": ROOM},
         headers={"X-Basilisk-Proof": str(issue_challenge()["hint"])},
     )
@@ -270,7 +270,7 @@ def test_negotiate_rejects_a_missing_or_invalid_proof(monkeypatch):
 def test_negotiate_rejects_a_room_id_that_is_not_one(monkeypatch):
     client = _client(monkeypatch)
     for bad in ("not-valid!!!", "short", "", "abcd2345efgh67yz-<script>"):
-        r = client.post("/api/v1/quorum/negotiate", json={"room": bad})
+        r = client.post("/api/v1/notebook/negotiate", json={"room": bad})
         assert r.status_code == 400, bad
 
 
@@ -285,13 +285,22 @@ def test_negotiate_says_so_when_signalling_is_unconfigured(monkeypatch):
     monkeypatch.delenv("BASILISK_DEV_APPROVE", raising=False)
     monkeypatch.setenv("BASILISK_TOKEN_SECRET", "unit-test-secret")
     get_settings.cache_clear()
-    r = create_app().test_client().post("/api/v1/quorum/negotiate", json={"room": ROOM})
+    r = create_app().test_client().post("/api/v1/notebook/negotiate", json={"room": ROOM})
     assert r.status_code == 503
 
 
 @pytest.mark.unit
-def test_the_mailbox_is_gone(monkeypatch):
-    """One transport, one path — the old relay must not still answer."""
+def test_the_retired_paths_are_gone(monkeypatch):
+    """One transport, one path — a retired path must not still answer.
+
+    The mailbox is the older of the two. ``/api/v1/quorum/negotiate`` is the
+    newer: the route moved to ``/api/v1/notebook/negotiate`` with the session
+    layer it serves, and deliberately left no alias behind. Both halves of that
+    rename ship together, so a client on the old path is a client running old
+    code, and a 404 says so immediately instead of silently working until the
+    alias is removed later.
+    """
     client = _client(monkeypatch)
     assert client.post(f"/api/v1/quorum/room/{ROOM}/messages", json={"payload": "x"}).status_code == 404
     assert client.get(f"/api/v1/quorum/room/{ROOM}/messages").status_code == 404
+    assert client.post("/api/v1/quorum/negotiate", json={"room": ROOM}).status_code == 404

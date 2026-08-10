@@ -11,7 +11,7 @@ Server-side OpenPGP **parsing/policy** (`basilisk/openpgp/`) is out of scope her
 | Layer | Role | Primary paths |
 |-------|------|----------------|
 | **OpenPGP.js** | Message encrypt / sign / decrypt; Curve25519 keygen; Argon2 S2K (WASM) | `web/src/lib/pgp/`, `crypto-worker.js` |
-| **WebCrypto** | Vault KEK, quorum session keys, toolkit keygen/import/export, digests, PBKDF2/HKDF internally | `vault.js`, `quorum/crypto.js`, `toolkit/engine.js` |
+| **WebCrypto** | Vault KEK, notebook session keys, toolkit keygen/import/export, digests, PBKDF2/HKDF internally | `vault.js`, `notebook/crypto.js`, `toolkit/engine.js` |
 | **Custom** | GF(256) Shamir SSS, BLIP39 mnemonics, EFF diceware | `slip39/`, `passphrase-gen.js` |
 
 ### Toolkit toolboxes
@@ -38,7 +38,7 @@ Product split (intentional today):
 
 - **Encrypt / Decrypt pages** — OpenPGP messaging for humans
 - **Toolkit** — notebook of recipe cells (blank-line chains) with a session kernel for `@slots`; keygen, encoding, SSS/BLIP39, OpenPGP encrypt *sinks* (see [RECIPE.md](./RECIPE.md#notebook-execution-toolkit-ui))
-- **Quorum** — ephemeral P-256 ECDH → HKDF → AES-GCM session crypto over WebRTC
+- **Shared notebook** — ephemeral P-256 ECDH → HKDF → AES-GCM session crypto over WebRTC
 
 ---
 
@@ -112,7 +112,11 @@ Resolve order for Encrypt / Toolkit recipients: in-memory → pubkey cache → B
 
 **Toolkit Agent** (`agent.*`) is the local My Keys keyring surface (gpg-agent metaphor). **HKP** (`hkp.*`) uses the same recipient stack as Encrypt (`hkp.get` / `hkp.search` / `hkp.filter` / `hkp.cache`). OpenPGP crypto stays on `gpg.*`.
 
-### Quorum (`web/src/lib/quorum/`)
+### Shared notebook (`web/src/lib/notebook/`)
+
+The multi-party P2P session: presence, signalling, and the authenticated key
+exchange that secures a mesh of WebRTC data channels. It is not a threshold
+scheme — see the next section for what still carries the *quorum* name.
 
 | Capability | Status | Notes |
 |------------|--------|-------|
@@ -120,7 +124,25 @@ Resolve order for Encrypt / Toolkit recipients: in-memory → pubkey cache → B
 | Signaling transport | Done | Azure Web PubSub group, joined with a server-minted JWT scoped to one room (`signaling.js` → `webpubsub.js`). The relay carries only sealed envelopes; it can read or alter none of them. |
 | Session keys | Done | Ephemeral ECDH P-256 → HKDF-SHA-256 → AES-GCM-256 |
 | Room / channel IDs | Done | SHA-256 / HKDF (`room.js`) |
-| Key confirmation | Done | Transcript-bound v2 (`rtc.js` + `crypto.js`) |
+| Key confirmation | Done | Transcript-bound v2 (`session.js` + `crypto.js`) |
+
+The HKDF/transcript domain-separation labels still read `basilisk-quorum-*`
+(`crypto.js`, `room.js`), as do the Web PubSub group labels in
+`basilisk/portal/webpubsub.py`. Those strings are hash preimages, not names:
+every session key, channel id and group name in existence is a function of
+them, so they did not move with the directory. Changing one is a protocol
+version bump, not a rename.
+
+### Quorum — threshold (`web/src/lib/quorum/`)
+
+What the word means on its own: an *m*-of-*n* scheme where that many parties
+must cooperate. Runs **over** a shared notebook session; it does not implement
+one.
+
+| Capability | Status | Notes |
+|------------|--------|-------|
+| Feldman VSS | Done | P-256 commitments, share verification (`vss.js`) |
+| Distributed key generation | Done | `dkg.js`, `dkg-run.js`, `dkg-session.js` |
 
 ### SSS / BLIP39 (`web/src/lib/slip39/`)
 
@@ -138,7 +160,7 @@ Resolve order for Encrypt / Toolkit recipients: in-memory → pubkey cache → B
 | Module | Status | Notes |
 |--------|--------|-------|
 | `passphrase-gen.js` | Done | EFF Large Wordlist diceware + char mode; rejection sampling |
-| `crypto.getRandomValues` | Done | Toolkit `random`, SSS coeffs, vault IVs, quorum nonces |
+| `crypto.getRandomValues` | Done | Toolkit `random`, SSS coeffs, vault IVs, notebook nonces |
 
 ### Integrity / policy
 
@@ -163,7 +185,7 @@ Eager startup self-tests (`runCryptoSelfTests`) cover:
 
 Toolkit UI always shows **verified** / **⚠ unverified** chips per crypto toolbox. **FIPS mode** (persisted `basilisk.fipsMode`) hard-blocks adding/running ops whose suite is unverified; the worker enforces the same gate via `executeToolkitRun` (`toolkit-run.js`). Disclaimer: FIPS-*inspired* posture only — not a NIST FIPS 140 certificate.
 
-Encrypt / Decrypt banners say **OpenPGP verified** (CAST-1…5). Quorum session ECDH/HKDF/AES-GCM is **not** CAST-gated today.
+Encrypt / Decrypt banners say **OpenPGP verified** (CAST-1…5). Shared-notebook session ECDH/HKDF/AES-GCM is **not** CAST-gated today.
 
 RSA-OAEP encrypt/decrypt is toolkit op **`rsa-oaep`** (also parses JCE OAEP forms). Distinct from OpenPGP **`gpg.encrypt`** and AES **`aes-gcm`**.
 
@@ -362,13 +384,13 @@ Serialize always emits the hyphenated canonical name. Bare `encrypt` / `decrypt`
 
 | API | Where |
 |-----|--------|
-| `getRandomValues` | Toolkit, SSS, vault, quorum, diceware, BLIP39 ids |
-| `subtle.generateKey` | Toolkit genkey; vault AES-GCM; quorum ECDH P-256 |
-| `subtle.importKey` / `exportKey` | Toolkit; vault HKDF; quorum ECDH JWK; inspect |
-| `subtle.encrypt` / `decrypt` | AES-GCM / AES-CBC / AES-CTR (toolkit); RSA-OAEP (`rsa-oaep`); vault/quorum AES-GCM |
-| `subtle.deriveBits` | Quorum ECDH; SSS PBKDF2 mask; room channel HKDF; toolkit `hkdf`/`pbkdf2`/`ecdh` default |
-| `subtle.deriveKey` | Vault PRF KEK; quorum session AES-GCM; toolkit `hkdf`/`pbkdf2`/`ecdh` with `as=` |
-| `subtle.digest` | SHA-256 — room id, JWK thumbprints, quorum transcript, module integrity |
+| `getRandomValues` | Toolkit, SSS, vault, notebook, diceware, BLIP39 ids |
+| `subtle.generateKey` | Toolkit genkey; vault AES-GCM; notebook ECDH P-256 |
+| `subtle.importKey` / `exportKey` | Toolkit; vault HKDF; notebook ECDH JWK; inspect |
+| `subtle.encrypt` / `decrypt` | AES-GCM / AES-CBC / AES-CTR (toolkit); RSA-OAEP (`rsa-oaep`); vault/notebook AES-GCM |
+| `subtle.deriveBits` | Notebook ECDH; SSS PBKDF2 mask; room channel HKDF; toolkit `hkdf`/`pbkdf2`/`ecdh` default |
+| `subtle.deriveKey` | Vault PRF KEK; notebook session AES-GCM; toolkit `hkdf`/`pbkdf2`/`ecdh` with `as=` |
+| `subtle.digest` | SHA-256 — room id, JWK thumbprints, notebook transcript, module integrity |
 | `subtle.sign` / `verify` | Toolkit `sign`/`verify` (RSA-PSS or RSASSA-PKCS1-v1_5; optional soft mode) |
 | `subtle.wrapKey` / `unwrapKey` | Toolkit `wrap`/`unwrap` (`aes-kw`, AES-GCM/CBC/CTR, `rsa-oaep`) |
 
@@ -550,7 +572,7 @@ When adding an op: registry entry + refined types + engine case + `tests/` + upd
 | FIPS mode / suite badges | `fips-mode.js`, `toolkit/suite-gate.js`, toolkit UI |
 | WebAuthn PRF + soft MDS | `vault.js`, `webauthn/attestation.js`, `webauthn/mds.js`, `portal/mds_cache.py`, toolkit `webauthn.*` |
 | Vault: no secrets in localStorage | `vault.js` header |
-| Quorum: signaling ≠ PFS; session keys discarded on leave | `quorum/crypto.js` |
+| Shared notebook: signaling ≠ PFS; session keys discarded on leave | `notebook/crypto.js` |
 | Smartcards / YubiKey GPG unavailable in browser | Toolkit `gpg.decrypt` docs / UI |
 
 ---

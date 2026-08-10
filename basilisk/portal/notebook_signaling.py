@@ -1,14 +1,14 @@
-"""Quorum signalling negotiation — proof of work in, room-scoped grant out.
+"""Notebook signalling negotiation — proof of work in, room-scoped grant out.
 
 This replaced a process-global mailbox dict. On Consumption Functions there is
 no shared memory between instances and instances recycle when idle, so two
 peers polling the same room only ever met when they happened to land on the
-same warm worker: quorum signalling did not reliably work in production. The
+same warm worker: notebook signalling did not reliably work in production. The
 signalling state now lives in the service, and this endpoint holds none of it.
 
 The contract is deliberately provider-neutral — a proof of work and a room id
 in, a URL, a subprotocol and an expiry out. Nothing above this route (and
-nothing in ``lib/quorum/session.js``) names a vendor; the Azure specifics are
+nothing in ``lib/notebook/session.js``) names a vendor; the Azure specifics are
 all in ``webpubsub.py``.
 
 Two things the mailbox never did:
@@ -79,15 +79,15 @@ def check_negotiate_rate(ip: str, room_id: str) -> None:
     """One negotiation per session rather than one call per signalling message,
     so these windows are far looser than they look next to the old mailbox."""
     limiter = get_limiter()
-    if not limiter.allow(f"quorum:ip:{ip}", 0.5):
-        raise RateLimitError("Quorum rate limit exceeded for this IP")
-    if not limiter.allow(f"quorum:room:{room_id}", 0.25):
-        raise RateLimitError("Quorum rate limit exceeded for this room")
+    if not limiter.allow(f"notebook:ip:{ip}", 0.5):
+        raise RateLimitError("Notebook rate limit exceeded for this IP")
+    if not limiter.allow(f"notebook:room:{room_id}", 0.25):
+        raise RateLimitError("Notebook rate limit exceeded for this room")
 
 
-def register_quorum_signaling(app: Flask) -> None:
-    @app.post("/api/v1/quorum/negotiate")
-    def quorum_negotiate() -> Response:
+def register_notebook_signaling(app: Flask) -> None:
+    @app.post("/api/v1/notebook/negotiate")
+    def notebook_negotiate() -> Response:
         body = request.get_json(silent=True) or {}
         room_id = str(body.get("room") or body.get("room_id") or "").strip().upper()
         if not re.fullmatch(ROOM_ID_RE, room_id):
@@ -113,13 +113,13 @@ def register_quorum_signaling(app: Flask) -> None:
 
         settings = get_settings()
         if not settings.web_pubsub_connection:
-            return _json({"error": "Quorum signalling is not configured"}, 503)
+            return _json({"error": "Notebook signalling is not configured"}, 503)
         try:
             endpoint = parse_connection_string(settings.web_pubsub_connection)
         except WebPubSubConfigError as exc:
             # The message names the connection string, never its contents.
             logger.error("Web PubSub connection string rejected: %s", exc)
-            return _json({"error": "Quorum signalling is not configured"}, 503)
+            return _json({"error": "Notebook signalling is not configured"}, 503)
 
         return _json(
             room_grant(

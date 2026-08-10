@@ -20,8 +20,8 @@ param serviceBusConnectionString string
 @description('Web PubSub connection string used to mint room-scoped signalling tokens')
 param webPubSubConnectionString string = ''
 
-@description('Web PubSub hub carrying quorum signalling')
-param webPubSubHub string = 'quorum'
+@description('Web PubSub hub carrying notebook signalling')
+param webPubSubHub string = 'notebook'
 
 @description('Require manager approval before publishing keys')
 param requireManagerApproval bool = false

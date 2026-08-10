@@ -25,7 +25,7 @@
  * it signed itself — so the field would buy nothing and could cost the whole
  * connection on an older service version.
  *
- * @module lib/quorum/webpubsub
+ * @module lib/notebook/webpubsub
  */
 
 /** The subprotocol string a `new WebSocket(url, …)` must ask for. */
@@ -66,7 +66,7 @@ export function connectWebPubSub({
   const WS =
     WebSocketImpl ||
     (typeof WebSocket === "function" ? WebSocket : null);
-  if (!WS) throw new Error("quorum: WebSocket is unavailable in this context");
+  if (!WS) throw new Error("notebook: WebSocket is unavailable in this context");
 
   const socket = new WS(url, protocol);
   /** @type {Map<number, { resolve: () => void, reject: (e: Error) => void, timer: ReturnType<typeof setTimeout> }>} */
@@ -91,7 +91,7 @@ export function connectWebPubSub({
   const request = (frame) =>
     new Promise((resolve, reject) => {
       if (closed || socket.readyState !== 1 /* OPEN */) {
-        reject(new Error("quorum: signalling socket is not open"));
+        reject(new Error("notebook: signalling socket is not open"));
         return;
       }
       // `ackId` is a uint64 unique within the connection; the service treats a
@@ -100,7 +100,7 @@ export function connectWebPubSub({
       const ackId = nextAckId++;
       const timer = setTimeout(() => {
         pending.delete(ackId);
-        reject(new Error(`quorum: no ack for ${frame.type} within ${ACK_TIMEOUT_MS}ms`));
+        reject(new Error(`notebook: no ack for ${frame.type} within ${ACK_TIMEOUT_MS}ms`));
       }, ACK_TIMEOUT_MS);
       pending.set(ackId, { resolve, reject, timer });
       try {
@@ -124,7 +124,7 @@ export function connectWebPubSub({
     socket.onerror = () => {
       // The browser deliberately withholds the reason for a failed WebSocket
       // handshake, so there is nothing to report but the fact.
-      const err = new Error("quorum: signalling socket error");
+      const err = new Error("notebook: signalling socket error");
       onError?.(err);
       reject(err);
     };
@@ -153,7 +153,7 @@ export function connectWebPubSub({
       else {
         waiter.reject(
           new Error(
-            `quorum: ${msg.error?.name || "request failed"}${
+            `notebook: ${msg.error?.name || "request failed"}${
               msg.error?.message ? ` — ${msg.error.message}` : ""
             }`
           )
@@ -178,7 +178,7 @@ export function connectWebPubSub({
   };
 
   socket.onclose = () => {
-    failPending(new Error("quorum: signalling socket closed"));
+    failPending(new Error("notebook: signalling socket closed"));
     if (!closed) {
       closed = true;
       onClose?.();
@@ -203,7 +203,7 @@ export function connectWebPubSub({
       } catch (_) {
         /* already gone */
       }
-      failPending(new Error("quorum: signalling closed"));
+      failPending(new Error("notebook: signalling closed"));
       try {
         socket.close();
       } catch (_) {

@@ -22,13 +22,13 @@ services:
       BASILISK_UPLOAD_RATE_LIMIT_SEC: "0"
       BASILISK_UPLOAD_FPR_RATE_LIMIT_SEC: "0"
       BASILISK_SENDTOKEN_RATE_LIMIT_SEC: "0"
-      # Quorum signalling against the local Web PubSub double, addressed the
+      # Notebook signalling against the local Web PubSub double, addressed the
       # same way the real service is — same connection-string shape, same
       # token, same subprotocol. `basilisk.serve` starts it because the
       # endpoint is loopback. The client is handed this URL verbatim, so the
       # port has to mean the same thing inside the container and out.
       AZURE_WEBPUBSUB_CONNECTION_STRING: "Endpoint=http://127.0.0.1:8081;AccessKey=ci-webpubsub-key;"
-      BASILISK_WEBPUBSUB_HUB: quorum
+      BASILISK_WEBPUBSUB_HUB: notebook
     ports:
       - "8080:8080"
       - "127.0.0.1:8081:8081"

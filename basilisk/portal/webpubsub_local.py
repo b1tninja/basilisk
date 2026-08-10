@@ -14,7 +14,7 @@ token is verified with the same code that mints it, and the ``role`` claims are
 enforced per request. A token scoped to room A gets ``Forbidden`` here for the
 same reason it would get ``Forbidden`` from the service.
 
-Not implemented, because quorum signalling does not use them: ``event``
+Not implemented, because notebook signalling does not use them: ``event``
 requests and upstream event handlers, the streaming frames, ``protobuf``,
 binary ``dataType``, permission changes at runtime, and per-connection or
 per-user REST sends. A frame this server does not recognise is answered with an
@@ -146,7 +146,7 @@ class _Connection:
 class LocalWebPubSub:
     """The service, as far as one hub and a handful of groups are concerned."""
 
-    def __init__(self, endpoint: WebPubSubEndpoint, hub: str = "quorum", host: str = "127.0.0.1") -> None:
+    def __init__(self, endpoint: WebPubSubEndpoint, hub: str = "notebook", host: str = "127.0.0.1") -> None:
         self.endpoint = endpoint
         self.hub = hub
         self._host = host
@@ -413,7 +413,7 @@ class LocalWebPubSub:
         conn.send_json(body)
 
 
-def start_local_double(connection_string: str, hub: str = "quorum") -> LocalWebPubSub:
+def start_local_double(connection_string: str, hub: str = "notebook") -> LocalWebPubSub:
     """Start the double described by a connection string pointing at loopback."""
     endpoint = parse_connection_string(connection_string)
     double = LocalWebPubSub(endpoint, hub=hub)

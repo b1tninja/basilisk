@@ -2,6 +2,12 @@
 
 > **Status (2026-07-26):** Implemented — suite badges + FIPS mode (Phase 0), CAST-6…11 + CAST-13/14 WebCrypto + CAST-12 SSS/BLIP39, expanded unit/type tests, toolkit-run worker smoke, CRYPTOGRAPHY.md updates. Quorum CAST suite and OpenPGP padding remain deferred.
 
+> **Vocabulary note (later than the plan below).** Where this document says
+> *Quorum* it means the multi-party P2P session, since renamed the **shared
+> notebook** (`web/src/lib/notebook/`). `web/src/lib/quorum/` now holds only the
+> *m*-of-*n* threshold code. The deferred item is a CAST suite for the shared
+> notebook's ECDH/HKDF/AES-GCM, and it is still deferred.
+
 Extend FIPS-inspired POST/CAST to cover shipped WebCrypto toolkit paths (today only OpenPGP CAST-1…5 run), make the **UI refuse to imply verification it does not have**, then fill unit/type/worker test gaps and document remaining deferred product items.
 
 ## Problem

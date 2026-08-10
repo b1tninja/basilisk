@@ -79,7 +79,7 @@ import { iceServerCensus } from "./ice.js";
  * a client that allocated on it. It holds no DTLS key, is not a party to the
  * handshake, and cannot become one without changing a fingerprint the peers
  * have already committed to — which for a quorum link is exactly what
- * `quorum-dtls-binding.test.js` proves is caught. So it carries ciphertext.
+ * `notebook-dtls-binding.test.js` proves is caught. So it carries ciphertext.
  *
  * What it does hold is the traffic: both peers allocate on it, so it sees both
  * addresses, when the connection ran, and how many bytes crossed. That is

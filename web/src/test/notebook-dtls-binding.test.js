@@ -27,7 +27,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 /** Every `derivePairwiseSessionKey` call, with its inputs, in order. */
 const { derived } = vi.hoisted(() => ({ derived: /** @type {any[]} */ ([]) }));
 
-vi.mock("../lib/quorum/crypto.js", async (importOriginal) => {
+vi.mock("../lib/notebook/crypto.js", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
   return {
     ...actual,
@@ -41,9 +41,9 @@ vi.mock("../lib/quorum/crypto.js", async (importOriginal) => {
 });
 
 const { combineDtlsFingerprints, derivePairwiseSessionKey } = await import(
-  "../lib/quorum/crypto.js"
+  "../lib/notebook/crypto.js"
 );
-const { makeQuorumPair, until } = await import("./helpers/quorum-pair.js");
+const { makeQuorumPair, until } = await import("./helpers/notebook-pair.js");
 
 /** A fingerprint no transport would ever mint. */
 const LIE = `sha-256 ${new Array(32).fill("00").join(":")}`;
@@ -69,7 +69,7 @@ const peerOf = (p, peerFpr) => p.session.peers.get(peerFpr);
 /**
  * The transport itself, reached past the link on purpose.
  *
- * The session cannot do this — it holds a `PeerLink` and `lib/quorum/` may not
+ * The session cannot do this — it holds a `PeerLink` and `lib/notebook/` may not
  * name a connection at all — and that is exactly why the test must. The
  * provenance assertion below compares `localDtls` against the fingerprint the
  * *connection* minted; asking the session for that number would compare it to

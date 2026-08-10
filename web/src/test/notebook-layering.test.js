@@ -1,20 +1,28 @@
 /**
  * The layering rule, asserted against the source rather than trusted.
  *
- * "Quorum is only to be a layer on top of the built-in WebRTC functionality."
- * That is a claim about which module constructs and drives an
+ * "The session is only to be a layer on top of the built-in WebRTC
+ * functionality." That is a claim about which module constructs and drives an
  * `RTCPeerConnection`, and it is the kind of claim that decays quietly: the
- * next handler wired inline inside `QuorumSession` will work perfectly and
+ * next handler wired inline inside `NotebookSession` will work perfectly and
  * nothing will complain. So the two halves are pinned here — no built-in driven
- * from `lib/quorum/`, and no import of `lib/quorum/` from `lib/webrtc/`.
+ * from the layers *above* `lib/webrtc/`, and no import of those layers from
+ * `lib/webrtc/` itself.
+ *
+ * **Two directories sit above it, and both are checked.** `lib/notebook/` is
+ * the session and its transport; `lib/quorum/` is what the name now means on
+ * its own — the m-of-n threshold scheme (`vss`, `dkg*`), which runs *over* a
+ * session it must not reach into. The threshold half satisfies this trivially
+ * today, which is the point of asserting it: `dkg-session.js` coordinates a run
+ * across peers, and the cheap way to make that work is to grab the connection.
  *
  * **Driving is not the only way to hold one.** The first extraction passed this
- * file and every other suite while `QuorumSession` still kept nine handles: the
+ * file and every other suite while `NotebookSession` still kept nine handles: the
  * driver returned a link and the session unwrapped it to `peer.pc`, then called
  * `signalingState`, `restartIce` and `close` on the built-in exactly as before.
  * A grep for `new RTCPeerConnection` said "done" because the constructor had
- * moved. So possession is asserted too — no `.pc` anywhere under `lib/quorum/`,
- * and no `RTC*` symbol in its executable text at all.
+ * moved. So possession is asserted too — no `.pc` anywhere above `lib/webrtc/`,
+ * and no `RTC*` symbol in that executable text at all.
  *
  * The docstrings in both directories *discuss* every symbol asserted absent —
  * that is what they are for — so comments are stripped before any of these
@@ -45,14 +53,15 @@ function readModules(rel) {
     }));
 }
 
-const QUORUM = readModules("../lib/quorum/");
+/** Everything above `lib/webrtc/`: the session layer and the threshold layer. */
+const ABOVE = [...readModules("../lib/notebook/"), ...readModules("../lib/quorum/")];
 const WEBRTC = readModules("../lib/webrtc/");
 
-describe("lib/quorum drives no WebRTC built-in", () => {
+describe("the layers above lib/webrtc drive no WebRTC built-in", () => {
   /**
    * Construction, negotiation and channel creation. Not `channel.send` or
-   * `channel.readyState`: the frames on a quorum channel are sealed under a key
-   * only this layer holds, so writing them is the session's own business (that
+   * `channel.readyState`: the frames on a session channel are sealed under a key
+   * only that layer holds, so writing them is the session's own business (that
    * is the line commit 4fe3322 drew, and it is the same line).
    */
   const DRIVING = [
@@ -69,14 +78,14 @@ describe("lib/quorum drives no WebRTC built-in", () => {
     /\ba=fingerprint\b/,
   ];
 
-  it.each(QUORUM)("$name", ({ name, code }) => {
+  it.each(ABOVE)("$name", ({ name, code }) => {
     for (const rx of DRIVING) {
       expect(code, `${name} drives ${rx}`).not.toMatch(rx);
     }
   });
 });
 
-describe("lib/quorum holds no WebRTC handle", () => {
+describe("the layers above lib/webrtc hold no WebRTC handle", () => {
   /**
    * Possession, which is the half a `new RTCPeerConnection` grep misses.
    *
@@ -94,7 +103,7 @@ describe("lib/quorum holds no WebRTC handle", () => {
    */
   const HOLDING = [/\.pc\b/, /\bRTC[A-Z]\w*/];
 
-  it.each(QUORUM)("$name holds none", ({ name, code }) => {
+  it.each(ABOVE)("$name holds none", ({ name, code }) => {
     for (const rx of HOLDING) {
       expect(code, `${name} holds ${rx}`).not.toMatch(rx);
     }
@@ -108,12 +117,14 @@ describe("lib/quorum holds no WebRTC handle", () => {
   });
 });
 
-describe("lib/webrtc knows nothing about quorum", () => {
+describe("lib/webrtc knows nothing about the layers above it", () => {
   it.each(WEBRTC)("$name imports no session layer", ({ name, code }) => {
     // The direction that matters: `lib/webrtc/` is the layer underneath, and an
     // import upward would put `peer.*` — which has no PGP audience and no relay
     // — back in the position of needing the module that implements both.
-    expect(code, `${name} imports upward`).not.toMatch(/from\s+["'][^"']*quorum/);
+    expect(code, `${name} imports upward`).not.toMatch(
+      /from\s+["'][^"']*(quorum|notebook)/
+    );
   });
 });
 

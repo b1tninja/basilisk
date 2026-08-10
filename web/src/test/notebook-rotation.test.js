@@ -8,14 +8,14 @@
  * a group name — and a name can be changed.
  *
  * Nothing is stubbed but the three things outside the process (see
- * `helpers/quorum-pair.js`): real keys, real sealed envelopes, real ECDH, real
+ * `helpers/notebook-pair.js`): real keys, real sealed envelopes, real ECDH, real
  * key confirmation. So "the room moved" here means the sessions re-derived
  * their material, re-negotiated, re-joined a different group, and re-confirmed
  * keys over a transcript bound to the new room — not that a field changed.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { makeQuorumPair, until } from "./helpers/quorum-pair.js";
-import { deriveRoomMaterial } from "../lib/quorum/room.js";
+import { makeQuorumPair, until } from "./helpers/notebook-pair.js";
+import { deriveRoomMaterial } from "../lib/notebook/room.js";
 
 /** @type {Awaited<ReturnType<typeof makeQuorumPair>>|null} */
 let pair = null;

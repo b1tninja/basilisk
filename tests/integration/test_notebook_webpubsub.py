@@ -122,7 +122,7 @@ class WsClient:
 @pytest.fixture
 def hub():
     endpoint = parse_connection_string(CONNECTION)
-    double = LocalWebPubSub(endpoint, hub="quorum")
+    double = LocalWebPubSub(endpoint, hub="notebook")
     port = double.start(port=0)
     # The endpoint has to name the port the OS actually handed out, or the
     # audience in every token would disagree with the one the double checks.
@@ -135,7 +135,7 @@ def hub():
 
 
 def _connect(bound, port, token) -> WsClient:
-    return WsClient("127.0.0.1", port, bound.client_path("quorum"), token)
+    return WsClient("127.0.0.1", port, bound.client_path("notebook"), token)
 
 
 @pytest.mark.integration
@@ -145,8 +145,8 @@ def _connect(bound, port, token) -> WsClient:
 )
 def test_two_peers_exchange_signalling_through_the_room(hub):
     _double, bound, port = hub
-    alice = _connect(bound, port, room_grant(bound, "quorum", ROOM_A)["url"].split("access_token=")[1])
-    bob = _connect(bound, port, room_grant(bound, "quorum", ROOM_A)["url"].split("access_token=")[1])
+    alice = _connect(bound, port, room_grant(bound, "notebook", ROOM_A)["url"].split("access_token=")[1])
+    bob = _connect(bound, port, room_grant(bound, "notebook", ROOM_A)["url"].split("access_token=")[1])
     try:
         assert alice.status == "101"
         assert f"Sec-WebSocket-Protocol: {CLIENT_SUBPROTOCOL}" in alice.handshake
@@ -178,7 +178,7 @@ def test_two_peers_exchange_signalling_through_the_room(hub):
 )
 def test_a_token_for_one_room_is_refused_by_every_other_room(hub):
     _double, bound, port = hub
-    token = room_grant(bound, "quorum", ROOM_A)["url"].split("access_token=")[1]
+    token = room_grant(bound, "notebook", ROOM_A)["url"].split("access_token=")[1]
     client = _connect(bound, port, token)
     try:
         assert client.await_type("system")["event"] == "connected"
@@ -214,8 +214,8 @@ def test_a_room_b_listener_never_sees_room_a_traffic(hub):
     """Scoping is not only about what a token may *do* — a peer holding a
     room B grant must not receive room A's envelopes either."""
     _double, bound, port = hub
-    a_token = room_grant(bound, "quorum", ROOM_A)["url"].split("access_token=")[1]
-    b_token = room_grant(bound, "quorum", ROOM_B)["url"].split("access_token=")[1]
+    a_token = room_grant(bound, "notebook", ROOM_A)["url"].split("access_token=")[1]
+    b_token = room_grant(bound, "notebook", ROOM_B)["url"].split("access_token=")[1]
     alice = _connect(bound, port, a_token)
     eve = _connect(bound, port, b_token)
     try:
@@ -265,14 +265,14 @@ def test_the_lobby_token_and_the_room_token_are_refused_by_each_other(hub):
     knocker = _connect(
         bound,
         port,
-        room_grant(bound, "quorum", lobby, room_id=ROOM_A, scope="lobby")["url"].split(
+        room_grant(bound, "notebook", lobby, room_id=ROOM_A, scope="lobby")["url"].split(
             "access_token="
         )[1],
     )
     member = _connect(
         bound,
         port,
-        room_grant(bound, "quorum", room, room_id=ROOM_A, scope="room")["url"].split(
+        room_grant(bound, "notebook", room, room_id=ROOM_A, scope="room")["url"].split(
             "access_token="
         )[1],
     )
@@ -335,10 +335,10 @@ def test_a_rotated_room_leaves_the_old_token_holding_a_name(hub):
     assert before != after
 
     stale = _connect(
-        bound, port, room_grant(bound, "quorum", before)["url"].split("access_token=")[1]
+        bound, port, room_grant(bound, "notebook", before)["url"].split("access_token=")[1]
     )
     moved = _connect(
-        bound, port, room_grant(bound, "quorum", after)["url"].split("access_token=")[1]
+        bound, port, room_grant(bound, "notebook", after)["url"].split("access_token=")[1]
     )
     try:
         for peer in (stale, moved):
@@ -384,7 +384,7 @@ def test_an_unsigned_or_foreign_token_never_becomes_a_websocket(hub):
     _double, bound, port = hub
     forged = client_access_token(
         parse_connection_string(f"Endpoint=http://127.0.0.1:{port};AccessKey=not-the-key;"),
-        "quorum",
+        "notebook",
         user_id="mallory",
         roles=room_roles(ROOM_A),
         groups=(ROOM_A,),
@@ -401,7 +401,7 @@ def test_an_unsigned_or_foreign_token_never_becomes_a_websocket(hub):
 def test_the_double_is_the_thread_it_says_it_is():
     """Start/stop is idempotent — a leaked listener would make the suite
     order-dependent."""
-    double = LocalWebPubSub(parse_connection_string(CONNECTION), hub="quorum")
+    double = LocalWebPubSub(parse_connection_string(CONNECTION), hub="notebook")
     port = double.start(port=0)
     assert port > 0
     assert double.start(port=0) == port

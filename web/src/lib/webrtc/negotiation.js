@@ -3,10 +3,10 @@
  *
  * This is the MDN pattern, not a Basilisk invention, which is why it lives in
  * `lib/webrtc/` and is imported by the session layer rather than the other way
- * round. `QuorumSession` still calls it from inside its own
+ * round. `NotebookSession` still calls it from inside its own
  * `onnegotiationneeded`/`ondescription` handlers; moving a pure function does
  * not move *when* those handlers run, which is the property §59b insists on
- * (see the note in `lib/quorum/session.js`).
+ * (see the note in `lib/notebook/session.js`).
  *
  * @module lib/webrtc/negotiation
  */

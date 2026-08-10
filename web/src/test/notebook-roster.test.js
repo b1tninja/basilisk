@@ -1,6 +1,6 @@
 /**
  * Roster projection — the one translation point between the transport's
- * vocabulary (QuorumPeerState) and the Connections panel's (ConnectionPeer).
+ * vocabulary (NotebookPeerState) and the Connections panel's (ConnectionPeer).
  *
  * The property that matters most: connectivity and authentication are
  * independent axes. A peer can be fully connected and completely unverified,
@@ -8,7 +8,7 @@
  * transcript-bound key confirmation — either alone is not identity.
  */
 import { describe, expect, it } from "vitest";
-import { projectRosterPeers, shortFpr } from "../lib/quorum/roster.js";
+import { projectRosterPeers, shortFpr } from "../lib/notebook/roster.js";
 import { selectedCandidateType } from "../lib/webrtc/candidates.js";
 
 const FPR_A = "AAAA111122223333444455556666777788889999";

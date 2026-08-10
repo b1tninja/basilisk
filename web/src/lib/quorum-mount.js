@@ -5,13 +5,13 @@ import {
   primaryUidLabel,
 } from "../lib/key-hit.js";
 import { normalizeFingerprintInput, normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
-import { QuorumSession } from "../lib/quorum/session.js";
+import { NotebookSession } from "../lib/notebook/session.js";
 import { DEFAULT_ICE_SERVERS, NO_ICE_SERVERS } from "../lib/webrtc/ice.js";
 import {
   requireSelfInAudience,
   unlockPrivateKey,
-} from "../lib/quorum/crypto.js";
-import { deriveRoomId, isValidRoomId, quorumRelyingPartyId } from "../lib/quorum/room.js";
+} from "../lib/notebook/crypto.js";
+import { deriveRoomId, isValidRoomId, notebookRelyingPartyId } from "../lib/notebook/room.js";
 import {
   getTrust,
   listTrusted,
@@ -48,7 +48,7 @@ export function mountQuorum(container, opts = {}) {
 let audience = [];
 /** @type {string} */
 let selfFpr = "";
-/** @type {QuorumSession|null} */
+/** @type {NotebookSession|null} */
 let session = null;
 /** @type {Array<{ from: string, text: string, ts: number, self?: boolean }>} */
 let chatLog = [];
@@ -78,7 +78,7 @@ function render() {
 
       <div class="card">
         <p class="card-title">Create room</p>
-        <p class="muted fs-sm mb-md">Add peers; your unlocked key is included automatically and cannot be removed. Creating publishes a signed invite. Room ID = hostname (<code>${escapeHtml(quorumRelyingPartyId())}</code>) + sorted audience fingerprints.</p>
+        <p class="muted fs-sm mb-md">Add peers; your unlocked key is included automatically and cannot be removed. Creating publishes a signed invite. Room ID = hostname (<code>${escapeHtml(notebookRelyingPartyId())}</code>) + sorted audience fingerprints.</p>
         ${
           trusted.length
             ? `<div class="mb-md">
@@ -453,7 +453,7 @@ async function startSession(roomId, audienceFprs, role, identity) {
       "Room ID does not match this audience (hostname + fingerprints). Check the audience list."
     );
   }
-  session = new QuorumSession({
+  session = new NotebookSession({
     roomId: derived,
     audienceFprs: fprs,
     privateKey: key,

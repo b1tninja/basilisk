@@ -1,5 +1,5 @@
 /**
- * Quorum full-mesh WebRTC data-channel session.
+ * The notebook's full-mesh WebRTC data-channel session.
  *
  * Creators post a PGP-signed invite proving key possession; joiners mesh only
  * after verifying that invite. Pairwise session keys use per-peer ephemeral
@@ -10,7 +10,7 @@
  * `PeerLink` — an opaque handle from `webrtc/peer-link.js` — and everything
  * this layer does to it is a method on that handle. The connection inside it
  * is never unwrapped: there is no `pc` on a peer record, and
- * `src/test/quorum-layering.test.js` fails if one comes back.
+ * `src/test/notebook-layering.test.js` fails if one comes back.
  *
  * That is the difference between this and the first extraction, which moved the
  * driver out and then took the connection straight back off the link it
@@ -20,7 +20,7 @@
  * SDP parsing lives in `webrtc/sdp.js`; the link inventory, the default ICE
  * server list, the glare rule and the selected-candidate stats in
  * `webrtc/link-registry.js`, `ice.js`, `negotiation.js` and `candidates.js`.
- * Deleting `lib/quorum/` leaves `peer.*` and `rtc.*` standing.
+ * Deleting `lib/notebook/` leaves `peer.*` and `rtc.*` standing.
  *
  * **The room is not a place, it is a name.** Membership in the signalling
  * group is asserted by holding a token and re-asserted every time the relay
@@ -35,7 +35,7 @@
  * the room, the roster, key derivation, key confirmation, and the mesh policy
  * that decides *which* links exist and who offers. The one piece of transport
  * this layer still touches directly is a live data channel's `send` and
- * `readyState` — because the frames on it are quorum's own, sealed under a key
+ * `readyState` — because the frames on it are this layer's own, sealed under a key
  * this layer holds and the transport cannot read.
  *
  * **Why the driver could move, after two commits said it could not.**
@@ -45,7 +45,7 @@
  * known, and the failure mode of getting it subtly wrong is key confirmation
  * *succeeding anyway* over a transcript no longer bound to the transport —
  * green tests, broken binding (§59b). What made it safe was not care: it was
- * `src/test/quorum-dtls-binding.test.js`, a test that **fails when tampered**.
+ * `src/test/notebook-dtls-binding.test.js`, a test that **fails when tampered**.
  * Two real sessions mesh over a fake transport; a signalling relay rewrites one
  * peer's fingerprint and re-seals under that peer's own key, so nothing in the
  * PGP layer can see it; both ends must end up unconfirmed. That test was
@@ -54,7 +54,7 @@
  * `answerRemoteOffer` hand back `{ sdp, dtlsFingerprint }` together, so an SDP
  * cannot be signalled without the fingerprint that belongs to it.
  *
- * @module lib/quorum/session
+ * @module lib/notebook/session
  */
 
 import {
@@ -87,7 +87,7 @@ import { iceServersOrDefault } from "../webrtc/ice.js";
 import { openPeerLink } from "../webrtc/peer-link.js";
 
 /**
- * @typedef {object} QuorumPeerState
+ * @typedef {object} NotebookPeerState
  * @property {string} fingerprint
  * @property {"unknown"|"verified"|"connecting"|"connected"|"failed"} status
  * @property {boolean} pgpVerified
@@ -112,7 +112,7 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  */
 
 /**
- * @typedef {object} QuorumSessionOpts
+ * @typedef {object} NotebookSessionOpts
  * @property {string} roomId
  * @property {string[]} audienceFprs
  * @property {import("openpgp").PrivateKey} privateKey
@@ -121,14 +121,14 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  * @property {RTCIceServer[]} [iceServers]
  *   Omitted (or null) takes the built-in STUN defaults; `[]` is a deliberate
  *   *no third party* and is honoured as written — host candidates only.
- * @property {(peers: Map<string, QuorumPeerState>) => void} [onRoster]
+ * @property {(peers: Map<string, NotebookPeerState>) => void} [onRoster]
  * @property {(msg: { from: string, text: string, ts: number }) => void} [onChat]
  * @property {(status: string) => void} [onStatus]
  * @property {(err: Error) => void} [onError]
  */
 
-export class QuorumSession {
-  /** @param {QuorumSessionOpts} opts */
+export class NotebookSession {
+  /** @param {NotebookSessionOpts} opts */
   constructor(opts) {
     this.roomId = String(opts.roomId || "")
       .trim()
@@ -147,7 +147,7 @@ export class QuorumSession {
     this.onStatus = opts.onStatus;
     this.onError = opts.onError;
 
-    /** @type {Map<string, QuorumPeerState>} */
+    /** @type {Map<string, NotebookPeerState>} */
     this.peers = new Map();
     /** @type {Map<string, import("openpgp").Key>} */
     this.audienceKeys = new Map();
@@ -332,7 +332,7 @@ export class QuorumSession {
    * @returns {Promise<{ epoch: number, roomId: string, audience: string[] }>}
    */
   async rotateRoom({ remove = [], announce = true } = {}) {
-    if (this._rotating) throw new Error("Quorum room rotation is already running");
+    if (this._rotating) throw new Error("Notebook room rotation is already running");
     const removed = new Set(
       (remove || []).map((f) => normalizeFingerprintInput(f)).filter(Boolean)
     );
@@ -341,7 +341,7 @@ export class QuorumSession {
       throw new Error("Cannot rotate a room that no longer includes this key");
     }
     if (next.length < 2) {
-      throw new Error("Quorum room requires at least two audience fingerprints");
+      throw new Error("Notebook room requires at least two audience fingerprints");
     }
     const epoch = this.epoch + 1;
     const secret = randomNonceHex(32);
@@ -389,7 +389,7 @@ export class QuorumSession {
     // and no room to re-open them in.
     const next = this.audienceFprs.filter((f) => !removed.has(f));
     if (!next.includes(this.myFpr) || next.length < 2) {
-      throw new Error("Quorum room requires at least two audience fingerprints");
+      throw new Error("Notebook room requires at least two audience fingerprints");
     }
     for (const fpr of removed) {
       const peer = this.peers.get(fpr);
@@ -624,7 +624,7 @@ export class QuorumSession {
   /**
    * Verified signaling payload → session/peer state. Shared by the mailbox
    * and channel paths.
-   * @param {import("./crypto.js").QuorumEnvelopePayload} payload
+   * @param {import("./crypto.js").NotebookEnvelopePayload} payload
    * @param {string} signerFpr
    */
   async _handleSignal(payload, signerFpr) {
@@ -771,7 +771,7 @@ export class QuorumSession {
   }
 
   /**
-   * @param {import("./crypto.js").QuorumEnvelopePayload} payload
+   * @param {import("./crypto.js").NotebookEnvelopePayload} payload
    * @param {string} signerFpr
    */
   async _handleInvite(payload, signerFpr) {
@@ -829,7 +829,7 @@ export class QuorumSession {
 
   /**
    * @param {string} fpr
-   * @returns {QuorumPeerState}
+   * @returns {NotebookPeerState}
    */
   _newPeer(fpr) {
     return {
@@ -946,6 +946,13 @@ export class QuorumSession {
     // What the mesh gives up is being the sole answer to "what is connected",
     // which it was never the right owner of: the five `rtc.*` diagnostics used
     // to refuse outright for any connection made another way.
+    // `origin` and `label` stay `"quorum"`, and so does the channel label
+    // below. None of the three is this module's name to change: `origin` is the
+    // discriminant `link-registry.js` declares and `peer-ops.js`, the readouts
+    // and the Connections panel switch on, and the channel label is negotiated
+    // on the wire — both ends must spell it the same way or the channel the
+    // answerer receives is not the one the offerer opened. They travel with the
+    // `quorum.*` ops that create these links, so they move when those do.
     registerLink({
       id: peerFpr,
       origin: "quorum",
@@ -1104,7 +1111,7 @@ export class QuorumSession {
   }
 
   /**
-   * @param {Partial<import("./crypto.js").QuorumEnvelopePayload>} fields
+   * @param {Partial<import("./crypto.js").NotebookEnvelopePayload>} fields
    */
   async _broadcast(fields) {
     const audienceKeys = [...this.audienceKeys.values()];
@@ -1117,7 +1124,7 @@ export class QuorumSession {
       ...fields,
     };
     const armored = await sealSignalingEnvelope({
-      payload: /** @type {import("./crypto.js").QuorumEnvelopePayload} */ (
+      payload: /** @type {import("./crypto.js").NotebookEnvelopePayload} */ (
         payload
       ),
       signingKey: this.privateKey,
@@ -1136,13 +1143,13 @@ export class QuorumSession {
    */
   async _publish(armored) {
     this._envSeen.seen(armored);
-    if (!this._relay) throw new Error("Quorum signalling is not connected");
+    if (!this._relay) throw new Error("Notebook signalling is not connected");
     await this._relay.send(armored);
   }
 
   /**
    * @param {string} toFpr
-   * @param {Partial<import("./crypto.js").QuorumEnvelopePayload>} fields
+   * @param {Partial<import("./crypto.js").NotebookEnvelopePayload>} fields
    * @param {{ recipients?: string[] }} [opts] seal to these audience members
    *   only. Signalling is sealed to the whole audience by default because a
    *   relaying member has to open an envelope to learn who it is for; naming
@@ -1165,7 +1172,7 @@ export class QuorumSession {
       ...fields,
     };
     const armored = await sealSignalingEnvelope({
-      payload: /** @type {import("./crypto.js").QuorumEnvelopePayload} */ (
+      payload: /** @type {import("./crypto.js").NotebookEnvelopePayload} */ (
         payload
       ),
       signingKey: this.privateKey,

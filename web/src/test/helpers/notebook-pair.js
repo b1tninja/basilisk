@@ -1,5 +1,5 @@
 /**
- * Two live `QuorumSession`s meshing with each other, in node.
+ * Two live `NotebookSession`s meshing with each other, in node.
  *
  * Nothing about the session is stubbed: real OpenPGP keys, real signed and
  * encrypted signalling envelopes, real ECDH, real key confirmation. Only the
@@ -29,9 +29,9 @@ import { generateKey } from "openpgp";
 import {
   openSignalingEnvelope,
   sealSignalingEnvelope,
-} from "../../lib/quorum/crypto.js";
-import { deriveRoomId } from "../../lib/quorum/room.js";
-import { QuorumSession } from "../../lib/quorum/session.js";
+} from "../../lib/notebook/crypto.js";
+import { deriveRoomId } from "../../lib/notebook/room.js";
+import { NotebookSession } from "../../lib/notebook/session.js";
 import { FakePeerConnection } from "./fake-peer-connection.js";
 import { installWebPubSubDouble } from "./webpubsub-double.js";
 
@@ -39,7 +39,7 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  * @typedef {object} PairSide
  * @property {string} fpr
  * @property {import("openpgp").PrivateKey} privateKey
- * @property {QuorumSession} session
+ * @property {NotebookSession} session
  * @property {Error[]} errors
  * @property {{ from: string, text: string, ts: number }[]} chats
  * @property {string[]} statuses
@@ -151,7 +151,7 @@ export async function makeQuorumPair({ tamper } = {}) {
       if (href.includes("/pks/v2/challenge")) {
         return Response.json({ nonce: "n", timestamp: 0, difficulty: 0, hint: "n:0:sig" });
       }
-      if (href.includes("/api/v1/quorum/negotiate")) {
+      if (href.includes("/api/v1/notebook/negotiate")) {
         const body = JSON.parse(String(init?.body || "{}"));
         return Response.json(await relay.grantFor(String(body.room || roomId)));
       }
@@ -169,7 +169,7 @@ export async function makeQuorumPair({ tamper } = {}) {
   function makeSide(privateKey, fpr, role) {
     /** @type {any} */
     const side = { fpr, privateKey, errors: [], chats: [], statuses: [] };
-    side.session = new QuorumSession({
+    side.session = new NotebookSession({
       roomId,
       audienceFprs: audience,
       privateKey,

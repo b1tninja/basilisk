@@ -72,7 +72,7 @@ export const LEGACY_STEP_MIGRATE = {
   // married to a quorum room", and it never arrived: both dispatch to
   // `execQuorumSend`/`execQuorumRecv`, which require a live exchange, address
   // peers by PGP fingerprint, and encrypt under the pairwise session key
-  // `derivePairwiseSessionKey` mints in `lib/quorum/`. `rtc.send`'s own doc
+  // `derivePairwiseSessionKey` mints in `lib/notebook/`. `rtc.send`'s own doc
   // said "key-confirmed channels only" for the whole of its life.
   //
   // §55c settled it in the other direction: `peer.send`/`peer.recv` are the

@@ -3,7 +3,7 @@
  * in process, for the node suite.
  *
  * The service cannot run here, and the alternative (mocking
- * `lib/quorum/webpubsub.js` away) would only prove the mock agrees with
+ * `lib/notebook/webpubsub.js` away) would only prove the mock agrees with
  * itself. So this stands in at the *socket*: `globalThis.WebSocket` is replaced
  * by a class that speaks the documented `json.webpubsub.azure.v1` frames —
  * joinGroup / leaveGroup / sendToGroup, ack responses, group broadcast, the

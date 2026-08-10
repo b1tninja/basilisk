@@ -105,7 +105,7 @@ class Settings:
                 os.environ.get("AZURE_WEBPUBSUB_CONNECTION_STRING")
                 or (_DEV_WEBPUBSUB_CONNECTION if _allow_insecure_default_secret() else None)
             ),
-            web_pubsub_hub=os.environ.get("BASILISK_WEBPUBSUB_HUB", "quorum"),
+            web_pubsub_hub=os.environ.get("BASILISK_WEBPUBSUB_HUB", "notebook"),
             # Minutes, not hours: the token buys a WebSocket handshake, and the
             # whole signalling bootstrap — invite, hello, offer/answer, ICE —
             # is seconds of work. Five matches BASILISK_PROOF_MAX_AGE_SEC, so
@@ -172,7 +172,7 @@ class Settings:
         }
 
     def signaling_ws_origin(self) -> str | None:
-        """``wss://host`` for quorum signalling, or None when unconfigured.
+        """``wss://host`` for notebook signalling, or None when unconfigured.
 
         Per-deployment, so it can never be hardcoded into the policy string:
         the hub lives at a hostname that comes out of the connection string.
@@ -184,12 +184,12 @@ class Settings:
         try:
             return parse_connection_string(self.web_pubsub_connection).ws_origin()
         except WebPubSubConfigError:
-            logger.warning("AZURE_WEBPUBSUB_CONNECTION_STRING is malformed; quorum signalling is off")
+            logger.warning("AZURE_WEBPUBSUB_CONNECTION_STRING is malformed; notebook signalling is off")
             return None
 
     def csp_connect_src(self) -> str:
         """connect-src sources: self, allowlisted HTTPS keyserver hosts, and
-        the quorum signalling socket."""
+        the notebook signalling socket."""
         parts = ["'self'"]
         for host in self.upstream_allowlist:
             parts.append(f"https://{host}")

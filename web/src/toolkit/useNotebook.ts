@@ -48,7 +48,7 @@ import type {
   VaultKeyRow,
 } from "./notebook-types";
 
-/** One roster row — mirror of lib/quorum/roster's ConnectionPeerRow. */
+/** One roster row — mirror of lib/notebook/roster's ConnectionPeerRow. */
 export type QuorumPeerRow = {
   id: string;
   fingerprint: string;

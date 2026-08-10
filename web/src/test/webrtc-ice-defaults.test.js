@@ -158,7 +158,7 @@ describe("the substitution has one home", () => {
 
   it("is the rule each substitution site actually calls", () => {
     for (const name of [
-      "lib/quorum/session.js",
+      "lib/notebook/session.js",
       "lib/toolkit/rtc-ops.js",
       "lib/toolkit/quorum-ops.js",
     ]) {

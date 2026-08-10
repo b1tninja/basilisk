@@ -4,7 +4,7 @@
  * `getStats()` is a WebRTC interface and the shapes it returns differ per
  * engine; knowing that Firefox omits the `transport` stat that links the
  * selected pair is a fact about browsers, not about a quorum roster. It lived
- * in `lib/quorum/roster.js` because the roster was its first caller — then
+ * in `lib/notebook/roster.js` because the roster was its first caller — then
  * `peer.*` became its second, which left the peer-connection manager importing
  * the mesh's projection module to answer a question about ICE.
  *

@@ -7,8 +7,8 @@ import {
   deriveRoomMaterial,
   isValidRoomId,
   isValidRoomKey,
-  quorumRelyingPartyId,
-} from "../lib/quorum/room.js";
+  notebookRelyingPartyId,
+} from "../lib/notebook/room.js";
 
 const ALICE =
   "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -31,13 +31,13 @@ describe("canonicalAudience", () => {
   });
 });
 
-describe("quorumRelyingPartyId", () => {
+describe("notebookRelyingPartyId", () => {
   it("normalizes an explicit override", () => {
-    expect(quorumRelyingPartyId(" Keys.Example.ORG ")).toBe("keys.example.org");
+    expect(notebookRelyingPartyId(" Keys.Example.ORG ")).toBe("keys.example.org");
   });
 
   it("falls back to localhost when location is unavailable", () => {
-    expect(quorumRelyingPartyId()).toBe("localhost");
+    expect(notebookRelyingPartyId()).toBe("localhost");
   });
 });
 

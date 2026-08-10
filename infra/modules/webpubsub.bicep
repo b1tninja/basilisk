@@ -4,10 +4,10 @@ param namePrefix string
 @description('Azure region')
 param location string
 
-@description('Hub name for quorum signalling; must match BASILISK_WEBPUBSUB_HUB')
-param hubName string = 'quorum'
+@description('Hub name for notebook signalling; must match BASILISK_WEBPUBSUB_HUB')
+param hubName string = 'notebook'
 
-// Free_F1 is the deliberate starting point: quorum signalling is a handful of
+// Free_F1 is the deliberate starting point: notebook signalling is a handful of
 // short-lived connections carrying a few sealed envelopes each, and the tier's
 // ceilings (20 concurrent connections, 20 000 messages/day) are the honest
 // limit of this design rather than an oversight. Signalling moves to the peer

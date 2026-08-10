@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "12157254576438401948"
+      "templateHash": "905867412153199573"
     }
   },
   "parameters": {
@@ -486,7 +486,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "256347022822576211"
+              "templateHash": "8110721803822989763"
             }
           },
           "parameters": {
@@ -504,9 +504,9 @@
             },
             "hubName": {
               "type": "string",
-              "defaultValue": "quorum",
+              "defaultValue": "notebook",
               "metadata": {
-                "description": "Hub name for quorum signalling; must match BASILISK_WEBPUBSUB_HUB"
+                "description": "Hub name for notebook signalling; must match BASILISK_WEBPUBSUB_HUB"
               }
             }
           },
@@ -616,7 +616,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "13026561988943419167"
+              "templateHash": "14739316855254206818"
             }
           },
           "parameters": {
@@ -659,9 +659,9 @@
             },
             "webPubSubHub": {
               "type": "string",
-              "defaultValue": "quorum",
+              "defaultValue": "notebook",
               "metadata": {
-                "description": "Web PubSub hub carrying quorum signalling"
+                "description": "Web PubSub hub carrying notebook signalling"
               }
             },
             "requireManagerApproval": {

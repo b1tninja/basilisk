@@ -396,7 +396,7 @@ export async function execPeerWait(params) {
 /**
  * Write pipeline text to a link's channel, passing the value through.
  *
- * Not `quorum.send`. That op writes through `QuorumSession.sendChat`, which
+ * Not `quorum.send`. That op writes through `NotebookSession.sendChat`, which
  * encrypts under the pairwise session key before touching the channel; a
  * managed link has no such key. Sharing one verb between the two would either
  * throw somewhere confusing or — if anyone "fixed" the throw — put plaintext on
@@ -513,7 +513,7 @@ export async function execPeerRecv(params) {
  * Bounded to `peer`-origin links even when closing everything: the mesh's links
  * are in the same inventory and belong to `quorum.close`, which also has
  * session keys to zeroize and a signalling poll to stop. Tearing them down from
- * here would leave `QuorumSession` believing it still had a transport.
+ * here would leave `NotebookSession` believing it still had a transport.
  */
 export function execPeerClose(params) {
   const raw = String(params?.name ?? "").trim();

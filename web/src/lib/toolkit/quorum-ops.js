@@ -1,6 +1,6 @@
 /**
  * Quorum toolbox ops (design v2 §21a) — WebRTC/STUN/ICE transport steps plus
- * a RUN-SCOPED p2p exchange wrapping lib/quorum's QuorumSession.
+ * a RUN-SCOPED p2p exchange wrapping lib/notebook's NotebookSession.
  *
  * The run boundary is the session boundary: `quorum.offer`/`quorum.join`
  * create the exchange (pausing the run at that cell until peers mesh),
@@ -16,10 +16,10 @@
  * @module lib/toolkit/quorum-ops
  */
 
-import { QuorumSession } from "../quorum/session.js";
+import { NotebookSession } from "../notebook/session.js";
 import { iceServersOrDefault } from "../webrtc/ice.js";
-import { deriveRoomId, canonicalAudience } from "../quorum/room.js";
-import { projectRosterPeers } from "../quorum/roster.js";
+import { deriveRoomId, canonicalAudience } from "../notebook/room.js";
+import { projectRosterPeers } from "../notebook/roster.js";
 import { DKG_COMMIT, DKG_SHARE } from "../quorum/dkg-run.js";
 import { idFromFingerprint, scalarToHex } from "../quorum/vss.js";
 
@@ -32,7 +32,7 @@ import { idFromFingerprint, scalarToHex } from "../quorum/vss.js";
  * @property {number} connected
  * @property {number} expected
  * @property {string} status   last human-readable session status line
- * @property {import("../quorum/roster.js").ConnectionPeerRow[]} peers
+ * @property {import("../notebook/roster.js").ConnectionPeerRow[]} peers
  */
 
 /** @type {QuorumExchangeState} */
@@ -50,7 +50,7 @@ const IDLE_STATE = Object.freeze({
 /**
  * The one live exchange for the current run/session.
  * @type {{
- *   session: QuorumSession,
+ *   session: NotebookSession,
  *   state: QuorumExchangeState,
  *   inbox: { from: string, text: string, ts: number }[],
  *   recvWaiters: ((msg: { from: string, text: string, ts: number } | null) => void)[],
@@ -69,8 +69,8 @@ let current = null;
  * Cached per exchange — the selected pair does not change without a
  * reconnection, and a reconnection makes a new exchange.
  *
- * @param {Map<string, import("../quorum/session.js").QuorumPeerState>} peersMap
- * @returns {import("../quorum/roster.js").ConnectionPeerRow[]}
+ * @param {Map<string, import("../notebook/session.js").NotebookPeerState>} peersMap
+ * @returns {import("../notebook/roster.js").ConnectionPeerRow[]}
  */
 function projectPeers(peersMap) {
   const ex = current;
@@ -112,10 +112,10 @@ function patchState(patch) {
 }
 
 /**
- * The live `QuorumSession` (or null) — lets the `rtc.*` diagnostic ops read
+ * The live `NotebookSession` (or null) — lets the `rtc.*` diagnostic ops read
  * real `RTCPeerConnection`/`RTCDataChannel` state off the running exchange
  * without importing the mesh themselves (design v2 §23b/29d/30d).
- * @returns {QuorumSession|null}
+ * @returns {NotebookSession|null}
  */
 export function getLiveSession() {
   return current && !current.cancelled ? current.session : null;
@@ -409,7 +409,7 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
   const wait = Math.max(1000, Number(params?.wait) || 120000);
   const needPeers = Math.max(1, Number(params?.peers) || 1);
 
-  const session = new QuorumSession({
+  const session = new NotebookSession({
     roomId: room,
     audienceFprs: audience,
     privateKey,
@@ -572,7 +572,7 @@ export async function execQuorumSend(value, params) {
       : new TextDecoder().decode(/** @type {Uint8Array} */ (value?.data));
   const to = String(params?.to || "").trim();
   // Addressed sends throw when no verified peer matches, rather than quietly
-  // reaching nobody — see QuorumSession.sendChatTo.
+  // reaching nobody — see NotebookSession.sendChatTo.
   if (to) await ex.session.sendChatTo(to, text);
   else await ex.session.sendChat(text);
   return value;

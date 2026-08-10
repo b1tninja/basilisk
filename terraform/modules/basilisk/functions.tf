@@ -92,7 +92,7 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
       ServiceBusConnection              = azurerm_servicebus_namespace_authorization_rule.function.primary_connection_string
       AZURE_STORAGE_CONNECTION_STRING   = azurerm_storage_account.basilisk.primary_connection_string
       AZURE_WEBPUBSUB_CONNECTION_STRING = azurerm_web_pubsub.basilisk.primary_connection_string
-      BASILISK_WEBPUBSUB_HUB            = azurerm_web_pubsub_hub.quorum.name
+      BASILISK_WEBPUBSUB_HUB            = azurerm_web_pubsub_hub.notebook.name
       BASILISK_CACHE_MODE               = "redirect"
       BASILISK_DEV_APPROVE              = "0"
       BASILISK_REQUIRE_MANAGER_APPROVAL = var.require_manager_approval ? "1" : "0"

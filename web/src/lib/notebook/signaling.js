@@ -1,5 +1,5 @@
 /**
- * Quorum signalling — an opaque relay for sealed envelopes, in room terms.
+ * Notebook signalling — an opaque relay for sealed envelopes, in room terms.
  *
  * This module is the seam. Above it (`session.js`, `quorum-ops.js`,
  * `quorum-mount.js`) the vocabulary is *join a room, send to the room, receive
@@ -17,7 +17,7 @@
  * carries nothing it can read or alter — which is why swapping the wire under
  * it is a transport change and not a protocol change.
  *
- * @module lib/quorum/signaling
+ * @module lib/notebook/signaling
  */
 
 import { fetchJson } from "../utils.js";
@@ -106,7 +106,7 @@ function recycleDelayMs(grant, override) {
 }
 
 /**
- * A room-scoped connection grant, in the shape `/api/v1/quorum/negotiate`
+ * A room-scoped connection grant, in the shape `/api/v1/notebook/negotiate`
  * promises. `transport` names which protocol `url`/`protocol` belong to; it is
  * the one field a second provider would change.
  *
@@ -150,7 +150,7 @@ export async function negotiateSignaling(roomId, opts = {}) {
     throw new Error("Room key does not match room id");
   }
   const headers = await proofHeaders();
-  return fetchJson("/api/v1/quorum/negotiate", {
+  return fetchJson("/api/v1/notebook/negotiate", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(key ? { room: rid, key } : { room: rid }),
@@ -168,7 +168,7 @@ function connectGrant(grant, handlers) {
     // deployment mismatch, and silently trying anyway would fail as "the peer
     // never answered" a layer away from the cause.
     throw new Error(
-      `quorum: unsupported signalling transport ${JSON.stringify(grant?.transport ?? null)}`
+      `notebook: unsupported signalling transport ${JSON.stringify(grant?.transport ?? null)}`
     );
   }
   return connectWebPubSub({
@@ -282,7 +282,7 @@ export function openSignalingChannel({
    */
   async function dial() {
     const grant = await negotiateSignaling(rid, { roomKey });
-    if (stopped) throw new Error("quorum: signalling channel is closed");
+    if (stopped) throw new Error("notebook: signalling channel is closed");
     /** @type {Leg} */
     const leg = /** @type {any} */ ({ conn: null, grant, retired: false });
     leg.conn = connectGrant(grant, {
@@ -354,12 +354,12 @@ export function openSignalingChannel({
   return {
     ready,
     async send(payload) {
-      if (stopped) throw new Error("quorum: signalling channel is closed");
+      if (stopped) throw new Error("notebook: signalling channel is closed");
       // Awaited rather than checked: a send that lands during a reconnect
       // should wait for the socket, not fail because it arrived early.
       await ready;
       const leg = live;
-      if (!leg) throw new Error("quorum: signalling channel is reconnecting");
+      if (!leg) throw new Error("notebook: signalling channel is reconnecting");
       await leg.conn.send(String(payload));
     },
     stop() {

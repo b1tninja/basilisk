@@ -523,15 +523,15 @@ When `BASILISK_REQUIRE_PROOF=1`:
 
 3. Legacy `POST /pks/add` (`gpg --send-keys`) never requires proof
 
-4. `POST /api/v1/quorum/negotiate` requires it too — signalling is gated the same way uploads are
+4. `POST /api/v1/notebook/negotiate` requires it too — signalling is gated the same way uploads are
 
 
 
-## Quorum signalling (Azure Web PubSub)
+## Notebook signalling (Azure Web PubSub)
 
 
 
-Quorum's WebRTC signalling runs over **Azure Web PubSub**. The Function App stores nothing: `POST /api/v1/quorum/negotiate` checks proof-of-work and the rate limits, validates the room id, and returns a **client access URL** whose JWT is scoped to exactly one group. The browser then opens a plain `WebSocket` with the `json.webpubsub.azure.v1` subprotocol — no npm dependency — and publishes sealed envelopes to the group. There is no server-side room record, no TTL to sweep and no global room cap.
+The shared notebook's WebRTC signalling runs over **Azure Web PubSub**. The Function App stores nothing: `POST /api/v1/notebook/negotiate` checks proof-of-work and the rate limits, validates the room id, and returns a **client access URL** whose JWT is scoped to exactly one group. The browser then opens a plain `WebSocket` with the `json.webpubsub.azure.v1` subprotocol — no npm dependency — and publishes sealed envelopes to the group. There is no server-side room record, no TTL to sweep and no global room cap.
 
 **Lobby and room.** Proof of work is an anti-abuse gate and costs a stranger exactly what it costs a member, so it cannot be what decides admission. A request carrying only a `room` id gets a token for that room's **lobby**; a request that also carries `key` — the whole base32 room digest, of which the id is the first 16 characters — gets a token for the **room** group, where signalling is actually broadcast. Computing the key takes the relying party and the full audience, so holding it means having been told who is meeting rather than having guessed a short code. The endpoint checks only that the key starts with the id; the audience never goes over the wire. Both group names are truncated SHA-256 digests under different labels, so the two namespaces cannot collide and the service's own logs and metrics see nothing about the room.
 
@@ -547,10 +547,30 @@ This replaced an in-process mailbox that could not work on Consumption Functions
 
 | Setting | Where | Notes |
 |---------|-------|-------|
-| `AZURE_WEBPUBSUB_CONNECTION_STRING` | Function App | `Endpoint=…;AccessKey=…`. Terraform/Bicep wire it from the Web PubSub resource. Unset ⇒ negotiate returns **503**, and quorum is off. |
-| `BASILISK_WEBPUBSUB_HUB` | Function App | Default `quorum`; must match the hub resource. |
+| `AZURE_WEBPUBSUB_CONNECTION_STRING` | Function App | `Endpoint=…;AccessKey=…`. Terraform/Bicep wire it from the Web PubSub resource. Unset ⇒ negotiate returns **503**, and the shared notebook is off. |
+| `BASILISK_WEBPUBSUB_HUB` | Function App | Default `notebook`; must match the hub resource. |
 | `BASILISK_WEBPUBSUB_TOKEN_TTL_SEC` | Function App | Default `300`. The token buys a handshake; the whole signalling bootstrap is seconds. |
-| `web_pubsub_sku` / `web_pubsub_hub` | Terraform vars | Default `Free_F1` / `quorum`. |
+| `web_pubsub_sku` / `web_pubsub_hub` | Terraform vars | Default `Free_F1` / `notebook`. |
+
+> **Redeploy required — the hub was renamed.** The default hub name changed from
+> `quorum` to `notebook`, in `BASILISK_WEBPUBSUB_HUB` and in the hub resource
+> that Bicep and Terraform declare. A hub name is part of the client URL and the
+> token's `aud` claim, so the app and the resource must agree: an app on
+> `notebook` against a hub still named `quorum` mints tokens the service rejects.
+>
+> Applying the change replaces the hub rather than renaming it in place — Bicep
+> and Terraform both see a new resource name and a deleted old one. That is safe
+> here because **a hub holds no state**: no rooms, no membership, no stored
+> messages. It is a namespace for connections. What is lost is the connections
+> open at the moment of replacement, and those recover on their own — the client
+> re-negotiates on drop, and it already re-makes the connection every 80% of a
+> five-minute token anyway.
+>
+> Deploy the app and the infrastructure together. Rolling one ahead of the other
+> leaves signalling down for the gap: existing sessions stay up on their peer
+> data channels, but no new pair can mesh. There is no alias and no fallback —
+> `/api/v1/quorum/negotiate` returns 404, by design, so a stale client fails
+> loudly instead of half-working.
 
 
 
@@ -578,7 +598,7 @@ Some pairs of peers cannot reach each other directly — both behind symmetric N
 
 
 
-**The relay is not in the ICE server list.** Putting one there makes it last in ICE's priority order, but the agent still **allocates** on it during gathering, before any connectivity check has succeeded or failed — so a relay configured as a fallback learns this machine's address, and that a connection is being made, on **every** call, including the large majority that connect directly and never relay a byte. Basilisk therefore gathers and connects with STUN only, and escalates in a second phase: on a connection that reaches `failed`, the browser asks `POST /api/v1/turn/credentials` for a short-lived credential, calls `setConfiguration()` with the relay added and `restartIce()`, and re-gathers. Per W3C webrtc-pc ("set the configuration", step 9) and RFC 8829 §4.1.18, that pair is exactly what applies a new server list to a live connection — and the connection, its DTLS certificate and its data channel all survive, which matters because a quorum session key is derived over a transcript committing to that certificate. One escalation per connection; a second failure is reported, not retried.
+**The relay is not in the ICE server list.** Putting one there makes it last in ICE's priority order, but the agent still **allocates** on it during gathering, before any connectivity check has succeeded or failed — so a relay configured as a fallback learns this machine's address, and that a connection is being made, on **every** call, including the large majority that connect directly and never relay a byte. Basilisk therefore gathers and connects with STUN only, and escalates in a second phase: on a connection that reaches `failed`, the browser asks `POST /api/v1/turn/credentials` for a short-lived credential, calls `setConfiguration()` with the relay added and `restartIce()`, and re-gathers. Per W3C webrtc-pc ("set the configuration", step 9) and RFC 8829 §4.1.18, that pair is exactly what applies a new server list to a live connection — and the connection, its DTLS certificate and its data channel all survive, which matters because a notebook session key is derived over a transcript committing to that certificate. One escalation per connection; a second failure is reported, not retried.
 
 
 

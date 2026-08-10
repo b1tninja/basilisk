@@ -5,7 +5,7 @@
  * `quorum-*.test.js` files cover `room`, `roster`, `relay` and the negotiation
  * rules, all of which are pure, and none of them touch `quorum-ops.js`.
  *
- * The transport is stubbed rather than mocked *around* — `QuorumSession` is
+ * The transport is stubbed rather than mocked *around* — `NotebookSession` is
  * replaced with a fake whose roster and chat callbacks the test drives by hand,
  * so `execQuorumOpen`, `execQuorumRecv`, `closeQuorumExchange`, `restartLiveIce`
  * and the state projection all run their real bodies. What is asserted is the
@@ -26,7 +26,7 @@ const FPR_B = "B2".repeat(20);
 const FPR_C = "C3".repeat(20);
 
 /**
- * A `QuorumSession` with the shape `quorum-ops` actually consumes: a `peers`
+ * A `NotebookSession` with the shape `quorum-ops` actually consumes: a `peers`
  * **Map**, the four callbacks, and `start`/`stop`/`sendChat*`. The Map is the
  * load-bearing detail — `restartLiveIce` read it as an array of peers.
  */
@@ -96,9 +96,9 @@ const { FakeSession } = vi.hoisted(() => {
   return { FakeSession };
 });
 
-vi.mock("../lib/quorum/session.js", async (importOriginal) => {
+vi.mock("../lib/notebook/session.js", async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, QuorumSession: FakeSession };
+  return { ...actual, NotebookSession: FakeSession };
 });
 
 /**
@@ -114,7 +114,7 @@ const q = await import("../lib/toolkit/quorum-ops.js");
 // default is asserted against what ships rather than a copy, and the mock
 // above cannot reach it.
 const { DEFAULT_ICE_SERVERS } = await import("../lib/webrtc/ice.js");
-const { deriveRoomId } = await import("../lib/quorum/room.js");
+const { deriveRoomId } = await import("../lib/notebook/room.js");
 
 /** Enough of an OpenPGP private key for `execQuorumOpen`. */
 const KEY_A = { getFingerprint: () => FPR_A.toLowerCase() };

@@ -13,7 +13,7 @@ import {
   createSeenSet,
   meshHealth,
   shouldRelay,
-} from "../lib/quorum/relay.js";
+} from "../lib/notebook/relay.js";
 
 const ME = "A".repeat(40);
 const OTHER = "B".repeat(40);

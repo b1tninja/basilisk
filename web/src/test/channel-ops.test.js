@@ -12,7 +12,7 @@
  * traffic is a transport primitive, and this file used to assert that position.
  * It did not hold: both dispatch to `execQuorumSend`/`execQuorumRecv`, which
  * refuse without a live exchange, address peers by PGP fingerprint, and encrypt
- * under a key `lib/quorum/` derives. The payoff claimed for the move — "works
+ * under a key `lib/notebook/` derives. The payoff claimed for the move — "works
  * on any data channel" — is delivered by `peer.send`/`peer.recv` instead.
  *
  * **The toolbox boundary**, which is a different question with a different

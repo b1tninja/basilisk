@@ -224,14 +224,14 @@ def create_app() -> Flask:
 
     register_v2(app)
 
-    from basilisk.portal.quorum_signaling import register_quorum_signaling
+    from basilisk.portal.notebook_signaling import register_notebook_signaling
     from basilisk.portal.routes import register_portal_api
     from basilisk.portal.static import register_static_portal
     from basilisk.portal.turn_credentials import register_turn_credentials
     from basilisk.portal.wkd_routes import register_wkd
 
     register_portal_api(app)
-    register_quorum_signaling(app)
+    register_notebook_signaling(app)
     register_turn_credentials(app)
     register_wkd(app)
     register_static_portal(app)
@@ -246,9 +246,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
     app = create_app()
-    # Quorum signalling lives in a service. When the connection string points
+    # Notebook signalling lives in a service. When the connection string points
     # at loopback, that service is the local double — start it alongside, so
-    # "run the server and quorum works" is true here as well as in production.
+    # "run the server and the notebook works" is true here as well as in production.
     settings = get_settings()
     conn = settings.web_pubsub_connection
     if conn:

@@ -2,7 +2,7 @@
  * Key confirmation between two real browsers, over two real
  * `RTCPeerConnection`s (§59b, and the gap `929a546` disclosed rather than hid).
  *
- * `src/test/quorum-dtls-binding.test.js` proves the property that matters —
+ * `src/test/notebook-dtls-binding.test.js` proves the property that matters —
  * a pairwise session key is bound to the transport that carries it, and a
  * signalling relay that rewrites one end's DTLS fingerprint leaves both ends
  * unconfirmed. It proves it in node, against real OpenPGP, real ECDH, real key
@@ -21,12 +21,12 @@
  * ## How the session is reached, and why it is not a back door
  *
  * `929a546` reported that the shipped chunk's exports are minified, so a test
- * could not name `QuorumSession` from the page, and that standing this up would
+ * could not name `NotebookSession` from the page, and that standing this up would
  * mean "adding a stable export surface". It does not. Class *method* names
  * survive minification even when the module's export bindings do not, so the
  * constructor is identifiable by its shape — `start`/`stop`/`_onMailbox`/
  * `_maybeDeriveSession`/`_maybeSendKeyConfirm` on one prototype — plus a string
- * it ships (`"Key confirmation failed"`). `findQuorumSession` below scans the
+ * it ships (`"Key confirmation failed"`). `findNotebookSession` below scans the
  * chunks the page *already loaded* and requires exactly one match. Nothing is
  * added to production; if the shape ever stops matching, this fails loudly with
  * what it did find rather than skipping.
@@ -51,7 +51,7 @@ import { createQuorumRoom } from "../helpers/quorum-room.js";
 // Run in node against descriptions produced by two real engines — the parser
 // the transcript depends on, fed the one input a fake can never supply.
 import { extractDtlsFingerprint } from "../../lib/webrtc/sdp.js";
-import { combineDtlsFingerprints } from "../../lib/quorum/crypto.js";
+import { combineDtlsFingerprints } from "../../lib/notebook/crypto.js";
 
 const availability = await chromiumAvailability();
 
@@ -69,7 +69,7 @@ if (!availability.ok && availability.kind === "broken") {
 const LIE = `sha-256 ${new Array(32).fill("00").join(":")}`;
 
 /**
- * In-page: find the shipped `QuorumSession` and the shipped OpenPGP module.
+ * In-page: find the shipped `NotebookSession` and the shipped OpenPGP module.
  *
  * A **string**, not a function, because Vitest rewrites `import()` in anything
  * it transforms into `__vite_ssr_dynamic_import__`, a module-runner binding
@@ -103,7 +103,7 @@ const LOAD_SESSION = `(async () => {
   }
   if (found.length !== 1) {
     throw new Error(
-      "expected exactly one QuorumSession in the chunks the page loaded, found " +
+      "expected exactly one NotebookSession in the chunks the page loaded, found " +
         found.length + ": " + JSON.stringify(found.map((f) => f.chunk + "#" + f.exportName))
     );
   }
@@ -115,7 +115,7 @@ const LOAD_SESSION = `(async () => {
   }
   const rtcPath = paths.find((n) => /\\/assets\\/rtc-ops-[^/]*\\.js$/.test(n));
   if (!rtcPath) throw new Error("the toolkit page did not load an rtc-ops chunk");
-  window.__QuorumSession = found[0].ctor;
+  window.__NotebookSession = found[0].ctor;
   window.__pgp = pgp;
   window.__ops = await import(rtcPath);
   return { chunk: found[0].chunk, exportName: found[0].exportName, pgp: pgpPath, rtc: rtcPath };
@@ -144,7 +144,7 @@ const LOAD_SESSION = `(async () => {
  */
 const startSession = (peer, cfg) =>
   peer.page.evaluate(async (c) => {
-    const Session = window.__QuorumSession;
+    const Session = window.__NotebookSession;
     const privateKey = await window.__pgp.readPrivateKey({ armoredKey: c.armoredPrivate });
     if (!privateKey.isDecrypted()) throw new Error("test key came back locked");
     window.__errors = [];
@@ -204,8 +204,8 @@ const startSession = (peer, cfg) =>
  * Everything about one side, projected to something serialisable.
  *
  * `peer.link.pc` is read past the link deliberately, and for the same reason
- * `quorum-dtls-binding.test.js` reaches past it: the session cannot ask that
- * question — `lib/quorum/` may not name a connection — so comparing
+ * `notebook-dtls-binding.test.js` reaches past it: the session cannot ask that
+ * question — `lib/notebook/` may not name a connection — so comparing
  * `localDtls` to the fingerprint the *transport* minted has to happen from
  * outside. Asking the session for it would compare it to itself, and a driver
  * reporting one constant would sail through.
@@ -343,7 +343,7 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
     }
   });
 
-  it("reaches the shipped QuorumSession without a stable export existing", () => {
+  it("reaches the shipped NotebookSession without a stable export existing", () => {
     // The chunk is content-hashed and the export binding is a single mangled
     // letter, so both are resolved rather than written down. Pinning the shape
     // of what was found keeps this from silently matching something else.

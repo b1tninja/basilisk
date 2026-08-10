@@ -6,8 +6,8 @@
  * Everything here is the browser's API and nothing here is Basilisk's:
  * `new RTCPeerConnection`, `onnegotiationneeded`, `setLocalDescription`,
  * `setRemoteDescription`, `addIceCandidate`, `createDataChannel`,
- * `ondatachannel`. It lived inside `QuorumSession` until the mesh was made a
- * layer *on top of* WebRTC rather than a shelf containing it; `lib/quorum/` now
+ * `ondatachannel`. It lived inside `NotebookSession` until the mesh was made a
+ * layer *on top of* WebRTC rather than a shelf containing it; `lib/notebook/` now
  * holds identity, the signed invite, the relay, the room, the roster, key
  * derivation, key confirmation and the DKG session — the protocol — and calls
  * this for the transport.
@@ -25,7 +25,7 @@
  * flowing, restart, close. `pc` and `channel` remain public *fields* because
  * the link is itself what `link-registry.js` registers as a holder, and the
  * diagnostics in `lib/toolkit/` read raw `getStats()` off the inventory — but
- * nothing in `lib/quorum/` may touch them, and `src/test/quorum-layering.test.js`
+ * nothing in `lib/notebook/` may touch them, and `src/test/notebook-layering.test.js`
  * fails the build if it does.
  *
  * ## The fingerprint contract, which is the whole reason this was hard
@@ -44,7 +44,7 @@
  * without the fingerprint that belongs to it, and cannot obtain the fingerprint
  * out of order, because there is no other way to get either.
  *
- * `src/test/quorum-dtls-binding.test.js` is the guard: two real sessions mesh
+ * `src/test/notebook-dtls-binding.test.js` is the guard: two real sessions mesh
  * over a fake transport, the transcript is asserted against the fingerprints
  * the two transports actually minted, and a signalling relay that rewrites one
  * fingerprint — re-sealing under the original signer's own key, so the PGP
@@ -107,7 +107,7 @@ export class PeerLink {
   }) {
     /**
      * The transport. Read by `link-registry.js` (which holds this object) and
-     * by the diagnostics that call `getStats()`; never by `lib/quorum/`.
+     * by the diagnostics that call `getStats()`; never by `lib/notebook/`.
      * @type {RTCPeerConnection|null}
      */
     this.pc = new RTCPeerConnection({ iceServers });

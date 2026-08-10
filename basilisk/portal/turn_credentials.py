@@ -9,7 +9,7 @@ connection was attempted. That property lives in the client
 this route is what makes it affordable, because there is no standing credential
 to hand out ahead of time.
 
-Modelled on ``quorum_signaling.py``, which has the same shape — a gated,
+Modelled on ``notebook_signaling.py``, which has the same shape — a gated,
 stateless mint in front of a vendor file:
 
 * **Nothing stored.** No TTL bookkeeping, no per-room record, no cache. The
@@ -17,7 +17,7 @@ stateless mint in front of a vendor file:
   within seconds. A cache here would be a secret with a lifetime to manage, in
   a process that recycles when idle.
 * **Anti-abuse.** ``verify_proof`` gates it exactly as it gates
-  ``quorum_negotiate``, ``sendtoken`` and both v2 upload routes, and the same
+  ``notebook_negotiate``, ``sendtoken`` and both v2 upload routes, and the same
   IP limiter runs behind it. Unlike those, an unmetered caller here spends the
   deployment's *own* relay egress — Cloudflare's free tier is 1 TB/month — so
   the gate is the difference between a fallback and an open relay.

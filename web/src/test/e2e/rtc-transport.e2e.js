@@ -24,7 +24,7 @@ import { chromiumAvailability, openPeers, until } from "../helpers/browser-peers
 // node against descriptions produced by a real engine — the one thing a fake
 // transport can never check.
 import { extractDtlsFingerprint } from "../../lib/webrtc/sdp.js";
-import { combineDtlsFingerprints } from "../../lib/quorum/crypto.js";
+import { combineDtlsFingerprints } from "../../lib/notebook/crypto.js";
 
 const availability = await chromiumAvailability();
 
@@ -331,7 +331,7 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
   /* ── ICE restart: renegotiation in place, the way rtc.js drives it ── */
 
   it("rotates ICE credentials on restartIce and keeps the channel open", async () => {
-    // `quorum/session.js` drives restart through `onnegotiationneeded` +
+    // `notebook/session.js` drives restart through `onnegotiationneeded` +
     // *no-arg* `setLocalDescription`, and its comment records that an earlier
     // build had no handler, so "Restart connection" only cleared flags. This
     // reproduces that exact wiring against a live peer so the claim is checked

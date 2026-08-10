@@ -2,8 +2,8 @@
  * Reading facts back out of SDP.
  *
  * Parsing `a=fingerprint:` is a fact about the session-description format, not
- * about a quorum transcript — it moved out of `lib/quorum/crypto.js` when the
- * driver moved out of `lib/quorum/session.js`, because the driver is what calls it
+ * about a quorum transcript — it moved out of `lib/notebook/crypto.js` when the
+ * driver moved out of `lib/notebook/session.js`, because the driver is what calls it
  * and `lib/webrtc/` must not import the layer sitting on top of it.
  *
  * What quorum keeps is the part that *is* protocol: `combineDtlsFingerprints`

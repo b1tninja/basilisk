@@ -17,8 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   negotiateSignaling,
   openSignalingChannel,
-} from "../lib/quorum/signaling.js";
-import { connectWebPubSub, WEBPUBSUB_SUBPROTOCOL } from "../lib/quorum/webpubsub.js";
+} from "../lib/notebook/signaling.js";
+import { connectWebPubSub, WEBPUBSUB_SUBPROTOCOL } from "../lib/notebook/webpubsub.js";
 import {
   installWebPubSubDouble,
   mintClientAccessToken,
@@ -44,7 +44,7 @@ function stubServer(grant) {
       if (href.includes("/pks/v2/challenge")) {
         return Response.json({ nonce: "n", timestamp: 1, difficulty: 0, hint: "n:1:sig" });
       }
-      if (href.includes("/api/v1/quorum/negotiate")) {
+      if (href.includes("/api/v1/notebook/negotiate")) {
         const body = JSON.parse(String(init?.body || "{}"));
         negotiations.push({ body, headers: init?.headers || {} });
         return Response.json(await grant(String(body.room)));
