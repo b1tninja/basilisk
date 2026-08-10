@@ -224,11 +224,13 @@ describe("what a manifest declares rather than pins", () => {
     expect(manifestReproducibility(nonsense).reasons[0]).toMatch(/not a declared mode/);
   });
 
-  it("says a pooled entropy value is a declaration this build cannot honour", async () => {
-    // `grep -c entropy registry.js` is 0: no op says whether the randomness it
-    // draws is public-safe or keying, so nothing can consume a pool.
+  it("says a pool is declared, audited, and still not fed to anything", async () => {
+    // Every op now declares whether its randomness may be seeded, so a pooled
+    // run *can* be refused — `op-entropy-declared.test.js` covers that half.
+    // What is still missing is the other one: no op reads a pool, so a run that
+    // says `pool` draws locally anyway and is not reproducible for that reason.
     const m = await buildRunManifest({ entropy: { mode: "pool", digest: "5b".repeat(32) } });
-    expect(manifestReproducibility(m).reasons[0]).toMatch(/cannot be honoured by this build yet/);
+    expect(manifestReproducibility(m).reasons[0]).toMatch(/no op reads a pool yet/);
     expect(ENTROPY_MODES).toEqual(["none", "pool", "local"]);
     expect(CLOCK_MODES).toEqual(["pinned", "free"]);
   });

@@ -33,6 +33,33 @@ import {
  */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
 /**
+ * What kind of randomness a step draws — and therefore whether a run that
+ * agrees its entropy in advance may run the step at all.
+ *
+ * The question is *not* "does it draw randomness". It is **"does it draw
+ * randomness that becomes, or protects, a secret"**:
+ *
+ * - `none` — draws none. Two runs on the same inputs agree byte for byte, so
+ *   far as entropy is concerned. (`run.receipt` is `none` and still differs
+ *   between runs: that is the clock, which the manifest declares separately.)
+ * - `public` — draws a value that is published alongside the output and whose
+ *   only requirement is freshness: an IV, a nonce, a set id, a challenge. A
+ *   peer who can recompute it learns nothing they could not read off the
+ *   result. Safe to seed, which is why every `public` here carries the argument
+ *   for it at the declaration.
+ * - `keying` — the randomness becomes key material, or is what stands between
+ *   key material and an attacker. Seeding it from a value every participant can
+ *   recompute means every participant can recompute the key, and a key everyone
+ *   can recompute is not a key.
+ *
+ * **Omission means `keying`** — see `stepEntropy`. Same discipline as `slot`
+ * defaulting to `false` and `emptyMeans` before it: the failure mode of
+ * forgetting has to be refusal, not permission. An op added next year that
+ * mints a key and says nothing about entropy must be refused by a mirrored run,
+ * not silently seeded by it.
+ * @typedef {"none"|"public"|"keying"} EntropyKind
+ */
+/**
  * What kind of *value* a parameter needs. Only that — how the value may be
  * supplied is `ParamSpec.slot`, and the two are orthogonal. `"slot"` used to
  * live in this union, which is why they were not: it named a supply mechanism
@@ -142,6 +169,13 @@ import {
  * @property {string} doc
  * @property {IoType} input
  * @property {IoType} output
+ * @property {EntropyKind} [entropy]  the kind of randomness this step draws.
+ *   Read through `stepEntropy`, never directly: **absent means `keying`**, so a
+ *   step that forgets to declare is refused by a mirrored run rather than
+ *   seeded by one. Required (by `registryIssues`) on every step whose `output`
+ *   is in `SECRET_BEARING_OUTPUTS` — that is the population where declaring
+ *   `none` by reflex would be the expensive mistake, so the author has to say
+ *   something rather than leave the field off and be quietly safe.
  * @property {ParamSpec[]} [params]
  * @property {boolean} [flowControl]
  * @property {boolean} [unresolvedRecipients]  needs runtime recipient binding
@@ -477,6 +511,7 @@ export const STEPS = [
     doc: "Generate a WebCrypto keypair/key. Curves: `ec/p256`…`p521`, `ed25519`, `x25519` (ECDH). Symmetric: `aes/128|192|256`, `hmac/sha256|384|512`. RSA `hash=` for hashed RSA. Example: `genkey x25519 | out $local` then `ecdh private=$local peer=$peer`.",
     input: "none",
     output: "keypair",
+    entropy: "keying",
     params: [
       {
         name: "alg",
@@ -527,6 +562,7 @@ export const STEPS = [
     doc: "Cryptographically random bytes (`crypto.getRandomValues`). Example: `random 32 | base64url | out $secret`.",
     input: "none",
     output: "bytes",
+    entropy: "keying",
     params: [
       {
         name: "length",
@@ -552,6 +588,7 @@ export const STEPS = [
     doc: "A literal byte string. Example: `bytes deadbeef | aes-gcm $key | out $ct`. Also accepts base64 (`encoding=base64`) or plain text (`encoding=utf8`); a leading `0x` on hex is optional. Quote the value if it contains a space or `=` — base64 padding needs `bytes \"aGVsbG8=\" encoding=base64`.",
     input: "none",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "value",
@@ -587,6 +624,7 @@ export const STEPS = [
     doc: "Import a keypair you already have, pasted at run time (never stored in the recipe). `which=private` (default) wants a PKCS#8 PEM or a JWK with `d` and yields the full pair; `which=public` reads an SPKI PEM or a public JWK and yields a public-key tip. The recipe names which, because the tip's type is fixed before the paste is read — material of the other half is refused by name rather than typed as whatever it turned out to be. Example: `keypair jwk alg=ed25519 | export spki | pem | out $pub`. To make a new one instead, use `genkey`.",
     input: "none",
     output: "keypair",
+    entropy: "none",
     effectiveIo(params) {
       return {
         input: "none",
@@ -648,6 +686,7 @@ export const STEPS = [
     doc: "Generate a passphrase. Default EFF diceware (`mode=diceware`, ≈12.9 bits/word); `mode=char` uses a 69-char alphabet. Example: `passphrase 6 | out $passphrase` or `passphrase mode=char length=20`.",
     input: "none",
     output: "text",
+    entropy: "keying",
     params: [
       {
         name: "mode",
@@ -683,6 +722,7 @@ export const STEPS = [
     doc: "Bind BLIP39 share mnemonics at run time (never stored in the recipe). Typical recover: `shares | blip39 -d | sss.combine | …`. Map each share with `foreach` / `- out $share`. For free-form text use `input`.",
     input: "none",
     output: "shares",
+    entropy: "none",
     unresolvedInputs: "shares",
     params: [],
   },
@@ -696,6 +736,7 @@ export const STEPS = [
     doc: "Free-form text at run time (textarea / file). Never stored in the recipe. Example: `input | utf8 | encode hex`. (Legacy aliases `paste`/`cat` migrate via Upgrade recipe.)",
     input: "none",
     output: "text",
+    entropy: "none",
     unresolvedInputs: "text",
     params: [],
   },
@@ -708,6 +749,7 @@ export const STEPS = [
     doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext BLIP39 mnemonics. Browser vault keys only (no smartcard/YubiKey in-page). Example: `gpg.decrypt | blip39 -d | sss.combine | …`.",
     input: "none",
     output: "shares",
+    entropy: "none",
     // Two panels, not one: the ciphertext, and share rows for mnemonics
     // already decrypted outside the browser (Kleopatra / gpg / YubiKey —
     // OpenPGP cards are not reachable from JS). The second used to be pushed
@@ -726,6 +768,7 @@ export const STEPS = [
     doc: "Export a keypair or projected `key` tip (pkcs8 / spki / jwk / raw / scalar). Prefer selectors for the half: `:public | export spki`, `:private | export pkcs8` (openssl pkey -pubout style). `format=spki` implies public; `pkcs8`/`scalar` imply private. In the ops drawer, pick a format from the Keys → Formats kit (not a bare Export tile).",
     input: "keypair",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "format",
@@ -761,6 +804,7 @@ export const STEPS = [
     doc: "Import DER/raw/scalar/JWK. `import spki` yields a public `key` tip; other formats yield a full keypair, and `import jwk which=public` yields a public `key` tip from JWK. The tip's type is fixed by `format=`, `alg=` and `which=` — a JWK that turns out to hold something else (a symmetric `oct`, another curve, no `d`) is refused by name rather than imported as whatever it happens to be. Example: `… | export jwk | import jwk alg=ed25519` or `import scalar alg=ec/p256`.",
     input: "bytes",
     output: "keypair",
+    entropy: "none",
     params: [
       {
         name: "format",
@@ -851,6 +895,7 @@ export const STEPS = [
     doc: "Hash bytes with SubtleCrypto.digest (SHA-256 / 384 / 512; SHA-1 available but discouraged). Example: `random 32 | digest | encode hex | out $digest`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "alg",
@@ -873,6 +918,13 @@ export const STEPS = [
     doc: "Sign pipeline bytes with a WebCrypto private/HMAC key. Prefer `sign key=$kp` (slot from `out`); else key panel. RSA-PSS `saltLength=` (default 32); ECDSA optional `hash=` override. Example: `input | utf8 | sign key=$kp | base64url`.",
     input: "bytes",
     output: "bytes",
+    // keying, and no `getRandomValues` in this repo says so: the randomness is
+    // WebCrypto's own. Running `sign` twice over identical bytes with an
+    // imported P-256 key gives two different signatures — that is the ECDSA
+    // nonce, and two signatures sharing one nonce hand over the private key.
+    // RSA-PSS draws its salt the same way. (Ed25519 alone is deterministic;
+    // the declaration is per step, so it takes the worst algorithm it offers.)
+    entropy: "keying",
     params: [
       {
         name: "key",
@@ -909,6 +961,7 @@ export const STEPS = [
     doc: "Verify a signature over pipeline message bytes. Prefer `verify key=$pub`; else key panel. Default fail-loud; `soft` / `-q` emits `true`/`false` instead of throwing on bad sig. Signature via `signature=` or runtime binding. Same `saltLength=` / `hash=` as sign.",
     input: "bytes",
     output: "bool",
+    entropy: "none",
     params: [
       {
         name: "key",
@@ -964,6 +1017,11 @@ export const STEPS = [
     doc: "AES-GCM encrypt (default) or decrypt with `-d`. Prefer `aes-gcm key=$cek`; else key panel. Optional `tagLength=` (default 128). Also accepts `aes-256-gcm` / `AES/GCM/NoPadding`. Bare `encrypt`/`decrypt` sugar is migrator-only — write the concrete op. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
+    // public: a 12-byte GCM IV, and `aesGcmEncrypt` returns `IV || ciphertext`
+    // — the drawn value *is* the first twelve bytes of this step's own output.
+    // Its requirement is uniqueness under a key, never secrecy, so a peer who
+    // can recompute it has learned something it could already read.
+    entropy: "public",
     params: [
       {
         name: "decode",
@@ -1019,6 +1077,10 @@ export const STEPS = [
     doc: "AES-CBC encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT. Prefer `aes-cbc key=$cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
+    // public: a 16-byte CBC IV, prefixed to the ciphertext by `aesCbcEncrypt`
+    // and read straight back off it by `aesCbcDecrypt`. The doc line above
+    // spells the packing out — `IV(16)||CT` — which is the argument.
+    entropy: "public",
     params: [
       {
         name: "decode",
@@ -1059,6 +1121,11 @@ export const STEPS = [
     doc: "AES-CTR encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT (128-bit counter block); `length=` is AesCtrParams.length (default 64), not IV size. Prefer `aes-ctr key=$cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
+    // public: the 128-bit initial counter block, prefixed to the ciphertext
+    // exactly as the CBC IV is. It must be fresh per message under a key — a
+    // seeded pool yields one draw per call, not one value for the whole run —
+    // and it travels in the clear either way.
+    entropy: "public",
     params: [
       {
         name: "decode",
@@ -1107,6 +1174,12 @@ export const STEPS = [
     doc: "RSA-OAEP encrypt (default) or decrypt with `-d`. Prefer `rsa-oaep key=$rk`; else key panel. Optional `label=` (must match on decrypt). Also accepts JCE `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`. Distinct from OpenPGP `gpg.encrypt` and AES `aes-gcm`.",
     input: "bytes",
     output: "bytes",
+    // keying: the OAEP seed. Unlike an IV it is not published — it is what
+    // makes encrypting the same plaintext twice give different ciphertext, so
+    // a peer who can recompute it can confirm a guessed plaintext by
+    // re-encrypting it. Drawn inside WebCrypto, which is why the empirical
+    // sweep sees a differing output and no visible draw.
+    entropy: "keying",
     params: [
       {
         name: "decode",
@@ -1154,6 +1227,10 @@ export const STEPS = [
     doc: "RSAES-PKCS1-v1_5 encrypt/decrypt (`-d`). Discouraged — prefer `rsa-oaep`. Pure-JS (not SubtleCrypto). Uses any RSA key (OAEP/PSS JWK) via `key=$rk`. Also accepts `RSA/ECB/PKCS1Padding`. Outputs tagged legacy/discouraged.",
     input: "bytes",
     output: "bytes",
+    // keying: the PKCS#1 v1.5 padding string (`rsaes-pkcs1.js`), which does the
+    // OAEP seed's job — hide that this ciphertext is an encryption of a value
+    // an attacker could otherwise guess and check.
+    entropy: "keying",
     params: [
       {
         name: "decode",
@@ -1184,6 +1261,7 @@ export const STEPS = [
     doc: "HKDF-Extract/Expand. Default emits OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → live `key` tip (`which: secret`), matching `unwrap`. Distinct from the `as master` cast stage. Example: `webauthn.prf | hkdf 32 as=aes/256 | out $cek`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "length",
@@ -1240,6 +1318,7 @@ export const STEPS = [
     doc: "PBKDF2-HMAC derive. Default OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → live `key` tip (`which: secret`). Example: `passphrase 6 | pbkdf2 32 as=aes/256 | out $cek`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "length",
@@ -1295,6 +1374,7 @@ export const STEPS = [
     doc: "ECDH/X25519 deriveBits (default) or deriveKey via `as=aes/256` / `as=aes-kw/256` → live `key` tip (`which: secret`). Prefer `genkey x25519` then `ecdh private=$local peer=$peer`. bits=0 auto-sizes from curve.",
     input: "none",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "private",
@@ -1346,6 +1426,11 @@ export const STEPS = [
     doc: "Wrap a CEK. Default AES-KW; also `mode=aes-gcm|aes-cbc|aes-ctr` (IV||wrapped) or `mode=rsa-oaep`. Optional `label=` (RSA-OAEP), `tagLength=` (AES-GCM), `length=` (AES-CTR). Prefer `wrap key=$kek target=$cek`.",
     input: "none",
     output: "bytes",
+    // keying: whatever this draws is wrapped around key material by
+    // construction. `aes-kw` draws nothing, `aes-gcm`/`aes-cbc`/`aes-ctr` draw
+    // an IV and `rsa-oaep` a seed — and one declaration covers every mode, so
+    // it takes the mode that must not be seeded.
+    entropy: "keying",
     params: [
       {
         name: "key",
@@ -1405,6 +1490,7 @@ export const STEPS = [
     doc: "Unwrap pipeline wrapped bytes into a live `key` tip (CryptoKey). Modes match `wrap`. Prefer `unwrap key=$kek`. Content modes expect IV||wrapped packing. Use `export raw` when you need bytes.",
     input: "bytes",
     output: "key",
+    entropy: "none",
     params: [
       {
         name: "key",
@@ -1464,6 +1550,7 @@ export const STEPS = [
     doc: "Wrap DER bytes as PEM armor. Label auto: SPKI/`which=public` → PUBLIC KEY, PKCS#8 → PRIVATE KEY. Conjugate: `der` strips armor. Example: `:public | export spki | pem | out $public`.",
     input: "bytes",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "label",
@@ -1484,6 +1571,7 @@ export const STEPS = [
     doc: "Strip PEM armor → DER bytes. Sets format/which from the BEGIN label when known. Example: `in $pub | der | import spki` or `in $pub | der | as key`.",
     input: "text",
     output: "bytes",
+    entropy: "none",
     params: [],
   },
   {
@@ -1499,6 +1587,7 @@ export const STEPS = [
     doc: "Encode bytes as Base64 (`base64.encode`) or decode (`base64.decode`). Example: `random 32 | base64.encode | out $secret`. Also accepts `base64 -d`.",
     input: "bytes",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "decode",
@@ -1526,6 +1615,7 @@ export const STEPS = [
     doc: "Encode bytes as URL-safe Base64 without padding (`base64url.encode`) or decode (`base64url.decode`). Also accepts `base64url -d`.",
     input: "bytes",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "decode",
@@ -1557,6 +1647,7 @@ export const STEPS = [
     doc: "Encode bytes as text in a base alphabet. Example: `… | digest | encode hex | out $digest`, or `… | encode base64url`. (`to` is the old spelling and still parses.)",
     input: "bytes",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "encoding",
@@ -1582,6 +1673,7 @@ export const STEPS = [
     doc: "Decode base-encoded text → bytes. Example: `in $digest | decode hex | …`, or `… | decode base64`. (`from` is the old spelling and still parses.)",
     input: "text",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "encoding",
@@ -1610,6 +1702,7 @@ export const STEPS = [
     doc: "Encode bytes as RFC 4648 Base32 (`base32.encode`) or decode (`base32.decode`). Example: `random 10 | base32.encode | out $id`.",
     input: "bytes",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "decode",
@@ -1633,6 +1726,7 @@ export const STEPS = [
     doc: "Decode UTF-8 bytes → text (or encode text → bytes when holding text). Example: `… | gpg.symdecrypt | utf8 | out $pem`.",
     input: "bytes",
     output: "text",
+    entropy: "none",
     params: [],
     effectiveIo(params) {
       void params;
@@ -1651,6 +1745,7 @@ export const STEPS = [
     doc: "Split a secret (≤ 32 bytes) into **verifiable** shares — Feldman VSS over P-256. Unlike `sss.split`, the share set carries public commitments, so a custodian can check their share is genuine the moment they receive it (`vss.verify`) instead of discovering a bad one when recovery fails. Emits the same `shares` shape, so `blip39` / `foreach` / `at` work unchanged. For arbitrary-length data use `sss.split` — verifiability needs a prime-order group, which GF(256) is not. Example: `export scalar | vss.split threshold=2 shares=3 | blip39 | foreach` / `- out $share`.",
     input: "bytes",
     output: "shares",
+    entropy: "keying",
     params: [
       {
         name: "threshold",
@@ -1679,6 +1774,7 @@ export const STEPS = [
     doc: "Check shares against their Feldman commitments and pass them through — fail-loud, so `in $shares | vss.verify | vss.combine` refuses to reconstruct from a tampered share rather than returning a wrong secret. Uses the commitments carried on a `vss.split` set, or `commitments=$slot` when a custodian holds them separately. Example: `in $shares | vss.verify | out $ok`.",
     input: "shares",
     output: "shares",
+    entropy: "none",
     params: [
       {
         name: "commitments",
@@ -1699,6 +1795,7 @@ export const STEPS = [
     doc: "Extract a `vss.split` set's public commitments as JSON, so they can be published alongside the shares. Commitments do not survive `blip39` — words carry no commitments — and that matches reality: a custodian holds a secret share and the public commitments, arriving by different routes. Example: `… | vss.split … | tee` / `- vss.commitments | out $commitments`.",
     input: "shares",
     output: "text",
+    entropy: "none",
     params: [],
   },
   {
@@ -1711,6 +1808,7 @@ export const STEPS = [
     doc: "Reconstruct the secret from a threshold of `vss.split` shares (Lagrange interpolation over P-256). Pair with `vss.verify` first if the shares came from elsewhere. Example: `shares | blip39.decode | vss.verify | vss.combine | out $secret`.",
     input: "shares",
     output: "bytes",
+    entropy: "none",
     params: [],
   },
   {
@@ -1741,6 +1839,9 @@ export const STEPS = [
     doc: "**Experimental.** Run a distributed key generation across the live exchange (Feldman VSS over P-256): every participant deals a contribution, verifies what they receive, and sums — so the private key is never assembled anywhere, and any `threshold` of the room can reconstruct it later. Needs a live `quorum.offer`/`quorum.join` with every participant present. There is no complaint round: a bad share aborts the run and names the dealer, and the group must restart without them. Produces a shared key, **not** threshold signing. Example: `dkg.run threshold=3 | out $dkg`.",
     input: "none",
     output: "text",
+    // keying, and the least arguable case in the registry: the output is this
+    // participant's share of a distributed key.
+    entropy: "keying",
     params: [
       {
         name: "threshold",
@@ -1768,6 +1869,7 @@ export const STEPS = [
     doc: "Split a 16/32-byte master into raw SSS shares (K-of-N). Pipe into `blip39` for mnemonics. EC: `export scalar | sss.split …`. Large PEM: `… | pem | out $pem | gpg.symencrypt mode=master | sss.split …`.",
     input: "bytes",
     output: "shares",
+    entropy: "keying",
     params: [
       {
         name: "threshold",
@@ -1827,6 +1929,13 @@ export const STEPS = [
     doc: "Encode raw SSS shares as BLIP39 mnemonics (`blip39.encode`) or decode (`blip39.decode`). Example: `… | sss.split | blip39.encode | foreach`. Recover: `shares | blip39.decode | sss.combine`. Also accepts `blip39 -d`.",
     input: "shares",
     output: "shares",
+    // public, and `none` would have been the easy wrong answer: this step is
+    // shares → shares and reads as pure encoding, but `encodeShareSet` draws
+    // fifteen bits for the set id — and every mnemonic it emits then spells
+    // that id out in the clear. Its whole job is to stop two splits being
+    // mixed at recovery time; the secret's entropy came from `sss.split`, one
+    // step upstream, which is where the `keying` refusal belongs.
+    entropy: "public",
     params: [
       {
         name: "decode",
@@ -1867,6 +1976,7 @@ export const STEPS = [
     doc: "Combine raw SSS shares into the 16/32-byte master. Decode mnemonics first: `shares | blip39 -d | sss.combine`. Unwrap envelopes with `gpg.symdecrypt` after combine.",
     input: "shares",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "passphrase",
@@ -1892,6 +2002,9 @@ export const STEPS = [
     doc: "OpenPGP-symmetric encrypt (`gpg -c` style). Dual mode is explicit: default `mode=master` (fresh 32-byte master tip + `envelope.asc` for SSS); `mode=passphrase` + `passphrase=`/`$slot` emits armored ciphertext as the tip (no master). Passphrase alone does not flip modes. Example SSS: `… | pem | gpg.symencrypt mode=master | sss.split …`. Example password: `\"hi\" | utf8 | gpg.symencrypt mode=passphrase passphrase=$pw | out $msg`.",
     input: "text",
     output: "bytes",
+    // keying: `mode=master` draws the 32 bytes that *are* the envelope's
+    // password, and either mode draws the session key OpenPGP encrypts under.
+    entropy: "keying",
     params: [
       {
         name: "mode",
@@ -1933,6 +2046,7 @@ export const STEPS = [
     doc: "Decrypt OpenPGP-symmetric ciphertext. Dual mode is explicit: default `mode=master` (tip is 16/32-byte master; bound `envelope.asc` decrypts with hex(master)); `mode=passphrase` + `passphrase=`/`$slot` (tip is armored ciphertext). Passphrase alone does not flip modes. Example: `in $msg | gpg.symdecrypt mode=passphrase passphrase=$pw | utf8`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     unresolvedInputs: { panel: "envelope", when: { mode: "master" } },
     params: [
       {
@@ -1973,6 +2087,7 @@ export const STEPS = [
     doc: "Map a required body over a shares collection. Indent `-` lines or `{ … }`. Optional `foreach :items` / `:values` / `:keys`. Tip is a `bundle` of per-item tips (side effects via `out` / auto-emit) — do not pipe the bundle into cipher/KDF ops; use `$slot`s from the body. Example: `… | blip39 | foreach` / `- out $share` or `- gpg.encrypt`.",
     input: "shares",
     output: "bundle",
+    entropy: "none",
     params: [],
   },
   {
@@ -1983,6 +2098,7 @@ export const STEPS = [
     doc: "Select from a shares collection (1-based). Same as `[1]` / `[1:2]`. Example: `… | blip39 | [1] | out $share-1`.",
     input: "shares",
     output: "shares",
+    entropy: "none",
     params: [
       {
         name: "selector",
@@ -2002,6 +2118,7 @@ export const STEPS = [
     doc: "Stem literal (parse/serialize as the literal itself — never written as `lit …`). Strings → text; decimal/hex ints → int; `true`/`false` → bool. Example: `\"hello\" | out $msg`, `0xff | out $n`, or `true | out $ok`.",
     input: "none",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "kind",
@@ -2032,6 +2149,7 @@ export const STEPS = [
     doc: "Source a prior `out` slot (live typed value). Chains are blank-line separated. Forms: `in $kp`, `in kp`, `in 1`. (`decode` is the alphabet verb; `in` only loads slots.) See docs/RECIPE.md.",
     input: "none",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "ref",
@@ -2051,6 +2169,7 @@ export const STEPS = [
     doc: "Project a member via selector. `:public` / `:private` turn a keypair tip into a `key` tip (CryptoKey half). Usually written bare: `:public | export spki | pem`. Also as a tee/foreach branch prefix: `- :public | …`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "selector",
@@ -2068,6 +2187,7 @@ export const STEPS = [
     doc: "Cast the tip. Retag (no crypto): `as master` / `as scalar` / `as opaque` / `as public` / `as private` / `as int` / `as bool`. Materialize (WebCrypto): `as key` / `as keypair` from DER or PEM. Distinct from hkdf/pbkdf2/ecdh param `as=aes/256`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "type",
@@ -2130,6 +2250,7 @@ export const STEPS = [
     doc: "Generate an OpenPGP Curve25519 keypair (same as My Keys). Pipeline emits `openpgp-key/private`; public key is also written as an artifact. `gpg.genkey email=alice@example.com | out $priv` — an address needs no quoting now that slots are `$`.",
     input: "none",
     output: "openpgp-key",
+    entropy: "keying",
     params: [
       {
         name: "email",
@@ -2168,6 +2289,7 @@ export const STEPS = [
     doc: "Inspect armored OpenPGP without decrypting (type, recipients, signatures, optional packet map). Example: `input | gpg.inspect | out $report`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "format",
@@ -2189,6 +2311,7 @@ export const STEPS = [
     doc: "OpenPGP-encrypt the current value. Prefer `to=$alices` (recipients slot) or `to=email` + lookup; else Run binder. `mode=separate|combined`. `-s` / `key=$me` for sign-then-encrypt.",
     input: "text",
     output: "artifact",
+    entropy: "keying",
     params: [
       {
         name: "to",
@@ -2243,6 +2366,9 @@ export const STEPS = [
     doc: "OpenPGP-sign pipeline text/bytes. Prefer `gpg.sign key=$me` (slot from `agent.unlock`); else vault key panel. Default cleartext; `format=detached` for detached sig. Distinct from WebCrypto `sign`.",
     input: "text",
     output: "text",
+    // keying: an RFC 9580 signature carries a random salt, and an ECDSA key
+    // signs with a nonce. Neither is a value this step publishes on purpose.
+    entropy: "keying",
     params: [
       {
         name: "key",
@@ -2279,6 +2405,7 @@ export const STEPS = [
     doc: "Verify an OpenPGP cleartext or detached signature. Prefer `gpg.verify key=$pub`. Detached: `signature=$slot`. Fail-loud by default; `soft`/`-q` → bool true|false. Distinct from WebCrypto `verify`.",
     input: "text",
     output: "bool",
+    entropy: "none",
     params: [
       {
         name: "key",
@@ -2322,6 +2449,10 @@ export const STEPS = [
     doc: "Encode a keypair/key as OpenSSH — `format=public` (default) emits the one-line public form (`ssh-ed25519 AAAA… comment`) for authorized_keys / GitHub; `format=private` emits an openssh-key-v1 block, **unencrypted unless you bind `passphrase=$slot`** (`aes256-ctr` + `bcrypt_pbkdf` at 24 rounds, the pair `ssh-keygen` writes). The passphrase is never taken from the Inputs panel behind your back: the same recipe must always emit the same kind of file, so the encryption has to be named in the recipe (`… | ssh.encode format=private passphrase=$pw`). ed25519, ec/p256|384|521, rsa. The leading key-type name is fixed by the key's algorithm and curve, not chosen here: a P-256 key is always `ecdsa-sha2-nistp256` (RFC 5656), where the `sha2` is part of that name rather than a digest you can set. The bytes match `ssh-keygen`. Example: `genkey ed25519 | ssh.encode comment=\"you@host\" | out $pub`.",
     input: "keypair",
     output: "text",
+    // keying: `format=private` writes an OPENSSH PRIVATE KEY block, whose
+    // random check bytes and (with `passphrase=`) bcrypt salt are the two
+    // things standing between the file and the private half it contains.
+    entropy: "keying",
     params: [
       {
         name: "format",
@@ -2384,6 +2515,7 @@ export const STEPS = [
     doc: "Decode OpenSSH key text into a live key/keypair — `format=public` (default) reads a one-line public key and yields a public `key`; `format=private` reads an openssh-key-v1 block and yields a keypair. The recipe names which, because the two produce different types and the file cannot be consulted before the run: a block handed to `format=public` is refused rather than quietly typed as the other thing. Passphrase-protected blocks open too — bind the passphrase to a slot and name it with `passphrase=$slot`; a wrong one is named as such rather than reported as a corrupt file. Example: `input | ssh.decode | ssh.fingerprint | out $fp`, or `input | out $pw` then `… | ssh.decode format=private passphrase=$pw`.",
     input: "text",
     output: "key",
+    entropy: "none",
     effectiveIo(params) {
       return {
         input: "text",
@@ -2462,6 +2594,7 @@ export const STEPS = [
     doc: "SHA-256 fingerprint of an SSH public key — `SHA256:` + base64, byte-identical to `ssh-keygen -lf`. Accepts a keypair, a key, or a public line. Example: `input | ssh.decode | ssh.fingerprint | out $fp`.",
     input: "keypair",
     output: "text",
+    entropy: "none",
     overloads: [
       { when: { base: "keypair" }, output: { base: "text" } },
       { when: { base: "key" }, output: { base: "text" } },
@@ -2480,6 +2613,9 @@ export const STEPS = [
     doc: "Sign the payload in sshsig format (`ssh-keygen -Y sign`) — also how git signs commits with SSH keys. `namespace=` is part of what is signed: a `git` signature can never verify as a `file` signature. Key from a slot. Example: `input | utf8 | ssh.sign key=$id namespace=git | out $sig`.",
     input: "text",
     output: "text",
+    // keying: an SSH signature over the same WebCrypto primitives `sign` uses,
+    // so the same ECDSA nonce argument applies.
+    entropy: "keying",
     params: [
       {
         name: "key",
@@ -2518,6 +2654,7 @@ export const STEPS = [
     doc: "Verify an sshsig signature over the pipeline payload (`ssh-keygen -Y verify`). `signature=$slot` holds the sshsig block, `key=` the public line or a slot; `namespace=` must match the signer's. Fail-loud; `-q` emits bool false instead. Example: `in $msg | ssh.verify key=$pub signature=$sig namespace=git | out $ok`.",
     input: "text",
     output: "bool",
+    entropy: "none",
     params: [
       {
         name: "key",
@@ -2574,6 +2711,7 @@ export const STEPS = [
     doc: "Build the `otpauth://` enrolment URI an authenticator scans, from a Base32 secret (or raw secret bytes, which are encoded for you). `algorithm=`, `digits=` and `period=` are always written into the URI even at their defaults — they are optional in the format, but the defaults readers assume are not uniform, and a URI that states them cannot be read two ways. The output is **masked**: this string is the shared secret plus a label, so it is a credential exactly as a private key is. Example: `random 20 | otp.uri issuer=\"Big Corp\" account=you@example.com | qr`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "issuer",
@@ -2604,6 +2742,7 @@ export const STEPS = [
     doc: "Read one field out of a pasted `otpauth://` URI — `field=secret` (default) is the conjugate of `otp.uri` and round-trips. The ambiguous URIs are refused rather than guessed: an `issuer=` that disagrees with the label's issuer is two accounts, and an `hotp` URI with no `counter=` cannot make a code at all. The label is split on the *encoded* separator, so an account name containing `%3A` does not sprout a phantom issuer. Only `field=secret` comes out masked. Example: `qr.scan | otp.parse | out $secret`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "field",
@@ -2640,6 +2779,7 @@ export const STEPS = [
     doc: "The code showing right now, from a Base32 secret, raw secret bytes, **or** a whole `otpauth://` URI. Handed a URI it takes `mode`, `algorithm`, `digits`, `period` and `counter` from the URI and ignores its own — the URI is what the other side is holding. `at=` pins the instant, which is how the RFC 6238 vectors are stated. The code itself is *not* masked: it expires in one step and exists to be read. Example: `in $secret | otp.code | out $code`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [...OTP_TOKEN_PARAMS, OTP_AT_PARAM],
     overloads: [
       { when: { base: "bytes" }, output: { base: "text", kind: "otp-code" } },
@@ -2656,6 +2796,7 @@ export const STEPS = [
     doc: "Check the code on the stem against the secret in `secret=$slot` (a Base32 secret or a whole `otpauth://` URI). `window=` is the part naive implementations get wrong: clocks drift and users type slowly, so a TOTP code is accepted within **±window** steps — while a HOTP window only ever looks *ahead*, because a server counter that went backwards would accept a code already spent. Fail-loud; `-q` emits bool false instead. Example: `input | otp.verify secret=$enrol window=1 | out $ok`.",
     input: "text",
     output: "bool",
+    entropy: "none",
     params: [
       {
         name: "secret",
@@ -2700,6 +2841,8 @@ export const STEPS = [
     doc: "Sign the pipeline payload with a My Keys key — the private key never enters the pipeline; the unlock happens inside the vault with per-use approval. `format=auto` follows the key's kind: PGP → OpenPGP signature, SSH → sshsig (`namespace=` names the domain, `git` for git). Prefer this over `agent.unlock | gpg.sign`. Example: `input | utf8 | agent.sign AABB… | out $sig`.",
     input: "text",
     output: "text",
+    // keying: the same OpenPGP signing path as `gpg.sign`, with a stored key.
+    entropy: "keying",
     params: [
       {
         name: "fpr",
@@ -2743,6 +2886,7 @@ export const STEPS = [
     doc: "Decrypt an OpenPGP message with a My Keys key — ciphertext in, plaintext out; the private key never enters the pipeline (per-use approval). PGP-kind keys only: SSH signing keys cannot decrypt. Example: `input | agent.decrypt AABB… | out $plain`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "fpr",
@@ -2768,6 +2912,7 @@ export const STEPS = [
     doc: "Exports the private key into the run — use only when a recipe genuinely needs key material (export, transformation). For signing or decrypting, prefer `agent.sign` / `agent.decrypt`, which keep the key in the vault. pgp keys emit openpgp-key; ssh/raw keys emit a live keypair. Main-thread (passkey).",
     input: "none",
     output: "openpgp-key",
+    entropy: "none",
     params: [
       {
         name: "fpr",
@@ -2786,6 +2931,7 @@ export const STEPS = [
     doc: "Emit stored `publicArmored` for a My Keys fingerprint — no unlock. Example: `agent.pub AABB… | out $pub`.",
     input: "none",
     output: "openpgp-key",
+    entropy: "none",
     params: [
       {
         name: "fpr",
@@ -2804,6 +2950,7 @@ export const STEPS = [
     doc: "List My Keys metadata as JSON (fingerprint, uid, protection, lastUsedAt) — no private material.",
     input: "none",
     output: "text",
+    entropy: "none",
     params: [],
   },
   {
@@ -2822,6 +2969,9 @@ export const STEPS = [
     doc: "Writes to the keyring of *whoever runs the recipe* — a shared link containing `agent.save` saves into the reader's vault, and nothing in the recipe undoes it. Reach for it when the write is the point: a `foreach` over generated keys, or a workspace you re-run yourself. Not available headlessly — `basilisk run` refuses the `agent` toolbox at pre-flight (exit 4), because Node has no vault. Save the pipeline's private key into My Keys. OpenPGP armor saves as kind pgp; a WebCrypto keypair saves as kind ssh (ed25519/ec/rsa — id is the SSH SHA256 fingerprint) or raw (x25519). `protection=device|passphrase|passkey`; passphrase applies to pgp only (non-PGP payloads have no S2K yet). Example: `genkey ed25519 | agent.save | out $id`.",
     input: "openpgp-key",
     output: "openpgp-key",
+    // keying: re-protecting a stored key draws the S2K salt and IV that are
+    // the only thing between the passphrase and the private key.
+    entropy: "keying",
     overloads: [
       { when: { base: "openpgp-key" }, output: { base: "openpgp-key" } },
       { when: { base: "keypair" }, output: { base: "keypair" } },
@@ -2866,6 +3016,7 @@ export const STEPS = [
     doc: "Fetch a public key by fingerprint (device cache → This site `/pks/lookup` → optional explicit upstream). Example: `hkp.get AABB… | out $bob`.",
     input: "none",
     output: "openpgp-key",
+    entropy: "none",
     params: [
       {
         name: "fpr",
@@ -2897,6 +3048,7 @@ export const STEPS = [
     doc: "Search local cache + This site directory; optional explicit upstream on miss. Filter with `hkp.filter`.",
     input: "none",
     output: "recipients",
+    entropy: "none",
     params: [
       {
         name: "query",
@@ -2935,6 +3087,7 @@ export const STEPS = [
     doc: "Filter a `recipients` list. Defaults: approved + encrypt-capable (upstream/import kept when valid).",
     input: "recipients",
     output: "recipients",
+    entropy: "none",
     params: [
       {
         name: "approved",
@@ -2964,6 +3117,7 @@ export const STEPS = [
     doc: "List or clear the device IndexedDB pubkey cache (`action=list|clear`).",
     input: "none",
     output: "recipients",
+    entropy: "none",
     params: [
       {
         name: "action",
@@ -2998,6 +3152,7 @@ export const STEPS = [
     doc: "Merge pipeline recipients with `with=$slot` (dedupe by fingerprint).",
     input: "recipients",
     output: "recipients",
+    entropy: "none",
     params: [
       {
         name: "with",
@@ -3017,6 +3172,7 @@ export const STEPS = [
     doc: "Render the current text as a QR code SVG artifact. Example: `… | blip39 | [1] | qr`.",
     input: "text",
     output: "artifact",
+    entropy: "none",
     params: [],
   },
   {
@@ -3030,6 +3186,10 @@ export const STEPS = [
     doc: "Emit a signable receipt for this run: recipe source, per-cell input/output **digests** (never the values), timestamps, and the op-registry version. Sign it with the vault key — `run.receipt | gpg.sign key=$me | out $receipt` — and check it later with `run.verify`.",
     input: "none",
     output: "text",
+    // none — and it still re-runs to a different document, because it stamps
+    // `createdAt`. That is the clock, which a manifest declares on its own
+    // axis; differing output is not by itself evidence of entropy.
+    entropy: "none",
     params: [
       {
         name: "label",
@@ -3049,6 +3209,7 @@ export const STEPS = [
     doc: "Check a receipt (signed or plain JSON) against the run happening now — digests only, so neither side reveals a secret. Fail-loud by default; `run.verify -q` emits a bool instead. Example: `input | run.verify -q | out $ok`.",
     input: "text",
     output: "bool",
+    entropy: "none",
     params: [
       {
         name: "soft",
@@ -3068,6 +3229,7 @@ export const STEPS = [
     doc: "Read a QR code out of an image — the conjugate of `qr`. Takes image bytes (`file.read`) or SVG markup and emits the encoded text; `count=all` joins every code found, for a photo of several share cards. Needs a browser with `BarcodeDetector` (Chromium today). Example: `file.read | qr.scan | quorum.join`.",
     input: "bytes",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "count",
@@ -3095,6 +3257,7 @@ export const STEPS = [
     doc: "Read the system clipboard into the pipeline as text. Asks every run — never remembered, because clipboard contents change silently between runs. The out-of-band signaling source: `clipboard.read | quorum.join`.",
     input: "none",
     output: "text",
+    entropy: "none",
     params: [],
   },
   {
@@ -3105,6 +3268,7 @@ export const STEPS = [
     doc: "Copy the current value to the system clipboard and pass it through — text verbatim, bytes as base64, structured values as JSON. Toast-weight confirm, no dialog: you just ran the recipe that produced the value. Example: `… | out $invite | clipboard.write`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [],
   },
   {
@@ -3118,6 +3282,9 @@ export const STEPS = [
     doc: "Chunked AES-GCM in the STREAM construction — the way to encrypt a *file*, since `SubtleCrypto.encrypt` is one-shot and its single tag only verifies after the last byte. Each 64 KiB chunk carries its own tag and its index in the nonce, so reorder, splice, and truncation are all detected. A fresh file key is wrapped under `key=$slot`, which is what makes counter nonces safe with a reused key. **Not age** — same construction, different AEAD and header (see `age.encrypt` for files the `age` CLI can read). Example: `file.read | stream.seal key=$cek | file.save name=doc.bskstrm`.",
     input: "bytes",
     output: "bytes",
+    // keying: a fresh 32-byte file key, wrapped under the bound key. Seeding
+    // it would let every peer decrypt the stream.
+    entropy: "keying",
     params: [
       {
         name: "key",
@@ -3147,6 +3314,7 @@ export const STEPS = [
     doc: "Open a `stream.seal` file. Distinguishes its failures: a bad tag means the file was modified or its chunks reordered; a missing final-chunk flag means it was truncated. Chunk size is read from the header, so `chunk=` is not repeated here. Example: `file.read | stream.open key=$cek | file.save`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "key",
@@ -3167,6 +3335,7 @@ export const STEPS = [
     doc: "Generate an age X25519 identity (`AGE-SECRET-KEY-1…`) — the same thing `age-keygen` writes. Secret: the tile stays masked until you reveal it. Its public half comes from `age.recipient`. Example: `age.keygen | out $id`.",
     input: "none",
     output: "text",
+    entropy: "keying",
     params: [],
   },
   {
@@ -3177,6 +3346,7 @@ export const STEPS = [
     doc: "Identity → recipient (`age1…`): the publishable half, derived and not invertible. An `age1…` already on the stem passes through, so this is safe to write when you are unsure which half you hold. Example: `in $id | age.recipient | out $pub`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [],
   },
   {
@@ -3190,6 +3360,9 @@ export const STEPS = [
     doc: "Encrypt to age recipients — real `age-encryption.org/v1`, produced by typage (age's author's implementation), so `age -d` reads it. `to=` takes one or more `age1…` recipients or an `$slot`; `passphrase=` is the scrypt mode instead (never both). `armor=true` for the PEM-style text form. CLI: `age -r age1… -o doc.age doc`. Example: `file.read | age.encrypt to=$pub | file.save`.",
     input: "bytes",
     output: "bytes",
+    // keying: an age file key plus, for a recipient, an ephemeral X25519
+    // keypair — the two values the recipient's key is used to protect.
+    entropy: "keying",
     params: [
       {
         // `string`, not `slot`, so a literal `age1…` parses — a recipient is
@@ -3236,6 +3409,7 @@ export const STEPS = [
     doc: "Decrypt an age file with `key=$identity` (or `passphrase=`). Accepts binary and armored input, including an armored file read as bytes. CLI: `age -d -i key.txt doc.age`. Example: `file.read | age.decrypt key=$id | file.save`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         // Deliberately a `slot` and not a string: a literal identity in `key=`
@@ -3275,6 +3449,7 @@ export const STEPS = [
     doc: "Open a file from disk into the pipeline. The browser's own picker is the consent — no extra prompt (unlike `clipboard.read`, where the page chooses when to look). Arrives as `bytes`; write `as=text` when the recipe wants it decoded as UTF-8. **The type is read from the recipe, never sniffed from the file** — a source that picked its own type would make every compile-time answer downstream a guess. Filename and MIME ride along in meta, so `file.read | age.encrypt to=$pub | file.save` names the output for you. Main-thread only. Example: `file.read accept=.pem | inspect`.",
     input: "none",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "accept",
@@ -3310,6 +3485,7 @@ export const STEPS = [
     doc: "Write the current value to disk and pass it through, like `out`. Uses the File System Access API's Save dialog where present, otherwise a plain download. The name comes from `name=`, else the value's own meta (a `file.read` upstream, or `age.encrypt`), else `output.bin`. Example: `… | age.encrypt to=$pub | file.save name=doc.age`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "name",
@@ -3336,6 +3512,7 @@ export const STEPS = [
     doc: "Emit a message tile (no filename; Encrypt compose). Prefer `out $label` when you need a file tile + reusable slot. (Legacy aliases `print`/`echo` migrate via Upgrade recipe.)",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "name",
@@ -3361,6 +3538,7 @@ export const STEPS = [
     doc: "Emit a file tile, register a live `$slot` for later `in`, and pass through. Prefer `out $public` (bare `out public` rewrites to `$`). File paths reserved — not supported yet.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "name",
@@ -3406,6 +3584,7 @@ export const STEPS = [
     doc: "Probe WebAuthn / PublicKeyCredential capabilities (platform UVPA, conditional UI, clientCapabilities). Output JSON text. No CAST — discovery only.",
     input: "none",
     output: "text",
+    entropy: "none",
     params: [],
   },
   {
@@ -3416,6 +3595,10 @@ export const STEPS = [
     doc: "Create a WebAuthn credential with PRF (platform or roaming). Returns PRF IKM bytes for HKDF/`aes-gcm`. Soft MDS on attestation; does not block. Main-thread only.",
     input: "none",
     output: "bytes",
+    // keying: `createPasskeyPrf` draws the 32-byte PRF salt that the
+    // authenticator evaluates its PRF over, and this step's output *is* that
+    // PRF's result. The drawn value becomes an input to key material.
+    entropy: "keying",
     params: [
       {
         name: "user",
@@ -3434,6 +3617,13 @@ export const STEPS = [
     doc: "WebAuthn assertion ceremony; emits clientExtensionResults JSON (inspect PRF support). For pipeline PRF IKM bytes use `webauthn.prf`. Main-thread only.",
     input: "none",
     output: "text",
+    // public: a 32-byte assertion challenge, which the authenticator echoes
+    // verbatim in clientDataJSON. It must be unpredictable to a third party —
+    // a pooled value is, since the pool is not published — and it never
+    // touches the credential's private key, which lives in the authenticator
+    // and is not derived from anything this step draws. Contrast
+    // `webauthn.create`, which draws the PRF salt.
+    entropy: "public",
     params: [],
   },
   {
@@ -3444,6 +3634,12 @@ export const STEPS = [
     doc: "Unlock PRF IKM from the vault passkey (same ceremony as My Keys unlock). Pipe into `hkdf` / `aes-gcm`. Main-thread only. Example: `webauthn.prf | hkdf length=32 | …`.",
     input: "none",
     output: "bytes",
+    // keying by the safe default rather than by a settled argument: the only
+    // value this step draws is an assertion challenge (the PRF salt is the
+    // stored one from enrolment), which would read as `public` — but the step
+    // hands back IKM, and `keying` is the answer that costs nothing to be
+    // wrong about.
+    entropy: "keying",
     params: [],
   },
   {
@@ -3454,6 +3650,7 @@ export const STEPS = [
     doc: "Parse WebAuthn attestationObject (bytes, or base64/hex text from Inputs) → JSON (fmt, aaguid). Soft / informational — not a CAST gate. Template: Templates → WebAuthn → Attestation → MDS.",
     input: "bytes",
     output: "text",
+    entropy: "none",
     overloads: [
       { when: { base: "bytes" }, output: { base: "text", kind: "opaque" } },
       { when: { base: "text" }, output: { base: "text", kind: "opaque" } },
@@ -3468,6 +3665,7 @@ export const STEPS = [
     doc: "Soft FIDO MDS lookup for an AAGUID (param or prior JSON aaguid from `webauthn.attest`). verified/unverified/unavailable — never blocks crypto. Same-origin MDS proxy.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "aaguid",
@@ -3494,6 +3692,7 @@ export const STEPS = [
     doc: "Inspect a compact JWS/JWE **without verifying it** — header plus claims, marked unverified. This is the safe first move on a token you were handed: it never checks a signature, so it never implies one was valid. Example: `input | jose.decode | out $claims`. To trust the contents, use `jose.verify`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "format",
@@ -3516,6 +3715,8 @@ export const STEPS = [
     doc: "Sign the pipeline payload into a compact JWS (a JWT when the payload is JSON claims). `alg=auto` reads the algorithm off the key; naming one is checked against the key, never trusted. Example: `input | jose.sign key=$k alg=es256 | out $token`.",
     input: "text",
     output: "text",
+    // keying: ES256 is ECDSA, so the nonce argument on `sign` applies here too.
+    entropy: "keying",
     params: [
       {
         name: "key",
@@ -3555,6 +3756,7 @@ export const STEPS = [
     doc: "Verify a compact JWS and emit its payload. Fail-loud with no soft mode — an unverified payload is attacker-chosen, so there is nothing to branch on; inspect those with `jose.decode`. Refuses `alg=none` and any header that disagrees with the bound key (algorithm confusion). `exp`/`nbf` are checked unless `expiry=ignore`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "key",
@@ -3591,6 +3793,10 @@ export const STEPS = [
     doc: "Encrypt the payload into a compact JWE. AES-GCM content encryption only (`enc=a128gcm|a192gcm|a256gcm`); key management is `dir` (the slot key *is* the CEK), AES-KW, or RSA-OAEP-256. Example: `input | jose.encrypt key=$cek | out $jwe`.",
     input: "text",
     output: "text",
+    // keying: every `alg=` but `dir` mints a fresh content-encryption key
+    // (`crypto.subtle.generateKey`) and wraps it. `dir` draws only the GCM IV,
+    // but one declaration covers the step, so it takes the worse mode.
+    entropy: "keying",
     params: [
       {
         name: "key",
@@ -3631,6 +3837,7 @@ export const STEPS = [
     doc: "Decrypt a compact JWE and emit its plaintext. `alg` / `enc` come from the token's protected header, which is also the AEAD's additional data — tampering with either breaks the tag rather than changing how it decrypts.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "key",
@@ -3650,6 +3857,7 @@ export const STEPS = [
     doc: "Human-readable dump of the current value (openssl-style / hexdump). Tile keeps a snapshot for live format switching. Example: `genkey ec/p256 | tee` / `- :private | inspect`. (Legacy aliases `dump`/`hexdump` migrate via Upgrade recipe.)",
     input: "bytes",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "format",
@@ -3669,6 +3877,7 @@ export const STEPS = [
     doc: "Fork side chains on a clone (`- :public | …`); stem continues unchanged. Use `peek` for a side inspect only.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [],
   },
   {
@@ -3679,6 +3888,7 @@ export const STEPS = [
     doc: "Side inspect snapshot; stem unchanged. Use instead of an empty `tee`. Example: `genkey ec/p256 | peek keypair | export pkcs8 | pem | out $private`.",
     input: "bytes",
     output: "bytes",
+    entropy: "none",
     params: [
       {
         name: "name",
@@ -3706,6 +3916,7 @@ export const STEPS = [
     doc: "ICE server config for a quorum exchange — STUN for reflexive discovery, optional TURN relay with credentials. Emits JSON consumed by `quorum.offer`/`quorum.join` via `ice=$slot`. `credential=` takes a **slot**, not a literal, so the secret never rides out through Copy link or an exported notebook. A STUN binding request tells whoever answers it your public address, so `stun=none` declines every third party — the exchange then gathers host candidates only, which reaches peers on your own network and not across NAT. Example: `rtc.ice turn=turn:relay.example.org:3478 username=u credential=$turncred | out $ice`.",
     input: "none",
     output: "endpoint",
+    entropy: "none",
     params: [
       {
         name: "stun",
@@ -3746,6 +3957,11 @@ export const STEPS = [
     doc: "One-shot NAT diagnostic: gathers ICE candidates against a STUN server and reports the server-reflexive (public) address, candidate mix, and gather time as JSON. Not publishable — a plain output row. Example: `stun.check | out $nat`.",
     input: "none",
     output: "endpoint",
+    // keying: probing a STUN server means constructing an RTCPeerConnection,
+    // and a peer connection mints a DTLS certificate and ICE credentials
+    // before it sends anything. The endpoint it reports is public; the
+    // keypair made along the way is not.
+    entropy: "keying",
     params: [
       {
         name: "server",
@@ -3776,6 +3992,11 @@ export const STEPS = [
     doc: "Open a **managed** peer connection and emit its SDP offer. Unlike the retired `rtc.offer`, the connection stays live under `name=` — carry the offer to the other browser, bring their answer back to `peer.accept`, and `peer.wait` for it to connect. No PGP audience, no room, no relay. The channel is DTLS-encrypted but the far end is **not authenticated**: whoever received the offer is on the other side. Use `quorum.offer` when the peer's identity has to be proven. Example: `peer.offer a | out $offer`.",
     input: "none",
     output: "sdp",
+    // keying: `new RTCPeerConnection` mints the DTLS certificate and ICE
+    // credentials this link is authenticated by. The SDP that comes out
+    // carries only their fingerprint, which is why the *output* is public and
+    // the *draw* is not.
+    entropy: "keying",
     params: [
       {
         name: "name",
@@ -3815,6 +4036,9 @@ export const STEPS = [
     doc: "Answer a remote **offer** and keep the resulting managed connection under `name=`. The conjugate of `peer.offer`: send the answer back, then `peer.wait` on both sides. Refuses an SDP that is already an answer — that one goes to `peer.accept`. Example: `in $remoteOffer | peer.answer b | out $answer`.",
     input: "sdp",
     output: "sdp",
+    // keying: the answering side builds its own RTCPeerConnection, so it mints
+    // its own DTLS certificate — same reasoning as `peer.offer`.
+    entropy: "keying",
     params: [
       {
         name: "name",
@@ -3848,6 +4072,7 @@ export const STEPS = [
     doc: "Apply the remote **answer** to a connection this notebook offered, completing the exchange. Signalling only — it does not wait for ICE, so that \"this is not an answer\" and \"no candidate pair worked\" stay separate errors with separate fixes; `peer.wait` owns the second. Example: `in $remoteAnswer | peer.accept a | out $state`.",
     input: "sdp",
     output: "connstate",
+    entropy: "none",
     params: [
       {
         name: "name",
@@ -3866,6 +4091,7 @@ export const STEPS = [
     doc: "Pause the run until a managed connection is connected and its data channel open, then emit the live channel. This is the step that tells you ICE succeeded: if it fails, the error is the same sentence the Connections panel shows, including what to do about it. Example: `peer.wait a | out $link`.",
     input: "none",
     output: "channel",
+    entropy: "none",
     params: [
       {
         name: "name",
@@ -3890,6 +4116,7 @@ export const STEPS = [
     doc: "Write the pipeline text to a managed connection's data channel, passing the value through. **Not `quorum.send`**: that op encrypts under the exchange's pairwise session key, which a direct connection does not have. What protects this traffic is DTLS alone, and DTLS does not tell you who the far end is. Example: `\"ping\" | peer.send a`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "name",
@@ -3908,6 +4135,7 @@ export const STEPS = [
     doc: "Read from a managed connection's data channel. `count=1` (default) waits for one message and emits it as text; `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `peer.recv b | out $msg`.",
     input: "none",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "name",
@@ -3946,6 +4174,7 @@ export const STEPS = [
     doc: "Close a managed connection and forget it, or every direct connection when `name=` is empty. Never touches the quorum mesh's links even when closing everything — those belong to `quorum.close`, which also has session keys to zeroize. Example: `peer.close a | out $state`.",
     input: "none",
     output: "connstate",
+    entropy: "none",
     params: [
       {
         name: "name",
@@ -3970,6 +4199,9 @@ export const STEPS = [
     doc: "Gather ICE candidates against the configured servers and emit one row per candidate — `host` (local NIC), `srflx` (server-reflexive, via STUN), `relay` (via TURN), plus any `prflx` peer-reflexive found by trickle. Each row carries protocol (`udp`/`tcp`). A missing `relay` row is informational, not an error — it just means no TURN is configured. This is what `quorum.offer` consumes internally; run it standalone to see why a later connection failed. Example: `rtc.ice turn=… | out $ice` then `rtc.gather ice=$ice | out $cands`.",
     input: "none",
     output: "candidate",
+    // keying: gathering needs a live RTCPeerConnection, which mints a DTLS
+    // certificate to gather with even though only candidates are reported.
+    entropy: "keying",
     params: [
       {
         name: "ice",
@@ -3997,6 +4229,7 @@ export const STEPS = [
     doc: "Report the ICE candidate-pair check matrix for the live exchange: one row per local×remote pair with its state (`waiting`/`in-progress`/`succeeded`/`failed`), the nominated pair flagged, plus this peer's `controlling`/`controlled` role. Needs a live `quorum.offer`/`quorum.join` — ICE only checks pairs once both sides have exchanged candidates. Example: `quorum.offer … | out $s` then `rtc.check | out $pairs`.",
     input: "none",
     output: "stats",
+    entropy: "none",
     params: [],
   },
   {
@@ -4008,6 +4241,10 @@ export const STEPS = [
     doc: "Generate a DTLS identity (`RTCCertificate`) — the certificate whose fingerprint the remote peer sees. Mirrors `genkey`'s shape. Most recipes never need this: `quorum.offer` mints a throwaway certificate itself. Use it when you want a stable fingerprint a peer can recognize across sessions. Example: `rtc.certificate | out $id`.",
     input: "none",
     output: "certificate",
+    // keying: `RTCPeerConnection.generateCertificate` is key generation. The
+    // value that travels the pipe is only the fingerprint, but the private
+    // half exists and was drawn here.
+    entropy: "keying",
     params: [
       {
         name: "alg",
@@ -4028,6 +4265,7 @@ export const STEPS = [
     doc: "Observe-only snapshot of the live exchange's `connectionState`, `iceConnectionState`, `iceGatheringState`, and `signalingState`, per peer. Diagnostic — never bind it as an input to a crypto op. Needs a live `quorum.offer`/`quorum.join`. Example: `rtc.state | out $state`.",
     input: "none",
     output: "connstate",
+    entropy: "none",
     params: [],
   },
   {
@@ -4039,6 +4277,8 @@ export const STEPS = [
     doc: "Restart ICE on every peer connection of the live exchange and report the resulting per-peer state. Renegotiates in place — room, invite, and roster survive. The chainable form of the Connections panel's Restart button. Example: `rtc.restart | out $state`.",
     input: "none",
     output: "connstate",
+    // keying: an ICE restart's whole purpose is fresh ICE credentials.
+    entropy: "keying",
     params: [],
   },
   {
@@ -4050,6 +4290,7 @@ export const STEPS = [
     doc: "Data-channel back-pressure and counters for the live exchange: `bufferedAmount` against its low-water threshold, ready state, and messages/bytes sent+received per peer. Use it to see whether `quorum.send` is queueing behind a slow link. Example: `rtc.stats | out $bp`.",
     input: "none",
     output: "stats",
+    entropy: "none",
     params: [],
   },
   {
@@ -4061,6 +4302,7 @@ export const STEPS = [
     doc: "Live `getStats()` quality numbers for the exchange — round-trip time and bytes/packets each way, per connected peer. **Packet loss is not reported**: loss statistics come from RTP, and this transport is SCTP data channels, so there is no RTP on the connection to lose any. The panel says so rather than showing a zero. Example: `rtc.quality | out $quality`.",
     input: "none",
     output: "stats",
+    entropy: "none",
     params: [],
   },
 
@@ -4086,6 +4328,8 @@ export const STEPS = [
     doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `quorum.send`/`quorum.recv`/`quorum.close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=$me | out $session`. Main-thread (WebRTC).",
     input: "none",
     output: "session",
+    // keying: forming the mesh mints a throwaway DTLS certificate per link.
+    entropy: "keying",
     params: [
       {
         name: "to",
@@ -4132,6 +4376,8 @@ export const STEPS = [
     doc: "Join a run-scoped exchange as peer: verifies the creator's signed invite, then meshes with per-peer ephemeral ECDH (data-channel PFS). Pauses the run at this cell until connected. Same audience + site = same room, no code to paste. Example: `quorum.join to=\"AABB…,CCDD…\" key=$me | out $session`. Main-thread (WebRTC).",
     input: "none",
     output: "session",
+    // keying: joining the mesh mints a throwaway DTLS certificate per link.
+    entropy: "keying",
     params: [
       {
         name: "to",
@@ -4178,6 +4424,7 @@ export const STEPS = [
     doc: "End the exchange now: closes every peer connection and zeroizes session keys. Runs implicitly at Clear session — close early when the exchange is done mid-notebook. Passes the value through.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [],
   },
   {
@@ -4188,6 +4435,7 @@ export const STEPS = [
     doc: "Write the pipeline text to the exchange's data channels (per-peer session keys; key-confirmed channels only). `to=` addresses one peer by fingerprint; empty broadcasts to every verified peer, which is the exchange's own policy. Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run — for a channel with no exchange behind it, use `peer.send`.",
     input: "text",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "to",
@@ -4207,6 +4455,7 @@ export const STEPS = [
     doc: "Read from the exchange's data channels, decrypting under each peer's session key. `count=1` (default) waits for one message and emits it as text (`meta.from` = sender fingerprint); `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `quorum.recv | gpg.verify`, or `quorum.recv count=all | foreach\\n  - gpg.verify`.",
     input: "none",
     output: "text",
+    entropy: "none",
     params: [
       {
         name: "from",
@@ -4413,6 +4662,62 @@ export function canonicalName(name) {
  */
 export function listSteps() {
   return STEPS.slice();
+}
+
+/**
+ * The declared entropy kinds, worst last.
+ * @type {readonly EntropyKind[]}
+ */
+export const ENTROPY_KINDS = /** @type {readonly EntropyKind[]} */ (
+  Object.freeze(["none", "public", "keying"])
+);
+
+/**
+ * Output types whose value can carry a secret, and therefore the steps
+ * `registryIssues` requires an `entropy` declaration from.
+ *
+ * Not every type: `bool` is an answer, `recipients` is a set of public keys,
+ * and the WebRTC vocabulary (`endpoint`, `candidate`, `sdp`, `connstate`,
+ * `stats`, `session`, `channel`) describes a connection rather than material —
+ * an SDP's DTLS fingerprint is published by design. What is left is the set a
+ * reader would be alarmed to find in a screenshot.
+ *
+ * `certificate` is in the list because the type names a keypair even though the
+ * value carries only its fingerprints: the question "what randomness made this"
+ * is one `rtc.certificate` must answer.
+ * @type {readonly IoType[]}
+ */
+export const SECRET_BEARING_OUTPUTS = /** @type {readonly IoType[]} */ (
+  Object.freeze([
+    "bytes",
+    "text",
+    "key",
+    "keypair",
+    "shares",
+    "artifact",
+    "bundle",
+    "item",
+    "openpgp-key",
+    "certificate",
+  ])
+);
+
+/**
+ * What kind of randomness a step draws — the *only* correct way to ask.
+ *
+ * An undeclared step reads as `keying`, so an op nobody has audited is refused
+ * by a mirrored run rather than seeded by one. Reading `spec.entropy` directly
+ * would turn `undefined` into a falsy "no entropy", which is the exact
+ * inversion this default exists to prevent.
+ *
+ * @param {StepSpec|null|undefined} spec
+ * @returns {EntropyKind}
+ */
+export function stepEntropy(spec) {
+  const declared = String(spec?.entropy ?? "");
+  return /** @type {EntropyKind} */ (
+    ENTROPY_KINDS.includes(/** @type {EntropyKind} */ (declared)) ? declared : "keying"
+  );
 }
 
 /**

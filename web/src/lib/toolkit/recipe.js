@@ -17,6 +17,8 @@
  */
 
 import {
+  ENTROPY_KINDS,
+  SECRET_BEARING_OUTPUTS,
   getStep,
   listSteps,
 } from "./registry.js";
@@ -1642,6 +1644,29 @@ export function registryIssues() {
         `${s.name}: at most one positional param (found ${positionals
           .map((p) => p.name)
           .join(", ")})`
+      );
+    }
+    // Entropy, in two halves. Anything declared has to name a real kind; and a
+    // step whose output can carry a secret has to declare *something*.
+    //
+    // Only that population, because omission already fails closed — `stepEntropy`
+    // reads an absent field as `keying`, so forgetting can never make a step
+    // seedable. What forgetting can do is leave the step silently refused by
+    // every mirrored run with nobody having decided that. Both facts this
+    // check reads are static: the output type and the declaration are both
+    // known before anything runs.
+    if (s.entropy != null && !ENTROPY_KINDS.includes(s.entropy)) {
+      issues.push(
+        `${s.name}: entropy must be one of ${ENTROPY_KINDS.join(", ")} (got ${JSON.stringify(s.entropy)})`
+      );
+    } else if (s.entropy == null && SECRET_BEARING_OUTPUTS.includes(s.output)) {
+      issues.push(
+        `${s.name}: output ${s.output} can carry a secret, so entropy must be declared — ` +
+          `"none" if it draws no randomness, "public" if what it draws is published ` +
+          `alongside the output (an IV, a nonce, a challenge) and safe for every peer ` +
+          `to recompute, "keying" if the randomness becomes or protects key material. ` +
+          `Run it twice on the same input before deciding; leaving the field off is ` +
+          `read as "keying" and the step is refused by any mirrored run.`
       );
     }
     for (const d of stepInputDeclarations(s.unresolvedInputs)) {

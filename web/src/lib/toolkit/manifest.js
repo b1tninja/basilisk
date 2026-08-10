@@ -52,8 +52,10 @@
  *   here, and it only rules out a receipt minted *before* the commitment.
  * - **That a pinned clock or a pooled entropy value was actually used.** No op
  *   reads either from a manifest today. `otp.code` has the `at=` parameter a
- *   pinned clock would flow into, and nothing flows into it. The declaration is
- *   a claim by the author, checkable only once the ops declare what they draw.
+ *   pinned clock would flow into, and nothing flows into it. What *can* now be
+ *   checked, before the run rather than after it, is the other direction:
+ *   `mirroredRunRefusals` reads each op's declared `entropy` and refuses a
+ *   pooled run that contains one whose randomness must not be seeded.
  * - **That the declared vault reach and network reads are complete.** A
  *   receipt does not echo them, and no static audit produces them yet.
  * - **Placement.** A receipt has no signer. Which peer ran a cell is
@@ -85,9 +87,11 @@ import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 import {
   PEER_WILDCARD,
   normalizePeerRef,
+  parseRecipeSource,
   peerFingerprintError,
   peerLooksLikeFingerprint,
 } from "./recipe-parse.js";
+import { getStep, stepEntropy } from "./registry.js";
 
 /**
  * Manifest envelope version. Bump when the *shape* changes.
@@ -108,13 +112,17 @@ export const MANIFEST_VERSION = 1;
  *   challenges.
  * - `local` — each machine draws its own. Honest, and not reproducible.
  *
- * **The refusal this list exists for is not implemented, and this is where it
- * will land.** Shared entropy must never reach key generation — if everyone can
- * recompute the key, nobody has a private key. Enforcing that needs the
- * registry to say, per op, whether the randomness an op draws is public-safe or
- * keying, and today `registry.js` says nothing about entropy at all. Until it
- * does, `pool` is a declaration no code can honour, and
- * `manifestReproducibility` treats it as such.
+ * **The refusal this list exists for is `mirroredRunRefusals`.** Shared entropy
+ * must never reach key generation — if everyone can recompute the key, nobody
+ * has a private key. That check reads `StepSpec.entropy`, which every op in the
+ * registry now declares: `none`, `public` (an IV, a nonce, a set id, a
+ * challenge — safe to seed) or `keying`. A `pool` manifest whose cells contain
+ * a `keying` op is refused before the run, naming the cell and the op.
+ *
+ * What is still not wired is the other half: no op *reads* a pool. So `pool`
+ * remains a declared non-reproducible dependency in `manifestReproducibility` —
+ * a run that says `pool` still draws locally today — even though the refusal it
+ * exists to make possible is now real.
  * @type {readonly string[]}
  */
 export const ENTROPY_MODES = Object.freeze(["none", "pool", "local"]);
@@ -406,9 +414,9 @@ export function parseManifest(text) {
  * Can this manifest's run be checked digest for digest, and if not, why not?
  *
  * Reads only the declared fields — this answers "what did the author say",
- * never "what will the engine do". The gap between those two is the entropy
- * audit `ENTROPY_MODES` describes: until an op declares whether the randomness
- * it draws is public-safe or keying, nothing can contradict a declaration here.
+ * never "what will the engine do". Contradicting a declaration is a different
+ * question, asked against the recipe rather than against the header, and
+ * `mirroredRunRefusals` is where it is asked.
  *
  * @param {RunManifest} manifest
  * @returns {{ reproducible: boolean, reasons: string[] }}
@@ -420,8 +428,9 @@ export function manifestReproducibility(manifest) {
   const mode = String(entropy.mode || "");
   if (mode === "pool") {
     reasons.push(
-      `entropy: pool ${short(entropy.digest)} — no op declares whether its ` +
-        "randomness may be seeded, so a pool cannot be honoured by this build yet"
+      `entropy: pool ${short(entropy.digest)} — every op declares whether its ` +
+        "randomness may be seeded (see mirroredRunRefusals), but no op reads a " +
+        "pool yet, so this run still draws its own"
     );
   } else if (mode === "local") {
     reasons.push("entropy: local — each machine draws its own, so digests will differ");
@@ -449,6 +458,119 @@ export function manifestReproducibility(manifest) {
     );
   }
   return { reproducible: reasons.length === 0, reasons };
+}
+
+/**
+ * One op a mirrored run will not run, and why.
+ * @typedef {object} MirroredRefusal
+ * @property {number} cell    the cell index the op sits in
+ * @property {string} step    the op's name, as written
+ * @property {"keying"|"unreadable"} reason
+ * @property {string} message human-readable, naming the op and what it would cost
+ */
+
+/**
+ * Pre-flight for a mirrored run: which ops in this notebook must not draw from
+ * a pool?
+ *
+ * A `pool` is entropy every participant helped choose and every participant can
+ * recompute — which is exactly what makes a distributed run agree, and exactly
+ * what must never reach key generation. `genkey` seeded from a value the whole
+ * room can derive produces a private key the whole room can derive, and a
+ * private key everyone has is not one.
+ *
+ * The decision is the registry's, not this module's: `stepEntropy` answers per
+ * op, and **an op that declares nothing reads as `keying`** — so a step added
+ * without an entropy audit is refused here rather than seeded. An op this build
+ * has never heard of resolves to the same answer, which matters for a manifest
+ * written against a newer registry.
+ *
+ * Only `pool` runs are checked. `none` and `local` seed nothing, so there is
+ * nothing to refuse — which is why calling this on any manifest an existing
+ * path builds returns `ok` with an empty list.
+ *
+ * The recipe text is read from `cells[].recipe`, the same field
+ * `manifestHonouredBy` compares against a receipt. If a cell will not parse,
+ * that is a refusal too: a run cannot be cleared on the strength of text
+ * nobody could read.
+ *
+ * @param {RunManifest} manifest
+ * @returns {{ ok: boolean, mode: string, refusals: MirroredRefusal[] }}
+ */
+export function mirroredRunRefusals(manifest) {
+  const mode = String(manifest?.entropy?.mode || "");
+  /** @type {MirroredRefusal[]} */
+  const refusals = [];
+  if (mode !== "pool") return { ok: true, mode, refusals };
+
+  const cells = manifest?.cells || [];
+  for (let i = 0; i < cells.length; i++) {
+    const cell = Number(cells[i]?.index ?? i) || 0;
+    const { ast, errors } = parseRecipeSource(String(cells[i]?.recipe ?? ""));
+    if (!ast) {
+      refusals.push({
+        cell,
+        step: "",
+        reason: "unreadable",
+        message:
+          `cell ${cell} does not parse (${errors?.[0]?.message || "unknown error"}), ` +
+          "so what randomness it draws cannot be read. A mirrored run needs every " +
+          "cell readable before it agrees on entropy.",
+      });
+      continue;
+    }
+    for (const step of flattenSteps(ast)) {
+      const name = String(step?.name || "");
+      if (!name) continue;
+      const spec = getStep(name);
+      // `stepEntropy(null)` is `keying`, so an op this build has never heard of
+      // is refused on the same footing as an undeclared one. The parser already
+      // refuses an unknown step, which is why that cell fails above rather than
+      // here; this is the second lock on the same door, and the one that still
+      // holds if the parser ever grows lenient.
+      if (stepEntropy(spec) !== "keying") continue;
+      const why = !spec
+        ? `is not an op in this build (${opsRegistryVersion()}), so nothing can be ` +
+          "read about the randomness it draws, and unread means keying"
+        : spec.entropy
+          ? "draws keying randomness"
+          : "declares no entropy, which reads as keying";
+      refusals.push({
+        cell,
+        step: spec?.name || name,
+        reason: "keying",
+        message:
+          `cell ${cell} · \`${name}\` ${why}. Pooled entropy is a value every ` +
+          "peer can recompute, so seeding this step would give every peer the " +
+          `same secret — which is no secret. Run this cell locally, or take ` +
+          `\`${name}\` out of the mirrored notebook.`,
+      });
+    }
+  }
+  return { ok: refusals.length === 0, mode, refusals };
+}
+
+/**
+ * Every step in a parsed cell, including the bodies `foreach` and branches
+ * carry — a keying op nested one level down is still a keying op.
+ * @param {{ chains?: { steps?: *[] }[], steps?: *[] }} ast
+ * @returns {*[]}
+ */
+function flattenSteps(ast) {
+  /** @type {*[]} */
+  const flat = [];
+  /** @param {*[]} steps */
+  const walk = (steps) => {
+    for (const s of steps || []) {
+      flat.push(s);
+      walk(s?.body);
+      for (const br of s?.branches || []) walk(br?.body);
+    }
+  };
+  const chains = ast?.chains || [];
+  if (chains.length) for (const c of chains) walk(c?.steps);
+  else walk(ast?.steps);
+  return flat;
 }
 
 /** @param {string} [digest] */
