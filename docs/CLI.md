@@ -65,10 +65,19 @@ Each blank-line **chain** is a cell, and one kernel spans the whole file — so
 `out $slot` in cell 1 is live in cell 3, exactly as in the notebook. Cells run
 top to bottom.
 
-`run` takes a *file*. That matters more than it used to: a slot is written
-`$label`, and a shell expands `$label` inside double quotes, so a recipe typed
-straight onto a command line (`--recipe "… | out $kp"`) would arrive with the
-slot names deleted. Keep recipes in files, or single-quote them.
+`run` takes a *file*, and there is no flag that accepts recipe text directly —
+which is what keeps the following from being a live hazard rather than a note.
+
+A slot is written `$label`, and a shell expands `$label` inside double quotes.
+So recipe text that passes through an unquoted shell context arrives with its
+slot names **deleted**, not mangled — `out $kp` becomes `out `, which fails as
+a parse error rather than silently doing the wrong thing. That covers
+`echo "… | out $kp"`, an unquoted heredoc (`<<EOF` rather than `<<'EOF'`), and
+any future flag that takes a recipe as a string. Single quotes are literal in
+every shell this repo targets, so `'…'` and `<<'EOF'` are safe.
+
+Keeping recipes in files avoids the question entirely, which is why `run` reads
+one.
 
 ```bash
 node web/cli/basilisk.js run split-recover.txt --out-dir ./artifacts
