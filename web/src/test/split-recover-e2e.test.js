@@ -43,7 +43,7 @@ describe("slot-graph wiring", () => {
 
   it("traces labeled slot edges", () => {
     const multi = compileRecipe(
-      "genkey ec/p256 | out @kp\n\n@kp | export pkcs8 | pem | out @private"
+      "genkey ec/p256 | out $kp\n\n$kp | export pkcs8 | pem | out $private"
     ).ast.chains;
     expect([...cellSlotIO(multi[0]).produces]).toEqual(["kp"]);
     expect([...cellSlotIO(multi[1]).consumes]).toEqual(["kp"]);
@@ -66,7 +66,7 @@ describe("split → recover, same session, nothing pasted", () => {
     // back to the indexed share slots the foreach just registered.
     const recoverArts = await kernel.runCell(1, chains[1], {});
     const secret = recoverArts.find((a) => /secret/i.test(a.label || a.filename || ""));
-    expect(secret, "recovered @secret artifact").toBeTruthy();
+    expect(secret, "recovered $secret artifact").toBeTruthy();
 
     // Round-trip proof: the recovered base64 decodes to 32 bytes — the same
     // width the split cell drew. (The raw master never surfaces to compare

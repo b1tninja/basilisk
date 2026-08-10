@@ -10,30 +10,30 @@ Implementation: `web/src/lib/toolkit/recipe-parse.js` (parse),
 
 ```text
 # Linear stem
-genkey ec/p256 | export pkcs8 | pem | out @private
+genkey ec/p256 | export pkcs8 | pem | out $private
 
 # Mid-stem fork (tee): branches run on a clone; stem continues
 genkey ec/p256 | tee
   - :private | inspect
-  - :public | export spki | pem | out @public
-| export pkcs8 | pem | out @private
+  - :public | export spki | pem | out $public
+| export pkcs8 | pem | out $private
 
-# Multi-chain: blank line starts a new pipeline; @slot loads a prior out
-genkey ec/p256 | out @kp
+# Multi-chain: blank line starts a new pipeline; $slot loads a prior out
+genkey ec/p256 | out $kp
 
-@kp | :public | export spki | pem | out @public
-@kp | export pkcs8 | pem | out @private
+$kp | :public | export spki | pem | out $public
+$kp | export pkcs8 | pem | out $private
 
 # Shares collection → foreach body
 random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
 # Dict view + per-item projection
 … | blip39 | foreach :items
-  - :value | out @share
+  - :value | out $share
 
 # One share (1-based index)
-… | blip39 | [1] | out @share-1
+… | blip39 | [1] | out $share-1
 ```
 
 ## Design rules
@@ -42,12 +42,12 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - Within a chain: flat `|` stem; a newline between stem lines is the same as `|`.
 - Blocks: `tee` / `foreach` take a **body** (braces `{ … }` or indented `-` lines).
 - Member / dict projection uses **colon selectors** (`:private`, `:items`, …). Dot (`.`) is reserved for namespaced ops (`gpg.encrypt`, `sss.split`) — not members.
-- Slots: `out @label` registers a live pipeline value; load with bare `@label` (preferred) or `in @label` / `in 1`. `@kp | out` re-emits as `@kp`.
-- Named slot args pass live values into ops: `aes-gcm key=@cek` (stem stays the payload).
+- Slots: `out $label` registers a live pipeline value; load with bare `$label` (preferred) or `in $label` / `in 1`. `$kp | out` re-emits as `$kp`.
+- Named slot args pass live values into ops: `aes-gcm key=$cek` (stem stays the payload).
 - Namespaced product ops use dots (`gpg.encrypt`, `sss.combine`, `webauthn.prf`); cipher ops use hyphens (`aes-gcm`). OpenSSL-sized (`aes-256-gcm`) and JCE (`AES/GCM/NoPadding`) parse to the same canonical hyphen name — **serialize preserves** size/hash as `keyBits=` / `hash=` when implied by those forms. Bare `encrypt`/`decrypt` sugar is migrator-only.
-- Bare `out kp` / `in kp` / `key=cek` do **not** live-parse — use `@label` (`out @kp`, `key=@cek`). Upgrade recipe / `migrateRecipe` rewrites bare forms. `@` is **load-only** — sinks stay `out @label`.
-- Stem literals: `"hello"` / `'…'` → text; `255` / `0xff` → int (serialize ints as decimal); `true` / `false` → bool. Example: `"hello world" | out @var`.
-- Prefer **positional** args: `out @public`, `export pkcs8`, `genkey ec/p256`.
+- Bare `out kp` / `in kp` / `key=cek` do **not** live-parse — use `$label` (`out $kp`, `key=$cek`). Upgrade recipe / `migrateRecipe` rewrites bare forms. A pre-swap `@label` still loads (with a compile warning) and re-serializes as `$label`; `@` at the head of a chain is reserved.
+- Stem literals: `"hello"` / `'…'` → text; `255` / `0xff` → int (serialize ints as decimal); `true` / `false` → bool. Example: `"hello world" | out $var`.
+- Prefer **positional** args: `out $public`, `export pkcs8`, `genkey ec/p256`.
 - Casts: retag (`as master` / `as public` / …), coerce (`as int` / `as bool`), or materialize (`as key` / `as keypair` → WebCrypto handles). Literal postfix (`1234 as int`) is not shipped — use `"1234" | as int` or `1234` stem lit.
 - Empty `tee` is invalid; use `peek` for a side inspect snapshot.
 - List marker is only `-`. Leading tabs are errors.
@@ -65,22 +65,22 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 | First chain | Also exposed as `ast.steps` for older callers |
 
 Use **tee** when you need a mid-stem projection fork (public beside private export).
-Use **blank-line chains + `@slot` / `in`** when a later pipeline should reuse an earlier `out`.
+Use **blank-line chains + `$slot` / `in`** when a later pipeline should reuse an earlier `out`.
 
 ## Notebook execution (toolkit UI)
 
-In the browser toolkit, each blank-line **chain** is one notebook **cell**. A session **kernel** holds live `@slot` values across cell runs (Jupyter-like), so you can run an HKP cell, then an encrypt cell that consumes `to=@alices` without re-searching.
+In the browser toolkit, each blank-line **chain** is one notebook **cell**. A session **kernel** holds live `$slot` values across cell runs (Jupyter-like), so you can run an HKP cell, then an encrypt cell that consumes `to=$alices` without re-searching.
 
 | Action | Effect |
 |--------|--------|
 | **Run cell** | Executes that chain against the kernel’s slot map; updates that cell’s output tiles; marks **downstream** cells stale (no auto-cascade) |
-| **Run all** / **Run from here** | Sequential cell runs top-to-bottom; soft-disabled while a runnable cell still needs input, recipients, or `@slots` |
+| **Run all** / **Run from here** | Sequential cell runs top-to-bottom; soft-disabled while a runnable cell still needs input, recipients, or `$slots` |
 | **Clear sensitive data** | Wipes kernel slots, all cell outputs, runtime inputs, and the agent session; **keeps** cell recipes and title |
 | **Reset notebook** | Clear sensitive **plus** collapse to a single empty cell (More menu) |
 | **Destroy** | Same wipe as Clear sensitive for secrets/outputs; recipe text retained (v1) |
 | **Clear outputs** (per cell) | Surgical cleanup of that cell’s tiles only |
 
-Idle auto-scrub uses the same path as **Clear sensitive data**. The whole notebook still serializes to multi-chain recipe source (shareable / Templates). Slot-side params (`to=@`, `key=@`) resolve from the kernel when present. Duplicate `out @label` within one cell still errors; re-running a later cell may replace a kernel binding written earlier.
+Idle auto-scrub uses the same path as **Clear sensitive data**. The whole notebook still serializes to multi-chain recipe source (shareable / Templates). Slot-side params (`to=$`, `key=$`) resolve from the kernel when present. Duplicate `out $label` within one cell still errors; re-running a later cell may replace a kernel binding written earlier.
 
 OpenPGP **Modern / Compatible / Auto** lives once in the notebook header (with **Advanced OpenPGP…** for profile details). Messaging **Encrypt** cells use the recipient binder only when the recipe has no `to=` — look-up chrome stays quiet until that panel is focused.
 
@@ -92,14 +92,14 @@ The **Templates** menu is organized by category (Keys, Encrypt, WebAuthn, …) w
 
 **WebAuthn starters:** Templates → WebAuthn includes PRF → AES-GCM and **Attestation → MDS** (`input | webauthn.attest` — paste base64/hex attestationObject in Inputs).
 
-Inter-cell feed stays **explicit `@slots`** — there is no implicit “trailing tile → next cell stem” and no new chain operator:
+Inter-cell feed stays **explicit `$slots`** — there is no implicit “trailing tile → next cell stem” and no new chain operator:
 
 | Bridge | When | How |
 |--------|------|-----|
-| **Slot** | Inverse already uses `in @x` / `key=@x`, or starts with `input` while forward ends with `out @x` | Kernel: run top→bottom so `@x` is registered before the inverse cell |
+| **Slot** | Inverse already uses `in $x` / `key=$x`, or starts with `input` while forward ends with `out $x` | Kernel: run top→bottom so `$x` is registered before the inverse cell |
 | **Inputs** | Inverse starts with `shares` / `gpg.decrypt` | Paste share mnemonics / ciphertext into that cell’s runtime Inputs (smoke tests feed forward tiles → `inputs`) |
 
-**Add both** may rewrite a reverse `input` head to `in @bridge` when a slot bridge applies; SSS/GPG-share inverses are left unchanged (inputs bridge). If the inverse reuses an `out @label` already emitted by the forward cell, Add both renames the inverse tip (e.g. `@pem` → `@pem_rev`) so the joined notebook validates. Trailing auto-emitted tiles alone never become slots — only `out` does.
+**Add both** may rewrite a reverse `input` head to `in $bridge` when a slot bridge applies; SSS/GPG-share inverses are left unchanged (inputs bridge). If the inverse reuses an `out $label` already emitted by the forward cell, Add both renames the inverse tip (e.g. `$pem` → `$pem_rev`) so the joined notebook validates. Trailing auto-emitted tiles alone never become slots — only `out` does.
 
 **Exhaustive verb smoke** (Vitest, not CAST): `web/src/test/helpers/verb-smoke.js` + `web/src/test/recipe-verbs.test.js` require every `listSteps()` op and every enum/bool param value to appear in a compiling recipe, then **run** every case. WebAuthn create/get/prf and `agent.save protection=passkey` use Vitest-only `installWebAuthnPrfStub` in `web/src/test/helpers/toolkit-smoke-stubs.js` (fake `navigator.credentials` + fixed PRF IKM) — never imported by production pages.
 
@@ -109,7 +109,7 @@ Toolkit recipes are addressable in the **URL fragment** (never sent to the serve
 
 | Fragment | Loads |
 |----------|--------|
-| `#encrypt` / `#decrypt` / `#symencrypt` | Messaging quick-start notebooks (`#symencrypt` = `mode=passphrase` + generated `@pw`) |
+| `#encrypt` / `#decrypt` / `#symencrypt` | Messaging quick-start notebooks (`#symencrypt` = `mode=passphrase` + generated `$pw`) |
 | `#t=<presetId>` | A Templates preset by id |
 | `#r=<compact-recipe>` | Full notebook in a URL-friendly compact form |
 | `#decrypt&ct=<base64url>` | Decrypt starter + **ciphertext Inputs seed** |
@@ -119,8 +119,8 @@ Toolkit recipes are addressable in the **URL fragment** (never sent to the serve
 
 - Pipes without spaces: `input|gpg.encrypt`
 - Chains joined with `~` instead of blank lines
-- `tee` / `foreach` bodies as one-line braces: `foreach{ - out @share }`
-- Spaces encoded as `+`; tokens like `|@=~` stay readable in the address bar
+- `tee` / `foreach` bodies as one-line braces: `foreach{ - out $share }`
+- Spaces encoded as `+`; tokens like `|$@=~` stay readable in the address bar — `$` costs one character per slot, not three
 
 On load, the compact payload is expanded and **beautified** back to canonical multi-line recipe text (blank-line chains, spaced pipes, indented or brace bodies). Legacy fully percent-encoded pretty recipes still parse.
 
@@ -160,7 +160,7 @@ Each apply stage is `name` then zero or more args:
 
 | Form | Example | Notes |
 |------|---------|-------|
-| Positional | `genkey ec/p256`, `out @public` | Binds the step’s `positional` param |
+| Positional | `genkey ec/p256`, `out $public` | Binds the step’s `positional` param |
 | Named | `sss.split threshold=2 shares=3` | `ident=value` — **unknown `name=` rejected at parse** |
 | Flag | `aes-gcm -d`, `base64 -d` | Sets the param with `flag: "-d"` to `true` (ciphers + encoding twins) |
 | Encode / decode verb | `base64.encode`, `base64.decode` | Encoding `decodeTwin` steps — serialize as `.encode` / `.decode` (AST still `{ decode }`) |
@@ -168,11 +168,11 @@ Each apply stage is `name` then zero or more args:
 | Base alphabet conjugate | `encode hex`, `decode base64` | Bytes ↔ text in `hex` / `base64` / `base64url` / `base32` |
 
 Canonical serialize omits redundant `name=` for the primary positional when the
-value is not the registry default (slot names always serialize as `@label`).
+value is not the registry default (slot names always serialize as `$label`).
 Encoding twins canonicalize to `name.encode` / `name.decode` (not `-d`).
 PEM armor serializes as bare `pem` / `der`; base alphabets as `encode <alphabet>` / `decode <alphabet>`.
 
-Aliases resolve at parse time only via Upgrade recipe for retired tokens (`paste` → `input`, …). Slot load is **`in @label` / bare `@label`**; `from` and `to` were retired in favour of `decode` / `encode`, which removes the ambiguity that made `from base64` unparseable. Basilisk-legacy step tokens (`aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, `to` / `from`, bare `encrypt`/`decrypt` sugar, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
+Aliases resolve at parse time only via Upgrade recipe for retired tokens (`paste` → `input`, …). Slot load is **`in $label` / bare `$label`**; `from` and `to` were retired in favour of `decode` / `encode`, which removes the ambiguity that made `from base64` unparseable. Basilisk-legacy step tokens (`aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, `to` / `from`, bare `encrypt`/`decrypt` sugar, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
 
 ### ParamSpec (registry)
 
@@ -194,10 +194,10 @@ Reference, and toolcards all read this schema — toolcards are views of
 | `serialize` | no | `"always"` — emit `name=value` even when equal to default (e.g. `mode=`) |
 
 Non-param parse mechanisms stay outside ParamSpec: JCE/sized verb forms →
-`keyBits` / `hash` via `step-names`; mid-token `@` emails; bare `@label` /
+`keyBits` / `hash` via `step-names`; mid-token `@` emails; bare `$label` /
 `out`/`in` slot sugar.
 
-## Slots (`@label`)
+## Slots (`$label`)
 
 `out` emits a result tile **and** registers a cloned live pipeline value.
 `in` sources that value (typed keypair / bytes / shares / …) — not
@@ -205,18 +205,18 @@ re-parsed artifact text.
 
 | Form | Meaning |
 |------|---------|
-| `out @kp` | Emit + register memory slot `kp` (+ next 1-based index) |
-| `in @kp` | Load slot `kp` |
+| `out $kp` | Emit + register memory slot `kp` (+ next 1-based index) |
+| `in $kp` | Load slot `kp` |
 | `in 1` | Load first registered slot by registration order |
 | `./x.pem`, `file:…` | Still rejected — disk is reached through `file.read` / `file.save`, not through a path in the recipe |
 
 Rules:
 
-- Duplicate `@label` in one recipe → error.
+- Duplicate `$label` in one recipe → error.
 - Forward / missing refs → error.
 - Only explicit `out` registers slots (dangling auto-emit does not).
-- Default stem when omitted: `@output`.
-- Bare `out kp` / `key=cek` → parse error; **Upgrade recipe** rewrites to `@`.
+- Default stem when omitted: `$output`.
+- Bare `out kp` / `key=cek` → parse error; **Upgrade recipe** rewrites to `$`.
 
 ## Named slot args
 
@@ -224,66 +224,66 @@ Secondary live values (keys, peers) are passed as **slot-typed named args**,
 not on the stem. The stem stays the payload.
 
 ```text
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-input | utf8 | aes-gcm key=@cek | out @ct
+input | utf8 | aes-gcm key=$cek | out $ct
 
-in @ct | aes-gcm -d key=@cek | utf8 | out @plain
+in $ct | aes-gcm -d key=$cek | utf8 | out $plain
 ```
 
 | Op | Slot args |
 |----|-----------|
-| `aes-gcm` / `aes-cbc` / `aes-ctr` / `rsa-oaep` / `rsa-pkcs1` / `sign` / `unwrap` | `key=@…` |
-| `aes-gcm` | also `aad=@…` (or UTF-8 literal) |
-| `hkdf` / `pbkdf2` | `salt=@…` / `info=@…` (hkdf); literals still OK |
-| `verify` | `key=@…` `signature=@…` (or bare base64url for `signature=`) |
-| `gpg.verify` | `signature=@…` (detached; cleartext uses stem) |
-| `gpg.symencrypt` / `gpg.symdecrypt` | `mode=master` (default, SSS) or `mode=passphrase` + `passphrase=@…` (`gpg -c`); passphrase alone does not flip modes |
-| `ecdh` | `private=@…` `peer=@…` |
-| `wrap` | `key=@…` (wrapping) `target=@…` (CEK) |
-| `stream.seal` / `stream.open` | `key=@…` (wraps / unwraps the per-file key) |
-| `age.encrypt` | `to=@…` (recipients) — or `passphrase=`, never both |
-| `age.decrypt` | `key=@…` (an `AGE-SECRET-KEY-1…` identity) — or `passphrase=` |
+| `aes-gcm` / `aes-cbc` / `aes-ctr` / `rsa-oaep` / `rsa-pkcs1` / `sign` / `unwrap` | `key=$…` |
+| `aes-gcm` | also `aad=$…` (or UTF-8 literal) |
+| `hkdf` / `pbkdf2` | `salt=$…` / `info=$…` (hkdf); literals still OK |
+| `verify` | `key=$…` `signature=$…` (or bare base64url for `signature=`) |
+| `gpg.verify` | `signature=$…` (detached; cleartext uses stem) |
+| `gpg.symencrypt` / `gpg.symdecrypt` | `mode=master` (default, SSS) or `mode=passphrase` + `passphrase=$…` (`gpg -c`); passphrase alone does not flip modes |
+| `ecdh` | `private=$…` `peer=$…` |
+| `wrap` | `key=$…` (wrapping) `target=$…` (CEK) |
+| `stream.seal` / `stream.open` | `key=$…` (wraps / unwraps the per-file key) |
+| `age.encrypt` | `to=$…` (recipients) — or `passphrase=`, never both |
+| `age.decrypt` | `key=$…` (an `AGE-SECRET-KEY-1…` identity) — or `passphrase=` |
 
 Rules:
 
-- Refs use `@label` (`key=@cek`). Bare `key=cek` is a parse error — Upgrade rewrites it.
+- Refs use `$label` (`key=$cek`). Bare `key=cek` is a parse error — Upgrade rewrites it.
 - Forward / missing refs error at validate (same as `in`).
 - When required slot args are present, the key/peer/wrap/signature panels are not required.
 - Panels remain as fallback when slot args are omitted.
-- Do not embed JWK JSON secrets in the recipe — only `@` refs (or panels).
+- Do not embed JWK JSON secrets in the recipe — only `$` refs (or panels).
 
 ```text
-input | utf8 | out @msg
-genkey ed25519 | out @kp
+input | utf8 | out $msg
+genkey ed25519 | out $kp
 
-in @msg | sign key=@kp | base64url | out @sig
-in @msg | verify key=@kp signature=@sig | out @ok
+in $msg | sign key=$kp | base64url | out $sig
+in $msg | verify key=$kp signature=$sig | out $ok
 ```
 
 ### Namespaces and cipher spellings
 
 | Kind | Canonical | Also parses | Serialize |
 |------|-----------|-------------|-----------|
-| OpenPGP | `gpg.genkey` / `gpg.inspect` / `gpg.encrypt` / `gpg.decrypt` / `gpg.sign` / `gpg.verify` / `gpg.symencrypt` / `gpg.symdecrypt` | `gpg.encrypt -s` sign+encrypt; `key=@slot` on sign/verify/`-s` | dotted |
+| OpenPGP | `gpg.genkey` / `gpg.inspect` / `gpg.encrypt` / `gpg.decrypt` / `gpg.sign` / `gpg.verify` / `gpg.symencrypt` / `gpg.symdecrypt` | `gpg.encrypt -s` sign+encrypt; `key=$slot` on sign/verify/`-s` | dotted |
 | Agent (My Keys) | `agent.unlock` / `agent.pub` / `agent.list` / `agent.save` | migrate `gpg.vault` → `agent.unlock`; emit `openpgp-key` | dotted |
 | HKP (keyserver) | `hkp.get` / `hkp.search` / `hkp.filter` / `recipients.merge` | search → `recipients`; get → `openpgp-key/public` | dotted |
 | WebCrypto AEAD/cipher/RSA | `aes-gcm`, `aes-cbc`, `aes-ctr`, `rsa-oaep`, `rsa-pkcs1` | `aes-256-gcm`, `AES/GCM/NoPadding` (live); `encrypt`/`decrypt` sugar via migrator only | hyphen |
 | Chunked AEAD (files) | `stream.seal` / `stream.open` | — | dotted |
 | age | `age.keygen` / `age.recipient` / `age.encrypt` / `age.decrypt` | — | dotted |
 | File I/O | `file.read` / `file.save` | — | dotted |
-| JOSE (JWS / JWE / JWT) | `jose.decode` / `jose.sign` / `jose.verify` / `jose.encrypt` / `jose.decrypt` | `key=@slot` on all but `decode`; alg/enc values are lowercase (`alg=es256` → header `ES256`) | dotted |
+| JOSE (JWS / JWE / JWT) | `jose.decode` / `jose.sign` / `jose.verify` / `jose.encrypt` / `jose.decrypt` | `key=$slot` on all but `decode`; alg/enc values are lowercase (`alg=es256` → header `ES256`) | dotted |
 
 Write concrete cipher ops in recipes. Bare `encrypt` / `decrypt` are **migrator-only** (not OpenPGP): Upgrade recipe rewrites known sugar to `aes-gcm` / …; live parse hard-errors.
 
 ```text
-input | utf8 | aes-gcm key=@cek | out @ct
-in @ct | aes-gcm -d key=@cek | utf8 | out @plain
+input | utf8 | aes-gcm key=$cek | out $ct
+in $ct | aes-gcm -d key=$cek | utf8 | out $plain
 ```
 
 **Builder UX:** the ops drawer’s **Pick a cipher** strip (Encrypt | Decrypt) is a meta entry — it opens a subset of AEAD/cipher/RSA ops and inserts a **concrete** card (`aes-gcm`, …) with decode pre-filled for Decrypt. There is never a builder block named `encrypt` / `decrypt`.
 
-OpenPGP signatures are **`gpg.sign` / `gpg.verify` only** — never bare `sign`/`verify`. OpenPGP encrypt stays **`gpg.encrypt`** (`-s` / `sign=true` = sign-then-encrypt). Prefer **`agent.unlock`** + `key=@slot` so recipes address My Keys by fingerprint/slot (not pasted armor). `hkp.get` loads remote public keys for verify. `gpg.genkey` emits `openpgp-key/private`; `gpg.inspect` summarizes armor without decrypting.
+OpenPGP signatures are **`gpg.sign` / `gpg.verify` only** — never bare `sign`/`verify`. OpenPGP encrypt stays **`gpg.encrypt`** (`-s` / `sign=true` = sign-then-encrypt). Prefer **`agent.unlock`** + `key=$slot` so recipes address My Keys by fingerprint/slot (not pasted armor). `hkp.get` loads remote public keys for verify. `gpg.genkey` emits `openpgp-key/private`; `gpg.inspect` summarizes armor without decrypting.
 
 ### Run receipts (`run.receipt` / `run.verify`)
 
@@ -293,11 +293,11 @@ digests, timestamps, and an op-registry fingerprint.
 
 ```text
 random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
-run.receipt "Board key ceremony" | gpg.sign key=@me | out @receipt
+run.receipt "Board key ceremony" | gpg.sign key=$me | out $receipt
 
-input | run.verify | out @ok      # check a receipt against a re-run
+input | run.verify | out $ok      # check a receipt against a re-run
 ```
 
 | Op | Role |
@@ -324,14 +324,14 @@ there is no extra gate — and `file.save` is a passthrough sink like `out`.
 
 ```text
 # Encrypt a file to an age recipient and write it back out
-file.read | age.encrypt to=@pub | file.save
+file.read | age.encrypt to=$pub | file.save
 
 # Decrypt one, keeping the round trip symmetric
-file.read | age.decrypt key=@id | file.save
+file.read | age.decrypt key=$id | file.save
 
 # Filter the picker, and name the pipeline type
-file.read ".pem,.asc" as=text | gpg.inspect | out @report
-file.read as=bytes | digest | encode hex | out @sha
+file.read ".pem,.asc" as=text | gpg.inspect | out $report
+file.read as=bytes | digest | encode hex | out $sha
 ```
 
 `file.read` emits `bytes`; `as=text` decodes the file as UTF-8 instead. Those
@@ -353,25 +353,25 @@ Two ways to encrypt a file, and they are **not** the same format.
 
 ```text
 # Basilisk's own chunked AEAD — any AES key the notebook holds
-genkey aes/256 | out @cek
-file.read | stream.seal key=@cek chunk=65536 | file.save
-file.read | stream.open key=@cek | file.save
+genkey aes/256 | out $cek
+file.read | stream.seal key=$cek chunk=65536 | file.save
+file.read | stream.open key=$cek | file.save
 
 # Real age — what `age -d` on someone else's machine reads
-age.keygen | out @id
-@id | age.recipient | out @pub
+age.keygen | out $id
+$id | age.recipient | out $pub
 
-file.read | age.encrypt to=@pub | file.save
-file.read | age.decrypt key=@id | file.save
+file.read | age.encrypt to=$pub | file.save
+file.read | age.decrypt key=$id | file.save
 
 # scrypt passphrase mode, and the armored text form
-file.read | age.encrypt passphrase="correct horse" armor=true | out @armored
+file.read | age.encrypt passphrase="correct horse" armor=true | out $armored
 ```
 
 | | `stream.seal` | `age.encrypt` |
 |---|---|---|
 | Interop | none — Basilisk-only (`BSKSTRM1`) | full `age-encryption.org/v1` |
-| Key | any AES `key=@slot` (`genkey`, `hkdf`, `ecdh`, `webauthn.prf`) | `age1…` recipients or a passphrase |
+| Key | any AES `key=$slot` (`genkey`, `hkdf`, `ecdh`, `webauthn.prf`) | `age1…` recipients or a passphrase |
 | AEAD | AES-256-GCM (WebCrypto has no ChaCha) | ChaCha20-Poly1305 |
 | Chunking | STREAM, 64 KiB default, `chunk=` | STREAM, 64 KiB fixed |
 | Armor | none — pipe through `base64` | `armor=true` |
@@ -387,7 +387,7 @@ you would otherwise have to invent an age identity to hold it.
 | `age -r age1… -o doc.age doc` | `file.read \| age.encrypt to=age1… \| file.save` |
 | `age -a -r age1… …` | `… \| age.encrypt to=age1… armor=true` |
 | `age -p -o doc.age doc` | `… \| age.encrypt passphrase=…` |
-| `age -d -i key.txt doc.age` | `file.read \| age.decrypt key=@id \| file.save` |
+| `age -d -i key.txt doc.age` | `file.read \| age.decrypt key=$id \| file.save` |
 
 ### Pipeline types: `recipients` / `openpgp-key`
 
@@ -397,46 +397,46 @@ you would otherwise have to invent an age identity to hold it.
 | `openpgp-key/public` | Single OpenPGP public key | No | `hkp.get`, `agent.pub` |
 | `openpgp-key/private` | Single OpenPGP private key | Yes | `agent.unlock`, `gpg.genkey`, `agent.save` |
 
-Do **not** overload WebCrypto `key` / `keypair`. Recipients and vault keys are usually **side inputs** (`to=@…`, `key=@…`), not the encrypt/sign stem tip — the suggest drawer offers composition chips (“Encrypt message to this set”) that insert a blank-line chain.
+Do **not** overload WebCrypto `key` / `keypair`. Recipients and vault keys are usually **side inputs** (`to=$…`, `key=$…`), not the encrypt/sign stem tip — the suggest drawer offers composition chips (“Encrypt message to this set”) that insert a blank-line chain.
 
 ### `gpg.encrypt to=`
 
 | Token | Kind |
 |-------|------|
-| `to=@alices` | Slot (`recipients` / `openpgp-key/public` / armored text) |
+| `to=$alices` | Slot (`recipients` / `openpgp-key/public` / armored text) |
 | `to=fpr:AABB…` / `to=0xAABB…` / bare 40-hex | Exact fingerprint |
 | `to=alice@example.org` / `to=email:…` | Unresolved until **Look up recipients** (search glyph); binds fingerprints in UI state |
 | `policy=ask\|one\|all` | Multi-match (default `ask`) |
 | `mode=separate\|combined` | Default `separate` = one ciphertext per recipient; `combined` = one message, N PKESKs |
 
-When `to=` is set, the Run recipient binder is skipped. Recipe text holds emails / fingerprints / `@slots` only — never armor.
+When `to=` is set, the Run recipient binder is skipped. Recipe text holds emails / fingerprints / `$slots` only — never armor.
 
 ```text
-input | utf8 | gpg.sign | out @signed
-in @signed | gpg.verify | out @ok
+input | utf8 | gpg.sign | out $signed
+in $signed | gpg.verify | out $ok
 
-agent.unlock AABBCCDDEEFF00112233445566778899AABBCCDD | out @me
-input | gpg.sign key=@me | out @signed
-in @signed | gpg.verify key=@me | out @ok
+agent.unlock AABBCCDDEEFF00112233445566778899AABBCCDD | out $me
+input | gpg.sign key=$me | out $signed
+in $signed | gpg.verify key=$me | out $ok
 
-hkp.get AABBCCDDEEFF00112233445566778899AABBCCDD | out @bob
-in @signed | gpg.verify key=@bob | out @ok
+hkp.get AABBCCDDEEFF00112233445566778899AABBCCDD | out $bob
+in $signed | gpg.verify key=$bob | out $ok
 
-hkp.search alice@example.org | hkp.filter | out @alices
-input | gpg.encrypt to=@alices
+hkp.search alice@example.org | hkp.filter | out $alices
+input | gpg.encrypt to=$alices
 input | gpg.encrypt to=alice@example.org policy=one
 input | gpg.encrypt to=fpr:AABBCCDDEEFF00112233445566778899AABBCCDD
 
-gpg.genkey email="you@example.com" | agent.save protection=device | out @priv
+gpg.genkey email="you@example.com" | agent.save protection=device | out $priv
 
-input | utf8 | out @msg
-in @msg | gpg.sign format=detached | out @sig
-in @msg | gpg.verify signature=@sig | out @ok
+input | utf8 | out $msg
+in $msg | gpg.sign format=detached | out $sig
+in $msg | gpg.verify signature=$sig | out $ok
 
 input | gpg.encrypt -s
-input | gpg.inspect format=packets | out @report
-passphrase mode=char length=20 | out @pass
-random 10 | base32 | out @id
+input | gpg.inspect format=packets | out $report
+passphrase mode=char length=20 | out $pass
+random 10 | base32 | out $id
 ```
 
 WebCrypto `verify` is fail-loud by default; `verify -q` / `soft=true` emits bool `true` or `false` (setup errors still throw). Same soft mode on `gpg.verify`. Prefer fail-loud for auth decisions. `aes-cbc` / `aes-ctr` are **unauthenticated** — prefer `aes-gcm` for new work.
@@ -444,16 +444,16 @@ WebCrypto `verify` is fail-loud by default; `verify -q` / `soft=true` emits bool
 ### JOSE (RFC 7515 / 7516 / 7519)
 
 ```text
-genkey ec/p256 usage=sign | out @jwtkey
+genkey ec/p256 usage=sign | out $jwtkey
 
-input | jose.sign key=@jwtkey alg=es256 | out @token
-@token | jose.verify key=@jwtkey | out @claims
+input | jose.sign key=$jwtkey alg=es256 | out $token
+$token | jose.verify key=$jwtkey | out $claims
 
-input | jose.decode | out @unverified
+input | jose.decode | out $unverified
 
-genkey aes/256 | out @cek
-input | jose.encrypt key=@cek | out @jwe
-@jwe | jose.decrypt key=@cek | out @plain
+genkey aes/256 | out $cek
+input | jose.encrypt key=$cek | out $jwe
+$jwe | jose.decrypt key=$cek | out $plain
 ```
 
 Typed as refined **`text`** — `text/jws`, `text/jwe`, and `text/json` for a
@@ -500,12 +500,12 @@ Stage form only: `… | as TYPE`. Three kinds:
 
 ```text
 random 16 | digest | as master | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
-:public | export spki | pem | out @pub
-in @pub | der | as key
-# or: in @pub | as key
-# or: in @priv | as keypair
+:public | export spki | pem | out $pub
+in $pub | der | as key
+# or: in $pub | as key
+# or: in $priv | as keypair
 ```
 
 | Form | Meaning |
@@ -525,8 +525,8 @@ Live `key` / `keypair` tips are backed by WebCrypto `CryptoKey` handles (artifac
 
 | Tokens | Meaning A | Meaning B |
 |--------|-----------|-----------|
-| `to` | *(retired encoding verb — use `encode <alphabet>`)* | Recipients: `gpg.encrypt to=@…` / `to=email:…` |
-| `from` | *(retired — use `decode <alphabet>`)* | *(retired slot load — use `in` / `@label`)* |
+| `to` | *(retired encoding verb — use `encode <alphabet>`)* | Recipients: `gpg.encrypt to=$…` / `to=email:…` |
+| `from` | *(retired — use `decode <alphabet>`)* | *(retired slot load — use `in` / `$label`)* |
 | `as` | Cast stage: `as master` / `as key` / `as int` | KDF param: `hkdf … as=aes/256` → live `key` tip |
 | `encrypt` / `decrypt` | *(migrator-only sugar)* | Prefer `aes-gcm` / `gpg.encrypt` |
 | `mode=` | Cipher unwrap modes (`wrap`/`unwrap`) | `gpg.symencrypt mode=master\|passphrase` |
@@ -570,13 +570,13 @@ ASCII-armored round-trips keep the half through `pem` / `der`
 (`BEGIN PUBLIC KEY` ↔ SPKI, `BEGIN PRIVATE KEY` ↔ PKCS#8):
 
 ```text
-:public | export spki | pem | out @pub
-in @pub | der | import spki
-# or: in @pub | as key
+:public | export spki | pem | out $pub
+in $pub | der | import spki
+# or: in $pub | as key
 
-:private | export pkcs8 | pem | out @priv
-in @priv | der | import pkcs8
-# or: in @priv | as keypair
+:private | export pkcs8 | pem | out $priv
+in $priv | der | import pkcs8
+# or: in $priv | as keypair
 ```
 
 ### Iteration views (`foreach` only)
@@ -602,8 +602,8 @@ Side pipelines on a **clone** (or projected member). Stem value is unchanged.
 
 ```text
 genkey ec/p256 | tee
-  - :public | export spki | pem | out @public
-| export pkcs8 | pem | out @private
+  - :public | export spki | pem | out $public
+| export pkcs8 | pem | out $private
 ```
 
 Brace form is equivalent: `tee { - :public | … }`.
@@ -611,14 +611,14 @@ Brace form is equivalent: `tee { - :public | … }`.
 ### `foreach`
 
 Map a body over a shares collection. Optional selector before the body.
-The tip after `foreach` is a **`bundle`** of per-item tips (side effects via `out` / auto-emitted shares) — do **not** pipe the bundle into cipher/KDF ops; use `@slot`s written in the body.
+The tip after `foreach` is a **`bundle`** of per-item tips (side effects via `out` / auto-emitted shares) — do **not** pipe the bundle into cipher/KDF ops; use `$slot`s written in the body.
 
 ```text
 … | blip39 | foreach
-  - out @share
+  - out $share
 
 … | blip39 | foreach :items
-  - :value | out @share
+  - :value | out $share
 ```
 
 Nested `tee` / `foreach` inside a body is rejected in v1.
@@ -628,7 +628,7 @@ Nested `tee` / `foreach` inside a body is rejected in v1.
 Side inspect snapshot; stem unchanged. Prefer this over an empty `tee`.
 
 ```text
-genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private
+genkey ec/p256 | peek keypair | export pkcs8 | pem | out $private
 ```
 
 ## Keywords
@@ -639,9 +639,9 @@ genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private
 | `foreach` | Map body over a sequence. Optional `:items` / `:values` / `:keys`. |
 | `peek` | Side inspect snapshot; stem unchanged. |
 | `at` | Same as `[n]` / `[n:m]` — share index or slice. |
-| `in` | Source: load a prior `out` slot by `@label` or 1-based index (also written bare as `@label`). |
+| `in` | Source: load a prior `out` slot by `$label` or 1-based index (also written bare as `$label`). |
 | `encode` / `decode` | Base-alphabet conjugate (`encode hex` / `decode base64`). |
-| `out` | Emit a tile, register a slot, pass the value through. After `@x` / `in @x`, bare `out` inherits `@x`. |
+| `out` | Emit a tile, register a slot, pass the value through. After `$x` / `in $x`, bare `out` inherits `$x`. |
 | `as` | Retag refined bytes kind (`master` / `scalar` / `opaque`). |
 | `input` | Free-form text at run time (not a slot). Legacy `paste`/`cat` migrate via Upgrade recipe. |
 | `select` | Internal name for a bare selector stage (usually written as `:public`). |
@@ -685,8 +685,9 @@ positional   = value | slot_ref ;
 value        = string | number | bare_value | slot_ref | "true" | "false" ;
 bare_value   = letter , { letter | digit | "_" | "-" | "/" | "." } ;
 
-slot_ref     = "@" , ident | ident | number ;
-slot_source  = "@" , ident ;  (* ≡ in @ident ; serialize prefers this form *)
+slot_ref     = "$" , ident | ident | number ;   (* legacy "@" , ident still reads, with a warning *)
+slot_source  = "$" , ident ;  (* ≡ in $ident ; serialize prefers this form.
+                                 "@" , ident here is RESERVED (peer assignment)  *)
 
 (* Members use colon — dot is reserved for dotted_name ops *)
 selector     = ":" , ident
@@ -712,9 +713,9 @@ Parser alternatives are **ordered** (first match wins). Dot-prefixed members (`.
 ```text
 chains       blank-line separated; run in order; share a slot registry
 pipeline     left-to-right within a chain
-out @x       emit tile + register cloned pipeline value as slot x
-in @x / in N load cloned slot (typed); must refer to an earlier out
-key=@x       named slot arg — resolve live value into the op (not the stem)
+out $x       emit tile + register cloned pipeline value as slot x
+in $x / in N load cloned slot (typed); must refer to an earlier out
+key=$x       named slot arg — resolve live value into the op (not the stem)
 as kind      retag bytes refined type (allowlisted)
 tee body     side branches on projection/clone; stem unchanged
 foreach      over values (default) or :items / :keys / :values
@@ -729,8 +730,8 @@ are never stored in the recipe text.
 Paste / blur canonicalize via `canonicalizeRecipe`:
 
 - lowercases step names and expands aliases
-- rewrites bare slot idents to `@label`
-- migrator (Upgrade recipe): bare `hex` → `to hex`, `unhex` → `from hex`, slot `from @…` → `in @…`
+- rewrites bare slot idents to `$label`
+- migrator (Upgrade recipe): bare `hex` → `to hex`, `unhex` → `from hex`, slot `from $…` → `in $…`
 - joins chains with a blank line
 - formats `tee` / `foreach` bodies with indented `-` lines
 
@@ -738,12 +739,12 @@ Paste / blur canonicalize via `canonicalizeRecipe`:
 
 | Old habit | Current form |
 |-----------|--------------|
-| Flat `foreach \| out` | `foreach` with a body: `- out @share` |
+| Flat `foreach \| out` | `foreach` with a body: `- out $share` |
 | Trailing `merge` / `collect` | Omit — body closes by dedent or `}` |
-| Side-export / mid-stem fork | `tee` with `- :public \| …` (or multi-chain `out @kp` + `@kp`) |
+| Side-export / mid-stem fork | `tee` with `- :public \| …` (or multi-chain `out $kp` + `$kp`) |
 | Dot member (`.public`) | Colon member (`:public`) — Upgrade recipe rewrites |
-| `in @x` only | Bare `@x` also loads the slot; serialize prefers `@x` |
-| Side inspect without a body | `peek @label` |
+| `in $x` only | Bare `$x` also loads the slot; serialize prefers `$x` |
+| Side inspect without a body | `peek $label` |
 | `encrypt gpg` / `gpg` / `decrypt gpg` | `gpg.encrypt` / `gpg.decrypt` |
 | `encrypt AES/…` / `decrypt aes-gcm` | concrete `aes-gcm` / … (migrator-only; live parse rejects) |
 | `symencrypt` / `symdecrypt` | `gpg.symencrypt` / `gpg.symdecrypt` (`mode=master` default; `mode=passphrase` for gpg -c) |
@@ -753,7 +754,7 @@ Paste / blur canonicalize via `canonicalizeRecipe`:
 | `wa-*` | `webauthn.*` |
 | `gpg.vault` / `gpg.vault.pub` | `agent.unlock` / `agent.pub` |
 | `hex` / `unhex` | `to hex` / `from hex` |
-| `from @slot` (slot alias) | `in @slot` (`from` is encoding only) |
+| `from $slot` (slot alias) | `in $slot` (`from` is encoding only) |
 
 Use `migrateRecipe(text)` (or the toolkit **Upgrade recipe** button) for a one-shot rewrite. The parser does not accept legacy tokens.
 

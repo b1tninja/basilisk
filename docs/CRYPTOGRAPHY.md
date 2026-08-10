@@ -37,7 +37,7 @@ Cipher (unauthenticated AES) and Wrap shelves default collapsed; WebAuthn toolbo
 Product split (intentional today):
 
 - **Encrypt / Decrypt pages** — OpenPGP messaging for humans
-- **Toolkit** — notebook of recipe cells (blank-line chains) with a session kernel for `@slots`; keygen, encoding, SSS/BLIP39, OpenPGP encrypt *sinks* (see [RECIPE.md](./RECIPE.md#notebook-execution-toolkit-ui))
+- **Toolkit** — notebook of recipe cells (blank-line chains) with a session kernel for `$slots`; keygen, encoding, SSS/BLIP39, OpenPGP encrypt *sinks* (see [RECIPE.md](./RECIPE.md#notebook-execution-toolkit-ui))
 - **Shared notebook** — ephemeral P-256 ECDH → HKDF → AES-GCM session crypto over WebRTC
 
 ---
@@ -224,10 +224,10 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js` + `step-names.j
 | Op | Status | Crypto |
 |----|--------|--------|
 | `digest` | Done | `subtle.digest` SHA-256/384/512; SHA-1 **discouraged** (warn + `legacy` tags) |
-| `sign` / `verify` | Done | Bound JWK / `key=@slot`; `signature=@slot` or bare base64url; fail-loud default; `soft`/`-q` → bool `true`\|`false` |
-| `aes-gcm` / `-d` | Done | AES-GCM; `key=@slot`; also `aes-256-gcm`, `AES/GCM/NoPadding` |
+| `sign` / `verify` | Done | Bound JWK / `key=$slot`; `signature=$slot` or bare base64url; fail-loud default; `soft`/`-q` → bool `true`\|`false` |
+| `aes-gcm` / `-d` | Done | AES-GCM; `key=$slot`; also `aes-256-gcm`, `AES/GCM/NoPadding` |
 | `aes-cbc` / `aes-ctr` | Done | Unauthenticated AES-CBC/CTR interop; IV(16)\|\|CT; prefer `aes-gcm` |
-| `rsa-oaep` / `-d` | Done | RSA-OAEP content encrypt; `key=@slot`; JCE OAEP forms accepted |
+| `rsa-oaep` / `-d` | Done | RSA-OAEP content encrypt; `key=$slot`; JCE OAEP forms accepted |
 | `rsa-pkcs1` / `-d` | Done | RSAES-PKCS1-v1_5 (pure-JS; **discouraged**; warn + tags); prefer `rsa-oaep` |
 | `hkdf` / `pbkdf2` | Done | `deriveBits` (default) or `deriveKey` via `as=aes/256` etc. → live `key` tip (`which: secret`) |
 | `ecdh` | Done | ECDH/X25519; `bits=0` curve-aware; `as=` → `deriveKey` like hkdf |
@@ -241,7 +241,7 @@ other is real age that leaves the browser.
 
 | Op | Status | Crypto |
 |----|--------|--------|
-| `stream.seal` / `stream.open` | Done | Chunked AES-256-GCM in the STREAM construction; per-file key wrapped under `key=@slot`; 64 KiB chunks (`chunk=`); counter+final-flag nonce ⇒ reorder / splice / truncation detected |
+| `stream.seal` / `stream.open` | Done | Chunked AES-256-GCM in the STREAM construction; per-file key wrapped under `key=$slot`; 64 KiB chunks (`chunk=`); counter+final-flag nonce ⇒ reorder / splice / truncation detected |
 | `age.encrypt` / `age.decrypt` | Done | **age-encryption.org/v1** via typage; X25519 `to=` recipients or scrypt `passphrase=`; `armor=true` for the PEM-style form |
 | `age.recipient` | Done | Identity → `age1…` recipient (derived, publishable) |
 
@@ -251,7 +251,7 @@ other is real age that leaves the browser.
 |---|---|---|
 | AEAD | ChaCha20-Poly1305 | AES-256-GCM (WebCrypto has no ChaCha) |
 | Chunk | 64 KiB fixed | 64 KiB default, `chunk=` selectable |
-| Key delivery | recipient stanzas (X25519 / scrypt) + HMAC'd header | one AES-GCM-wrapped file key under `key=@slot` |
+| Key delivery | recipient stanzas (X25519 / scrypt) + HMAC'd header | one AES-GCM-wrapped file key under `key=$slot` |
 | Header integrity | HMAC-SHA-256 keyed by the file key | header is the AAD of the file-key wrap |
 | Armor | `BEGIN AGE ENCRYPTED FILE` | none — pipe through `base64` for text |
 | Magic | `age-encryption.org/v1` | `BSKSTRM1` |
@@ -283,7 +283,7 @@ machine. `age-encryption` is the implementation by age's own author.
 | `gpg.genkey` | Done | Curve25519 keygen; private on stem, public artifact |
 | `gpg.inspect` | Done | Armored summary / packet map / JSON (no decrypt) |
 | `gpg.encrypt` / `gpg.decrypt` | Done | Public-key encrypt / decrypt; `to=@\|email\|fpr`; `mode=separate\|combined`; `sign`/`-s` |
-| `gpg.sign` / `gpg.verify` | Done | Cleartext (default) or detached; `key=@slot` or vault panel; soft `-q` |
+| `gpg.sign` / `gpg.verify` | Done | Cleartext (default) or detached; `key=$slot` or vault panel; soft `-q` |
 | `gpg.symencrypt` | Done | Dual mode: default `mode=master` (SKESK under fresh 32 B master tip + envelope); `mode=passphrase` + `passphrase=` (`gpg -c` tip) |
 | `gpg.symdecrypt` | Done | Dual mode: `mode=master` unwraps bound envelope with hex(master); `mode=passphrase` decrypts armored tip |
 
@@ -307,7 +307,7 @@ Typed `recipients` lists for encrypt `to=@…`. Email `to=` uses deferred lookup
 | `hkp.get` | Done | Public key by fingerprint → `openpgp-key/public` |
 | `hkp.search` | Done | Directory search → `recipients` (`format=json` → text) |
 | `hkp.filter` | Done | Keep approved + encrypt-capable (defaults on) |
-| `recipients.merge` | Done | Dedupe by fingerprint (`with=@slot`) |
+| `recipients.merge` | Done | Dedupe by fingerprint (`with=$slot`) |
 
 ### WebAuthn (toolbox `webauthn`, no CAST suite)
 
@@ -331,7 +331,7 @@ Compose with WebCrypto: `webauthn.prf \| hkdf 32 \| …` / `aes-gcm`.
 | Op | Status | Crypto |
 |----|--------|--------|
 | `foreach` | Done | Map via required body (`-` list or `{ … }`); optional `:items` / `:values` / `:keys` |
-| `tee` / `peek` / `in` / `as` | Done | tee = mid-stem forks; `out @x` + chains + `in @x`; named args `key=@x`; cast `as master` (retag) / `as int`/`as bool` (coerce) / `as key` (materialize); distinct from hkdf/pbkdf2/ecdh param `as=aes/256`; `peek` = side inspect |
+| `tee` / `peek` / `in` / `as` | Done | tee = mid-stem forks; `out $x` + chains + `in $x`; named args `key=$x`; cast `as master` (retag) / `as int`/`as bool` (coerce) / `as key` (materialize); distinct from hkdf/pbkdf2/ecdh param `as=aes/256`; `peek` = side inspect |
 | `at` / `[n]` | Done | 1-based share index / slice |
 | `gpg.encrypt` | Done | OpenPGP.js public-key encrypt (sink); `-s` sign-then-encrypt |
 | `gpg.genkey` / `gpg.inspect` | Done | Curve25519 keygen; armor inspect without decrypt |
@@ -356,10 +356,10 @@ Serialize always emits the hyphenated canonical name. Bare `encrypt` / `decrypt`
 | Op | Status | Notes |
 |----|--------|-------|
 | `digest` | Done | SHA-256 / 384 / 512 |
-| `sign` / `verify` | Done | Bound JWK or `key=@slot`; `signature=@slot`; soft `-q` text artifact |
+| `sign` / `verify` | Done | Bound JWK or `key=$slot`; `signature=$slot`; soft `-q` text artifact |
 | `aes-gcm` / `-d` | Done | IV\|\|CT\|\|tag; distinct from OpenPGP `gpg.encrypt` |
 | `aes-cbc` / `aes-ctr` | Done | Unauthenticated interop; IV(16)\|\|CT; prefer `aes-gcm` for new work |
-| `rsa-oaep` / `-d` | Done | RSA-OAEP content encrypt/decrypt; `key=@slot` |
+| `rsa-oaep` / `-d` | Done | RSA-OAEP content encrypt/decrypt; `key=$slot` |
 | `rsa-pkcs1` / `-d` | Done | RSAES-PKCS1-v1_5 pure-JS interop; discouraged (warn + tags) |
 | `hkdf` / `pbkdf2` | Done | `deriveBits` or `as=` → `deriveKey` (AES / HMAC / AES-KW → live `key` tip, `which: secret`) |
 | `ecdh` | Done | Curve-aware bits; `as=` → deriveKey; slots `private=@` `peer=@` |
@@ -454,7 +454,7 @@ Display maps in `algos.js` also name historical algorithms for **inspection** of
 
 Normative grammar and slots/chains semantics: [RECIPE.md](./RECIPE.md).
 Stem stays a flat `|` pipeline; `tee` / `foreach` take brace or indented `-` bodies;
-blank lines separate chains; `out @label` / `in @label` reuse live values.
+blank lines separate chains; `out $label` / `in $label` reuse live values.
 
 ```text
 # WebCrypto key → PEM (openssl pkey / genpkey style)
@@ -463,30 +463,30 @@ genkey ec/p256 | export pkcs8 | pem
 # Tee selector branches (prefer :public / :private over export which=)
 genkey ec/p256 | tee
   - :private | inspect
-  - :public | export spki | pem | out @public
-| export pkcs8 | pem | out @private
+  - :public | export spki | pem | out $public
+| export pkcs8 | pem | out $private
 
-# Multi-chain reuse (blank line + in @slot)
-genkey ec/p256 | out @kp
+# Multi-chain reuse (blank line + in $slot)
+genkey ec/p256 | out $kp
 
-@kp | :public | export spki | pem | out @public
-@kp | :private | export pkcs8 | pem | out @private
+$kp | :public | export spki | pem | out $public
+$kp | :private | export pkcs8 | pem | out $private
 
 # Scalar SSS + BLIP39 (tee public, foreach shares)
 genkey ec/p256 | tee
-  - :public | export spki | pem | out @public
+  - :public | export spki | pem | out $public
 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
 # One share (1-based)
-… | blip39 | [1] | out @share-1
+… | blip39 | [1] | out $share-1
 
 # Recover
 shares | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem
 
 # Large payload via OpenPGP envelope then SSS
 … | pem | gpg.symencrypt mode=master | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 ```
 
 ### OpenSSL CLI ↔ toolkit (keys)
@@ -515,36 +515,36 @@ There is no single `openssl enc -pass` twin for WebCrypto AEAD.
 
 | Goal | OpenSSL / GPG | Toolkit recipe |
 |------|---------------|----------------|
-| Passphrase → AES key | `openssl kdf` / PBKDF2 | `input \| utf8 \| pbkdf2 32 salt=@salt as=aes/256 \| out @cek` |
-| Encrypt with that CEK | `enc -aes-256-gcm -K … -iv …` | `"payload" \| utf8 \| aes-gcm key=@cek \| to hex \| out @ct` |
-| Decrypt | `enc -d …` | `in @ct \| from hex \| aes-gcm -d key=@cek \| utf8` |
-| OpenPGP password (SKESK) | `gpg -c` | `gpg.symencrypt mode=passphrase passphrase=@pw` / `gpg.symdecrypt mode=passphrase passphrase=@pw` (SSS path: `mode=master`, random master tip) |
-| Wrap CEK under KEK | `pkeyutl -encrypt` / AES-KW | `wrap key=@kek target=@cek` → bytes; `unwrap … \| export raw` for key bytes |
+| Passphrase → AES key | `openssl kdf` / PBKDF2 | `input \| utf8 \| pbkdf2 32 salt=$salt as=aes/256 \| out $cek` |
+| Encrypt with that CEK | `enc -aes-256-gcm -K … -iv …` | `"payload" \| utf8 \| aes-gcm key=$cek \| to hex \| out $ct` |
+| Decrypt | `enc -d …` | `in $ct \| from hex \| aes-gcm -d key=$cek \| utf8` |
+| OpenPGP password (SKESK) | `gpg -c` | `gpg.symencrypt mode=passphrase passphrase=$pw` / `gpg.symdecrypt mode=passphrase passphrase=$pw` (SSS path: `mode=master`, random master tip) |
+| Wrap CEK under KEK | `pkeyutl -encrypt` / AES-KW | `wrap key=$kek target=$cek` → bytes; `unwrap … \| export raw` for key bytes |
 
 ```text
 # Password → AES-GCM (WebCrypto)
-"correct horse battery staple" | utf8 | out @pw
-random 16 | out @salt
-in @pw | pbkdf2 32 salt=@salt as=aes/256 | out @cek
-"hello" | utf8 | aes-gcm key=@cek | to hex | out @ct
+"correct horse battery staple" | utf8 | out $pw
+random 16 | out $salt
+in $pw | pbkdf2 32 salt=$salt as=aes/256 | out $cek
+"hello" | utf8 | aes-gcm key=$cek | to hex | out $ct
 
 # OpenPGP symmetric (gpg -c style)
-"secret" | out @pw
-"hello" | utf8 | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg
-in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8
+"secret" | out $pw
+"hello" | utf8 | gpg.symencrypt mode=passphrase passphrase=$pw | out $msg
+in $msg | gpg.symdecrypt mode=passphrase passphrase=$pw | utf8
 ```
 
-`unwrap` yields a live **`key` tip** (CryptoKey), not bytes — pipe `export raw` / `export jwk` when you need material. Prefer `unwrap key=@kek` over panel defaults.
+`unwrap` yields a live **`key` tip** (CryptoKey), not bytes — pipe `export raw` / `export jwk` when you need material. Prefer `unwrap key=$kek` over panel defaults.
 
 ### GPG CLI ↔ toolkit (OpenPGP)
 
 | GPG | Toolkit |
 |-----|---------|
-| `gpg --gen-key` (Curve25519) | `gpg.genkey email="…" \| out @priv` |
+| `gpg --gen-key` (Curve25519) | `gpg.genkey email="…" \| out $priv` |
 | `--export` / `--export-secret-keys` | `out` of public/private armor; `agent.pub` / `agent.unlock` for My Keys |
 | `--encrypt` / `--decrypt` | `gpg.encrypt` / `gpg.decrypt` (`-s` = sign+encrypt) |
 | `--sign` / `--verify` | `gpg.sign` / `gpg.verify` |
-| `--symmetric` / `-c` | `gpg.symencrypt mode=passphrase passphrase=@pw` / `gpg.symdecrypt mode=passphrase passphrase=@pw` (`mode=master` for SSS envelope path) |
+| `--symmetric` / `-c` | `gpg.symencrypt mode=passphrase passphrase=$pw` / `gpg.symdecrypt mode=passphrase passphrase=$pw` (`mode=master` for SSS envelope path) |
 | `--list-packets` / inspect | `gpg.inspect` (`format=summary\|packets\|json`) |
 
 ---

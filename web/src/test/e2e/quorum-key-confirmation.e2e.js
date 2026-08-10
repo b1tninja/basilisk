@@ -172,7 +172,7 @@ const startSession = (peer, cfg) =>
         constructor(cfg) {
           super(cfg);
           /** @type {string[]} */
-          const seen = [`@ice:${this.iceConnectionState}`, `@conn:${this.connectionState}`];
+          const seen = [`$ice:${this.iceConnectionState}`, `$conn:${this.connectionState}`];
           window.__pcWatch.set(this, seen);
           this.addEventListener("iceconnectionstatechange", () =>
             seen.push(`ice:${this.iceConnectionState}`)
@@ -389,7 +389,7 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
       const states = side.peers[0].iceStates;
       // Watched from `new`, so an absent transition below is an absent
       // transition rather than a listener that arrived late.
-      expect(states.slice(0, 2)).toEqual(["@ice:new", "@conn:new"]);
+      expect(states.slice(0, 2)).toEqual(["$ice:new", "$conn:new"]);
       expect(states).toContain("ice:checking");
       expect(states).toContain("ice:connected");
       expect(states).toContain("conn:connected");

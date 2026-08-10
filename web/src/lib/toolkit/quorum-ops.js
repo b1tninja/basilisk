@@ -283,15 +283,15 @@ export function parseIceConfig(text) {
     try {
       parsed = JSON.parse(String(text));
     } catch {
-      // Binding `ice=@somethingelse` is the common way to get here, and the
+      // Binding `ice=$somethingelse` is the common way to get here, and the
       // raw `Unexpected token 'h', "hunter2" is not valid JSON` that used to
       // surface named neither the parameter nor the step.
-      throw new Error("ice=@slot does not hold rtc.ice output");
+      throw new Error("ice=$slot does not hold rtc.ice output");
     }
   }
   const list = parsed?.iceServers;
   if (!Array.isArray(list)) {
-    throw new Error("ice=@slot does not hold rtc.ice output");
+    throw new Error("ice=$slot does not hold rtc.ice output");
   }
   // An empty list used to be refused here as malformed. `rtc.ice stun=none`
   // writes one deliberately, so it is now a legitimate config — but only from
@@ -299,7 +299,7 @@ export function parseIceConfig(text) {
   // the parameter rather than sliding through as "no third party", which
   // would turn a mis-bound slot into a silent connectivity change.
   if (!list.length && parsed?.v == null) {
-    throw new Error("ice=@slot does not hold rtc.ice output");
+    throw new Error("ice=$slot does not hold rtc.ice output");
   }
   return list;
 }
@@ -383,7 +383,7 @@ export async function execStunCheck(params) {
 
 /**
  * @param {Record<string, unknown>} params
- * @param {import("openpgp").PrivateKey} privateKey decrypted, from key=@slot
+ * @param {import("openpgp").PrivateKey} privateKey decrypted, from key=$slot
  * @param {RTCIceServer[] | null} iceServers
  * @param {"creator"|"joiner"} role
  */

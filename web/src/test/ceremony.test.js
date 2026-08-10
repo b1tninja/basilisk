@@ -79,7 +79,7 @@ describe("recipes", () => {
 
   it("compiles every cell the ceremony will add", () => {
     // Compiled together, because that is what they are: the Sheet appends
-    // them to one notebook, and the verify cell reads `@commitments` from the
+    // them to one notebook, and the verify cell reads `$commitments` from the
     // split cell. Compiling each in isolation would report a missing slot
     // that never happens in the flow.
     const notebook = ceremonyCells(params)
@@ -90,10 +90,10 @@ describe("recipes", () => {
   });
 
   it("never writes the master to an out tile", () => {
-    // The tee branch digests it in place; `out @master` would put the secret
+    // The tee branch digests it in place; `out $master` would put the secret
     // one click from the screen for the rest of the session.
-    expect(splitRecipe(params)).not.toMatch(/out @master/);
-    expect(splitRecipe(params)).toContain("digest | encode hex | out @expected");
+    expect(splitRecipe(params)).not.toMatch(/out \$master/);
+    expect(splitRecipe(params)).toContain("digest | encode hex | out $expected");
   });
 
   it("carries the chosen threshold and share count into the split", () => {
@@ -108,19 +108,19 @@ describe("recipes", () => {
     // the cell there is nothing to check it against.
     const recipe = splitRecipe(params);
     expect(recipe).toContain("vss.split");
-    expect(recipe).toContain("vss.commitments | out @commitments");
+    expect(recipe).toContain("vss.commitments | out $commitments");
     expect(recipe).not.toContain("sss.split");
   });
 
   it("drops the qr step when the ceremony asked for no QR", () => {
-    expect(splitRecipe({ ...params, qr: false })).toContain("- out @share");
+    expect(splitRecipe({ ...params, qr: false })).toContain("- out $share");
     expect(splitRecipe({ ...params, qr: false })).not.toContain("| qr");
   });
 
   it("verifies by digest, never by revealing the recovered secret", () => {
     const r = verifyRecipe();
     expect(r).toContain("vss.combine | digest");
-    expect(r).not.toMatch(/out @secret|utf8 \| out/);
+    expect(r).not.toMatch(/out \$secret|utf8 \| out/);
   });
 
   it("checks the shares against the commitments before recombining them", () => {
@@ -129,17 +129,17 @@ describe("recipes", () => {
     const r = verifyRecipe();
     expect(r.indexOf("vss.verify")).toBeGreaterThan(-1);
     expect(r.indexOf("vss.verify")).toBeLessThan(r.indexOf("vss.combine"));
-    expect(r).toContain("commitments=@commitments");
+    expect(r).toContain("commitments=$commitments");
   });
 
   it("signs the receipt when a key was chosen, and still makes one when not", () => {
     expect(receiptRecipe({ label: "Board key", signWith: "me" })).toBe(
-      'run.receipt "Board key" | gpg.sign key=@me | out @receipt'
+      'run.receipt "Board key" | gpg.sign key=$me | out $receipt'
     );
     expect(receiptRecipe({ label: "Board key" })).toBe(
-      'run.receipt "Board key" | out @receipt'
+      'run.receipt "Board key" | out $receipt'
     );
-    expect(receiptRecipe({})).toBe("run.receipt | out @receipt");
+    expect(receiptRecipe({})).toBe("run.receipt | out $receipt");
   });
 
   it("titles the notebook with the quorum", () => {
@@ -184,10 +184,10 @@ describe("tileForSlot", () => {
   it("finds a tile by slot label or filename", () => {
     const outputs = [
       { label: "expected", filename: "expected.txt", content: "aa" },
-      { label: "@recovered", filename: "recovered.txt", content: "bb" },
+      { label: "$recovered", filename: "recovered.txt", content: "bb" },
     ];
     expect(tileForSlot(outputs, "expected")).toBe("aa");
-    expect(tileForSlot(outputs, "@recovered")).toBe("bb");
+    expect(tileForSlot(outputs, "$recovered")).toBe("bb");
     expect(tileForSlot(outputs, "nothing")).toBe("");
   });
 });

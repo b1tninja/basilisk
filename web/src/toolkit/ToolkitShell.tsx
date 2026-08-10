@@ -1467,7 +1467,7 @@ export function ToolkitShell() {
                                   }
                                 }}
                                 spellCheck={false}
-                                placeholder="random 32 | base64 | out @secret"
+                                placeholder="random 32 | base64 | out $secret"
                               />
                               <div className="flex flex-wrap items-baseline gap-2">
                                 <p className="text-xs text-[var(--muted-foreground)]">
@@ -2332,14 +2332,14 @@ export function ToolkitShell() {
                 <div className="border-b border-[var(--border)] p-3">
                   <h3 className="text-sm font-bold">Slots</h3>
                   <p className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
-                    Live <code>@slots</code> from the notebook kernel — metas only, no private
+                    Live <code>$slots</code> from the notebook kernel — metas only, no private
                     armor. Cleared by <strong>Clear session</strong>.
                   </p>
                 </div>
                 <ScrollArea className="flex-1 px-3">
                   {!nb.slotMetas.length ? (
                     <p className="py-4 text-sm text-[var(--muted-foreground)]">
-                      No slots yet — run a cell that ends with <code>out @label</code>.
+                      No slots yet — run a cell that ends with <code>out $label</code>.
                     </p>
                   ) : (
                     <ul className="space-y-2 py-3">
@@ -2599,7 +2599,7 @@ export function ToolkitShell() {
                     ) : (
                       <p className="text-[length:11px] italic text-[var(--muted-foreground)]">
                         No outputs yet — run a cell that ends in{" "}
-                        <code className="font-mono">out @label</code>.
+                        <code className="font-mono">out $label</code>.
                       </p>
                     )}
                   </div>

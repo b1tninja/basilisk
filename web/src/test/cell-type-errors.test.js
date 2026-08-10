@@ -72,7 +72,7 @@ describe("validator errors stay parseable", () => {
 /**
  * The banner used to cry wolf. `cellErrors` validated each cell on its own,
  * which discards the slot table the cells above it build, so every shipped
- * multi-cell template opened under a wall of red — `in @kp: unknown slot` and
+ * multi-cell template opened under a wall of red — `in $kp: unknown slot` and
  * the cascade behind it — before a single run, and still after a successful
  * one. The fix validates the notebook whole and deals the errors back out.
  *
@@ -84,9 +84,9 @@ describe("cellErrorsForChains", () => {
   const chainsOf = (src) => parseRecipe(src).ast.chains || [];
 
   it("resolves a slot written by an earlier cell", () => {
-    const chains = chainsOf(`genkey ec/p256 | out @kp
+    const chains = chainsOf(`genkey ec/p256 | out $kp
 
-@kp | export pkcs8 | pem | out @private`);
+$kp | export pkcs8 | pem | out $private`);
     expect(chains).toHaveLength(2);
     expect(cellErrorsForChains(chains)).toEqual([[], []]);
   });
@@ -105,13 +105,13 @@ describe("cellErrorsForChains", () => {
   });
 
   it("still reports a slot nothing ever writes, in the same words", () => {
-    const chains = chainsOf(`genkey ec/p256 | out @kp
+    const chains = chainsOf(`genkey ec/p256 | out $kp
 
-@typo | export pkcs8 | pem | out @private`);
+$typo | export pkcs8 | pem | out $private`);
     const cells = cellErrorsForChains(chains);
     expect(cells[0]).toEqual([]);
     expect(cells[1][0].message).toBe(
-      "in @typo: unknown slot (register it earlier with out @typo)"
+      "in $typo: unknown slot (register it earlier with out $typo)"
     );
     // …and the cascade behind it is still reported too — the point is that the
     // complaint is true, not that it is short.
@@ -120,9 +120,9 @@ describe("cellErrorsForChains", () => {
 
   it("does not accept a slot written only *below* the cell that reads it", () => {
     // Order is the whole content of "register it earlier".
-    const chains = chainsOf(`@kp | export pkcs8 | pem | out @private
+    const chains = chainsOf(`$kp | export pkcs8 | pem | out $private
 
-genkey ec/p256 | out @kp`);
+genkey ec/p256 | out $kp`);
     expect(cellErrorsForChains(chains)[0][0].message).toMatch(/unknown slot/);
   });
 
@@ -130,11 +130,11 @@ genkey ec/p256 | out @kp`);
     // stepIndex is a cell-local index into that cell's `steps` — the banner
     // does `steps[e.stepIndex]` to name the chip. A whole-notebook validation
     // numbers steps continuously, so this is where the rebasing is checked.
-    const chains = chainsOf(`genkey ec/p256 | out @kp
+    const chains = chainsOf(`genkey ec/p256 | out $kp
 
-@kp | export pkcs8 | pem | out @private
+$kp | export pkcs8 | pem | out $private
 
-@kp | digest`);
+$kp | digest`);
     const cells = cellErrorsForChains(chains);
     expect(cells[0]).toEqual([]);
     expect(cells[1]).toEqual([]);
@@ -146,9 +146,9 @@ genkey ec/p256 | out @kp`);
   });
 
   it("anchors errors raised inside a foreach body to the stem chip", () => {
-    const chains = chainsOf(`random 32 | sss.split threshold=2 shares=3 | out @sh
+    const chains = chainsOf(`random 32 | sss.split threshold=2 shares=3 | out $sh
 
-@sh | inspect | foreach
+$sh | inspect | foreach
   - digest`);
     const cells = cellErrorsForChains(chains);
     expect(cells[1]).not.toHaveLength(0);
@@ -156,7 +156,7 @@ genkey ec/p256 | out @kp`);
   });
 
   it("returns one array per cell, empty ones included", () => {
-    const chains = [{ steps: [] }, ...chainsOf("genkey ed25519 | out @k"), { steps: [] }];
+    const chains = [{ steps: [] }, ...chainsOf("genkey ed25519 | out $k"), { steps: [] }];
     expect(cellErrorsForChains(chains)).toEqual([[], [], []]);
     expect(cellErrorsForChains([])).toEqual([]);
     expect(cellErrorsForChains([{ steps: [] }])).toEqual([[]]);
@@ -182,7 +182,7 @@ describe("cellWarningsForChains", () => {
 
   it("surfaces the §29f unencrypted-private-key warning at all", () => {
     const cells = cellWarningsForChains(
-      chainsOf("genkey ed25519 | ssh.encode format=private | out @k")
+      chainsOf("genkey ed25519 | ssh.encode format=private | out $k")
     );
     expect(cells[0].some((w) => SSH_BARE.test(w.message))).toBe(true);
   });
@@ -191,16 +191,16 @@ describe("cellWarningsForChains", () => {
     // The gate is the whole reason the message is trustworthy: it must not
     // claim "unencrypted" about a file that is encrypted.
     const cells = cellWarningsForChains(
-      chainsOf("genkey ed25519 | ssh.encode format=private passphrase=@pw | out @k")
+      chainsOf("genkey ed25519 | ssh.encode format=private passphrase=$pw | out $k")
     );
     expect(cells.flat().some((w) => SSH_BARE.test(w.message))).toBe(false);
   });
 
   it("lands the warning on the cell that earned it, not the first one", () => {
     // The failure an unanchored string guarantees. `ssh.encode` is in cell 2.
-    const chains = chainsOf(`genkey ed25519 | out @k
+    const chains = chainsOf(`genkey ed25519 | out $k
 
-@k | ssh.encode format=private | out @priv`);
+$k | ssh.encode format=private | out $priv`);
     const cells = cellWarningsForChains(chains);
     expect(cells[0].some((w) => SSH_BARE.test(w.message))).toBe(false);
     const hit = cells[1].find((w) => SSH_BARE.test(w.message));
@@ -210,9 +210,9 @@ describe("cellWarningsForChains", () => {
   });
 
   it("anchors the trailing-value warning to the last step", () => {
-    const chains = chainsOf(`genkey ec/p256 | out @kp
+    const chains = chainsOf(`genkey ec/p256 | out $kp
 
-@kp | export scalar`);
+$kp | export scalar`);
     const cells = cellWarningsForChains(chains);
     const hit = cells[1].find((w) => /Trailing /i.test(w.message));
     expect(hit).toBeTruthy();
@@ -221,7 +221,7 @@ describe("cellWarningsForChains", () => {
 
   it("stays clear of errors — a warning never blocks the run", () => {
     // `validation.ok` is errors-only, and a warning-only recipe still runs.
-    const src = "genkey ed25519 | ssh.encode format=private | out @k";
+    const src = "genkey ed25519 | ssh.encode format=private | out $k";
     const { validation } = compileRecipe(src);
     expect(validation.ok).toBe(true);
     expect(validation.warnings.length).toBeGreaterThan(0);
@@ -308,12 +308,12 @@ describe("cellErrorRows", () => {
   });
 
   it("anchors on the index alone when the engine named no op", () => {
-    // `in @nope` resolves its slot before dispatch, so it never reaches the
+    // `in $nope` resolves its slot before dispatch, so it never reaches the
     // attribution point and carries no name — but it does carry an index, and
     // that index is the only word on the subject.
     const rows = cellErrorRows(
       [],
-      { message: "in @nope: unknown slot", stepIndex: 0, stepName: "" },
+      { message: "in $nope: unknown slot", stepIndex: 0, stepName: "" },
       [{ name: "in" }]
     );
     expect(rows[0].stepIndex).toBe(0);

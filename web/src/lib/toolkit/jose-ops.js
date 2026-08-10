@@ -367,7 +367,7 @@ function pipelineText(value, op) {
 }
 
 /**
- * Resolve the signing/verifying key from `key=@slot`, with a clear error when
+ * Resolve the signing/verifying key from `key=$slot`, with a clear error when
  * the recipe never bound one — the key panel fallback the WebCrypto ops use
  * does not apply here, because a JOSE op with no key has nothing to do.
  * @param {object} bindings
@@ -379,7 +379,7 @@ function pipelineText(value, op) {
 async function requireSlotKey(bindings, ref, need, op) {
   const r = String(ref || "").trim();
   if (!r) {
-    throw new Error(`${op}: key=@slot is required (e.g. \`genkey ec/p256 | out @k\` then \`${op} key=@k\`)`);
+    throw new Error(`${op}: key=$slot is required (e.g. \`genkey ec/p256 | out $k\` then \`${op} key=$k\`)`);
   }
   let key = null;
   if (need === "public" || need === "either") {

@@ -16,7 +16,7 @@
  *     rendering and this is about what is in the object at all.
  *  2. It resolves to a kind that says "keypair" in its badge, its label and
  *     its card, and is not the kind a public key resolves to.
- *  3. The two halves of `| out @kp` share **no marker naming a half** — as set
+ *  3. The two halves of `| out $kp` share **no marker naming a half** — as set
  *     disjointness over every field that carries one, so a marker later added
  *     to both fails here rather than in a tile. `ssh-format.test.js`'s "shares
  *     no tag between the two" is the model, and 7d563cd is why it exists.
@@ -126,7 +126,7 @@ describe("the keypair tile does not render as a public key", () => {
     // Absence with a stated reason, never silent absence — and the reason
     // names the recipe edit, in ACTION_REASONS' register.
     expect(el.props.withheld).toMatch(/private half/i);
-    expect(el.props.withheld).toMatch(/out @kp/);
+    expect(el.props.withheld).toMatch(/out \$kp/);
     // Drawn from the public JWK on traits; there is no body to draw from.
     expect(el.props.content).toBe("");
     expect(el.props.jwk).toBe(tip.traits.publicJwk);
@@ -164,7 +164,7 @@ describe("the keypair tile does not render as a public key", () => {
 
   it("is a different kind from the public half, on real artifacts", async () => {
     const [tip] = await artifactsOf("genkey ed25519");
-    const halves = await artifactsOf("genkey ed25519 | out @kp");
+    const halves = await artifactsOf("genkey ed25519 | out $kp");
     const pub = halves.find((a) => (a.tags || []).includes("public"));
     expect(kindOf(tip).id).toBe("keypair");
     expect(kindOf(pub).id).toBe("keypair-public");
@@ -198,7 +198,7 @@ describe("the keypair tile does not render as a public key", () => {
       const verdict = actionById(id).available(ctx);
       expect(verdict, id).not.toBe(true);
       expect(verdict.disabled, id).toMatch(/was not asked for/);
-      expect(verdict.disabled, id).toMatch(/out @label/);
+      expect(verdict.disabled, id).toMatch(/out \$label/);
     }
   });
 });
@@ -225,7 +225,7 @@ describe("the two halves of `out` share no marker naming a half", () => {
     );
 
   it("gives each half exactly its own word", async () => {
-    const arts = await artifactsOf("genkey ed25519 | out @kp");
+    const arts = await artifactsOf("genkey ed25519 | out $kp");
     const priv = arts.find((a) => (a.tags || []).includes("private"));
     const pub = arts.find((a) => (a.tags || []).includes("public"));
     expect(priv, "no private half emitted").toBeTruthy();
@@ -235,7 +235,7 @@ describe("the two halves of `out` share no marker naming a half", () => {
   });
 
   it("shares none of them, whatever else the two carry", async () => {
-    const arts = await artifactsOf("genkey ec/p256 | out @kp");
+    const arts = await artifactsOf("genkey ec/p256 | out $kp");
     const priv = arts.find((a) => (a.tags || []).includes("private"));
     const pub = arts.find((a) => (a.tags || []).includes("public"));
     const shared = [...halfMarkers(priv)].filter((w) => halfMarkers(pub).has(w));
@@ -247,7 +247,7 @@ describe("the two halves of `out` share no marker naming a half", () => {
   });
 
   it("resolves the two to different kinds", async () => {
-    const arts = await artifactsOf("genkey ed25519 | out @kp");
+    const arts = await artifactsOf("genkey ed25519 | out $kp");
     const ids = arts.map((a) => kindOf(a).id).sort();
     expect(ids).toEqual(["keypair-private", "keypair-public"]);
   });
@@ -263,7 +263,7 @@ describe("no placeholder body survives on a key path", () => {
       "genkey ec/p256",
       "genkey x25519",
       "genkey aes/256",
-      "genkey ed25519 | out @kp",
+      "genkey ed25519 | out $kp",
     ]) {
       for (const a of await artifactsOf(src)) {
         expect(a.content, `${src} → ${a.label}`).not.toMatch(/^\[.*\]$/);

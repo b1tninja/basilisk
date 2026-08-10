@@ -22,14 +22,14 @@ describe("derive as=aes-kw", () => {
 describe("hmac sugar", () => {
   it("parses hmac / hmac.verify as sign / verify", () => {
     const { ast, errors } = parseRecipe(
-      "genkey hmac/sha256 | out @k\n\ninput | utf8 | hmac key=@k | out @tag"
+      "genkey hmac/sha256 | out $k\n\ninput | utf8 | hmac key=$k | out $tag"
     );
     expect(errors).toEqual([]);
     expect(ast?.chains?.[1]?.steps?.some((s) => s.name === "sign")).toBe(true);
-    expect(serializeRecipe(ast)).toContain("| sign key=@k |");
+    expect(serializeRecipe(ast)).toContain("| sign key=$k |");
     expect(serializeRecipe(ast)).not.toMatch(/\|\s*hmac\s/);
 
-    const v = parseRecipe("input | hmac.verify key=@k signature=@tag");
+    const v = parseRecipe("input | hmac.verify key=$k signature=$tag");
     expect(v.errors).toEqual([]);
     expect(v.ast?.steps?.[1]?.name).toBe("verify");
   });
@@ -48,10 +48,10 @@ describe("key format picks", () => {
 
 describe("wrap mode=aes-gcm", () => {
   it("round-trips a CEK", async () => {
-    const { ast, validation } = compileRecipe(`genkey aes/256 | out @kek
-genkey aes/256 | out @cek
-wrap mode=aes-gcm key=@kek target=@cek | encode hex | out @wrapped
-in @wrapped | decode hex | unwrap mode=aes-gcm key=@kek | export raw | encode hex`);
+    const { ast, validation } = compileRecipe(`genkey aes/256 | out $kek
+genkey aes/256 | out $cek
+wrap mode=aes-gcm key=$kek target=$cek | encode hex | out $wrapped
+in $wrapped | decode hex | unwrap mode=aes-gcm key=$kek | export raw | encode hex`);
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
     const wrapped = out.find((a) => /wrapped/i.test(a.filename || a.label || ""));
@@ -63,10 +63,10 @@ in @wrapped | decode hex | unwrap mode=aes-gcm key=@kek | export raw | encode he
 
 describe("hkdf as=aes-kw/256 wrap", () => {
   it("derives KEK and wraps", async () => {
-    const { ast, validation } = compileRecipe(`random 32 | hkdf 32 as=aes-kw/256 | out @kek
-genkey aes/256 | out @cek
-wrap key=@kek target=@cek | encode hex | out @wrapped
-in @wrapped | decode hex | unwrap key=@kek | export raw | encode hex`);
+    const { ast, validation } = compileRecipe(`random 32 | hkdf 32 as=aes-kw/256 | out $kek
+genkey aes/256 | out $cek
+wrap key=$kek target=$cek | encode hex | out $wrapped
+in $wrapped | decode hex | unwrap key=$kek | export raw | encode hex`);
     expect(validation.ok).toBe(true);
     const out = await runRecipe(ast);
     expect(out.some((a) => /^[0-9a-f]{64}$/.test(a.content || ""))).toBe(true);
@@ -76,9 +76,9 @@ in @wrapped | decode hex | unwrap key=@kek | export raw | encode hex`);
 
 describe("x25519 ecdh preset compiles", () => {
   it("compiles genkey x25519 | ecdh", () => {
-    const { validation } = compileRecipe(`genkey x25519 | out @local
-genkey x25519 | out @peer
-ecdh private=@local peer=@peer | hkdf 32 as=aes/256 | out @cek`);
+    const { validation } = compileRecipe(`genkey x25519 | out $local
+genkey x25519 | out $peer
+ecdh private=$local peer=$peer | hkdf 32 as=aes/256 | out $cek`);
     expect(validation.ok).toBe(true);
   });
 });

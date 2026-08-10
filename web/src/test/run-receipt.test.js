@@ -98,7 +98,7 @@ describe("receipt envelope", () => {
   const cells = [
     {
       index: 0,
-      recipe: "random 32 | out @m",
+      recipe: "random 32 | out $m",
       inputs: [],
       outputs: [{ label: "m", digest: "a".repeat(64), length: 32 }],
     },
@@ -107,12 +107,12 @@ describe("receipt envelope", () => {
   it("carries the recipe source and its digest", async () => {
     const r = await buildRunReceipt({
       label: "Ceremony",
-      recipeSource: "random 32 | out @m",
+      recipeSource: "random 32 | out $m",
       cells,
     });
     expect(r.v).toBe(RECEIPT_VERSION);
     expect(r.kind).toBe("basilisk.run-receipt");
-    expect(r.recipeDigest).toBe(await digestText("random 32 | out @m"));
+    expect(r.recipeDigest).toBe(await digestText("random 32 | out $m"));
     expect(r.registry).toMatch(/^ops-/);
   });
 
@@ -152,7 +152,7 @@ describe("comparison", () => {
   const mkCells = (digest) => [
     {
       index: 0,
-      recipe: "random 32 | out @m",
+      recipe: "random 32 | out $m",
       inputs: [{ channel: "text", digest: "b".repeat(64) }],
       outputs: [{ label: "m", digest, length: 32 }],
     },
@@ -189,7 +189,7 @@ describe("comparison", () => {
     const a = await buildRunReceipt({ recipeSource: "r", cells: mkCells("c".repeat(64)) });
     const b = await buildRunReceipt({
       recipeSource: "r",
-      cells: mkCells("c".repeat(64)).map((c) => ({ ...c, recipe: "random 16 | out @m" })),
+      cells: mkCells("c".repeat(64)).map((c) => ({ ...c, recipe: "random 16 | out $m" })),
     });
     const result = compareReceipts(a, b);
     expect(result.ok).toBe(false);
@@ -254,9 +254,9 @@ describe("run.receipt / run.verify through the engine", () => {
   it("receipts a split without recording a single share", async () => {
     const { ast } = compileRecipe(
       `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
-run.receipt "Board key ceremony" | out @receipt`
+run.receipt "Board key ceremony" | out $receipt`
     );
     const arts = await runRecipe(ast);
     const receiptTile = arts.find((a) => a.role === "receipt");
@@ -278,22 +278,22 @@ run.receipt "Board key ceremony" | out @receipt`
   }, 30_000);
 
   it("verifies a receipt against the run that minted it", async () => {
-    const { ast } = compileRecipe("run.receipt | run.verify | out @ok");
+    const { ast } = compileRecipe("run.receipt | run.verify | out $ok");
     const arts = await runRecipe(ast);
     expect(arts.some((a) => String(a.content).trim() === "true")).toBe(true);
   });
 
   it("fails loud on a tampered receipt, and soft with -q", async () => {
-    const { ast: mint } = compileRecipe("run.receipt | out @r");
+    const { ast: mint } = compileRecipe("run.receipt | out $r");
     const minted = (await runRecipe(mint)).find((a) => a.role === "receipt");
     const tampered = JSON.parse(minted.content);
     tampered.recipeDigest = "0".repeat(64);
     const bindings = { inputs: { text: { value: JSON.stringify(tampered) } } };
 
-    const { ast: loud } = compileRecipe("input | run.verify | out @ok");
+    const { ast: loud } = compileRecipe("input | run.verify | out $ok");
     await expect(runRecipe(loud, bindings)).rejects.toThrow(/mismatch/i);
 
-    const { ast: soft } = compileRecipe("input | run.verify -q | out @ok");
+    const { ast: soft } = compileRecipe("input | run.verify -q | out $ok");
     const arts = await runRecipe(soft, bindings);
     expect(arts.some((a) => String(a.content).trim() === "false")).toBe(true);
   });
@@ -301,7 +301,7 @@ run.receipt "Board key ceremony" | out @receipt`
   it("refuses text that is not a receipt even in soft mode", async () => {
     // Soft mode is about "the receipt does not match", not "you piped in the
     // wrong thing" — the same distinction `verify -q` draws for setup errors.
-    const { ast } = compileRecipe("input | run.verify -q | out @ok");
+    const { ast } = compileRecipe("input | run.verify -q | out $ok");
     await expect(
       runRecipe(ast, { inputs: { text: { value: "not a receipt" } } })
     ).rejects.toThrow(/not JSON|not a Basilisk/);
@@ -311,7 +311,7 @@ run.receipt "Board key ceremony" | out @receipt`
 describe("kernel run log", () => {
   it("accumulates one digested entry per cell run", async () => {
     const kernel = createKernel();
-    const { ast } = compileRecipe("bytes deadbeef | encode hex | out @a\n\nin @a | out @b");
+    const { ast } = compileRecipe("bytes deadbeef | encode hex | out $a\n\nin $a | out $b");
     await kernel.runCell(0, ast.chains[0], {});
     await kernel.runCell(1, ast.chains[1], {});
     const log = kernel.getRunLog();
@@ -324,7 +324,7 @@ describe("kernel run log", () => {
   it("lets a receipt in the last cell cover the whole notebook", async () => {
     const kernel = createKernel();
     const { ast } = compileRecipe(
-      "bytes deadbeef | encode hex | out @a\n\nrun.receipt | out @receipt"
+      "bytes deadbeef | encode hex | out $a\n\nrun.receipt | out $receipt"
     );
     await kernel.runCell(0, ast.chains[0], {});
     const arts = await kernel.runCell(1, ast.chains[1], {});
@@ -336,7 +336,7 @@ describe("kernel run log", () => {
 
   it("forgets the log on Clear sensitive, because a digest is still a fact", async () => {
     const kernel = createKernel();
-    const { ast } = compileRecipe("bytes deadbeef | encode hex | out @a");
+    const { ast } = compileRecipe("bytes deadbeef | encode hex | out $a");
     await kernel.runCell(0, ast.chains[0], {});
     expect(kernel.getRunLog().length).toBe(1);
     kernel.clearSensitive();

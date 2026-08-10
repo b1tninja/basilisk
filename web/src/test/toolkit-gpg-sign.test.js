@@ -11,7 +11,7 @@ describe("gpg.sign / gpg.verify", () => {
       userIDs: [{ name: "Toolkit Test", email: "test@example.com" }],
       format: "object",
     });
-    const sign = compileRecipe("input | gpg.sign | out @signed");
+    const sign = compileRecipe("input | gpg.sign | out $signed");
     expect(sign.validation.ok).toBe(true);
     const signedArts = await runRecipe(sign.ast, {
       inputs: {
@@ -26,7 +26,7 @@ describe("gpg.sign / gpg.verify", () => {
     const signed = signedArts.find((a) => /signed/i.test(a.filename || a.label || "")) || signedArts[0];
     expect(signed.content).toMatch(/BEGIN PGP SIGNED MESSAGE/);
 
-    const verify = compileRecipe("input | gpg.verify | out @ok");
+    const verify = compileRecipe("input | gpg.verify | out $ok");
     const out = await runRecipe(verify.ast, {
       inputs: {
         text: { value: String(signed.content) },
@@ -40,18 +40,18 @@ describe("gpg.sign / gpg.verify", () => {
     expect(out[0].content).toMatch(/^true$/i);
   }, 60_000);
 
-  it("detached sign + verify via signature=@slot", async () => {
+  it("detached sign + verify via signature=$slot", async () => {
     const { privateKey, publicKey } = await generateKey({
       type: "ecc",
       curve: "curve25519",
       userIDs: [{ name: "Toolkit Test", email: "test@example.com" }],
       format: "object",
     });
-    const recipe = `input | out @msg
+    const recipe = `input | out $msg
 
-in @msg | gpg.sign format=detached | out @sig
+in $msg | gpg.sign format=detached | out $sig
 
-in @msg | gpg.verify signature=@sig | out @ok`;
+in $msg | gpg.verify signature=$sig | out $ok`;
     const { ast, validation } = compileRecipe(recipe);
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast, {

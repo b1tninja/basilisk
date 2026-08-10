@@ -11,7 +11,7 @@
  *
  * 1. **The master is never `out`.** A tee branch digests it in place, so the
  *    expected digest becomes an ordinary non-sensitive tile while the 32 bytes
- *    themselves never reach a revealable artifact. Writing `out @master` would
+ *    themselves never reach a revealable artifact. Writing `out $master` would
  *    have been the obvious way to get a value to compare against later, and it
  *    would have put the secret one click from the screen for the rest of the
  *    session.
@@ -27,6 +27,8 @@
  *
  * @module lib/toolkit/ceremony
  */
+
+import { SLOT_SIGIL } from "./recipe-parse.js";
 
 /** @typedef {"setup"|"split"|"verify"|"cards"|"receipt"} CeremonyStageId */
 
@@ -163,10 +165,10 @@ export function ceremonyIssues(params = {}) {
 export function splitRecipe(params) {
   const k = Number(params.threshold) || 2;
   const n = Number(params.shares) || 3;
-  const body = params.qr === false ? "  - out @share" : "  - out @share | qr";
+  const body = params.qr === false ? "  - out $share" : "  - out $share | qr";
   return [
     "random 32 | tee",
-    "  - digest | encode hex | out @expected",
+    "  - digest | encode hex | out $expected",
     // Verifiable rather than plain Shamir: each custodian can check the share
     // they were handed against the published commitments, at the table,
     // instead of discovering a bad one when recovery is attempted and the
@@ -174,7 +176,7 @@ export function splitRecipe(params) {
     // commitments are *public* and travel separately from the mnemonics —
     // words carry no commitments, which is the real-world model, not a gap.
     `| vss.split threshold=${k} shares=${n} | tee`,
-    "  - vss.commitments | out @commitments",
+    "  - vss.commitments | out $commitments",
     "| blip39 | foreach",
     body,
   ].join("\n");
@@ -196,8 +198,8 @@ export function verifyRecipe() {
   // saying which share was wrong. With it, the bad share is named.
   return [
     "shares | blip39.decode",
-    "| vss.verify commitments=@commitments",
-    "| vss.combine | digest | encode hex | out @recovered",
+    "| vss.verify commitments=$commitments",
+    "| vss.combine | digest | encode hex | out $recovered",
   ].join(" ");
 }
 
@@ -214,9 +216,9 @@ export function receiptRecipe(params = /** @type {*} */ ({})) {
   const quoted = label ? ` ${JSON.stringify(label)}` : "";
   const key = String(params.signWith || "").trim();
   if (key) {
-    return `run.receipt${quoted} | gpg.sign key=@${key.replace(/^@/, "")} | out @receipt`;
+    return `run.receipt${quoted} | gpg.sign key=$${key.replace(/^[$@]/, "")} | out $receipt`;
   }
-  return `run.receipt${quoted} | out @receipt`;
+  return `run.receipt${quoted} | out $receipt`;
 }
 
 /**
@@ -311,19 +313,19 @@ export function verificationResult(expected, recovered) {
 /**
  * Pull a named `out` tile's text out of a cell's outputs.
  * @param {{ label?: string, filename?: string, content?: string }[]} outputs
- * @param {string} slot  slot label without `@`
+ * @param {string} slot  slot label without `$`
  * @returns {string}
  */
 export function tileForSlot(outputs, slot) {
-  const want = String(slot || "").replace(/^@/, "").toLowerCase();
+  const want = String(slot || "").replace(/^[$@]/, "").toLowerCase();
   for (const a of outputs || []) {
     const label = String(a.label || "").toLowerCase();
     const file = String(a.filename || "").toLowerCase();
-    if (label === want || label === `@${want}` || file === `${want}.txt`) {
+    if (label === want || label === `${SLOT_SIGIL}${want}` || file === `${want}.txt`) {
       return String(a.content || "").trim();
     }
   }
-  // Fall back to a looser contains-match: `out @expected` labels its tile from
+  // Fall back to a looser contains-match: `out $expected` labels its tile from
   // the slot name, but the exact spelling has changed before and a ceremony
   // that silently reports "pending" because of a label tweak is worse than one
   // that matches a little loosely.

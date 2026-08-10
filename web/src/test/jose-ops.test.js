@@ -63,8 +63,8 @@ function keyValue(key, which) {
   return { type: "key", data: key, meta: { which } };
 }
 
-/** Bindings whose single slot `@k` resolves to `value`. */
-function slotBindings(value, ref = "@k") {
+/** Bindings whose single slot `$k` resolves to `value`. */
+function slotBindings(value, ref = "$k") {
   return { resolveSlot: (r) => (String(r) === ref ? value : null) };
 }
 
@@ -104,7 +104,7 @@ describe("RFC 7515 test vectors", () => {
       // The vector's `exp` is 2011; enforcing it would fail a signature check
       // that in fact succeeded, which is exactly the distinction the message
       // in that error draws.
-      { key: "@k", expiry: "ignore" },
+      { key: "$k", expiry: "ignore" },
       slotBindings(keyValue(key, "secret"))
     );
     expect(out.meta.jose.verified).toBe(true);
@@ -123,7 +123,7 @@ describe("RFC 7515 test vectors", () => {
     await expect(
       execJoseVerify(
         textValue(tampered),
-        { key: "@k", expiry: "ignore" },
+        { key: "$k", expiry: "ignore" },
         slotBindings(keyValue(key, "secret"))
       )
     ).rejects.toThrow(/verification failed|not a JSON object|base64url/);
@@ -136,7 +136,7 @@ describe("RFC 7515 test vectors", () => {
     const pub = await importEs(A3.jwk, "P-256", false);
     const out = await execJoseVerify(
       textValue(A3.token),
-      { key: "@k", expiry: "ignore" },
+      { key: "$k", expiry: "ignore" },
       slotBindings(keyValue(pub, "public"))
     );
     expect(out.meta.jose.verified).toBe(true);
@@ -149,7 +149,7 @@ describe("RFC 7515 test vectors", () => {
     await expect(
       execJoseVerify(
         textValue(A3.token),
-        { key: "@k", expiry: "ignore" },
+        { key: "$k", expiry: "ignore" },
         slotBindings(other)
       )
     ).rejects.toThrow(/verification failed/);
@@ -274,7 +274,7 @@ describe("sign → verify round trips", () => {
 
       const signed = await execJoseSign(
         textValue(claims),
-        { key: "@k", alg: rt.alg },
+        { key: "$k", alg: rt.alg },
         slotBindings(value)
       );
       expect(signed.data.split(".")).toHaveLength(3);
@@ -284,7 +284,7 @@ describe("sign → verify round trips", () => {
 
       const verified = await execJoseVerify(
         textValue(signed.data),
-        { key: "@k" },
+        { key: "$k" },
         slotBindings(value)
       );
       expect(JSON.parse(verified.data)).toEqual({ sub: "alice", iat: 1700000000 });
@@ -294,7 +294,7 @@ describe("sign → verify round trips", () => {
 
   it("alg=auto reads the algorithm off the key", async () => {
     const value = await pairValue({ name: "ECDSA", namedCurve: "P-384" });
-    const signed = await execJoseSign(textValue("{}"), { key: "@k" }, slotBindings(value));
+    const signed = await execJoseSign(textValue("{}"), { key: "$k" }, slotBindings(value));
     expect(signed.meta.jose.header.alg).toBe("ES384");
   });
 
@@ -302,13 +302,13 @@ describe("sign → verify round trips", () => {
     const value = await pairValue({ name: "Ed25519" });
     const withKid = await execJoseSign(
       textValue("{}"),
-      { key: "@k", kid: "2024-05" },
+      { key: "$k", kid: "2024-05" },
       slotBindings(value)
     );
     expect(withKid.meta.jose.header).toEqual({ alg: "EdDSA", typ: "JWT", kid: "2024-05" });
     const bare = await execJoseSign(
       textValue("{}"),
-      { key: "@k", typ: "" },
+      { key: "$k", typ: "" },
       slotBindings(value)
     );
     expect(bare.meta.jose.header).toEqual({ alg: "EdDSA" });
@@ -318,13 +318,13 @@ describe("sign → verify round trips", () => {
     const value = await pairValue({ name: "Ed25519" });
     const signed = await execJoseSign(
       textValue("just some bytes"),
-      { key: "@k" },
+      { key: "$k" },
       slotBindings(value)
     );
     expect(signed.meta.jose.claims).toBeNull();
     const verified = await execJoseVerify(
       textValue(signed.data),
-      { key: "@k" },
+      { key: "$k" },
       slotBindings(value)
     );
     expect(verified.data).toBe("just some bytes");
@@ -341,7 +341,7 @@ describe("jose.verify refuses the classic mistakes", () => {
     await expect(
       execJoseVerify(
         textValue(`${seg('{"alg":"none"}')}.${seg('{"sub":"admin"}')}.`),
-        { key: "@k" },
+        { key: "$k" },
         slotBindings(keyValue(key, "secret"))
       )
     ).rejects.toThrow(/refusing alg="none"/);
@@ -363,7 +363,7 @@ describe("jose.verify refuses the classic mistakes", () => {
     await expect(
       execJoseVerify(
         textValue(`${seg('{"alg":"HS256"}')}.${seg('{"sub":"admin"}')}.AAAA`),
-        { key: "@k" },
+        { key: "$k" },
         slotBindings(pair)
       )
     ).rejects.toThrow(/token says alg=HS256 but the bound key is PS256/);
@@ -371,9 +371,9 @@ describe("jose.verify refuses the classic mistakes", () => {
 
   it("refuses a token whose alg is not the one the recipe demanded", async () => {
     const value = await pairValue({ name: "ECDSA", namedCurve: "P-256" });
-    const signed = await execJoseSign(textValue("{}"), { key: "@k" }, slotBindings(value));
+    const signed = await execJoseSign(textValue("{}"), { key: "$k" }, slotBindings(value));
     await expect(
-      execJoseVerify(textValue(signed.data), { key: "@k", alg: "es384" }, slotBindings(value))
+      execJoseVerify(textValue(signed.data), { key: "$k", alg: "es384" }, slotBindings(value))
     ).rejects.toThrow(/ES384 was required but the token is ES256/);
   });
 
@@ -384,7 +384,7 @@ describe("jose.verify refuses the classic mistakes", () => {
     await expect(
       execJoseVerify(
         textValue(`${seg('{"alg":"dir","enc":"A256GCM"}')}..A.B.C`),
-        { key: "@k" },
+        { key: "$k" },
         slotBindings(keyValue(key, "secret"))
       )
     ).rejects.toThrow(/use jose.decrypt/);
@@ -394,16 +394,16 @@ describe("jose.verify refuses the classic mistakes", () => {
     const value = await pairValue({ name: "Ed25519" });
     const signed = await execJoseSign(
       textValue(JSON.stringify({ sub: "a", exp: 1300819380 })),
-      { key: "@k" },
+      { key: "$k" },
       slotBindings(value)
     );
     await expect(
-      execJoseVerify(textValue(signed.data), { key: "@k" }, slotBindings(value))
+      execJoseVerify(textValue(signed.data), { key: "$k" }, slotBindings(value))
     ).rejects.toThrow(/signature is valid but the token expired/);
     // …and still lets you look at it deliberately.
     const anyway = await execJoseVerify(
       textValue(signed.data),
-      { key: "@k", expiry: "ignore" },
+      { key: "$k", expiry: "ignore" },
       slotBindings(value)
     );
     expect(anyway.meta.jose.timing.expired).toBe(true);
@@ -415,24 +415,24 @@ describe("jose.verify refuses the classic mistakes", () => {
     const nbf = Math.floor(Date.now() / 1000) + 3600;
     const signed = await execJoseSign(
       textValue(JSON.stringify({ sub: "a", nbf })),
-      { key: "@k" },
+      { key: "$k" },
       slotBindings(value)
     );
     await expect(
-      execJoseVerify(textValue(signed.data), { key: "@k" }, slotBindings(value))
+      execJoseVerify(textValue(signed.data), { key: "$k" }, slotBindings(value))
     ).rejects.toThrow(/not valid before/);
   });
 
   it("says so when no key slot was bound", async () => {
     await expect(
       execJoseVerify(textValue(A1.token), {}, { resolveSlot: () => null })
-    ).rejects.toThrow(/key=@slot is required/);
+    ).rejects.toThrow(/key=\$slot is required/);
   });
 
   it("refuses to sign with an algorithm the key cannot do", async () => {
     const value = await pairValue({ name: "ECDSA", namedCurve: "P-256" });
     await expect(
-      execJoseSign(textValue("{}"), { key: "@k", alg: "hs256" }, slotBindings(value))
+      execJoseSign(textValue("{}"), { key: "$k", alg: "hs256" }, slotBindings(value))
     ).rejects.toThrow(/alg=HS256 does not match the bound key \(ES256\)/);
   });
 });
@@ -446,7 +446,7 @@ describe("JWE round trips", () => {
       "decrypt",
     ]);
     const b = slotBindings(keyValue(cek, "secret"));
-    const jwe = await execJoseEncrypt(textValue('{"sub":"alice"}'), { key: "@k" }, b);
+    const jwe = await execJoseEncrypt(textValue('{"sub":"alice"}'), { key: "$k" }, b);
     const parts = jwe.data.split(".");
     expect(parts).toHaveLength(5);
     // `dir` carries no encrypted key — RFC 7516 §5.1 step 11.
@@ -455,7 +455,7 @@ describe("JWE round trips", () => {
       alg: "dir",
       enc: "A256GCM",
     });
-    const out = await execJoseDecrypt(textValue(jwe.data), { key: "@k" }, b);
+    const out = await execJoseDecrypt(textValue(jwe.data), { key: "$k" }, b);
     expect(out.data).toBe('{"sub":"alice"}');
     expect(out.meta.jose.claims).toEqual({ sub: "alice" });
     expect(out.meta.sensitive).toBe(true);
@@ -469,8 +469,8 @@ describe("JWE round trips", () => {
         "decrypt",
       ]);
       const b = slotBindings(keyValue(cek, "secret"));
-      const jwe = await execJoseEncrypt(textValue("secret payload"), { key: "@k", enc }, b);
-      const out = await execJoseDecrypt(textValue(jwe.data), { key: "@k" }, b);
+      const jwe = await execJoseEncrypt(textValue("secret payload"), { key: "$k", enc }, b);
+      const out = await execJoseDecrypt(textValue(jwe.data), { key: "$k" }, b);
       expect(out.data).toBe("secret payload");
     });
   }
@@ -483,10 +483,10 @@ describe("JWE round trips", () => {
         "unwrapKey",
       ]);
       const b = slotBindings(keyValue(kek, "secret"));
-      const jwe = await execJoseEncrypt(textValue("wrapped"), { key: "@k", alg }, b);
+      const jwe = await execJoseEncrypt(textValue("wrapped"), { key: "$k", alg }, b);
       // Unlike `dir`, the second segment now carries the wrapped CEK.
       expect(jwe.data.split(".")[1]).not.toBe("");
-      const out = await execJoseDecrypt(textValue(jwe.data), { key: "@k" }, b);
+      const out = await execJoseDecrypt(textValue(jwe.data), { key: "$k" }, b);
       expect(out.data).toBe("wrapped");
     });
   }
@@ -505,10 +505,10 @@ describe("JWE round trips", () => {
     const b = slotBindings({ type: "keypair", data: pair, meta: {} });
     const jwe = await execJoseEncrypt(
       textValue("to the holder of the private key"),
-      { key: "@k", alg: "rsa-oaep-256" },
+      { key: "$k", alg: "rsa-oaep-256" },
       b
     );
-    const out = await execJoseDecrypt(textValue(jwe.data), { key: "@k" }, b);
+    const out = await execJoseDecrypt(textValue(jwe.data), { key: "$k" }, b);
     expect(out.data).toBe("to the holder of the private key");
   }, 30_000);
 
@@ -518,7 +518,7 @@ describe("JWE round trips", () => {
       "decrypt",
     ]);
     const b = slotBindings(keyValue(cek, "secret"));
-    const jwe = await execJoseEncrypt(textValue("payload"), { key: "@k" }, b);
+    const jwe = await execJoseEncrypt(textValue("payload"), { key: "$k" }, b);
     const parts = jwe.data.split(".");
     // Re-encode the same *semantic* header with an added member: decryption
     // must fail even though alg/enc still say what they said.
@@ -527,7 +527,7 @@ describe("JWE round trips", () => {
       .replace(/\//g, "_")
       .replace(/=+$/, "");
     await expect(
-      execJoseDecrypt(textValue(parts.join(".")), { key: "@k" }, b)
+      execJoseDecrypt(textValue(parts.join(".")), { key: "$k" }, b)
     ).rejects.toThrow(/authentication failed/);
   });
 
@@ -539,13 +539,13 @@ describe("JWE round trips", () => {
       ]);
     const jwe = await execJoseEncrypt(
       textValue("payload"),
-      { key: "@k" },
+      { key: "$k" },
       slotBindings(keyValue(await mk(), "secret"))
     );
     await expect(
       execJoseDecrypt(
         textValue(jwe.data),
-        { key: "@k" },
+        { key: "$k" },
         slotBindings(keyValue(await mk(), "secret"))
       )
     ).rejects.toThrow(/authentication failed/);
@@ -559,7 +559,7 @@ describe("JWE round trips", () => {
     await expect(
       execJoseDecrypt(
         textValue(A1.token),
-        { key: "@k" },
+        { key: "$k" },
         slotBindings(keyValue(cek, "secret"))
       )
     ).rejects.toThrow(/use jose.verify/);
@@ -573,7 +573,7 @@ describe("JWE round trips", () => {
     await expect(
       execJoseEncrypt(
         textValue("x"),
-        { key: "@k", enc: "a256gcm" },
+        { key: "$k", enc: "a256gcm" },
         slotBindings(keyValue(cek, "secret"))
       )
     ).rejects.toThrow(/needs a 256-bit key, slot holds 128-bit/);
@@ -589,7 +589,7 @@ describe("JWE round trips", () => {
     await expect(
       execJoseDecrypt(
         textValue(`${seg('{"alg":"dir","enc":"A128CBC-HS256"}')}..A.B.C`),
-        { key: "@k" },
+        { key: "$k" },
         slotBindings(keyValue(cek, "secret"))
       )
     ).rejects.toThrow(/unsupported enc A128CBC-HS256/);

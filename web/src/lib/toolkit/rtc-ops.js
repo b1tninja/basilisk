@@ -31,7 +31,7 @@ function requireWebRtc(op) {
 }
 
 /**
- * Resolve an `ice=@slot` reference to RTCIceServer[].
+ * Resolve an `ice=$slot` reference to RTCIceServer[].
  *
  * No `ice=` is nobody saying anything, so the defaults fill it. A bound slot
  * is somebody saying something — including `rtc.ice stun=none`, whose list is
@@ -474,7 +474,7 @@ export async function execDataChannelStats() {
 
 /**
  * ICE restart as a pipeline primitive — the same recovery the Connections
- * panel button performs, chainable: `rtc.restart | out @state` after a
+ * panel button performs, chainable: `rtc.restart | out $state` after a
  * `stun.check` that came back degraded, or scripted into a reconnect recipe.
  * Renegotiates in place: room, invite, and roster survive because the session
  * never closed — only its transport did. The new offers ride

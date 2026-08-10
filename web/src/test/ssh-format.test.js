@@ -458,12 +458,12 @@ describe("sshsig", () => {
  * shares the same gap and would light up with it).
  *
  * The name of this block used to claim the panel was how a user did this. It
- * is not, and the reachable route — `passphrase=@slot` — is covered by the
+ * is not, and the reachable route — `passphrase=$slot` — is covered by the
  * block that follows. A test whose title names a mechanism that does not
  * exist is how the next reader learns something false.
  */
 describe("ssh.decode opens a protected key when a passphrase reaches it", () => {
-  const recipe = "input | ssh.decode format=private | ssh.fingerprint | out @fp";
+  const recipe = "input | ssh.decode format=private | ssh.fingerprint | out $fp";
 
   it("decodes when the passphrase is present", async () => {
     const { ast, validation } = compileRecipe(recipe);
@@ -491,7 +491,7 @@ describe("ssh.decode opens a protected key when a passphrase reaches it", () => 
    * never constructs `inputs.agent` at all, so the panel channel the two
    * tests above exercise is reachable only from a test that writes the
    * binding by hand. The message used to say "Inputs → passphrase" about a
-   * field no page renders. `passphrase=@slot` is the path a user can
+   * field no page renders. `passphrase=$slot` is the path a user can
    * actually take, so that is what the sentence names and what these pin.
    */
   it("takes the passphrase from a named slot", async () => {
@@ -500,7 +500,7 @@ describe("ssh.decode opens a protected key when a passphrase reaches it", () => 
     // which is the machinery `passphrase=` gets for free by being a `slot`
     // param rather than a string one.
     const { ast, validation } = compileRecipe(
-      `"correct horse" | out @pw\n\ninput | ssh.decode format=private passphrase=@pw | ssh.fingerprint | out @fp`
+      `"correct horse" | out $pw\n\ninput | ssh.decode format=private passphrase=$pw | ssh.fingerprint | out $fp`
     );
     expect(validation.errors).toEqual([]);
     const artifacts = await runRecipe(ast, {
@@ -513,36 +513,36 @@ describe("ssh.decode opens a protected key when a passphrase reaches it", () => 
   });
 
   it("points the refusal at the slot, not at a panel field that does not exist", () => {
-    expect(ENCRYPTED_KEY_MESSAGE).toMatch(/passphrase=@pw/);
+    expect(ENCRYPTED_KEY_MESSAGE).toMatch(/passphrase=\$pw/);
     expect(ENCRYPTED_KEY_MESSAGE).not.toMatch(/Inputs → passphrase/);
   });
 
   it("names an unregistered slot at compile time, before the run", () => {
     const { validation } = compileRecipe(
-      "input | ssh.decode format=private passphrase=@pw | ssh.fingerprint | out @fp"
+      "input | ssh.decode format=private passphrase=$pw | ssh.fingerprint | out $fp"
     );
     expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
-      /passphrase=@pw: unknown slot/
+      /passphrase=\$pw: unknown slot/
     );
   });
 });
 
 /**
- * `ssh.encode format=private passphrase=@slot` (§29f).
+ * `ssh.encode format=private passphrase=$slot` (§29f).
  *
  * The asymmetry with `ssh.decode` above is the whole design and is asserted
  * here rather than only written down: decoding may read the Inputs panel,
  * because a passphrase there decides whether a run starts. Encoding may not,
  * because there it decides what the file *is* — and a recipe whose output is a
  * protected key on one machine and a bare one on the next, with nothing in its
- * text to say which, is not a recipe. So the secret is named, as an `@slot`.
+ * text to say which, is not a recipe. So the secret is named, as an `$slot`.
  */
 describe("ssh.encode passphrase=", () => {
   const PASSPHRASE = "correct horse";
 
-  /** One text slot named @pw, the way a notebook cell would register it. */
+  /** One text slot named $pw, the way a notebook cell would register it. */
   const withPw = (pw = PASSPHRASE) => ({
-    resolveSlot: (ref) => (ref === "@pw" ? { type: "text", data: pw } : null),
+    resolveSlot: (ref) => (ref === "$pw" ? { type: "text", data: pw } : null),
   });
 
   /** A live keypair value, since execSshEncode reads CryptoKey handles. */
@@ -554,7 +554,7 @@ describe("ssh.encode passphrase=", () => {
   it("encrypts the block, at the rounds ssh-keygen writes today", async () => {
     const out = await execSshEncode(
       await keypair(),
-      { format: "private", passphrase: "@pw" },
+      { format: "private", passphrase: "$pw" },
       withPw()
     );
     expect(out.meta.kind).toBe("ssh-private");
@@ -584,7 +584,7 @@ describe("ssh.encode passphrase=", () => {
   it("refuses a literal, which would be a passphrase living in recipe text", async () => {
     await expect(
       execSshEncode(await keypair(), { format: "private", passphrase: PASSPHRASE }, withPw())
-    ).rejects.toThrow(/takes an @slot/);
+    ).rejects.toThrow(/takes an \$slot/);
   });
 
   it("stops warning about an unencrypted export once one is encrypted", () => {
@@ -593,11 +593,11 @@ describe("ssh.encode passphrase=", () => {
     // warning that is wrong precisely where the user did the careful thing is
     // worse than no warning: it teaches that the warnings are noise.
     const warn = (src) => compileRecipe(src).validation.warnings || [];
-    const bare = warn("genkey ed25519 | ssh.encode format=private | out @k");
+    const bare = warn("genkey ed25519 | ssh.encode format=private | out $k");
     expect(bare.some((w) => /emits an unencrypted private key/.test(w.message))).toBe(true);
 
     const protectedOut = warn(
-      "genkey ed25519 | ssh.encode format=private passphrase=@pw | out @k"
+      "genkey ed25519 | ssh.encode format=private passphrase=$pw | out $k"
     );
     expect(protectedOut.some((w) => /emits an unencrypted private key/.test(w.message))).toBe(
       false
@@ -606,48 +606,48 @@ describe("ssh.encode passphrase=", () => {
 
   it("refuses an empty slot rather than quietly exporting the key bare", async () => {
     await expect(
-      execSshEncode(await keypair(), { format: "private", passphrase: "@pw" }, withPw(""))
+      execSshEncode(await keypair(), { format: "private", passphrase: "$pw" }, withPw(""))
     ).rejects.toThrow(/empty passphrase is not encryption/);
   });
 
   it("refuses passphrase= on the public half instead of ignoring it", async () => {
     await expect(
-      execSshEncode(await keypair(), { format: "public", passphrase: "@pw" }, withPw())
+      execSshEncode(await keypair(), { format: "public", passphrase: "$pw" }, withPw())
     ).rejects.toThrow(/only applies to format=private/);
   });
 
   it("names the secret in the recipe, and never serializes it", () => {
-    const src = `"${PASSPHRASE}" | out @pw
+    const src = `"${PASSPHRASE}" | out $pw
 
-genkey ed25519 | ssh.encode format=private passphrase=@pw | out @k`;
+genkey ed25519 | ssh.encode format=private passphrase=$pw | out $k`;
     const { ast, validation } = compileRecipe(src);
     expect(validation.errors).toEqual([]);
-    // The `@ref` survives a share link — that is what makes the recipe honest
+    // The `$ref` survives a share link — that is what makes the recipe honest
     // about what it emits — while `p.secret` keeps a literal from ever doing so.
-    expect(serializeRecipe({ chains: ast.chains })).toContain("passphrase=@pw");
+    expect(serializeRecipe({ chains: ast.chains })).toContain("passphrase=$pw");
   });
 
   it("will not even parse a literal, so one cannot reach the recipe text", () => {
     // `p.secret` drops a literal at *serialization*; making the param `slot`
     // stops it a step earlier, at the parser, where the user still gets told.
     const { validation } = compileRecipe(
-      `genkey ed25519 | ssh.encode format=private passphrase="hunter2" | out @k`
+      `genkey ed25519 | ssh.encode format=private passphrase="hunter2" | out $k`
     );
     expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
-      /ssh\.encode passphrase=.*require @/i
+      /ssh\.encode passphrase=.*require \$/i
     );
   });
 
   it("round-trips end to end through the engine", async () => {
-    const { ast, validation } = compileRecipe(`"${PASSPHRASE}" | out @pw
+    const { ast, validation } = compileRecipe(`"${PASSPHRASE}" | out $pw
 
-genkey ed25519 | out @id
+genkey ed25519 | out $id
 
-in @id | ssh.encode format=private passphrase=@pw | out @enc
+in $id | ssh.encode format=private passphrase=$pw | out $enc
 
-in @enc | ssh.decode format=private | ssh.fingerprint | out @fp
+in $enc | ssh.decode format=private | ssh.fingerprint | out $fp
 
-in @id | ssh.fingerprint | out @fp2`);
+in $id | ssh.fingerprint | out $fp2`);
     expect(validation.errors).toEqual([]);
     const arts = await runRecipe(ast, {
       // ssh.decode's channel, unchanged: the panel opens a protected file.
@@ -665,7 +665,7 @@ in @id | ssh.fingerprint | out @fp2`);
   it("refuses to reopen with the wrong passphrase, so the block really is sealed", async () => {
     const out = await execSshEncode(
       await keypair(),
-      { format: "private", passphrase: "@pw" },
+      { format: "private", passphrase: "$pw" },
       withPw()
     );
     await expect(
@@ -735,7 +735,7 @@ describe("ssh.decode types from format=, and the file may only agree", () => {
   const block = fixture("id_ed25519");
 
   it("declares a public key for the default, and refuses the pkcs8 export that used to lie", () => {
-    const { validation } = compileRecipe("input | ssh.decode | export pkcs8 | encode hex | out @k");
+    const { validation } = compileRecipe("input | ssh.decode | export pkcs8 | encode hex | out $k");
     expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
       /"export pkcs8" needs a private key — tip is key\/public/
     );
@@ -743,7 +743,7 @@ describe("ssh.decode types from format=, and the file may only agree", () => {
 
   it("declares a keypair for format=private, and exports real pkcs8", async () => {
     const { ast, validation } = compileRecipe(
-      "input | ssh.decode format=private | export pkcs8 | encode hex | out @k"
+      "input | ssh.decode format=private | export pkcs8 | encode hex | out $k"
     );
     expect(validation.errors).toEqual([]);
     const arts = await runRecipe(ast, { inputs: { text: { value: block } } });
@@ -752,7 +752,7 @@ describe("ssh.decode types from format=, and the file may only agree", () => {
   });
 
   it("still fingerprints a public line under the default", async () => {
-    const { ast, validation } = compileRecipe("input | ssh.decode | ssh.fingerprint | out @fp");
+    const { ast, validation } = compileRecipe("input | ssh.decode | ssh.fingerprint | out $fp");
     expect(validation.errors).toEqual([]);
     const arts = await runRecipe(ast, { inputs: { text: { value: publicLine } } });
     expect(String(arts.at(-1).content).trim()).toBe(
@@ -761,7 +761,7 @@ describe("ssh.decode types from format=, and the file may only agree", () => {
   });
 
   it("refuses a private block handed to the public reading, naming the word that fixes it", async () => {
-    const { ast, validation } = compileRecipe("input | ssh.decode | ssh.fingerprint | out @fp");
+    const { ast, validation } = compileRecipe("input | ssh.decode | ssh.fingerprint | out $fp");
     expect(validation.errors).toEqual([]);
     await expect(runRecipe(ast, { inputs: { text: { value: block } } })).rejects.toThrow(
       SSH_DECODE_FORMAT_MISMATCH.public
@@ -770,7 +770,7 @@ describe("ssh.decode types from format=, and the file may only agree", () => {
 
   it("refuses a public line handed to format=private", async () => {
     const { ast, validation } = compileRecipe(
-      "input | ssh.decode format=private | ssh.fingerprint | out @fp"
+      "input | ssh.decode format=private | ssh.fingerprint | out $fp"
     );
     expect(validation.errors).toEqual([]);
     await expect(runRecipe(ast, { inputs: { text: { value: publicLine } } })).rejects.toThrow(
@@ -784,13 +784,13 @@ describe("ssh.decode types from format=, and the file may only agree", () => {
    */
   it("catches a format= that contradicts a known kind, at compile time", () => {
     const priv = compileRecipe(
-      `genkey ed25519 | ssh.encode format=private | out @pem\n\nin @pem | ssh.decode | out @k`
+      `genkey ed25519 | ssh.encode format=private | out $pem\n\nin $pem | ssh.decode | out $k`
     );
     expect(priv.validation.errors.map((e) => e.message)).toContain(
       SSH_DECODE_KIND_CONFLICT.private
     );
     const pub = compileRecipe(
-      `genkey ed25519 | ssh.encode | out @pub\n\nin @pub | ssh.decode format=private | out @k`
+      `genkey ed25519 | ssh.encode | out $pub\n\nin $pub | ssh.decode format=private | out $k`
     );
     expect(pub.validation.errors.map((e) => e.message)).toContain(SSH_DECODE_KIND_CONFLICT.public);
   });
@@ -812,7 +812,7 @@ describe("ssh.decode types from format=, and the file may only agree", () => {
     expect(declared(typeOf("keypair", { alg: "ec/p521" })).length).toBe(66);
 
     const { ast, validation } = compileRecipe(
-      `genkey ec/p521 | ssh.encode format=private | out @pem\n\nin @pem | ssh.decode format=private | export scalar | encode hex | out @s`
+      `genkey ec/p521 | ssh.encode format=private | out $pem\n\nin $pem | ssh.decode format=private | export scalar | encode hex | out $s`
     );
     expect(validation.errors).toEqual([]);
     const arts = await runRecipe(ast, {});
@@ -860,7 +860,7 @@ describe("the two ssh.encode formats never share a tag", () => {
 
   it("tags a private block ssh-private, not ssh-public", async () => {
     const [art] = await artifactsOf(
-      "genkey ed25519 | ssh.encode format=private | out @priv"
+      "genkey ed25519 | ssh.encode format=private | out $priv"
     );
     expect(art.content).toContain("BEGIN OPENSSH PRIVATE KEY");
     expect(art.tags).toContain("ssh-private");
@@ -879,7 +879,7 @@ describe("the two ssh.encode formats never share a tag", () => {
   });
 
   it("tags a public line ssh-public, not ssh-private", async () => {
-    const [art] = await artifactsOf("genkey ed25519 | ssh.encode | out @pub");
+    const [art] = await artifactsOf("genkey ed25519 | ssh.encode | out $pub");
     expect(art.content).toMatch(/^ssh-ed25519 /);
     expect(art.tags).toContain("ssh-public");
     expect(art.tags).not.toContain("ssh-private");
@@ -891,8 +891,8 @@ describe("the two ssh.encode formats never share a tag", () => {
     // Asserted as set disjointness rather than as two literals: a tag added to
     // both halves later would pass the tests above and still reintroduce the
     // defect, because one kind matching both is the whole failure mode.
-    const [priv] = await artifactsOf("genkey ed25519 | ssh.encode format=private | out @a");
-    const [pub] = await artifactsOf("genkey ed25519 | ssh.encode | out @b");
+    const [priv] = await artifactsOf("genkey ed25519 | ssh.encode format=private | out $a");
+    const [pub] = await artifactsOf("genkey ed25519 | ssh.encode | out $b");
     const shared = (priv.tags || []).filter((t) => (pub.tags || []).includes(t));
     expect(shared, `private and public share tags: ${shared.join(", ")}`).toEqual([]);
   });

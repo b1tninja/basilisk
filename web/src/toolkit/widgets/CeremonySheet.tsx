@@ -48,12 +48,12 @@ export type CeremonySheetProps = {
   onRunStage: (stage: CeremonyStageId) => void | Promise<void>;
   runState: CeremonyRunState;
   runError?: string;
-  /** Digest hex from the split cell's `@expected` tile. */
+  /** Digest hex from the split cell's `$expected` tile. */
   expectedDigest: string;
-  /** Digest hex from the verify cell's `@recovered` tile. */
+  /** Digest hex from the verify cell's `$recovered` tile. */
   recoveredDigest: string;
   shareArtifacts: ShareCardArtifact[];
-  /** JSON from the split cell's `@commitments` tile — the public half. */
+  /** JSON from the split cell's `$commitments` tile — the public half. */
   commitmentsText?: string;
   receiptText: string;
   /** `file.read | qr.scan`, supplied by the host; absent hides the scan button. */

@@ -22,7 +22,7 @@ import type { VaultKeyRow } from "../notebook-types";
 type Props = {
   /** The vault's keys, exactly as the Keys tray receives them. */
   keys: VaultKeyRow[];
-  /** Currently bound fingerprint (or `@slot` ref). */
+  /** Currently bound fingerprint (or `$slot` ref). */
   value?: string;
   onChange?: (fingerprint: string) => void;
   /** Verb for the header — "Sign with", "Decrypt with". */

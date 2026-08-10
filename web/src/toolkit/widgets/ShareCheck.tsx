@@ -168,7 +168,7 @@ export function ShareCheck({
         <summary>Do this by hand instead</summary>
         <p>
           The panel runs the same op a notebook cell would. Paste your share into the{" "}
-          <code>shares</code> panel, the commitments into <code>@commitments</code>, and run:
+          <code>shares</code> panel, the commitments into <code>$commitments</code>, and run:
         </p>
         <pre>{shareCheckRecipe()}</pre>
       </details>

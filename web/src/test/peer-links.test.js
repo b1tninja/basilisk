@@ -88,23 +88,23 @@ describe("a connection name is a recipe token, not a slot", () => {
       expect(normalizeLinkId(id)).toBe(id);
     }
     // Empty means the default connection, which is what makes the two-party
-    // case free of ceremony: `peer.offer | out @offer`.
+    // case free of ceremony: `peer.offer | out $offer`.
     expect(normalizeLinkId("")).toBe("default");
     expect(normalizeLinkId(undefined)).toBe("default");
   });
 
-  it("names the @ mistake specifically, because it is the likely one", () => {
+  it("names the sigil mistake specifically, because it is the likely one", () => {
     // Everything else in this language that threads a value between cells is a
-    // slot, so `peer.offer @a` is the habit rather than a typo. A bare charset
+    // slot, so `peer.offer $a` is the habit rather than a typo. A bare charset
     // complaint would read as "your name has a bad character" and send a reader
     // hunting for one.
     let msg = "";
     try {
-      normalizeLinkId("@a", "peer.offer");
+      normalizeLinkId("$a", "peer.offer");
     } catch (err) {
       msg = err.message;
     }
-    expect(msg).toMatch(/without the @/);
+    expect(msg).toMatch(/without the \$/);
     expect(msg).toMatch(/peer\.offer a/);
     expect(msg).toMatch(/not a slot/);
     // And an ordinary bad name still gets the charset sentence.

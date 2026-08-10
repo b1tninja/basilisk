@@ -53,12 +53,12 @@ describe("toolkit engine", () => {
     expect(s).not.toMatch(/[+/=]/);
   });
 
-  // `out name=label` is retired from live parse — slot labels require `@`
+  // `out name=label` is retired from live parse — slot labels require `$`
   // (Upgrade recipe rewrites the old spelling). These use the canonical form;
   // the migration itself is asserted separately below.
   it("out emits a named file tile without duplicating a terminal value", async () => {
     const { ast, validation } = compileRecipe(
-      "random 16 | out @secret encoding=hex ext=hex"
+      "random 16 | out $secret encoding=hex ext=hex"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -72,7 +72,7 @@ describe("toolkit engine", () => {
 
   it("out passes the value through for later steps", async () => {
     const { ast, validation } = compileRecipe(
-      "random 8 | out @raw encoding=base64 | encode hex"
+      "random 8 | out $raw encoding=base64 | encode hex"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -107,7 +107,7 @@ describe("toolkit engine", () => {
 
   it("validates pem | out | gpg.encrypt-style type flow", () => {
     const { validation } = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | out @key ext=pem | gpg.encrypt"
+      "genkey ec/p256 | export pkcs8 | pem | out $key ext=pem | gpg.encrypt"
     );
     expect(validation.ok).toBe(true);
   });
@@ -120,9 +120,9 @@ describe("toolkit engine", () => {
     const legacy = "random 16 | out name=secret encoding=hex ext=hex";
     const { validation } = compileRecipe(legacy);
     expect(validation.ok).toBe(false);
-    expect(validation.errors[0].message).toMatch(/slot labels require @/i);
+    expect(validation.errors[0].message).toMatch(/slot labels require \$/i);
     expect(migrateRecipe(legacy).recipe).toBe(
-      "random 16 | out @secret encoding=hex ext=hex"
+      "random 16 | out $secret encoding=hex ext=hex"
     );
     expect(compileRecipe(migrateRecipe(legacy).recipe).validation.ok).toBe(true);
   });

@@ -3,7 +3,7 @@
  *
  * Forms (first match wins):
  *   #encrypt | #decrypt | #symencrypt  — named messaging starters
- *     (#symencrypt = mode=passphrase + generated @pw)
+ *     (#symencrypt = mode=passphrase + generated $pw)
  *   #t=<presetId>                      — Templates preset
  *   #r=<compact-recipe>                — URL-friendly compact recipe
  *                                        (beautified via canonicalize on load)
@@ -13,7 +13,7 @@
  * Compact recipe form (written by hashForRecipe):
  *   - pipes without spaces: `input|gpg.encrypt`
  *   - chains joined with `~` instead of blank lines
- *   - tee/foreach bodies as one-line braces: `foreach{ - out @share }`
+ *   - tee/foreach bodies as one-line braces: `foreach{ - out $share }`
  *   - spaces as `+` in the fragment; `| @ = ~` left unescaped
  *
  * Private keys / passphrases must never be written here.
@@ -62,9 +62,9 @@ export const MESSAGING_STARTERS = {
   },
   symencrypt: {
     title: "Password encrypt",
-    recipe: `passphrase mode=char | out @pw
+    recipe: `passphrase mode=char | out $pw
 
-input | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg`,
+input | gpg.symencrypt mode=passphrase passphrase=$pw | out $msg`,
   },
 };
 
@@ -129,6 +129,10 @@ export function encodeSharePayload(text) {
   return encodeURIComponent(String(text ?? ""))
     .replace(/%20/g, "+")
     .replace(/%7C/gi, "|")
+    // `$` is the slot sigil and appears once per slot reference; left encoded
+    // it costs three characters each against the 6000-char fragment budget.
+    // It is a sub-delim, legal unescaped in a fragment.
+    .replace(/%24/g, "$")
     .replace(/%40/g, "@")
     .replace(/%3D/gi, "=")
     .replace(/%7E/gi, "~")

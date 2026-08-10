@@ -28,11 +28,11 @@ describe("step name alternates", () => {
   });
 
   it("parses alternates and serializes canonical", () => {
-    const { ast, errors } = parseRecipe("random 16 | AES/GCM/NoPadding key=@k");
+    const { ast, errors } = parseRecipe("random 16 | AES/GCM/NoPadding key=$k");
     expect(errors).toEqual([]);
     expect(ast?.steps?.[1]?.name).toBe("aes-gcm");
     expect(ast?.steps?.[1]?.params?.expectedKeyBits).toBeUndefined();
-    const sized = parseRecipe("random 16 | aes-256-gcm key=@k");
+    const sized = parseRecipe("random 16 | aes-256-gcm key=$k");
     expect(sized.errors).toEqual([]);
     expect(sized.ast?.steps?.[1]?.name).toBe("aes-gcm");
     expect(sized.ast?.steps?.[1]?.params?.keyBits).toBe(256);
@@ -59,7 +59,7 @@ describe("encrypt / decrypt cipher sugar (migrator-only)", () => {
 
   it("live parse rejects encrypt / decrypt sugar", () => {
     const { errors } = parseRecipe(
-      "random 16 | encrypt AES/GCM/NoPadding key=@k"
+      "random 16 | encrypt AES/GCM/NoPadding key=$k"
     );
     expect(errors.some((e) => /removed from live parse|Upgrade recipe/i.test(e.message))).toBe(
       true
@@ -68,7 +68,7 @@ describe("encrypt / decrypt cipher sugar (migrator-only)", () => {
 
   it("migrateRecipe rewrites encrypt TRANSFORM to concrete aes-gcm", () => {
     const { recipe, changes } = migrateRecipe(
-      "random 16 | encrypt AES/GCM/NoPadding key=@k"
+      "random 16 | encrypt AES/GCM/NoPadding key=$k"
     );
     expect(recipe).toContain("aes-gcm");
     expect(recipe).not.toMatch(/\bencrypt\b/);
@@ -81,7 +81,7 @@ describe("encrypt / decrypt cipher sugar (migrator-only)", () => {
   });
 
   it("migrateRecipe rewrites decrypt sized transform to decode + keyBits", () => {
-    const { recipe } = migrateRecipe("random 16 | decrypt aes-256-gcm key=@k");
+    const { recipe } = migrateRecipe("random 16 | decrypt aes-256-gcm key=$k");
     expect(recipe).toMatch(/aes-256-gcm\s+-d/);
     const { ast, errors } = parseRecipe(recipe);
     expect(errors).toEqual([]);
@@ -92,7 +92,7 @@ describe("encrypt / decrypt cipher sugar (migrator-only)", () => {
   });
 
   it("migrateRecipe rewrites encrypt -d before transform", () => {
-    const { recipe } = migrateRecipe("random 16 | encrypt -d aes-gcm key=@k");
+    const { recipe } = migrateRecipe("random 16 | encrypt -d aes-gcm key=$k");
     expect(recipe).toMatch(/aes-gcm\s+-d/);
     const { ast, errors } = parseRecipe(recipe);
     expect(errors).toEqual([]);
@@ -147,14 +147,14 @@ describe("encode / decode twin verbs", () => {
   });
 
   it("pem ↔ der conjugate has no .encode/.decode or -d aliases", () => {
-    const { errors: e1 } = parseRecipe("export spki | pem.encode | out @pub");
+    const { errors: e1 } = parseRecipe("export spki | pem.encode | out $pub");
     expect(e1.some((e) => /Unknown step|pem\.encode/i.test(e.message))).toBe(true);
-    const { errors: e2 } = parseRecipe("in @pub | pem.decode | import spki");
+    const { errors: e2 } = parseRecipe("in $pub | pem.decode | import spki");
     expect(e2.some((e) => /Unknown step|pem\.decode/i.test(e.message))).toBe(true);
-    const { errors: e3 } = parseRecipe("in @pub | pem -d | import spki");
+    const { errors: e3 } = parseRecipe("in $pub | pem -d | import spki");
     expect(e3.some((e) => /Unknown flag|Unknown step|-d/i.test(e.message))).toBe(true);
     const { ast, errors } = parseRecipe(
-      "export spki | pem | out @pub\n\nin @pub | der | import spki"
+      "export spki | pem | out $pub\n\nin $pub | der | import spki"
     );
     expect(errors).toEqual([]);
     expect(ast?.chains?.[0]?.steps?.map((s) => s.name)).toEqual([
@@ -168,28 +168,28 @@ describe("encode / decode twin verbs", () => {
       "import",
     ]);
     expect(serializeRecipe(ast)).toBe(
-      "export spki | pem | out @pub\n\n@pub | der | import spki"
+      "export spki | pem | out $pub\n\n$pub | der | import spki"
     );
   });
 
   it("encode ↔ decode hex conjugate — bare hex/unhex rejected", () => {
-    const { errors: e1 } = parseRecipe("random 8 | hex | out @h");
+    const { errors: e1 } = parseRecipe("random 8 | hex | out $h");
     expect(e1.some((e) => /hex.*removed|Unknown step|encode hex/i.test(e.message))).toBe(
       true
     );
-    const { errors: e2 } = parseRecipe("in @h | unhex");
+    const { errors: e2 } = parseRecipe("in $h | unhex");
     expect(e2.some((e) => /unhex.*removed|Unknown step|decode hex/i.test(e.message))).toBe(
       true
     );
-    const { errors: e3 } = parseRecipe("in @h | encode hex -d");
+    const { errors: e3 } = parseRecipe("in $h | encode hex -d");
     expect(e3.some((e) => /Unknown flag|-d/i.test(e.message))).toBe(true);
-    const { ast, errors } = parseRecipe("random 8 | encode hex | out @h\n\nin @h | decode hex");
+    const { ast, errors } = parseRecipe("random 8 | encode hex | out $h\n\nin $h | decode hex");
     expect(errors).toEqual([]);
     expect(ast?.chains?.[0]?.steps?.map((s) => s.name)).toEqual(["random", "encode", "out"]);
     expect(ast?.chains?.[0]?.steps?.[1]?.params?.encoding).toBe("hex");
     expect(ast?.chains?.[1]?.steps?.map((s) => s.name)).toEqual(["in", "decode"]);
     expect(ast?.chains?.[1]?.steps?.[1]?.params?.encoding).toBe("hex");
-    expect(serializeRecipe(ast)).toBe("random 8 | encode hex | out @h\n\n@h | decode hex");
+    expect(serializeRecipe(ast)).toBe("random 8 | encode hex | out $h\n\n$h | decode hex");
   });
 
   it("isBaseEncoding covers every alphabet the verbs accept", () => {
@@ -202,7 +202,7 @@ describe("encode / decode twin verbs", () => {
     // is handled by Upgrade recipe, the same route `hex`/`unhex` already take.
     for (const [src, want] of [
       ["random 8 | to hex", /"to" was renamed|Unknown step/i],
-      ["in @h | from hex", /"from" was renamed|Unknown step/i],
+      ["in $h | from hex", /"from" was renamed|Unknown step/i],
     ]) {
       const { errors } = parseRecipe(src);
       expect(errors.some((e) => want.test(e.message)), src).toBe(true);
@@ -210,25 +210,25 @@ describe("encode / decode twin verbs", () => {
     expect(legacyRemovalHint("to")).toMatch(/encode/);
     // `from` was overloaded — the hint has to name both of its replacements.
     expect(legacyRemovalHint("from")).toMatch(/decode/);
-    expect(legacyRemovalHint("from")).toMatch(/in @slot/);
+    expect(legacyRemovalHint("from")).toMatch(/in \$slot/);
   });
 
   it("migrates both roles of `from` in one line", () => {
     // Slot load and decode, side by side — the case the old hex-only rule got
     // wrong the moment a second alphabet existed.
-    expect(migrateRecipe("from @h | from base64").recipe).toBe("in @h | decode base64");
+    expect(migrateRecipe("from $h | from base64").recipe).toBe("in $h | decode base64");
     expect(migrateRecipe("random 8 | to base64").recipe).toBe("random 8 | encode base64");
     // Already-current text is left alone.
     expect(migrateRecipe("random 8 | encode base32").recipe).toBe("random 8 | encode base32");
   });
 
   it("parses the current spelling and round-trips it", () => {
-    const ok = parseRecipe("random 8 | encode base64url | out @h\n\nin @h | decode base64url");
+    const ok = parseRecipe("random 8 | encode base64url | out $h\n\nin $h | decode base64url");
     expect(ok.errors).toEqual([]);
     expect(ok.ast?.chains?.[0]?.steps?.[1]?.name).toBe("encode");
     expect(ok.ast?.chains?.[1]?.steps?.[1]?.name).toBe("decode");
     expect(serializeRecipe(ok.ast)).toBe(
-      "random 8 | encode base64url | out @h\n\n@h | decode base64url"
+      "random 8 | encode base64url | out $h\n\n$h | decode base64url"
     );
   });
 });
@@ -260,29 +260,29 @@ symencrypt | symdecrypt`;
 
   it("rewrites bare encrypt/decrypt sugar to concrete ciphers", () => {
     const { recipe, changes } = migrateRecipe(
-      "input | utf8 | encrypt AES/GCM/NoPadding key=@cek"
+      "input | utf8 | encrypt AES/GCM/NoPadding key=$cek"
     );
     expect(recipe).toContain("aes-gcm");
     expect(recipe).not.toMatch(/\bencrypt\b/);
     expect(changes.some((c) => c.from === "encrypt/decrypt")).toBe(true);
   });
 
-  it("rewrites bare slot labels to @", () => {
+  it("rewrites bare slot labels to $", () => {
     const { recipe, changes } = migrateRecipe(
       "genkey aes/256 | out cek\n\nrandom 16 | aes-gcm key=cek"
     );
-    expect(recipe).toContain("out @cek");
-    expect(recipe).toContain("key=@cek");
-    expect(changes.some((c) => c.from === "bare-slot-@")).toBe(true);
+    expect(recipe).toContain("out $cek");
+    expect(recipe).toContain("key=$cek");
+    expect(changes.some((c) => c.from === "bare-slot-$")).toBe(true);
   });
 
   it("compileRecipe accepts only after migrate", () => {
     const legacy = compileRecipe(
-      "genkey aes/256 | out @cek\n\ninput | utf8 | aesgcm key=@cek | out @ct"
+      "genkey aes/256 | out $cek\n\ninput | utf8 | aesgcm key=$cek | out $ct"
     );
     expect(legacy.validation.ok).toBe(false);
     const m = migrateRecipe(
-      "genkey aes/256 | out @cek\n\ninput | utf8 | aesgcm key=@cek | out @ct"
+      "genkey aes/256 | out $cek\n\ninput | utf8 | aesgcm key=$cek | out $ct"
     );
     const compiled = compileRecipe(m.recipe);
     expect(compiled.validation.ok).toBe(true);

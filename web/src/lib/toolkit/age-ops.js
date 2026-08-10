@@ -9,11 +9,11 @@
  * what `age` and `rage` on the command line read, and vice versa.
  *
  * ```text
- * age.keygen | out @id                        # AGE-SECRET-KEY-1…  (secret)
- * in @id | age.recipient | out @pub           # age1…              (shareable)
+ * age.keygen | out $id                        # AGE-SECRET-KEY-1…  (secret)
+ * in $id | age.recipient | out $pub           # age1…              (shareable)
  *
- * file.read | age.encrypt to=@pub | file.save name=doc.age
- * file.read | age.decrypt key=@id | file.save
+ * file.read | age.encrypt to=$pub | file.save name=doc.age
+ * file.read | age.decrypt key=$id | file.save
  * ```
  *
  * | Recipe | CLI equivalent |
@@ -22,7 +22,7 @@
  * | `age.encrypt to=age1…` | `age -r age1… -o doc.age doc` |
  * | `age.encrypt to=… armor=true` | `age -a -r age1… -o doc.age doc` |
  * | `age.encrypt passphrase=…` | `age -p -o doc.age doc` |
- * | `age.decrypt key=@id` | `age -d -i key.txt doc.age` |
+ * | `age.decrypt key=$id` | `age -d -i key.txt doc.age` |
  *
  * Contrast `stream.seal`: that is the toolkit's own chunked AEAD, keyed by any
  * AES slot the notebook holds, and it is explicitly **not** age (see
@@ -41,6 +41,7 @@ import {
   generateX25519Identity,
   identityToRecipient,
 } from "age-encryption";
+import { SLOT_SIGIL } from "./recipe-parse.js";
 
 /** Bech32 with the age HRPs — uppercase for identities, lowercase for recipients. */
 const IDENTITY_RE = /^AGE-SECRET-KEY-1[0-9A-Z]+$/;
@@ -49,7 +50,7 @@ const RECIPIENT_RE = /^age1[0-9a-z]+$/;
 const ARMOR_HEAD = "BEGIN AGE ENCRYPTED FILE";
 
 /**
- * Resolve a `to=` / `key=` param that may be literal text or an `@slot` ref.
+ * Resolve a `to=` / `key=` param that may be literal text or an `$slot` ref.
  * Slot values may be text (the usual case) or bytes (a `file.read` of a
  * key file), so both are decoded to a trimmed string.
  * @param {Record<string, unknown>} params
@@ -59,7 +60,7 @@ const ARMOR_HEAD = "BEGIN AGE ENCRYPTED FILE";
  */
 function paramText(params, name, bindings) {
   const raw = String(params?.[name] ?? "").trim();
-  if (!raw.startsWith("@")) return raw;
+  if (!raw.startsWith(SLOT_SIGIL)) return raw;
   const resolve = bindings?.resolveSlot;
   if (typeof resolve !== "function") {
     throw new Error(`age: runtime slot resolver missing for ${name}=`);
@@ -150,7 +151,7 @@ export async function execAgeEncrypt(value, params, bindings) {
   } else {
     const entries = toRaw.split(/[\s,]+/).filter(Boolean);
     if (!entries.length) {
-      throw new Error("age.encrypt: to=<age1… | @slot> (or passphrase=) is required");
+      throw new Error("age.encrypt: to=<age1… | $slot> (or passphrase=) is required");
     }
     for (const entry of entries) {
       // Handing an identity where a recipient belongs is a common slip with an
@@ -221,7 +222,7 @@ export async function execAgeDecrypt(value, params, bindings) {
     dec.addIdentity(key);
   }
   if (!passphrase && !key) {
-    throw new Error("age.decrypt: key=@identity (or passphrase=) is required");
+    throw new Error("age.decrypt: key=$identity (or passphrase=) is required");
   }
   const plaintext = await dec.decrypt(ciphertext, "uint8array");
   const sourceName = String(value?.meta?.filename ?? "").trim();

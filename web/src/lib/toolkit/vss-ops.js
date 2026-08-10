@@ -11,7 +11,7 @@
  * existing machinery composes untouched:
  *
  *     vss.split threshold=2 shares=3 | blip39 | foreach
- *       - out @share
+ *       - out $share
  *
  * The commitments ride along on the share set (and are public — publishing
  * them is the point), so a set that survives a `blip39` round trip can still
@@ -150,7 +150,7 @@ function commitmentsFor(data, params, bindings) {
   }
   if (Array.isArray(data?.commitments)) return data.commitments;
   throw new Error(
-    "vss.verify: no commitments — pipe a vss.split set, or pass commitments=@slot"
+    "vss.verify: no commitments — pipe a vss.split set, or pass commitments=$slot"
   );
 }
 
@@ -158,7 +158,7 @@ function commitmentsFor(data, params, bindings) {
  * Verify every share against the commitments; pass the set through.
  *
  * Fail-loud and mid-pipeline on purpose: it reads as a guard, so
- * `in @shares | vss.verify | vss.combine` refuses to reconstruct from
+ * `in $shares | vss.verify | vss.combine` refuses to reconstruct from
  * shares that were tampered with, rather than returning a wrong secret.
  *
  * @param {{ type: string, data: any }} value
@@ -204,9 +204,9 @@ export function execVssVerify(value, params, bindings) {
  * half:
  *
  *     … | vss.split … | tee
- *       - vss.commitments | out @commitments
+ *       - vss.commitments | out $commitments
  *     | blip39 | foreach
- *       - out @share
+ *       - out $share
  *
  * @param {{ type: string, data: any }} value
  */

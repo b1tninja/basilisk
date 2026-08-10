@@ -29,7 +29,7 @@ const OUTPUT_LIST =
 describe("the tile's mono text obeys a type scale (§39b)", () => {
   it("sizes tile code by scoped rule, because the global one outranks utilities", () => {
     // site.css sets an *unlayered* `code { font-size: .78rem }`; Tailwind
-    // utilities live in @layer utilities, and unlayered beats layered
+    // utilities live in $layer utilities, and unlayered beats layered
     // regardless of specificity. Measured in the built page: label 11px,
     // body 10px, and a control <span> with the same class also 11px.
     expect(TOOLKIT_CSS).toMatch(/\[data-output-list\] code\.artifact-label\s*\{[^}]*font-size:\s*11px/);

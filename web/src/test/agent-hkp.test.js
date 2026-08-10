@@ -1,5 +1,5 @@
 /**
- * Agent + HKP toolkit ops and gpg key=@slot compose.
+ * Agent + HKP toolkit ops and gpg key=$slot compose.
  */
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +26,7 @@ beforeEach(async () => {
 });
 
 describe("agent toolbox", () => {
-  it("agent.list / unlock / pub and gpg.sign key=@me", async () => {
+  it("agent.list / unlock / pub and gpg.sign key=$me", async () => {
     const { privateKey: armoredPrivate, publicKey: armoredPublic } =
       await generateKey({
         type: "ecc",
@@ -47,16 +47,16 @@ describe("agent toolbox", () => {
       protection: "device",
     });
 
-    const list = compileRecipe("agent.list | out @ring");
+    const list = compileRecipe("agent.list | out $ring");
     expect(list.validation.ok).toBe(true);
     const listArts = await runRecipe(list.ast, { inputs: {} });
     const listText = listArts.map((a) => String(a.content)).join("\n");
     expect(listText).toContain(fpr);
 
-    const recipe = `agent.unlock ${fpr} | out @me
-input | gpg.sign key=@me | out @signed
+    const recipe = `agent.unlock ${fpr} | out $me
+input | gpg.sign key=$me | out $signed
 
-in @signed | gpg.verify key=@me | out @ok`;
+in $signed | gpg.verify key=$me | out $ok`;
     const { ast, validation } = compileRecipe(recipe);
     expect(validation.ok).toBe(true);
     expect(recipeNeedsMainThread(ast)).toBe(true);
@@ -72,7 +72,7 @@ in @signed | gpg.verify key=@me | out @ok`;
     const ok = arts.find((a) => /ok/i.test(a.filename || a.label || "")) || arts.at(-1);
     expect(String(ok.content)).toMatch(/^true$/i);
 
-    const pubRun = compileRecipe(`agent.pub ${fpr} | out @pub`);
+    const pubRun = compileRecipe(`agent.pub ${fpr} | out $pub`);
     const pubArts = await runRecipe(pubRun.ast, { inputs: {} });
     expect(pubArts.map((a) => String(a.content)).join("\n")).toContain(
       "BEGIN PGP PUBLIC KEY"
@@ -81,7 +81,7 @@ in @signed | gpg.verify key=@me | out @ok`;
 
   it("agent.save stores a generated key", async () => {
     const { ast, validation } = compileRecipe(
-      `gpg.genkey email="save@example.com" | agent.save protection=device | out @priv`
+      `gpg.genkey email="save@example.com" | agent.save protection=device | out $priv`
     );
     expect(validation.ok).toBe(true);
     expect(recipeNeedsMainThread(ast)).toBe(true);
@@ -93,25 +93,25 @@ in @signed | gpg.verify key=@me | out @ok`;
   }, 60_000);
 
   it("migrates gpg.vault → agent.unlock", () => {
-    expect(migrateRecipe("gpg.vault AABB | out @me").recipe).toContain(
+    expect(migrateRecipe("gpg.vault AABB | out $me").recipe).toContain(
       "agent.unlock"
     );
-    expect(migrateRecipe("gpg.vault.pub AABB | out @p").recipe).toContain(
+    expect(migrateRecipe("gpg.vault.pub AABB | out $p").recipe).toContain(
       "agent.pub"
     );
   });
 
   it("parses positional fingerprints that start with a digit", () => {
     const fpr = "8F" + "A".repeat(38);
-    const { ast, validation } = compileRecipe(`hkp.get ${fpr} | out @bob`);
+    const { ast, validation } = compileRecipe(`hkp.get ${fpr} | out $bob`);
     expect(validation.ok).toBe(true);
     expect(ast?.chains?.[0]?.steps?.[0]?.params?.fpr).toBe(fpr);
   });
 
-  it("validateRecipe exposes gpgPass for key=@slot sign", () => {
+  it("validateRecipe exposes gpgPass for key=$slot sign", () => {
     const { ast } = compileRecipe(
-      `agent.unlock ${"A".repeat(40)} | out @me
-input | gpg.sign key=@me | out @signed`
+      `agent.unlock ${"A".repeat(40)} | out $me
+input | gpg.sign key=$me | out $signed`
     );
     const v = validateRecipe(ast);
     expect(v.inputNeeds || []).toContain("gpgPass");
@@ -157,7 +157,7 @@ describe("hkp toolbox", () => {
       })
     );
 
-    const { ast, validation } = compileRecipe(`hkp.get ${realFpr} | out @bob`);
+    const { ast, validation } = compileRecipe(`hkp.get ${realFpr} | out $bob`);
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast, { inputs: {} });
     expect(arts.map((a) => String(a.content)).join("\n")).toContain(

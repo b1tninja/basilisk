@@ -2,7 +2,7 @@
  * `import jwk` and `keypair` produce the key the recipe declared, or nothing.
  *
  * The measured defect: `input | import jwk alg=ec/p256 | export pkcs8 | encode
- * hex | out @k` compiled with **zero errors**, and an `oct` JWK ran through it
+ * hex | out $k` compiled with **zero errors**, and an `oct` JWK ran through it
  * to `0000…` — 32 raw AES bytes, under a recipe that said pkcs8. The compiler
  * typed the tip from `alg=` (`genkeyOutputBase`) while `importBoundJwk` typed
  * it from `kty`, `crv` and `d`: the body decided, and the two disagreed for
@@ -71,9 +71,9 @@ describe("algTokenForKey names every algorithm import can be asked for", () => {
         // Generated for real and read back off the platform — no reference to
         // Basilisk's own vocabulary except the token under test.
         const { slots } = await run(
-          `genkey ${alg} | export jwk | import jwk alg=${alg} | out @k`
+          `genkey ${alg} | export jwk | import jwk alg=${alg} | out $k`
         );
-        const value = slots.resolve("@k");
+        const value = slots.resolve("$k");
         expect(value.type, `${alg} tip base`).toBe(genkeyOutputBase(alg));
         const keys = keysOf(value);
         expect(keys.length, `${alg} produced no CryptoKey`).toBeGreaterThan(0);
@@ -98,7 +98,7 @@ describe("import jwk refuses a JWK that is not what alg= declared", () => {
   });
 
   it("still compiles the recipe that used to lie, and now refuses at the run", async () => {
-    const recipe = "input | import jwk alg=ec/p256 | export pkcs8 | encode hex | out @k";
+    const recipe = "input | import jwk alg=ec/p256 | export pkcs8 | encode hex | out $k";
     const { ast, validation } = compileRecipe(recipe);
     // The declaration was never the wrong part — `export pkcs8` is a perfectly
     // good thing to ask of the `keypair` this says it produces.
@@ -114,7 +114,7 @@ describe("import jwk refuses a JWK that is not what alg= declared", () => {
   });
 
   it("refuses an asymmetric JWK under a symmetric alg=", async () => {
-    const { ast } = compileRecipe("input | import jwk alg=aes/256 | out @k");
+    const { ast } = compileRecipe("input | import jwk alg=aes/256 | out $k");
     await expect(runRecipe(ast, { inputs: { text: { value: ED_PUBLIC } } })).rejects.toThrow(
       keyDeclarationMessage(
         "import jwk",
@@ -126,10 +126,10 @@ describe("import jwk refuses a JWK that is not what alg= declared", () => {
   });
 
   it("refuses a curve other than the one named, which used to fix a wrong scalar length", async () => {
-    const { slots } = await run("genkey ec/p256 | export jwk | out @j");
-    const p256 = String(slots.resolve("@j").data);
+    const { slots } = await run("genkey ec/p256 | export jwk | out $j");
+    const p256 = String(slots.resolve("$j").data);
     const { ast } = compileRecipe(
-      "input | import jwk alg=ec/p521 | export scalar | encode hex | out @s"
+      "input | import jwk alg=ec/p521 | export scalar | encode hex | out $s"
     );
     await expect(runRecipe(ast, { inputs: { text: { value: p256 } } })).rejects.toThrow(
       keyDeclarationMessage(
@@ -142,7 +142,7 @@ describe("import jwk refuses a JWK that is not what alg= declared", () => {
   }, 30_000);
 
   it("refuses a public-only JWK where a keypair was declared, naming which=public", async () => {
-    const { ast } = compileRecipe("input | import jwk alg=ed25519 | out @k");
+    const { ast } = compileRecipe("input | import jwk alg=ed25519 | out $k");
     await expect(runRecipe(ast, { inputs: { text: { value: ED_PUBLIC } } })).rejects.toThrow(
       noPrivateHalfMessage("import jwk")
     );
@@ -152,9 +152,9 @@ describe("import jwk refuses a JWK that is not what alg= declared", () => {
 describe("import jwk which=public is the declared way in for a public JWK", () => {
   it("types a key/public tip and produces one", async () => {
     const { slots } = await run(
-      "genkey ed25519 | export jwk which=public | import jwk alg=ed25519 which=public | out @k"
+      "genkey ed25519 | export jwk which=public | import jwk alg=ed25519 which=public | out $k"
     );
-    const value = slots.resolve("@k");
+    const value = slots.resolve("$k");
     expect(value.type).toBe("key");
     expect(value.meta.which).toBe("public");
     expect(algTokenForKey(value.data)).toBe("ed25519");
@@ -162,7 +162,7 @@ describe("import jwk which=public is the declared way in for a public JWK", () =
 
   it("refuses export pkcs8 off that tip at compile time, where it belongs", () => {
     const { validation } = compileRecipe(
-      "genkey ed25519 | export jwk which=public | import jwk alg=ed25519 which=public | export pkcs8 | out @k"
+      "genkey ed25519 | export jwk which=public | import jwk alg=ed25519 which=public | export pkcs8 | out $k"
     );
     expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
       /"export pkcs8" needs a private key — tip is key\/ed25519\/public/
@@ -170,14 +170,14 @@ describe("import jwk which=public is the declared way in for a public JWK", () =
   });
 
   it("is refused on a symmetric alg, which has no public half", () => {
-    const { validation } = compileRecipe("input | import jwk alg=aes/256 which=public | out @k");
+    const { validation } = compileRecipe("input | import jwk alg=aes/256 which=public | out $k");
     expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
       /is for asymmetric keys — aes\/256 is symmetric and has no public half/
     );
   });
 
   it("is refused on the DER formats, which already name their half", () => {
-    const { validation } = compileRecipe("input | der | import pkcs8 which=public | out @k");
+    const { validation } = compileRecipe("input | der | import pkcs8 which=public | out $k");
     expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
       /"import pkcs8 which=public" is a contradiction/
     );
@@ -242,7 +242,7 @@ describe("the keypair source step is held to alg= and which= too", () => {
 
   it("refuses an oct JWK under an asymmetric alg=, where pkcs8 used to emit raw key bytes", async () => {
     const { ast, validation } = compileRecipe(
-      "keypair alg=ec/p256 | export pkcs8 | encode hex | out @k"
+      "keypair alg=ec/p256 | export pkcs8 | encode hex | out $k"
     );
     expect(validation.errors).toEqual([]);
     await expect(runRecipe(ast, { inputs: panel(OCT) })).rejects.toThrow(
@@ -258,7 +258,7 @@ describe("the keypair source step is held to alg= and which= too", () => {
   it("refuses a lone PUBLIC KEY block where a keypair was declared, where pkcs8 used to emit SPKI", async () => {
     const { publicPem } = await pemBlocks();
     const { ast, validation } = compileRecipe(
-      "keypair pem alg=ed25519 | export pkcs8 | encode hex | out @k"
+      "keypair pem alg=ed25519 | export pkcs8 | encode hex | out $k"
     );
     expect(validation.errors).toEqual([]);
     await expect(runRecipe(ast, { inputs: panel(publicPem) })).rejects.toThrow(
@@ -269,15 +269,15 @@ describe("the keypair source step is held to alg= and which= too", () => {
   it("types which=public as a key/public tip and produces one", async () => {
     const { publicPem } = await pemBlocks();
     const { ast, validation } = compileRecipe(
-      "keypair pem alg=ed25519 which=public | export spki | encode hex | out @pub"
+      "keypair pem alg=ed25519 which=public | export spki | encode hex | out $pub"
     );
     expect(validation.errors).toEqual([]);
     const slots = createSlotRegistry();
     await runRecipe(ast, { inputs: panel(publicPem) }, { slotRegistry: slots });
-    expect(String(slots.resolve("@pub").data)).toMatch(/^[0-9a-f]+$/);
+    expect(String(slots.resolve("$pub").data)).toMatch(/^[0-9a-f]+$/);
     // The declared tip is what `export pkcs8` is refused against, before the run.
     const { validation: v2 } = compileRecipe(
-      "keypair pem alg=ed25519 which=public | export pkcs8 | out @k"
+      "keypair pem alg=ed25519 which=public | export pkcs8 | out $k"
     );
     expect(v2.errors.map((e) => e.message).join("\n")).toMatch(
       /"export pkcs8" needs a private key — tip is key\/ed25519\/public/
@@ -287,9 +287,9 @@ describe("the keypair source step is held to alg= and which= too", () => {
   it("still imports a full pair under the default, both formats", async () => {
     const { publicPem, privatePem } = await pemBlocks();
     for (const [recipe, value] of [
-      ["keypair pem alg=ed25519 | export spki | encode hex | out @k", `${privatePem}\n${publicPem}`],
+      ["keypair pem alg=ed25519 | export spki | encode hex | out $k", `${privatePem}\n${publicPem}`],
       [
-        "keypair jwk alg=ed25519 | export pkcs8 | encode hex | out @k",
+        "keypair jwk alg=ed25519 | export pkcs8 | encode hex | out $k",
         await (async () => {
           const kp = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
           return JSON.stringify(await crypto.subtle.exportKey("jwk", kp.privateKey));

@@ -9,7 +9,7 @@ import { actionById } from "../lib/toolkit/artifact-actions.js";
 describe("gpg.genkey", () => {
   it("emits armored private + public artifact", async () => {
     const { ast, validation } = compileRecipe(
-      'gpg.genkey email="alice@example.com" name=Alice | out @priv'
+      'gpg.genkey email="alice@example.com" name=Alice | out $priv'
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -30,7 +30,7 @@ describe("gpg.genkey", () => {
  * fingerprint it had just computed. The private half does not go through that
  * push: it is the pipeline value, and its tile is built downstream.
  *
- * Which meant there were two of them, and only one was right. `| out @priv`
+ * Which meant there were two of them, and only one was right. `| out $priv`
  * lands in `materializeOutArtifacts`, which copies `meta.fingerprint` into
  * traits; a bare `gpg.genkey` lands in `valueToArtifacts`, which did not. Same
  * key, same run, same kind — and on the second one Copy fingerprint sat
@@ -57,8 +57,8 @@ describe("gpg.genkey's private half carries its fingerprint", () => {
     expect(priv.traits.fingerprint).toMatch(/^[0-9A-F]{40}$/);
   }, 60_000);
 
-  it("agrees with what `| out @priv` produces", async () => {
-    const { ast } = compileRecipe('gpg.genkey email="fp@example.com" | out @priv');
+  it("agrees with what `| out $priv` produces", async () => {
+    const { ast } = compileRecipe('gpg.genkey email="fp@example.com" | out $priv');
     const arts = await runRecipe(ast);
     const priv = arts.find((a) => a.label === "priv");
     const pub = arts.find((a) => a.role === "public-key");
@@ -116,7 +116,7 @@ describe("gpg.inspect", () => {
       inputs: { text: { value: "secret payload" } },
     });
     const armored = String(encArts[0].content);
-    const insp = compileRecipe("input | gpg.inspect | out @report");
+    const insp = compileRecipe("input | gpg.inspect | out $report");
     const out = await runRecipe(insp.ast, {
       inputs: { text: { value: armored } },
     });
@@ -172,7 +172,7 @@ describe("gpg.encrypt -s sign+encrypt", () => {
 describe("passphrase mode=char", () => {
   it("emits a long character passphrase", async () => {
     const { ast, validation } = compileRecipe(
-      "passphrase mode=char length=24 | out @pass"
+      "passphrase mode=char length=24 | out $pass"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -185,7 +185,7 @@ describe("base32", () => {
     const raw = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(base32ToBytes(bytesToBase32(raw))).toEqual(raw);
     const { ast, validation } = compileRecipe(
-      "random 10 | base32 | out @b32\n\nin @b32 | base32 -d | encode hex | out @hex"
+      "random 10 | base32 | out $b32\n\nin $b32 | base32 -d | encode hex | out $hex"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -196,7 +196,7 @@ describe("base32", () => {
 
 describe("gpg.sign inputNeeds", () => {
   it("reports gpg panel for sign recipes", () => {
-    const { validation } = compileRecipe("input | gpg.sign | out @signed");
+    const { validation } = compileRecipe("input | gpg.sign | out $signed");
     expect(validation.inputNeeds).toEqual(
       expect.arrayContaining(["text", "gpg"])
     );
@@ -204,12 +204,12 @@ describe("gpg.sign inputNeeds", () => {
 });
 
 describe("gpg.symencrypt passphrase (gpg -c)", () => {
-  it("round-trips with mode=passphrase passphrase=@slot", async () => {
-    const { ast, validation } = compileRecipe(`"correct horse" | out @pw
+  it("round-trips with mode=passphrase passphrase=$slot", async () => {
+    const { ast, validation } = compileRecipe(`"correct horse" | out $pw
 
-"hello gpg-c" | utf8 | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg
+"hello gpg-c" | utf8 | gpg.symencrypt mode=passphrase passphrase=$pw | out $msg
 
-in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8 | out @pt`);
+in $msg | gpg.symdecrypt mode=passphrase passphrase=$pw | utf8 | out $pt`);
     expect(validation.ok).toBe(true);
     expect(validation.inputNeeds || []).not.toContain("envelope");
     const arts = await runRecipe(ast);
@@ -220,9 +220,9 @@ in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8 | out @pt`);
 
   it("rejects passphrase= without mode=passphrase", () => {
     const { validation } = compileRecipe(
-      `"pw" | out @pw
+      `"pw" | out $pw
 
-"hi" | utf8 | gpg.symencrypt passphrase=@pw`
+"hi" | utf8 | gpg.symencrypt passphrase=$pw`
     );
     expect(validation.ok).toBe(false);
     expect(

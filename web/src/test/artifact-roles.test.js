@@ -170,7 +170,7 @@ describe("`text`/`secret` is a sensitivity ternary, not an identity (§32c)", ()
     // The SSH halves were written down there for the same reason the two
     // above were, plus one the others did not have: `ssh.encode`'s formats
     // are both `text`, so the sensitivity ternary gave one private block two
-    // roles — `secret` from `out @priv`, `text` from a dangling tip — and a
+    // roles — `secret` from `out $priv`, `text` from a dangling tip — and a
     // kind matches `role` exactly, so it could only ever have claimed one.
     //
     // `public-key` and `secret-key` were written down for the third variant
@@ -187,7 +187,7 @@ describe("`text`/`secret` is a sensitivity ternary, not an identity (§32c)", ()
     // It was `text` while carrying tags ["ssh","signature"], which left
     // `role: "sshsig"` in the vocabulary with nothing able to claim it.
     const roles = await rolesFor(
-      'genkey ed25519 | out @id\n\n"msg" | utf8 | ssh.sign key=@id namespace=file | out @sig'
+      'genkey ed25519 | out $id\n\n"msg" | utf8 | ssh.sign key=$id namespace=file | out $sig'
     );
     expect(roles.sig).toBe("sshsig");
   }, 60_000);
@@ -197,17 +197,17 @@ describe("`text`/`secret` is a sensitivity ternary, not an identity (§32c)", ()
     // *handling* and not about what the artifact is — `sensitive` already
     // carries that, and carries it without costing the artifact its identity.
     const roles = await rolesFor(
-      'genkey ec/p256 | out @k\n\n"hello" | utf8 | jose.sign key=@k | out @tok'
+      'genkey ec/p256 | out $k\n\n"hello" | utf8 | jose.sign key=$k | out $tok'
     );
     expect(roles.tok).toBe("token");
   }, 60_000);
 
   it("leaves the ordinary text and secret cases exactly where they were", async () => {
-    expect((await rolesFor('"plain" | utf8 | out @msg')).msg).toBe("text");
-    expect((await rolesFor("random 32 | out @s")).s).toBe("secret");
+    expect((await rolesFor('"plain" | utf8 | out $msg')).msg).toBe("text");
+    expect((await rolesFor("random 32 | out $s")).s).toBe("secret");
     // The known gap, asserted so it is a decision rather than a surprise: a
     // PEM export still lands as `text`, waiting on a KeyCard that reads PEM.
-    expect((await rolesFor("genkey ec/p256 | export spki | pem | out @pub")).pub).toBe(
+    expect((await rolesFor("genkey ec/p256 | export spki | pem | out $pub")).pub).toBe(
       "text"
     );
   }, 60_000);

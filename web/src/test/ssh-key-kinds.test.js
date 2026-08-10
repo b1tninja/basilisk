@@ -78,12 +78,12 @@ describe("the halves are two roles, not one role and a tag", () => {
 describe("both emit paths land on the same kind", () => {
   /**
    * The reason two roles were needed rather than tags on `text`/`secret`.
-   * `out @priv` stamps `secret` from sensitivity and a dangling tip stamps
+   * `out $priv` stamps `secret` from sensitivity and a dangling tip stamps
    * `text`, so before the type owned the role these two lines produced one
    * block wearing two identities — and `ArtifactMatch.role` is exact.
    */
   it("claims a public line whether or not the recipe wrote `out`", async () => {
-    for (const src of ["genkey ed25519 | ssh.encode | out @pub", "genkey ed25519 | ssh.encode"]) {
+    for (const src of ["genkey ed25519 | ssh.encode | out $pub", "genkey ed25519 | ssh.encode"]) {
       const [tile] = await tilesOf(src);
       expect(tile.artifact.role, src).toBe("ssh-public");
       expect(tile.kind.id, src).toBe("ssh-public");
@@ -93,7 +93,7 @@ describe("both emit paths land on the same kind", () => {
 
   it("claims a private block whether or not the recipe wrote `out`", async () => {
     for (const src of [
-      "genkey ed25519 | ssh.encode format=private | out @priv",
+      "genkey ed25519 | ssh.encode format=private | out $priv",
       "genkey ed25519 | ssh.encode format=private",
     ]) {
       const [tile] = await tilesOf(src);
@@ -108,7 +108,7 @@ describe("both emit paths land on the same kind", () => {
     // The failure this pair of kinds exists to make impossible: a kind that
     // matched an SSH public line and also claimed the openssh-key-v1 block
     // would label a private key "SSH public key".
-    const [priv] = await tilesOf("genkey ed25519 | ssh.encode format=private | out @a");
+    const [priv] = await tilesOf("genkey ed25519 | ssh.encode format=private | out $a");
     expect(kindById("ssh-public").label).toMatch(/public/i);
     expect(resolveArtifactKind(priv.artifact, [kindById("ssh-public")], FALLBACK_KIND).id).toBe(
       "fallback"
@@ -144,7 +144,7 @@ describe("what the tiles say", () => {
     // The op and the tile deriving the same key's identity differently would
     // be worse than the tile showing nothing.
     const tiles = await tilesOf(
-      "genkey ed25519 | tee { - ssh.encode format=private | out @priv } | ssh.fingerprint | out @fp"
+      "genkey ed25519 | tee { - ssh.encode format=private | out $priv } | ssh.fingerprint | out $fp"
     );
     const priv = tiles.find((t) => t.artifact.label === "priv");
     const fp = tiles.find((t) => t.artifact.label === "fp");
@@ -173,8 +173,8 @@ describe("what the tiles say", () => {
 describe("what the tiles can do", () => {
   it("offers Copy fingerprint on both halves, and honours it", async () => {
     for (const [src, id] of [
-      ["genkey ed25519 | ssh.encode | out @pub", "ssh-public"],
-      ["genkey ed25519 | ssh.encode format=private | out @priv", "ssh-private"],
+      ["genkey ed25519 | ssh.encode | out $pub", "ssh-public"],
+      ["genkey ed25519 | ssh.encode format=private | out $priv", "ssh-private"],
     ]) {
       const [tile] = await tilesOf(src);
       expect(tile.kind.actions, id).toContain("key.copyFingerprint");
@@ -222,7 +222,7 @@ describe("what the tiles can do", () => {
 
 describe("what Download writes", () => {
   it("gives a public line the extension every SSH tool expects", async () => {
-    const [tile] = await tilesOf("genkey ed25519 | ssh.encode | out @pub");
+    const [tile] = await tilesOf("genkey ed25519 | ssh.encode | out $pub");
     // Stem from the engine's namer, extension from the kind — one namer with
     // a declared correction, never two schemes.
     expect(tile.artifact.filename).toBe("pub.txt");
@@ -230,12 +230,12 @@ describe("what Download writes", () => {
   }, 60_000);
 
   it("keeps a private block out of a text editor", async () => {
-    const [tile] = await tilesOf("genkey ed25519 | ssh.encode format=private | out @priv");
+    const [tile] = await tilesOf("genkey ed25519 | ssh.encode format=private | out $priv");
     expect(downloadNameFor(tile.artifact, tile.kind)).toBe("priv.key");
   }, 60_000);
 
   it("still takes the stem the recipe chose, not the kind's", async () => {
-    const [tile] = await tilesOf("genkey ed25519 | ssh.encode | out @github");
+    const [tile] = await tilesOf("genkey ed25519 | ssh.encode | out $github");
     expect(downloadNameFor(tile.artifact, tile.kind)).toBe("github.pub");
   }, 60_000);
 });

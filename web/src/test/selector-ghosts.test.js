@@ -80,11 +80,11 @@ describe("nested carets never offer tee/foreach", () => {
 describe("branch-with-step lands as valid recipe text", () => {
   it("a selector branch with one step parses; the armed (empty) form does not", () => {
     const ok = compileRecipe(
-      "genkey ec/p256 | tee\n  - :public | export spki\n| out @kp"
+      "genkey ec/p256 | tee\n  - :public | export spki\n| out $kp"
     );
     expect(ok.validation.errors.map((e) => e.message)).toEqual([]);
     // What the armed state would serialize to if it were committed too early.
-    const early = compileRecipe("genkey ec/p256 | tee\n  - :public |\n| out @kp");
+    const early = compileRecipe("genkey ec/p256 | tee\n  - :public |\n| out $kp");
     expect(early.validation.ok).toBe(false);
   });
 });

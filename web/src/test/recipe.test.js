@@ -94,10 +94,10 @@ describe("parse / serialize", () => {
 
   it("canonicalizeRecipe formats foreach bodies and spacing", () => {
     const { text, errors } = canonicalizeRecipe(
-      "random 16|sss.split threshold=2 shares=2|foreach\n  - out @share"
+      "random 16|sss.split threshold=2 shares=2|foreach\n  - out $share"
     );
     expect(errors).toEqual([]);
-    expect(text).toBe("random 16 | sss.split shares=2 | foreach\n  - out @share");
+    expect(text).toBe("random 16 | sss.split shares=2 | foreach\n  - out $share");
   });
 
   it("rejects retired foreach aliases", () => {
@@ -188,22 +188,22 @@ describe("validation", () => {
 
   it("rejects legacy pem.encode / pem.decode / pem -d", () => {
     expect(
-      parseRecipe("export spki | pem.encode | out @pub").errors.some((e) =>
+      parseRecipe("export spki | pem.encode | out $pub").errors.some((e) =>
         /Unknown step|pem\.encode/i.test(e.message)
       )
     ).toBe(true);
     expect(
-      parseRecipe("in @pub | pem.decode | import spki").errors.some((e) =>
+      parseRecipe("in $pub | pem.decode | import spki").errors.some((e) =>
         /Unknown step|pem\.decode/i.test(e.message)
       )
     ).toBe(true);
     expect(
-      parseRecipe("in @pub | pem -d | import spki").errors.some((e) =>
+      parseRecipe("in $pub | pem -d | import spki").errors.some((e) =>
         /Unknown flag|-d/i.test(e.message)
       )
     ).toBe(true);
     const { ast, errors } = parseRecipe(
-      "export spki | pem | out @pub\n\nin @pub | der | import spki"
+      "export spki | pem | out $pub\n\nin $pub | der | import spki"
     );
     expect(errors).toEqual([]);
     expect(ast.chains[0].steps.find((s) => s.name === "pem")).toBeTruthy();
@@ -214,23 +214,23 @@ describe("validation", () => {
 
   it("rejects bare hex / unhex; accepts encode hex / decode hex", () => {
     expect(
-      parseRecipe("random 8 | hex | out @h").errors.some((e) =>
+      parseRecipe("random 8 | hex | out $h").errors.some((e) =>
         /hex.*removed|Unknown step|encode hex/i.test(e.message)
       )
     ).toBe(true);
     expect(
-      parseRecipe("in @h | unhex").errors.some((e) =>
+      parseRecipe("in $h | unhex").errors.some((e) =>
         /unhex.*removed|Unknown step|decode hex/i.test(e.message)
       )
     ).toBe(true);
     expect(
-      parseRecipe("in @h | encode hex -d").errors.some((e) =>
+      parseRecipe("in $h | encode hex -d").errors.some((e) =>
         /Unknown flag|-d/i.test(e.message)
       )
     ).toBe(true);
     // Old text still parses — `to`/`from` alias `encode`/`decode` — but it
     // canonicalizes, so serializing gives back the current spelling.
-    const { ast, errors } = parseRecipe("random 8 | encode hex | out @h\n\nin @h | decode hex");
+    const { ast, errors } = parseRecipe("random 8 | encode hex | out $h\n\nin $h | decode hex");
     expect(errors).toEqual([]);
     expect(ast.chains[0].steps.find((s) => s.name === "encode")?.params?.encoding).toBe(
       "hex"
@@ -238,14 +238,14 @@ describe("validation", () => {
     expect(ast.chains[1].steps.find((s) => s.name === "decode")?.params?.encoding).toBe(
       "hex"
     );
-    expect(serializeRecipe(ast)).toBe("random 8 | encode hex | out @h\n\n@h | decode hex");
+    expect(serializeRecipe(ast)).toBe("random 8 | encode hex | out $h\n\n$h | decode hex");
   });
 
   it("migrateRecipe rewrites hex/unhex and slot from", () => {
     const { recipe, changes } = migrateRecipe(
-      "random 8 | hex | out @h\n\nfrom @h | unhex"
+      "random 8 | hex | out $h\n\nfrom $h | unhex"
     );
-    expect(recipe).toBe("random 8 | encode hex | out @h\n\nin @h | decode hex");
+    expect(recipe).toBe("random 8 | encode hex | out $h\n\nin $h | decode hex");
     expect(changes.some((c) => c.from === "hex")).toBe(true);
     expect(changes.some((c) => c.from === "unhex")).toBe(true);
     expect(changes.some((c) => c.from === "from (slot)")).toBe(true);

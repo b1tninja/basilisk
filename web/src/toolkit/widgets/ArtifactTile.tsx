@@ -606,7 +606,7 @@ export function ArtifactTile({
 
               The keypair tile said "nothing here" twice, stacked, in the same
               10px italic mono muted: its own withheld line ("private half not
-              shown — add `out @kp` …") and then this. The second was not a
+              shown — add `out $kp` …") and then this. The second was not a
               quieter restatement of the first, it was false — `keypair` has
               no body to mask, `view` and `publicView` are the same function
               for exactly that reason, and there is no reveal that could ever

@@ -21,7 +21,7 @@ describe("reveal is gated on an explicit request to display", () => {
     // Writing one of these verbs *is* the request to see the value, so the
     // tile may offer Reveal even when the value is sensitive.
     for (const src of [
-      "random 8 | encode hex | out @r",
+      "random 8 | encode hex | out $r",
       "random 8 | encode hex | text note",
       "random 8 | inspect",
     ]) {
@@ -42,7 +42,7 @@ describe("reveal is gated on an explicit request to display", () => {
   });
 
   it("keeps the content on masked tiles, so revealing needs no re-run", async () => {
-    const [a] = await arts("random 8 | encode hex | out @r");
+    const [a] = await arts("random 8 | encode hex | out $r");
     expect(a.sensitive).toBe(true);
     expect(String(a.content)).toMatch(/^[0-9a-f]{16}$/);
   });
@@ -50,7 +50,7 @@ describe("reveal is gated on an explicit request to display", () => {
   it("still marks a non-sensitive out as revealable, harmlessly", async () => {
     // `revealable` records intent, not secrecy; the UI only acts on it when
     // there is something masked to unmask.
-    const [a] = await arts("bytes deadbeef | out @b");
+    const [a] = await arts("bytes deadbeef | out $b");
     expect(a.sensitive).toBe(false);
     expect(a.revealable).toBe(true);
   });
@@ -67,7 +67,7 @@ describe("input marks pasted material sensitive", () => {
   });
 
   it("clears sensitivity through a one-way function", async () => {
-    const [a] = await arts("input | utf8 | digest | encode hex | out @d", pastedPublicKey);
+    const [a] = await arts("input | utf8 | digest | encode hex | out $d", pastedPublicKey);
     expect(a.sensitive).toBe(false);
   });
 });

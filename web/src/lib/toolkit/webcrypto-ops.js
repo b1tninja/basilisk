@@ -307,7 +307,7 @@ export async function pipelineValueToCryptoKey(value, need, algHint) {
 }
 
 /**
- * Resolve `key=@slot` (etc.) via bindings.resolveSlot, or null if unset.
+ * Resolve `key=$slot` (etc.) via bindings.resolveSlot, or null if unset.
  * @param {object} bindings
  * @param {string|undefined|null} ref
  * @param {"private"|"public"|"secret"|"either"} need

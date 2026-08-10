@@ -128,9 +128,9 @@ it(
 
 const RELAY = status.relay;
 
-/** The `ice=@slot` shape `rtc.gather` resolves through at runtime. */
+/** The `ice=$slot` shape `rtc.gather` resolves through at runtime. */
 const SLOT_BINDING = (data) => ({
-  resolveSlot: (ref) => (ref === "@ice" ? { type: "endpoint", data } : null),
+  resolveSlot: (ref) => (ref === "$ice" ? { type: "endpoint", data } : null),
 });
 
 describe.runIf(status.ok)("the TURN relay path, against a real relay", () => {
@@ -235,7 +235,7 @@ describe.runIf(status.ok)("the TURN relay path, against a real relay", () => {
     let out;
 
     beforeAll(async () => {
-      // `rtc.ice turn=… username=… credential=@turncred | rtc.gather ice=@ice`
+      // `rtc.ice turn=… username=… credential=$turncred | rtc.gather ice=$ice`
       // — the template's exact pipeline, through the shipped ops, with the
       // literal credential standing in for the input slot.
       out = await A.page.evaluate(async (relay) => {
@@ -246,8 +246,8 @@ describe.runIf(status.ok)("the TURN relay path, against a real relay", () => {
         });
         const servers = window.__q.parseIceConfig(emitted.data);
         const g = await window.__ops.execGatherCandidates(
-          { ice: "@ice", timeout: 10000 },
-          { resolveSlot: (ref) => (ref === "@ice" ? { type: "endpoint", data: emitted.data } : null) }
+          { ice: "$ice", timeout: 10000 },
+          { resolveSlot: (ref) => (ref === "$ice" ? { type: "endpoint", data: emitted.data } : null) }
         );
         return { servers, sensitive: emitted.meta.sensitive, data: g.data };
       }, publicRelay());
@@ -305,8 +305,8 @@ describe.runIf(status.ok)("the TURN relay path, against a real relay", () => {
         });
         const servers = window.__q.parseIceConfig(emitted.data);
         const g = await window.__ops.execGatherCandidates(
-          { ice: "@ice", timeout: 10000 },
-          { resolveSlot: (ref) => (ref === "@ice" ? { type: "endpoint", data: emitted.data } : null) }
+          { ice: "$ice", timeout: 10000 },
+          { resolveSlot: (ref) => (ref === "$ice" ? { type: "endpoint", data: emitted.data } : null) }
         );
         return { servers, byType: g.data.byType };
       }, publicRelay());

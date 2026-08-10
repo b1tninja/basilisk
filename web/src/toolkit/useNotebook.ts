@@ -295,7 +295,7 @@ export function cellErrorRows(
   if (!runError) return compileErrors || [];
   const at = runError.stepIndex;
   const host = at >= 0 ? steps?.[at] : undefined;
-  // No name means the throw never reached `execStep` — `in @nope` resolves its
+  // No name means the throw never reached `execStep` — `in $nope` resolves its
   // slot before dispatch. The engine's index is then the only word on the
   // subject and there is nothing to contradict it, so a live index is enough.
   const anchored = !!host && (!runError.stepName || holdsStep(host, runError.stepName));
@@ -338,10 +338,10 @@ function holdsStep(step: StepTree, name: string): boolean {
  * errors are dealt back to the cell they came from. Cell-by-cell validation —
  * what this used to do — threw away the slot table each cell builds for the
  * ones below it, so a shipped multi-cell template greeted you with
- * `in @kp: unknown slot` on every `in` plus the cascade behind it (`"export"
+ * `in $kp: unknown slot` on every `in` plus the cascade behind it (`"export"
  * needs an input`, …), before you had run anything and still after a wholly
  * successful run. That was the notebook's worst first impression, and it was
- * pure fiction: `@kp` is written one cell up.
+ * pure fiction: `$kp` is written one cell up.
  *
  * Validating the whole notebook is preferred over patching a producing context
  * into a per-cell call because it is *the same validation the run gate already
@@ -660,7 +660,7 @@ export function useNotebook() {
         recipients?: number;
         length?: number;
       }) => ({
-        label: String(m.label || "").replace(/^@/, ""),
+        label: String(m.label || "").replace(/^\$/, ""),
         type: String(m.type || "unknown"),
         fingerprint: m.fingerprint,
         sensitive: !!m.sensitive,
@@ -781,7 +781,7 @@ export function useNotebook() {
     }
     const { publishArmoredKey } = await import("../lib/toolkit/hkp-ops.js");
     const { fingerprint, directoryUrl } = await publishArmoredKey(tile.content);
-    tile.publishedAs = fingerprint ? `@${fingerprint.slice(-8)}` : "@pub";
+    tile.publishedAs = fingerprint ? `@${fingerprint.slice(-8)}` : "$pub";
     tile.directoryUrl = directoryUrl;
     setKernelEpoch((n) => n + 1);
     // Returned, not just stored: the Activity log records where an outward
@@ -1623,7 +1623,7 @@ export function useNotebook() {
   const insertUnlockCell = useCallback(
     (fpr: string, kind: "agent.unlock" | "agent.pub" = "agent.unlock") => {
       const short = `@${(fpr.slice(-8) || "me").toLowerCase()}`;
-      const slot = kind === "agent.unlock" ? "@me" : short;
+      const slot = kind === "agent.unlock" ? "$me" : short;
       const recipe = `${kind} ${fpr} | out ${slot}`;
       const { ast } = compileRecipe(recipe);
       if (!ast) return;
@@ -1637,10 +1637,10 @@ export function useNotebook() {
     []
   );
 
-  /** Insert/replace `in @label` at the start of `cell`. */
+  /** Insert/replace `in $label` at the start of `cell`. */
   const insertSlotRef = useCallback(
     (cell: number, label: string) => {
-      const clean = String(label || "").replace(/^@/, "");
+      const clean = String(label || "").replace(/^\$/, "");
       if (!clean) return;
       if (stepsAt(cell)[0]?.name === "in") {
         updateStepParams(cell, 0, "ref", `@${clean}`);

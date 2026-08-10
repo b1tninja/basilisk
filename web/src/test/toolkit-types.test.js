@@ -163,9 +163,9 @@ describe("refined types", () => {
     expect(formatType(br0[0]?.output)).toMatch(/bytes\/der/);
   });
 
-  it("walkPipelineTypes: in @slot resolves prior out tip", () => {
+  it("walkPipelineTypes: in $slot resolves prior out tip", () => {
     const compiled = compileRecipe(
-      "genkey ec/p256 | out @kp\n\n@kp | :public | export spki"
+      "genkey ec/p256 | out $kp\n\n$kp | :public | export spki"
     );
     expect(compiled.validation.ok).toBe(true);
     const slots = new Map();
@@ -392,33 +392,33 @@ describe("network / WebRTC types (design v2 §25a)", () => {
   });
 
   it("type-checks the offer → answer SDP exchange", () => {
-    const ok = compileRecipe("peer.offer | peer.answer | out @a");
+    const ok = compileRecipe("peer.offer | peer.answer | out $a");
     expect(ok.validation.ok, JSON.stringify(ok.validation.errors)).toBe(true);
 
-    const bad = compileRecipe("rtc.gather | peer.answer | out @a");
+    const bad = compileRecipe("rtc.gather | peer.answer | out $a");
     expect(bad.validation.ok).toBe(false);
     expect(bad.validation.errors[0].message).toMatch(/expects sdp, got candidate/);
   });
 
   it("refuses to let a live session handle be consumed by a crypto op", () => {
-    const { validation } = compileRecipe('quorum.offer to="AAAA" | digest | out @d');
+    const { validation } = compileRecipe('quorum.offer to="AAAA" | digest | out $d');
     expect(validation.ok).toBe(false);
     expect(validation.errors[0].message).toMatch(/live handle/);
   });
 
   it("refuses to let an observe-only diagnostic be consumed", () => {
-    const { validation } = compileRecipe("rtc.state | base64 | out @b");
+    const { validation } = compileRecipe("rtc.state | base64 | out $b");
     expect(validation.ok).toBe(false);
     expect(validation.errors[0].message).toMatch(/observe-only/);
   });
 
   it("still lets every network type reach out / inspect", () => {
     for (const src of [
-      "rtc.gather | out @c",
+      "rtc.gather | out $c",
       "rtc.state | inspect",
-      "rtc.ice | out @ice",
-      "quorum.offer to=\"AAAA\" | out @s",
-      "rtc.quality | out @q",
+      "rtc.ice | out $ice",
+      "quorum.offer to=\"AAAA\" | out $s",
+      "rtc.quality | out $q",
     ]) {
       const { validation } = compileRecipe(src);
       expect(validation.ok, `${src}: ${JSON.stringify(validation.errors)}`).toBe(true);
@@ -427,12 +427,12 @@ describe("network / WebRTC types (design v2 §25a)", () => {
 
   it("accepts an rtc.ice endpoint slot for ice=, and rejects a wrong-typed slot", () => {
     const ok = compileRecipe(
-      "rtc.ice | out @ice\n\nrtc.gather ice=@ice | out @c"
+      "rtc.ice | out $ice\n\nrtc.gather ice=$ice | out $c"
     );
     expect(ok.validation.ok, JSON.stringify(ok.validation.errors)).toBe(true);
 
     const bad = compileRecipe(
-      "genkey ec/p256 | out @kp\n\nrtc.gather ice=@kp | out @c"
+      "genkey ec/p256 | out $kp\n\nrtc.gather ice=$kp | out $c"
     );
     expect(bad.validation.ok).toBe(false);
     expect(bad.validation.errors.some((e) => /not an ICE config/.test(e.message))).toBe(true);

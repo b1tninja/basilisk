@@ -92,7 +92,7 @@ describe("the toolbox and its shelves", () => {
 describe("the secret is treated as a credential", () => {
   it("masks the otpauth:// URI, because the URI *is* the secret", async () => {
     const { tile } = await run(
-      `random 20 | otp.uri issuer=Acme account=a@b.com | out @uri`
+      `random 20 | otp.uri issuer=Acme account=a@b.com | out $uri`
     );
     const uri = tile("uri");
     expect(uri.content).toMatch(/^otpauth:\/\/totp\//);
@@ -103,7 +103,7 @@ describe("the secret is treated as a credential", () => {
   });
 
   it("masks the Base32 secret on its own too", async () => {
-    const { tile } = await run("random 20 | base32 | out @secret");
+    const { tile } = await run("random 20 | base32 | out $secret");
     expect(tile("secret").sensitive).toBe(true);
   });
 
@@ -111,10 +111,10 @@ describe("the secret is treated as a credential", () => {
     const uri = "otpauth://totp/Acme:a@b.com?secret=MFRGGZDFMZTWQ2LK&issuer=Acme";
     const { tile } = await run(
       `input | tee
-  - otp.parse secret | out @s
+  - otp.parse secret | out $s
 | tee
-  - otp.parse issuer | out @i
-| otp.parse digits | out @d`,
+  - otp.parse issuer | out $i
+| otp.parse digits | out $d`,
       uri
     );
     expect(tile("s").sensitive).toBe(true);
@@ -128,7 +128,7 @@ describe("the secret is treated as a credential", () => {
   it("does not mask the code itself", async () => {
     // Six digits that expire in one step, whose whole purpose is to be read
     // off the screen. A masked code is a useless code.
-    const { tile } = await run("random 20 | base32 | otp.code | out @code");
+    const { tile } = await run("random 20 | base32 | otp.code | out $code");
     expect(tile("code").content).toMatch(/^\d{6}$/);
     expect(tile("code").sensitive).toBe(false);
   });
@@ -149,15 +149,15 @@ describe("the secret is treated as a credential", () => {
 describe("the ops carry the pipeline's shapes", () => {
   it("takes raw secret bytes as readily as a Base32 string", async () => {
     const { out } = await run(`random 20 | tee
-  - base32 | out @b32
-| otp.uri issuer=Acme account=a@b.com | out @uri`);
+  - base32 | out $b32
+| otp.uri issuer=Acme account=a@b.com | out $uri`);
     expect(parseOtpauthUri(out.uri).secret).toBe(out.b32);
   });
 
   it("round-trips secret → URI → secret, which is what conjugates mean", async () => {
     const { out } = await run(`random 20 | base32 | tee
-  - out @before
-| otp.uri issuer=Acme account=a@b.com | otp.parse | out @after`);
+  - out $before
+| otp.uri issuer=Acme account=a@b.com | otp.parse | out $after`);
     expect(out.after).toBe(out.before);
   });
 
@@ -166,14 +166,14 @@ describe("the ops carry the pipeline's shapes", () => {
     // cannot both be obeyed.
     const uri =
       "otpauth://totp/Acme:a@b.com?secret=MFRGGZDFMZTWQ2LK&issuer=Acme&digits=8&algorithm=SHA256";
-    const { out } = await run("input | otp.code digits=6 | out @code", uri);
+    const { out } = await run("input | otp.code digits=6 | out $code", uri);
     expect(out.code).toMatch(/^\d{8}$/);
   });
 
   it("and lets otp.parse be the way to take the parameters back", async () => {
     const uri =
       "otpauth://totp/Acme:a@b.com?secret=MFRGGZDFMZTWQ2LK&issuer=Acme&digits=8&algorithm=SHA256";
-    const { out } = await run("input | otp.parse | otp.code digits=6 | out @code", uri);
+    const { out } = await run("input | otp.parse | otp.code digits=6 | out $code", uri);
     expect(out.code).toMatch(/^\d{6}$/);
   });
 
@@ -181,26 +181,26 @@ describe("the ops carry the pipeline's shapes", () => {
     // The seed is ASCII "12345678901234567890" in Base32; the answer is the
     // SHA-1 row for t = 1111111111 in Appendix B.
     const { out } = await run(
-      `"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" | otp.code digits=8 at=1111111111 | out @code`
+      `"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" | otp.code digits=8 at=1111111111 | out $code`
     );
     expect(out.code).toBe("14050471");
   });
 
   it("fails loud on a wrong code, and softly under -q", async () => {
-    const base = `random 20 | base32 | out @s\n\n"000000"`;
+    const base = `random 20 | base32 | out $s\n\n"000000"`;
     await expect(
-      run(`${base} | otp.verify secret=@s window=0 | out @ok`)
+      run(`${base} | otp.verify secret=$s window=0 | out $ok`)
     ).rejects.toThrow(/does not match any step/);
-    const { out } = await run(`${base} | otp.verify -q secret=@s window=0 | out @ok`);
+    const { out } = await run(`${base} | otp.verify -q secret=$s window=0 | out $ok`);
     expect(String(out.ok)).toBe("false");
   });
 
   it("refuses a malformed code loudly, and softly under -q", async () => {
-    const base = `random 20 | base32 | out @s\n\n"not-a-code"`;
-    await expect(run(`${base} | otp.verify secret=@s | out @ok`)).rejects.toThrow(
+    const base = `random 20 | base32 | out $s\n\n"not-a-code"`;
+    await expect(run(`${base} | otp.verify secret=$s | out $ok`)).rejects.toThrow(
       /not a code/
     );
-    const { out } = await run(`${base} | otp.verify -q secret=@s | out @ok`);
+    const { out } = await run(`${base} | otp.verify -q secret=$s | out $ok`);
     expect(String(out.ok)).toBe("false");
   });
 
@@ -208,7 +208,7 @@ describe("the ops carry the pipeline's shapes", () => {
     // The message has to say *why*, or a clock-drift failure reads as a wrong
     // secret and the user re-enrols for nothing.
     await expect(
-      run(`random 20 | base32 | out @s\n\n"000000" | otp.verify secret=@s window=2 | out @ok`)
+      run(`random 20 | base32 | out $s\n\n"000000" | otp.verify secret=$s window=2 | out $ok`)
     ).rejects.toThrow(/±2/);
   });
 });
@@ -253,7 +253,7 @@ describe("the OTP templates run, and teach what their blurbs promise", () => {
     expect(qr.mime).toBe("image/svg+xml");
     expect(qr.content).toContain("<svg");
     // Same secret on both branches of the tee — a QR of a *different* secret
-    // than the one in @secret is exactly the bug a `tee` invites.
+    // than the one in $secret is exactly the bug a `tee` invites.
     expect(parseOtpauthUri(out.uri).secret).toBe(out.secret);
   });
 
@@ -309,15 +309,15 @@ describe("every enum and flag the ops declare is exercised by a running recipe",
    */
   const EXTRA = [
     `random 20 | base32 | otp.uri mode=hotp counter=4 issuer=A account=b | tee
-  - otp.parse mode | out @m
+  - otp.parse mode | out $m
 | tee
-  - otp.parse counter | out @c
+  - otp.parse counter | out $c
 | tee
-  - otp.parse period | out @p
-| otp.parse secret | out @s`,
-    `random 20 | base32 | otp.code algorithm=sha256 digits=7 | out @a`,
-    `random 20 | base32 | otp.code algorithm=sha512 digits=8 period=60 | out @b`,
-    `random 20 | base32 | otp.code algorithm=sha1 digits=6 | out @c`,
+  - otp.parse period | out $p
+| otp.parse secret | out $s`,
+    `random 20 | base32 | otp.code algorithm=sha256 digits=7 | out $a`,
+    `random 20 | base32 | otp.code algorithm=sha512 digits=8 period=60 | out $b`,
+    `random 20 | base32 | otp.code algorithm=sha1 digits=6 | out $c`,
   ];
 
   it("runs the leftovers", async () => {

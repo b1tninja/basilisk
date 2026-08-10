@@ -1,8 +1,8 @@
 /**
- * Live @slot registry for toolkit recipes / notebook kernel.
+ * Live $slot registry for toolkit recipes / notebook kernel.
  */
 
-import { slotLabelKey } from "./recipe-parse.js";
+import { SLOT_SIGIL, slotLabelKey } from "./recipe-parse.js";
 import { formatType, typeOf } from "./types.js";
 
 /**
@@ -223,7 +223,7 @@ export function createSlotRegistry() {
           opts.preexisting &&
           opts.preexisting.has(key);
         if (!canReplace) {
-          throw new Error(`Duplicate out slot @${key}`);
+          throw new Error(`Duplicate out slot ${SLOT_SIGIL}${key}`);
         }
         slotsByLabel.set(key, cloned);
         return;
@@ -249,7 +249,7 @@ export function createSlotRegistry() {
     const v = key ? slotsByLabel.get(key) : undefined;
     if (!v) {
       throw new Error(
-        `in ${r}: unknown slot (register earlier with out ${r.startsWith("@") ? r : `@${key}`})`
+        `in ${r}: unknown slot (register earlier with out ${r.startsWith(SLOT_SIGIL) ? r : `${SLOT_SIGIL}${key}`})`
       );
     }
     return clonePipelineValue(v);

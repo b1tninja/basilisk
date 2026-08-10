@@ -182,7 +182,7 @@ function baseCases() {
     // —— sources / I/O ——
     {
       id: "random.default",
-      recipe: "random | encode hex | out @r",
+      recipe: "random | encode hex | out $r",
       mode: "run",
       assert: (a) => {
         if (!a.some((x) => /^[0-9a-f]{64}$/.test(String(x.content)))) {
@@ -192,12 +192,12 @@ function baseCases() {
     },
     {
       id: "random.length=16",
-      recipe: "random 16 | encode hex | out @r",
+      recipe: "random 16 | encode hex | out $r",
       mode: "run",
     },
     {
       id: "bytes.hex",
-      recipe: "bytes deadbeef | encode hex | out @b",
+      recipe: "bytes deadbeef | encode hex | out $b",
       mode: "run",
       assert: (a) => {
         if (!a.some((x) => String(x.content).trim() === "deadbeef")) {
@@ -208,7 +208,7 @@ function baseCases() {
     {
       id: "bytes.encoding=hex",
       // A leading 0x is optional — the same four bytes either way.
-      recipe: "bytes 0xdeadbeef encoding=hex | encode hex | out @b",
+      recipe: "bytes 0xdeadbeef encoding=hex | encode hex | out $b",
       mode: "run",
       assert: (a) => {
         if (!a.some((x) => String(x.content).trim() === "deadbeef")) {
@@ -219,7 +219,7 @@ function baseCases() {
     {
       id: "bytes.encoding=base64",
       // Quoted because base64 padding would otherwise read as `key=value`.
-      recipe: 'bytes "aGVsbG8=" encoding=base64 | encode hex | out @b',
+      recipe: 'bytes "aGVsbG8=" encoding=base64 | encode hex | out $b',
       mode: "run",
       assert: (a) => {
         if (!a.some((x) => String(x.content).trim() === "68656c6c6f")) {
@@ -229,7 +229,7 @@ function baseCases() {
     },
     {
       id: "bytes.encoding=utf8",
-      recipe: "bytes hello encoding=utf8 | encode hex | out @b",
+      recipe: "bytes hello encoding=utf8 | encode hex | out $b",
       mode: "run",
       assert: (a) => {
         if (!a.some((x) => String(x.content).trim() === "68656c6c6f")) {
@@ -243,7 +243,7 @@ function baseCases() {
       // Exports the pair we just imported and checks the public half comes
       // back byte-identical, so this really exercises the import rather than
       // just proving the step does not throw.
-      recipe: "keypair jwk alg=ec/p256 | export spki | encode hex | out @pub",
+      recipe: "keypair jwk alg=ec/p256 | export spki | encode hex | out $pub",
       mode: "run",
       bindings: async () => {
         const kp = await crypto.subtle.generateKey(
@@ -270,7 +270,7 @@ function baseCases() {
     {
       id: "keypair.format=pem",
       // Both halves together — PKCS#8 alone cannot yield SPKI.
-      recipe: "keypair pem alg=ec/p256 | export spki | encode hex | out @pub",
+      recipe: "keypair pem alg=ec/p256 | export spki | encode hex | out $pub",
       mode: "run",
       bindings: async () => {
         const kp = await crypto.subtle.generateKey(
@@ -309,7 +309,7 @@ function baseCases() {
       // spki` is the only export a `key/public` tip compiles against, so the
       // recipe running at all is the assertion that the declared type is real.
       id: "keypair.which=public",
-      recipe: "keypair pem alg=ec/p256 which=public | export spki | encode hex | out @pub",
+      recipe: "keypair pem alg=ec/p256 which=public | export spki | encode hex | out $pub",
       mode: "run",
       bindings: async () => {
         const kp = await crypto.subtle.generateKey(
@@ -341,13 +341,13 @@ function baseCases() {
     ...["ec/p384", "ec/p521", "ed25519", "x25519", "rsa/2048", "rsa/3072", "rsa/4096"].map(
       (alg) => ({
         id: `keypair.alg=${alg}`,
-        recipe: `keypair jwk alg=${alg} | out @kp`,
+        recipe: `keypair jwk alg=${alg} | out $kp`,
         mode: /** @type {const} */ ("compile"),
       })
     ),
     ...["auto", "sign", "derive", "encrypt"].map((usage) => ({
       id: `keypair.usage=${usage}`,
-      recipe: `keypair jwk usage=${usage} | out @kp`,
+      recipe: `keypair jwk usage=${usage} | out $kp`,
       mode: /** @type {const} */ ("compile"),
     })),
     // —— to / from: one verb per base encoding, round-tripped ——
@@ -359,7 +359,7 @@ function baseCases() {
     ].flatMap(([enc, expected]) => [
       {
         id: `to.encoding=${enc}`,
-        recipe: `bytes deadbeef | to ${enc} | out @e`,
+        recipe: `bytes deadbeef | to ${enc} | out $e`,
         mode: /** @type {const} */ ("run"),
         assert: (a) => {
           if (!a.some((x) => String(x.content).trim() === expected)) {
@@ -371,7 +371,7 @@ function baseCases() {
         id: `from.encoding=${enc}`,
         // Round-trips back to the original bytes, so this tests the decode
         // rather than merely that the step runs.
-        recipe: `bytes deadbeef | to ${enc} | from ${enc} | encode hex | out @rt`,
+        recipe: `bytes deadbeef | to ${enc} | from ${enc} | encode hex | out $rt`,
         mode: /** @type {const} */ ("run"),
         assert: (a) => {
           if (!a.some((x) => String(x.content).trim() === "deadbeef")) {
@@ -384,7 +384,7 @@ function baseCases() {
       // The twin steps and the `to`/`from` spelling are the same operation —
       // if they ever diverge, this crossing fails.
       id: "to/from.interop-with-twins",
-      recipe: "bytes deadbeef | base64 | decode base64 | encode hex | out @rt",
+      recipe: "bytes deadbeef | base64 | decode base64 | encode hex | out $rt",
       mode: "run",
       assert: (a) => {
         if (!a.some((x) => String(x.content).trim() === "deadbeef")) {
@@ -394,12 +394,12 @@ function baseCases() {
     },
     {
       id: "passphrase.diceware",
-      recipe: "passphrase 6 | out @p",
+      recipe: "passphrase 6 | out $p",
       mode: "run",
     },
     {
       id: "passphrase.char",
-      recipe: "passphrase mode=char length=20 | out @p",
+      recipe: "passphrase mode=char length=20 | out $p",
       mode: "run",
     },
     {
@@ -410,22 +410,22 @@ function baseCases() {
     },
     {
       id: "out.encoding=auto",
-      recipe: "random 8 | out @a encoding=auto",
+      recipe: "random 8 | out $a encoding=auto",
       mode: "run",
     },
     {
       id: "out.encoding=hex",
-      recipe: "random 8 | out @b encoding=hex",
+      recipe: "random 8 | out $b encoding=hex",
       mode: "run",
     },
     {
       id: "out.encoding=base64",
-      recipe: "random 8 | out @c encoding=base64",
+      recipe: "random 8 | out $c encoding=base64",
       mode: "run",
     },
     {
       id: "out.encoding=text",
-      recipe: "input | out @d encoding=text",
+      recipe: "input | out $d encoding=text",
       mode: "run",
       bindings: { inputs: { text: { value: "tile" } } },
     },
@@ -445,18 +445,18 @@ function baseCases() {
     {
       id: "encoding.roundtrip",
       recipe:
-        "random 24 | base64 | base64.decode | base64url | base64url.decode | encode hex | decode hex | base32 | base32.decode | encode hex | out @x",
+        "random 24 | base64 | base64.decode | base64url | base64url.decode | encode hex | decode hex | base32 | base32.decode | encode hex | out $x",
       mode: "run",
     },
     {
       id: "lit.text-int-bool",
-      recipe: `"hello world" | out @msg
+      recipe: `"hello world" | out $msg
 
-0xff | out @n
-255 | out @n2
-true | out @ok
-"1" | as bool | out @yes
-"42" | as int | out @answer`,
+0xff | out $n
+255 | out $n2
+true | out $ok
+"1" | as bool | out $yes
+"42" | as int | out $answer`,
       mode: "run",
       assert: (a) => {
         const msg = a.find((x) => /msg/i.test(String(x.label || x.filename || "")));
@@ -477,141 +477,141 @@ true | out @ok
     },
     {
       id: "aes-gcm.keyBits",
-      recipe: `genkey aes/128 | out @k128
+      recipe: `genkey aes/128 | out $k128
 
-genkey aes/192 | out @k192
+genkey aes/192 | out $k192
 
-genkey aes/256 | out @k256
+genkey aes/256 | out $k256
 
-"sized" | utf8 | aes-gcm keyBits=192 key=@k192 | encode hex | out @ct192
+"sized" | utf8 | aes-gcm keyBits=192 key=$k192 | encode hex | out $ct192
 
-"sized" | utf8 | aes-128-gcm key=@k128 | encode hex | out @ct128
+"sized" | utf8 | aes-128-gcm key=$k128 | encode hex | out $ct128
 
-"sized" | utf8 | aes-256-gcm key=@k256 | encode hex | out @ct256
+"sized" | utf8 | aes-256-gcm key=$k256 | encode hex | out $ct256
 
-"sized" | utf8 | aes-128-cbc key=@k128 | encode hex | out @cbc
+"sized" | utf8 | aes-128-cbc key=$k128 | encode hex | out $cbc
 
-"sized" | utf8 | aes-256-cbc key=@k256 | encode hex | out @cbc256
+"sized" | utf8 | aes-256-cbc key=$k256 | encode hex | out $cbc256
 
-"sized" | utf8 | aes-256-ctr key=@k256 | encode hex | out @ctr
+"sized" | utf8 | aes-256-ctr key=$k256 | encode hex | out $ctr
 
-"sized" | utf8 | aes-cbc keyBits=192 key=@k192 | encode hex | out @cbc192
+"sized" | utf8 | aes-cbc keyBits=192 key=$k192 | encode hex | out $cbc192
 
-"sized" | utf8 | aes-ctr keyBits=128 key=@k128 | encode hex | out @ctr128
+"sized" | utf8 | aes-ctr keyBits=128 key=$k128 | encode hex | out $ctr128
 
-"sized" | utf8 | aes-ctr keyBits=192 key=@k192 | encode hex | out @ctr192`,
+"sized" | utf8 | aes-ctr keyBits=192 key=$k192 | encode hex | out $ctr192`,
       mode: "run",
     },
     {
       id: "rsa-oaep.hash-forms",
-      recipe: `genkey rsa/2048 usage=encrypt hash=sha-256 | out @rk256
+      recipe: `genkey rsa/2048 usage=encrypt hash=sha-256 | out $rk256
 
-"oaep" | utf8 | RSA/ECB/OAEPWithSHA-256AndMGF1Padding key=@rk256 | encode hex | out @ct256
+"oaep" | utf8 | RSA/ECB/OAEPWithSHA-256AndMGF1Padding key=$rk256 | encode hex | out $ct256
 
-in @ct256 | decode hex | RSA/ECB/OAEPWithSHA-256AndMGF1Padding -d key=@rk256 | utf8 | out @pt`,
+in $ct256 | decode hex | RSA/ECB/OAEPWithSHA-256AndMGF1Padding -d key=$rk256 | utf8 | out $pt`,
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "rsa-oaep.hash-enum",
-      recipe: `genkey rsa/2048 usage=encrypt hash=sha-256 | out @rk
+      recipe: `genkey rsa/2048 usage=encrypt hash=sha-256 | out $rk
 
-"x" | utf8 | rsa-oaep hash=sha-1 key=@rk | out @a
+"x" | utf8 | rsa-oaep hash=sha-1 key=$rk | out $a
 
-"x" | utf8 | rsa-oaep hash=sha-256 key=@rk | out @b
+"x" | utf8 | rsa-oaep hash=sha-256 key=$rk | out $b
 
-"x" | utf8 | rsa-oaep hash=sha-384 key=@rk | out @c
+"x" | utf8 | rsa-oaep hash=sha-384 key=$rk | out $c
 
-"x" | utf8 | rsa-oaep hash=sha-512 key=@rk | out @d`,
+"x" | utf8 | rsa-oaep hash=sha-512 key=$rk | out $d`,
       mode: "compile",
     },
     {
       id: "pem.labels",
-      recipe: `genkey ec/p256 | export pkcs8 | pem label="PRIVATE KEY" | out @priv
+      recipe: `genkey ec/p256 | export pkcs8 | pem label="PRIVATE KEY" | out $priv
 
-genkey ec/p256 | :public | export spki | pem label="PUBLIC KEY" | out @pub`,
+genkey ec/p256 | :public | export spki | pem label="PUBLIC KEY" | out $pub`,
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "pem.der",
       recipe:
-        "genkey ec/p256 | export pkcs8 | pem | der | pem label=auto | out @again",
+        "genkey ec/p256 | export pkcs8 | pem | der | pem label=auto | out $again",
       mode: "run",
     },
 
     // —— webcrypto core ——
     {
       id: "digest.sha-256",
-      recipe: "input | utf8 | digest sha-256 | encode hex | out @d256",
+      recipe: "input | utf8 | digest sha-256 | encode hex | out $d256",
       mode: "run",
       bindings: { inputs: { text: { value: "digest" } } },
     },
     {
       id: "digest.sha-384",
-      recipe: "input | utf8 | digest alg=sha-384 | encode hex | out @d384",
+      recipe: "input | utf8 | digest alg=sha-384 | encode hex | out $d384",
       mode: "run",
       bindings: { inputs: { text: { value: "digest" } } },
     },
     {
       id: "digest.sha-512",
-      recipe: "input | utf8 | digest alg=sha-512 | encode hex | out @d512",
+      recipe: "input | utf8 | digest alg=sha-512 | encode hex | out $d512",
       mode: "run",
       bindings: { inputs: { text: { value: "digest" } } },
     },
     {
       id: "digest.sha-1",
-      recipe: "input | utf8 | digest alg=sha-1 | encode hex | out @d1",
+      recipe: "input | utf8 | digest alg=sha-1 | encode hex | out $d1",
       mode: "run",
       bindings: { inputs: { text: { value: "digest" } } },
     },
     {
       id: "sign.verify.ed25519",
-      recipe: `genkey ed25519 | out @kp
+      recipe: `genkey ed25519 | out $kp
 
-input | utf8 | out @msg | sign key=@kp | out @sig
+input | utf8 | out $msg | sign key=$kp | out $sig
 
-in @msg | verify key=@kp signature=@sig | out @ok`,
+in $msg | verify key=$kp signature=$sig | out $ok`,
       mode: "run",
       bindings: { inputs: { text: { value: "sign-me" } } },
       timeoutMs: 30_000,
     },
     {
       id: "verify.soft",
-      recipe: `genkey ed25519 | out @kp
+      recipe: `genkey ed25519 | out $kp
 
-input | utf8 | out @msg | sign key=@kp | out @sig
+input | utf8 | out $msg | sign key=$kp | out $sig
 
-in @msg | verify -q key=@kp signature=@sig | out @result`,
+in $msg | verify -q key=$kp signature=$sig | out $result`,
       mode: "run",
       bindings: { inputs: { text: { value: "soft-ok" } } },
       timeoutMs: 30_000,
     },
     {
       id: "aes-gcm.aad-slot",
-      recipe: `"aad" | utf8 | out @aad
+      recipe: `"aad" | utf8 | out $aad
 
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-"hi" | utf8 | aes-gcm key=@cek aad=@aad | encode hex | out @ct
+"hi" | utf8 | aes-gcm key=$cek aad=$aad | encode hex | out $ct
 
-in @ct | decode hex | aes-gcm -d key=@cek aad=@aad | utf8 | out @pt`,
+in $ct | decode hex | aes-gcm -d key=$cek aad=$aad | utf8 | out $pt`,
       mode: "run",
     },
     {
       id: "gpg.symencrypt.passphrase",
-      recipe: `"pw" | out @pw
+      recipe: `"pw" | out $pw
 
-"secret" | utf8 | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg
+"secret" | utf8 | gpg.symencrypt mode=passphrase passphrase=$pw | out $msg
 
-in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8 | out @pt`,
+in $msg | gpg.symdecrypt mode=passphrase passphrase=$pw | utf8 | out $pt`,
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "gpg.symencrypt.profile-custom",
       recipe:
-        "input | gpg.symencrypt mode=master name=env profile=custom cipher=aes128 aead=off s2k=iterated compression=zlib | out @env",
+        "input | gpg.symencrypt mode=master name=env profile=custom cipher=aes128 aead=off s2k=iterated compression=zlib | out $env",
       mode: "run",
       bindings: { inputs: { text: { value: "sym-profile" } } },
       timeoutMs: 60_000,
@@ -619,14 +619,14 @@ in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8 | out @pt`,
     {
       id: "gpg.symencrypt.profile-modern",
       recipe:
-        "input | gpg.symencrypt mode=master name=env profile=modern cipher=aes192 aead=gcm compression=zip | out @env",
+        "input | gpg.symencrypt mode=master name=env profile=modern cipher=aes192 aead=gcm compression=zip | out $env",
       mode: "run",
       bindings: { inputs: { text: { value: "sym-profile" } } },
       timeoutMs: 60_000,
     },
     {
       id: "gpg.symencrypt.profile-compatible",
-      recipe: "input | gpg.symencrypt mode=master name=env profile=compatible aead=eax | out @env",
+      recipe: "input | gpg.symencrypt mode=master name=env profile=compatible aead=eax | out $env",
       mode: "run",
       bindings: { inputs: { text: { value: "sym-profile" } } },
       timeoutMs: 60_000,
@@ -634,201 +634,201 @@ in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8 | out @pt`,
     {
       id: "import.raw.aes",
       recipe:
-        "genkey aes/256 | export raw | import raw alg=aes/256 | export jwk | out @k",
+        "genkey aes/256 | export raw | import raw alg=aes/256 | export jwk | out $k",
       mode: "run",
     },
     {
       id: "import.pkcs8",
       recipe:
-        "genkey ec/p256 | export pkcs8 | import pkcs8 alg=ec/p256 | export pkcs8 | pem | out @p",
+        "genkey ec/p256 | export pkcs8 | import pkcs8 alg=ec/p256 | export pkcs8 | pem | out $p",
       mode: "run",
     },
     {
       id: "aes-gcm.roundtrip",
-      recipe: `genkey aes/256 | out @cek
+      recipe: `genkey aes/256 | out $cek
 
-input | utf8 | aes-gcm key=@cek | encode hex | out @ct
+input | utf8 | aes-gcm key=$cek | encode hex | out $ct
 
-in @ct | decode hex | aes-gcm -d key=@cek | utf8 | out @pt`,
+in $ct | decode hex | aes-gcm -d key=$cek | utf8 | out $pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "gcm" } } },
     },
     {
       id: "aes-gcm.tagLength=96",
-      recipe: `genkey aes/256 | out @cek
+      recipe: `genkey aes/256 | out $cek
 
-input | utf8 | aes-gcm key=@cek tagLength=96 | encode hex | out @ct
+input | utf8 | aes-gcm key=$cek tagLength=96 | encode hex | out $ct
 
-in @ct | decode hex | aes-gcm -d key=@cek tagLength=96 | utf8 | out @pt`,
+in $ct | decode hex | aes-gcm -d key=$cek tagLength=96 | utf8 | out $pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "gcm96" } } },
     },
     {
       id: "wrap.tagLength=96",
-      recipe: `genkey aes/256 | out @kek
+      recipe: `genkey aes/256 | out $kek
 
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-wrap key=@kek target=@cek mode=aes-gcm tagLength=96 | out @wrapped
+wrap key=$kek target=$cek mode=aes-gcm tagLength=96 | out $wrapped
 
-in @wrapped | unwrap key=@kek mode=aes-gcm alg=aes/256 tagLength=96 | out @cek2`,
+in $wrapped | unwrap key=$kek mode=aes-gcm alg=aes/256 tagLength=96 | out $cek2`,
       mode: "run",
     },
     {
       id: "sign.verify.hash=sha-256",
-      recipe: `genkey ec/p256 | out @kp
+      recipe: `genkey ec/p256 | out $kp
 
-input | utf8 | out @msg | sign key=@kp hash=sha-256 | out @sig
+input | utf8 | out $msg | sign key=$kp hash=sha-256 | out $sig
 
-in @msg | verify key=@kp signature=@sig hash=sha-256 | out @ok`,
+in $msg | verify key=$kp signature=$sig hash=sha-256 | out $ok`,
       mode: "run",
       bindings: { inputs: { text: { value: "hash-sign" } } },
     },
     {
       id: "sign.verify.hash=sha-384",
-      recipe: `genkey ec/p256 | out @kp
+      recipe: `genkey ec/p256 | out $kp
 
-input | utf8 | out @msg | sign key=@kp hash=sha-384 | out @sig
+input | utf8 | out $msg | sign key=$kp hash=sha-384 | out $sig
 
-in @msg | verify key=@kp signature=@sig hash=sha-384 | out @ok`,
+in $msg | verify key=$kp signature=$sig hash=sha-384 | out $ok`,
       mode: "run",
       bindings: { inputs: { text: { value: "hash-sign" } } },
     },
     {
       id: "sign.verify.hash=sha-512",
-      recipe: `genkey ec/p256 | out @kp
+      recipe: `genkey ec/p256 | out $kp
 
-input | utf8 | out @msg | sign key=@kp hash=sha-512 | out @sig
+input | utf8 | out $msg | sign key=$kp hash=sha-512 | out $sig
 
-in @msg | verify key=@kp signature=@sig hash=sha-512 | out @ok`,
+in $msg | verify key=$kp signature=$sig hash=sha-512 | out $ok`,
       mode: "run",
       bindings: { inputs: { text: { value: "hash-sign" } } },
     },
     {
       id: "aes-cbc.roundtrip",
-      recipe: `genkey aes/256 | out @cek
+      recipe: `genkey aes/256 | out $cek
 
-input | utf8 | aes-cbc key=@cek | encode hex | out @ct
+input | utf8 | aes-cbc key=$cek | encode hex | out $ct
 
-in @ct | decode hex | aes-cbc -d key=@cek | utf8 | out @pt`,
+in $ct | decode hex | aes-cbc -d key=$cek | utf8 | out $pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "cbc" } } },
     },
     {
       id: "aes-ctr.roundtrip",
-      recipe: `genkey aes/256 | out @cek
+      recipe: `genkey aes/256 | out $cek
 
-input | utf8 | aes-ctr key=@cek length=64 | encode hex | out @ct
+input | utf8 | aes-ctr key=$cek length=64 | encode hex | out $ct
 
-in @ct | decode hex | aes-ctr -d key=@cek length=64 | utf8 | out @pt`,
+in $ct | decode hex | aes-ctr -d key=$cek length=64 | utf8 | out $pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "ctr" } } },
     },
     {
       id: "rsa-oaep.roundtrip",
-      recipe: `genkey rsa/2048 usage=encrypt | out @rk
+      recipe: `genkey rsa/2048 usage=encrypt | out $rk
 
-input | utf8 | rsa-oaep key=@rk | encode hex | out @ct
+input | utf8 | rsa-oaep key=$rk | encode hex | out $ct
 
-in @ct | decode hex | rsa-oaep -d key=@rk | utf8 | out @pt`,
+in $ct | decode hex | rsa-oaep -d key=$rk | utf8 | out $pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "oaep" } } },
       timeoutMs: 60_000,
     },
     {
       id: "rsa-pkcs1.roundtrip",
-      recipe: `genkey rsa/2048 usage=encrypt | out @rk
+      recipe: `genkey rsa/2048 usage=encrypt | out $rk
 
-input | utf8 | rsa-pkcs1 key=@rk | encode hex | out @ct
+input | utf8 | rsa-pkcs1 key=$rk | encode hex | out $ct
 
-in @ct | decode hex | rsa-pkcs1 -d key=@rk | utf8 | out @pt`,
+in $ct | decode hex | rsa-pkcs1 -d key=$rk | utf8 | out $pt`,
       mode: "run",
       bindings: { inputs: { text: { value: "pkcs1" } } },
       timeoutMs: 60_000,
     },
     {
       id: "hkdf.bytes+hash",
-      recipe: `random 32 | hkdf 32 hash=sha-256 salt=s info=i | encode hex | out @a
+      recipe: `random 32 | hkdf 32 hash=sha-256 salt=s info=i | encode hex | out $a
 
-random 32 | hkdf 32 hash=sha-384 | encode hex | out @b
+random 32 | hkdf 32 hash=sha-384 | encode hex | out $b
 
-random 32 | hkdf 32 hash=sha-512 | encode hex | out @c`,
+random 32 | hkdf 32 hash=sha-512 | encode hex | out $c`,
       mode: "run",
     },
     {
       id: "pbkdf2.bytes+hash",
-      recipe: `passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-256 | encode hex | out @a
+      recipe: `passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-256 | encode hex | out $a
 
-passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-384 | encode hex | out @b
+passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-384 | encode hex | out $b
 
-passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-512 | encode hex | out @c`,
+passphrase mode=char length=16 | pbkdf2 32 iterations=1000 hash=sha-512 | encode hex | out $c`,
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "ecdh.x25519",
-      recipe: `genkey x25519 | out @local
+      recipe: `genkey x25519 | out $local
 
-genkey x25519 | :public | out @peer
+genkey x25519 | :public | out $peer
 
-ecdh private=@local peer=@peer | encode hex | out @shared`,
+ecdh private=$local peer=$peer | encode hex | out $shared`,
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "wrap.unwrap.aes-kw",
-      recipe: `genkey aes/256 | out @kek
+      recipe: `genkey aes/256 | out $kek
 
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-wrap key=@kek target=@cek mode=aes-kw | out @wrapped
+wrap key=$kek target=$cek mode=aes-kw | out $wrapped
 
-in @wrapped | unwrap key=@kek mode=aes-kw alg=aes/256 | out @cek2`,
+in $wrapped | unwrap key=$kek mode=aes-kw alg=aes/256 | out $cek2`,
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "wrap.unwrap.aes-gcm",
-      recipe: `genkey aes/256 | out @kek
+      recipe: `genkey aes/256 | out $kek
 
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-wrap key=@kek target=@cek mode=aes-gcm tagLength=128 | out @wrapped
+wrap key=$kek target=$cek mode=aes-gcm tagLength=128 | out $wrapped
 
-in @wrapped | unwrap key=@kek mode=aes-gcm alg=aes/256 tagLength=128 | out @cek2`,
+in $wrapped | unwrap key=$kek mode=aes-gcm alg=aes/256 tagLength=128 | out $cek2`,
       mode: "run",
     },
     {
       id: "wrap.unwrap.aes-cbc",
-      recipe: `genkey aes/256 | out @kek
+      recipe: `genkey aes/256 | out $kek
 
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-wrap key=@kek target=@cek mode=aes-cbc | out @wrapped
+wrap key=$kek target=$cek mode=aes-cbc | out $wrapped
 
-in @wrapped | unwrap key=@kek mode=aes-cbc alg=aes/256 | out @cek2`,
+in $wrapped | unwrap key=$kek mode=aes-cbc alg=aes/256 | out $cek2`,
       mode: "run",
     },
     {
       id: "wrap.unwrap.aes-ctr",
-      recipe: `genkey aes/256 | out @kek
+      recipe: `genkey aes/256 | out $kek
 
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-wrap key=@kek target=@cek mode=aes-ctr length=64 | out @wrapped
+wrap key=$kek target=$cek mode=aes-ctr length=64 | out $wrapped
 
-in @wrapped | unwrap key=@kek mode=aes-ctr alg=aes/256 length=64 | out @cek2`,
+in $wrapped | unwrap key=$kek mode=aes-ctr alg=aes/256 length=64 | out $cek2`,
       mode: "run",
     },
     {
       id: "wrap.unwrap.rsa-oaep",
-      recipe: `genkey rsa/2048 usage=encrypt | out @rk
+      recipe: `genkey rsa/2048 usage=encrypt | out $rk
 
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-wrap key=@rk target=@cek mode=rsa-oaep | out @wrapped
+wrap key=$rk target=$cek mode=rsa-oaep | out $wrapped
 
-in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
+in $wrapped | unwrap key=$rk mode=rsa-oaep alg=aes/256 | out $cek2`,
       mode: "run",
       timeoutMs: 60_000,
     },
@@ -837,28 +837,28 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
     {
       id: "export.import.jwk",
       recipe:
-        "genkey ed25519 | export jwk | import jwk alg=ed25519 | export jwk | out @k",
+        "genkey ed25519 | export jwk | import jwk alg=ed25519 | export jwk | out $k",
       mode: "run",
     },
     {
       id: "export.import.scalar",
       recipe:
-        "genkey ec/p256 | export scalar | import scalar alg=ec/p256 | export pkcs8 | pem | out @priv",
+        "genkey ec/p256 | export scalar | import scalar alg=ec/p256 | export pkcs8 | pem | out $priv",
       mode: "run",
     },
     {
       id: "export.raw.aes",
-      recipe: "genkey aes/256 | export raw | encode hex | out @raw",
+      recipe: "genkey aes/256 | export raw | encode hex | out $raw",
       mode: "run",
     },
     {
       id: "export.d.alias",
-      recipe: "genkey ec/p256 | export scalar | encode hex | out @d",
+      recipe: "genkey ec/p256 | export scalar | encode hex | out $d",
       mode: "run",
     },
     {
       id: "export.which=public",
-      recipe: "genkey ec/p256 | export jwk which=public | out @j",
+      recipe: "genkey ec/p256 | export jwk which=public | out $j",
       mode: "compile",
     },
     {
@@ -869,7 +869,7 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
       // `export spki` at the end only compiles against a public tip.
       id: "import.which=public",
       recipe:
-        "genkey ec/p256 | export jwk which=public | import jwk alg=ec/p256 which=public | export spki | pem | out @pub",
+        "genkey ec/p256 | export jwk which=public | import jwk alg=ec/p256 which=public | export spki | pem | out $pub",
       mode: "run",
       assert(arts) {
         const pem = arts.find((a) => String(a.label || "").includes("pub"));
@@ -881,7 +881,7 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
     {
       id: "import.spki",
       recipe:
-        "genkey ec/p256 | :public | export spki | import spki alg=ec/p256 | export spki | pem | out @pub",
+        "genkey ec/p256 | :public | export spki | import spki alg=ec/p256 | export spki | pem | out $pub",
       mode: "run",
     },
 
@@ -890,9 +890,9 @@ in @wrapped | unwrap key=@rk mode=rsa-oaep alg=aes/256 | out @cek2`,
     // behind it, so there is nothing to stub and no reason to compile-only.
     {
       id: "vss.split.verify.combine",
-      recipe: `random 32 | vss.split threshold=2 shares=3 | out @shares
+      recipe: `random 32 | vss.split threshold=2 shares=3 | out $shares
 
-in @shares | vss.verify | vss.combine | encode hex | out @recovered`,
+in $shares | vss.verify | vss.combine | encode hex | out $recovered`,
       mode: "run",
       timeoutMs: 30_000,
     },
@@ -901,7 +901,7 @@ in @shares | vss.verify | vss.combine | encode hex | out @recovered`,
       // Emits the same `shares` shape as sss.split, so the existing
       // collection machinery composes untouched.
       recipe: `random 32 | vss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`,
+  - out $share`,
       mode: "run",
       timeoutMs: 30_000,
     },
@@ -910,18 +910,18 @@ in @shares | vss.verify | vss.combine | encode hex | out @recovered`,
       // The realistic custodian flow: mnemonics go to people, commitments go
       // on a noticeboard, and the two are brought back together to verify.
       recipe: `random 32 | vss.split threshold=2 shares=3 | tee
-  - vss.commitments | out @commitments
-| out @shares
+  - vss.commitments | out $commitments
+| out $shares
 
-in @shares | vss.verify commitments=@commitments | vss.combine | encode hex | out @back`,
+in $shares | vss.verify commitments=$commitments | vss.combine | encode hex | out $back`,
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "vss.scalar.roundtrip",
-      recipe: `genkey ec/p256 | export scalar | vss.split threshold=2 shares=3 | out @s
+      recipe: `genkey ec/p256 | export scalar | vss.split threshold=2 shares=3 | out $s
 
-in @s | vss.verify | out @checked`,
+in $s | vss.verify | out $checked`,
       mode: "run",
       timeoutMs: 30_000,
     },
@@ -930,29 +930,29 @@ in @s | vss.verify | out @checked`,
     {
       id: "sss.blip39.foreach.at",
       recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
-random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out @one
+random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $one
 
 random 32 | sss.split threshold=2 shares=3 | blip39 | foreach :items
-  - :value | out @item`,
+  - :value | out $item`,
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "sss.combine+shares",
       recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`,
+  - out $share`,
       mode: "run",
       // recover path covered via shares source in follow-up case
     },
     {
       id: "shares.combine",
-      recipe: "shares | blip39.decode | sss.combine | base64 | out @secret",
+      recipe: "shares | blip39.decode | sss.combine | base64 | out $secret",
       mode: "run",
       bindings: async () => {
         const { ast } = compileRecipe(
-          "random 32 | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share"
+          "random 32 | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out $share"
         );
         const arts = await runRecipe(ast);
         const mnemonics = arts
@@ -971,62 +971,62 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach :items
     {
       id: "in.select.as.peek.tee.inspect",
       recipe: `genkey ec/p256 | tee
-  - :public | export spki | pem | out @public
+  - :public | export spki | pem | out $public
   - :private | inspect format=hex
-| peek keypair format=meta | export pkcs8 | pem | out @private
+| peek keypair format=meta | export pkcs8 | pem | out $private
 
-in @private | der | as opaque | encode hex | out @hex
+in $private | der | as opaque | encode hex | out $hex
 
-genkey ec/p256 | :public | export spki | pem | out @pub2`,
+genkey ec/p256 | :public | export spki | pem | out $pub2`,
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "inspect.format=text",
-      recipe: "input | utf8 | inspect format=text | out @t",
+      recipe: "input | utf8 | inspect format=text | out $t",
       mode: "run",
       bindings: { inputs: { text: { value: "inspect" } } },
     },
     {
       id: "inspect.format=hex",
-      recipe: "random 8 | inspect format=hex | out @hx",
+      recipe: "random 8 | inspect format=hex | out $hx",
       mode: "run",
     },
     {
       id: "inspect.format=hexdump",
-      recipe: "random 8 | inspect format=hexdump | out @h",
+      recipe: "random 8 | inspect format=hexdump | out $h",
       mode: "run",
     },
     {
       id: "inspect.format=jwk",
-      recipe: "genkey aes/256 | export jwk | inspect format=jwk | out @j",
+      recipe: "genkey aes/256 | export jwk | inspect format=jwk | out $j",
       mode: "run",
     },
     {
       id: "inspect.format=auto",
-      recipe: "random 4 | inspect format=auto | out @a",
+      recipe: "random 4 | inspect format=auto | out $a",
       mode: "run",
     },
     {
       id: "inspect.format=meta",
-      recipe: "genkey ec/p256 | inspect format=meta | out @m",
+      recipe: "genkey ec/p256 | inspect format=meta | out $m",
       mode: "run",
     },
     {
       id: "as.casts",
-      recipe: `random 32 | as master | encode hex | out @m
+      recipe: `random 32 | as master | encode hex | out $m
 
-random 32 | as scalar | encode hex | out @s
+random 32 | as scalar | encode hex | out $s
 
-random 32 | as opaque | encode hex | out @o
+random 32 | as opaque | encode hex | out $o
 
-genkey ec/p256 | :public | export spki | as public | pem | out @pubpem
+genkey ec/p256 | :public | export spki | as public | pem | out $pubpem
 
-genkey ec/p256 | export pkcs8 | as private | pem | out @privpem
+genkey ec/p256 | export pkcs8 | as private | pem | out $privpem
 
-genkey ec/p256 | :public | export spki | pem | as key | export spki | out @pub2
+genkey ec/p256 | :public | export spki | pem | as key | export spki | out $pub2
 
-genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
+genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out $priv2`,
       mode: "run",
       timeoutMs: 60_000,
     },
@@ -1034,13 +1034,13 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
     // —— OpenPGP ——
     {
       id: "gpg.genkey",
-      recipe: 'gpg.genkey email="verb@example.com" | out @priv',
+      recipe: 'gpg.genkey email="verb@example.com" | out $priv',
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "gpg.inspect.summary",
-      recipe: "input | gpg.inspect format=summary | out @sum",
+      recipe: "input | gpg.inspect format=summary | out $sum",
       mode: "run",
       bindings: async () => {
         const b = await gpgBindings("inspect-me");
@@ -1052,7 +1052,7 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
     },
     {
       id: "gpg.inspect.packets",
-      recipe: "input | gpg.inspect format=packets | out @p",
+      recipe: "input | gpg.inspect format=packets | out $p",
       mode: "run",
       bindings: async () => {
         const b = await gpgBindings("inspect-me");
@@ -1064,7 +1064,7 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
     },
     {
       id: "gpg.inspect.json",
-      recipe: "input | gpg.inspect format=json | out @j",
+      recipe: "input | gpg.inspect format=json | out $j",
       mode: "run",
       bindings: async () => {
         const b = await gpgBindings("inspect-me");
@@ -1076,21 +1076,21 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
     },
     {
       id: "gpg.encrypt.separate",
-      recipe: "input | utf8 | gpg.encrypt mode=separate policy=ask | out @ct",
+      recipe: "input | utf8 | gpg.encrypt mode=separate policy=ask | out $ct",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
     },
     {
       id: "gpg.encrypt.combined",
-      recipe: "input | utf8 | gpg.encrypt mode=combined policy=one | out @ct",
+      recipe: "input | utf8 | gpg.encrypt mode=combined policy=one | out $ct",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
     },
     {
       id: "gpg.encrypt.sign",
-      recipe: "input | utf8 | gpg.encrypt -s policy=all | out @ct",
+      recipe: "input | utf8 | gpg.encrypt -s policy=all | out $ct",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
@@ -1098,7 +1098,7 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
     {
       id: "gpg.encrypt.profile-custom",
       recipe:
-        "input | utf8 | gpg.encrypt policy=one profile=custom cipher=aes128 aead=off s2k=iterated compression=zlib | out @ct",
+        "input | utf8 | gpg.encrypt policy=one profile=custom cipher=aes128 aead=off s2k=iterated compression=zlib | out $ct",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
@@ -1106,21 +1106,21 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
     {
       id: "gpg.encrypt.profile-modern",
       recipe:
-        "input | utf8 | gpg.encrypt policy=one profile=modern cipher=aes192 aead=gcm compression=zip | out @ct",
+        "input | utf8 | gpg.encrypt policy=one profile=modern cipher=aes192 aead=gcm compression=zip | out $ct",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
     },
     {
       id: "gpg.encrypt.profile-compatible",
-      recipe: "input | utf8 | gpg.encrypt policy=one profile=compatible aead=eax | out @ct",
+      recipe: "input | utf8 | gpg.encrypt policy=one profile=compatible aead=eax | out $ct",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
     },
     {
       id: "gpg.decrypt.source",
-      recipe: "gpg.decrypt | out @plain",
+      recipe: "gpg.decrypt | out $plain",
       mode: "run",
       bindings: async () => {
         const b = await gpgBindings("decrypt-me");
@@ -1140,18 +1140,18 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out @priv2`,
     },
     {
       id: "gpg.sign.verify.cleartext",
-      recipe: `input | gpg.sign format=cleartext | out @signed
+      recipe: `input | gpg.sign format=cleartext | out $signed
 
-in @signed | gpg.verify | out @ok`,
+in $signed | gpg.verify | out $ok`,
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
     },
     {
       id: "gpg.sign.detached",
-      recipe: `input | out @msg | gpg.sign format=detached | out @sig
+      recipe: `input | out $msg | gpg.sign format=detached | out $sig
 
-in @msg | gpg.verify -q signature=@sig | out @ok`,
+in $msg | gpg.verify -q signature=$sig | out $ok`,
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
@@ -1159,7 +1159,7 @@ in @msg | gpg.verify -q signature=@sig | out @ok`,
     {
       id: "gpg.symencrypt.decrypt",
       recipe: `input | gpg.symencrypt mode=master name=env | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`,
+  - out $share`,
       mode: "run",
       bindings: {
         inputs: {
@@ -1171,13 +1171,13 @@ in @msg | gpg.verify -q signature=@sig | out @ok`,
     {
       id: "gpg.symdecrypt",
       recipe:
-        "shares | blip39.decode | sss.combine | gpg.symdecrypt mode=master | utf8 | out @pem",
+        "shares | blip39.decode | sss.combine | gpg.symdecrypt mode=master | utf8 | out $pem",
       mode: "run",
       bindings: async () => {
         const pem =
           "-----BEGIN PRIVATE KEY-----\nMIIBverbsmoke\n-----END PRIVATE KEY-----";
         const { ast } = compileRecipe(
-          `input | gpg.symencrypt mode=master name=env | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share`
+          `input | gpg.symencrypt mode=master name=env | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out $share`
         );
         const arts = await runRecipe(ast, {
           inputs: { text: { value: pem } },
@@ -1209,20 +1209,20 @@ in @msg | gpg.verify -q signature=@sig | out @ok`,
     // —— agent (device protection; fake-indexeddb in test file) ——
     {
       id: "agent.list",
-      recipe: "agent.list | out @ring",
+      recipe: "agent.list | out $ring",
       mode: "run",
     },
     {
       id: "agent.save.device",
       recipe:
-        'gpg.genkey email="save-smoke@example.com" | agent.save protection=device expiry=none | out @priv',
+        'gpg.genkey email="save-smoke@example.com" | agent.save protection=device expiry=none | out $priv',
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "agent.save.passphrase",
       recipe:
-        'gpg.genkey email="save-pass@example.com" | agent.save protection=passphrase | out @priv',
+        'gpg.genkey email="save-pass@example.com" | agent.save protection=passphrase | out $priv',
       mode: "run",
       bindings: {
         inputs: { gpg: { passphrase: "verb-smoke-pass" } },
@@ -1232,7 +1232,7 @@ in @msg | gpg.verify -q signature=@sig | out @ok`,
     {
       id: "agent.save.passkey",
       recipe:
-        'gpg.genkey email="save-pk@example.com" | agent.save protection=passkey | out @priv',
+        'gpg.genkey email="save-pk@example.com" | agent.save protection=passkey | out $priv',
       mode: "run",
       timeoutMs: 60_000,
       assert: (arts) => {
@@ -1255,33 +1255,33 @@ in @msg | gpg.verify -q signature=@sig | out @ok`,
     },
     {
       id: "hkp.search.filter.merge",
-      recipe: `hkp.search "alice@example.com" format=recipients | out @recs
+      recipe: `hkp.search "alice@example.com" format=recipients | out $recs
 
-in @recs | hkp.filter approved=true encrypt=true | out @filt
+in $recs | hkp.filter approved=true encrypt=true | out $filt
 
-hkp.search "bob@example.com" format=json | out @json`,
+hkp.search "bob@example.com" format=json | out $json`,
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "hkp.get",
-      recipe: "hkp.get __FPR__ | out @bob",
+      recipe: "hkp.get __FPR__ | out $bob",
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "hkp.get.refresh",
-      recipe: "hkp.get __FPR__ refresh=true | out @bob",
+      recipe: "hkp.get __FPR__ refresh=true | out $bob",
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "recipients.merge",
-      recipe: `hkp.search "alice@example.com" | out @a
+      recipe: `hkp.search "alice@example.com" | out $a
 
-hkp.search "bob@example.com" | out @b
+hkp.search "bob@example.com" | out $b
 
-in @a | recipients.merge with=@b | out @merged`,
+in $a | recipients.merge with=$b | out $merged`,
       mode: "run",
       timeoutMs: 30_000,
     },
@@ -1333,15 +1333,15 @@ in @a | recipients.merge with=@b | out @merged`,
     },
     {
       id: "webauthn.attest.mds",
-      recipe: `input | webauthn.attest | out @att
+      recipe: `input | webauthn.attest | out $att
 
-in @att | webauthn.mds | out @mds`,
+in $att | webauthn.mds | out $mds`,
       mode: "run",
       bindings: { inputs: { text: { value: sampleAttestationB64() } } },
     },
     {
       id: "webauthn.mds.aaguid",
-      recipe: `input | webauthn.mds ${ZERO_AAGUID} | out @mds0`,
+      recipe: `input | webauthn.mds ${ZERO_AAGUID} | out $mds0`,
       mode: "run",
       bindings: { inputs: { text: { value: "{}" } } },
     },
@@ -1350,7 +1350,7 @@ in @att | webauthn.mds | out @mds`,
     // stun.check / quorum.* need WebRTC + live peers, so compile-only here.
     {
       id: "rtc.ice.defaults",
-      recipe: "rtc.ice | out @ice",
+      recipe: "rtc.ice | out $ice",
       mode: "run",
       assert: (arts) => {
         const body = arts.map((a) => String(a.content || "")).join("\n");
@@ -1369,7 +1369,7 @@ in @att | webauthn.mds | out @mds`,
       // the defaults fill — and the value has to survive compile, run, and
       // serialization to be worth anything to a user writing a recipe.
       id: "rtc.ice.none",
-      recipe: "rtc.ice none | out @ice",
+      recipe: "rtc.ice none | out $ice",
       mode: "run",
       assert: (arts) => {
         const body = arts.map((a) => String(a.content || "")).join("\n");
@@ -1383,9 +1383,9 @@ in @att | webauthn.mds | out @mds`,
     },
     {
       id: "rtc.ice.turn",
-      recipe: `passphrase | out @cred
+      recipe: `passphrase | out $cred
 
-rtc.ice stun=stun:stun.example.org:3478 turn=turn:relay.example.org:3478 username=u credential=@cred | out @ice`,
+rtc.ice stun=stun:stun.example.org:3478 turn=turn:relay.example.org:3478 username=u credential=$cred | out $ice`,
       mode: "run",
       assert: (arts) => {
         const body = arts.map((a) => String(a.content || "")).join("\n");
@@ -1394,34 +1394,34 @@ rtc.ice stun=stun:stun.example.org:3478 turn=turn:relay.example.org:3478 usernam
         if (!turn || turn.username !== "u" || !turn.credential) {
           throw new Error("expected TURN entry with a resolved credential from rtc.ice");
         }
-        if (turn.credential === "@cred") {
-          throw new Error("rtc.ice credential=@slot was not resolved to its slot value");
+        if (turn.credential === "$cred") {
+          throw new Error("rtc.ice credential=$slot was not resolved to its slot value");
         }
       },
     },
     {
       id: "stun.check.compile",
-      recipe: "stun.check stun:stun.example.org:3478 timeout=1000 | out @nat",
+      recipe: "stun.check stun:stun.example.org:3478 timeout=1000 | out $nat",
       mode: "compile",
       skipReason: "needs RTCPeerConnection (main-thread browser only)",
     },
     {
       id: "quorum.exchange.compile",
-      recipe: `gpg.genkey email="quorum-smoke@example.com" | out @me
+      recipe: `gpg.genkey email="quorum-smoke@example.com" | out $me
 
-quorum.offer to="${"A".repeat(40)},${"B".repeat(40)}" key=@me wait=5000 | out @session
+quorum.offer to="${"A".repeat(40)},${"B".repeat(40)}" key=$me wait=5000 | out $session
 
-quorum.recv wait=5000 | quorum.close | out @last`,
+quorum.recv wait=5000 | quorum.close | out $last`,
       mode: "compile",
       skipReason: "needs WebRTC mesh + a live peer",
     },
     {
       id: "quorum.join.send.compile",
-      recipe: `gpg.genkey email="quorum-smoke@example.com" | out @me
+      recipe: `gpg.genkey email="quorum-smoke@example.com" | out $me
 
-quorum.join to="${"A".repeat(40)},${"B".repeat(40)}" key=@me | out @session
+quorum.join to="${"A".repeat(40)},${"B".repeat(40)}" key=$me | out $session
 
-input | quorum.send | out @sent`,
+input | quorum.send | out $sent`,
       mode: "compile",
       skipReason: "needs WebRTC mesh + a live peer",
     },
@@ -1430,27 +1430,27 @@ input | quorum.send | out @sent`,
     // RTCPeerConnection (and several a live exchange), so all compile-only.
     {
       id: "rtc.gather.compile",
-      recipe: `rtc.ice | out @ice
+      recipe: `rtc.ice | out $ice
 
-rtc.gather ice=@ice timeout=3000 | out @cands`,
+rtc.gather ice=$ice timeout=3000 | out $cands`,
       mode: "compile",
       skipReason: "needs RTCPeerConnection (main-thread browser only)",
     },
     {
       id: "rtc.check.compile",
-      recipe: "rtc.check | out @pairs",
+      recipe: "rtc.check | out $pairs",
       mode: "compile",
       skipReason: "needs a live WebRTC exchange with a peer",
     },
     {
       id: "rtc.certificate.ecdsa.compile",
-      recipe: "rtc.certificate ecdsa | out @id",
+      recipe: "rtc.certificate ecdsa | out $id",
       mode: "compile",
       skipReason: "needs RTCPeerConnection.generateCertificate",
     },
     {
       id: "rtc.certificate.rsa.compile",
-      recipe: "rtc.certificate rsa | out @id",
+      recipe: "rtc.certificate rsa | out $id",
       mode: "compile",
       skipReason: "needs RTCPeerConnection.generateCertificate",
     },
@@ -1460,64 +1460,64 @@ rtc.gather ice=@ice timeout=3000 | out @cands`,
       // runs the middle cell in the *other* browser, which is the whole point
       // and is what the e2e suite drives.
       id: "peer.offer.answer.accept.compile",
-      recipe: `rtc.ice | out @ice
+      recipe: `rtc.ice | out $ice
 
-peer.offer a ice=@ice label=basilisk timeout=3000 | out @offer
+peer.offer a ice=$ice label=basilisk timeout=3000 | out $offer
 
-in @offer | peer.answer b ice=@ice timeout=3000 | out @answer
+in $offer | peer.answer b ice=$ice timeout=3000 | out $answer
 
-in @answer | peer.accept a | out @state`,
+in $answer | peer.accept a | out $state`,
       mode: "compile",
       skipReason: "needs RTCPeerConnection (main-thread browser only)",
     },
     {
       id: "peer.wait.send.recv.compile",
-      recipe: `peer.wait a wait=30000 | out @link
+      recipe: `peer.wait a wait=30000 | out $link
 
-input | peer.send a | out @sent
+input | peer.send a | out $sent
 
-peer.recv a count=all wait=30000 | out @msgs`,
+peer.recv a count=all wait=30000 | out $msgs`,
       mode: "compile",
       inputText: "ping",
       skipReason: "needs a live direct connection",
     },
     {
       id: "peer.close.compile",
-      recipe: "peer.close a | out @state",
+      recipe: "peer.close a | out $state",
       mode: "compile",
       skipReason: "needs a live direct connection",
     },
     {
       id: "rtc.state.compile",
-      recipe: "rtc.state | out @state",
+      recipe: "rtc.state | out $state",
       mode: "compile",
       skipReason: "needs a live WebRTC exchange",
     },
     {
       id: "dkg.run.compile",
-      recipe: `gpg.genkey email="dkg-smoke@example.com" | out @me
+      recipe: `gpg.genkey email="dkg-smoke@example.com" | out $me
 
-quorum.join to="${"A".repeat(40)},${"B".repeat(40)},${"C".repeat(40)}" key=@me | out @session
+quorum.join to="${"A".repeat(40)},${"B".repeat(40)},${"C".repeat(40)}" key=$me | out $session
 
-dkg.run threshold=2 | out @dkg`,
+dkg.run threshold=2 | out $dkg`,
       mode: "compile",
       skipReason: "needs a live mesh with every participant present",
     },
     {
       id: "rtc.restart.compile",
-      recipe: "rtc.restart | out @state",
+      recipe: "rtc.restart | out $state",
       mode: "compile",
       skipReason: "needs a live WebRTC exchange",
     },
     {
       id: "rtc.stats.compile",
-      recipe: "rtc.stats | out @bp",
+      recipe: "rtc.stats | out $bp",
       mode: "compile",
       skipReason: "needs a live WebRTC exchange",
     },
     {
       id: "rtc.quality.compile",
-      recipe: "rtc.quality | out @quality",
+      recipe: "rtc.quality | out $quality",
       mode: "compile",
       skipReason: "needs a live WebRTC exchange",
     },
@@ -1526,9 +1526,9 @@ dkg.run threshold=2 | out @dkg`,
     {
       id: "run.receipt",
       recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
-run.receipt "verb smoke ceremony" | out @receipt`,
+run.receipt "verb smoke ceremony" | out $receipt`,
       mode: "run",
       timeoutMs: 30_000,
       assert: (arts) => {
@@ -1555,7 +1555,7 @@ run.receipt "verb smoke ceremony" | out @receipt`,
       // inside one run, so the comparison has something real to agree with. The
       // interesting failure paths (tampered digest, extra cell) are unit-tested
       // in run-receipt.test.js against the pure comparator.
-      recipe: "run.receipt | run.verify | out @ok",
+      recipe: "run.receipt | run.verify | out $ok",
       mode: "run",
       assert: (arts) => {
         if (!arts.some((a) => String(a.content).trim() === "true")) {
@@ -1565,7 +1565,7 @@ run.receipt "verb smoke ceremony" | out @receipt`,
     },
     {
       id: "run.verify.soft",
-      recipe: "run.receipt | run.verify -q | out @ok",
+      recipe: "run.receipt | run.verify -q | out $ok",
       mode: "run",
     },
 
@@ -1573,25 +1573,25 @@ run.receipt "verb smoke ceremony" | out @receipt`,
     // clipboard plus (for read) the UI's permission gate, so compile-only.
     {
       id: "qr.scan.compile",
-      recipe: "file.read | qr.scan | out @invite",
+      recipe: "file.read | qr.scan | out $invite",
       mode: "compile",
       skipReason: "needs BarcodeDetector + a file picker (main-thread browser only)",
     },
     {
       id: "qr.scan.all.compile",
-      recipe: "file.read | qr.scan count=all | foreach\n  - out @code",
+      recipe: "file.read | qr.scan count=all | foreach\n  - out $code",
       mode: "compile",
       skipReason: "needs BarcodeDetector + a file picker (main-thread browser only)",
     },
     {
       id: "clipboard.read.compile",
-      recipe: "clipboard.read | out @pasted",
+      recipe: "clipboard.read | out $pasted",
       mode: "compile",
       skipReason: "needs navigator.clipboard + the UI permission gate",
     },
     {
       id: "clipboard.write.compile",
-      recipe: "random 16 | encode base64 | clipboard.write | out @copied",
+      recipe: "random 16 | encode base64 | clipboard.write | out $copied",
       mode: "compile",
       skipReason: "needs navigator.clipboard (main-thread browser only)",
     },
@@ -1602,19 +1602,19 @@ run.receipt "verb smoke ceremony" | out @receipt`,
       id: "file.read.compile",
       // The accept list is quoted: a bare token starting with `.` is a
       // selector to the parser, which is the correct reading everywhere else.
-      recipe: 'file.read ".pem,.asc" as=text | out @loaded',
+      recipe: 'file.read ".pem,.asc" as=text | out $loaded',
       mode: "compile",
       skipReason: "needs a file picker (main-thread browser only)",
     },
     {
       id: "file.read.bytes.compile",
-      recipe: "file.read as=bytes | out @blob",
+      recipe: "file.read as=bytes | out $blob",
       mode: "compile",
       skipReason: "needs a file picker (main-thread browser only)",
     },
     {
       id: "file.save.compile",
-      recipe: "random 32 | file.save name=key.bin mime=application/octet-stream | out @saved",
+      recipe: "random 32 | file.save name=key.bin mime=application/octet-stream | out $saved",
       mode: "compile",
       skipReason: "needs a save picker / download (main-thread browser only)",
     },
@@ -1622,11 +1622,11 @@ run.receipt "verb smoke ceremony" | out @receipt`,
     // ── Chunked AEAD — pure WebCrypto, so this one genuinely runs.
     {
       id: "stream.seal.open",
-      recipe: `genkey aes/256 | out @cek
+      recipe: `genkey aes/256 | out $cek
 
-"chunked payload" | utf8 | stream.seal key=@cek chunk=1024 | out @sealed
+"chunked payload" | utf8 | stream.seal key=$cek chunk=1024 | out $sealed
 
-in @sealed | stream.open key=@cek | utf8 | out @opened`,
+in $sealed | stream.open key=$cek | utf8 | out $opened`,
       mode: "run",
       assert(arts) {
         const opened = arts.find((a) => a.label?.includes("opened"));
@@ -1640,13 +1640,13 @@ in @sealed | stream.open key=@cek | utf8 | out @opened`,
     // whole interop path runs here rather than being asserted by inspection.
     {
       id: "age.keygen.recipient.roundtrip",
-      recipe: `age.keygen | out @id
+      recipe: `age.keygen | out $id
 
-in @id | age.recipient | out @pub
+in $id | age.recipient | out $pub
 
-"age round trip" | utf8 | age.encrypt to=@pub | out @ct
+"age round trip" | utf8 | age.encrypt to=$pub | out $ct
 
-in @ct | age.decrypt key=@id | utf8 | out @plain`,
+in $ct | age.decrypt key=$id | utf8 | out $plain`,
       mode: "run",
       timeoutMs: 20000,
       assert(arts) {
@@ -1662,13 +1662,13 @@ in @ct | age.decrypt key=@id | utf8 | out @plain`,
     // registry surface composes.
     {
       id: "ssh.encode.decode.fingerprint",
-      recipe: `genkey ed25519 | out @id
+      recipe: `genkey ed25519 | out $id
 
-in @id | ssh.encode comment="verb@smoke" | out @pub
+in $id | ssh.encode comment="verb@smoke" | out $pub
 
-in @pub | ssh.decode | ssh.fingerprint | out @fp
+in $pub | ssh.decode | ssh.fingerprint | out $fp
 
-in @id | ssh.fingerprint | out @fp2`,
+in $id | ssh.fingerprint | out $fp2`,
       mode: "run",
       timeoutMs: 30_000,
       assert(arts) {
@@ -1694,17 +1694,17 @@ in @id | ssh.fingerprint | out @fp2`,
     },
     {
       id: "ssh.encode.format=private.roundtrip",
-      recipe: `genkey ec/p256 | out @id
+      recipe: `genkey ec/p256 | out $id
 
-in @id | ssh.encode format=private comment="verb@smoke" | out @pem
+in $id | ssh.encode format=private comment="verb@smoke" | out $pem
 
-in @pem | ssh.decode format=private | out @again
+in $pem | ssh.decode format=private | out $again
 
-"private round trip" | utf8 | out @msg | ssh.sign key=@again | out @sig
+"private round trip" | utf8 | out $msg | ssh.sign key=$again | out $sig
 
-in @id | ssh.encode | out @pub
+in $id | ssh.encode | out $pub
 
-in @msg | ssh.verify key=@pub signature=@sig | out @ok`,
+in $msg | ssh.verify key=$pub signature=$sig | out $ok`,
       mode: "run",
       timeoutMs: 30_000,
       assert(arts) {
@@ -1725,15 +1725,15 @@ in @msg | ssh.verify key=@pub signature=@sig | out @ok`,
       // user picks, and the generic sign/verify then honour it rather than
       // signing under an unasked-for digest.
       id: "ssh.decode.hash=sha256.rsa",
-      recipe: `genkey rsa/2048 padding=pkcs1 | out @gen
+      recipe: `genkey rsa/2048 padding=pkcs1 | out $gen
 
-in @gen | ssh.encode format=private | out @pem
+in $gen | ssh.encode format=private | out $pem
 
-in @pem | ssh.decode format=private hash=sha256 | out @id
+in $pem | ssh.decode format=private hash=sha256 | out $id
 
-"rsa handle" | utf8 | out @msg | sign key=@id hash=sha-256 | base64url | out @sig
+"rsa handle" | utf8 | out $msg | sign key=$id hash=sha-256 | base64url | out $sig
 
-in @msg | verify key=@id signature=@sig hash=sha-256 | out @ok`,
+in $msg | verify key=$id signature=$sig hash=sha-256 | out $ok`,
       mode: "run",
       timeoutMs: 60_000,
       assert(arts) {
@@ -1746,15 +1746,15 @@ in @msg | verify key=@id signature=@sig hash=sha-256 | out @ok`,
     },
     {
       id: "ssh.sign.verify.namespace",
-      recipe: `genkey ed25519 | out @id
+      recipe: `genkey ed25519 | out $id
 
-in @id | ssh.encode | out @pub
+in $id | ssh.encode | out $pub
 
-"namespaced" | utf8 | out @msg | ssh.sign key=@id namespace=git | out @sig
+"namespaced" | utf8 | out $msg | ssh.sign key=$id namespace=git | out $sig
 
-in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok
+in $msg | ssh.verify key=$pub signature=$sig namespace=git | out $ok
 
-in @msg | ssh.verify -q key=@pub signature=@sig namespace=file | out @wrongns`,
+in $msg | ssh.verify -q key=$pub signature=$sig namespace=file | out $wrongns`,
       mode: "run",
       timeoutMs: 30_000,
       assert(arts) {
@@ -1770,13 +1770,13 @@ in @msg | ssh.verify -q key=@pub signature=@sig namespace=file | out @wrongns`,
     },
     {
       id: "ssh.sign.hash=sha256.rsa",
-      recipe: `genkey rsa/2048 | out @id
+      recipe: `genkey rsa/2048 | out $id
 
-in @id | ssh.encode | out @pub
+in $id | ssh.encode | out $pub
 
-"rsa sshsig" | utf8 | out @msg | ssh.sign key=@id hash=sha256 | out @sig
+"rsa sshsig" | utf8 | out $msg | ssh.sign key=$id hash=sha256 | out $sig
 
-in @msg | ssh.verify key=@pub signature=@sig | out @ok`,
+in $msg | ssh.verify key=$pub signature=$sig | out $ok`,
       mode: "run",
       timeoutMs: 45_000,
       assert(arts) {
@@ -1788,20 +1788,20 @@ in @msg | ssh.verify key=@pub signature=@sig | out @ok`,
     {
       // §29f (b): the passphrase is *named* by the recipe, never lifted out of
       // the Inputs panel — so this case proves the whole channel, from an
-      // `@slot` the notebook registered through to a container `ssh.decode`
+      // `$slot` the notebook registered through to a container `ssh.decode`
       // has to be given the same passphrase to reopen.
       id: "ssh.encode.format=private.passphrase",
-      recipe: `"correct horse" | out @pw
+      recipe: `"correct horse" | out $pw
 
-genkey ed25519 | out @id
+genkey ed25519 | out $id
 
-in @id | ssh.encode format=private comment="verb@smoke" passphrase=@pw | out @enc
+in $id | ssh.encode format=private comment="verb@smoke" passphrase=$pw | out $enc
 
-in @enc | ssh.decode format=private | out @again
+in $enc | ssh.decode format=private | out $again
 
-in @again | ssh.fingerprint | out @fp
+in $again | ssh.fingerprint | out $fp
 
-in @id | ssh.fingerprint | out @fp2`,
+in $id | ssh.fingerprint | out $fp2`,
       mode: "run",
       timeoutMs: 30_000,
       // `ssh.decode` reads the panel, because on that side a passphrase only
@@ -1831,9 +1831,9 @@ in @id | ssh.fingerprint | out @fp2`,
     },
     {
       id: "age.armor.passphrase",
-      recipe: `"armored" | utf8 | age.encrypt passphrase="correct horse" armor=true | out @armored
+      recipe: `"armored" | utf8 | age.encrypt passphrase="correct horse" armor=true | out $armored
 
-in @armored | age.decrypt passphrase="correct horse" | utf8 | out @plain`,
+in $armored | age.decrypt passphrase="correct horse" | utf8 | out $plain`,
       mode: "run",
       timeoutMs: 20000,
       assert(arts) {
@@ -1845,11 +1845,11 @@ in @armored | age.decrypt passphrase="correct horse" | utf8 | out @plain`,
     },
     {
       id: "age.encrypt.armor.false",
-      recipe: `age.keygen | out @id2
+      recipe: `age.keygen | out $id2
 
-in @id2 | age.recipient | out @pub2
+in $id2 | age.recipient | out $pub2
 
-"binary" | utf8 | age.encrypt to=@pub2 armor=false | out @bin`,
+"binary" | utf8 | age.encrypt to=$pub2 armor=false | out $bin`,
       mode: "run",
       timeoutMs: 20000,
     },
@@ -1859,14 +1859,14 @@ in @id2 | age.recipient | out @pub2
     {
       id: "otp.enrol.code.verify",
       recipe: `random 20 | tee
-  - base32 | out @secret
+  - base32 | out $secret
 | otp.uri issuer="Verb Smoke" account=smoke@example.com | tee
   - qr
-| out @uri
+| out $uri
 
-in @secret | otp.code | out @code
+in $secret | otp.code | out $code
 
-in @code | otp.verify secret=@uri window=1 | out @ok`,
+in $code | otp.verify secret=$uri window=1 | out $ok`,
       mode: "run",
       timeoutMs: 20000,
       assert(arts) {
@@ -1894,28 +1894,28 @@ in @code | otp.verify secret=@uri window=1 | out @ok`,
     {
       id: "otp.hotp.counter.parse.fields",
       recipe: `random 20 | base32 | tee
-  - out @secret
-| otp.uri mode=hotp counter=3 algorithm=sha256 digits=8 issuer=Acme account=token-7 | out @uri
+  - out $secret
+| otp.uri mode=hotp counter=3 algorithm=sha256 digits=8 issuer=Acme account=token-7 | out $uri
 
-in @uri | tee
-  - otp.parse secret | out @fsecret
+in $uri | tee
+  - otp.parse secret | out $fsecret
 | tee
-  - otp.parse issuer | out @fissuer
+  - otp.parse issuer | out $fissuer
 | tee
-  - otp.parse account | out @faccount
+  - otp.parse account | out $faccount
 | tee
-  - otp.parse algorithm | out @falgorithm
+  - otp.parse algorithm | out $falgorithm
 | tee
-  - otp.parse digits | out @fdigits
+  - otp.parse digits | out $fdigits
 | tee
-  - otp.parse period | out @fperiod
+  - otp.parse period | out $fperiod
 | tee
-  - otp.parse counter | out @fcounter
-| otp.parse mode | out @fmode
+  - otp.parse counter | out $fcounter
+| otp.parse mode | out $fmode
 
-in @secret | otp.code mode=hotp counter=3 algorithm=sha256 digits=8 | out @code
+in $secret | otp.code mode=hotp counter=3 algorithm=sha256 digits=8 | out $code
 
-in @code | otp.verify -q secret=@secret mode=hotp counter=0 algorithm=sha256 digits=8 window=5 | out @resync`,
+in $code | otp.verify -q secret=$secret mode=hotp counter=0 algorithm=sha256 digits=8 window=5 | out $resync`,
       mode: "run",
       timeoutMs: 20000,
       assert(arts) {
@@ -1935,12 +1935,12 @@ in @code | otp.verify -q secret=@secret mode=hotp counter=0 algorithm=sha256 dig
     {
       id: "otp.sha512.digits7.period60",
       recipe: `random 32 | base32 | tee
-  - out @s3
-| otp.uri algorithm=sha512 digits=7 period=60 issuer=Long account=ops@example.com | out @u3
+  - out $s3
+| otp.uri algorithm=sha512 digits=7 period=60 issuer=Long account=ops@example.com | out $u3
 
-in @s3 | otp.code algorithm=sha512 digits=7 period=60 at=1111111111 | out @c3
+in $s3 | otp.code algorithm=sha512 digits=7 period=60 at=1111111111 | out $c3
 
-in @c3 | otp.verify secret=@s3 algorithm=sha512 digits=7 period=60 at=1111111111 window=0 | out @ok3`,
+in $c3 | otp.verify secret=$s3 algorithm=sha512 digits=7 period=60 at=1111111111 window=0 | out $ok3`,
       mode: "run",
       timeoutMs: 20000,
       assert(arts) {
@@ -1963,7 +1963,7 @@ in @c3 | otp.verify secret=@s3 algorithm=sha512 digits=7 period=60 at=1111111111
     // not have. The per-algorithm matrices are below in `joseMatrix`.
     {
       id: "jose.decode",
-      recipe: "input | jose.decode | out @claims",
+      recipe: "input | jose.decode | out $claims",
       mode: "run",
       bindings: { inputs: { text: { value: RFC7515_A1_TOKEN } } },
       assert: (a) => {
@@ -1974,7 +1974,7 @@ in @c3 | otp.verify secret=@s3 algorithm=sha512 digits=7 period=60 at=1111111111
     },
     {
       id: "jose.decode.format=compact",
-      recipe: "input | jose.decode compact | out @claims",
+      recipe: "input | jose.decode compact | out $claims",
       mode: "run",
       bindings: { inputs: { text: { value: RFC7515_A1_TOKEN } } },
       assert: (a) => {
@@ -1986,11 +1986,11 @@ in @c3 | otp.verify secret=@s3 algorithm=sha512 digits=7 period=60 at=1111111111
       id: "jose.verify.expiry=ignore",
       // Signature valid, `exp` long past: the default would refuse, and
       // `expiry=ignore` is how you look at an old token on purpose.
-      recipe: `genkey ed25519 | out @k
+      recipe: `genkey ed25519 | out $k
 
-'{"sub":"basilisk","exp":1300819380}' | jose.sign key=@k | out @token
+'{"sub":"basilisk","exp":1300819380}' | jose.sign key=$k | out $token
 
-@token | jose.verify key=@k expiry=ignore | out @claims`,
+$token | jose.verify key=$k expiry=ignore | out $claims`,
       mode: "run",
     },
   ];
@@ -2035,11 +2035,11 @@ function joseMatrix() {
       // slot is the one worth having.
       out.push({
         id: "jose.sign.alg=auto",
-        recipe: `genkey ed25519 | out @k
+        recipe: `genkey ed25519 | out $k
 
-'{"sub":"basilisk"}' | jose.sign key=@k | out @token
+'{"sub":"basilisk"}' | jose.sign key=$k | out $token
 
-@token | jose.verify key=@k | out @claims`,
+$token | jose.verify key=$k | out $claims`,
         mode: "run",
         assert: (a) => {
           const token = a.find((x) => x.label === "token");
@@ -2057,11 +2057,11 @@ function joseMatrix() {
     const rsa = gen.includes("rsa/");
     out.push({
       id: `jose.sign.alg=${alg}`,
-      recipe: `${gen} | out @k
+      recipe: `${gen} | out $k
 
-'{"sub":"basilisk","iat":1700000000}' | jose.sign key=@k alg=${alg} | out @token
+'{"sub":"basilisk","iat":1700000000}' | jose.sign key=$k alg=${alg} | out $token
 
-@token | jose.verify key=@k alg=${alg} | out @claims`,
+$token | jose.verify key=$k alg=${alg} | out $claims`,
       mode: "run",
       timeoutMs: rsa ? 90_000 : 30_000,
       assert: (a) => {
@@ -2087,11 +2087,11 @@ function joseMatrix() {
     if (!gen) continue;
     out.push({
       id: `jose.encrypt.alg=${alg}`,
-      recipe: `${gen} | out @k
+      recipe: `${gen} | out $k
 
-'sealed by basilisk' | jose.encrypt key=@k alg=${alg} | out @jwe
+'sealed by basilisk' | jose.encrypt key=$k alg=${alg} | out $jwe
 
-@jwe | jose.decrypt key=@k | out @plain`,
+$jwe | jose.decrypt key=$k | out $plain`,
       mode: "run",
       timeoutMs: alg.startsWith("rsa") ? 90_000 : 30_000,
       assert: (a) => {
@@ -2110,11 +2110,11 @@ function joseMatrix() {
     const bits = enc.slice(1, 4);
     out.push({
       id: `jose.encrypt.enc=${enc}`,
-      recipe: `genkey aes/${bits} | out @cek
+      recipe: `genkey aes/${bits} | out $cek
 
-'sealed by basilisk' | jose.encrypt key=@cek enc=${enc} | out @jwe
+'sealed by basilisk' | jose.encrypt key=$cek enc=${enc} | out $jwe
 
-@jwe | jose.decrypt key=@cek | out @plain`,
+$jwe | jose.decrypt key=$cek | out $plain`,
       mode: "run",
     });
   }
@@ -2133,13 +2133,13 @@ function genkeyMatrix() {
   for (const alg of algs) {
     let recipe;
     if (alg.startsWith("aes/") || alg.startsWith("hmac/")) {
-      recipe = `genkey ${alg} | export jwk | out @k`;
+      recipe = `genkey ${alg} | export jwk | out $k`;
     } else if (alg.startsWith("rsa/")) {
-      recipe = `genkey ${alg} hash=sha-256 | :public | export spki | pem | out @pub`;
+      recipe = `genkey ${alg} hash=sha-256 | :public | export spki | pem | out $pub`;
     } else if (alg === "x25519") {
-      recipe = `genkey ${alg} usage=derive | export jwk | out @k`;
+      recipe = `genkey ${alg} usage=derive | export jwk | out $k`;
     } else {
-      recipe = `genkey ${alg} | export pkcs8 | pem | out @priv`;
+      recipe = `genkey ${alg} | export pkcs8 | pem | out $priv`;
     }
     out.push({
       id: `genkey.alg=${alg}`,
@@ -2151,32 +2151,32 @@ function genkeyMatrix() {
   out.push({
     id: "genkey.rsa.padding=pkcs1",
     recipe:
-      "genkey rsa/2048 usage=sign padding=pkcs1 hash=sha-256 | :public | export spki | pem | out @pub",
+      "genkey rsa/2048 usage=sign padding=pkcs1 hash=sha-256 | :public | export spki | pem | out $pub",
     mode: "run",
     timeoutMs: 60_000,
   });
   out.push({
     id: "genkey.rsa.hash=sha-384",
     recipe:
-      "genkey rsa/2048 usage=encrypt hash=sha-384 | :public | export spki | pem | out @pub",
+      "genkey rsa/2048 usage=encrypt hash=sha-384 | :public | export spki | pem | out $pub",
     mode: "run",
     timeoutMs: 60_000,
   });
   out.push({
     id: "genkey.rsa.hash=sha-512",
     recipe:
-      "genkey rsa/2048 usage=encrypt hash=sha-512 | :public | export spki | pem | out @pub",
+      "genkey rsa/2048 usage=encrypt hash=sha-512 | :public | export spki | pem | out $pub",
     mode: "run",
     timeoutMs: 60_000,
   });
   out.push({
     id: "genkey.usage=sign",
-    recipe: "genkey ed25519 usage=sign | export jwk | out @k",
+    recipe: "genkey ed25519 usage=sign | export jwk | out $k",
     mode: "run",
   });
   out.push({
     id: "genkey.usage=encrypt",
-    recipe: "genkey aes/256 usage=encrypt | export jwk | out @k",
+    recipe: "genkey aes/256 usage=encrypt | export jwk | out $k",
     mode: "run",
   });
   return out;
@@ -2194,12 +2194,12 @@ function deriveAsMatrix() {
     if (as === "bytes") continue; // covered in base
     out.push({
       id: `hkdf.as=${as}`,
-      recipe: `random 32 | hkdf 32 as=${as} | export jwk | out @k`,
+      recipe: `random 32 | hkdf 32 as=${as} | export jwk | out $k`,
       mode: "run",
     });
     out.push({
       id: `pbkdf2.as=${as}`,
-      recipe: `passphrase mode=char length=16 | pbkdf2 32 iterations=500 as=${as} | export jwk | out @k`,
+      recipe: `passphrase mode=char length=16 | pbkdf2 32 iterations=500 as=${as} | export jwk | out $k`,
       mode: "run",
       timeoutMs: 30_000,
     });
@@ -2210,11 +2210,11 @@ function deriveAsMatrix() {
       // ECDH+HMAC deriveKey is not supported by Chromium/Node SubtleCrypto.
       out.push({
         id: `ecdh.as=${as}`,
-        recipe: `genkey ec/p521 | out @local
+        recipe: `genkey ec/p521 | out $local
 
-genkey ec/p521 | :public | out @peer
+genkey ec/p521 | :public | out $peer
 
-ecdh private=@local peer=@peer as=${as} | export jwk | out @k`,
+ecdh private=$local peer=$peer as=${as} | export jwk | out $k`,
         mode: "compile",
       });
       continue;
@@ -2222,22 +2222,22 @@ ecdh private=@local peer=@peer as=${as} | export jwk | out @k`,
     if (as === "bytes") {
       out.push({
         id: "ecdh.as=bytes",
-        recipe: `genkey x25519 | out @local
+        recipe: `genkey x25519 | out $local
 
-genkey x25519 | :public | out @peer
+genkey x25519 | :public | out $peer
 
-ecdh private=@local peer=@peer as=bytes | encode hex | out @shared`,
+ecdh private=$local peer=$peer as=bytes | encode hex | out $shared`,
         mode: "run",
       });
       continue;
     }
     out.push({
       id: `ecdh.as=${as}`,
-      recipe: `genkey x25519 | out @local
+      recipe: `genkey x25519 | out $local
 
-genkey x25519 | :public | out @peer
+genkey x25519 | :public | out $peer
 
-ecdh private=@local peer=@peer as=${as} | export jwk | out @k`,
+ecdh private=$local peer=$peer as=${as} | export jwk | out $k`,
       mode: "run",
     });
   }
@@ -2254,20 +2254,20 @@ function unwrapAlgMatrix() {
   const out = [];
   for (const alg of algs) {
     const gen = alg.startsWith("aes-kw/")
-      ? `random 32 | hkdf 32 as=${alg} | out @cek`
-      : `genkey ${alg} | out @cek`;
+      ? `random 32 | hkdf 32 as=${alg} | out $cek`
+      : `genkey ${alg} | out $cek`;
     const kek = alg.startsWith("aes-kw/")
-      ? `random 32 | hkdf 32 as=aes-kw/256 | out @kek`
-      : `genkey aes/256 | out @kek`;
+      ? `random 32 | hkdf 32 as=aes-kw/256 | out $kek`
+      : `genkey aes/256 | out $kek`;
     out.push({
       id: `unwrap.alg=${alg}`,
       recipe: `${kek}
 
 ${gen}
 
-wrap key=@kek target=@cek mode=aes-kw | out @wrapped
+wrap key=$kek target=$cek mode=aes-kw | out $wrapped
 
-in @wrapped | unwrap key=@kek mode=aes-kw alg=${alg} | out @cek2`,
+in $wrapped | unwrap key=$kek mode=aes-kw alg=${alg} | out $cek2`,
       mode: "run",
       timeoutMs: 30_000,
     });
@@ -2285,23 +2285,23 @@ function gcmTagMatrix() {
   for (const tag of ["104", "112", "120"]) {
     out.push({
       id: `aes-gcm.tagLength=${tag}`,
-      recipe: `genkey aes/256 | out @cek
+      recipe: `genkey aes/256 | out $cek
 
-input | utf8 | aes-gcm key=@cek tagLength=${tag} | encode hex | out @ct
+input | utf8 | aes-gcm key=$cek tagLength=${tag} | encode hex | out $ct
 
-in @ct | decode hex | aes-gcm -d key=@cek tagLength=${tag} | utf8 | out @pt`,
+in $ct | decode hex | aes-gcm -d key=$cek tagLength=${tag} | utf8 | out $pt`,
       mode: "run",
       bindings: { inputs: { text: { value: `tag${tag}` } } },
     });
     out.push({
       id: `wrap.tagLength=${tag}`,
-      recipe: `genkey aes/256 | out @kek
+      recipe: `genkey aes/256 | out $kek
 
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-wrap key=@kek target=@cek mode=aes-gcm tagLength=${tag} | out @wrapped
+wrap key=$kek target=$cek mode=aes-gcm tagLength=${tag} | out $wrapped
 
-in @wrapped | unwrap key=@kek mode=aes-gcm alg=aes/256 tagLength=${tag} | out @cek2`,
+in $wrapped | unwrap key=$kek mode=aes-gcm alg=aes/256 tagLength=${tag} | out $cek2`,
       mode: "run",
     });
   }
@@ -2317,13 +2317,13 @@ function pemLabelMatrix() {
     {
       id: 'pem.label="EC PRIVATE KEY"',
       recipe:
-        'genkey ec/p256 | export pkcs8 | pem label="EC PRIVATE KEY" | out @p',
+        'genkey ec/p256 | export pkcs8 | pem label="EC PRIVATE KEY" | out $p',
       mode: "run",
     },
     {
       id: 'pem.label="RSA PRIVATE KEY"',
       recipe:
-        'genkey rsa/2048 | export pkcs8 | pem label="RSA PRIVATE KEY" | out @p',
+        'genkey rsa/2048 | export pkcs8 | pem label="RSA PRIVATE KEY" | out $p',
       mode: "run",
       timeoutMs: 60_000,
     },
@@ -2340,45 +2340,45 @@ function importMatrix() {
     {
       id: "import.format=d",
       recipe:
-        "genkey ec/p256 | export scalar | import scalar alg=ec/p256 | export pkcs8 | pem | out @p",
+        "genkey ec/p256 | export scalar | import scalar alg=ec/p256 | export pkcs8 | pem | out $p",
       mode: "run",
     },
     {
       id: "import.usage=sign",
       recipe:
-        "genkey ed25519 | export jwk | import jwk alg=ed25519 usage=sign | export jwk | out @k",
+        "genkey ed25519 | export jwk | import jwk alg=ed25519 usage=sign | export jwk | out $k",
       mode: "run",
     },
     {
       id: "import.usage=derive",
       recipe:
-        "genkey x25519 | export jwk | import jwk alg=x25519 usage=derive | export jwk | out @k",
+        "genkey x25519 | export jwk | import jwk alg=x25519 usage=derive | export jwk | out $k",
       mode: "run",
     },
     {
       id: "import.usage=encrypt",
       recipe:
-        "genkey aes/256 | export jwk | import jwk alg=aes/256 usage=encrypt | export jwk | out @k",
+        "genkey aes/256 | export jwk | import jwk alg=aes/256 usage=encrypt | export jwk | out $k",
       mode: "run",
     },
     {
       id: "import.padding=pkcs1",
       recipe:
-        "genkey rsa/2048 usage=sign padding=pkcs1 | export jwk | import jwk alg=rsa/2048 usage=sign padding=pkcs1 hash=sha-256 | export jwk | out @k",
+        "genkey rsa/2048 usage=sign padding=pkcs1 | export jwk | import jwk alg=rsa/2048 usage=sign padding=pkcs1 hash=sha-256 | export jwk | out $k",
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "import.hash=sha-384",
       recipe:
-        "genkey rsa/2048 hash=sha-384 | export jwk | import jwk alg=rsa/2048 hash=sha-384 | export jwk | out @k",
+        "genkey rsa/2048 hash=sha-384 | export jwk | import jwk alg=rsa/2048 hash=sha-384 | export jwk | out $k",
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "import.hash=sha-512",
       recipe:
-        "genkey rsa/2048 hash=sha-512 | export jwk | import jwk alg=rsa/2048 hash=sha-512 | export jwk | out @k",
+        "genkey rsa/2048 hash=sha-512 | export jwk | import jwk alg=rsa/2048 hash=sha-512 | export jwk | out $k",
       mode: "run",
       timeoutMs: 60_000,
     },
@@ -2398,14 +2398,14 @@ function importMatrix() {
   ]) {
     let recipe;
     if (alg.startsWith("aes/") || alg.startsWith("hmac/")) {
-      recipe = `genkey ${alg} | export jwk | import jwk alg=${alg} | export jwk | out @k`;
+      recipe = `genkey ${alg} | export jwk | import jwk alg=${alg} | export jwk | out $k`;
     } else if (alg.startsWith("rsa/")) {
-      recipe = `genkey ${alg} | export jwk | import jwk alg=${alg} | export jwk | out @k`;
+      recipe = `genkey ${alg} | export jwk | import jwk alg=${alg} | export jwk | out $k`;
     } else if (alg === "x25519") {
-      recipe = `genkey ${alg} | export jwk | import jwk alg=${alg} | export jwk | out @k`;
+      recipe = `genkey ${alg} | export jwk | import jwk alg=${alg} | export jwk | out $k`;
     } else {
       // EC P-384/P-521: pkcs8 round-trip avoids JWK public-import usage mismatch
-      recipe = `genkey ${alg} | export pkcs8 | import pkcs8 alg=${alg} | export pkcs8 | pem | out @k`;
+      recipe = `genkey ${alg} | export pkcs8 | import pkcs8 alg=${alg} | export pkcs8 | pem | out $k`;
     }
     out.push({
       id: `import.alg=${alg}`,
@@ -2426,77 +2426,77 @@ function miscParamMatrix() {
     {
       id: "foreach:keys",
       recipe: `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach :keys
-  - out @k`,
+  - out $k`,
       mode: "run",
     },
     {
       id: "foreach:values",
       recipe: `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach :values
-  - out @v`,
+  - out $v`,
       mode: "run",
     },
     {
       id: "agent.save.expiry=1d",
       recipe:
-        'gpg.genkey email="exp1d@example.com" | agent.save protection=device expiry=1d | out @p',
+        'gpg.genkey email="exp1d@example.com" | agent.save protection=device expiry=1d | out $p',
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "agent.save.expiry=1w",
       recipe:
-        'gpg.genkey email="exp1w@example.com" | agent.save protection=device expiry=1w | out @p',
+        'gpg.genkey email="exp1w@example.com" | agent.save protection=device expiry=1w | out $p',
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "agent.save.expiry=1m",
       recipe:
-        'gpg.genkey email="exp1m@example.com" | agent.save protection=device expiry=1m | out @p',
+        'gpg.genkey email="exp1m@example.com" | agent.save protection=device expiry=1m | out $p',
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "agent.save.expiry=1y",
       recipe:
-        'gpg.genkey email="exp1y@example.com" | agent.save protection=device expiry=1y | out @p',
+        'gpg.genkey email="exp1y@example.com" | agent.save protection=device expiry=1y | out $p',
       mode: "run",
       timeoutMs: 60_000,
     },
     {
       id: "hkp.filter.flags",
-      recipe: `hkp.search "alice@example.com" | hkp.filter approved=false encrypt=false | out @f`,
+      recipe: `hkp.search "alice@example.com" | hkp.filter approved=false encrypt=false | out $f`,
       mode: "run",
     },
     {
       id: "peek.format=auto",
-      recipe: "random 8 | peek x format=auto | encode hex | out @h",
+      recipe: "random 8 | peek x format=auto | encode hex | out $h",
       mode: "run",
     },
     {
       id: "peek.format=hex",
-      recipe: "random 8 | peek x format=hex | encode hex | out @h",
+      recipe: "random 8 | peek x format=hex | encode hex | out $h",
       mode: "run",
     },
     {
       id: "peek.format=text",
-      recipe: "input | peek x format=text | out @t",
+      recipe: "input | peek x format=text | out $t",
       mode: "run",
       bindings: { inputs: { text: { value: "peek" } } },
     },
     {
       id: "peek.format=hexdump",
-      recipe: "random 8 | peek x format=hexdump | encode hex | out @h",
+      recipe: "random 8 | peek x format=hexdump | encode hex | out $h",
       mode: "run",
     },
     {
       id: "peek.format=jwk",
-      recipe: "genkey aes/256 | export jwk | peek x format=jwk | out @j",
+      recipe: "genkey aes/256 | export jwk | peek x format=jwk | out $j",
       mode: "run",
     },
     {
       id: "peek.format=meta",
-      recipe: "genkey ec/p256 | peek x format=meta | export jwk | out @j",
+      recipe: "genkey ec/p256 | peek x format=meta | export jwk | out $j",
       mode: "run",
     },
   ];
@@ -2541,13 +2541,13 @@ export async function agentUnlockCases() {
   return [
     {
       id: "agent.unlock",
-      recipe: `agent.unlock ${fpr} | out @me`,
+      recipe: `agent.unlock ${fpr} | out $me`,
       mode: "run",
       timeoutMs: 30_000,
     },
     {
       id: "agent.pub",
-      recipe: `agent.pub ${fpr} | out @pub`,
+      recipe: `agent.pub ${fpr} | out $pub`,
       mode: "run",
     },
     // Boundary ops (§26f). The approval gate is stubbed to approve once —
@@ -2556,7 +2556,7 @@ export async function agentUnlockCases() {
     // ops compile, dispatch and produce real output through the registry.
     {
       id: "agent.sign",
-      recipe: `"boundary smoke" | utf8 | agent.sign ${fpr} | out @sig`,
+      recipe: `"boundary smoke" | utf8 | agent.sign ${fpr} | out $sig`,
       mode: "run",
       timeoutMs: 60_000,
       setup: () => setApprovalGate(async () => "once"),
@@ -2569,7 +2569,7 @@ export async function agentUnlockCases() {
     },
     {
       id: "agent.sign.mode=detached",
-      recipe: `"detached smoke" | utf8 | agent.sign ${fpr} mode=detached | out @sig`,
+      recipe: `"detached smoke" | utf8 | agent.sign ${fpr} mode=detached | out $sig`,
       mode: "run",
       timeoutMs: 60_000,
       setup: () => setApprovalGate(async () => "once"),
@@ -2582,7 +2582,7 @@ export async function agentUnlockCases() {
     },
     {
       id: "agent.sign.format=gpg",
-      recipe: `"explicit gpg" | utf8 | agent.sign ${fpr} format=gpg | out @sig`,
+      recipe: `"explicit gpg" | utf8 | agent.sign ${fpr} format=gpg | out $sig`,
       mode: "run",
       timeoutMs: 60_000,
       setup: () => setApprovalGate(async () => "once"),
@@ -2592,7 +2592,7 @@ export async function agentUnlockCases() {
       // The ssh key is minted and vaulted while the catalog is built, so the
       // recipe can name its SHA256: id literally — same shape as the HKP
       // fingerprint substitution above.
-      recipe: `"explicit sshsig" | utf8 | agent.sign ${sshId} format=ssh namespace=git | out @sig`,
+      recipe: `"explicit sshsig" | utf8 | agent.sign ${sshId} format=ssh namespace=git | out $sig`,
       mode: "run",
       timeoutMs: 60_000,
       setup: () => setApprovalGate(async () => "once"),
@@ -2608,7 +2608,7 @@ export async function agentUnlockCases() {
       // Ciphertext arrives through `input`, as the design's own example
       // writes it — `gpg.encrypt` emits its ciphertext as an *artifact* and
       // returns a null-data value, so a slot cannot carry it to a later cell.
-      recipe: `input | agent.decrypt ${fpr} | out @plain`,
+      recipe: `input | agent.decrypt ${fpr} | out $plain`,
       mode: "run",
       timeoutMs: 60_000,
       setup: () => setApprovalGate(async () => "once"),

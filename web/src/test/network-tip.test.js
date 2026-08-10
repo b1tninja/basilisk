@@ -14,7 +14,7 @@
  *     `network-value` kind and carries the structured body that kind's widget
  *     draws from. Zero artifacts is the regression; a tile that resolves to
  *     untyped `text` is the near-miss.
- *  2. **The dangling tip and `out @label` describe one value identically.**
+ *  2. **The dangling tip and `out $label` describe one value identically.**
  *     Asserted as field-by-field equality over everything that decides a kind
  *     or a rendering, with the label deliberately excluded — because naming it
  *     is the only thing `out` does here. Two spellings of one artifact is the
@@ -318,7 +318,7 @@ describe("rtc.quality reports no number it did not measure", () => {
   });
 });
 
-describe("the tip and `out @label` are one artifact, not two", () => {
+describe("the tip and `out $label` are one artifact, not two", () => {
   /**
    * Everything that decides which kind claims an artifact, how it renders, and
    * what Download writes. `label` is excluded on purpose — naming the value is
@@ -351,7 +351,7 @@ describe("the tip and `out @label` are one artifact, not two", () => {
       // these carry a duration or a timestamp, so two invocations would differ
       // in the body for reasons that have nothing to do with the emit path.
       // The tee body writes the named tile; the stem falls off the end.
-      const arts = await artifactsOf(`${src} | tee\n  - out @thing`);
+      const arts = await artifactsOf(`${src} | tee\n  - out $thing`);
       expect(arts, `${src} did not produce both an out tile and a tip`).toHaveLength(2);
       const named = arts.find((a) => a.label === "thing");
       const tip = arts.find((a) => a !== named);
@@ -362,10 +362,10 @@ describe("the tip and `out @label` are one artifact, not two", () => {
   }
 
   it("keeps the op's own filename on both paths", async () => {
-    // `out @thing` used to be able to rename a candidate dump to `thing.json`;
+    // `out $thing` used to be able to rename a candidate dump to `thing.json`;
     // the op named it `candidates.json` and that name is the engine's, not a
     // second namer's (downloadNameFor's whole position).
-    const arts = await artifactsOf("rtc.gather | tee\n  - out @thing");
+    const arts = await artifactsOf("rtc.gather | tee\n  - out $thing");
     for (const a of arts) expect(a.filename, a.label).toBe("candidates.json");
   });
 });
@@ -401,7 +401,7 @@ describe("nothing is withheld, so nothing refuses", () => {
         expect(a.content, `${src} → ${a.label}`).not.toMatch(/^\[.*\]$/);
       }
       closeLinksByOrigin("peer");
-      for (const a of await artifactsOf(`${src} | out @x`)) {
+      for (const a of await artifactsOf(`${src} | out $x`)) {
         expect(a.content, `${src} | out → ${a.label}`).not.toMatch(/^\[.*\]$/);
       }
     }

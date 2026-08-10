@@ -142,7 +142,7 @@ describe("inspect / tee", () => {
 });
 
 /**
- * `inspect | out @x` keeps the identity `inspect` gave it (D2, §52).
+ * `inspect | out $x` keeps the identity `inspect` gave it (D2, §52).
  *
  * The bug was that `out` re-derived the role from *sensitivity* — the emit
  * site's `text`/`secret` ternary — and never asked whether the value was a
@@ -161,7 +161,7 @@ describe("inspect survives being named", () => {
 
   it("gives the same role and tag through `out` as through the bare tip", async () => {
     const [tip] = await run('"hello" | utf8 | inspect');
-    const [named] = await run('"hello" | utf8 | inspect | out @i');
+    const [named] = await run('"hello" | utf8 | inspect | out $i');
     expect(tip.role).toBe("inspect");
     expect(named.role).toBe("inspect");
     expect(named.tags).toContain("inspect");
@@ -169,7 +169,7 @@ describe("inspect survives being named", () => {
   });
 
   it("carries the structured snapshot, which is what the tile draws", async () => {
-    const [named] = await run('"hello" | utf8 | inspect | out @i');
+    const [named] = await run('"hello" | utf8 | inspect | out $i');
     expect(named.inspectSnapshot).toBeTruthy();
     expect(named.inspectFormat).toBe("auto");
   });
@@ -177,14 +177,14 @@ describe("inspect survives being named", () => {
   it("still withholds the snapshot for a sensitive value", async () => {
     // The absence is a decision, not a gap: a snapshot retains raw private
     // fields the masked text dump does not. `out` must not undo it.
-    const [named] = await run("random 8 | inspect | out @i");
+    const [named] = await run("random 8 | inspect | out $i");
     expect(named.role).toBe("inspect");
     expect(named.sensitive).toBe(true);
     expect(named.inspectSnapshot).toBeUndefined();
   });
 
   it("leaves a plain `out` alone", async () => {
-    const [named] = await run('"hello" | utf8 | out @m');
+    const [named] = await run('"hello" | utf8 | out $m');
     expect(named.role).toBe("text");
     expect(named.tags).not.toContain("inspect");
     expect(named.inspectSnapshot).toBeUndefined();

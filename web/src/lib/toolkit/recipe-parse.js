@@ -2,8 +2,8 @@
  * Recursive-descent recipe parser (PEG-style ordered choice).
  * Normative grammar: docs/RECIPE.md
  *
- * Supports multi-chain recipes (blank-line separated), `@slot` refs on `out`/`in`,
- * tee/foreach bodies, member selectors (`:public`, `[n]`), and bare `@slot` sources.
+ * Supports multi-chain recipes (blank-line separated), `$slot` refs on `out`/`in`,
+ * tee/foreach bodies, member selectors (`:public`, `[n]`), and bare `$slot` sources.
  *
  * AST steps match recipe.js RecipeStep, with:
  *   - chains[] + steps (= chains[0].steps)
@@ -11,7 +11,16 @@
  *   - tee.branches[].member    canonical "private"|"public"
  *   - foreach.foreachSelector  e.g. ":items" (optional)
  *   - select steps for bare selectors: { name: "select", params: { selector } }
- *   - bare `@label` → { name: "in", params: { ref: "@label" } }
+ *   - bare `$label` → { name: "in", params: { ref: "$label" } }
+ *
+ * Sigils. `$` marks a slot; `@` is reserved for the chain-header position (peer
+ * assignment) and is *not* a slot marker there. Recipes written before the swap
+ * spelled slots with `@`, so `@label` is still read as a slot in the two
+ * positions where nothing else can appear — after `out`/`in`, and after
+ * `param=` — and normalized to `$label` in the AST, so the very next serialize
+ * writes the new spelling. Both sigils are start-anchored: they mark a slot only
+ * as the first character of a reference token, which is what keeps
+ * `to=alice@example.com` and `passphrase=my$ecret` literal.
  */
 
 import { canonicalName, getStep } from "./registry.js";
@@ -53,6 +62,45 @@ export function canonicalSelectorMember(raw) {
   return m;
 }
 
+/** Slot sigil in the current grammar. */
+export const SLOT_SIGIL = "$";
+
+/** Pre-swap slot sigil, still read (and rewritten) for old share links. */
+export const LEGACY_SLOT_SIGIL = "@";
+
+/** Slot a bare `out` writes to. */
+export const DEFAULT_OUT_SLOT = "$output";
+
+/**
+ * `$` or the legacy `@`, at the *start* of a reference token only.
+ * @param {string} ch
+ * @returns {boolean}
+ */
+export function isSlotSigil(ch) {
+  return ch === SLOT_SIGIL || ch === LEGACY_SLOT_SIGIL;
+}
+
+/**
+ * A slot label, no sigil. Shared by the parser and by every caller that has to
+ * build a pattern out of a label — `$` is the regex end-anchor, so a label must
+ * never reach `new RegExp` unescaped.
+ */
+const SLOT_LABEL_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+/** A whole param value that is a pre-swap slot ref, sigil and all. */
+const LEGACY_SLOT_TOKEN_RE = /^@[A-Za-z][A-Za-z0-9_-]*$/;
+
+/**
+ * Escape a slot ref for interpolation into a regular expression.
+ * `$` is the end-anchor and `$&`-style replacement syntax; a bare `$kp` spliced
+ * into a pattern matches an empty string at end of input instead of the ref.
+ * @param {string} ref
+ * @returns {string}
+ */
+export function escapeSlotRefForRegExp(ref) {
+  return String(ref ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Path-shaped refs reserved for future file I/O.
  * @param {string} raw
@@ -63,17 +111,19 @@ export function isPathLikeRef(raw) {
   if (!s) return false;
   if (/^file:/i.test(s)) return true;
   if (s.startsWith("./") || s.startsWith("../") || s.startsWith("/")) return true;
-  if (s.includes("\\") || s.includes("/") && !s.startsWith("@")) return true;
+  if (s.includes("\\") || s.includes("/") && !isSlotSigil(s[0])) return true;
   if (/\.(pem|der|bin|txt|asc|key|spki|pkcs8)$/i.test(s)) return true;
   return false;
 }
 
 /**
- * Canonical slot ref for out/in: `@label` or decimal index string.
- * Labels must include `@` (bare `kp` / `key=cek` rejected — use migrateRecipe / Upgrade).
+ * Canonical slot ref for out/in: `$label` or decimal index string.
+ * Labels must include `$` (bare `kp` / `key=cek` rejected — use migrateRecipe / Upgrade).
+ * A legacy `@label` normalizes to `$label` and reports `legacy: true`, so the
+ * caller can warn once and the AST carries only the new spelling.
  * @param {string} raw
  * @param {{ allowIndex?: boolean }} [opts]
- * @returns {{ ok: true, ref: string } | { ok: false, error: string }}
+ * @returns {{ ok: true, ref: string, legacy?: boolean } | { ok: false, error: string }}
  */
 export function normalizeSlotRef(raw, opts = {}) {
   const allowIndex = opts.allowIndex !== false;
@@ -83,7 +133,7 @@ export function normalizeSlotRef(raw, opts = {}) {
     return {
       ok: false,
       error:
-        "File paths are not supported yet — use @label (e.g. out @kp / in @kp)",
+        "File paths are not supported yet — use $label (e.g. out $kp / in $kp)",
     };
   }
   if (/^\d+$/.test(s)) {
@@ -94,42 +144,53 @@ export function normalizeSlotRef(raw, opts = {}) {
     if (n < 1) return { ok: false, error: "Slot index must be ≥ 1" };
     return { ok: true, ref: String(n) };
   }
-  if (!s.startsWith("@")) {
-    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(s)) {
+  if (!isSlotSigil(s[0])) {
+    if (!SLOT_LABEL_RE.test(s)) {
       return { ok: false, error: `Invalid slot label "${s}"` };
     }
     return {
       ok: false,
-      error: `Slot labels require @ (use @${s}, not ${s})`,
+      error: `Slot labels require $ (use $${s}, not ${s})`,
     };
   }
+  const legacy = s[0] === LEGACY_SLOT_SIGIL;
   const bare = s.slice(1);
-  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(bare)) {
+  if (!SLOT_LABEL_RE.test(bare)) {
     return { ok: false, error: `Invalid slot label "${s}"` };
   }
-  return { ok: true, ref: `@${bare}` };
+  return legacy
+    ? { ok: true, ref: `${SLOT_SIGIL}${bare}`, legacy: true }
+    : { ok: true, ref: `${SLOT_SIGIL}${bare}` };
 }
 
 /**
- * Label key without `@` (for registry maps). Null if index ref.
+ * Label key without its sigil (for registry maps). Null if index ref.
  * @param {string} ref
  * @returns {string|null}
  */
 export function slotLabelKey(ref) {
   const s = String(ref || "");
   if (/^\d+$/.test(s)) return null;
-  return s.startsWith("@") ? s.slice(1) : s;
+  return isSlotSigil(s[0]) ? s.slice(1) : s;
+}
+
+/**
+ * The message every legacy-sigil warning carries.
+ * @param {string} ref  canonical (`$label`) ref
+ * @returns {string}
+ */
+export function legacySlotSigilWarning(ref) {
+  const bare = slotLabelKey(ref) || "";
+  return `Slots are written \`$${bare}\` now — \`@${bare}\` still loads and was rewritten. \`@\` is reserved for naming a peer.`;
 }
 
 /**
  * @param {string} source
- * @returns {{ ast: { chains: { steps: RecipeStep[] }[], steps: RecipeStep[], source: string }|null, errors: RecipeError[] }}
+ * @returns {{ ast: { chains: { steps: RecipeStep[] }[], steps: RecipeStep[], source: string }|null, errors: RecipeError[], warnings: RecipeError[] }}
  */
 export function parseRecipeSource(source) {
   const raw = String(source || "");
   const text = raw.trim();
-  /** @type {RecipeError[]} */
-  const errors = [];
   if (!text) {
     return {
       ast: { chains: [], steps: [], source: text },
@@ -139,25 +200,61 @@ export function parseRecipeSource(source) {
             "Empty recipe — start with a source step like genkey, random, or input.",
         },
       ],
+      warnings: [],
     };
   }
 
   if (raw.includes("\t")) {
     const idx = raw.indexOf("\t");
-    errors.push({
-      message: "Tabs are not allowed — use 2 spaces per indent level",
-      start: idx,
-      end: idx + 1,
-    });
-    return { ast: null, errors };
+    return {
+      ast: null,
+      errors: [
+        {
+          message: "Tabs are not allowed — use 2 spaces per indent level",
+          start: idx,
+          end: idx + 1,
+        },
+      ],
+      warnings: [],
+    };
   }
 
+  // Pass 1 reads `@` as a slot only where nothing else can appear (after
+  // `out`/`in`, after `param=`) and leaves the chain-header `@` reserved.
+  const first = runParse(raw, text, false);
+  // A chain-header `@kp` is only a slot in a recipe that is *provably* pre-swap:
+  // one that spelled a slot `@` somewhere unambiguous. That is not a guess — a
+  // bare `@kp` source can only resolve against an `out @kp` in the same source,
+  // so every valid legacy recipe carries the evidence. Without it, `@` at the
+  // head of a chain stays free for peer assignment.
+  if (first.replayAsLegacy) return runParse(raw, text, true);
+  return first;
+}
+
+/**
+ * @param {string} raw
+ * @param {string} text
+ * @param {boolean} legacyChainHeader
+ */
+function runParse(raw, text, legacyChainHeader) {
+  /** @type {RecipeError[]} */
+  const errors = [];
   const p = new Parser(raw, errors);
+  p.legacyChainHeader = legacyChainHeader;
   try {
     const chains = p.parseRecipe();
-    if (errors.length) return { ast: null, errors };
+    const replayAsLegacy =
+      !legacyChainHeader && p.sawReservedChainHeader && p.sawLegacySlotSigil;
+    if (errors.length) {
+      return { ast: null, errors, warnings: p.warnings, replayAsLegacy };
+    }
     const steps = chains[0]?.steps || [];
-    return { ast: { chains, steps, source: text }, errors: [] };
+    return {
+      ast: { chains, steps, source: text },
+      errors: [],
+      warnings: p.warnings,
+      replayAsLegacy,
+    };
   } catch (err) {
     if (!errors.length) {
       errors.push({
@@ -166,7 +263,13 @@ export function parseRecipeSource(source) {
         end: p.pos,
       });
     }
-    return { ast: null, errors };
+    return {
+      ast: null,
+      errors,
+      warnings: p.warnings,
+      replayAsLegacy:
+        !legacyChainHeader && p.sawReservedChainHeader && p.sawLegacySlotSigil,
+    };
   }
 }
 
@@ -178,11 +281,34 @@ class Parser {
   constructor(src, errors) {
     this.src = src;
     this.errors = errors;
+    /** @type {RecipeError[]} */
+    this.warnings = [];
     this.pos = 0;
+    /** Read a chain-header `@label` as a slot (legacy replay only). */
+    this.legacyChainHeader = false;
+    /** A `$label` was read as a slot where the position allows only a slot. */
+    this.sawLegacySlotSigil = false;
+    /** A chain began with `$label`, which this grammar reserves. */
+    this.sawReservedChainHeader = false;
+    /** Next stage starts a chain — the position `@` is reserved for. */
+    this.atChainHeader = false;
     this.lineStarts = [0];
     for (let i = 0; i < src.length; i++) {
       if (src[i] === "\n") this.lineStarts.push(i + 1);
     }
+  }
+
+  /**
+   * Record a legacy `@label` read, once per distinct ref.
+   * @param {string} ref  canonical `$label`
+   * @param {number} start
+   * @param {number} end
+   */
+  noteLegacySlotSigil(ref, start, end) {
+    this.sawLegacySlotSigil = true;
+    const message = legacySlotSigilWarning(ref);
+    if (this.warnings.some((w) => w.message === message)) return;
+    this.warnings.push({ message, start, end });
   }
 
   eof() {
@@ -263,12 +389,17 @@ class Parser {
         continue;
       }
 
+      // A leading `|` continues the stem of the chain above it, so the stage
+      // after it is not a chain header.
+      let header = current.length === 0;
       if (this.peek() === "|") {
         this.pos++;
         this.skipSpaces();
+        header = false;
       }
 
       void lineStart;
+      this.atChainHeader = header;
       const pipeSteps = this.parsePipeline(0);
       current.push(...pipeSteps);
 
@@ -318,16 +449,19 @@ class Parser {
       }
       stages.push(this.parseStage(parentIndent));
     }
-    // `@kp | out` → out inherits @kp (same as `in @kp | out @kp`).
+    // `$kp | out` → out inherits $kp (same as `in $kp | out $kp`).
     for (let i = 1; i < stages.length; i++) {
       const prev = stages[i - 1];
       const cur = stages[i];
       if (cur.name !== "out") continue;
       const name = cur.params?.name;
       const isDefault =
-        name === undefined || name === "" || name === "@output";
+        name === undefined || name === "" || name === DEFAULT_OUT_SLOT;
       if (!isDefault) continue;
-      if (prev.name === "in" && String(prev.params?.ref || "").startsWith("@")) {
+      if (
+        prev.name === "in" &&
+        String(prev.params?.ref || "").startsWith(SLOT_SIGIL)
+      ) {
         cur.params = { ...cur.params, name: String(prev.params.ref) };
       }
     }
@@ -339,6 +473,8 @@ class Parser {
    * @returns {RecipeStep}
    */
   parseStage(parentIndent) {
+    const header = this.atChainHeader;
+    this.atChainHeader = false;
     this.skipSpaces();
     if (this.peek() === ":") {
       return this.parseSelectorStage();
@@ -364,7 +500,24 @@ class Parser {
     if (this.peek() === "[") {
       return this.parseIndexSelectorStage();
     }
-    if (this.peek() === "@") {
+    if (this.peek() === SLOT_SIGIL) {
+      return this.parseBareSlotStage();
+    }
+    if (this.peek() === LEGACY_SLOT_SIGIL) {
+      // Reserved: `@alice | …` is how a chain will name the peer it runs for.
+      // Mid-pipeline there is no such reading, so the legacy slot read is safe.
+      if (header && !this.legacyChainHeader) {
+        this.sawReservedChainHeader = true;
+        this.errors.push({
+          message:
+            "`@` at the start of a chain is reserved — write a slot as `$label` (e.g. `$kp | :public`)",
+          start: this.pos,
+          end: this.pos + 1,
+        });
+        // Parsed, not counted: this `@` must never be its own evidence that the
+        // recipe is legacy, or the reservation would unmake itself.
+        return this.parseBareSlotStage(false);
+      }
       return this.parseBareSlotStage();
     }
 
@@ -565,29 +718,34 @@ class Parser {
   }
 
   /**
-   * Bare `@label` source — same as `in @label`.
+   * Bare `$label` source — same as `in $label`.
    * @returns {RecipeStep}
    */
-  parseBareSlotStage() {
+  parseBareSlotStage(noteLegacy = true) {
     const start = this.pos;
-    this.pos++; // @
+    const sigil = this.peek();
+    this.pos++; // $ or legacy @
     const id = this.readIdent();
     if (!id) {
       this.errors.push({
-        message: "Expected slot label after `@`",
+        message: `Expected slot label after \`${sigil}\``,
         start,
         end: this.pos,
       });
       return {
         name: "in",
-        params: { ref: "@" },
+        params: { ref: sigil },
         start,
         end: this.pos,
       };
     }
+    const ref = `${SLOT_SIGIL}${id}`;
+    if (sigil === LEGACY_SLOT_SIGIL && noteLegacy) {
+      this.noteLegacySlotSigil(ref, start, this.pos);
+    }
     return {
       name: "in",
-      params: { ref: `@${id}` },
+      params: { ref },
       start,
       end: this.pos,
     };
@@ -759,7 +917,7 @@ class Parser {
     if (!body.listBody.length && !body.branches.length) {
       this.errors.push({
         message:
-          "foreach requires a body — use indented `- out @share` or `foreach { - out @share }`",
+          "foreach requires a body — use indented `- out $share` or `foreach { - out $share }`",
         start,
         end: this.pos,
       });
@@ -1207,7 +1365,7 @@ class Parser {
         }
         this.errors.push({
           message:
-            "File paths are not supported yet — use @label (e.g. out @kp / in @kp)",
+            "File paths are not supported yet — use $label (e.g. out $kp / in $kp)",
           start: tokStart,
           end: this.pos,
         });
@@ -1221,11 +1379,12 @@ class Parser {
         continue;
       }
 
-      // @label slot sugar
-      if (ch === "@") {
+      // $label slot sugar (legacy `@label` still read here — a positional
+      // argument is one of the two positions where only a slot can appear).
+      if (isSlotSigil(ch)) {
         this.pos++;
         const id = this.readIdent();
-        const raw = id ? `@${id}` : "@";
+        const raw = id ? `${ch}${id}` : ch;
         if (!positionalUsed) {
           const pos = (spec?.params || []).find((p) => p.positional);
           if (!pos) {
@@ -1305,7 +1464,7 @@ class Parser {
         } else {
           // Positional: allow alg ids (ec/p256) and emails (alice@example.org).
           let raw = word;
-          if (/[/:@+]/.test(this.peek())) {
+          if (/[/:@+$]/.test(this.peek())) {
             this.pos = tokStart;
             raw = this.readArgValue();
           }
@@ -1350,7 +1509,22 @@ class Parser {
       params.format = "hexdump";
     }
 
-    // Normalize out/in slot refs to canonical @label or index.
+    // Legacy sigil, one sweep. Not every slot-bearing param is declared
+    // `type: "slot"` — `passphrase=`, `aad=`, `salt=`, `info=`, `signature=`
+    // and `gpg.encrypt to=` are strings that the validator reads as a slot
+    // when, and only when, the value starts with the sigil. That leading-sigil
+    // rule is the whole of the old grammar, so replaying it here rewrites all
+    // of them at once and the AST leaves parse holding only `$`.
+    for (const key of Object.keys(params)) {
+      const v = params[key];
+      if (typeof v !== "string") continue;
+      if (!LEGACY_SLOT_TOKEN_RE.test(v)) continue;
+      const ref = `${SLOT_SIGIL}${v.slice(1)}`;
+      params[key] = ref;
+      this.noteLegacySlotSigil(ref, start, this.pos);
+    }
+
+    // Normalize out/in slot refs to canonical $label or index.
     if (canon === "out" || canon === "in") {
       const key = canon === "out" ? "name" : "ref";
       const rawSlot = params[key];
@@ -1366,13 +1540,14 @@ class Parser {
           });
         } else {
           params[key] = norm.ref;
+          if (norm.legacy) this.noteLegacySlotSigil(norm.ref, start, this.pos);
         }
       } else if (canon === "out") {
-        params.name = "@output";
+        params.name = DEFAULT_OUT_SLOT;
       }
     }
 
-    // Normalize typed slot params (key=@cek, peer=@pub, …).
+    // Normalize typed slot params (key=$cek, peer=$pub, …).
     for (const p of spec?.params || []) {
       if (p.type !== "slot") continue;
       const rawSlot = params[p.name];
@@ -1388,13 +1563,14 @@ class Parser {
         });
       } else {
         params[p.name] = norm.ref;
+        if (norm.legacy) this.noteLegacySlotSigil(norm.ref, start, this.pos);
       }
     }
 
-    // verify signature=@slot (bare base64url strings stay as-is).
+    // verify signature=$slot (bare base64url strings stay as-is).
     if (canon === "verify") {
       const sig = params.signature;
-      if (sig != null && String(sig).trim().startsWith("@")) {
+      if (sig != null && isSlotSigil(String(sig).trim()[0])) {
         const norm = normalizeSlotRef(String(sig), { allowIndex: false });
         if (!norm.ok) {
           this.errors.push({
@@ -1404,6 +1580,7 @@ class Parser {
           });
         } else {
           params.signature = norm.ref;
+          if (norm.legacy) this.noteLegacySlotSigil(norm.ref, start, this.pos);
         }
       }
     }
@@ -1422,19 +1599,21 @@ class Parser {
    */
   readArgValue() {
     if (this.peek() === '"' || this.peek() === "'") return this.readString();
-    if (this.peek() === "@") {
+    if (isSlotSigil(this.peek())) {
       const start = this.pos;
+      const sigil = this.peek();
       this.pos++;
       const id = this.readIdent();
-      return id ? `@${id}` : this.src.slice(start, this.pos);
+      return id ? `${sigil}${id}` : this.src.slice(start, this.pos);
     }
     if (/[0-9]/.test(this.peek())) return String(this.readNumber());
     if (!/[A-Za-z]/.test(this.peek())) return "";
     const start = this.pos;
     this.pos++;
-    // Mid-token `@` / `:` so positional emails (`hkp.search alice@example.org`)
-    // parse as one value. Leading `@slot` is handled above.
-    while (/[A-Za-z0-9_+./:@-]/.test(this.peek())) this.pos++;
+    // Mid-token `@` / `$` / `:` so positional emails (`hkp.search
+    // alice@example.org`) parse as one value. A sigil marks a slot only at the
+    // start of the token — that is what keeps `my$ecret` a literal.
+    while (/[A-Za-z0-9_+./:@$-]/.test(this.peek())) this.pos++;
     return this.src.slice(start, this.pos);
   }
 
@@ -1444,18 +1623,20 @@ class Parser {
    */
   readNamedArgValue() {
     if (this.peek() === '"' || this.peek() === "'") return this.readString();
-    if (this.peek() === "@") {
+    if (isSlotSigil(this.peek())) {
       const start = this.pos;
+      const sigil = this.peek();
       this.pos++;
       const id = this.readIdent();
-      return id ? `@${id}` : this.src.slice(start, this.pos);
+      return id ? `${sigil}${id}` : this.src.slice(start, this.pos);
     }
-    // Unquoted values: allow `@` / `:` so `to=alice@example.org` and `to=email:…` /
-    // `to=fpr:…` parse as one token (leading `@slot` handled above).
+    // Unquoted values: allow `@` / `$` / `:` so `to=alice@example.org`,
+    // `passphrase=my$ecret` and `to=email:…` / `to=fpr:…` parse as one token.
+    // Only a *leading* sigil (handled above) means a slot.
     if (!/[A-Za-z0-9_+./-]/.test(this.peek())) return "";
     const start = this.pos;
     this.pos++;
-    while (/[A-Za-z0-9_+./:@-]/.test(this.peek())) this.pos++;
+    while (/[A-Za-z0-9_+./:@$-]/.test(this.peek())) this.pos++;
     return this.src.slice(start, this.pos);
   }
 

@@ -141,7 +141,7 @@ function KeypairCard({ artifact }: ArtifactViewContext) {
        * refusal spoken by a control. It is pinned verbatim in
        * `artifact-kinds-table.test.js`, which is the thing it was missing.
        */
-      withheld="private half not shown — add `out @kp` to the recipe to write both halves"
+      withheld="private half not shown — add `out $kp` to the recipe to write both halves"
     />
   );
 }
@@ -245,10 +245,10 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
      * JWK. Read as a rendering, it is the most public tile in the section.
      *
      * It is still secret, because the badge names the **artifact** and not
-     * the view. `@kp` holds both halves; Copy and Download move both; the
+     * the view. `$kp` holds both halves; Copy and Download move both; the
      * withheld line exists precisely to say that the half you cannot see is
      * in there. A tier that described what is currently painted would flip
-     * from public to secret the moment a recipe added `out @kp`, which is the
+     * from public to secret the moment a recipe added `out $kp`, which is the
      * definition of a label that does not name its object.
      *
      * And the two errors are not the same size. Tinting a keypair public is a
@@ -826,7 +826,7 @@ export const ARTIFACT_KINDS: readonly ToolkitArtifactKind[] = [
      *
      * **No new role, and the probe is why.** The SSH halves needed two words
      * because `role` is stamped from *sensitivity* at the text emit sites, so
-     * one private block arrived as `secret` through `out @priv` and `text`
+     * one private block arrived as `secret` through `out $priv` and `text`
      * through a dangling tip, and `ArtifactMatch.role` is exact. A code is
      * never sensitive — that is `otp-ops.js`'s deliberate decision, since it
      * expires in one step and exists to be read — so both paths stamp `text`,

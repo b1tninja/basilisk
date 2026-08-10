@@ -456,7 +456,7 @@ export function inferSourceType(name, params = {}) {
     // ── Network / WebRTC (design v2 §21a/23a/23b/29a/29d/30d) ──
     case "rtc.ice":
       // A list of ICE server addresses — host:port pairs, same shape as any
-      // other endpoint, which is why `ice=@slot` can type-check against it.
+      // other endpoint, which is why `ice=$slot` can type-check against it.
       return typeOf("endpoint", { kind: "ice-servers" });
     case "stun.check":
       // The peer's own server-reflexive address, as discovered.
@@ -560,7 +560,7 @@ function gpgSymModeTypeError(params, op) {
     return `${op}: passphrase= requires mode=passphrase (default mode=master is the SSS envelope path)`;
   }
   if (mode === "passphrase" && !pw) {
-    return `${op} mode=passphrase requires passphrase= or passphrase=@slot`;
+    return `${op} mode=passphrase requires passphrase= or passphrase=$slot`;
   }
   return null;
 }
@@ -1625,7 +1625,7 @@ export function resolveStepType(spec, current, params = {}) {
       ok: false,
       error:
         current.base === "bundle"
-          ? `Type mismatch: "${name}" expects ${want}, got bundle (foreach tip — use @slots from the body, not the bundle tip).`
+          ? `Type mismatch: "${name}" expects ${want}, got bundle (foreach tip — use $slots from the body, not the bundle tip).`
           : `Type mismatch: "${name}" expects ${want}, got ${formatType(current)}.`,
     };
   }
@@ -1858,7 +1858,7 @@ export const ARTIFACT_ROLES = Object.freeze([
    *
    * They are not served by `text`/`secret` plus a tag, which was tried
    * first: `role` is stamped from *sensitivity* at both text emit sites, so
-   * the same private block came out `secret` through `out @priv` and `text`
+   * the same private block came out `secret` through `out $priv` and `text`
    * through a dangling tip, and `ArtifactMatch.role` is exact. A kind
    * matching one spelling silently disowned the other — a masked private key
    * rendering as untyped text, which is the tile §35d already fixed once.
@@ -1970,7 +1970,7 @@ export function artifactMetaFromType(t) {
  *
  * Recipe sinks decide this explicitly (memory-safety.js rule 4 — do not regress):
  *   - `text` / `print` → disposition "message" (compose; string unavoidable)
- *   - `out @label` → disposition "file" (attachment; keep wipeable `artifact.bytes`)
+ *   - `out $label` → disposition "file" (attachment; keep wipeable `artifact.bytes`)
  *
  * Do NOT reintroduce content sniffing (hex / base64 / armor → “message”). That
  * encouraged treating secrets as display strings, which cannot be zeroed in JS.
@@ -1996,7 +1996,7 @@ export function artifactIsTextualForEncrypt(a) {
 
 /**
  * Walk recipe steps and compute refined input→output types per step.
- * Tracks `out @label` within the walk so later `in` / bare `@label` resolve
+ * Tracks `out $label` within the walk so later `in` / bare `$label` resolve
  * to the registered tip (ghost chips); unbound `in` stays opaque.
  *
  * @param {{ name: string, params?: Record<string, *>, body?: *, branches?: *, foreachSelector?: string }[]} steps
@@ -2135,7 +2135,7 @@ export function walkPipelineTypes(steps, deps, slotTypes = new Map()) {
     }
     current = resolved.output;
     if (step.name === "out") {
-      const key = slotLabelKey(String(step.params?.name || "@output"));
+      const key = slotLabelKey(String(step.params?.name || "$output"));
       if (key) slotTypes.set(key, { ...current });
     }
     edges.push({
@@ -2206,7 +2206,7 @@ function walkBodyTypes(body, start, deps, slotTypes = new Map()) {
     }
     current = resolved.output;
     if (step.name === "out") {
-      const key = slotLabelKey(String(step.params?.name || "@output"));
+      const key = slotLabelKey(String(step.params?.name || "$output"));
       if (key) slotTypes.set(key, { ...current });
     }
     edges.push({

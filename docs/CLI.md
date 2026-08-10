@@ -62,8 +62,13 @@ recipe.txt: 1 error
 ## `run`
 
 Each blank-line **chain** is a cell, and one kernel spans the whole file — so
-`out @slot` in cell 1 is live in cell 3, exactly as in the notebook. Cells run
+`out $slot` in cell 1 is live in cell 3, exactly as in the notebook. Cells run
 top to bottom.
+
+`run` takes a *file*. That matters more than it used to: a slot is written
+`$label`, and a shell expands `$label` inside double quotes, so a recipe typed
+straight onto a command line (`--recipe "… | out $kp"`) would arrive with the
+slot names deleted. Keep recipes in files, or single-quote them.
 
 ```bash
 node web/cli/basilisk.js run split-recover.txt --out-dir ./artifacts
@@ -73,9 +78,9 @@ with `split-recover.txt`:
 
 ```text
 random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
-shares | blip39.decode | sss.combine | base64 | out @secret
+shares | blip39.decode | sss.combine | base64 | out $secret
 ```
 
 The recover cell has no paste panel here and does not need one: it falls back
@@ -125,7 +130,7 @@ echo -n "hello world" | node web/cli/basilisk.js run hash.txt --stdin
 node web/cli/basilisk.js run hash.txt --input "hello world"
 ```
 
-where `hash.txt` is `input | utf8 | digest | encode hex | out @hash`. Both
+where `hash.txt` is `input | utf8 | digest | encode hex | out $hash`. Both
 print `b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9`.
 
 Recovering from shares held outside this session:
@@ -149,7 +154,7 @@ BASILISK_PW=… node web/cli/basilisk.js run decrypt.txt \
   --passphrase-env BASILISK_PW
 ```
 
-with `decrypt.txt` being `gpg.decrypt | out @plain`.
+with `decrypt.txt` being `gpg.decrypt | out $plain`.
 
 ### Why there is no `--passphrase`
 
@@ -169,7 +174,7 @@ Passing `--passphrase` is a usage error, not an undocumented alias.
 
 `--passphrase-env` covers private-key unlock and the SSS envelope. It does
 **not** feed `gpg.symencrypt` / `gpg.symdecrypt` `mode=passphrase`, whose
-passphrase is a *recipe* parameter (`passphrase=@slot`) rather than a runtime
+passphrase is a *recipe* parameter (`passphrase=$slot`) rather than a runtime
 input — see RECIPE.md.
 
 ## Browser-only ops

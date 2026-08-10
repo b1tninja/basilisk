@@ -41,7 +41,7 @@ describe("parseToolkitHash", () => {
     expect(MESSAGING_STARTERS.symencrypt.recipe).toContain(
       "gpg.symencrypt mode=passphrase"
     );
-    expect(MESSAGING_STARTERS.symencrypt.recipe).toContain("passphrase=@pw");
+    expect(MESSAGING_STARTERS.symencrypt.recipe).toContain("passphrase=$pw");
   });
 
   it("parses preset and recipe forms", () => {
@@ -63,17 +63,17 @@ describe("parseToolkitHash", () => {
 describe("compact share form", () => {
   it("minifies pipes, chains, and foreach bodies", () => {
     const foreachPretty = `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`;
+  - out $share`;
     expect(compactRecipeText(foreachPretty)).toBe(
-      "random 32|sss.split|blip39.encode|foreach{ - out @share }"
+      "random 32|sss.split|blip39.encode|foreach{ - out $share }"
     );
 
-    const chained = `genkey ec/p256 | out @kp
+    const chained = `genkey ec/p256 | out $kp
 
-in @kp | export spki | pem | out @pub`;
+in $kp | export spki | pem | out $pub`;
     const compact = compactRecipeText(chained);
     expect(compact).toBe(
-      "genkey ec/p256|out @kp~@kp|export spki|pem|out @pub"
+      "genkey ec/p256|out $kp~$kp|export spki|pem|out $pub"
     );
     expect(compact).not.toContain("\n");
     expect(encodeSharePayload(compact)).toContain("|");
@@ -81,10 +81,31 @@ in @kp | export spki | pem | out @pub`;
     expect(encodeSharePayload(compact)).not.toContain("%7C");
   });
 
-  it("round-trips through hash and beautifies on load", () => {
-    const pretty = `genkey ec/p256 | out @kp
+  it("spends one fragment character on a slot, not three", () => {
+    // `encodeURIComponent` escapes `$` to `%24`. Against a 6000-character
+    // budget that is three characters per slot reference, on a language where
+    // every value that crosses a cell boundary is one.
+    const compact = "genkey ec/p256|out $kp~$kp|export spki|pem|out $pub";
+    const encoded = encodeSharePayload(compact);
+    expect(encoded).not.toContain("%24");
+    expect((encoded.match(/\$/g) || []).length).toBe(3);
+    expect(encoded.length).toBe(compact.length);
 
-in @kp | export spki | pem | out @pub`;
+    // And it survives the whole `#r=` trip unchanged.
+    const { hash } = hashForRecipe(compact);
+    const action = parseToolkitHash(hash);
+    expect(action.kind).toBe("recipe");
+    if (action.kind !== "recipe") return;
+    expect(expandShareRecipe(action.recipe)).toContain("out $kp");
+    const { text, errors } = canonicalizeRecipe(expandShareRecipe(action.recipe));
+    expect(errors).toEqual([]);
+    expect(text).toContain("out $pub");
+  });
+
+  it("round-trips through hash and beautifies on load", () => {
+    const pretty = `genkey ec/p256 | out $kp
+
+in $kp | export spki | pem | out $pub`;
     const { hash, ok } = hashForRecipe(pretty);
     expect(ok).toBe(true);
     expect(hash.startsWith("#r=")).toBe(true);
@@ -100,7 +121,7 @@ in @kp | export spki | pem | out @pub`;
     const { text, errors } = canonicalizeRecipe(action.recipe);
     expect(errors).toEqual([]);
     expect(text).toBe(
-      "genkey ec/p256 | out @kp\n\n@kp | export spki | pem | out @pub"
+      "genkey ec/p256 | out $kp\n\n$kp | export spki | pem | out $pub"
     );
   });
 
@@ -247,12 +268,12 @@ describe("hash writers", () => {
   });
 
   it("encodes full recipes under the size cap", () => {
-    const r = hashForRecipe("random 8 | encode hex | out @x");
+    const r = hashForRecipe("random 8 | encode hex | out $x");
     expect(r.ok).toBe(true);
     expect(r.hash.startsWith("#r=")).toBe(true);
     expect(parseToolkitHash(r.hash)).toEqual({
       kind: "recipe",
-      recipe: "random 8|encode hex|out @x",
+      recipe: "random 8|encode hex|out $x",
     });
   });
 

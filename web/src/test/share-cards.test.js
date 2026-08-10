@@ -127,9 +127,9 @@ describe("verifiable splits on paper", () => {
   it("prints vss.combine for a verifiable set and sss.combine otherwise", async () => {
     const { ast } = compileRecipe(
       `random 32 | vss.split threshold=2 shares=3 | tee
-  - vss.commitments | out @commitments
+  - vss.commitments | out $commitments
 | blip39 | foreach
-  - out @share`
+  - out $share`
     );
     const arts = await runRecipe(ast);
     const [card] = collectShareCards(arts);
@@ -174,7 +174,7 @@ describe("against a real split", () => {
   it("cards a 2-of-3 blip39 split with QR codes attached", async () => {
     const { ast } = compileRecipe(
       `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share | qr`
+  - out $share | qr`
     );
     const arts = await runRecipe(ast);
     const cards = collectShareCards(arts, { label: "Ceremony" });
@@ -193,7 +193,7 @@ describe("against a real split", () => {
   it("cards a split with no qr step, leaving the QR slot empty", async () => {
     const { ast } = compileRecipe(
       `random 32 | sss.split threshold=3 shares=5 | blip39 | foreach
-  - out @share`
+  - out $share`
     );
     const arts = await runRecipe(ast);
     const cards = collectShareCards(arts);

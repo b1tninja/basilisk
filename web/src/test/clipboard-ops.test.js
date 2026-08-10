@@ -76,8 +76,8 @@ describe("registry shape", () => {
 
   it("compiles in the signaling shapes the design names", () => {
     for (const recipe of [
-      "clipboard.read | out @pasted",
-      "random 16 | encode base64 | clipboard.write | out @copied",
+      "clipboard.read | out $pasted",
+      "random 16 | encode base64 | clipboard.write | out $copied",
     ]) {
       expect(compileRecipe(recipe).validation.errors.map((e) => e.message)).toEqual([]);
     }

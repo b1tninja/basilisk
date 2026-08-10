@@ -24,7 +24,7 @@
  * |---|---|---|
  * | AEAD | ChaCha20-Poly1305 | **AES-256-GCM** (WebCrypto has no ChaCha) |
  * | Chunk | 64 KiB fixed | 64 KiB default, `chunk=` selectable |
- * | Key delivery | recipient stanzas (X25519 / scrypt) + HMAC'd header | one AES-GCM-wrapped file key under the `key=@slot` you supply |
+ * | Key delivery | recipient stanzas (X25519 / scrypt) + HMAC'd header | one AES-GCM-wrapped file key under the `key=$slot` you supply |
  * | Header MAC | HMAC-SHA-256 over the header, keyed by the file key | header is the AAD of the file-key wrap |
  * | Armor | PEM-style `BEGIN AGE ENCRYPTED FILE` | none — bytes; pipe through `base64` if you need text |
  *
@@ -48,7 +48,7 @@
  * ```
  *
  * The file key is fresh random per file, which is what makes counter nonces
- * safe: the `key=@slot` you pass may be reused across many files (it usually
+ * safe: the `key=$slot` you pass may be reused across many files (it usually
  * is), and reusing a counter nonce under a reused key would be catastrophic
  * for GCM. Wrapping a per-file key is the same move age makes for the same
  * reason. It also means the supplied key never needs to be extractable —
@@ -139,7 +139,7 @@ function headerPrefix(chunkSize) {
 
 /**
  * Seal plaintext into the v1 chunked format.
- * @param {CryptoKey} kek  key-encryption key (the caller's `key=@slot`)
+ * @param {CryptoKey} kek  key-encryption key (the caller's `key=$slot`)
  * @param {Uint8Array} plaintext
  * @param {{ chunk?: number }} [opts]
  * @returns {Promise<Uint8Array>}

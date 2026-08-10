@@ -1,5 +1,5 @@
 /**
- * Notebook session kernel — live @slots + per-cell outputs across Runs.
+ * Notebook session kernel — live $slots + per-cell outputs across Runs.
  */
 
 import { runRecipe } from "./engine.js";

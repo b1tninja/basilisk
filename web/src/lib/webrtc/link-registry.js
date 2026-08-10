@@ -84,16 +84,18 @@ const watchers = new Set();
 export function normalizeLinkId(raw, op = "peer") {
   const id = String(raw ?? "").trim() || "default";
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
-    // `@a` is the mistake worth naming, because everything else in this
+    // `$a` is the mistake worth naming, because everything else in this
     // language that threads a value between cells is a slot and the habit is
     // strong. A connection name is not a slot — it is not written by `out`, it
-    // holds no value, and `in @a` would find nothing. Saying so beats a bare
+    // holds no value, and `in $a` would find nothing. Saying so beats a bare
     // charset complaint, which reads as "your name has a typo".
-    const slotish = /^@/.test(id);
+    // Both sigils, because a reader arriving from an older recipe still has
+    // `@` in hand and the advice is identical either way.
+    const sigil = /^[$@]/.test(id) ? id[0] : "";
     throw new Error(
       `${op}: "${id}" is not a usable connection name — ` +
-        (slotish
-          ? `write it without the @ (${op} ${id.slice(1) || "a"}). A connection name is not a slot: nothing writes it, and it holds no value to load.`
+        (sigil
+          ? `write it without the ${sigil} (${op} ${id.slice(1) || "a"}). A connection name is not a slot: nothing writes it, and it holds no value to load.`
           : "letters, digits, dot, dash and underscore only, starting with a letter or digit.")
     );
   }

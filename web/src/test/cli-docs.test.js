@@ -178,7 +178,7 @@ describe("docs/CLI.md", () => {
   it("reproduces the hash the page prints for the --input / --stdin example", async () => {
     const claimed = /`(b94d27b9[0-9a-f]+)`/.exec(docText);
     expect(claimed, "documented digest missing from CLI.md").toBeTruthy();
-    const recipeText = /`(input \| utf8 \| digest \| encode hex \| out @hash)`/.exec(
+    const recipeText = /`(input \| utf8 \| digest \| encode hex \| out \$hash)`/.exec(
       docText
     );
     expect(recipeText, "documented hash recipe missing from CLI.md").toBeTruthy();
@@ -198,7 +198,7 @@ describe("docs/CLI.md", () => {
     const recipe = file(
       dir,
       "rtc.txt",
-      "random 8 | encode hex | out @nonce\n\nrtc.certificate | out @cert\n"
+      "random 8 | encode hex | out $nonce\n\nrtc.certificate | out $cert\n"
     );
     const { code, err } = await cli(["run", recipe]);
     expect(code).toBe(EXIT.browserOnly);
@@ -209,9 +209,9 @@ describe("docs/CLI.md", () => {
   });
 
   it("the documented gpg.decrypt recipe is the one the flags actually drive", async () => {
-    expect(docText).toContain("gpg.decrypt | out @plain");
+    expect(docText).toContain("gpg.decrypt | out $plain");
     const dir = workdir();
-    const recipe = file(dir, "decrypt.txt", "gpg.decrypt | out @plain\n");
+    const recipe = file(dir, "decrypt.txt", "gpg.decrypt | out $plain\n");
     // Valid recipe, missing inputs — proves the recipe on the page compiles.
     const { code } = await cli(["check", recipe]);
     expect(code).toBe(EXIT.ok);

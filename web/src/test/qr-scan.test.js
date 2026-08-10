@@ -54,17 +54,17 @@ describe("registry shape", () => {
 describe("type flow", () => {
   it("accepts an image from file.read and SVG text from `qr`", () => {
     for (const recipe of [
-      "file.read | qr.scan | out @invite",
-      "input | qr.scan | out @invite",
+      "file.read | qr.scan | out $invite",
+      "input | qr.scan | out $invite",
     ]) {
       expect(compileRecipe(recipe).validation.errors.map((e) => e.message), recipe).toEqual([]);
     }
   });
 
   it("lets foreach walk a multi-code scan, and not a single one", () => {
-    const many = compileRecipe("file.read | qr.scan count=all | foreach\n  - out @code");
+    const many = compileRecipe("file.read | qr.scan count=all | foreach\n  - out $code");
     expect(many.validation.errors.map((e) => e.message)).toEqual([]);
-    const one = compileRecipe("file.read | qr.scan | foreach\n  - out @code");
+    const one = compileRecipe("file.read | qr.scan | foreach\n  - out $code");
     expect(one.validation.ok).toBe(false);
   });
 

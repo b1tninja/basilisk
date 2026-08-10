@@ -21,10 +21,10 @@ type Props = {
   className?: string;
 };
 
-/** `@label` slot reference, or empty/unbound. Secret params only ever hold this shape. */
+/** `$label` slot reference, or empty/unbound. Secret params only ever hold this shape. */
 function slotRefOf(val: unknown): string | null {
   const s = typeof val === "string" ? val.trim() : "";
-  return s.startsWith("@") && s.length > 1 ? s : null;
+  return s.startsWith("$") && s.length > 1 ? s : null;
 }
 
 /**
@@ -67,7 +67,7 @@ export function ParamField({
   const lockedReason = visibility.lockedReason;
 
   // Secret params (design v2 §22a): no free text, ever — bind-only. The literal
-  // value never renders even when bound; only the @slotRef name is shown.
+  // value never renders even when bound; only the $slotRef name is shown.
   if (param.secret) {
     const ref = slotRefOf(val);
     return (

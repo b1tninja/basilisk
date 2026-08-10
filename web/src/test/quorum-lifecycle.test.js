@@ -290,12 +290,12 @@ describe("parseIceConfig blames the binding, not the parser", () => {
   });
 
   it("says which parameter is wrong when the slot holds something else", () => {
-    // Binding `ice=@passphrase` is how anyone gets here, and the raw
+    // Binding `ice=$passphrase` is how anyone gets here, and the raw
     // `SyntaxError: Unexpected token 'h', "hunter2" is not valid JSON` that
     // used to escape named neither `ice=` nor the step.
     for (const bad of ["hunter2", "", "-----BEGIN PGP MESSAGE-----"]) {
       expect(() => q.parseIceConfig(bad), JSON.stringify(bad)).toThrow(
-        "ice=@slot does not hold rtc.ice output"
+        "ice=$slot does not hold rtc.ice output"
       );
     }
   });
@@ -311,7 +311,7 @@ describe("parseIceConfig blames the binding, not the parser", () => {
     // `stun=none` unreachable from the other end of the pipeline: a user could
     // write the choice and the binding would reject it. It is accepted now —
     // but only from a value that declares itself an rtc.ice config, so
-    // `ice=@somethingelse` still names the parameter rather than quietly
+    // `ice=$somethingelse` still names the parameter rather than quietly
     // becoming "no third party".
     const none = q.execRtcIce({ stun: "none" });
     expect(q.parseIceConfig(none.data)).toEqual([]);

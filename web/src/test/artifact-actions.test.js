@@ -119,7 +119,7 @@ describe("a disabled action always carries a reason (§33d)", () => {
     // for one sentence to drift, which is what this module exists to prevent.
     expect(ACTION_REASONS.maskedButRevealable).not.toMatch(/\bcopie?d?\b|\bdownload/i);
     expect(ACTION_REASONS.neverAskedFor).toBe(
-      "This value was not asked for. Add `out @label` to the recipe to see or copy it."
+      "This value was not asked for. Add `out $label` to the recipe to see or copy it."
     );
     expect(ACTION_REASONS.noVault).toBe(
       "My Keys is unavailable in this browser (no IndexedDB)."
@@ -503,13 +503,13 @@ describe("the filename is the feature: one namer, corrected per kind", () => {
   });
 
   it("names an OpenPGP pair public.asc and k.asc, as the engine did", async () => {
-    const rows = await tiles('gpg.genkey email="a@b.c" | out @k');
+    const rows = await tiles('gpg.genkey email="a@b.c" | out $k');
     expect(nameOf(rows, "openpgp-public")).toBe("public.asc");
     expect(nameOf(rows, "openpgp-private")).toBe("k.asc");
   });
 
   it("keeps a JWK a .jwk.json on both halves", async () => {
-    const rows = await tiles("genkey ed25519 | out @kp");
+    const rows = await tiles("genkey ed25519 | out $kp");
     expect(nameOf(rows, "keypair-private")).toBe("kp-private.jwk.json");
     expect(nameOf(rows, "keypair-public")).toBe("kp-public.jwk.json");
   });
@@ -519,7 +519,7 @@ describe("the filename is the feature: one namer, corrected per kind", () => {
     // `sig.txt`. `ssh-keygen -Y verify` wants a `.sig` beside the file it
     // signed — the rename this action exists to save.
     const rows = await tiles(
-      'genkey ed25519 | tee\n  - :public | ssh.encode | out @pub\n| out @id\n\n"msg" | ssh.sign key=@id namespace=git | out @sig'
+      'genkey ed25519 | tee\n  - :public | ssh.encode | out $pub\n| out $id\n\n"msg" | ssh.sign key=$id namespace=git | out $sig'
     );
     expect(nameOf(rows, "sshsig")).toBe("sig.sig");
     expect(ARTIFACT_KINDS.find((k) => k.id === "sshsig").download).toEqual({ ext: "sig" });
@@ -537,13 +537,13 @@ describe("the filename is the feature: one namer, corrected per kind", () => {
     // and both are role `receipt`. A declared `.json` would be wrong for the
     // half the ceremony actually produces — which is why `download` on a kind
     // is a correction and not a naming scheme.
-    const rows = await tiles('"hi" | out @msg\nrun.receipt | out @receipt');
+    const rows = await tiles('"hi" | out $msg\nrun.receipt | out $receipt');
     expect(nameOf(rows, "receipt")).toBe("receipt.txt");
     expect(ARTIFACT_KINDS.find((k) => k.id === "receipt").download).toBeUndefined();
   });
 
   it("names ordinary text and an inspect dump after the slot that asked", async () => {
-    expect(nameOf(await tiles('"hi" | out @msg'), "text")).toBe("msg.txt");
+    expect(nameOf(await tiles('"hi" | out $msg'), "text")).toBe("msg.txt");
     expect(nameOf(await tiles('"hi" | inspect'), "inspect-snapshot")).toBe("inspect.txt");
   });
 
@@ -812,7 +812,7 @@ describe("the table is the single definition (§33c)", () => {
 describe("the key actions against a real artifact", () => {
   /** The public half of a real generated keypair, as the engine emits it. */
   const publicHalf = async (alg) => {
-    const { ast } = compileRecipe(`genkey ${alg} | out @kp`);
+    const { ast } = compileRecipe(`genkey ${alg} | out $kp`);
     const arts = await runRecipe(ast, {});
     return arts.find((a) => /public/.test(a.label));
   };
@@ -856,7 +856,7 @@ describe("the key actions against a real artifact", () => {
 
   it("still fingerprints while the private half is masked", async () => {
     // The fingerprint is a public fact; masking it would be theatre (§34b).
-    const { ast } = compileRecipe("genkey ed25519 | out @kp");
+    const { ast } = compileRecipe("genkey ed25519 | out $kp");
     const arts = await runRecipe(ast, {});
     const priv = arts.find((a) => /private/.test(a.label));
     expect(priv.sensitive).toBe(true);

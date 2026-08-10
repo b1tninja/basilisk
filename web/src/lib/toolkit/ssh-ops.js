@@ -173,7 +173,7 @@ function importParamsFor(type, hash = "sha512") {
  * run the notebook makes. It is kept as the fallback rather than deleted
  * because `agent.save protection=passphrase` reads the same two fields and
  * has the same gap; when a field is finally wired, both light up at once.
- * The reachable path is `passphrase=@slot`, below.
+ * The reachable path is `passphrase=$slot`, below.
  *
  * @param {import("./engine.js").RuntimeBindings} [bindings]
  */
@@ -182,7 +182,7 @@ function panelPassphrase(bindings) {
 }
 
 /**
- * The passphrase `ssh.decode passphrase=@slot` names.
+ * The passphrase `ssh.decode passphrase=$slot` names.
  *
  * `ssh.encode`'s side of this is `encodePassphrase`, and the asymmetry in
  * their *reasoning* is deliberate: on encode the passphrase decides what the
@@ -204,9 +204,9 @@ function panelPassphrase(bindings) {
 function decodePassphrase(bindings, raw) {
   const ref = String(raw ?? "").trim();
   if (!ref) return "";
-  if (!/^@[^\s|=]+$/.test(ref)) {
+  if (!/^\$[^\s|=]+$/.test(ref)) {
     throw new Error(
-      "ssh.decode passphrase= takes an @slot (bind one from Inputs) — a literal passphrase would travel in the recipe text"
+      "ssh.decode passphrase= takes an $slot (bind one from Inputs) — a literal passphrase would travel in the recipe text"
     );
   }
   const value = slotValue(bindings, ref, "passphrase= (slot holding the passphrase)");
@@ -262,14 +262,14 @@ function payloadBytes(value) {
 }
 
 /**
- * The passphrase `ssh.encode format=private passphrase=@slot` names.
+ * The passphrase `ssh.encode format=private passphrase=$slot` names.
  *
  * Deliberately *not* `panelPassphrase`. `ssh.decode` reads the Inputs panel
  * because a passphrase there only decides whether an already-protected file
  * opens; on this side it decides what the emitted file *is*, and a recipe that
  * writes an encrypted key on one machine and a bare one on the next — with
  * nothing in its text to say which — is not a recipe. So the secret is named,
- * and only ever as an `@slot`: a literal here would be a passphrase sitting in
+ * and only ever as an `$slot`: a literal here would be a passphrase sitting in
  * recipe text, which `serializeStep` would drop from the share link anyway,
  * turning a protected export into a bare one for whoever opened the link.
  *
@@ -280,9 +280,9 @@ function payloadBytes(value) {
 function encodePassphrase(bindings, raw) {
   const ref = String(raw ?? "").trim();
   if (!ref) return "";
-  if (!/^@[^\s|=]+$/.test(ref)) {
+  if (!/^\$[^\s|=]+$/.test(ref)) {
     throw new Error(
-      "ssh.encode passphrase= takes an @slot (bind one from Inputs) — a literal passphrase would travel in the recipe text"
+      "ssh.encode passphrase= takes an $slot (bind one from Inputs) — a literal passphrase would travel in the recipe text"
     );
   }
   const value = slotValue(bindings, ref, "passphrase= (slot holding the passphrase)");

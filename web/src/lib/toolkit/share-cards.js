@@ -68,7 +68,7 @@ import { splitIdFor } from "./share-check.js";
 /**
  * Find the published commitments among a cell's tiles.
  *
- * `vss.commitments | out @commitments` writes an ordinary non-sensitive text
+ * `vss.commitments | out $commitments` writes an ordinary non-sensitive text
  * tile, so it arrives in the same flat list as the shares. Matched by content
  * rather than only by name: a ceremony author may relabel the slot, and a
  * document that parses as a commitments object *is* one.
@@ -98,7 +98,7 @@ export function findCommitments(artifacts) {
 function isShareBody(a) {
   if (!a) return false;
   if (a.role === "share") return true;
-  // Pre-role tiles and `out @share` inside a foreach: a share index plus text
+  // Pre-role tiles and `out $share` inside a foreach: a share index plus text
   // content is the honest signal. QR tiles carry an index too, hence the mime
   // guard rather than index alone.
   return !!a.shareIndex && a.role !== "qr" && !/svg/i.test(String(a.mime || ""));
@@ -233,7 +233,7 @@ export function quorumLine(card) {
  */
 export function recoveryLine(card) {
   return card?.verifiable
-    ? "shares | blip39.decode | vss.verify commitments=@commitments | vss.combine"
+    ? "shares | blip39.decode | vss.verify commitments=$commitments | vss.combine"
     : "shares | blip39.decode | sss.combine";
 }
 

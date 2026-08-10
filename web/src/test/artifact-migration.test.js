@@ -131,7 +131,7 @@ describe("§38d — nothing this design adds is persisted", () => {
   });
 
   it("adds no migrateRecipe entry, because no recipe text changed", () => {
-    const before = "gpg.genkey a@b.c | out @kp";
+    const before = "gpg.genkey a@b.c | out $kp";
     const after = migrateRecipe(before);
     expect(after.recipe).toBe(before);
     expect(after.changes).toEqual([]);

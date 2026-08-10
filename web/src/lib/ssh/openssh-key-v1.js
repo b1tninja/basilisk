@@ -57,7 +57,7 @@ export const DEFAULT_KDF_ROUNDS = 24;
 
 /** §29f, verbatim — asserted by tests; the wording is the feature. */
 export const ENCRYPTED_KEY_MESSAGE =
-  "This key is passphrase-protected. Bind the passphrase to a slot and name it — `input | out @pw` then `ssh.decode passphrase=@pw` — or decrypt it outside with `ssh-keygen -p -N \"\"`.";
+  "This key is passphrase-protected. Bind the passphrase to a slot and name it — `input | out $pw` then `ssh.decode passphrase=$pw` — or decrypt it outside with `ssh-keygen -p -N \"\"`.";
 
 /** The other half of §29f: the passphrase arrived, and it was the wrong one. */
 export const WRONG_PASSPHRASE_MESSAGE =

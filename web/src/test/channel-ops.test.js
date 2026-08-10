@@ -175,8 +175,8 @@ describe("prefix boundary", () => {
       "quorum.recv | quorum.close"
     );
     // Addressed and parameterised forms keep their arguments.
-    expect(migrateRecipe("rtc.send AABBCCDD | out @sent").recipe).toBe(
-      "quorum.send AABBCCDD | out @sent"
+    expect(migrateRecipe("rtc.send AABBCCDD | out $sent").recipe).toBe(
+      "quorum.send AABBCCDD | out $sent"
     );
     expect(migrateRecipe("rtc.recv count=all wait=5000").recipe).toBe(
       "quorum.recv count=all wait=5000"
@@ -253,7 +253,7 @@ describe("quorum.recv output shape follows count (§30c)", () => {
 
   it("lets foreach consume a multi-message read", () => {
     const { validation } = compileRecipe(
-      "quorum.offer | quorum.recv count=all | foreach\n  - out @msg"
+      "quorum.offer | quorum.recv count=all | foreach\n  - out $msg"
     );
     expect(validation.errors.map((e) => e.message)).toEqual([]);
   });
@@ -300,18 +300,18 @@ describe("48a naming audit — camelCase rtc ops renamed, not aliased", () => {
 
   it("migrates old recipes, camelCase included", () => {
     expect(
-      migrateRecipe("rtc.gatherCandidates ice=@ice | out @cands").recipe
-    ).toBe("rtc.gather ice=@ice | out @cands");
-    expect(migrateRecipe("rtc.createOffer | rtc.createAnswer | out @a").recipe).toBe(
-      "peer.offer | peer.answer | out @a"
+      migrateRecipe("rtc.gatherCandidates ice=$ice | out $cands").recipe
+    ).toBe("rtc.gather ice=$ice | out $cands");
+    expect(migrateRecipe("rtc.createOffer | rtc.createAnswer | out $a").recipe).toBe(
+      "peer.offer | peer.answer | out $a"
     );
     // And the one-hop rename lands in the same place, so a notebook saved at
     // either vintage upgrades to a recipe that parses.
-    expect(migrateRecipe("rtc.offer | rtc.answer | out @a").recipe).toBe(
-      "peer.offer | peer.answer | out @a"
+    expect(migrateRecipe("rtc.offer | rtc.answer | out $a").recipe).toBe(
+      "peer.offer | peer.answer | out $a"
     );
-    expect(migrateRecipe("rtc.statsReport | out @q").recipe).toBe(
-      "rtc.quality | out @q"
+    expect(migrateRecipe("rtc.statsReport | out $q").recipe).toBe(
+      "rtc.quality | out $q"
     );
   });
 

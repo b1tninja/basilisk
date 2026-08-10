@@ -51,11 +51,11 @@ const GENKEY_ALGS = (() => {
  * @param {string} alg
  */
 async function generated(alg) {
-  const { ast, validation } = compileRecipe(`genkey ${alg} | out @k`);
+  const { ast, validation } = compileRecipe(`genkey ${alg} | out $k`);
   expect(validation.errors, `genkey ${alg} should compile`).toEqual([]);
   const slots = createSlotRegistry();
   await runRecipe(ast, {}, { slotRegistry: slots });
-  const value = slots.resolve("@k");
+  const value = slots.resolve("$k");
   const bag = value.data;
   /** Every CryptoKey the value holds, however it is packed. */
   const keys = isCryptoKey(bag)
@@ -143,7 +143,7 @@ describe("a symmetric key never claims to be a keypair", () => {
   });
 
   for (const alg of symmetric) {
-    for (const src of [`genkey ${alg}`, `genkey ${alg} | out @k`]) {
+    for (const src of [`genkey ${alg}`, `genkey ${alg} | out $k`]) {
       it(`${src} carries no keypair tag, no half`, async () => {
         const { ast, validation } = compileRecipe(src);
         expect(validation.errors).toEqual([]);

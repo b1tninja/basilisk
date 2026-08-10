@@ -1188,7 +1188,7 @@ function CatalogApp() {
           </div>
           <StateLabel>
             Key export — Publish raises the §34c consequence banner inline; the
-            already-published row shows @slot + a link icon that copies the directory
+            already-published row shows $slot + a link icon that copies the directory
             URL, and offers no Publish at all
           </StateLabel>
           <p className="mb-1 max-w-md text-[11px] text-[var(--muted-foreground)]">
@@ -2095,7 +2095,7 @@ function CatalogApp() {
             />
             <ParamField
               param={{ name: "key", type: "slot", secret: true, doc: "TURN credential" }}
-              value="@dana-turn-pass"
+              value="$dana-turn-pass"
               onChange={() => {}}
               onRequestBind={() => {}}
             />
@@ -2111,7 +2111,7 @@ function CatalogApp() {
                 secret: true,
                 default: "",
                 emptyMeans: "the private block is written unencrypted",
-                doc: "format=private only: @slot holding the passphrase to encrypt the block with",
+                doc: "format=private only: $slot holding the passphrase to encrypt the block with",
               }}
               value=""
               onChange={() => {}}
@@ -2153,7 +2153,7 @@ function CatalogApp() {
                 group: "Keys",
                 title: "Demo forward",
                 blurb: "Catalog fixture — forward half of a companion pair.",
-                recipe: "genkey ec/p256 | out @k",
+                recipe: "genkey ec/p256 | out $k",
                 pair: "demo-pair",
               },
               {
@@ -2161,7 +2161,7 @@ function CatalogApp() {
                 group: "Keys",
                 title: "Demo inverse",
                 blurb: "Catalog fixture — inverse half.",
-                recipe: "in @k | export spki",
+                recipe: "in $k | export spki",
                 pair: "demo-pair",
               },
               {
@@ -2169,7 +2169,7 @@ function CatalogApp() {
                 group: "Secrets",
                 title: "Solo template",
                 blurb: "Single card without a companion.",
-                recipe: "random 32 | base64url | out @secret",
+                recipe: "random 32 | base64url | out $secret",
               },
             ]}
             groups={["Keys", "Secrets"]}
@@ -2327,7 +2327,7 @@ z/xCJfxmKLBbNvkC/OAJmObwiE6FKdwW79Bv2s8kcCgNbnJcg/SqmE5cs5cn
 -----END PGP MESSAGE-----
 `;
 
-/** `"release-2026.07" | utf8 | ssh.sign key=@id namespace=git` */
+/** `"release-2026.07" | utf8 | ssh.sign key=$id namespace=git` */
 const DEMO_SSHSIG = `-----BEGIN SSH SIGNATURE-----
 U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgLvt5SVIUF1g6+jpuSMZQ20lsuX
 HEUQU66zrrzhf59eUAAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
@@ -2353,7 +2353,7 @@ const DEMO_RECEIPT = JSON.stringify({
           stepName: "out",
         },
       ],
-      recipe: '"plain" | utf8 | out @msg',
+      recipe: '"plain" | utf8 | out $msg',
       startedAt: "2026-08-01T03:01:48.042Z",
     },
     {
@@ -2380,7 +2380,7 @@ const DEMO_RECEIPT = JSON.stringify({
           stepName: "gpg.symencrypt",
         },
       ],
-      recipe: "random 32 | sss.split threshold=2 shares=3 | out @s",
+      recipe: "random 32 | sss.split threshold=2 shares=3 | out $s",
       startedAt: "2026-08-01T03:01:49.101Z",
     },
   ],
@@ -2463,7 +2463,7 @@ length: 11 bytes
 hello world
 `;
 
-/** `'{"sub":"me"}' | utf8 | jose.sign key=@k alg=ES256 | out @t` */
+/** `'{"sub":"me"}' | utf8 | jose.sign key=$k alg=ES256 | out $t` */
 const DEMO_JWS =
   "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJtZSJ9." +
   "6AeMiatcldxFVP8JEN3i6vlFxrlrlesdexBW-A43exaFIHA03CgB7C7OrpgG4lZerDlE8M5xoDerd76cy083Rw";
@@ -2580,7 +2580,7 @@ function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"]
     }),
     row({
       /**
-       * `jose.sign key=@k alg=ES256 | out @t` — **masked, because that is what
+       * `jose.sign key=$k alg=ES256 | out $t` — **masked, because that is what
        * the engine emits**, and that is the finding this row exists to make
        * visible (§48d).
        *
@@ -2621,7 +2621,7 @@ function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"]
     }),
     row({
       /**
-       * `rtc.state | out @s` — a network value in a tile rather than bare.
+       * `rtc.state | out $s` — a network value in a tile rather than bare.
        *
        * `#networkartifact` mounts `NetworkArtifact` directly, so the *tile*
        * level of this kind — badge, actions, Expand, the mask gate — had never
@@ -2699,7 +2699,7 @@ const DEMO_KP_PUBLIC_JWK = JSON.stringify(
   2
 );
 
-/** `genkey ed25519 | out @kp` — the private half. */
+/** `genkey ed25519 | out $kp` — the private half. */
 const DEMO_KP_PRIVATE = JSON.stringify(
   {
     key_ops: ["sign"],
@@ -2728,7 +2728,7 @@ const DEMO_KP_PUBLIC = JSON.stringify(
   2
 );
 
-/** `genkey aes/256 | out @k` — a symmetric key, which has no halves. */
+/** `genkey aes/256 | out $k` — a symmetric key, which has no halves. */
 const DEMO_SECRET_JWK = JSON.stringify(
   {
     key_ops: ["encrypt", "decrypt"],
@@ -2741,11 +2741,11 @@ const DEMO_SECRET_JWK = JSON.stringify(
   2
 );
 
-/** `genkey ed25519 | ssh.encode comment=dana@laptop | out @pub` */
+/** `genkey ed25519 | ssh.encode comment=dana@laptop | out $pub` */
 const DEMO_SSH_PUBLIC =
   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOTy7eoXFoeHUYSj7bup7fa6mPizYsdZ8gMg2vlmNxoX dana@laptop";
 
-/** `genkey ed25519 | ssh.encode format=private comment=dana@laptop | out @priv` */
+/** `genkey ed25519 | ssh.encode format=private comment=dana@laptop | out $priv` */
 const DEMO_SSH_PRIVATE = `-----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
 QyNTUxOQAAACBkGd5qUSLxUpm08/42114C0nW31Ya22yktOxPtCEVrGgAAAJBa8dS1WvHU
@@ -2755,7 +2755,7 @@ dbfVhrbbKS07E+0IRWsaAAAAC2RhbmFAbGFwdG9wAQI=
 -----END OPENSSH PRIVATE KEY-----
 `;
 
-/** `gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out @k` */
+/** `gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out $k` */
 const DEMO_PGP_PUBLIC = `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 xjMEam4g9hYJKwYBBAHaRw8BAQdAPegJfKCCwBHtEslsjVuJrxBHoXf335px
@@ -3371,7 +3371,7 @@ function CeremonyStates() {
 }
 
 /**
- * Catalog fixture: what `sss.split … | blip39 | foreach { - out @share | qr }`
+ * Catalog fixture: what `sss.split … | blip39 | foreach { - out $share | qr }`
  * leaves behind. Deliberately fake words — a catalog page must never hold a
  * real mnemonic, even a throwaway one.
  */

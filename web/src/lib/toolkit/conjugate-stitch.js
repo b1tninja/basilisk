@@ -1,13 +1,17 @@
 /**
- * Companion preset stitching — explicit @slots only (no new pipe grammar).
+ * Companion preset stitching — explicit $slots only (no new pipe grammar).
  *
  * Modes:
  * - as-is: reverse already consumes a forward out slot
- * - slot: rewrite reverse `input` → `in @bridge` (ensure forward ends with out)
+ * - slot: rewrite reverse `input` → `in $bridge` (ensure forward ends with out)
  * - inputs: reverse starts with shares / gpg.decrypt — runtime Inputs panel
  */
 
-import { normalizeSlotRef } from "./recipe-parse.js";
+import {
+  DEFAULT_OUT_SLOT,
+  SLOT_SIGIL,
+  normalizeSlotRef,
+} from "./recipe-parse.js";
 import {
   PRESETS,
   canonicalizeRecipe,
@@ -41,7 +45,8 @@ import {
  * @returns {{ badge: string, hint: string, toast: string }}
  */
 export function bridgeModeMeta(mode, bridge = null) {
-  const slot = bridge && String(bridge).startsWith("@") ? String(bridge) : "@slot";
+  const slot =
+    bridge && String(bridge).startsWith(SLOT_SIGIL) ? String(bridge) : "$slot";
   switch (mode) {
     case "slot":
       return {
@@ -67,7 +72,7 @@ export function bridgeModeMeta(mode, bridge = null) {
 }
 
 /**
- * Stable @slot label from a pair id (must match normalizeSlotRef rules).
+ * Stable $slot label from a pair id (must match normalizeSlotRef rules).
  * @param {string} pairId
  * @returns {string}
  */
@@ -77,7 +82,7 @@ export function bridgeSlotName(pairId) {
     .replace(/^_+|_+$/g, "");
   if (!bare) bare = "bridge";
   if (!/^[A-Za-z]/.test(bare)) bare = `p_${bare}`;
-  return `@${bare}`;
+  return `${SLOT_SIGIL}${bare}`;
 }
 
 /**
@@ -131,7 +136,7 @@ function walkSteps(steps, fn) {
 
 /**
  * @param {import("./recipe.js").RecipeAst|null} ast
- * @returns {Set<string>}  canonical `@label` outs
+ * @returns {Set<string>}  canonical `$label` outs
  */
 export function collectOutLabels(ast) {
   /** @type {Set<string>} */
@@ -139,7 +144,7 @@ export function collectOutLabels(ast) {
   for (const c of recipeChains(ast)) {
     walkSteps(c.steps, (s) => {
       if (s.name !== "out") return;
-      const n = normalizeSlotRef(String(s.params?.name || "@output"), {
+      const n = normalizeSlotRef(String(s.params?.name || DEFAULT_OUT_SLOT), {
         allowIndex: false,
       });
       if (n.ok) labels.add(n.ref);
@@ -149,7 +154,7 @@ export function collectOutLabels(ast) {
 }
 
 /**
- * Slots consumed via `in`/`from` or `@`-valued params (`key=@cek`, `to=@alices`).
+ * Slots consumed via `in`/`from` or `$`-valued params (`key=$cek`, `to=$alices`).
  * @param {import("./recipe.js").RecipeAst|null} ast
  * @returns {Set<string>}
  */
@@ -162,12 +167,12 @@ export function collectConsumedSlots(ast) {
         const n = normalizeSlotRef(String(s.params?.ref || ""), {
           allowIndex: true,
         });
-        if (n.ok && String(n.ref).startsWith("@")) refs.add(n.ref);
+        if (n.ok && String(n.ref).startsWith(SLOT_SIGIL)) refs.add(n.ref);
       }
       for (const [k, v] of Object.entries(s.params || {})) {
         if (k === "name" || k === "ref") continue;
         const sv = String(v ?? "").trim();
-        if (!sv.startsWith("@")) continue;
+        if (!sv.startsWith(SLOT_SIGIL)) continue;
         const n = normalizeSlotRef(sv, { allowIndex: false });
         if (n.ok) refs.add(n.ref);
       }
@@ -189,7 +194,7 @@ function firstSourceName(ast) {
 }
 
 /**
- * Final `out @label` on the last non-empty chain tip, or null.
+ * Final `out $label` on the last non-empty chain tip, or null.
  * @param {import("./recipe.js").RecipeAst|null} ast
  * @returns {string|null}
  */
@@ -200,7 +205,7 @@ export function lastChainFinalOut(ast) {
     if (!steps.length) continue;
     const last = steps[steps.length - 1];
     if (last.name !== "out") return null;
-    const n = normalizeSlotRef(String(last.params?.name || "@output"), {
+    const n = normalizeSlotRef(String(last.params?.name || DEFAULT_OUT_SLOT), {
       allowIndex: false,
     });
     return n.ok ? n.ref : null;
@@ -254,7 +259,7 @@ function cloneAst(ast) {
 
 /**
  * @param {import("./recipe.js").RecipeAst} ast
- * @param {string} bridge  `@label`
+ * @param {string} bridge  `$label`
  * @returns {import("./recipe.js").RecipeAst}
  */
 function appendOutToLastChain(ast, bridge) {
@@ -286,7 +291,7 @@ function appendOutToLastChain(ast, bridge) {
 }
 
 /**
- * Replace first chain’s leading `input`/`paste`/`cat` with `in @bridge`.
+ * Replace first chain’s leading `input`/`paste`/`cat` with `in $bridge`.
  * @param {import("./recipe.js").RecipeAst} ast
  * @param {string} bridge
  * @returns {import("./recipe.js").RecipeAst}
@@ -308,10 +313,10 @@ function replaceFirstSourceWithIn(ast, bridge) {
 }
 
 /**
- * Rename reverse `out @label` that collide with forward outs so a joined
+ * Rename reverse `out $label` that collide with forward outs so a joined
  * multi-chain recipe validates (and notebook Run all can register both).
  * @param {import("./recipe.js").RecipeAst} revAst
- * @param {Set<string>} occupied  canonical `@label` from forward
+ * @param {Set<string>} occupied  canonical `$label` from forward
  * @returns {import("./recipe.js").RecipeAst}
  */
 function dedupeReverseOuts(revAst, occupied) {
@@ -323,15 +328,15 @@ function dedupeReverseOuts(revAst, occupied) {
     recipeChains(next).flatMap((c) => c.steps || []),
     (s) => {
       if (s.name !== "out") return;
-      const n = normalizeSlotRef(String(s.params?.name || "@output"), {
+      const n = normalizeSlotRef(String(s.params?.name || DEFAULT_OUT_SLOT), {
         allowIndex: false,
       });
       if (!n.ok || !occupied.has(n.ref)) return;
       let bare = n.ref.slice(1);
-      let candidate = `@${bare}_rev`;
+      let candidate = `${SLOT_SIGIL}${bare}_rev`;
       let i = 2;
       while (used.has(candidate)) {
-        candidate = `@${bare}_rev${i}`;
+        candidate = `${SLOT_SIGIL}${bare}_rev${i}`;
         i += 1;
       }
       used.add(candidate);

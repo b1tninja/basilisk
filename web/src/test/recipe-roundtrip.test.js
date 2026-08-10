@@ -34,7 +34,7 @@ const exampleOf = (spec) => {
 /**
  * Only the examples that stand alone.
  *
- * Roughly half are deliberately fragments — `input | ssh.sign key=@id` names a
+ * Roughly half are deliberately fragments — `input | ssh.sign key=$id` names a
  * slot an earlier cell registers, and `hkp.filter` continues a search. Those
  * cannot compile by themselves, and *making* them compile would mean rewriting
  * doc strings to suit a test, which is the tail wagging the dog. The round trip

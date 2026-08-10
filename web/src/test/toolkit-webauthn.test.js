@@ -74,7 +74,7 @@ describe("webauthn toolbox shelves", () => {
     expect(formatType(inferSourceType("webauthn.create"))).toBe("bytes/opaque");
     expect(formatType(inferSourceType("webauthn.prf"))).toBe("bytes/opaque");
     expect(compileRecipe("webauthn.create | encode hex").validation.ok).toBe(true);
-    expect(compileRecipe("webauthn.get | out @a").validation.ok).toBe(true);
+    expect(compileRecipe("webauthn.get | out $a").validation.ok).toBe(true);
   });
 });
 
@@ -115,9 +115,9 @@ describe("webauthn ops (offline)", () => {
 
   it("input | webauthn.attest | webauthn.mds typechecks (Attestation → MDS template)", () => {
     const { validation } = compileRecipe(
-      `input | webauthn.attest | out @att
+      `input | webauthn.attest | out $att
 
-in @att | webauthn.mds | out @mds`
+in $att | webauthn.mds | out $mds`
     );
     expect(validation.ok, validation.errors?.[0]?.message).toBe(true);
   });

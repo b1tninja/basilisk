@@ -12,7 +12,7 @@ import { runRecipe } from "../lib/toolkit/engine.js";
 describe("nested list recipe syntax", () => {
   it("parses foreach indented list body", () => {
     const src = `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`;
+  - out $share`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     const fe = ast.steps.find((s) => s.name === "foreach");
@@ -24,7 +24,7 @@ describe("nested list recipe syntax", () => {
     const src = `genkey ec/p256 | tee
   - export spki
   - pem
-  - out @public
+  - out $public
 | export pkcs8 | pem`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
@@ -44,7 +44,7 @@ describe("nested list recipe syntax", () => {
   it("parses brace tee body", () => {
     const src = `genkey ec/p256 | tee {
   - :private | inspect
-  - :public | export spki | out @pub
+  - :public | export spki | out $pub
 } | export pkcs8 | pem`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
@@ -55,7 +55,7 @@ describe("nested list recipe syntax", () => {
 
   it("round-trips nested foreach via serialize", () => {
     const src = `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`;
+  - out $share`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     const out = serializeRecipe(ast);
@@ -70,9 +70,9 @@ describe("nested list recipe syntax", () => {
 
   it("blank line after indented foreach starts a new chain", () => {
     const src = `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
-shares | blip39 -d | sss.combine | base64 | out @secret`;
+shares | blip39 -d | sss.combine | base64 | out $secret`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     expect(ast.chains.length).toBe(2);
@@ -82,7 +82,7 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
 
   it("rejects flat foreach without body", () => {
     const { validation } = compileRecipe(
-      "random 16 | sss.split threshold=2 shares=3 | blip39 | foreach | out @share"
+      "random 16 | sss.split threshold=2 shares=3 | blip39 | foreach | out $share"
     );
     expect(validation.ok).toBe(false);
     expect(
@@ -92,14 +92,14 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
 
   it("parses at and [n] alias", () => {
     const a = parseRecipe(
-      "random 16 | sss.split threshold=2 shares=3 | blip39 | at 1 | out @s"
+      "random 16 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $s"
     );
     expect(a.errors).toEqual([]);
     expect(a.ast.steps.some((s) => s.name === "at")).toBe(true);
     expect(a.ast.steps.find((s) => s.name === "at")?.params.selector).toBe("1");
 
     const b = parseRecipe(
-      "random 16 | sss.split threshold=2 shares=3 | blip39 | [2] | out @s"
+      "random 16 | sss.split threshold=2 shares=3 | blip39 | [2] | out $s"
     );
     expect(b.errors).toEqual([]);
     expect(b.ast.steps.find((s) => s.name === "at")?.params.selector).toBe("2");
@@ -127,7 +127,7 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
   it("runs nested foreach body", async () => {
     const { ast, validation } = compileRecipe(
       `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`
+  - out $share`
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -137,7 +137,7 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
   it("foreach :items projects :value", async () => {
     const { ast, validation } = compileRecipe(
       `random 16 | sss.split threshold=2 shares=3 | blip39 | foreach :items
-  - :value | out @share`
+  - :value | out $share`
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -146,7 +146,7 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
 
   it("at 1 selects a single share", async () => {
     const { ast, validation } = compileRecipe(
-      "random 16 | sss.split threshold=2 shares=3 | blip39 | at 1 | out @one"
+      "random 16 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $one"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -158,8 +158,8 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
     const { ast, validation } = compileRecipe(
       `genkey ec/p256 | tee
   - export spki
-  - out @pub
-| export pkcs8 | pem | out @priv`
+  - out $pub
+| export pkcs8 | pem | out $priv`
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -171,7 +171,7 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
   it("parses tee selector branches", () => {
     const src = `genkey ec/p256 | tee
   - :private | inspect
-  - :public | export spki | out @pub`;
+  - :public | export spki | out $pub`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     const tee = ast.steps.find((s) => s.name === "tee");
@@ -184,7 +184,7 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
     const { ast, validation } = compileRecipe(
       `genkey ec/p256 | tee
   - :private | inspect
-| export pkcs8 | pem | out @priv`
+| export pkcs8 | pem | out $priv`
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -218,7 +218,7 @@ shares | blip39 -d | sss.combine | base64 | out @secret`;
 
   it("peek emits side inspect without consuming stem", async () => {
     const { ast, validation } = compileRecipe(
-      "genkey ec/p256 | peek kp | export pkcs8 | pem | out @priv"
+      "genkey ec/p256 | peek kp | export pkcs8 | pem | out $priv"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);

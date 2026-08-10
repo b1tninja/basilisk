@@ -219,8 +219,8 @@ export function readCommitments(text) {
 export function shareCheckRecipe() {
   return [
     "shares | blip39.decode",
-    "| vss.verify commitments=@commitments",
-    "| out @checked",
+    "| vss.verify commitments=$commitments",
+    "| out $checked",
   ].join(" ");
 }
 

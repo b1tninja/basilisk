@@ -2,15 +2,17 @@
  * Toolkit recipe language — validate / serialize / presets.
  * Normative grammar: docs/RECIPE.md
  *
- *   genkey ec/p256 | out @kp
+ *   genkey ec/p256 | out $kp
  *
- *   @kp | :public | export spki | pem | out @public
- *   @kp | export pkcs8 | pem | out @private
+ *   $kp | :public | export spki | pem | out $public
+ *   $kp | export pkcs8 | pem | out $private
  *
  * Decode: encoding twins prefer `base64.encode` / `base64.decode` (also accept `-d`).
  * pem ↔ der and to ↔ from (encoding) are conjugate pairs (bare verbs, not decodeTwin).
- * Cipher twins still use `-d` (`aes-gcm -d`). Slot labels require `@` (`out @kp` / `key=@cek`);
- * bare `out kp` / `key=cek` → `migrateRecipe` / Upgrade. Bare `@kp` ≡ `in @kp` on load.
+ * Cipher twins still use `-d` (`aes-gcm -d`). Slot labels require `$` (`out $kp` / `key=$cek`);
+ * bare `out kp` / `key=cek` → `migrateRecipe` / Upgrade. Bare `$kp` ≡ `in $kp` on load.
+ * A pre-swap `@kp` still parses in step/param position and is rewritten to `$kp`
+ * with a compile warning; `@` at the head of a chain is reserved.
  */
 
 import {
@@ -19,7 +21,9 @@ import {
 } from "./registry.js";
 import {
   canonicalSelectorMember,
+  DEFAULT_OUT_SLOT,
   parseRecipeSource,
+  SLOT_SIGIL,
   slotLabelKey,
 } from "./recipe-parse.js";
 import { decodeTwinToken, migrateRecipe } from "./step-names.js";
@@ -103,7 +107,7 @@ function pushDiscouragedAlgoWarnings(step, warnings, stepIndex) {
   if (
     step.name === "ssh.encode" &&
     String(step.params?.format || "public") === "private" &&
-    // …and only when the block really will be bare. `passphrase=@slot` now
+    // …and only when the block really will be bare. `passphrase=$slot` now
     // encrypts it (aes256-ctr + bcrypt_pbkdf), so warning regardless said
     // "emits an unencrypted private key" about a file that is encrypted —
     // and a warning that is false where it is most specific is worse than
@@ -235,7 +239,7 @@ export function stepNeedsKeyPanel(step) {
 
 /**
  * Whether an OpenPGP op still needs the vault / paste private-key panel.
- * When `key=@slot` is bound, only the passphrase field may still be needed.
+ * When `key=$slot` is bound, only the passphrase field may still be needed.
  * @param {RecipeStep} step
  */
 export function stepNeedsGpgPrivatePanel(step) {
@@ -253,7 +257,7 @@ export function stepNeedsGpgPrivatePanel(step) {
 }
 
 /**
- * OpenPGP passphrase field after `key=@slot` (S2K) or agent.save passphrase wrap.
+ * OpenPGP passphrase field after `key=$slot` (S2K) or agent.save passphrase wrap.
  * @param {RecipeStep} step
  */
 export function stepNeedsGpgPassphrasePanel(step) {
@@ -293,7 +297,7 @@ function lookupSlotType(ref, slotTypes, slotTypesByIndex) {
 }
 
 /**
- * Validate string params that optionally take `@slot` of text/bytes
+ * Validate string params that optionally take `$slot` of text/bytes
  * (`aad=`, `salt=`, `info=`, `passphrase=`, and verify `signature=`).
  * @param {RecipeStep} step
  * @param {Map<string, import("./types.js").RefinedType>} slotTypes
@@ -325,11 +329,11 @@ function validateOptionalBytesSlotStrings(
   }
   if (step.name === "verify" || step.name === "gpg.verify") {
     const sig = String(step.params?.signature || "").trim();
-    if (sig.startsWith("@")) names.push("signature");
+    if (sig.startsWith(SLOT_SIGIL)) names.push("signature");
   }
   for (const name of names) {
     const raw = String(step.params?.[name] || "").trim();
-    if (!raw.startsWith("@")) continue;
+    if (!raw.startsWith(SLOT_SIGIL)) continue;
     const loaded = lookupSlotType(raw, slotTypes, slotTypesByIndex);
     if (!loaded) {
       errors.push({
@@ -378,7 +382,7 @@ function validateStepSlotParams(
     const loaded = lookupSlotType(String(ref), slotTypes, slotTypesByIndex);
     if (!loaded) {
       errors.push({
-        message: `${step.name} ${p.name}=${ref}: unknown slot (register earlier with out ${String(ref).startsWith("@") || /^\d+$/.test(String(ref)) ? ref : `@${ref}`})`,
+        message: `${step.name} ${p.name}=${ref}: unknown slot (register earlier with out ${String(ref).startsWith(SLOT_SIGIL) || /^\d+$/.test(String(ref)) ? ref : `${SLOT_SIGIL}${ref}`})`,
         start: step.start,
         end: step.end,
         stepIndex,
@@ -406,7 +410,7 @@ function validateStepSlotParams(
         base === "openpgp-key" ||
         base === "text";
     }
-    // `ice=@slot` wants an ICE server list — `rtc.ice`'s `endpoint` output.
+    // `ice=$slot` wants an ICE server list — `rtc.ice`'s `endpoint` output.
     // Text still works so a hand-written JSON config keeps functioning.
     if (p.name === "ice") {
       okBase = base === "endpoint" || base === "text";
@@ -424,17 +428,20 @@ function validateStepSlotParams(
     }
   }
 
-  // gpg.encrypt to=@slot — string param that may reference a slot
+  // gpg.encrypt to=$slot — string param that may reference a slot.
+  // `$` costs nothing to tell apart from an address: a slot ref *starts* with
+  // the sigil, and an email never does. Before the swap this had to ask
+  // whether the `@` was at position 0, which made `to=@corp.example` — a
+  // perfectly ordinary domain-ish address — read as a slot named `corp`.
   if (step.name === "gpg.encrypt") {
     const toRaw = String(step.params?.to || "").trim();
     if (toRaw) {
-      const looksEmail =
-        (/^email:/i.test(toRaw) || (toRaw.includes("@") && !toRaw.startsWith("@")));
+      const looksEmail = /^email:/i.test(toRaw) || toRaw.includes("@");
       const looksFpr =
         /^(?:fpr:|0x)/i.test(toRaw) ||
         /^[0-9A-Fa-f]{40,}$/i.test(toRaw.replace(/\s+/g, ""));
       if (!looksEmail && !looksFpr) {
-        const ref = toRaw.startsWith("@") ? toRaw : `@${toRaw}`;
+        const ref = toRaw.startsWith(SLOT_SIGIL) ? toRaw : `${SLOT_SIGIL}${toRaw}`;
         const loaded = lookupSlotType(ref, slotTypes, slotTypesByIndex);
         if (!loaded) {
           errors.push({
@@ -555,11 +562,19 @@ export function recipeChains(astOrSteps) {
 
 /**
  * Parse a recipe string into an AST.
+ *
+ * `warnings` carries the parse-time advisories — today, that a slot was spelled
+ * with the pre-swap `@` and has been rewritten to `$`. They are warnings and
+ * not errors on purpose: the recipe ran before and still runs, and the rewrite
+ * is complete by the time the AST exists, so the very next serialize (share
+ * link, Copy recipe, Workspace save) writes the new spelling and the warning
+ * never comes back.
  * @param {string} source
- * @returns {{ ast: RecipeAst|null, errors: RecipeError[] }}
+ * @returns {{ ast: RecipeAst|null, errors: RecipeError[], warnings: RecipeWarning[] }}
  */
 export function parseRecipe(source) {
-  return parseRecipeSource(source);
+  const r = parseRecipeSource(source);
+  return { ...r, warnings: r.warnings || [] };
 }
 
 /**
@@ -617,11 +632,11 @@ export function serializeStep(step) {
   for (const p of spec?.params || []) {
     const v = step.params?.[p.name];
     if (v === undefined || v === "") continue;
-    // Secret params (design v2 §22a) only ever legitimately hold an `@slot`
+    // Secret params (design v2 §22a) only ever legitimately hold a `$slot`
     // ref — the UI enforces that, but the raw AST can still carry a literal
     // (e.g. hand-typed in Source view). Never let a literal leak into
     // serialized recipe text (share links, Copy recipe, Workspace saves).
-    if (p.secret && !/^@[^\s|=]+$/.test(String(v))) continue;
+    if (p.secret && !/^\$[^\s|=]+$/.test(String(v))) continue;
     if (p.flag && p.type === "bool") {
       // Encoding twins serialize direction in the verb; skip `-d`.
       if (useEncodeVerb && p.name === "decode") continue;
@@ -646,7 +661,7 @@ export function serializeStep(step) {
     if (p.positional && parts.length === 1) {
       // …and it is not only those three characters. A *bare* positional has to
       // begin the way `recipe-parse.js`'s argument loop expects one to begin —
-      // it dispatches on a letter, a digit, or `@` slot sugar, and nothing
+      // it dispatches on a letter, a digit, or a slot sigil, and nothing
       // else. (`.` and `/` are recognised, but only for `out`/`in`, where they
       // raise "File paths are not supported yet".) So `file.read accept=.pem`,
       // which is the op's own documented example, serialized bare to
@@ -655,7 +670,7 @@ export function serializeStep(step) {
       // re-serializes on every mutation and Copy link serializes to build the
       // URL, so editing any chip nearby, or sharing the notebook, handed back
       // something that would not parse.
-      parts.push(/^[A-Za-z0-9@]/.test(String(v)) ? quoted : JSON.stringify(String(v)));
+      parts.push(/^[A-Za-z0-9$@]/.test(String(v)) ? quoted : JSON.stringify(String(v)));
       continue;
     }
     parts.push(`${p.name}=${quoted}`);
@@ -766,8 +781,12 @@ function serializeChainSteps(steps, opts = {}) {
       head = serializeStep(step);
     } else if (step.name === "in" && step.params?.ref) {
       const ref = String(step.params.ref);
-      // Prefer bare `@label`; keep `in N` for 1-based indexes.
-      head = /^\d+$/.test(ref) ? `in ${ref}` : ref.startsWith("@") ? ref : `@${ref}`;
+      // Prefer bare `$label`; keep `in N` for 1-based indexes.
+      head = /^\d+$/.test(ref)
+        ? `in ${ref}`
+        : ref.startsWith(SLOT_SIGIL)
+          ? ref
+          : `${SLOT_SIGIL}${ref}`;
     } else if (step.name === "select" && step.params?.selector) {
       head = String(step.params.selector);
     } else if (step.name === "at" && step.params?.selector != null) {
@@ -784,7 +803,7 @@ function serializeChainSteps(steps, opts = {}) {
     const lines = bodyLines(step);
     const useBrace = compact || step.bodyForm === "brace";
     if (compact) {
-      // One-line brace body: foreach{ - out @share }
+      // One-line brace body: foreach{ - out $share }
       chunks.push(`${head}{ ${lines.join(" ")} }`);
     } else if (useBrace) {
       chunks.push(`${head} {\n`);
@@ -801,7 +820,7 @@ function serializeChainSteps(steps, opts = {}) {
 /**
  * Serialize an AST (or steps / chains) back to recipe text.
  * Chains are joined with a blank line (or `~` when `compact`).
- * Canonical names; `@` slot sugar.
+ * Canonical names; `$` slot sugar.
  * @param {RecipeAst|RecipeStep[]|RecipeChain[]} astOrSteps
  * @param {{ compact?: boolean }} [opts]
  * @returns {string}
@@ -1027,12 +1046,12 @@ function validateBodySteps(body, startType, ctx) {
       slotTypesByIndex &&
       !ctx.inForeach
     ) {
-      const ref = String(step.params?.name || "@output");
+      const ref = String(step.params?.name || DEFAULT_OUT_SLOT);
       const key = slotLabelKey(ref);
       if (key) {
         if (slotTypes.has(key)) {
           ctx.errors.push({
-            message: `Duplicate out slot @${key}`,
+            message: `Duplicate out slot ${SLOT_SIGIL}${key}`,
             start: step.start,
             end: step.end,
             stepIndex: ctx.stepIndex,
@@ -1219,7 +1238,7 @@ export function validateRecipe(ast) {
     }
 
     // Spec-declared input panels (envelope / …).
-    // Skip "key" — gated by stepNeedsKeyPanel (honors key=@slot).
+    // Skip "key" — gated by stepNeedsKeyPanel (honors key=$slot).
     // Skip "gpg" — gated by stepNeedsGpgPrivatePanel / stepNeedsGpgPassphrasePanel.
     // gpg.decrypt / input / shares already handled above.
     // gpg.symdecrypt mode=passphrase does not need the envelope panel.
@@ -1269,7 +1288,7 @@ export function validateRecipe(ast) {
         loaded = key ? slotTypes.get(key) : undefined;
         if (!loaded) {
           errors.push({
-            message: `in ${ref}: unknown slot (register it earlier with out ${ref.startsWith("@") ? ref : `@${ref}`})`,
+            message: `in ${ref}: unknown slot (register it earlier with out ${ref.startsWith(SLOT_SIGIL) ? ref : `${SLOT_SIGIL}${ref}`})`,
             start: step.start,
             end: step.end,
             stepIndex,
@@ -1322,7 +1341,7 @@ export function validateRecipe(ast) {
       if (!step.body?.length) {
         errors.push({
           message:
-            "foreach requires a body — use indented `- out @share` or `foreach { - out @share }`",
+            "foreach requires a body — use indented `- out $share` or `foreach { - out $share }`",
           start: step.start,
           end: step.end,
           stepIndex,
@@ -1506,12 +1525,12 @@ export function validateRecipe(ast) {
     current = resolved.output;
 
     if (step.name === "out") {
-      const ref = String(step.params?.name || "@output");
+      const ref = String(step.params?.name || DEFAULT_OUT_SLOT);
       const key = slotLabelKey(ref);
       if (key) {
         if (slotTypes.has(key)) {
           errors.push({
-            message: `Duplicate out slot @${key}`,
+            message: `Duplicate out slot ${SLOT_SIGIL}${key}`,
             start: step.start,
             end: step.end,
             stepIndex,
@@ -1608,14 +1627,22 @@ export function validateRecipe(ast) {
  * @returns {{ ast: RecipeAst|null, validation: ValidationResult }}
  */
 export function compileRecipe(source) {
-  const { ast, errors } = parseRecipe(source);
+  const { ast, errors, warnings } = parseRecipe(source);
   if (!ast || errors.length) {
     return {
       ast: null,
-      validation: { ok: false, errors, warnings: [], inputNeeds: [] },
+      validation: { ok: false, errors, warnings, inputNeeds: [] },
     };
   }
-  return { ast, validation: validateRecipe(ast) };
+  const validation = validateRecipe(ast);
+  // Parse-time advisories lead: a legacy sigil is a fact about the text the
+  // caller handed in, and `validateRecipe` only ever sees the rewritten AST.
+  return {
+    ast,
+    validation: warnings.length
+      ? { ...validation, warnings: [...warnings, ...(validation.warnings || [])] }
+      : validation,
+  };
 }
 
 /**
@@ -1747,33 +1774,33 @@ export const PRESETS = [
     blurb:
       "Tee the public SPKI PEM, then export PKCS#8 — mid-stem fork keeps the keypair on the stem.",
     recipe: `genkey ec/p256 | tee
-  - :public | export spki | pem | out @public
-| export pkcs8 | pem | out @private`,
+  - :public | export spki | pem | out $public
+| export pkcs8 | pem | out $private`,
   },
   {
     id: "p256-tee-inspect",
     group: "Keys",
     title: "P-256 with mid-pipeline peek",
     blurb: "Generate a key, peek an openssl-style dump, then export PEM (keypair still flows through).",
-    recipe: "genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private",
+    recipe: "genkey ec/p256 | peek keypair | export pkcs8 | pem | out $private",
   },
   {
     id: "p256-multichain",
     group: "Keys",
-    title: "P-256 via @slot reuse",
+    title: "P-256 via $slot reuse",
     blurb:
-      "Register the live keypair with out @kp, then reuse it across blank-line chains with in @kp.",
-    recipe: `genkey ec/p256 | out @kp
+      "Register the live keypair with out $kp, then reuse it across blank-line chains with in $kp.",
+    recipe: `genkey ec/p256 | out $kp
 
-@kp | :public | export spki | pem | out @public
-@kp | export pkcs8 | pem | out @private`,
+$kp | :public | export spki | pem | out $public
+$kp | export pkcs8 | pem | out $private`,
   },
   {
     id: "ed25519-jwk",
     group: "Keys",
     title: "Ed25519 key (JWK)",
     blurb: "Signing key as JSON Web Key.",
-    recipe: "genkey ed25519 | export jwk | out @jwk",
+    recipe: "genkey ed25519 | export jwk | out $jwk",
   },
   // ── SSH. The toolbox shipped with byte-exact ssh-keygen interop and no way
   // to find it from the Templates menu; these are the seven errands people
@@ -1784,7 +1811,7 @@ export const PRESETS = [
     title: "An SSH key for GitHub",
     blurb:
       "The one line you paste into Settings → SSH keys — `ssh.encode` writes the same `ssh-ed25519 AAAA… comment` bytes as `ssh-keygen -t ed25519`, comment and all.",
-    recipe: `genkey ed25519 | ssh.encode comment="you@host" | out @pub`,
+    recipe: `genkey ed25519 | ssh.encode comment="you@host" | out $pub`,
   },
   {
     id: "ssh-key-vault",
@@ -1793,8 +1820,8 @@ export const PRESETS = [
     blurb:
       "Fork the public line off the stem and let the private half go on to `agent.save` — one run gives you the text to paste and a vault key the `agent.*` ops can sign with (it writes to whoever runs it).",
     recipe: `genkey ed25519 | tee
-  - ssh.encode comment="you@host" | out @pub
-| agent.save | out @id`,
+  - ssh.encode comment="you@host" | out $pub
+| agent.save | out $id`,
   },
   {
     id: "ssh-fingerprint",
@@ -1802,7 +1829,7 @@ export const PRESETS = [
     title: "Fingerprint a public key",
     blurb:
       "Paste an authorized_keys line and read back the `SHA256:…` string byte-for-byte identical to `ssh-keygen -lf` — the one GitHub prints beside the key.",
-    recipe: "input | ssh.decode | ssh.fingerprint | out @fp",
+    recipe: "input | ssh.decode | ssh.fingerprint | out $fp",
   },
   {
     id: "ssh-sign-git",
@@ -1816,25 +1843,25 @@ export const PRESETS = [
     title: "Sign a file the way git does",
     blurb:
       "sshsig, the envelope `ssh-keygen -Y sign` and `git commit -S` both write — `namespace=` is inside what gets signed, so a `git` signature can never verify as a `file` one no matter how good the key is.",
-    recipe: `genkey ed25519 | out @id
+    recipe: `genkey ed25519 | out $id
 
-input | utf8 | ssh.sign key=@id namespace=git | out @sig`,
+input | utf8 | ssh.sign key=$id namespace=git | out $sig`,
   },
   {
     id: "ssh-verify-git",
     group: "SSH",
     title: "Verify an SSH signature",
     blurb:
-      "Both halves in one notebook so the check is readable: swap `@pub` and `@sig` for a signer's public line and their `BEGIN SSH SIGNATURE` block, and keep `namespace=` equal or a perfectly good signature fails.",
+      "Both halves in one notebook so the check is readable: swap `$pub` and `$sig` for a signer's public line and their `BEGIN SSH SIGNATURE` block, and keep `namespace=` equal or a perfectly good signature fails.",
     recipe: `genkey ed25519 | tee
-  - :public | ssh.encode | out @pub
-| out @id
+  - :public | ssh.encode | out $pub
+| out $id
 
-input | utf8 | out @msg
+input | utf8 | out $msg
 
-in @msg | ssh.sign key=@id namespace=git | out @sig
+in $msg | ssh.sign key=$id namespace=git | out $sig
 
-in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok`,
+in $msg | ssh.verify key=$pub signature=$sig namespace=git | out $ok`,
   },
   {
     id: "ssh-to-pem",
@@ -1843,7 +1870,7 @@ in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok`,
     title: "SSH private key → PKCS#8 PEM",
     blurb:
       "The conversion chore, without `ssh-keygen -p -m PKCS8` overwriting your file: paste an openssh-key-v1 block and get PEM. `format=private` is written because it is what fixes the output type — a public line pasted here is refused by name instead of being decoded into the other thing. Passphrase-protected blocks work — put the passphrase in the Inputs panel.",
-    recipe: "input | ssh.decode format=private | export pkcs8 | pem | out @pem",
+    recipe: "input | ssh.decode format=private | export pkcs8 | pem | out $pem",
   },
   {
     id: "pem-to-ssh",
@@ -1852,7 +1879,7 @@ in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok`,
     title: "PKCS#8 PEM → SSH public line",
     blurb:
       "The way back. `import` has to be told `alg=` because PEM armor alone does not say — change it to `ec/p256` and the emitted key type changes with it, not with anything you write on `ssh.encode`.",
-    recipe: `input | der | import pkcs8 alg=ed25519 | ssh.encode comment="you@host" | out @pub`,
+    recipe: `input | der | import pkcs8 alg=ed25519 | ssh.encode comment="you@host" | out $pub`,
   },
   {
     id: "ssh-p521",
@@ -1860,35 +1887,35 @@ in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok`,
     title: "A P-521 SSH key",
     blurb:
       "The key type comes out `ecdsa-sha2-nistp521` and there is no knob for the `sha2`: RFC 5656 fixes the name from the curve, and the curve alone picks the digest — P-256→SHA-256, P-384→SHA-384, P-521→SHA-512.",
-    recipe: `genkey ec/p521 | ssh.encode comment="you@host" | out @pub`,
+    recipe: `genkey ec/p521 | ssh.encode comment="you@host" | out $pub`,
   },
   {
     id: "secret-b64url",
     group: "Secrets",
     title: "256-bit secret (base64url)",
     blurb: "Websafe random secret — no +/ or padding.",
-    recipe: "random 32 | base64url | out @secret",
+    recipe: "random 32 | base64url | out $secret",
   },
   {
     id: "diceware",
     group: "Secrets",
     title: "Diceware passphrase",
     blurb: "EFF Large Wordlist, 6 words (~77 bits).",
-    recipe: "passphrase 6 | out @passphrase",
+    recipe: "passphrase 6 | out $passphrase",
   },
   {
     id: "passphrase-char",
     group: "Secrets",
     title: "Character passphrase",
     blurb: "69-char alphabet random passphrase (`passphrase mode=char`).",
-    recipe: `passphrase mode=char length=20 | out @pass`,
+    recipe: `passphrase mode=char length=20 | out $pass`,
   },
   {
     id: "digest-sha256",
     group: "Digest & MAC",
     title: "SHA-256 digest",
     blurb: "Hash 32 random bytes and show hex.",
-    recipe: "random 32 | digest | encode hex | out @digest",
+    recipe: "random 32 | digest | encode hex | out $digest",
   },
   {
     id: "hmac-sign-verify",
@@ -1896,13 +1923,13 @@ in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok`,
     title: "HMAC sign / verify",
     blurb:
       "HMAC-SHA-256 via recipe sugar `hmac` / `hmac.verify` (serialize as sign/verify).",
-    recipe: `genkey hmac/sha256 | out @mac
+    recipe: `genkey hmac/sha256 | out $mac
 
-input | utf8 | out @msg
+input | utf8 | out $msg
 
-in @msg | hmac key=@mac | base64url | out @tag
+in $msg | hmac key=$mac | base64url | out $tag
 
-in @msg | hmac.verify key=@mac signature=@tag | out @ok`,
+in $msg | hmac.verify key=$mac signature=$tag | out $ok`,
   },
   {
     id: "jwk-thumbprint",
@@ -1910,9 +1937,9 @@ in @msg | hmac.verify key=@mac signature=@tag | out @ok`,
     title: "JWK SHA-256 digest",
     blurb:
       "Export a public JWK and SHA-256 digest the JSON text (handy fingerprint; not RFC 7638 canonical thumbprint).",
-    recipe: `genkey ec/p256 | :public | export jwk | out @jwk
+    recipe: `genkey ec/p256 | :public | export jwk | out $jwk
 
-in @jwk | utf8 | digest | encode hex | out @thumb`,
+in $jwk | utf8 | digest | encode hex | out $thumb`,
   },
   {
     id: "verify-soft",
@@ -1920,33 +1947,33 @@ in @jwk | utf8 | digest | encode hex | out @thumb`,
     title: "Soft signature verify",
     blurb:
       "Fail-soft verify (`-q`): emits bool `true` or `false` instead of throwing. Bind signature= (or the sig panel) at run time; prefer fail-loud for auth.",
-    recipe: `genkey ed25519 | :public | export jwk | out @pub
+    recipe: `genkey ed25519 | :public | export jwk | out $pub
 
-input | utf8 | verify -q key=@pub | out @result`,
+input | utf8 | verify -q key=$pub | out $result`,
   },
   {
     id: "rsa-oaep-roundtrip",
     group: "Encrypt",
     title: "RSA-OAEP encrypt / decrypt",
     blurb:
-      "Generate an RSA-OAEP key, encrypt a message with rsa-oaep key=@rk, then decrypt across chains.",
-    recipe: `genkey rsa/2048 usage=encrypt | out @rk
+      "Generate an RSA-OAEP key, encrypt a message with rsa-oaep key=$rk, then decrypt across chains.",
+    recipe: `genkey rsa/2048 usage=encrypt | out $rk
 
-input | utf8 | rsa-oaep key=@rk | encode hex | out @ct
+input | utf8 | rsa-oaep key=$rk | encode hex | out $ct
 
-in @ct | decode hex | rsa-oaep -d key=@rk | utf8 | out @plain`,
+in $ct | decode hex | rsa-oaep -d key=$rk | utf8 | out $plain`,
   },
   {
     id: "aes-gcm-roundtrip",
     group: "Encrypt",
     title: "AES-GCM encrypt / decrypt",
     blurb:
-      "Generate an AES-256 key, encrypt with `aes-gcm key=@cek`, then decrypt across chains (preferred AEAD).",
-    recipe: `genkey aes/256 | out @cek
+      "Generate an AES-256 key, encrypt with `aes-gcm key=$cek`, then decrypt across chains (preferred AEAD).",
+    recipe: `genkey aes/256 | out $cek
 
-input | utf8 | aes-gcm key=@cek | encode hex | out @ct
+input | utf8 | aes-gcm key=$cek | encode hex | out $ct
 
-in @ct | decode hex | aes-gcm -d key=@cek | utf8 | out @plain`,
+in $ct | decode hex | aes-gcm -d key=$cek | utf8 | out $plain`,
   },
   {
     id: "pbkdf2-aes-gcm",
@@ -1954,45 +1981,45 @@ in @ct | decode hex | aes-gcm -d key=@cek | utf8 | out @plain`,
     title: "Passphrase → PBKDF2 → AES-GCM",
     blurb:
       "Derive an AES-GCM CEK from a generated passphrase (`pbkdf2 as=aes/256`), encrypt plaintext, then decrypt. Swap `passphrase` for `input | utf8` to use your own password.",
-    recipe: `passphrase mode=char length=20 | pbkdf2 32 as=aes/256 | out @cek
+    recipe: `passphrase mode=char length=20 | pbkdf2 32 as=aes/256 | out $cek
 
-input | utf8 | aes-gcm key=@cek | base64url | out @ct
+input | utf8 | aes-gcm key=$cek | base64url | out $ct
 
-in @ct | base64url.decode | aes-gcm -d key=@cek | utf8 | out @plain`,
+in $ct | base64url.decode | aes-gcm -d key=$cek | utf8 | out $plain`,
   },
   {
     id: "hkdf-as-aes-gcm",
     group: "Encrypt",
     title: "HKDF → AES key → encrypt",
     blurb:
-      "Derive an AES-256 key with `hkdf as=aes/256` (deriveKey), then AES-GCM encrypt with key=@cek.",
-    recipe: `random 32 | hkdf 32 as=aes/256 | out @cek
+      "Derive an AES-256 key with `hkdf as=aes/256` (deriveKey), then AES-GCM encrypt with key=$cek.",
+    recipe: `random 32 | hkdf 32 as=aes/256 | out $cek
 
-input | utf8 | aes-gcm key=@cek | base64url | out @ct`,
+input | utf8 | aes-gcm key=$cek | base64url | out $ct`,
   },
   {
     id: "aes-cbc-roundtrip",
     group: "Encrypt",
     title: "AES-CBC encrypt / decrypt",
     blurb:
-      "Unauthenticated AES-CBC interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
-    recipe: `genkey aes/256 | out @cek
+      "Unauthenticated AES-CBC interop (prefer aes-gcm for new work). Round-trip with key=$cek.",
+    recipe: `genkey aes/256 | out $cek
 
-input | utf8 | aes-cbc key=@cek | encode hex | out @ct
+input | utf8 | aes-cbc key=$cek | encode hex | out $ct
 
-in @ct | decode hex | aes-cbc -d key=@cek | utf8 | out @plain`,
+in $ct | decode hex | aes-cbc -d key=$cek | utf8 | out $plain`,
   },
   {
     id: "aes-ctr-roundtrip",
     group: "Encrypt",
     title: "AES-CTR encrypt / decrypt",
     blurb:
-      "Unauthenticated AES-CTR interop (prefer aes-gcm for new work). Round-trip with key=@cek.",
-    recipe: `genkey aes/256 | out @cek
+      "Unauthenticated AES-CTR interop (prefer aes-gcm for new work). Round-trip with key=$cek.",
+    recipe: `genkey aes/256 | out $cek
 
-input | utf8 | aes-ctr key=@cek | encode hex | out @ct
+input | utf8 | aes-ctr key=$cek | encode hex | out $ct
 
-in @ct | decode hex | aes-ctr -d key=@cek | utf8 | out @plain`,
+in $ct | decode hex | aes-ctr -d key=$cek | utf8 | out $plain`,
   },
   // ── age. Not another AEAD row above: this is a whole file format with its
   // own key strings, and the arc keygen → recipient → encrypt → decrypt is the
@@ -2003,9 +2030,9 @@ in @ct | decode hex | aes-ctr -d key=@cek | utf8 | out @plain`,
     title: "An age identity and its recipient",
     blurb:
       "`age-keygen` in two chains — the `AGE-SECRET-KEY-1…` half stays masked until you reveal it, the `age1…` half is what you hand out, and the arrow between them only points one way.",
-    recipe: `age.keygen | out @id
+    recipe: `age.keygen | out $id
 
-in @id | age.recipient | out @pub`,
+in $id | age.recipient | out $pub`,
   },
   {
     id: "age-encrypt",
@@ -2014,10 +2041,10 @@ in @id | age.recipient | out @pub`,
     title: "Encrypt to an age recipient",
     blurb:
       "Real `age-encryption.org/v1`, not a lookalike — `armor=true` gives the PEM-style block, and `age -d -i key.txt` on the command line reads exactly this back.",
-    recipe: `age.keygen | out @id
-in @id | age.recipient | out @pub
+    recipe: `age.keygen | out $id
+in $id | age.recipient | out $pub
 
-input | utf8 | age.encrypt to=@pub armor=true | out @ct`,
+input | utf8 | age.encrypt to=$pub armor=true | out $ct`,
   },
   {
     id: "age-decrypt",
@@ -2026,9 +2053,9 @@ input | utf8 | age.encrypt to=@pub armor=true | out @ct`,
     title: "Decrypt an age file",
     blurb:
       "`age -d -i key.txt doc.age`, one picker each — `key=` is slot-typed precisely so the identity never lands in recipe text, which Copy link and Export would carry off. The identity file is read `as=text` and the ciphertext as bytes, because `file.read` takes its type from the recipe and not from what the picker happened to return.",
-    recipe: `file.read as=text | out @id
+    recipe: `file.read as=text | out $id
 
-file.read | age.decrypt key=@id | file.save`,
+file.read | age.decrypt key=$id | file.save`,
   },
   {
     id: "hkdf-as-aes-kw-wrap",
@@ -2036,13 +2063,13 @@ file.read | age.decrypt key=@id | file.save`,
     title: "HKDF → AES-KW → wrap CEK",
     blurb:
       "Derive an AES-KW KEK (`as=aes-kw/256`), wrap a CEK with AES-KW, then unwrap (`export raw` before hex — unwrap tip is a live key).",
-    recipe: `random 32 | hkdf 32 as=aes-kw/256 | out @kek
+    recipe: `random 32 | hkdf 32 as=aes-kw/256 | out $kek
 
-genkey aes/256 | out @cek
+genkey aes/256 | out $cek
 
-wrap key=@kek target=@cek | encode hex | out @wrapped
+wrap key=$kek target=$cek | encode hex | out $wrapped
 
-in @wrapped | decode hex | unwrap key=@kek | export raw | encode hex | out @cek-raw`,
+in $wrapped | decode hex | unwrap key=$kek | export raw | encode hex | out $cek-raw`,
   },
   {
     id: "wrap-aes-gcm",
@@ -2050,12 +2077,12 @@ in @wrapped | decode hex | unwrap key=@kek | export raw | encode hex | out @cek-
     title: "Wrap CEK with AES-GCM",
     blurb:
       "SubtleCrypto wrapKey under AES-GCM (IV||wrapped packing). Prefer AES-KW for new key-wrap work. Unwrap yields a live key tip — `export raw` before hex.",
-    recipe: `genkey aes/256 | out @kek
-genkey aes/256 | out @cek
+    recipe: `genkey aes/256 | out $kek
+genkey aes/256 | out $cek
 
-wrap mode=aes-gcm key=@kek target=@cek | encode hex | out @wrapped
+wrap mode=aes-gcm key=$kek target=$cek | encode hex | out $wrapped
 
-in @wrapped | decode hex | unwrap mode=aes-gcm key=@kek | export raw | encode hex | out @cek-raw`,
+in $wrapped | decode hex | unwrap mode=aes-gcm key=$kek | export raw | encode hex | out $cek-raw`,
   },
   {
     id: "x25519-ecdh",
@@ -2063,11 +2090,11 @@ in @wrapped | decode hex | unwrap mode=aes-gcm key=@kek | export raw | encode he
     title: "X25519 ECDH → AES key",
     blurb:
       "Generate two X25519 keys, ECDH deriveBits, then HKDF to an AES-GCM CEK.",
-    recipe: `genkey x25519 | out @local
-genkey x25519 | out @peer
+    recipe: `genkey x25519 | out $local
+genkey x25519 | out $peer
 
-ecdh private=@local peer=@peer | hkdf 32 as=aes/256 | out @cek
-in @cek | export jwk | out @cek-jwk`,
+ecdh private=$local peer=$peer | hkdf 32 as=aes/256 | out $cek
+in $cek | export jwk | out $cek-jwk`,
   },
   {
     id: "slip39-split",
@@ -2076,7 +2103,7 @@ in @cek | export jwk | out @cek-jwk`,
     title: "SSS + BLIP39 split a secret",
     blurb: "Generate 32 random bytes, Shamir-split 2-of-3, encode as BLIP39 mnemonics.",
     recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`,
+  - out $share`,
   },
   {
     id: "recover-shares",
@@ -2084,7 +2111,7 @@ in @cek | export jwk | out @cek-jwk`,
     pair: "slip39-secret",
     title: "Recover secret from BLIP39 shares",
     blurb: "Paste K-of-N mnemonics, decode to raw SSS, reconstruct the 16/32-byte master as Base64.",
-    recipe: "shares | blip39.decode | sss.combine | base64 | out @secret",
+    recipe: "shares | blip39.decode | sss.combine | base64 | out $secret",
   },
   {
     id: "ceremony-receipt",
@@ -2094,9 +2121,9 @@ in @cek | export jwk | out @cek-jwk`,
     blurb:
       "Split a secret, then mint a receipt of the run — recipe, timestamps, and digests of every output, never the outputs — and OpenPGP-sign it with a vault key.",
     recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
-run.receipt | gpg.sign | out @receipt`,
+run.receipt | gpg.sign | out $receipt`,
   },
   {
     id: "ceremony-verify",
@@ -2105,7 +2132,7 @@ run.receipt | gpg.sign | out @receipt`,
     title: "Check a receipt against a re-run",
     blurb:
       "Paste a receipt (signed or plain) and compare it to the run happening now. Digests only — the check never reveals what was split.",
-    recipe: "input | run.verify | out @ok",
+    recipe: "input | run.verify | out $ok",
   },
   {
     id: "out-mid-pipeline",
@@ -2115,9 +2142,9 @@ run.receipt | gpg.sign | out @receipt`,
     blurb:
       "Tee the public PEM, then SSS + BLIP39-split the 32-byte scalar (no envelope) — preferred for P-256 keys.",
     recipe: `genkey ec/p256 | tee
-  - :public | export spki | pem | out @public
+  - :public | export spki | pem | out $public
 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`,
+  - out $share`,
   },
   {
     id: "rebuild-p256",
@@ -2126,7 +2153,7 @@ run.receipt | gpg.sign | out @receipt`,
     title: "Rebuild P-256 key from scalar shares",
     blurb: "Decode BLIP39 shares of a P-256 private scalar, recover SSS, and re-import as WebCrypto.",
     recipe:
-      "shares | blip39.decode | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
+      "shares | blip39.decode | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out $private",
   },
   {
     id: "quorum-gpg",
@@ -2136,7 +2163,7 @@ run.receipt | gpg.sign | out @receipt`,
     blurb:
       "Tee the public PEM, SSS-split the 32-byte scalar 2-of-3, BLIP39-encode, encrypt each share to a different recipient.",
     recipe: `genkey ec/p256 | tee
-  - :public | export spki | pem | out @public
+  - :public | export spki | pem | out $public
 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
   - gpg.encrypt`,
   },
@@ -2148,7 +2175,7 @@ run.receipt | gpg.sign | out @receipt`,
     blurb:
       "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then blip39.decode | sss.combine and rebuild the P-256 PEM from the scalar.",
     recipe:
-      "gpg.decrypt | blip39.decode | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out @private",
+      "gpg.decrypt | blip39.decode | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out $private",
   },
   {
     id: "pem-envelope-split",
@@ -2156,9 +2183,9 @@ run.receipt | gpg.sign | out @receipt`,
     pair: "slip39-pem-envelope",
     title: "Split PEM via OpenPGP envelope",
     blurb:
-      "Emit PKCS#8 PEM (@pem), OpenPGP-encrypt under a random 32-byte master, then SSS + BLIP39-split the master. Keep envelope.asc with the shares.",
-    recipe: `genkey ec/p256 | export pkcs8 | pem | out @pem | gpg.symencrypt mode=master | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`,
+      "Emit PKCS#8 PEM ($pem), OpenPGP-encrypt under a random 32-byte master, then SSS + BLIP39-split the master. Keep envelope.asc with the shares.",
+    recipe: `genkey ec/p256 | export pkcs8 | pem | out $pem | gpg.symencrypt mode=master | sss.split threshold=2 shares=3 | blip39 | foreach
+  - out $share`,
   },
   {
     id: "pem-envelope-rebuild",
@@ -2167,7 +2194,7 @@ run.receipt | gpg.sign | out @receipt`,
     title: "Recover PEM from envelope + shares",
     blurb:
       "Decode + recover shares to the hex master, then gpg.symdecrypt the bound envelope.asc (also works with gpg --decrypt).",
-    recipe: "shares | blip39.decode | sss.combine | gpg.symdecrypt mode=master | utf8 | out @pem",
+    recipe: "shares | blip39.decode | sss.combine | gpg.symdecrypt mode=master | utf8 | out $pem",
   },
   {
     id: "stun-reachable",
@@ -2175,7 +2202,7 @@ run.receipt | gpg.sign | out @receipt`,
     title: "Is STUN reachable?",
     blurb:
       "One-shot NAT check. Reports your server-reflexive address, or says STUN is blocked — the first thing to run when a peer connection will not form.",
-    recipe: "stun.check | out @nat",
+    recipe: "stun.check | out $nat",
   },
   {
     id: "ice-gather",
@@ -2183,9 +2210,9 @@ run.receipt | gpg.sign | out @receipt`,
     title: "Gather ICE candidates",
     blurb:
       "Every route ICE would try, typed: host, peer-reflexive, server-reflexive, relay. A missing relay row means no TURN is configured — informational, not a failure.",
-    recipe: `rtc.ice | out @ice
+    recipe: `rtc.ice | out $ice
 
-rtc.gather ice=@ice timeout=5000 | out @candidates`,
+rtc.gather ice=$ice timeout=5000 | out $candidates`,
   },
   {
     id: "ice-custom-stun",
@@ -2193,9 +2220,9 @@ rtc.gather ice=@ice timeout=5000 | out @candidates`,
     title: "Gather against your own STUN server",
     blurb:
       "Same gather, pointed at a STUN server you choose instead of the built-in defaults. Compare the reflexive address with the previous template's to see whether a server is lying to you.",
-    recipe: `rtc.ice stun=stun:stun.l.google.com:19302 | out @ice
+    recipe: `rtc.ice stun=stun:stun.l.google.com:19302 | out $ice
 
-rtc.gather ice=@ice | out @candidates`,
+rtc.gather ice=$ice | out $candidates`,
   },
   {
     id: "ice-turn-relay",
@@ -2203,11 +2230,11 @@ rtc.gather ice=@ice | out @candidates`,
     title: "Add a TURN relay",
     blurb:
       "For the case both peers are behind symmetric NAT, where no direct route exists. Replace the URL and username, and paste the credential into Inputs — `credential=` takes a slot on purpose, so the secret never rides out in shared recipe text.",
-    recipe: `input | out @turncred
+    recipe: `input | out $turncred
 
-rtc.ice turn=turns:turn.example.net:5349 username=USER credential=@turncred | out @ice
+rtc.ice turn=turns:turn.example.net:5349 username=USER credential=$turncred | out $ice
 
-rtc.gather ice=@ice | out @candidates`,
+rtc.gather ice=$ice | out $candidates`,
   },
   {
     id: "rtc-dtls-identity",
@@ -2215,25 +2242,25 @@ rtc.gather ice=@ice | out @candidates`,
     title: "DTLS certificate fingerprint",
     blurb:
       "The fingerprint a peer actually sees. An offer carries `a=fingerprint:` and the DTLS handshake must match it — which is what lets a signed invite prove who is on the far end of the channel.",
-    recipe: "rtc.certificate | out @dtls",
+    recipe: "rtc.certificate | out $dtls",
   },
   {
     id: "sdp-hand-carried",
     group: "WebRTC",
     title: "Connect two browsers by hand",
     blurb:
-      "A real connection with no PGP audience, no room and no relay — you are the signalling channel. As written both ends live in this notebook, so it connects to itself and you can watch the whole handshake; in a real exchange the `peer.answer` cell runs in the *other* browser and you carry `@offer` there and `@answer` back. `peer.wait` is the step that tells you ICE succeeded. The channel is DTLS-encrypted, but nothing proves who is on the far end — that is what `quorum.offer` is for.",
-    recipe: `peer.offer a | out @offer
+      "A real connection with no PGP audience, no room and no relay — you are the signalling channel. As written both ends live in this notebook, so it connects to itself and you can watch the whole handshake; in a real exchange the `peer.answer` cell runs in the *other* browser and you carry `$offer` there and `$answer` back. `peer.wait` is the step that tells you ICE succeeded. The channel is DTLS-encrypted, but nothing proves who is on the far end — that is what `quorum.offer` is for.",
+    recipe: `peer.offer a | out $offer
 
-in @offer | peer.answer b | out @answer
+in $offer | peer.answer b | out $answer
 
-in @answer | peer.accept a | out @state
+in $answer | peer.accept a | out $state
 
-peer.wait a | out @link
+peer.wait a | out $link
 
 "hello from a" | peer.send a
 
-peer.recv b | out @heard`,
+peer.recv b | out $heard`,
   },
   {
     id: "sdp-to-clipboard",
@@ -2243,7 +2270,7 @@ peer.recv b | out @heard`,
       "Signalling has to start somewhere outside WebRTC. The tee copies the offer to the clipboard while the pipeline keeps it, so you can paste it into chat and still hold it here. The connection stays open under the name `a` while you do.",
     recipe: `peer.offer a | tee
   - clipboard.write
-| out @offer`,
+| out $offer`,
   },
   {
     id: "rtc-live-diagnostics",
@@ -2251,11 +2278,11 @@ peer.recv b | out @heard`,
     title: "Diagnose a live exchange",
     blurb:
       "Needs a running `quorum.offer` / `quorum.join` in another cell — these read the exchange that is already open. State first, then the candidate-pair matrix (why ICE chose the route it did), then quality. `rtc.restart` renegotiates in place without losing the room.",
-    recipe: `rtc.state | out @state
+    recipe: `rtc.state | out $state
 
-rtc.check | out @pairs
+rtc.check | out $pairs
 
-rtc.quality | out @quality`,
+rtc.quality | out $quality`,
   },
   {
     id: "gpg-decrypt",
@@ -2271,20 +2298,20 @@ rtc.quality | out @quality`,
     title: "OpenPGP sign / verify",
     blurb:
       "Cleartext-sign with a vault OpenPGP private key (`gpg.sign`), then verify (`gpg.verify`). Distinct from WebCrypto `sign`/`verify`.",
-    recipe: `input | utf8 | gpg.sign | out @signed
+    recipe: `input | utf8 | gpg.sign | out $signed
 
-in @signed | gpg.verify | out @ok`,
+in $signed | gpg.verify | out $ok`,
   },
   {
     id: "agent-sign-verify",
     group: "OpenPGP",
     title: "Vault sign / verify",
     blurb:
-      "Unlock My Keys (`agent.unlock`), sign with `gpg.sign key=@me`, verify. Edit the fingerprint before running.",
-    recipe: `agent.unlock AABBCCDDEEFF00112233445566778899AABBCCDD | out @me
-input | gpg.sign key=@me | out @signed
+      "Unlock My Keys (`agent.unlock`), sign with `gpg.sign key=$me`, verify. Edit the fingerprint before running.",
+    recipe: `agent.unlock AABBCCDDEEFF00112233445566778899AABBCCDD | out $me
+input | gpg.sign key=$me | out $signed
 
-in @signed | gpg.verify key=@me | out @ok`,
+in $signed | gpg.verify key=$me | out $ok`,
   },
   {
     id: "agent-gen-save",
@@ -2292,18 +2319,18 @@ in @signed | gpg.verify key=@me | out @ok`,
     title: "Generate & save to My Keys",
     blurb:
       "`gpg.genkey` then `agent.save protection=device` into the browser vault.",
-    recipe: `gpg.genkey email="you@example.com" | agent.save protection=device | out @priv`,
+    recipe: `gpg.genkey email="you@example.com" | agent.save protection=device | out $priv`,
   },
   {
     id: "agent-sign-encrypt-to",
     group: "OpenPGP",
-    title: "Vault sign + encrypt to @alices",
+    title: "Vault sign + encrypt to $alices",
     blurb:
-      "Unlock My Keys, search recipients, sign-then-encrypt with `to=@alices` and `key=@me`.",
-    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
-agent.unlock AABBCCDDEEFF00112233445566778899AABBCCDD | out @me
+      "Unlock My Keys, search recipients, sign-then-encrypt with `to=$alices` and `key=$me`.",
+    recipe: `hkp.search alice@example.org | hkp.filter | out $alices
+agent.unlock AABBCCDDEEFF00112233445566778899AABBCCDD | out $me
 
-input | gpg.encrypt to=@alices -s key=@me mode=combined`,
+input | gpg.encrypt to=$alices -s key=$me mode=combined`,
   },
   {
     id: "encrypt-to-email-one",
@@ -2319,40 +2346,40 @@ input | gpg.encrypt to=@alices -s key=@me mode=combined`,
     title: "Generate OpenPGP key",
     blurb:
       "Curve25519 keypair (`gpg.genkey`) — private on the pipeline, public as an artifact. Edit the email before running.",
-    recipe: `gpg.genkey email="you@example.com" | out @priv`,
+    recipe: `gpg.genkey email="you@example.com" | out $priv`,
   },
   {
     id: "gpg-inspect",
     group: "OpenPGP",
     title: "Inspect OpenPGP armor",
     blurb: "Summarize armored ciphertext / signatures without decrypting.",
-    recipe: `input | gpg.inspect format=packets | out @report`,
+    recipe: `input | gpg.inspect format=packets | out $report`,
   },
   {
     id: "hkp-fetch-pub",
     group: "Directory",
     title: "Fetch public key",
     blurb: "Pull armored public key from the keyserver (`hkp.get`). Edit the fingerprint before running.",
-    recipe: `hkp.get AABBCCDDEEFF00112233445566778899AABBCCDD | out @bob`,
+    recipe: `hkp.get AABBCCDDEEFF00112233445566778899AABBCCDD | out $bob`,
   },
   {
     id: "hkp-search-encrypt",
     group: "Directory",
     title: "Search → encrypt (separate)",
     blurb:
-      "Directory search → filter approved/encrypt → `gpg.encrypt to=@alices` (one ciphertext per recipient).",
-    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
+      "Directory search → filter approved/encrypt → `gpg.encrypt to=$alices` (one ciphertext per recipient).",
+    recipe: `hkp.search alice@example.org | hkp.filter | out $alices
 
-input | gpg.encrypt to=@alices`,
+input | gpg.encrypt to=$alices`,
   },
   {
     id: "hkp-encrypt-combined",
     group: "Directory",
     title: "Group encrypt (combined)",
     blurb: "One OpenPGP message with N PKESKs (`mode=combined`).",
-    recipe: `hkp.search alice@example.org | hkp.filter | out @alices
+    recipe: `hkp.search alice@example.org | hkp.filter | out $alices
 
-input | gpg.encrypt to=@alices mode=combined`,
+input | gpg.encrypt to=$alices mode=combined`,
   },
   {
     id: "webauthn-prf-aes-gcm",
@@ -2360,11 +2387,11 @@ input | gpg.encrypt to=@alices mode=combined`,
     title: "WebAuthn PRF → HKDF → AES-GCM",
     blurb:
       "Unlock vault passkey PRF IKM (`webauthn.prf`), HKDF to an AES-GCM CEK, encrypt plaintext, then decrypt. Main-thread ceremony.",
-    recipe: `webauthn.prf | hkdf 32 as=aes/256 | out @cek
+    recipe: `webauthn.prf | hkdf 32 as=aes/256 | out $cek
 
-input | utf8 | aes-gcm key=@cek | base64url | out @ct
+input | utf8 | aes-gcm key=$cek | base64url | out $ct
 
-in @ct | base64url.decode | aes-gcm -d key=@cek | utf8 | out @plain`,
+in $ct | base64url.decode | aes-gcm -d key=$cek | utf8 | out $plain`,
   },
   {
     id: "webauthn-attest-mds",
@@ -2372,9 +2399,9 @@ in @ct | base64url.decode | aes-gcm -d key=@cek | utf8 | out @plain`,
     title: "Attestation → MDS",
     blurb:
       "Paste a base64 or hex attestationObject in Inputs, parse fmt/AAGUID (`webauthn.attest`), then soft FIDO MDS lookup. Soft / informational — not a CAST gate.",
-    recipe: `input | webauthn.attest | out @att
+    recipe: `input | webauthn.attest | out $att
 
-in @att | webauthn.mds | out @mds`,
+in $att | webauthn.mds | out $mds`,
   },
   // ── OTP. One template carries the whole enrolment arc; the other three are
   // the three questions people arrive with about it — what is in this URI
@@ -2387,14 +2414,14 @@ in @att | webauthn.mds | out @mds`,
     blurb:
       "The whole arc in one notebook: 20 random bytes become a Base32 secret, the secret becomes an `otpauth://` URI, the URI becomes a QR your phone can scan — and the last cell checks a code against it, which is the step that proves the enrolment worked rather than merely looking pretty.",
     recipe: `random 20 | tee
-  - base32 | out @secret
+  - base32 | out $secret
 | otp.uri issuer="Basilisk" account=you@example.com | tee
   - qr
-| out @uri
+| out $uri
 
-in @secret | otp.code | out @code
+in $secret | otp.code | out $code
 
-in @code | otp.verify secret=@uri window=1 | out @ok`,
+in $code | otp.verify secret=$uri window=1 | out $ok`,
   },
   {
     id: "otp-read-uri",
@@ -2403,14 +2430,14 @@ in @code | otp.verify secret=@uri window=1 | out @ok`,
     blurb:
       "Paste an `otpauth://` string (or scan it with `qr.scan`) and take it apart field by field — the URI carries the algorithm and the digit count as well as the secret, which is why a code computed with the defaults can be right in every respect and still wrong.",
     recipe: `input | tee
-  - otp.parse issuer | out @issuer
+  - otp.parse issuer | out $issuer
 | tee
-  - otp.parse account | out @account
+  - otp.parse account | out $account
 | tee
-  - otp.parse algorithm | out @algorithm
+  - otp.parse algorithm | out $algorithm
 | tee
-  - otp.parse digits | out @digits
-| otp.code | out @code`,
+  - otp.parse digits | out $digits
+| otp.code | out $code`,
   },
   {
     id: "otp-hotp-counter",
@@ -2419,14 +2446,14 @@ in @code | otp.verify secret=@uri window=1 | out @ok`,
     blurb:
       "What a hardware token does: each press advances a counter, so codes do not expire, they get spent. The verify here allows a look-ahead of three, because a token in a drawer gets pressed by accident — and it looks *only* ahead, since a server counter that stepped backwards would accept a code already used.",
     recipe: `random 20 | base32 | tee
-  - out @secret
-| otp.uri mode=hotp counter=0 issuer="Basilisk" account=token-7 | out @uri
+  - out $secret
+| otp.uri mode=hotp counter=0 issuer="Basilisk" account=token-7 | out $uri
 
-in @secret | otp.code mode=hotp counter=0 | out @first
+in $secret | otp.code mode=hotp counter=0 | out $first
 
-in @secret | otp.code mode=hotp counter=2 | out @third
+in $secret | otp.code mode=hotp counter=2 | out $third
 
-in @third | otp.verify -q secret=@secret mode=hotp counter=0 window=3 | out @resync`,
+in $third | otp.verify -q secret=$secret mode=hotp counter=0 window=3 | out $resync`,
   },
   {
     id: "otp-parameters",
@@ -2435,14 +2462,14 @@ in @third | otp.verify -q secret=@secret mode=hotp counter=0 window=3 | out @res
     blurb:
       "One secret, three sets of parameters, three different codes — none of which verify against each other. RFC 6238 allows SHA-256 and SHA-512 and 6-to-8 digits, so a URI that omits `algorithm=` is trusting both ends to guess the same default; this is why `otp.uri` always writes them down.",
     recipe: `random 32 | base32 | tee
-  - out @secret
-| otp.uri algorithm=sha512 digits=8 issuer="Long Corp" account=ops@example.com | out @uri
+  - out $secret
+| otp.uri algorithm=sha512 digits=8 issuer="Long Corp" account=ops@example.com | out $uri
 
-in @secret | otp.code | out @plain6
+in $secret | otp.code | out $plain6
 
-in @secret | otp.code algorithm=sha512 digits=8 | out @long8
+in $secret | otp.code algorithm=sha512 digits=8 | out $long8
 
-in @secret | otp.code algorithm=sha256 digits=7 period=60 at=1111111111 | out @odd7`,
+in $secret | otp.code algorithm=sha256 digits=7 period=60 at=1111111111 | out $odd7`,
   },
   {
     id: "jwt-decode",
@@ -2450,7 +2477,7 @@ in @secret | otp.code algorithm=sha256 digits=7 period=60 at=1111111111 | out @o
     title: "Decode a JWT (unverified)",
     blurb:
       "Paste a token in Inputs and read its header and claims — without checking the signature, and labelled as such. The safe first move on a token you were handed; nothing leaves the page. To trust what it says, run the verify companion instead.",
-    recipe: "input | jose.decode | out @claims",
+    recipe: "input | jose.decode | out $claims",
   },
   {
     // Sign and verify ship as *one* preset rather than a companion pair, the
@@ -2458,18 +2485,18 @@ in @secret | otp.code algorithm=sha256 digits=7 period=60 at=1111111111 | out @o
     // inverse has to stand on its own when loaded alone, which the SSS
     // inverses manage because `shares` opens a paste panel — but a JWS
     // verification needs a key, and there is no panel that conjures one. The
-    // cells are still slot-wired (`@jwtkey`, `@token`), so `slot-graph` gates
+    // cells are still slot-wired (`$jwtkey`, `$token`), so `slot-graph` gates
     // them per cell exactly as it would across a pair.
     id: "jwt-sign-es256",
     group: "JOSE",
     title: "Sign & verify a JWT (ES256)",
     blurb:
       'Generate a P-256 signing key, sign JSON claims from Inputs into a compact JWS, then verify it back. Try `{"sub":"alice","exp":2000000000}` — the token tile shows the claims and a live expiry clock. Verification enforces `exp`; add `expiry=ignore` to inspect an old token anyway.',
-    recipe: `genkey ec/p256 usage=sign | out @jwtkey
+    recipe: `genkey ec/p256 usage=sign | out $jwtkey
 
-input | jose.sign key=@jwtkey alg=es256 | out @token
+input | jose.sign key=$jwtkey alg=es256 | out $token
 
-@token | jose.verify key=@jwtkey | out @claims`,
+$token | jose.verify key=$jwtkey | out $claims`,
   },
   {
     id: "jwe-roundtrip",
@@ -2477,17 +2504,17 @@ input | jose.sign key=@jwtkey alg=es256 | out @token
     title: "Encrypt & decrypt a JWE",
     blurb:
       "Wrap a payload in a compact JWE under a generated AES-256 key (`dir` means that key *is* the content key, so there is no wrapped-CEK segment), then unseal it. The protected header is the AEAD's additional data — editing `alg` or `enc` in transit breaks the tag rather than changing how it decrypts.",
-    recipe: `genkey aes/256 | out @cek
+    recipe: `genkey aes/256 | out $cek
 
-input | jose.encrypt key=@cek | out @jwe
+input | jose.encrypt key=$cek | out $jwe
 
-@jwe | jose.decrypt key=@cek | out @plain`,
+$jwe | jose.decrypt key=$cek | out $plain`,
   },
   {
     id: "base32-id",
     group: "Encoding",
     title: "Base32 encode",
     blurb: "RFC 4648 Base32 (no padding) — same codec as Quorum room ids.",
-    recipe: `random 10 | base32 | out @id`,
+    recipe: `random 10 | base32 | out $id`,
   },
 ];

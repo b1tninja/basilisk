@@ -1,5 +1,5 @@
 /**
- * Execute a compiled toolkit recipe AST (multi-chain + @slot registry).
+ * Execute a compiled toolkit recipe AST (multi-chain + $slot registry).
  * Normative language: docs/RECIPE.md
  * Returns encoded artifacts only (never CryptoKey handles).
  */
@@ -18,6 +18,7 @@ import {
   mapPacketSpans,
 } from "../packet-map.js";
 import { qrSvg } from "../qr.js";
+import { DEFAULT_OUT_SLOT, SLOT_SIGIL } from "./recipe-parse.js";
 import {
   PROFILE_AUTO,
   encryptArtifacts,
@@ -276,7 +277,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
 
   const resolveSlot = (ref) => registry.resolve(ref);
 
-  // Named slot args (`key=@cek`) resolve through the same registry as `in`.
+  // Named slot args (`key=$cek`) resolve through the same registry as `in`.
   // `listIndexedSlots` lets the `shares` panel op fall back to share slots an
   // earlier cell's foreach emitted this session (wired inputs, §slot-graph).
   bindings = {
@@ -350,7 +351,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
             artifacts[ai].stepName = step.name;
           }
           if (step.name === "out" && sideVal) {
-            registerSlot(String(step.params?.name || "@output"), sideVal, preexisting);
+            registerSlot(String(step.params?.name || DEFAULT_OUT_SLOT), sideVal, preexisting);
           }
           if (step.name === "out" || step.name === "text") emitted = true;
           if (artifacts.length > before) emitted = true;
@@ -485,7 +486,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
             artifacts[ai].stepName = step.name;
           }
           if (step.name === "out" && itemVal) {
-            registerSlot(String(step.params?.name || "@output"), itemVal, preexisting);
+            registerSlot(String(step.params?.name || DEFAULT_OUT_SLOT), itemVal, preexisting);
           }
         }
         if (itemVal && (itemVal.type === "text" || itemVal.type === "bytes")) {
@@ -554,7 +555,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
     stampNew(before, node.step);
     lastStepEmitted = node.step.name === "out" || node.step.name === "text";
     if (node.step.name === "out" && value) {
-      registerSlot(String(node.step.params?.name || "@output"), value, preexisting);
+      registerSlot(String(node.step.params?.name || DEFAULT_OUT_SLOT), value, preexisting);
     }
   }
 
@@ -1531,7 +1532,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         const peerText = String(bindings.inputs?.key?.peerJwkText || "").trim();
         if (!peerText) {
           throw new Error(
-            "ecdh needs peer=@slot or peer public JWK in the peer key field"
+            "ecdh needs peer=$slot or peer public JWK in the peer key field"
           );
         }
         const peer = await importBoundJwk({ jwkText: peerText, alg: "ecdh" });
@@ -1561,7 +1562,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         const wrapText = String(bindings.inputs?.key?.wrapJwkText || "").trim();
         if (!wrapText) {
           throw new Error(
-            "wrap needs target=@slot or key-to-wrap JWK in the wrap panel"
+            "wrap needs target=$slot or key-to-wrap JWK in the wrap panel"
           );
         }
         const toWrap = await importBoundJwk({ jwkText: wrapText });
@@ -1790,7 +1791,7 @@ async function execStepBody(step, value, bindings, artifacts) {
           : null;
       if (mode === "passphrase" && !userPass) {
         throw new Error(
-          "gpg.symencrypt mode=passphrase requires passphrase= or passphrase=@slot"
+          "gpg.symencrypt mode=passphrase requires passphrase= or passphrase=$slot"
         );
       }
       const master = mode === "master" ? crypto.getRandomValues(new Uint8Array(32)) : null;
@@ -1877,7 +1878,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         );
         if (!userPass) {
           throw new Error(
-            "gpg.symdecrypt mode=passphrase requires passphrase= or passphrase=@slot"
+            "gpg.symdecrypt mode=passphrase requires passphrase= or passphrase=$slot"
           );
         }
         let armored;
@@ -2097,7 +2098,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         // three ways to name a recipient — two of which would be advice to do
         // what the author already did.
         throw new Error(
-          "gpg.encrypt: no recipients chosen. Pick them in the Keys tray, or name them on the step — `to=@slot` for an earlier lookup, or `to=someone@example.com` to resolve one now."
+          "gpg.encrypt: no recipients chosen. Pick them in the Keys tray, or name them on the step — `to=$slot` for an earlier lookup, or `to=someone@example.com` to resolve one now."
         );
       }
       // Foreach + binder: one recipient per share index (legacy SSS fan-out).
@@ -2680,7 +2681,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       if (step.name === "rtc.ice") {
         const params = { ...(step.params || {}) };
         const credRef = String(params.credential || "").trim();
-        if (credRef.startsWith("@")) {
+        if (credRef.startsWith(SLOT_SIGIL)) {
           const resolve = bindings?.resolveSlot;
           if (typeof resolve !== "function") {
             throw new Error("rtc.ice: runtime slot resolver missing for credential=");
@@ -3175,7 +3176,7 @@ function coercePipelineScalar(value, kind) {
 
 /**
  * @param {RuntimeBindings} bindings
- * @param {string|undefined|null} [keyRef]  `key=@slot` armored private
+ * @param {string|undefined|null} [keyRef]  `key=$slot` armored private
  * @returns {Promise<import("openpgp").PrivateKey>}
  */
 async function resolveGpgPrivateKey(bindings, keyRef) {
@@ -3194,7 +3195,7 @@ async function resolveGpgPrivateKey(bindings, keyRef) {
   const gpg = bindings.inputs?.gpg;
   if (!gpg?.privateKeyArmored) {
     throw new Error(
-      "OpenPGP private key required (vault / key panel / key=@slot) — used by gpg.sign and gpg.encrypt -s"
+      "OpenPGP private key required (vault / key panel / key=$slot) — used by gpg.sign and gpg.encrypt -s"
     );
   }
   let privateKey = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
@@ -3305,7 +3306,7 @@ async function resolveEncryptRecipients(bindings, toParam, policy = "ask") {
   }
 
   if (!list.length) {
-    // Reached when a `to=@slot` resolved to a value carrying no usable public
+    // Reached when a `to=$slot` resolved to a value carrying no usable public
     // key — an empty recipients set, or text that is not armor. Naming the
     // slot and what it should hold beats reporting the internal outcome.
     const ref = token.kind === "slot" ? token.ref : "";
@@ -3347,7 +3348,7 @@ async function resolveEncryptRecipients(bindings, toParam, policy = "ask") {
 
 /**
  * @param {RuntimeBindings} bindings
- * @param {string|undefined|null} [keyRef]  `key=@slot` armored public or private
+ * @param {string|undefined|null} [keyRef]  `key=$slot` armored public or private
  * @returns {Promise<import("openpgp").Key[]>}
  */
 async function resolveGpgVerificationKeys(bindings, keyRef) {
@@ -3374,7 +3375,7 @@ async function resolveGpgVerificationKeys(bindings, keyRef) {
   const recipients = bindings.recipients || [];
   if (recipients.length) return recipients;
   throw new Error(
-    "gpg.verify needs an OpenPGP public key (key=@slot, vault key panel, or recipients)"
+    "gpg.verify needs an OpenPGP public key (key=$slot, vault key panel, or recipients)"
   );
 }
 
@@ -3390,7 +3391,7 @@ async function resolveGpgDetachedSignature(bindings, refOrText) {
       bindings.inputs?.key?.signatureB64url || bindings.inputs?.signature || ""
     ).trim();
   }
-  if (raw.startsWith("@")) {
+  if (raw.startsWith(SLOT_SIGIL)) {
     const resolve = bindings?.resolveSlot;
     if (typeof resolve !== "function") {
       throw new Error(`gpg.verify signature=${raw}: runtime slot resolver missing`);
@@ -3536,7 +3537,7 @@ async function decryptGpgSource(bindings, _artifacts) {
 }
 
 /**
- * Resolve optional bytes from a UTF-8 literal or `@slot` of text/bytes.
+ * Resolve optional bytes from a UTF-8 literal or `$slot` of text/bytes.
  * Empty / missing → null (caller supplies default).
  * @param {object} bindings
  * @param {string|undefined|null} raw
@@ -3550,7 +3551,7 @@ async function resolveBytesOrUtf8Param(bindings, raw, label, opts = {}) {
     if (opts.defaultUtf8 != null) return textToBytes(String(opts.defaultUtf8));
     return null;
   }
-  if (s.startsWith("@")) {
+  if (s.startsWith(SLOT_SIGIL)) {
     const resolve = bindings?.resolveSlot;
     if (typeof resolve !== "function") {
       throw new Error(`${label}=${s}: runtime slot resolver missing`);
@@ -3590,14 +3591,14 @@ function resolveGpgSymMode(params, op) {
   }
   if (mode === "passphrase" && !pw) {
     throw new Error(
-      `${op} mode=passphrase requires passphrase= or passphrase=@slot`
+      `${op} mode=passphrase requires passphrase= or passphrase=$slot`
     );
   }
   return /** @type {"master"|"passphrase"} */ (mode);
 }
 
 /**
- * Resolve passphrase= literal or `@slot` text. Empty → null.
+ * Resolve passphrase= literal or `$slot` text. Empty → null.
  * @param {object} bindings
  * @param {string|undefined|null} raw
  * @param {string} label
@@ -3606,7 +3607,7 @@ function resolveGpgSymMode(params, op) {
 async function resolvePassphraseParam(bindings, raw, label) {
   const s = String(raw ?? "").trim();
   if (!s) return null;
-  if (s.startsWith("@")) {
+  if (s.startsWith(SLOT_SIGIL)) {
     const resolve = bindings?.resolveSlot;
     if (typeof resolve !== "function") {
       throw new Error(`${label}=${s}: runtime slot resolver missing`);
@@ -3623,14 +3624,14 @@ async function resolvePassphraseParam(bindings, raw, label) {
 }
 
 /**
- * Resolve verify signature= from @slot, base64url string, or panel binding.
+ * Resolve verify signature= from $slot, base64url string, or panel binding.
  * @param {object} bindings
  * @param {string|undefined|null} refOrB64
  * @returns {Promise<Uint8Array>}
  */
 async function resolveVerifySignature(bindings, refOrB64) {
   const raw = String(refOrB64 || "").trim();
-  if (raw.startsWith("@")) {
+  if (raw.startsWith(SLOT_SIGIL)) {
     const resolve = bindings?.resolveSlot;
     if (typeof resolve !== "function") {
       throw new Error(`verify signature=${raw}: runtime slot resolver missing`);
@@ -3648,7 +3649,7 @@ async function resolveVerifySignature(bindings, refOrB64) {
   const sigB64 =
     raw || String(bindings.inputs?.key?.signatureB64url || "").trim();
   if (!sigB64) {
-    throw new Error("verify needs signature=… (base64url or @slot) or sig binding");
+    throw new Error("verify needs signature=… (base64url or $slot) or sig binding");
   }
   return base64ToBytes(sigB64);
 }
@@ -4392,7 +4393,7 @@ async function importScalarKey(scalar, alg, usage) {
 function safeOutputStem(raw) {
   const s = String(raw || "output")
     .trim()
-    .replace(/^@+/, "")
+    .replace(/^[$@]+/, "")
     .replace(/[^\w.-]+/g, "_")
     .replace(/^\.+/, "")
     .slice(0, 64);
@@ -4420,7 +4421,7 @@ function safeOutputStem(raw) {
  *
  * The SSH halves join for the sshsig reason and one more. `ssh.encode`'s two
  * formats are both `text`, so the ternary gave the same private block `secret`
- * through `out @priv` and `text` through a dangling tip — one artifact with
+ * through `out $priv` and `text` through a dangling tip — one artifact with
  * two identities, and `ArtifactMatch.role` is exact, so a kind could only ever
  * claim one of them. The half is a fact about the *type*
  * (`text/ssh-private`), which is what makes it this set's business rather than
@@ -4522,7 +4523,7 @@ function attachPipeMeta(artifact, value, refine) {
     // §32c: the projection is the *floor*, the emit site is the override.
     //
     // Role is a property of the artifact, not of the value: the same `text`
-    // emitted by `inspect` and by `out @msg` are one type and two different
+    // emitted by `inspect` and by `out $msg` are one type and two different
     // artifacts, and `receipt`/`diagnostic` come from why the artifact
     // exists, which no projection of a type can know. So a site that
     // declares a role keeps it; a site that declares none stops being
@@ -4597,7 +4598,7 @@ function attachPipeMeta(artifact, value, refine) {
  *
  * Shared by `materializeOutArtifacts` and `valueToArtifacts` because one value
  * described two ways is the failure this exists to prevent: an SDP offer
- * written by `out @offer` and the same offer left dangling at the end of a
+ * written by `out $offer` and the same offer left dangling at the end of a
  * pipeline are the same value, and `ArtifactMatch.role` is exact — so a kind
  * can only ever claim one of two spellings, and the other silently renders as
  * untyped text (7d563cd, and §35d before it).
@@ -4694,7 +4695,7 @@ async function materializeOutArtifacts(value, params) {
      * the artifact *was*:
      *
      *     "hello" | utf8 | inspect          → role "inspect", tags ["inspect"]
-     *     "hello" | utf8 | inspect | out @i → role "text",    tags []
+     *     "hello" | utf8 | inspect | out $i → role "text",    tags []
      *
      * Identical bytes, two identities — the `inspect-snapshot` kind claims
      * `role: "inspect"`, so the second one resolved as `text` and lost its
@@ -4704,7 +4705,7 @@ async function materializeOutArtifacts(value, params) {
      *
      * The role is a property of the *artifact*, not of the value, and this is
      * exactly the case that rule exists for — the same text from `inspect` and
-     * from `out @msg` is one type and two different artifacts. What `out` adds
+     * from `out $msg` is one type and two different artifacts. What `out` adds
      * is a name and a file; what it must not do is forget why the value was
      * asked for. `peek` was never affected, because it pushes `role: "inspect"`
      * itself.
@@ -4919,7 +4920,7 @@ async function materializeOutArtifacts(value, params) {
      * A symmetric key is not a half, so it is not labelled as one.
      *
      * `handles.privateKey || handles.secretKey` used to collapse the two, and
-     * everything downstream inherited the collapse: `genkey aes/256 | out @k`
+     * everything downstream inherited the collapse: `genkey aes/256 | out $k`
      * wrote a tile called "k · private JWK", tagged `["keypair", "private"]`,
      * which resolved to the `keypair-private` kind and captioned itself
      * "private half" — of a pair that does not exist. The handles know the
@@ -5296,7 +5297,7 @@ async function valueToArtifacts(value, name = "artifact") {
           tags: ["openpgp", which],
           // The same traits `materializeOutArtifacts` stamps. Without them the
           // auto-emitted tip of a bare `gpg.genkey` and the tile from
-          // `| out @priv` were the same key described two different ways, and
+          // `| out $priv` were the same key described two different ways, and
           // the difference was visible: Copy fingerprint sat disabled on the
           // tip, reading "This artifact carries no key to fingerprint" about a
           // key whose fingerprint the step had already computed and put on the
@@ -5352,7 +5353,7 @@ async function valueToArtifacts(value, name = "artifact") {
    * dangling tip — already emits its body for exactly this reason.
    *
    * Built by `networkArtifact` rather than here, so this tile and the one
-   * `out @label` produces cannot drift into two descriptions of one value.
+   * `out $label` produces cannot drift into two descriptions of one value.
    */
   if (NETWORK_VALUE_TYPES.has(value.type)) {
     return [

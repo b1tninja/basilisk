@@ -42,7 +42,7 @@ export const ACTION_REASONS = Object.freeze({
    * asked for. The remedy is a recipe edit, so it names the edit.
    */
   neverAskedFor:
-    "This value was not asked for. Add `out @label` to the recipe to see or copy it.",
+    "This value was not asked for. Add `out $label` to the recipe to see or copy it.",
   /**
    * Download on a tile with no body at all — the `text` kind's own `empty`
    * line, said as a refusal. There is no remedy to name because nothing is
@@ -107,7 +107,7 @@ export const ACTION_REASONS = Object.freeze({
 /**
  * **Not here on purpose: the keypair tile's withheld line.**
  *
- * `KeypairCard` renders "private half not shown — add `out @kp` to the recipe
+ * `KeypairCard` renders "private half not shown — add `out $kp` to the recipe
  * to write both halves", and moving it into the table above was tried in the
  * polish pass and reverted — by the test three lines of contract below, which
  * was right. Everything in `ACTION_REASONS` is a *sentence*, capitalised and

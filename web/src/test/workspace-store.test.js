@@ -75,7 +75,7 @@ describe("workspace-store", () => {
       v: 1,
       id: "abc",
       title: "Pipe",
-      recipe: "random 8 | encode hex | out @x",
+      recipe: "random 8 | encode hex | out $x",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     expect(blob).toContain('"title": "Pipe"');
@@ -100,13 +100,13 @@ describe("workspace-store", () => {
     const storage = memoryStorage();
     for (let i = 0; i < WORKSPACE_MAX_ENTRIES; i++) {
       const r = saveWorkspace(
-        { title: `N${i}`, recipe: `random 8 | out @x${i}` },
+        { title: `N${i}`, recipe: `random 8 | out $x${i}` },
         storage
       );
       expect(r.ok).toBe(true);
     }
     const overflow = saveWorkspace(
-      { title: "overflow", recipe: "random 8 | out @overflow" },
+      { title: "overflow", recipe: "random 8 | out $overflow" },
       storage
     );
     expect(overflow.ok).toBe(false);

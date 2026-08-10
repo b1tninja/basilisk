@@ -59,9 +59,9 @@ const OFFERS = [
   ['random 8 | hex', "hex"],
   ['random 8 | unhex', "unhex"],
   ['random 8 | to base64', "to"],
-  ['from @h | from base64', "from"],
-  ['random 16 | encrypt aes-gcm key=@k', "encrypt"],
-  ['file.read as=auto | out @b', "as=auto"],
+  ['from $h | from base64', "from"],
+  ['random 16 | encrypt aes-gcm key=$k', "encrypt"],
+  ['file.read as=auto | out $b', "as=auto"],
   // A retired *op* name, and the most recent one: the channel ops went back to
   // `quorum.*` because they encrypt under the exchange's session key. Listed
   // here rather than only in `channel-ops.test.js` so the button's promise is
@@ -105,7 +105,7 @@ describe("every message that names the button has a rewrite behind it", () => {
     const everything = [
       "paste | utf8 | hex",
       "random 8 | to base64 | out kp",
-      "from @h | from base64 | out name=x",
+      "from $h | from base64 | out name=x",
       "random 16 | encrypt aes-gcm key=k",
       'file.read ".pem" as=auto | unhex',
     ].join("\n\n");
@@ -133,9 +133,9 @@ describe("every message that names the button has a rewrite behind it", () => {
 
 describe("the button is absent where there is nothing to do (§33d)", () => {
   it("returns null for a recipe the migrator would leave alone", () => {
-    expect(recipeUpgrade("random 32 | encode base64 | out @secret")).toBeNull();
+    expect(recipeUpgrade("random 32 | encode base64 | out $secret")).toBeNull();
     expect(recipeUpgrade("")).toBeNull();
-    expect(recipeUpgrade("genkey ec/p256 | out @kp")).toBeNull();
+    expect(recipeUpgrade("genkey ec/p256 | out $kp")).toBeNull();
   });
 
   it("does not fire on an ordinary type error, which upgrading cannot fix", () => {

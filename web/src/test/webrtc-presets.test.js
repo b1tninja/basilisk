@@ -39,7 +39,7 @@ describe("the TURN template keeps the credential out of recipe text", () => {
     // through Copy link or an exported notebook. A template that used a
     // literal would teach the opposite habit — and would not compile.
     const p = byId("ice-turn-relay");
-    expect(p.recipe).toContain("credential=@turncred");
+    expect(p.recipe).toContain("credential=$turncred");
     expect(p.recipe).not.toMatch(/credential=[A-Za-z0-9]/);
     expect(getStep("rtc.ice").params.find((x) => x.name === "credential").type).toBe(
       "slot"
@@ -81,7 +81,7 @@ describe("the hand-carried exchange demonstrates both halves", () => {
     expect(p.recipe).toContain("peer.accept");
     // The answer consumes the offer through a slot — the same wiring a real
     // out-of-band exchange does by hand.
-    expect(p.recipe).toContain("in @offer");
+    expect(p.recipe).toContain("in $offer");
   });
 
   it("keeps the offer when copying it out of band", () => {

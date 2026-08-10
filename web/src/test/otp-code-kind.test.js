@@ -86,11 +86,11 @@ const STEP_END = 1234567920;
 
 describe("the role is text, and a tag is what makes the code its own kind", () => {
   it("stamps role text on both emit paths, with the tag on each", async () => {
-    // The SSH failure mode, checked for and absent: `out @code` and a bare
+    // The SSH failure mode, checked for and absent: `out $code` and a bare
     // pipeline tip must agree, or a kind matching one silently disowns the
     // other (`ArtifactMatch.role` is exact).
     for (const src of [
-      `random 20 | base32 | otp.code at=${AT} | out @code`,
+      `random 20 | base32 | otp.code at=${AT} | out $code`,
       `random 20 | base32 | otp.code at=${AT}`,
     ]) {
       const [tile] = await tilesOf(src);
@@ -127,12 +127,12 @@ describe("the role is text, and a tag is what makes the code its own kind", () =
     // The masking decision this kind must not disturb: the secret and the URI
     // are credentials and stay masked; only the code is readable.
     const tiles = await tilesOf(`random 20 | tee
-  - base32 | out @secret
+  - base32 | out $secret
 | otp.uri issuer="Basilisk" account=you@example.com | tee
   - qr
-| out @uri
+| out $uri
 
-in @secret | otp.code | out @code`);
+in $secret | otp.code | out $code`);
     const by = (label) => tiles.find((t) => t.artifact.label === label);
     expect(by("secret").artifact.sensitive).toBe(true);
     expect(by("secret").kind.id).toBe("secret");
@@ -145,7 +145,7 @@ in @secret | otp.code | out @code`);
 
 describe("the facts the op computed reach the tile", () => {
   it("stamps the run's OTP facts onto traits", async () => {
-    const [tile] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out @code`);
+    const [tile] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out $code`);
     const t = tile.artifact.traits;
     expect(t.otpMode).toBe("totp");
     expect(t.otpDigits).toBe(6);
@@ -158,8 +158,8 @@ describe("the facts the op computed reach the tile", () => {
     // The one fact a bare secret cannot supply, and the reason the tile can
     // say whose code this is at all.
     const tiles = await tilesOf(
-      `random 20 | otp.uri issuer="Basilisk" account=you@example.com | out @uri\n\n` +
-        `in @uri | otp.code at=${AT} | out @code`
+      `random 20 | otp.uri issuer="Basilisk" account=you@example.com | out $uri\n\n` +
+        `in $uri | otp.code at=${AT} | out $code`
     );
     const code = tiles.find((t) => t.artifact.label === "code");
     expect(code.artifact.traits.otpLabel).toBe("Basilisk: you@example.com");
@@ -181,7 +181,7 @@ describe("the facts the op computed reach the tile", () => {
   it("adds no trait an op did not emit", async () => {
     // Copied key by key, so widening what reaches a tile is a deliberate edit
     // to the list rather than a side effect of adding a meta field.
-    const [tile] = await tilesOf('"plain" | utf8 | out @msg');
+    const [tile] = await tilesOf('"plain" | utf8 | out $msg');
     expect(tile.artifact.traits).toBeUndefined();
   });
 });
@@ -192,7 +192,7 @@ describe("the countdown is honest about a stale artifact", () => {
     // same instant expressed so it survives the artifact being read minutes
     // later. At run time the two must agree exactly — the moment they do not,
     // one of them is wrong.
-    const [tile] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out @code`);
+    const [tile] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out $code`);
     const readout = otpCodeReadout(tile.artifact.content, tile.artifact.traits);
     expect(readout.expiresAt).toBe(STEP_END);
     expect(readout.expiresAt - AT).toBe(readout.snapshotSeconds);
@@ -230,7 +230,7 @@ describe("the countdown is honest about a stale artifact", () => {
     // §33d: "is this meaningful for this object" is answered by omission. A
     // counter code does not expire, it gets spent — so there is no countdown,
     // not a disabled or a zeroed one.
-    const [tile] = await tilesOf("random 20 | base32 | otp.code mode=hotp counter=2 | out @first");
+    const [tile] = await tilesOf("random 20 | base32 | otp.code mode=hotp counter=2 | out $first");
     const readout = otpCodeReadout(tile.artifact.content, tile.artifact.traits);
     expect(readout.mode).toBe("hotp");
     expect(readout.counter).toBe(2);
@@ -247,10 +247,10 @@ describe("a code the recipe pinned is not measured against now", () => {
   // doing the only thing it could with what it had.
 
   it("records that the recipe named the instant, and stays silent when it did not", async () => {
-    const [pinned] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out @code`);
+    const [pinned] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out $code`);
     expect(pinned.artifact.traits.otpPinnedAt).toBe(AT);
 
-    const [live] = await tilesOf("random 20 | base32 | otp.code | out @code");
+    const [live] = await tilesOf("random 20 | base32 | otp.code | out $code");
     // Absent, not `null` or `0`. Absent already meant "the recipe meant now"
     // for every artifact ever produced, which is why this needs no migration.
     expect("otpPinnedAt" in live.artifact.traits).toBe(false);
@@ -262,7 +262,7 @@ describe("a code the recipe pinned is not measured against now", () => {
     // to `counter=` — so recording an instant here would be recording a
     // parameter that did not participate in the value.
     const [tile] = await tilesOf(
-      `random 20 | base32 | otp.code mode=hotp counter=2 at=${AT} | out @code`
+      `random 20 | base32 | otp.code mode=hotp counter=2 at=${AT} | out $code`
     );
     expect(tile.artifact.traits.otpMode).toBe("hotp");
     expect("otpPinnedAt" in tile.artifact.traits).toBe(false);
@@ -270,7 +270,7 @@ describe("a code the recipe pinned is not measured against now", () => {
   });
 
   it("re-running a pinned cell produces the same digits, which is why the old advice was false", async () => {
-    const src = `"JBSWY3DPEHPK3PXP" | otp.code at=1700000000 | out @code`;
+    const src = `"JBSWY3DPEHPK3PXP" | otp.code at=1700000000 | out $code`;
     const [a] = await tilesOf(src);
     const [b] = await tilesOf(src);
     expect(a.artifact.content).toBe(b.artifact.content);
@@ -311,7 +311,7 @@ describe("a code the recipe pinned is not measured against now", () => {
     // filename, role, stepName, sensitive, length and a digest of content —
     // never `traits`. A role carrying the same distinction would have moved
     // every row and cost a RECEIPT_VERSION bump, as v1 → v2 did.
-    const [tile] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out @code`);
+    const [tile] = await tilesOf(`random 20 | base32 | otp.code at=${AT} | out $code`);
     const withIntent = await digestArtifact(tile.artifact);
     const { otpPinnedAt: _drop, ...rest } = tile.artifact.traits;
     const withoutIntent = await digestArtifact({ ...tile.artifact, traits: rest });
@@ -356,7 +356,7 @@ describe("the catalog shows both states on purpose", () => {
 
   it("pins the pinned row to what a real run actually stamps", async () => {
     // A hand-written fixture is a claim about the engine. This one is checked.
-    const [tile] = await tilesOf(`"JBSWY3DPEHPK3PXP" | otp.code at=1700000000 | out @code`);
+    const [tile] = await tilesOf(`"JBSWY3DPEHPK3PXP" | otp.code at=1700000000 | out $code`);
     const t = tile.artifact.traits;
     const code = stripComments(CATALOG_SRC);
     expect(code).toContain(`otpStep: "${t.otpStep}"`);

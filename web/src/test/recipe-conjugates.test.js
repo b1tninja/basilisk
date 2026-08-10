@@ -65,7 +65,7 @@ describe("inputs-bridge pairs (SSS / envelope)", () => {
     expect(pem).toContain("BEGIN PRIVATE KEY");
   }, 60_000);
 
-  it("slip39-pem-envelope: recover PEM matches forward @pem", async () => {
+  it("slip39-pem-envelope: recover PEM matches forward $pem", async () => {
     const pair = listPresetPairs().find((p) => p.id === "slip39-pem-envelope");
     expect(pair).toBeTruthy();
     const { fwdArts, revArts, envelope, stitch } = await runInputsBridgePair(
@@ -84,25 +84,25 @@ describe("inputs-bridge pairs (SSS / envelope)", () => {
 });
 
 describe("slot-bridge synthetic pair via kernel", () => {
-  it("hex payload survives in @bridge across cells", async () => {
+  it("hex payload survives in $bridge across cells", async () => {
     const forward = {
       id: "fwd",
       pair: "hex-bridge",
       title: "fwd",
-      recipe: "random 16 | encode hex | out @payload",
+      recipe: "random 16 | encode hex | out $payload",
     };
     const reverse = {
       id: "rev",
       pair: "hex-bridge",
       title: "rev",
-      recipe: "input | out @echo",
+      recipe: "input | out $echo",
     };
     const { stitch, slots } = await runSlotBridgePair(forward, reverse);
     expect(stitch.mode).toBe("slot");
-    expect(stitch.bridge).toBe("@payload");
+    expect(stitch.bridge).toBe("$payload");
     // Terminal `out` registers slots (may not emit tiles); assert kernel handoff.
-    expect(slots["@payload"]).toMatch(/^[0-9a-f]{32}$/);
-    expect(slots["@echo"]).toBe(slots["@payload"]);
+    expect(slots["$payload"]).toMatch(/^[0-9a-f]{32}$/);
+    expect(slots["$echo"]).toBe(slots["$payload"]);
   }, 30_000);
 });
 

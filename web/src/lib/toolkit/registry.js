@@ -7,7 +7,7 @@
  * outputType / typed args / flowControl). Verbs mirror shell commands they replace
  * (gpg --encrypt/--decrypt, base64 -d, ssss-split/combine, openssl pkey).
  *
- * Prefer positional short form in docs (`genkey ec/p256`, `out @public`, `in @kp`).
+ * Prefer positional short form in docs (`genkey ec/p256`, `out $public`, `in $kp`).
  */
 
 import { BASE_ENCODINGS, CIPHER_DISPATCH_TARGETS } from "./step-names.js";
@@ -75,9 +75,9 @@ import {
  * @property {string} [flag]  bare CLI flag (e.g. "-d") that sets this bool to true
  * @property {boolean} [allowIndex]  for type "slot": allow 1-based index refs (default false)
  * @property {"always"} [serialize]  always emit `name=value` even when equal to default
- * @property {boolean} [secret]  UI-only: locked to a bound `@slot` ref, never free text; the
+ * @property {boolean} [secret]  UI-only: locked to a bound `$slot` ref, never free text; the
  *   literal value is still whatever the AST carries (recipe text, Publish share links, and
- *   plain copy/export must redact it to the `@slotRef` string — see design v2 §22a)
+ *   plain copy/export must redact it to the `$slotRef` string — see design v2 §22a)
  */
 
 /**
@@ -428,7 +428,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "webcrypto",
     shelf: "keys",
-    doc: "Generate a WebCrypto keypair/key. Curves: `ec/p256`…`p521`, `ed25519`, `x25519` (ECDH). Symmetric: `aes/128|192|256`, `hmac/sha256|384|512`. RSA `hash=` for hashed RSA. Example: `genkey x25519 | out @local` then `ecdh private=@local peer=@peer`.",
+    doc: "Generate a WebCrypto keypair/key. Curves: `ec/p256`…`p521`, `ed25519`, `x25519` (ECDH). Symmetric: `aes/128|192|256`, `hmac/sha256|384|512`. RSA `hash=` for hashed RSA. Example: `genkey x25519 | out $local` then `ecdh private=$local peer=$peer`.",
     input: "none",
     output: "keypair",
     params: [
@@ -478,7 +478,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "io",
     shelf: "ports",
-    doc: "Cryptographically random bytes (`crypto.getRandomValues`). Example: `random 32 | base64url | out @secret`.",
+    doc: "Cryptographically random bytes (`crypto.getRandomValues`). Example: `random 32 | base64url | out $secret`.",
     input: "none",
     output: "bytes",
     params: [
@@ -503,7 +503,7 @@ export const STEPS = [
     toolbox: "io",
     shelf: "types",
     instantiates: "bytes",
-    doc: "A literal byte string. Example: `bytes deadbeef | aes-gcm @key | out @ct`. Also accepts base64 (`encoding=base64`) or plain text (`encoding=utf8`); a leading `0x` on hex is optional. Quote the value if it contains a space or `=` — base64 padding needs `bytes \"aGVsbG8=\" encoding=base64`.",
+    doc: "A literal byte string. Example: `bytes deadbeef | aes-gcm $key | out $ct`. Also accepts base64 (`encoding=base64`) or plain text (`encoding=utf8`); a leading `0x` on hex is optional. Quote the value if it contains a space or `=` — base64 padding needs `bytes \"aGVsbG8=\" encoding=base64`.",
     input: "none",
     output: "bytes",
     params: [
@@ -538,7 +538,7 @@ export const STEPS = [
     shelf: "types",
     instantiates: "keypair",
     unresolvedInputs: "keypair",
-    doc: "Import a keypair you already have, pasted at run time (never stored in the recipe). `which=private` (default) wants a PKCS#8 PEM or a JWK with `d` and yields the full pair; `which=public` reads an SPKI PEM or a public JWK and yields a public-key tip. The recipe names which, because the tip's type is fixed before the paste is read — material of the other half is refused by name rather than typed as whatever it turned out to be. Example: `keypair jwk alg=ed25519 | export spki | pem | out @pub`. To make a new one instead, use `genkey`.",
+    doc: "Import a keypair you already have, pasted at run time (never stored in the recipe). `which=private` (default) wants a PKCS#8 PEM or a JWK with `d` and yields the full pair; `which=public` reads an SPKI PEM or a public JWK and yields a public-key tip. The recipe names which, because the tip's type is fixed before the paste is read — material of the other half is refused by name rather than typed as whatever it turned out to be. Example: `keypair jwk alg=ed25519 | export spki | pem | out $pub`. To make a new one instead, use `genkey`.",
     input: "none",
     output: "keypair",
     effectiveIo(params) {
@@ -599,7 +599,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "io",
     shelf: "ports",
-    doc: "Generate a passphrase. Default EFF diceware (`mode=diceware`, ≈12.9 bits/word); `mode=char` uses a 69-char alphabet. Example: `passphrase 6 | out @passphrase` or `passphrase mode=char length=20`.",
+    doc: "Generate a passphrase. Default EFF diceware (`mode=diceware`, ≈12.9 bits/word); `mode=char` uses a 69-char alphabet. Example: `passphrase 6 | out $passphrase` or `passphrase mode=char length=20`.",
     input: "none",
     output: "text",
     params: [
@@ -634,7 +634,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "sss",
     shelf: "split",
-    doc: "Bind BLIP39 share mnemonics at run time (never stored in the recipe). Typical recover: `shares | blip39 -d | sss.combine | …`. Map each share with `foreach` / `- out @share`. For free-form text use `input`.",
+    doc: "Bind BLIP39 share mnemonics at run time (never stored in the recipe). Typical recover: `shares | blip39 -d | sss.combine | …`. Map each share with `foreach` / `- out $share`. For free-form text use `input`.",
     input: "none",
     output: "shares",
     unresolvedInputs: "shares",
@@ -798,7 +798,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "digest",
-    doc: "Hash bytes with SubtleCrypto.digest (SHA-256 / 384 / 512; SHA-1 available but discouraged). Example: `random 32 | digest | encode hex | out @digest`.",
+    doc: "Hash bytes with SubtleCrypto.digest (SHA-256 / 384 / 512; SHA-1 available but discouraged). Example: `random 32 | digest | encode hex | out $digest`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -820,7 +820,7 @@ export const STEPS = [
     conjugate: "verify",
     pairCaption: "Sign / verify (HMAC via hmac sugar)",
     pairLabels: { forward: "Sign", reverse: "Verify" },
-    doc: "Sign pipeline bytes with a WebCrypto private/HMAC key. Prefer `sign key=@kp` (slot from `out`); else key panel. RSA-PSS `saltLength=` (default 32); ECDSA optional `hash=` override. Example: `input | utf8 | sign key=@kp | base64url`.",
+    doc: "Sign pipeline bytes with a WebCrypto private/HMAC key. Prefer `sign key=$kp` (slot from `out`); else key panel. RSA-PSS `saltLength=` (default 32); ECDSA optional `hash=` override. Example: `input | utf8 | sign key=$kp | base64url`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -829,7 +829,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live key slot (`@kp`); omit to use the key panel",
+        doc: "Live key slot (`$kp`); omit to use the key panel",
       },
       {
         name: "saltLength",
@@ -854,7 +854,7 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "sign",
     conjugateOf: "sign",
-    doc: "Verify a signature over pipeline message bytes. Prefer `verify key=@pub`; else key panel. Default fail-loud; `soft` / `-q` emits `true`/`false` instead of throwing on bad sig. Signature via `signature=` or runtime binding. Same `saltLength=` / `hash=` as sign.",
+    doc: "Verify a signature over pipeline message bytes. Prefer `verify key=$pub`; else key panel. Default fail-loud; `soft` / `-q` emits `true`/`false` instead of throwing on bad sig. Signature via `signature=` or runtime binding. Same `saltLength=` / `hash=` as sign.",
     input: "bytes",
     output: "bool",
     unresolvedInputs: "key",
@@ -863,14 +863,14 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live public/HMAC key slot (`@pub`); omit to use the key panel",
+        doc: "Live public/HMAC key slot (`$pub`); omit to use the key panel",
       },
       {
         name: "signature",
         type: "string",
         default: "",
         emptyMeans: "use the signature bound at run time",
-        doc: "Base64url signature, or `@slot` of bytes/text",
+        doc: "Base64url signature, or `$slot` of bytes/text",
       },
       {
         name: "soft",
@@ -905,7 +905,7 @@ export const STEPS = [
     pairCaption: "AES-GCM",
     pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
-    doc: "AES-GCM encrypt (default) or decrypt with `-d`. Prefer `aes-gcm key=@cek`; else key panel. Optional `tagLength=` (default 128). Also accepts `aes-256-gcm` / `AES/GCM/NoPadding`. Bare `encrypt`/`decrypt` sugar is migrator-only — write the concrete op. Distinct from OpenPGP `gpg.encrypt`.",
+    doc: "AES-GCM encrypt (default) or decrypt with `-d`. Prefer `aes-gcm key=$cek`; else key panel. Optional `tagLength=` (default 128). Also accepts `aes-256-gcm` / `AES/GCM/NoPadding`. Bare `encrypt`/`decrypt` sugar is migrator-only — write the concrete op. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -921,13 +921,13 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live AES key slot (`@cek`); omit to use the key panel",
+        doc: "Live AES key slot (`$cek`); omit to use the key panel",
       },
       {
         name: "aad",
         type: "string",
         default: "",
-        doc: "Optional AAD as UTF-8 string, or `@slot` of text/bytes",
+        doc: "Optional AAD as UTF-8 string, or `$slot` of text/bytes",
       },
       {
         name: "tagLength",
@@ -956,7 +956,7 @@ export const STEPS = [
     pairCaption: "AES-CBC",
     pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
-    doc: "AES-CBC encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT. Prefer `aes-cbc key=@cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
+    doc: "AES-CBC encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT. Prefer `aes-cbc key=$cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -972,7 +972,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live AES key slot (`@cek`); omit to use the key panel",
+        doc: "Live AES key slot (`$cek`); omit to use the key panel",
       },
       {
         name: "keyBits",
@@ -994,7 +994,7 @@ export const STEPS = [
     pairCaption: "AES-CTR",
     pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
-    doc: "AES-CTR encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT (128-bit counter block); `length=` is AesCtrParams.length (default 64), not IV size. Prefer `aes-ctr key=@cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
+    doc: "AES-CTR encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT (128-bit counter block); `length=` is AesCtrParams.length (default 64), not IV size. Prefer `aes-ctr key=$cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -1010,7 +1010,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live AES key slot (`@cek`); omit to use the key panel",
+        doc: "Live AES key slot (`$cek`); omit to use the key panel",
       },
       {
         name: "length",
@@ -1040,7 +1040,7 @@ export const STEPS = [
     pairCaption: "RSA-OAEP",
     pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
-    doc: "RSA-OAEP encrypt (default) or decrypt with `-d`. Prefer `rsa-oaep key=@rk`; else key panel. Optional `label=` (must match on decrypt). Also accepts JCE `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`. Distinct from OpenPGP `gpg.encrypt` and AES `aes-gcm`.",
+    doc: "RSA-OAEP encrypt (default) or decrypt with `-d`. Prefer `rsa-oaep key=$rk`; else key panel. Optional `label=` (must match on decrypt). Also accepts JCE `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`. Distinct from OpenPGP `gpg.encrypt` and AES `aes-gcm`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -1056,7 +1056,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live RSA-OAEP key slot (`@rk`); omit to use the key panel",
+        doc: "Live RSA-OAEP key slot (`$rk`); omit to use the key panel",
       },
       {
         name: "label",
@@ -1085,7 +1085,7 @@ export const STEPS = [
     pairCaption: "RSAES-PKCS1",
     pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
-    doc: "RSAES-PKCS1-v1_5 encrypt/decrypt (`-d`). Discouraged — prefer `rsa-oaep`. Pure-JS (not SubtleCrypto). Uses any RSA key (OAEP/PSS JWK) via `key=@rk`. Also accepts `RSA/ECB/PKCS1Padding`. Outputs tagged legacy/discouraged.",
+    doc: "RSAES-PKCS1-v1_5 encrypt/decrypt (`-d`). Discouraged — prefer `rsa-oaep`. Pure-JS (not SubtleCrypto). Uses any RSA key (OAEP/PSS JWK) via `key=$rk`. Also accepts `RSA/ECB/PKCS1Padding`. Outputs tagged legacy/discouraged.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -1101,7 +1101,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live RSA key slot (`@rk`); omit to use the key panel",
+        doc: "Live RSA key slot (`$rk`); omit to use the key panel",
       },
     ],
     effectiveIo() {
@@ -1113,7 +1113,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "kdf",
-    doc: "HKDF-Extract/Expand. Default emits OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → live `key` tip (`which: secret`), matching `unwrap`. Distinct from the `as master` cast stage. Example: `webauthn.prf | hkdf 32 as=aes/256 | out @cek`.",
+    doc: "HKDF-Extract/Expand. Default emits OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → live `key` tip (`which: secret`), matching `unwrap`. Distinct from the `as master` cast stage. Example: `webauthn.prf | hkdf 32 as=aes/256 | out $cek`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -1138,13 +1138,13 @@ export const STEPS = [
         type: "string",
         default: "",
         emptyMeans: "a zero-length salt",
-        doc: "Optional salt as UTF-8 string, or `@slot` of text/bytes",
+        doc: "Optional salt as UTF-8 string, or `$slot` of text/bytes",
       },
       {
         name: "info",
         type: "string",
         default: "",
-        doc: "Optional info/context as UTF-8 string, or `@slot` of text/bytes",
+        doc: "Optional info/context as UTF-8 string, or `$slot` of text/bytes",
       },
       {
         name: "hash",
@@ -1165,7 +1165,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "kdf",
-    doc: "PBKDF2-HMAC derive. Default OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → live `key` tip (`which: secret`). Example: `passphrase 6 | pbkdf2 32 as=aes/256 | out @cek`.",
+    doc: "PBKDF2-HMAC derive. Default OKM bytes; `as=aes/256` / `as=aes-kw/256` / HMAC uses deriveKey → live `key` tip (`which: secret`). Example: `passphrase 6 | pbkdf2 32 as=aes/256 | out $cek`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -1189,7 +1189,7 @@ export const STEPS = [
         name: "salt",
         type: "string",
         default: "basilisk",
-        doc: "Salt as UTF-8 string, or `@slot` of text/bytes",
+        doc: "Salt as UTF-8 string, or `$slot` of text/bytes",
       },
       {
         name: "iterations",
@@ -1218,7 +1218,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webcrypto",
     shelf: "agreement",
-    doc: "ECDH/X25519 deriveBits (default) or deriveKey via `as=aes/256` / `as=aes-kw/256` → live `key` tip (`which: secret`). Prefer `genkey x25519` then `ecdh private=@local peer=@peer`. bits=0 auto-sizes from curve.",
+    doc: "ECDH/X25519 deriveBits (default) or deriveKey via `as=aes/256` / `as=aes-kw/256` → live `key` tip (`which: secret`). Prefer `genkey x25519` then `ecdh private=$local peer=$peer`. bits=0 auto-sizes from curve.",
     input: "none",
     output: "bytes",
     unresolvedInputs: "key",
@@ -1227,13 +1227,13 @@ export const STEPS = [
         name: "private",
         type: "slot",
         default: "",
-        doc: "Local private key slot (`@local`); omit to use the key panel",
+        doc: "Local private key slot (`$local`); omit to use the key panel",
       },
       {
         name: "peer",
         type: "slot",
         default: "",
-        doc: "Peer public key slot (`@peer`); omit to use the peer JWK panel",
+        doc: "Peer public key slot (`$peer`); omit to use the peer JWK panel",
       },
       {
         name: "bits",
@@ -1264,7 +1264,7 @@ export const STEPS = [
     shelf: "wrap",
     conjugate: "unwrap",
     pairCaption: "Wrap / unwrap",
-    doc: "Wrap a CEK. Default AES-KW; also `mode=aes-gcm|aes-cbc|aes-ctr` (IV||wrapped) or `mode=rsa-oaep`. Optional `label=` (RSA-OAEP), `tagLength=` (AES-GCM), `length=` (AES-CTR). Prefer `wrap key=@kek target=@cek`.",
+    doc: "Wrap a CEK. Default AES-KW; also `mode=aes-gcm|aes-cbc|aes-ctr` (IV||wrapped) or `mode=rsa-oaep`. Optional `label=` (RSA-OAEP), `tagLength=` (AES-GCM), `length=` (AES-CTR). Prefer `wrap key=$kek target=$cek`.",
     input: "none",
     output: "bytes",
     unresolvedInputs: "key",
@@ -1273,13 +1273,13 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Wrapping key slot (`@kek` AES or `@rk` RSA); omit to use the key panel",
+        doc: "Wrapping key slot (`$kek` AES or `$rk` RSA); omit to use the key panel",
       },
       {
         name: "target",
         type: "slot",
         default: "",
-        doc: "Key-to-wrap slot (`@cek`); omit to use the wrap panel",
+        doc: "Key-to-wrap slot (`$cek`); omit to use the wrap panel",
       },
       {
         name: "mode",
@@ -1318,7 +1318,7 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "wrap",
     conjugateOf: "wrap",
-    doc: "Unwrap pipeline wrapped bytes into a live `key` tip (CryptoKey). Modes match `wrap`. Prefer `unwrap key=@kek`. Content modes expect IV||wrapped packing. Use `export raw` when you need bytes.",
+    doc: "Unwrap pipeline wrapped bytes into a live `key` tip (CryptoKey). Modes match `wrap`. Prefer `unwrap key=$kek`. Content modes expect IV||wrapped packing. Use `export raw` when you need bytes.",
     input: "bytes",
     output: "key",
     unresolvedInputs: "key",
@@ -1327,7 +1327,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Wrapping key slot (`@kek` AES or `@rk` RSA); omit to use the key panel",
+        doc: "Wrapping key slot (`$kek` AES or `$rk` RSA); omit to use the key panel",
       },
       {
         name: "alg",
@@ -1375,7 +1375,7 @@ export const STEPS = [
     conjugate: "der",
     pairCaption: "PEM / DER",
     pairLabels: { forward: "Armor", reverse: "Dearmor" },
-    doc: "Wrap DER bytes as PEM armor. Label auto: SPKI/`which=public` → PUBLIC KEY, PKCS#8 → PRIVATE KEY. Conjugate: `der` strips armor. Example: `:public | export spki | pem | out @public`.",
+    doc: "Wrap DER bytes as PEM armor. Label auto: SPKI/`which=public` → PUBLIC KEY, PKCS#8 → PRIVATE KEY. Conjugate: `der` strips armor. Example: `:public | export spki | pem | out $public`.",
     input: "bytes",
     output: "text",
     params: [
@@ -1395,7 +1395,7 @@ export const STEPS = [
     shelf: "binary",
     glyph: "pem",
     conjugateOf: "pem",
-    doc: "Strip PEM armor → DER bytes. Sets format/which from the BEGIN label when known. Example: `in @pub | der | import spki` or `in @pub | der | as key`.",
+    doc: "Strip PEM armor → DER bytes. Sets format/which from the BEGIN label when known. Example: `in $pub | der | import spki` or `in $pub | der | as key`.",
     input: "text",
     output: "bytes",
     params: [],
@@ -1410,7 +1410,7 @@ export const STEPS = [
     pairCaption: "Base64",
     pairLabels: { forward: "Encode", reverse: "Decode" },
     kitOnly: true,
-    doc: "Encode bytes as Base64 (`base64.encode`) or decode (`base64.decode`). Example: `random 32 | base64.encode | out @secret`. Also accepts `base64 -d`.",
+    doc: "Encode bytes as Base64 (`base64.encode`) or decode (`base64.decode`). Example: `random 32 | base64.encode | out $secret`. Also accepts `base64 -d`.",
     input: "bytes",
     output: "text",
     params: [
@@ -1468,7 +1468,7 @@ export const STEPS = [
     conjugate: "decode",
     pairCaption: "Encode / Decode",
     pairLabels: { forward: "Encode", reverse: "Decode" },
-    doc: "Encode bytes as text in a base alphabet. Example: `… | digest | encode hex | out @digest`, or `… | encode base64url`. (`to` is the old spelling and still parses.)",
+    doc: "Encode bytes as text in a base alphabet. Example: `… | digest | encode hex | out $digest`, or `… | encode base64url`. (`to` is the old spelling and still parses.)",
     input: "bytes",
     output: "text",
     params: [
@@ -1493,7 +1493,7 @@ export const STEPS = [
     shelf: "binary",
     glyph: "hex",
     conjugateOf: "encode",
-    doc: "Decode base-encoded text → bytes. Example: `in @digest | decode hex | …`, or `… | decode base64`. (`from` is the old spelling and still parses.)",
+    doc: "Decode base-encoded text → bytes. Example: `in $digest | decode hex | …`, or `… | decode base64`. (`from` is the old spelling and still parses.)",
     input: "text",
     output: "bytes",
     params: [
@@ -1521,7 +1521,7 @@ export const STEPS = [
     pairCaption: "Base32",
     pairLabels: { forward: "Encode", reverse: "Decode" },
     kitOnly: true,
-    doc: "Encode bytes as RFC 4648 Base32 (`base32.encode`) or decode (`base32.decode`). Example: `random 10 | base32.encode | out @id`.",
+    doc: "Encode bytes as RFC 4648 Base32 (`base32.encode`) or decode (`base32.decode`). Example: `random 10 | base32.encode | out $id`.",
     input: "bytes",
     output: "text",
     params: [
@@ -1544,7 +1544,7 @@ export const STEPS = [
     toolbox: "encoding",
     shelf: "text",
     glyph: "text",
-    doc: "Decode UTF-8 bytes → text (or encode text → bytes when holding text). Example: `… | gpg.symdecrypt | utf8 | out @pem`.",
+    doc: "Decode UTF-8 bytes → text (or encode text → bytes when holding text). Example: `… | gpg.symdecrypt | utf8 | out $pem`.",
     input: "bytes",
     output: "text",
     params: [],
@@ -1562,7 +1562,7 @@ export const STEPS = [
     conjugate: "vss.combine",
     pairCaption: "Split / combine (verifiable)",
     glyph: "split",
-    doc: "Split a secret (≤ 32 bytes) into **verifiable** shares — Feldman VSS over P-256. Unlike `sss.split`, the share set carries public commitments, so a custodian can check their share is genuine the moment they receive it (`vss.verify`) instead of discovering a bad one when recovery fails. Emits the same `shares` shape, so `blip39` / `foreach` / `at` work unchanged. For arbitrary-length data use `sss.split` — verifiability needs a prime-order group, which GF(256) is not. Example: `export scalar | vss.split threshold=2 shares=3 | blip39 | foreach` / `- out @share`.",
+    doc: "Split a secret (≤ 32 bytes) into **verifiable** shares — Feldman VSS over P-256. Unlike `sss.split`, the share set carries public commitments, so a custodian can check their share is genuine the moment they receive it (`vss.verify`) instead of discovering a bad one when recovery fails. Emits the same `shares` shape, so `blip39` / `foreach` / `at` work unchanged. For arbitrary-length data use `sss.split` — verifiability needs a prime-order group, which GF(256) is not. Example: `export scalar | vss.split threshold=2 shares=3 | blip39 | foreach` / `- out $share`.",
     input: "bytes",
     output: "shares",
     params: [
@@ -1590,7 +1590,7 @@ export const STEPS = [
     toolbox: "sss",
     shelf: "split",
     glyph: "split",
-    doc: "Check shares against their Feldman commitments and pass them through — fail-loud, so `in @shares | vss.verify | vss.combine` refuses to reconstruct from a tampered share rather than returning a wrong secret. Uses the commitments carried on a `vss.split` set, or `commitments=@slot` when a custodian holds them separately. Example: `in @shares | vss.verify | out @ok`.",
+    doc: "Check shares against their Feldman commitments and pass them through — fail-loud, so `in $shares | vss.verify | vss.combine` refuses to reconstruct from a tampered share rather than returning a wrong secret. Uses the commitments carried on a `vss.split` set, or `commitments=$slot` when a custodian holds them separately. Example: `in $shares | vss.verify | out $ok`.",
     input: "shares",
     output: "shares",
     params: [
@@ -1608,7 +1608,7 @@ export const STEPS = [
     toolbox: "sss",
     shelf: "split",
     glyph: "split",
-    doc: "Extract a `vss.split` set's public commitments as JSON, so they can be published alongside the shares. Commitments do not survive `blip39` — words carry no commitments — and that matches reality: a custodian holds a secret share and the public commitments, arriving by different routes. Example: `… | vss.split … | tee` / `- vss.commitments | out @commitments`.",
+    doc: "Extract a `vss.split` set's public commitments as JSON, so they can be published alongside the shares. Commitments do not survive `blip39` — words carry no commitments — and that matches reality: a custodian holds a secret share and the public commitments, arriving by different routes. Example: `… | vss.split … | tee` / `- vss.commitments | out $commitments`.",
     input: "shares",
     output: "text",
     params: [],
@@ -1620,7 +1620,7 @@ export const STEPS = [
     shelf: "split",
     conjugateOf: "vss.split",
     glyph: "recover",
-    doc: "Reconstruct the secret from a threshold of `vss.split` shares (Lagrange interpolation over P-256). Pair with `vss.verify` first if the shares came from elsewhere. Example: `shares | blip39.decode | vss.verify | vss.combine | out @secret`.",
+    doc: "Reconstruct the secret from a threshold of `vss.split` shares (Lagrange interpolation over P-256). Pair with `vss.verify` first if the shares came from elsewhere. Example: `shares | blip39.decode | vss.verify | vss.combine | out $secret`.",
     input: "shares",
     output: "bytes",
     params: [],
@@ -1650,7 +1650,7 @@ export const STEPS = [
     toolbox: "sss",
     shelf: "split",
     glyph: "split",
-    doc: "**Experimental.** Run a distributed key generation across the live exchange (Feldman VSS over P-256): every participant deals a contribution, verifies what they receive, and sums — so the private key is never assembled anywhere, and any `threshold` of the room can reconstruct it later. Needs a live `quorum.offer`/`quorum.join` with every participant present. There is no complaint round: a bad share aborts the run and names the dealer, and the group must restart without them. Produces a shared key, **not** threshold signing. Example: `dkg.run threshold=3 | out @dkg`.",
+    doc: "**Experimental.** Run a distributed key generation across the live exchange (Feldman VSS over P-256): every participant deals a contribution, verifies what they receive, and sums — so the private key is never assembled anywhere, and any `threshold` of the room can reconstruct it later. Needs a live `quorum.offer`/`quorum.join` with every participant present. There is no complaint round: a bad share aborts the run and names the dealer, and the group must restart without them. Produces a shared key, **not** threshold signing. Example: `dkg.run threshold=3 | out $dkg`.",
     input: "none",
     output: "text",
     params: [
@@ -1677,7 +1677,7 @@ export const STEPS = [
     shelf: "split",
     conjugate: "sss.combine",
     pairCaption: "Split / combine",
-    doc: "Split a 16/32-byte master into raw SSS shares (K-of-N). Pipe into `blip39` for mnemonics. EC: `export scalar | sss.split …`. Large PEM: `… | pem | out @pem | gpg.symencrypt mode=master | sss.split …`.",
+    doc: "Split a 16/32-byte master into raw SSS shares (K-of-N). Pipe into `blip39` for mnemonics. EC: `export scalar | sss.split …`. Large PEM: `… | pem | out $pem | gpg.symencrypt mode=master | sss.split …`.",
     input: "bytes",
     output: "shares",
     params: [
@@ -1801,7 +1801,7 @@ export const STEPS = [
     shelf: "password",
     conjugate: "gpg.symdecrypt",
     pairCaption: "Symmetric",
-    doc: "OpenPGP-symmetric encrypt (`gpg -c` style). Dual mode is explicit: default `mode=master` (fresh 32-byte master tip + `envelope.asc` for SSS); `mode=passphrase` + `passphrase=`/`@slot` emits armored ciphertext as the tip (no master). Passphrase alone does not flip modes. Example SSS: `… | pem | gpg.symencrypt mode=master | sss.split …`. Example password: `\"hi\" | utf8 | gpg.symencrypt mode=passphrase passphrase=@pw | out @msg`.",
+    doc: "OpenPGP-symmetric encrypt (`gpg -c` style). Dual mode is explicit: default `mode=master` (fresh 32-byte master tip + `envelope.asc` for SSS); `mode=passphrase` + `passphrase=`/`$slot` emits armored ciphertext as the tip (no master). Passphrase alone does not flip modes. Example SSS: `… | pem | gpg.symencrypt mode=master | sss.split …`. Example password: `\"hi\" | utf8 | gpg.symencrypt mode=passphrase passphrase=$pw | out $msg`.",
     input: "text",
     output: "bytes",
     params: [
@@ -1823,7 +1823,7 @@ export const STEPS = [
         name: "passphrase",
         type: "string",
         default: "",
-        doc: "User passphrase (UTF-8) or `@slot` of text — required with mode=passphrase; forbidden with mode=master",
+        doc: "User passphrase (UTF-8) or `$slot` of text — required with mode=passphrase; forbidden with mode=master",
       },
       ...CRYPTO_PROFILE_PARAMS,
     ],
@@ -1840,7 +1840,7 @@ export const STEPS = [
     toolbox: "openpgp",
     shelf: "password",
     conjugateOf: "gpg.symencrypt",
-    doc: "Decrypt OpenPGP-symmetric ciphertext. Dual mode is explicit: default `mode=master` (tip is 16/32-byte master; bound `envelope.asc` decrypts with hex(master)); `mode=passphrase` + `passphrase=`/`@slot` (tip is armored ciphertext). Passphrase alone does not flip modes. Example: `in @msg | gpg.symdecrypt mode=passphrase passphrase=@pw | utf8`.",
+    doc: "Decrypt OpenPGP-symmetric ciphertext. Dual mode is explicit: default `mode=master` (tip is 16/32-byte master; bound `envelope.asc` decrypts with hex(master)); `mode=passphrase` + `passphrase=`/`$slot` (tip is armored ciphertext). Passphrase alone does not flip modes. Example: `in $msg | gpg.symdecrypt mode=passphrase passphrase=$pw | utf8`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "envelope",
@@ -1857,7 +1857,7 @@ export const STEPS = [
         name: "passphrase",
         type: "string",
         default: "",
-        doc: "User passphrase (UTF-8) or `@slot` — required with mode=passphrase; forbidden with mode=master",
+        doc: "User passphrase (UTF-8) or `$slot` — required with mode=passphrase; forbidden with mode=master",
       },
     ],
     effectiveIo(params) {
@@ -1878,7 +1878,7 @@ export const STEPS = [
     toolbox: "flow",
     shelf: "control",
     flowControl: true,
-    doc: "Map a required body over a shares collection. Indent `-` lines or `{ … }`. Optional `foreach :items` / `:values` / `:keys`. Tip is a `bundle` of per-item tips (side effects via `out` / auto-emit) — do not pipe the bundle into cipher/KDF ops; use `@slot`s from the body. Example: `… | blip39 | foreach` / `- out @share` or `- gpg.encrypt`.",
+    doc: "Map a required body over a shares collection. Indent `-` lines or `{ … }`. Optional `foreach :items` / `:values` / `:keys`. Tip is a `bundle` of per-item tips (side effects via `out` / auto-emit) — do not pipe the bundle into cipher/KDF ops; use `$slot`s from the body. Example: `… | blip39 | foreach` / `- out $share` or `- gpg.encrypt`.",
     input: "shares",
     output: "bundle",
     params: [],
@@ -1888,7 +1888,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "sss",
     shelf: "split",
-    doc: "Select from a shares collection (1-based). Same as `[1]` / `[1:2]`. Example: `… | blip39 | [1] | out @share-1`.",
+    doc: "Select from a shares collection (1-based). Same as `[1]` / `[1:2]`. Example: `… | blip39 | [1] | out $share-1`.",
     input: "shares",
     output: "shares",
     params: [
@@ -1907,7 +1907,7 @@ export const STEPS = [
     toolbox: "flow",
     shelf: "control",
     kitOnly: true,
-    doc: "Stem literal (parse/serialize as the literal itself — never written as `lit …`). Strings → text; decimal/hex ints → int; `true`/`false` → bool. Example: `\"hello\" | out @msg`, `0xff | out @n`, or `true | out @ok`.",
+    doc: "Stem literal (parse/serialize as the literal itself — never written as `lit …`). Strings → text; decimal/hex ints → int; `true`/`false` → bool. Example: `\"hello\" | out $msg`, `0xff | out $n`, or `true | out $ok`.",
     input: "none",
     output: "text",
     params: [
@@ -1937,7 +1937,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "flow",
     shelf: "control",
-    doc: "Source a prior `out` slot (live typed value). Chains are blank-line separated. Forms: `in @kp`, `in kp`, `in 1`. (`decode` is the alphabet verb; `in` only loads slots.) See docs/RECIPE.md.",
+    doc: "Source a prior `out` slot (live typed value). Chains are blank-line separated. Forms: `in $kp`, `in kp`, `in 1`. (`decode` is the alphabet verb; `in` only loads slots.) See docs/RECIPE.md.",
     input: "none",
     output: "bytes",
     params: [
@@ -1945,7 +1945,7 @@ export const STEPS = [
         name: "ref",
         type: "string",
         positional: true,
-        doc: "Slot `@label` or 1-based index (`@kp`, `kp`, or `1`)",
+        doc: "Slot `$label` or 1-based index (`$kp`, `kp`, or `1`)",
       },
     ],
   },
@@ -2033,7 +2033,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "openpgp",
     shelf: "pubkey",
-    doc: "Generate an OpenPGP Curve25519 keypair (same as My Keys). Pipeline emits `openpgp-key/private`; public key is also written as an artifact. Quote emails (`@` is slot syntax): `gpg.genkey email=\"alice@example.com\" | out @priv`.",
+    doc: "Generate an OpenPGP Curve25519 keypair (same as My Keys). Pipeline emits `openpgp-key/private`; public key is also written as an artifact. `gpg.genkey email=alice@example.com | out $priv` — an address needs no quoting now that slots are `$`.",
     input: "none",
     output: "openpgp-key",
     params: [
@@ -2071,7 +2071,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "openpgp",
     shelf: "pubkey",
-    doc: "Inspect armored OpenPGP without decrypting (type, recipients, signatures, optional packet map). Example: `input | gpg.inspect | out @report`.",
+    doc: "Inspect armored OpenPGP without decrypting (type, recipients, signatures, optional packet map). Example: `input | gpg.inspect | out $report`.",
     input: "text",
     output: "text",
     params: [
@@ -2092,7 +2092,7 @@ export const STEPS = [
     conjugate: "gpg.decrypt",
     pairCaption: "Encrypt / decrypt",
     unresolvedRecipients: true,
-    doc: "OpenPGP-encrypt the current value. Prefer `to=@alices` (recipients slot) or `to=email` + lookup; else Run binder. `mode=separate|combined`. `-s` / `key=@me` for sign-then-encrypt.",
+    doc: "OpenPGP-encrypt the current value. Prefer `to=$alices` (recipients slot) or `to=email` + lookup; else Run binder. `mode=separate|combined`. `-s` / `key=$me` for sign-then-encrypt.",
     input: "text",
     output: "artifact",
     params: [
@@ -2101,7 +2101,7 @@ export const STEPS = [
         type: "string",
         default: "",
         emptyMeans: "the recipients picked in the Run binder",
-        doc: "`@slot`, `fpr:…`, or email (resolve via lookup)",
+        doc: "`$slot`, `fpr:…`, or email (resolve via lookup)",
       },
       {
         name: "policy",
@@ -2128,7 +2128,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Signing private-key slot when `-s` (`@me`); omit to use the vault key panel",
+        doc: "Signing private-key slot when `-s` (`$me`); omit to use the vault key panel",
       },
       ...CRYPTO_PROFILE_PARAMS,
     ],
@@ -2140,7 +2140,7 @@ export const STEPS = [
     shelf: "gpgsign",
     conjugate: "gpg.verify",
     pairCaption: "Sign / verify",
-    doc: "OpenPGP-sign pipeline text/bytes. Prefer `gpg.sign key=@me` (slot from `agent.unlock`); else vault key panel. Default cleartext; `format=detached` for detached sig. Distinct from WebCrypto `sign`.",
+    doc: "OpenPGP-sign pipeline text/bytes. Prefer `gpg.sign key=$me` (slot from `agent.unlock`); else vault key panel. Default cleartext; `format=detached` for detached sig. Distinct from WebCrypto `sign`.",
     input: "text",
     output: "text",
     unresolvedInputs: "gpg",
@@ -2149,7 +2149,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live private-key slot (`@me`); omit to use the vault key panel",
+        doc: "Live private-key slot (`$me`); omit to use the vault key panel",
       },
       {
         name: "format",
@@ -2174,7 +2174,7 @@ export const STEPS = [
     toolbox: "openpgp",
     shelf: "gpgsign",
     conjugateOf: "gpg.sign",
-    doc: "Verify an OpenPGP cleartext or detached signature. Prefer `gpg.verify key=@pub`. Detached: `signature=@slot`. Fail-loud by default; `soft`/`-q` → bool true|false. Distinct from WebCrypto `verify`.",
+    doc: "Verify an OpenPGP cleartext or detached signature. Prefer `gpg.verify key=$pub`. Detached: `signature=$slot`. Fail-loud by default; `soft`/`-q` → bool true|false. Distinct from WebCrypto `verify`.",
     input: "text",
     output: "bool",
     unresolvedInputs: "gpg",
@@ -2183,14 +2183,14 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live public (or private) key slot (`@pub`); omit to use vault key / recipients",
+        doc: "Live public (or private) key slot (`$pub`); omit to use vault key / recipients",
       },
       {
         name: "signature",
         type: "string",
         default: "",
         emptyMeans: "a cleartext signature on the stem, or the run-time binding",
-        doc: "Detached armored signature or `@slot`",
+        doc: "Detached armored signature or `$slot`",
       },
       {
         name: "soft",
@@ -2213,7 +2213,7 @@ export const STEPS = [
     conjugate: "ssh.decode",
     pairCaption: "Encode / decode",
     glyph: "ssh-key",
-    doc: "Encode a keypair/key as OpenSSH — `format=public` (default) emits the one-line public form (`ssh-ed25519 AAAA… comment`) for authorized_keys / GitHub; `format=private` emits an openssh-key-v1 block, **unencrypted unless you bind `passphrase=@slot`** (`aes256-ctr` + `bcrypt_pbkdf` at 24 rounds, the pair `ssh-keygen` writes). The passphrase is never taken from the Inputs panel behind your back: the same recipe must always emit the same kind of file, so the encryption has to be named in the recipe (`… | ssh.encode format=private passphrase=@pw`). ed25519, ec/p256|384|521, rsa. The leading key-type name is fixed by the key's algorithm and curve, not chosen here: a P-256 key is always `ecdsa-sha2-nistp256` (RFC 5656), where the `sha2` is part of that name rather than a digest you can set. The bytes match `ssh-keygen`. Example: `genkey ed25519 | ssh.encode comment=\"you@host\" | out @pub`.",
+    doc: "Encode a keypair/key as OpenSSH — `format=public` (default) emits the one-line public form (`ssh-ed25519 AAAA… comment`) for authorized_keys / GitHub; `format=private` emits an openssh-key-v1 block, **unencrypted unless you bind `passphrase=$slot`** (`aes256-ctr` + `bcrypt_pbkdf` at 24 rounds, the pair `ssh-keygen` writes). The passphrase is never taken from the Inputs panel behind your back: the same recipe must always emit the same kind of file, so the encryption has to be named in the recipe (`… | ssh.encode format=private passphrase=$pw`). ed25519, ec/p256|384|521, rsa. The leading key-type name is fixed by the key's algorithm and curve, not chosen here: a P-256 key is always `ecdsa-sha2-nistp256` (RFC 5656), where the `sha2` is part of that name rather than a digest you can set. The bytes match `ssh-keygen`. Example: `genkey ed25519 | ssh.encode comment=\"you@host\" | out $pub`.",
     input: "keypair",
     output: "text",
     params: [
@@ -2233,7 +2233,7 @@ export const STEPS = [
       {
         // `slot` + `secret`, the shape `rtc.ice credential=` uses, and for its
         // reason: the UI offers only "Bind a value from Inputs…", and
-        // `serializeStep` drops anything that is not an `@ref` before a recipe
+        // `serializeStep` drops anything that is not an `$ref` before a recipe
         // becomes a share link. So the passphrase is *named* in the recipe
         // while its bytes stay in the session.
         //
@@ -2247,7 +2247,7 @@ export const STEPS = [
         secret: true,
         default: "",
         emptyMeans: "the private block is written unencrypted",
-        doc: "format=private only: @slot holding the passphrase to encrypt the block with (aes256-ctr + bcrypt_pbkdf, 24 rounds).",
+        doc: "format=private only: $slot holding the passphrase to encrypt the block with (aes256-ctr + bcrypt_pbkdf, 24 rounds).",
       },
     ],
     overloads: [
@@ -2273,7 +2273,7 @@ export const STEPS = [
     shelf: "sshwire",
     conjugateOf: "ssh.encode",
     glyph: "ssh-key",
-    doc: "Decode OpenSSH key text into a live key/keypair — `format=public` (default) reads a one-line public key and yields a public `key`; `format=private` reads an openssh-key-v1 block and yields a keypair. The recipe names which, because the two produce different types and the file cannot be consulted before the run: a block handed to `format=public` is refused rather than quietly typed as the other thing. Passphrase-protected blocks open too — bind the passphrase to a slot and name it with `passphrase=@slot`; a wrong one is named as such rather than reported as a corrupt file. Example: `input | ssh.decode | ssh.fingerprint | out @fp`, or `input | out @pw` then `… | ssh.decode format=private passphrase=@pw`.",
+    doc: "Decode OpenSSH key text into a live key/keypair — `format=public` (default) reads a one-line public key and yields a public `key`; `format=private` reads an openssh-key-v1 block and yields a keypair. The recipe names which, because the two produce different types and the file cannot be consulted before the run: a block handed to `format=public` is refused rather than quietly typed as the other thing. Passphrase-protected blocks open too — bind the passphrase to a slot and name it with `passphrase=$slot`; a wrong one is named as such rather than reported as a corrupt file. Example: `input | ssh.decode | ssh.fingerprint | out $fp`, or `input | out $pw` then `… | ssh.decode format=private passphrase=$pw`.",
     input: "text",
     output: "key",
     effectiveIo(params) {
@@ -2323,7 +2323,7 @@ export const STEPS = [
         /**
          * The conjugate of `ssh.encode passphrase=`, and a slot for the same
          * mechanical reason: `serializeStep` drops anything that is not an
-         * `@ref` before a recipe becomes a share link, so a literal would
+         * `$ref` before a recipe becomes a share link, so a literal would
          * either travel in the text or vanish from it.
          *
          * The *design* reason differs from encode's, and the difference is
@@ -2339,7 +2339,7 @@ export const STEPS = [
         type: "slot",
         secret: true,
         default: "",
-        doc: "@slot holding the passphrase for a protected openssh-key-v1 block (`input | out @pw` then `passphrase=@pw`). Ignored for public lines and unencrypted blocks.",
+        doc: "$slot holding the passphrase for a protected openssh-key-v1 block (`input | out $pw` then `passphrase=$pw`). Ignored for public lines and unencrypted blocks.",
       },
     ],
   },
@@ -2349,7 +2349,7 @@ export const STEPS = [
     toolbox: "ssh",
     shelf: "sshwire",
     glyph: "fingerprint",
-    doc: "SHA-256 fingerprint of an SSH public key — `SHA256:` + base64, byte-identical to `ssh-keygen -lf`. Accepts a keypair, a key, or a public line. Example: `input | ssh.decode | ssh.fingerprint | out @fp`.",
+    doc: "SHA-256 fingerprint of an SSH public key — `SHA256:` + base64, byte-identical to `ssh-keygen -lf`. Accepts a keypair, a key, or a public line. Example: `input | ssh.decode | ssh.fingerprint | out $fp`.",
     input: "keypair",
     output: "text",
     overloads: [
@@ -2367,7 +2367,7 @@ export const STEPS = [
     conjugate: "ssh.verify",
     pairCaption: "Sign / verify",
     glyph: "sshsig-sign",
-    doc: "Sign the payload in sshsig format (`ssh-keygen -Y sign`) — also how git signs commits with SSH keys. `namespace=` is part of what is signed: a `git` signature can never verify as a `file` signature. Key from a slot. Example: `input | utf8 | ssh.sign key=@id namespace=git | out @sig`.",
+    doc: "Sign the payload in sshsig format (`ssh-keygen -Y sign`) — also how git signs commits with SSH keys. `namespace=` is part of what is signed: a `git` signature can never verify as a `file` signature. Key from a slot. Example: `input | utf8 | ssh.sign key=$id namespace=git | out $sig`.",
     input: "text",
     output: "text",
     params: [
@@ -2403,7 +2403,7 @@ export const STEPS = [
     shelf: "sshsig",
     conjugateOf: "ssh.sign",
     glyph: "sshsig-sign",
-    doc: "Verify an sshsig signature over the pipeline payload (`ssh-keygen -Y verify`). `signature=@slot` holds the sshsig block, `key=` the public line or a slot; `namespace=` must match the signer's. Fail-loud; `-q` emits bool false instead. Example: `in @msg | ssh.verify key=@pub signature=@sig namespace=git | out @ok`.",
+    doc: "Verify an sshsig signature over the pipeline payload (`ssh-keygen -Y verify`). `signature=$slot` holds the sshsig block, `key=` the public line or a slot; `namespace=` must match the signer's. Fail-loud; `-q` emits bool false instead. Example: `in $msg | ssh.verify key=$pub signature=$sig namespace=git | out $ok`.",
     input: "text",
     output: "bool",
     params: [
@@ -2480,7 +2480,7 @@ export const STEPS = [
     shelf: "enrolment",
     conjugateOf: "otp.uri",
     glyph: "qr",
-    doc: "Read one field out of a pasted `otpauth://` URI — `field=secret` (default) is the conjugate of `otp.uri` and round-trips. The ambiguous URIs are refused rather than guessed: an `issuer=` that disagrees with the label's issuer is two accounts, and an `hotp` URI with no `counter=` cannot make a code at all. The label is split on the *encoded* separator, so an account name containing `%3A` does not sprout a phantom issuer. Only `field=secret` comes out masked. Example: `qr.scan | otp.parse | out @secret`.",
+    doc: "Read one field out of a pasted `otpauth://` URI — `field=secret` (default) is the conjugate of `otp.uri` and round-trips. The ambiguous URIs are refused rather than guessed: an `issuer=` that disagrees with the label's issuer is two accounts, and an `hotp` URI with no `counter=` cannot make a code at all. The label is split on the *encoded* separator, so an account name containing `%3A` does not sprout a phantom issuer. Only `field=secret` comes out masked. Example: `qr.scan | otp.parse | out $secret`.",
     input: "text",
     output: "text",
     params: [
@@ -2516,7 +2516,7 @@ export const STEPS = [
     pairCaption: "Code / verify",
     pairLabels: { forward: "Code", reverse: "Verify" },
     glyph: "otp",
-    doc: "The code showing right now, from a Base32 secret, raw secret bytes, **or** a whole `otpauth://` URI. Handed a URI it takes `mode`, `algorithm`, `digits`, `period` and `counter` from the URI and ignores its own — the URI is what the other side is holding. `at=` pins the instant, which is how the RFC 6238 vectors are stated. The code itself is *not* masked: it expires in one step and exists to be read. Example: `in @secret | otp.code | out @code`.",
+    doc: "The code showing right now, from a Base32 secret, raw secret bytes, **or** a whole `otpauth://` URI. Handed a URI it takes `mode`, `algorithm`, `digits`, `period` and `counter` from the URI and ignores its own — the URI is what the other side is holding. `at=` pins the instant, which is how the RFC 6238 vectors are stated. The code itself is *not* masked: it expires in one step and exists to be read. Example: `in $secret | otp.code | out $code`.",
     input: "text",
     output: "text",
     params: [...OTP_TOKEN_PARAMS, OTP_AT_PARAM],
@@ -2532,7 +2532,7 @@ export const STEPS = [
     shelf: "otpcode",
     conjugateOf: "otp.code",
     glyph: "otp",
-    doc: "Check the code on the stem against the secret in `secret=@slot` (a Base32 secret or a whole `otpauth://` URI). `window=` is the part naive implementations get wrong: clocks drift and users type slowly, so a TOTP code is accepted within **±window** steps — while a HOTP window only ever looks *ahead*, because a server counter that went backwards would accept a code already spent. Fail-loud; `-q` emits bool false instead. Example: `input | otp.verify secret=@enrol window=1 | out @ok`.",
+    doc: "Check the code on the stem against the secret in `secret=$slot` (a Base32 secret or a whole `otpauth://` URI). `window=` is the part naive implementations get wrong: clocks drift and users type slowly, so a TOTP code is accepted within **±window** steps — while a HOTP window only ever looks *ahead*, because a server counter that went backwards would accept a code already spent. Fail-loud; `-q` emits bool false instead. Example: `input | otp.verify secret=$enrol window=1 | out $ok`.",
     input: "text",
     output: "bool",
     params: [
@@ -2571,7 +2571,7 @@ export const STEPS = [
     toolbox: "agent",
     shelf: "boundary",
     glyph: "agent-sign",
-    doc: "Sign the pipeline payload with a My Keys key — the private key never enters the pipeline; the unlock happens inside the vault with per-use approval. `format=auto` follows the key's kind: PGP → OpenPGP signature, SSH → sshsig (`namespace=` names the domain, `git` for git). Prefer this over `agent.unlock | gpg.sign`. Example: `input | utf8 | agent.sign AABB… | out @sig`.",
+    doc: "Sign the pipeline payload with a My Keys key — the private key never enters the pipeline; the unlock happens inside the vault with per-use approval. `format=auto` follows the key's kind: PGP → OpenPGP signature, SSH → sshsig (`namespace=` names the domain, `git` for git). Prefer this over `agent.unlock | gpg.sign`. Example: `input | utf8 | agent.sign AABB… | out $sig`.",
     input: "text",
     output: "text",
     params: [
@@ -2614,7 +2614,7 @@ export const STEPS = [
     toolbox: "agent",
     shelf: "boundary",
     glyph: "agent-decrypt",
-    doc: "Decrypt an OpenPGP message with a My Keys key — ciphertext in, plaintext out; the private key never enters the pipeline (per-use approval). PGP-kind keys only: SSH signing keys cannot decrypt. Example: `input | agent.decrypt AABB… | out @plain`.",
+    doc: "Decrypt an OpenPGP message with a My Keys key — ciphertext in, plaintext out; the private key never enters the pipeline (per-use approval). PGP-kind keys only: SSH signing keys cannot decrypt. Example: `input | agent.decrypt AABB… | out $plain`.",
     input: "text",
     output: "text",
     params: [
@@ -2657,7 +2657,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "agent",
     shelf: "vault",
-    doc: "Emit stored `publicArmored` for a My Keys fingerprint — no unlock. Example: `agent.pub AABB… | out @pub`.",
+    doc: "Emit stored `publicArmored` for a My Keys fingerprint — no unlock. Example: `agent.pub AABB… | out $pub`.",
     input: "none",
     output: "openpgp-key",
     params: [
@@ -2693,7 +2693,7 @@ export const STEPS = [
     // claim, that this op exists "for CLI runs", is simply false and is not
     // repeated here: `basilisk run` refuses the whole `agent` toolbox at
     // pre-flight with exit 4, verified.
-    doc: "Writes to the keyring of *whoever runs the recipe* — a shared link containing `agent.save` saves into the reader's vault, and nothing in the recipe undoes it. Reach for it when the write is the point: a `foreach` over generated keys, or a workspace you re-run yourself. Not available headlessly — `basilisk run` refuses the `agent` toolbox at pre-flight (exit 4), because Node has no vault. Save the pipeline's private key into My Keys. OpenPGP armor saves as kind pgp; a WebCrypto keypair saves as kind ssh (ed25519/ec/rsa — id is the SSH SHA256 fingerprint) or raw (x25519). `protection=device|passphrase|passkey`; passphrase applies to pgp only (non-PGP payloads have no S2K yet). Example: `genkey ed25519 | agent.save | out @id`.",
+    doc: "Writes to the keyring of *whoever runs the recipe* — a shared link containing `agent.save` saves into the reader's vault, and nothing in the recipe undoes it. Reach for it when the write is the point: a `foreach` over generated keys, or a workspace you re-run yourself. Not available headlessly — `basilisk run` refuses the `agent` toolbox at pre-flight (exit 4), because Node has no vault. Save the pipeline's private key into My Keys. OpenPGP armor saves as kind pgp; a WebCrypto keypair saves as kind ssh (ed25519/ec/rsa — id is the SSH SHA256 fingerprint) or raw (x25519). `protection=device|passphrase|passkey`; passphrase applies to pgp only (non-PGP payloads have no S2K yet). Example: `genkey ed25519 | agent.save | out $id`.",
     input: "openpgp-key",
     output: "openpgp-key",
     overloads: [
@@ -2734,7 +2734,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "hkp",
     shelf: "lookup",
-    doc: "Fetch a public key by fingerprint (device cache → This site `/pks/lookup` → optional explicit upstream). Example: `hkp.get AABB… | out @bob`.",
+    doc: "Fetch a public key by fingerprint (device cache → This site `/pks/lookup` → optional explicit upstream). Example: `hkp.get AABB… | out $bob`.",
     input: "none",
     output: "openpgp-key",
     params: [
@@ -2866,7 +2866,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "hkp",
     shelf: "recipients",
-    doc: "Merge pipeline recipients with `with=@slot` (dedupe by fingerprint).",
+    doc: "Merge pipeline recipients with `with=$slot` (dedupe by fingerprint).",
     input: "recipients",
     output: "recipients",
     params: [
@@ -2896,7 +2896,7 @@ export const STEPS = [
     conjugate: "run.verify",
     pairCaption: "Run receipt",
     pairLabels: { forward: "Receipt", reverse: "Verify" },
-    doc: "Emit a signable receipt for this run: recipe source, per-cell input/output **digests** (never the values), timestamps, and the op-registry version. Sign it with the vault key — `run.receipt | gpg.sign key=@me | out @receipt` — and check it later with `run.verify`.",
+    doc: "Emit a signable receipt for this run: recipe source, per-cell input/output **digests** (never the values), timestamps, and the op-registry version. Sign it with the vault key — `run.receipt | gpg.sign key=$me | out $receipt` — and check it later with `run.verify`.",
     input: "none",
     output: "text",
     params: [
@@ -2915,7 +2915,7 @@ export const STEPS = [
     toolbox: "io",
     shelf: "receipt",
     conjugateOf: "run.receipt",
-    doc: "Check a receipt (signed or plain JSON) against the run happening now — digests only, so neither side reveals a secret. Fail-loud by default; `run.verify -q` emits a bool instead. Example: `input | run.verify -q | out @ok`.",
+    doc: "Check a receipt (signed or plain JSON) against the run happening now — digests only, so neither side reveals a secret. Fail-loud by default; `run.verify -q` emits a bool instead. Example: `input | run.verify -q | out $ok`.",
     input: "text",
     output: "bool",
     params: [
@@ -2971,7 +2971,7 @@ export const STEPS = [
     kind: "sink",
     toolbox: "io",
     shelf: "ports",
-    doc: "Copy the current value to the system clipboard and pass it through — text verbatim, bytes as base64, structured values as JSON. Toast-weight confirm, no dialog: you just ran the recipe that produced the value. Example: `… | out @invite | clipboard.write`.",
+    doc: "Copy the current value to the system clipboard and pass it through — text verbatim, bytes as base64, structured values as JSON. Toast-weight confirm, no dialog: you just ran the recipe that produced the value. Example: `… | out $invite | clipboard.write`.",
     input: "bytes",
     output: "bytes",
     params: [],
@@ -2984,7 +2984,7 @@ export const STEPS = [
     conjugate: "stream.open",
     pairCaption: "Chunked AEAD (STREAM)",
     pairLabels: { forward: "Seal", reverse: "Open" },
-    doc: "Chunked AES-GCM in the STREAM construction — the way to encrypt a *file*, since `SubtleCrypto.encrypt` is one-shot and its single tag only verifies after the last byte. Each 64 KiB chunk carries its own tag and its index in the nonce, so reorder, splice, and truncation are all detected. A fresh file key is wrapped under `key=@slot`, which is what makes counter nonces safe with a reused key. **Not age** — same construction, different AEAD and header (see `age.encrypt` for files the `age` CLI can read). Example: `file.read | stream.seal key=@cek | file.save name=doc.bskstrm`.",
+    doc: "Chunked AES-GCM in the STREAM construction — the way to encrypt a *file*, since `SubtleCrypto.encrypt` is one-shot and its single tag only verifies after the last byte. Each 64 KiB chunk carries its own tag and its index in the nonce, so reorder, splice, and truncation are all detected. A fresh file key is wrapped under `key=$slot`, which is what makes counter nonces safe with a reused key. **Not age** — same construction, different AEAD and header (see `age.encrypt` for files the `age` CLI can read). Example: `file.read | stream.seal key=$cek | file.save name=doc.bskstrm`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -2993,7 +2993,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live AES key slot (`@cek`) used to wrap the per-file key; omit to use the key panel",
+        doc: "Live AES key slot (`$cek`) used to wrap the per-file key; omit to use the key panel",
       },
       {
         name: "chunk",
@@ -3011,7 +3011,7 @@ export const STEPS = [
     toolbox: "webcrypto",
     shelf: "files",
     conjugateOf: "stream.seal",
-    doc: "Open a `stream.seal` file. Distinguishes its failures: a bad tag means the file was modified or its chunks reordered; a missing final-chunk flag means it was truncated. Chunk size is read from the header, so `chunk=` is not repeated here. Example: `file.read | stream.open key=@cek | file.save`.",
+    doc: "Open a `stream.seal` file. Distinguishes its failures: a bad tag means the file was modified or its chunks reordered; a missing final-chunk flag means it was truncated. Chunk size is read from the header, so `chunk=` is not repeated here. Example: `file.read | stream.open key=$cek | file.save`.",
     input: "bytes",
     output: "bytes",
     unresolvedInputs: "key",
@@ -3020,7 +3020,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live AES key slot (`@cek`) the file was sealed under; omit to use the key panel",
+        doc: "Live AES key slot (`$cek`) the file was sealed under; omit to use the key panel",
       },
     ],
   },
@@ -3029,7 +3029,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "age",
     shelf: "keys",
-    doc: "Generate an age X25519 identity (`AGE-SECRET-KEY-1…`) — the same thing `age-keygen` writes. Secret: the tile stays masked until you reveal it. Its public half comes from `age.recipient`. Example: `age.keygen | out @id`.",
+    doc: "Generate an age X25519 identity (`AGE-SECRET-KEY-1…`) — the same thing `age-keygen` writes. Secret: the tile stays masked until you reveal it. Its public half comes from `age.recipient`. Example: `age.keygen | out $id`.",
     input: "none",
     output: "text",
     params: [],
@@ -3039,7 +3039,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "age",
     shelf: "keys",
-    doc: "Identity → recipient (`age1…`): the publishable half, derived and not invertible. An `age1…` already on the stem passes through, so this is safe to write when you are unsure which half you hold. Example: `in @id | age.recipient | out @pub`.",
+    doc: "Identity → recipient (`age1…`): the publishable half, derived and not invertible. An `age1…` already on the stem passes through, so this is safe to write when you are unsure which half you hold. Example: `in $id | age.recipient | out $pub`.",
     input: "text",
     output: "text",
     params: [],
@@ -3052,7 +3052,7 @@ export const STEPS = [
     conjugate: "age.decrypt",
     pairCaption: "age (age-encryption.org/v1)",
     pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
-    doc: "Encrypt to age recipients — real `age-encryption.org/v1`, produced by typage (age's author's implementation), so `age -d` reads it. `to=` takes one or more `age1…` recipients or an `@slot`; `passphrase=` is the scrypt mode instead (never both). `armor=true` for the PEM-style text form. CLI: `age -r age1… -o doc.age doc`. Example: `file.read | age.encrypt to=@pub | file.save`.",
+    doc: "Encrypt to age recipients — real `age-encryption.org/v1`, produced by typage (age's author's implementation), so `age -d` reads it. `to=` takes one or more `age1…` recipients or an `$slot`; `passphrase=` is the scrypt mode instead (never both). `armor=true` for the PEM-style text form. CLI: `age -r age1… -o doc.age doc`. Example: `file.read | age.encrypt to=$pub | file.save`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -3064,7 +3064,7 @@ export const STEPS = [
         type: "string",
         positional: true,
         default: "",
-        doc: "Recipients: `age1…` (space/comma separated) or an `@slot` holding them",
+        doc: "Recipients: `age1…` (space/comma separated) or an `$slot` holding them",
       },
       {
         name: "passphrase",
@@ -3090,7 +3090,7 @@ export const STEPS = [
     toolbox: "age",
     shelf: "files",
     conjugateOf: "age.encrypt",
-    doc: "Decrypt an age file with `key=@identity` (or `passphrase=`). Accepts binary and armored input, including an armored file read as bytes. CLI: `age -d -i key.txt doc.age`. Example: `file.read | age.decrypt key=@id | file.save`.",
+    doc: "Decrypt an age file with `key=$identity` (or `passphrase=`). Accepts binary and armored input, including an armored file read as bytes. CLI: `age -d -i key.txt doc.age`. Example: `file.read | age.decrypt key=$id | file.save`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -3121,7 +3121,7 @@ export const STEPS = [
     conjugate: "file.save",
     pairCaption: "File",
     pairLabels: { forward: "Read", reverse: "Save" },
-    doc: "Open a file from disk into the pipeline. The browser's own picker is the consent — no extra prompt (unlike `clipboard.read`, where the page chooses when to look). Arrives as `bytes`; write `as=text` when the recipe wants it decoded as UTF-8. **The type is read from the recipe, never sniffed from the file** — a source that picked its own type would make every compile-time answer downstream a guess. Filename and MIME ride along in meta, so `file.read | age.encrypt to=@pub | file.save` names the output for you. Main-thread only. Example: `file.read accept=.pem | inspect`.",
+    doc: "Open a file from disk into the pipeline. The browser's own picker is the consent — no extra prompt (unlike `clipboard.read`, where the page chooses when to look). Arrives as `bytes`; write `as=text` when the recipe wants it decoded as UTF-8. **The type is read from the recipe, never sniffed from the file** — a source that picked its own type would make every compile-time answer downstream a guess. Filename and MIME ride along in meta, so `file.read | age.encrypt to=$pub | file.save` names the output for you. Main-thread only. Example: `file.read accept=.pem | inspect`.",
     input: "none",
     output: "bytes",
     params: [
@@ -3156,7 +3156,7 @@ export const STEPS = [
     toolbox: "io",
     shelf: "ports",
     conjugateOf: "file.read",
-    doc: "Write the current value to disk and pass it through, like `out`. Uses the File System Access API's Save dialog where present, otherwise a plain download. The name comes from `name=`, else the value's own meta (a `file.read` upstream, or `age.encrypt`), else `output.bin`. Example: `… | age.encrypt to=@pub | file.save name=doc.age`.",
+    doc: "Write the current value to disk and pass it through, like `out`. Uses the File System Access API's Save dialog where present, otherwise a plain download. The name comes from `name=`, else the value's own meta (a `file.read` upstream, or `age.encrypt`), else `output.bin`. Example: `… | age.encrypt to=$pub | file.save name=doc.age`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -3182,7 +3182,7 @@ export const STEPS = [
     kind: "sink",
     toolbox: "io",
     shelf: "ports",
-    doc: "Emit a message tile (no filename; Encrypt compose). Prefer `out @label` when you need a file tile + reusable slot. (Legacy aliases `print`/`echo` migrate via Upgrade recipe.)",
+    doc: "Emit a message tile (no filename; Encrypt compose). Prefer `out $label` when you need a file tile + reusable slot. (Legacy aliases `print`/`echo` migrate via Upgrade recipe.)",
     input: "text",
     output: "text",
     params: [
@@ -3207,7 +3207,7 @@ export const STEPS = [
     toolbox: "io",
     shelf: "ports",
     conjugateOf: "input",
-    doc: "Emit a file tile, register a live `@slot` for later `in`, and pass through. Prefer `out @public` (bare `out public` rewrites to `@`). File paths reserved — not supported yet.",
+    doc: "Emit a file tile, register a live `$slot` for later `in`, and pass through. Prefer `out $public` (bare `out public` rewrites to `$`). File paths reserved — not supported yet.",
     input: "text",
     output: "text",
     params: [
@@ -3215,8 +3215,8 @@ export const STEPS = [
         name: "name",
         type: "string",
         positional: true,
-        default: "@output",
-        doc: "Slot / filename stem — `@label` (canonical); bare ident rewrites to `@ident`",
+        default: "$output",
+        doc: "Slot / filename stem — `$label` (canonical); bare ident rewrites to `$ident`",
       },
       {
         name: "encoding",
@@ -3340,7 +3340,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "jose",
     shelf: "token",
-    doc: "Inspect a compact JWS/JWE **without verifying it** — header plus claims, marked unverified. This is the safe first move on a token you were handed: it never checks a signature, so it never implies one was valid. Example: `input | jose.decode | out @claims`. To trust the contents, use `jose.verify`.",
+    doc: "Inspect a compact JWS/JWE **without verifying it** — header plus claims, marked unverified. This is the safe first move on a token you were handed: it never checks a signature, so it never implies one was valid. Example: `input | jose.decode | out $claims`. To trust the contents, use `jose.verify`.",
     input: "text",
     output: "text",
     params: [
@@ -3362,7 +3362,7 @@ export const STEPS = [
     conjugate: "jose.verify",
     pairCaption: "JWS (RFC 7515)",
     pairLabels: { forward: "Sign", reverse: "Verify" },
-    doc: "Sign the pipeline payload into a compact JWS (a JWT when the payload is JSON claims). `alg=auto` reads the algorithm off the key; naming one is checked against the key, never trusted. Example: `input | jose.sign key=@k alg=es256 | out @token`.",
+    doc: "Sign the pipeline payload into a compact JWS (a JWT when the payload is JSON claims). `alg=auto` reads the algorithm off the key; naming one is checked against the key, never trusted. Example: `input | jose.sign key=$k alg=es256 | out $token`.",
     input: "text",
     output: "text",
     params: [
@@ -3370,7 +3370,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live signing key slot (`@k`) — private half or HMAC secret",
+        doc: "Live signing key slot (`$k`) — private half or HMAC secret",
       },
       {
         name: "alg",
@@ -3407,7 +3407,7 @@ export const STEPS = [
         name: "key",
         type: "slot",
         default: "",
-        doc: "Live verification key slot (`@pub`) — public half or HMAC secret",
+        doc: "Live verification key slot (`$pub`) — public half or HMAC secret",
       },
       {
         name: "alg",
@@ -3433,7 +3433,7 @@ export const STEPS = [
     conjugate: "jose.decrypt",
     pairCaption: "JWE (RFC 7516)",
     pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
-    doc: "Encrypt the payload into a compact JWE. AES-GCM content encryption only (`enc=a128gcm|a192gcm|a256gcm`); key management is `dir` (the slot key *is* the CEK), AES-KW, or RSA-OAEP-256. Example: `input | jose.encrypt key=@cek | out @jwe`.",
+    doc: "Encrypt the payload into a compact JWE. AES-GCM content encryption only (`enc=a128gcm|a192gcm|a256gcm`); key management is `dir` (the slot key *is* the CEK), AES-KW, or RSA-OAEP-256. Example: `input | jose.encrypt key=$cek | out $jwe`.",
     input: "text",
     output: "text",
     params: [
@@ -3517,7 +3517,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "flow",
     shelf: "control",
-    doc: "Side inspect snapshot; stem unchanged. Use instead of an empty `tee`. Example: `genkey ec/p256 | peek keypair | export pkcs8 | pem | out @private`.",
+    doc: "Side inspect snapshot; stem unchanged. Use instead of an empty `tee`. Example: `genkey ec/p256 | peek keypair | export pkcs8 | pem | out $private`.",
     input: "bytes",
     output: "bytes",
     params: [
@@ -3544,7 +3544,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "ice",
     glyph: "ports",
-    doc: "ICE server config for a quorum exchange — STUN for reflexive discovery, optional TURN relay with credentials. Emits JSON consumed by `quorum.offer`/`quorum.join` via `ice=@slot`. `credential=` takes a **slot**, not a literal, so the secret never rides out through Copy link or an exported notebook. A STUN binding request tells whoever answers it your public address, so `stun=none` declines every third party — the exchange then gathers host candidates only, which reaches peers on your own network and not across NAT. Example: `rtc.ice turn=turn:relay.example.org:3478 username=u credential=@turncred | out @ice`.",
+    doc: "ICE server config for a quorum exchange — STUN for reflexive discovery, optional TURN relay with credentials. Emits JSON consumed by `quorum.offer`/`quorum.join` via `ice=$slot`. `credential=` takes a **slot**, not a literal, so the secret never rides out through Copy link or an exported notebook. A STUN binding request tells whoever answers it your public address, so `stun=none` declines every third party — the exchange then gathers host candidates only, which reaches peers on your own network and not across NAT. Example: `rtc.ice turn=turn:relay.example.org:3478 username=u credential=$turncred | out $ice`.",
     input: "none",
     output: "endpoint",
     params: [
@@ -3568,7 +3568,7 @@ export const STEPS = [
         type: "slot",
         secret: true,
         default: "",
-        doc: "TURN credential — bind an @slot from Inputs; never stored/shared as literal text",
+        doc: "TURN credential — bind an $slot from Inputs; never stored/shared as literal text",
       },
     ],
   },
@@ -3578,7 +3578,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "ice",
     glyph: "ports",
-    doc: "One-shot NAT diagnostic: gathers ICE candidates against a STUN server and reports the server-reflexive (public) address, candidate mix, and gather time as JSON. Not publishable — a plain output row. Example: `stun.check | out @nat`.",
+    doc: "One-shot NAT diagnostic: gathers ICE candidates against a STUN server and reports the server-reflexive (public) address, candidate mix, and gather time as JSON. Not publishable — a plain output row. Example: `stun.check | out $nat`.",
     input: "none",
     output: "endpoint",
     params: [
@@ -3608,7 +3608,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "webrtc",
     shelf: "peer",
-    doc: "Open a **managed** peer connection and emit its SDP offer. Unlike the retired `rtc.offer`, the connection stays live under `name=` — carry the offer to the other browser, bring their answer back to `peer.accept`, and `peer.wait` for it to connect. No PGP audience, no room, no relay. The channel is DTLS-encrypted but the far end is **not authenticated**: whoever received the offer is on the other side. Use `quorum.offer` when the peer's identity has to be proven. Example: `peer.offer a | out @offer`.",
+    doc: "Open a **managed** peer connection and emit its SDP offer. Unlike the retired `rtc.offer`, the connection stays live under `name=` — carry the offer to the other browser, bring their answer back to `peer.accept`, and `peer.wait` for it to connect. No PGP audience, no room, no relay. The channel is DTLS-encrypted but the far end is **not authenticated**: whoever received the offer is on the other side. Use `quorum.offer` when the peer's identity has to be proven. Example: `peer.offer a | out $offer`.",
     input: "none",
     output: "sdp",
     params: [
@@ -3624,7 +3624,7 @@ export const STEPS = [
         type: "slot",
         default: "",
         emptyMeans: "built-in Cloudflare + Google STUN",
-        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
+        doc: "$slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "label",
@@ -3645,7 +3645,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webrtc",
     shelf: "peer",
-    doc: "Answer a remote **offer** and keep the resulting managed connection under `name=`. The conjugate of `peer.offer`: send the answer back, then `peer.wait` on both sides. Refuses an SDP that is already an answer — that one goes to `peer.accept`. Example: `in @remoteOffer | peer.answer b | out @answer`.",
+    doc: "Answer a remote **offer** and keep the resulting managed connection under `name=`. The conjugate of `peer.offer`: send the answer back, then `peer.wait` on both sides. Refuses an SDP that is already an answer — that one goes to `peer.accept`. Example: `in $remoteOffer | peer.answer b | out $answer`.",
     input: "sdp",
     output: "sdp",
     params: [
@@ -3661,7 +3661,7 @@ export const STEPS = [
         type: "slot",
         default: "",
         emptyMeans: "built-in Cloudflare + Google STUN",
-        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
+        doc: "$slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "timeout",
@@ -3676,7 +3676,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "webrtc",
     shelf: "peer",
-    doc: "Apply the remote **answer** to a connection this notebook offered, completing the exchange. Signalling only — it does not wait for ICE, so that \"this is not an answer\" and \"no candidate pair worked\" stay separate errors with separate fixes; `peer.wait` owns the second. Example: `in @remoteAnswer | peer.accept a | out @state`.",
+    doc: "Apply the remote **answer** to a connection this notebook offered, completing the exchange. Signalling only — it does not wait for ICE, so that \"this is not an answer\" and \"no candidate pair worked\" stay separate errors with separate fixes; `peer.wait` owns the second. Example: `in $remoteAnswer | peer.accept a | out $state`.",
     input: "sdp",
     output: "connstate",
     params: [
@@ -3694,7 +3694,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "webrtc",
     shelf: "peer",
-    doc: "Pause the run until a managed connection is connected and its data channel open, then emit the live channel. This is the step that tells you ICE succeeded: if it fails, the error is the same sentence the Connections panel shows, including what to do about it. Example: `peer.wait a | out @link`.",
+    doc: "Pause the run until a managed connection is connected and its data channel open, then emit the live channel. This is the step that tells you ICE succeeded: if it fails, the error is the same sentence the Connections panel shows, including what to do about it. Example: `peer.wait a | out $link`.",
     input: "none",
     output: "channel",
     params: [
@@ -3736,7 +3736,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "webrtc",
     shelf: "channel",
-    doc: "Read from a managed connection's data channel. `count=1` (default) waits for one message and emits it as text; `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `peer.recv b | out @msg`.",
+    doc: "Read from a managed connection's data channel. `count=1` (default) waits for one message and emits it as text; `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `peer.recv b | out $msg`.",
     input: "none",
     output: "text",
     params: [
@@ -3774,7 +3774,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "webrtc",
     shelf: "peer",
-    doc: "Close a managed connection and forget it, or every direct connection when `name=` is empty. Never touches the quorum mesh's links even when closing everything — those belong to `quorum.close`, which also has session keys to zeroize. Example: `peer.close a | out @state`.",
+    doc: "Close a managed connection and forget it, or every direct connection when `name=` is empty. Never touches the quorum mesh's links even when closing everything — those belong to `quorum.close`, which also has session keys to zeroize. Example: `peer.close a | out $state`.",
     input: "none",
     output: "connstate",
     params: [
@@ -3798,7 +3798,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "ice",
     glyph: "ports",
-    doc: "Gather ICE candidates against the configured servers and emit one row per candidate — `host` (local NIC), `srflx` (server-reflexive, via STUN), `relay` (via TURN), plus any `prflx` peer-reflexive found by trickle. Each row carries protocol (`udp`/`tcp`). A missing `relay` row is informational, not an error — it just means no TURN is configured. This is what `quorum.offer` consumes internally; run it standalone to see why a later connection failed. Example: `rtc.ice turn=… | out @ice` then `rtc.gather ice=@ice | out @cands`.",
+    doc: "Gather ICE candidates against the configured servers and emit one row per candidate — `host` (local NIC), `srflx` (server-reflexive, via STUN), `relay` (via TURN), plus any `prflx` peer-reflexive found by trickle. Each row carries protocol (`udp`/`tcp`). A missing `relay` row is informational, not an error — it just means no TURN is configured. This is what `quorum.offer` consumes internally; run it standalone to see why a later connection failed. Example: `rtc.ice turn=… | out $ice` then `rtc.gather ice=$ice | out $cands`.",
     input: "none",
     output: "candidate",
     params: [
@@ -3807,7 +3807,7 @@ export const STEPS = [
         type: "slot",
         default: "",
         emptyMeans: "built-in Cloudflare + Google STUN",
-        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
+        doc: "$slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "timeout",
@@ -3823,7 +3823,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "ice",
     glyph: "ports",
-    doc: "Report the ICE candidate-pair check matrix for the live exchange: one row per local×remote pair with its state (`waiting`/`in-progress`/`succeeded`/`failed`), the nominated pair flagged, plus this peer's `controlling`/`controlled` role. Needs a live `quorum.offer`/`quorum.join` — ICE only checks pairs once both sides have exchanged candidates. Example: `quorum.offer … | out @s` then `rtc.check | out @pairs`.",
+    doc: "Report the ICE candidate-pair check matrix for the live exchange: one row per local×remote pair with its state (`waiting`/`in-progress`/`succeeded`/`failed`), the nominated pair flagged, plus this peer's `controlling`/`controlled` role. Needs a live `quorum.offer`/`quorum.join` — ICE only checks pairs once both sides have exchanged candidates. Example: `quorum.offer … | out $s` then `rtc.check | out $pairs`.",
     input: "none",
     output: "stats",
     params: [],
@@ -3834,7 +3834,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "peer",
     glyph: "genkey",
-    doc: "Generate a DTLS identity (`RTCCertificate`) — the certificate whose fingerprint the remote peer sees. Mirrors `genkey`'s shape. Most recipes never need this: `quorum.offer` mints a throwaway certificate itself. Use it when you want a stable fingerprint a peer can recognize across sessions. Example: `rtc.certificate | out @id`.",
+    doc: "Generate a DTLS identity (`RTCCertificate`) — the certificate whose fingerprint the remote peer sees. Mirrors `genkey`'s shape. Most recipes never need this: `quorum.offer` mints a throwaway certificate itself. Use it when you want a stable fingerprint a peer can recognize across sessions. Example: `rtc.certificate | out $id`.",
     input: "none",
     output: "certificate",
     params: [
@@ -3854,7 +3854,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "peer",
     glyph: "ports",
-    doc: "Observe-only snapshot of the live exchange's `connectionState`, `iceConnectionState`, `iceGatheringState`, and `signalingState`, per peer. Diagnostic — never bind it as an input to a crypto op. Needs a live `quorum.offer`/`quorum.join`. Example: `rtc.state | out @state`.",
+    doc: "Observe-only snapshot of the live exchange's `connectionState`, `iceConnectionState`, `iceGatheringState`, and `signalingState`, per peer. Diagnostic — never bind it as an input to a crypto op. Needs a live `quorum.offer`/`quorum.join`. Example: `rtc.state | out $state`.",
     input: "none",
     output: "connstate",
     params: [],
@@ -3865,7 +3865,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "peer",
     glyph: "ports",
-    doc: "Restart ICE on every peer connection of the live exchange and report the resulting per-peer state. Renegotiates in place — room, invite, and roster survive. The chainable form of the Connections panel's Restart button. Example: `rtc.restart | out @state`.",
+    doc: "Restart ICE on every peer connection of the live exchange and report the resulting per-peer state. Renegotiates in place — room, invite, and roster survive. The chainable form of the Connections panel's Restart button. Example: `rtc.restart | out $state`.",
     input: "none",
     output: "connstate",
     params: [],
@@ -3876,7 +3876,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "channel",
     glyph: "ports",
-    doc: "Data-channel back-pressure and counters for the live exchange: `bufferedAmount` against its low-water threshold, ready state, and messages/bytes sent+received per peer. Use it to see whether `quorum.send` is queueing behind a slow link. Example: `rtc.stats | out @bp`.",
+    doc: "Data-channel back-pressure and counters for the live exchange: `bufferedAmount` against its low-water threshold, ready state, and messages/bytes sent+received per peer. Use it to see whether `quorum.send` is queueing behind a slow link. Example: `rtc.stats | out $bp`.",
     input: "none",
     output: "stats",
     params: [],
@@ -3887,7 +3887,7 @@ export const STEPS = [
     toolbox: "webrtc",
     shelf: "rtcstats",
     glyph: "ports",
-    doc: "Live `getStats()` quality numbers for the exchange — round-trip time and bytes/packets each way, per connected peer. **Packet loss is not reported**: loss statistics come from RTP, and this transport is SCTP data channels, so there is no RTP on the connection to lose any. The panel says so rather than showing a zero. Example: `rtc.quality | out @quality`.",
+    doc: "Live `getStats()` quality numbers for the exchange — round-trip time and bytes/packets each way, per connected peer. **Packet loss is not reported**: loss statistics come from RTP, and this transport is SCTP data channels, so there is no RTP on the connection to lose any. The panel says so rather than showing a zero. Example: `rtc.quality | out $quality`.",
     input: "none",
     output: "stats",
     params: [],
@@ -3912,7 +3912,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "quorum",
     shelf: "exchange",
-    doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `quorum.send`/`quorum.recv`/`quorum.close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
+    doc: "Open a run-scoped p2p exchange as creator: derives the room from the audience, publishes a PGP-signed invite through the encrypted relay, then PAUSES the run at this cell until a peer meshes (or `wait` expires). Output is the session summary JSON; `quorum.send`/`quorum.recv`/`quorum.close` downstream use the live session. Example: `quorum.offer to=\"AABB…,CCDD…\" key=$me | out $session`. Main-thread (WebRTC).",
     input: "none",
     output: "session",
     params: [
@@ -3928,14 +3928,14 @@ export const STEPS = [
         type: "slot",
         secret: true,
         default: "",
-        doc: "@slot holding your armored private key (`agent.unlock … | out @me`)",
+        doc: "$slot holding your armored private key (`agent.unlock … | out $me`)",
       },
       {
         name: "ice",
         type: "string",
         default: "",
         emptyMeans: "built-in Cloudflare + Google STUN",
-        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
+        doc: "$slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "wait",
@@ -3956,7 +3956,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "quorum",
     shelf: "exchange",
-    doc: "Join a run-scoped exchange as peer: verifies the creator's signed invite, then meshes with per-peer ephemeral ECDH (data-channel PFS). Pauses the run at this cell until connected. Same audience + site = same room, no code to paste. Example: `quorum.join to=\"AABB…,CCDD…\" key=@me | out @session`. Main-thread (WebRTC).",
+    doc: "Join a run-scoped exchange as peer: verifies the creator's signed invite, then meshes with per-peer ephemeral ECDH (data-channel PFS). Pauses the run at this cell until connected. Same audience + site = same room, no code to paste. Example: `quorum.join to=\"AABB…,CCDD…\" key=$me | out $session`. Main-thread (WebRTC).",
     input: "none",
     output: "session",
     params: [
@@ -3972,14 +3972,14 @@ export const STEPS = [
         type: "slot",
         secret: true,
         default: "",
-        doc: "@slot holding your armored private key",
+        doc: "$slot holding your armored private key",
       },
       {
         name: "ice",
         type: "string",
         default: "",
         emptyMeans: "built-in Cloudflare + Google STUN",
-        doc: "@slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
+        doc: "$slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
       },
       {
         name: "wait",

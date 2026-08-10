@@ -50,7 +50,7 @@ describe("the button stores what the tile is holding", () => {
   });
 
   it("files an ed25519 private JWK as an ssh key with a listable public line", async () => {
-    const priv = await tile("genkey ed25519 | out @kp", /private/);
+    const priv = await tile("genkey ed25519 | out $kp", /private/);
     const res = await addPrivateKeyToMyKeys(priv);
     expect(res.kind).toBe("ssh");
     expect(res.already).toBe(false);
@@ -63,7 +63,7 @@ describe("the button stores what the tile is holding", () => {
   });
 
   it("files an x25519 private JWK as a raw key under an spki id", async () => {
-    const priv = await tile("genkey x25519 | out @kp", /private/);
+    const priv = await tile("genkey x25519 | out $kp", /private/);
     const res = await addPrivateKeyToMyKeys(priv);
     expect(res.kind).toBe("raw");
     expect(res.fingerprint).toMatch(/^spki:SHA256:/);
@@ -90,7 +90,7 @@ describe("the button stores what the tile is holding", () => {
 
   it("stores an armored OpenPGP private key under its own uid", async () => {
     const priv = await tile(
-      'gpg.genkey name="Dana" email="dana@example.com" | out @k',
+      'gpg.genkey name="Dana" email="dana@example.com" | out $k',
       /^k$/
     );
     expect(priv.content).toContain("PGP PRIVATE KEY BLOCK");
@@ -109,7 +109,7 @@ describe("a second click is honest about what it did", () => {
     // `putGuardingProtection` refuses only a *weakening* re-save, so device
     // over device goes through and overwrites the row. "Added" would be a
     // true statement about the write and a false one about the vault.
-    const priv = await tile("genkey ed25519 | out @kp", /private/);
+    const priv = await tile("genkey ed25519 | out $kp", /private/);
     const first = await addPrivateKeyToMyKeys(priv);
     expect(first.already).toBe(false);
     const second = await addPrivateKeyToMyKeys(priv);
@@ -122,7 +122,7 @@ describe("a second click is honest about what it did", () => {
     // The refusal is the point of passing no `onConflict`: one click may not
     // silently throw away a passkey binding. The message reaches the tile
     // through `runAction`'s catch, verbatim.
-    const priv = await tile("genkey ed25519 | out @kp", /private/);
+    const priv = await tile("genkey ed25519 | out $kp", /private/);
     const { fingerprint } = await addPrivateKeyToMyKeys(priv);
     await saveKey({
       fingerprint,
@@ -151,7 +151,7 @@ describe("a body it cannot store is refused by name", () => {
   });
 
   it("says a public JWK has no private half", async () => {
-    const pub = await tile("genkey ed25519 | out @kp", /public/);
+    const pub = await tile("genkey ed25519 | out $kp", /public/);
     await expect(addPrivateKeyToMyKeys(pub)).rejects.toThrow(
       /a public OKP JWK, with no private half/
     );
@@ -172,9 +172,9 @@ describe("a body it cannot store is refused by name", () => {
    * owes the user is not to send them somewhere that changes nothing.
    */
   it("does not send a protected OpenSSH key to a panel this button cannot read", async () => {
-    const { ast } = compileRecipe(`"correct horse" | out @pw
+    const { ast } = compileRecipe(`"correct horse" | out $pw
 
-genkey ed25519 | ssh.encode format=private passphrase=@pw | out @enc`);
+genkey ed25519 | ssh.encode format=private passphrase=$pw | out $enc`);
     const arts = await runRecipe(ast, {});
     const enc = arts.find((a) => /enc/.test(String(a.label)));
     expect(String(enc.content)).toContain("BEGIN OPENSSH PRIVATE KEY");
@@ -190,7 +190,7 @@ genkey ed25519 | ssh.encode format=private passphrase=@pw | out @enc`);
   });
 
   it("still stores an unprotected OpenSSH block, so the refusal is about the passphrase", async () => {
-    const { ast } = compileRecipe("genkey ed25519 | ssh.encode format=private | out @bare");
+    const { ast } = compileRecipe("genkey ed25519 | ssh.encode format=private | out $bare");
     const arts = await runRecipe(ast, {});
     const bare = arts.find((a) => /bare/.test(String(a.label)));
     const res = await addPrivateKeyToMyKeys({ content: bare.content, alg: "ed25519" });

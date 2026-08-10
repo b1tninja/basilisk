@@ -72,9 +72,9 @@ async function cli(argv, ctx = {}) {
 }
 
 const SPLIT_RECOVER = `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share
+  - out $share
 
-shares | blip39.decode | sss.combine | base64 | out @secret
+shares | blip39.decode | sss.combine | base64 | out $secret
 `;
 
 describe("basilisk run", () => {
@@ -93,7 +93,7 @@ describe("basilisk run", () => {
     // The recover cell never saw a paste panel: it consumed the indexed share
     // slots the split cell's foreach registered, exactly as the notebook does.
     const secret = artifacts.find((a) => /secret/i.test(a.label || ""));
-    expect(secret, "recovered @secret artifact").toBeTruthy();
+    expect(secret, "recovered $secret artifact").toBeTruthy();
     const raw = Buffer.from(String(secret.content).trim(), "base64");
     expect(raw.length).toBe(32);
 
@@ -121,7 +121,7 @@ describe("basilisk run", () => {
       "shares.txt",
       `# recovered from cold storage\n${mnemonics[0]}\n\n${mnemonics[2]}\n`
     );
-    const recover = file(dir, "recover.txt", "shares | blip39.decode | sss.combine | base64 | out @secret\n");
+    const recover = file(dir, "recover.txt", "shares | blip39.decode | sss.combine | base64 | out $secret\n");
 
     const { code, out } = await cli(["run", recover, "--shares", sharesFile, "--json"]);
     expect(code).toBe(EXIT.ok);
@@ -131,7 +131,7 @@ describe("basilisk run", () => {
 
   it("feeds the `input` op from --input and from stdin identically", async () => {
     const dir = workdir();
-    const recipe = file(dir, "hash.txt", "input | utf8 | digest | encode hex | out @hash\n");
+    const recipe = file(dir, "hash.txt", "input | utf8 | digest | encode hex | out $hash\n");
     // SHA-256("hello world"), so a wrong binding cannot pass by accident.
     const expected = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
 
@@ -160,7 +160,7 @@ describe("basilisk run", () => {
     });
 
     const dir = workdir();
-    const recipe = file(dir, "decrypt.txt", "gpg.decrypt | out @plain\n");
+    const recipe = file(dir, "decrypt.txt", "gpg.decrypt | out $plain\n");
     const ct = file(dir, "message.asc", String(armoredCiphertext));
     const key = file(dir, "secret.asc", privateKey);
 
@@ -183,7 +183,7 @@ describe("basilisk run", () => {
 
   it("refuses --passphrase-env when the variable is unset, and has no --passphrase", async () => {
     const dir = workdir();
-    const recipe = file(dir, "decrypt.txt", "gpg.decrypt | out @plain\n");
+    const recipe = file(dir, "decrypt.txt", "gpg.decrypt | out $plain\n");
     const unset = await cli(["run", recipe, "--passphrase-env", "BASILISK_NOT_SET"], {
       env: {},
     });
@@ -205,7 +205,7 @@ describe("browser-only ops", () => {
     const recipe = file(
       dir,
       "rtc.txt",
-      "random 8 | encode hex | out @nonce\n\nrtc.certificate | out @cert\n"
+      "random 8 | encode hex | out $nonce\n\nrtc.certificate | out $cert\n"
     );
     const { code, out, err } = await cli(["run", recipe]);
     expect(code).toBe(EXIT.browserOnly);
@@ -217,7 +217,7 @@ describe("browser-only ops", () => {
 
   it("classifies a clipboard op at dispatch, from the op's own failure", async () => {
     const dir = workdir();
-    const recipe = file(dir, "clip.txt", '"hello" | clipboard.write | out @copied\n');
+    const recipe = file(dir, "clip.txt", '"hello" | clipboard.write | out $copied\n');
     const { code, err } = await cli(["run", recipe]);
     expect(code).toBe(EXIT.browserOnly);
     expect(err).toContain('browser-only op: "clipboard.write"');
@@ -238,7 +238,7 @@ describe("browser-only ops", () => {
     const recipe = file(
       dir,
       "quorum.txt",
-      "random 8 | encode hex | out @nonce\n\nquorum.recv | out @msg\n"
+      "random 8 | encode hex | out $nonce\n\nquorum.recv | out $msg\n"
     );
     const { code, out, err } = await cli(["run", recipe]);
     expect(code).toBe(EXIT.browserOnly);
@@ -252,7 +252,7 @@ describe("browser-only ops", () => {
     const dir = workdir();
     // Garbage input, but the failure must be about the *bytes*, not about a
     // browser surface — `webauthn.attest` decodes pasted data and needs none.
-    const recipe = file(dir, "attest.txt", "input | webauthn.attest | out @report\n");
+    const recipe = file(dir, "attest.txt", "input | webauthn.attest | out $report\n");
     const { code, err } = await cli(["run", recipe, "--input", "not-an-attestation"]);
     expect(code).toBe(EXIT.runtime);
     expect(err).not.toContain("browser-only op");
@@ -262,7 +262,7 @@ describe("browser-only ops", () => {
 describe("basilisk check", () => {
   it("exits non-zero on an invalid recipe, with the message the UI shows", async () => {
     const dir = workdir();
-    const recipe = file(dir, "bad.txt", "genkey ec/p256 | frobnicate | out @x\n");
+    const recipe = file(dir, "bad.txt", "genkey ec/p256 | frobnicate | out $x\n");
     const { code, err } = await cli(["check", recipe]);
     expect(code).toBe(EXIT.invalidRecipe);
     // The validator's own string, unchanged — same text as the cell banner.
@@ -271,7 +271,7 @@ describe("basilisk check", () => {
 
   it("reports a forward slot reference rather than failing at run time", async () => {
     const dir = workdir();
-    const recipe = file(dir, "forward.txt", "@later | out @x\n\ngenkey ec/p256 | out @later\n");
+    const recipe = file(dir, "forward.txt", "$later | out $x\n\ngenkey ec/p256 | out $later\n");
     const { code, out } = await cli(["check", recipe, "--json"]);
     expect(code).toBe(EXIT.invalidRecipe);
     const report = JSON.parse(out);
@@ -289,7 +289,7 @@ describe("basilisk check", () => {
 
   it("--json carries errors, warnings and the runtime inputs a run would need", async () => {
     const dir = workdir();
-    const recipe = file(dir, "needs.txt", "input | utf8 | digest | out @d\n");
+    const recipe = file(dir, "needs.txt", "input | utf8 | digest | out $d\n");
     const { code, out } = await cli(["check", recipe, "--json"]);
     expect(code).toBe(EXIT.ok);
     const report = JSON.parse(out);
@@ -300,7 +300,7 @@ describe("basilisk check", () => {
 
   it("check never executes the recipe — a browser-only op still validates", async () => {
     const dir = workdir();
-    const recipe = file(dir, "rtc.txt", "rtc.certificate | out @cert\n");
+    const recipe = file(dir, "rtc.txt", "rtc.certificate | out $cert\n");
     const { code } = await cli(["check", recipe]);
     expect(code).toBe(EXIT.ok);
   });
@@ -374,7 +374,7 @@ describe("the shipped binary", () => {
 
   it("exits 4 with the browser-only message, not a stack trace", async () => {
     const dir = workdir();
-    const recipe = file(dir, "rtc.txt", "rtc.certificate | out @cert\n");
+    const recipe = file(dir, "rtc.txt", "rtc.certificate | out $cert\n");
     await expect(
       execFileAsync(process.execPath, [CLI_BIN, "run", recipe], { cwd: dirname(CLI_BIN) })
     ).rejects.toMatchObject({

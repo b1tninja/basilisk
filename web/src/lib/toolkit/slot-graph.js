@@ -19,7 +19,7 @@
 
 import { getStep } from "./registry.js";
 import { walkPipelineTypes } from "./types.js";
-import { slotLabelKey } from "./recipe-parse.js";
+import { SLOT_SIGIL, slotLabelKey } from "./recipe-parse.js";
 
 /** @typedef {import("./recipe.js").RecipeStep} RecipeStep */
 
@@ -60,10 +60,10 @@ function collectSlotRefs(steps, add) {
     }
     const spec = getStep(step.name);
     for (const p of spec?.params || []) {
-      // `out @x`'s name param *defines* the slot — it consumes nothing.
+      // `out $x`'s name param *defines* the slot — it consumes nothing.
       if (step.name === "out" && p.name === "name") continue;
       const raw = String(step.params?.[p.name] ?? "");
-      if (raw.startsWith("@")) {
+      if (raw.startsWith(SLOT_SIGIL)) {
         const label = slotLabelKey(raw);
         if (label) add(label);
       }
@@ -158,18 +158,18 @@ export function wiredForCell(chains, cellIndex) {
  * the pipeline. The step that exports it is not the only place the key is
  * live. Two ways it spreads, and both are modelled:
  *
- *   1. *Along the pipe.* `agent.unlock … | out @me` writes the key into
- *      `@me` from a step two positions later. So once a chain exposes,
+ *   1. *Along the pipe.* `agent.unlock … | out $me` writes the key into
+ *      `$me` from a step two positions later. So once a chain exposes,
  *      every following step in that chain is handling the exported value,
  *      and any `out` among them writes an exposed slot.
- *   2. *Across cells.* A later cell reading `@me` (`in @me`, `key=@me`) is
+ *   2. *Across cells.* A later cell reading `$me` (`in $me`, `key=$me`) is
  *      holding the same key, and whatever it writes carries it onward.
  *
  * Iterated to a fixed point, because a notebook is not strictly ordered in
  * what it references and one pass would miss the second hop.
  *
- * Deliberately conservative: `agent.unlock | export spki | out @pub` marks
- * `@pub` too, though a public half is not secret. Narrowing that would mean
+ * Deliberately conservative: `agent.unlock | export spki | out $pub` marks
+ * `$pub` too, though a public half is not secret. Narrowing that would mean
  * deciding which transforms launder key material, which is a judgement the
  * type system cannot make and a warning should not guess. Over-marking says
  * "the key was in play on this path"; under-marking would be a false all-clear.

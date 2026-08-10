@@ -1,6 +1,8 @@
 /**
- * Toolkit recipients helpers — directory picks for gpg.encrypt to=@
+ * Toolkit recipients helpers — directory picks for gpg.encrypt to=
  */
+
+import { SLOT_SIGIL } from "./recipe-parse.js";
 
 /**
  * @typedef {object} ToolkitRecipient
@@ -209,7 +211,7 @@ export function parseEncryptToToken(raw) {
     return { kind: "fpr", fingerprint: compact.toUpperCase() };
   }
 
-  if (s.startsWith("@")) {
+  if (s.startsWith(SLOT_SIGIL)) {
     return { kind: "slot", ref: s };
   }
 

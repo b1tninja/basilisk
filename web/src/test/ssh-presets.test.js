@@ -176,7 +176,7 @@ describe("the templates that need nothing pasted, run", () => {
     // encrypt template exercises the same two ops against each other and
     // proves the ciphertext the template emits is really openable.
     const out = await run(
-      `${byId("age-encrypt").recipe}\n\nin @ct | age.decrypt key=@id | utf8 | out @plain`,
+      `${byId("age-encrypt").recipe}\n\nin $ct | age.decrypt key=$id | utf8 | out $plain`,
       "attack at dawn"
     );
     expect(out.plain).toBe("attack at dawn");
@@ -187,10 +187,10 @@ describe("the templates that need a paste, run on real material", () => {
   /** Real ssh-keygen-shaped fixtures, made by the engine itself. */
   async function fixtures() {
     return run(`genkey ed25519 | tee
-  - ssh.encode format=private | out @priv
+  - ssh.encode format=private | out $priv
 | tee
-  - export pkcs8 | pem | out @pem
-| ssh.encode comment="you@host" | out @pub`);
+  - export pkcs8 | pem | out $pem
+| ssh.encode comment="you@host" | out $pub`);
   }
 
   it("ssh-fingerprint matches ssh-keygen -lf's shape", async () => {
@@ -239,7 +239,7 @@ describe("what cannot run headlessly says so plainly", () => {
     // `key=` is a slot for exactly this reason; a literal would ship a secret
     // key inside anything Copy link or Export carries off.
     const p = byId("age-decrypt");
-    expect(p.recipe).toContain("key=@id");
+    expect(p.recipe).toContain("key=$id");
     expect(p.recipe).not.toMatch(/AGE-SECRET-KEY/);
     // Two pickers, matching `age -d -i key.txt doc.age`. It is also what lets
     // the pair stitch: an `input` here would collide with the encrypt half's.

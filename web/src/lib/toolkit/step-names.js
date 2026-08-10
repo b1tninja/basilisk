@@ -244,13 +244,13 @@ export function legacyRemovalHint(raw) {
   }
   // Hinted here rather than via LEGACY_STEP_MIGRATE: that map also drives the
   // final token rewrite in migrateRecipe, and `to`/`from` need the narrower
-  // rules there (only when followed by an alphabet) so a slot-load `from @x`
+  // rules there (only when followed by an alphabet) so a slot-load `from $x`
   // is not turned into a decode.
   if (key === "to") {
     return `"to" was renamed — use encode <alphabet> (or Upgrade recipe to migrate)`;
   }
   if (key === "from") {
-    return `"from" was renamed — use decode <alphabet>, or in @slot to load a slot (or Upgrade recipe to migrate)`;
+    return `"from" was renamed — use decode <alphabet>, or in $slot to load a slot (or Upgrade recipe to migrate)`;
   }
   const to = LEGACY_STEP_MIGRATE[key];
   if (!to) return null;
@@ -294,39 +294,39 @@ export function migrateRecipe(text) {
     /(^|[\s|;{]|-(?:\s+))decrypt\s+gpg(?=[\s|;}\-]|$)/gi
   );
 
-  // Bare slot labels → @ (live parse requires @).
+  // Bare slot labels → $ (live parse requires $).
   {
     let n = 0;
     recipe = recipe.replace(
       /(^|[\s|;{]|-(?:\s+))out\s+name=([A-Za-z][A-Za-z0-9_-]*)(?=[\s|;}\-]|$)/gi,
       (m, pre, lab) => {
         n += 1;
-        return `${pre}out @${lab}`;
+        return `${pre}out $${lab}`;
       }
     );
     recipe = recipe.replace(
-      /(^|[\s|;{]|-(?:\s+))out\s+(?!@)([A-Za-z][A-Za-z0-9_-]*)(?=[\s|;}\-]|$)/gi,
+      /(^|[\s|;{]|-(?:\s+))out\s+(?![$@])([A-Za-z][A-Za-z0-9_-]*)(?=[\s|;}\-]|$)/gi,
       (m, pre, lab) => {
         n += 1;
-        return `${pre}out @${lab}`;
+        return `${pre}out $${lab}`;
       }
     );
     recipe = recipe.replace(
-      /(^|[\s|;{]|-(?:\s+))in\s+(?!@)([A-Za-z][A-Za-z0-9_-]*)(?=[\s|;}\-]|$)/gi,
+      /(^|[\s|;{]|-(?:\s+))in\s+(?![$@])([A-Za-z][A-Za-z0-9_-]*)(?=[\s|;}\-]|$)/gi,
       (m, pre, lab) => {
         n += 1;
-        return `${pre}in @${lab}`;
+        return `${pre}in $${lab}`;
       }
     );
     // Known slot-typed kwargs (not to= emails / fingerprints).
     recipe = recipe.replace(
-      /\b(key|peer|private|target|with)=(?!@)([A-Za-z][A-Za-z0-9_-]*)\b/gi,
+      /\b(key|peer|private|target|with)=(?![$@])([A-Za-z][A-Za-z0-9_-]*)\b/gi,
       (m, k, lab) => {
         n += 1;
-        return `${k}=@${lab}`;
+        return `${k}=$${lab}`;
       }
     );
-    if (n) counts.set("bare-slot-@", (counts.get("bare-slot-@") || 0) + n);
+    if (n) counts.set("bare-slot-$", (counts.get("bare-slot-$") || 0) + n);
   }
 
   // WebCrypto sugar: encrypt|decrypt [-d] TRANSFORM → concrete cipher (migrator-only).
@@ -378,14 +378,18 @@ export function migrateRecipe(text) {
   // The alphabet list has to be spelled out here because this is a text
   // rewrite that runs before parsing. It previously hardcoded `hex` alone, so
   // the moment `to`/`from` learned base64 every `from base64` was rewritten to
-  // `in base64` and then rejected as a slot label missing its `@`. Renaming
+  // `in base64` and then rejected as a slot label missing its sigil. Renaming
   // the verb to `decode` is what retires this ambiguity for good; this rule
   // only has to carry legacy text.
+  //
+  // Both sigils are matched, and as a character class: `$` is the end-anchor
+  // outside one, so the obvious `(?:$|@|…)` would match the empty string at end
+  // of input and rewrite every trailing `from`.
   {
     let n = 0;
     recipe = recipe.replace(
       new RegExp(
-        `(^|[\\s|;{]|-(?:\\s+))from(?=\\s+(?:@|\\d|(?!(?:${BASE_ENCODINGS.join("|")})\\b)[A-Za-z][\\w-]*))`,
+        `(^|[\\s|;{]|-(?:\\s+))from(?=\\s+(?:[$@]|\\d|(?!(?:${BASE_ENCODINGS.join("|")})\\b)[A-Za-z][\\w-]*))`,
         "gi"
       ),
       (m, pre) => {
@@ -489,7 +493,7 @@ export function migrateRecipe(text) {
    * A readable target for every count key this function can set.
    *
    * The keys that are not `LEGACY_STEP_MIGRATE` names live here, and three of
-   * them were **missing** — `to`, `from` and `bare-slot-@` produced a change
+   * them were **missing** — `to`, `from` and `bare-slot-$` produced a change
    * whose `to` was `undefined`. Nothing noticed for as long as `changes` was
    * returned to nobody: `migrateRecipe` had no UI caller at all, so the list
    * was only ever read by tests that checked the entries they cared about.
@@ -508,7 +512,7 @@ export function migrateRecipe(text) {
     to: "encode <alphabet>",
     from: "decode <alphabet>",
     "from (slot)": "in",
-    "bare-slot-@": "@label",
+    "bare-slot-$": "$label",
     "encrypt gpg": "gpg.encrypt",
     "decrypt gpg": "gpg.decrypt",
     "encrypt/decrypt": "aes-gcm / …",

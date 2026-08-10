@@ -155,19 +155,19 @@ describe("round trips", () => {
     );
   });
 
-  it("resolves to= and key= through @slots", async () => {
+  it("resolves to= and key= through $slots", async () => {
     const { identity, recipient } = await identityPair();
-    const bindings = slots({ "@pub": recipient, "@id": identity });
-    const ct = await execAgeEncrypt(bytesValue(utf8("slotted")), { to: "@pub" }, bindings);
-    const out = await execAgeDecrypt(ct, { key: "@id" }, bindings);
+    const bindings = slots({ "$pub": recipient, "$id": identity });
+    const ct = await execAgeEncrypt(bytesValue(utf8("slotted")), { to: "$pub" }, bindings);
+    const out = await execAgeDecrypt(ct, { key: "$id" }, bindings);
     expect(text(out.data)).toBe("slotted");
   });
 
   it("accepts a slot whose value is bytes — an identity file read off disk", async () => {
     const { identity, recipient } = await identityPair();
-    const bindings = slots({ "@id": utf8(`${identity}\n`) });
+    const bindings = slots({ "$id": utf8(`${identity}\n`) });
     const ct = await execAgeEncrypt(bytesValue(utf8("from file")), { to: recipient }, {});
-    expect(text((await execAgeDecrypt(ct, { key: "@id" }, bindings)).data)).toBe(
+    expect(text((await execAgeDecrypt(ct, { key: "$id" }, bindings)).data)).toBe(
       "from file"
     );
   });
@@ -201,7 +201,7 @@ describe("refusals", () => {
       /to=.*is required/
     );
     await expect(execAgeDecrypt(bytesValue(new Uint8Array(4)), {}, {})).rejects.toThrow(
-      /key=@identity.*is required/
+      /key=\$identity.*is required/
     );
   });
 
@@ -226,8 +226,8 @@ describe("refusals", () => {
     expect(text((await execAgeDecrypt(ct, { key: identity }, {})).data)).toBe("oops");
   });
 
-  it("reports a missing slot resolver rather than treating @pub as a literal", async () => {
-    await expect(execAgeEncrypt(bytesValue(utf8("x")), { to: "@pub" }, {})).rejects.toThrow(
+  it("reports a missing slot resolver rather than treating $pub as a literal", async () => {
+    await expect(execAgeEncrypt(bytesValue(utf8("x")), { to: "$pub" }, {})).rejects.toThrow(
       /slot resolver missing/
     );
   });
@@ -270,11 +270,11 @@ describe("registry wiring", () => {
 
   it("compiles the documented file pipeline", () => {
     const { validation } = compileRecipe(
-      `age.keygen | out @id
+      `age.keygen | out $id
 
-in @id | age.recipient | out @pub
+in $id | age.recipient | out $pub
 
-file.read | age.encrypt to=@pub | file.save name=doc.age`
+file.read | age.encrypt to=$pub | file.save name=doc.age`
     );
     expect(validation.errors.map((e) => e.message)).toEqual([]);
   });
@@ -285,17 +285,17 @@ file.read | age.encrypt to=@pub | file.save name=doc.age`
     // private key in recipe text — which Copy link, Export, and the workspace
     // library all carry off. So `key=` is slot-typed and rejects a literal.
     expect(
-      compileRecipe("file.read | age.encrypt to=age1abcdef | out @ct").validation.ok
+      compileRecipe("file.read | age.encrypt to=age1abcdef | out $ct").validation.ok
     ).toBe(true);
     expect(
-      compileRecipe("file.read | age.encrypt age1abcdef | out @ct").validation.ok
+      compileRecipe("file.read | age.encrypt age1abcdef | out $ct").validation.ok
     ).toBe(true);
     const literalIdentity = compileRecipe(
-      "file.read | age.decrypt key=AGE-SECRET-KEY-1ABC | out @pt"
+      "file.read | age.decrypt key=AGE-SECRET-KEY-1ABC | out $pt"
     );
     expect(literalIdentity.validation.ok).toBe(false);
     expect(literalIdentity.validation.errors.map((e) => e.message).join(" ")).toMatch(
-      /require @|unknown slot/i
+      /require \$|unknown slot/i
     );
   });
 

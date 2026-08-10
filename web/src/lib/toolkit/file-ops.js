@@ -241,7 +241,7 @@ function downloadLegacy(bytes, name, mime) {
 
 /**
  * Sink with passthrough, like `out` and `clipboard.write` — the value keeps
- * flowing so `file.save | inspect` and `file.save | out @ct` both work.
+ * flowing so `file.save | inspect` and `file.save | out $ct` both work.
  * @param {{ type: string, data: unknown, meta?: Record<string, unknown> }} value
  * @param {Record<string, unknown>} [params]
  */

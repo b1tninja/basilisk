@@ -278,7 +278,7 @@ describe("the keypair's withheld line, verbatim", () => {
     const kp = ARTIFACT_KINDS.find((k) => k.id === "keypair");
     const withheld = kp.view({ artifact: { traits: {} }, masked: false }).props.withheld;
     expect(withheld).toBe(
-      "private half not shown — add `out @kp` to the recipe to write both halves"
+      "private half not shown — add `out $kp` to the recipe to write both halves"
     );
     // Lowercase and unpunctuated, matching "public + private halves" and
     // "symmetric — no public half" on the same card — which is exactly what
@@ -286,7 +286,7 @@ describe("the keypair's withheld line, verbatim", () => {
     expect(withheld[0]).toBe(withheld[0].toLowerCase());
     expect(withheld).not.toMatch(/[.!]$/);
     // The remedy is named, which is the half of §33d a caption still owes.
-    expect(withheld).toMatch(/out @kp/);
+    expect(withheld).toMatch(/out \$kp/);
   });
 
   it("is rendered by the keypair kind in both mask states", () => {
@@ -647,7 +647,7 @@ describe("real engine artifacts resolve to the right kind", () => {
     // view of its own — the raw body, its format bar and its reveal gate are
     // already the right rendering of an opaque value. What changed is that the
     // table now says so instead of shrugging.
-    const rows = await kindsFor('"plain" | utf8 | out @msg');
+    const rows = await kindsFor('"plain" | utf8 | out $msg');
     expect(rows.every((r) => r.kind === "text")).toBe(true);
     const text = ARTIFACT_KINDS.find((k) => k.id === "text");
     expect(text.view({ artifact: { content: "plain" }, masked: false })).toBeNull();
@@ -657,7 +657,7 @@ describe("real engine artifacts resolve to the right kind", () => {
     // The design's description of emitted metadata has been wrong before, so
     // these are asserted against a run rather than against the prose. Each one
     // was checked by printing role/tags off `runRecipe` first.
-    const shares = await kindsFor("random 32 | sss.split threshold=2 shares=3 | out @s");
+    const shares = await kindsFor("random 32 | sss.split threshold=2 shares=3 | out $s");
     expect(shares.every((r) => r.role === "share" && r.kind === "share")).toBe(true);
 
     const qr = await kindsFor('"hello" | qr');
@@ -682,7 +682,7 @@ describe("real engine artifacts resolve to the right kind", () => {
     expect(symTile.role).toBe("ciphertext");
     expect(symTile.kind).toBe("ciphertext");
 
-    const receipt = await kindsFor('run.receipt label="ceremony" | out @r');
+    const receipt = await kindsFor('run.receipt label="ceremony" | out $r');
     expect(receipt.find((r) => r.role === "receipt").kind).toBe("receipt");
   }, 60_000);
 
@@ -691,7 +691,7 @@ describe("real engine artifacts resolve to the right kind", () => {
     // sensitivity, which outranked the type projection, so `role: "sshsig"`
     // sat in the vocabulary with nothing able to claim it (§32c/§37).
     const rows = await kindsFor(
-      'genkey ed25519 | out @id\n\n"msg" | utf8 | ssh.sign key=@id namespace=file | out @sig'
+      'genkey ed25519 | out $id\n\n"msg" | utf8 | ssh.sign key=$id namespace=file | out $sig'
     );
     const sig = rows.find((r) => r.label === "sig");
     expect(sig.role).toBe("sshsig");
@@ -703,7 +703,7 @@ describe("real engine artifacts resolve to the right kind", () => {
     // `role: "token"`, nothing emitted it, and the JWT reader was unreachable
     // from a notebook while every test passed.
     const rows = await kindsFor(
-      'genkey ec/p256 | out @k\n\n"hello" | utf8 | jose.sign key=@k | out @tok'
+      'genkey ec/p256 | out $k\n\n"hello" | utf8 | jose.sign key=$k | out $tok'
     );
     const tok = rows.find((r) => r.label === "tok");
     expect(tok.role).toBe("token");
@@ -713,18 +713,18 @@ describe("real engine artifacts resolve to the right kind", () => {
   it("never throws on anything the engine emits", async () => {
     // Ambiguity is a build error by design; this is the guard that no real
     // artifact trips it.
-    const rows = await kindsFor(`genkey ed25519 | out @kp
+    const rows = await kindsFor(`genkey ed25519 | out $kp
 
 "x" | utf8 | inspect
 
-"y" | utf8 | out @t`);
+"y" | utf8 | out $t`);
     expect(rows.length).toBeGreaterThan(3);
   });
 });
 
 describe("key artifacts resolve to the right card (§35)", () => {
   it("splits a keypair into public and private kinds", async () => {
-    const { ast } = compileRecipe("genkey ed25519 | out @kp");
+    const { ast } = compileRecipe("genkey ed25519 | out $kp");
     const arts = await runRecipe(ast, {});
     const kinds = arts.map((a) => ({
       label: a.label,
@@ -799,7 +799,7 @@ describe("key artifacts resolve to the right card (§35)", () => {
 
 describe("OpenPGP keys resolve to their own kinds (§35e)", () => {
   it("splits gpg.genkey into openpgp-public and openpgp-private", async () => {
-    const { ast } = compileRecipe('gpg.genkey email="k@example.com" | out @priv');
+    const { ast } = compileRecipe('gpg.genkey email="k@example.com" | out $priv');
     const arts = await runRecipe(ast, {});
     const byKind = arts.map((a) => ({
       label: a.label,

@@ -231,24 +231,24 @@ describe("file.read", () => {
   it("compiles the recipe that used to compile clean and then throw", () => {
     // `base64` is strict — nothing coerces text to bytes — so this chain is
     // only safe because `file.read` now really does hand it bytes.
-    const ok = compileRecipe("file.read accept=.pem | base64 | out @b");
+    const ok = compileRecipe("file.read accept=.pem | base64 | out $b");
     expect(ok.validation.errors).toEqual([]);
     expect(formatType(inferSourceType("file.read", { accept: ".pem" }))).toBe("bytes/opaque");
     // And the text form is refused up front rather than at run time.
-    const bad = compileRecipe("file.read accept=.pem as=text | base64 | out @b");
+    const bad = compileRecipe("file.read accept=.pem as=text | base64 | out $b");
     expect(bad.validation.errors.map((e) => e.message).join(" ")).toMatch(
       /"base64" expects bytes, got text/
     );
   });
 
   it("names as=auto as retired, and Upgrade rewrites it to as=bytes", () => {
-    const errs = compileRecipe("file.read as=auto | out @b").validation.errors;
+    const errs = compileRecipe("file.read as=auto | out $b").validation.errors;
     expect(errs).toHaveLength(1);
     expect(errs[0].message).toMatch(/as="auto" was removed/);
     expect(errs[0].message).toMatch(/Upgrade recipe/);
 
-    const migrated = migrateRecipe('file.read ".pem" as=auto | out @b');
-    expect(migrated.recipe).toBe('file.read ".pem" as=bytes | out @b');
+    const migrated = migrateRecipe('file.read ".pem" as=auto | out $b');
+    expect(migrated.recipe).toBe('file.read ".pem" as=bytes | out $b');
     expect(compileRecipe(migrated.recipe).validation.errors).toEqual([]);
     expect(migrated.changes).toContainEqual({
       from: "file.read as=auto",
@@ -258,9 +258,9 @@ describe("file.read", () => {
   });
 
   it("leaves other ops' live auto= alone — the rewrite is scoped to the step", () => {
-    const src = "random 16 | out @r encoding=auto\n\nfile.read as=auto | out @b";
+    const src = "random 16 | out $r encoding=auto\n\nfile.read as=auto | out $b";
     const migrated = migrateRecipe(src);
-    expect(migrated.recipe).toContain("out @r encoding=auto");
+    expect(migrated.recipe).toContain("out $r encoding=auto");
     expect(migrated.recipe).toContain("file.read as=bytes");
   });
 
@@ -440,7 +440,7 @@ describe("registry wiring", () => {
     expect(POLYMORPHIC_STEPS.has("file.save")).toBe(true);
     // Which is what lets it follow a value that is not bytes at all.
     expect(
-      compileRecipe("genkey ec/p256 | file.save name=key.jwk | export pkcs8 | out @k")
+      compileRecipe("genkey ec/p256 | file.save name=key.jwk | export pkcs8 | out $k")
         .validation.ok
     ).toBe(true);
   });
@@ -449,7 +449,7 @@ describe("registry wiring", () => {
     const spec = getStep("file.read");
     expect(spec.kind).toBe("source");
     expect(spec.input).toBe("none");
-    expect(compileRecipe("file.read | out @f").validation.ok).toBe(true);
+    expect(compileRecipe("file.read | out $f").validation.ok).toBe(true);
   });
 
   it("pairs the two as conjugates in the drawer", () => {

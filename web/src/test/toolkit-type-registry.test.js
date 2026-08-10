@@ -314,16 +314,16 @@ describe("keypair import type (§31c)", () => {
     // The whole security argument for §31c: a pasted private key must not be
     // serializable into a share link or a saved workspace.
     expect(getStep("keypair").unresolvedInputs).toBe("keypair");
-    const { ast } = parseRecipeSource("keypair jwk alg=ec/p256 | out @k");
+    const { ast } = parseRecipeSource("keypair jwk alg=ec/p256 | out $k");
     expect(serializeRecipe(ast)).not.toContain("BEGIN");
-    expect(serializeRecipe(ast)).toBe("keypair jwk | out @k");
+    expect(serializeRecipe(ast)).toBe("keypair jwk | out $k");
   });
 
   it("round-trips an EC private JWK back to the identical public key", async () => {
     // Regression: the EC branch of importBoundJwk kept `key_ops` on the copied
     // public JWK, so a WebCrypto-exported private JWK (key_ops:["sign"]) was
     // rejected for requesting "verify" — every other kty already stripped it.
-    const out = await run("keypair jwk alg=ec/p256 | export spki | encode hex | out @pub", jwkText);
+    const out = await run("keypair jwk alg=ec/p256 | export spki | encode hex | out $pub", jwkText);
     expect(out[0].content).toBe(wantSpki);
   });
 
@@ -332,7 +332,7 @@ describe("keypair import type (§31c)", () => {
       (await pemOf(pair.privateKey, "pkcs8", "PRIVATE KEY")) +
       "\n" +
       (await pemOf(pair.publicKey, "spki", "PUBLIC KEY"));
-    const out = await run("keypair pem alg=ec/p256 | export spki | encode hex | out @pub", both);
+    const out = await run("keypair pem alg=ec/p256 | export spki | encode hex | out $pub", both);
     expect(out[0].content).toBe(wantSpki);
   });
 
@@ -341,12 +341,12 @@ describe("keypair import type (§31c)", () => {
     // reason the step accepts two blocks at once.
     const priv = await pemOf(pair.privateKey, "pkcs8", "PRIVATE KEY");
     await expect(
-      run("keypair pem alg=ec/p256 | export spki | encode hex | out @pub", priv)
+      run("keypair pem alg=ec/p256 | export spki | encode hex | out $pub", priv)
     ).rejects.toThrow(/No public key/i);
   });
 
   it("refuses to run with nothing pasted", async () => {
-    await expect(run("keypair jwk | out @k", "")).rejects.toThrow(/No key material/i);
+    await expect(run("keypair jwk | out $k", "")).rejects.toThrow(/No key material/i);
   });
 
   it("splits every PEM block, where parsePem takes only the first", async () => {

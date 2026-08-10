@@ -242,7 +242,7 @@ describe("emptying a branch by removing its last step", () => {
 
   it("does not cascade while other steps remain in the branch", () => {
     const src = `genkey ec/p256 | tee
-  - :public | inspect | out @a
+  - :public | inspect | out $a
 | export pkcs8 | pem`;
     const out = stepsWithNestStepRemoved(stepsOf(src), 1, 0, 1);
     expect(out.droppedBranch).toBe(false);
@@ -252,7 +252,7 @@ describe("emptying a branch by removing its last step", () => {
 
   it("leaves a foreach body alone — an empty loop body is still a recipe", () => {
     const src = `file.read | qr.scan count=all | foreach
-  - out @code`;
+  - out $code`;
     const steps = stepsOf(src);
     const out = stepsWithNestStepRemoved(steps, 2, null, 0);
     expect(out.droppedBranch).toBe(false);

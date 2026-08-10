@@ -13,7 +13,7 @@ import { combineShares } from "../lib/slip39/slip39.js";
 describe("toolkit recover / shares", () => {
   it("round-trips random 32 via sss|blip39 then shares|recover|hex", async () => {
     const split = compileRecipe(
-      "random 32 | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share"
+      "random 32 | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out $share"
     );
     expect(split.validation.ok).toBe(true);
     const arts = await runRecipe(split.ast);
@@ -57,7 +57,7 @@ describe("toolkit recover / shares", () => {
 
   it("tee emits public key and does not consume keypair for scalar export", async () => {
     const { ast, validation } = compileRecipe(
-      "genkey ec/p256 | tee\n  - :public | export spki | pem | out @public\n| export scalar | encode hex"
+      "genkey ec/p256 | tee\n  - :public | export spki | pem | out $public\n| export scalar | encode hex"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast);
@@ -75,7 +75,7 @@ describe("toolkit recover / shares", () => {
 
   it("direct scalar SSS: tee public → slip39 → recover → import scalar", async () => {
     const split = compileRecipe(
-      "genkey ec/p256 | tee\n  - :public | export spki | pem | out @public\n| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share"
+      "genkey ec/p256 | tee\n  - :public | export spki | pem | out $public\n| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out $share"
     );
     expect(split.validation.ok).toBe(true);
     const arts = await runRecipe(split.ast);
@@ -107,7 +107,7 @@ describe("toolkit recover / shares", () => {
 
   it("OpenPGP envelope path: pem → gpg.symencrypt → slip39 → recover → gpg.symdecrypt", async () => {
     const split = compileRecipe(
-      "genkey ec/p256 | export pkcs8 | pem | gpg.symencrypt mode=master | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out @share"
+      "genkey ec/p256 | export pkcs8 | pem | gpg.symencrypt mode=master | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out $share"
     );
     expect(split.validation.ok).toBe(true);
     const arts = await runRecipe(split.ast, {
@@ -146,7 +146,7 @@ describe("toolkit recover / shares", () => {
     const fpr = publicKey.getFingerprint().toUpperCase();
 
     const { ast, validation } = compileRecipe(
-      "genkey ec/p256 | tee\n  - :public | export spki | pem | out @public\n| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach\n  - gpg.encrypt"
+      "genkey ec/p256 | tee\n  - :public | export spki | pem | out $public\n| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach\n  - gpg.encrypt"
     );
     expect(validation.ok).toBe(true);
     const arts = await runRecipe(ast, {
@@ -271,7 +271,7 @@ describe("toolkit recover / shares", () => {
 
   it("passphrase path: wrong passphrase fails to recover secret", async () => {
     const split = compileRecipe(
-      "random 32 | sss.split threshold=2 shares=3 passphrase=correct-horse | blip39 | foreach\n  - out @share"
+      "random 32 | sss.split threshold=2 shares=3 passphrase=correct-horse | blip39 | foreach\n  - out $share"
     );
     const arts = await runRecipe(split.ast);
     const mnemonics = arts.filter((a) => a.shareIndex).map((a) => a.content);

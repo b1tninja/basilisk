@@ -54,9 +54,9 @@ describe("pipeline types", () => {
 
 describe("parseEncryptToToken / binder skip", () => {
   it("parses slot, email, fpr forms", () => {
-    expect(parseEncryptToToken("@alices")).toEqual({
+    expect(parseEncryptToToken("$alices")).toEqual({
       kind: "slot",
-      ref: "@alices",
+      ref: "$alices",
     });
     expect(parseEncryptToToken("alice@example.org")).toEqual({
       kind: "email",
@@ -91,9 +91,9 @@ describe("parseEncryptToToken / binder skip", () => {
 
   it("unresolvedRecipients skips binder when to= is set", () => {
     const withTo = compileRecipe(
-      `hkp.search a | out @alices
+      `hkp.search a | out $alices
 
-input | gpg.encrypt to=@alices`
+input | gpg.encrypt to=$alices`
     );
     expect(withTo.validation.ok).toBe(true);
     expect(unresolvedRecipients(withTo.ast).slots).toBe(0);
@@ -133,8 +133,8 @@ describe("hkp.filter", () => {
   });
 });
 
-describe("gpg.encrypt to=@slot", () => {
-  it("encrypts via real out @slot pipeline (separate + combined)", async () => {
+describe("gpg.encrypt to=$slot", () => {
+  it("encrypts via real out $slot pipeline (separate + combined)", async () => {
     const alice = await generateKey({
       type: "ecc",
       curve: "curve25519",
@@ -214,9 +214,9 @@ describe("gpg.encrypt to=@slot", () => {
     );
 
     const sep = compileRecipe(
-      `hkp.search team | hkp.filter | out @alices
+      `hkp.search team | hkp.filter | out $alices
 
-input | gpg.encrypt to=@alices mode=separate`
+input | gpg.encrypt to=$alices mode=separate`
     );
     expect(sep.validation.ok).toBe(true);
     expect(unresolvedRecipients(sep.ast).slots).toBe(0);
@@ -229,9 +229,9 @@ input | gpg.encrypt to=@alices mode=separate`
     expect(sepCipher.length).toBeGreaterThanOrEqual(2);
 
     const comb = compileRecipe(
-      `hkp.search team | hkp.filter | out @alices
+      `hkp.search team | hkp.filter | out $alices
 
-input | gpg.encrypt to=@alices mode=combined`
+input | gpg.encrypt to=$alices mode=combined`
     );
     const combArts = await runRecipe(comb.ast, {
       inputs: { text: { value: "hello combined" } },

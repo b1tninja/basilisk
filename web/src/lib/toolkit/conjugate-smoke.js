@@ -4,6 +4,7 @@
  */
 
 import { runRecipe } from "./engine.js";
+import { SLOT_SIGIL } from "./recipe-parse.js";
 import { createKernel } from "./kernel.js";
 import {
   listPresetPairs,
@@ -66,7 +67,7 @@ function compileOk(source) {
 }
 
 /**
- * Run stitched slot-bridge pair via kernel (shared @slots).
+ * Run stitched slot-bridge pair via kernel (shared $slots).
  * @param {ToolkitPreset} forward
  * @param {ToolkitPreset} reverse
  * @param {import("./engine.js").RuntimeBindings} [bindings]
@@ -86,7 +87,7 @@ export async function runSlotBridgePair(forward, reverse, bindings = {}) {
     const slotTexts = {};
     const reg = kernel.slots;
     for (const key of reg.labels()) {
-      const ref = String(key).startsWith("@") ? String(key) : `@${key}`;
+      const ref = String(key).startsWith(SLOT_SIGIL) ? String(key) : `${SLOT_SIGIL}${key}`;
       try {
         const v = reg.resolve(ref);
         if (v?.type === "text") slotTexts[ref] = String(v.data);

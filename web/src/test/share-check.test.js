@@ -24,9 +24,9 @@ import { runRecipe } from "../lib/toolkit/engine.js";
 async function realSplit({ threshold = 2, shares = 3 } = {}) {
   const { ast } = compileRecipe(
     `random 32 | vss.split threshold=${threshold} shares=${shares} | tee
-  - vss.commitments | out @commitments
+  - vss.commitments | out $commitments
 | blip39 | foreach
-  - out @share`
+  - out $share`
   );
   const arts = await runRecipe(ast);
   const mnemonics = arts
@@ -138,7 +138,7 @@ describe("checkShare", () => {
   it("rejects an sss share without pretending it could ever have passed", async () => {
     const { ast } = compileRecipe(
       `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
-  - out @share`
+  - out $share`
     );
     const arts = await runRecipe(ast);
     const mnemonic = String(arts.find((a) => a.role === "share")?.content || "").trim();
@@ -161,7 +161,7 @@ describe("checkShare", () => {
   it("offers a recipe that uses only registered ops", () => {
     const recipe = shareCheckRecipe();
     expect(recipe).toContain("blip39.decode");
-    expect(recipe).toContain("vss.verify commitments=@commitments");
+    expect(recipe).toContain("vss.verify commitments=$commitments");
     const { ast } = compileRecipe(recipe);
     expect(ast?.chains?.length).toBe(1);
   });

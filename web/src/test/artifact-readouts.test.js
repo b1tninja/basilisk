@@ -178,7 +178,7 @@ describe("filterRecipientRows — which rows match, not how they are drawn", () 
 describe("openpgpKeyForm — one source for which half the armor holds", () => {
   it("reads both halves off the header, synchronously", async () => {
     const arts = await run(
-      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out @k'
+      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out $k'
     );
     const pub = arts.find((a) => a.role === "public-key");
     const priv = arts.find((a) => (a.tags || []).includes("private"));
@@ -200,7 +200,7 @@ describe("openpgpKeyForm — one source for which half the armor holds", () => {
 describe("openpgpKeySummary", () => {
   it("reads uid, fingerprint and dates off a key this build produced", async () => {
     const arts = await run(
-      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out @k'
+      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out $k'
     );
     const pub = arts.find((a) => a.role === "public-key");
     const summary = await openpgpKeySummary(pub.content);
@@ -217,7 +217,7 @@ describe("openpgpKeySummary", () => {
 
   it("reports the same half `openpgpKeyForm` does, because it calls it", async () => {
     const arts = await run(
-      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out @k'
+      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" | out $k'
     );
     for (const a of arts.filter((x) => String(x.content).includes("BEGIN PGP"))) {
       expect((await openpgpKeySummary(a.content)).form).toBe(openpgpKeyForm(a.content));
@@ -236,7 +236,7 @@ describe("openpgpKeySummary", () => {
    */
   it("hands the card an instant a verdict can be read off", async () => {
     const arts = await run(
-      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" expiry=777600 | out @k'
+      'gpg.genkey name="Dana Okonkwo" email="dana@example.org" expiry=777600 | out $k'
     );
     const pub = arts.find((a) => a.role === "public-key");
     const summary = await openpgpKeySummary(pub.content);
@@ -253,7 +253,7 @@ describe("openpgpKeySummary", () => {
   }, 60_000);
 
   it("says nothing about a key that does not expire", async () => {
-    const arts = await run('gpg.genkey email="dana@example.org" | out @k');
+    const arts = await run('gpg.genkey email="dana@example.org" | out $k');
     const pub = arts.find((a) => a.role === "public-key");
     const summary = await openpgpKeySummary(pub.content);
     // The card's "does not expire" stands alone — a verdict here would be a
@@ -321,7 +321,7 @@ describe("expiryInstant — one reading of 'when does this stop being valid'", (
 describe("sshsigSummary", () => {
   it("reads the envelope off a signature this build produced", async () => {
     const arts = await run(
-      'genkey ed25519 | out @id\n\n"msg" | utf8 | ssh.sign key=@id namespace=git | out @sig'
+      'genkey ed25519 | out $id\n\n"msg" | utf8 | ssh.sign key=$id namespace=git | out $sig'
     );
     const sig = arts.find((a) => a.label === "sig");
     const summary = await sshsigSummary(sig.content);
@@ -344,7 +344,7 @@ describe("sshsigSummary", () => {
 
 describe("receiptSummary", () => {
   it("reduces a real receipt to the rows run.verify walks", async () => {
-    const arts = await run('"plain" | utf8 | out @msg\n\nrun.receipt label="ceremony" | out @r');
+    const arts = await run('"plain" | utf8 | out $msg\n\nrun.receipt label="ceremony" | out $r');
     const receipt = arts.find((a) => a.role === "receipt");
     const summary = receiptSummary(receipt.content);
     expect(summary.label).toBe("ceremony");
@@ -389,7 +389,7 @@ describe("qrDataUri", () => {
 
 describe("shareIdentity — what a masked share may still say", () => {
   it("reads index and threshold off a real split", async () => {
-    const arts = await run("random 32 | sss.split threshold=2 shares=3 | out @s");
+    const arts = await run("random 32 | sss.split threshold=2 shares=3 | out $s");
     const ids = arts.map(shareIdentity);
     expect(ids.map((i) => i.index)).toEqual([1, 2, 3]);
     expect(ids.every((i) => i.threshold === 2)).toBe(true);

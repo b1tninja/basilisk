@@ -512,7 +512,7 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
     // and reaches `new RTCPeerConnection` without the defaults filling it in.
     const g = await A.page.evaluate(async () => {
       const v = await window.__ops.execGatherCandidates(
-        { timeout: 4000, ice: "@ice" },
+        { timeout: 4000, ice: "$ice" },
         { resolveSlot: () => ({ type: "endpoint", data: { v: 1, iceServers: [] } }) }
       );
       return v.data;
