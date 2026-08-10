@@ -32,7 +32,14 @@ import {
  *   |"host"|"endpoint"|"candidate"|"sdp"|"certificate"|"session"|"channel"|"peer"|"connstate"|"stats"} IoType
  */
 /** @typedef {"source"|"transform"|"sink"|"flow"} StepKind */
-/** @typedef {"enum"|"int"|"string"|"bool"|"flag"|"slot"} ParamType */
+/**
+ * What kind of *value* a parameter needs. Only that — how the value may be
+ * supplied is `ParamSpec.slot`, and the two are orthogonal. `"slot"` used to
+ * live in this union, which is why they were not: it named a supply mechanism
+ * and left the value kind unsaid, while `"string"` named a value kind and
+ * (wrongly) implied a literal.
+ * @typedef {"enum"|"int"|"string"|"bytes"|"bool"|"flag"} ParamType
+ */
 /** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"|"agent"|"hkp"|"webrtc"|"jose"} Toolbox */
 /** @typedef {string} Shelf */
 /** @typedef {import("./types.js").StepOverload} StepOverload */
@@ -49,7 +56,21 @@ import {
  *
  * @typedef {object} ParamSpec
  * @property {string} name  kwarg key (`key=…`) and AST `params` key
- * @property {ParamType} type  enum | int | string | bool | flag | slot
+ * @property {ParamType} type  the value kind only — enum | int | string | bytes | bool | flag
+ * @property {boolean|"required"} [slot]  whether a `$ref`, resolved at run time, may
+ *   stand in for the value. `false` (the default) literal only; `true` literal or
+ *   `$ref`; `"required"` `$ref` only, never a literal.
+ *
+ *   Omission fails closed, which is the point: before this field the validator
+ *   decided by sniffing the leading sigil, so `type: "string"` params quietly
+ *   accepted refs — `passphrase=`, `aad=`, `salt=`, `info=`, `signature=` and
+ *   `gpg.encrypt to=` among them — and nothing said so. Declaring it makes both
+ *   directions compile-time: a ref bound to a `slot: false` param is an error
+ *   before the run, not a literal `"$k"` handed to a cipher.
+ * @property {IoType|IoType[]} [slotOf]  the pipeline type(s) the resolved value must
+ *   have. Omitted means *any* registered slot (`in $x` is the honest case). Checked
+ *   at compile time, which is the determinism rule — the type is known before the
+ *   run — finally applied to inputs and not only to outputs.
  * @property {string} [doc]
  * @property {*} [default]  filled when omitted; omitted from serialize unless serialize:"always"
  * @property {string} [emptyMeans]  what leaving this blank actually *does*, as a
@@ -73,7 +94,7 @@ import {
  * @property {number} [max]  int upper bound
  * @property {boolean} [positional]  first bare token binds here (≤1 per step)
  * @property {string} [flag]  bare CLI flag (e.g. "-d") that sets this bool to true
- * @property {boolean} [allowIndex]  for type "slot": allow 1-based index refs (default false)
+ * @property {boolean} [allowIndex]  for slot params: allow 1-based index refs (default false)
  * @property {"always"} [serialize]  always emit `name=value` even when equal to default
  * @property {boolean} [secret]  UI-only: locked to a bound `$slot` ref, never free text; the
  *   literal value is still whatever the AST carries (recipe text, Publish share links, and
@@ -827,7 +848,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live key slot (`$kp`); omit to use the key panel",
       },
@@ -861,13 +884,17 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live public/HMAC key slot (`$pub`); omit to use the key panel",
       },
       {
         name: "signature",
-        type: "string",
+        type: "bytes",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "",
         emptyMeans: "use the signature bound at run time",
         doc: "Base64url signature, or `$slot` of bytes/text",
@@ -919,13 +946,17 @@ export const STEPS = [
       },
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`); omit to use the key panel",
       },
       {
         name: "aad",
-        type: "string",
+        type: "bytes",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "",
         doc: "Optional AAD as UTF-8 string, or `$slot` of text/bytes",
       },
@@ -970,7 +1001,9 @@ export const STEPS = [
       },
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`); omit to use the key panel",
       },
@@ -1008,7 +1041,9 @@ export const STEPS = [
       },
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`); omit to use the key panel",
       },
@@ -1054,7 +1089,9 @@ export const STEPS = [
       },
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live RSA-OAEP key slot (`$rk`); omit to use the key panel",
       },
@@ -1099,7 +1136,9 @@ export const STEPS = [
       },
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live RSA key slot (`$rk`); omit to use the key panel",
       },
@@ -1135,14 +1174,18 @@ export const STEPS = [
       },
       {
         name: "salt",
-        type: "string",
+        type: "bytes",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "",
         emptyMeans: "a zero-length salt",
         doc: "Optional salt as UTF-8 string, or `$slot` of text/bytes",
       },
       {
         name: "info",
-        type: "string",
+        type: "bytes",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "",
         doc: "Optional info/context as UTF-8 string, or `$slot` of text/bytes",
       },
@@ -1187,7 +1230,9 @@ export const STEPS = [
       },
       {
         name: "salt",
-        type: "string",
+        type: "bytes",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "basilisk",
         doc: "Salt as UTF-8 string, or `$slot` of text/bytes",
       },
@@ -1225,13 +1270,17 @@ export const STEPS = [
     params: [
       {
         name: "private",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Local private key slot (`$local`); omit to use the key panel",
       },
       {
         name: "peer",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Peer public key slot (`$peer`); omit to use the peer JWK panel",
       },
@@ -1271,13 +1320,17 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Wrapping key slot (`$kek` AES or `$rk` RSA); omit to use the key panel",
       },
       {
         name: "target",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Key-to-wrap slot (`$cek`); omit to use the wrap panel",
       },
@@ -1325,7 +1378,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Wrapping key slot (`$kek` AES or `$rk` RSA); omit to use the key panel",
       },
@@ -1596,7 +1651,9 @@ export const STEPS = [
     params: [
       {
         name: "commitments",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Slot holding the dealer's public commitments (when not carried on the shares)",
       },
@@ -1822,6 +1879,8 @@ export const STEPS = [
       {
         name: "passphrase",
         type: "string",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "",
         doc: "User passphrase (UTF-8) or `$slot` of text — required with mode=passphrase; forbidden with mode=master",
       },
@@ -1856,6 +1915,8 @@ export const STEPS = [
       {
         name: "passphrase",
         type: "string",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "",
         doc: "User passphrase (UTF-8) or `$slot` — required with mode=passphrase; forbidden with mode=master",
       },
@@ -1944,6 +2005,8 @@ export const STEPS = [
       {
         name: "ref",
         type: "string",
+        slot: "required",
+        allowIndex: true,
         positional: true,
         doc: "Slot `$label` or 1-based index (`$kp`, `kp`, or `1`)",
       },
@@ -2099,6 +2162,8 @@ export const STEPS = [
       {
         name: "to",
         type: "string",
+        slot: true,
+        slotOf: ["recipients", "openpgp-key", "text"],
         default: "",
         emptyMeans: "the recipients picked in the Run binder",
         doc: "`$slot`, `fpr:…`, or email (resolve via lookup)",
@@ -2126,7 +2191,9 @@ export const STEPS = [
       },
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
         default: "",
         doc: "Signing private-key slot when `-s` (`$me`); omit to use the vault key panel",
       },
@@ -2147,7 +2214,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
         default: "",
         doc: "Live private-key slot (`$me`); omit to use the vault key panel",
       },
@@ -2181,13 +2250,17 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
         default: "",
         doc: "Live public (or private) key slot (`$pub`); omit to use vault key / recipients",
       },
       {
         name: "signature",
         type: "string",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "",
         emptyMeans: "a cleartext signature on the stem, or the run-time binding",
         doc: "Detached armored signature or `$slot`",
@@ -2243,7 +2316,9 @@ export const STEPS = [
         // state would mean one recipe emitting a protected key on one machine
         // and a bare one on the next, with nothing in the text to say which.
         name: "passphrase",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         secret: true,
         default: "",
         emptyMeans: "the private block is written unencrypted",
@@ -2336,7 +2411,9 @@ export const STEPS = [
          * refusal pointed at a control that does not exist.
          */
         name: "passphrase",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         secret: true,
         default: "",
         doc: "$slot holding the passphrase for a protected openssh-key-v1 block (`input | out $pw` then `passphrase=$pw`). Ignored for public lines and unencrypted blocks.",
@@ -2373,7 +2450,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Private key slot — a keypair, or `ssh.decode` output",
       },
@@ -2409,13 +2488,17 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Signer's public key — slot, or the literal public line",
       },
       {
         name: "signature",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Slot holding the sshsig block",
       },
@@ -2538,7 +2621,9 @@ export const STEPS = [
     params: [
       {
         name: "secret",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Slot holding the Base32 secret or the otpauth:// URI",
       },
@@ -2872,7 +2957,9 @@ export const STEPS = [
     params: [
       {
         name: "with",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["recipients", "openpgp-key", "text"],
         default: "",
         doc: "Other recipients / public key slot to merge",
       },
@@ -2991,7 +3078,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`) used to wrap the per-file key; omit to use the key panel",
       },
@@ -3018,7 +3107,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live AES key slot (`$cek`) the file was sealed under; omit to use the key panel",
       },
@@ -3062,13 +3153,21 @@ export const STEPS = [
         // decrypt side stays a `slot` for the opposite reason.
         name: "to",
         type: "string",
+        slot: true,
+        slotOf: ["bytes", "text"],
         positional: true,
         default: "",
         doc: "Recipients: `age1…` (space/comma separated) or an `$slot` holding them",
       },
       {
+        // `secret: true` says the UI binds this to a slot and that serialize
+        // drops any literal — and until `slot` existed, nothing said the
+        // runtime had to *resolve* one. It did not: `passphrase=$pw` encrypted
+        // under the four characters `$pw`. Declaring it is what found that.
         name: "passphrase",
         type: "string",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "",
         secret: true,
         doc: "Passphrase (scrypt) mode instead of recipients — `age -p`",
@@ -3099,7 +3198,9 @@ export const STEPS = [
         // would be a private key sitting in recipe text, which is exactly what
         // Copy link, Export, and the workspace library then carry off.
         name: "key",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         positional: true,
         default: "",
         doc: "Slot holding an `AGE-SECRET-KEY-1…` identity (never write the identity inline — recipe text is shareable)",
@@ -3107,6 +3208,8 @@ export const STEPS = [
       {
         name: "passphrase",
         type: "string",
+        slot: true,
+        slotOf: ["bytes", "text"],
         default: "",
         secret: true,
         doc: "Passphrase, for a file encrypted with `age -p`",
@@ -3368,7 +3471,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live signing key slot (`$k`) — private half or HMAC secret",
       },
@@ -3405,7 +3510,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live verification key slot (`$pub`) — public half or HMAC secret",
       },
@@ -3439,7 +3546,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live key slot — the CEK for `dir`, the KEK for AES-KW, the RSA public key for RSA-OAEP-256",
       },
@@ -3477,7 +3586,9 @@ export const STEPS = [
     params: [
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
         doc: "Live key slot — the CEK for `dir`, the KEK for AES-KW, the RSA private key for RSA-OAEP-256",
       },
@@ -3565,7 +3676,9 @@ export const STEPS = [
       { name: "username", type: "string", default: "", doc: "TURN username" },
       {
         name: "credential",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text"],
         secret: true,
         default: "",
         doc: "TURN credential — bind an $slot from Inputs; never stored/shared as literal text",
@@ -3621,7 +3734,9 @@ export const STEPS = [
       },
       {
         name: "ice",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["endpoint", "text"],
         default: "",
         emptyMeans: "built-in Cloudflare + Google STUN",
         doc: "$slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
@@ -3658,7 +3773,9 @@ export const STEPS = [
       },
       {
         name: "ice",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["endpoint", "text"],
         default: "",
         emptyMeans: "built-in Cloudflare + Google STUN",
         doc: "$slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
@@ -3804,7 +3921,9 @@ export const STEPS = [
     params: [
       {
         name: "ice",
-        type: "slot",
+        type: "string",
+        slot: "required",
+        slotOf: ["endpoint", "text"],
         default: "",
         emptyMeans: "built-in Cloudflare + Google STUN",
         doc: "$slot holding `rtc.ice` output. Bind one from `rtc.ice stun=none` to contact no third party at all — the empty list is carried through and honoured, not replaced.",
@@ -3925,7 +4044,9 @@ export const STEPS = [
       },
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
         secret: true,
         default: "",
         doc: "$slot holding your armored private key (`agent.unlock … | out $me`)",
@@ -3969,7 +4090,9 @@ export const STEPS = [
       },
       {
         name: "key",
-        type: "slot",
+        type: "bytes",
+        slot: "required",
+        slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
         secret: true,
         default: "",
         doc: "$slot holding your armored private key",

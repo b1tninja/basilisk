@@ -73,6 +73,26 @@ function paramText(params, name, bindings) {
 }
 
 /**
+ * `passphrase=` may be a literal or an `$slot`, like every other declared
+ * `slot: true` param. Unlike a recipient it is never trimmed — leading and
+ * trailing space are part of a passphrase — so the literal branch is kept
+ * verbatim rather than routed through `paramText`.
+ *
+ * Until the param declared `slot`, this resolution did not happen at all:
+ * `secret: true` had the UI binding a slot and serialize dropping literals,
+ * while `execAgeEncrypt` read `params.passphrase` straight, so a slot-bound
+ * passphrase encrypted the file under the string `$pw`.
+ * @param {Record<string, unknown>} params
+ * @param {{ resolveSlot?: (ref: string) => { data?: unknown } | null }} bindings
+ * @returns {string}
+ */
+function passphraseText(params, bindings) {
+  const raw = String(params?.passphrase ?? "");
+  if (!raw.trim().startsWith(SLOT_SIGIL)) return raw;
+  return paramText(params, "passphrase", bindings);
+}
+
+/**
  * @param {{ type?: string, data?: unknown } | null | undefined} value
  * @returns {Uint8Array}
  */
@@ -139,7 +159,7 @@ export async function execAgeRecipient(value) {
 export async function execAgeEncrypt(value, params, bindings) {
   const plaintext = valueBytes(value);
   const enc = new Encrypter();
-  const passphrase = String(params?.passphrase ?? "");
+  const passphrase = passphraseText(params, bindings);
   const toRaw = paramText(params, "to", bindings);
   if (passphrase) {
     if (toRaw) {
@@ -212,7 +232,7 @@ export async function execAgeDecrypt(value, params, bindings) {
     }
   }
   const dec = new Decrypter();
-  const passphrase = String(params?.passphrase ?? "");
+  const passphrase = passphraseText(params, bindings);
   const key = paramText(params, "key", bindings);
   if (passphrase) dec.addPassphrase(passphrase);
   if (key) {

@@ -35,14 +35,14 @@ describe("the group", () => {
 
 describe("the TURN template keeps the credential out of recipe text", () => {
   it("binds a slot rather than a literal", () => {
-    // `credential` is slot-typed precisely so the secret does not ride out
+    // `credential` declares `slot: "required"` precisely so the secret does not ride out
     // through Copy link or an exported notebook. A template that used a
     // literal would teach the opposite habit — and would not compile.
     const p = byId("ice-turn-relay");
     expect(p.recipe).toContain("credential=$turncred");
     expect(p.recipe).not.toMatch(/credential=[A-Za-z0-9]/);
-    expect(getStep("rtc.ice").params.find((x) => x.name === "credential").type).toBe(
-      "slot"
+    expect(getStep("rtc.ice").params.find((x) => x.name === "credential").slot).toBe(
+      "required"
     );
   });
 

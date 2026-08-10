@@ -82,7 +82,7 @@ describe("the toolbox and its shelves", () => {
   it("takes the secret through a slot on verify, never as recipe text", () => {
     // Same reason `age.decrypt key=` and `rtc.ice credential=` are slots: a
     // literal would ride out through Copy link and any exported notebook.
-    expect(getStep("otp.verify").params.find((p) => p.name === "secret").type).toBe("slot");
+    expect(getStep("otp.verify").params.find((p) => p.name === "secret").slot).toBe("required");
     for (const p of otpPresets()) {
       expect(p.recipe, p.id).not.toMatch(/secret=[A-Z2-7]{8}/);
     }

@@ -297,70 +297,63 @@ function lookupSlotType(ref, slotTypes, slotTypesByIndex) {
 }
 
 /**
- * Validate string params that optionally take `$slot` of text/bytes
- * (`aad=`, `salt=`, `info=`, `passphrase=`, and verify `signature=`).
- * @param {RecipeStep} step
- * @param {Map<string, import("./types.js").RefinedType>} slotTypes
- * @param {import("./types.js").RefinedType[]} slotTypesByIndex
- * @param {RecipeError[]} errors
- * @param {number} stepIndex
+ * `gpg.encrypt to=` is the one param whose literal form is not a plain value:
+ * an address, an `email:`/`fpr:`/`0x` prefix or a bare fingerprint is a
+ * recipient, and *anything else* — sigil or not — names a slot. That reading
+ * is the runtime's (`parseEncryptToToken`), so the compiler has to share it or
+ * it would pass recipes the run rejects. `$` costs nothing to tell apart from
+ * an address; before the sigil swap this had to ask whether the `@` was at
+ * position 0, which made `to=@corp.example` — a perfectly ordinary domain-ish
+ * address — read as a slot named `corp`.
+ * @param {string} raw
  */
-function validateOptionalBytesSlotStrings(
-  step,
-  slotTypes,
-  slotTypesByIndex,
-  errors,
-  stepIndex
-) {
-  /** @type {string[]} */
-  const names = [];
-  if (
-    step.name === "aes-gcm" ||
-    step.name === "hkdf" ||
-    step.name === "pbkdf2" ||
-    step.name === "gpg.symencrypt" ||
-    step.name === "gpg.symdecrypt"
-  ) {
-    for (const n of ["aad", "salt", "info", "passphrase"]) {
-      if (step.params?.[n] != null && String(step.params[n]).trim() !== "") {
-        names.push(n);
-      }
-    }
-  }
-  if (step.name === "verify" || step.name === "gpg.verify") {
-    const sig = String(step.params?.signature || "").trim();
-    if (sig.startsWith(SLOT_SIGIL)) names.push("signature");
-  }
-  for (const name of names) {
-    const raw = String(step.params?.[name] || "").trim();
-    if (!raw.startsWith(SLOT_SIGIL)) continue;
-    const loaded = lookupSlotType(raw, slotTypes, slotTypesByIndex);
-    if (!loaded) {
-      errors.push({
-        message: `${step.name} ${name}=${raw}: unknown slot (register earlier with out ${raw})`,
-        start: step.start,
-        end: step.end,
-        stepIndex,
-      });
-      continue;
-    }
-    if (
-      loaded.base !== "bytes" &&
-      loaded.base !== "text" &&
-      loaded.base !== "none"
-    ) {
-      errors.push({
-        message: `${step.name} ${name}=${raw}: slot type ${formatType(loaded)} cannot supply text/bytes`,
-        start: step.start,
-        end: step.end,
-        stepIndex,
-      });
-    }
-  }
+function recipientLiteralShape(raw) {
+  const s = String(raw || "").trim();
+  const looksEmail = /^email:/i.test(s) || s.includes("@");
+  const looksFpr =
+    /^(?:fpr:|0x)/i.test(s) || /^[0-9A-Fa-f]{40,}$/i.test(s.replace(/\s+/g, ""));
+  return looksEmail || looksFpr;
 }
 
 /**
- * Validate slot-typed params on a step (existence + coarse type).
+ * Is this bound value a slot reference rather than a literal?
+ *
+ * `slot: "required"` params hold nothing else. `slot: true` params are read by
+ * the leading sigil, which is the whole of the old grammar — the difference is
+ * that the declaration now says *which* params get read that way, instead of
+ * every string param being sniffed and six of them turning out to be slots by
+ * accident.
+ * @param {import("./registry.js").ParamSpec} p
+ * @param {string} stepName
+ * @param {string} raw
+ */
+function boundAsSlotRef(p, stepName, raw) {
+  if (!p.slot) return false;
+  if (p.slot === "required") return true;
+  if (stepName === "gpg.encrypt" && p.name === "to") return !recipientLiteralShape(raw);
+  return raw.startsWith(SLOT_SIGIL);
+}
+
+/**
+ * What a slot that fails `slotOf` was supposed to supply. Keyed on the
+ * declared set so the phrasing follows the registry rather than the step name.
+ * @param {import("./registry.js").IoType[]} want
+ */
+function supplyNoun(want) {
+  const key = [...want].sort().join(",");
+  if (key === "bytes,text") return "text/bytes";
+  if (key === "openpgp-key,recipients,text") return "recipients";
+  return "a key";
+}
+
+/**
+ * Validate every declared slot param on a step: the ref resolves, and what it
+ * resolves to is one of the types the declaration allows.
+ *
+ * Both halves are compile-time on purpose. A recipe's output type is known
+ * before it runs; until `ParamSpec.slot` there was no way to say the same of
+ * its inputs, because "is this a slot?" was answered by looking at the first
+ * character of the value.
  * @param {RecipeStep} step
  * @param {Map<string, import("./types.js").RefinedType>} slotTypes
  * @param {import("./types.js").RefinedType[]} slotTypesByIndex
@@ -376,94 +369,55 @@ function validateStepSlotParams(
 ) {
   const spec = getStep(step.name);
   for (const p of spec?.params || []) {
-    if (p.type !== "slot") continue;
-    const ref = step.params?.[p.name];
-    if (ref == null || String(ref).trim() === "") continue;
-    const loaded = lookupSlotType(String(ref), slotTypes, slotTypesByIndex);
+    const rawVal = step.params?.[p.name];
+    if (rawVal == null || String(rawVal).trim() === "") continue;
+    const raw = String(rawVal).trim();
+
+    if (!p.slot) {
+      // The check the sigil rule could never make. `passphrase=$pw` on a param
+      // that does not take a slot used to hand the cipher the four characters
+      // `$pw`; `out` is excluded because there `$label` is the binding
+      // occurrence, not a reference to one.
+      if (step.name !== "out" && raw.startsWith(SLOT_SIGIL)) {
+        errors.push({
+          message: `${step.name} ${p.name}=${raw}: ${p.name}= takes a literal, not a slot`,
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+      }
+      continue;
+    }
+    if (!boundAsSlotRef(p, step.name, raw)) continue;
+
+    const ref =
+      p.slot === "required" || raw.startsWith(SLOT_SIGIL) || /^\d+$/.test(raw)
+        ? raw
+        : `${SLOT_SIGIL}${raw}`;
+    const loaded = lookupSlotType(ref, slotTypes, slotTypesByIndex);
     if (!loaded) {
       errors.push({
-        message: `${step.name} ${p.name}=${ref}: unknown slot (register earlier with out ${String(ref).startsWith(SLOT_SIGIL) || /^\d+$/.test(String(ref)) ? ref : `${SLOT_SIGIL}${ref}`})`,
+        message: `${step.name} ${p.name}=${raw}: unknown slot (register earlier with out ${ref})`,
         start: step.start,
         end: step.end,
         stepIndex,
       });
       continue;
     }
-    const base = loaded.base;
-    let okBase =
-      base === "keypair" ||
-      base === "bytes" ||
-      base === "text" ||
-      base === "key";
-    if (
-      step.name === "gpg.sign" ||
-      step.name === "gpg.verify" ||
-      (step.name === "gpg.encrypt" && p.name === "key") ||
-      step.name === "agent.save" ||
-      ((step.name === "quorum.offer" || step.name === "quorum.join") && p.name === "key")
-    ) {
-      okBase = okBase || base === "openpgp-key";
-    }
-    if (step.name === "recipients.merge" && p.name === "with") {
-      okBase =
-        base === "recipients" ||
-        base === "openpgp-key" ||
-        base === "text";
-    }
-    // `ice=$slot` wants an ICE server list — `rtc.ice`'s `endpoint` output.
-    // Text still works so a hand-written JSON config keeps functioning.
-    if (p.name === "ice") {
-      okBase = base === "endpoint" || base === "text";
-    }
-    if (!okBase) {
-      errors.push({
-        message:
-          p.name === "ice"
-            ? `${step.name} ice=${ref}: slot type ${formatType(loaded)} is not an ICE config — use rtc.ice`
-            : `${step.name} ${p.name}=${ref}: slot type ${formatType(loaded)} cannot supply a key`,
-        start: step.start,
-        end: step.end,
-        stepIndex,
-      });
-    }
-  }
-
-  // gpg.encrypt to=$slot — string param that may reference a slot.
-  // `$` costs nothing to tell apart from an address: a slot ref *starts* with
-  // the sigil, and an email never does. Before the swap this had to ask
-  // whether the `@` was at position 0, which made `to=@corp.example` — a
-  // perfectly ordinary domain-ish address — read as a slot named `corp`.
-  if (step.name === "gpg.encrypt") {
-    const toRaw = String(step.params?.to || "").trim();
-    if (toRaw) {
-      const looksEmail = /^email:/i.test(toRaw) || toRaw.includes("@");
-      const looksFpr =
-        /^(?:fpr:|0x)/i.test(toRaw) ||
-        /^[0-9A-Fa-f]{40,}$/i.test(toRaw.replace(/\s+/g, ""));
-      if (!looksEmail && !looksFpr) {
-        const ref = toRaw.startsWith(SLOT_SIGIL) ? toRaw : `${SLOT_SIGIL}${toRaw}`;
-        const loaded = lookupSlotType(ref, slotTypes, slotTypesByIndex);
-        if (!loaded) {
-          errors.push({
-            message: `${step.name} to=${toRaw}: unknown slot (register earlier with out ${ref})`,
-            start: step.start,
-            end: step.end,
-            stepIndex,
-          });
-        } else if (
-          loaded.base !== "recipients" &&
-          loaded.base !== "openpgp-key" &&
-          loaded.base !== "text"
-        ) {
-          errors.push({
-            message: `${step.name} to=${toRaw}: slot type ${formatType(loaded)} cannot supply recipients`,
-            start: step.start,
-            end: step.end,
-            stepIndex,
-          });
-        }
-      }
-    }
+    // No `slotOf` means no claim about the type — `in $x` takes whatever was
+    // registered, and saying otherwise would be a guess.
+    if (!p.slotOf) continue;
+    const want = Array.isArray(p.slotOf) ? p.slotOf : [p.slotOf];
+    if (want.includes(loaded.base) || loaded.base === "none") continue;
+    errors.push({
+      message:
+        p.name === "ice"
+          ? `${step.name} ice=${raw}: slot type ${formatType(loaded)} is not an ICE config — use rtc.ice`
+          : `${step.name} ${p.name}=${raw}: slot type ${formatType(loaded)} cannot supply ${supplyNoun(want)}`,
+      start: step.start,
+      end: step.end,
+      stepIndex,
+    });
   }
 }
 
@@ -1310,7 +1264,6 @@ export function validateRecipe(ast) {
     }
 
     validateStepSlotParams(step, slotTypes, slotTypesByIndex, errors, stepIndex);
-    validateOptionalBytesSlotStrings(step, slotTypes, slotTypesByIndex, errors, stepIndex);
 
     if (stepNeedsKeyPanel(step) && !inputNeeds.includes("key")) {
       inputNeeds.push("key");
@@ -1671,7 +1624,7 @@ export function unresolvedInputs(ast) {
 export function registryIssues() {
   /** @type {string[]} */
   const issues = [];
-  const paramTypes = new Set(["enum", "int", "string", "bool", "flag", "slot"]);
+  const paramTypes = new Set(["enum", "int", "string", "bytes", "bool", "flag"]);
   for (const s of listSteps()) {
     if (!s.name) issues.push("step missing name");
     if (!s.kind) issues.push(`${s.name}: missing kind`);
@@ -1697,6 +1650,17 @@ export function registryIssues() {
         issues.push(
           `${s.name}.${p.name}: serialize must be "always" (got ${JSON.stringify(p.serialize)})`
         );
+      }
+      if (p.slot != null && p.slot !== true && p.slot !== "required") {
+        issues.push(
+          `${s.name}.${p.name}: slot must be true or "required" (got ${JSON.stringify(p.slot)})`
+        );
+      }
+      if (p.slotOf && !p.slot) {
+        issues.push(`${s.name}.${p.name}: slotOf without slot`);
+      }
+      if (p.allowIndex && !p.slot) {
+        issues.push(`${s.name}.${p.name}: allowIndex without slot`);
       }
     }
   }

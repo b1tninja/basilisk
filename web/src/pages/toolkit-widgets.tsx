@@ -2088,13 +2088,13 @@ function CatalogApp() {
           <StateLabel>Secret param (§22a) — unbound / bound; never free text</StateLabel>
           <div className="grid max-w-md grid-cols-2 gap-3">
             <ParamField
-              param={{ name: "key", type: "slot", secret: true, doc: "TURN credential" }}
+              param={{ name: "key", type: "string", slot: "required", secret: true, doc: "TURN credential" }}
               value=""
               onChange={() => {}}
               onRequestBind={() => {}}
             />
             <ParamField
-              param={{ name: "key", type: "slot", secret: true, doc: "TURN credential" }}
+              param={{ name: "key", type: "string", slot: "required", secret: true, doc: "TURN credential" }}
               value="$dana-turn-pass"
               onChange={() => {}}
               onRequestBind={() => {}}
@@ -2107,7 +2107,8 @@ function CatalogApp() {
             <ParamField
               param={{
                 name: "passphrase",
-                type: "slot",
+                type: "string",
+                slot: "required",
                 secret: true,
                 default: "",
                 emptyMeans: "the private block is written unencrypted",

@@ -36,6 +36,11 @@ const KIND_LABEL: Record<string, string> = {
 
 function paramTypeBits(p: ParamSpec): string {
   const typeBits = [p.type];
+  // `type` names the value kind and nothing else now, so the card has to say
+  // how the value may arrive. It used to fall out of `type: "slot"` — which is
+  // exactly why the value kind of 36 params went unwritten.
+  if (p.slot === "required") typeBits.push("$slot");
+  else if (p.slot) typeBits.push("literal or $slot");
   if (p.positional) typeBits.push("positional");
   if (p.flag) typeBits.push(p.flag);
   if (p.serialize === "always") typeBits.push("serialize always");

@@ -87,9 +87,6 @@ export function isSlotSigil(ch) {
  */
 const SLOT_LABEL_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-/** A whole param value that is a pre-swap slot ref, sigil and all. */
-const LEGACY_SLOT_TOKEN_RE = /^@[A-Za-z][A-Za-z0-9_-]*$/;
-
 /**
  * Escape a slot ref for interpolation into a regular expression.
  * `$` is the end-anchor and `$&`-style replacement syntax; a bare `$kp` spliced
@@ -1509,21 +1506,6 @@ class Parser {
       params.format = "hexdump";
     }
 
-    // Legacy sigil, one sweep. Not every slot-bearing param is declared
-    // `type: "slot"` — `passphrase=`, `aad=`, `salt=`, `info=`, `signature=`
-    // and `gpg.encrypt to=` are strings that the validator reads as a slot
-    // when, and only when, the value starts with the sigil. That leading-sigil
-    // rule is the whole of the old grammar, so replaying it here rewrites all
-    // of them at once and the AST leaves parse holding only `$`.
-    for (const key of Object.keys(params)) {
-      const v = params[key];
-      if (typeof v !== "string") continue;
-      if (!LEGACY_SLOT_TOKEN_RE.test(v)) continue;
-      const ref = `${SLOT_SIGIL}${v.slice(1)}`;
-      params[key] = ref;
-      this.noteLegacySlotSigil(ref, start, this.pos);
-    }
-
     // Normalize out/in slot refs to canonical $label or index.
     if (canon === "out" || canon === "in") {
       const key = canon === "out" ? "name" : "ref";
@@ -1547,42 +1529,39 @@ class Parser {
       }
     }
 
-    // Normalize typed slot params (key=$cek, peer=$pub, …).
+    // Normalize slot refs to the canonical `$label`, by declaration.
+    //
+    // This replaces a blanket sweep over *every* string param, which existed
+    // because `passphrase=`, `aad=`, `salt=`, `info=`, `signature=` and
+    // `gpg.encrypt to=` accepted slots while declaring `type: "string"`. With
+    // `ParamSpec.slot` the registry says which params take a ref, so the rule
+    // can be applied where it belongs and nowhere else.
+    //
+    // `slot: "required"` holds nothing but a ref, so a malformed one is a parse
+    // error. `slot: true` may hold a literal — an unquoted `to=@corp.example`
+    // is an address, not a slot named `corp` — so a value that opens with a
+    // sigil but is not a well-formed ref is left exactly as written, and the
+    // validator decides.
     for (const p of spec?.params || []) {
-      if (p.type !== "slot") continue;
+      if (!p.slot) continue;
+      if (canon === "in" && p.name === "ref") continue; // normalized above
       const rawSlot = params[p.name];
       if (rawSlot == null || rawSlot === "") continue;
-      const norm = normalizeSlotRef(String(rawSlot), {
-        allowIndex: !!p.allowIndex,
-      });
+      const raw = String(rawSlot);
+      const optional = p.slot !== "required";
+      if (optional && !isSlotSigil(raw.trim()[0])) continue;
+      const norm = normalizeSlotRef(raw, { allowIndex: !!p.allowIndex });
       if (!norm.ok) {
+        if (optional) continue;
         this.errors.push({
           message: `${canon} ${p.name}=: ${norm.error}`,
           start,
           end: this.pos,
         });
-      } else {
-        params[p.name] = norm.ref;
-        if (norm.legacy) this.noteLegacySlotSigil(norm.ref, start, this.pos);
+        continue;
       }
-    }
-
-    // verify signature=$slot (bare base64url strings stay as-is).
-    if (canon === "verify") {
-      const sig = params.signature;
-      if (sig != null && isSlotSigil(String(sig).trim()[0])) {
-        const norm = normalizeSlotRef(String(sig), { allowIndex: false });
-        if (!norm.ok) {
-          this.errors.push({
-            message: `verify signature=: ${norm.error}`,
-            start,
-            end: this.pos,
-          });
-        } else {
-          params.signature = norm.ref;
-          if (norm.legacy) this.noteLegacySlotSigil(norm.ref, start, this.pos);
-        }
-      }
+      params[p.name] = norm.ref;
+      if (norm.legacy) this.noteLegacySlotSigil(norm.ref, start, this.pos);
     }
 
     return {

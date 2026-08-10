@@ -183,14 +183,16 @@ Reference, and toolcards all read this schema — toolcards are views of
 | Field | Required | Notes |
 |-------|----------|-------|
 | `name` | yes | Kwarg key and AST `params` key |
-| `type` | yes | `enum` \| `int` \| `string` \| `bool` \| `flag` \| `slot` — CLI flags use `bool` + `flag` |
+| `type` | yes | The value kind only: `enum` \| `int` \| `string` \| `bytes` \| `bool` \| `flag` — CLI flags use `bool` + `flag` |
 | `doc` | no | Reference / toolcard blurb |
 | `default` | no | Filled when omitted; usually omitted from serialize |
 | `enum` | no | Allowed values when `type === "enum"` |
 | `min` / `max` | no | Int bounds (docs / UI) |
 | `positional` | no | First bare token binds here (≤1 per step) |
 | `flag` | no | Bare CLI flag (e.g. `"-d"`) → sets bool `true` |
-| `allowIndex` | no | For `type: "slot"`: allow 1-based index refs |
+| `slot` | no | How the value may be supplied: absent/`false` literal only, `true` literal or `$ref`, `"required"` `$ref` only. Defaults to literal-only, so a param that takes a ref has to say so |
+| `slotOf` | no | The pipeline type(s) a ref must resolve to — checked at compile time. Omit only where any type is honest (`in $x`) |
+| `allowIndex` | no | For slot params: allow 1-based index refs |
 | `serialize` | no | `"always"` — emit `name=value` even when equal to default (e.g. `mode=`) |
 
 Non-param parse mechanisms stay outside ParamSpec: JCE/sized verb forms →
