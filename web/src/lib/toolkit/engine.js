@@ -89,6 +89,7 @@ import {
 } from "./webcrypto-ops.js";
 import { buildInspectSnapshot, inspectFromSnapshot } from "./inspect.js";
 import { getStep } from "./registry.js";
+import { placementGate } from "./placement.js";
 import { recipeChains } from "./recipe.js";
 import {
   LEGACY_CRYPTO_TAGS,
@@ -217,7 +218,13 @@ import {
  *   allowReplaceSlots?: boolean,
  *   chainStart?: number,
  *   chainEnd?: number,
+ *   placement?: import("./placement.js").Placement,
  * }} [opts]
+ *   `placement` is the only way a cell fails to run here, and its absence is
+ *   not a weaker form of it: with no `placement` this function does exactly
+ *   what it did before the gate existed, and with one it refuses anything the
+ *   plan does not fully cover. See `placement.js` for why there is no third
+ *   state.
  * @returns {Promise<ToolkitArtifact[]>}
  */
 /**
@@ -242,6 +249,24 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
   if (!slice.length || !slice.some((c) => c.steps?.length)) {
     throw new Error("Empty recipe");
   }
+
+  // Who runs what, decided before this call and read here rather than worked
+  // out again. `null` when no placement was supplied, which is every caller
+  // that predates the gate — see `placement.js` on why that is a separate
+  // object from a gate that admits everything.
+  //
+  // Plan indices count *non-empty* chains, the same filter `planRun` applies,
+  // so a notebook with a blank cell in it lines the two up. That is index
+  // bookkeeping, not a second placement decision.
+  const filled = (/** @type {*[]} */ list) => list.filter((c) => c?.steps?.length).length;
+  const gate =
+    opts.placement == null
+      ? null
+      : placementGate(opts.placement, {
+          cells: filled(chains),
+          first: filled(chains.slice(0, chainStart)),
+          count: filled(slice),
+        });
 
   if (bindings.fipsMode) {
     const { assertRecipeAllowedUnderFips } = await import("./suite-gate.js");
@@ -287,10 +312,22 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
   };
 
   let stepOrdinal = 0;
+  let cellIndex = gate ? gate.firstCell : 0;
 
   for (const chain of slice) {
     const steps = chain.steps || [];
     if (!steps.length) continue;
+    if (gate) {
+      const here = gate.admit(cellIndex, (label) => registry.has(label));
+      cellIndex++;
+      if (!here) {
+        // Not performed, and the numbering moves on regardless: a step's
+        // ordinal is its place in the notebook, and a cell that ran elsewhere
+        // still occupies its place in it.
+        stepOrdinal += steps.length;
+        continue;
+      }
+    }
     const preexisting = registry.snapshotKeys();
 
     /** @type {PipelineValue|null} */
