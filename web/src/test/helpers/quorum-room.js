@@ -54,8 +54,8 @@ import { generateKey } from "openpgp";
 import {
   openSignalingEnvelope,
   sealSignalingEnvelope,
-} from "../../lib/quorum/crypto.js";
-import { deriveRoomId } from "../../lib/quorum/room.js";
+} from "../../lib/notebook/crypto.js";
+import { deriveRoomId } from "../../lib/notebook/room.js";
 
 /**
  * The loopback address `browser-peers.js` serves on. The room id is derived
