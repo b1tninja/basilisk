@@ -36,7 +36,7 @@ first: the point is to drive the *shipped* bundle under the *production* CSP.
 | `rtc-transport.e2e.js` | Chromium |
 | `peer-manager.e2e.js` | Chromium |
 | `quorum-key-confirmation.e2e.js` | Chromium |
-| `hkp-directory.e2e.js` | Chromium for the browser half; the wire half needs nothing |
+| `hkp-directory.e2e.js` | Python that can import `basilisk.serve`; Chromium for the browser half |
 | `stun-discovery.e2e.js` | Chromium; one spec also wants public STUN |
 | `turn-relay.e2e.js` | Chromium **and** Docker |
 
@@ -49,14 +49,27 @@ resolve against `${location.origin}/pks/lookup` — "This site" — so a directo
 served by the same loopback server that serves `dist/` is same-origin by
 construction and needs no CSP change.
 
-`src/test/helpers/keyserver.js` is that directory: in-process, seedable, and
-**not** an independent invention. Its response shapes are taken from the Python
-service this repo actually ships — `basilisk/hkp/lookup.py`, `basilisk/hkp/add.py`,
-`basilisk/portal/routes.py`, `basilisk/portal/search.py`,
-`basilisk/db/sqlite_store.py` — including the parts a cleaner design would
-change, because a stub that answers more helpfully than the server hides the
-defects it exists to find. `basilisk/hkp_v2/` does not need separate modelling:
-every one of its GET routes calls the same `lookup_get`.
+`src/test/helpers/basilisk-server.js` supplies that directory by running the
+service this repo ships. `startBasilisk()` spawns `basilisk/serve.py` on a free
+loopback port and returns a `routes` hook that **proxies** `/pks/*`, `/api/v1/*`,
+`/claim/*` and `/.well-known/*` at it — proxies rather than redirects, so the
+browser still sees exactly one origin and `connect-src 'self'` is the policy
+under test.
+
+An earlier draft used a JavaScript reimplementation of `/pks/lookup`. It was
+deleted on purpose: two implementations of one idea can disagree, and the one
+under test is never the one users hit. Nothing in the suite constructs a
+response any more — the server emits, the test reads. Several of the assertions
+below exist because the real bytes turned out to differ from what the
+reimplementation produced.
+
+No Docker and no Azure. `basilisk/db/factory.py` picks its stores from one
+variable: with `AZURE_STORAGE_CONNECTION_STRING` unset it falls back to
+`SqliteCertStore` and `LocalBlobStore`, which need nothing running, so each run
+gets a fresh temp directory. `docker-compose.e2e.yml` exists because the *Python*
+e2e deliberately exercises the Azure branch; the browser suite has no such need.
+`basilisk/hkp_v2/` needs no separate handling either: every one of its GET routes
+calls the same `lookup_get`.
 
 It is not only `/pks/lookup`. `hkp.get` resolves through
 `Promise.all([fetchJson("/api/v1/key/<fpr>"), fetchText("/pks/lookup?op=get…")])`
@@ -64,16 +77,28 @@ and `hkp.search` never issues an HKP request at all — it reads
 `GET /api/v1/search?q=`. A lookup-only fake cannot run either op.
 
 `src/test/helpers/key-corpus.js` supplies the population: eight keys generated
-per run (~200ms, RSA-2048 included), sharing a surname and a domain so a search
+per run (~100ms, RSA-2048 included), sharing a surname and a domain so a search
 returns several, with one multi-uid key, one signing-only key, one genuinely
 expired key, one carrying a real revocation signature, one still pending, and
 both algorithms. Nothing is checked in — armored text in the repo needs a
 `.gitattributes` to survive a Windows checkout, and generation is cheaper than
 the trap.
 
-Keys are seeded **directly** (`keyserver.seed(corpus.list)`), never through
-`POST /pks/add`. Only the publish specs use the submission door, so a defect in
-publishing cannot fail every lookup test.
+`seedDirectory()` puts that corpus in through `POST /pks/add` then
+`POST /api/v1/dev/approve` — the same two calls `tests/helpers/hkp_client.py`
+makes for the Python e2e, so both suites populate a directory the same way and
+the corpus is validated by the policy that runs in production. `BASILISK_DEV_APPROVE=1`
+is what opens the second route; `BASILISK_DEV_AUTH=1` is what lets the harness
+forge the Easy Auth principal the signed-in publish path needs. Refusals are
+returned rather than thrown, because a key the server declines is a fact worth
+asserting: the revoked key is refused outright on the default upload policy, so
+the fixture starts the server with `rejectRevoked: false` to model a key revoked
+*after* it was accepted.
+
+The whole file stands down when no Python can import `basilisk.serve`, and the
+browser half additionally when Chromium is absent. A Python that is present and
+a server that will not start is a real failure and is reported as one, with
+whatever the process wrote before it died.
 
 Several specs are labelled **DEFECT**: they assert behaviour that is wrong, so a
 fix turns them red and has to be acknowledged rather than passing silently.
