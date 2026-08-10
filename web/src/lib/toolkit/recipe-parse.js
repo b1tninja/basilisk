@@ -13,14 +13,20 @@
  *   - select steps for bare selectors: { name: "select", params: { selector } }
  *   - bare `$label` → { name: "in", params: { ref: "$label" } }
  *
- * Sigils. `$` marks a slot; `@` is reserved for the chain-header position (peer
- * assignment) and is *not* a slot marker there. Recipes written before the swap
- * spelled slots with `@`, so `@label` is still read as a slot in the two
- * positions where nothing else can appear — after `out`/`in`, and after
- * `param=` — and normalized to `$label` in the AST, so the very next serialize
- * writes the new spelling. Both sigils are start-anchored: they mark a slot only
- * as the first character of a reference token, which is what keeps
- * `to=alice@example.com` and `passphrase=my$ecret` literal.
+ * Sigils. `$` marks a slot; `@` names a peer at the chain-header position and is
+ * *not* a slot marker there. Recipes written before the swap spelled slots with
+ * `@`, so `@label` is still read as a slot in the two positions where nothing
+ * else can appear — after `out`/`in`, and after `param=` — and normalized to
+ * `$label` in the AST, so the very next serialize writes the new spelling. Both
+ * sigils are start-anchored: they mark a slot only as the first character of a
+ * reference token, which is what keeps `to=alice@example.com` and
+ * `passphrase=my$ecret` literal.
+ *
+ * Chain header. A chain (a notebook cell) may open with `@peer` or
+ * `@peer publish`, before its first step: `@` is who, `$` is what. The header
+ * is inert grammar — it names the party a cell belongs to and says whether the
+ * cell's `out` artifacts are meant to leave the machine; nothing here runs
+ * anything anywhere.
  */
 
 import { canonicalName, getStep } from "./registry.js";
@@ -70,6 +76,21 @@ export const LEGACY_SLOT_SIGIL = "@";
 
 /** Slot a bare `out` writes to. */
 export const DEFAULT_OUT_SLOT = "$output";
+
+/** Peer sigil — `@` names *who* a chain runs for, where `$` names *what*. */
+export const PEER_SIGIL = "@";
+
+/**
+ * Rendezvous peer: every participant, entering together.
+ *
+ * Spelled `*` rather than `all` because `*` cannot be a label — `SLOT_LABEL_RE`
+ * requires a leading letter — so the wildcard can never collide with a
+ * participant who is actually called `all`.
+ */
+export const PEER_WILDCARD = "*";
+
+/** The `publish` keyword, the header's only modifier. */
+export const PEER_PUBLISH_KEYWORD = "publish";
 
 /**
  * `$` or the legacy `@`, at the *start* of a reference token only.
@@ -161,6 +182,135 @@ export function normalizeSlotRef(raw, opts = {}) {
 }
 
 /**
+ * Longest peer name accepted.
+ *
+ * `SLOT_LABEL_RE` carries no length bound, which is right for a slot — the
+ * label is local to the recipe and nothing else reads it. A peer label is a
+ * *person's name in shared text*, so an unbounded one is an unbounded string
+ * riding out in a `#r=` link under a grammar that looks like it only holds
+ * names. 64 is far past any name and short enough that the bound is real.
+ */
+export const MAX_PEER_LABEL_LEN = 64;
+
+/**
+ * Hex-only labels long enough to identify a key.
+ *
+ * The exact shapes are a v4 fingerprint (40 hex) and a v6 / SHA-256
+ * fingerprint (64), but the rule is deliberately wider: a 16-hex long key id
+ * identifies its holder just as well as the fingerprint does, in fewer
+ * characters, and no one names a peer `deadbeefdeadbeef`. See
+ * `peerLooksLikeFingerprint` for why any of this matters.
+ */
+const PEER_FINGERPRINT_SRC = "[0-9A-Fa-f]{16,}";
+const PEER_FINGERPRINT_RE = new RegExp(`^${PEER_FINGERPRINT_SRC}$`);
+
+/**
+ * Is this peer label a key fingerprint (or long key id) wearing a name's
+ * clothes?
+ *
+ * The label grammar is shared with slots, and `SLOT_LABEL_RE` is
+ * `/^[A-Za-z][A-Za-z0-9_-]*$/` with no length bound — so a 40-character hex
+ * fingerprint that happens to begin `A`–`F` is a *structurally valid* peer
+ * label while one beginning with a digit is not. That asymmetry is what makes
+ * it dangerous: roughly 37% of fingerprints parse, so casual testing says it
+ * does not work while it silently does for some users.
+ *
+ * It has to be refused because the design's central privacy property depends
+ * on it. `notebook/room.js` derives the room from a *digest* of the audience
+ * precisely so fingerprints never cross the wire, and the manifest carries
+ * `audienceSha` rather than a list. A fingerprint written as a peer label
+ * rides out verbatim in a shared `#r=` link, and the room is a function of
+ * exactly that audience — so the link would let a stranger derive the room.
+ * @param {string} peer  canonical peer label (no sigil)
+ * @returns {boolean}
+ */
+export function peerLooksLikeFingerprint(peer) {
+  return PEER_FINGERPRINT_RE.test(String(peer ?? ""));
+}
+
+/**
+ * The same refusal, applied to recipe *text* rather than to a parsed label.
+ *
+ * A compile error is not enough on its own: `hashForRecipe` builds a `#r=`
+ * link from text without compiling it, so the refusal has to exist in both
+ * places or the fingerprint leaves anyway.
+ *
+ * Anchored to the header position — start of text, start of a line, or after
+ * the compact `~` separator — and nowhere else. That is what keeps
+ * `hkp.get 4F2AC1…` and `gpg.encrypt to=4F2AC1…` shareable, which they must
+ * be: a fingerprint is an ordinary public argument in every position except
+ * the one that names a person.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function textHasFingerprintPeer(text) {
+  const sigil = escapeSlotRefForRegExp(PEER_SIGIL);
+  return new RegExp(
+    `(^|[\\n~])[ ]*${sigil}${PEER_FINGERPRINT_SRC}(?![0-9A-Za-z_-])`
+  ).test(String(text ?? ""));
+}
+
+/**
+ * The refusal copy for a fingerprint-shaped peer label. One home, so the
+ * compile-time refusal and anything that echoes it cannot drift apart.
+ * @param {string} peer  canonical peer label (no sigil)
+ * @returns {string}
+ */
+export function peerFingerprintError(peer) {
+  const s = String(peer ?? "");
+  const shown = s.length > 6 ? `${s.slice(0, 6)}…` : s;
+  return (
+    `A peer is named, not fingerprinted — write \`@alice\`, not \`@${shown}\`. ` +
+    `A fingerprint in shared recipe text gives away the audience, and the ` +
+    `room is derived from the audience.`
+  );
+}
+
+/**
+ * Canonical peer ref for a chain header: a bare label, or `*` for everyone.
+ *
+ * Sits beside `normalizeSlotRef` — one canonicalizer per sigil — and shares
+ * `SLOT_LABEL_RE` with it rather than restating the label rules, so there is
+ * one label grammar and two sigils, not two grammars.
+ *
+ * A fingerprint-shaped label is *structurally* fine and is returned as one:
+ * this function answers "is this a label", and `validateRecipe` answers "is
+ * this label a thing a person may be called". Splitting them keeps the
+ * security refusal somewhere it can carry a sentence instead of a token error.
+ * @param {string} raw  with or without the `@`
+ * @returns {{ ok: true, peer: string } | { ok: false, error: string }}
+ */
+export function normalizePeerRef(raw) {
+  const s = String(raw ?? "").trim();
+  const bare = s[0] === PEER_SIGIL ? s.slice(1) : s;
+  if (!bare) {
+    return {
+      ok: false,
+      error:
+        "Expected a peer name after `@` — write `@alice`, or `@*` for everyone",
+    };
+  }
+  if (bare === PEER_WILDCARD) return { ok: true, peer: PEER_WILDCARD };
+  if (!SLOT_LABEL_RE.test(bare)) {
+    return {
+      ok: false,
+      error:
+        `Invalid peer name "${PEER_SIGIL}${bare}" — a peer is a letter ` +
+        `followed by letters, digits, \`_\` or \`-\` (or \`@*\` for everyone)`,
+    };
+  }
+  if (bare.length > MAX_PEER_LABEL_LEN) {
+    return {
+      ok: false,
+      error:
+        `Peer name "${PEER_SIGIL}${bare.slice(0, 12)}…" is ${bare.length} ` +
+        `characters — a peer is a name, so keep it under ${MAX_PEER_LABEL_LEN}`,
+    };
+  }
+  return { ok: true, peer: bare };
+}
+
+/**
  * Label key without its sigil (for registry maps). Null if index ref.
  * @param {string} ref
  * @returns {string|null}
@@ -178,12 +328,16 @@ export function slotLabelKey(ref) {
  */
 export function legacySlotSigilWarning(ref) {
   const bare = slotLabelKey(ref) || "";
-  return `Slots are written \`$${bare}\` now — \`@${bare}\` still loads and was rewritten. \`@\` is reserved for naming a peer.`;
+  return `Slots are written \`$${bare}\` now — \`@${bare}\` still loads and was rewritten. \`@\` names a peer.`;
 }
 
 /**
+ * @typedef {import("./recipe.js").RecipeChain} RecipeChain
+ */
+
+/**
  * @param {string} source
- * @returns {{ ast: { chains: { steps: RecipeStep[] }[], steps: RecipeStep[], source: string }|null, errors: RecipeError[], warnings: RecipeError[] }}
+ * @returns {{ ast: { chains: RecipeChain[], steps: RecipeStep[], source: string }|null, errors: RecipeError[], warnings: RecipeError[] }}
  */
 export function parseRecipeSource(source) {
   const raw = String(source || "");
@@ -217,13 +371,13 @@ export function parseRecipeSource(source) {
   }
 
   // Pass 1 reads `@` as a slot only where nothing else can appear (after
-  // `out`/`in`, after `param=`) and leaves the chain-header `@` reserved.
+  // `out`/`in`, after `param=`) and reads the chain-header `@` as a peer.
   const first = runParse(raw, text, false);
   // A chain-header `@kp` is only a slot in a recipe that is *provably* pre-swap:
   // one that spelled a slot `@` somewhere unambiguous. That is not a guess — a
   // bare `@kp` source can only resolve against an `out @kp` in the same source,
   // so every valid legacy recipe carries the evidence. Without it, `@` at the
-  // head of a chain stays free for peer assignment.
+  // head of a chain is the peer it now names.
   if (first.replayAsLegacy) return runParse(raw, text, true);
   return first;
 }
@@ -285,10 +439,8 @@ class Parser {
     this.legacyChainHeader = false;
     /** A `$label` was read as a slot where the position allows only a slot. */
     this.sawLegacySlotSigil = false;
-    /** A chain began with `$label`, which this grammar reserves. */
+    /** A chain began with `@label`, which this grammar reads as a peer. */
     this.sawReservedChainHeader = false;
-    /** Next stage starts a chain — the position `@` is reserved for. */
-    this.atChainHeader = false;
     this.lineStarts = [0];
     for (let i = 0; i < src.length; i++) {
       if (src[i] === "\n") this.lineStarts.push(i + 1);
@@ -340,19 +492,41 @@ class Parser {
   }
 
   /**
-   * @returns {{ steps: RecipeStep[] }[]}
+   * @returns {RecipeChain[]}
    */
   parseRecipe() {
-    /** @type {{ steps: RecipeStep[] }[]} */
+    /** @type {RecipeChain[]} */
     const chains = [];
     /** @type {RecipeStep[]} */
     let current = [];
+    /** @type {{ peer: string, publish: boolean, start: number, end: number }|null} */
+    let head = null;
 
     const flush = () => {
       if (current.length) {
-        chains.push({ steps: current });
+        /** @type {RecipeChain} */
+        const chain = { steps: current };
+        if (head) {
+          chain.peer = head.peer;
+          if (head.publish) chain.publish = true;
+          chain.headerStart = head.start;
+          chain.headerEnd = head.end;
+        }
+        chains.push(chain);
         current = [];
+      } else if (head) {
+        // A header with nothing under it is not a cell — and it would not
+        // survive a serialize round trip, since the serializer has no chain to
+        // hang it on.
+        this.errors.push({
+          message:
+            `\`${PEER_SIGIL}${head.peer}\` names the peer a cell runs for, ` +
+            `but no steps follow it`,
+          start: head.start,
+          end: head.end,
+        });
       }
+      head = null;
     };
 
     while (!this.eof()) {
@@ -386,17 +560,45 @@ class Parser {
         continue;
       }
 
-      // A leading `|` continues the stem of the chain above it, so the stage
-      // after it is not a chain header.
-      let header = current.length === 0;
+      // A leading `|` continues the stem of the chain above it, so the line
+      // after it is not the head of a chain.
+      let atChainHead = current.length === 0;
       if (this.peek() === "|") {
         this.pos++;
         this.skipSpaces();
-        header = false;
+        atChainHead = false;
+      }
+
+      // `@peer` / `@peer publish` — who this cell runs for. Read only at the
+      // head of a chain, and only when this pass is not replaying the recipe
+      // as pre-swap text (see parseRecipeSource).
+      if (atChainHead && this.peek() === PEER_SIGIL && !this.legacyChainHeader) {
+        const h = this.parseChainHeader();
+        if (h) {
+          if (head) {
+            this.errors.push({
+              message:
+                `This cell already runs for \`${PEER_SIGIL}${head.peer}\` — ` +
+                `one peer per cell (start a new cell with a blank line)`,
+              start: h.start,
+              end: h.end,
+            });
+          } else {
+            head = h;
+          }
+        }
+        this.skipSpacesAndCommentsOnLine();
+        if (this.peek() === "\n") {
+          // Pretty form: the header owns the line, the steps follow below.
+          this.pos++;
+          continue;
+        }
+        if (this.eof()) continue;
+        // Compact form: `@alice publish $kpA|:public`. The `@` is spent, so
+        // the stage that follows is an ordinary first step.
       }
 
       void lineStart;
-      this.atChainHeader = header;
       const pipeSteps = this.parsePipeline(0);
       current.push(...pipeSteps);
 
@@ -419,6 +621,67 @@ class Parser {
     }
     flush();
     return chains.length ? chains : [{ steps: [] }];
+  }
+
+  /**
+   * `@peer` / `@peer publish` at the head of a chain. Positioned on the `@`.
+   *
+   * Returns null when the token is not a peer name; the error is already
+   * recorded and the whole bad token consumed, so the caller can carry on
+   * reading the pipeline instead of producing a second complaint about the
+   * same characters.
+   * @returns {{ peer: string, publish: boolean, start: number, end: number }|null}
+   */
+  parseChainHeader() {
+    const start = this.pos;
+    this.pos++; // @
+    // Recorded, never counted: reaching this branch says the recipe *used* the
+    // reserved position, not that it spelled its slots with `@`. This `@` must
+    // never be its own evidence that the recipe is legacy, or the reservation
+    // would unmake itself.
+    this.sawReservedChainHeader = true;
+
+    const tokStart = this.pos;
+    while (!this.eof() && !/[\s|#]/.test(this.peek())) this.pos++;
+    const norm = normalizePeerRef(this.src.slice(tokStart, this.pos));
+    if (!norm.ok) {
+      this.errors.push({ message: norm.error, start, end: this.pos });
+      return null;
+    }
+
+    // `publish`, and only as a whole token — `@alice publishing` is a peer
+    // followed by a step name the registry will not know.
+    let publish = false;
+    const afterPeer = this.pos;
+    this.skipSpaces();
+    const kwEnd = this.pos + PEER_PUBLISH_KEYWORD.length;
+    if (
+      this.src.startsWith(PEER_PUBLISH_KEYWORD, this.pos) &&
+      !/[A-Za-z0-9_-]/.test(this.src[kwEnd] || "")
+    ) {
+      this.pos = kwEnd;
+      publish = true;
+    } else {
+      this.pos = afterPeer;
+    }
+    const end = this.pos;
+
+    // `@alice | genkey` reads as a peer with a stray pipe *or* as a pre-swap
+    // slot at a position that is no longer one. Name both fixes, recover past
+    // the `|`, and leave it at one error either way.
+    this.skipSpaces();
+    if (this.peek() === "|") {
+      this.errors.push({
+        message:
+          `\`${PEER_SIGIL}${norm.peer}\` at the head of a cell names the peer ` +
+          `it runs for, not a step — drop the \`|\` after it, or write the ` +
+          `slot as \`${SLOT_SIGIL}${norm.peer}\``,
+        start,
+        end: this.pos + 1,
+      });
+      this.pos++;
+    }
+    return { peer: norm.peer, publish, start, end };
   }
 
   /**
@@ -470,8 +733,6 @@ class Parser {
    * @returns {RecipeStep}
    */
   parseStage(parentIndent) {
-    const header = this.atChainHeader;
-    this.atChainHeader = false;
     this.skipSpaces();
     if (this.peek() === ":") {
       return this.parseSelectorStage();
@@ -501,20 +762,11 @@ class Parser {
       return this.parseBareSlotStage();
     }
     if (this.peek() === LEGACY_SLOT_SIGIL) {
-      // Reserved: `@alice | …` is how a chain will name the peer it runs for.
-      // Mid-pipeline there is no such reading, so the legacy slot read is safe.
-      if (header && !this.legacyChainHeader) {
-        this.sawReservedChainHeader = true;
-        this.errors.push({
-          message:
-            "`@` at the start of a chain is reserved — write a slot as `$label` (e.g. `$kp | :public`)",
-          start: this.pos,
-          end: this.pos + 1,
-        });
-        // Parsed, not counted: this `@` must never be its own evidence that the
-        // recipe is legacy, or the reservation would unmake itself.
-        return this.parseBareSlotStage(false);
-      }
+      // Mid-pipeline, `@` has no peer reading — the chain-header position is
+      // the only one that does, and `parseChainHeader` has already spent it by
+      // the time any stage is parsed. So here the legacy slot read is safe,
+      // and stays safe in the legacy replay pass, where the header `@` reaches
+      // this branch too.
       return this.parseBareSlotStage();
     }
 

@@ -27,6 +27,7 @@ import {
   canonicalizeRecipe,
   serializeRecipe,
 } from "./recipe.js";
+import { textHasFingerprintPeer } from "./recipe-parse.js";
 
 /**
  * Re-armor binary OpenPGP message bytes via OpenPGP.js (RFC ASCII armor).
@@ -459,6 +460,11 @@ export function recipeLooksSecret(recipe) {
   if (/BEGIN PGP PRIVATE KEY BLOCK/i.test(s)) return true;
   if (/BEGIN PRIVATE KEY/i.test(s)) return true;
   if (/"kty"\s*:\s*"[^"]+"/i.test(s) && /"d"\s*:/i.test(s)) return true;
+  // A fingerprint written where a peer is named. `validateRecipe` refuses the
+  // same shape at compile, but this function is what stands between a recipe
+  // and a URL — `hashForRecipe` never compiles — so the refusal has to be
+  // made twice or it is only made where it does not matter.
+  if (textHasFingerprintPeer(s)) return true;
   return false;
 }
 

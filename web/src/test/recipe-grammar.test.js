@@ -141,10 +141,10 @@ describe("recipe grammar negatives", () => {
 });
 
 /**
- * `$` is the slot sigil; `@` is reserved for the chain-header position that
- * peer assignment will take. The three cases below are the whole of the
- * migration's risk surface: the compatibility read, the reservation it must
- * not swallow, and the start-anchoring that keeps a `$` inside a value literal.
+ * `$` is the slot sigil; `@` names the peer at the chain-header position. The
+ * three cases below are the whole of the migration's risk surface: the
+ * compatibility read, the header position it must not swallow, and the
+ * start-anchoring that keeps a `$` inside a value literal.
  */
 describe("slot sigil", () => {
   it("reads a pre-swap @slot, warns, and re-serializes it as $", () => {
@@ -174,11 +174,28 @@ describe("slot sigil", () => {
     expect(again.validation.warnings).toEqual([]);
   });
 
-  it("keeps `@` free at the head of a chain", () => {
+  it("reads `@` at the head of a chain as the peer, not a slot", () => {
     // No `out @…` / `in @…` / `=@…` anywhere, so nothing proves this is a
-    // pre-swap recipe and `@alice` must not be read as a slot.
-    const { errors } = parseRecipe("@alice | genkey ec/p256 | out $kp");
-    expect(errors.some((e) => /reserved/i.test(e.message))).toBe(true);
+    // pre-swap recipe and `@alice` is the peer the cell runs for.
+    const { ast, errors } = parseRecipe("@alice\ngenkey ec/p256 | out $kp");
+    expect(errors).toEqual([]);
+    expect(ast.chains[0].peer).toBe("alice");
+    expect(ast.steps[0].name).toBe("genkey");
+  });
+
+  it("still replays a pre-swap recipe whose chain head is a slot", () => {
+    // The reservation must not unmake itself: pass 1 reads this `@kp` as a
+    // peer, and only the *unambiguous* `out @kp` in the cell above it is
+    // evidence enough to replay the whole source with the legacy slot read.
+    const { ast, validation } = compileRecipe(
+      "genkey ec/p256 | out @kp\n\n@kp | export spki | pem | out @pub"
+    );
+    expect(validation.errors).toEqual([]);
+    expect(ast.chains[1].peer).toBeUndefined();
+    expect(ast.chains[1].steps[0]).toMatchObject({
+      name: "in",
+      params: { ref: "$kp" },
+    });
   });
 
   it("does not treat a `$` inside a value as a slot", () => {

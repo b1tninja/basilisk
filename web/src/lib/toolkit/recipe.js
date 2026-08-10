@@ -12,7 +12,8 @@
  * Cipher twins still use `-d` (`aes-gcm -d`). Slot labels require `$` (`out $kp` / `key=$cek`);
  * bare `out kp` / `key=cek` → `migrateRecipe` / Upgrade. Bare `$kp` ≡ `in $kp` on load.
  * A pre-swap `@kp` still parses in step/param position and is rewritten to `$kp`
- * with a compile warning; `@` at the head of a chain is reserved.
+ * with a compile warning; `@` at the head of a chain names the peer the cell
+ * runs for (`@alice`, `@alice publish`, `@*`).
  */
 
 import {
@@ -27,7 +28,12 @@ import {
 import {
   canonicalSelectorMember,
   DEFAULT_OUT_SLOT,
+  normalizePeerRef,
   parseRecipeSource,
+  peerFingerprintError,
+  peerLooksLikeFingerprint,
+  PEER_PUBLISH_KEYWORD,
+  PEER_SIGIL,
   SLOT_SIGIL,
   slotLabelKey,
 } from "./recipe-parse.js";
@@ -394,8 +400,24 @@ function validateStepSlotParams(
  */
 
 /**
+ * One cell: a pipeline, and optionally the party it belongs to.
+ *
+ * The header fields are all optional and absent on every chain written without
+ * one, so a recipe with no `@peer` produces exactly the AST it always did.
+ * `recipeChains()` normalises bare step arrays into `{ steps }` and simply
+ * carries no peer, which is why every existing consumer keeps working.
+ *
+ * They are inert. `peer` says which party a cell is *written for* and
+ * `publish` says its `out` artifacts are meant to leave the machine; nothing
+ * in the engine reads either one, and a header does not make a cell run
+ * anywhere — the header names a peer, it does not command one.
+ *
  * @typedef {object} RecipeChain
  * @property {RecipeStep[]} steps
+ * @property {string} [peer]  canonical peer label (no sigil), or `*` for everyone
+ * @property {boolean} [publish]  this cell's `out` artifacts go to the room
+ * @property {number} [headerStart]  char offsets — a complaint about the header
+ * @property {number} [headerEnd]    must anchor to it, not to step 0's span
  */
 
 /**
@@ -725,9 +747,30 @@ function serializeChainSteps(steps, opts = {}) {
 }
 
 /**
+ * Serialize one chain, header included.
+ *
+ * The header is emitted only when the chain has steps to hang it on: a
+ * header-only cell does not parse, so writing one would be a round trip that
+ * loses. Newline-joined in pretty form, space-joined in compact — where the
+ * `~` chain separator already marks where a header may begin.
+ * @param {RecipeChain} chain
+ * @param {{ compact?: boolean }} [opts]
+ * @returns {string}
+ */
+function serializeChain(chain, opts = {}) {
+  const body = serializeChainSteps(chain?.steps || [], opts);
+  const peer = chain?.peer == null ? "" : String(chain.peer);
+  if (!body.length || !peer.length) return body;
+  const head = chain.publish
+    ? `${PEER_SIGIL}${peer} ${PEER_PUBLISH_KEYWORD}`
+    : `${PEER_SIGIL}${peer}`;
+  return opts.compact === true ? `${head} ${body}` : `${head}\n${body}`;
+}
+
+/**
  * Serialize an AST (or steps / chains) back to recipe text.
  * Chains are joined with a blank line (or `~` when `compact`).
- * Canonical names; `$` slot sugar.
+ * Canonical names; `$` slot sugar, `@` peer header.
  * @param {RecipeAst|RecipeStep[]|RecipeChain[]} astOrSteps
  * @param {{ compact?: boolean }} [opts]
  * @returns {string}
@@ -736,7 +779,7 @@ export function serializeRecipe(astOrSteps, opts = {}) {
   const compact = opts.compact === true;
   const chains = recipeChains(astOrSteps);
   return chains
-    .map((c) => serializeChainSteps(c.steps || [], opts))
+    .map((c) => serializeChain(c, opts))
     .filter((t) => t.length)
     .join(compact ? "~" : "\n\n");
 }
@@ -959,6 +1002,66 @@ function validateBodySteps(body, startType, ctx) {
 }
 
 /**
+ * Check one chain's `@peer` header.
+ *
+ * The parser already refused everything that is not a label, so what is left
+ * here is the question a label grammar cannot answer: whether a well-formed
+ * label is a thing a *person* may be called. `peerLooksLikeFingerprint` is the
+ * whole of it, and it is a security rule rather than a style one — a
+ * fingerprint written as a peer name rides out verbatim in a shared `#r=`
+ * link, and `notebook/room.js` derives the room from a digest of exactly that
+ * audience, so the link would hand a stranger the room.
+ *
+ * Anchored to `headerStart`/`headerEnd` and to the chain's first step index,
+ * so the complaint lands on the header in Source view and on the right cell in
+ * the notebook.
+ * @param {RecipeChain} chain
+ * @param {number} firstStepIndex  global index of this chain's first step
+ * @param {RecipeError[]} errors
+ */
+function validateChainHeader(chain, firstStepIndex, errors) {
+  const steps = chain?.steps || [];
+  const anchor = {
+    start: chain?.headerStart ?? steps[0]?.start,
+    end: chain?.headerEnd ?? steps[0]?.end,
+    stepIndex: firstStepIndex,
+  };
+  const peer = chain?.peer;
+  if (peer == null || peer === "") {
+    if (chain?.publish) {
+      errors.push({
+        message:
+          `\`${PEER_PUBLISH_KEYWORD}\` says where this cell's \`out\` ` +
+          `artifacts go, so it needs a peer to go from — write ` +
+          `\`${PEER_SIGIL}alice ${PEER_PUBLISH_KEYWORD}\``,
+        ...anchor,
+      });
+    }
+    return;
+  }
+  const norm = normalizePeerRef(String(peer));
+  if (!norm.ok) {
+    errors.push({ message: norm.error, ...anchor });
+    return;
+  }
+  if (peerLooksLikeFingerprint(norm.peer)) {
+    errors.push({ message: peerFingerprintError(norm.peer), ...anchor });
+    return;
+  }
+  if (chain?.publish && !steps.some((s) => s?.name === "out")) {
+    // A cell that publishes nothing is a ceremony that quietly did nothing —
+    // an error rather than a runtime skip, for the same reason.
+    errors.push({
+      message:
+        `\`${PEER_SIGIL}${norm.peer} ${PEER_PUBLISH_KEYWORD}\` publishes this ` +
+        `cell's \`out\` artifacts, but the cell has no \`out\` — add ` +
+        `\`out $name\`, or drop \`${PEER_PUBLISH_KEYWORD}\``,
+      ...anchor,
+    });
+  }
+}
+
+/**
  * Validate a parsed AST against the registry (types, scopes, params).
  * @param {RecipeAst} ast
  * @returns {ValidationResult}
@@ -996,6 +1099,8 @@ export function validateRecipe(ast) {
   for (let ci = 0; ci < chains.length; ci++) {
     const steps = chains[ci].steps || [];
     if (!steps.length) continue;
+
+    validateChainHeader(chains[ci], globalStepIndex, errors);
 
     /** @type {import("./types.js").RefinedType} */
     let current = tNone();

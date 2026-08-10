@@ -45,7 +45,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - Slots: `out $label` registers a live pipeline value; load with bare `$label` (preferred) or `in $label` / `in 1`. `$kp | out` re-emits as `$kp`.
 - Named slot args pass live values into ops: `aes-gcm key=$cek` (stem stays the payload).
 - Namespaced product ops use dots (`gpg.encrypt`, `sss.combine`, `webauthn.prf`); cipher ops use hyphens (`aes-gcm`). OpenSSL-sized (`aes-256-gcm`) and JCE (`AES/GCM/NoPadding`) parse to the same canonical hyphen name — **serialize preserves** size/hash as `keyBits=` / `hash=` when implied by those forms. Bare `encrypt`/`decrypt` sugar is migrator-only.
-- Bare `out kp` / `in kp` / `key=cek` do **not** live-parse — use `$label` (`out $kp`, `key=$cek`). Upgrade recipe / `migrateRecipe` rewrites bare forms. A pre-swap `@label` still loads (with a compile warning) and re-serializes as `$label`; `@` at the head of a chain is reserved.
+- Bare `out kp` / `in kp` / `key=cek` do **not** live-parse — use `$label` (`out $kp`, `key=$cek`). Upgrade recipe / `migrateRecipe` rewrites bare forms. A pre-swap `@label` still loads (with a compile warning) and re-serializes as `$label`; `@` at the head of a chain names a **peer** (see Cell headers).
 - Stem literals: `"hello"` / `'…'` → text; `255` / `0xff` → int (serialize ints as decimal); `true` / `false` → bool. Example: `"hello world" | out $var`.
 - Prefer **positional** args: `out $public`, `export pkcs8`, `genkey ec/p256`.
 - Casts: retag (`as master` / `as public` / …), coerce (`as int` / `as bool`), or materialize (`as key` / `as keypair` → WebCrypto handles). Literal postfix (`1234 as int`) is not shipped — use `"1234" | as int` or `1234` stem lit.
@@ -66,6 +66,51 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 
 Use **tee** when you need a mid-stem projection fork (public beside private export).
 Use **blank-line chains + `$slot` / `in`** when a later pipeline should reuse an earlier `out`.
+
+## Cell headers (`@peer`)
+
+A chain may open with a header naming the party the cell is written for.
+`@` is who; `$` is what.
+
+```text
+chain     := header? pipeline
+header    := "@" peer (SP "publish")?    # at the chain head, before the first step
+peer      := LABEL | "*"                 # "*" = every participant (rendezvous)
+LABEL     := /^[A-Za-z][A-Za-z0-9_-]*$/  # the slot label grammar, shared
+```
+
+```text
+@alice
+genkey x25519 | out $kpA
+
+@alice publish
+$kpA | :public | out $pubA
+
+@*
+random 32 | out $nonce
+```
+
+| Form | Meaning |
+|------|---------|
+| `@alice` | This cell belongs to the peer named `alice` |
+| `@alice publish` | …and its `out` artifacts are meant to leave the machine |
+| `@*` | Rendezvous: every participant, together |
+
+Rules:
+
+- One peer per cell; a header with no steps under it is an error.
+- The header owns its own line in pretty form and is space-joined in compact
+  form (`@alice publish random 32|out $x`), so it survives `#r=` unchanged.
+- `publish` needs an `out` to publish, and a peer to publish from.
+- `*` is spelled `*` rather than `all` because it cannot be a label, so the
+  wildcard can never collide with a participant actually called `all`.
+- **A peer is a name, never a fingerprint.** A hex label of 16 characters or
+  more is refused at compile *and* at share: the room is derived from a digest
+  of the audience precisely so fingerprints never travel, and a fingerprint in
+  shared recipe text would hand the room to anyone holding the link. A
+  fingerprint remains an ordinary argument everywhere else (`hkp.get 4F2A…`).
+- The header is **inert**. It records who a cell is for; it does not run
+  anything, anywhere, for anyone.
 
 ## Notebook execution (toolkit UI)
 
