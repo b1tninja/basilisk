@@ -2530,8 +2530,13 @@ export const STEPS = [
       {
         name: "signature",
         type: "string",
+        // Text only, because `execSshVerify` says so outright:
+        // `if (sigVal?.type !== "text") throw "signature slot must hold sshsig
+        // text"`. The wider set this used to carry came from the validator's
+        // okBase table -- what a slot ref may resolve to *in general* -- not
+        // from what this op accepts. Every other value reached that throw.
         slot: "required",
-        slotOf: ["key", "keypair", "bytes", "text"],
+        slotOf: ["text"],
         default: "",
         doc: "Slot holding the sshsig block",
       },
@@ -2655,8 +2660,11 @@ export const STEPS = [
       {
         name: "secret",
         type: "string",
+        // `base32From` accepts exactly these two and throws on anything else:
+        // raw secret bytes, or Base32/otpauth text. A key or keypair never
+        // reached the base32 decoder -- it reached the throw beneath it.
         slot: "required",
-        slotOf: ["key", "keypair", "bytes", "text"],
+        slotOf: ["bytes", "text"],
         default: "",
         doc: "Slot holding the Base32 secret or the otpauth:// URI",
       },
@@ -3235,8 +3243,12 @@ export const STEPS = [
         // Copy link, Export, and the workspace library then carry off.
         name: "key",
         type: "string",
+        // An age identity is the *text* `AGE-SECRET-KEY-1…`, not a CryptoKey.
+        // `paramText` decodes a Uint8Array and stringifies anything else, so a
+        // key or keypair arrived at `IDENTITY_RE` as "[object Object]" and
+        // failed there, one layer too late to say why.
         slot: "required",
-        slotOf: ["key", "keypair", "bytes", "text"],
+        slotOf: ["bytes", "text"],
         positional: true,
         default: "",
         doc: "Slot holding an `AGE-SECRET-KEY-1…` identity (never write the identity inline — recipe text is shareable)",
@@ -3713,8 +3725,12 @@ export const STEPS = [
       {
         name: "credential",
         type: "string",
+        // A TURN credential is a shared secret string the relay operator
+        // issued. `engine.js` reads a text slot with String() and everything
+        // else through `TextDecoder().decode(slot.data)` -- which on a
+        // CryptoKey throws a TypeError naming neither the op nor the param.
         slot: "required",
-        slotOf: ["key", "keypair", "bytes", "text"],
+        slotOf: ["bytes", "text"],
         secret: true,
         default: "",
         doc: "TURN credential — bind an $slot from Inputs; never stored/shared as literal text",
