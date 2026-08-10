@@ -42,6 +42,8 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  * @property {NotebookSession} session
  * @property {Error[]} errors
  * @property {{ from: string, text: string, ts: number }[]} chats
+ * @property {any[]} manifests      manifests that arrived, verified and parsed
+ * @property {any[]} attestations   attestations that arrived, verified and parsed
  * @property {string[]} statuses
  */
 
@@ -168,7 +170,15 @@ export async function makeQuorumPair({ tamper } = {}) {
    */
   function makeSide(privateKey, fpr, role) {
     /** @type {any} */
-    const side = { fpr, privateKey, errors: [], chats: [], statuses: [] };
+    const side = {
+      fpr,
+      privateKey,
+      errors: [],
+      chats: [],
+      manifests: [],
+      attestations: [],
+      statuses: [],
+    };
     side.session = new NotebookSession({
       roomId,
       audienceFprs: audience,
@@ -176,6 +186,8 @@ export async function makeQuorumPair({ tamper } = {}) {
       myFingerprint: fpr,
       role,
       onChat: (/** @type {any} */ m) => side.chats.push(m),
+      onManifest: (/** @type {any} */ d) => side.manifests.push(d),
+      onAttestation: (/** @type {any} */ d) => side.attestations.push(d),
       onStatus: (/** @type {string} */ s) => side.statuses.push(s),
       onError: (/** @type {Error} */ err) => side.errors.push(err),
     });

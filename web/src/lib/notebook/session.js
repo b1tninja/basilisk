@@ -38,6 +38,26 @@
  * `readyState` — because the frames on it are this layer's own, sealed under a key
  * this layer holds and the transport cannot read.
  *
+ * **The session is a courier, not a signer.** Two more payload kinds ride the
+ * `session` frame beside `kc` and `chat` — a signed run manifest and a signed
+ * manifest attestation. Both arrive already signed and leave already signed:
+ * `publishManifest` refuses anything that is not a cleartext-signed document,
+ * and there is no path from a payload to `this.privateKey`. The private key is
+ * here to seal signalling envelopes for a room this session is already in, and
+ * a commitment about what a notebook will do is not that. `approval-gate.js`
+ * puts it as *"Grants are minted only by a human clicking, never by a param."*
+ *
+ * The mirror of that rule is that **an arriving manifest runs nothing and
+ * attests to nothing**. It is verified, parsed and handed to `onManifest` as an
+ * object a person can look at — the same discipline as an `#r=` link, which
+ * `useNotebook.loadFromHash` loads without running. Answering a manifest is a
+ * recipe somebody types.
+ *
+ * Both kinds inherit `chat`'s refusal exactly: nothing is believed from a peer
+ * whose key is not confirmed. `lib/notebook/documents.js` holds what happens
+ * after that — above all, that a document is checked against *this* peer's key
+ * and no other.
+ *
  * **Why the driver could move, after two commits said it could not.**
  * `derivePairwiseSessionKey` binds **both DTLS fingerprints** into the
  * transcript, and the local one is minted from the local description *inside*
@@ -73,6 +93,12 @@ import {
   requireSelfInAudience,
   sealSignalingEnvelope,
 } from "./crypto.js";
+import {
+  assertDocumentFits,
+  looksCleartextSigned,
+  readSignedAttestation,
+  readSignedManifest,
+} from "./documents.js";
 import { canonicalAudience, deriveRoomMaterial, isValidRoomId } from "./room.js";
 import { classifyChannelFrame, createSeenSet, shouldRelay } from "./relay.js";
 import { openSignalingChannel } from "./signaling.js";
@@ -109,6 +135,15 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  * @property {boolean} polite      perfect negotiation: lower fingerprint yields on glare
  * @property {boolean} makingOffer
  * @property {boolean} ignoreOffer
+ * @property {Set<string>} attested
+ *   Manifest digests this peer has attested to, each established by a signature
+ *   this session checked against this peer's own key. Bounded — see
+ *   `ATTESTED_PER_PEER_CAP`.
+ * @property {string|null} publishedManifest
+ *   Digest of the last manifest this peer put in front of the room, or null.
+ *   One slot rather than a list: a peer's commitment is whatever they last
+ *   stood behind, and the documents themselves reach the application through
+ *   `onManifest`.
  */
 
 /**
@@ -123,9 +158,30 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   *no third party* and is honoured as written — host candidates only.
  * @property {(peers: Map<string, NotebookPeerState>) => void} [onRoster]
  * @property {(msg: { from: string, text: string, ts: number }) => void} [onChat]
+ * @property {(doc: {
+ *   from: string, digest: string, signed: string, ts: number,
+ *   manifest: import("../toolkit/manifest.js").RunManifest,
+ * }) => void} [onManifest]
+ *   A manifest that arrived, was checked against the sender's key, and parsed.
+ *   Nothing has been run and nothing has been attested — this is a document
+ *   somebody can now look at.
+ * @property {(doc: {
+ *   from: string, digest: string, signed: string, ts: number,
+ *   attestation: import("../toolkit/attest.js").ManifestAttestation,
+ * }) => void} [onAttestation]
  * @property {(status: string) => void} [onStatus]
  * @property {(err: Error) => void} [onError]
  */
+
+/**
+ * How many distinct manifest digests one peer's attestations may occupy.
+ *
+ * A confirmed peer can still be a broken one, and every attestation is a fresh
+ * 64-character string it chose. The cap keeps a peer's roster entry flat under
+ * that, evicting oldest-first the way `createSeenSet` does; a room agreeing on
+ * more than this many manifests at once has a different problem.
+ */
+const ATTESTED_PER_PEER_CAP = 64;
 
 export class NotebookSession {
   /** @param {NotebookSessionOpts} opts */
@@ -144,6 +200,8 @@ export class NotebookSession {
     this.iceServers = iceServersOrDefault(opts.iceServers);
     this.onRoster = opts.onRoster;
     this.onChat = opts.onChat;
+    this.onManifest = opts.onManifest;
+    this.onAttestation = opts.onAttestation;
     this.onStatus = opts.onStatus;
     this.onError = opts.onError;
 
@@ -542,6 +600,102 @@ export class NotebookSession {
   }
 
   /**
+   * Put a signed run manifest in front of the room.
+   *
+   * Takes the **signed document**, not a manifest object, and that is the whole
+   * design: the bytes are whatever `run.manifest | gpg.sign key=$me` produced,
+   * chosen by someone who read the recipe. A `publishManifest(manifest)` that
+   * reached for `this.privateKey` would be one line shorter and would mint a
+   * commitment nobody made.
+   *
+   * @param {string} signed  armored cleartext-signed manifest
+   * @returns {Promise<number>} peers written to
+   */
+  async publishManifest(signed) {
+    return this._publishDocument("manifest", signed);
+  }
+
+  /**
+   * Put a signed attestation in front of the room.
+   * @param {string} signed  armored cleartext-signed attestation
+   * @returns {Promise<number>} peers written to
+   */
+  async publishAttestation(signed) {
+    return this._publishDocument("attestation", signed);
+  }
+
+  /**
+   * Which peers have attested to a manifest digest.
+   *
+   * Fingerprints, because that is the session's vocabulary — it never learns
+   * the peer *labels* a manifest is written in, and `attest.js` is explicit
+   * that the label a signature resolves to is the caller's to supply. Turning
+   * one into the other is the job of whoever holds the label→fingerprint
+   * binding `peersSha` commits to, and it is not this layer.
+   *
+   * @param {string} digest
+   * @returns {string[]} fingerprints, sorted
+   */
+  attestersOf(digest) {
+    const want = String(digest || "").trim().toLowerCase();
+    if (!want) return [];
+    const out = [];
+    for (const [fpr, peer] of this.peers) {
+      if (peer.attested.has(want)) out.push(fpr);
+    }
+    return out.sort();
+  }
+
+  /**
+   * Broadcast one already-signed document, encrypted once per peer.
+   *
+   * **Per peer, not per room.** `chat` is broadcast the same way and for the
+   * same reason: there is no group key here, only a pairwise key for each peer,
+   * derived from a transcript bound to that pair and to the transport carrying
+   * it. Minting a room key so a document could be sealed once would throw that
+   * binding away for a document whose entire value is that everyone knows who
+   * stood behind it.
+   *
+   * Only confirmed peers are written to, so a room mid-handshake is a room this
+   * returns a smaller number for. It is a count and not a promise — a caller
+   * that needs everyone to have seen a manifest must compare it against the
+   * roster, because nothing here can make an unmeshed peer appear.
+   *
+   * @param {"manifest"|"attestation"} kind
+   * @param {string} signed
+   * @returns {Promise<number>}
+   */
+  async _publishDocument(kind, signed) {
+    const doc = String(signed ?? "");
+    // Refused before anything is encrypted, so an oversized document fails in
+    // the author's hands and not in the room.
+    assertDocumentFits(doc, kind);
+    if (!looksCleartextSigned(doc)) {
+      throw new Error(
+        `notebook: ${kind} must arrive here already signed — pipe it through ` +
+          "`gpg.sign key=$me` first. The session carries documents between " +
+          "peers; it does not sign on anyone's behalf."
+      );
+    }
+    const body = JSON.stringify({ kind, doc, ts: Date.now() });
+    let sent = 0;
+    for (const peer of this.peers.values()) {
+      if (
+        !peer.channel ||
+        peer.channel.readyState !== "open" ||
+        !peer.sessionKey ||
+        !peer.kcVerified
+      ) {
+        continue;
+      }
+      const blob = await encryptSessionPayload(peer.sessionKey, body);
+      peer.channel.send(JSON.stringify({ v: 1, blob }));
+      sent += 1;
+    }
+    return sent;
+  }
+
+  /**
    * A sealed envelope off the signalling relay.
    * @param {string} armored
    */
@@ -853,6 +1007,8 @@ export class NotebookSession {
       polite: this.myFpr < fpr,
       makingOffer: false,
       ignoreOffer: false,
+      attested: new Set(),
+      publishedManifest: null,
     };
   }
 
@@ -1041,11 +1197,111 @@ export class NotebookSession {
           text: String(msg.text || ""),
           ts: Number(msg.ts) || Date.now(),
         });
+        return;
+      }
+      if (msg.kind === "manifest" || msg.kind === "attestation") {
+        await this._onDocument(peerFpr, peer, msg);
       }
     } catch (err) {
       this.onError?.(
         err instanceof Error ? err : new Error(String(err))
       );
+    }
+  }
+
+  /**
+   * A signed manifest or attestation off a peer's channel.
+   *
+   * **Dropped, not queued, before key confirmation.** The refusal is `chat`'s,
+   * inherited on purpose: a peer whose key is not confirmed is not anyone in
+   * particular, and a document's whole content is *who* stood behind it. There
+   * is nothing to queue for, either. Both ends send `kc` the instant a key is
+   * derived, a data channel is ordered, and `_enqueue` handles arrivals in the
+   * order they came — so an honest peer's confirmation is always ahead of its
+   * first document on the same channel. A document that overtakes it came from
+   * a peer that skipped its own confirmation, which is the case the refusal is
+   * for. Holding those bytes would mean keeping an unauthenticated stranger's
+   * blob on the chance they authenticate later, and would put the refusal
+   * behind a timing window.
+   *
+   * The payload deliberately carries no `from`. `chat` has one and tolerates it
+   * disagreeing with the channel; a document must not, because "who signed
+   * this" is the question the document exists to answer, and a second answer in
+   * a field the sender chose is a second thing that can be wrong. The sender is
+   * the peer whose pairwise key opened the frame, and the signature is checked
+   * against that peer's key and no other — which is also why a peer cannot pass
+   * on somebody else's signed manifest as if it were traffic: it verifies
+   * against the original signer's key, not the forwarder's, and is refused.
+   *
+   * Every failure here is reported and swallowed. A malformed document, a
+   * signature from the wrong key, a manifest three versions old: each is one
+   * peer's frame going nowhere, and none of them is a reason for a session
+   * carrying four other peers to fall over.
+   *
+   * @param {string} peerFpr
+   * @param {NotebookPeerState} peer
+   * @param {{ kind: string, doc?: string, ts?: number }} msg
+   */
+  async _onDocument(peerFpr, peer, msg) {
+    if (!peer.kcVerified) return;
+    const kind = msg.kind === "manifest" ? "manifest" : "attestation";
+    const doc = String(msg.doc ?? "");
+    const ts = Number(msg.ts) || Date.now();
+    const key = this.audienceKeys.get(peerFpr);
+    try {
+      if (kind === "manifest") {
+        const { manifest, digest } = await readSignedManifest(doc, {
+          key,
+          fpr: peerFpr,
+        });
+        peer.publishedManifest = digest;
+        this._emitRoster();
+        // Parsed, and that is all. Nothing here runs a cell, pins a clock or
+        // answers with an attestation; those are recipes a person types.
+        this.onManifest?.({ from: peerFpr, digest, manifest, signed: doc, ts });
+        return;
+      }
+      const { attestation, digest } = await readSignedAttestation(doc, {
+        key,
+        fpr: peerFpr,
+      });
+      this._rememberAttestation(peer, digest);
+      // The roster is the one notification path for peer state, so who has
+      // attested travels with everything else the roster says about a peer
+      // rather than beside it.
+      this._emitRoster();
+      this.onAttestation?.({ from: peerFpr, digest, attestation, signed: doc, ts });
+    } catch (err) {
+      this.onError?.(
+        new Error(
+          `notebook: ${kind} from ${peerFpr.slice(0, 8)}… refused — ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
+      );
+    }
+  }
+
+  /**
+   * Record that a peer attested to a digest.
+   *
+   * Survives rotation and a dropped channel, unlike everything in
+   * `_applyRotation`'s reset: a session key says which transport is live, and a
+   * signature says what somebody put their name to. Rotating a room does not
+   * un-sign a document.
+   *
+   * @param {NotebookPeerState} peer
+   * @param {string} digest
+   */
+  _rememberAttestation(peer, digest) {
+    const sha = String(digest || "").toLowerCase();
+    if (!sha || peer.attested.has(sha)) return;
+    peer.attested.add(sha);
+    while (peer.attested.size > ATTESTED_PER_PEER_CAP) {
+      // Sets iterate in insertion order — evict the oldest, as `createSeenSet`
+      // does for envelopes.
+      const oldest = peer.attested.values().next().value;
+      peer.attested.delete(oldest);
     }
   }
 
