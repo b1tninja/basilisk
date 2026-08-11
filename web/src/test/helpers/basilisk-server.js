@@ -226,6 +226,14 @@ export function easyAuthHeaders(user) {
  *   key that was revoked *after* it was accepted, which is the only way that
  *   state is reachable and is what a client has to cope with.
  * @param {number} [opts.timeout]       readiness deadline, ms
+ * @param {Record<string, string>} [opts.env]
+ *   Extra environment for the server process, merged last so a caller can set
+ *   what this harness does not. It exists for one deployment fact the harness
+ *   cannot know: notebook signalling is configured by a connection string, and
+ *   `basilisk.serve` starts its own local Web PubSub double when that string
+ *   points at loopback. A suite that needs signalling therefore has to name the
+ *   port before the server starts, and every other caller keeps exactly the
+ *   environment it had.
  * @returns {Promise<BasiliskServer>}
  */
 export async function startBasilisk(opts = {}) {
@@ -259,6 +267,7 @@ export async function startBasilisk(opts = {}) {
         BASILISK_LOOKUP_RATE_LIMIT_SEC: "0",
         ...(opts.rejectRevoked === false ? { BASILISK_REJECT_REVOKED: "0" } : {}),
         PYTHONUNBUFFERED: "1",
+        ...(opts.env || {}),
       },
     }
   );
