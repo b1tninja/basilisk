@@ -551,10 +551,15 @@ describe("an unplaced run is the run it always was", () => {
   }, 120_000);
 
   it("holds over every docs/RECIPE.md fence that compiles", async () => {
+    // `.replace(/\r\n/g, "\n")` because the fence pattern wants a bare `\n`
+    // after the marker, and a Windows checkout writes CRLF — without it this
+    // matched nothing and the sweep reported success having swept zero fences.
+    // `swept` below is the guard against exactly that, and it is why the count
+    // is asserted rather than just the outcomes.
     const md = readFileSync(
       fileURLToPath(new URL("../../../docs/RECIPE.md", import.meta.url)),
       "utf8"
-    );
+    ).replace(/\r\n/g, "\n");
     const re = /```[a-z]*\n([\s\S]*?)```/g;
     let m;
     let i = -1;

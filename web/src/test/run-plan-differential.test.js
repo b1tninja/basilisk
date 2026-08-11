@@ -36,7 +36,14 @@ const RECIPE_MD = fileURLToPath(new URL("../../../docs/RECIPE.md", import.meta.u
 
 /** Every fenced block in the normative grammar doc. */
 function docFences() {
-  const text = readFileSync(RECIPE_MD, "utf8");
+  // Newlines normalised before matching. `git checkout` rewrites the working
+  // tree to CRLF on Windows, and the fence pattern wants a bare `\n` after the
+  // marker — so this returned **zero** fences on a fresh Windows clone and the
+  // sweep silently swept nothing. CI runs on Ubuntu, where the checkout is LF,
+  // so nothing would have caught it there either. Same shape as the CRLF bug
+  // in `otp-code-kind.test.js`: a test that passes on the line endings its
+  // author happened to have.
+  const text = readFileSync(RECIPE_MD, "utf8").replace(/\r\n/g, "\n");
   /** @type {string[]} */
   const blocks = [];
   const re = /```[a-z]*\n([\s\S]*?)```/g;
