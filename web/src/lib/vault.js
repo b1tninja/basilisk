@@ -663,6 +663,25 @@ export async function saveKey(opts) {
     throw new Error(`Invalid ${kind} key id — expected SHA256:… fingerprint, got "${fpr}"`);
   }
 
+  // Read before write, for `created` / `lastUsedAt` only — the downgrade
+  // refusal is *not* made here.
+  //
+  // Two fixes for this bug landed independently, one on each side of a merge:
+  // a pre-check in this position, and the transactional guard in `putRecord`.
+  // Keeping both would have been worse than either. This read and a later
+  // `put` are separate transactions, so the window between them is exactly
+  // when the other tab enrols the passkey the guard exists to protect — the
+  // race `putRecord` was written to close by issuing its write from its own
+  // read's success callback. A pre-check here would refuse the common case
+  // slightly earlier and leave the racing case to the real guard, which reads
+  // as defence in depth and is really one correct check beside one that
+  // cannot see the state it is judging.
+  //
+  // It also judged `prior.protection`, the label, where `effectiveProtection`
+  // asks whether an outer PRF wrap is actually present — a record whose label
+  // was edited would have passed here and been caught there.
+  const prior = await withStore(STORE_KEYS, "readonly", (s) => s.get(fpr));
+
   /** @type {string[]} */
   let keyIds = Array.isArray(opts.keyIds) ? [...opts.keyIds] : [];
   if (kind === "pgp" && !keyIds.length && opts.armoredPrivate) {
@@ -698,12 +717,12 @@ export async function saveKey(opts) {
     uid: opts.uid || "",
     email: opts.email || "",
     name: opts.name || "",
-    created: new Date().toISOString(),
+    created: prior?.created || new Date().toISOString(),
     expires: opts.expires || null,
     protection: opts.protection,
     keyIds,
     publicArmored,
-    lastUsedAt: null,
+    lastUsedAt: prior?.lastUsedAt || null,
     wrapped: ciphertext,
     iv: iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength),
   };
