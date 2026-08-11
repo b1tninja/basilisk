@@ -42,6 +42,7 @@ export {
 } from "./JwtArtifact";
 export { SessionStrip, type SessionStripState } from "./SessionStrip";
 export { PlanPanel, type PlanPanelProps } from "./PlanPanel";
+export { CellAssign, type CellAssignProps } from "./CellAssign";
 export { ShareSheet, type ShareSheetProps, type RecipeLink } from "./ShareSheet";
 export { InspectorArtifact, hasInspectorRenderer, type InspectSnapshot } from "./InspectorArtifact";
 export { CellTypeErrors, type CellTypeError } from "./CellTypeErrors";

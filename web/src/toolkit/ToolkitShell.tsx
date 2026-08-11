@@ -74,6 +74,7 @@ import {
   RunBar,
   ReadinessBar,
   OutputList,
+  CellAssign,
   PlanPanel,
   SessionStrip,
   TopBar,
@@ -589,6 +590,25 @@ export function ToolkitShell() {
     if (plan.refusals.some((r) => r.reason === "uncompiled")) return null;
     return plan;
   }, [nb.source, nb.quorumState.peers]);
+
+  /**
+   * Labels a cell can be assigned to.
+   *
+   * The room *and* the labels this notebook already names, unioned. Only the
+   * room would make a header impossible to write before anybody joins, which
+   * is backwards — a ceremony is written first and run when the other person
+   * is free, and `planRun` reports on an unbound notebook precisely so it can
+   * be. Only the notebook would mean a peer who joins can never be given a
+   * cell without someone typing their label by hand.
+   */
+  const peerChoices = useMemo(() => {
+    const fromRoster = (nb.quorumState.peers || []).map((p) =>
+      String(p.id || "").replace(/^@/, "")
+    );
+    return [...new Set([...fromRoster, ...(runPlan?.peers || [])])]
+      .filter(Boolean)
+      .sort();
+  }, [nb.quorumState.peers, runPlan]);
   /**
    * The Activity log (§36). Session-scoped and never persisted: it names key
    * ids and destinations, and localStorage is XSS-readable.
@@ -1311,6 +1331,20 @@ export function ToolkitShell() {
                             nb.setFocusedCell(i);
                             setCellView(i, view as CellView);
                             if (view !== "pipeline") setChipEdit(null);
+                          }}
+                        />
+                        {/* Beside the view toggle rather than in the ml-auto
+                            group: where a cell runs is a property of the cell,
+                            not an action on it, and it belongs next to what
+                            the cell *is* rather than next to Run and Delete. */}
+                        <CellAssign
+                          className="ml-1"
+                          peer={(chain as { peer?: string }).peer ?? null}
+                          publish={!!(chain as { publish?: boolean }).publish}
+                          choices={peerChoices}
+                          onAssign={(peer, publish) => {
+                            nb.setFocusedCell(i);
+                            nb.setCellPeer(i, peer, publish);
                           }}
                         />
                         <div className="ml-auto flex gap-1">

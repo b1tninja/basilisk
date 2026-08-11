@@ -1201,12 +1201,56 @@ export function useNotebook() {
     const chain = ast.chains?.[0] || { steps: ast.steps || [] };
     setChains((prev) => {
       const next = [...prev];
-      next[cellIndex] = { steps: [...(chain.steps || [])] };
+      // `peer` and `publish` come with the chain and have to be carried over.
+      // Rebuilding from `steps` alone dropped them, which made a `@peer`
+      // header impossible to write anywhere in the product: the grammar reads
+      // it (`recipe-parse.js` sets `chain.peer`), `serializeChain` writes it
+      // back out, `planRun` places cells by it and `placementGate` enforces it
+      // — and this one assignment threw it away between the parse and the
+      // state, so typing `@mara publish` parsed cleanly and then vanished.
+      next[cellIndex] = {
+        steps: [...(chain.steps || [])],
+        ...(chain.peer == null ? {} : { peer: chain.peer }),
+        ...(chain.publish ? { publish: true } : {}),
+      };
       return next;
     });
     setRunError("");
     return true;
   }, []);
+
+  /**
+   * Assign a cell to a peer, or take the assignment off.
+   *
+   * The header was reachable only by typing it, which made placement a feature
+   * you had to already know the grammar to use. This is the same edit the text
+   * makes — it sets the fields `serializeChain` writes as `@peer` /
+   * `@peer publish` — so the two views cannot drift: there is one
+   * representation and both surfaces move it.
+   *
+   * `peer: null` clears the header rather than writing an empty one. An
+   * unassigned cell has no `peer` field at all, which is what `planRun` reads
+   * as "everyone", and a `@` with nothing after it is not a recipe.
+   *
+   * `publish` is only meaningful alongside a peer — it says this cell's output
+   * may leave the machine that made it — so clearing the peer clears it too
+   * rather than leaving a modifier attached to nobody.
+   */
+  const setCellPeer = useCallback(
+    (cellIndex: number, peer: string | null, publish = false) => {
+      setChains((prev) => {
+        const next = [...prev];
+        const chain = next[cellIndex];
+        if (!chain) return prev;
+        const { peer: _p, publish: _pub, ...rest } = chain as Record<string, unknown>;
+        next[cellIndex] = peer
+          ? { ...rest, peer, ...(publish ? { publish: true } : {}) }
+          : { ...rest };
+        return next as typeof prev;
+      });
+    },
+    []
+  );
 
   /**
    * Apply **Upgrade recipe** to one cell, from either view.
@@ -1784,6 +1828,7 @@ export function useNotebook() {
     appendPreset,
     appendPresetPair,
     applyCellRecipeText,
+    setCellPeer,
     loadRecipeText,
     cellRecipeSource,
     upgradeCellRecipe,
