@@ -74,6 +74,7 @@ import {
   RunBar,
   ReadinessBar,
   OutputList,
+  PlanPanel,
   SessionStrip,
   TopBar,
   type SuiteTone,
@@ -81,6 +82,7 @@ import {
 } from "./widgets/index";
 import { getStep } from "../lib/toolkit/registry.js";
 import { compileRecipe, projectTypeForMember } from "../lib/toolkit/recipe.js";
+import { planRun } from "../lib/toolkit/plan.js";
 import { stepOverridesProfile } from "../lib/pgp/profile-from-step.js";
 import {
   cellPipelineTip,
@@ -545,6 +547,48 @@ export function ToolkitShell() {
     () => exposureTrace(nb.chains).steps,
     [nb.chains]
   );
+  /**
+   * Where every cell runs, and why — computed from the notebook's own text.
+   *
+   * **`nb.source`, never a re-serialization of `nb.chains`.** Serializing the
+   * chains drops blank cells, so every cell after the first blank shifts by
+   * one, and the plan's indices then disagree with the manifest's and with the
+   * editor's. That is the defect the cell-index work closed, and it comes back
+   * the moment a caller rebuilds the text instead of using it.
+   *
+   * The roster is only the peers whose key we actually have — a label with no
+   * fingerprint is somebody we have not verified, and handing that to the
+   * planner as though it were a person is how `@alice` comes to mean whoever
+   * answered. Absent peers, `planRun` is still worth running: it reports the
+   * solo case, and it is the surface that makes a `@peer` header mean anything
+   * before a session exists.
+   *
+   * `me` is deliberately not guessed. Nothing yet binds this browser to a
+   * label, and the planner has a question for exactly that (`who-am-i`) which
+   * the panel renders — a fabricated `me` would silently mark somebody else's
+   * cells as mine.
+   */
+  const runPlan = useMemo(() => {
+    let plan;
+    try {
+      const roster = Object.fromEntries(
+        (nb.quorumState.peers || [])
+          .filter((p) => p.fingerprint)
+          .map((p) => [p.id.replace(/^@/, ""), p.fingerprint as string])
+      );
+      plan = planRun(compileRecipe(nb.source), { roster });
+    } catch {
+      return null;
+    }
+    // A notebook that does not compile has no plan, and `planRun` says so by
+    // *returning* an `uncompiled` refusal rather than throwing — so a `catch`
+    // never sees it. Without this, a brand-new empty notebook opened its
+    // Connections tab onto a red "this recipe does not compile" complaint
+    // about the absence of a recipe nobody had written yet. The editor owns
+    // that conversation; this panel only answers where cells run.
+    if (plan.refusals.some((r) => r.reason === "uncompiled")) return null;
+    return plan;
+  }, [nb.source, nb.quorumState.peers]);
   /**
    * The Activity log (§36). Session-scoped and never persisted: it names key
    * ids and destinations, and localStorage is XSS-readable.
@@ -2427,6 +2471,21 @@ export function ToolkitShell() {
                   </p>
                 </div>
                 <ScrollArea className="flex-1">
+                  {/* The plan sits above the live connections because it is
+                      the commitment and they are the observation — what this
+                      notebook says it will do, before anything has happened.
+                      It renders whether or not a session exists: a `@peer`
+                      header means something the moment it is typed, and having
+                      to open a connection to find out where a cell would run
+                      is how placement stays invisible until it refuses. */}
+                  {runPlan ? (
+                    <section className="mb-3 flex flex-col gap-1.5">
+                      <h4 className="text-[11px] font-bold text-[var(--foreground)]">
+                        This notebook
+                      </h4>
+                      <PlanPanel plan={runPlan} />
+                    </section>
+                  ) : null}
                   <ConnectionsPanel
                     session={{
                       phase: nb.quorumState.phase,

@@ -34,6 +34,7 @@
     "RecipientsCard": "src/toolkit/widgets/RecipientsCard.tsx",
     "QrArtifact": "src/toolkit/widgets/QrArtifact.tsx",
     "GateBanner": "src/toolkit/widgets/GateBanner.tsx",
+    "PlanPanel": "src/toolkit/widgets/PlanPanel.tsx",
     "SessionStrip": "src/toolkit/widgets/SessionStrip.tsx",
     "ConnectionsPanel": "src/toolkit/widgets/ConnectionsPanel.tsx",
     "ApprovalBanner": "src/toolkit/widgets/ApprovalBanner.tsx",
