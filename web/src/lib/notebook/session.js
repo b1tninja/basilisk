@@ -38,14 +38,15 @@
  * `readyState` — because the frames on it are this layer's own, sealed under a key
  * this layer holds and the transport cannot read.
  *
- * **The session is a courier, not a signer.** Two more payload kinds ride the
- * `session` frame beside `kc` and `chat` — a signed run manifest and a signed
- * manifest attestation. Both arrive already signed and leave already signed:
- * `publishManifest` refuses anything that is not a cleartext-signed document,
- * and there is no path from a payload to `this.privateKey`. The private key is
- * here to seal signalling envelopes for a room this session is already in, and
- * a commitment about what a notebook will do is not that. `approval-gate.js`
- * puts it as *"Grants are minted only by a human clicking, never by a param."*
+ * **The session is a courier, not a signer.** Three more payload kinds ride the
+ * `session` frame beside `kc` and `chat` — a signed run manifest, a signed
+ * manifest attestation and a cell handoff offer. The two signed ones arrive
+ * already signed and leave already signed: `publishManifest` refuses anything
+ * that is not a cleartext-signed document, and there is no path from a payload
+ * to `this.privateKey`. The private key is here to seal signalling envelopes for
+ * a room this session is already in, and a commitment about what a notebook will
+ * do is not that. `approval-gate.js` puts it as *"Grants are minted only by a
+ * human clicking, never by a param."*
  *
  * The mirror of that rule is that **an arriving manifest runs nothing and
  * attests to nothing**. It is verified, parsed and handed to `onManifest` as an
@@ -53,10 +54,21 @@
  * `useNotebook.loadFromHash` loads without running. Answering a manifest is a
  * recipe somebody types.
  *
- * Both kinds inherit `chat`'s refusal exactly: nothing is believed from a peer
- * whose key is not confirmed. `lib/notebook/documents.js` holds what happens
- * after that — above all, that a document is checked against *this* peer's key
- * and no other.
+ * **A handoff offer runs nothing either, and it is not signed.** `sendOffer`
+ * carries the JSON `lib/toolkit/handoff.js` built, to *one* confirmed peer,
+ * because an offer is a delivery rather than a commitment: it asserts nothing
+ * the recipient takes on trust, since every field of it is checked against the
+ * recipient's own plan, their own notebook and a manifest they already hold.
+ * Signing it would mean minting a document no recipe produces, which is the
+ * temptation this layer refused for the manifest. What arrives is parsed and
+ * handed to `onOffer` as something pending; **nothing here accepts it**, and
+ * there is no method on this class that could — accepting registers slot
+ * bindings, and that is a person's act in the shell above.
+ *
+ * All three kinds inherit `chat`'s refusal exactly: nothing is believed from a
+ * peer whose key is not confirmed. `lib/notebook/documents.js` holds what
+ * happens after that — above all, that a document is checked against *this*
+ * peer's key and no other.
  *
  * **Why the driver could move, after two commits said it could not.**
  * `derivePairwiseSessionKey` binds **both DTLS fingerprints** into the
@@ -96,6 +108,7 @@ import {
 import {
   assertDocumentFits,
   looksCleartextSigned,
+  readHandoffOffer,
   readSignedAttestation,
   readSignedManifest,
 } from "./documents.js";
@@ -144,6 +157,10 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   One slot rather than a list: a peer's commitment is whatever they last
  *   stood behind, and the documents themselves reach the application through
  *   `onManifest`.
+ * @property {Set<string>} offered
+ *   Cell handoff offers this peer has held out, as `manifest:cell`. A record
+ *   that an offer arrived, never that it was taken — nothing in this class can
+ *   take one. Bounded the same way `attested` is.
  */
 
 /**
@@ -169,6 +186,14 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   from: string, digest: string, signed: string, ts: number,
  *   attestation: import("../toolkit/attest.js").ManifestAttestation,
  * }) => void} [onAttestation]
+ * @property {(doc: {
+ *   from: string, cell: number, manifest: string, ts: number,
+ *   offer: import("../toolkit/handoff.js").HandoffOffer,
+ * }) => void} [onOffer]
+ *   A cell handoff offer that arrived from a confirmed peer and parsed. It is
+ *   **pending**: nothing has been checked against a plan, no slot has been
+ *   registered and no cell has run. Accepting is `acceptHandoffOffer` plus a
+ *   person, in the shell above.
  * @property {(status: string) => void} [onStatus]
  * @property {(err: Error) => void} [onError]
  */
@@ -202,6 +227,7 @@ export class NotebookSession {
     this.onChat = opts.onChat;
     this.onManifest = opts.onManifest;
     this.onAttestation = opts.onAttestation;
+    this.onOffer = opts.onOffer;
     this.onStatus = opts.onStatus;
     this.onError = opts.onError;
 
@@ -625,6 +651,61 @@ export class NotebookSession {
   }
 
   /**
+   * Hand one cell handoff offer to one peer.
+   *
+   * **Addressed, not broadcast**, and that is the only place an offer is
+   * addressed at all: the document deliberately names no assignee, because who
+   * runs a cell is the recipient's plan's answer and a second answer in a field
+   * the sender chose is a second thing that can be wrong. So the wire carries
+   * the addressing, where it is transport and not a claim.
+   *
+   * Throws rather than returning 0, for `sendChatTo`'s reason: the author asked
+   * to hand a cell to one peer, and silence would leave them believing it
+   * landed.
+   *
+   * @param {string} toFpr  fingerprint or unambiguous prefix
+   * @param {string} json   `offerToJson(offer)` — see `lib/toolkit/handoff.js`
+   * @returns {Promise<number>} peers written to (never 0 — throws instead)
+   */
+  async sendOffer(toFpr, json) {
+    const doc = String(json ?? "");
+    // Refused before anything is encrypted, so an oversized offer fails in the
+    // offerer's hands and not in the room.
+    assertDocumentFits(doc, "handoff offer");
+    const want = String(toFpr || "").replace(/\s+/g, "").toUpperCase();
+    if (!want) {
+      throw new Error(
+        "notebook: a handoff offer goes to one peer — name the fingerprint it " +
+          "is for. An offer says nothing about who runs the cell, so there is " +
+          "nobody for an unaddressed one to reach."
+      );
+    }
+    const body = JSON.stringify({ kind: "handoff", doc, ts: Date.now() });
+    let sent = 0;
+    for (const [fpr, peer] of this.peers) {
+      if (!String(fpr || "").toUpperCase().startsWith(want)) continue;
+      if (
+        !peer.channel ||
+        peer.channel.readyState !== "open" ||
+        !peer.sessionKey ||
+        !peer.kcVerified
+      ) {
+        continue;
+      }
+      const blob = await encryptSessionPayload(peer.sessionKey, body);
+      peer.channel.send(JSON.stringify({ v: 1, blob }));
+      sent += 1;
+    }
+    if (!sent) {
+      throw new Error(
+        `notebook: no verified peer with fingerprint ${want} is connected, so ` +
+          "this cell was handed to nobody"
+      );
+    }
+    return sent;
+  }
+
+  /**
    * Which peers have attested to a manifest digest.
    *
    * Fingerprints, because that is the session's vocabulary — it never learns
@@ -1009,6 +1090,7 @@ export class NotebookSession {
       ignoreOffer: false,
       attested: new Set(),
       publishedManifest: null,
+      offered: new Set(),
     };
   }
 
@@ -1201,6 +1283,10 @@ export class NotebookSession {
       }
       if (msg.kind === "manifest" || msg.kind === "attestation") {
         await this._onDocument(peerFpr, peer, msg);
+        return;
+      }
+      if (msg.kind === "handoff") {
+        this._onOffer(peerFpr, peer, msg);
       }
     } catch (err) {
       this.onError?.(
@@ -1279,6 +1365,68 @@ export class NotebookSession {
           }`
         )
       );
+    }
+  }
+
+  /**
+   * A cell handoff offer off a peer's channel.
+   *
+   * The same key-confirmation refusal the documents inherit, for the same
+   * reason: an unconfirmed peer is not anyone in particular, and an offer is a
+   * peer proposing to put values into this machine's slots.
+   *
+   * Everything past that is shape. The offer is parsed — which refuses any
+   * field beyond the seven it may carry — and handed on **pending**. Nothing
+   * here checks it against a plan, and nothing here could: this layer has no
+   * notebook, no plan and no slot registry, which is exactly why it is safe for
+   * it to be the courier. `acceptHandoffOffer` does the checking, in the shell,
+   * for a person who clicked.
+   *
+   * Failures are reported and swallowed, as the documents' are. A malformed
+   * offer is one peer's frame going nowhere.
+   *
+   * @param {string} peerFpr
+   * @param {NotebookPeerState} peer
+   * @param {{ doc?: string, ts?: number }} msg
+   */
+  _onOffer(peerFpr, peer, msg) {
+    if (!peer.kcVerified) return;
+    const doc = String(msg.doc ?? "");
+    const ts = Number(msg.ts) || Date.now();
+    try {
+      const offer = readHandoffOffer(doc);
+      this._rememberOffer(peer, `${offer.manifest}:${offer.cell}`);
+      this._emitRoster();
+      this.onOffer?.({
+        from: peerFpr,
+        cell: offer.cell,
+        manifest: offer.manifest,
+        offer,
+        ts,
+      });
+    } catch (err) {
+      this.onError?.(
+        new Error(
+          `notebook: handoff offer from ${peerFpr.slice(0, 8)}… refused — ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
+      );
+    }
+  }
+
+  /**
+   * Record that a peer held out an offer. Bounded exactly as `attested` is, and
+   * for the same reason: a confirmed peer can still be a broken one.
+   * @param {NotebookPeerState} peer
+   * @param {string} key
+   */
+  _rememberOffer(peer, key) {
+    if (peer.offered.has(key)) return;
+    peer.offered.add(key);
+    while (peer.offered.size > ATTESTED_PER_PEER_CAP) {
+      const oldest = peer.offered.values().next().value;
+      peer.offered.delete(oldest);
     }
   }
 

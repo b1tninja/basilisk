@@ -388,33 +388,83 @@ function collectProduced(steps, add) {
 }
 
 /**
- * Where every slot in the notebook comes from, and whether anyone owns it.
+ * The chains a plan calls cells, in the order it numbers them.
  *
- * The type map is `walkPipelineTypes`', filled by the walk itself as it passes
- * each `out` — one shared map across all the chains, so a later cell reading
- * `$kpA` sees the type the earlier cell registered. A second type walk here
- * would be a second answer to "what is in this slot".
+ * **This is the only definition of "cell index" in the placement stack.** A
+ * notebook's chains and a plan's cells are not the same list: an empty chain is
+ * a blank line in the editor and not a cell, so it is filtered out here and
+ * every index below counts non-empty chains. `engine.js` says the same thing in
+ * its own words when it lines the gate up (`filled`), and `handoff.js` names a
+ * cell with a number produced by this function rather than by a second filter
+ * that happens to agree today.
+ *
+ * @param {*} compiled  a `compileRecipe` result, or the AST from one
+ * @returns {import("./recipe.js").RecipeChain[]}
+ */
+export function planChains(compiled) {
+  const source = /** @type {*} */ (compiled);
+  const ast = source?.ast !== undefined ? source.ast : source;
+  return recipeChains(ast).filter((c) => c?.steps?.length);
+}
+
+/**
+ * What is in every labeled slot this notebook writes.
+ *
+ * `walkPipelineTypes`' own map, filled by the walk itself as it passes each
+ * `out` — one shared map across all the chains, so a later cell reading `$kpA`
+ * sees the type the earlier cell registered. A second type walk would be a
+ * second answer to "what is in this slot", which is why this is exported and
+ * `slotOrigins` calls it rather than keeping a private copy.
+ *
+ * @param {import("./recipe.js").RecipeChain[]} chains
+ * @returns {Map<string, import("./types.js").RefinedType>}
+ */
+function typesOf(chains) {
+  /** @type {Map<string, import("./types.js").RefinedType>} */
+  const types = new Map();
+  for (const chain of chains) {
+    try {
+      walkPipelineTypes(chain?.steps || [], { getStep }, types);
+    } catch (_) {
+      // A chain the type walk cannot finish still has an owner for whatever it
+      // writes. Placement is a question about headers and slot names, and it
+      // must not become unanswerable because a type could not be resolved.
+    }
+  }
+  return types;
+}
+
+/**
+ * What is in every slot of a compiled notebook, by label.
+ *
+ * The handoff's second private-value guard reads this: a slot whose type says
+ * `keypair` is key material whatever the ownership analysis concluded about who
+ * holds it. A label this map does not carry is one nothing could be established
+ * about, and a caller checking whether a value may leave the machine must treat
+ * that as "no" rather than as "unconstrained".
+ *
+ * @param {*} compiled  a `compileRecipe` result, or the AST from one
+ * @returns {Map<string, import("./types.js").RefinedType>}
+ */
+export function slotTypes(compiled) {
+  return typesOf(planChains(compiled));
+}
+
+/**
+ * Where every slot in the notebook comes from, and whether anyone owns it.
  *
  * @param {import("./recipe.js").RecipeChain[]} chains
  * @returns {{ owners: Map<string, { cell: number, peer: string, published: boolean }>,
  *   types: Map<string, import("./types.js").RefinedType> }}
  */
 function slotOrigins(chains) {
-  /** @type {Map<string, import("./types.js").RefinedType>} */
-  const types = new Map();
+  // Types first, over the whole notebook: the walk registers each chain's `out`
+  // slots as it goes, and a chain below may read them.
+  const types = typesOf(chains);
   /** @type {Map<string, { cell: number, peer: string, published: boolean }>} */
   const owners = new Map();
   for (let i = 0; i < chains.length; i++) {
     const steps = chains[i]?.steps || [];
-    // Types first: the walk registers this chain's `out` slots as it goes, and
-    // a chain below may read them.
-    try {
-      walkPipelineTypes(steps, { getStep }, types);
-    } catch (_) {
-      // A chain the type walk cannot finish still has an owner for whatever it
-      // writes. Placement is a question about headers and slot names, and it
-      // must not become unanswerable because a type could not be resolved.
-    }
     const peer = String(chains[i]?.peer || "");
     const published = !!chains[i]?.publish;
     collectProduced(steps, (label) => {
@@ -429,10 +479,17 @@ function slotOrigins(chains) {
 
 /**
  * Is this value one that may leave the machine that produced it?
+ *
+ * Exported because `handoff.js` asks exactly this question about a value an
+ * offer would carry, and asking it a second way would be a second answer. A
+ * `publish` cell and a handoff payload are the same act — a value crossing a
+ * machine boundary — so the closed list above governs both, and a role added to
+ * it is argued for once.
+ *
  * @param {import("./types.js").RefinedType|undefined} type
  * @returns {{ known: boolean, publishable: boolean, role: string }}
  */
-function publishability(type) {
+export function publishability(type) {
   if (!type || !type.base || type.base === "none") {
     return { known: false, publishable: false, role: "" };
   }
@@ -513,8 +570,7 @@ function andList(list) {
 export function planRun(compiled, opts = {}) {
   const source = /** @type {*} */ (compiled);
   const validation = source?.validation;
-  const ast = source?.ast !== undefined ? source.ast : source;
-  const chains = recipeChains(ast).filter((c) => c?.steps?.length);
+  const chains = planChains(source);
 
   const log = mismatchLog();
   /** @type {PlanRefusal[]} */

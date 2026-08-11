@@ -1,6 +1,10 @@
 /**
- * The two documents a notebook session carries between peers, and the checks
- * that must pass before either one is believed.
+ * The documents a notebook session carries between peers, and the checks that
+ * must pass before any of them is believed.
+ *
+ * Two are signed — a run manifest and a manifest attestation — and everything
+ * below about "signed by *this* peer" is about them. The third, a cell handoff
+ * offer, is not signed and says why at `readHandoffOffer`.
  *
  * **The session is a courier, not a signer.** A run manifest and a manifest
  * attestation are produced by recipes the user read before pressing Run —
@@ -64,6 +68,7 @@
 import { readCleartextMessage, verify } from "openpgp";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 import { parseAttestation } from "../toolkit/attest.js";
+import { parseHandoffOffer } from "../toolkit/handoff.js";
 import { manifestDigest, parseManifest } from "../toolkit/manifest.js";
 
 /**
@@ -245,6 +250,32 @@ export async function readSignedManifest(signed, { key, fpr }) {
   const text = await verifySignedBy(signed, { key, fpr, what: "manifest" });
   const manifest = parseManifest(text);
   return { manifest, digest: await manifestDigest(manifest), text };
+}
+
+/**
+ * A cell handoff offer, checked for size and shape and nothing else.
+ *
+ * **The one carried thing that is not signed, deliberately.** A manifest and an
+ * attestation are commitments, and a signature is what lets one be shown to
+ * somebody who was not in the room. An offer is a delivery: it carries public
+ * values for a cell, and it asserts nothing the recipient takes on trust — every
+ * field of it is checked by `acceptHandoffOffer` against the recipient's own
+ * plan, their own notebook and a manifest they already hold, and the values
+ * themselves become inputs their own receipt digests. Signing it would mean
+ * minting a document no recipe produces, on a private key this layer must never
+ * reach; that is the temptation the module header refuses, and it is not worth
+ * re-opening for a document whose authority is local to the reader anyway.
+ *
+ * The sender is still the peer whose pairwise session key opened the frame,
+ * which is the same identity claim `chat` rests on, and the same one step 1 of
+ * the bridge above starts from.
+ *
+ * @param {string} json  `offerToJson(offer)`
+ * @returns {import("../toolkit/handoff.js").HandoffOffer}
+ */
+export function readHandoffOffer(json) {
+  assertDocumentFits(json, "handoff offer");
+  return parseHandoffOffer(String(json ?? ""));
 }
 
 /**
