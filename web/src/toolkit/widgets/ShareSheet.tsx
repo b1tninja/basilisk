@@ -1,0 +1,275 @@
+import { type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import { cn } from "@/lib/cn";
+
+/** `hashForNotebook`'s answer, carried whole so the refusal keeps its reason. */
+export type RecipeLink = { ok: true; url: string } | { ok: false; reason: string };
+
+export type ShareSheetProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  recipeLink: RecipeLink;
+  onCopyRecipeLink?: () => void;
+  onShowRecipeQr?: () => void;
+  /** A finished run's proof. Absent means nothing has been run yet. */
+  proof?: { manifest: string; receipt: string; signedBy?: string } | null;
+  onExportProof?: () => void;
+  /**
+   * The live session. `joined` and `verified` are deliberately two numbers —
+   * see the note on `Tier` below.
+   */
+  session?: {
+    room: string;
+    invite: string;
+    joined: number;
+    expected?: number;
+    verified: number;
+  } | null;
+  onStartSession?: () => void;
+  onCopyInvite?: () => void;
+  className?: string;
+};
+
+/**
+ * Share this notebook — three things, not one.
+ *
+ * "Share" is a single word covering three transfers that differ in what
+ * actually crosses the wire, and therefore in what trust they need:
+ *
+ * - **The recipe** — text, in the URL fragment, which never reaches a server.
+ *   No trust required; the reader gets an identical, unrun notebook.
+ * - **A run's proof** — the signed manifest and receipt. Still nobody online;
+ *   the reader needs your public key to check it.
+ * - **The doing of it** — a live session where cells placed with `@peer`
+ *   headers run on their own machine. **Nothing private moves at all**: only
+ *   offers, results and attestations cross.
+ *
+ * One button covering all three would make the safe case and the case needing
+ * mutual verification look identical at the moment of clicking. So each is its
+ * own row, named by what moves.
+ *
+ * The recipe still travels by the first mechanism even when a session exists.
+ * The session does not carry the notebook — both sides arrive at the same text
+ * independently, which is what makes this a reproducible build rather than a
+ * screen share, and it is the same layering as the quorum sitting on top of
+ * the transport rather than replacing it.
+ *
+ * **An unavailable row says why.** Hiding the proof row until a run exists
+ * teaches nobody what it is, and hiding the recipe row when the secret guard
+ * refuses it looks like a bug. `hashForNotebook` already returns its reason;
+ * this is the surface that keeps it rather than flashing it past in a status
+ * line.
+ */
+export function ShareSheet({
+  open,
+  onOpenChange,
+  recipeLink,
+  onCopyRecipeLink,
+  onShowRecipeQr,
+  proof,
+  onExportProof,
+  session,
+  onStartSession,
+  onCopyInvite,
+  className,
+}: ShareSheetProps) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className={className}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        data-share-sheet
+      >
+        <SheetHeader>
+          <SheetTitle>Share this notebook</SheetTitle>
+          <SheetDescription>
+            Three different things, each needing different trust. Nothing here
+            uploads the notebook.
+          </SheetDescription>
+        </SheetHeader>
+
+        {/* Hoisted, because the tier that carries this sits third and fell
+            below the fold — the one state this sheet exists to make visible
+            was the one needing a scroll to find. The tiers stay in their
+            order: they are a ladder of increasing trust, and shuffling the
+            live session to the top when it happens to exist would make the
+            sheet's structure change shape under the reader. The urgent fact
+            gets promoted instead of the section that holds it. */}
+        {session && session.verified < session.joined ? (
+          <p
+            className="rounded-[6px] border border-[var(--error)] px-2 py-1.5 text-[11px] text-[var(--error)]"
+            data-unverified-warning
+          >
+            {session.joined - session.verified} of {session.joined} who joined
+            are still unconfirmed. Until you compare codes, a label names
+            nobody and no cell will run on them.
+          </p>
+        ) : null}
+
+        <div className="flex flex-col gap-3 overflow-y-auto py-1">
+          <Tier
+            title="Send the recipe"
+            what="The notebook text, carried in the link's fragment — it never reaches a server. They open an identical, unrun notebook."
+            trust="No trust needed"
+            blocked={recipeLink.ok ? null : recipeLink.reason}
+            value={recipeLink.ok ? recipeLink.url : ""}
+          >
+            <Button onClick={onCopyRecipeLink} disabled={!recipeLink.ok}>
+              Copy link
+            </Button>
+            <Button variant="outline" onClick={onShowRecipeQr} disabled={!recipeLink.ok}>
+              QR
+            </Button>
+          </Tier>
+
+          <Tier
+            title="Send what you ran"
+            what="The signed manifest and receipt alongside the recipe, so they can check your run reproduced. Nobody needs to be online."
+            trust="They need your public key to check it"
+            blocked={proof ? null : "Nothing has been run yet — a proof describes a run that happened."}
+            tone="not-yet"
+            value={
+              proof
+                ? `manifest ${proof.manifest} · receipt ${proof.receipt}${
+                    proof.signedBy ? ` · signed ${proof.signedBy}` : ""
+                  }`
+                : ""
+            }
+          >
+            <Button onClick={onExportProof} disabled={!proof}>
+              Export proof
+            </Button>
+          </Tier>
+
+          <Tier
+            title="Run it together"
+            what="A live session. Cells you place on a peer run on their machine — no private value moves. The recipe still travels by the link above."
+            trust="Both sides verify each other"
+            blocked={null}
+            value={session ? `room ${session.room}` : ""}
+          >
+            {session ? (
+              <>
+                <Button variant="outline" onClick={onCopyInvite}>
+                  Copy invite
+                </Button>
+                <RosterCount
+                  joined={session.joined}
+                  verified={session.verified}
+                  expected={session.expected}
+                />
+              </>
+            ) : (
+              <Button onClick={onStartSession}>Start shared session</Button>
+            )}
+          </Tier>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/**
+ * One transfer.
+ *
+ * `blocked` is a sentence rather than a boolean because every way this can be
+ * unavailable has a different reason a reader can act on, and "Export proof
+ * (disabled)" tells them none of them.
+ */
+function Tier({
+  title,
+  what,
+  trust,
+  blocked,
+  tone = "refused",
+  value,
+  children,
+}: {
+  title: string;
+  what: string;
+  trust: string;
+  blocked: string | null;
+  /**
+   * Why it is unavailable, which is not one thing. `refused` is the guard
+   * saying no — sharing this would hand over a key — and earns the error
+   * colour. `not-yet` is an absence the reader has done nothing wrong to
+   * cause; painting "nothing has been run yet" red makes an ordinary empty
+   * state look like a fault.
+   */
+  tone?: "refused" | "not-yet";
+  value: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      className={cn(
+        "flex flex-col gap-1.5 rounded-[8px] border border-[var(--border)] p-2.5",
+        blocked && "opacity-70"
+      )}
+      data-tier={title}
+      data-blocked={blocked ? "yes" : "no"}
+    >
+      <h4 className="text-[12.5px] font-semibold text-[var(--foreground)]">{title}</h4>
+      <p className="text-[11px] leading-relaxed text-[var(--muted-foreground)]">{what}</p>
+      {value ? (
+        <code className="block truncate rounded-[6px] border border-[var(--border)] px-2 py-1 font-mono text-[10px] text-[var(--muted-foreground)]">
+          {value}
+        </code>
+      ) : null}
+      {blocked ? (
+        <p
+          className={cn(
+            "text-[10.5px]",
+            tone === "refused" ? "text-[var(--error)]" : "text-[var(--muted-foreground)]"
+          )}
+          data-blocked-reason
+          data-tone={tone}
+        >
+          {blocked}
+        </p>
+      ) : (
+        <p className="text-[10px] text-[var(--muted-foreground)]">{trust}</p>
+      )}
+      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * Joined and verified, as two numbers.
+ *
+ * They are never the same claim. Someone opening the invite link is *joined*;
+ * only a matching comparison of the short code makes them *verified*, and a
+ * single "2 peers" hides exactly the gap an attacker holding a forwarded link
+ * would sit in. The session layer already refuses to place cells on an
+ * unverified peer — this is that distinction, said out loud, at the moment the
+ * invite is being handed out.
+ */
+function RosterCount({
+  joined,
+  verified,
+  expected,
+}: {
+  joined: number;
+  verified: number;
+  expected?: number;
+}) {
+  const pending = joined - verified;
+  return (
+    <span className="font-mono text-[10px] text-[var(--muted-foreground)]" data-roster-count>
+      {joined} joined{expected ? ` of ${expected}` : ""} ·{" "}
+      <span className={pending > 0 ? "text-[var(--error)]" : undefined}>
+        {verified} verified
+      </span>
+      {pending > 0 ? ` · ${pending} still to confirm` : ""}
+    </span>
+  );
+}

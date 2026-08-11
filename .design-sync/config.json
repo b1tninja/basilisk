@@ -35,6 +35,7 @@
     "QrArtifact": "src/toolkit/widgets/QrArtifact.tsx",
     "GateBanner": "src/toolkit/widgets/GateBanner.tsx",
     "PlanPanel": "src/toolkit/widgets/PlanPanel.tsx",
+    "ShareSheet": "src/toolkit/widgets/ShareSheet.tsx",
     "SessionStrip": "src/toolkit/widgets/SessionStrip.tsx",
     "ConnectionsPanel": "src/toolkit/widgets/ConnectionsPanel.tsx",
     "ApprovalBanner": "src/toolkit/widgets/ApprovalBanner.tsx",
@@ -48,11 +49,30 @@
     "ShareIdentity": "src/toolkit/widgets/ShareIdentity.tsx"
   },
   "overrides": {
-    "Sheet": { "cardMode": "single", "primaryStory": "InvitePeer" },
-    "DropdownMenu": { "cardMode": "single", "primaryStory": "PeerActions" },
-    "Tooltip": { "cardMode": "single", "primaryStory": "Default" },
-    "PresetMenu": { "cardMode": "single", "primaryStory": "Default" },
-    "CeremonySheet": { "cardMode": "single", "primaryStory": "Verified" }
+    "Sheet": {
+      "cardMode": "single",
+      "primaryStory": "InvitePeer"
+    },
+    "DropdownMenu": {
+      "cardMode": "single",
+      "primaryStory": "PeerActions"
+    },
+    "Tooltip": {
+      "cardMode": "single",
+      "primaryStory": "Default"
+    },
+    "PresetMenu": {
+      "cardMode": "single",
+      "primaryStory": "Default"
+    },
+    "CeremonySheet": {
+      "cardMode": "single",
+      "primaryStory": "Verified"
+    },
+    "ShareSheet": {
+      "cardMode": "single",
+      "primaryStory": "SessionJoinedNotVerified"
+    }
   },
   "readmeHeader": ".design-sync/conventions.md"
 }

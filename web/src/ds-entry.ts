@@ -119,6 +119,7 @@ export { GateBanner, GateFact } from "./toolkit/widgets/GateBanner";
  * the Shamir threshold, where "any k of these n" is simply what a quorum is.
  */
 export { PlanPanel } from "./toolkit/widgets/PlanPanel";
+export { ShareSheet } from "./toolkit/widgets/ShareSheet";
 export { SessionStrip } from "./toolkit/widgets/SessionStrip";
 export { ConnectionsPanel } from "./toolkit/widgets/ConnectionsPanel";
 export { ApprovalBanner } from "./toolkit/widgets/ApprovalBanner";
