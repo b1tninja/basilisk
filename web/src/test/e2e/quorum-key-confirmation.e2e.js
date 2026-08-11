@@ -24,7 +24,7 @@
  * could not name `NotebookSession` from the page, and that standing this up would
  * mean "adding a stable export surface". It does not. Class *method* names
  * survive minification even when the module's export bindings do not, so the
- * constructor is identifiable by its shape — `start`/`stop`/`_onMailbox`/
+ * constructor is identifiable by its shape — `start`/`stop`/`_onRelayEnvelope`/
  * `_maybeDeriveSession`/`_maybeSendKeyConfirm` on one prototype — plus a string
  * it ships (`"Key confirmation failed"`). `findNotebookSession` below scans the
  * chunks the page *already loaded* and requires exactly one match. Nothing is
@@ -86,7 +86,11 @@ const LOAD_SESSION = `(async () => {
   )];
   const WANTED = [
     "start", "stop", "sendChat", "sendChatTo",
-    "_onMailbox", "_handleSignal", "_maybeDeriveSession", "_maybeSendKeyConfirm",
+    // \`_onRelayEnvelope\`, not \`_onMailbox\`: the latter was the HTTP mailbox's
+    // entry point and the Web PubSub migration deleted it, so this scan matched
+    // nothing and every test below skipped. The sibling arc suite had already
+    // been corrected; this copy had not.
+    "_onRelayEnvelope", "_handleSignal", "_maybeDeriveSession", "_maybeSendKeyConfirm",
   ];
   const found = [];
   for (const p of paths) {

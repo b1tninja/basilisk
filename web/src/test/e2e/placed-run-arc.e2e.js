@@ -1046,12 +1046,23 @@ describe("the product cannot accept an offer at all", () => {
     acceptCellResult: "an answer to a question nobody asked",
   };
 
-  it("ships none of the five functions the arc is made of", () => {
-    // Rollup drops them because nothing imports them: there is no page, no op
-    // and no mount that plans a run, builds an offer, accepts one, builds a
-    // result or accepts one. If a shell is ever written, this fails — and the
-    // suite above should then drive the shipped chunk instead of a bundle.
-    const present = Object.entries(ONLY_IN)
+  it("ships the planner, because a shell now asks it where cells run", () => {
+    // This assertion used to be `present).toEqual([])` for all five, and said
+    // that if a shell were ever written it would fail. One was: `PlanPanel`
+    // reads `planRun` and renders it in the Connections tab, so Rollup keeps
+    // it. Stated as the narrower fact rather than deleted, because "the
+    // planner ships" and "the handoff does not" are now two different truths
+    // and collapsing them would lose the second.
+    expect(chunks.some((c) => c.text.includes(ONLY_IN.planRun))).toBe(true);
+  });
+
+  it("still ships no way to make or accept an offer", () => {
+    // The other four remain dropped: nothing plans a handoff, builds an offer,
+    // accepts one, builds a result or accepts one. A readout is not a
+    // transport — `PlanPanel` says where a cell *would* run, and no code yet
+    // carries a cell to the peer it names or brings an answer back.
+    const { planRun: _planner, ...handoff } = ONLY_IN;
+    const present = Object.entries(handoff)
       .filter(([, needle]) => chunks.some((c) => c.text.includes(needle)))
       .map(([fn]) => fn);
     expect(present).toEqual([]);
