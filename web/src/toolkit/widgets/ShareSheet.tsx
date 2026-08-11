@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -8,6 +8,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
+import { QrArtifact } from "./QrArtifact";
 
 /** `hashForNotebook`'s answer, carried whole so the refusal keeps its reason. */
 export type RecipeLink =
@@ -24,7 +25,25 @@ export type ShareSheetProps = {
   onOpenChange: (open: boolean) => void;
   recipeLink: RecipeLink;
   onCopyRecipeLink?: () => void;
-  onShowRecipeQr?: () => void;
+  /**
+   * The link as a QR, or why it is not one.
+   *
+   * A QR holds roughly 2,950 bytes and a notebook link may be up to 6,000, so
+   * "show a QR" is a request that can genuinely fail. It fails with a sentence
+   * rather than a broken image, and the file fallback sits beside it, because
+   * both are the same errand: getting the notebook across a gap with no
+   * network on either side.
+   */
+  recipeQr?: { ok: true; svg: string } | { ok: false; reason: string } | null;
+  /** Writes the notebook to a file — the air-gap path with no size limit. */
+  onSaveRecipe?: () => void;
+  /**
+   * Start with the code shown. For a catalog, which cannot press the button —
+   * the same reason `OtpCodeCard` takes an injectable `nowMs`. A QR that only
+   * exists after a click is a QR no sheet can photograph, and the refusal is
+   * the state most worth showing.
+   */
+  defaultQrOpen?: boolean;
   /** A finished run's proof. Absent means nothing has been run yet. */
   proof?: { manifest: string; receipt: string; signedBy?: string } | null;
   onExportProof?: () => void;
@@ -79,7 +98,9 @@ export function ShareSheet({
   onOpenChange,
   recipeLink,
   onCopyRecipeLink,
-  onShowRecipeQr,
+  recipeQr,
+  onSaveRecipe,
+  defaultQrOpen = false,
   proof,
   onExportProof,
   session,
@@ -87,6 +108,7 @@ export function ShareSheet({
   onCopyInvite,
   className,
 }: ShareSheetProps) {
+  const [showQr, setShowQr] = useState(defaultQrOpen);
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -133,9 +155,18 @@ export function ShareSheet({
             <Button onClick={onCopyRecipeLink} disabled={!recipeLink.ok}>
               Copy link
             </Button>
-            <Button variant="outline" onClick={onShowRecipeQr} disabled={!recipeLink.ok}>
-              QR
+            <Button
+              variant="outline"
+              onClick={() => setShowQr((v) => !v)}
+              disabled={!recipeLink.ok}
+              aria-expanded={showQr}
+            >
+              {showQr ? "Hide QR" : "QR"}
             </Button>
+            <Button variant="outline" onClick={onSaveRecipe} disabled={!recipeLink.ok}>
+              Save file
+            </Button>
+            {showQr ? <RecipeQr qr={recipeQr} /> : null}
           </Tier>
 
           <Tier
@@ -186,6 +217,35 @@ export function ShareSheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/**
+ * The link as a scannable code, or the reason it is not one.
+ *
+ * The refusal is the interesting half. A QR tops out near 2,950 bytes and a
+ * notebook link may be twice that, so a long notebook cannot cross an air gap
+ * this way — and a broken image, or a code that scans to a truncated link,
+ * would be a worse answer than a sentence. The sentence names the file
+ * instead, which is the same errand without the size limit.
+ *
+ * White background, always. A QR is read by a camera, not by a person, and
+ * inverting it under a dark theme is a real scanning failure rather than a
+ * styling preference — `QrArtifact` renders the SVG the encoder produced.
+ */
+function RecipeQr({ qr }: { qr: ShareSheetProps["recipeQr"] }) {
+  if (!qr) return null;
+  if (!qr.ok) {
+    return (
+      <p className="w-full text-[10.5px] text-[var(--muted-foreground)]" data-qr-refused>
+        {qr.reason}
+      </p>
+    );
+  }
+  return (
+    <div className="w-full pt-1" data-qr>
+      <QrArtifact content={qr.svg} label="this notebook's link" />
+    </div>
   );
 }
 

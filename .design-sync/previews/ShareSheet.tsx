@@ -1,4 +1,4 @@
-import { ShareSheet } from "basilisk-portal";
+import { ShareSheet, qrSvg } from "basilisk-portal";
 
 /*
  * Share this notebook — three transfers, named by what actually moves.
@@ -123,5 +123,53 @@ export const SessionVerified = () => (
     }}
     onCopyInvite={() => {}}
     onExportProof={() => {}}
+  />
+);
+
+/**
+ * The offline path, shown. A QR crosses an air gap with no network on either
+ * side and no third-party app in the middle — which is the whole reason it is
+ * here rather than a second copy of the link.
+ *
+ * The code is generated from the link beside it, not pasted in: a fixture
+ * picture of somebody else's QR would scan to somebody else's notebook.
+ */
+export const RecipeAsQr = () => (
+  <ShareSheet
+    open
+    onOpenChange={() => {}}
+    recipeLink={LINK}
+    recipeQr={{ ok: true, svg: qrSvg(LINK.url, { moduleSize: 3, margin: 2 }) }}
+    defaultQrOpen
+    onCopyRecipeLink={() => {}}
+    onSaveRecipe={() => {}}
+    onStartSession={() => {}}
+  />
+);
+
+/**
+ * **A QR that cannot be made.** The interesting half of offering one.
+ *
+ * A QR holds roughly 2,950 bytes; a notebook link may be 6,000. So this is not
+ * a rare edge — a real notebook of any size lands here. The sentence carries
+ * the actual character count, because "too long" without a number gives a
+ * reader nothing to act on, and it names the file, which is the same errand
+ * across the same gap without the limit.
+ */
+export const QrTooLong = () => (
+  <ShareSheet
+    open
+    onOpenChange={() => {}}
+    recipeLink={LINK}
+    recipeQr={{
+      ok: false,
+      reason:
+        "This notebook's link is 3,256 characters, which is more than a QR code can hold. " +
+        "Save it as a file instead — that crosses the same gap with no limit.",
+    }}
+    defaultQrOpen
+    onCopyRecipeLink={() => {}}
+    onSaveRecipe={() => {}}
+    onStartSession={() => {}}
   />
 );

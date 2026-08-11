@@ -86,6 +86,7 @@ import { getStep } from "../lib/toolkit/registry.js";
 import { compileRecipe, projectTypeForMember } from "../lib/toolkit/recipe.js";
 import { planRun } from "../lib/toolkit/plan.js";
 import { hashForNotebook, toolkitShareUrl } from "../lib/toolkit/fragment.js";
+import { qrSvg } from "../lib/qr.js";
 import { stepOverridesProfile } from "../lib/pgp/profile-from-step.js";
 import {
   cellPipelineTip,
@@ -314,6 +315,39 @@ function collectProfileOverrides(chains: RecipeChain[]): ChipPath[] {
     });
   });
   return out;
+}
+
+/**
+ * Write the notebook to a file the reader can carry.
+ *
+ * The third offline path, and the only one with no size limit. A link needs a
+ * channel to paste into; a QR needs the notebook to be under about 2,950
+ * bytes; a file needs neither, which is what makes it the honest fallback when
+ * the QR refuses.
+ *
+ * The recipe text and nothing else — no manifest, no receipt, no keys. It is
+ * the same bytes the link's fragment carries, so a notebook restored from a
+ * file and one restored from a link are the same notebook, which is the whole
+ * premise of treating the recipe as the build input.
+ */
+function saveNotebookFile(title: string, recipe: string): void {
+  const stem =
+    String(title || "notebook")
+      .trim()
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "notebook";
+  const blob = new Blob([recipe], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${stem}.recipe.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked on the next tick rather than immediately: Safari has historically
+  // read the blob after the click returns.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function workspaceStepCount(recipe: string): number {
@@ -659,6 +693,30 @@ export function ToolkitShell() {
     }
     return manifest || receipt ? { manifest, receipt, signedBy } : null;
   }, [nb.cellOutputs]);
+
+  /**
+   * The share link as a QR, or the reason it cannot be one.
+   *
+   * Encoding is attempted rather than predicted: the capacity depends on the
+   * error-correction level and the character set the encoder picks, so the
+   * only honest test is whether it fits. A notebook link may be up to 6,000
+   * characters and a QR holds roughly 2,950, so this genuinely fails on real
+   * notebooks — and the sentence says by how much, because "too long" without
+   * a number gives a reader nothing to act on.
+   */
+  const recipeQr = useMemo(() => {
+    if (!recipeLink.ok) return null;
+    try {
+      return { ok: true as const, svg: qrSvg(recipeLink.url, { moduleSize: 3, margin: 2 }) };
+    } catch {
+      return {
+        ok: false as const,
+        reason:
+          `This notebook's link is ${recipeLink.url.length} characters, which is more than a ` +
+          "QR code can hold. Save it as a file instead — that crosses the same gap with no limit.",
+      };
+    }
+  }, [recipeLink]);
 
   const peerChoices = useMemo(() => {
     const fromRoster = (nb.quorumState.peers || []).map((p) =>
@@ -3047,6 +3105,8 @@ export function ToolkitShell() {
           onOpenChange={setShareOpen}
           recipeLink={recipeLink}
           onCopyRecipeLink={() => void nb.copyShareLink()}
+          recipeQr={recipeQr}
+          onSaveRecipe={() => saveNotebookFile(nb.title, nb.source)}
           proof={runProof}
           session={
             nb.quorumState.room

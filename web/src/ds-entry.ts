@@ -88,6 +88,16 @@ export { ReceiptCard } from "./toolkit/widgets/ReceiptCard";
 export { RecipientsCard } from "./toolkit/widgets/RecipientsCard";
 export { QrArtifact } from "./toolkit/widgets/QrArtifact";
 /**
+ * The encoder behind `QrArtifact`, exported for the same reason
+ * `buttonVariants` is: the card takes SVG markup, and without the function
+ * that produces it nobody downstream can make one. A QR is also the offline
+ * half of sharing, so a design that shows a code needs to be able to generate
+ * a real one rather than paste a picture of somebody else's.
+ *
+ * Not in `componentSrcMap` — it renders nothing on its own.
+ */
+export { qrSvg } from "./lib/qr.js";
+/**
  * `GateFact` rides along with `GateBanner` because the banner cannot be used
  * without it. `facts` takes `<dt>`/`<dd>` pairs that must stay *direct*
  * children of the banner's grid — a wrapper element breaks the 68px column —
