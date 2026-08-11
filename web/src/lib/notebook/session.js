@@ -38,15 +38,15 @@
  * `readyState` — because the frames on it are this layer's own, sealed under a key
  * this layer holds and the transport cannot read.
  *
- * **The session is a courier, not a signer.** Three more payload kinds ride the
+ * **The session is a courier, not a signer.** Four more payload kinds ride the
  * `session` frame beside `kc` and `chat` — a signed run manifest, a signed
- * manifest attestation and a cell handoff offer. The two signed ones arrive
- * already signed and leave already signed: `publishManifest` refuses anything
- * that is not a cleartext-signed document, and there is no path from a payload
- * to `this.privateKey`. The private key is here to seal signalling envelopes for
- * a room this session is already in, and a commitment about what a notebook will
- * do is not that. `approval-gate.js` puts it as *"Grants are minted only by a
- * human clicking, never by a param."*
+ * manifest attestation, a cell handoff offer and a signed cell result. The three
+ * signed ones arrive already signed and leave already signed: `publishManifest`
+ * and `sendResult` refuse anything that is not a cleartext-signed document, and
+ * there is no path from a payload to `this.privateKey`. The private key is here
+ * to seal signalling envelopes for a room this session is already in, and a
+ * commitment about what a notebook will do is not that. `approval-gate.js` puts
+ * it as *"Grants are minted only by a human clicking, never by a param."*
  *
  * The mirror of that rule is that **an arriving manifest runs nothing and
  * attests to nothing**. It is verified, parsed and handed to `onManifest` as an
@@ -65,7 +65,19 @@
  * there is no method on this class that could — accepting registers slot
  * bindings, and that is a person's act in the shell above.
  *
- * All three kinds inherit `chat`'s refusal exactly: nothing is believed from a
+ * **A result is signed, and arrives just as pending.** It is the answer to an
+ * offer, and `_onResult` checks the signature against that one peer's key and
+ * hands the document up. It does not check it against a plan, a manifest or a
+ * record of what this peer offered, and it must not: whether a returned value is
+ * one this machine asked for is `acceptCellResult`'s question, asked of a plan
+ * and a notebook this layer does not have. **Nothing here registers a slot and
+ * nothing here restarts a run** — a courier that resumed a stopped notebook
+ * because a frame arrived would be the worst version of this whole exchange.
+ * This class also keeps no record of the offers it *sent*: a record kept in
+ * order to judge what comes back is a decision, and the deciding is done where
+ * the plan is.
+ *
+ * All four kinds inherit `chat`'s refusal exactly: nothing is believed from a
  * peer whose key is not confirmed. `lib/notebook/documents.js` holds what
  * happens after that — above all, that a document is checked against *this*
  * peer's key and no other.
@@ -111,6 +123,7 @@ import {
   readHandoffOffer,
   readSignedAttestation,
   readSignedManifest,
+  readSignedResult,
 } from "./documents.js";
 import { canonicalAudience, deriveRoomMaterial, isValidRoomId } from "./room.js";
 import { classifyChannelFrame, createSeenSet, shouldRelay } from "./relay.js";
@@ -161,6 +174,12 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   Cell handoff offers this peer has held out, as `manifest:cell`. A record
  *   that an offer arrived, never that it was taken — nothing in this class can
  *   take one. Bounded the same way `attested` is.
+ * @property {Set<string>} returned
+ *   Cell results this peer has signed and sent back, as `manifest:cell`, each
+ *   established by a signature this session checked against this peer's own key.
+ *   A record that a claim arrived, never that it was believed: whether the cell
+ *   was theirs to run and whether the values may be registered are questions for
+ *   a plan this layer does not hold. Bounded the same way `attested` is.
  */
 
 /**
@@ -194,6 +213,16 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   **pending**: nothing has been checked against a plan, no slot has been
  *   registered and no cell has run. Accepting is `acceptHandoffOffer` plus a
  *   person, in the shell above.
+ * @property {(doc: {
+ *   from: string, cell: number, manifest: string, signed: string, ts: number,
+ *   result: import("../toolkit/handoff.js").CellResult,
+ * }) => void} [onResult]
+ *   A cell result that arrived from a confirmed peer, was checked against that
+ *   peer's key and parsed. Equally **pending**: the signature says this peer
+ *   made the claim, and nothing yet says the claim is about a cell this peer
+ *   offered them or that the values may be registered. `acceptCellResult` plus
+ *   a person answers both, and the run this result unblocks is restarted by
+ *   whoever presses Run.
  * @property {(status: string) => void} [onStatus]
  * @property {(err: Error) => void} [onError]
  */
@@ -228,6 +257,7 @@ export class NotebookSession {
     this.onManifest = opts.onManifest;
     this.onAttestation = opts.onAttestation;
     this.onOffer = opts.onOffer;
+    this.onResult = opts.onResult;
     this.onStatus = opts.onStatus;
     this.onError = opts.onError;
 
@@ -706,6 +736,73 @@ export class NotebookSession {
   }
 
   /**
+   * Hand one signed cell result back to the peer that offered the cell.
+   *
+   * **Addressed like the offer it answers**, and for the same reason: the
+   * document names no recipient, because who was waiting for a cell is something
+   * the peer holding the run already knows from their own plan. The wire carries
+   * the addressing, where it is transport rather than a claim, and this throws
+   * rather than returning 0 so that an author is never left believing a value
+   * landed.
+   *
+   * **Takes the signed document, not a result object.** The bytes are whatever
+   * the author put through `gpg.sign`, and a `sendResult(result)` that reached
+   * for `this.privateKey` would have this layer swear to work it never saw —
+   * `publishManifest` refuses exactly that, and a result is the document where
+   * the temptation is strongest, because the signature is the *only* thing
+   * standing behind a claim nobody can check.
+   *
+   * @param {string} toFpr  fingerprint or unambiguous prefix
+   * @param {string} signed  armored cleartext-signed result
+   * @returns {Promise<number>} peers written to (never 0 — throws instead)
+   */
+  async sendResult(toFpr, signed) {
+    const doc = String(signed ?? "");
+    // Refused before anything is encrypted, so an oversized result fails in the
+    // runner's hands and not in the room.
+    assertDocumentFits(doc, "cell result");
+    if (!looksCleartextSigned(doc)) {
+      throw new Error(
+        "notebook: a cell result must arrive here already signed — pipe it " +
+          "through `gpg.sign key=$me` first. A result is a claim about work " +
+          "done on this machine, and the session carries claims between peers " +
+          "without making any."
+      );
+    }
+    const want = String(toFpr || "").replace(/\s+/g, "").toUpperCase();
+    if (!want) {
+      throw new Error(
+        "notebook: a cell result goes back to one peer — name the fingerprint " +
+          "it is for. A result says nothing about who was waiting for it, so " +
+          "there is nobody for an unaddressed one to reach."
+      );
+    }
+    const body = JSON.stringify({ kind: "result", doc, ts: Date.now() });
+    let sent = 0;
+    for (const [fpr, peer] of this.peers) {
+      if (!String(fpr || "").toUpperCase().startsWith(want)) continue;
+      if (
+        !peer.channel ||
+        peer.channel.readyState !== "open" ||
+        !peer.sessionKey ||
+        !peer.kcVerified
+      ) {
+        continue;
+      }
+      const blob = await encryptSessionPayload(peer.sessionKey, body);
+      peer.channel.send(JSON.stringify({ v: 1, blob }));
+      sent += 1;
+    }
+    if (!sent) {
+      throw new Error(
+        `notebook: no verified peer with fingerprint ${want} is connected, so ` +
+          "this cell's result went nowhere"
+      );
+    }
+    return sent;
+  }
+
+  /**
    * Which peers have attested to a manifest digest.
    *
    * Fingerprints, because that is the session's vocabulary — it never learns
@@ -1091,6 +1188,7 @@ export class NotebookSession {
       attested: new Set(),
       publishedManifest: null,
       offered: new Set(),
+      returned: new Set(),
     };
   }
 
@@ -1287,6 +1385,10 @@ export class NotebookSession {
       }
       if (msg.kind === "handoff") {
         this._onOffer(peerFpr, peer, msg);
+        return;
+      }
+      if (msg.kind === "result") {
+        await this._onResult(peerFpr, peer, msg);
       }
     } catch (err) {
       this.onError?.(
@@ -1416,6 +1518,58 @@ export class NotebookSession {
   }
 
   /**
+   * A signed cell result off a peer's channel.
+   *
+   * The signature is checked here because that is `documents.js`'s discipline
+   * and this is the layer that knows which fingerprint opened the frame: the
+   * document is verified against **that peer's key and no other**, and parsed
+   * out of the bytes the signature covers. A result whose signature is good but
+   * somebody else's is refused, which is the replay a `verify against everyone`
+   * check waves through — here it would be one peer returning another peer's
+   * work as their own answer to an offer.
+   *
+   * Everything past the signature is somebody else's question. This layer has no
+   * plan, no notebook, no registry and no record of which cells this peer handed
+   * out, so it cannot tell whether the result was asked for, whether the cell is
+   * that peer's to run, or whether the values may be registered — and that is
+   * why it is safe for it to be the courier. `acceptCellResult` answers all
+   * three, in the shell, for a person who clicked.
+   *
+   * Failures are reported and swallowed, as every other document's are.
+   *
+   * @param {string} peerFpr
+   * @param {NotebookPeerState} peer
+   * @param {{ doc?: string, ts?: number }} msg
+   */
+  async _onResult(peerFpr, peer, msg) {
+    if (!peer.kcVerified) return;
+    const doc = String(msg.doc ?? "");
+    const ts = Number(msg.ts) || Date.now();
+    const key = this.audienceKeys.get(peerFpr);
+    try {
+      const { result } = await readSignedResult(doc, { key, fpr: peerFpr });
+      this._rememberReturn(peer, `${result.manifest}:${result.cell}`);
+      this._emitRoster();
+      this.onResult?.({
+        from: peerFpr,
+        cell: result.cell,
+        manifest: result.manifest,
+        result,
+        signed: doc,
+        ts,
+      });
+    } catch (err) {
+      this.onError?.(
+        new Error(
+          `notebook: cell result from ${peerFpr.slice(0, 8)}… refused — ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
+      );
+    }
+  }
+
+  /**
    * Record that a peer held out an offer. Bounded exactly as `attested` is, and
    * for the same reason: a confirmed peer can still be a broken one.
    * @param {NotebookPeerState} peer
@@ -1427,6 +1581,20 @@ export class NotebookSession {
     while (peer.offered.size > ATTESTED_PER_PEER_CAP) {
       const oldest = peer.offered.values().next().value;
       peer.offered.delete(oldest);
+    }
+  }
+
+  /**
+   * Record that a peer returned a result. Bounded exactly as `offered` is.
+   * @param {NotebookPeerState} peer
+   * @param {string} key
+   */
+  _rememberReturn(peer, key) {
+    if (peer.returned.has(key)) return;
+    peer.returned.add(key);
+    while (peer.returned.size > ATTESTED_PER_PEER_CAP) {
+      const oldest = peer.returned.values().next().value;
+      peer.returned.delete(oldest);
     }
   }
 

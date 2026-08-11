@@ -1,6 +1,6 @@
 /**
- * The handoff offer — a cell the plan placed on somebody else, turned into
- * something that peer can accept.
+ * The handoff — a cell the plan placed on somebody else, turned into something
+ * that peer can accept, and the value they hand back when they have run it.
  *
  * `ecf3999` made a placed cell stop running here. It did not make it run
  * anywhere else: the gate reports a `SkippedCell` and the run walks on, and a
@@ -100,7 +100,79 @@
  * `offerAwaiting`. Declining is local: the recipient registers nothing and their
  * cell does not run. The offerer's own run already stopped at the withheld-input
  * sentence the gate produced, naming the slot and the peer, and it stays stopped
- * until a result comes back — which is the next unit's business, not this one's.
+ * until a result comes back.
+ *
+ * ## The way back
+ *
+ * `buildResultFor` is what comes back. The peer that accepted an offer runs the
+ * cell and returns the values it wrote, and registering those closes the loop
+ * the gate opened: the origin's run stopped at the first cell reading a slot
+ * produced elsewhere, the gate asks the registry **first**, so a value that is
+ * now here runs the cell and the stop simply stops happening. Again with no edit
+ * to `placement.js`, and again arriving through the test that specified the seam
+ * before either half of this file existed.
+ *
+ * **Nothing re-runs.** `acceptCellResult` returns bindings, exactly as
+ * `acceptHandoffOffer` does, and a person registers them and presses Run. A
+ * result that resumed a run on a peer's say-so would be the consent rule above
+ * broken from the other end — and this end is the worse one, because there the
+ * machine continuing is the origin's own, on values nobody looked at.
+ *
+ * **A result answers an offer, and the pairing is the one that already exists.**
+ * `(manifest, cell)` is what a recipient records as `offered` and it is what a
+ * result names. There is no correlation id, no offer digest and no nonce: a
+ * second name for one pairing is a second thing that can disagree with the
+ * first, and this stack has paid for second answers repeatedly.
+ *
+ * ## Why a result is signed when an offer is not
+ *
+ * The offer's reason for travelling unsigned is at `readHandoffOffer`: it
+ * asserts nothing the recipient takes on trust, because every field of it is
+ * checked against documents the recipient already holds. That argument does not
+ * survive the return trip, and what breaks it is not the direction — it is what
+ * the document *says*.
+ *
+ * An offer says *here are inputs; run this if you like*. A result says **I ran
+ * cell N and this is what came out**: a claim about a past event on another
+ * machine, which is the category a receipt and an attestation are in, and this
+ * repo signs that category. The origin folds the value into a run whose receipt
+ * it may later show to somebody who was not in the room, and by then the session
+ * frame that authenticated the delivery is gone — a pairwise key says who is on
+ * the channel *now*, and a signature is what outlives the channel. So a result
+ * is cleartext-signed by the runner, checked by `documents.js` against that one
+ * peer's key, and parsed out of the bytes that signature covers.
+ *
+ * ## What a signature over a result does not say
+ *
+ * **A signed result is a claim about what the runner computed, not proof that
+ * they computed it correctly.** The origin can check that this peer signed it,
+ * that it names a manifest the origin holds and a cell the origin's own plan
+ * places on that peer, that every value fills a slot that cell writes, and that
+ * each one is a kind the recipe says may leave a machine at all. It cannot check
+ * the arithmetic. A runner who returns `$b64` from a different pipeline entirely
+ * — or from no pipeline, typed by hand — produces a result that passes every
+ * check in this file, and the origin's run continues on it.
+ *
+ * That gap is closed in exactly one place in this codebase, and it is closed by
+ * mathematics rather than by a document: `dkg.run`'s Feldman commitments make a
+ * share checkable against a published polynomial, so a peer who sends a wrong
+ * share is caught by the peer receiving it. Nothing of the kind exists for an
+ * arbitrary placed cell. `bytes … | encode base64` has no commitment scheme, and
+ * proving a step ran as written needs a zero-knowledge proof or a trusted
+ * execution environment — which `manifest.js` says of receipts, in the same
+ * words, and refuses as a dependency for the same reason.
+ *
+ * So the signature buys attribution and not correctness: it makes the value
+ * *somebody's*. Whoever is deciding whether to trust a returned value is
+ * deciding whether to trust the peer who returned it, and this paragraph is here
+ * rather than in a design document because that is a decision made by people
+ * reading code.
+ *
+ * The document therefore carries no receipt digest and no step trace. Both could
+ * be put in it and neither would be evidence — a receipt is the same peer's word
+ * one level down — and carrying them would dress a claim up as a proof. What the
+ * origin can ask for beyond the values is an attestation, which is a document
+ * that already exists and is honest about what it establishes.
  *
  * @module lib/toolkit/handoff
  */
@@ -153,8 +225,49 @@ export const HANDOFF_FIELDS = Object.freeze([
   "offeredAt",
 ]);
 
-/** Every field one carried value may carry. @type {readonly string[]} */
+/**
+ * Every field one carried value may carry, whichever way it is travelling.
+ *
+ * One shape, shared by an offer's `needs` and a result's `produced`, because a
+ * value crossing a machine boundary is one idea. The `meta` an op left on it is
+ * excluded in both directions — see `uncarry`.
+ * @type {readonly string[]}
+ */
 export const NEED_FIELDS = Object.freeze(["label", "type", "data"]);
+
+/**
+ * Result envelope version. Bump when the *shape* changes, or when a field keeps
+ * its shape and changes which thing it names.
+ *
+ * Starts at 1 while `HANDOFF_VERSION` is 2, and the gap is the point: the offer
+ * was born under a cell numbering that counted only the non-empty cells and had
+ * to be broken out of it, and a result has never known any numbering but the
+ * notebook's own. Five documents now, five reasons to break, and a shared
+ * version would tie a result's shape to an offer's history.
+ */
+export const RESULT_VERSION = 1;
+
+/** The `kind` discriminator, so no other document can be read as a result. */
+export const RESULT_KIND = "basilisk.cell-result";
+
+/**
+ * Every field a result may carry — the whole document.
+ *
+ * Closed for `HANDOFF_FIELDS`' reason, and one absence is deliberate beyond
+ * that: there is no receipt digest and no step trace. Neither would be evidence
+ * of anything the signature does not already establish, and carrying them would
+ * make a claim look like a proof. See the module header.
+ * @type {readonly string[]}
+ */
+export const RESULT_FIELDS = Object.freeze([
+  "v",
+  "kind",
+  "manifest",
+  "cell",
+  "cellDigest",
+  "produced",
+  "ranAt",
+]);
 
 /**
  * The pipeline values an offer can carry.
@@ -191,6 +304,17 @@ const DIGEST_RE = /^[0-9a-f]{64}$/;
  */
 
 /**
+ * @typedef {object} CellResult
+ * @property {number} v
+ * @property {"basilisk.cell-result"} kind
+ * @property {string} manifest    SHA-256 of the manifest's canonical JSON
+ * @property {number} cell        the plan's cell index — see the module header
+ * @property {string} cellDigest  digest of that cell's recipe text
+ * @property {CarriedValue[]} produced  what the cell wrote, sorted by label
+ * @property {string} ranAt       ISO — the runner's own word, witnessed by nothing
+ */
+
+/**
  * One reason an offer was not built, or not accepted.
  *
  * The first four fields are `mismatchLog()`'s and are produced by it, the same
@@ -205,7 +329,8 @@ const DIGEST_RE = /^[0-9a-f]{64}$/;
  * @property {"no-such-cell"|"ambiguous-index"|"cell-mismatch"|"different-notebook"
  *   |"unknown-manifest"|"not-mine"|"mine-already"|"rendezvous"|"private-value"
  *   |"untyped-value"|"uncarriable"|"absent-value"|"unasked-slot"|"incomplete"
- *   |"slot-present"} reason
+ *   |"slot-present"|"unattributed"|"not-theirs"|"not-offered"
+ *   |"nothing-to-return"} reason
  * @property {string} message
  */
 
@@ -391,16 +516,38 @@ export function parseHandoffOffer(text) {
   if (!Array.isArray(parsed.needs)) {
     throw new Error("handoff: needs must be a list of the values the cell reads");
   }
+  checkCarried(parsed.needs, {
+    prefix: "handoff",
+    field: "needs",
+    noun: "an offer",
+    verb: "is offered as",
+  });
+  return /** @type {HandoffOffer} */ (parsed);
+}
+
+/**
+ * The carried values of either document, checked the one way.
+ *
+ * Shared rather than written twice: an offer's `needs` and a result's `produced`
+ * are the same list of the same thing pointing opposite ways, and two copies of
+ * "what may a value look like on the wire" would agree until the first edge case
+ * one of them met alone. The nouns differ because the sentences are read by
+ * people; the rules do not.
+ *
+ * @param {*[]} list
+ * @param {{ prefix: string, field: string, noun: string, verb: string }} say
+ */
+function checkCarried(list, say) {
   /** @type {Set<string>} */
   const seen = new Set();
-  for (const raw of parsed.needs) {
+  for (const raw of list) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new Error("handoff: every entry in needs is a { label, type, data }");
+      throw new Error(`${say.prefix}: every entry in ${say.field} is a { label, type, data }`);
     }
     const over = Object.keys(raw).filter((k) => !NEED_FIELDS.includes(k));
     if (over.length) {
       throw new Error(
-        `handoff: carried value ${JSON.stringify(String(raw.label ?? ""))} has ` +
+        `${say.prefix}: carried value ${JSON.stringify(String(raw.label ?? ""))} has ` +
           `unexpected field${over.length === 1 ? "" : "s"} ${over.sort().join(", ")} — ` +
           "a value travels as a label, a type and its data, and the annotations " +
           "an op left on it stay on the machine that made it"
@@ -408,30 +555,29 @@ export function parseHandoffOffer(text) {
     }
     const label = slotLabelKey(String(raw.label ?? ""));
     if (!label) {
-      throw new Error("handoff: a carried value must name the slot it fills");
+      throw new Error(`${say.prefix}: a carried value must name the slot it fills`);
     }
     if (seen.has(label)) {
       throw new Error(
-        `handoff: ${slot(label)} is carried twice — one slot holds one value, and ` +
-          "which of two an offer meant is not a question this can answer"
+        `${say.prefix}: ${slot(label)} is carried twice — one slot holds one value, and ` +
+          `which of two ${say.noun} meant is not a question this can answer`
       );
     }
     seen.add(label);
     if (!CARRIABLE.has(String(raw.type ?? ""))) {
       throw new Error(
-        `handoff: ${slot(label)} is offered as ${JSON.stringify(String(raw.type ?? ""))}, ` +
-          `which is not a kind an offer carries (${[...CARRIABLE].sort().join(", ")})`
+        `${say.prefix}: ${slot(label)} ${say.verb} ${JSON.stringify(String(raw.type ?? ""))}, ` +
+          `which is not a kind ${say.noun} carries (${[...CARRIABLE].sort().join(", ")})`
       );
     }
     if (raw.type === "bytes") {
       try {
         base64ToBytes(String(raw.data ?? ""));
       } catch (_) {
-        throw new Error(`handoff: ${slot(label)} says bytes and is not base64`);
+        throw new Error(`${say.prefix}: ${slot(label)} says bytes and is not base64`);
       }
     }
   }
-  return /** @type {HandoffOffer} */ (parsed);
 }
 
 /**
@@ -475,6 +621,66 @@ function slotsFromElsewhere(plan, cell, runner) {
   }
   return out;
 }
+
+/**
+ * What a cell writes, and what the plan says about each of it — the mirror of
+ * `slotsFromElsewhere`, answered off the same rows.
+ *
+ * A produced slot is described by whoever *reads* it, because that is where the
+ * plan records ownership: `consumes[].private` is one reader's answer to *does
+ * somebody hold this and not publish it*. So each label is walked back to every
+ * cell that reads it from this one, and:
+ *
+ * - `private` is true if **any** reader says so, not the first. A slot that is a
+ *   secret to one reader is a secret, and taking the first row would make the
+ *   answer depend on cell order.
+ * - `readers` is kept rather than reduced, because the two callers ask different
+ *   questions of it. A runner asks *does anybody who is not me read this*, which
+ *   is what must travel. A recipient asks *do I read this*, which is what must
+ *   arrive. Neither is the other, and a three-peer notebook where two peers read
+ *   different outputs of one cell is where they come apart.
+ *
+ * A label nobody reads is still listed, with no readers. It is not carried by
+ * anybody, and a caller that filtered it out here would have nothing to say
+ * about a result that carried it anyway.
+ *
+ * @param {import("./plan.js").RunPlan} plan
+ * @param {number} cell
+ * @returns {Map<string, { label: string, private: boolean, type: string,
+ *   readers: import("./plan.js").PlannedCell[] }>}
+ */
+function producedSlots(plan, cell) {
+  /** @type {ReturnType<typeof producedSlots>} */
+  const out = new Map();
+  for (const label of plan.cells[cell]?.produces || []) {
+    if (out.has(label)) continue;
+    out.set(label, { label, private: false, type: "", readers: [] });
+  }
+  for (const consumer of plan.cells || []) {
+    if (!consumer || consumer.index === cell) continue;
+    for (const row of consumer.consumes || []) {
+      if (row.from !== cell) continue;
+      const found = out.get(row.label);
+      if (!found) continue;
+      if (!found.readers.includes(consumer)) found.readers.push(consumer);
+      found.private = found.private || !!row.private;
+      if (!found.type) found.type = row.type;
+    }
+  }
+  return out;
+}
+
+/**
+ * Does this peer, and only this peer, run the cell?
+ *
+ * `runsOn: []` is every participant, so a witnessed cell is never one peer's —
+ * which is the case that matters, because a witnessed cell downstream of a
+ * placed one is exactly the cell whose input has to travel.
+ * @param {import("./plan.js").PlannedCell} cell
+ * @param {string} peer
+ */
+const onlyRunsOn = (cell, peer) =>
+  cell.runsOn.length > 0 && !!peer && cell.runsOn.every((p) => p === peer);
 
 /**
  * Both private-value guards, over one slot.
@@ -968,6 +1174,531 @@ export async function acceptHandoffOffer(offer, ctx) {
 }
 
 /**
+ * Canonical bytes of a result — what gets signed, and what travels.
+ *
+ * The signing itself is not here, for `attest.js`'s reason: the recipe is the
+ * thing somebody reads before pressing Run, and a signer buried in a module
+ * signs without anybody having read one. A result goes out the way a receipt and
+ * an attestation do, through `gpg.sign` on a pipeline the author looked at.
+ * @param {CellResult} result
+ * @returns {string}
+ */
+export function resultToJson(result) {
+  return canonicalJson(result);
+}
+
+/**
+ * Build the result for a cell this peer ran on somebody else's behalf.
+ *
+ * The mirror of `buildOfferFor`, and it takes a cell index rather than a
+ * `SkippedCell` because there is nothing skipped on this side: the gate admitted
+ * the cell, the cell ran, and what is left is to say what it wrote.
+ *
+ * Refuses rather than throws, and `result` is `null` whenever `ok` is false.
+ * There is no partial result for the same reason there is no partial offer — one
+ * that carried some of what the origin is waiting for would move the origin's
+ * run from stopped to stopped somewhere less obvious.
+ *
+ * @param {object} spec
+ * @param {import("./plan.js").RunPlan} spec.plan  this peer's plan
+ * @param {*} spec.compiled  the compiled notebook that plan was made against
+ * @param {import("./manifest.js").RunManifest} spec.manifest  the run's manifest
+ * @param {number} spec.cell  the cell this peer ran
+ * @param {(label: string) => import("./engine.js").PipelineValue|null} spec.readSlot
+ * @param {string|number|Date} [spec.ranAt]
+ * @returns {Promise<{ ok: boolean, result: CellResult|null,
+ *   refusals: HandoffRefusal[] }>}
+ */
+export async function buildResultFor(spec) {
+  const { plan, compiled, manifest } = spec;
+  const cell = Number(spec?.cell);
+  const at = { path: `cell ${cell}`, cell };
+  const { refuse, list } = refusals();
+  const stop = () => ({ ok: false, result: /** @type {CellResult|null} */ (null), refusals: list });
+
+  const planned = plan?.cells?.[cell];
+  if (!planned || planned.index !== cell) {
+    refuse(
+      at,
+      "cell",
+      `a cell this plan describes (0–${(plan?.cells?.length || 0) - 1})`,
+      cell,
+      "no-such-cell",
+      `There is no cell ${cell} in this plan, so there is nothing to report ` +
+        "having run. A result names a cell by the index the plan gives it, " +
+        "counting every cell from 0 the way the notebook does."
+    );
+    return stop();
+  }
+  // Before `mine`, exactly as `buildOfferFor` orders it: everybody's cell is
+  // also mine, so asking "did I run it" first would answer a rendezvous yes.
+  if (planned.kind === "rendezvous") {
+    refuse(
+      at,
+      "peer",
+      "a cell placed on one peer",
+      PEER_WILDCARD,
+      "rendezvous",
+      `Cell ${cell} is a rendezvous (\`${PEER_SIGIL}${PEER_WILDCARD}\`) — every ` +
+        "participant enters it together, so no one peer ran it on anybody's " +
+        "behalf and there is nothing to hand back. This build has no barrier " +
+        "machinery, and a result would be one peer reporting a room's work as " +
+        "their own."
+    );
+    return stop();
+  }
+  if (!planned.mine) {
+    refuse(
+      at,
+      "mine",
+      "a cell this peer performed",
+      planned.runsOn.join(", ") || "(everyone)",
+      "not-mine",
+      `Cell ${cell} does not run here — this plan places it on ` +
+        `${planned.runsOn.map((p) => who(p)).join(" and ") || "everyone"}. A ` +
+        "result is what the machine that ran a cell hands back, so there is " +
+        "nothing here to hand: whatever is in those slots was not produced by " +
+        "running that cell."
+    );
+    return stop();
+  }
+
+  const me = plan.me || planned.runsOn[0] || "";
+  if (!onlyRunsOn(planned, me)) {
+    refuse(
+      at,
+      "peer",
+      "a cell one peer runs alone",
+      "(everyone)",
+      "nothing-to-return",
+      `Every participant runs cell ${cell}, so everybody already has what it ` +
+        "wrote and nobody is waiting on this peer for it. A result closes a " +
+        "run that stopped for want of a value held somewhere else, and a " +
+        "witnessed cell never leaves anyone in that state."
+    );
+    return stop();
+  }
+
+  const chains = planChains(compiled);
+  const mineDigest = await cellTextDigest(chains[cell]);
+  const declared = manifest?.cells?.[cell];
+  const identity = await checkCellIdentity({ at, cell, plan, manifest, mineDigest, refuse });
+  if (!identity) return stop();
+
+  const types = slotTypes(compiled);
+  /** @type {CarriedValue[]} */
+  const produced = [];
+  for (const row of producedSlots(plan, cell).values()) {
+    // What has to travel: a slot somebody who is not this peer reads. A reader
+    // this peer runs alone has it already, and sending it would be this peer
+    // handing itself a value.
+    if (!row.readers.some((reader) => !onlyRunsOn(reader, me))) continue;
+    const verdict = publicEnough(row, types);
+    if (!verdict.ok) {
+      refuse(at, verdict.field, verdict.expected, verdict.actual, verdict.reason, verdict.message);
+      continue;
+    }
+    const value = spec.readSlot?.(row.label) || null;
+    const held = carry(row.label, value);
+    if (!held.ok) {
+      refuse(
+        at,
+        "produced",
+        `a value in ${row.label}`,
+        held.why,
+        value ? "uncarriable" : "absent-value",
+        `Cell ${cell} writes ${slot(row.label)} and ${held.why}. A result is ` +
+          "built from what a run actually produced, so run the cell before " +
+          "reporting it — and if that slot can never take a form a result " +
+          "carries, the cell cannot be handed back at all and should not have " +
+          "been handed over."
+      );
+      continue;
+    }
+    produced.push(held.need);
+  }
+  if (list.length) return stop();
+  if (!produced.length) {
+    refuse(
+      at,
+      "produced",
+      "a value somebody else is waiting for",
+      "nothing",
+      "nothing-to-return",
+      `Nothing cell ${cell} writes is read by a cell anybody else runs, so ` +
+        "there is no value to return and no run waiting on one. If what is " +
+        "wanted is evidence that this cell ran, that is a receipt or an " +
+        "attestation — a result carries values, and this one would carry none."
+    );
+    return stop();
+  }
+
+  produced.sort((a, b) => a.label.localeCompare(b.label));
+  return {
+    ok: true,
+    refusals: list,
+    result: {
+      v: RESULT_VERSION,
+      kind: /** @type {"basilisk.cell-result"} */ (RESULT_KIND),
+      manifest: await manifestDigest(manifest),
+      cell,
+      cellDigest: String(declared?.recipeDigest || mineDigest),
+      produced,
+      // The runner's claim, not a fact — `attest.js`'s `claimedAt` again, and
+      // no better witnessed than that one is.
+      ranAt: isoTimestamp(spec.ranAt),
+    },
+  };
+}
+
+/**
+ * Parse a result out of text.
+ *
+ * **The text is the bytes a signature covered, and this does not unwrap armor.**
+ * `parseManifest` and `parseAttestation` both tolerate a cleartext wrapper,
+ * because both have an op that hands them a document pasted into a recipe with
+ * no key to check it against. A result has no such op and no such caller: it is
+ * only ever read after `verifySignedBy` has handed back `CleartextMessage
+ * .getText()`. Unwrapping here as well would put a second answer to *which bytes
+ * were signed* in the one document whose entire content is a claim, and the two
+ * answers would agree until the first dash-escaped line. An armored result is
+ * therefore refused by name, pointing at the check that was skipped.
+ *
+ * Refuses any field outside `RESULT_FIELDS` and any field on a carried value
+ * outside `NEED_FIELDS`, for `parseHandoffOffer`'s reason.
+ *
+ * @param {string} text
+ * @returns {CellResult}
+ */
+export function parseCellResult(text) {
+  const body = String(text ?? "");
+  if (/^\s*-----BEGIN PGP SIGNED MESSAGE-----/.test(body)) {
+    throw new Error(
+      "result: this is a signed document and not a result — check the signature " +
+        "against the key of the peer that ran the cell, and parse what that " +
+        "check hands back. A result is a claim about work done on another " +
+        "machine, so the bytes worth reading are only ever the bytes somebody " +
+        "signed."
+    );
+  }
+  /** @type {*} */
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch (_) {
+    throw new Error("result: not JSON (expected a Basilisk cell result)");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("result: not a Basilisk cell result");
+  }
+  if (parsed.kind !== RESULT_KIND) {
+    throw new Error("result: not a Basilisk cell result");
+  }
+  if (Number(parsed.v) !== RESULT_VERSION) {
+    throw new Error(
+      `result: unsupported version ${parsed.v} (this build writes and reads ` +
+        `v${RESULT_VERSION})`
+    );
+  }
+  const extra = Object.keys(parsed).filter((k) => !RESULT_FIELDS.includes(k));
+  if (extra.length) {
+    throw new Error(
+      `result: unexpected field${extra.length === 1 ? "" : "s"} ` +
+        `${extra.sort().join(", ")} — a result names a manifest, a cell and the ` +
+        "values that cell wrote, and nothing else. It does not carry evidence " +
+        "that the work was done correctly, because there is none to carry: the " +
+        "signature says who computed it and that is the whole of what is known."
+    );
+  }
+  if (!DIGEST_RE.test(String(parsed.manifest ?? ""))) {
+    throw new Error(
+      "result: manifest must be a SHA-256 digest as 64 lowercase hex characters"
+    );
+  }
+  if (!DIGEST_RE.test(String(parsed.cellDigest ?? ""))) {
+    throw new Error(
+      "result: cellDigest must be a SHA-256 digest as 64 lowercase hex characters"
+    );
+  }
+  if (!Number.isInteger(parsed.cell) || parsed.cell < 0) {
+    throw new Error(
+      `result: cell must be a cell index, got ${JSON.stringify(parsed.cell)} — ` +
+        "the index a plan gives a cell, counting every cell from 0 the way the " +
+        "notebook does"
+    );
+  }
+  if (!Array.isArray(parsed.produced)) {
+    throw new Error("result: produced must be a list of the values the cell wrote");
+  }
+  checkCarried(parsed.produced, {
+    prefix: "result",
+    field: "produced",
+    noun: "a result",
+    verb: "comes back as",
+  });
+  return /** @type {CellResult} */ (parsed);
+}
+
+/**
+ * Read a result, decide whether it can be accepted, and say what to register.
+ *
+ * **This function registers nothing**, and there is no parameter that makes it.
+ * It returns the bindings a caller *would* register, and a person registers them
+ * and presses Run — the same rule `acceptHandoffOffer` keeps, kept at the end
+ * where the machine that would carry on is the reader's own.
+ *
+ * Four refusals here have no counterpart on the offer side, and each answers a
+ * peer answering a question nobody asked them:
+ *
+ * - **`unattributed`** — nothing established who sent this. `by` is a peer
+ *   *label*, resolved by the caller from a signature and a roster, exactly as
+ *   `manifestAttestedBy` takes one; an unattributed attestation counts for
+ *   nothing there, and here it must count for less than nothing, because
+ *   accepting writes to this machine.
+ * - **`not-theirs`** — this peer's own plan does not place that cell on `by`. A
+ *   result is answered from the plan first, before any record of what was sent,
+ *   because the plan is the deeper fact: a peer the plan never placed the cell
+ *   on could not have been honestly offered it either, and blaming the record
+ *   would point at the wrong document.
+ * - **`not-offered`** — the cell was never handed to that peer. An unsolicited
+ *   result is a peer volunteering to have run something, and *absence is not
+ *   permission*: with no record of what went out, nothing comes back. That is
+ *   `placement.js`'s rule about a missing placement, at the other end of the
+ *   same exchange.
+ * - **`slot-present`** — the cell is already satisfied. Two peers returning
+ *   results for one cell is the ordinary way this happens, and which of two
+ *   values is the right one is not a question a document can answer.
+ *
+ * @param {CellResult} result  already through `parseCellResult`
+ * @param {object} ctx
+ * @param {import("./plan.js").RunPlan} ctx.plan  the recipient's own plan
+ * @param {*} ctx.compiled  the recipient's own compiled notebook
+ * @param {string} ctx.by  peer label the signature resolved to, never a fingerprint
+ * @param {import("./manifest.js").RunManifest|null} [ctx.manifest]  the manifest
+ *   the recipient holds for `result.manifest`, or nothing if they hold none
+ * @param {{ manifest: string, cell: number, to: string }[]} [ctx.offered]  the
+ *   offers this peer sent and has not seen answered. The caller holds this, not
+ *   the session: a courier that remembered what went out in order to judge what
+ *   comes back would be deciding, and `475fd81` spent a commit refusing that.
+ * @param {(label: string) => boolean} [ctx.hasSlot]  the recipient's registry
+ * @returns {Promise<{ ok: boolean, cell: number, refusals: HandoffRefusal[],
+ *   bindings: { label: string, value: import("./engine.js").PipelineValue }[] }>}
+ */
+export async function acceptCellResult(result, ctx) {
+  const cell = Number(result?.cell);
+  const at = { path: `cell ${cell}`, cell };
+  const { refuse, list } = refusals();
+  const stop = () => ({ ok: false, cell, refusals: list, bindings: [] });
+  const plan = ctx?.plan;
+
+  if (!plan || !Array.isArray(plan.cells)) {
+    throw new Error(
+      "handoff: a result is checked against the recipient's own plan, and none " +
+        "was supplied — there is no reading of a result that does not need one"
+    );
+  }
+
+  const by = String(ctx?.by ?? "").trim();
+  if (!by) {
+    refuse(
+      at,
+      "by",
+      "the peer whose signature this result carries",
+      "",
+      "unattributed",
+      "Nothing established who returned this. A result is one peer's claim " +
+        "about work done on their machine, so a result from nobody is a claim " +
+        "nobody made — check the signature against that peer's key, resolve the " +
+        "fingerprint to a label through the roster, and pass it as `by`."
+    );
+    return stop();
+  }
+
+  // The manifest first, as an offer does it: without it this result names a run
+  // this peer knows nothing about and nothing below is answerable.
+  const manifest = ctx.manifest || null;
+  const held = manifest ? await manifestDigest(manifest) : "";
+  if (!manifest || held !== String(result.manifest || "")) {
+    refuse(
+      at,
+      "manifest",
+      String(result.manifest || ""),
+      held,
+      "unknown-manifest",
+      `This result is against a run manifest this peer has not seen` +
+        `${held ? " — the manifest held here digests to something else" : ""}. ` +
+        "Nothing was committed to under that digest here, so there is no run " +
+        "for a value to be returned into. Ask for the signed manifest and check " +
+        "it before anything is accepted against it."
+    );
+    return stop();
+  }
+
+  const planned = plan.cells[cell];
+  if (!planned || planned.index !== cell) {
+    refuse(
+      at,
+      "cell",
+      `a cell this plan describes (0–${plan.cells.length - 1})`,
+      cell,
+      "no-such-cell",
+      `This plan has no cell ${cell}, so the result names nothing this peer was ` +
+        "waiting for."
+    );
+    return stop();
+  }
+
+  const chains = planChains(ctx.compiled);
+  const mineDigest = await cellTextDigest(chains[cell]);
+  const identified = await checkCellIdentity({
+    at,
+    cell,
+    plan,
+    manifest,
+    mineDigest,
+    refuse,
+    offered: String(result.cellDigest || ""),
+  });
+  if (!identified) return stop();
+
+  if (planned.kind === "rendezvous") {
+    refuse(
+      at,
+      "peer",
+      "a cell placed on one peer",
+      PEER_WILDCARD,
+      "rendezvous",
+      `Cell ${cell} is a rendezvous (\`${PEER_SIGIL}${PEER_WILDCARD}\`) in this ` +
+        "notebook. Every participant enters it together, so no peer ran it for " +
+        "this one, and a value offered as its output is one peer's answer " +
+        "standing in for a room's."
+    );
+    return stop();
+  }
+  if (planned.mine) {
+    refuse(
+      at,
+      "mine",
+      "a cell this peer left to somebody else",
+      "mine",
+      "mine-already",
+      `Cell ${cell} runs here, so nobody was asked to run it. Accepting would ` +
+        "put a peer's values into the slots this machine fills for itself, and " +
+        "the run would carry on as though it had done the work."
+    );
+    return stop();
+  }
+  if (!planned.runsOn.includes(by)) {
+    refuse(
+      at,
+      "peer",
+      planned.runsOn.join(", ") || "(everyone)",
+      by,
+      "not-theirs",
+      `Cell ${cell} is not ${who(by)}'s to run: this plan places it on ` +
+        `${planned.runsOn.map((p) => who(p)).join(" and ") || "everyone"}. A ` +
+        "result does not say who ran the cell any more than an offer says who " +
+        "should — the plan on this machine says, and it does not say them."
+    );
+    return stop();
+  }
+
+  const sent = (ctx.offered || []).some(
+    (o) =>
+      Number(o?.cell) === cell &&
+      String(o?.manifest || "") === String(result.manifest || "") &&
+      String(o?.to || "") === by
+  );
+  if (!sent) {
+    refuse(
+      at,
+      "offered",
+      `cell ${cell} offered to ${by}`,
+      "no record of it",
+      "not-offered",
+      `Cell ${cell} was never handed to ${who(by)} in this run, so this is an ` +
+        "answer to a question nobody asked. Absence is not permission: a peer " +
+        "who runs a cell unasked and returns the value has decided what this " +
+        "machine's run is made of. Offer the cell, then take the answer."
+    );
+    return stop();
+  }
+
+  // Both directions, as the offer does for its needs: a result missing a value
+  // this peer's run stops on cannot restart it, and a result carrying a slot
+  // this cell does not write is a peer choosing where to put a value.
+  const produced = producedSlots(plan, cell);
+  const types = slotTypes(ctx.compiled);
+  const carried = new Set((result.produced || []).map((p) => slotLabelKey(String(p.label))));
+
+  for (const row of produced.values()) {
+    if (!row.readers.some((reader) => reader.mine)) continue;
+    if (carried.has(row.label)) continue;
+    refuse(
+      at,
+      "produced",
+      row.label,
+      "",
+      "incomplete",
+      `Cell ${cell} writes ${slot(row.label)}, which a cell this peer runs ` +
+        "reads, and this result does not carry it. Accepting would restart the " +
+        "run as far as the next thing that is missing, which is a worse place " +
+        "to stop than the one it is stopped at now."
+    );
+  }
+
+  /** @type {{ label: string, value: import("./engine.js").PipelineValue }[]} */
+  const bindings = [];
+  for (const value of result.produced || []) {
+    const label = slotLabelKey(String(value.label));
+    const row = produced.get(label);
+    if (!row) {
+      refuse(
+        at,
+        "produced",
+        "",
+        label,
+        "unasked-slot",
+        `This result carries ${slot(label)}, and cell ${cell} does not write it ` +
+          "in this notebook. A cell that ran writes what its text says it " +
+          "writes; anything else is a peer putting a value of their choosing " +
+          "into a slot of their choosing on this machine, under cover of a cell " +
+          "that was asked for something different."
+      );
+      continue;
+    }
+    if (ctx.hasSlot?.(label)) {
+      refuse(
+        at,
+        "produced",
+        `${label} unset`,
+        `${label} already here`,
+        "slot-present",
+        `${slot(label)} already holds a value on this machine, so this cell is ` +
+          "already satisfied. Accepting would replace what is here with what a " +
+          "peer sent, and which of the two is right is not a question a result " +
+          "can answer — two peers answering one offer look exactly like this. " +
+          "Clear the slot if the returned value is the one you want."
+      );
+      continue;
+    }
+    // The same two guards the runner ran, re-run against this peer's own plan
+    // and this peer's own notebook. A runner's analysis is not evidence, and a
+    // runner whose notebook is not this one is not lying to be wrong.
+    const verdict = publicEnough(row, types);
+    if (!verdict.ok) {
+      refuse(at, verdict.field, verdict.expected, verdict.actual, verdict.reason, verdict.message);
+      continue;
+    }
+    bindings.push({ label, value: uncarry(value) });
+  }
+
+  if (list.length) return stop();
+  bindings.sort((a, b) => a.label.localeCompare(b.label));
+  return { ok: true, cell, refusals: list, bindings };
+}
+
+/**
  * What the offerer sees while an offer sits unanswered.
  *
  * **A declined offer and an ignored one are the same state here, and this says
@@ -994,24 +1725,34 @@ export function offerAwaiting(state) {
 }
 
 /**
- * A one-line human summary of an acceptance check — the shape `summarizePlan`,
- * `summarizeHonour` and `summarizeAttestation` return.
+ * A one-line human summary of a build or an acceptance check, either direction
+ * — the shape `summarizePlan`, `summarizeHonour` and `summarizeAttestation`
+ * return.
+ *
+ * The tail of the happy sentence is the same for all four cases on purpose.
+ * Every one of them ends with a document in somebody's hand and a person who has
+ * not clicked yet, which is the property this file is built around.
+ *
  * @param {Awaited<ReturnType<typeof acceptHandoffOffer>> |
- *   Awaited<ReturnType<typeof buildOfferFor>>} result
+ *   Awaited<ReturnType<typeof buildOfferFor>> |
+ *   Awaited<ReturnType<typeof acceptCellResult>> |
+ *   Awaited<ReturnType<typeof buildResultFor>>} verdict
  * @returns {string}
  */
-export function summarizeHandoff(result) {
-  const list = result.refusals;
-  if (!result.ok) {
+export function summarizeHandoff(verdict) {
+  const list = verdict.refusals;
+  if (!verdict.ok) {
     const first = list[0];
     const rest = list.length - 1;
     return `handoff refused at ${first.path} (${first.field})${
       rest > 0 ? ` and ${rest} more` : ""
     }`;
   }
-  const offer = /** @type {*} */ (result).offer;
-  const n = offer ? offer.needs.length : /** @type {*} */ (result).bindings.length;
-  const cell = offer ? offer.cell : /** @type {*} */ (result).cell;
+  const offer = /** @type {*} */ (verdict).offer;
+  const result = /** @type {*} */ (verdict).result;
+  const carried = offer?.needs || result?.produced;
+  const n = carried ? carried.length : /** @type {*} */ (verdict).bindings.length;
+  const cell = offer?.cell ?? result?.cell ?? /** @type {*} */ (verdict).cell;
   return (
     `cell ${cell} ready — ${n} ${n === 1 ? "value" : "values"}, every one of them ` +
     "public, and nothing runs until somebody says so"

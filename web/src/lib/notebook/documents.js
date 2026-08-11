@@ -2,9 +2,10 @@
  * The documents a notebook session carries between peers, and the checks that
  * must pass before any of them is believed.
  *
- * Two are signed — a run manifest and a manifest attestation — and everything
- * below about "signed by *this* peer" is about them. The third, a cell handoff
- * offer, is not signed and says why at `readHandoffOffer`.
+ * Three are signed — a run manifest, a manifest attestation and a cell result —
+ * and everything below about "signed by *this* peer" is about them. The fourth,
+ * a cell handoff offer, is not signed and says why at `readHandoffOffer`; the
+ * result travelling the other way is signed, and says why at `readSignedResult`.
  *
  * **The session is a courier, not a signer.** A run manifest and a manifest
  * attestation are produced by recipes the user read before pressing Run —
@@ -68,7 +69,7 @@
 import { readCleartextMessage, verify } from "openpgp";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 import { parseAttestation } from "../toolkit/attest.js";
-import { parseHandoffOffer } from "../toolkit/handoff.js";
+import { parseCellResult, parseHandoffOffer } from "../toolkit/handoff.js";
 import { manifestDigest, parseManifest } from "../toolkit/manifest.js";
 
 /**
@@ -276,6 +277,44 @@ export async function readSignedManifest(signed, { key, fpr }) {
 export function readHandoffOffer(json) {
   assertDocumentFits(json, "handoff offer");
   return parseHandoffOffer(String(json ?? ""));
+}
+
+/**
+ * A verified cell result — the values a peer says came out of a cell this peer
+ * handed them.
+ *
+ * **Signed, where the offer that provoked it was not**, and the asymmetry is
+ * argued at length in `lib/toolkit/handoff.js`'s header. In short: an offer says
+ * *here are inputs, run this if you like*, and every field of it is checked
+ * against documents the recipient already holds. A result says *I ran cell N and
+ * this is what came out* — a claim about a past event on another machine, in the
+ * same category as a receipt and an attestation, and the origin will fold the
+ * value into a run whose receipt it may show to somebody who was not in the
+ * room. A pairwise session key says who is on the channel now; a signature is
+ * what is left when the channel is gone.
+ *
+ * What the signature does **not** say is that the runner computed correctly.
+ * Nothing here or anywhere else in this codebase can check that for an arbitrary
+ * cell — the module header of `handoff.js` states the limit and why `dkg.run`'s
+ * Feldman commitments are the one place it does not apply. This function
+ * establishes that these bytes are that peer's word, and `acceptCellResult`
+ * establishes that the word is about a cell this peer actually asked them for.
+ *
+ * The parse is `parseCellResult` over `verifySignedBy`'s return, which is
+ * `CleartextMessage.getText()` — the bytes OpenPGP hashed. `parseCellResult`
+ * refuses armor outright rather than unwrapping it a second way, so there is one
+ * answer to which bytes were signed and this is the only path that produces it.
+ *
+ * @param {string} signed
+ * @param {{ key: import("openpgp").Key|undefined, fpr: string }} opts
+ * @returns {Promise<{ result: import("../toolkit/handoff.js").CellResult,
+ *   digest: string, text: string }>}  `digest` is the manifest the result names
+ */
+export async function readSignedResult(signed, { key, fpr }) {
+  assertDocumentFits(signed, "cell result");
+  const text = await verifySignedBy(signed, { key, fpr, what: "cell result" });
+  const result = parseCellResult(text);
+  return { result, digest: String(result.manifest), text };
 }
 
 /**

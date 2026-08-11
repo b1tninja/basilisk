@@ -46,6 +46,9 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  * @property {any[]} attestations   attestations that arrived, verified and parsed
  * @property {any[]} offers         handoff offers that arrived and parsed — pending,
  *   never accepted: nothing in the session can accept one
+ * @property {any[]} results        cell results that arrived, were checked against
+ *   the sender's key and parsed — equally pending: no slot registered, no run
+ *   restarted, and nothing in the session that could do either
  * @property {string[]} statuses
  */
 
@@ -180,6 +183,7 @@ export async function makeQuorumPair({ tamper } = {}) {
       manifests: [],
       attestations: [],
       offers: [],
+      results: [],
       statuses: [],
     };
     side.session = new NotebookSession({
@@ -192,6 +196,7 @@ export async function makeQuorumPair({ tamper } = {}) {
       onManifest: (/** @type {any} */ d) => side.manifests.push(d),
       onAttestation: (/** @type {any} */ d) => side.attestations.push(d),
       onOffer: (/** @type {any} */ d) => side.offers.push(d),
+      onResult: (/** @type {any} */ d) => side.results.push(d),
       onStatus: (/** @type {string} */ s) => side.statuses.push(s),
       onError: (/** @type {Error} */ err) => side.errors.push(err),
     });
