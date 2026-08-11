@@ -75,6 +75,7 @@ import {
   ReadinessBar,
   OutputList,
   CellAssign,
+  ShareSheet,
   PlanPanel,
   SessionStrip,
   TopBar,
@@ -84,6 +85,7 @@ import {
 import { getStep } from "../lib/toolkit/registry.js";
 import { compileRecipe, projectTypeForMember } from "../lib/toolkit/recipe.js";
 import { planRun } from "../lib/toolkit/plan.js";
+import { hashForNotebook, toolkitShareUrl } from "../lib/toolkit/fragment.js";
 import { stepOverridesProfile } from "../lib/pgp/profile-from-step.js";
 import {
   cellPipelineTip,
@@ -451,6 +453,7 @@ export function ToolkitShell() {
   );
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const [trayOpen, setTrayOpen] = useState(true);
+  const [shareOpen, setShareOpen] = useState(false);
   const [trayTab, setTrayTab] = useState<
     "keys" | "slots" | "connections" | "outputs" | "activity" | "inputs" | "params"
   >("keys");
@@ -601,6 +604,62 @@ export function ToolkitShell() {
    * be. Only the notebook would mean a peer who joins can never be given a
    * cell without someone typing their label by hand.
    */
+  /**
+   * The recipe's share link, or the reason there is not one.
+   *
+   * `hashForNotebook` already answers both halves; until now the refusal was
+   * handed to `setRunStatus` and scrolled away, so a notebook that could not
+   * be shared said so once and then looked identical to one that could. The
+   * sheet keeps it.
+   */
+  const recipeLink = useMemo(() => {
+    // An empty notebook hashes fine and yields a bare /toolkit URL, so the row
+    // would offer Copy link for a link to nothing. Nothing to send is not the
+    // guard refusing — it is a not-yet.
+    if (!nb.source.trim()) {
+      return {
+        ok: false as const,
+        reason: "There is nothing in this notebook to send yet.",
+        tone: "not-yet" as const,
+      };
+    }
+    const result = hashForNotebook(nb.source);
+    return result.ok === false
+      ? { ok: false as const, reason: result.reason || "This notebook cannot be shared in a link." }
+      : { ok: true as const, url: toolkitShareUrl(result.hash) };
+  }, [nb.source]);
+
+  /**
+   * The run proof, when this notebook has made one.
+   *
+   * A proof is not "a run happened" — it is a `run.manifest` and a
+   * `run.receipt` document sitting in the outputs, so the test is for those
+   * documents rather than for a run having occurred. A notebook can be run
+   * many times and still have nothing to send, which is why the sheet's
+   * unavailable line names the cells that would produce one.
+   */
+  const runProof = useMemo(() => {
+    let manifest = "";
+    let receipt = "";
+    let signedBy = "";
+    for (const tiles of nb.cellOutputs || []) {
+      for (const tile of tiles || []) {
+        const text = String((tile as { content?: unknown })?.content ?? "");
+        if (!text.startsWith("{")) continue;
+        try {
+          const doc = JSON.parse(text) as Record<string, string>;
+          const digest = String(doc.recipeDigest || "").slice(0, 12).toUpperCase();
+          if (doc.kind === "basilisk.run-manifest") manifest = digest;
+          if (doc.kind === "basilisk.run-receipt") receipt = digest;
+          if (doc.signedBy) signedBy = String(doc.signedBy);
+        } catch {
+          /* not a document — an output that merely starts with a brace */
+        }
+      }
+    }
+    return manifest || receipt ? { manifest, receipt, signedBy } : null;
+  }, [nb.cellOutputs]);
+
   const peerChoices = useMemo(() => {
     const fromRoster = (nb.quorumState.peers || []).map((p) =>
       String(p.id || "").replace(/^@/, "")
@@ -1013,9 +1072,13 @@ export function ToolkitShell() {
             setTrayTab("inputs");
           }}
         >
-          <Button variant="ghost" onClick={() => void nb.copyShareLink()}>
+          {/* Was Copy link, which is one of the three transfers this notebook
+              supports and the only one that had an entry point. The sheet's
+              first row is still Copy link, so the fast path costs one more
+              click and the other two stop being unreachable. */}
+          <Button variant="ghost" onClick={() => setShareOpen(true)}>
             <Link2 />
-            Copy link
+            Share
           </Button>
           <Button variant="ghost" onClick={() => nb.clearSensitive()}>
             <Eraser />
@@ -2974,6 +3037,31 @@ export function ToolkitShell() {
           </button>
         )}
         </div>
+
+        {/* Share this notebook — the three transfers, each with its own row.
+            `verified` counts peers whose key has actually been confirmed, not
+            peers who arrived: they are different claims, and the sheet draws
+            the gap between them. */}
+        <ShareSheet
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          recipeLink={recipeLink}
+          onCopyRecipeLink={() => void nb.copyShareLink()}
+          proof={runProof}
+          session={
+            nb.quorumState.room
+              ? {
+                  room: nb.quorumState.room,
+                  invite: nb.quorumState.invite,
+                  joined: (nb.quorumState.peers || []).length,
+                  expected: nb.quorumState.expected,
+                  verified: (nb.quorumState.peers || []).filter((p) => p.authenticated)
+                    .length,
+                }
+              : null
+          }
+          onCopyInvite={() => void navigator.clipboard.writeText(nb.quorumState.invite)}
+        />
 
         {/* Guided key ceremony — the kit's front door (HANDOFF: a window is a Sheet) */}
         <CeremonySheet

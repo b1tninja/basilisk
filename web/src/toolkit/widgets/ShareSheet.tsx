@@ -10,7 +10,14 @@ import {
 import { cn } from "@/lib/cn";
 
 /** `hashForNotebook`'s answer, carried whole so the refusal keeps its reason. */
-export type RecipeLink = { ok: true; url: string } | { ok: false; reason: string };
+export type RecipeLink =
+  | { ok: true; url: string }
+  /**
+   * `tone` because the two ways this fails are not alike. The secret guard
+   * saying no is a refusal; an empty notebook having nothing to send is a
+   * not-yet, and painting it red makes a blank page look like a fault.
+   */
+  | { ok: false; reason: string; tone?: "refused" | "not-yet" };
 
 export type ShareSheetProps = {
   open: boolean;
@@ -120,6 +127,7 @@ export function ShareSheet({
             what="The notebook text, carried in the link's fragment — it never reaches a server. They open an identical, unrun notebook."
             trust="No trust needed"
             blocked={recipeLink.ok ? null : recipeLink.reason}
+            tone={recipeLink.ok ? undefined : (recipeLink.tone ?? "refused")}
             value={recipeLink.ok ? recipeLink.url : ""}
           >
             <Button onClick={onCopyRecipeLink} disabled={!recipeLink.ok}>
@@ -134,7 +142,11 @@ export function ShareSheet({
             title="Send what you ran"
             what="The signed manifest and receipt alongside the recipe, so they can check your run reproduced. Nobody needs to be online."
             trust="They need your public key to check it"
-            blocked={proof ? null : "Nothing has been run yet — a proof describes a run that happened."}
+            blocked={
+              proof
+                ? null
+                : "No proof in this notebook yet — add run.manifest and run.receipt cells, then run it."
+            }
             tone="not-yet"
             value={
               proof
