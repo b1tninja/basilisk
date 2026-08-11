@@ -1,7 +1,7 @@
 import { QrArtifact } from "basilisk-portal";
 
 /*
- * A real `qr` artifact: `basilisk run` on `input | qr | out @qr`, with the SSH
+ * A real `qr` artifact: `basilisk run` on `input | qr | out $qr`, with the SSH
  * fingerprint of the checked-in ed25519 fixture as the payload. What is below
  * is the op's SVG source verbatim — 83×83, one `<rect>` per module — which is
  * why it is a wall of markup rather than a tidy path.

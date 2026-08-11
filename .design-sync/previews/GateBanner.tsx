@@ -37,7 +37,7 @@ export const Approval = () => (
     facts={
       <>
         <GateFact term="Step" detailClassName="break-all font-mono">
-          cell 3 · ssh.sign key=@release namespace=git
+          cell 3 · ssh.sign key=$release namespace=git
         </GateFact>
         <GateFact term="Key">
           <span className="key-kind-badge" data-key-kind="ssh">
@@ -109,7 +109,7 @@ export const ApprovalWithSessionGrant = () => (
     facts={
       <>
         <GateFact term="Step" detailClassName="break-all font-mono">
-          cell 1 · agent.decrypt key=@ada
+          cell 1 · agent.decrypt key=$ada
         </GateFact>
         <GateFact term="Key">
           <span className="key-kind-badge" data-key-kind="pgp">
@@ -229,7 +229,7 @@ export const ConsequenceFailed = () => (
     facts={
       <>
         <GateFact term="Slot" detailClassName="font-mono">
-          @release
+          $release
         </GateFact>
         <GateFact term="Replacing">
           <span>release signing (ed25519)</span>

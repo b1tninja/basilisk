@@ -46,9 +46,16 @@ export const Default = () => <Kind kind="keypair" />;
 /**
  * The closed map, in full. It is shared precisely so a kind can never show
  * one pictogram in an output row and a different one on a type card — and
- * the collisions are deliberate: `key`, `keypair` and `openpgp-key` all
- * take the key glyph because at badge size they are the same claim, and
- * `share`/`shares`/`recipients` all take the people glyph.
+ * the collisions are deliberate: `key` and `keypair` take the same key glyph
+ * because at badge size they are the same claim, and `share`/`shares`/
+ * `recipients` all take the people glyph.
+ *
+ * `openpgp-key` is **not** here, though this list once claimed it "takes the
+ * key glyph". It resolves through neither `KIND_GLYPHS` nor `GLYPH_PATHS`, so
+ * it renders nothing — and in this cell there is no dashed slot to say so, so
+ * it drew as a bare chip between two mapped neighbours and read as breakage.
+ * It belongs in `UnmappedRendersNothing`, where absence is captioned as
+ * intent, and that is where it now is.
  */
 export const AllKinds = () => (
   <div style={{ display: "grid", gap: 12 }}>
@@ -63,7 +70,7 @@ export const AllKinds = () => (
     <div>
       <p style={groupTitle}>Key material</p>
       <div style={wrap}>
-        {["key", "keypair", "openpgp-key", "secret", "signature"].map((k) => (
+        {["key", "keypair", "secret", "signature"].map((k) => (
           <Kind key={k} kind={k} />
         ))}
       </div>
@@ -157,7 +164,16 @@ export const Sizes = () => (
  */
 export const UnmappedRendersNothing = () => (
   <div style={{ display: "grid", gap: 8, maxWidth: 400 }}>
-    {["keypair", "sdp", "peer", "quorum"].map((k) => (
+    {/* These four are checked against the maps, not assumed. `kindGlyph` is
+     * `KIND_GLYPHS[k] || (GLYPH_PATHS[k] ? k : null)` — it resolves through
+     * *either* namespace, which is the trap `glyphExists`'s own comment warns
+     * about. This cell previously used `peer` and `quorum` as its unmapped
+     * examples; both are in `GLYPH_PATHS`, so both drew a glyph directly
+     * beneath a caption reading "unmapped — no glyph, never a guess". Three of
+     * the four rows stated the opposite of what they showed.
+     *
+     * `sdp`, `openpgp-key` and `certificate` are in neither map. */}
+    {["keypair", "sdp", "openpgp-key", "certificate"].map((k) => (
       <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
         <span
           style={{

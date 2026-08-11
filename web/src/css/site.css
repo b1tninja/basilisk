@@ -3915,8 +3915,29 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   position: relative;
   cursor: default;
 }
-.builder-ingredient-chip-error {
-  border-color: color-mix(in srgb, var(--danger, #c44) 50%, var(--border));
+/* Compound with `.suggest-chip`, and `--error` rather than `--danger`, because
+ * this rule drew nothing at all. Two defects, stacked:
+ *
+ * 1. `--danger` is defined nowhere in this codebase. The token for red is
+ *    `--error` (site.css, light and dark), used 44 times elsewhere. So this
+ *    fell to its literal `#c44` fallback — a hardcoded near-red that ignores
+ *    the theme, which is the fallback masking the missing token rather than
+ *    surfacing it.
+ * 2. That fallback never applied either. `.suggest-chip` sets the `border`
+ *    *shorthand*, which resets `border-color`; both selectors were specificity
+ *    (0,1,0) and the shorthand is emitted later in the bundle. Same specificity,
+ *    later wins.
+ *
+ * So a chip marked `error` was pixel-identical to a plain one: no red, no
+ * affordance, nothing. Compounding the selector makes it (0,2,0), which wins on
+ * specificity rather than on emission order — the ordering of two chunks in a
+ * bundle is not something this rule should depend on.
+ *
+ * Found by /design-sync: the error cell of SuggestChip's preview sheet rendered
+ * identically to its neighbours, which is the only reason anyone looked.
+ */
+.suggest-chip.builder-ingredient-chip-error {
+  border-color: color-mix(in srgb, var(--error) 50%, var(--border));
 }
 .cell-recipe-chip-pop {
   display: none;

@@ -56,11 +56,11 @@ export const RecipeSource = () => (
     <label style={label}>Recipe</label>
     <Textarea
       rows={5}
-      defaultValue={`in @secret
+      defaultValue={`in $secret
 | genkey ed25519
 | ssh.encode as=openssh
-| agent.sign key=@me
-| out @signature`}
+| agent.sign key=$me
+| out $signature`}
     />
   </div>
 );

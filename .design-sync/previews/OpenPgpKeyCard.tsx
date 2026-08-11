@@ -1,52 +1,65 @@
 import { OpenPgpKeyCard } from "basilisk-portal";
 
 /*
- * Real armor from `gpg.genkey name="Ada Lovelace" email="ada.lovelace@example.org"`,
- * run through `basilisk run`. Both blocks are the same Curve25519 key — the op
- * emits the private one as its tip and writes the public one beside it.
+ * Real armor for `Ada Lovelace <ada.lovelace@example.org>`. Both blocks are the
+ * same Curve25519 key — the private one is the tip `gpg.genkey` emits, and the
+ * public one is what it writes beside it.
  *
  * The card parses these with `openpgp`'s `readKey`, so the user id, the grouped
  * fingerprint and the dates on screen are all read back out of the bytes below.
  * Substitute a plausible-looking fake and the card falls back to "OpenPGP key",
  * which is exactly the unreadable state it was written to replace.
+ *
+ * **The creation date is load-bearing: keep it behind 2024-05-15.** The capture
+ * harness pins the browser clock to `2024-05-15T12:00:00Z` so screenshots are
+ * deterministic, and `getPrimaryUser` validates the self-certification against
+ * the clock it is given. A key generated *today* is signed in that clock's
+ * future, so the self-sig is not yet valid and `getPrimaryUser` rejects —
+ * silently, because `openpgpKeySummary` catches it and leaves `uid` empty. The
+ * fingerprint and creation date do no date validation and `getExpirationTime`
+ * answers `Infinity` on its own failure path, so the card renders every field
+ * *except* the user id and reads as a live bug in the component. It is not one:
+ * a real reader has a real clock. Regenerate these and the whole cell silently
+ * reverts to that fallback, which is why the date is stated here rather than
+ * left to whoever next runs `generateKey`.
  */
 
 const PUBLIC = `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
-xjMEam4XaRYJKwYBBAHaRw8BAQdA8+AobcRqM6mF0HHPBLcvvqkCeJsmzQjh
-LhNuc5p5mufNJ0FkYSBMb3ZlbGFjZSA8YWRhLmxvdmVsYWNlQGV4YW1wbGUu
-b3JnPsLAEwQTFgoAhQWCam4XaQMLCQcJEJBJCKDw7PCrRRQAAAAAABwAIHNh
-bHRAbm90YXRpb25zLm9wZW5wZ3Bqcy5vcmf1MV9+y/ueZDslNhoOvMo+v4vW
-s8Zg3GaoNUG2Dj18tgUVCggODAQWAAIBAhkBApsDAh4BFiEE7xXNP3WUeENx
-6CwKkEkIoPDs8KsAADuCAQDz9ztasAjXsN8oT0mAGmwzDdt1PSajdEbfvWEQ
-2c1DQgEA5NfmtBIcJz79o5k+6CnUBOA48OG7lP9DFgsw2y11XgPOOARqbhdp
-EgorBgEEAZdVAQUBAQdAY69jbuZTvA63DM+fpp6Xq/UOBKxxI8yhfZqjoeBH
-XQ0DAQgHwr4EGBYKAHAFgmpuF2kJEJBJCKDw7PCrRRQAAAAAABwAIHNhbHRA
-bm90YXRpb25zLm9wZW5wZ3Bqcy5vcmfpdy1K1vW6H6yajxGjQfj3VcQyFcm0
-JnF/5a3qBUfbLQKbDBYhBO8VzT91lHhDcegsCpBJCKDw7PCrAAD0XgEA8N8Q
-o0IxEX4N35CJyJf6ftg2rgNMjgBFRXMuCiCMLrcBAIChaMVoKQVwYVzK4vIp
-a874GVWABikbRCjAXs6f3xsL
-=do/f
+xjMEZHhhDBYJKwYBBAHaRw8BAQdAUcwlXpt+Lq6Zl+9P1shhbcCxCWEsMsK4
+at1iz6n7LmnNJ0FkYSBMb3ZlbGFjZSA8YWRhLmxvdmVsYWNlQGV4YW1wbGUu
+b3JnPsLAEwQTFgoAhQWCZHhhDAMLCQcJECxeu7Rq0BOIRRQAAAAAABwAIHNh
+bHRAbm90YXRpb25zLm9wZW5wZ3Bqcy5vcmcqSYt6iRrZVjsgRTy7W8V2P8cx
+KhRi/UjLz8O14Tw/jgUVCggODAQWAAIBAhkBApsDAh4BFiEE13IHjFx8Kg7c
+oJ7TLF67tGrQE4gAAKldAPwPwdeP8O7Nxzf43pB13h3PsCyCFhFKQYtDUVlA
+uRl37QEAjyv6ATu/WbOpXifMKDp3Z1HsH3Yln6wBp1Sr2sBCuQ7OOARkeGEM
+EgorBgEEAZdVAQUBAQdAE2rk/hJIhITUWpJpkn/kwIZGdFhoNwLIv2uP6RRb
+6EYDAQgHwr4EGBYKAHAFgmR4YQwJECxeu7Rq0BOIRRQAAAAAABwAIHNhbHRA
+bm90YXRpb25zLm9wZW5wZ3Bqcy5vcmdBIxJkS+vr8kQZn3LpVvsHYgtww95g
+o/pYug048DtvnQKbDBYhBNdyB4xcfCoO3KCe0yxeu7Rq0BOIAAB+DwEAqUSH
+DAiwidKj344y4JORClJxShghOrlKyO2KQrDZ51ABAMHvHPJTlVxG3gAzQsZz
+yjltP/kOPj+fEp/ZBKRn22kL
+=YyoN
 -----END PGP PUBLIC KEY BLOCK-----`;
 
 const PRIVATE = `-----BEGIN PGP PRIVATE KEY BLOCK-----
 
-xVgEam4XaRYJKwYBBAHaRw8BAQdA8+AobcRqM6mF0HHPBLcvvqkCeJsmzQjh
-LhNuc5p5mucAAP9nS14EPUaa8onWkPC0a0H+K2CcTbEaZxm2pdwchtyhJxCb
+xVgEZHhhDBYJKwYBBAHaRw8BAQdAUcwlXpt+Lq6Zl+9P1shhbcCxCWEsMsK4
+at1iz6n7LmkAAP9Dcx4kx4mT/sLmVt9vRZbFeAkTkzyYRVlN75jCUNmXQxD2
 zSdBZGEgTG92ZWxhY2UgPGFkYS5sb3ZlbGFjZUBleGFtcGxlLm9yZz7CwBME
-ExYKAIUFgmpuF2kDCwkHCRCQSQig8Ozwq0UUAAAAAAAcACBzYWx0QG5vdGF0
-aW9ucy5vcGVucGdwanMub3Jn9TFffsv7nmQ7JTYaDrzKPr+L1rPGYNxmqDVB
-tg49fLYFFQoIDgwEFgACAQIZAQKbAwIeARYhBO8VzT91lHhDcegsCpBJCKDw
-7PCrAAA7ggEA8/c7WrAI17DfKE9JgBpsMw3bdT0mo3RG371hENnNQ0IBAOTX
-5rQSHCc+/aOZPugp1ATgOPDhu5T/QxYLMNstdV4Dx10Eam4XaRIKKwYBBAGX
-VQEFAQEHQGOvY27mU7wOtwzPn6ael6v1DgSscSPMoX2ao6HgR10NAwEIBwAA
-/2r1MWlI2hcmW85KbP5cSb1kxy131K4LT1msXKimQYKwEGPCvgQYFgoAcAWC
-am4XaQkQkEkIoPDs8KtFFAAAAAAAHAAgc2FsdEBub3RhdGlvbnMub3BlbnBn
-cGpzLm9yZ+l3LUrW9bofrJqPEaNB+PdVxDIVybQmcX/lreoFR9stApsMFiEE
-7xXNP3WUeENx6CwKkEkIoPDs8KsAAPReAQDw3xCjQjERfg3fkInIl/p+2Dau
-A0yOAEVFcy4KIIwutwEAgKFoxWgpBXBhXMri8ilrzvgZVYAGKRtEKMBezp/f
-Gws=
-=2svL
+ExYKAIUFgmR4YQwDCwkHCRAsXru0atATiEUUAAAAAAAcACBzYWx0QG5vdGF0
+aW9ucy5vcGVucGdwanMub3JnKkmLeoka2VY7IEU8u1vFdj/HMSoUYv1Iy8/D
+teE8P44FFQoIDgwEFgACAQIZAQKbAwIeARYhBNdyB4xcfCoO3KCe0yxeu7Rq
+0BOIAACpXQD8D8HXj/Duzcc3+N6Qdd4dz7AsghYRSkGLQ1FZQLkZd+0BAI8r
++gE7v1mzqV4nzCg6d2dR7B92JZ+sAadUq9rAQrkOx10EZHhhDBIKKwYBBAGX
+VQEFAQEHQBNq5P4SSISE1FqSaZJ/5MCGRnRYaDcCyL9rj+kUW+hGAwEIBwAA
+/2TQ7slt+5H6EQAKKLW0bdhkdNs/bRJjqZhq+0mRqI5wEcjCvgQYFgoAcAWC
+ZHhhDAkQLF67tGrQE4hFFAAAAAAAHAAgc2FsdEBub3RhdGlvbnMub3BlbnBn
+cGpzLm9yZ0EjEmRL6+vyRBmfculW+wdiC3DD3mCj+li6DTjwO2+dApsMFiEE
+13IHjFx8Kg7coJ7TLF67tGrQE4gAAH4PAQCpRIcMCLCJ0qPfjjLgk5EKUnFK
+GCE6uUrI7YpCsNnnUAEAwe8c8lOVXEbeADNCxnPKOW0/+Q4+P58Sn9kEpGfb
+aQs=
+=I2Xp
 -----END PGP PRIVATE KEY BLOCK-----`;
 
 /**
@@ -83,5 +96,5 @@ export const MaskedAndOpen = () => (
  * the card can say. It says that, and stops, rather than inventing a date.
  */
 export const FingerprintBeforeParse = () => (
-  <OpenPgpKeyCard content="" fingerprint="EF15CD3F7594784371E82C0A904908A0F0ECF0AB" publicOnly />
+  <OpenPgpKeyCard content="" fingerprint="D772078C5C7C2A0EDCA09ED32C5EBBB46AD01388" publicOnly />
 );

@@ -13,6 +13,10 @@
     "Textarea": "src/components/ui/textarea.tsx",
     "Separator": "src/components/ui/separator.tsx",
     "ScrollArea": "src/components/ui/scroll-area.tsx",
+    "Sheet": "src/components/ui/sheet.tsx",
+    "DropdownMenu": "src/components/ui/dropdown-menu.tsx",
+    "Tooltip": "src/components/ui/tooltip.tsx",
+    "ToggleGroup": "src/components/ui/toggle-group.tsx",
     "SuggestChip": "src/toolkit/widgets/SuggestChip.tsx",
     "ArtifactAction": "src/toolkit/widgets/ArtifactAction.tsx",
     "Glyph": "src/toolkit/widgets/Glyph.tsx",
@@ -29,7 +33,25 @@
     "ReceiptCard": "src/toolkit/widgets/ReceiptCard.tsx",
     "RecipientsCard": "src/toolkit/widgets/RecipientsCard.tsx",
     "QrArtifact": "src/toolkit/widgets/QrArtifact.tsx",
-    "GateBanner": "src/toolkit/widgets/GateBanner.tsx"
+    "GateBanner": "src/toolkit/widgets/GateBanner.tsx",
+    "SessionStrip": "src/toolkit/widgets/SessionStrip.tsx",
+    "ConnectionsPanel": "src/toolkit/widgets/ConnectionsPanel.tsx",
+    "ApprovalBanner": "src/toolkit/widgets/ApprovalBanner.tsx",
+    "ReadinessBar": "src/toolkit/widgets/ReadinessBar.tsx",
+    "ModeToggle": "src/toolkit/widgets/ModeToggle.tsx",
+    "PresetMenu": "src/toolkit/widgets/PresetMenu.tsx",
+    "CeremonySheet": "src/toolkit/widgets/CeremonySheet.tsx",
+    "DkgPanel": "src/toolkit/widgets/DkgPanel.tsx",
+    "ShareCards": "src/toolkit/widgets/ShareCards.tsx",
+    "ShareCheck": "src/toolkit/widgets/ShareCheck.tsx",
+    "ShareIdentity": "src/toolkit/widgets/ShareIdentity.tsx"
+  },
+  "overrides": {
+    "Sheet": { "cardMode": "single", "primaryStory": "InvitePeer" },
+    "DropdownMenu": { "cardMode": "single", "primaryStory": "PeerActions" },
+    "Tooltip": { "cardMode": "single", "primaryStory": "Default" },
+    "PresetMenu": { "cardMode": "single", "primaryStory": "Default" },
+    "CeremonySheet": { "cardMode": "single", "primaryStory": "Verified" }
   },
   "readmeHeader": ".design-sync/conventions.md"
 }

@@ -2,7 +2,7 @@ import { KeyCard } from "basilisk-portal";
 
 /*
  * Every JWK below came out of `genkey` — `basilisk run` on `genkey ed25519 |
- * export jwk | out @kp` and friends. The public halves are what the engine's
+ * export jwk | out $kp` and friends. The public halves are what the engine's
  * `publicJwkText` puts in `traits.publicJwk`: the same key re-exported through
  * `crypto.subtle.exportKey("jwk", …)` with the private scalar gone.
  *
@@ -81,7 +81,7 @@ export const MaskedPrivate = () => (
     alg="ed25519"
     comment="ada@lovelace.dev"
     half="private"
-    withheld="private scalar not shown — reveal the tile, or `out @kp` to write it to a file"
+    withheld="private scalar not shown — reveal the tile, or `out $kp` to write it to a file"
     publicOnly
   />
 );
@@ -98,7 +98,7 @@ export const KeypairTip = () => (
     jwk={ED_PUBLIC}
     alg="ed25519"
     half="both"
-    withheld="private half not shown — add `out @kp` to the recipe to write both halves"
+    withheld="private half not shown — add `out $kp` to the recipe to write both halves"
     publicOnly
   />
 );

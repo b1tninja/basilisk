@@ -27,6 +27,31 @@ export { Textarea } from "./components/ui/textarea";
 export { Separator } from "./components/ui/separator";
 export { ScrollArea } from "./components/ui/scroll-area";
 
+/**
+ * Overlay and control primitives — added for the shared-notebook surfaces.
+ *
+ * Without these the design tool has no dialog, no menu and no tooltip, so any
+ * screen needing one gets an invented panel that matches nothing in this repo.
+ * Every session and peer flow below is a dialog or a menu, which made their
+ * absence the actual blocker rather than a gap in the widget list.
+ *
+ * Each is a compound whose parts must travel together — `SheetContent` outside
+ * a `Sheet` has no portal to render into — so the subcomponents are exported
+ * for the same reason `GateFact` is, and only the roots get map entries.
+ */
+export {
+  Sheet, SheetTrigger, SheetClose, SheetPortal, SheetOverlay,
+  SheetContent, SheetHeader, SheetFooter, SheetTitle, SheetDescription,
+} from "./components/ui/sheet";
+export {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuGroup, DropdownMenuPortal,
+  DropdownMenuSub, DropdownMenuRadioGroup, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "./components/ui/dropdown-menu";
+export { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/tooltip";
+export { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
+
 // Toolkit parts that render without the notebook around them.
 export { SuggestChip } from "./toolkit/widgets/SuggestChip";
 export { ArtifactAction } from "./toolkit/widgets/ArtifactAction";
@@ -71,3 +96,36 @@ export { QrArtifact } from "./toolkit/widgets/QrArtifact";
  * standalone rendering, and it belongs on `GateBanner`'s card, not its own.
  */
 export { GateBanner, GateFact } from "./toolkit/widgets/GateBanner";
+
+/**
+ * Shared-notebook surfaces — the session, its peers, and what gets shared.
+ *
+ * These were held back on the first sync under the coupling rule at the top of
+ * this file, and the rule does not actually exclude them: checked rather than
+ * assumed, none of the twelve reads context or a store, and each takes plain
+ * props (`state`, `peers`, `cards`, `facts`). The genuinely coupled widgets are
+ * still absent — `ToolCard`, `OutputList`, `OpsShelf`, `ToolkitShell` and the
+ * rest need the op registry or the notebook itself.
+ *
+ * They belong here because the multi-party session is what the design tool is
+ * being asked to draw next, and without them every dialog for inviting a peer,
+ * showing a roster, or approving a handoff would be invented from scratch and
+ * map onto none of this code.
+ *
+ * `quorum` in these files is not stale naming from the abandoned design. It is
+ * two live things: the authenticated transport the notebook session sits on
+ * top of (`quorum.offer`/`quorum.join` are implemented steps, and `origin:
+ * "quorum"` is a live link kind), and — in `ShareCards` and `CeremonySheet` —
+ * the Shamir threshold, where "any k of these n" is simply what a quorum is.
+ */
+export { SessionStrip } from "./toolkit/widgets/SessionStrip";
+export { ConnectionsPanel } from "./toolkit/widgets/ConnectionsPanel";
+export { ApprovalBanner } from "./toolkit/widgets/ApprovalBanner";
+export { ReadinessBar } from "./toolkit/widgets/ReadinessBar";
+export { ModeToggle } from "./toolkit/widgets/ModeToggle";
+export { PresetMenu } from "./toolkit/widgets/PresetMenu";
+export { CeremonySheet } from "./toolkit/widgets/CeremonySheet";
+export { DkgPanel } from "./toolkit/widgets/DkgPanel";
+export { ShareCards } from "./toolkit/widgets/ShareCards";
+export { ShareCheck } from "./toolkit/widgets/ShareCheck";
+export { ShareIdentity } from "./toolkit/widgets/ShareIdentity";

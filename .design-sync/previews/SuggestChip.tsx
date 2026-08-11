@@ -8,7 +8,7 @@ export const Placed = () => (
   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
     <SuggestChip label="genkey" variant="placed" />
     <SuggestChip label="ssh.encode" variant="placed" hint="text" />
-    <SuggestChip label="out @pub" variant="placed" />
+    <SuggestChip label="out $pub" variant="placed" />
   </div>
 );
 
@@ -41,7 +41,7 @@ export const ErrorAndExposure = () => (
   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
     <SuggestChip label="aes-gcm" variant="placed" error />
     <SuggestChip label="agent.unlock" variant="placed" keyExposed />
-    <SuggestChip label="gpg.sign key=@me" variant="placed" keyExposed />
+    <SuggestChip label="gpg.sign key=$me" variant="placed" keyExposed />
   </div>
 );
 

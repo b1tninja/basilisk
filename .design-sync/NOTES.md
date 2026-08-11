@@ -116,6 +116,70 @@ green, and a reinstall can disrupt a concurrent session working in this tree.
   with no standalone rendering and would only ever draw a floor card of its
   own. An export without a map entry is fine; `buttonVariants` already was one.
 
+- **The capture harness pins the browser clock to `2024-05-15T12:00:00Z`**
+  (`package-capture.mjs`), so any fixture whose validity is checked against
+  "now" must be dated *behind* that. `OpenPgpKeyCard`'s armor was generated on
+  the day it was authored, which is that clock's future, so the self-signature
+  was not yet valid and `getPrimaryUser` rejected — leaving `uid` empty while
+  the fingerprint and creation date (no date validation) and
+  `getExpirationTime` (answers `Infinity` on failure) all rendered normally.
+  The card read as a live bug in the component and is not one: it renders
+  correctly under a real clock, verified both ways against the same bundle.
+  The fixture is now dated 2023-06-01 and the preview says why. **Any
+  time-validated fixture — certificates, signatures, expiring keys — inherits
+  this.** A cell that renders every field except the one behind a signature
+  check is this bug, not a parser bug.
+
+## The shared-notebook widening (38 components)
+
+- **`quorum` is not stale naming.** It survives the shared-notebook redesign as
+  two live things: the authenticated transport the session sits on top of
+  (`quorum.offer`/`quorum.join` are implemented steps — `registry.js`,
+  `engine.js` — `origin: "quorum"` is a live link kind, and `quorum.html` is a
+  built page), and the Shamir threshold in `ShareCards`/`CeremonySheet`, where
+  "any k of n" is simply what a quorum is. Do not "clean it up".
+- **The session/peer/share widgets are not coupled.** The exclusion rule at the
+  top of `ds-entry.ts` is about `ToolCard`/`OutputList`/`ToolkitShell`, which
+  need the op registry or the notebook. The twelve added here read no context
+  and no store — checked, not assumed.
+- **`IntegrityPanel` is deliberately still out.** It reaches `node:crypto`
+  through `deployment-check.js` → `module-integrity.js` (a vitest-only fallback
+  branch). Vite tolerates the unresolved builtin; the converter's esbuild does
+  not, and there is no cfg hook for externals. Re-adding it means forking
+  `lib/bundle.mjs` via `cfg.libOverrides`.
+- **Portal/fixed components need `cfg.overrides.<Name> = {cardMode: "single",
+  primaryStory}`** or `package-validate` raises `[GRID_OVERFLOW]` — no grid can
+  present content that portals out of its cell. Applies to `Sheet`,
+  `DropdownMenu`, `Tooltip`, `PresetMenu`, `CeremonySheet`.
+- Radix overlays must render `open` (a closed sheet photographs as an empty
+  frame) **and** suppress autofocus with `onOpenAutoFocus={(e) =>
+  e.preventDefault()}`, or the first field is captured focused with its text
+  selected and reads as an accident.
+
+## Fixtures must be generated, not invented
+
+- **BLIP39 mnemonics and VSS commitments cannot be written by hand.** A
+  mnemonic is checksummed over a fixed wordlist, so plausible words render
+  "Unknown SLIP-39 word", and fabricated hex is "not valid P-256 points" — a
+  cell captioned as a successful check then shows a parse failure. Generate
+  them with a throwaway vitest test (vitest has the Vite resolver; plain node
+  cannot load `wordlist.txt`) running
+  `random 32 | vss.split threshold=3 shares=5 | tee - vss.commitments | blip39`.
+- **`traits.shareOf` is the share *number*, not the total** — the name reads
+  like "of N" and means the opposite, and `engine.js` sets it from
+  `shareIndex`. `shareIdentity` prefers it over `shareIndex`, so a fixture
+  putting the total there renumbers the share.
+- **`ShareCards` derives the total from how many artifacts it is given.** Pass
+  the whole split or every card misstates itself; one card alone printed
+  "Share 2 of 1 — any 3 of these 1 reconstruct the secret".
+- **The `@` → `$` slot migration left stale spellings in the previews** —
+  `out @kp`, `key=@release`, `in @secret`. These teach the design tool a recipe
+  language this build no longer parses, so they were migrated. Emails and SSH
+  comments (`ada@lovelace.dev`) keep their `@`. **`ReceiptCard` is left alone
+  on purpose**: its fixture is a signed receipt whose `recipeDigest` is
+  computed over that exact `recipeSource`, so editing the text would make the
+  digest a lie. Regenerate the receipt if it ever needs updating.
+
 ## Re-sync risks
 
 - **`web/.ds-styles.css` goes stale silently.** It is a copy, gitignored, and
