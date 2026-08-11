@@ -43,6 +43,39 @@
  * and keyserver are in this process. Only an absent Chromium download stands
  * this down; an installed browser that will not launch is a failure, per
  * `classifyLaunchFailure`.
+ *
+ * ## Why this suite does not pass yet — signalling has no server here
+ *
+ * The scan above works: the session is the `N` export of `session-*.js`, forty
+ * prototype methods, carrying the needle. `start()` then fails with `not
+ * found`, which is the *dist file server's* catch-all 404 body, not the
+ * keyserver's — the keyserver's own 404 branch was instrumented and never
+ * fired. `quorum-room.js` serves `/pks/lookup` and nothing else, because the
+ * mailbox routes went with the dead helper, so the client's POST to
+ * `/api/v1/notebook/negotiate` reaches nothing.
+ *
+ * The obvious shortcut does not work. `webpubsub-double.js` cannot be injected
+ * into the pages: it brokers `sendToGroup` through a `Set` of sockets held in
+ * one process, and two browser contexts would each get their own copy, so
+ * neither peer would ever see the other's signals. Signalling has to be shared,
+ * which means a server both pages reach.
+ *
+ * It also has to be *same-origin*. `connect-src 'self'` is the shipped policy
+ * and the reason `routes` proxies the keyserver rather than redirecting to it;
+ * a WebSocket to another port is refused for the same reason. So the dist
+ * server has to tunnel the upgrade, which needs no framing — once the
+ * handshake is forwarded it is bytes in both directions.
+ *
+ * The hub itself already exists and is already trusted for this: Python's
+ * `LocalWebPubSub` (`basilisk/portal/webpubsub_local.py`), which `basilisk
+ * serve` starts whenever `WEB_PUBSUB_CONNECTION` points at loopback. There is
+ * no `ws` dependency here, so standing a Node hub up would mean hand-rolling
+ * RFC 6455 beside a Python implementation the dev path already relies on.
+ *
+ * The one non-obvious detail for whoever wires it: `LocalWebPubSub.start()`
+ * takes an explicit port, so the endpoint the negotiate response *advertises*
+ * can be the dist server's origin while the hub *binds* somewhere else. That
+ * is what lets the page dial same-origin and still be tunnelled through.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
