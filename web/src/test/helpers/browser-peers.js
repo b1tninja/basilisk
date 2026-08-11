@@ -39,12 +39,14 @@
 
 import { createServer } from "node:http";
 import { connect } from "node:net";
+import { randomBytes } from "node:crypto";
 
-/** Spelled once so an editor cannot turn a literal request terminator into LF. */
-const CRLF = String.fromCharCode(13, 10);
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+
+/** Spelled once so an editor cannot turn a literal request terminator into LF. */
+const CRLF = String.fromCharCode(13, 10);
 
 /** The built app. Run `npm run build` before the e2e suite. */
 export const DIST_ROOT = fileURLToPath(new URL("../../../dist/", import.meta.url));
@@ -84,6 +86,118 @@ const MIME = {
   ".map": "application/json; charset=utf-8",
 };
 
+
+/**
+ * Client→server WebSocket frames, one at a time, with a hook on the text ones.
+ *
+ * The tunnel forwards bytes because it does not need to understand them. This
+ * is the exception: a relay tamper has to reach the payload, and the mailbox
+ * that used to be that seam sees none of this traffic any more.
+ *
+ * Only unfragmented text frames are opened. Continuations, binary and control
+ * frames are forwarded as the exact bytes that arrived — a pump that
+ * reassembled fragments would be reimplementing the protocol to inspect
+ * messages this suite's signalling never sends.
+ *
+ * Rewrites are re-masked with a fresh key, because client→server frames must
+ * be masked and reusing the original key on different plaintext is not how
+ * that works. Frames the hook leaves alone are forwarded byte-identical rather
+ * than re-encoded, so an untouched relay stays untouched.
+ *
+ * The hook is async and delivery order is the protocol's, so frames are
+ * chained rather than raced.
+ */
+function pumpFrames(socket, upstream, onSignal) {
+  let buf = Buffer.alloc(0);
+  let chain = Promise.resolve();
+  socket.on("data", (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    for (;;) {
+      const frame = readClientFrame(buf);
+      if (!frame) break;
+      buf = buf.subarray(frame.size);
+      const { fin, opcode, payload, bytes } = frame;
+      chain = chain
+        .then(async () => {
+          if (!fin || opcode !== 1) {
+            upstream.write(bytes);
+            return;
+          }
+          const text = payload.toString("utf8");
+          const out = await onSignal(text);
+          upstream.write(typeof out === "string" && out !== text ? encodeTextFrame(out) : bytes);
+        })
+        .catch(() => {
+          // A hook that threw must not silently drop the frame: forward the
+          // original so the failure shows up as a protocol error rather than
+          // as a peer that never answered.
+          try {
+            upstream.write(bytes);
+          } catch {
+            /* the socket is already gone */
+          }
+        });
+    }
+  });
+  socket.on("end", () => {
+    chain.finally(() => upstream.end());
+  });
+}
+
+/** One masked frame, or null when the buffer does not hold a whole one yet. */
+function readClientFrame(buf) {
+  if (buf.length < 2) return null;
+  const fin = (buf[0] & 0x80) !== 0;
+  const opcode = buf[0] & 0x0f;
+  const masked = (buf[1] & 0x80) !== 0;
+  let len = buf[1] & 0x7f;
+  let off = 2;
+  if (len === 126) {
+    if (buf.length < off + 2) return null;
+    len = buf.readUInt16BE(off);
+    off += 2;
+  } else if (len === 127) {
+    if (buf.length < off + 8) return null;
+    len = Number(buf.readBigUInt64BE(off));
+    off += 8;
+  }
+  let mask = null;
+  if (masked) {
+    if (buf.length < off + 4) return null;
+    mask = buf.subarray(off, off + 4);
+    off += 4;
+  }
+  if (buf.length < off + len) return null;
+  const body = buf.subarray(off, off + len);
+  const payload = Buffer.from(body);
+  if (mask) for (let i = 0; i < payload.length; i += 1) payload[i] ^= mask[i % 4];
+  return { size: off + len, fin, opcode, payload, bytes: Buffer.from(buf.subarray(0, off + len)) };
+}
+
+/** A masked text frame, as a client must send. */
+function encodeTextFrame(text) {
+  const payload = Buffer.from(text, "utf8");
+  const n = payload.length;
+  let header;
+  if (n < 126) {
+    header = Buffer.from([0x81, 0x80 | n]);
+  } else if (n < 65536) {
+    header = Buffer.alloc(4);
+    header[0] = 0x81;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(n, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x81;
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(n), 2);
+  }
+  const mask = randomBytes(4);
+  const masked = Buffer.alloc(n);
+  for (let i = 0; i < n; i += 1) masked[i] = payload[i] ^ mask[i % 4];
+  return Buffer.concat([header, mask, masked]);
+}
+
 /**
  * Serve a directory on loopback.
  *
@@ -102,7 +216,7 @@ const MIME = {
  * @param {((req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => boolean)|null} [routes]
  * @returns {Promise<{ origin: string, close: () => Promise<void> }>}
  */
-export async function serveDist(root = DIST_ROOT, routes = null, upgradeTarget = null) {
+export async function serveDist(root = DIST_ROOT, routes = null, upgradeTarget = null, onSignal = null) {
   const server = createServer((req, res) => {
     if (routes && routes(req, res)) return;
     const url = req.url || "/";
@@ -136,9 +250,13 @@ export async function serveDist(root = DIST_ROOT, routes = null, upgradeTarget =
   // Signalling has to arrive on the page's own origin: `connect-src 'self'` is
   // the shipped policy and the reason the keyserver is proxied rather than
   // redirected to. So the WebSocket upgrade is tunnelled to whatever port the
-  // hub actually bound. No framing is involved — once the handshake is
-  // forwarded verbatim this is bytes in both directions, which is also why the
-  // hub's own protocol is untouched by passing through here.
+  // hub actually bound; the handshake is forwarded verbatim.
+  //
+  // Server→client is piped untouched. Client→server is read frame by frame
+  // when `onSignal` is given, because that is the seam a relay tamper needs and
+  // the mailbox — which used to be that seam — no longer sees any of this. The
+  // hub rebroadcasts whatever it receives, so rewriting on the way *in* is
+  // exactly a relay rewriting in flight.
   server.on("upgrade", (req, socket, head) => {
     const port = typeof upgradeTarget === "function" ? upgradeTarget(req) : upgradeTarget;
     if (!port) {
@@ -153,7 +271,8 @@ export async function serveDist(root = DIST_ROOT, routes = null, upgradeTarget =
       upstream.write(lines.join(CRLF) + CRLF + CRLF);
       if (head?.length) upstream.write(head);
       upstream.pipe(socket);
-      socket.pipe(upstream);
+      if (onSignal) pumpFrames(socket, upstream, onSignal);
+      else socket.pipe(upstream);
     });
     const bail = () => {
       upstream.destroy();
@@ -299,9 +418,10 @@ export async function openPeers(opts = {}) {
     headless = true,
     routes = null,
     upgrade = null,
+    onSignal = null,
   } = opts;
   const { chromium } = await import("playwright");
-  const server = await serveDist(root, routes, upgrade);
+  const server = await serveDist(root, routes, upgrade, onSignal);
   const browser = await chromium.launch({ headless, args: WEBRTC_FLAGS });
 
   /** @type {Peer[]} */

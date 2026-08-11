@@ -158,7 +158,13 @@ export async function createQuorumRoom({ tamper } = {}) {
    * reordered an offer past its own candidates would be testing something
    * nobody ships.
    *
+   * Returns the re-sealed wire, so a caller that is *relaying* rather than
+   * storing can forward it. Signalling used to arrive here as a mailbox POST
+   * and be read back by polling; it now goes over a WebSocket, so the browser
+   * suite hands frames in through `intercept` and forwards what comes back.
+   *
    * @param {string} armored
+   * @returns {Promise<string>} the envelope to deliver, tampered or not
    */
   async function accept(armored) {
     /** @type {{ payload: any, signerFpr: string }} */
@@ -177,13 +183,16 @@ export async function createQuorumRoom({ tamper } = {}) {
       faults.push(
         `mailbox could not open a posted envelope: ${err instanceof Error ? err.message : String(err)}`
       );
-      return;
+      // Unreadable here is not a delivery decision: forward it untouched
+      // rather than losing the frame, and let the peers fail on their own
+      // terms with the fault already recorded.
+      return armored;
     }
     const signer = opened.signerFpr;
     const signingKey = privateByFpr.get(signer);
     if (!signingKey) {
       faults.push(`mailbox has no private key for signer ${signer.slice(0, 8)}`);
-      return;
+      return armored;
     }
     const before = String(opened.payload?.dtlsFingerprint || "");
     const payload = tamper ? tamper(opened.payload, signer) : opened.payload;
@@ -207,6 +216,7 @@ export async function createQuorumRoom({ tamper } = {}) {
       audienceKeys: [...keyByFpr.values()],
     });
     log.push({ seq, payload: wire });
+    return wire;
   }
 
   /** POSTs are chained so `seq` is assigned in arrival order. */
@@ -333,6 +343,7 @@ export async function createQuorumRoom({ tamper } = {}) {
     })),
     routes,
     signalled: () => facts.slice(),
+    intercept: accept,
     faults: () => faults.slice(),
     counts: () => ({ ...counts }),
   };

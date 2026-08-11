@@ -44,29 +44,24 @@
  * this down; an installed browser that will not launch is a failure, per
  * `classifyLaunchFailure`.
  *
- * ## What still fails, and the one reason all of it does
+ * ## The tamper, and where it happens now
  *
- * Eight assertions pass, including the two that carry the weight: the key
- * confirms on both ends over a live connection, and the transcript is bound to
- * the fingerprints the two engines actually minted.
+ * The tamper is the half that makes the rest mean anything: without it this
+ * suite would prove a key confirms when nothing is attacking it, which is the
+ * easy case.
  *
- * The six that fail share a single cause — **`quorum-room.js` can no longer see
- * signalling**. Its `tamper` hook ran inside the mailbox's envelope-opening and
- * `signalled()` recorded what passed through there; signalling now goes over a
- * WebSocket to the hub and never touches the room at all. So `signalled()` is
- * empty, the mailbox post/poll counts are zero, and the tamper never fires.
- * Nothing about the product is wrong in any of the six.
+ * It used to happen in the mailbox, because that was where signalling passed
+ * through in readable form. It now happens in the tunnel: `browser-peers.js`
+ * reads client→server frames and hands each `sendToGroup` payload to
+ * `quorum-room.js`'s `intercept`, which opens the envelope, records what it
+ * claimed, lets the tamper rewrite it, and re-seals under the signer's *own*
+ * key. The hub rebroadcasts whatever it receives, so rewriting on the way in
+ * is exactly a relay rewriting in flight.
  *
- * Fixing them is one piece of work rather than six: the tunnel in
- * `browser-peers.js` needs an observe-and-rewrite hook. It forwards bytes today
- * precisely because it does not have to understand them, so this means parsing
- * `json.webpubsub.azure.v1` text frames on the way through and handing the
- * `data` to a callback — at which point the room's existing tamper closure can
- * be reused unchanged, since it already re-seals under the liar's own key.
- *
- * The tamper is the half that makes the other half mean something: without it
- * this suite says a key confirms when nothing is attacking it, which is the
- * easy case. It should not stay unported.
+ * Nothing about the payload changes for the peers: the signature, the room,
+ * the audience and `from` are all still correct, and the SDP is left as
+ * Chromium wrote it, so DTLS completes and the channel opens. Only the
+ * transcript field disagrees — which nothing but the binding can see.
  *
  * ## How signalling is served here
  *
@@ -256,11 +251,39 @@ const openMesh = async (room) => {
     return room.routes(req, res);
   };
 
+  /**
+   * Every signalling envelope, on its way to the hub.
+   *
+   * The room used to see these as mailbox POSTs, which is where its `tamper`
+   * hook and its record of what was signalled both lived. Signalling is a
+   * WebSocket now, so the frames are handed to the same function instead —
+   * `intercept` opens, records, rewrites and re-seals under the signer's own
+   * key exactly as before. The hub rebroadcasts whatever it receives, so
+   * rewriting on the way in *is* a relay rewriting in flight.
+   *
+   * Frames that are not a `sendToGroup` carrying text, and envelopes the room
+   * leaves alone, are returned unchanged so the tunnel forwards the original
+   * bytes.
+   */
+  const onSignal = async (text) => {
+    /** @type {any} */
+    let msg;
+    try {
+      msg = JSON.parse(text);
+    } catch {
+      return text;
+    }
+    if (msg?.type !== "sendToGroup" || typeof msg.data !== "string") return text;
+    const out = await room.intercept(msg.data);
+    return out === msg.data ? text : JSON.stringify({ ...msg, data: out });
+  };
+
   const fx = await openPeers({
     path: "/toolkit",
     count: 2,
     routes,
     upgrade: () => state.port,
+    onSignal,
   });
   state.origin = fx.origin;
 
@@ -518,13 +541,18 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
     expect(loaded.a.rtc).toMatch(/^\/assets\/rtc-ops-[\w-]+\.js$/);
   });
 
-  it("bootstraps through the mailbox and the keyserver, and neither faulted", () => {
-    // Both identities were fetched by both sides, and every posted envelope
-    // opened. A harness that dropped signalling would read as a dead transport.
+  it("bootstraps through the keyserver and the hub, and neither faulted", () => {
+    // Both identities were fetched by both sides, and every envelope that
+    // crossed the tunnel opened. A harness that dropped signalling would read
+    // as a dead transport rather than a failure.
     expect(room.faults()).toEqual([]);
     expect(room.counts().lookups).toBeGreaterThanOrEqual(4);
-    expect(room.counts().posts).toBeGreaterThan(0);
-    expect(room.counts().polls).toBeGreaterThan(0);
+    // `posts` and `polls` are deliberately not asserted. They counted mailbox
+    // traffic, and there is no mailbox: signalling is a WebSocket to the hub
+    // and reaches the room through `intercept` instead. `signalled()` is the
+    // count that means the same thing now — envelopes actually observed — and
+    // asserting it is what keeps this test honest rather than merely passing.
+    expect(room.signalled().length).toBeGreaterThan(0);
     // The invite is the creator's, and only the creator's.
     const invites = room.signalled().filter((s) => s.type === "invite");
     expect(invites).toHaveLength(1);
