@@ -38,6 +38,10 @@
  */
 
 import { createServer } from "node:http";
+import { connect } from "node:net";
+
+/** Spelled once so an editor cannot turn a literal request terminator into LF. */
+const CRLF = String.fromCharCode(13, 10);
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -98,7 +102,7 @@ const MIME = {
  * @param {((req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => boolean)|null} [routes]
  * @returns {Promise<{ origin: string, close: () => Promise<void> }>}
  */
-export async function serveDist(root = DIST_ROOT, routes = null) {
+export async function serveDist(root = DIST_ROOT, routes = null, upgradeTarget = null) {
   const server = createServer((req, res) => {
     if (routes && routes(req, res)) return;
     const url = req.url || "/";
@@ -127,6 +131,36 @@ export async function serveDist(root = DIST_ROOT, routes = null) {
       .catch(() => {
         res.writeHead(404, { "content-type": "text/plain" }).end("not found");
       });
+  });
+
+  // Signalling has to arrive on the page's own origin: `connect-src 'self'` is
+  // the shipped policy and the reason the keyserver is proxied rather than
+  // redirected to. So the WebSocket upgrade is tunnelled to whatever port the
+  // hub actually bound. No framing is involved — once the handshake is
+  // forwarded verbatim this is bytes in both directions, which is also why the
+  // hub's own protocol is untouched by passing through here.
+  server.on("upgrade", (req, socket, head) => {
+    const port = typeof upgradeTarget === "function" ? upgradeTarget(req) : upgradeTarget;
+    if (!port) {
+      socket.destroy();
+      return;
+    }
+    const upstream = connect(port, "127.0.0.1", () => {
+      const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+      }
+      upstream.write(lines.join(CRLF) + CRLF + CRLF);
+      if (head?.length) upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    const bail = () => {
+      upstream.destroy();
+      socket.destroy();
+    };
+    upstream.on("error", bail);
+    socket.on("error", bail);
   });
 
   await new Promise((resolve, reject) => {
@@ -264,9 +298,10 @@ export async function openPeers(opts = {}) {
     root = DIST_ROOT,
     headless = true,
     routes = null,
+    upgrade = null,
   } = opts;
   const { chromium } = await import("playwright");
-  const server = await serveDist(root, routes);
+  const server = await serveDist(root, routes, upgrade);
   const browser = await chromium.launch({ headless, args: WEBRTC_FLAGS });
 
   /** @type {Peer[]} */

@@ -81,6 +81,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromiumAvailability, openPeers, until } from "../helpers/browser-peers.js";
 import { createQuorumRoom } from "../helpers/quorum-room.js";
+import { connectionFor, startLocalHub } from "../helpers/webpubsub-hub.js";
+import { mintClientAccessToken, roomRoles } from "../helpers/webpubsub-double.js";
 // Run in node against descriptions produced by two real engines — the parser
 // the transcript depends on, fed the one input a fake can never supply.
 import { extractDtlsFingerprint } from "../../lib/webrtc/sdp.js";
@@ -179,6 +181,92 @@ const LOAD_SESSION = `(async () => {
  * @param {import("../helpers/browser-peers.js").Peer} peer
  * @param {{ roomId: string, audience: string[], fpr: string, armoredPrivate: string, role: string }} cfg
  */
+/**
+ * Open the pages and the hub, and wire signalling between them.
+ *
+ * The order matters and is the awkward part. The token's audience is the
+ * origin the page dials, which is the dist server's — so the server has to
+ * exist before the connection string can be written, and the hub has to exist
+ * before a grant can name a port. Nothing negotiates until `startSession`, so
+ * filling `state` after `openPeers` is in time.
+ *
+ * `routes` answers negotiate itself rather than proxying Flask: the real
+ * endpoint is gated by proof-of-work and two rate limits that have nothing to
+ * do with key confirmation, and minting the grant here keeps the subject of
+ * this suite the session rather than the portal.
+ *
+ * @param {Awaited<ReturnType<typeof createQuorumRoom>>} room
+ */
+const openMesh = async (room) => {
+  const accessKey = "browser-suite-access-key";
+  const hubName = "notebook";
+  /** @type {{ port: number|null, origin: string }} */
+  const state = { port: null, origin: "" };
+
+  const routes = (req, res) => {
+    const [path] = (req.url || "/").split("?");
+    if (path === "/api/v1/notebook/negotiate") {
+      let body = "";
+      req.on("data", (d) => (body += d));
+      req.on("end", async () => {
+        const parsed = JSON.parse(body || "{}");
+        const group = String(parsed.key || parsed.room || "").toUpperCase();
+        const token = await mintClientAccessToken({
+          accessKey,
+          audience: `${state.origin}/client/hubs/${hubName}`,
+          userId: `peer-${Math.random().toString(36).slice(2, 8)}`,
+          roles: roomRoles(group),
+        });
+        const url = `${state.origin.replace(/^http/, "ws")}/client/hubs/${hubName}?access_token=${token}`;
+        const grant = {
+          v: 1,
+          room: String(parsed.room || "").toUpperCase(),
+          group,
+          scope: parsed.key ? "room" : "lobby",
+          transport: "webpubsub",
+          url,
+          protocol: "json.webpubsub.azure.v1",
+          expires_at: Math.floor(Date.now() / 1000) + 300,
+        };
+        const payload = JSON.stringify(grant);
+        res.writeHead(200, {
+          "content-type": "application/json",
+          "content-length": String(Buffer.byteLength(payload)),
+        });
+        res.end(payload);
+      });
+      return true;
+    }
+    return room.routes(req, res);
+  };
+
+  const fx = await openPeers({
+    path: "/toolkit",
+    count: 2,
+    routes,
+    upgrade: () => state.port,
+  });
+  state.origin = fx.origin;
+
+  const started = await startLocalHub({
+    connection: connectionFor(fx.origin, accessKey),
+    hub: hubName,
+  });
+  if (!started.ok) {
+    await fx.close();
+    return { ok: false, reason: started.reason, kind: started.kind };
+  }
+  state.port = started.hub.port;
+  return {
+    ok: true,
+    fx,
+    close: async () => {
+      await started.hub.stop();
+      await fx.close();
+    },
+  };
+};
+
 const startSession = (peer, cfg) =>
   peer.page.evaluate(async (c) => {
     const Session = window.__NotebookSession;
@@ -294,6 +382,8 @@ const stopSession = (peer) =>
 describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
   /** @type {import("../helpers/browser-peers.js").PeerFixture} */
   let fx;
+  /** @type {(() => Promise<void>)|null} Closes the hub as well as the pages. */
+  let closeMesh = null;
   /** @type {Awaited<ReturnType<typeof createQuorumRoom>>} */
   let room;
   /** @type {any} */
@@ -307,7 +397,15 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
 
   beforeAll(async () => {
     room = await createQuorumRoom();
-    fx = await openPeers({ path: "/toolkit", count: 2, routes: room.routes });
+    const mesh = await openMesh(room);
+    if (!mesh.ok) {
+      // A hub that will not start is a real failure, not a reason to skip:
+      // the same rule `basilisk-server.js` states for the app. Only an absent
+      // interpreter stands anything down, and that is reported as the reason.
+      throw new Error(`local Web PubSub hub did not start (${mesh.kind}): ${mesh.reason}`);
+    }
+    closeMesh = mesh.close;
+    fx = mesh.fx;
     const [A, B] = fx.peers;
     loaded = {
       a: await A.page.evaluate(LOAD_SESSION),
@@ -321,19 +419,31 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
     lo = { peer: A, ...loM };
     hi = { peer: B, ...hiM };
 
-    await startSession(A, {
-      roomId: room.roomId,
-      audience: room.audience,
-      fpr: lo.fpr,
-      armoredPrivate: lo.armoredPrivate,
-      role: "creator",
-    });
+    // The joiner first, and *seen* to be listening before the creator
+    // publishes. Web PubSub has no history: the invite is broadcast once,
+    // and a joiner that has not joined the group yet never sees it. The HTTP
+    // mailbox this replaced replayed on poll, which is the only reason the
+    // original creator-first order worked. Nothing in the session re-sends —
+    // `_beginMeshing` announces to peers the creator already knows about, and
+    // a joiner that missed the invite is not one of them.
     await startSession(B, {
       roomId: room.roomId,
       audience: room.audience,
       fpr: hi.fpr,
       armoredPrivate: hi.armoredPrivate,
       role: "joiner",
+    });
+    await until(
+      () => snapshot(B),
+      (v) => v.statuses.includes("Waiting for signed invite…"),
+      { what: "the joiner listening", timeout: 30000 }
+    );
+    await startSession(A, {
+      roomId: room.roomId,
+      audience: room.audience,
+      fpr: lo.fpr,
+      armoredPrivate: lo.armoredPrivate,
+      role: "creator",
     });
 
     // `until` throws with the last observed state on timeout, so reaching past
@@ -376,7 +486,8 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
   afterAll(async () => {
     if (fx) {
       for (const p of fx.peers) await stopSession(p).catch(() => {});
-      await fx.close();
+      if (closeMesh) await closeMesh();
+      else await fx.close();
     }
   });
 
@@ -551,6 +662,8 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
 describe.runIf(availability.ok)("key confirmation refuses a substituted DTLS fingerprint", () => {
   /** @type {import("../helpers/browser-peers.js").PeerFixture} */
   let fx;
+  /** @type {(() => Promise<void>)|null} Closes the hub as well as the pages. */
+  let closeMesh = null;
   /** @type {Awaited<ReturnType<typeof createQuorumRoom>>} */
   let room;
   /** @type {any} */
@@ -579,7 +692,15 @@ describe.runIf(availability.ok)("key confirmation refuses a substituted DTLS fin
     });
     liar = room.audience[0];
 
-    fx = await openPeers({ path: "/toolkit", count: 2, routes: room.routes });
+    const mesh = await openMesh(room);
+    if (!mesh.ok) {
+      // A hub that will not start is a real failure, not a reason to skip:
+      // the same rule `basilisk-server.js` states for the app. Only an absent
+      // interpreter stands anything down, and that is reported as the reason.
+      throw new Error(`local Web PubSub hub did not start (${mesh.kind}): ${mesh.reason}`);
+    }
+    closeMesh = mesh.close;
+    fx = mesh.fx;
     const [A, B] = fx.peers;
     await A.page.evaluate(LOAD_SESSION);
     await B.page.evaluate(LOAD_SESSION);
@@ -588,19 +709,31 @@ describe.runIf(availability.ok)("key confirmation refuses a substituted DTLS fin
     lo = { peer: A, ...loM };
     hi = { peer: B, ...hiM };
 
-    await startSession(A, {
-      roomId: room.roomId,
-      audience: room.audience,
-      fpr: lo.fpr,
-      armoredPrivate: lo.armoredPrivate,
-      role: "creator",
-    });
+    // The joiner first, and *seen* to be listening before the creator
+    // publishes. Web PubSub has no history: the invite is broadcast once,
+    // and a joiner that has not joined the group yet never sees it. The HTTP
+    // mailbox this replaced replayed on poll, which is the only reason the
+    // original creator-first order worked. Nothing in the session re-sends —
+    // `_beginMeshing` announces to peers the creator already knows about, and
+    // a joiner that missed the invite is not one of them.
     await startSession(B, {
       roomId: room.roomId,
       audience: room.audience,
       fpr: hi.fpr,
       armoredPrivate: hi.armoredPrivate,
       role: "joiner",
+    });
+    await until(
+      () => snapshot(B),
+      (v) => v.statuses.includes("Waiting for signed invite…"),
+      { what: "the joiner listening", timeout: 30000 }
+    );
+    await startSession(A, {
+      roomId: room.roomId,
+      audience: room.audience,
+      fpr: lo.fpr,
+      armoredPrivate: lo.armoredPrivate,
+      role: "creator",
     });
 
     // The connection must come up, or the refusal below would prove nothing —
@@ -653,7 +786,8 @@ describe.runIf(availability.ok)("key confirmation refuses a substituted DTLS fin
   afterAll(async () => {
     if (fx) {
       for (const p of fx.peers) await stopSession(p).catch(() => {});
-      await fx.close();
+      if (closeMesh) await closeMesh();
+      else await fx.close();
     }
   });
 
