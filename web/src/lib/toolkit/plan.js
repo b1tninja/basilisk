@@ -106,7 +106,9 @@ import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
  * - `no-private-input` — the cell reads nothing anyone owns, so everyone runs
  *   it and the digests are the check.
  * - `rendezvous` — `@*`. Everyone, together.
- * @typedef {"solo"|"secret-locality"|"header"|"no-private-input"|"rendezvous"} PlacementBasis
+ * - `empty` — the cell has no steps. There is nothing to place, and it is here
+ *   because it holds the number the notebook shows for it.
+ * @typedef {"empty"|"solo"|"secret-locality"|"header"|"no-private-input"|"rendezvous"} PlacementBasis
  */
 
 /**
@@ -200,7 +202,9 @@ import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
  * @property {PlanAsk[]} asks
  * @property {PlanWait[]} waits
  * @property {{ solo: number, forced: number, chosen: number, witnessed: number,
- *   rendezvous: number }} counts
+ *   rendezvous: number, empty: number }} counts  every cell falls in exactly
+ *   one bucket, so the six sum to `cells.length` — `empty` is the bucket that
+ *   keeps that true rather than the one that hides a blank cell
  */
 
 /**
@@ -390,21 +394,31 @@ function collectProduced(steps, add) {
 /**
  * The chains a plan calls cells, in the order it numbers them.
  *
- * **This is the only definition of "cell index" in the placement stack.** A
- * notebook's chains and a plan's cells are not the same list: an empty chain is
- * a blank line in the editor and not a cell, so it is filtered out here and
- * every index below counts non-empty chains. `engine.js` says the same thing in
- * its own words when it lines the gate up (`filled`), and `handoff.js` names a
- * cell with a number produced by this function rather than by a second filter
- * that happens to agree today.
+ * **This is the only definition of "cell index" in the placement stack, and it
+ * is the notebook's own: a cell's index is its position in the chain list,
+ * counting every chain including the empty ones.**
  *
- * @param {*} compiled  a `compileRecipe` result, or the AST from one
+ * That is not an arbitrary pick between two defensible numberings. It is the
+ * one a person can see. `ToolkitShell` renders the notebook as
+ * `nb.chains.map((chain, i) => …)` and labels each cell `[i]`; the kernel keys
+ * outputs, statuses and its run log by the same `i`; `dealByCell` attributes
+ * compile errors by it. So `Cell 1 reads $seed, which cell 0 writes on @mara`
+ * names the cells the reader is looking at. A number in an error that does not
+ * match the number on screen is worse than no number.
+ *
+ * An empty chain is therefore a **no-op cell**, not a gap: it appears here, in
+ * `planRun`'s cells, in the manifest and in the gate's bookkeeping, and it
+ * performs nothing. Filtering it in one of those places and not another is what
+ * put "cell 2" out of step three times running.
+ *
+ * @param {*} compiled  a `compileRecipe` result, the AST from one, or the
+ *   notebook's chain array itself
  * @returns {import("./recipe.js").RecipeChain[]}
  */
 export function planChains(compiled) {
   const source = /** @type {*} */ (compiled);
   const ast = source?.ast !== undefined ? source.ast : source;
-  return recipeChains(ast).filter((c) => c?.steps?.length);
+  return recipeChains(ast);
 }
 
 /**
@@ -643,7 +657,7 @@ export function planRun(compiled, opts = {}) {
     refusals,
     asks,
     waits,
-    counts: { solo: 0, forced: 0, chosen: 0, witnessed: 0, rendezvous: 0 },
+    counts: { solo: 0, forced: 0, chosen: 0, witnessed: 0, rendezvous: 0, empty: 0 },
   };
 
   if (validation && validation.ok === false) {
@@ -714,7 +728,21 @@ export function planRun(compiled, opts = {}) {
     let why = "";
     let forced = privateOwners.length === 1;
 
-    if (solo) {
+    if (!steps.length) {
+      // A cell with nothing in it. Answered before every other case, because
+      // "where does this run" has no answer worth giving about a blank cell and
+      // the generic ones are all misleading: `solo` would say it runs here, and
+      // `no-private-input` would say every participant runs it and the digests
+      // are the check. It is in the plan for one reason — it holds the number
+      // the notebook, the manifest and the engine all give the cells below it.
+      basis = "empty";
+      peer = "";
+      forced = false;
+      why =
+        "this cell is empty — there is nothing in it to run and nothing to " +
+        "place. It keeps its number so that every cell under it has the number " +
+        "the notebook shows";
+    } else if (solo) {
       basis = "solo";
       peer = declaredPeer;
       forced = false;
@@ -922,7 +950,8 @@ export function planRun(compiled, opts = {}) {
       ...(anchor.end == null ? {} : { end: anchor.end }),
     });
 
-    if (basis === "solo") plan.counts.solo++;
+    if (basis === "empty") plan.counts.empty++;
+    else if (basis === "solo") plan.counts.solo++;
     else if (basis === "rendezvous") plan.counts.rendezvous++;
     else if (forced) plan.counts.forced++;
     else if (declaredPeer) plan.counts.chosen++;
@@ -1013,12 +1042,13 @@ export function summarizePlan(plan) {
   if (plan.play === "solo") {
     return `${plan.cells.length} ${plan.cells.length === 1 ? "cell" : "cells"}, one runner — this notebook names no peers`;
   }
-  const { forced, chosen, witnessed, rendezvous } = plan.counts;
+  const { forced, chosen, witnessed, rendezvous, empty } = plan.counts;
   const parts = [
     `${witnessed} witnessed`,
     `${forced} forced`,
     `${chosen} chosen`,
     ...(rendezvous ? [`${rendezvous} rendezvous`] : []),
+    ...(empty ? [`${empty} blank`] : []),
   ];
   const asked = plan.asks.length ? `, ${plan.asks.length} to confirm` : "";
   return `${plan.play} run — ${parts.join(", ")}${asked}`;

@@ -226,49 +226,62 @@ describe("a cell index means one thing or the offer means nothing", () => {
     expect(verdict.refusals[0].message).toContain("makes a wrong index select nothing");
   });
 
-  it("refuses a manifest that numbers its cells by chain instead of by cell", async () => {
-    // `planRun` filters empty chains and numbers what is left; `run.manifest`
-    // skips the empty ones but keeps the *raw* chain number. A blank cell puts
-    // the two out of step, and then "cell 1" has two readings — so nothing is
-    // handed over at all rather than the likelier one. The blank chain is built
-    // the way `run-gate.test.js` builds one, since the parser produces no such
-    // thing from source.
+  it("refuses a manifest that left a notebook's blank cell out of its count", async () => {
+    // The manifest v1 built: every cell that had text in it, renumbered. The
+    // notebook has three cells and the document describes two, so "cell 2"
+    // means mara's cell in one and nothing in the other — and an offer is
+    // refused outright rather than resolved to the likelier reading. The blank
+    // chain is built rather than parsed, because recipe text has no spelling
+    // for an empty cell.
     const chains = /** @type {*} */ (compile(HANDED).ast).chains;
     const blanked = {
       chains: [chains[0], { steps: [] }, chains[1]],
       steps: chains[0].steps,
       source: "",
     };
-    /** @type {*[]} */
-    const cells = [];
-    for (let i = 0; i < blanked.chains.length; i++) {
-      const chain = blanked.chains[i];
-      if (!chain?.steps?.length) continue;
-      cells.push({
-        index: i,
-        peer: String(chain.peer || ""),
-        publish: !!chain.publish,
-        recipe: serializeRecipe({ chains: [chain] }),
-      });
-    }
-    const manifest = await buildRunManifest({
+    const filtered = await buildRunManifest({
       recipeSource: migrateRecipe(HANDED).recipe,
       peers: ROSTER,
-      cells,
+      cells: blanked.chains
+        .filter((c) => c?.steps?.length)
+        .map((chain, i) => ({
+          index: i,
+          peer: String(chain.peer || ""),
+          publish: !!chain.publish,
+          recipe: serializeRecipe({ chains: [chain] }),
+        })),
     });
-    // The manifest's own two answers already disagree: position 1, cell 2.
-    expect(manifest.cells[1].index).toBe(2);
 
     const built = await buildOfferFor({
       plan: planRun(blanked, { me: "mara", roster: ROSTER }),
       compiled: blanked,
-      manifest,
-      skipped: { cell: 1, waitingOn: "okafor", runsOn: ["okafor"], why: "", produces: ["b64"] },
+      manifest: filtered,
+      skipped: { cell: 2, waitingOn: "okafor", runsOn: ["okafor"], why: "", produces: ["b64"] },
       readSlot: () => ({ type: "text", data: "deadbeef", meta: {} }),
     });
     expect(built.ok).toBe(false);
-    expect(built.refusals[0].reason).toBe("ambiguous-index");
-    expect(built.refusals[0].message).toContain("has two readings");
+    expect(built.refusals[0].reason).toBe("different-notebook");
+    expect(built.refusals[0].message).toContain("not the same notebook");
+  });
+
+  it("refuses a manifest whose cell calls itself a different number", async () => {
+    // The check that survives one numbering: a manifest arrives from a peer,
+    // and a row whose `index` is not its own position was not built by the rule
+    // this build states. It cannot happen to a document `run.manifest` wrote —
+    // which is why it is the *document* that is refused here rather than the
+    // notebook being blamed for having a blank cell in it.
+    const honest = await manifestFor(HANDED);
+    const bent = {
+      ...honest,
+      cells: [honest.cells[0], { ...honest.cells[1], index: 2 }],
+    };
+    const verdict = await acceptHandoffOffer(
+      { ...(await offerFrom()).built.offer, manifest: await manifestDigest(bent) },
+      { plan: planFor(HANDED, "okafor"), compiled: compile(HANDED), manifest: bent }
+    );
+    expect(verdict.ok).toBe(false);
+    expect(verdict.refusals[0].reason).toBe("ambiguous-index");
+    expect(verdict.refusals[0].message).toContain("calls itself cell 2");
   });
 
   it("refuses a manifest for a different notebook outright", async () => {
@@ -597,6 +610,18 @@ describe("an offer carries seven fields and has nowhere to put an eighth", () =>
     expect(() => parseHandoffOffer(JSON.stringify({ ...base, v: 99 }))).toThrow(
       /unsupported version/
     );
+  });
+
+  it("tells a v1 offer which cell it would have meant, rather than refusing a digest", async () => {
+    // `cell` kept its shape and changed what it counts, so a v1 offer read
+    // under v2 would have selected a different cell of any notebook with a
+    // blank one — and been refused with a `cellDigest` mismatch, which says
+    // the cell's *text* is wrong when what is wrong is which cell was meant.
+    const { built } = await offerFrom();
+    const asV1 = JSON.stringify({ ...built.offer, v: 1 });
+    expect(() => parseHandoffOffer(asV1)).toThrow(/unsupported version 1/);
+    expect(() => parseHandoffOffer(asV1)).toThrow(/numbers every cell the way the notebook does/);
+    expect(() => parseHandoffOffer(asV1)).not.toThrow(/mismatch|does not match/);
   });
 
   it("drops nothing on the floor when the values arrive as a pasted one would", async () => {

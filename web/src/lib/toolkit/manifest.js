@@ -71,6 +71,17 @@
  * does not normalise recipe text itself — a second normaliser beside
  * `serializeRecipe` is the same defect as a second `canonicalJson`.
  *
+ * ## One number per cell
+ *
+ * `cells[].index` is the cell's position in the notebook, counting every cell
+ * including the empty ones, which is the number the notebook shows for it and
+ * the number the run log records. It is therefore always the row's own position
+ * in `cells`, and `cells` has a row per cell — an empty one carries `recipe:
+ * ""` rather than being left out. Under v1 the empty ones were skipped and the
+ * rows kept their raw numbers anyway, so a manifest could hold `cells[1]`
+ * calling itself cell 2: a document disagreeing with itself about which cell it
+ * meant. See `MANIFEST_VERSION`.
+ *
  * @module lib/toolkit/manifest
  */
 
@@ -94,13 +105,29 @@ import {
 import { getStep, stepEntropy } from "./registry.js";
 
 /**
- * Manifest envelope version. Bump when the *shape* changes.
+ * Manifest envelope version. Bump when the *shape* changes, or when a field
+ * keeps its shape and changes what it counts.
  *
  * Independent of `RECEIPT_VERSION`: the two documents version separately
  * because they break separately, and `toolchain.receipt` is where a manifest
  * records which receipt envelope it expects a run to produce.
+ *
+ * **v2: `cells[].index` is the cell's position in the notebook, counting empty
+ * cells.** Under v1 a manifest was built from recipe text, which has no
+ * spelling for an empty cell, so `cells` was the notebook's non-empty cells
+ * renumbered — while the kernel's run log, the plan and the cell headers on
+ * screen all numbered every cell. A notebook with a blank cell in the middle
+ * produced a manifest and a receipt that called the same cell two different
+ * numbers, and `manifestHonouredBy` reported an honest run as a mismatch.
+ *
+ * The bump is the point rather than a side effect: `cells` is inside
+ * `manifestDigest`, so a v1 and a v2 manifest of the same blank-cell notebook
+ * are different documents, and every attestation and offer that names one by
+ * digest names one of them and not the other. A manifest of a notebook with no
+ * blank cells is byte-for-byte what it was, `v` aside — which is why the
+ * version has to say so, since nothing else would.
  */
-export const MANIFEST_VERSION = 1;
+export const MANIFEST_VERSION = 2;
 
 /**
  * How a run gets its randomness.
@@ -154,10 +181,14 @@ const AUDIENCE_DOMAIN = "basilisk.run-manifest/audience/v1\n";
 
 /**
  * @typedef {object} ManifestCell
- * @property {number} index          cell position in the notebook
+ * @property {number} index          cell position in the notebook, counting
+ *   every cell including the empty ones — the number the notebook shows, the
+ *   number the plan places and the number the run log records. It is always the
+ *   row's own position in `cells`; a document where the two differ is malformed.
  * @property {string} peer           chain-header peer label, `*`, or "" for everyone
  * @property {boolean} publish       this cell's `out` artifacts are meant to leave the machine
- * @property {string} recipe         the cell's recipe text, as it will be run
+ * @property {string} recipe         the cell's recipe text, as it will be run —
+ *   "" for an empty cell, which is a cell with nothing in it rather than a gap
  * @property {string} recipeDigest   digest of `recipe`, so one cell can be
  *   attested without holding the whole notebook
  */
@@ -405,7 +436,18 @@ export function parseManifest(text) {
     throw new Error("manifest: not a Basilisk run manifest");
   }
   if (Number(parsed.v) !== MANIFEST_VERSION) {
-    throw new Error(`manifest: unsupported version ${parsed.v}`);
+    throw new Error(
+      `manifest: unsupported version ${parsed.v} (this build writes and reads ` +
+        `v${MANIFEST_VERSION})` +
+        (Number(parsed.v) === 1
+          ? " — v1 numbered a notebook's cells by skipping the empty ones, and " +
+            "v2 numbers every cell the way the notebook does, so `cells[].index` " +
+            "means a different cell in each. Rebuild the manifest from the " +
+            "notebook and have the room attest to the new digest; a v1 document " +
+            "cannot be re-read under the new numbering without guessing which " +
+            "cell it meant."
+          : "")
+    );
   }
   return /** @type {RunManifest} */ (parsed);
 }
@@ -506,7 +548,13 @@ export function mirroredRunRefusals(manifest) {
   const cells = manifest?.cells || [];
   for (let i = 0; i < cells.length; i++) {
     const cell = Number(cells[i]?.index ?? i) || 0;
-    const { ast, errors } = parseRecipeSource(String(cells[i]?.recipe ?? ""));
+    const text = String(cells[i]?.recipe ?? "");
+    // An empty cell draws no randomness, because there is nothing in it to draw
+    // any. Said here rather than left to fall out of the parser returning an
+    // empty AST for empty text, so that a blank cell in a pooled notebook is
+    // cleared on purpose instead of by accident.
+    if (!text) continue;
+    const { ast, errors } = parseRecipeSource(text);
     if (!ast) {
       refusals.push({
         cell,
@@ -603,7 +651,14 @@ export function manifestHonouredBy(manifest, receipt) {
   log.compare("manifest", "registry", manifest?.toolchain?.ops, receipt?.registry);
   log.compare("manifest", "receiptVersion", manifest?.toolchain?.receipt, receipt?.v);
 
-  const declaredCells = manifest?.cells || [];
+  // The cells that were promised *work*. An empty cell is a cell — it holds its
+  // number in this document, in the plan and in the notebook — but there is
+  // nothing in it to perform, so the kernel never logs a row for it and a
+  // receipt that had one would be reporting a run of nothing. This is the one
+  // place the two documents legitimately count differently, and it is a fact
+  // about what a blank cell is rather than a second numbering: every row below
+  // is still matched in order, and each side's `index` is still the notebook's.
+  const declaredCells = (manifest?.cells || []).filter((c) => String(c?.recipe ?? "") !== "");
   const ranCells = receipt?.cells || [];
   if (declaredCells.length !== ranCells.length) {
     log.note("manifest", "cells", declaredCells.length, ranCells.length);

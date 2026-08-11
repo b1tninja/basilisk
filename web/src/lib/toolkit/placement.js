@@ -72,7 +72,8 @@ import { PEER_SIGIL, SLOT_SIGIL } from "./recipe-parse.js";
 
 /**
  * @typedef {object} Placement
- * @property {import("./plan.js").RunPlan} plan  a `planRun` result, whole
+ * @property {import("./plan.js").RunPlan} plan  a `planRun` result, whole, and
+ *   of the same chain list this run walks — cell indices are positions in it
  * @property {number} [firstCell]  plan index of the first cell this run walks.
  *   Only needed by a caller that runs one cell at a time against a one-chain
  *   AST (the notebook kernel), where the chain's own index is 0 and its index
@@ -124,9 +125,13 @@ function boundaryError(msg) {
  *
  * @param {Placement|null|undefined} placement
  * @param {{ cells: number, first: number, count: number }} shape
- *   `cells` — non-empty chains in the whole AST this run was handed;
+ *   `cells` — chains in the whole AST this run was handed, empty ones included;
  *   `first` — plan index the run starts at, as the AST reads it;
- *   `count` — non-empty chains this run will actually walk.
+ *   `count` — chains this run will walk, empty ones included.
+ *   Empty chains are counted because a cell's index is its position in the
+ *   notebook and a blank cell has one — see `planChains`. A shape that counted
+ *   only the filled ones would agree with the plan until the first blank line
+ *   and then place every cell below it on the wrong peer.
  * @returns {{
  *   firstCell: number,
  *   admit: (index: number, hasSlot: (label: string) => boolean) => boolean,

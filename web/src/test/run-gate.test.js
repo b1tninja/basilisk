@@ -30,10 +30,13 @@
  *    every `docs/RECIPE.md` fence, by running each one both ways.
  */
 import { describe, expect, it } from "vitest";
-import { PRESETS, compileRecipe, migrateRecipe } from "../lib/toolkit/recipe.js";
+import { PRESETS, compileRecipe, migrateRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
 import { planRun } from "../lib/toolkit/plan.js";
 import { placementGate } from "../lib/toolkit/placement.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
+import { createKernel } from "../lib/toolkit/kernel.js";
+import { manifestHonouredBy, parseManifest, summarizeHonour } from "../lib/toolkit/manifest.js";
+import { buildRunReceipt } from "../lib/toolkit/receipt.js";
 import { createSlotRegistry } from "../lib/toolkit/slot-registry.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -59,6 +62,54 @@ in $seed | decode hex | encode base64 | out $b64
 
 /** @param {string} src */
 const compile = (src) => compileRecipe(migrateRecipe(src).recipe);
+
+/**
+ * The two cells of a notebook that has a blank one between them.
+ *
+ * Built rather than parsed, because recipe *text* has no spelling for an empty
+ * cell — `serializeRecipe` drops one and the parser never produces one, so a
+ * blank cell exists only in the notebook a person is editing. That is precisely
+ * why the numbering had to be settled: the notebook and its own source text do
+ * not have the same number of cells.
+ */
+const BLANK_MIDDLE_TEXT = `@okafor
+bytes 00 | encode hex | out $first
+
+@mara
+bytes 11 | encode hex | out $mine
+`;
+
+/** @type {*} */
+const BLANK_MIDDLE = (() => {
+  const chains = /** @type {*} */ (compile(BLANK_MIDDLE_TEXT).ast).chains;
+  return {
+    chains: [chains[0], { steps: [] }, chains[1]],
+    steps: chains[0].steps,
+    source: "",
+  };
+})();
+
+/**
+ * The manifest `run.manifest` emits for a notebook, through the op rather than
+ * beside it — the shell hands the notebook over as `receipt.chains` for the
+ * reason `currentRunManifest` gives, and this is that path.
+ * @param {*} notebook
+ */
+async function manifestOf(notebook) {
+  const arts = await runRecipe(
+    compile("run.manifest | out $m").ast,
+    {
+      receipt: {
+        // What the shell passes: the text, serialised from these same chains —
+        // so it holds two cells where the notebook holds three.
+        recipeSource: serializeRecipe({ chains: notebook.chains }),
+        chains: notebook.chains,
+      },
+    },
+    {}
+  );
+  return parseManifest(String(arts[0].content));
+}
 
 /**
  * @param {string} src @param {string} me
@@ -358,30 +409,102 @@ in $kp | export spki | out $pub
     expect(asZero.has("o")).toBe(true);
   });
 
-  it("skips a blank cell without spending a plan index on it", async () => {
-    // `planRun` counts non-empty chains and so does the engine. A notebook with
-    // an empty cell in the middle would otherwise place every cell after it on
-    // the wrong peer — off by exactly one blank line.
-    const src = `@okafor
-bytes 00 | encode hex | out $first
-
-@mara
-bytes 11 | encode hex | out $mine
-`;
-    const { ast } = compile(src);
-    const chains = /** @type {*} */ (ast).chains;
-    const withBlank = {
-      chains: [chains[0], { steps: [] }, chains[1]],
-      steps: chains[0].steps,
-      source: "",
-    };
+  it("spends a plan index on a blank cell, because the notebook does", async () => {
+    // The cell after the blank one is cell 2 everywhere, or this run is
+    // performing somebody else's work. A plan built from the blank-free *text*
+    // numbers it 1 — that is the mistake a caller makes by planning the wrong
+    // list, and the gate refuses it rather than running mara's cell as okafor's.
     const registry = createSlotRegistry();
-    await runRecipe(withBlank, {}, {
+    await expect(
+      runRecipe(BLANK_MIDDLE, {}, {
+        slotRegistry: registry,
+        placement: placementFor(BLANK_MIDDLE_TEXT, "mara"),
+      })
+    ).rejects.toThrow(/describes 2 cells and this run has 3/);
+    expect(registry.has("mine")).toBe(false);
+  });
+});
+
+/**
+ * A blank cell in the middle, and the four things that have to call it cell 1.
+ *
+ * This is the case that used to break all four differently: `planRun` filtered
+ * the blank chain and numbered what was left, `runRecipe` filtered it too but
+ * only for the gate's arithmetic, `run.manifest` skipped it and kept the raw
+ * number anyway, and the kernel numbered every cell the way the notebook does.
+ * One index space means one answer, and the answer is the notebook's, because
+ * the notebook's is the one on screen — `ToolkitShell` labels each cell `[i]`
+ * from `nb.chains.map((chain, i) => …)`, blank cells included.
+ */
+describe("a blank cell in the middle is cell 1 to everything that counts", () => {
+  it("agrees across the plan, the manifest, the gate and the kernel", async () => {
+    const plan = planRun(BLANK_MIDDLE, { me: "mara", roster: ROSTER });
+
+    // 1 · The plan. Three cells, and the blank one is placed nowhere rather
+    // than described as a cell every participant runs.
+    expect(plan.ok, plan.refusals.map((r) => r.message).join(" · ")).toBe(true);
+    expect(plan.cells.map((c) => [c.index, c.basis])).toEqual([
+      [0, "header"],
+      [1, "empty"],
+      [2, "header"],
+    ]);
+    expect(plan.cells[1].why).toContain("this cell is empty");
+    expect(plan.counts.empty).toBe(1);
+    // Every cell is in exactly one bucket, so a blank one cannot go missing
+    // from the summary by being counted nowhere.
+    const { solo, forced, chosen, witnessed, rendezvous, empty } = plan.counts;
+    expect(solo + forced + chosen + witnessed + rendezvous + empty).toBe(plan.cells.length);
+
+    // 2 · The gate. okafor's cell 0 is declined *as cell 0*, and mara's cell 2
+    // runs. The blank cell is neither run nor skipped: there is nothing in it
+    // to do either to.
+    /** @type {import("../lib/toolkit/placement.js").SkippedCell[]} */
+    const skipped = [];
+    const registry = createSlotRegistry();
+    await runRecipe(BLANK_MIDDLE, {}, {
       slotRegistry: registry,
-      placement: placementFor(src, "mara"),
+      placement: { plan, onSkip: (s) => skipped.push(s) },
     });
+    expect(skipped.map((s) => s.cell)).toEqual([0]);
     expect(registry.has("first")).toBe(false);
     expect(registry.has("mine")).toBe(true);
+
+    // 3 · The manifest. A row per cell, each calling itself by its own
+    // position, and the blank one carrying no text rather than being left out.
+    const manifest = await manifestOf(BLANK_MIDDLE);
+    expect(manifest.cells.map((c) => c.index)).toEqual([0, 1, 2]);
+    expect(manifest.cells[1].recipe).toBe("");
+    expect(manifest.cells[2].recipe).toContain("$mine");
+
+    // 4 · The kernel, which is where the numbers on screen come from. It ran
+    // two cells, and it calls the second of them cell 2.
+    const kernel = createKernel();
+    await kernel.runAll(/** @type {*} */ (BLANK_MIDDLE).chains, {});
+    expect(kernel.getRunLog().map((c) => c.index)).toEqual([0, 2]);
+    expect(kernel.getCellOutputs(2).length).toBeGreaterThan(0);
+    expect(kernel.getCellOutputs(1)).toEqual([]);
+    expect(kernel.getCellStatus(1)).toBe("idle");
+
+    // And the four agree with each other, which is the whole property: cell 2
+    // is the same cell in the plan, in the manifest and in the run log.
+    expect(plan.cells[2].index).toBe(manifest.cells[2].index);
+    expect(kernel.getRunLog()[1].index).toBe(manifest.cells[2].index);
+    expect(kernel.getRunLog()[1].recipe).toBe(manifest.cells[2].recipe);
+  });
+
+  it("checks the run against a manifest that carries a cell nothing ran", async () => {
+    // The other half: a receipt has no row for a blank cell, because nothing
+    // was performed in it. That is the one place the two documents legitimately
+    // count differently, and it must not read as a run that skipped a cell.
+    const kernel = createKernel();
+    await kernel.runAll(/** @type {*} */ (BLANK_MIDDLE).chains, {});
+    const manifest = await manifestOf(BLANK_MIDDLE);
+    const receipt = await buildRunReceipt({
+      recipeSource: manifest.recipeSource,
+      cells: kernel.getRunLog(),
+    });
+    const honoured = manifestHonouredBy(manifest, receipt);
+    expect(honoured.ok, summarizeHonour(honoured)).toBe(true);
   });
 });
 

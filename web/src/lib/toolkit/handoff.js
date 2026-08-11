@@ -47,16 +47,19 @@
  *
  * ## Which index a cell is named by
  *
- * `planRun` filters empty chains and `runRecipe` does not, so "cell 2" has two
- * possible readings in a notebook with a blank line in it. An offer means the
- * **plan's** index — `planChains()`'s numbering, the count of non-empty chains
- * before it — and it is made impossible to mean the other by refusing whenever
- * the two could differ. `offer.cell` is only honoured when all three of these
- * agree:
+ * There is one numbering and everything uses it: a cell's index is its position
+ * in the notebook, counting every cell including the empty ones. That is what
+ * the notebook shows, what `planChains` counts, what the gate admits by, what
+ * `cells[].index` means in a manifest and what the run log records. `v2` of this
+ * document is the bump for it — a `cell` written under `v1` counted only the
+ * non-empty cells and so names a different cell in a notebook with a blank one.
+ *
+ * The number alone is still not trusted to select anything. `offer.cell` is only
+ * honoured when all three of these agree:
  *
  * - the manifest has a cell at that **position**, and that cell's own `index`
- *   field equals the position (they disagree exactly when a blank chain shifted
- *   the numbering, and then no number means one thing);
+ *   field equals the position — one numbering means these can only differ in a
+ *   malformed document, and a malformed document does not get to pick a cell;
  * - the manifest's cell at that position digests to `offer.cellDigest`;
  * - the **recipient's own notebook**, serialised the way a manifest and a
  *   receipt both spell a cell, digests to the same thing.
@@ -110,12 +113,24 @@ import { canonicalJson, digestText, isoTimestamp, mismatchLog } from "./receipt.
 import { serializeRecipe } from "./recipe.js";
 
 /**
- * Offer envelope version. Bump when the *shape* changes.
+ * Offer envelope version. Bump when the *shape* changes, or when a field keeps
+ * its shape and changes which thing it names.
  *
  * Independent of `MANIFEST_VERSION`, `ATTESTATION_VERSION` and
- * `RECEIPT_VERSION` — four documents, four reasons to break.
+ * `RECEIPT_VERSION` — four documents, four reasons to break, and this time two
+ * of them broke for the same one: **v2 is the cell numbering**, alongside
+ * `MANIFEST_VERSION` 2. `cell` counted the non-empty cells under v1 and counts
+ * every cell under v2, so the same integer names a different cell of any
+ * notebook with a blank one in it. The other two documents stayed where they
+ * were: a receipt already numbered every cell, because the kernel it comes from
+ * always did, and an attestation carries a manifest digest and nothing that
+ * counts cells. Nothing in the shape
+ * changed, which is exactly why the version has to say it — an unbumped v1
+ * offer would have been read against the new numbering and refused as a digest
+ * mismatch, which tells the reader that a cell's text is wrong when what is
+ * wrong is which cell was meant.
  */
-export const HANDOFF_VERSION = 1;
+export const HANDOFF_VERSION = 2;
 
 /** The `kind` discriminator, so no other document can be read as an offer. */
 export const HANDOFF_KIND = "basilisk.cell-handoff";
@@ -336,7 +351,16 @@ export function parseHandoffOffer(text) {
     throw new Error("handoff: not a Basilisk cell handoff offer");
   }
   if (Number(parsed.v) !== HANDOFF_VERSION) {
-    throw new Error(`handoff: unsupported version ${parsed.v}`);
+    throw new Error(
+      `handoff: unsupported version ${parsed.v} (this build writes and reads ` +
+        `v${HANDOFF_VERSION})` +
+        (Number(parsed.v) === 1
+          ? " — v1 numbered a notebook's cells by skipping the empty ones and v2 " +
+            "numbers every cell the way the notebook does, so `cell` names a " +
+            "different cell in each. Nothing is accepted against the old " +
+            "numbering: build the offer again from the run that is happening now."
+          : "")
+    );
   }
   const extra = Object.keys(parsed).filter((k) => !HANDOFF_FIELDS.includes(k));
   if (extra.length) {
@@ -360,7 +384,8 @@ export function parseHandoffOffer(text) {
   if (!Number.isInteger(parsed.cell) || parsed.cell < 0) {
     throw new Error(
       `handoff: cell must be a cell index, got ${JSON.stringify(parsed.cell)} — ` +
-        "the index a plan gives a cell, counting non-empty cells from 0"
+        "the index a plan gives a cell, counting every cell from 0 the way the " +
+        "notebook does"
     );
   }
   if (!Array.isArray(parsed.needs)) {
@@ -548,8 +573,8 @@ export async function buildOfferFor(spec) {
       cell,
       "no-such-cell",
       `There is no cell ${cell} in this plan, so there is nothing to hand over. ` +
-        "An offer names a cell by the index the plan gives it, counting " +
-        "non-empty cells from 0."
+        "An offer names a cell by the index the plan gives it, counting every " +
+        "cell from 0 the way the notebook does."
     );
     return stop();
   }
@@ -710,11 +735,12 @@ async function checkCellIdentity({ at, cell, plan, manifest, mineDigest, refuse,
       declared.index,
       "ambiguous-index",
       `The manifest's cell at position ${cell} calls itself cell ` +
-        `${declared.index}. Those two numberings differ exactly when a blank ` +
-        "cell shifted one of them, and then \"cell " +
-        `${cell}\" has two readings and an offer naming it would be a coin ` +
-        "flip. Take the blank cell out of the notebook and rebuild the " +
-        "manifest; nothing is handed over while a cell index means two things."
+        `${declared.index}. A manifest numbers its cells by their position — ` +
+        "every cell, blank ones included — so a document where the two disagree " +
+        "was not built by this rule, and there is no way to tell which of the " +
+        "two numbers an offer naming it meant. Nothing is handed over while a " +
+        "cell index means two things: get the manifest from the run that is " +
+        "actually happening."
     );
     return false;
   }

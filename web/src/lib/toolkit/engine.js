@@ -255,17 +255,17 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
   // that predates the gate — see `placement.js` on why that is a separate
   // object from a gate that admits everything.
   //
-  // Plan indices count *non-empty* chains, the same filter `planRun` applies,
-  // so a notebook with a blank cell in it lines the two up. That is index
-  // bookkeeping, not a second placement decision.
-  const filled = (/** @type {*[]} */ list) => list.filter((c) => c?.steps?.length).length;
+  // A cell's index is its position in this chain list, empty chains included —
+  // `planChains` numbers the same way and so does the notebook the person is
+  // looking at. There is no counting to do here, and the version of this that
+  // did some was the bug: two filters that agreed until a blank line.
   const gate =
     opts.placement == null
       ? null
       : placementGate(opts.placement, {
-          cells: filled(chains),
-          first: filled(chains.slice(0, chainStart)),
-          count: filled(slice),
+          cells: chains.length,
+          first: chainStart,
+          count: slice.length,
         });
 
   if (bindings.fipsMode) {
@@ -312,14 +312,18 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
   };
 
   let stepOrdinal = 0;
-  let cellIndex = gate ? gate.firstCell : 0;
+  let cellIndex = gate ? gate.firstCell : chainStart;
 
   for (const chain of slice) {
     const steps = chain.steps || [];
+    // Every chain spends an index, empty ones included. A blank cell is a cell
+    // with nothing in it, not a cell that is not there: the notebook numbers it,
+    // the plan places it as `empty` and the manifest carries it, and the moment
+    // this loop skipped its number every cell below it belonged to somebody else.
+    const index = cellIndex++;
     if (!steps.length) continue;
     if (gate) {
-      const here = gate.admit(cellIndex, (label) => registry.has(label));
-      cellIndex++;
+      const here = gate.admit(index, (label) => registry.has(label));
       if (!here) {
         // Not performed, and the numbering moves on regardless: a step's
         // ordinal is its place in the notebook, and a cell that ran elsewhere
@@ -3098,13 +3102,30 @@ async function currentRunReceipt(bindings, artifacts, params) {
  * this cell's text otherwise. The two ops are honest about the same notebook or
  * neither is, so they share the fallback rather than each inventing one.
  *
- * The cells are *read from the recipe*, not accumulated from a run log: a
+ * The cells are *read from the notebook*, not accumulated from a run log: a
  * manifest describes a run that has not happened, so there is no log to read.
  * The reading is `recipeChains` + `serializeRecipe`, which is the spelling
  * `appendRunLog` records — a manifest built any other way would compare
  * unequal to an honest receipt on whitespace alone. `buildRunManifest` declines
  * to do this itself for the reason its doc comment gives; doing it here, in the
  * caller, is what that comment asks for.
+ *
+ * ## Which notebook, and why `receipt.chains` exists
+ *
+ * `serializeRecipe` has no spelling for an empty cell, so recipe *text* cannot
+ * carry one: parse `recipeSource` back and a notebook of `[cell, blank, cell]`
+ * returns two chains, numbered 0 and 1. The notebook the person is looking at
+ * numbers them 0 and 2, and so does the kernel's run log, which keys every row
+ * by the cell index the shell handed it. A manifest built from the text alone
+ * therefore describes cells the receipt calls by other numbers — the same
+ * document disagreeing with the run it commits to.
+ *
+ * So a shell that has the notebook passes it as `receipt.chains`, and that is
+ * the list the cells come from; `recipeSource` stays the text, and its digest
+ * still covers exactly the bytes that travel. Parsing `recipeSource` is the
+ * fallback for a caller that has only text (the ceremony, the CLI, a test), and
+ * for those the two readings are the same list, because text has no blank cells
+ * in it to disagree about.
  *
  * `peers` is deliberately empty. A manifest's `peersSha` commits to a
  * label→fingerprint binding, and this build has no roster to bind: the session
@@ -3129,13 +3150,14 @@ async function currentRunManifest(bindings, params) {
   const ctx = /** @type {*} */ (bindings).receipt || {};
   const recipeSource = String(ctx.recipeSource || ctx.cellRecipe || "");
 
-  const { ast } = parseRecipeSource(recipeSource);
   /** @type {{ index: number, peer: string, publish: boolean, recipe: string }[]} */
   const cells = [];
-  const chains = ast ? recipeChains(ast) : [];
+  const notebook = /** @type {*} */ (ctx).chains;
+  const chains = notebook?.length
+    ? recipeChains(notebook)
+    : recipeChains(parseRecipeSource(recipeSource).ast);
   for (let i = 0; i < chains.length; i++) {
     const chain = chains[i];
-    if (!chain?.steps?.length) continue;
     let recipe = "";
     try {
       recipe = serializeRecipe({ chains: [chain] });
@@ -3145,6 +3167,11 @@ async function currentRunManifest(bindings, params) {
       // to a shorter notebook than the one about to run.
       recipe = "";
     }
+    // Every chain gets a row, and its index is its position. An empty cell is
+    // a no-op cell — `recipe: ""`, digesting to the digest of nothing — rather
+    // than a gap, because the alternative is what this used to do: skip it, and
+    // then push `index: i` from the loop counter anyway, so that `cells[1]`
+    // called itself cell 2 and the document contradicted itself.
     cells.push({
       index: i,
       peer: String(chain.peer || ""),

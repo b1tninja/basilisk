@@ -75,13 +75,14 @@ function expectInert(label, src) {
     expect(cell.kind, `${label} cell ${cell.index}`).toBe("witnessed");
     expect(cell.why, `${label} cell ${cell.index}`).toContain("runs here");
   }
-  // The cells the plan lists are the cells the recipe has — a plan that
-  // dropped one would satisfy every clause above and describe a shorter
-  // notebook than the one about to run.
+  // The cells the plan lists are the cells the recipe has, numbered by
+  // position and none of them dropped — a plan that dropped one would satisfy
+  // every clause above and describe a shorter notebook than the one about to
+  // run. No corpus entry here has a blank cell (recipe text cannot hold one),
+  // so this is also the statement that the numbering did not move under the
+  // corpora it was supposed to leave alone.
   expect(plan.cells.map((c) => c.index), label).toEqual(
-    recipeChains(compiled.ast)
-      .filter((c) => c.steps?.length)
-      .map((_, i) => i)
+    recipeChains(compiled.ast).map((_, i) => i)
   );
   return plan;
 }

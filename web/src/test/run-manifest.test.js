@@ -126,6 +126,22 @@ describe("the manifest as a value", () => {
     );
   });
 
+  it("tells a v1 manifest what changed, rather than that a digest disagrees", async () => {
+    // The bump this unit made, from the reader's side. A v1 manifest of a
+    // notebook with a blank cell in it numbers its cells differently, so the
+    // same integer names a different cell — and a document refused with a bare
+    // version number sends somebody looking for a changed recipe. `RECEIPT_VERSION
+    // = 2` is the precedent and it made exactly this argument.
+    const { manifest } = await agreeing();
+    const asV1 = JSON.stringify({ ...manifest, v: 1 });
+    expect(() => parseManifest(asV1)).toThrow(/unsupported version 1/);
+    expect(() => parseManifest(asV1)).toThrow(/numbers every cell the way the notebook does/);
+    expect(() => parseManifest(asV1)).toThrow(/Rebuild the manifest/);
+    // Not a mismatch complaint, which is the failure mode the bump exists to
+    // prevent: the bytes are fine, the numbering is not.
+    expect(() => parseManifest(asV1)).not.toThrow(/mismatch|does not match/);
+  });
+
   it("derives a cell's kind from the one field that decides it", () => {
     expect(cellKind({ peer: "" })).toBe("witnessed");
     expect(cellKind({ peer: "mara" })).toBe("placed");

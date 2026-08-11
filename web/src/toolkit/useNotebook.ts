@@ -1310,7 +1310,15 @@ export function useNotebook() {
     // Through bindings, not the recipe text — a ceremony label is metadata, and
     // putting it in the recipe would push it into share links and saved
     // workspaces.
-    bindings.receipt = { recipeSource: source, label: title };
+    //
+    // `chains` is the notebook itself, and it is here because the source is not
+    // a faithful copy of it: `serializeRecipe` has no spelling for an empty
+    // cell, so a notebook of `[cell, blank, cell]` round-trips through text as
+    // two cells numbered 0 and 1 while this array — and the cell headers on
+    // screen, and every index the kernel keys its outputs by — numbers them 0
+    // and 2. `run.manifest` commits to the cells the person is looking at, so
+    // it needs the list they are looking at.
+    bindings.receipt = { recipeSource: source, label: title, chains };
     const recs = boundRecipientsRef.current.filter((r) => r?.fingerprint);
     if (recs.length) {
       bindings.recipientKeysArmored = recs.map((r) => r.armoredKey);
