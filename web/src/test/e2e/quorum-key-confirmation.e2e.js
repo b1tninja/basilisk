@@ -44,38 +44,54 @@
  * this down; an installed browser that will not launch is a failure, per
  * `classifyLaunchFailure`.
  *
- * ## Why this suite does not pass yet — signalling has no server here
+ * ## What still fails, and the one reason all of it does
  *
- * The scan above works: the session is the `N` export of `session-*.js`, forty
- * prototype methods, carrying the needle. `start()` then fails with `not
- * found`, which is the *dist file server's* catch-all 404 body, not the
- * keyserver's — the keyserver's own 404 branch was instrumented and never
- * fired. `quorum-room.js` serves `/pks/lookup` and nothing else, because the
- * mailbox routes went with the dead helper, so the client's POST to
- * `/api/v1/notebook/negotiate` reaches nothing.
+ * Eight assertions pass, including the two that carry the weight: the key
+ * confirms on both ends over a live connection, and the transcript is bound to
+ * the fingerprints the two engines actually minted.
  *
- * The obvious shortcut does not work. `webpubsub-double.js` cannot be injected
- * into the pages: it brokers `sendToGroup` through a `Set` of sockets held in
- * one process, and two browser contexts would each get their own copy, so
- * neither peer would ever see the other's signals. Signalling has to be shared,
- * which means a server both pages reach.
+ * The six that fail share a single cause — **`quorum-room.js` can no longer see
+ * signalling**. Its `tamper` hook ran inside the mailbox's envelope-opening and
+ * `signalled()` recorded what passed through there; signalling now goes over a
+ * WebSocket to the hub and never touches the room at all. So `signalled()` is
+ * empty, the mailbox post/poll counts are zero, and the tamper never fires.
+ * Nothing about the product is wrong in any of the six.
  *
- * It also has to be *same-origin*. `connect-src 'self'` is the shipped policy
- * and the reason `routes` proxies the keyserver rather than redirecting to it;
- * a WebSocket to another port is refused for the same reason. So the dist
- * server has to tunnel the upgrade, which needs no framing — once the
- * handshake is forwarded it is bytes in both directions.
+ * Fixing them is one piece of work rather than six: the tunnel in
+ * `browser-peers.js` needs an observe-and-rewrite hook. It forwards bytes today
+ * precisely because it does not have to understand them, so this means parsing
+ * `json.webpubsub.azure.v1` text frames on the way through and handing the
+ * `data` to a callback — at which point the room's existing tamper closure can
+ * be reused unchanged, since it already re-seals under the liar's own key.
  *
- * The hub itself already exists and is already trusted for this: Python's
- * `LocalWebPubSub` (`basilisk/portal/webpubsub_local.py`), which `basilisk
- * serve` starts whenever `WEB_PUBSUB_CONNECTION` points at loopback. There is
- * no `ws` dependency here, so standing a Node hub up would mean hand-rolling
- * RFC 6455 beside a Python implementation the dev path already relies on.
+ * The tamper is the half that makes the other half mean something: without it
+ * this suite says a key confirms when nothing is attacking it, which is the
+ * easy case. It should not stay unported.
  *
- * The one non-obvious detail for whoever wires it: `LocalWebPubSub.start()`
- * takes an explicit port, so the endpoint the negotiate response *advertises*
- * can be the dist server's origin while the hub *binds* somewhere else. That
- * is what lets the page dial same-origin and still be tunnelled through.
+ * ## How signalling is served here
+ *
+ * `webpubsub-double.js` cannot be used: it brokers `sendToGroup` through a Set
+ * of sockets in one process, so two browser contexts would each hold their own
+ * and neither peer would see the other. Signalling has to be shared, and it has
+ * to arrive **same-origin** — `connect-src 'self'` is the shipped policy and
+ * the reason the keyserver is proxied rather than redirected to.
+ *
+ * So `webpubsub-hub.js` spawns Python's `LocalWebPubSub`, the implementation
+ * `basilisk serve` already uses, and `serveDist` tunnels the WebSocket upgrade
+ * to it: the handshake is forwarded verbatim and the rest is bytes. The token's
+ * audience is the dist origin the page dials, while the hub binds a free port —
+ * `LocalWebPubSub.start()` taking an explicit port is what separates the two.
+ *
+ * `routes` answers `/api/v1/notebook/negotiate` itself rather than proxying
+ * Flask, whose endpoint is gated by proof-of-work and two rate limits that have
+ * nothing to do with key confirmation.
+ *
+ * **The joiner starts first, and is seen to be waiting before the creator
+ * publishes.** Web PubSub has no history: the invite is broadcast once, and
+ * `_beginMeshing` only announces to peers the creator already knows about, so a
+ * joiner that has not joined the group yet never learns the session exists. The
+ * HTTP mailbox replayed on poll, which is the only reason creator-first ever
+ * worked here.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
