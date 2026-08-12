@@ -71,13 +71,24 @@
  * rather than of the product, and the reason the chunk assertions below exist
  * at all.
  *
- * One function no longer takes that on trust. "plans the same way in the bytes
- * the browser shipped" pulls `planRun` back out of the `/assets/` chunks the
- * page already fetched, finds it by a sentence only it ships, plans this same
- * notebook with it, and requires the answer to match the compiled planner's
- * cell for cell. So the entry point is checked as *shipped bytes* and not only
- * as a file; the remaining four are still checked for presence only, and
- * extending the same treatment to them is the next tightening.
+ * None of the five takes that on trust any more. `__useArc("shipped")` pulls
+ * all five back out of the `/assets/` chunks the page already fetched — each
+ * found by a sentence only it ships, because export bindings are minified and
+ * function names with them — and points the arc at them. `/assets/` excludes
+ * the source-compiled bundle at `/e2e/`, so a hit can only be shipped bytes.
+ *
+ * Every step of the arc is then run a second time on those functions and has to
+ * give the same answer: the plan, the offer, the verdict on it, the result, and
+ * the verdict on that. Only steps that register nothing are repeated, so the
+ * run above still decides everything exactly once.
+ *
+ * Two fields are excluded from the comparison rather than matched, and both are
+ * excluded for the same reason: an offer carries `offeredAt` and a result
+ * carries `ranAt`. That they *differ* is asserted too — a cached value from the
+ * first pass would repeat, and these do not.
+ *
+ * What is left on trust is the plumbing around the five: the session, the
+ * signing, and the transport are still the compiled ones.
  *
  * ## What may skip, and what may not
  *
@@ -306,8 +317,91 @@ const LOAD = `(async () => {
  * template literal anywhere in it: a template literal is what carries it, and
  * either would end it early.
  */
+/**
+ * A sentence each of the five arc functions ships and nothing else does.
+ *
+ * Used twice: the chunk assertions at the bottom scan the built files with
+ * these on disk, and `__useArc` resolves the same five inside the page. One
+ * definition because two would drift, and a needle that stops matching is a
+ * silent hole in the on-disk half.
+ *
+ * They are string literals rather than function names on purpose — the build
+ * minifies export bindings and function names with them, and a literal comes
+ * through intact.
+ */
+const ARC_NEEDLES = {
+  planRun: "keying-unplaced",
+  buildOfferFor: "so there is nothing to hand over",
+  acceptHandoffOffer: "under cover of a cell that never asked",
+  buildResultFor: "and should not have been handed over",
+  acceptCellResult: "an answer to a question nobody asked",
+};
+
 const INSTALL = `(() => {
-  const arc = window.__arc;
+  /**
+   * A mutable copy of the arc, so the five functions under test can be swapped
+   * for the ones the browser shipped without touching anything else.
+   *
+   * A module namespace object has read-only properties, so this is a spread
+   * rather than the namespace itself. Every helper below reads arc.fn at call
+   * time, which is what lets one swap redirect all of them at once.
+   */
+  const arc = { ...window.__arc };
+
+  const NEEDLE = ${JSON.stringify(ARC_NEEDLES)};
+
+  let shipped = null;
+
+  /**
+   * Find the five in the chunks the page already fetched.
+   *
+   * Export bindings are minified and function names with them, so each is found
+   * by a string literal only it contains — the same needles the on-disk
+   * assertions use. Only /assets/ paths are considered, which excludes the
+   * source-compiled arc bundle at /e2e/, so a hit can only be shipped bytes.
+   */
+  const resolveShipped = async () => {
+    if (shipped) return shipped;
+    const paths = [...new Set(
+      performance.getEntriesByType("resource")
+        .map((x) => new URL(x.name).pathname)
+        .filter((n) => n.startsWith("/assets/") && n.endsWith(".js"))
+    )];
+    const hits = {};
+    for (const path of paths) {
+      let mod;
+      try { mod = await import(path); } catch (_) { continue; }
+      for (const k of Object.keys(mod)) {
+        const v = mod[k];
+        if (typeof v !== "function") continue;
+        const src = String(v);
+        for (const name of Object.keys(NEEDLE)) {
+          if (!src.includes(NEEDLE[name])) continue;
+          if (hits[name] && hits[name] !== v) {
+            throw new Error("two shipped candidates for " + name);
+          }
+          hits[name] = v;
+        }
+      }
+    }
+    const missing = Object.keys(NEEDLE).filter((n) => !hits[n]);
+    if (missing.length) throw new Error("not shipped: " + missing.join(","));
+    shipped = hits;
+    return shipped;
+  };
+
+  /**
+   * Point the arc at the compiled modules or at the shipped ones.
+   *
+   * The suite runs its whole arc on "source", then repeats individual steps on
+   * "shipped" and requires the same answer. Only steps that register nothing
+   * are repeated, so the swap never changes what the run has decided.
+   */
+  window.__useArc = async (which) => {
+    const from = which === "shipped" ? await resolveShipped() : window.__arc;
+    for (const name of Object.keys(NEEDLE)) arc[name] = from[name];
+    return { which, names: Object.keys(NEEDLE) };
+  };
 
   /** Peer-local state. There is no shared realm; this is all one side knows. */
   const S = window.__S = {
@@ -740,6 +834,18 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
       { timeout: 20000, interval: 100, what: "the offer reaching okafor" }
     );
 
+    // Mara builds the same offer again on the shipped `buildOfferFor`. Building
+    // an offer registers nothing — it reads slots and returns JSON — so this is
+    // safe to repeat, and the JSON has to come out byte for byte the same.
+    out.offerShipped = await A.page.evaluate(async () => {
+      await window.__useArc("shipped");
+      try {
+        return await window.__buildOffer(1);
+      } finally {
+        await window.__useArc("source");
+      }
+    });
+
     /* ── 4. okafor, before anybody has clicked ── */
 
     out.bBeforeClick = {
@@ -751,6 +857,18 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
         out.offer.json
       ),
     };
+    // The same check again, on the bytes the browser shipped. `register` is
+    // false on both passes, so this decides nothing twice — it asks the same
+    // question of two implementations and requires one answer.
+    out.bCheckedShipped = await B.page.evaluate(async (json) => {
+      await window.__useArc("shipped");
+      try {
+        return await window.__acceptOffer(json, { register: false });
+      } finally {
+        await window.__useArc("source");
+      }
+    }, out.offer.json);
+
     out.bStillStopped = await B.page.evaluate(() => window.__run());
 
     /* ── 5. okafor accepts. This is the click. ── */
@@ -764,6 +882,19 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     /* ── 6. okafor signs what came out and hands it back ── */
 
     out.result = await B.page.evaluate((k) => window.__buildResult(1, k), okafor.armoredPrivate);
+    // The fourth of the five, on the same slots. Building a result registers
+    // nothing either, so okafor can do it twice. The signature is not compared
+    // — an OpenPGP signature carries a timestamp and is not reproducible — but
+    // the result it signs over is, and that is the part the arc produces.
+    out.resultShipped = await B.page.evaluate(async (k) => {
+      await window.__useArc("shipped");
+      try {
+        return await window.__buildResult(1, k);
+      } finally {
+        await window.__useArc("source");
+      }
+    }, okafor.armoredPrivate);
+
     out.resultSent = await B.page.evaluate(
       ([to, signed]) => window.__session.sendResult(to, signed),
       [mara.fpr, out.result.signed]
@@ -789,6 +920,16 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
       ),
       run: await A.page.evaluate(() => window.__run()),
     };
+
+    // And the same for the returning half, on the shipped `acceptCellResult`.
+    out.aCheckedShipped = await A.page.evaluate(async ([r, f]) => {
+      await window.__useArc("shipped");
+      try {
+        return await window.__acceptResult(r, f, { register: false });
+      } finally {
+        await window.__useArc("source");
+      }
+    }, [arrived.result, arrived.from]);
 
     /* ── 8. mara accepts, and the run that stopped completes ── */
 
@@ -883,6 +1024,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     // Compared against `planA` — the compiled planner's own output for the same
     // notebook, roster and identity — so a build that shipped a stale or
     // differently-configured planner would disagree here rather than pass.
+    //
     // `play` is compared only against a literal below: `__setup` does not
     // return it, and the comparison is limited to what both sides expose.
     expect(out.shippedPlanA.ok).toBe(out.planA.ok);
@@ -895,6 +1037,76 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     expect(out.shippedPlanA.play).toBe("placed");
     expect(out.shippedPlanA.cells.map((c) => c.peer)).toEqual(["mara", "okafor", "mara"]);
     expect(out.shippedPlanA.cells.filter((c) => !c.mine)).toHaveLength(1);
+  });
+
+  it("hands a cell over the same way in the bytes the browser shipped", () => {
+    // The other four, each repeated on the shipped implementation at the point
+    // in the run where its inputs exist. Every repeat is a step that registers
+    // nothing, so the arc above decided everything exactly once.
+    //
+    // `buildOfferFor`: the offer is JSON over a manifest and a slot — the bytes
+    // the peer would actually receive — so it is compared whole, minus the one
+    // field that cannot repeat. An offer is stamped with the moment it was
+    // built, so `offeredAt` differs by the milliseconds between the two calls.
+    // That it differs is itself the proof this was built again rather than
+    // returned from something the first pass cached.
+    const withoutStamp = (json) => {
+      const { offeredAt, ...rest } = JSON.parse(json);
+      expect(typeof offeredAt).toBe("string");
+      return rest;
+    };
+    expect(out.offerShipped.ok).toBe(true);
+    expect(withoutStamp(out.offerShipped.json)).toEqual(withoutStamp(out.offer.json));
+    expect(JSON.parse(out.offerShipped.json).offeredAt).not.toBe(
+      JSON.parse(out.offer.json).offeredAt
+    );
+    expect(out.offerShipped.summary).toBe(out.offer.summary);
+    expect(out.offerShipped.refusals).toEqual([]);
+
+    // The digest the offer commits to is the cell, and it is the same cell.
+    expect(JSON.parse(out.offerShipped.json).cellDigest).toBe(
+      JSON.parse(out.offer.json).cellDigest
+    );
+
+    // `acceptHandoffOffer`: the verdict, the cell it is for, and the labels it
+    // would bind. Checked against okafor's own pre-click check of the same JSON.
+    expect(out.bCheckedShipped.ok).toBe(true);
+    expect(out.bCheckedShipped.cell).toBe(out.bBeforeClick.checked.cell);
+    expect(out.bCheckedShipped.bindings).toEqual(out.bBeforeClick.checked.bindings);
+    expect(out.bCheckedShipped.summary).toBe(out.bBeforeClick.checked.summary);
+    // It stayed a question: the shipped pass registered nothing either.
+    expect(out.bCheckedShipped.registered).toBe(false);
+
+    // `buildResultFor`: the result, not the signature over it. An OpenPGP
+    // signature carries a timestamp, so the armor differs on every call while
+    // the document it commits to does not — and the document is stamped too,
+    // with `ranAt`, for the same reason the offer carries `offeredAt`.
+    expect(out.resultShipped.ok).toBe(true);
+    const { ranAt: shippedRanAt, ...shippedResult } = out.resultShipped.result;
+    const { ranAt: sourceRanAt, ...sourceResult } = out.result.result;
+    expect(shippedResult).toEqual(sourceResult);
+    expect(typeof shippedRanAt).toBe("string");
+    expect(shippedRanAt).not.toBe(sourceRanAt);
+    expect(out.resultShipped.summary).toBe(out.result.summary);
+
+    // The value it carries is the round-trip this whole notebook exists to do,
+    // so the shipped builder is moving the real answer and not an empty shell.
+    expect(shippedResult.produced.map((x) => x.data)).toContain(EXPECTED_B64);
+
+    // `acceptCellResult`: mara's verdict on the result that came back, checked
+    // against her own pre-click check of the same bytes from the same peer.
+    expect(out.aCheckedShipped.ok).toBe(true);
+    expect(out.aCheckedShipped.by).toBe("okafor");
+    expect(out.aCheckedShipped.cell).toBe(out.aBeforeClick.checked.cell);
+    expect(out.aCheckedShipped.bindings).toEqual(out.aBeforeClick.checked.bindings);
+    expect(out.aCheckedShipped.summary).toBe(out.aBeforeClick.checked.summary);
+    expect(out.aCheckedShipped.registered).toBe(false);
+
+    // Not vacuous: each of these carried something across. The offer names a
+    // slot, and both accepts would have bound one.
+    expect(out.offerShipped.json.length).toBeGreaterThan(0);
+    expect(out.bCheckedShipped.bindings.length).toBeGreaterThan(0);
+    expect(out.aCheckedShipped.bindings.length).toBeGreaterThan(0);
   });
 
   it("plans the same notebook two ways, one for each peer", () => {
@@ -1133,14 +1345,8 @@ describe("the product cannot accept an offer at all", () => {
     .filter((n) => n.endsWith(".js"))
     .map((n) => ({ name: n, text: readFileSync(join(DIST_ROOT, "assets", n), "utf8") }));
 
-  /** A sentence each function ships and nothing else does. */
-  const ONLY_IN = {
-    planRun: "keying-unplaced",
-    buildOfferFor: "so there is nothing to hand over",
-    acceptHandoffOffer: "under cover of a cell that never asked",
-    buildResultFor: "and should not have been handed over",
-    acceptCellResult: "an answer to a question nobody asked",
-  };
+  /** The same needles the page resolves with — see `ARC_NEEDLES`. */
+  const ONLY_IN = ARC_NEEDLES;
 
   it("ships the planner, because a shell now asks it where cells run", () => {
     // This assertion used to be `present).toEqual([])` for all five, and said
