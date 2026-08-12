@@ -43,6 +43,7 @@ import {
 import { readSignedResult } from "../lib/notebook/documents.js";
 import { signOpenPgp } from "../lib/pgp/sign.js";
 import { planChains, planRun } from "../lib/toolkit/plan.js";
+import { parseRecipeSource } from "../lib/toolkit/recipe-parse.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { buildRunManifest, manifestDigest } from "../lib/toolkit/manifest.js";
 import { compileRecipe, migrateRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
@@ -417,7 +418,12 @@ in $seed | decode hex | encode base64 | out $b64
         ranAt: new Date(0).toISOString(),
       },
       {
-        plan: mara.plan,
+        // `validateRecipe` now refuses `@*`, so a rendezvous plan can no longer
+        // come from a compiled recipe. It can still *arrive*: `planRun` places
+        // one from any AST it is handed, and the plan a result is checked
+        // against was built by whoever sent it. Parsed rather than compiled
+        // here, which is that shape — and the guard exists for exactly this.
+        plan: planRun(parseRecipeSource(src).ast, { me: "mara", roster: ROSTER }),
         compiled: mara.compiled,
         manifest,
         by: "okafor",

@@ -87,7 +87,7 @@ genkey x25519 | out $kpA
 @alice publish
 $kpA | :public | out $pubA
 
-@*
+@bob
 random 32 | out $nonce
 ```
 
@@ -96,7 +96,30 @@ random 32 | out $nonce
 | `@alice` | This cell belongs to the peer named `alice` |
 | `@alice publish` | …and every `out` it writes is meant to leave the machine |
 | `@alice publish=$a,$b` | …and only `$a` and `$b` are; every other `out` stays with alice |
-| `@*` | Rendezvous: every participant, together |
+| `@*` | Rendezvous: every participant, together — **parses, and this build refuses to plan it** (see below) |
+
+### `@*` is refused, not performed
+
+The grammar accepts `@*` and the planner understands it: a rendezvous cell is
+placed on everyone, and `planRun` records the barrier as a wait
+(`{ peer: "*", reason: "rendezvous" }`). What does not exist is anything that
+*performs* it. Nothing makes the participants arrive together.
+
+That gap is worse than a missing feature. A cell that plans as a rendezvous and
+then simply runs would have you enter alone while believing the room entered
+with you — which is the exact failure `buildOfferFor` already refuses a
+rendezvous handoff to avoid, reached by pressing Run instead of by handing a
+cell over. So `planRun` refuses the header, before the run rather than during
+it, and says what to write instead.
+
+Write one cell per participant with `@`their label, or drop the header and let
+everyone run the cell as an ordinary mirrored cell. Neither claims a barrier.
+
+Performing one would need a wire protocol this build does not have: peers
+announcing arrival at a cell, and agreement on *what* they must match before
+one counts as arrived — cell index alone would let two different notebooks
+rendezvous on position. That is a coordination layer, and it is not being
+invented to satisfy a header nobody has needed yet.
 
 A cell often writes several things with different destinations. A verifiable
 split writes commitments the room needs, shares that must never leave, and a

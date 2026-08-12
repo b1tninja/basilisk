@@ -39,6 +39,7 @@ import { placementGate } from "../lib/toolkit/placement.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { buildRunManifest, manifestDigest } from "../lib/toolkit/manifest.js";
 import { compileRecipe, migrateRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
+import { parseRecipeSource } from "../lib/toolkit/recipe-parse.js";
 import { createSlotRegistry } from "../lib/toolkit/slot-registry.js";
 
 const FPR_M = "4F2AC1B39D8E7C6A5B4938271605F4E3D2C1B0A9";
@@ -522,8 +523,25 @@ bytes deadbeef | encode hex | out $seed
 in $seed | decode hex | encode base64 | out $b64
 `;
 
+  /**
+   * A rendezvous plan, built the only way one can still arrive.
+   *
+   * `validateRecipe` now refuses `@*` — this build can describe a rendezvous
+   * and not perform one, so the header is a compile error rather than a cell
+   * that runs alone. That does not make these guards dead: `planRun` places a
+   * rendezvous from any AST it is handed, and a plan or an offer reaching this
+   * peer was built somewhere else — by an older build, a newer one, or one that
+   * simply permits the header. Defence in depth is the whole point of a guard
+   * sitting behind a compiler.
+   *
+   * So the plan comes from the *parsed* AST rather than the compiled one, which
+   * is exactly the shape a foreign plan has.
+   */
+  const rendezvousPlan = (me) =>
+    planRun(parseRecipeSource(RENDEZVOUS).ast, { me, roster: ROSTER });
+
   it("is not offered, because there is no barrier to enter it with", async () => {
-    const plan = planFor(RENDEZVOUS, "mara");
+    const plan = rendezvousPlan("mara");
     expect(plan.cells[1].kind).toBe("rendezvous");
     const built = await buildOfferFor({
       plan,
@@ -549,7 +567,10 @@ in $seed | decode hex | encode base64 | out $b64
         needs: [{ label: "seed", type: "text", data: "deadbeef" }],
         offeredAt: new Date(0).toISOString(),
       },
-      { plan: planFor(RENDEZVOUS, "okafor"), compiled: compile(RENDEZVOUS), manifest }
+      // The manifest and the compiled recipe are the recipient's own; the
+      // *plan* is the foreign-shaped one. This is a peer whose build made a
+      // rendezvous offering it to a build that will not.
+      { plan: rendezvousPlan("okafor"), compiled: compile(RENDEZVOUS), manifest }
     );
     expect(verdict.ok).toBe(false);
     expect(verdict.refusals[0].reason).toBe("rendezvous");

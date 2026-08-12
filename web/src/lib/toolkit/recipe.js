@@ -37,6 +37,7 @@ import {
   PEER_PUBLISH_KEYWORD,
   PEER_PUBLISH_SEPARATOR,
   PEER_SIGIL,
+  PEER_WILDCARD,
   SLOT_SIGIL,
   slotLabelKey,
 } from "./recipe-parse.js";
@@ -1216,6 +1217,36 @@ function validateChainHeader(chain, firstStepIndex, errors) {
   }
   if (peerLooksLikeFingerprint(norm.peer)) {
     errors.push({ message: peerFingerprintError(norm.peer), ...anchor });
+    return;
+  }
+  // `@*` parses, and it plans: `planRun` places a rendezvous cell on everyone
+  // and records the barrier as a wait. Nothing *performs* it — no peer
+  // announces arrival, and no peer waits for one.
+  //
+  // Refused here rather than in the planner, because the planner is not on
+  // every path. `useNotebook` builds a placement only when a plan is `ok` and
+  // `placed`, so a refused plan is simply dropped and the notebook runs
+  // ungated — a plan-level refusal would have been routed around by the one
+  // caller that matters. A compile error is the gate every run passes: the
+  // editor shows it, Run is blocked, and a recipe arriving from a peer is
+  // refused on the way in too.
+  //
+  // The cost of getting this wrong is why it is a refusal and not a warning: a
+  // cell that plans as a rendezvous and then runs has this peer entering alone
+  // while believing the room entered with it — exactly what `buildOfferFor`
+  // refuses a rendezvous handoff to avoid, reached by pressing Run instead of
+  // by handing a cell over.
+  if (norm.peer === PEER_WILDCARD) {
+    errors.push({
+      message:
+        `\`${PEER_SIGIL}${PEER_WILDCARD}\` is a rendezvous — every participant ` +
+        "enters this cell together — and this build can describe one but not " +
+        "perform one, so running it would have you enter alone while believing " +
+        "the room entered with you. Write one cell per participant with " +
+        `\`${PEER_SIGIL}\`their label, or drop the header and let everyone run ` +
+        "it as an ordinary mirrored cell. Neither claims a barrier.",
+      ...anchor,
+    });
     return;
   }
   if (!chain?.publish) return;

@@ -188,14 +188,20 @@ describe("every docs/RECIPE.md fence that compiles plans exactly as it runs toda
   });
 
   it("plans the doc's own placement example the way the doc reads it", () => {
-    const block = docFences().find((b) => b.includes(`\n@${"*"}\n`));
+    // The doc's example used to end on `@*`, and this asserted it planned
+    // clean. It no longer does: a rendezvous is refused, so the example was
+    // changed to `@bob` in the same commit — a manual telling you to write a
+    // header the planner refuses is worse than no manual. The third cell is now
+    // an ordinary placed one, which is exactly what the paragraph beneath the
+    // table tells a reader to write instead.
+    const block = docFences().find((b) => b.includes("\n@alice publish\n"));
     const plan = planRun(compileRecipe(String(block)));
     expect(plan.ok).toBe(true);
     expect(plan.play).toBe("placed");
     expect(plan.cells.map((c) => [c.kind, c.basis])).toEqual([
       ["placed", "header"],
       ["placed", "secret-locality"],
-      ["rendezvous", "rendezvous"],
+      ["placed", "header"],
     ]);
     // Cell 1 is the interesting one: it carries `@alice publish` *and* could
     // not have run anywhere else. `declared` and `forced` are separate fields
@@ -208,7 +214,7 @@ describe("every docs/RECIPE.md fence that compiles plans exactly as it runs toda
     // so `@alice` there is a choice the author made.
     expect(plan.cells[0].declared).toBe(true);
     expect(plan.cells[0].forced).toBe(false);
-    expect(plan.counts).toMatchObject({ forced: 1, chosen: 1, rendezvous: 1 });
+    expect(plan.counts).toMatchObject({ forced: 1, chosen: 2, rendezvous: 0 });
   });
 });
 

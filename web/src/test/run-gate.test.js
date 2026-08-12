@@ -32,6 +32,7 @@
 import { describe, expect, it } from "vitest";
 import { PRESETS, compileRecipe, migrateRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
 import { planRun } from "../lib/toolkit/plan.js";
+import { parseRecipeSource } from "../lib/toolkit/recipe-parse.js";
 import { placementGate } from "../lib/toolkit/placement.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { createKernel } from "../lib/toolkit/kernel.js";
@@ -236,7 +237,19 @@ bytes 11 | encode hex | out $mine
     expect(gated.map((a) => a.stepIndex)).toEqual([plain[1].stepIndex]);
   });
 
-  it("runs a rendezvous cell — `@*` is everybody, and everybody includes me", async () => {
+  it("refuses a rendezvous cell rather than running it alone", async () => {
+    // This test used to assert the opposite, under the title "`@*` is
+    // everybody, and everybody includes me". The premise is true and the
+    // conclusion was not: everybody does include me, but running it *because*
+    // it includes me performs the one thing the header does not mean. `@*`
+    // says the participants enter together, nothing makes them, and a cell
+    // that ran anyway would have this peer enter alone while believing the
+    // room entered with it — the failure `buildOfferFor` refuses a rendezvous
+    // handoff to avoid, reached by pressing Run.
+    //
+    // So the plan refuses it, and `placementGate` turns a refused plan into a
+    // stop. Flipped rather than deleted: the old behaviour is the bug, and the
+    // test that pinned it is where that is easiest to see.
     const src = `@mara
 bytes 00 | encode hex | out $m
 
@@ -244,13 +257,62 @@ bytes 00 | encode hex | out $m
 bytes 11 | encode hex | out $both
 `;
     const registry = createSlotRegistry();
-    await runRecipe(
-      compile(src).ast,
-      {},
-      { slotRegistry: registry, placement: placementFor(src, "okafor") }
-    );
+    // `placementFor` asserts the plan is clean, which this one is not — the
+    // point of the test is that it refuses. So the plan is handed to the gate
+    // directly, exactly as the shell would hand it over.
+    const plan = planRun(compile(src), {
+      me: "okafor",
+      roster: { mara: "A".repeat(40), okafor: "B".repeat(40) },
+    });
+    expect(plan.ok).toBe(false);
+    await expect(
+      runRecipe(compile(src).ast, {}, { slotRegistry: registry, placement: { plan } })
+    ).rejects.toThrow(/refused the run/);
+    // And nothing ran: not the rendezvous cell, and not the cell above it.
+    expect(registry.has("both")).toBe(false);
     expect(registry.has("m")).toBe(false);
-    expect(registry.has("both")).toBe(true);
+  });
+
+  it("refuses it at compile time, which is the gate every run passes", () => {
+    // **Where** the refusal lives is the load-bearing part. A plan-level one
+    // would have been routed around: `useNotebook` builds a placement only
+    // when a plan is `ok` and `placed`, so a refused plan is dropped and the
+    // notebook runs *ungated* — the refusal would have been read by the panel
+    // and ignored by the runner. A compile error is on every path: the editor
+    // shows it, Run is blocked, and a recipe arriving from a peer is refused
+    // on the way in.
+    const src = `@*
+bytes 11 | encode hex | out $both
+`;
+    const { validation } = compile(src);
+    expect(validation.ok).toBe(false);
+    const message = validation.errors.map((e) => e.message).join(" ");
+    expect(message).toMatch(/can describe one but not perform one/);
+    expect(message).toMatch(/enter alone while believing the room entered with you/);
+    // The remedy, because a refusal that names no alternative is a dead end.
+    expect(message).toMatch(/one cell per participant/);
+    expect(message).toMatch(/ordinary mirrored cell/);
+  });
+
+  it("still lets the planner say what a rendezvous means", () => {
+    // The reading is kept rather than deleted. `planRun` places a rendezvous
+    // from any AST it is handed — which is how a plan from another build
+    // arrives, and why the handoff guards behind it stay reachable. It will
+    // also be what performs one, the day anything can.
+    const src = "@*\nbytes 11 | encode hex | out $both\n";
+    const plan = planRun(parseRecipeSource(src).ast, {
+      me: "okafor",
+      roster: { mara: "A".repeat(40), okafor: "B".repeat(40) },
+    });
+    expect(plan.cells[0].kind).toBe("rendezvous");
+    expect(plan.cells[0].basis).toBe("rendezvous");
+    expect(plan.waits).toContainEqual({
+      cell: 0,
+      on: 0,
+      peer: "*",
+      slot: "",
+      reason: "rendezvous",
+    });
   });
 });
 
