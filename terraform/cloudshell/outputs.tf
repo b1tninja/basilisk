@@ -83,6 +83,11 @@ output "front_door_endpoint_name" {
   value       = module.basilisk.front_door_endpoint_name
 }
 
+output "signaling_wss_origin" {
+  description = "Signalling `connect-src` source — read by scripts/deploy-static.sh."
+  value       = module.basilisk.signaling_wss_origin
+}
+
 output "key_vault_name" {
   description = "Key Vault holding basilisk-token-secret."
   value       = module.basilisk.key_vault_name

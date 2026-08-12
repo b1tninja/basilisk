@@ -578,7 +578,16 @@ This replaced an in-process mailbox that could not work on Consumption Functions
 
 
 
-**CSP.** The signalling host is per-deployment, so it is never written into a policy string. `Settings.signaling_ws_origin()` derives `wss://<host>` from the connection string; `basilisk/serve.py` puts it in the response header, `basilisk/portal/static.py` merges it into each page's `<meta>` on the way out, and `terraform/…/frontdoor.tf` interpolates `local.signaling_wss_origin` into the header it overwrites. All three must allow it — the browser enforces the intersection. `tests/unit/test_csp_signaling.py` fails if they drift.
+**CSP.** The signalling host is per-deployment, so it is never written into a policy string. A browser enforces the **intersection** of a document's `<meta>` policy and the response header, so the origin has to reach both — and how it reaches the meta depends on who serves the HTML:
+
+| Deployment | Serves the HTML | Header from | Meta gets the origin from |
+|---|---|---|---|
+| Azure (Front Door + storage) | `$web` blob container | `terraform/…/frontdoor.tf` | `scripts/package-static.sh`, at upload |
+| Container / local (`docker compose`, `basilisk serve`) | Flask | `basilisk/serve.py` | `basilisk/portal/static.py`, per request |
+
+`Settings.signaling_ws_origin()` derives `wss://<host>` from the connection string for both headers. On Azure, Front Door routes `/*` to blob storage and only `/api/*`, `/pks/*`, `/claim/*`, `/.auth/*` and `/health` to the Function App — **Flask is not in the path for portal pages**, so the per-request merge does not cover them. Relying on it is what shipped `keys.b1tninja.com` with a header naming the signalling socket, pages that did not, and shared sessions that could not start.
+
+`scripts/deploy-static.sh` **fails** if the origin cannot be resolved rather than uploading pages with signalling off; a deployment that genuinely has none says `BASILISK_SIGNALING_WSS_ORIGIN=none`. `tests/unit/test_csp_signaling.py` fails if the three policies drift, `web/src/test/e2e/csp-policy.e2e.js` fails if any page's meta refuses a source its header allows, and `scripts/smoke-test.sh` re-checks the same thing against the live site after every deploy.
 
 
 

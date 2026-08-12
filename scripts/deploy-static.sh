@@ -21,6 +21,56 @@ if [[ -z "$STORAGE_ACCOUNT" ]]; then
   exit 1
 fi
 
+# ── The signalling origin the uploaded pages must allow ──────────────────────
+# Front Door puts this value in the CSP response header and the browser enforces
+# the intersection of that header with each document's own `<meta>` policy — so
+# pages uploaded without it ship a site where shared sessions cannot open a
+# socket, while every configuration file still looks right. The packaging step
+# merges it in; this resolves it.
+#
+# **Empty is a failure, not a warning.** It was a warning, and that is how this
+# shipped: `terraform output` is wrapped so any error yields an empty string, an
+# uninitialised workspace or a renamed output produces one silently, the warning
+# lands on stderr among hundreds of CI lines, and Front Door then caches the
+# result for 24 hours. A deploy that disables a headline feature has to stop.
+#
+# `none` is the deliberate way to say a deployment has no signalling — a
+# keyserver-only install. It is spelled the way the rest of this codebase spells
+# the same idea: `rtc.ice stun=none` is a user declining every third party, and
+# `NO_ICE_SERVERS` exists precisely so "nobody said" and "somebody said none"
+# cannot be confused. Same distinction, same word, and the silent path is the
+# one that fails.
+if [[ -z "${BASILISK_SIGNALING_WSS_ORIGIN:-}" ]]; then
+  BASILISK_SIGNALING_WSS_ORIGIN="$(cd "$TF_DIR" && terraform output -raw signaling_wss_origin 2>/dev/null || true)"
+fi
+export BASILISK_SIGNALING_WSS_ORIGIN
+
+if [[ -z "$BASILISK_SIGNALING_WSS_ORIGIN" ]]; then
+  cat >&2 <<'MSG'
+ERROR: the signalling origin could not be resolved, and nothing has been uploaded.
+
+  Front Door's CSP header names this deployment's Web PubSub host. A browser
+  enforces the intersection of that header and each page's own <meta> policy, so
+  pages uploaded without it refuse the signalling socket and shared sessions
+  cannot start — silently, with every config file looking correct.
+
+  Fix one of these:
+    · `terraform output -raw signaling_wss_origin` in the deploy workspace
+      (this is what the deploy reads; check the workspace is initialised and
+      applied, and that AZURE_WEBPUBSUB_CONNECTION_STRING is set)
+    · export BASILISK_SIGNALING_WSS_ORIGIN=wss://<host>.webpubsub.azure.com
+
+  If this deployment genuinely has no signalling — a keyserver-only install —
+  say so explicitly:
+    · export BASILISK_SIGNALING_WSS_ORIGIN=none
+MSG
+  exit 1
+fi
+
+if [[ "$BASILISK_SIGNALING_WSS_ORIGIN" == "none" ]]; then
+  echo "Signalling: explicitly none — uploading pages with no signalling socket." >&2
+fi
+
 STAGE="$(bash "${REPO_ROOT}/scripts/package-static.sh")"
 
 storage_args=(--account-name "$STORAGE_ACCOUNT")

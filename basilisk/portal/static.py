@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from flask import Flask, Response, send_from_directory
 
 from basilisk.config import get_settings
 
-_CONNECT_SRC_RE = re.compile(r"(connect-src\s+)([^;\"]+)")
+# Re-exported: `merge_connect_src` moved to a flask-free module so the packaging
+# step can apply the same rewrite to the artifact it uploads. Importing it from
+# here still works, which keeps every existing caller and test pointing at one
+# implementation rather than acquiring a second.
+from basilisk.security.csp import merge_connect_src  # noqa: F401
 
 # Prefer Vite build output; fall back to legacy web/static during local transition.
 _WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
@@ -56,32 +59,30 @@ def _static_root() -> Path:
     )
 
 
-def merge_connect_src(html: str, extra_sources: tuple[str, ...]) -> str:
-    """Add per-deployment sources to the page's own ``connect-src``.
-
-    The `<meta>` CSP and the response header intersect in the browser, so a
-    source the header allows is still blocked unless the meta allows it too.
-    Most of the policy is a build-time constant and stays in the HTML; the
-    quorum signalling host is not — it comes out of a connection string that
-    differs per deployment — so it is merged in on the way out rather than
-    hardcoded into ten static pages. Sources already present are left alone,
-    which keeps ``quorum.html``'s ``stun:`` entries intact.
-    """
-    if not extra_sources:
-        return html
-
-    def add(match: re.Match[str]) -> str:
-        prefix, existing = match.group(1), match.group(2)
-        parts = existing.split()
-        for source in extra_sources:
-            if source not in parts:
-                parts.append(source)
-        return f"{prefix}{' '.join(parts)}"
-
-    return _CONNECT_SRC_RE.sub(add, html, count=1)
-
-
 def _send_html(filename: str) -> Response:
+    """Serve a portal page, merging the deployment's signalling origin into it.
+
+    **This is not the route the deployed site takes for these documents, and
+    relying on it was the defect.** Front Door sends ``/*`` to the storage
+    account's ``$web`` container; only ``/api/*``, ``/pks/*``, ``/claim/*``,
+    ``/.auth/*`` and ``/health`` reach the Function App. So on
+    ``keys.b1tninja.com`` the portal HTML never passed through here, the merge
+    below never ran on it, Front Door's header carried ``wss://…`` while the
+    blob's meta did not, and the intersection the browser enforces left
+    signalling with no reachable origin. Shared sessions could not start at all.
+
+    The merge that covers the Azure artifact is now done at packaging time —
+    ``scripts/package-static.sh``, against the bytes that are actually uploaded.
+
+    **This is not dead code, and it is not a second implementation.** It calls
+    the same :func:`~basilisk.security.csp.merge_connect_src`, and it covers the
+    deployments where Flask really does serve the HTML: ``docker compose`` and
+    any container fronting the app directly, ``basilisk serve`` for local work,
+    ``BASILISK_DEV_APPROVE`` runs, and the test client. Those have no packaging
+    step to do it for them. Doing it in both places is safe because the merge is
+    idempotent; a document that already carries the origin is returned
+    unchanged.
+    """
     ws_origin = get_settings().signaling_ws_origin()
     if ws_origin:
         # Read rather than stream: the bytes have to change, and a

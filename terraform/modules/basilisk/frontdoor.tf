@@ -3,9 +3,19 @@
 # and Front Door overwrites what the origin sent — so a source missing from any
 # one of the three is a source that does not exist. Everything here is a
 # build-time constant except the signalling socket, whose hostname is
-# per-deployment; `basilisk/portal/static.py` merges the same origin into the
-# meta on the way out. 'wasm-unsafe-eval' is OpenPGP.js Argon2 WASM only, not
-# JS eval; integrity of that WASM is SRI on the embedding chunk (see serve.py).
+# per-deployment.
+#
+# That one source has to reach the `<meta>` too, and this route never touches
+# Flask: `/*` goes to the storage account's `$web` container, so the portal HTML
+# is blob bytes with whatever policy was uploaded. `scripts/package-static.sh`
+# merges `signaling_wss_origin` into every page before upload, reading it from
+# the `signaling_wss_origin` output. It used to be merged per request by
+# `basilisk/portal/static.py`, which is a path these documents do not take —
+# the header carried `wss://` and the meta did not, and signalling was blocked
+# on the deployed site while every configuration file looked right.
+#
+# 'wasm-unsafe-eval' is OpenPGP.js Argon2 WASM only, not JS eval; integrity of
+# that WASM is SRI on the embedding chunk (see serve.py).
 locals {
   content_security_policy = join(" ", [
     "default-src 'none';",

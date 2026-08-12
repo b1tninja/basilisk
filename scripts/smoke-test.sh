@@ -87,6 +87,73 @@ wait_for_sri_html() {
   return 1
 }
 
+# The two halves of the policy a browser actually computes, compared.
+#
+# A document carries a `<meta http-equiv="Content-Security-Policy">` and the
+# response arrives with a header, and the browser enforces the **intersection**.
+# So a source in one and not the other is a source that does not exist — and
+# neither side looks wrong on its own, which is exactly how this deployment
+# shipped with signalling switched off: Front Door's header named the Web PubSub
+# host, the uploaded pages' meta did not, shared sessions could not open a
+# socket, and every configuration file was correct.
+#
+# This is the check that catches it from the outside, against the bytes actually
+# being served, after the upload and the purge. Nothing else in this repo can:
+# the unit tests see the artifact and the browser suite sees a harness, but only
+# this sees what a visitor gets.
+check_csp_meta_allows_header() {
+  local label="$1" url="$2"
+  printf '  %-48s' "$label"
+  local raw curl_exit=0
+  raw=$(curl -sS -D - --max-time "$TIMEOUT" --compressed "$url") || curl_exit=$?
+  if [[ $curl_exit -ne 0 ]]; then
+    echo "FAIL (curl exit $curl_exit)"
+    FAIL=1
+    return
+  fi
+
+  # `connect-src …` up to the next `;`, from the header and from the meta tag.
+  local header meta
+  header=$(printf '%s' "$raw" | tr -d '\r' \
+    | grep -i '^content-security-policy:' | head -n1 \
+    | grep -oE 'connect-src [^;]*' || true)
+  meta=$(printf '%s' "$raw" \
+    | grep -oE '<meta http-equiv="Content-Security-Policy" content="[^"]*"' | head -n1 \
+    | grep -oE 'connect-src [^;]*' || true)
+
+  if [[ -z "$header" ]]; then
+    echo "FAIL (no connect-src in the response header)"
+    FAIL=1
+    return
+  fi
+  if [[ -z "$meta" ]]; then
+    # Not "allow everything" — with `default-src 'none'` a missing connect-src
+    # denies everything, so an absent directive is a harder failure than a
+    # mismatched one.
+    echo "FAIL (page carries no connect-src meta)"
+    FAIL=1
+    return
+  fi
+
+  local missing=""
+  local source
+  for source in ${header#connect-src }; do
+    case " ${meta#connect-src } " in
+      *" $source "*) ;;
+      *) missing="${missing} ${source}" ;;
+    esac
+  done
+
+  if [[ -n "$missing" ]]; then
+    echo "FAIL (header allows, page refuses:${missing})"
+    echo "      The browser enforces the intersection, so those sources are unreachable."
+    echo "      Re-run scripts/deploy-static.sh with BASILISK_SIGNALING_WSS_ORIGIN resolved."
+    FAIL=1
+  else
+    echo "OK"
+  fi
+}
+
 echo "Smoke testing $BASE_URL ..."
 echo ""
 
@@ -120,6 +187,11 @@ done
 
 # 5. Search API — confirms the API route is live (result set is not validated).
 check_status "/api/v1/search?q=test"           "$BASE_URL/api/v1/search?q=test%40example.com"
+
+# 6. The policy a browser computes. `/toolkit` because it is the page that opens
+#    the signalling socket, so it is the one where a header-only source costs a
+#    feature rather than nothing.
+check_csp_meta_allows_header "/toolkit (meta allows header CSP)" "$BASE_URL/toolkit?${SMOKE_QS}"
 
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then

@@ -78,6 +78,19 @@ output "front_door_endpoint_name" {
   value       = azurerm_cdn_frontdoor_endpoint.basilisk.name
 }
 
+output "signaling_wss_origin" {
+  description = <<-EOT
+    The signalling socket's `connect-src` source, for `scripts/deploy-static.sh`.
+
+    The same value Front Door puts in the CSP response header. The portal HTML
+    is served from blob storage, not by Flask, so the packaging step has to
+    merge this origin into each page's `<meta>` policy before upload — the
+    browser enforces the intersection of the two, and a header-only source is a
+    source that does not exist.
+  EOT
+  value       = local.signaling_wss_origin
+}
+
 output "static_website_host" {
   value = azurerm_storage_account.basilisk.primary_web_host
 }

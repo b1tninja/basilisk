@@ -16,6 +16,8 @@
  *     phase or not at all. `window.onerror` never sees it.
  *  2. **CSP blocks are not errors.** A refused subresource or inline style
  *     fires `securitypolicyviolation`, which nothing listens to by default.
+ *     A refused *connection* fires the same event and is a different kind of
+ *     accident — see `isConnection`, which is why the two are counted apart.
  *  3. **Dynamic `import()` failures are rejections**, not error events — this
  *     app code-splits openpgp and the WebRTC ops, so a bad chunk shows up as
  *     an unhandled promise rejection far from the import.
@@ -28,12 +30,67 @@
 
 /**
  * @typedef {object} BootFailure
- * @property {"resource"|"csp"|"import"} kind
+ * @property {"resource"|"csp"|"connection"|"import"} kind
  * @property {string} url        the thing that failed, as best we can name it
  * @property {string} detail     one line a human can act on
  * @property {number} at         ms since page start
  * @property {boolean} [predicted]  report-only CSP: fine now, breaks when built
  */
+
+/**
+ * A refused *connection* is not a subresource that failed to load.
+ *
+ * `connect-src` governs fetch, XHR and WebSockets — things the page reaches out
+ * to, not things it is assembled from. Counting one as a failed subresource
+ * produced the report this split exists for: a blocked signalling socket was
+ * announced as "1 subresource failed to load — this page is running
+ * incomplete", above a line naming `/assets/session-*.js`. Both halves were
+ * wrong. Nothing failed to load, and the chunk named was the *caller* — the
+ * origin it could not reach was never mentioned, so the one fact needed to
+ * diagnose it was the one fact absent.
+ *
+ * @param {string} directive
+ */
+export function isConnection(directive) {
+  return String(directive || "").startsWith("connect-src");
+}
+
+/**
+ * Which origin a violation was about, preferring the blocked one.
+ *
+ * For a subresource the source file locates the problem. For a refused
+ * connection the *destination* is the problem, and the source file is merely
+ * whoever called. `blockedURI` carries the destination; it is only useless for
+ * inline script/style, which is never a connection.
+ *
+ * @param {SecurityPolicyViolationEvent} e
+ */
+export function violationTarget(e) {
+  const blocked = String(e.blockedURI || "");
+  if (isConnection(e.effectiveDirective || e.violatedDirective) && blocked && blocked !== "inline") {
+    return blocked;
+  }
+  return e.sourceFile ? `${e.sourceFile}:${e.lineNumber || 0}` : blocked || "unknown";
+}
+
+/**
+ * What a refused connection costs, in the reader's terms.
+ *
+ * The only WebSocket this app opens is the signalling relay, so a blocked
+ * `ws:`/`wss:` origin has exactly one consequence and it is worth saying rather
+ * than leaving to be inferred from a hostname. The deployment that prompted
+ * this had a correct Front Door header and a stale `<meta>` policy in the
+ * uploaded pages; the browser enforces the intersection, so the socket was
+ * refused and every shared session failed with nothing on screen that named
+ * signalling.
+ *
+ * @param {string} origin
+ */
+export function connectionConsequence(origin) {
+  return /^wss?:/i.test(origin)
+    ? "this page cannot reach it, so shared sessions are unavailable on this deployment"
+    : "this page cannot reach it";
+}
 
 /** @type {BootFailure[]} */
 const failures = [];
@@ -102,12 +159,23 @@ function render() {
   // A report-only CSP hit is a *prediction* — nothing is broken here, it will
   // be once built. Announcing "running incomplete" for one would be the same
   // species of misleading message this whole module exists to eliminate.
-  const broken = failures.filter((f) => !f.predicted).length;
-  const predicted = failures.length - broken;
+  const live = failures.filter((f) => !f.predicted);
+  const predicted = failures.length - live.length;
+  // Two different accidents, counted apart. A missing chunk leaves the page
+  // assembled wrong; a refused connection leaves it whole and unable to reach
+  // something. Saying "subresource failed to load" for the second was wrong
+  // twice over and sent the reader looking at the chunk that was named.
+  const refused = live.filter((f) => f.kind === "connection").length;
+  const broken = live.length - refused;
   const parts = [];
   if (broken) {
     parts.push(
       `${broken} subresource${broken === 1 ? "" : "s"} failed to load — this page is running incomplete.`
+    );
+  }
+  if (refused) {
+    parts.push(
+      `${refused} connection${refused === 1 ? "" : "s"} refused by this page's security policy.`
     );
   }
   if (predicted) {
@@ -176,22 +244,32 @@ export function installBootDiagnostics(opts = {}) {
     const src = String(e.sourceFile || "");
     if (/\/@vite\/|\/@react-refresh|\/node_modules\/\.vite\//.test(src)) return;
 
-    // `blockedURI` is "inline" for inline script/style; the source file and
-    // line are what actually locate it.
-    const where = e.sourceFile
-      ? `${e.sourceFile}:${e.lineNumber || 0}`
-      : e.blockedURI || "unknown";
+    const directive = e.effectiveDirective || e.violatedDirective;
+    // For a connection the destination is the subject; for anything else the
+    // source file locates it. `blockedURI` is "inline" for inline script/style.
+    const where = violationTarget(e);
     // In dev the production policy rides along as report-only, so a violation
     // there is a *prediction* — this works now and breaks once built. Saying
     // "blocked" would be false, and the difference is the whole reason the
     // report-only copy exists.
     const predicted = e.disposition === "report";
+    if (isConnection(directive) && where !== "unknown" && e.blockedURI !== "inline") {
+      emit(
+        "connection",
+        where,
+        predicted
+          ? `would be refused in production by ${directive} — ${connectionConsequence(where)} once built`
+          : `refused by ${directive} — ${connectionConsequence(where)}`,
+        predicted
+      );
+      return;
+    }
     emit(
       "csp",
       where,
-      `${predicted ? "would be blocked in production by" : "blocked by"} ${
-        e.effectiveDirective || e.violatedDirective
-      }${e.blockedURI === "inline" ? " (inline)" : ""}`,
+      `${predicted ? "would be blocked in production by" : "blocked by"} ${directive}${
+        e.blockedURI === "inline" ? " (inline)" : ""
+      }`,
       predicted
     );
   });
