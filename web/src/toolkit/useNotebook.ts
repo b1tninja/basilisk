@@ -57,6 +57,7 @@ import type {
   PgpMode,
   RecipeChain,
   RecipeStep,
+  RecipeParams,
   ResolvedRecipient,
   SlotMeta,
   VaultKeyRow,
@@ -822,7 +823,7 @@ export function useNotebook() {
   );
 
   const makeStep = useCallback(
-    (opName: string, opts?: { decode?: boolean; params?: Record<string, unknown> }) => {
+    (opName: string, opts?: { decode?: boolean; params?: RecipeParams }) => {
       const spec = getStep(opName);
       if (!spec) return null;
       const step: RecipeStep = { name: opName, params: { ...(opts?.params || {}) } };
@@ -841,7 +842,7 @@ export function useNotebook() {
     (
       cell: number,
       opName: string,
-      opts?: { decode?: boolean; params?: Record<string, unknown> }
+      opts?: { decode?: boolean; params?: RecipeParams }
     ) => {
       const step = makeStep(opName, opts);
       if (!step) return;
@@ -855,7 +856,7 @@ export function useNotebook() {
       cell: number,
       index: number,
       opName: string,
-      opts?: { decode?: boolean; params?: Record<string, unknown> }
+      opts?: { decode?: boolean; params?: RecipeParams }
     ) => {
       const step = makeStep(opName, opts);
       if (!step) return;
@@ -874,7 +875,7 @@ export function useNotebook() {
       stem: number,
       branch: number | null,
       opName: string,
-      opts?: { decode?: boolean; params?: Record<string, unknown>; at?: number }
+      opts?: { decode?: boolean; params?: RecipeParams; at?: number }
     ) => {
       // Nested tee/foreach is rejected by the parser (RECIPE.md, v1). The
       // shelf already hides them for nested carets; this catches drag-drops.
@@ -929,7 +930,7 @@ export function useNotebook() {
       stem: number,
       selector: string,
       opName: string,
-      opts?: { decode?: boolean; params?: Record<string, unknown> }
+      opts?: { decode?: boolean; params?: RecipeParams }
     ) => {
       const step = makeStep(opName, opts);
       if (!step) return;
@@ -1256,11 +1257,11 @@ export function useNotebook() {
         const next = [...prev];
         const chain = next[cellIndex];
         if (!chain) return prev;
-        const { peer: _p, publish: _pub, ...rest } = chain as Record<string, unknown>;
+        const { peer: _p, publish: _pub, ...rest } = chain;
         next[cellIndex] = peer
           ? { ...rest, peer, ...(publish ? { publish: true } : {}) }
-          : { ...rest };
-        return next as typeof prev;
+          : rest;
+        return next;
       });
     },
     []

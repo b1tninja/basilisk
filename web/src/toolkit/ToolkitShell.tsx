@@ -106,8 +106,9 @@ import {
 } from "../lib/toolkit/workspace-store.js";
 import type { ToolkitWorkspace } from "../lib/toolkit/workspace-store.js";
 import { exposureTrace } from "../lib/toolkit/slot-graph.js";
+import { copyText } from "../lib/utils.js";
 import type { ArmedBranch, ChipPath, ChipStemView } from "./widgets/RecipeChipFlow";
-import type { RecipeChain, RecipeStep } from "./notebook-types";
+import type { CellStatus, RecipeChain, RecipeStep } from "./notebook-types";
 
 type CellView = "pipeline" | "source";
 
@@ -2225,8 +2226,7 @@ export function ToolkitShell() {
                                 // verdict, claims, and a live expiry clock.
                                 jose: a.jose,
                                 onConfigureTurn: openRtcIceTurnParam,
-                                onCopy: () =>
-                                  void navigator.clipboard.writeText(a.content),
+                                onCopy: () => void copyText(a.content),
                                 publishedAs: a.publishedAs,
                                 directoryUrl: a.directoryUrl,
                                 // Whether this artifact *may* be published is
@@ -2794,7 +2794,7 @@ export function ToolkitShell() {
                               netKind: a.netKind,
                               netData: a.netData,
                               preview: a.sensitive ? undefined : oneLinePreview(a.content),
-                              onCopy: () => copyText(a.content),
+                              onCopy: () => void copyText(a.content),
                               // §33a/§38b: the same tile, so the same actions.
                               // Publish is declared by the kind, which means
                               // this pane offers it too — and had to be given

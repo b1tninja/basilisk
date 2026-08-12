@@ -105,7 +105,11 @@ export function normalizeLinkId(raw, op = "peer") {
 /** Subscribe to inventory changes. Returns an unsubscribe. */
 export function watchLinks(fn) {
   watchers.add(fn);
-  return () => watchers.delete(fn);
+  // Returns nothing, for the reason in activity-log.js: an unsubscriber's
+  // value is not meaningful, and Set.delete's boolean would leak out as one.
+  return () => {
+    watchers.delete(fn);
+  };
 }
 
 /** Announce a change to watchers and to the page. */

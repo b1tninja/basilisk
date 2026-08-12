@@ -1,11 +1,18 @@
-export type RecipeStep = {
-  name: string;
-  params?: Record<string, unknown>;
-  body?: RecipeStep[];
-  branches?: { selector?: string; member?: string; body?: RecipeStep[] }[];
-};
-
-export type RecipeChain = { steps: RecipeStep[] };
+/**
+ * The recipe shapes, taken from the parser that produces them.
+ *
+ * These were declared here by hand and drifted from `recipe.js`, which is the
+ * only thing that makes a chain: this copy had `params` optional and no
+ * `start`/`end`, and — the expensive one — no `peer` or `publish`. A chain
+ * carrying a `@peer` header was therefore *invalid* under the type the hook
+ * uses, so the assignment that silently dropped the header typechecked, and
+ * the one that restored it did not.
+ *
+ * Re-exported rather than redeclared, for the same reason `CellAssign` writes
+ * the same two fields the source view writes: one representation, two
+ * surfaces onto it, so they cannot disagree about what a chain is.
+ */
+export type { RecipeStep, RecipeChain, RecipeParams } from "../lib/toolkit/recipe.js";
 
 export type CellStatus = "idle" | "ok" | "error" | "stale" | "running";
 

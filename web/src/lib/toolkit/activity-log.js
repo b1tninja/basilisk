@@ -61,7 +61,12 @@ function notify() {
 /** Subscribe to changes; returns an unsubscribe. */
 export function onActivityChange(fn) {
   listeners.add(fn);
-  return () => listeners.delete(fn);
+  // Braces on purpose: an unsubscriber returns nothing. Set.delete's boolean
+  // would otherwise leak out as the value, and React's cleanup slot is typed
+  // void — which is how this surfaced.
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 /** Newest first — the order a reader wants when something just happened. */

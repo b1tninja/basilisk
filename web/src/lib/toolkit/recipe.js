@@ -397,11 +397,25 @@ function validateStepSlotParams(
  */
 
 /**
+ * A param value is a scalar and nothing else. The recipe text has no syntax
+ * for anything richer, and a step's output type is meant to be knowable before
+ * it runs, so a param that could hold an object would put that out of reach.
+ *
+ * @typedef {Record<string, string|number|boolean>} RecipeParams
+ */
+
+/**
+ * `start` and `end` are optional because not every step comes from text. A step
+ * built by clicking an op in the toolkit has no span in a source that does not
+ * exist yet, and this file already reads them that way — `stepSourceHasWhich`
+ * guards on `== null` and `pushExportWhichPolicy` falls back to `?? 0`. The
+ * typedef required them anyway, which described neither producer honestly.
+ *
  * @typedef {object} RecipeStep
  * @property {string} name  canonical name
- * @property {Record<string, string|number|boolean>} params
- * @property {number} start  char offset in source
- * @property {number} end
+ * @property {RecipeParams} params
+ * @property {number} [start]  char offset in source, when there is a source
+ * @property {number} [end]
  * @property {RecipeStep[]} [body]  nested `-` list body for tee / foreach
  * @property {TeeBranch[]} [branches]  tee selector branches
  * @property {string} [foreachSelector]  e.g. ":items"

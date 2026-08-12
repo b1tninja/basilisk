@@ -14,6 +14,7 @@ import {
 } from "../../lib/toolkit/registry.js";
 import { CIPHER_DISPATCH_TARGETS } from "../../lib/toolkit/step-names.js";
 import { listTypes, type TypeMeta } from "../../lib/toolkit/type-registry.js";
+import type { RecipeParams } from "../../lib/toolkit/recipe.js";
 import { TypeCard } from "./TypeCard";
 import { cn } from "@/lib/cn";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -33,7 +34,8 @@ export type OpsShelfTip = {
 
 export type OpsAppendOpts = {
   decode?: boolean;
-  params?: Record<string, unknown>;
+  /** A step's params, as the parser defines them — scalars, not arbitrary values. */
+  params?: RecipeParams;
 };
 
 type Props = {
