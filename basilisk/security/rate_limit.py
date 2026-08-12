@@ -75,8 +75,17 @@ def client_ip(headers: dict[str, str], remote_addr: str | None = None) -> str:
     use the *last* hop — the one appended by the trusted reverse proxy — rather than
     the first (client-controlled) entry.
     """
-    # Azure App Service / Functions often set this to the true client when behind AFD.
-    for name in ("X-Azure-ClientIP", "X-Client-IP", "x-azure-clientip", "x-client-ip"):
+    # `X-Azure-ClientIP` only: Azure sets it at the edge, so a client cannot
+    # forge one past Front Door. `X-Client-IP` used to be in this tuple and is
+    # not an Azure header at all — nothing in terraform/, infra/ or .github/
+    # sets or strips it, and Front Door has no request-header rules, so it
+    # forwarded whatever the caller sent. Being checked *before* the hardened
+    # branch below, it let any caller pick their own bucket and made every
+    # per-IP limiter — lookup, upload, sendtoken, negotiate, TURN — a header
+    # away from unlimited. Measured at 100/100 uploads through a 3600 s gap
+    # from one client. `require_front_door` does not help: a request *through*
+    # Front Door still carries whatever the client set.
+    for name in ("X-Azure-ClientIP", "x-azure-clientip"):
         val = headers.get(name)
         if val:
             return val.split(",")[0].strip()

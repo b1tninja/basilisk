@@ -82,6 +82,33 @@ def test_client_ip_uses_last_xff_hop():
 
 
 @pytest.mark.unit
+def test_a_client_cannot_choose_its_own_rate_limit_bucket():
+    """The hardened last-hop rule above is only hardening if nothing outranks it.
+
+    `X-Client-IP` used to be checked first. It is not an Azure header — nothing
+    in terraform/, infra/ or .github/ sets or strips it, and Front Door has no
+    request-header rules — so it arrived from the caller, took precedence over
+    the trusted hop, and let anyone pick their own bucket for every per-IP
+    limiter there is. `require_front_door` does not help, because a request
+    *through* Front Door still carries whatever the client set.
+    """
+    trusted = {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}
+    assert client_ip(trusted, None) == "5.6.7.8"
+
+    # The same request, with the caller naming itself. The trusted hop wins.
+    for forged in ("X-Client-IP", "x-client-ip"):
+        assert client_ip({**trusted, forged: "9.9.9.9"}, None) == "5.6.7.8", forged
+
+    # A caller cannot mint fresh buckets by varying it, either.
+    seen = {client_ip({**trusted, "X-Client-IP": f"10.0.0.{n}"}, None) for n in range(20)}
+    assert seen == {"5.6.7.8"}
+
+    # What Azure itself sets is still believed — that is set at the edge, past
+    # the caller's reach, and is the reason the platform branch exists at all.
+    assert client_ip({**trusted, "X-Azure-ClientIP": "203.0.113.9"}, None) == "203.0.113.9"
+
+
+@pytest.mark.unit
 def test_pending_lookup_strips_uids(sample_armored, sample_fingerprint):
     store = get_store()
     ingest_keytext(store, get_blob_store(), sample_armored)
