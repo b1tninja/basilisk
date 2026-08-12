@@ -67,7 +67,16 @@ import {
  * (wrongly) implied a literal.
  * @typedef {"enum"|"int"|"string"|"bytes"|"bool"|"flag"} ParamType
  */
-/** @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"|"agent"|"hkp"|"webrtc"|"jose"} Toolbox */
+/**
+ * Every toolbox a step in this file declares.
+ *
+ * Checked against the file rather than remembered: `age`, `otp`, `quorum` and
+ * `ssh` were missing, which is 24 steps whose toolbox was outside the type
+ * meant to name them. `quorum` in particular has been its own category since
+ * the mesh ops were split out.
+ *
+ * @typedef {"webcrypto"|"openpgp"|"sss"|"webauthn"|"encoding"|"flow"|"io"|"agent"|"hkp"|"webrtc"|"jose"|"age"|"otp"|"quorum"|"ssh"} Toolbox
+ */
 /** @typedef {string} Shelf */
 /** @typedef {import("./types.js").StepOverload} StepOverload */
 /** @typedef {import("./types.js").RefinedType} RefinedType */

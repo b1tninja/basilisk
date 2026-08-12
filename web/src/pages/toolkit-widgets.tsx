@@ -46,7 +46,8 @@ import { qrSvg } from "../lib/qr.js";
 import { encodeShareSet } from "../lib/slip39/blip39.js";
 import type { DeploymentVerdict } from "../lib/toolkit/deployment-check.js";
 import type { DkgParticipant } from "../lib/quorum/dkg-session.js";
-import { getTypeMeta } from "../lib/toolkit/type-registry.js";
+import { getTypeMeta, type TypeMeta } from "../lib/toolkit/type-registry.js";
+import { PROFILE_MODERN } from "../lib/pgp/encrypt.js";
 import { artifactMetaFromType } from "../lib/toolkit/types.js";
 import { protectionDowngradeMessage } from "../lib/vault.js";
 import type { CeremonyStageId } from "../lib/toolkit/ceremony.js";
@@ -54,6 +55,21 @@ import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "../css/toolkit.css";
 import "../css/site.css";
+
+
+/**
+ * `getTypeMeta` for a type this page names on purpose.
+ *
+ * It returns null for a base it does not know, and `TypeCard` requires a meta.
+ * A catalog naming a type the registry does not have is a broken catalog, not
+ * a state worth rendering — so this fails loudly rather than handing null to a
+ * card or asserting the null away.
+ */
+function namedType(base: string): TypeMeta {
+  const meta = getTypeMeta(base);
+  if (!meta) throw new Error(`toolkit-widgets names a type the registry does not have: ${base}`);
+  return meta;
+}
 
 function Section({
   id,
@@ -452,12 +468,18 @@ function CatalogApp() {
                 four, which drew the mesh op in the wrong identity colour the
                 moment quorum became its own category — and `rtc.open` had not
                 existed for several turns. */}
-            {[
-              { name: "rtc.gather", output: "candidate", toolbox: "webrtc" },
-              { name: "quorum.offer", output: "session", toolbox: "quorum" },
-              { name: "peer.wait", output: "channel", toolbox: "webrtc" },
-              { name: "rtc.state", output: "connstate", toolbox: "webrtc" },
-            ].map((o) => (
+            {/* `as const`, so `toolbox` and `output` stay the literals they are
+                written as. Widened to `string` they matched neither Toolbox nor
+                IoType, which is how a chip could name a toolbox that does not
+                exist and still compile. */}
+            {(
+              [
+                { name: "rtc.gather", output: "candidate", toolbox: "webrtc" },
+                { name: "quorum.offer", output: "session", toolbox: "quorum" },
+                { name: "peer.wait", output: "channel", toolbox: "webrtc" },
+                { name: "rtc.state", output: "connstate", toolbox: "webrtc" },
+              ] as const
+            ).map((o) => (
               <SuggestChip
                 key={o.name}
                 label={o.name}
@@ -1741,7 +1763,7 @@ function CatalogApp() {
                 compression: "off",
               }}
               onChange={() => {}}
-              sessionProfile="modern"
+              sessionProfile={PROFILE_MODERN}
             />
           </div>
           <div className="max-w-md">
@@ -1757,7 +1779,7 @@ function CatalogApp() {
                 compression: "off",
               }}
               onChange={() => {}}
-              sessionProfile="modern"
+              sessionProfile={PROFILE_MODERN}
             />
           </div>
         </Section>
@@ -1844,32 +1866,32 @@ function CatalogApp() {
               <StateLabel>
                 int — constructible; the constructor accepts 0x / 0b / 0o and shows the value
               </StateLabel>
-              <TypeCard meta={getTypeMeta("int")} onInsertLiteral={() => {}} />
+              <TypeCard meta={namedType("int")} onInsertLiteral={() => {}} />
             </div>
             <div>
               <StateLabel>bytes — the most consumed type (26 ops), literal + reference</StateLabel>
-              <TypeCard meta={getTypeMeta("bytes")} onInsertLiteral={() => {}} />
+              <TypeCard meta={namedType("bytes")} onInsertLiteral={() => {}} />
             </div>
             <div>
               <StateLabel>
                 keypair — two origins (§31c): Generate inserts genkey itself, Import
                 inserts the run-time paste step
               </StateLabel>
-              <TypeCard meta={getTypeMeta("keypair")} onPickOp={() => {}} />
+              <TypeCard meta={namedType("keypair")} onPickOp={() => {}} />
             </div>
             <div>
               <StateLabel>
                 stats — observe-only; nothing consumes it, and the card says so
               </StateLabel>
-              <TypeCard meta={getTypeMeta("stats")} />
+              <TypeCard meta={namedType("stats")} />
             </div>
             <div>
               <StateLabel>host — declared in the union but unused: “reserved”</StateLabel>
-              <TypeCard meta={getTypeMeta("host")} />
+              <TypeCard meta={namedType("host")} />
             </div>
             <div>
               <StateLabel>text — compact (summary only, no constructor)</StateLabel>
-              <TypeCard meta={getTypeMeta("text")} compact />
+              <TypeCard meta={namedType("text")} compact />
             </div>
           </div>
         </Section>
