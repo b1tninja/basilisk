@@ -10,13 +10,16 @@ import {
 } from "../../lib/pgp/encrypt-intent.js";
 import type { ResolvedRecipient, StepCryptoProfile } from "../notebook-types";
 
-/** @typedef {import("../../lib/pgp/types.js").EncryptProfile} EncryptProfile */
-type EncryptProfile = {
-  cipher: string;
-  aead: string | null;
-  compression: string;
-  s2k: string;
-};
+/**
+ * The profile, from the module that defines it.
+ *
+ * A JSDoc `@typedef` import sat above a hand-written copy of the same name.
+ * The typedef does nothing in a .tsx, so the copy is what the file used — and
+ * it had every field as a bare `string` where the real one is a union of the
+ * ciphers, modes and compressions that actually exist. A control offering an
+ * impossible AEAD mode typechecked.
+ */
+import type { EncryptProfile } from "../../lib/pgp/types.js";
 
 export type CryptoProfileValue = {
   profile: StepCryptoProfile;

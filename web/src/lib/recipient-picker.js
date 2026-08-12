@@ -543,6 +543,14 @@ export function renderRecipientHits(hitsEl, results, warning, onPick, opts = {})
  * @param {object} opts
  * @param {number} opts.slots
  * @param {boolean} [opts.foreach]
+ * @param {({fingerprint: string, armoredKey: string, label?: string,
+ *   email?: string, modernCapable?: boolean}|null)[]} [opts.initial]
+ *   Prefilled slots. Undeclared until now, which made every caller that
+ *   seeds the binder an error against a contract this function does not
+ *   actually have — it reads `opts.initial` twice, just below.
+ *
+ *   The summary a caller holds, not a full `Recipient`: the toolkit passes
+ *   what it has after resolving a key, and the binder fills in the rest.
  * @param {(recipients: Recipient[]) => void} opts.onChange
  */
 export function mountRecipientBinder(host, opts) {
