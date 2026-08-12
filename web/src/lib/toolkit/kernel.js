@@ -119,14 +119,18 @@ export function cellRunErrorFrom(err) {
  * @property {ReturnType<typeof createSlotRegistry>} slots
  * @property {(i: number) => import("./engine.js").ToolkitArtifact[]} getCellOutputs
  * @property {(i: number) => CellStatus} getCellStatus
+ * @property {(i: number) => { ranAt: number, durationMs: number }|null} getCellTiming
  * @property {(i: number) => CellRunError|null} getCellRunError
  * @property {(i: number, status: CellStatus) => void} setCellStatus
  * @property {(i: number) => void} clearCellOutputs
  * @property {(fromIndex: number) => void} invalidateFrom
  * @property {() => number[]} staleCellIndices
- * @property {(cellIndex: number, chain: import("./recipe.js").RecipeChain|import("./recipe.js").RecipeStep[], bindings?: import("./engine.js").RuntimeBindings) => Promise<import("./engine.js").ToolkitArtifact[]>} runCell
+ * @property {(cellIndex: number, chain: import("./recipe.js").RecipeChain|import("./recipe.js").RecipeStep[], bindings?: import("./engine.js").RuntimeBindings, placement?: { plan: import("./plan.js").RunPlan, onSkip: (s: import("./placement.js").SkippedCell) => void }) => Promise<import("./engine.js").ToolkitArtifact[]>} runCell
  * @property {(chains: import("./recipe.js").RecipeChain[], bindings?: import("./engine.js").RuntimeBindings, opts?: { from?: number }) => Promise<import("./engine.js").ToolkitArtifact[][]>} runAll
  * @property {() => void} clearSensitive
+ * @property {() => void} lockSensitive
+ * @property {(mapFn: (oldIndex: number) => number|null) => void} remapCells
+ * @property {() => void} markAllWithOutputsStale
  * @property {() => void} destroy
  * @property {() => import("./slot-registry.js").SlotMeta[]} listSlots
  * @property {() => number} slotCount
