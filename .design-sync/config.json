@@ -37,6 +37,11 @@
     "CellAssign": "src/toolkit/widgets/CellAssign.tsx",
     "PlanPanel": "src/toolkit/widgets/PlanPanel.tsx",
     "ShareSheet": "src/toolkit/widgets/ShareSheet.tsx",
+    "InviteCard": "src/toolkit/widgets/InviteCard.tsx",
+    "SessionStart": "src/toolkit/widgets/SessionStart.tsx",
+    "SessionLive": "src/toolkit/widgets/SessionLive.tsx",
+    "SessionSheet": "src/toolkit/widgets/SessionSheet.tsx",
+    "HandoffQueue": "src/toolkit/widgets/HandoffQueue.tsx",
     "SessionStrip": "src/toolkit/widgets/SessionStrip.tsx",
     "ConnectionsPanel": "src/toolkit/widgets/ConnectionsPanel.tsx",
     "ApprovalBanner": "src/toolkit/widgets/ApprovalBanner.tsx",
@@ -73,6 +78,22 @@
     "ShareSheet": {
       "cardMode": "single",
       "primaryStory": "SessionJoinedNotVerified"
+    },
+    "SessionSheet": {
+      "cardMode": "single",
+      "primaryStory": "Naming"
+    },
+    "SessionLive": {
+      "cardMode": "single",
+      "primaryStory": "HalfConfirmed"
+    },
+    "SessionStart": {
+      "cardMode": "single",
+      "primaryStory": "ReadyToStart"
+    },
+    "HandoffQueue": {
+      "cardMode": "single",
+      "primaryStory": "AllThreeWaits"
     },
     "CellAssign": {
       "cardMode": "single",

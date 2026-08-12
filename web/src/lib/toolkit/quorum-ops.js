@@ -29,6 +29,11 @@ import { idFromFingerprint, scalarToHex } from "../quorum/vss.js";
  * @property {string} room
  * @property {"creator"|"joiner"|""} role
  * @property {string} invite   short shareable line (room + audience count)
+ * @property {string[]} audience
+ *   The fingerprints this room was derived from. Carried because the room id is
+ *   a one-way digest of them: a shell holding only the id can say *which* room
+ *   is open and cannot build an invite to it, and re-deriving the audience from
+ *   the roster would miss everyone who has not arrived yet.
  * @property {number} connected
  * @property {number} expected
  * @property {string} status   last human-readable session status line
@@ -42,6 +47,7 @@ const IDLE_STATE = Object.freeze({
   room: "",
   role: "",
   invite: "",
+  audience: Object.freeze([]),
   connected: 0,
   expected: 0,
   status: "",
@@ -105,6 +111,30 @@ function emitState() {
   window.dispatchEvent(new CustomEvent("basilisk:quorum-state", { detail }));
 }
 
+/**
+ * Say that the pending list changed.
+ *
+ * A separate event from `basilisk:quorum-state` because it is a different fact
+ * on a different clock: a roster change is the transport moving, and an offer
+ * landing is a document arriving with the transport perfectly still. Folding it
+ * into the state snapshot would mean either putting the documents themselves in
+ * an event that is broadcast on every ICE tick, or emitting a whole state for a
+ * list nothing in it describes.
+ *
+ * The event carries a count and not the queue. `getPendingHandoffs` is the only
+ * way to read one — it copies, and `takeHandoff` is the only way to remove one
+ * — so an event that shipped the documents would be a second source for a list
+ * whose whole point is that it can be taken exactly once.
+ */
+function emitHandoffs() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent("basilisk:quorum-handoffs", {
+      detail: { pending: current ? current.handoffs.length : 0 },
+    })
+  );
+}
+
 /** @param {Partial<QuorumExchangeState>} patch */
 function patchState(patch) {
   if (!current) return;
@@ -158,6 +188,39 @@ export function restartLiveIce() {
   return n;
 }
 
+/**
+ * Move the room, leaving somebody behind (`NotebookSession.rotateRoom`).
+ *
+ * This is what "remove from the room" *is* here, and the distinction matters
+ * enough to keep at this layer too: nothing is evicted, because the signalling
+ * service has no API to evict with — no membership to enumerate and no way to
+ * close a connection this application did not make. The room moves to a name
+ * derived from a new epoch, the remaining audience and a secret minted now and
+ * delivered sealed to the people who stay, so the name it moves to is not a
+ * function of anything the removed party holds.
+ *
+ * The state is patched afterwards rather than waited for on the roster: `room`,
+ * `audience` and `expected` all change together at the rotation, and a panel
+ * showing the new roster beside the old room code would be describing two
+ * different rooms.
+ *
+ * @param {string[]} remove  fingerprints to leave behind
+ * @returns {Promise<{ epoch: number, roomId: string, audience: string[] }>}
+ */
+export async function rotateQuorumRoom(remove) {
+  const ex = requireExchange("quorum.rotate");
+  const out = await ex.session.rotateRoom({ remove: remove || [] });
+  if (current !== ex || ex.cancelled) return out;
+  patchState({
+    room: out.roomId,
+    audience: [...out.audience],
+    expected: Math.max(0, out.audience.length - 1),
+    invite: `quorum ${out.roomId} · ${out.audience.length} keys · ${quorumHost()}`,
+    peers: projectPeers(ex.session.peers),
+  });
+  return out;
+}
+
 /** Current exchange snapshot (UI polls this on mount, then follows events). */
 export function getQuorumState() {
   return current ? { ...current.state } : { ...IDLE_STATE };
@@ -206,7 +269,9 @@ export function takeHandoff(id) {
   if (!ex) return null;
   const at = ex.handoffs.findIndex((h) => h.id === id);
   if (at < 0) return null;
-  return ex.handoffs.splice(at, 1)[0];
+  const taken = ex.handoffs.splice(at, 1)[0];
+  emitHandoffs();
+  return taken;
 }
 
 /** Close the live exchange (Clear session, quorum.close, Cancel). */
@@ -231,6 +296,9 @@ export function closeQuorumExchange(reason = "closed") {
   };
   emitState();
   current = null;
+  // After `current` is cleared, so the count it reports is the one a reader can
+  // now observe: nothing pending, because there is nothing to be pending in.
+  emitHandoffs();
 }
 
 if (typeof window !== "undefined") {
@@ -490,6 +558,7 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
         ts: doc.ts,
         offer: doc.offer,
       });
+      emitHandoffs();
     },
     /**
      * A result a peer computed for a cell. Pending for the same reason, and
@@ -509,6 +578,7 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
         signed: doc.signed,
         result: doc.result,
       });
+      emitHandoffs();
     },
     onChat: (msg) => {
       const ex = current;
@@ -559,6 +629,7 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       room,
       role,
       invite: `quorum ${room} · ${audience.length} keys · ${quorumHost()}`,
+      audience: [...audience],
       connected: 0,
       expected: audience.length - 1,
       status: "starting…",

@@ -131,6 +131,40 @@ export { GateBanner, GateFact } from "./toolkit/widgets/GateBanner";
 export { CellAssign } from "./toolkit/widgets/CellAssign";
 export { PlanPanel } from "./toolkit/widgets/PlanPanel";
 export { ShareSheet } from "./toolkit/widgets/ShareSheet";
+/**
+ * The session's own surfaces — naming a room, watching one, and the cells that
+ * cross between machines.
+ *
+ * `ShareSheet` could always *say* a live session existed and had no way to open
+ * one; these are the flow itself. They meet the rule at the top of this file for
+ * the same reason the twelve above do — each takes plain props and reads no
+ * context — and `SessionSheet` is the only one that is a portal, which is why it
+ * carries a `primaryStory` in `.design-sync/config.json`.
+ */
+export { InviteCard } from "./toolkit/widgets/InviteCard";
+export { SessionStart } from "./toolkit/widgets/SessionStart";
+export { SessionLive } from "./toolkit/widgets/SessionLive";
+export { SessionSheet } from "./toolkit/widgets/SessionSheet";
+export { HandoffQueue } from "./toolkit/widgets/HandoffQueue";
+/**
+ * The derivations those five render, exported for the same reason `qrSvg` is:
+ * the components draw sentences they do not write, so a catalog with no access
+ * to the functions can only paste prose that will drift from the product's.
+ * `startIssues` in particular is what decides whether Start is available, so a
+ * design showing a refusal has to be able to produce the real one.
+ *
+ * Not in `componentSrcMap` — they render nothing on their own.
+ */
+export {
+  confirmationReadout,
+  rosterCounts,
+  sessionReadout,
+  sessionRecipe,
+  sessionStage,
+  startIssues,
+  INVITE_CARRIES,
+  INVITE_OMITS,
+} from "./lib/toolkit/session-flow.js";
 export { SessionStrip } from "./toolkit/widgets/SessionStrip";
 export { ConnectionsPanel } from "./toolkit/widgets/ConnectionsPanel";
 export { ApprovalBanner } from "./toolkit/widgets/ApprovalBanner";

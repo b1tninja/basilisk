@@ -5,6 +5,9 @@
  *   #encrypt | #decrypt | #symencrypt  — named messaging starters
  *     (#symencrypt = mode=passphrase + generated $pw)
  *   #t=<presetId>                      — Templates preset
+ *   #j=<fpr,fpr,…>                     — a shared-session invite: the audience,
+ *                                        which is the only thing both ends need
+ *                                        to derive the same room
  *   #r=<compact-recipe>                — URL-friendly compact recipe
  *                                        (beautified via canonicalize on load)
  *   …&ct=<base64url>                   — optional ciphertext Inputs seed
@@ -22,6 +25,11 @@
 
 import { armor, enums } from "openpgp";
 import { dearmorToBytes } from "../packet-map.js";
+// The room's own canonicalisation, not a second copy of it. Sorting and
+// de-duping an audience is what *decides which room* a link means, so a link
+// that ordered its fingerprints differently from `deriveRoomMaterial` would
+// name a different room while looking identical.
+import { canonicalAudience } from "../notebook/room.js";
 import { base64ToBytes, bytesToBase64Url } from "./encode.js";
 import {
   canonicalizeRecipe,
@@ -73,6 +81,7 @@ input | gpg.symencrypt mode=passphrase passphrase=$pw | out $msg`,
  * @typedef {{ kind: "starter", starter: MessagingStarter, inputs?: ToolkitInputSeeds }
  *   | { kind: "preset", id: string, inputs?: ToolkitInputSeeds }
  *   | { kind: "recipe", recipe: string, inputs?: ToolkitInputSeeds }
+ *   | { kind: "join", audience: string[] }
  *   | { kind: "empty" }
  *   | { kind: "unknown", raw: string }} ToolkitHashAction
  */
@@ -309,6 +318,17 @@ export function parseToolkitHash(hash) {
       const params = new URLSearchParams(head);
       const t = params.get("t");
       if (t) return withCtSeed({ kind: "preset", id: t }, ct);
+      // Before `r=`, because an invite carries no recipe and never should: the
+      // notebook travels by `#r=` and the session does not carry it. Two people
+      // arriving at the same text independently is what makes a shared run a
+      // reproducible build rather than a screen share.
+      const j = params.get("j");
+      if (j) {
+        const audience = joinAudienceFromParam(j);
+        // A `j=` that names fewer than two keys derives no room, so it is not an
+        // invite — reported as unknown rather than opening an empty one.
+        if (audience.length >= 2) return { kind: "join", audience };
+      }
       const r = params.get("r");
       if (r != null && r !== "") {
         return withCtSeed(
@@ -364,6 +384,45 @@ export function hashForDecryptLink(armored) {
     };
   }
   return { hash, ok: true };
+}
+
+/**
+ * @param {string} raw  the `j=` value, already URL-decoded by URLSearchParams
+ * @returns {string[]}
+ */
+function joinAudienceFromParam(raw) {
+  return canonicalAudience(String(raw || "").split(/[\s,]+/));
+}
+
+/**
+ * Build a shared-session invite: `#j=<fpr>,<fpr>…`.
+ *
+ * **The audience is the whole invite.** The room id is
+ * `SHA-256(hostname | sorted fingerprints)` truncated, so both ends compute it
+ * from this list and it never travels; there is nothing here that admits
+ * anybody, because admission is *being in the list* and holding the key it
+ * names. That is why this can be pasted into a chat window in a way a room code
+ * plus a token could not be.
+ *
+ * Nothing is refused as secret here, and that is deliberate rather than an
+ * omission: a fingerprint is what a keyserver hands out to strangers, and
+ * `recipeLooksSecret` refuses one only where a *recipe* writes it as a peer
+ * label — a different rule about a different document.
+ *
+ * @param {string[]} audience
+ * @returns {{ hash: string, ok: true } | { hash: "#", ok: false, reason: string }}
+ */
+export function hashForJoin(audience) {
+  const list = canonicalAudience(audience || []);
+  if (list.length < 2) {
+    return {
+      hash: "#",
+      ok: false,
+      reason:
+        "An invite needs at least two fingerprints, including yours — a room is derived from the whole audience.",
+    };
+  }
+  return { hash: `#j=${list.join(",")}`, ok: true };
 }
 
 /**

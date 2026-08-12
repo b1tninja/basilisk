@@ -9,8 +9,10 @@ import {
   getPendingHandoffs,
   takeHandoff,
   getLiveSession,
+  rotateQuorumRoom,
   signSessionDocument,
 } from "../lib/toolkit/quorum-ops.js";
+import { sessionRecipe } from "../lib/toolkit/session-flow.js";
 import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
 import { planRun } from "../lib/toolkit/plan.js";
 import { offerForSkipped, resultForCell } from "../lib/toolkit/handoff-shell.js";
@@ -109,10 +111,19 @@ export type QuorumUiState = {
   room: string;
   role: "creator" | "joiner" | "";
   invite: string;
+  /**
+   * The fingerprints the room was derived from — every member, present or not.
+   * The room id is a one-way digest of these, so this is the only end of the
+   * pair a shell can build an invite from, and the roster cannot substitute:
+   * it holds who arrived, not who was asked.
+   */
+  audience: string[];
   connected: number;
   expected: number;
   status: string;
   peers: QuorumPeerRow[];
+  /** Which fingerprint this browser is, so a label can be matched to "me". */
+  self?: string;
 };
 
 function emptyChains(): RecipeChain[] {
@@ -483,11 +494,27 @@ export function useNotebook() {
     room: "",
     role: "",
     invite: "",
+    audience: [],
     connected: 0,
     expected: 0,
     status: "",
     peers: [],
   });
+  /**
+   * Bumped whenever the pending-handoff list changes.
+   *
+   * A counter rather than a mirror of the list: `getPendingHandoffs` copies and
+   * `takeHandoff` is the only way to remove one, so a second copy living in
+   * React state would be a second place for a queue whose whole point is that
+   * each document can be taken exactly once to be wrong. This says *look
+   * again*; the list itself is still read from the exchange.
+   */
+  const [handoffTick, setHandoffTick] = useState(0);
+  useEffect(() => {
+    const onHandoffs = () => setHandoffTick((n) => n + 1);
+    window.addEventListener("basilisk:quorum-handoffs", onHandoffs);
+    return () => window.removeEventListener("basilisk:quorum-handoffs", onHandoffs);
+  }, []);
   const [peerLinks, setPeerLinks] = useState<PeerLinkRow[]>([]);
   /** Cell index currently executing — lets the shell pin SessionStrip to it. */
   const [runningCell, setRunningCell] = useState<number | null>(null);
@@ -511,7 +538,7 @@ export function useNotebook() {
     window.dispatchEvent(new CustomEvent("basilisk:quorum-cancel"));
   }, []);
   const [sheet, setSheet] = useState<
-    "workspace" | "prefs" | "ceremony" | "sharecheck" | "integrity" | null
+    "workspace" | "prefs" | "ceremony" | "sharecheck" | "integrity" | "session" | null
   >(null);
   const [kernelEpoch, setKernelEpoch] = useState(0);
   const [toolkitPrefs, setToolkitPrefsState] = useState<ToolkitPrefs>(() => getToolkitPrefs());
@@ -573,7 +600,21 @@ export function useNotebook() {
     // `unknown` alongside `empty`: a hash this build does not recognise names
     // nothing to load, and neither carries a seed. Stated rather than left to
     // fall past the three branches, so the seed below can read `inputs` at all.
-    if (!action || action.kind === "empty" || action.kind === "unknown") return;
+    //
+    // `join` is here for a stronger reason than "carries no seed": an invite
+    // must never load a notebook. The session does not carry the recipe — both
+    // sides arrive at the same text independently, which is what makes a shared
+    // run a reproducible build — so a link that opened a session *and* replaced
+    // your notebook would be exactly the thing this design refuses. The shell
+    // reads `#j=` for itself and opens the session sheet; nothing here does.
+    if (
+      !action ||
+      action.kind === "empty" ||
+      action.kind === "unknown" ||
+      action.kind === "join"
+    ) {
+      return;
+    }
     /**
      * The `ct=` seed, applied whatever the link named.
      *
@@ -1701,6 +1742,90 @@ export function useNotebook() {
   }, [clearSensitive]);
 
   /**
+   * A run this hook asked for itself, once the state it depends on has landed.
+   *
+   * `runFrom` closes over `chains` and `compiled`, so calling it in the same
+   * handler that just called `setChains` would run the notebook as it was
+   * *before* the cells were added — which for `startSession` means running
+   * everything except the session it was pressed to open. The effect below
+   * fires after the re-render, when `runFrom` is the one built from the new
+   * chains.
+   */
+  const [autoRunFrom, setAutoRunFrom] = useState<number | null>(null);
+
+  /**
+   * Open a shared session by writing the cells that open one.
+   *
+   * Not a call into the transport. `sessionRecipe` returns the same two cells a
+   * person could have typed — `agent.unlock` into `$me`, then
+   * `quorum.offer`/`quorum.join` over the audience — and this appends and runs
+   * them, so the session is in Source view, in the saved notebook and in the
+   * receipt like every other step. A session started by a hidden code path
+   * would be the one thing in this app that happened without a recipe saying
+   * so.
+   *
+   * `agent.unlock` stays its own cell rather than being folded in. It is the
+   * step that exports a private key into the run and is marked as such
+   * throughout — `exposure: "exports-secret"`, the warn underline on the chip,
+   * the exposure trace across the whole notebook — and a session that hid it
+   * inside a `key=` parameter would erase that mark at exactly the moment it
+   * matters.
+   */
+  const startSession = useCallback(
+    (draft: { audience: string[]; keyFingerprint: string; role?: "offer" | "join" }) => {
+      const text = sessionRecipe(draft);
+      const { ast } = compileRecipe(text);
+      if (!ast) return false;
+      const added: RecipeChain[] = ast.chains?.length
+        ? ast.chains
+        : [{ steps: ast.steps || [] }];
+      setChains((prev) => {
+        // An untouched notebook is one empty cell, and appending after it would
+        // leave a blank cell above the session for the rest of the notebook's
+        // life. Every other loader in this hook treats that cell as a placeholder.
+        const base =
+          prev.length === 1 && !(prev[0].steps || []).length ? [] : prev;
+        const next = [...base, ...added];
+        setFocusedCell(next.length - 1);
+        setAutoRunFrom(next.length - added.length);
+        return next;
+      });
+      setSheet(null);
+      return true;
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (autoRunFrom == null) return;
+    const at = autoRunFrom;
+    setAutoRunFrom(null);
+    void runFrom(at);
+  }, [autoRunFrom, runFrom]);
+
+  /**
+   * Leave somebody behind by moving the room.
+   *
+   * The name says what happens rather than what was wanted: there is no
+   * eviction to be had. The signalling service has no membership this
+   * application can enumerate and no connection it can close, so the room moves
+   * to a name derived from a new epoch and a secret the remaining members are
+   * sent sealed, and the removed key is left holding a token for a group nobody
+   * is in.
+   */
+  const removeFromRoom = useCallback(async (fingerprint: string) => {
+    try {
+      const out = await rotateQuorumRoom([fingerprint]);
+      setRunStatus(`Room moved to epoch ${out.epoch} — ${out.audience.length} keys remain`);
+      return { ok: true as const };
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      setRunError(why);
+      return { ok: false as const, why };
+    }
+  }, []);
+
+  /**
    * Offers and results a peer has sent, still waiting on a person.
    *
    * Read straight from the exchange rather than mirrored into state: the list
@@ -2041,6 +2166,9 @@ export function useNotebook() {
     clearSensitive,
     resetNotebook,
     copyShareLink,
+    startSession,
+    removeFromRoom,
+    handoffTick,
     pendingHandoffs,
     skippedCells,
     offerCell,

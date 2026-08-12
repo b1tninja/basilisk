@@ -76,16 +76,30 @@ import {
   OutputList,
   CellAssign,
   ShareSheet,
+  SessionSheet,
+  HandoffQueue,
   PlanPanel,
   SessionStrip,
   TopBar,
+  type HandoffRow,
+  type OwedBack,
   type SuiteTone,
   type SuiteDetail,
 } from "./widgets/index";
 import { getStep } from "../lib/toolkit/registry.js";
 import { compileRecipe, projectTypeForMember } from "../lib/toolkit/recipe.js";
 import { planRun } from "../lib/toolkit/plan.js";
-import { hashForNotebook, toolkitShareUrl } from "../lib/toolkit/fragment.js";
+import {
+  hashForJoin,
+  hashForNotebook,
+  parseToolkitHash,
+  toolkitShareUrl,
+} from "../lib/toolkit/fragment.js";
+import {
+  parseInviteAudience,
+  sessionRecipe,
+  startIssues,
+} from "../lib/toolkit/session-flow.js";
 import { qrSvg } from "../lib/qr.js";
 import { stepOverridesProfile } from "../lib/pgp/profile-from-step.js";
 import {
@@ -391,6 +405,32 @@ export function ToolkitShell() {
   }, [focusParamHint]);
   /** Cell the live quorum exchange was opened in — SessionStrip pins there (§21a). */
   const [quorumCell, setQuorumCell] = useState<number | null>(null);
+  /**
+   * The room being named, before there is one.
+   *
+   * Shell state rather than the hook's, because until Start is pressed nothing
+   * of it exists anywhere else: a half-typed audience is not a session, and
+   * putting it in `useNotebook` would give the notebook a field describing a
+   * room that may never be opened. Once it *is* opened the live exchange owns
+   * every one of these facts and this stops being read.
+   */
+  const [sessionDraft, setSessionDraft] = useState<{
+    role: "offer" | "join";
+    keyFingerprint: string;
+    audience: string[];
+  }>({ role: "offer", keyFingerprint: "", audience: [] });
+  /**
+   * Cells run here on somebody else's behalf, whose signed answer is owed back.
+   *
+   * Kept by the shell because it is a record of *presses*, not of documents:
+   * `quorum-ops` deliberately keeps no record of what it delivered, and the
+   * session keeps none of what it accepted. Accepting an offer is the only
+   * moment anything knows a result will be owed, and this is where that press
+   * happens.
+   */
+  const [owedBack, setOwedBack] = useState<OwedBack[]>([]);
+  /** The last handoff attempt's outcome, in the handoff layer's own words. */
+  const [handoffNote, setHandoffNote] = useState<string | null>(null);
   /** Gap click sets pending insert; next shelf append / drop uses it. */
   const [pendingInsert, setPendingInsert] = useState<ChipPath | null>(null);
   /**
@@ -718,6 +758,99 @@ export function ToolkitShell() {
       };
     }
   }, [recipeLink]);
+
+  /* ─────────────────────── the shared session's surface ─────────────────── */
+
+  const sessionLive = nb.quorumState.phase !== "idle";
+
+  /**
+   * The audience the invite is built from.
+   *
+   * The live exchange's when there is one, the draft's before that. Not the
+   * roster: the roster holds who *arrived*, and an invite is for the people who
+   * have not — deriving one from the roster would drop the very person it is
+   * being copied for.
+   */
+  const sessionAudience = sessionLive
+    ? nb.quorumState.audience || []
+    : sessionDraft.audience;
+
+  /**
+   * The invite link. `hashForJoin` refuses an audience that names fewer than
+   * two keys, because that audience derives no room — so `null` here is the
+   * same refusal, not a rendering shortcut.
+   */
+  const inviteUrl = useMemo(() => {
+    const hash = hashForJoin(sessionAudience);
+    return hash.ok ? toolkitShareUrl(hash.hash) : null;
+  }, [sessionAudience]);
+
+  /**
+   * An invite arriving as a link — the joiner's entry point.
+   *
+   * Read once, at mount, and only for `#j=`. Every other hash form is
+   * `useNotebook.loadFromHash`'s, and this deliberately loads *nothing*: an
+   * invite carries no recipe and must not, so all that happens is the sheet
+   * opens with the audience filled in and the role set to the one the link
+   * implies. The press is still the reader's, and so is the choice of key.
+   */
+  useEffect(() => {
+    const action = parseToolkitHash(window.location.hash || "");
+    if (action.kind !== "join") return;
+    setSessionDraft((d) => ({ ...d, role: "join", audience: action.audience }));
+    nb.setSheet("session");
+    // Mount only: re-running on every hash change would reopen the sheet each
+    // time the notebook rewrites its own `#r=`, which it does as you type.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // An answer owed to a peer is owed *on a session*. When the exchange ends
+  // there is no channel to send it on and no peer to send it to, and a button
+  // still offering to would fail with a transport error rather than saying the
+  // room is gone.
+  useEffect(() => {
+    if (!sessionLive) setOwedBack([]);
+  }, [sessionLive]);
+
+  const sessionIssues = useMemo(
+    () =>
+      startIssues({
+        audience: sessionDraft.audience,
+        keyFingerprint: sessionDraft.keyFingerprint,
+        live: sessionLive,
+      }),
+    [sessionDraft, sessionLive]
+  );
+
+  /**
+   * Offers and results waiting on a press.
+   *
+   * Re-read on `handoffTick`, which `quorum-ops` bumps whenever the queue
+   * changes. The list itself is never mirrored into state — `takeHandoff` is
+   * what removes a document and it may only succeed once, so a copy React held
+   * would be a second answer to "is this still pending".
+   */
+  const pendingHandoffs = useMemo(() => {
+    void nb.handoffTick;
+    return nb.pendingHandoffs() as HandoffRow[];
+  }, [nb.handoffTick, nb.pendingHandoffs]);
+
+  /**
+   * Cells the last run declined, paired with the label that owns them.
+   *
+   * `skippedCells` carries `waitingOn`; the plan carries what each cell writes.
+   * Both come from the same run, so this is a join rather than a re-derivation.
+   */
+  const placedAway = useMemo(() => {
+    void nb.busy;
+    return (nb.skippedCells() as { cell: number; waitingOn?: string; produces?: string[] }[]).map(
+      (s) => ({
+        cell: s.cell,
+        peer: String(s.waitingOn || ""),
+        produces: [...(s.produces || [])],
+      })
+    );
+  }, [nb.busy, nb.skippedCells]);
 
   const peerChoices = useMemo(() => {
     const fromRoster = (nb.quorumState.peers || []).map((p) =>
@@ -2618,12 +2751,26 @@ export function ToolkitShell() {
 
             {trayTab === "connections" ? (
               <>
-                <div className="border-b border-[var(--border)] p-3">
-                  <h3 className="text-sm font-bold">Connections</h3>
-                  <p className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
-                    Whatever is live right now, and the actions that close or repair it.
-                    Separate from Outputs, which holds what a run already produced.
-                  </p>
+                <div className="flex items-start gap-2 border-b border-[var(--border)] p-3">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-bold">Connections</h3>
+                    <p className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
+                      Whatever is live right now, and the actions that close or repair it.
+                      Separate from Outputs, which holds what a run already produced.
+                    </p>
+                  </div>
+                  {/* The second door onto the session window. This tab is where
+                      someone comes to ask "is anybody there", and before this
+                      the only answer available was a recipe step they had to
+                      know the name of. */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0"
+                    onClick={() => nb.setSheet("session")}
+                  >
+                    {sessionLive ? "Session" : "Start session"}
+                  </Button>
                 </div>
                 <ScrollArea className="flex-1">
                   {/* The plan sits above the live connections because it is
@@ -2660,6 +2807,64 @@ export function ToolkitShell() {
                     onCloseLink={(id) => void closeLink(id)}
                     onRestartLink={(id) => void restartLink(id)}
                   />
+
+                  {/* Below the connections, because it is what the connections
+                      are *for*. The plan says where a cell runs, the panel
+                      above says whether the wire is up, and this is the only
+                      surface where a cell actually crosses — until it existed,
+                      `offerCell`, `acceptHandoff` and `sendCellResult` were
+                      finished and unreachable. */}
+                  <section className="mt-3 border-t border-[var(--border)] pt-3">
+                    <HandoffQueue
+                      live={sessionLive}
+                      pending={pendingHandoffs}
+                      placedAway={placedAway}
+                      owedBack={owedBack}
+                      note={handoffNote}
+                      onOffer={(cell) => {
+                        void nb.offerCell(cell).then((r) => {
+                          setHandoffNote(
+                            r.ok
+                              ? `Cell ${cell} handed to @${r.peer}. Nothing runs there until they accept it.`
+                              : r.why || "That cell could not be handed over."
+                          );
+                        });
+                      }}
+                      onAccept={(id) => {
+                        // The row is read *before* the accept, because
+                        // `takeHandoff` removes it and the shell needs the
+                        // sender to know who is owed an answer afterwards.
+                        const row = pendingHandoffs.find((h) => h.id === id);
+                        void nb.acceptHandoff(id).then((r) => {
+                          if (r.ok && row?.kind === "offer") {
+                            const label =
+                              (nb.quorumState.peers || []).find(
+                                (p) => p.fingerprint === row.from
+                              )?.id || row.from;
+                            setOwedBack((prev) => [
+                              ...prev.filter((o) => o.cell !== row.cell),
+                              { cell: row.cell, to: row.from, label: String(label).replace(/^@/, "") },
+                            ]);
+                          }
+                          setHandoffNote(
+                            r.ok
+                              ? `Accepted — ${r.registered} value${r.registered === 1 ? "" : "s"} registered. Run the notebook to use them.`
+                              : r.why || "That handoff was refused."
+                          );
+                        });
+                      }}
+                      onSendResult={(cell, label) => {
+                        void nb.sendCellResult(cell, label).then((r) => {
+                          if (r.ok) setOwedBack((prev) => prev.filter((o) => o.cell !== cell));
+                          setHandoffNote(
+                            r.ok
+                              ? `Cell ${cell} signed and sent back to @${label}.`
+                              : r.why || "That result could not be sent."
+                          );
+                        });
+                      }}
+                    />
+                  </section>
                 </ScrollArea>
               </>
             ) : null}
@@ -3120,7 +3325,93 @@ export function ToolkitShell() {
                 }
               : null
           }
-          onCopyInvite={() => void navigator.clipboard.writeText(nb.quorumState.invite)}
+          /* The row hands off to the session's own window rather than doing
+             anything itself. Until this prop was passed, "Start shared session"
+             was a button with no handler — the tier that needs the most
+             explanation was the one with no way in. */
+          onStartSession={() => {
+            setShareOpen(false);
+            nb.setSheet("session");
+          }}
+          onCopyInvite={() =>
+            void copyText(inviteUrl || nb.quorumState.invite)
+          }
+        />
+
+        {/* The shared session, start to finish. Reached from the Share sheet's
+            third tier, from the Connections tab, and from an invite link —
+            three doors onto one window, because a session is arrived at from
+            all three directions. */}
+        <SessionSheet
+          open={nb.sheet === "session"}
+          onOpenChange={(o) => nb.setSheet(o ? "session" : null)}
+          live={
+            sessionLive
+              ? {
+                  state: {
+                    phase: nb.quorumState.phase,
+                    role: nb.quorumState.role,
+                    room: nb.quorumState.room,
+                    status: nb.quorumState.status,
+                    audience: nb.quorumState.audience || [],
+                    self: String(nb.quorumState.self || ""),
+                    peers: nb.quorumState.peers,
+                  },
+                  inviteUrl,
+                  onCopyInvite: () => void copyText(inviteUrl || ""),
+                  onRestartIce: () => void restartLiveIce(),
+                  onClose: () => nb.cancelQuorum(),
+                  onRemove: (fingerprint: string) =>
+                    void nb.removeFromRoom(fingerprint),
+                }
+              : null
+          }
+          start={{
+            role: sessionDraft.role,
+            onRole: (role) => setSessionDraft((d) => ({ ...d, role })),
+            keys: nb.vaultKeys.map((k) => ({
+              fingerprint: k.fingerprint,
+              uid: k.uid,
+            })),
+            keyFingerprint: sessionDraft.keyFingerprint,
+            onKeyFingerprint: (fpr) =>
+              setSessionDraft((d) => ({
+                ...d,
+                keyFingerprint: fpr,
+                // Your own key joins the room the moment it is chosen. A room
+                // you are not in derives a different room, so leaving that to a
+                // second press is leaving a footgun where a default belongs.
+                audience: fpr && !d.audience.includes(fpr) ? [...d.audience, fpr] : d.audience,
+              })),
+            audience: sessionDraft.audience,
+            suggestions: nb.vaultKeys.map((k) => ({
+              fingerprint: k.fingerprint,
+              uid: k.uid,
+            })),
+            onAudience: (audience) => setSessionDraft((d) => ({ ...d, audience })),
+            onPaste: (text) =>
+              setSessionDraft((d) => ({
+                ...d,
+                audience: [
+                  ...new Set([...d.audience, ...parseInviteAudience(text)]),
+                ],
+              })),
+            issues: sessionIssues,
+            inviteUrl,
+            onCopyInvite: () => void copyText(inviteUrl || ""),
+            recipe: sessionRecipe({
+              audience: sessionDraft.audience,
+              keyFingerprint: sessionDraft.keyFingerprint,
+              role: sessionDraft.role,
+            }),
+            onStart: () => {
+              nb.startSession({
+                audience: sessionDraft.audience,
+                keyFingerprint: sessionDraft.keyFingerprint,
+                role: sessionDraft.role,
+              });
+            },
+          }}
         />
 
         {/* Guided key ceremony — the kit's front door (HANDOFF: a window is a Sheet) */}
