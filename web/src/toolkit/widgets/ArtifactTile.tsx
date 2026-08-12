@@ -98,8 +98,17 @@ export type OutputArtifact = {
    * cannot re-derive from the token text.
    */
   jose?: unknown;
-  /** Full serialized content, for types that are text on the wire (SDP). */
-  content?: string;
+  /**
+   * The artifact's text — required, because every row resolves a kind.
+   *
+   * `ArtifactTile` calls `resolveArtifactKind` and then `renderKindView` on
+   * whatever it is handed, and the kind views read `content` to draw. The
+   * engine's own `ToolkitArtifact` has always required it — `bytes` is the
+   * optional one, for when `content` is a textual encoding of binary — so a
+   * row without it is not an artifact any of this can render, only one the
+   * type permitted.
+   */
+  content: string;
   /**
    * Whether a sensitive value may be unmasked on request. Set by the engine
    * only for tiles a user explicitly asked to see (`out`, `text`, `inspect`);

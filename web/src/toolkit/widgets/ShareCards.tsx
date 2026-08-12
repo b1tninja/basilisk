@@ -17,7 +17,15 @@ export type ShareCardArtifact = {
   sensitive?: boolean;
   shareIndex?: number;
   mime?: string;
-  traits?: { shareOf?: number; threshold?: number };
+  /**
+   * The artifact's open trait bag, narrowed to the two this card reads.
+   *
+   * `traits` is deliberately open-ended upstream — it is the one bag every
+   * projection copies wholesale — so declaring only these two made the real
+   * thing unassignable. The intersection keeps `shareOf` and `threshold` typed
+   * while still accepting the bag they arrive in.
+   */
+  traits?: Record<string, unknown> & { shareOf?: number; threshold?: number };
 };
 
 export type ShareCardsProps = {

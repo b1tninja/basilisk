@@ -29,7 +29,8 @@ export function ShareIdentity({
   artifact: {
     shareIndex?: number;
     tags?: string[];
-    traits?: { shareOf?: number; threshold?: number };
+    // The open bag, narrowed to what `shareIdentity` reads — see ShareCards.
+    traits?: Record<string, unknown> & { shareOf?: number; threshold?: number };
   };
   className?: string;
 }) {

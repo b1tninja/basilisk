@@ -1193,6 +1193,7 @@ function CatalogApp() {
               outputs={[
                 {
                   label: "ciphertext",
+                  content: "-----BEGIN PGP MESSAGE----- hQEMA1Qq8kZ9v2mLAQf/XcLm… -----END PGP MESSAGE-----",
                   kind: "text",
                   sizeBytes: 892,
                   onCopy: () => {},
@@ -1200,6 +1201,7 @@ function CatalogApp() {
                 },
                 {
                   label: "master-key",
+                  content: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
                   kind: "text",
                   sizeBytes: 32,
                   sensitive: true,
@@ -1226,6 +1228,7 @@ function CatalogApp() {
               outputs={[
                 {
                   label: "dana.pub.asc",
+                  content: "-----BEGIN PGP PUBLIC KEY BLOCK----- mDMEZQm1kBYJKwYBBAHaRw8B… -----END PGP PUBLIC KEY BLOCK-----",
                   kind: "key",
                   role: "public-key",
                   tags: ["openpgp", "public-key"],
@@ -1237,6 +1240,7 @@ function CatalogApp() {
                 },
                 {
                   label: "sam.pub.asc",
+                  content: "-----BEGIN PGP PUBLIC KEY BLOCK----- mDMEZQm2LxYJKwYBBAHaRw8B… -----END PGP PUBLIC KEY BLOCK-----",
                   kind: "key",
                   role: "public-key",
                   tags: ["openpgp", "public-key"],
@@ -1258,6 +1262,7 @@ function CatalogApp() {
               outputs={[
                 {
                   label: "dana.pub.asc",
+                  content: "-----BEGIN PGP PUBLIC KEY BLOCK----- mDMEZQm1kBYJKwYBBAHaRw8B… -----END PGP PUBLIC KEY BLOCK-----",
                   kind: "key",
                   role: "public-key",
                   tags: ["openpgp", "public-key"],
@@ -1276,6 +1281,7 @@ function CatalogApp() {
               outputs={[
                 {
                   label: "nat",
+                  content: "srflx 203.0.113.14:54221 — relay allocation failed",
                   kind: "diag",
                   sizeBytes: 240,
                   onCopy: () => {},
@@ -1924,8 +1930,6 @@ function CatalogApp() {
             onSelect={() => {}}
             onGap={() => setGapActive((v) => !v)}
             onBranchHit={() => {}}
-            onNestToggle={() => {}}
-            onNestAppend={() => {}}
             onReorder={() => {}}
           />
           <StateLabel>activeGap highlights insert focus</StateLabel>
@@ -1955,8 +1959,6 @@ function CatalogApp() {
             onSelect={() => {}}
             onGap={() => setGapActive(true)}
             onBranchHit={() => {}}
-            onNestToggle={() => {}}
-            onNestAppend={() => {}}
             onReorder={() => {}}
           />
           <StateLabel>

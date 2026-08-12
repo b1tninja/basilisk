@@ -363,8 +363,14 @@ function joinRecipes(fwd, rev) {
 
 /**
  * Stitch a companion preset pair into one multi-chain recipe.
- * @param {ToolkitPreset} forwardPreset
- * @param {ToolkitPreset} reversePreset
+ *
+ * Typed by the three fields it reads, not as `ToolkitPreset`. That alias is
+ * `typeof PRESETS[number]` — the union inferred from the literal array — so it
+ * carries every field of every entry as *required*, and a caller holding a
+ * looser row (`PresetMenuItem`, which the menu builds) could not satisfy it.
+ * All three are read with `?.` and a fallback here, so all three are optional.
+ * @param {{ id?: string, pair?: string, recipe?: string }} forwardPreset
+ * @param {{ id?: string, pair?: string, recipe?: string }} reversePreset
  * @returns {StitchResult}
  */
 export function stitchPresetPair(forwardPreset, reversePreset) {

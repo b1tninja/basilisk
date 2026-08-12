@@ -1787,7 +1787,11 @@ export const PRESET_GROUP_ORDER = Object.freeze([
 
 /**
  * Ordered group names for the Templates menu (known order first, then any extras).
- * @param {typeof PRESETS} [presets]
+ *
+ * `group` is the only field read, and it is read with a fallback — so this
+ * takes anything that names one. `typeof PRESETS` demanded the whole inferred
+ * literal union, which the Templates menu's own rows do not satisfy.
+ * @param {{ group?: string }[]} [presets]
  * @returns {string[]}
  */
 export function listPresetGroups(presets = PRESETS) {
