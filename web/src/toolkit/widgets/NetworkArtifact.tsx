@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { cn } from "@/lib/cn";
+import { normalizeFingerprintInput } from "../../lib/pgp/verify-fpr.js";
 import {
   candidateAbsence,
   connStateReadout,
@@ -25,6 +27,30 @@ import {
  * "Configure TURN" fallback CTA), it's wired to the same handler the plain
  * OutputList row uses.
  */
+
+/**
+ * Whichever end of a link a row is about, named honestly.
+ *
+ * `peer` is two different things depending on which op produced the artifact:
+ * `rtc-ops` fills it with a fingerprint for a quorum peer, `peer-ops` with a
+ * link id like `peer-1`. These tiles printed `slice(0, 8)…` over both — eight
+ * hex characters for the ones that were keys, which is exactly the length
+ * `pages/index.tsx` warns is collision-prone, in a diagnostic panel where the
+ * reader is deciding which connection they are looking at.
+ *
+ * A link id is not an identity and is short already, so it is drawn whole and
+ * plain. A fingerprint goes through the component, in full — these tiles open
+ * at the width of the tray, so the row that was cited as having no space has
+ * more of it than any roster row does.
+ */
+function PeerName({ peer, className }: { peer: unknown; className?: string }) {
+  const value = String(peer || "");
+  const hex = normalizeFingerprintInput(value);
+  if (hex.length === 40 || hex.length === 64) {
+    return <Fingerprint className={className} fpr={value} />;
+  }
+  return <code className={cn("min-w-0 font-mono", className)}>{value}</code>;
+}
 
 /* ────────────────────────────── shared chrome ────────────────────────────── */
 
@@ -198,9 +224,7 @@ function PairMatrix({ data, onConfigureTurn }: { data: any; onConfigureTurn?: ()
       {peers.map((p, pi) => (
         <div key={pi}>
           <div className="flex items-center gap-2 border-b border-[color-mix(in_srgb,var(--border)_45%,transparent)] px-2.5 py-[6px]">
-            <code className="font-mono text-[10px] text-[var(--muted-foreground)]">
-              {String(p.peer || "").slice(0, 8)}…
-            </code>
+            <PeerName peer={p.peer} className="text-[10px] text-[var(--muted-foreground)]" />
             {/* 26b: role is protocol-assigned and informational only. Chromium
                 leaves it null, so we say so rather than showing a blank chip. */}
             {p.role ? (
@@ -315,9 +339,7 @@ function ConnStateStrip({ data }: { data: any }) {
             data-conn-state={p.connectionState || "new"}
           >
             <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-              <code className="font-mono text-[10px] text-[var(--muted-foreground)]">
-                {String(p.peer || "").slice(0, 8)}…
-              </code>
+              <PeerName peer={p.peer} className="text-[10px] text-[var(--muted-foreground)]" />
               <span className="net-headline text-[11px] font-semibold" data-tone={read.tone}>
                 {read.headline}
               </span>
@@ -406,9 +428,7 @@ function QualityStats({ data }: { data: any }) {
     <div>
       {peers.map((p, i) => (
         <Row key={i}>
-          <code className="min-w-0 flex-1 truncate font-mono text-[10.5px]">
-            {String(p.peer || "").slice(0, 8)}…
-          </code>
+          <PeerName peer={p.peer} className="min-w-0 flex-1 text-[10.5px]" />
           <span className="shrink-0 font-mono text-[10px] text-[var(--caret)]">
             {p.rttMs != null ? `${p.rttMs}ms rtt` : "— rtt"}
           </span>
@@ -465,9 +485,7 @@ function ChannelStats({ data }: { data: any }) {
             className="border-b border-[color-mix(in_srgb,var(--border)_45%,transparent)] px-2.5 py-2 last:border-b-0"
           >
             <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate font-mono text-[10.5px]">
-                {String(p.peer || "").slice(0, 8)}…
-              </code>
+              <PeerName peer={p.peer} className="min-w-0 flex-1 text-[10.5px]" />
               <TypeBadge
                 label={p.readyState}
                 tone={p.readyState === "open" ? "brand" : "muted"}
@@ -763,11 +781,15 @@ function SessionPanel({ data }: { data: any }) {
           {data?.connected ?? 0}/{Math.max(0, audience.length - 1)} connected
         </span>
       </Row>
+      {/* The audience is what the room is derived from, so this list is the
+          same claim `InviteCard` makes — and 16 of 40 characters was the same
+          answer to it. Whole, every one. */}
       {audience.map((f, i) => (
         <Row key={i}>
-          <code className="min-w-0 flex-1 truncate font-mono text-[10px] text-[var(--muted-foreground)]">
-            {f.slice(0, 16)}…
-          </code>
+          <Fingerprint
+            className="min-w-0 flex-1 text-[10px] text-[var(--muted-foreground)]"
+            fpr={f}
+          />
         </Row>
       ))}
     </div>

@@ -10,6 +10,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { formatFingerprint } from "../../lib/utils.js";
 import { ShareCards, type ShareCardArtifact } from "./ShareCards";
 import { ShareCheck } from "./ShareCheck";
 import {
@@ -426,9 +427,13 @@ export function CeremonySheet({
                     onChange={(e) => onSignWith?.(e.target.value)}
                   >
                     <option value="">Do not sign</option>
+                    {/* The other place a fingerprint is not a control: an
+                        `<option>` is text and cannot hold one. It carries the
+                        whole value instead of the last sixteen characters,
+                        which is the rule that actually mattered here. */}
                     {signingKeys.map((k) => (
                       <option key={k.fingerprint} value={k.fingerprint}>
-                        {k.uid || k.fingerprint.slice(-16)}
+                        {k.uid || formatFingerprint(k.fingerprint)}
                       </option>
                     ))}
                   </select>

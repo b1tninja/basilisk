@@ -8,7 +8,8 @@
  * transcript-bound key confirmation — either alone is not identity.
  */
 import { describe, expect, it } from "vitest";
-import { projectRosterPeers, shortFpr } from "../lib/notebook/roster.js";
+import * as roster from "../lib/notebook/roster.js";
+import { projectRosterPeers } from "../lib/notebook/roster.js";
 import { selectedCandidateType } from "../lib/webrtc/candidates.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { normalizeRoster, planRun } from "../lib/toolkit/plan.js";
@@ -61,16 +62,21 @@ describe("projectRosterPeers", () => {
     expect(rows[0].authenticated).toBe(false);
   });
 
-  it("carries the full fingerprint beside the label", () => {
+  it("carries the whole fingerprint beside the label, and nothing in between", () => {
     const [row] = projectRosterPeers(new Map([[FPR_A, peer()]]));
     expect(row.fingerprint).toBe(FPR_A);
-    // `id` was `AAAA1111…9999`, `shortFpr`'s output. Changed because `id` is
-    // the name a cell header addresses and the key of `planRun`'s roster, and
-    // an elided fingerprint is not a legal peer label — it stopped notebooks
-    // compiling and made `normalizeRoster` throw. The abbreviation did not go
-    // away, it moved to `display`, which the panels render beside the label.
+    // `id` was `AAAA1111…9999`, the output of a `shortFpr` this module used to
+    // export. Changed because `id` is the name a cell header addresses and the
+    // key of `planRun`'s roster, and an elided fingerprint is not a legal peer
+    // label — it stopped notebooks compiling and made `normalizeRoster` throw.
     expect(row.id).toBe("peer1");
-    expect(row.display).toBe("AAAA1111…9999");
+    // The abbreviation then moved to `display`, and `display` is now gone too.
+    // It was twelve of forty characters — 48 bits, against the 32 the search
+    // page already warns are collision-prone — printed where a reader compares
+    // it, with no way to tell whether the 112 bits behind the ellipsis matched.
+    // A row has two honest options and this projection supplies both: the label
+    // it can print, and the whole fingerprint a `<Fingerprint>` can copy.
+    expect("display" in row).toBe(false);
   });
 
   it("attaches via only for peers whose ICE lookup has resolved", () => {
@@ -86,11 +92,14 @@ describe("projectRosterPeers", () => {
   });
 });
 
-describe("shortFpr", () => {
-  it("shortens long fingerprints and leaves short labels alone", () => {
-    expect(shortFpr(FPR_A)).toBe("AAAA1111…9999");
-    expect(shortFpr("abcd1234")).toBe("ABCD1234");
-    expect(shortFpr("")).toBe("");
+describe("the projection prints no fingerprint at all", () => {
+  it("exports nothing that shortens one", () => {
+    // `shortFpr` lived here and had five private copies in widgets. It is not
+    // centralised, it is gone: a shared `shortFpr` is the same defect with one
+    // import, because the defect was never the duplication. See
+    // `components/ui/fingerprint.tsx` for what replaced it and why there is no
+    // safer number of characters to have chosen instead.
+    expect(Object.keys(roster).sort()).toEqual(["peerLabels", "projectRosterPeers"]);
   });
 });
 
@@ -155,11 +164,15 @@ describe("selectedCandidateType", () => {
  * problem: the notebook stops compiling and `normalizeRoster` throws, which
  * `ToolkitShell` catches into a null plan. The feature fails silently.
  *
- * The abbreviation `shortFpr` produces cannot be that value. It carries U+2026,
- * which no label grammar admits, and the elided form could not be an identity
- * even if it parsed — it is a truncation, and `peerLooksLikeFingerprint`
- * refuses fingerprint-shaped labels on the security ground that a fingerprint
- * in shared recipe text gives away the audience the room is derived from.
+ * The abbreviation this module used to produce cannot be that value. It carries
+ * U+2026, which no label grammar admits, and the elided form could not be an
+ * identity even if it parsed — it is a truncation, and
+ * `peerLooksLikeFingerprint` refuses fingerprint-shaped labels on the security
+ * ground that a fingerprint in shared recipe text gives away the audience the
+ * room is derived from.
+ *
+ * That abbreviation is now gone from the product altogether rather than merely
+ * demoted, because being an illegal name was the smaller of its two problems.
  */
 describe("peer labels are legal, stable identities", () => {
   const FPR_C = "CCCC111122223333444455556666777788889999";
@@ -214,15 +227,18 @@ describe("peer labels are legal, stable identities", () => {
     expect(labelOf(late)).toMatchObject(labelOf(asCreator));
   });
 
-  it("still shortens a fingerprint for display, but not as a name", () => {
-    // `shortFpr` is unchanged and still what the panels put in front of a
-    // reader; the defect was using its output where an identity was wanted.
-    // Both forms now ride on the row, so neither surface has to recompute the
-    // other and the identity is never the abbreviation by accident.
-    expect(shortFpr(FPR_A)).toBe("AAAA1111…9999");
+  it("hands a panel a name and a whole key, and no third thing", () => {
+    // This used to assert that the abbreviation survived on `display` — "still
+    // what the panels put in front of a reader; the defect was using its output
+    // where an identity was wanted". That reading of the defect was too narrow.
+    // `AAAA1111…9999` was also unsafe to *read*: a reader who compares it has
+    // checked 48 of 160 bits and has no way to know it. So the row carries the
+    // label, which is a name and admits it, and the fingerprint, which is
+    // whole — and a panel renders one or the other, never a blend of the two.
     const rows = projectRosterPeers(connected(), undefined, AUDIENCE);
     expect(rows.every((r) => !r.id.includes("…"))).toBe(true);
-    expect(rows.map((r) => r.display)).toEqual(["AAAA1111…9999", "BBBB1111…9999"]);
+    expect(rows.map((r) => r.id)).toEqual(["peer1", "peer2"]);
     expect(rows.map((r) => r.fingerprint)).toEqual([FPR_A, FPR_B]);
+    expect(rows.some((r) => JSON.stringify(r).includes("…"))).toBe(false);
   });
 });

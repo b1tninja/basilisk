@@ -130,6 +130,7 @@ import { classifyChannelFrame, createSeenSet, shouldRelay } from "./relay.js";
 import { openSignalingChannel } from "./signaling.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
+import { formatFingerprint } from "../utils.js";
 import {
   deregisterLink,
   patchLink,
@@ -367,8 +368,12 @@ export class NotebookSession {
     this.audienceKeys = await fetchAudienceKeys(this.audienceFprs);
     const missing = this.audienceFprs.filter((f) => !this.audienceKeys.has(f));
     if (missing.length) {
+      // Every one, whole. This is the message that names who could not be
+      // brought into a room, and eight characters of each was a list nobody
+      // could act on — `findFingerprints` reads this back out of a pasted line,
+      // and a comma is deliberately not a separator inside one fingerprint.
       throw new Error(
-        `Missing public keys for: ${missing.map((f) => f.slice(0, 8)).join(", ")}`
+        `Missing public keys for: ${missing.map((f) => formatFingerprint(f)).join(", ")}`
       );
     }
 
@@ -1485,7 +1490,7 @@ export class NotebookSession {
     } catch (err) {
       this.onError?.(
         new Error(
-          `notebook: ${kind} from ${peerFpr.slice(0, 8)}… refused — ${
+          `notebook: ${kind} from ${formatFingerprint(peerFpr)} refused — ${
             err instanceof Error ? err.message : String(err)
           }`
         )
@@ -1532,7 +1537,7 @@ export class NotebookSession {
     } catch (err) {
       this.onError?.(
         new Error(
-          `notebook: handoff offer from ${peerFpr.slice(0, 8)}… refused — ${
+          `notebook: handoff offer from ${formatFingerprint(peerFpr)} refused — ${
             err instanceof Error ? err.message : String(err)
           }`
         )
@@ -1584,7 +1589,7 @@ export class NotebookSession {
     } catch (err) {
       this.onError?.(
         new Error(
-          `notebook: cell result from ${peerFpr.slice(0, 8)}… refused — ${
+          `notebook: cell result from ${formatFingerprint(peerFpr)} refused — ${
             err instanceof Error ? err.message : String(err)
           }`
         )

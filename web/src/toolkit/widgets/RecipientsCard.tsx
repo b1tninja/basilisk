@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/cn";
-import { formatFingerprint } from "../../lib/utils.js";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import {
   filterRecipientRows,
   recipientRows,
@@ -92,11 +92,13 @@ export function RecipientsCard({
                 <td className="w-[40%] truncate pr-2 font-mono text-[10px] text-[var(--foreground)]">
                   {r.label || r.email || "(no user id)"}
                 </td>
-                <td
-                  className="w-[34%] truncate pr-2 font-mono text-[10px] text-[var(--muted-foreground)]"
-                  title={formatFingerprint(r.fingerprint)}
-                >
-                  {formatFingerprint(r.fingerprint)}
+                {/* The cell was `truncate` with the whole value in a `title`,
+                    which is the elided form drawn by the layout: a prefix
+                    whose length depends on the pane, unreachable by keyboard
+                    and by touch. It wraps now, and it is a control — this is
+                    the list somebody checks before pressing encrypt. */}
+                <td className="w-[34%] pr-2 text-[10px] text-[var(--muted-foreground)]">
+                  <Fingerprint fpr={r.fingerprint} />
                 </td>
                 {/* Two lines, not one truncating cell. Measured in the real
                     pane, "approved · cannot encrypt" lost its second half —

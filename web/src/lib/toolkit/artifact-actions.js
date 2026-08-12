@@ -21,7 +21,7 @@
  */
 
 import { ACTION_REASONS } from "./artifact-reasons.js";
-import { shortKeyId } from "./approval-gate.js";
+import { keyIdText } from "./approval-gate.js";
 import { sshIdentityFromJwk } from "./ssh-ops.js";
 import { sshKeySummary } from "./artifact-readouts.js";
 import { formatFingerprint } from "../utils.js";
@@ -450,7 +450,7 @@ export const ARTIFACT_ACTIONS = Object.freeze([
         // rejects a weakening — so it succeeds and overwrites the row it
         // already had. "Added" would be a lie about what changed.
         receipt: saved.already ? "Already in My Keys" : "Added to My Keys",
-        detail: `My Keys ${shortKeyId(saved.fingerprint)}`,
+        detail: `My Keys ${keyIdText(saved.fingerprint)}`,
       };
     },
   },

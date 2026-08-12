@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { cn } from "@/lib/cn";
 import { InviteCard } from "./InviteCard";
 import {
@@ -38,12 +39,6 @@ export type SessionLiveProps = {
   onRemove?: (fingerprint: string) => void;
   className?: string;
 };
-
-/** `AABBCCDD…EEFF`, matching `shortFpr` in the roster projection. */
-function shortFpr(fpr: string): string {
-  const f = String(fpr || "").toUpperCase();
-  return f.length > 12 ? `${f.slice(0, 8)}…${f.slice(-4)}` : f;
-}
 
 /**
  * The live session: what it is doing, who is in it, and what confirmation
@@ -140,16 +135,20 @@ export function SessionLive({
                       data-peer-state={p.state}
                       aria-hidden
                     />
-                    {/* Label then key, for the reason ConnectionsPanel gives. */}
-                    <code
-                      className="min-w-0 shrink-0 font-mono text-[11px] text-[var(--foreground)]"
-                      title={p.fingerprint || undefined}
-                    >
-                      {p.id}
-                    </code>
-                    <code className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-[var(--muted-foreground)]">
-                      {p.display}
-                    </code>
+                    {/* Label and key in one control, for the reason
+                        ConnectionsPanel gives. */}
+                    {p.fingerprint ? (
+                      <Fingerprint
+                        className="min-w-0 flex-1 text-[11px] text-[var(--foreground)]"
+                        fpr={p.fingerprint}
+                        variant="compact"
+                        label={p.id}
+                      />
+                    ) : (
+                      <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]">
+                        {p.id}
+                      </code>
+                    )}
                     {p.via ? (
                       <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
                         {p.via}

@@ -601,10 +601,16 @@ function CatalogApp() {
                 state="connected"
                 room="KJ8XW2PQZM4RT9FQ"
                 connected={2}
+                /* `id` was `AAAA1111…9999` in this fixture — the catalog was
+                   still showing the elided form as a peer's name a commit after
+                   `projectRosterPeers` stopped producing one. A real `id` is
+                   `peer1`, ordered by the canonical audience, and the row draws
+                   it through `<Fingerprint variant="compact">`: press the label
+                   and the whole key is on the clipboard. */
                 peers={[
-                  { id: "AAAA1111…9999", fingerprint: "A".repeat(40), state: "connected", authenticated: true, via: "srflx" },
-                  { id: "BBBB2222…8888", fingerprint: "B".repeat(40), state: "connected", authenticated: false, via: "relay" },
-                  { id: "CCCC3333…7777", fingerprint: "C".repeat(40), state: "failed", authenticated: true },
+                  { id: "peer1", fingerprint: "A".repeat(40), state: "connected", authenticated: true, via: "srflx" },
+                  { id: "peer2", fingerprint: "B".repeat(40), state: "connected", authenticated: false, via: "relay" },
+                  { id: "peer3", fingerprint: "C".repeat(40), state: "failed", authenticated: true },
                 ]}
                 onRestartIce={() => {}}
               />
@@ -615,10 +621,14 @@ function CatalogApp() {
                 state="waiting"
                 room="KJ8XW2PQZM4RT9FQ"
                 invite="quorum KJ8XW2PQZM4RT9FQ · 3 keys · localhost"
+                /* No `fingerprint` on these three on purpose: a peer can be in
+                   the roster before its key is known, and the row falls back to
+                   the plain label rather than offering a control with nothing
+                   behind it. */
                 peers={[
-                  { id: "AAAA1111…9999", state: "connected", authenticated: true },
-                  { id: "BBBB2222…8888", state: "connecting" },
-                  { id: "CCCC3333…7777", state: "new" },
+                  { id: "peer1", state: "connected", authenticated: true },
+                  { id: "peer2", state: "connecting" },
+                  { id: "peer3", state: "new" },
                 ]}
                 onCopyInvite={() => {}}
                 onCancel={() => {}}

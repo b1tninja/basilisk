@@ -2,8 +2,10 @@ import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
-import { useRefusal } from "@/components/ui/refusal";
+import { RefusalLayout, useRefusal } from "@/components/ui/refusal";
+import { ALREADY_IN_ROOM, Fingerprint } from "@/components/ui/fingerprint";
 import { pasteReadout } from "../../lib/toolkit/session-flow.js";
+import { formatFingerprint } from "../../lib/utils.js";
 import { InviteCard } from "./InviteCard";
 
 export type SessionKeyChoice = {
@@ -68,12 +70,6 @@ export type SessionStartProps = {
   className?: string;
 };
 
-/** `AABBCCDD…EEFF`, matching `shortFpr` in the roster projection. */
-function shortFpr(fpr: string): string {
-  const f = String(fpr || "").toUpperCase();
-  return f.length > 12 ? `${f.slice(0, 8)}…${f.slice(-4)}` : f;
-}
-
 /** The paste readout's tone, in this app's tokens. */
 const PASTE_TONE: Record<string, string> = {
   brand: "text-[var(--brand)]",
@@ -96,8 +92,10 @@ const PASTE_TONE: Record<string, string> = {
  * they are meeting and not their key. So the order here is: your own key, which
  * joins the room when you choose it; the peers you have marked trusted, one
  * press each; a search; and only then a paste box, for somebody who was sent
- * something. Every one of those hands back a whole fingerprint — a truncated
- * form is only ever a label here, never an identity.
+ * something. Every one of those hands back a whole fingerprint, and every one
+ * of them shows a whole fingerprint or a name somebody already gave the key —
+ * never part of one. See `components/ui/fingerprint.tsx` for why there is no
+ * middle setting.
  *
  * **Start writes cells.** It does not call the transport — it appends
  * `agent.unlock` and `quorum.offer`/`quorum.join` to the notebook and runs
@@ -131,25 +129,43 @@ function SearchHitRow({
   here: boolean;
   onAdd: (fpr: string) => void;
 }) {
-  const refusal = useRefusal(
-    here ? "This key is already in the room, so there is nothing to add." : undefined
-  );
+  const refusal = useRefusal(here ? ALREADY_IN_ROOM : undefined);
   return (
-    <button
-      type="button"
-      className="flex items-center gap-1.5 text-left link-action"
-      {...refusal.aria}
-      title={hit.fingerprint}
-      onClick={refusal.guard(() => onAdd(hit.fingerprint))}
-    >
-      <span className="min-w-0 truncate">{hit.label || shortFpr(hit.fingerprint)}</span>
-      <code className="font-mono text-[10px] text-[var(--muted-foreground)]">
-        {shortFpr(hit.fingerprint)}
-      </code>
-      <span className="text-[10px] text-[var(--muted-foreground)]">
-        {here ? "in the room" : "add"}
+    <RefusalLayout note={refusal.note} className="w-full">
+      <span className="flex flex-wrap items-baseline gap-1.5">
+        {/* The name if the keyserver gave one, and the whole fingerprint under
+            it either way. A hit is a key this browser has never met, chosen
+            from a list of strangers — the row where somebody decides that this
+            is the Ada they meant is the one row that has to show all of it. */}
+        {hit.label ? (
+          <span className="min-w-0 truncate text-[11px] text-[var(--foreground)]">
+            {hit.label}
+          </span>
+        ) : null}
+        <Fingerprint
+          className="text-[10px] text-[var(--muted-foreground)]"
+          fpr={hit.fingerprint}
+          onAddToAudience={onAdd}
+          inAudience={here}
+        />
+        {/* The one-press add stays. The menu is the uniform home for a
+            fingerprint's actions; this is the primary task of this panel, and
+            burying it a press deeper for consistency's sake would be paying for
+            the rule with the flow it exists to protect. Both refuse in the same
+            words, from the same constant. */}
+        <button
+          type="button"
+          className="link-action"
+          {...refusal.aria}
+          aria-label={`${here ? "Already in the room" : "Add to the room"}: ${
+            hit.label || formatFingerprint(hit.fingerprint)
+          }`}
+          onClick={refusal.guard(() => onAdd(hit.fingerprint))}
+        >
+          {here ? "in the room" : "Add to the room"}
+        </button>
       </span>
-    </button>
+    </RefusalLayout>
   );
 }
 
@@ -277,9 +293,13 @@ export function SessionStart({
           <option value="">
             {keys.length ? "Choose a key…" : "No private key in this browser"}
           </option>
+          {/* An `<option>` is text, and nothing else — no control, no menu, no
+              copy. So it carries the whole fingerprint where the vault knows no
+              uid: a chooser is not a place anybody confirms a key, and the row
+              in the room below is where this key gets checked. */}
           {keys.map((k) => (
             <option key={k.fingerprint} value={k.fingerprint}>
-              {k.uid || shortFpr(k.fingerprint)}
+              {k.uid || formatFingerprint(k.fingerprint)}
             </option>
           ))}
         </select>
@@ -299,16 +319,19 @@ export function SessionStart({
             <ul className="flex list-none flex-col gap-0.5 p-0">
               {audience.map((fpr) => (
                 <li key={fpr} className="flex items-center gap-1.5">
-                  <code
-                    className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-[var(--foreground)]"
-                    title={fpr}
-                  >
-                    {shortFpr(fpr)}
-                  </code>
+                  <Fingerprint
+                    className="min-w-0 flex-1 text-[10.5px] text-[var(--foreground)]"
+                    fpr={fpr}
+                  />
+                  {/* The accessible name carries the whole fingerprint too. A
+                      list of buttons all called "Remove" is one announcement
+                      repeated (4.1.2), and naming twelve of forty characters
+                      here would put the elided form back into the one place a
+                      screen-reader user has no way to check it. */}
                   <button
                     type="button"
                     className="link-action"
-                    aria-label={`Remove ${shortFpr(fpr)} from the room`}
+                    aria-label={`Remove ${formatFingerprint(fpr)} from the room`}
                     onClick={() => onAudience(audience.filter((f) => f !== fpr))}
                   >
                     Remove
@@ -333,19 +356,40 @@ export function SessionStart({
             <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
               Keys you have marked trusted
             </span>
-            <div className="flex flex-wrap gap-1.5">
+            {/* A trusted mark is a key this browser has already met and the
+                reader already decided about, so the name they gave it is the
+                honest thing to show — and the fingerprint is one press away in
+                its own menu. Where there is no name there is nothing to be
+                compact about, and the whole value is drawn. */}
+            <ul className="flex list-none flex-col gap-1 p-0">
               {offerable.map((t) => (
-                <button
-                  key={t.fingerprint}
-                  type="button"
-                  className="link-action"
-                  title={t.fingerprint}
-                  onClick={() => add(t.fingerprint)}
-                >
-                  + {t.label || shortFpr(t.fingerprint)}
-                </button>
+                <li key={t.fingerprint} className="flex flex-wrap items-baseline gap-1.5">
+                  {t.label ? (
+                    <Fingerprint
+                      className="text-[10.5px] text-[var(--foreground)]"
+                      fpr={t.fingerprint}
+                      variant="compact"
+                      label={t.label}
+                      onAddToAudience={add}
+                    />
+                  ) : (
+                    <Fingerprint
+                      className="text-[10.5px] text-[var(--foreground)]"
+                      fpr={t.fingerprint}
+                      onAddToAudience={add}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className="link-action"
+                    aria-label={`Add ${t.label || formatFingerprint(t.fingerprint)} to the room`}
+                    onClick={() => add(t.fingerprint)}
+                  >
+                    Add to the room
+                  </button>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         ) : null}
 

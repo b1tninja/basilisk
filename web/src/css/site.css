@@ -6592,3 +6592,128 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   color: var(--muted-foreground);
   word-break: break-all;
 }
+
+/*
+ * Fingerprints (components/ui/fingerprint.tsx).
+ *
+ * site.css rather than toolkit.css for the reason the scroll-lock block above
+ * gives about dropdowns: a fingerprint is on the search page, the key page and
+ * the toolkit, and only toolkit pages load the other stylesheet — and only
+ * toolkit pages load Tailwind, so the primitive cannot lean on a utility class
+ * for anything it actually needs to look right.
+ *
+ * `font-size: inherit` on the value is deliberate. The rows this lands in run
+ * from 9.5px in a roster to 0.85rem on the key page, and a fingerprint that
+ * imposed its own size would either shout in a peer row or whisper on a key
+ * page. The row decides the size; this decides everything else.
+ */
+.fingerprint {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+/*
+ * `overflow-wrap: anywhere`, never `text-overflow: ellipsis`.
+ *
+ * Clipping a fingerprint to its column is the elided form again with the
+ * browser holding the knife: the reader sees a prefix, cannot tell how much is
+ * missing, and compares it anyway. A whole fingerprint that wraps onto two
+ * lines is 49 characters of truth; a clipped one is a checkable-looking part
+ * whose length depends on the window. Where a row genuinely has no room the
+ * caller uses `variant="compact"`, which shows a name — never part of the key.
+ */
+.fingerprint-value {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: 0.02em;
+  color: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.fingerprint-value:hover {
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.fingerprint-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  align-self: center;
+  min-height: 16px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.fingerprint-actions:hover,
+.fingerprint-actions[data-state="open"] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+}
+
+/* The menu names the key it is about, in full — a compact fingerprint's reader
+   may want to read the value rather than copy it. */
+.fingerprint-menu {
+  min-width: 16rem;
+  max-width: min(24rem, 90vw);
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.fingerprint-menu-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * What the last press did. Rendered text, never `sr-only`: a control that
+ * copies has to say what it copied, and the reports behind `refusal.tsx` were
+ * all from someone looking straight at the control. Empty until something has
+ * happened, so a quiet fingerprint occupies no space.
+ */
+.fingerprint-said {
+  flex-basis: 100%;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.fingerprint-said:empty {
+  display: none;
+}
+
+/* The clipboard refused, so the value goes on screen instead. A compact
+   fingerprint whose copy failed would otherwise leave the reader holding a
+   name with no route to the key it names. */
+.fingerprint-fallback {
+  flex-basis: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: all;
+}

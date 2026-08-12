@@ -1,6 +1,7 @@
 import { KeyRound } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { expiryNote } from "../../lib/toolkit/artifact-readouts.js";
+import { formatFingerprint } from "../../lib/utils.js";
 import type { VaultKeyRow } from "../notebook-types";
 
 /**
@@ -40,10 +41,21 @@ type Props = {
  * the verdict changed; this file just stopped owning it.
  */
 
-function shortFpr(fpr: string): string {
-  const clean = String(fpr || "").replace(/\s+/g, "");
-  return clean.length > 16 ? `…${clean.slice(-16)}` : clean;
-}
+/*
+ * This is one of two places a fingerprint is drawn without `<Fingerprint>`
+ * around it, and the reason is structural rather than a judgement about space.
+ *
+ * Every row here *is* a control — the whole card is the button that selects the
+ * key, which is what makes this a picker rather than a list with a picker in
+ * it. A `<button>` cannot contain a `<button>`, so an interactive fingerprint
+ * inside a row would be invalid markup, and pulling it out into a sibling would
+ * shrink the click target to the words beside it.
+ *
+ * What that costs is the copy control and the actions menu. What it does not
+ * cost is the rule those exist to serve: this printed `…{last 16}` — sixty-four
+ * bits with the rest hidden — and it prints the whole value now. Where a key
+ * has a uid the row leads with that, exactly as `variant="compact"` would.
+ */
 
 export function GpgKeyBinder({
   keys,
@@ -81,13 +93,17 @@ export function GpgKeyBinder({
                 aria-hidden
                 className={selected ? "text-[var(--brand)]" : "text-[var(--muted-foreground)]"}
               />
+              {/* `break-all`, not `truncate`: clipping a fingerprint to its
+                  column is the elided form with the browser holding the knife
+                  — a prefix whose length depends on the window, and no way for
+                  the reader to tell how much is gone. */}
               <span className="min-w-0 flex-1">
-                <code className="block truncate font-mono text-[11px] text-[var(--foreground)]">
-                  {k.uid || k.email || shortFpr(k.fingerprint)}
+                <code className="block break-all font-mono text-[11px] text-[var(--foreground)]">
+                  {k.uid || k.email || formatFingerprint(k.fingerprint)}
                 </code>
                 {k.uid || k.email ? (
-                  <code className="block truncate font-mono text-[9.5px] text-[var(--muted-foreground)]">
-                    {shortFpr(k.fingerprint)}
+                  <code className="block break-all font-mono text-[9.5px] text-[var(--muted-foreground)]">
+                    {formatFingerprint(k.fingerprint)}
                   </code>
                 ) : null}
               </span>

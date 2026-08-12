@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { sshKeySummary } from "../../lib/toolkit/artifact-readouts.js";
 
 type Summary = Awaited<ReturnType<typeof sshKeySummary>>;
@@ -65,9 +66,16 @@ export function SshKeyCard({
           {summary.comment ? ` · ${summary.comment}` : ""}
         </span>
       </div>
-      <code className="artifact-body block break-all font-mono text-[var(--muted-foreground)]">
-        {summary.fingerprint}
-      </code>
+      {/* The fingerprint is the point of this card, and it was the one thing on
+          it a reader could not take with them. `<Fingerprint>` copies it
+          verbatim — no grouping — because it is what `ssh-keygen -lf` prints and
+          what an `allowed_signers` line is compared against character for
+          character. The keyserver and trust rows refuse, and say that the
+          keyserver holds OpenPGP keys. */}
+      <Fingerprint
+        className="artifact-body text-[var(--muted-foreground)]"
+        fpr={summary.fingerprint}
+      />
       {withRaw ? (
         <div className="flex flex-col gap-1">
           <button

@@ -187,6 +187,81 @@ describe.skipIf(!python.ok || !chromium.ok)("the search page, against a real dir
     expect(basilisk.counts().search ?? 0).toBe(0);
   });
 
+  /**
+   * The fingerprint is a control, and this is the only place it is one in a
+   * real browser under the real policy.
+   *
+   * The node suite renders it with `react-dom/server`, which can see what the
+   * markup says and nothing about what a press does. Three things can only fail
+   * here: the menu is a Radix portal, which writes inline styles that
+   * `style-src 'self'` refuses outright unless `lib/scroll-lock` is aliased in;
+   * the clipboard is a browser API; and the whole point of the exercise is that
+   * what leaves on the clipboard is *not* what the reader is looking at.
+   */
+  it("copies the whole fingerprint from a control, under the shipped policy", async () => {
+    await search("alice@corp.test");
+
+    // The clipboard is stubbed rather than granted, because the assertion is
+    // about the argument, not about Chromium's clipboard: `writeText` is what
+    // the component calls, and what it is called with is the claim.
+    await page.evaluate(() => {
+      /** @type {string[]} */
+      const wrote = [];
+      Object.defineProperty(window, "__copied", { value: wrote, configurable: true });
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText: async (t) => void wrote.push(String(t)) },
+        configurable: true,
+      });
+    });
+
+    await page.click(".result-fpr .fingerprint-value");
+    await page.waitForFunction(
+      () => (document.querySelector(".fingerprint-said")?.textContent || "").length > 0,
+      undefined,
+      { timeout: 5000 }
+    );
+
+    const copied = await page.evaluate(() => window.__copied);
+    expect(copied).toHaveLength(1);
+    expect(copied[0].replace(/\s+/g, "")).toBe(alice.fingerprint);
+    // Grouped, which is the one spelling `findFingerprints` is built to recover
+    // — so this pastes back into the session invite box and names the same key.
+    expect(copied[0]).not.toBe(alice.fingerprint);
+
+    // And it said what it copied, on screen, counting the characters rather
+    // than implying it got all of them.
+    expect(await page.textContent(".fingerprint-said")).toMatch(
+      /Copied the whole fingerprint — all 40 characters/
+    );
+  });
+
+  it("opens the fingerprint's actions without the policy refusing the menu", async () => {
+    await search("alice@corp.test");
+    await page.click(".result-fpr .fingerprint-actions");
+    await page.waitForSelector(".fingerprint-menu", { timeout: 5000 });
+
+    const menu = await page.$eval(".fingerprint-menu", (el) => ({
+      text: el.textContent || "",
+      href: el.querySelector("a")?.getAttribute("href") || "",
+      // The trust mark has never been set in this browser, so exactly one row
+      // refuses — and it names the state the reader is in rather than going
+      // grey. `aria-disabled`, so it is still in the arrow-key walk.
+      refusing: [...el.querySelectorAll('[aria-disabled="true"]')].map(
+        (r) => r.textContent || ""
+      ),
+    }));
+    expect(menu.text).toContain("Copy the whole fingerprint");
+    expect(menu.href).toBe(`/key?fpr=${alice.fingerprint}`);
+    expect(menu.refusing.join(" ")).toMatch(/no trust mark on this key/);
+    // A room is not on offer here: the search page has no session, so the row
+    // is absent rather than refused.
+    expect(menu.text).not.toContain("Add to the room");
+
+    // The portal is where a CSP failure would land, and it would land silently.
+    expect(await fixture.peers[0].cspViolations()).toEqual([]);
+    await page.keyboard.press("Escape");
+  });
+
   it("did all of that inside its own Content-Security-Policy", async () => {
     // The page writes the cautions and the help snippets with innerHTML, which
     // is exactly the shape `script-src 'self'` exists to keep honest.

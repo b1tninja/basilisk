@@ -1,5 +1,6 @@
 import { Cable, Copy, RotateCw, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { meshHealth } from "@/lib/notebook/relay.js";
 import {
   connStateReadout,
@@ -30,9 +31,7 @@ export type ConnectionPeer = {
    * in `lib/notebook/roster.js` for why a truncation cannot be an identity.
    */
   id: string;
-  /** `AABBCCDD…EEFF` — which key the label is attached to, for a reader. */
-  display?: string;
-  /** Full key fingerprint when the row comes from a live quorum roster. */
+  /** The whole key fingerprint when the row comes from a live quorum roster. */
   fingerprint?: string;
   state: "new" | "connecting" | "connected" | "disconnected" | "failed" | "closed";
   /** Verified against a published key, per the signed-transcript design. */
@@ -104,20 +103,26 @@ function PeerRow({ peer }: { peer: ConnectionPeer }) {
         data-peer-state={peer.state}
         aria-hidden
       />
-      {/* The label is what a cell header addresses (`@peer2`), so it is what
-          the row is named by; the short fingerprint beside it says which key
-          that label is attached to. They are different questions and the row
-          answers both — reading only the abbreviation is how a display form
-          came to be used as an identity in the first place. */}
-      <code
-        className="min-w-0 shrink-0 font-mono text-[11px] text-[var(--foreground)]"
-        title={peer.fingerprint || undefined}
-      >
-        {peer.id}
-      </code>
-      <code className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-[var(--muted-foreground)]">
-        {peer.display}
-      </code>
+      {/* One element for both questions, where there used to be two. The label
+          is what a cell header addresses (`@peer2`), so it is what the row is
+          named by — and pressing it copies the whole fingerprint of the key it
+          is attached to. What sat beside it was `AABBCCDD…EEFF`, which invited
+          the reader to check twelve of forty characters and told them nothing
+          about the rest; the row is shorter now and publishes none of the key.
+          Rows with no fingerprint (a direct link, no identity) keep the plain
+          label: there is nothing to copy and nothing to act on. */}
+      {peer.fingerprint ? (
+        <Fingerprint
+          className="min-w-0 flex-1 text-[11px] text-[var(--foreground)]"
+          fpr={peer.fingerprint}
+          variant="compact"
+          label={peer.id}
+        />
+      ) : (
+        <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]">
+          {peer.id}
+        </code>
+      )}
       {peer.via ? (
         <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
           {peer.via}

@@ -18,6 +18,7 @@ import {
   mapPacketSpans,
 } from "../packet-map.js";
 import { qrSvg } from "../qr.js";
+import { formatFingerprint } from "../utils.js";
 import { DEFAULT_OUT_SLOT, SLOT_SIGIL } from "./recipe-parse.js";
 import {
   PROFILE_AUTO,
@@ -3714,8 +3715,12 @@ async function resolveEncryptRecipients(bindings, toParam, policy = "ask") {
       const loaded = await loadRecipientKey(fpr);
       armored = String(loaded?.armoredKey || "").trim();
       if (!armored.includes("BEGIN PGP")) {
+        // Whole: this names the recipient an encryption refused to reach, and
+        // eight hex characters is the length `pages/index.tsx` warns is
+        // collision-prone. Nothing about an error message needs to be short,
+        // and there is no control beside one to reveal the rest.
         throw new Error(
-          loaded?.error || `Could not load public key for ${fpr.slice(-8)}`
+          loaded?.error || `Could not load public key for ${formatFingerprint(fpr)}`
         );
       }
     }

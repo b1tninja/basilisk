@@ -6,7 +6,8 @@ import { createRoot } from "react-dom/client";
 import { useEffect, useRef, useState } from "react";
 import { Layout } from "../components/Layout";
 import { normalizeSearchQuery } from "../lib/pgp/verify-fpr.js";
-import { fetchJson, formatFingerprint, queryParam } from "../lib/utils.js";
+import { fetchJson, queryParam } from "../lib/utils.js";
+import { Fingerprint } from "../components/ui/fingerprint";
 import { sortByTrust } from "../lib/trust.js";
 import { userLabelOf } from "../lib/key-hit.js";
 import { renderSearchHelpSnippets, wireSnippetCopy } from "../lib/snippets.js";
@@ -62,8 +63,16 @@ function ResultCard({ item }: { item: KeyHit }) {
             </span>
           ) : null}
         </div>
+        {/* This page already printed the whole fingerprint — it is the page
+            that tells the reader to check one. What it did not do was let them
+            take it anywhere: the value was inert text beside a View button, so
+            confirming a key out of band meant selecting 49 characters by hand.
+            Same characters, now a control that copies all of them, marks trust,
+            and opens the key page. */}
         {item.fingerprint ? (
-          <div className="result-fpr">{formatFingerprint(item.fingerprint)}</div>
+          <div className="result-fpr">
+            <Fingerprint fpr={item.fingerprint} />
+          </div>
         ) : null}
       </div>
       <a className="result-view-btn" href={`/key?fpr=${encodeURIComponent(item.fingerprint || "")}`}>

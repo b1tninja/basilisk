@@ -52,6 +52,23 @@ export {
 export { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/tooltip";
 export { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 
+/**
+ * The fingerprint, which is a primitive here for the same reason `Button` is.
+ *
+ * It is not a toolkit widget: it is on the keyserver search page, on the key
+ * cards, in the roster, in the invite and in the Keyring, and it is the only
+ * way a fingerprint is drawn in any of them. A design tool without it will draw
+ * one — and what it will draw is `AABBCCDD…EEFF`, because that is what every
+ * screenshot of this app used to show and what every other product shows. That
+ * form is the thing this component exists to remove.
+ *
+ * `fingerprintActions` rides along for the reason `startIssues` does: the
+ * component renders a menu of rows it does not write, and a catalog with no
+ * access to the function can only invent labels and refusals that will drift
+ * from the product's. Not in `componentSrcMap` — it renders nothing on its own.
+ */
+export { Fingerprint, fingerprintActions, ALREADY_IN_ROOM } from "./components/ui/fingerprint";
+
 // Toolkit parts that render without the notebook around them.
 export { SuggestChip } from "./toolkit/widgets/SuggestChip";
 export { ArtifactAction } from "./toolkit/widgets/ArtifactAction";

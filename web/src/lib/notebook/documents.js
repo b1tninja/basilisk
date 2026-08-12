@@ -69,6 +69,7 @@
 import { readCleartextMessage, verify } from "openpgp";
 import { signatureVerificationDate } from "../pgp/clock.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
+import { formatFingerprint } from "../utils.js";
 import { parseAttestation } from "../toolkit/attest.js";
 import { parseCellResult, parseHandoffOffer } from "../toolkit/handoff.js";
 import { manifestDigest, parseManifest } from "../toolkit/manifest.js";
@@ -146,10 +147,22 @@ export function looksCleartextSigned(text) {
   return CLEARTEXT_HEAD.test(String(text ?? "").trim());
 }
 
-/** @param {string} fpr */
-function short(fpr) {
+/**
+ * The whole fingerprint, in an error message, in the one spelling.
+ *
+ * This printed eight hex characters and an ellipsis — 32 bits, which is the
+ * exact length `pages/index.tsx` warns is collision-prone. A log line is not a
+ * place where space is scarce, and it is the *worst* place to shorten one:
+ * there is no press to reveal the rest, so a reader who wants to know which key
+ * refused a document has nowhere to go. Whole, and grouped like everything else
+ * this product prints, so `findFingerprints` recovers it out of a pasted error
+ * message and the paste box adds the key it was about.
+ *
+ * @param {string} fpr
+ */
+function whole(fpr) {
   const f = normalizeFingerprintInput(fpr);
-  return f ? `${f.slice(0, 8)}…` : "(none)";
+  return f ? formatFingerprint(f) : "(none)";
 }
 
 /** @param {unknown} err */
@@ -178,7 +191,7 @@ export async function verifySignedBy(signed, { key, fpr, what = "document" }) {
   }
   if (!key) {
     throw new Error(
-      `notebook: no public key is held for ${short(expected)}, so a ${what} from ` +
+      `notebook: no public key is held for ${whole(expected)}, so a ${what} from ` +
         "them can be checked against nothing"
     );
   }
@@ -187,8 +200,8 @@ export async function verifySignedBy(signed, { key, fpr, what = "document" }) {
   const keyFpr = normalizeFingerprintInput(key.getFingerprint?.() || "");
   if (keyFpr !== expected) {
     throw new Error(
-      `notebook: the key held for ${short(expected)} carries fingerprint ` +
-        `${short(keyFpr)} — refusing to check a ${what} against a key that is ` +
+      `notebook: the key held for ${whole(expected)} carries fingerprint ` +
+        `${whole(keyFpr)} — refusing to check a ${what} against a key that is ` +
         "not this peer's"
     );
   }
@@ -199,7 +212,7 @@ export async function verifySignedBy(signed, { key, fpr, what = "document" }) {
     clear = await readCleartextMessage({ cleartextMessage: String(signed ?? "") });
   } catch (err) {
     throw new Error(
-      `notebook: ${what} from ${short(expected)} is not an OpenPGP ` +
+      `notebook: ${what} from ${whole(expected)} is not an OpenPGP ` +
         `cleartext-signed document (${reason(err)}). A detached signature is two ` +
         "objects and this frame carries one; sign with the default cleartext form."
     );
@@ -214,7 +227,7 @@ export async function verifySignedBy(signed, { key, fpr, what = "document" }) {
     date: signatureVerificationDate(),
   });
   if (!signatures?.length) {
-    throw new Error(`notebook: ${what} from ${short(expected)} carries no signature`);
+    throw new Error(`notebook: ${what} from ${whole(expected)} carries no signature`);
   }
   const keyIDs = key.getKeyIDs?.() || [];
   for (const sig of signatures) {
@@ -234,7 +247,7 @@ export async function verifySignedBy(signed, { key, fpr, what = "document" }) {
     return clear.getText();
   }
   throw new Error(
-    `notebook: ${what} from ${short(expected)} is not signed by that peer. The ` +
+    `notebook: ${what} from ${whole(expected)} is not signed by that peer. The ` +
       "signature may be perfectly good — it is not theirs, and a signature that " +
       "verifies against some key is not one that verifies against this one."
   );

@@ -1,5 +1,6 @@
 import { useId } from "react";
 import { Button } from "@/components/ui/button";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { cn } from "@/lib/cn";
 import { INVITE_CARRIES, INVITE_OMITS } from "../../lib/toolkit/session-flow.js";
 
@@ -31,12 +32,6 @@ export type InviteCardProps = {
   className?: string;
 };
 
-/** `AABBCCDD…EEFF`, matching `shortFpr` in the roster projection. */
-function shortFpr(fpr: string): string {
-  const f = String(fpr || "").toUpperCase();
-  return f.length > 12 ? `${f.slice(0, 8)}…${f.slice(-4)}` : f;
-}
-
 /**
  * The invite — a list of public fingerprints, and a promise about everything it
  * is not.
@@ -58,6 +53,13 @@ function shortFpr(fpr: string): string {
  * cannot check; the fingerprints are the thing they compare against the ones
  * they meant to invite, and inviting the wrong key is the one mistake this
  * screen can still make after everything above it has been proved.
+ *
+ * "In full" was, until now, a claim this card did not honour: the paragraph
+ * above was already written and the list underneath it printed
+ * `AABBCCDD…EEFF`. Twelve of forty characters is not the thing anybody compares
+ * against an invitation, and on the one card whose whole argument is that the
+ * reader should check the list, it was the worst place in the product to
+ * shorten. Each row is a whole fingerprint now.
  */
 export function InviteCard({
   url,
@@ -99,12 +101,10 @@ export function InviteCard({
             className="flex items-baseline gap-1.5"
             data-invite-member={fpr.toUpperCase() === me ? "self" : "peer"}
           >
-            <code
-              className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-[var(--foreground)]"
-              title={fpr}
-            >
-              {shortFpr(fpr)}
-            </code>
+            <Fingerprint
+              className="min-w-0 flex-1 text-[10.5px] text-[var(--foreground)]"
+              fpr={fpr}
+            />
             {fpr.toUpperCase() === me ? (
               <span className="shrink-0 text-[9.5px] text-[var(--muted-foreground)]">you</span>
             ) : null}
