@@ -1564,8 +1564,8 @@ input[type=file] { display: none; }
   border: 1px solid var(--border);
 }
 .verify-result.pass {
-  border-color: color-mix(in srgb, var(--ok, #2f9e44) 50%, var(--border));
-  background: color-mix(in srgb, var(--ok, #2f9e44) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--success) 50%, var(--border));
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
 }
 .verify-result.fail {
   border-color: color-mix(in srgb, var(--error) 50%, var(--border));
@@ -2470,7 +2470,7 @@ input[type=file] { display: none; }
   background: #d4a017;
 }
 .pw-strength-meter[data-strength="strong"] .pw-strength-fill {
-  background: var(--ok, #2f9e44);
+  background: var(--success);
 }
 .pw-strength-label {
   margin: 0.35rem 0 0;
@@ -2771,7 +2771,7 @@ input[type=file] { display: none; }
   padding: 0.3rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--bg-input, var(--bg-card));
+  background: var(--surface-raised);
   color: var(--text);
   font-size: 0.85rem;
 }
@@ -2799,7 +2799,7 @@ input[type=file] { display: none; }
 .key-label-details {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--bg-card);
+  background: var(--surface-raised);
 }
 
 .key-label-details[open] {
@@ -3553,12 +3553,12 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--warn, #c90) 12%, transparent);
 }
 .cell-runtime-zone.cell-runtime-ready {
-  border-color: color-mix(in srgb, var(--ok, #2a7) 40%, var(--border));
-  border-left-color: color-mix(in srgb, var(--ok, #2a7) 75%, var(--border));
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  border-left-color: color-mix(in srgb, var(--success) 75%, var(--border));
   background:
     linear-gradient(
       135deg,
-      color-mix(in srgb, var(--ok, #2a7) 8%, transparent) 0%,
+      color-mix(in srgb, var(--success) 8%, transparent) 0%,
       transparent 42%
     ),
     color-mix(in srgb, var(--surface) 45%, var(--surface-raised));
@@ -3581,7 +3581,7 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   color: color-mix(in srgb, var(--warn, #c90) 90%, var(--text));
 }
 .cell-runtime-ready .cell-runtime-kicker {
-  color: color-mix(in srgb, var(--ok, #2a7) 85%, var(--text));
+  color: color-mix(in srgb, var(--success) 85%, var(--text));
 }
 .cell-runtime-zone .card-title {
   margin: 0;
@@ -3632,7 +3632,7 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
 }
 .cell-bind-messaging.cell-runtime-ready::before {
   content: "Recipients";
-  color: color-mix(in srgb, var(--ok, #2a7) 85%, var(--text));
+  color: color-mix(in srgb, var(--success) 85%, var(--text));
 }
 /* Messaging binder: quiet chrome, but never hide the keyserver control —
    :focus-within + display:none steals the native <select> mid-click. */
@@ -3960,7 +3960,7 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   display: block;
 }
 .cell-recipe-chip-pop-error {
-  border-color: color-mix(in srgb, var(--danger, #c44) 45%, var(--border));
+  border-color: color-mix(in srgb, var(--error) 45%, var(--border));
 }
 .cell-recipe-chip-doc {
   display: flex;
@@ -4033,7 +4033,7 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   white-space: normal;
 }
 .cell-recipe-chip-io-side:last-child .cell-recipe-chip-io-type {
-  background: color-mix(in srgb, var(--ok, #3d9a6a) 10%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 .cell-recipe-chip-io-arrow {
   align-self: center;
@@ -4251,8 +4251,8 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   background: color-mix(in srgb, var(--text-muted) 12%, transparent);
 }
 .cell-status-ok {
-  color: var(--ok, #2a7);
-  background: color-mix(in srgb, var(--ok, #2a7) 14%, transparent);
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
 }
 .cell-status-error {
   color: var(--error, #b33);
@@ -5312,13 +5312,13 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   background: color-mix(in srgb, var(--accent, #7aa2f7) 14%, var(--surface));
 }
 .toolbox-openpgp {
-  border-color: color-mix(in srgb, var(--ok, #3d9a6a) 45%, var(--border));
-  color: color-mix(in srgb, var(--ok, #3d9a6a) 85%, var(--text));
-  background: color-mix(in srgb, var(--ok, #3d9a6a) 8%, var(--surface-raised));
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  color: color-mix(in srgb, var(--success) 85%, var(--text));
+  background: color-mix(in srgb, var(--success) 8%, var(--surface-raised));
 }
 .toolbox-openpgp .toolbox-badge-mark {
-  border-color: color-mix(in srgb, var(--ok, #3d9a6a) 40%, var(--border));
-  background: color-mix(in srgb, var(--ok, #3d9a6a) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  background: color-mix(in srgb, var(--success) 14%, var(--surface));
 }
 .toolbox-sss {
   border-color: color-mix(in srgb, var(--warn, #c47d2b) 45%, var(--border));
@@ -5567,8 +5567,8 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   border-left: 2px dashed var(--accent, #7aa2f7);
 }
 .builder-out {
-  border-left: 3px solid var(--ok, #3dd68c);
-  background: color-mix(in srgb, var(--ok, #3dd68c) 6%, transparent);
+  border-left: 3px solid var(--success);
+  background: color-mix(in srgb, var(--success) 6%, transparent);
 }
 .builder-text {
   border-left: 3px solid var(--brand);
@@ -5804,9 +5804,9 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   text-overflow: ellipsis;
 }
 .builder-type-ghost-error {
-  color: var(--danger, #b91c1c);
-  border-color: color-mix(in srgb, var(--danger, #b91c1c) 40%, transparent);
-  background: color-mix(in srgb, var(--danger, #b91c1c) 10%, transparent);
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
 }
 .builder-branch-selector {
   cursor: default;
@@ -6069,7 +6069,7 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   cursor: help;
 }
 .builder-type-error {
-  border-color: color-mix(in srgb, var(--danger, #c44) 55%, var(--border));
+  border-color: color-mix(in srgb, var(--error) 55%, var(--border));
 }
 .builder-type-hint code {
   font-size: 0.85em;
@@ -6329,8 +6329,8 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   border: 1px solid var(--border);
 }
 .share-badge-ok {
-  color: var(--ok, #3fb950);
-  border-color: color-mix(in srgb, var(--ok, #3fb950) 40%, var(--border));
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
 }
 .share-badge-bad {
   color: var(--error, #ff7b72);
