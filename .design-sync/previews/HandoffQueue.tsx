@@ -37,6 +37,27 @@ export const Nothing = () => (
 );
 
 /**
+ * **The first thing a reload shows** — no session, nothing planned away, and an
+ * answer you owed a minute ago missing from a panel that cannot say it ever
+ * existed. The second paragraph is the whole reason this story is separate.
+ *
+ * "You owe them an answer" is built from a press. Accepting an offer is the only
+ * moment anything knows a result will be owed, and that knowledge lives in shell
+ * state a reload ends. Nothing restores it because nothing recorded it —
+ * `quorum-ops` keeps no record of what it delivered and the session keeps none
+ * of what it accepted, which is the property the exchange exists to have.
+ * Writing the list to storage would trade that away to redraw a row.
+ *
+ * So the panel says it, and it has something worth saying: `offerCell` does not
+ * remove the cell from the sender's skipped list, so their press is still
+ * sitting there. Asking them to hand it over again recovers the whole thing,
+ * and this paragraph is the only place a reader is ever told so.
+ */
+export const AfterAReload = () => (
+  <HandoffQueue {...actions} live={false} pending={[]} placedAway={[]} owedBack={[]} />
+);
+
+/**
  * **No session, and the honest version of that.** A cell with an `@peer` header
  * is still planned and still declined at run time — placement does not depend on
  * a connection — it just has nowhere to go. Saying "nothing pending" here would

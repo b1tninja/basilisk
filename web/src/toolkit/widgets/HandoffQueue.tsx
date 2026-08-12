@@ -102,11 +102,29 @@ export function HandoffQueue({
       </h4>
 
       {empty ? (
-        <p className="text-[10.5px] leading-snug text-[var(--muted-foreground)]">
-          {live
-            ? "Nothing is waiting on anybody. Give a cell an @peer header and run — the cells that are not yours are declined here and offered to whoever owns them."
-            : "No session, so nothing can cross. A cell with an @peer header is still planned and still declined at run time; it just has nowhere to go."}
-        </p>
+        <>
+          <p className="text-[10.5px] leading-snug text-[var(--muted-foreground)]">
+            {live
+              ? "Nothing is waiting on anybody. Give a cell an @peer header and run — the cells that are not yours are declined here and offered to whoever owns them."
+              : "No session, so nothing can cross. A cell with an @peer header is still planned and still declined at run time; it just has nowhere to go."}
+          </p>
+          {/* The third list is shell state built when a person presses accept,
+              and a reload ends it. Persisting it is the wrong fix: it would put
+              a record of who sent you what somewhere `quorum-ops` and the
+              session both deliberately keep it out of. The recovery is real
+              and unaided — `offerCell` does not consume the skipped cell — so
+              the honest move is to say where it went and what to ask for. */}
+          <p
+            className="text-[10.5px] leading-snug text-[var(--muted-foreground)]"
+            data-handoff-reload
+          >
+            If you accepted a cell before a reload, the answer you owed is not
+            listed here and will not come back: nothing wrote down what you took.
+            Sending an offer does not spend it, so the cell is still theirs and
+            their plan still says so — ask them to hand it over again, and
+            accepting it puts the answer back in this list.
+          </p>
+        </>
       ) : null}
 
       {placedAway.length ? (

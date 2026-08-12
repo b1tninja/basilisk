@@ -318,6 +318,29 @@ export class NotebookSession {
      * @type {Promise<void>}
      */
     this._inbound = Promise.resolve();
+    /**
+     * Outbound envelopes leave in the order they were made, per peer.
+     *
+     * The mirror of `_inbound`, and it exists for a sharper reason. Sealing an
+     * envelope is a few milliseconds of OpenPGP, so two `_sendTo` calls a
+     * microtask apart seal *concurrently* and reach the wire in whichever order
+     * their crypto finishes — and one pair is not free to be reordered. A
+     * description and the ICE candidates gathered from it are made back to
+     * back: `setLocalDescription` returns the answer and schedules the
+     * candidates, so `answer` is sent first and `ice` a moment later. Arriving
+     * the other way round, `addIceCandidate` runs against a peer connection
+     * with no remote description, which is an `InvalidStateError` in the fake
+     * transport and in every browser.
+     *
+     * Nothing held that order. Measured over 60 handshakes the answer won by
+     * 0.5–3 ms, which is a coincidence of two seals of similar cost, not a
+     * guarantee — one WebCrypto call landing on a busy thread inverts it, and
+     * `notebook-signal-order.test.js` makes that inversion happen on purpose.
+     * Keyed by peer so a slow send to one member cannot delay another's
+     * handshake; ordering only ever mattered within a pair.
+     * @type {Map<string, Promise<void>>}
+     */
+    this._outbound = new Map();
   }
 
   /**
@@ -1729,6 +1752,38 @@ export class NotebookSession {
    *   (and therefore unrelayable) by everyone else.
    */
   async _sendTo(toFpr, fields, opts = {}) {
+    const prior = this._outbound.get(toFpr) || Promise.resolve();
+    // `then(work, work)` rather than `finally`: a send that failed still had
+    // its turn, and the next one in line is owed the wire either way.
+    const run = prior.then(
+      () => this._sealAndSend(toFpr, fields, opts),
+      () => this._sealAndSend(toFpr, fields, opts)
+    );
+    // The chain remembers only that the turn is over. A rejection belongs to
+    // whoever asked for that send — carrying it forward would fail the next
+    // one for something it did not do.
+    this._outbound.set(
+      toFpr,
+      run.then(
+        () => {},
+        () => {}
+      )
+    );
+    return run;
+  }
+
+  /**
+   * Seal one envelope and put it on whichever wire will take it.
+   *
+   * Split from `_sendTo` so the ordering above wraps the whole seal-and-send,
+   * not just the send: it is the seal that varies in length, so serialising
+   * only the last step would leave the race exactly where it was.
+   *
+   * @param {string} toFpr
+   * @param {Partial<import("./crypto.js").NotebookEnvelopePayload>} fields
+   * @param {{ recipients?: string[] }} opts
+   */
+  async _sealAndSend(toFpr, fields, opts) {
     const only = opts.recipients
       ? new Set(opts.recipients.map((f) => normalizeFingerprintInput(f)))
       : null;

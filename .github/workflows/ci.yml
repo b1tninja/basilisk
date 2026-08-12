@@ -41,6 +41,20 @@ jobs:
         run: |
           npm ci
           npm run build
+      # vite strips types without reading them, so a green build says nothing
+      # about whether the portal typechecks. Nothing ran tsc until this step:
+      # that is how a used-but-never-imported symbol, a duplicate import and a
+      # four-argument call to a three-argument function all reached main.
+      - name: Typecheck portal
+        working-directory: web
+        run: npm run typecheck
+      # The portal's own suite, which CI also never ran. Among it is
+      # src/test/sources-parse.test.js, the guard on the step above: a file
+      # that fails to parse stops tsc there and takes the whole repo out of
+      # its report, leaving a red typecheck that looks like one small problem.
+      - name: Test portal
+        working-directory: web
+        run: npm test
       - name: Node vulnerability audit
         working-directory: web
         run: npm audit --audit-level=moderate

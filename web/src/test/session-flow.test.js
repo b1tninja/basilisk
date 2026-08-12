@@ -463,6 +463,28 @@ describe("the handoff arc finally has a surface", () => {
     // And the rule the middle list exists to state.
     expect(QUEUE).toMatch(/registers nothing|Accepting is what/);
   });
+
+  it("says a reload drops what you owed, and how to get it back", () => {
+    // The third list is shell state built at the accept press, so a reload ends
+    // it and nothing restores it. That is deliberate: persisting it would put a
+    // record of what crossed in storage the exchange is built to do without.
+    // What the panel owes the reader is therefore the recovery, not the row —
+    // `offerCell` leaves the cell in the sender's skipped list, so their press
+    // survives and asking them to repeat it is a complete fix.
+    expect(QUEUE).toContain("data-handoff-reload");
+    expect(QUEUE).toMatch(/nothing wrote down what you took/);
+    expect(QUEUE).toMatch(/ask them to hand it over again/);
+  });
+
+  it("leaves the accepted cell in the sender's list, which is what makes that true", () => {
+    // The sentence above is only honest while `offerCell` is non-destructive.
+    // If sending ever consumed the skipped entry, the recovery it promises
+    // would stop existing and the copy would have to change with it.
+    expect(HOOK).toMatch(
+      /const skipped = skippedRef\.current\.find\(\(sk\) => sk\.cell === cell\);/
+    );
+    expect(HOOK).not.toMatch(/skippedRef\.current\s*=\s*skippedRef\.current\.filter/);
+  });
 });
 
 describe("the session's window is a window, and not a fourth Share row", () => {
