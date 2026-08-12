@@ -212,9 +212,12 @@ describe("the signalling tunnel", () => {
     expect(hub.bytes().length).toBeGreaterThan(0);
   });
 
-  it("names a message left unfinished when the client goes away", async () => {
-    // Held fragments are not quietly discarded on disconnect: they go on, and
-    // the fact that nobody read them is recorded.
+  it("names a message left unfinished when the client goes away, and drops it", async () => {
+    // Two claims, and the second is the one that was missing. A message whose
+    // final frame never arrived is not a message: forwarding the pieces would
+    // hand the hub a truncated payload the client never finished sending, and
+    // would leave the room's record of it missing — the silent loss this file
+    // exists to prevent. So it is named *and* dropped.
     const { socket, server, hub } = await tunnel(async (text) => text);
     socket.write(clientFrame(0x1, "never finished", false));
     await settle();
@@ -223,8 +226,51 @@ describe("the signalling tunnel", () => {
 
     expect(server.tunnelFaults()).toEqual([
       "the client went away mid-message: a fragmented text message was never" +
-        " finished, so its fragments were forwarded unread",
+        " finished, so nothing was forwarded",
     ]);
+    expect(hub.bytes()).toHaveLength(0);
+  });
+
+  it("names a message interrupted by a close, and drops it", async () => {
+    // The other interruption. A close ends the conversation, so the fragments
+    // can never be completed — but the close itself still goes on, because the
+    // hub is entitled to know the client is leaving.
+    const { socket, server, hub } = await tunnel(async (text) => text);
+    socket.write(clientFrame(0x1, "half a message", false));
+    await settle();
+    socket.write(clientFrame(0x8, ""));
+    await settle();
+
+    const faults = server.tunnelFaults();
+    expect(faults).toHaveLength(1);
+    expect(faults[0]).toMatch(/closed mid-message/);
+    expect(faults[0]).toMatch(/nothing was forwarded/);
+    // The close frame reached the hub; the abandoned fragments did not.
+    const wire = hub.bytes();
+    expect(wire.length).toBeGreaterThan(0);
+    expect(wire[0] & 0x0f, "only the close is on the wire").toBe(0x8);
+  });
+
+  it("drops an unfinished message interrupted by a new one, and names both", async () => {
+    // A client that starts a second message before finishing the first is a
+    // protocol error, and the first can never be completed. The second is an
+    // ordinary message and is handled normally.
+    /** @type {string[]} */
+    const seen = [];
+    const { socket, server, hub } = await tunnel(async (text) => {
+      seen.push(text);
+      return text;
+    });
+    socket.write(clientFrame(0x1, "abandoned", false));
+    socket.write(clientFrame(0x1, "whole"));
+    await settle();
+
+    expect(seen, "only the complete message is shown to the hook").toEqual(["whole"]);
+    expect(server.tunnelFaults()).toHaveLength(1);
+    expect(server.tunnelFaults()[0]).toMatch(/new text message began/);
+    expect(server.tunnelFaults()[0]).toMatch(/nothing was forwarded/);
+    // The second message went on; the first did not, so the hub sees exactly
+    // one frame carrying "whole".
     expect(hub.bytes().length).toBeGreaterThan(0);
   });
 

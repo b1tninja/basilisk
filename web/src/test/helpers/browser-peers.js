@@ -120,11 +120,25 @@ function pumpFrames(socket, upstream, onSignal, onFault) {
    */
   let open = null;
 
-  /** Let go of a half-built message, loudly — it is a message nobody saw. */
+  /**
+   * Let go of a half-built message — loudly, and without passing it on.
+   *
+   * Both halves matter, and the second was missing. These fragments were
+   * forwarded once, on the reasoning that dropping a frame is worse than
+   * letting it through unread. That reasoning holds for a *complete* message
+   * the tunnel could not inspect; it is wrong here, because a message that
+   * never received its final frame is not a message. Forwarding the pieces
+   * hands the hub a truncated payload the client never finished sending, and
+   * leaves the room's record of it missing — the same silent loss closed for
+   * every other case.
+   *
+   * So: fault, and drop. Nothing downstream is entitled to half a message, and
+   * a run that needed it fails on the fault rather than on whatever the hub
+   * made of the fragments.
+   */
   const abandonOpen = (why) => {
     if (!open) return;
     onFault(why);
-    upstream.write(Buffer.concat(open.frames));
     open = null;
   };
 
@@ -177,7 +191,7 @@ function pumpFrames(socket, upstream, onSignal, onFault) {
             if (opcode === 0x8) {
               abandonOpen(
                 "closed mid-message: a fragmented text message was still open when the" +
-                  " client sent close, so its fragments were forwarded unread"
+                  " client sent close, so nothing was forwarded"
               );
             }
             upstream.write(bytes);
@@ -201,7 +215,7 @@ function pumpFrames(socket, upstream, onSignal, onFault) {
             // client's side. Nothing sensible can be reassembled from it.
             abandonOpen(
               "a new text message began while a fragmented one was still open;" +
-                " the unfinished fragments were forwarded unread"
+                " the unfinished fragments were dropped and nothing was forwarded"
             );
             if (fin) {
               await deliver(payload.toString("utf8"), bytes);
@@ -241,7 +255,7 @@ function pumpFrames(socket, upstream, onSignal, onFault) {
     chain.finally(() => {
       abandonOpen(
         "the client went away mid-message: a fragmented text message was never" +
-          " finished, so its fragments were forwarded unread"
+          " finished, so nothing was forwarded"
       );
       upstream.end();
     });
