@@ -276,8 +276,18 @@ export function createKernel() {
    * @param {number} cellIndex
    * @param {import("./recipe.js").RecipeChain|import("./recipe.js").RecipeStep[]} chainOrSteps
    * @param {import("./engine.js").RuntimeBindings} [bindings]
+   * @param {{ plan: import("./plan.js").RunPlan,
+   *   onSkip: (s: import("./placement.js").SkippedCell) => void }} [placement]
+   *   Who runs what. Absent, the gate is never built and this runs exactly what
+   *   it ran before — `placement.js` is explicit that no placement and a
+   *   permissive one are different things, and defaulting one to the other is
+   *   how a partly-filled plan silently runs somebody else's cell here.
+   *
+   *   `firstCell` is the cell's index *in the plan*: this runs one chain at a
+   *   time against a one-chain AST, so the chain's own index is always 0 and
+   *   the gate has to be told which cell that actually is.
    */
-  const runCell = async (cellIndex, chainOrSteps, bindings = {}) => {
+  const runCell = async (cellIndex, chainOrSteps, bindings = {}, placement = undefined) => {
     const chain = Array.isArray(chainOrSteps)
       ? { steps: chainOrSteps }
       : chainOrSteps;
@@ -316,6 +326,9 @@ export function createKernel() {
         {
           slotRegistry: slots,
           allowReplaceSlots: true,
+          ...(placement
+            ? { placement: { ...placement, firstCell: cellIndex } }
+            : {}),
         }
       );
       cellOutputs.set(cellIndex, artifacts);
@@ -338,9 +351,11 @@ export function createKernel() {
   /**
    * @param {import("./recipe.js").RecipeChain[]} chains
    * @param {import("./engine.js").RuntimeBindings} [bindings]
-   * @param {{ from?: number }} [opts]
+   * @param {{ from?: number, placement?: { plan: import("./plan.js").RunPlan,
+   *   onSkip: (s: import("./placement.js").SkippedCell) => void } }} [opts]
    */
   const runAll = async (chains, bindings = {}, opts = {}) => {
+    const { placement } = opts;
     const list = recipeChains(chains);
     const from = opts.from ?? 0;
     /** @type {import("./engine.js").ToolkitArtifact[][]} */
@@ -350,7 +365,7 @@ export function createKernel() {
         all.push([]);
         continue;
       }
-      all.push(await runCell(i, list[i], bindings));
+      all.push(await runCell(i, list[i], bindings, placement));
     }
     return all;
   };

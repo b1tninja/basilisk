@@ -46,36 +46,30 @@
  * 3. **The clicks are `page.evaluate` calls.** There is no UI to click, which
  *    is not a limitation of the harness; see the next paragraph.
  *
- * ## What the bundle can do, and what it still cannot
+ * ## What the bundle can do
  *
- * This used to say the shipped bundle could do none of it: all five of
- * `planRun`, `buildOfferFor`, `acceptHandoffOffer`, `buildResultFor` and
- * `acceptCellResult` were dropped by Rollup because nothing called them, and
- * the assertion below required every one to be missing. Two things have since
- * been written, so the finding has moved rather than gone.
+ * All five of `planRun`, `buildOfferFor`, `acceptHandoffOffer`,
+ * `buildResultFor` and `acceptCellResult` now ship, and this file has watched
+ * that number go from none to five.
  *
- * `planRun` ships: `PlanPanel` reads it and the Connections tab renders where
- * every cell runs. Both accept halves ship: `useNotebook.acceptHandoff` checks
- * an offer or a result that arrived and registers the bindings it returns —
- * from a function only a person's press reaches, which is the consent rule
- * `handoff.js` states, held one layer out.
+ * `useNotebook.runFrom` builds a plan when the room can bind the notebook's
+ * labels and passes it as `engine.js`'s `placement`, so the gate reports the
+ * cells this peer declined. `offerCell` hands one of those to the peer that
+ * owns it. `sendCellResult` signs what a cell wrote with the key the session
+ * was opened under, because `sendResult` refuses anything not cleartext-signed.
+ * `acceptHandoff` checks an offer or a result that arrived and registers the
+ * bindings it returns — from a function only a press reaches, which is the
+ * consent rule `handoff.js` states, held one layer out.
  *
- * `buildOfferFor` and `buildResultFor` are still dropped, and the reason is
- * specific rather than incidental. Building an offer needs the gate to have
- * skipped a cell, which means a *placed* run, and nothing in the shell passes
- * `engine.js`'s `placement` yet. Building a result needs that and a signing
- * key, since `sendResult` takes a cleartext-signed document. So a cell placed
- * on a peer still cannot leave this machine — the notebook can now say where
- * it should run and accept the answer, and cannot yet ask.
+ * The assertion below is now "every one of the five", in one direction, and it
+ * is the direction that can regress: a refactor that drops the last caller of
+ * any of them puts the arc back in the bundle-less state this suite was
+ * written to describe.
  *
- * The assertion below is split along exactly that line, in both directions, so
- * neither half can quietly stop being true. When the send side lands it fails,
- * and it should: the suite would then drive the shipped chunk for the whole
- * arc rather than the bundle `helpers/placed-run-arc.js` compiles from source.
- *
- * Until then the build half is still compiled from `src/lib/toolkit/` and
- * imported into the page. Those are the real files; they are not the shipped
- * bytes, because for those two there are still no shipped bytes to be.
+ * The modules are still compiled from `src/lib/toolkit/` and imported into the
+ * page rather than resolved out of the chunks. That is now a property of this
+ * harness rather than of the product, and moving it onto the shipped chunk is
+ * the obvious next tightening.
  *
  * ## What may skip, and what may not
  *
@@ -1068,35 +1062,27 @@ describe("the product cannot accept an offer at all", () => {
     expect(chunks.some((c) => c.text.includes(ONLY_IN.planRun))).toBe(true);
   });
 
-  it("ships both halves of accepting, because a person can now press accept", () => {
-    // `useNotebook.acceptHandoff` calls them: an offer or a result that a peer
-    // sent is checked, and the bindings it returns are registered — by a
-    // function only a click reaches, never by a running recipe.
-    expect(chunks.some((c) => c.text.includes(ONLY_IN.acceptHandoffOffer))).toBe(true);
-    expect(chunks.some((c) => c.text.includes(ONLY_IN.acceptCellResult))).toBe(true);
-  });
-
-  it("still ships no way to *make* an offer or a result", () => {
-    // `buildOfferFor` needs the gate to have skipped a cell in a placed run,
-    // which nothing in the shell asks for yet; `buildResultFor` needs that and
-    // a signing key, since `sendResult` takes a cleartext-signed document.
-    // Both are reachable from `handoff-shell.js` and neither has a caller, so
-    // Rollup drops them — which is why a cell placed on a peer still cannot
-    // leave this machine.
-    const present = [
-      ["buildOfferFor", ONLY_IN.buildOfferFor],
-      ["buildResultFor", ONLY_IN.buildResultFor],
-    ]
-      .filter(([, needle]) => chunks.some((c) => c.text.includes(needle)))
+  it("ships every function the arc is made of", () => {
+    // This assertion has now been through all three of its states: none of the
+    // five shipped, then the planner and both accept halves, and now the build
+    // halves too. `useNotebook` runs placed — it passes `engine.js`'s
+    // `placement`, so the gate reports the cells this peer declined — offers
+    // one to the peer that owns it, signs a result with the session's own key,
+    // and registers what comes back. Rollup keeps all five because all five
+    // are called.
+    const missing = Object.entries(ONLY_IN)
+      .filter(([, needle]) => !chunks.some((c) => c.text.includes(needle)))
       .map(([fn]) => fn);
-    expect(present).toEqual([]);
+    expect(missing).toEqual([]);
   });
 
-  it("ships the gate, and no way to open it", () => {
-    // `placementGate` is in the bundle — `engine.js` imports it — so the arc's
-    // absence is not a chunking accident. What is missing is a caller that
-    // passes `placement`, and without one the gate returns `null` on every path
-    // a user can reach, which is the run this app has always done.
+  it("ships the gate, and now something that opens it", () => {
+    // `placementGate` was always in the bundle — `engine.js` imports it — and
+    // what was missing was a caller passing `placement`. `useNotebook.runFrom`
+    // is that caller now, and only when the room can bind the notebook's
+    // labels: an unbound plan places every cell on nobody, so no plan is built
+    // and the gate is never made, which `placement.js` insists is a different
+    // thing from a gate that admits everything.
     const gate = chunks.filter((c) => c.text.includes("does not know which peer you are"));
     expect(gate.length).toBeGreaterThan(0);
   });

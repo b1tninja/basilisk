@@ -169,6 +169,25 @@ export function getQuorumState() {
  * Read-only and a copy: the shell renders these, and the *only* way one leaves
  * the list is `takeHandoff`, which a caller reaches because somebody clicked.
  */
+/**
+ * Cleartext-sign a document with the key this session was opened under.
+ *
+ * The key, not a copy of it, and never handed out: `sendResult` refuses
+ * anything that is not cleartext-signed because the origin has to know *this*
+ * peer made the claim, and a caller holding the key could sign anything. So
+ * the exchange signs and returns armor.
+ *
+ * @param {string} text
+ * @returns {Promise<string>} cleartext-signed armor
+ */
+export async function signSessionDocument(text) {
+  const ex = current;
+  if (!ex?.privateKey) throw new Error("quorum: no live session to sign with");
+  const { signOpenPgp } = await import("../pgp/sign.js");
+  const { armored } = await signOpenPgp(String(text ?? ""), [ex.privateKey], "cleartext");
+  return armored;
+}
+
 export function getPendingHandoffs() {
   return current ? current.handoffs.map((h) => ({ ...h })) : [];
 }
@@ -553,6 +572,7 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     inbox: [],
     recvWaiters: [],
     handoffs: [],
+    privateKey,
     cancelled: false,
     viaByFpr: new Map(),
     viaPending: new Set(),

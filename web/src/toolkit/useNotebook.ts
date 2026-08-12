@@ -5,8 +5,15 @@ import {
   reviewOffer,
   reviewResult,
 } from "../lib/toolkit/handoff-shell.js";
-import { getPendingHandoffs, takeHandoff } from "../lib/toolkit/quorum-ops.js";
-import { summarizeHandoff } from "../lib/toolkit/handoff.js";
+import {
+  getPendingHandoffs,
+  takeHandoff,
+  getLiveSession,
+  signSessionDocument,
+} from "../lib/toolkit/quorum-ops.js";
+import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
+import { planRun } from "../lib/toolkit/plan.js";
+import { offerForSkipped, resultForCell } from "../lib/toolkit/handoff-shell.js";
 import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
 import { clearActivity } from "../lib/toolkit/activity-log.js";
 import {
@@ -1417,6 +1424,27 @@ export function useNotebook() {
        * takes its cell index explicitly, and nothing reads an ambient one).
        */
       let at = -1;
+      /**
+       * Who runs what, for this run.
+       *
+       * Built only when the room can bind the labels — a plan whose peers mean
+       * nobody would place every cell on nobody. Absent, `runCell` builds no
+       * gate and this is the run it has always been, which `placement.js`
+       * insists is a different thing from a gate that admits everything.
+       */
+      skippedRef.current = [];
+      const { roster, me } = handoffWho();
+      let placement: any;
+      if (me && Object.keys(roster).length) {
+        try {
+          const plan = planRun(compileRecipe(source), { me, roster });
+          if (plan.ok && plan.play === "placed") {
+            placement = { plan, onSkip: (sk: any) => skippedRef.current.push(sk) };
+          }
+        } catch {
+          /* an uncompilable notebook is the editor's complaint, not the gate's */
+        }
+      }
       try {
         const bindings = buildBindings();
         for (let n = 0; n < runnable.length; n++) {
@@ -1447,7 +1475,7 @@ export function useNotebook() {
           setRunningCell(i);
           setRunStatus(`Running cell ${i}…`);
           at = i;
-          await kernelRef.current.runCell(i, chains[i], bindings);
+          await kernelRef.current.runCell(i, chains[i], bindings, placement);
         }
         setKernelEpoch((n) => n + 1);
         setRunStatus("Done");
@@ -1658,6 +1686,17 @@ export function useNotebook() {
   const pendingHandoffs = useCallback(() => getPendingHandoffs(), []);
 
   /**
+   * Cells the last run declined because they belong to somebody else.
+   *
+   * A ref, not state: it is written inside the run loop and read by the offer
+   * that follows it, and a render in between would be a render that could
+   * arrive after the read. The list is replaced per run rather than appended
+   * to, so a cell that stopped being somebody else's does not linger.
+   */
+  const skippedRef = useRef<any[]>([]);
+  const skippedCells = useCallback(() => skippedRef.current.slice(), []);
+
+  /**
    * Accept one, which is the click the whole arc is gated on.
    *
    * `handoff.js` returns *bindings a caller would register* and registers
@@ -1672,22 +1711,87 @@ export function useNotebook() {
    * unbound, `handoff.js` refuses, and nothing is registered — which is the
    * right outcome for a notebook that does not name us.
    */
+  /**
+   * The roster and which label this browser is, from the live exchange.
+   *
+   * One derivation, used by every handoff step. Two of them disagreeing about
+   * who "me" is would be an offer addressed to the wrong half of the notebook.
+   */
+  const handoffWho = useCallback(() => {
+    const peers = (quorumState.peers || []) as any[];
+    const roster = Object.fromEntries(
+      peers
+        .filter((p) => p.fingerprint)
+        .map((p) => [String(p.id || "").replace(/^@/, ""), String(p.fingerprint).toUpperCase()])
+    );
+    const self = String((quorumState as any).self || "").toUpperCase();
+    const me = Object.keys(roster).find((label) => roster[label] === self) || "";
+    return { roster, me, self };
+  }, [quorumState]);
+
+  /**
+   * Hand a skipped cell to the peer it belongs to.
+   *
+   * The offer carries the values that cell reads and nothing else —
+   * `buildOfferFor` refuses rather than trimming, because a partial offer says
+   * "run this" while withholding something the cell needs. `sendOffer` throws
+   * rather than returning zero, so a failure here is a failure the author sees
+   * instead of an offer they believe landed.
+   */
+  const offerCell = useCallback(
+    async (cell: number) => {
+      const skipped = skippedRef.current.find((sk) => sk.cell === cell);
+      if (!skipped) return { ok: false, why: "That cell was not left to anybody." };
+      const { roster, me } = handoffWho();
+      const ctx = await handoffContext({ source, me, roster, title });
+      const slots = kernelRef.current.slots;
+      const built = await offerForSkipped(ctx, skipped, (l: string) =>
+        slots.has(l) ? slots.resolve(l) : null
+      );
+      if (!built.ok) return { ok: false, why: summarizeHandoff({ refusals: built.refusals }) };
+      const to = roster[built.peer];
+      if (!to) return { ok: false, why: `Nobody in this room answers to @${built.peer}.` };
+      const session = getLiveSession();
+      if (!session) return { ok: false, why: "No live session to hand it over on." };
+      await session.sendOffer(to, built.json);
+      return { ok: true, cell, peer: built.peer };
+    },
+    [handoffWho, source, title]
+  );
+
+  /**
+   * Send back what a cell wrote, signed.
+   *
+   * `sendResult` takes a cleartext-signed document and refuses anything else:
+   * the origin has to know *this* peer made the claim, and an unsigned result
+   * is a value from whoever reached the channel. The key is the one the
+   * session already opened, so signing asks nobody for anything new.
+   */
+  const sendCellResult = useCallback(
+    async (cell: number, toPeer: string) => {
+      const { roster, me } = handoffWho();
+      const ctx = await handoffContext({ source, me, roster, title });
+      const slots = kernelRef.current.slots;
+      const built = await resultForCell(ctx, cell, (l: string) =>
+        slots.has(l) ? slots.resolve(l) : null
+      );
+      if (!built.ok) return { ok: false, why: summarizeHandoff({ refusals: built.refusals }) };
+      const session = getLiveSession();
+      const to = roster[toPeer];
+      if (!session || !to) return { ok: false, why: "No live session, or no such peer." };
+      const signed = await signSessionDocument(resultToJson(built.result));
+      await session.sendResult(to, signed);
+      return { ok: true, cell, peer: toPeer };
+    },
+    [handoffWho, source, title]
+  );
+
   const acceptHandoff = useCallback(
     async (id: string) => {
       const doc = takeHandoff(id);
       if (!doc) return { ok: false, why: "That handoff is no longer pending." };
 
-      const peers = quorumState.peers || [];
-      const roster = Object.fromEntries(
-        peers.filter((p: any) => p.fingerprint).map((p: any) => [
-          String(p.id || "").replace(/^@/, ""),
-          String(p.fingerprint).toUpperCase(),
-        ])
-      );
-      const self = String((quorumState as any).self || "").toUpperCase();
-      const me =
-        Object.keys(roster).find((label) => roster[label] === self) || "";
-
+      const { roster, me } = handoffWho();
       const ctx = await handoffContext({ source, me, roster, title });
       const slots = kernelRef.current.slots;
       const verdict =
@@ -1706,7 +1810,7 @@ export function useNotebook() {
       setSessionTick((n) => n + 1);
       return { ok: true, cell: doc.cell, registered: (verdict.bindings || []).length };
     },
-    [quorumState, source, title]
+    [handoffWho, source, title]
   );
 
   const copyShareLink = useCallback(async () => {
@@ -1907,6 +2011,9 @@ export function useNotebook() {
     resetNotebook,
     copyShareLink,
     pendingHandoffs,
+    skippedCells,
+    offerCell,
+    sendCellResult,
     acceptHandoff,
     copyRecipe,
     unlockKey,
