@@ -534,9 +534,14 @@ export function inferSourceType(name, params = {}) {
       // "master"` the way `random 32` is. The kinds are not decoration: a
       // master is key material, and this value is published to every
       // participant by construction. Typing it as one would offer it to the
-      // ops that take a master — which is exactly the mistake
-      // `mirroredRunRefusals` refuses a whole run to prevent.
-      return typeOf("bytes", { length: 32 });
+      // ops that take a master.
+      //
+      // `pooled` is the other half, and the load-bearing one. Refusing `master`
+      // only keeps this away from ops that *require* a master; it says nothing
+      // about `hkdf`, which takes plain bytes and hands back a key. The flag
+      // rides with the value through slots so the compiler can refuse that —
+      // see the pooled-value check in `recipe.js`.
+      return typeOf("bytes", { length: 32, pooled: true });
     case "file.read": {
       // `as` decides, and nothing else does — `execFileRead` reads the same
       // param and makes the same call, so this is a promise rather than a

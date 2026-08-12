@@ -152,6 +152,26 @@ import {
  * @property {string} [flag]  bare CLI flag (e.g. "-d") that sets this bool to true
  * @property {boolean} [allowIndex]  for slot params: allow 1-based index refs (default false)
  * @property {"always"} [serialize]  always emit `name=value` even when equal to default
+ * @property {boolean} [acceptsPooled]  this param may be bound to a value from
+ *   `entropy.pool` even when the step produces key material.
+ *
+ *   **Default-deny, and the default is the point.** A pooled value is
+ *   randomness every participant can recompute, so anything derived from it is
+ *   derivable by the whole room — which is why the compiler refuses a pooled
+ *   value reaching a step whose output is a key. This says "not through *this*
+ *   param", and it is only true where the input is public *by definition*: a
+ *   salt (RFC 5869 §3.1, RFC 8018 §4.1 — non-secret by construction), HKDF's
+ *   `info` context, an AEAD's additional data. Those are published alongside
+ *   the thing they protect; a pooled one costs nothing and is the case
+ *   `entropy.pool` exists to serve.
+ *
+ *   Declared on the param rather than kept as a list of (op, param) pairs
+ *   somewhere, so a new op taking a public salt says so itself and a new op
+ *   that does not is refused without anyone remembering to add it.
+ *
+ *   Never on a param that carries the secret being protected. If you are
+ *   reaching for this on a `key`, `passphrase` or `master`, the answer is that
+ *   a pooled value cannot go there.
  * @property {boolean} [secret]  UI-only: locked to a bound `$slot` ref, never free text; the
  *   literal value is still whatever the AST carries (recipe text, Publish share links, and
  *   plain copy/export must redact it to the `$slotRef` string — see design v2 §22a)
@@ -1061,6 +1081,9 @@ export const STEPS = [
         slot: true,
         slotOf: ["bytes", "text"],
         default: "",
+        // Additional *authenticated* data — authenticated, not encrypted, so
+        // it travels in the clear beside the ciphertext.
+        acceptsPooled: true,
         doc: "Optional AAD as UTF-8 string, or `$slot` of text/bytes",
       },
       {
@@ -1302,6 +1325,9 @@ export const STEPS = [
         slotOf: ["bytes", "text"],
         default: "",
         emptyMeans: "a zero-length salt",
+        // RFC 5869 §3.1: the salt is non-secret by construction, and a salt
+        // the room agreed on is what `entropy.pool` is for.
+        acceptsPooled: true,
         doc: "Optional salt as UTF-8 string, or `$slot` of text/bytes",
       },
       {
@@ -1310,6 +1336,8 @@ export const STEPS = [
         slot: true,
         slotOf: ["bytes", "text"],
         default: "",
+        // Context, not key material — published with whatever it binds.
+        acceptsPooled: true,
         doc: "Optional info/context as UTF-8 string, or `$slot` of text/bytes",
       },
       {
@@ -1358,6 +1386,9 @@ export const STEPS = [
         slot: true,
         slotOf: ["bytes", "text"],
         default: "basilisk",
+        // RFC 8018 §4.1: a PBKDF2 salt need not be secret. The secret is the
+        // passphrase arriving through the pipe, which is *not* accepted pooled.
+        acceptsPooled: true,
         doc: "Salt as UTF-8 string, or `$slot` of text/bytes",
       },
       {

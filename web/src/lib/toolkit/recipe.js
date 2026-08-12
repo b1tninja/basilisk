@@ -371,6 +371,46 @@ function validateStepSlotParams(
       });
       continue;
     }
+    // A pooled value binding a param on a step that makes key material.
+    //
+    // The **param** half of the pooled-value rule (the pipe half is
+    // `checkPooledPipelineValue`). Default-deny: a param says `acceptsPooled`
+    // or it does not take one, so a new op that takes a public salt declares it
+    // and a new op that does not is refused without anyone remembering.
+    //
+    // The population that may declare it is small and principled — inputs that
+    // are public *by definition*: a salt (RFC 5869 §3.1, RFC 8018 §4.1), HKDF's
+    // `info` context, an AEAD's `aad`. Those ride in the clear beside what they
+    // protect, so a pooled one costs nothing — and a pooled salt is the case
+    // `entropy.pool` exists to serve. Refusing it would forbid the feature's
+    // headline use, and a control that refuses correct use is one people learn
+    // to route around.
+    if (loaded.pooled && !p.acceptsPooled) {
+      const spec = getStep(step.name);
+      // Resolved where it can be — `hkdf` declares `bytes` and `hkdf as=aes/256`
+      // makes a key — and the declared output otherwise. The probe runs from
+      // `none`, so a step that needs a pipeline input cannot resolve here and
+      // falls back to what it says it produces, which for `unwrap` is `key`.
+      const probe = spec ? resolveStepType(spec, { base: "none" }, step.params || {}) : null;
+      const outgoing = probe?.ok ? probe.output : spec ? { base: spec.output } : null;
+      // Only where it would become key material. A pooled value reaching an
+      // ordinary param of an ordinary step is a public number in a public
+      // place, which is what it is for.
+      if (producesKeyMaterial(outgoing)) {
+        errors.push({
+          message:
+            `${step.name} ${p.name}=${raw}: this binds a pooled value where the ` +
+            "step makes key material. `entropy.pool` draws randomness the whole " +
+            "room can recompute, so anything keyed from it is too. A salt, an " +
+            "`info` context or an AEAD's `aad` may take one — those are public " +
+            "by definition — and this param is not one of them.",
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+        continue;
+      }
+    }
     // No `slotOf` means no claim about the type — `in $x` takes whatever was
     // registered, and saying otherwise would be a guess.
     if (!p.slotOf) continue;
@@ -386,6 +426,62 @@ function validateStepSlotParams(
       stepIndex,
     });
   }
+}
+
+/**
+ * Does this type name key material?
+ *
+ * `key` and `keypair` by base, and `master` by kind — a 16/32-byte master is key
+ * material whatever its base says, which is why `random 32` carries that kind.
+ * Read from the *resolved* output rather than the declared one, because `hkdf`
+ * declares `bytes` and `hkdf as=aes/256` produces a key: the declaration is a
+ * family, the resolution is the answer.
+ *
+ * @param {import("./types.js").RefinedType} type
+ * @returns {boolean}
+ */
+function producesKeyMaterial(type) {
+  return type?.base === "key" || type?.base === "keypair" || type?.kind === "master";
+}
+
+/**
+ * A value the whole room can recompute must not become key material.
+ *
+ * `entropy.pool` draws randomness every participant helped choose and every
+ * participant can derive again. That is what makes a distributed run agree, and
+ * exactly what must never reach a key: a private key everyone can recompute is
+ * not one.
+ *
+ * The refusal that was meant to cover this — `mirroredRunRefusals` — reads each
+ * op's declared `entropy` and refuses ops that *draw* keying randomness. `hkdf`
+ * and `pbkdf2` draw none; they *derive*. So `entropy.pool | out $salt` followed
+ * by `in $salt | hkdf as=aes/256` compiled, planned and ran, handing back a
+ * "secret" the whole room shared. The type system is where that is visible,
+ * because the pooled flag rides with the value through `out` and `in`.
+ *
+ * This is the **pipe** half: the pooled value is the thing being turned into a
+ * key, and there is no exception to make — the secret being stretched cannot be
+ * public. The param half is in `validateStepSlotParams`, where whether it is
+ * allowed depends on which param.
+ *
+ * @param {RecipeStep} step
+ * @param {import("./types.js").RefinedType} incoming
+ * @param {import("./types.js").RefinedType} outgoing
+ * @param {RecipeError[]} errors
+ * @param {number} stepIndex
+ */
+function checkPooledPipelineValue(step, incoming, outgoing, errors, stepIndex) {
+  if (!incoming?.pooled || !producesKeyMaterial(outgoing)) return;
+  errors.push({
+    message:
+      `\`${step.name}\` would turn a pooled value into key material. ` +
+      "`entropy.pool` draws randomness every participant in the room can " +
+      "recompute, so a key derived from it is one they can all derive — which " +
+      "is not a key. Pool a salt or a nonce and keep the secret local.",
+    start: step.start,
+    end: step.end,
+    stepIndex,
+  });
 }
 
 /**
@@ -1127,6 +1223,7 @@ function validateBodySteps(body, startType, ctx) {
       });
       continue;
     }
+    checkPooledPipelineValue(step, current, resolved.output, ctx.errors, ctx.stepIndex);
     current = resolved.output;
     if (
       step.name === "out" &&
@@ -1702,6 +1799,7 @@ export function validateRecipe(ast) {
       continue;
     }
 
+    checkPooledPipelineValue(step, current, resolved.output, errors, stepIndex);
     current = resolved.output;
 
     if (step.name === "out") {
