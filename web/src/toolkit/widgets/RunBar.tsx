@@ -16,6 +16,33 @@ export type RunBarState =
   | "waiting-peer"
   | "waiting-approval";
 
+/**
+ * What the notebook is holding, on the one row that is never collapsed.
+ *
+ * Whether a private key is open in this browser was computed the whole time and
+ * was reachable only by opening the tray *and* selecting the Keys tab — two
+ * deliberate acts to find out that a key has been decrypted in memory for the
+ * last four minutes. That is precisely backwards: the state nobody thinks to
+ * look for is the one that has to be in view.
+ *
+ * `power` is `key-power.js`'s closed vocabulary and rides as a `data` attribute
+ * for the same reason `data-run-state` does — the stylesheet enumerates it, and
+ * `style-src 'self'` refuses the alternative.
+ */
+export type KeyChip = {
+  /** The strongest thing any held key can do — `absent` when nothing is held. */
+  power: "absent" | "unusable" | "held" | "loaded" | "ready";
+  /** How many keys have armor in the agent session right now. */
+  loaded: number;
+  /**
+   * When the first of them is dropped, or null when none is.
+   *
+   * `sessionEarliestExpiry()` in `vault-session.js` is exactly this value and
+   * had no caller anywhere in the app: correct, exported, and reaching nothing.
+   */
+  expiresAt: number | null;
+};
+
 type Props = {
   /** Derive: running while the kernel is busy, blocked when a readiness blocker exists, else idle. */
   state: RunBarState;
@@ -48,9 +75,74 @@ type Props = {
   sessionInvite?: string;
   onCopyInvite?: () => void;
   onCancelSession?: () => void;
+  /** What this browser is holding — see `KeyChip`. Absent where nothing is. */
+  keyChip?: KeyChip | null;
+  /** Ticked by the shell; the countdown reads it rather than a timer of its own. */
+  now?: number;
+  /** Opens the tray's Keys tab — the chip is a way in, not only a readout. */
+  onOpenKeys?: () => void;
   /** Right-aligned actions (Copy link / Clear session / Tray toggle in the shell). */
   children?: ReactNode;
 };
+
+/** m:ss, matching the tray's rows so one clock is not printed two ways. */
+function countdown(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/**
+ * The key chip — always on screen while anything is open, and never otherwise.
+ *
+ * Nothing held is not drawn at all: a permanent "0 keys" would be noise on
+ * every notebook that never touches one, and the tray's own tab already says
+ * zero by having no number. What this exists for is the opposite case, where
+ * something *is* decrypted and the reader has no reason to go looking.
+ */
+function KeyChipView({
+  chip,
+  now,
+  onOpenKeys,
+}: {
+  chip: KeyChip;
+  now: number;
+  onOpenKeys?: () => void;
+}) {
+  const left = chip.expiresAt == null ? null : countdown(chip.expiresAt - now);
+  const label =
+    chip.loaded === 1 ? "1 key open" : `${chip.loaded} keys open`;
+  const body = (
+    <>
+      <span className="key-power" data-key-power={chip.power}>
+        {label}
+      </span>
+      {left ? (
+        // The soonest expiry, not a per-key list: what a reader needs from a
+        // strip this size is when the first thing goes away.
+        <span className="font-mono text-[10.5px] text-[var(--warn)]">{left} left</span>
+      ) : null}
+    </>
+  );
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface-raised)] px-2 py-[3px] text-[length:11px]"
+      data-key-chip={chip.power}
+    >
+      {onOpenKeys ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-auto gap-1.5 px-0 py-0 text-[length:11px]"
+          onClick={onOpenKeys}
+        >
+          {body}
+        </Button>
+      ) : (
+        body
+      )}
+    </span>
+  );
+}
 
 /** Execution bar — Run all / Run from / blocker chip / running progress (design v2 §19g). */
 export function RunBar({
@@ -67,6 +159,9 @@ export function RunBar({
   sessionInvite,
   onCopyInvite,
   onCancelSession,
+  keyChip = null,
+  now = 0,
+  onOpenKeys,
   children,
 }: Props) {
   // Publish the fill percentage as a custom property rather than a style prop.
@@ -240,6 +335,15 @@ export function RunBar({
           ) : null}
         </>
       )}
+
+      {/* Beside the run controls in every state that has room for it, because
+          "a key is open" is not news about the run — it is news about this
+          browser, and it is true while a run is in flight as much as before
+          one. The two peer states own the whole bar and are excluded for the
+          same reason `children` is. */}
+      {keyChip && keyChip.loaded > 0 && state !== "waiting-peer" && state !== "waiting-approval" ? (
+        <KeyChipView chip={keyChip} now={now} onOpenKeys={onOpenKeys} />
+      ) : null}
 
       {children && state !== "waiting-peer" && state !== "waiting-approval" ? (
         <div className="ml-auto flex flex-wrap items-center gap-1">{children}</div>

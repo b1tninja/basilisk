@@ -95,6 +95,53 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * `data-key-power` — what a key can do for you, here, now.
+ *
+ * A closed set of five (`lib/toolkit/key-power.js`), enumerated here for the
+ * reason `data-key-kind` and `data-action-tier` are: the production CSP is
+ * `style-src 'self'`, so a colour chosen at the call site is a colour that
+ * never arrives. It is written once and read by three surfaces — the tray's
+ * rows, the run bar's key chip and the session's chooser — which is what makes
+ * "ready in the tray, refused by the session" impossible rather than unlikely.
+ *
+ * The colours are the states' own: `unusable` is the only one that is a dead
+ * end, so it is the only one in `--error`; `loaded` is `--warn` because
+ * something is still owed; `ready` is the only affirmative. `held` and `absent`
+ * are both ordinary and say nothing in colour — an at-rest vault key is not a
+ * warning, and a key you do not have is not an error.
+ */
+.key-power {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+.key-power[data-key-power="absent"],
+.key-power[data-key-power="held"] {
+  color: var(--muted-foreground);
+}
+.key-power[data-key-power="unusable"] {
+  color: var(--error);
+}
+.key-power[data-key-power="loaded"] {
+  color: var(--warn);
+}
+.key-power[data-key-power="ready"] {
+  color: var(--success);
+}
+/*
+ * The row's own left edge, which is the part a reader scanning a list sees
+ * before any word. Only the two states that are not ordinary get one; a border
+ * on every row is a border that distinguishes nothing.
+ */
+[data-key-power="unusable"] {
+  border-left-color: color-mix(in srgb, var(--error) 45%, var(--border));
+}
+[data-key-power="loaded"] {
+  border-left-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+
+/*
  * Scrollable regions (`components/ui/scroll-area`).
  *
  * Plain overflow with a styled scrollbar. This replaced a Radix ScrollArea

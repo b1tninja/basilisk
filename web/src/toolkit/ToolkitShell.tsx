@@ -60,6 +60,8 @@ import {
   DocsFooter,
   CellTypeErrors,
   GpgKeyBinder,
+  KeyVault,
+  type VaultKeyView,
   ConnectionsPanel,
   DkgPanel,
   PoolPanel,
@@ -110,11 +112,23 @@ import {
   toolkitShareUrl,
 } from "../lib/toolkit/fragment.js";
 import {
-  keyOwesPassphrase,
   sessionKeyChoices,
   sessionRecipe,
   startIssues,
 } from "../lib/toolkit/session-flow.js";
+import {
+  keyPower,
+  keyPowerReadout,
+  loadedCount,
+  strongestPower,
+} from "../lib/toolkit/key-power.js";
+import { sessionEarliestExpiry } from "../lib/vault-session.js";
+import { expiryNote } from "../lib/toolkit/artifact-readouts.js";
+import {
+  exportVaultKey,
+  generateVaultKey,
+  importPrivateKey,
+} from "../lib/toolkit/vault-manage.js";
 // The picker the encryption side has always had, on the side that had none.
 // `SessionStart` cannot reach for these itself — it is on the design surface,
 // where a widget takes plain props and reads no store.
@@ -131,7 +145,7 @@ import {
   selectorGhostsFor,
   tipFitFor,
 } from "../lib/toolkit/suggest.js";
-import { getTrust, setTrust, type TrustLevel } from "../lib/trust.js";
+import { getTrust, listTrusted, setTrust, type TrustLevel } from "../lib/trust.js";
 import { getSuiteStatus, runCryptoSelfTests } from "../lib/crypto-self-test.js";
 import { getFipsMode, setFipsMode, FIPS_MODE_DISCLAIMER } from "../lib/fips-mode.js";
 import { unverifiedSuitesAmong, suitesUsedByAst } from "../lib/toolkit/suite-gate.js";
@@ -144,9 +158,10 @@ import {
 import type { ToolkitWorkspace } from "../lib/toolkit/workspace-store.js";
 import { openSignedPlaybook } from "../lib/toolkit/playbook.js";
 import type { PlaybookOpening } from "../lib/toolkit/playbook.js";
-import { listKeys } from "../lib/vault.js";
+import { deleteKey, isPasskeyPrfAvailable, listKeys } from "../lib/vault.js";
+import { getDeviceLabel, setDeviceLabel } from "../lib/prefs.js";
 import { exposureTrace } from "../lib/toolkit/slot-graph.js";
-import { copyText } from "../lib/utils.js";
+import { copyText, formatFingerprint } from "../lib/utils.js";
 import type { ArmedBranch, ChipPath, ChipStemView } from "./widgets/RecipeChipFlow";
 import type { CellStatus, RecipeChain, RecipeStep } from "./notebook-types";
 
@@ -866,10 +881,19 @@ export function ToolkitShell() {
   useEffect(() => {
     setCssVar("--ops-width", opsWidth, "px");
   }, [opsWidth]);
-  const [trustTick, setTrustTick] = useState(0);
+  /**
+   * Bumped whenever a mark this browser keeps about a key changes.
+   *
+   * It was `trustTick` and covered `setTrust` alone. Device labels are the same
+   * shape of thing — written to localStorage by a helper with no change event —
+   * and a second counter for them would be two answers to "has anything about
+   * these keys changed". The name says both, because a reader who sees a device
+   * label re-render on a trust mark should be able to find out why here.
+   */
+  const [localMarkTick, setLocalMarkTick] = useState(0);
   const applyTrust = (fpr: string, level: TrustLevel) => {
     setTrust(fpr, level);
-    setTrustTick((n) => n + 1);
+    setLocalMarkTick((n) => n + 1);
   };
   const opsWorkspaceRef = useRef<HTMLDivElement | null>(null);
 
@@ -1113,7 +1137,7 @@ export function ToolkitShell() {
     return () => {
       live = false;
     };
-  }, [sessionSheetOpen, trustTick]);
+  }, [sessionSheetOpen, localMarkTick]);
 
   /**
    * The invite link. `hashForJoin` refuses an audience that names fewer than
@@ -1180,17 +1204,23 @@ export function ToolkitShell() {
   /**
    * The chosen key, with whatever the agent session observed about its armor.
    *
-   * Re-read on `now` for the reason the Keyring rows are: a session entry
+   * Looked up in **every** row this browser holds, not in the filtered choices.
+   * A fingerprint stays in the draft while the list is re-derived every render,
+   * so a key that expires with the sheet open drops out of `sessionKeys` and
+   * leaves the choice standing — and a chosen key nothing can find is a chosen
+   * key nothing can refuse. `startIssues` is what says so; this is what lets it.
+   *
+   * Re-read on `now` for the reason the tray's rows are: a session entry
    * expires on a clock, so "what is loaded" is a question with a different
    * answer a minute later and no event to announce it.
    */
   const chosenSessionKey = useMemo(() => {
     void now;
-    const row = sessionKeys.find((k) => k.fingerprint === sessionDraft.keyFingerprint);
+    const row = nb.vaultKeys.find((k) => k.fingerprint === sessionDraft.keyFingerprint);
     if (!row) return null;
     const entry = nb.sessionList().find((e) => e.fingerprint === row.fingerprint);
-    return { ...row, locked: entry?.locked };
-  }, [sessionKeys, sessionDraft.keyFingerprint, nb.sessionList, now]);
+    return { ...row, locked: entry?.locked, loaded: !!entry };
+  }, [nb.vaultKeys, sessionDraft.keyFingerprint, nb.sessionList, now]);
 
   const sessionIssues = useMemo(
     () =>
@@ -1199,13 +1229,24 @@ export function ToolkitShell() {
         keyFingerprint: sessionDraft.keyFingerprint,
         live: sessionLive,
         keyCount: sessionKeys.length,
+        // Everything held, so "no private key in this browser" is never said to
+        // somebody looking at three of them. The two numbers differ exactly
+        // when the vault holds only keys that cannot open a session.
+        heldCount: nb.vaultKeys.length,
         key: chosenSessionKey,
         // The field `agent.unlock` reads. Bound here rather than checked inside
         // the run, so the refusal arrives while the reader is still looking at
         // the choice that caused it.
         passphraseBound: Boolean(nb.gpgPassphrase),
       }),
-    [sessionDraft, sessionLive, sessionKeys.length, chosenSessionKey, nb.gpgPassphrase]
+    [
+      sessionDraft,
+      sessionLive,
+      sessionKeys.length,
+      nb.vaultKeys.length,
+      chosenSessionKey,
+      nb.gpgPassphrase,
+    ]
   );
 
   /**
@@ -1258,6 +1299,181 @@ export function ToolkitShell() {
     void approvalAsk;
     return listApprovalGrants();
   }, [now, approvalAsk]);
+
+  /**
+   * Whether this browser can turn a security key into a vault passphrase.
+   *
+   * Asked once, at mount, because it is a capability of the browser and not of
+   * a key — and asked *here* rather than inside `KeyVault`, which takes plain
+   * props and reads nothing. Its absence is a sentence on the radio rather than
+   * a missing option: a choice that vanishes teaches nobody why.
+   */
+  const [passkeyAvailable, setPasskeyAvailable] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void isPasskeyPrfAvailable()
+      .then((ok) => {
+        if (live) setPasskeyAvailable(!!ok);
+      })
+      .catch(() => {
+        /* Treated as unavailable, which is what the radio then says. */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  /**
+   * Every key this browser holds, with what it can do for you right now.
+   *
+   * One derivation feeding the tray's rows, the Keys tab's count, the run bar's
+   * chip and the session's chooser — which is the whole point of the vocabulary.
+   * The old split was on storage and produced two true statements that
+   * contradicted each other; a single list answering "what can this key do" is
+   * what makes that impossible rather than merely unlikely.
+   *
+   * Re-read on `now` for the reason the countdowns are: a session entry expires
+   * on a clock, so `held` becomes `loaded` and back again with no event to
+   * announce either.
+   */
+  const keyViews = useMemo<VaultKeyView[]>(() => {
+    void localMarkTick;
+    const sessions = new Map(nb.sessionList().map((e) => [e.fingerprint, e]));
+    return nb.vaultKeys.map((k) => {
+      const entry = sessions.get(k.fingerprint);
+      const key = { ...k, locked: entry?.locked, loaded: !!entry };
+      const readout = keyPowerReadout(key, now);
+      return {
+        fingerprint: k.fingerprint,
+        uid: k.uid,
+        email: k.email,
+        kind: k.kind,
+        protection: k.protection,
+        publicLine: k.publicLine,
+        power: readout.power,
+        powerLabel: readout.label,
+        why: readout.why,
+        loadedUntil: entry?.expiresAt ?? null,
+        trust: getTrust(k.fingerprint)?.level ?? null,
+        deviceLabel: getDeviceLabel(k.fingerprint),
+        // The same verdict `GpgKeyBinder` and `OpenPgpKeyCard` draw, from the
+        // same function — a row that said "expires in 3 days" one place and
+        // nothing in another would be two opinions about one key. A session
+        // key's `expires` is the agent TTL rather than a validity, so it is
+        // left alone here for the reason `keyIsExpired` leaves it alone.
+        expiryNote: k.protection === "session" ? null : expiryNote(k.expires, now),
+        grants: approvalGrants
+          .filter((g) => g.keyId === k.fingerprint)
+          .map((g) => ({ use: g.use, uses: g.uses, expiresAt: g.expiresAt })),
+      };
+    });
+  }, [nb.vaultKeys, nb.sessionList, now, localMarkTick, approvalGrants]);
+
+  /**
+   * How many keys are open, and when the first of them closes.
+   *
+   * Both read from `keyViews`, so the tab's number, the chip's word and the
+   * row's countdown are one derivation. `sessionEarliestExpiry` is the vault
+   * session's own answer to the second question and had no caller anywhere in
+   * the app — the value existed, was correct, and reached nothing.
+   */
+  const keysLoaded = useMemo(
+    () => loadedCount(keyViews.map((v) => v.power)),
+    [keyViews]
+  );
+  /**
+   * The keys this browser has marked `never`.
+   *
+   * Read here rather than inside `SessionStart`, which takes plain props and
+   * opens no store. Re-read on `localMarkTick` so a mark changed in the Keys
+   * tray takes effect in the room being assembled without a reload — the two
+   * surfaces are one browser's opinion about one key.
+   */
+  const neverTrustedKeys = useMemo(() => {
+    void localMarkTick;
+    return listTrusted()
+      .filter((t) => t.level === "never")
+      .map((t) => t.fingerprint.toUpperCase());
+  }, [localMarkTick]);
+
+  const keysExpireAt = useMemo(() => {
+    // Re-read on the same one-second tick the countdowns run on: an expiry is
+    // a fact about a clock, and nothing announces it passing.
+    void now;
+    return sessionEarliestExpiry();
+  }, [now]);
+
+  /**
+   * The vault acts, wired to `vault-manage.js` and followed by a refresh.
+   *
+   * Each one resolves with the line the panel prints or throws the sentence it
+   * refused with — `KeyVault` never sees a vault, and the refusals are the
+   * shared module's rather than a second set written for the tray.
+   */
+  const generateIntoVault = async (spec: {
+    name: string;
+    email: string;
+    expiryPreset: string;
+    protection: "passphrase" | "passkey" | "device";
+    passphrase: string;
+  }) => {
+    const { fingerprint } = await generateVaultKey(spec);
+    await nb.refreshVault();
+    return `Generated ${formatFingerprint(fingerprint)} and stored it in this browser's vault.`;
+  };
+
+  const importIntoVault = async (spec: {
+    armored: string;
+    passphrase: string;
+    target: "vault" | "session";
+  }) => {
+    const res = await importPrivateKey(spec.armored, {
+      passphrase: spec.passphrase,
+      target: spec.target,
+    });
+    await nb.refreshVault();
+    return res.target === "session"
+      ? `Loaded ${formatFingerprint(res.fingerprint)} for this session only — nothing was written down.`
+      : `Imported ${formatFingerprint(res.fingerprint)} into this browser's vault.`;
+  };
+
+  const exportFromVault = async (spec: {
+    fingerprint: string;
+    format: string;
+    exportPassphrase: string;
+  }) => {
+    const meta = (await listKeys()).find((k) => k.fingerprint === spec.fingerprint) || null;
+    const { filename } = await exportVaultKey({ ...spec, meta });
+    return `Wrote ${filename}.`;
+  };
+
+  const deleteFromVault = async (fingerprint: string) => {
+    await deleteKey(fingerprint);
+    // A deleted key cannot stay unlocked in the agent session: the armor is
+    // still in memory and every reader would go on offering it.
+    nb.lockKey(fingerprint);
+    revokeApprovalGrants(fingerprint);
+    await nb.refreshVault();
+  };
+
+  const copyPublicLine = (fingerprint: string) => {
+    const line = String(
+      nb.vaultKeys.find((k) => k.fingerprint === fingerprint)?.publicLine || ""
+    );
+    if (!line) return;
+    void copyText(line);
+  };
+
+  /**
+   * The EFF wordlist, fetched only when somebody asks for a suggestion — the
+   * 7776-word list is ~44 KB gzipped and most notebooks never make a key.
+   */
+  const suggestPassphrase = async () => {
+    const { generateWordPassphrase } = await import("../lib/passphrase-gen.js");
+    const { passphrase, bits } = await generateWordPassphrase(6);
+    return { passphrase, bits };
+  };
+
   const [workspaces, setWorkspaces] = useState<ToolkitWorkspace[]>(() => listWorkspaces());
   const [workspaceError, setWorkspaceError] = useState("");
   /**
@@ -1716,6 +1932,19 @@ export function ToolkitShell() {
           sessionInvite={nb.quorumState.invite}
           onCopyInvite={() => void navigator.clipboard.writeText(nb.quorumState.invite)}
           onCancelSession={() => nb.cancelQuorum()}
+          // The one row that is never collapsed, carrying the one fact that was
+          // two deliberate acts away: a private key is decrypted in this
+          // browser, and here is when it goes.
+          keyChip={{
+            power: strongestPower(keyViews.map((v) => v.power)),
+            loaded: keysLoaded,
+            expiresAt: keysExpireAt,
+          }}
+          now={now}
+          onOpenKeys={() => {
+            setTrayOpen(true);
+            setTrayTab("keys");
+          }}
           onRunAll={() => void nb.runFrom(0)}
           onRunFrom={(from) => void nb.runFrom(from)}
           onStop={() => nb.stopRun()}
@@ -2927,7 +3156,18 @@ export function ToolkitShell() {
                 [
                   // §35 — icon + label. Outputs/Inputs deliberately mirror
                   // each other (down-into-tray vs. up-out-of-notebook).
-                  { id: "keys" as const, label: "Keys", Icon: KeyRound },
+                  // The count is how many keys have armor in the agent session
+                  // with a clock running. It was the one tab button carrying no
+                  // number, and the number it was missing is the one that says
+                  // a private key is open in this browser right now — computed
+                  // since `unlockedCount` was written, and reachable only by
+                  // opening the tray and selecting this tab.
+                  {
+                    id: "keys" as const,
+                    label: "Keys",
+                    count: keysLoaded,
+                    Icon: KeyRound,
+                  },
                   {
                     id: "slots" as const,
                     label: "Slots",
@@ -3006,172 +3246,33 @@ export function ToolkitShell() {
             </div>
 
             {trayTab === "keys" ? (
-              <>
-                <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] p-3">
-                  <div>
-                    <h3 className="text-sm font-bold">Keyring</h3>
-                    <p className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
-                      Unlock into the agent session, or insert{" "}
-                      <code>agent.unlock</code>/<code>agent.pub</code> cells. Full vault management
-                      is on{" "}
-                      <a className="text-[var(--brand)] underline" href="/my-keys">
-                        My Keys
-                      </a>
-                      .
-                    </p>
-                  </div>
-                  {nb.unlockedCount > 0 ? (
-                    <Button
-                      variant="outline"
-                      className="h-auto shrink-0 rounded-[7px] border-[var(--error)] px-[9px] py-[4px] text-[length:11px] font-semibold text-[var(--error)]"
-                      onClick={lockAllSessions}
-                    >
-                      Lock all
-                    </Button>
-                  ) : null}
-                </div>
-                <ScrollArea className="flex-1 px-3">
-                  {!nb.vaultKeys.length ? (
-                    <p className="py-4 text-sm text-[var(--muted-foreground)]">
-                      No keys in My Keys yet. Generate one on My Keys or use{" "}
-                      <code>agent.save</code>.
-                    </p>
-                  ) : (
-                    <ul className="space-y-3 py-3">
-                      {nb.vaultKeys.map((k) => {
-                        void trustTick;
-                        const session = nb
-                          .sessionList()
-                          .find((e) => e.fingerprint === k.fingerprint);
-                        const unlocked = !!session;
-                        const trust = getTrust(k.fingerprint);
-                        return (
-                          <li
-                            key={k.fingerprint}
-                            className="rounded-[9px] border border-[var(--border)] bg-[var(--surface-raised)] p-3"
-                          >
-                            <div className="font-semibold">
-                              {k.kind && k.kind !== "pgp" ? (
-                                <span className="key-kind-badge" data-key-kind={k.kind}>
-                                  {k.kind.toUpperCase()}
-                                </span>
-                              ) : null}
-                              {k.uid || k.email || "Key"}
-                            </div>
-                            {/* One element for both kinds, where there were two.
-                                The keyserver link used to be the fingerprint
-                                itself, so an SSH id — which has no `/key` page
-                                — had to be drawn as inert text and lost the
-                                only thing the row offered. It is a menu row
-                                now, refusing with a sentence that says the
-                                keyserver holds OpenPGP keys, and every kind
-                                keeps the copy control. */}
-                            <Fingerprint
-                              className="text-xs text-[var(--muted-foreground)]"
-                              fpr={k.fingerprint}
-                            />
-                            <div className="mt-1 text-xs text-[var(--muted-foreground)]">
-                              {k.protection || "device"}
-                              {session ? (
-                                <>
-                                  {/* "unlocked" was a claim about the vault
-                                      envelope being open, printed where a reader
-                                      takes it to mean the key is usable. For a
-                                      passphrase-protected key it is not: OpenPGP's
-                                      own S2K lock is still on the armor, and the
-                                      run said so several steps later in OpenPGP's
-                                      words. Two words for two states. */}
-                                  {keyOwesPassphrase({ ...k, locked: session.locked }) === true
-                                    ? " · open, needs its passphrase · "
-                                    : " · unlocked · "}
-                                  <span className="font-mono text-[length:10.5px] text-[var(--warn)]">
-                                    {formatCountdown(session.expiresAt - now)} left
-                                  </span>
-                                </>
-                              ) : null}
-                            </div>
-                            {/* §27c: a grant nobody can see is a rubber stamp with
-                                extra steps. This one counts its uses live and
-                                shows its own clock. */}
-                            {approvalGrants
-                              .filter((g) => g.keyId === k.fingerprint)
-                              .map((g) => (
-                                <div
-                                  key={g.use}
-                                  className="mt-0.5 font-mono text-[length:10.5px] text-[var(--warn)]"
-                                  data-approval-grant={g.use}
-                                >
-                                  approved: {g.use} · {g.uses}{" "}
-                                  {g.uses === 1 ? "use" : "uses"} ·{" "}
-                                  {formatCountdown(g.expiresAt - now)} left
-                                </div>
-                              ))}
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {unlocked ? (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => {
-                                    nb.lockKey(k.fingerprint);
-                                    revokeApprovalGrants(k.fingerprint);
-                                  }}
-                                >
-                                  Lock
-                                </Button>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  onClick={() => void nb.unlockKey(k.fingerprint)}
-                                >
-                                  Unlock
-                                </Button>
-                              )}
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => nb.insertUnlockCell(k.fingerprint, "agent.unlock")}
-                              >
-                                Unlock → cell
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => nb.insertUnlockCell(k.fingerprint, "agent.pub")}
-                              >
-                                Pub → cell
-                              </Button>
-                            </div>
-                            <div className="mt-2 flex items-center gap-1">
-                              <span className="text-[length:10.5px] text-[var(--muted-foreground)]">
-                                Trust:
-                              </span>
-                              {(["trusted", "marginal", "never"] as TrustLevel[]).map((level) => (
-                                <Button
-                                  key={level}
-                                  variant={trust?.level === level ? "secondary" : "ghost"}
-                                  className={cn(
-                                    "h-auto rounded-md px-[8px] py-[2px] text-[length:10px] font-semibold capitalize",
-                                    trust?.level === level &&
-                                      level === "trusted" &&
-                                      "text-[var(--success)]",
-                                    trust?.level === level &&
-                                      level === "never" &&
-                                      "text-[var(--error)]"
-                                  )}
-                                  onClick={() => applyTrust(k.fingerprint, level)}
-                                >
-                                  {level}
-                                </Button>
-                              ))}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </ScrollArea>
-              </>
+              /* The vault itself, not a picker pointing at another page. See
+                 KeyVault.tsx for why the Keys tray is where it lives now. */
+              <ScrollArea className="flex-1">
+                <KeyVault
+                  keys={keyViews}
+                  now={now}
+                  passkeyAvailable={passkeyAvailable}
+                  onLockAll={lockAllSessions}
+                  onUnlock={(fpr) => void nb.unlockKey(fpr)}
+                  onLock={(fpr) => {
+                    nb.lockKey(fpr);
+                    revokeApprovalGrants(fpr);
+                  }}
+                  onDelete={deleteFromVault}
+                  onGenerate={generateIntoVault}
+                  onImport={importIntoVault}
+                  onExport={exportFromVault}
+                  onTrust={applyTrust}
+                  onDeviceLabel={(fpr, label) => {
+                    setDeviceLabel(fpr, "", label);
+                    setLocalMarkTick((n) => n + 1);
+                  }}
+                  onCopyPublicLine={copyPublicLine}
+                  onInsertCell={(fpr, step) => nb.insertUnlockCell(fpr, step)}
+                  onSuggestPassphrase={suggestPassphrase}
+                />
+              </ScrollArea>
             ) : null}
 
             {trayTab === "slots" ? (
@@ -3981,6 +4082,12 @@ export function ToolkitShell() {
             keys: sessionKeys.map((k) => ({
               fingerprint: k.fingerprint,
               uid: k.uid,
+              // What picking this one will ask of you, in the same words the
+              // Keys tray uses for the same key. The chooser listed every
+              // candidate identically, so "signs immediately" and "will stop
+              // the run to ask for a passphrase" looked the same at the moment
+              // of the choice.
+              note: keyViews.find((v) => v.fingerprint === k.fingerprint)?.powerLabel,
             })),
             keyFingerprint: sessionDraft.keyFingerprint,
             onKeyFingerprint: (fpr) =>
@@ -3997,16 +4104,24 @@ export function ToolkitShell() {
             // One press, one lookup. `searchRecipients` is the encrypt side's
             // own search — same cache, same keyserver, same trust ordering —
             // so a person found here is a person found there.
+            //
+            // Every hit is handed over, including the ones `mergeSearchHits`
+            // admits at sixteen characters. Filtering those out here made the
+            // empty case lie: "No key here answers to that" was printed to
+            // somebody whose search had matched. `SHORT_ID_HIT` is the row's
+            // own refusal, so a search that found nothing and a search that
+            // found something unusable are two different answers again.
             onSearch: async (query: string) =>
               (await searchRecipients(query))
                 .map((hit) => ({
                   fingerprint: String(hit.fingerprint || "").toUpperCase(),
                   label: primaryUidLabel(hit),
-                }))
-                // `mergeSearchHits` admits a hit at 16 characters, and a room
-                // is derived from whole fingerprints — offering one would be a
-                // press that silently adds nobody.
-                .filter((hit) => hit.fingerprint.length >= 40),
+                })),
+            // The marks this browser holds, so a key you decided not to
+            // believe cannot be built into a room by a stray press.
+            // `quorum-mount.js` asked this with a `confirm()`, which names a
+            // state and offers to ignore it in the same sentence.
+            neverTrusted: neverTrustedKeys,
             onAudience: (audience) => setSessionDraft((d) => ({ ...d, audience })),
             // The readout did the reading. Applying its audience rather than
             // re-parsing the text is what keeps the sentence on screen and the

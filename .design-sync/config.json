@@ -39,6 +39,7 @@
     "PlanPanel": "src/toolkit/widgets/PlanPanel.tsx",
     "ShareSheet": "src/toolkit/widgets/ShareSheet.tsx",
     "InviteCard": "src/toolkit/widgets/InviteCard.tsx",
+    "KeyVault": "src/toolkit/widgets/KeyVault.tsx",
     "SessionStart": "src/toolkit/widgets/SessionStart.tsx",
     "SessionLive": "src/toolkit/widgets/SessionLive.tsx",
     "SessionSheet": "src/toolkit/widgets/SessionSheet.tsx",
@@ -97,6 +98,10 @@
     "SessionStart": {
       "cardMode": "single",
       "primaryStory": "ReadyToStart"
+    },
+    "KeyVault": {
+      "cardMode": "single",
+      "primaryStory": "Open"
     },
     "HandoffQueue": {
       "cardMode": "single",

@@ -44,6 +44,16 @@ export type VaultKeyRow = {
    * "Epoch ms" and typed only the number, describing one of its two callers.
    */
   expires?: string | number | null;
+  /**
+   * The OpenSSH public line, on `ssh` records only.
+   *
+   * Public material, which is why it rides on the row rather than behind an
+   * export: `authorized_keys` and pasting into GitHub are what an ssh key is
+   * mostly *for*. The vault has stored it since kinds landed and this
+   * projection dropped it, so the Keys tray had no way to offer what
+   * `/my-keys` already did.
+   */
+  publicLine?: string;
 };
 
 export type SlotMeta = {

@@ -11,6 +11,17 @@ import { InviteCard } from "./InviteCard";
 export type SessionKeyChoice = {
   fingerprint: string;
   uid?: string;
+  /**
+   * What this key will ask of you if you pick it — `keyPowerReadout`'s label.
+   *
+   * "ready", "needs an unlock", "open, needs its passphrase". The chooser used
+   * to list every candidate identically, so the difference between a key that
+   * signs immediately and one that will stop the run to ask for a passphrase
+   * was invisible at the moment of the choice and discovered afterwards.
+   * Nothing `unusable` reaches this list at all — `sessionKeyChoices` filters
+   * it — and the reason for that appears under Start, not as a silent absence.
+   */
+  note?: string;
 };
 
 /** Somebody who could be in the room — a trusted mark, or a search hit. */
@@ -19,6 +30,41 @@ export type RecipientChoice = {
   /** Their uid or email. Absent for a key nothing local knows a name for. */
   label?: string;
 };
+
+/**
+ * Why a key you marked "never" is not put in a room.
+ *
+ * `quorum-mount.js` asked this with a `confirm()` — "Key … is marked "never"
+ * trust. Add to audience anyway?" — which is a dialog that names a state and
+ * offers to ignore it in the same breath, from a control that had said nothing
+ * until it was pressed. The mark is a decision the reader already made about
+ * this key, so the honest shape is a refusal that names the mark and points at
+ * where it can be changed, not a prompt that treats it as a speed bump.
+ *
+ * A module constant because two controls refuse with it — the row's button and
+ * the fingerprint's own menu — and one condition gets one explanation.
+ */
+export const NEVER_TRUSTED =
+  "You marked this key “never” — this browser's own trust mark, the same thing GnuPG calls ownertrust. A room is derived from its audience, so adding it would build the room around a key you decided not to believe. Change the mark on the key itself if that was wrong.";
+
+/**
+ * Why a hit the keyserver returned still cannot go in the room.
+ *
+ * `mergeSearchHits` admits a result at sixteen characters, and a room is
+ * derived from whole fingerprints — so these were filtered out of the list
+ * before it was drawn. That made the *empty* case lie: "No key here answers to
+ * that" was printed to somebody whose search had matched, which is a refusal
+ * naming a state they were not in. The hit is shown now and refuses on its own
+ * behalf, which is the difference between a search that found nothing and a
+ * search that found something unusable.
+ */
+export const SHORT_ID_HIT =
+  "This result carries only a short key id, not a whole fingerprint. More than one key can end in the same characters, and a room is derived from full fingerprints — so there is nothing here to derive one from. Open the key and copy its fingerprint, or ask them for it.";
+
+/** A room is derived from whole fingerprints: 40 for v4, 64 for v6. */
+function wholeFingerprint(fpr: string): boolean {
+  return /^[0-9A-F]{40}$|^[0-9A-F]{64}$/.test(String(fpr || "").toUpperCase());
+}
 
 /** What `pasteReadout` hands back — the sentence and what it did. */
 export type PasteResult = ReturnType<typeof pasteReadout>;
@@ -56,6 +102,15 @@ export type SessionStartProps = {
    * for everything on the design surface.
    */
   onSearch?: (query: string) => Promise<RecipientChoice[]>;
+  /**
+   * Fingerprints this browser has marked `never`, upper-case.
+   *
+   * A list rather than a flag on each choice, because the add has two doors —
+   * the row's button and the fingerprint's own actions menu — and only a check
+   * inside `add` covers both. A flag would leave the menu route open, which is
+   * how the original `confirm()` was bypassed by the one path nobody tested.
+   */
+  neverTrusted?: string[];
   onAudience: (audience: string[]) => void;
   /** What the paste box found, as `pasteReadout` read it. */
   onPaste: (result: PasteResult) => void;
@@ -123,13 +178,19 @@ const PASTE_TONE: Record<string, string> = {
 function SearchHitRow({
   hit,
   here,
+  never,
   onAdd,
 }: {
   hit: { fingerprint: string; label?: string };
   here: boolean;
+  /** Marked `never` in this browser — refused, and told before the press. */
+  never: boolean;
   onAdd: (fpr: string) => void;
 }) {
-  const refusal = useRefusal(here ? ALREADY_IN_ROOM : undefined);
+  const short = !wholeFingerprint(hit.fingerprint);
+  const refusal = useRefusal(
+    here ? ALREADY_IN_ROOM : short ? SHORT_ID_HIT : never ? NEVER_TRUSTED : undefined
+  );
   return (
     <RefusalLayout note={refusal.note} className="w-full">
       <span className="flex flex-wrap items-baseline gap-1.5">
@@ -157,12 +218,24 @@ function SearchHitRow({
           type="button"
           className="link-action"
           {...refusal.aria}
-          aria-label={`${here ? "Already in the room" : "Add to the room"}: ${
-            hit.label || formatFingerprint(hit.fingerprint)
-          }`}
+          aria-label={`${
+            here
+              ? "Already in the room"
+              : short
+                ? "Short key id"
+                : never
+                  ? "Marked never"
+                  : "Add to the room"
+          }: ${hit.label || formatFingerprint(hit.fingerprint)}`}
           onClick={refusal.guard(() => onAdd(hit.fingerprint))}
         >
-          {here ? "in the room" : "Add to the room"}
+          {here
+            ? "in the room"
+            : short
+              ? "short key id"
+              : never
+                ? "marked never"
+                : "Add to the room"}
         </button>
       </span>
     </RefusalLayout>
@@ -178,6 +251,7 @@ export function SessionStart({
   audience,
   trusted = [],
   onSearch,
+  neverTrusted = [],
   onAudience,
   onPaste,
   issues,
@@ -194,14 +268,36 @@ export function SessionStart({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [showRecipe, setShowRecipe] = useState(false);
+  /**
+   * The sentence an add refused with, or "".
+   *
+   * The refusal is already on the row's own button, and this is the half that
+   * covers the *other* door: `Fingerprint`'s actions menu offers "add to the
+   * room" too, and a guard there that silently did nothing would be the dead
+   * control this whole mechanism exists to stop. It is a live region, so a
+   * screen reader hears it whichever door was used.
+   */
+  const [addRefusal, setAddRefusal] = useState("");
   const issuesId = useId();
   const inRoom = new Set(audience.map((f) => f.toUpperCase()));
+  const refused = new Set(neverTrusted.map((f) => f.toUpperCase()));
   const offering = role === "offer";
 
   /** The pick *is* the add. A picker that then wants a confirm is a form. */
   const add = (fpr: string) => {
     const clean = String(fpr || "").toUpperCase();
     if (!clean || inRoom.has(clean)) return;
+    if (!wholeFingerprint(clean)) {
+      // `canonicalAudience` would drop it a moment later and the press would
+      // read as a control that does nothing, which is what it did.
+      setAddRefusal(SHORT_ID_HIT);
+      return;
+    }
+    if (refused.has(clean)) {
+      setAddRefusal(NEVER_TRUSTED);
+      return;
+    }
+    setAddRefusal("");
     onAudience([...audience, clean]);
   };
 
@@ -300,6 +396,7 @@ export function SessionStart({
           {keys.map((k) => (
             <option key={k.fingerprint} value={k.fingerprint}>
               {k.uid || formatFingerprint(k.fingerprint)}
+              {k.note ? ` — ${k.note}` : ""}
             </option>
           ))}
         </select>
@@ -350,6 +447,18 @@ export function SessionStart({
             </p>
           )}
         </div>
+
+        {/* Whichever door the add came through. Always rendered so the region
+            is there before it has anything to say — a live region created at
+            the moment of its first message is a message some screen readers
+            never announce. */}
+        <p
+          aria-live="polite"
+          data-add-refusal={addRefusal ? "never" : ""}
+          className="text-[10.5px] leading-snug text-[var(--warn)]"
+        >
+          {addRefusal}
+        </p>
 
         {offerable.length ? (
           <div className="flex flex-col gap-1" data-session-trusted>
@@ -446,6 +555,7 @@ export function SessionStart({
                       key={hit.fingerprint}
                       hit={hit}
                       here={inRoom.has(hit.fingerprint.toUpperCase())}
+                      never={refused.has(hit.fingerprint.toUpperCase())}
                       onAdd={add}
                     />
                   ))}

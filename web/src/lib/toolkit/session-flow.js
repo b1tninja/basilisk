@@ -44,6 +44,7 @@
 
 import { canonicalAudience } from "../notebook/room.js";
 import { findFingerprints, findShortKeyIds } from "../pgp/verify-fpr.js";
+import { keyOwesPassphrase, keyPower, keyPowerReadout } from "./key-power.js";
 
 /**
  * What the invite carries, and what it does not.
@@ -293,6 +294,14 @@ export function confirmationReadout(peer) {
  * `agent.unlock` and then a failure in `resolveGpgPrivateKey`, which wants
  * armor, several steps after the choice was made.
  *
+ * **Expiry is the second half of the same rule**, and it was missing. An
+ * expired OpenPGP key is `kind: "pgp"`, so it passed this filter, sat in the
+ * chooser, unlocked without complaint — the vault stores no opinion about
+ * validity — and then failed at the signature in OpenPGP's own words, at the
+ * same distance from the choice as the ssh case above. `keyPower` calls both of
+ * those `unusable` in one word, so this filter is now that word rather than a
+ * second list of what cannot sign.
+ *
  * Exported so the picker, its suggestions and the count behind "there is
  * nothing to choose" cannot answer this differently. That count getting it
  * wrong is how the original report happened one layer up: a number that
@@ -300,43 +309,13 @@ export function confirmationReadout(peer) {
  * shown to someone with nothing to choose.
  *
  * @param {SessionKeyRow[]} rows
+ * @param {number} [now]  Unix milliseconds
  * @returns {SessionKeyRow[]}
  */
-export function sessionKeyChoices(rows) {
-  return (Array.isArray(rows) ? rows : []).filter((k) => {
-    const kind = String(k?.kind || "pgp");
-    return kind === "pgp";
-  });
-}
-
-/**
- * Whether this key still owes an OpenPGP passphrase before it can sign.
- *
- * Two locks, and only one of them is the vault's. `vault.unlockKey` opens the
- * device-bound envelope and returns armor that may still be S2K-protected, so
- * "unlocked" and "usable" are different claims about the same key — the
- * distinction `sessionPut` records and this reads.
- *
- * Observation beats intent: `locked` came from parsing the armor that
- * `decryptKey` will be handed, so where it disagrees with `protection` it wins.
- * `protection` answers for a key that is not loaded, because that is all there
- * is to go on before an unlock — and it is what the mode *means*
- * ("passphrase: OpenPGP S2K/Argon2 locks the armored key before wrapping").
- *
- * `undefined` where neither settles it, and callers must stay silent on it. A
- * sentence about a passphrase that may not be owed is a refusal naming a state
- * the reader is not in, which is the failure this whole repair is about.
- *
- * @param {SessionKeyRow|null|undefined} key
- * @returns {boolean|undefined}
- */
-export function keyOwesPassphrase(key) {
-  if (!key) return undefined;
-  if (typeof key.locked === "boolean") return key.locked;
-  const protection = String(key.protection || "");
-  if (protection === "passphrase") return true;
-  if (protection === "device" || protection === "passkey") return false;
-  return undefined;
+export function sessionKeyChoices(rows, now = Date.now()) {
+  return (Array.isArray(rows) ? rows : []).filter(
+    (k) => k && keyPower(k, now) !== "unusable"
+  );
 }
 
 /**
@@ -368,6 +347,13 @@ export function keyOwesPassphrase(key) {
  * one layer down: an ssh key makes "there is nothing to choose" false while
  * leaving nothing choosable.
  *
+ * `heldCount` is what stops that correction from lying in the other direction.
+ * Once `keyCount` excludes everything `unusable`, a browser holding only ssh
+ * keys or only expired ones has `keyCount === 0` — and "No private key in this
+ * browser" is then a sentence about a vault with keys in it, which is exactly
+ * the class of refusal this module exists to stop. Three states, three
+ * sentences: nothing held, nothing held that can sign, nothing chosen yet.
+ *
  * The passphrase clause is the other half of the same report. A
  * passphrase-protected key is the mode this app recommends, and choosing one
  * used to pass every check here and die inside `resolveGpgPrivateKey` on
@@ -376,7 +362,8 @@ export function keyOwesPassphrase(key) {
  * and the field it names is the one `agent.unlock` reads.
  *
  * @param {{ audience?: string[], keyFingerprint?: string, live?: boolean,
- *   keyCount?: number, key?: SessionKeyRow|null, passphraseBound?: boolean }} draft
+ *   keyCount?: number, heldCount?: number, key?: SessionKeyRow|null,
+ *   passphraseBound?: boolean }} draft
  * @returns {string[]}
  */
 export function startIssues(draft) {
@@ -392,12 +379,29 @@ export function startIssues(draft) {
     .toUpperCase();
   if (!key) {
     // A session is signed, so it cannot start without a key at all. Say which
-    // of the two situations this is, because only one of them is a choice.
+    // of the three situations this is, because only one of them is a choice.
+    const choosable = Number(draft?.keyCount || 0);
+    const held = Number(draft?.heldCount || 0);
     issues.push(
-      Number(draft?.keyCount || 0) === 0
-        ? "No private key in this browser. A session signs the invite and every envelope after it, so it needs a key held here — the ones under “Your keys” on My Keys are public keys on your account and cannot sign. Make or import one under “Your browser vault”."
-        : "Choose the key you are joining as — it signs the invite and every envelope after it."
+      choosable > 0
+        ? "Choose the key you are joining as — it signs the invite and every envelope after it."
+        : held > 0
+          ? "None of the keys in this browser can open a session. A session signs an OpenPGP invite, so an SSH or raw key cannot open one and neither can an expired key — the Keys tray says which each of yours is. Generate or import an OpenPGP key there."
+          : "No private key in this browser. A session signs the invite and every envelope after it, so it needs a key held here — the ones under “Your keys” on My Keys are public keys on your account and cannot sign. Make or import one in the Keys tray, under “Your browser vault”."
     );
+  }
+  if (key && draft?.key && keyPower(draft.key) === "unusable") {
+    // A chosen key the picker would not offer today. It reaches here because
+    // the fingerprint is held in the draft while the *list* is re-derived every
+    // render: a key that expires with the sheet open, or a choice made before
+    // this filter existed, leaves a fingerprint selected that nothing can sign
+    // with. Without this the picker refuses to show it and Start goes right on
+    // being available — a refusal removed from the list is not a refusal.
+    //
+    // The sentence is `keyPowerReadout`'s, not a second one written here, so
+    // the row in the tray and the blocker under Start say the same thing about
+    // the same key.
+    issues.push(keyPowerReadout(draft.key).why);
   }
   if (key && keyOwesPassphrase(draft?.key) === true && !draft?.passphraseBound) {
     // Only when it is *known* to be owed. `keyOwesPassphrase` returns undefined
