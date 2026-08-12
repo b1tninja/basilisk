@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createMessage, encrypt, generateKey } from "openpgp";
 import { dearmorToBytes } from "../lib/packet-map.js";
 import {
@@ -300,5 +302,34 @@ describe("hash writers", () => {
         path: "/toolkit",
       })
     ).toBe("https://example.test/toolkit#decrypt&ct=abc");
+  });
+});
+
+describe("the seed a link carries reaches the notebook", () => {
+  const HOOK = readFileSync(
+    fileURLToPath(new URL("../toolkit/useNotebook.ts", import.meta.url)),
+    "utf8"
+  );
+
+  it("reads the field `attachCiphertextSeed` actually writes", () => {
+    // The producer above writes `inputs.ctArmored`, and it is the only thing
+    // that writes a seed at all. The hook read `inputs.ciphertext`, so a
+    // `#decrypt&ct=…` link parsed correctly, produced the armor, and then
+    // dropped it on the floor — the field stayed empty.
+    expect(HOOK).toMatch(/action\.inputs\?\.ctArmored/);
+    expect(HOOK).not.toMatch(/action\.inputs\?\.ciphertext/);
+  });
+
+  it("applies it whatever the link named, not only a starter", () => {
+    // `attachCiphertextSeed` spreads `inputs` onto *any* action, so
+    // `#preset=gpg-decrypt&ct=…` carries a ciphertext exactly as `#decrypt`
+    // does. The read used to sit inside the starter branch, which returns
+    // before the preset and recipe branches run.
+    const body = HOOK.slice(HOOK.indexOf("const loadFromHash"));
+    const handler = body.slice(0, body.indexOf("useEffect("));
+    expect(handler.match(/seedCiphertext\(\)/g) || []).toHaveLength(3);
+    for (const kind of ["starter", "preset", "recipe"]) {
+      expect(handler).toContain(`action.kind === "${kind}"`);
+    }
   });
 });

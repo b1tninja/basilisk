@@ -567,23 +567,43 @@ export function useNotebook() {
 
   const loadFromHash = useCallback(() => {
     const action = parseToolkitHash(window.location.hash || "");
-    if (!action || action.kind === "empty") return;
+    // `unknown` alongside `empty`: a hash this build does not recognise names
+    // nothing to load, and neither carries a seed. Stated rather than left to
+    // fall past the three branches, so the seed below can read `inputs` at all.
+    if (!action || action.kind === "empty" || action.kind === "unknown") return;
+    /**
+     * The `ct=` seed, applied whatever the link named.
+     *
+     * `attachCiphertextSeed` in `fragment.js` hangs `inputs` off *any* action,
+     * so `#preset=gpg-decrypt&ct=…` carries a ciphertext exactly as
+     * `#decrypt&ct=…` does. This used to live inside the starter branch, which
+     * returns before the other two run, so every non-starter link dropped it.
+     *
+     * It is also spelled the way the writer spells it. The read was
+     * `inputs.ciphertext` and nothing has ever written that field, so the seed
+     * did not arrive even for a starter — the one case this branch handled.
+     */
+    const ctSeed = String(action.inputs?.ctArmored || "");
+    const seedCiphertext = () => {
+      if (ctSeed) setCiphertext(ctSeed);
+    };
     if (action.kind === "starter") {
       const starter = MESSAGING_STARTERS[action.starter];
       if (!starter) return;
       loadRecipeText(starter.title, starter.recipe);
-      if (action.inputs?.ciphertext) setCiphertext(String(action.inputs.ciphertext));
-      if (action.inputs?.text) setInputText(String(action.inputs.text));
+      seedCiphertext();
       return;
     }
     if (action.kind === "preset") {
       const p = PRESETS.find((x: { id: string }) => x.id === action.id);
       if (!p) return;
       loadRecipeText(p.title, p.recipe);
+      seedCiphertext();
       return;
     }
     if (action.kind === "recipe") {
       loadRecipeText("Shared notebook", action.recipe);
+      seedCiphertext();
     }
   }, [loadRecipeText]);
 
@@ -594,7 +614,7 @@ export function useNotebook() {
     return () => window.removeEventListener("hashchange", onHash);
   }, [loadFromHash]);
 
-  const source = useMemo(() => serializeRecipe({ chains }), [chains]);
+  const source = useMemo(() => serializeRecipe(chains), [chains]);
 
   const compiled = useMemo(() => compileRecipe(source), [source]);
 
@@ -1291,7 +1311,7 @@ export function useNotebook() {
   const upgradeCellRecipe = useCallback(
     (cellIndex: number, text?: string) => {
       const before =
-        text ?? serializeRecipe({ chains: [chains[cellIndex] || { steps: [] }] });
+        text ?? serializeRecipe([chains[cellIndex] || { steps: [] }]);
       const upgrade = recipeUpgrade(before);
       if (!upgrade) return null;
       if (!applyCellRecipeText(cellIndex, upgrade.recipe)) return null;
@@ -1311,7 +1331,7 @@ export function useNotebook() {
 
   const cellRecipeSource = useCallback(
     (cellIndex: number) =>
-      serializeRecipe({ chains: [chains[cellIndex] || { steps: [] }] }),
+      serializeRecipe([chains[cellIndex] || { steps: [] }]),
     [chains]
   );
 
