@@ -22,9 +22,13 @@ E2E tests run real `gpg --send-keys` / `--recv-keys` against the basilisk contai
 
 ```bash
 cd web
-npx vitest run        # 143 files, node only, no browser, no sockets
+npx vitest run        # node only, no browser, no sockets — seconds
+npx tsc --noEmit      # must exit 0; see below
 npm run test:e2e      # builds dist/, then drives it in real Chromium
 ```
+
+No file count here on purpose: it was `143` for long enough to be wrong by
+forty, and a number nobody updates is worse than no number.
 
 The two are separate on purpose. `npx vitest run` must stay fast and hermetic,
 so the browser specs live behind `vitest.e2e.config.js` and a `.e2e.js` suffix
@@ -39,6 +43,23 @@ first: the point is to drive the *shipped* bundle under the *production* CSP.
 | `hkp-directory.e2e.js` | Python that can import `basilisk.serve`; Chromium for the browser half |
 | `stun-discovery.e2e.js` | Chromium; one spec also wants public STUN |
 | `turn-relay.e2e.js` | Chromium **and** Docker |
+| `placed-run-arc.e2e.js` | Chromium; Python that can import `basilisk.serve` |
+| `portal-search.e2e.js` | Chromium; Python that can import `basilisk.serve` |
+
+### What CI runs, and what it does not
+
+`ci.yml` runs the node suite and `npx tsc --noEmit` on every push and pull
+request. Neither ran there until recently: the job built the portal and audited
+dependencies, and vite strips types without reading them, so a green build said
+nothing about whether anything type-checked. Three real errors reached `main`
+that way.
+
+The browser suite runs in `e2e.yml`'s `browser` job — **push to `main` and
+`workflow_dispatch` only, not on pull requests**, because it has had
+load-sensitive flakes and gating a PR on one teaches people to re-run red CI.
+That workflow says what has to be true before it moves onto PRs. Every run
+writes `web/test-results/e2e.xml`, kept as an artifact, because a rare failure
+here is expensive to reproduce and the terminal scrolls.
 
 ### The HKP directory suite
 

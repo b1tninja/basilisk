@@ -452,12 +452,14 @@ function producesKeyMaterial(type) {
  * exactly what must never reach a key: a private key everyone can recompute is
  * not one.
  *
- * The refusal that was meant to cover this — `mirroredRunRefusals` — reads each
- * op's declared `entropy` and refuses ops that *draw* keying randomness. `hkdf`
- * and `pbkdf2` draw none; they *derive*. So `entropy.pool | out $salt` followed
- * by `in $salt | hkdf as=aes/256` compiled, planned and ran, handing back a
- * "secret" the whole room shared. The type system is where that is visible,
- * because the pooled flag rides with the value through `out` and `in`.
+ * A whole-notebook refusal was meant to cover this and could not. It read each
+ * op's declared `entropy` and refused ops that *draw* keying randomness —
+ * `hkdf` and `pbkdf2` draw none, they *derive* — so
+ * `entropy.pool | out $salt` followed by `in $salt | hkdf as=aes/256` compiled,
+ * planned and ran, handing back a "secret" the whole room shared. (That check
+ * has since been retired for three separate reasons; `manifest.js` records
+ * them.) The type system is where this is visible, because the pooled flag
+ * rides with the value through `out` and `in`.
  *
  * This is the **pipe** half: the pooled value is the thing being turned into a
  * key, and there is no exception to make — the secret being stretched cannot be

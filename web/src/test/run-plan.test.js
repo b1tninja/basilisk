@@ -23,7 +23,7 @@
  * - `unknown-peer` — a recipe naming somebody the roster does not have, which
  *   is the common case rather than an edge.
  * - `publish-secret` — `publish` on a cell whose `out` is a private half.
- * - `keying-in-mirror` — `mirroredRunRefusals` wired into the pre-flight,
+ * - `keying-in-mirror` — retired; see the note where its block stood,
  *   reached through a plan rather than sitting unreached.
  *
  * The second theme is the *binding*. `session.js` deals in fingerprints and
@@ -384,61 +384,24 @@ in $kpM | :public | out $pubM`,
   });
 });
 
-describe("refusal · a mirrored run that would seed a key", () => {
-  /** @param {string} src @param {string} mode */
-  async function manifestFor(src, mode) {
-    const { ast } = compileRecipe(src);
-    const cells = recipeChains(ast).map((chain, index) => ({
-      index,
-      peer: String(chain.peer || ""),
-      publish: !!chain.publish,
-      recipe: serializeRecipe({ chains: [chain] }),
-    }));
-    return buildRunManifest({
-      recipeSource: src,
-      cells,
-      peers: ROSTER,
-      entropy: { mode },
-    });
-  }
-
-  const SRC = "bytes deadbeef | encode hex | out $a\n\ngenkey x25519 | out $kp";
-
-  it("passes the entropy pre-flight through into the plan's refusals", async () => {
-    const manifest = await manifestFor(SRC, "pool");
-    const p = planRun(compileRecipe(SRC), { me: FPR_A, roster: ROSTER, manifest });
-    expect(p.ok).toBe(false);
-    const r = refusalFor(p, "keying-in-mirror");
-    expect(r?.field).toBe("entropy");
-    expect(r?.cell).toBe(1);
-    expect(r?.path).toBe("cell 1");
-    expect(r?.actual).toBe("genkey (keying)");
-    expect(r?.message).toContain("genkey");
-    expect(r?.message).toContain("no secret");
-  });
-
-  it("anchors the entropy refusal to the cell it came from", async () => {
-    const manifest = await manifestFor(SRC, "pool");
-    const p = planRun(compileRecipe(SRC), { me: FPR_A, roster: ROSTER, manifest });
-    const r = refusalFor(p, "keying-in-mirror");
-    // Asserted before the slice, because `slice(undefined, undefined)` is the
-    // whole source and would pass this test with no refusal at all.
-    expect(r).toBeTruthy();
-    expect(r?.start).toBeGreaterThan(0);
-    expect(SRC.slice(r?.start, r?.end)).toContain("genkey");
-  });
-
-  it("says nothing when the run draws its randomness locally", async () => {
-    const manifest = await manifestFor(SRC, "local");
-    const p = planRun(compileRecipe(SRC), { me: FPR_A, roster: ROSTER, manifest });
-    expect(p.refusals).toEqual([]);
-  });
-
-  it("says nothing when no manifest is offered — the plan does not invent one", () => {
-    const p = planRun(compileRecipe(SRC), { me: FPR_A, roster: ROSTER });
-    expect(p.refusals).toEqual([]);
-  });
-});
+/*
+ * "refusal · a mirrored run that would seed a key" stood here, exercising the
+ * `manifest` option to `planRun` and the `keying-in-mirror` refusal behind it.
+ * Both are gone, and the reason belongs where the tests were.
+ *
+ * The refusal read a manifest's `entropy.mode` and refused a `pool` run
+ * containing any op that *draws* keying randomness, on the premise that such an
+ * op would be seeded from the pool. Nothing in this build seeds anything from a
+ * pool, so `genkey` in a pooled notebook draws from the platform CSPRNG and
+ * every peer gets a different key — the refusal was false. It would also have
+ * refused every manifest this build produces, because a manifest only says
+ * `pool` when a pool was drawn, which needs a room, which needs `quorum.join`,
+ * which correctly declares `keying` for the channel's ephemeral ECDH. And no
+ * caller ever passed a manifest, so it never ran.
+ *
+ * The danger was real. It is now checked by value flow in the compiler — a
+ * pooled value may not become key material — which is `pooled-value-rule.test.js`.
+ */
 
 describe("refusal · a recipe that does not compile has no placement", () => {
   it("says so once, against the recipe rather than a cell", () => {

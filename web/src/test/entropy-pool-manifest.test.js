@@ -14,7 +14,7 @@
  * matter are the negative ones: no pool drawn, and a pool that refused.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { buildRunManifest, mirroredRunRefusals } from "../lib/toolkit/manifest.js";
+import { buildRunManifest } from "../lib/toolkit/manifest.js";
 import { clearPooledEntropy } from "../lib/toolkit/entropy-pool-ops.js";
 
 afterEach(() => clearPooledEntropy());
@@ -29,7 +29,6 @@ describe("what a manifest says about the randomness a run drew", () => {
     const m = await buildRunManifest({ registry: "1", recipeSource: "", cells: cells("random 32 | out $k") });
     expect(m.entropy.mode).toBe("local");
     expect(m.entropy.digest).toBeUndefined();
-    expect(mirroredRunRefusals(m).ok).toBe(true);
   });
 
   it("records the digest when one was drawn", async () => {
@@ -42,36 +41,19 @@ describe("what a manifest says about the randomness a run drew", () => {
     expect(m.entropy).toEqual({ mode: "pool", digest: DIGEST });
   });
 
-  it("keeps the keying refusal exactly as it was", async () => {
-    // The guard that has been protecting a value nothing produced. It is
-    // upstream of the op and unchanged by it: a pooled run containing anything
-    // that draws `keying` randomness is refused before the run, naming the cell
-    // and the op. `genkey` seeded from a value the whole room can derive is a
-    // private key the whole room can derive.
-    const m = await buildRunManifest({
-      registry: "1",
-      recipeSource: "",
-      cells: cells("genkey | out $k"),
-      entropy: { mode: "pool", digest: DIGEST },
-    });
-    const refused = mirroredRunRefusals(m);
-    expect(refused.ok).toBe(false);
-    expect(refused.refusals.map((r) => r.step)).toContain("genkey");
-    expect(refused.refusals[0].reason).toBe("keying");
-  });
-
-  it("does not refuse the pool op itself", async () => {
-    // `entropy.pool` declares `public`, which is the whole point rather than a
-    // concession — the value is published to the room by construction. An op
-    // that declared nothing would read as `keying` and a pooled run would
-    // refuse itself.
-    const m = await buildRunManifest({
-      registry: "1",
-      recipeSource: "",
-      cells: cells("entropy.pool | out $salt"),
-      entropy: { mode: "pool", digest: DIGEST },
-    });
-    expect(mirroredRunRefusals(m).ok).toBe(true);
+  it("no longer carries a whole-notebook keying refusal", async () => {
+    // `mirroredRunRefusals` used to refuse a `pool` manifest containing any op
+    // that draws keying randomness. It is gone: nothing in this build seeds an
+    // op from a pool, so the refusal was false; it would have refused every
+    // manifest this build produces, since drawing a pool needs `quorum.join`
+    // and that correctly declares `keying`; and it never ran, because nothing
+    // passed a manifest to `planRun`.
+    //
+    // The danger it was aimed at is real and is now checked where it can be
+    // seen — a pooled *value* becoming key material, in the compiler. See
+    // `pooled-value-rule.test.js`.
+    const manifest = await import("../lib/toolkit/manifest.js");
+    expect(manifest.mirroredRunRefusals).toBeUndefined();
   });
 });
 

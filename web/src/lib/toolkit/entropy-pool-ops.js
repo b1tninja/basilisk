@@ -11,11 +11,12 @@
  * A value every participant helped choose and every participant can recompute.
  * That is exactly what makes a distributed run agree and exactly what must
  * never reach key generation: a private key everyone can derive is not one.
- * The guard is `mirroredRunRefusals` in `manifest.js`, which reads each op's
- * declared `entropy` and refuses a `pool` run containing anything that draws
- * `keying` randomness — and it is upstream of this op rather than inside it,
- * because a refusal that happens before the run is worth more than one that
- * happens after the value exists.
+ * The guard is the compiler's pooled-value rule in `recipe.js`: a value
+ * carrying `pooled` may not reach a step that produces key material, and a
+ * param takes one only where it says `acceptsPooled` — which is true of a salt,
+ * an HKDF `info` and an AEAD's `aad`, all public by definition. It is upstream
+ * of this op rather than inside it, because a refusal before the run is worth
+ * more than one after the value exists.
  *
  * So: salts, nonces, IVs, challenges, set ids. The op declares `public` for the
  * same reason.

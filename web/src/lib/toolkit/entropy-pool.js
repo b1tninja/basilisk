@@ -2,16 +2,20 @@
  * Pooled entropy — the value every participant helped choose, and the half of
  * `entropy: { mode: "pool" }` that did not exist.
  *
- * `manifest.js` has declared the slot for a while and says so in its own words:
- * *"What is still not wired is the other half: no op reads a pool."* It also
- * ships the refusal that makes a pool safe — `mirroredRunRefusals` reads each
- * op's declared `entropy` and refuses a `pool` run containing anything that
- * draws `keying` randomness, because entropy the whole room can recompute is a
- * private key the whole room can recompute. That refusal has been guarding a
- * value nothing produced. This module produces it.
+ * `manifest.js` declared the slot — `entropy: { mode: "pool", digest }` — long
+ * before anything filled it. This module is what fills it.
  *
- * Public-safe randomness only: salts, nonces, IVs, challenges. The refusal in
- * `manifest.js` is what keeps it there, and it is upstream of everything here.
+ * **Public-safe randomness only**: salts, nonces, IVs, challenges. What keeps it
+ * there is not in this module and not in `manifest.js` either — it is the
+ * compiler's pooled-value rule (`recipe.js`), which refuses a value carrying
+ * `pooled` from reaching a step that produces key material. A param may say
+ * `acceptsPooled` where its input is public by definition, and a pooled salt is
+ * exactly the case this op exists to serve.
+ *
+ * `manifest.js` used to carry a whole-notebook refusal aimed at the same
+ * danger. It was removed: it guarded a seeding mechanism this build does not
+ * have, would have refused every manifest the build can produce, and never
+ * ran. Its header records why.
  *
  * ## Commit, then reveal
  *

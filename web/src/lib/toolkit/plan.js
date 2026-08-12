@@ -78,7 +78,7 @@
  * @module lib/toolkit/plan
  */
 
-import { cellKind, mirroredRunRefusals } from "./manifest.js";
+import { cellKind } from "./manifest.js";
 import { mismatchLog } from "./receipt.js";
 import {
   PEER_SIGIL,
@@ -571,11 +571,14 @@ function andList(list) {
  *   | import("./recipe.js").RecipeAst
  *   | import("./recipe.js").RecipeChain[]
  *   | null|undefined} compiled  a `compileRecipe` result, or the AST from one
- * @param {{ me?: string, roster?: Record<string, string>|null,
- *   manifest?: import("./manifest.js").RunManifest|null }} [opts]
+ * @param {{ me?: string, roster?: Record<string, string>|null }} [opts]
  *   `me` is a peer label or this peer's fingerprint — either is resolved
  *   through the roster, because a session knows the second and a recipe knows
- *   the first. `manifest` arms the mirrored-run entropy pre-flight.
+ *   the first.
+ *
+ *   There was a `manifest` option here, arming a whole-notebook entropy
+ *   pre-flight. It is gone with the check it armed — see `manifest.js` for why
+ *   that check was wrong — and nothing ever passed it.
  * @returns {RunPlan}
  */
 export function planRun(compiled, opts = {}) {
@@ -983,29 +986,6 @@ export function planRun(compiled, opts = {}) {
     }
   }
 
-  // The entropy pre-flight. `mirroredRunRefusals` reads the manifest's declared
-  // mode and every op's declared `entropy`, and answers the one question a plan
-  // must not answer for itself: whether a run that agreed its randomness in
-  // advance may contain an op that mints a key from it.
-  if (opts.manifest) {
-    const mirrored = mirroredRunRefusals(opts.manifest);
-    for (const r of mirrored.refusals) {
-      const cell = plan.cells.find((c) => c.index === r.cell);
-      refuse(
-        {
-          path: `cell ${r.cell}`,
-          cell: r.cell,
-          start: cell?.start,
-          end: cell?.end,
-        },
-        "entropy",
-        "an op whose randomness may be seeded from a pool",
-        r.step ? `${r.step} (${r.reason})` : r.reason,
-        r.reason === "keying" ? "keying-in-mirror" : "unreadable",
-        r.message
-      );
-    }
-  }
 
   if (bound && !me) {
     asks.push({

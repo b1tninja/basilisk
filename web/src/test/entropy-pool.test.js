@@ -2,10 +2,12 @@
  * The pooled value, and the four things that have to be true about it.
  *
  * `manifest.js` has carried `entropy: { mode: "pool", digest }` and the refusal
- * that guards it — `mirroredRunRefusals` will not let a pooled run contain an op
- * that draws `keying` randomness — while saying plainly in its own header that
- * no op reads a pool. The refusal was protecting a value nothing produced. This
- * is the value.
+ * that declared it — `entropy: { mode: "pool", digest }` — while saying plainly
+ * in its own header that nothing produced one. This is the value.
+ *
+ * What keeps a pooled value away from key material is the compiler's
+ * pooled-value rule (`pooled-value-rule.test.js`), which checks it by value
+ * flow rather than by the company an op keeps.
  *
  * Pure: no transport, no session, no clock. A pool is a digest over reveals, so
  * it can be tested as one, which is why it comes before the op that will collect
