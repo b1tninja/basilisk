@@ -138,8 +138,9 @@ export function ShareSheet({
             data-unverified-warning
           >
             {session.joined - session.verified} of {session.joined} who joined
-            are still unconfirmed. Until you compare codes, a label names
-            nobody and no cell will run on them.
+            are still unconfirmed. Confirmation is automatic and there is
+            nothing for you to compare — until it lands, a label names nobody
+            and no cell will run on them.
           </p>
         ) : null}
 
@@ -319,11 +320,20 @@ function Tier({
  * Joined and verified, as two numbers.
  *
  * They are never the same claim. Someone opening the invite link is *joined*;
- * only a matching comparison of the short code makes them *verified*, and a
- * single "2 peers" hides exactly the gap an attacker holding a forwarded link
- * would sit in. The session layer already refuses to place cells on an
- * unverified peer — this is that distinction, said out loud, at the moment the
- * invite is being handed out.
+ * what makes them *verified* is a `kc` frame whose transcript hash binds the
+ * room id, both PGP fingerprints, both ephemeral ECDH keys and both DTLS
+ * certificates — see `session-flow.js`, which owns every sentence this app says
+ * about confirmation. A single "2 peers" hides exactly the gap an attacker
+ * holding a forwarded link would sit in. The session layer already refuses to
+ * place cells on an unverified peer; this is that distinction, said out loud,
+ * at the moment the invite is being handed out.
+ *
+ * **Nothing here is read out by a person.** This note and the warning above it
+ * both used to send the reader off to match a short code against their peer —
+ * an errand no code path in this app produces and nobody could have completed.
+ * `session-flow.js` states the absence three times over, and its guard covered
+ * its own module, so the false instruction lived two files away for as long as
+ * it took someone to read it. The guard now reads this file too.
  */
 function RosterCount({
   joined,

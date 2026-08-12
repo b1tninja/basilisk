@@ -25,6 +25,47 @@ import {
  */
 
 /**
+ * Whether this armor still carries OpenPGP S2K protection.
+ *
+ * The vault's outer envelope and OpenPGP's own passphrase are two different
+ * locks, and `unlockKey` opens only the first — its own return type says so
+ * ("may still be OpenPGP passphrase-locked"). Nothing read that sentence, so
+ * the chrome called every opened envelope "unlocked" and the run discovered
+ * the second lock several steps later. See `sessionPut` for what the answer is
+ * used for.
+ *
+ * `protection === "passphrase"` is the *intent* and this is the *observation*;
+ * they normally agree, and where they do not the armor wins, because the armor
+ * is what `decryptKey` will be handed. Observing costs one parse on a path that
+ * has just run Argon2.
+ *
+ * Only PGP armor has an S2K to inspect. An ssh or raw record holds
+ * openssh-key-v1 text or a bare JWK, which `readPrivateKey` cannot read at all,
+ * so those answer `false` — nothing further is owed for them, which is the
+ * honest reading of "no passphrase is outstanding".
+ *
+ * A parse failure answers `undefined` rather than guessing. An unreadable key
+ * is a problem, but it is not *this* problem, and claiming either state would
+ * put a sentence on screen about something never established.
+ *
+ * @param {string} armored
+ * @param {"pgp"|"ssh"|"raw"|undefined} kind
+ * @returns {Promise<boolean|undefined>}
+ */
+async function stillOwesAPassphrase(armored, kind) {
+  if (kind && kind !== "pgp") return false;
+  try {
+    // Lazily, matching `agent-ops.js` and `keyring-service.js`: OpenPGP is a
+    // large dependency and this module is imported by chrome that may never
+    // unlock anything.
+    const { isArmoredKeyLocked } = await import("./key-export.js");
+    return await isArmoredKeyLocked(armored);
+  } catch (_) {
+    return undefined;
+  }
+}
+
+/**
  * Unlock a vault private key (session-cached). Passkey ceremony when needed.
  *
  * @param {string} fingerprint
@@ -96,7 +137,9 @@ export async function unlockVaultForUse(fingerprint, opts = {}) {
       }
     }
     const armored = await unlockKey(fpr, unlockOpts);
-    if (!opts.skipSession) sessionPut(fpr, armored);
+    if (!opts.skipSession) {
+      sessionPut(fpr, armored, { locked: await stillOwesAPassphrase(armored, meta.kind) });
+    }
     try {
       await touchKeyUsed(fpr);
     } catch (_) {

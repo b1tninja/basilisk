@@ -3012,6 +3012,16 @@ export const STEPS = [
     doc: "Exports the private key into the run — use only when a recipe genuinely needs key material (export, transformation). For signing or decrypting, prefer `agent.sign` / `agent.decrypt`, which keep the key in the vault. pgp keys emit openpgp-key; ssh/raw keys emit a live keypair. Main-thread (passkey).",
     input: "none",
     output: "openpgp-key",
+    // `execAgentUnlock` reads `inputs.gpg.passphrase`, and nothing said so.
+    // Unguarded, unlike `agent.save`'s: there the mode is a param the recipe
+    // writes, so a `when:` can read it; here whether a passphrase is owed is a
+    // property of the key in the vault, which no declaration can see. So the
+    // panel is offered whenever this op is present and the panel's own copy
+    // says it is only needed for passphrase-protected keys. Undeclared, the
+    // field never appeared at all — the reader existed and had no writer, and
+    // a passphrase-protected key (the recommended mode) could not sign
+    // anything from this app.
+    unresolvedInputs: "gpgPass",
     entropy: "none",
     params: [
       {

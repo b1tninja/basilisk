@@ -272,6 +272,73 @@ export function confirmationReadout(peer) {
 }
 
 /**
+ * @typedef {object} SessionKeyRow
+ * @property {string} fingerprint
+ * @property {string} [uid]
+ * @property {"pgp"|"ssh"|"raw"|string} [kind]  absent means a legacy vault
+ *   record, which is definitionally pgp — `agent-ops.js` reads it the same way
+ * @property {string} [protection]  passphrase | passkey | device | session
+ * @property {boolean|undefined} [locked]  `sessionList`'s answer for this key,
+ *   or undefined when it is not loaded and nothing observed the armor
+ */
+
+/**
+ * The keys that could actually open a session, out of everything held here.
+ *
+ * A session signs an OpenPGP invite and every envelope after it, so the only
+ * candidates are OpenPGP keys. The vault holds three kinds — `agent.save`
+ * stores openssh-key-v1 blocks and bare JWKs beside PGP armor — and the key
+ * picker was listing all of them. Choosing one produced a live `CryptoKey` from
+ * `agent.unlock` and then a failure in `resolveGpgPrivateKey`, which wants
+ * armor, several steps after the choice was made.
+ *
+ * Exported so the picker, its suggestions and the count behind "there is
+ * nothing to choose" cannot answer this differently. That count getting it
+ * wrong is how the original report happened one layer up: a number that
+ * included keys the list could not offer meant "you have not chosen yet" was
+ * shown to someone with nothing to choose.
+ *
+ * @param {SessionKeyRow[]} rows
+ * @returns {SessionKeyRow[]}
+ */
+export function sessionKeyChoices(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((k) => {
+    const kind = String(k?.kind || "pgp");
+    return kind === "pgp";
+  });
+}
+
+/**
+ * Whether this key still owes an OpenPGP passphrase before it can sign.
+ *
+ * Two locks, and only one of them is the vault's. `vault.unlockKey` opens the
+ * device-bound envelope and returns armor that may still be S2K-protected, so
+ * "unlocked" and "usable" are different claims about the same key — the
+ * distinction `sessionPut` records and this reads.
+ *
+ * Observation beats intent: `locked` came from parsing the armor that
+ * `decryptKey` will be handed, so where it disagrees with `protection` it wins.
+ * `protection` answers for a key that is not loaded, because that is all there
+ * is to go on before an unlock — and it is what the mode *means*
+ * ("passphrase: OpenPGP S2K/Argon2 locks the armored key before wrapping").
+ *
+ * `undefined` where neither settles it, and callers must stay silent on it. A
+ * sentence about a passphrase that may not be owed is a refusal naming a state
+ * the reader is not in, which is the failure this whole repair is about.
+ *
+ * @param {SessionKeyRow|null|undefined} key
+ * @returns {boolean|undefined}
+ */
+export function keyOwesPassphrase(key) {
+  if (!key) return undefined;
+  if (typeof key.locked === "boolean") return key.locked;
+  const protection = String(key.protection || "");
+  if (protection === "passphrase") return true;
+  if (protection === "device" || protection === "passkey") return false;
+  return undefined;
+}
+
+/**
  * Why a session cannot be started yet — sentences, not a boolean.
  *
  * Every one of these is a condition `execQuorumOpen` or `NotebookSession` would
@@ -295,8 +362,20 @@ export function confirmationReadout(peer) {
  * with no reason attached -- so pressing it did nothing and said nothing, which
  * is how this was reported.
  *
+ * `keyCount` counts keys that could *open a session* — `sessionKeyChoices`,
+ * not everything the vault holds. Counting the rest brings the same bug back
+ * one layer down: an ssh key makes "there is nothing to choose" false while
+ * leaving nothing choosable.
+ *
+ * The passphrase clause is the other half of the same report. A
+ * passphrase-protected key is the mode this app recommends, and choosing one
+ * used to pass every check here and die inside `resolveGpgPrivateKey` on
+ * OpenPGP's own words, several steps after the press — the refusal furthest
+ * from the decision that caused it. `keyOwesPassphrase` knows before the press,
+ * and the field it names is the one `agent.unlock` reads.
+ *
  * @param {{ audience?: string[], keyFingerprint?: string, live?: boolean,
- *   keyCount?: number }} draft
+ *   keyCount?: number, key?: SessionKeyRow|null, passphraseBound?: boolean }} draft
  * @returns {string[]}
  */
 export function startIssues(draft) {
@@ -317,6 +396,14 @@ export function startIssues(draft) {
       Number(draft?.keyCount || 0) === 0
         ? "No private key in this browser. A session signs the invite and every envelope after it, so it needs a key held here — the ones under “Your keys” on My Keys are public keys on your account and cannot sign. Make or import one under “Your browser vault”."
         : "Choose the key you are joining as — it signs the invite and every envelope after it."
+    );
+  }
+  if (key && keyOwesPassphrase(draft?.key) === true && !draft?.passphraseBound) {
+    // Only when it is *known* to be owed. `keyOwesPassphrase` returns undefined
+    // where nothing established it, and asking for a passphrase a device key
+    // does not want would be the same defect pointing the other way.
+    issues.push(
+      "This key is passphrase-protected, and no key passphrase is bound. Opening it in the vault does not remove OpenPGP's own lock — the invite is signed with the key itself, so the passphrase is owed before anything can be signed. Type it under Inputs → Key passphrase."
     );
   }
   if (audience.length < 2) {

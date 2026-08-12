@@ -30,8 +30,12 @@ import {
   sessionRecipe,
   sessionStage,
   startIssues,
+  keyOwesPassphrase,
+  sessionKeyChoices,
 } from "../lib/toolkit/session-flow.js";
 import { hashForJoin, parseToolkitHash } from "../lib/toolkit/fragment.js";
+import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
+import { STEPS } from "../lib/toolkit/registry.js";
 import { deriveRoomId } from "../lib/notebook/room.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -42,6 +46,7 @@ const LIVE = read("../toolkit/widgets/SessionLive.tsx");
 const START = read("../toolkit/widgets/SessionStart.tsx");
 const INVITE = read("../toolkit/widgets/InviteCard.tsx");
 const QUEUE = read("../toolkit/widgets/HandoffQueue.tsx");
+const SHARE = read("../toolkit/widgets/ShareSheet.tsx");
 
 const ADA = "D772078C5C7C2A0EDCA09ED32C5EBBB46AD01388";
 const GRACE = "9F2A11B4C8D30E5761AA0C4E88B2F6D5091C7E43";
@@ -203,6 +208,32 @@ describe("nothing in this flow asks a person to compare a code", () => {
     expect(all).toMatch(/nothing for you to compare/);
   });
 
+  it("holds the same rule in the widgets, not only in the module", () => {
+    // The guard above enumerates every sentence `session-flow.js` can produce
+    // and was taken to mean the rule was kept. It was not: `ShareSheet` told
+    // the reader to match a short code against their peer, in a warning and
+    // again in a doc comment, and neither is a string this module emits. A rule
+    // asserted over one module is a rule that holds in one module.
+    //
+    // Source text rather than rendered output, because these are TSX and the
+    // node suite has no renderer — which also means prose about the absence has
+    // to avoid the ask phrasing itself. That is the right constraint: a comment
+    // is read by the next person to touch the file, and this is precisely the
+    // sentence that must not survive there either.
+    for (const [name, src] of Object.entries({ SHARE, LIVE, START, SHEET, SHELL, QUEUE })) {
+      expect(src, name).not.toMatch(
+        /compare (?:these|the|this|that|it|them|codes|words|numbers)/i
+      );
+      expect(src, name).not.toMatch(/aloud|read it back|say the words/i);
+      expect(src, name).not.toMatch(/safety number|authentication string|check the code/i);
+    }
+    // Not vacuous — the surface that carried the claim still discusses
+    // confirmation, so a passing grep means the wording changed rather than the
+    // subject disappearing.
+    expect(SHARE).toMatch(/unconfirmed/);
+    expect(SHARE).toMatch(/nothing for you to compare/);
+  });
+
   it("says confirmation is automatic where a reader will look for the ask", () => {
     const read = confirmationReadout(connected(true));
     expect(read.verdict).toBe("confirmed");
@@ -280,6 +311,53 @@ describe("starting a session is a recipe, not a code path", () => {
     expect(first.startsWith("agent.unlock")).toBe(true);
     expect(blank).toBe("");
     expect(second.startsWith("quorum.")).toBe(true);
+  });
+
+  it("writes cells the notebook can still read back", () => {
+    // The shipped blocker, and the reason it was a blocker: `startSession`
+    // appends these cells and the notebook's `source` is `serializeRecipe` of
+    // what it holds. The audience is comma-joined, `serializeStep` did not
+    // quote a comma, and `to=` is positional — so the source came back as
+    // `quorum.offer 9F2A…,D772… key=$me` and the whole notebook stopped
+    // compiling with `Unexpected "," · Unexpected "<next fingerprint>"`. Every
+    // session did this; the run only surfaced it once it got far enough to
+    // matter.
+    //
+    // Compiling `sessionRecipe`'s own text was not enough to catch it — that
+    // always passed. The property is the *round trip*, because the text the
+    // user ends up holding is the serialized form, not the generated one.
+    for (const role of ["offer", "join"]) {
+      for (const audience of [[ADA, GRACE], [ADA, GRACE, LIN]]) {
+        const first = compileRecipe(sessionRecipe({ audience, keyFingerprint: ADA, role }));
+        expect(first.validation.errors, `${role} ${audience.length}`).toEqual([]);
+        const source = serializeRecipe({ chains: first.ast.chains });
+        const second = compileRecipe(source);
+        expect(
+          second.validation.errors.map((e) => e.message),
+          `${role} with ${audience.length} members serialized to:\n${source}`
+        ).toEqual([]);
+        // The audience has to survive as itself, not merely parse.
+        const quorumStep = second.ast.chains
+          .flatMap((c) => c.steps || [])
+          .find((s) => String(s.name).startsWith("quorum."));
+        expect(String(quorumStep?.params?.to || "").split(",").sort()).toEqual(
+          [...audience].sort()
+        );
+      }
+    }
+  });
+
+  it("is not covered by the documented-example sweep, which is why this exists", () => {
+    // `recipe-roundtrip.test.js` sweeps every registry `Example:` that compiles
+    // standalone. `quorum.offer`'s names `key=$me`, a slot an earlier cell
+    // registers, so it is filtered out of that sweep — the one op whose example
+    // carries a comma was the one the sweep could not see. Pinned so that
+    // removing this test is a deliberate act rather than an assumption that the
+    // sweep has it.
+    const spec = STEPS.find((s) => s.name === "quorum.offer");
+    expect(spec.doc).toMatch(/Example:/);
+    expect(compileRecipe(/Example:\s*`([^`]+)`/.exec(spec.doc)[1]).validation.errors.length)
+      .toBeGreaterThan(0);
   });
 
   it("writes quorum.join for the invited side", () => {
@@ -530,5 +608,107 @@ describe("an empty vault is a different problem from an unmade choice", () => {
       const picked = startIssues({ audience: [fpr], keyFingerprint: fpr, keyCount });
       expect(picked.join(" ")).not.toMatch(/no private key|Choose the key/i);
     }
+  });
+});
+
+describe("only a key that can sign is a key you can choose", () => {
+  it("keeps pgp and drops the kinds that cannot sign an invite", () => {
+    // The vault holds three kinds — `agent.save` stores openssh-key-v1 blocks
+    // and bare JWKs beside PGP armor — and all three were offered. Picking one
+    // produced a live CryptoKey from `agent.unlock` and then a failure in
+    // `resolveGpgPrivateKey`, several steps after the choice was made.
+    const rows = [
+      { fingerprint: ADA, kind: "pgp" },
+      { fingerprint: "SHA256:" + "b".repeat(43), kind: "ssh" },
+      { fingerprint: "spki:SHA256:" + "c".repeat(43), kind: "raw" },
+    ];
+    expect(sessionKeyChoices(rows).map((k) => k.fingerprint)).toEqual([ADA]);
+  });
+
+  it("treats a record with no kind as pgp, which is what a legacy row is", () => {
+    expect(sessionKeyChoices([{ fingerprint: ADA }])).toHaveLength(1);
+  });
+
+  it("counts the same rows the picker offers", () => {
+    // The count behind "there is nothing to choose" and the list you choose
+    // from have to be the same derivation, or an ssh key makes "you have not
+    // chosen yet" the answer for somebody with nothing to choose — the original
+    // report, one layer down.
+    expect(SHELL).toMatch(/sessionKeyChoices\(nb\.vaultKeys\)/);
+    expect(SHELL).toMatch(/keyCount: sessionKeys\.length/);
+    expect(SHELL).not.toMatch(/keyCount: nb\.vaultKeys\.length/);
+  });
+});
+
+describe("an open vault envelope is not a key that can sign", () => {
+  it("reads the observed armor before the stored intent", () => {
+    // `vault.unlockKey` removes the vault's own wrapper and returns armor that
+    // may still be S2K-locked. Where the observation disagrees with the stored
+    // protection mode, the armor wins: it is what `decryptKey` will be handed.
+    expect(keyOwesPassphrase({ protection: "passphrase", locked: false })).toBe(false);
+    expect(keyOwesPassphrase({ protection: "device", locked: true })).toBe(true);
+  });
+
+  it("falls back to the protection mode for a key nothing has opened", () => {
+    expect(keyOwesPassphrase({ protection: "passphrase" })).toBe(true);
+    expect(keyOwesPassphrase({ protection: "device" })).toBe(false);
+    expect(keyOwesPassphrase({ protection: "passkey" })).toBe(false);
+  });
+
+  it("answers undefined rather than guessing, and stays silent on it", () => {
+    // A sentence about a passphrase that may not be owed is a refusal naming a
+    // state the reader is not in, which is the whole defect being repaired.
+    expect(keyOwesPassphrase({ protection: "session" })).toBeUndefined();
+    expect(keyOwesPassphrase(null)).toBeUndefined();
+    const quiet = startIssues({
+      audience: [ADA, GRACE],
+      keyFingerprint: ADA,
+      keyCount: 1,
+      key: { fingerprint: ADA, protection: "session" },
+      passphraseBound: false,
+    });
+    expect(quiet).toEqual([]);
+  });
+
+  it("refuses before the press, and names the field that answers it", () => {
+    // This is where the reported bug actually ended: Start was enabled, the run
+    // wrote both cells, and the failure arrived inside `resolveGpgPrivateKey`
+    // in OpenPGP's own words — the refusal furthest from the decision that
+    // caused it, about the protection mode this app recommends.
+    const issues = startIssues({
+      audience: [ADA, GRACE],
+      keyFingerprint: ADA,
+      keyCount: 1,
+      key: { fingerprint: ADA, protection: "passphrase" },
+      passphraseBound: false,
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(/passphrase-protected/);
+    expect(issues[0]).toMatch(/Inputs → Key passphrase/);
+  });
+
+  it("clears once the passphrase is bound", () => {
+    expect(
+      startIssues({
+        audience: [ADA, GRACE],
+        keyFingerprint: ADA,
+        keyCount: 1,
+        key: { fingerprint: ADA, protection: "passphrase" },
+        passphraseBound: true,
+      })
+    ).toEqual([]);
+  });
+
+  it("has a field to bind it in, which is the half that was missing", () => {
+    // `input-needs.js` has derived `gpgPass` since it was written and
+    // `agent.unlock` has always read `inputs.gpg.passphrase`. Nothing rendered
+    // a field, so the need was underivable in practice: a reader with no
+    // writer. Asserting the panel and the binding together, because either one
+    // alone is the same dead end pointing the other way.
+    expect(SHELL).toMatch(/notebookNeeds\.has\("gpgPass"\)/);
+    expect(SHELL).toMatch(/nb\.setGpgPassphrase/);
+    expect(HOOK).toMatch(/passphrase: gpgPassphrase/);
+    // A secret in memory goes when Clear session goes.
+    expect(HOOK).toMatch(/setGpgPassphrase\(""\)/);
   });
 });

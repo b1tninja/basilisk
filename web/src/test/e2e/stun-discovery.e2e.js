@@ -110,6 +110,55 @@ describe.runIf(availability.ok)("STUN discovery in a real browser", () => {
     expect(await A.cspViolations()).toEqual([]);
   });
 
+  /* ── what the two CSPs actually do to ICE ── */
+
+  describe("the policy a browser really computes, over both halves of it", () => {
+    it("serves the response-header CSP the deployment sends", async () => {
+      // The half this suite could not see. Flask sets a policy header on every
+      // response and the browser *intersects* it with the page's own `<meta>`
+      // tag, so a source named in only one of them is blocked. Serving files
+      // alone tested the meta tag and called it the production CSP.
+      const res = await A.page.request.get(`${fx.origin}/toolkit`);
+      const header = res.headers()["content-security-policy"] || "";
+      expect(header, "no policy header — the intersection is untested again").toMatch(
+        /connect-src/
+      );
+      // The finding that made this matter: `quorum.html` names two `stun:`
+      // sources in its meta tag and `Settings.csp_connect_src` names none, so
+      // the intersection permits none. If the header ever grows them, this line
+      // is where the two beliefs stop disagreeing.
+      expect(header).not.toMatch(/stun:/);
+    });
+
+    it("does not refuse a stun: server the policy never allowed", async () => {
+      // **The empirical answer.** `quorum.html` carries `stun:` sources in its
+      // meta CSP and `static.py` speaks of keeping them intact, which only
+      // means something if `connect-src` governs ICE. The header names none, so
+      // under that belief STUN is refused on every page — including the one
+      // page that lists them — and `/toolkit`, which has never listed them,
+      // would have been broken in production all along.
+      //
+      // It is not. Chromium gathers against a `stun:` URL no directive permits
+      // and files no violation: `connect-src` does not reach ICE servers here.
+      // So the meta entries buy nothing, and the toolkit's missing ones cost
+      // nothing — the retirement moves no sources, it deletes a belief.
+      //
+      // Loopback with nothing listening: deterministic, no internet, and the
+      // gather still has to *start* for a policy to have anything to refuse.
+      const before = (await A.cspViolations()).length;
+      const r = await call(A.page, "execStunCheck", {
+        server: "stun:127.0.0.1:3478",
+        timeout: 1500,
+      });
+      expect(r.ok, `stun.check threw: ${r.message}`).toBe(true);
+      const fresh = (await A.cspViolations()).slice(before);
+      expect(
+        fresh.filter((v) => /connect-src/.test(v.directive) || /^stun:/.test(v.blocked)),
+        "connect-src now reaches ICE — csp_connect_src() must list the STUN servers"
+      ).toEqual([]);
+    });
+  });
+
   /* ── refusals: no network, no engine state, must never skip ── */
 
   describe("stun.check refuses a server it could never query", () => {

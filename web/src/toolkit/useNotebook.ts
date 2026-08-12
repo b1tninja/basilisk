@@ -49,7 +49,7 @@ import {
 import { profileForMode } from "../lib/pgp/profile-from-step.js";
 import { listKeys } from "../lib/vault.js";
 import { unlockVaultForUse } from "../lib/vault-unlock.js";
-import { sessionEvict, sessionList } from "../lib/vault-session.js";
+import { sessionEvict, sessionList, vaultKindFromId } from "../lib/vault-session.js";
 import { getToolkitPrefs, setToolkitPrefs, type ToolkitPrefs } from "../lib/toolkit/prefs.js";
 import { configureRelayFallback } from "../lib/webrtc/relay-fallback.js";
 import { fetchRelayCredentials } from "../lib/webrtc/turn-credentials.js";
@@ -475,6 +475,16 @@ export function useNotebook() {
   const [ciphertext, setCiphertext] = useState("");
   const [shareRows, setShareRows] = useState<string[]>([""]);
   const [sharePassphrase, setSharePassphrase] = useState("");
+  /**
+   * The OpenPGP S2K passphrase — the `gpgPass` input panel.
+   *
+   * `input-needs.js` has derived this need since it was written, `agent.unlock`
+   * and `resolveGpgPrivateKey` both read `inputs.gpg.passphrase`, and
+   * `agent.save`'s refusal names "the Inputs panel" by name. Nothing ever wrote
+   * it: there was no field, so a passphrase-protected key — the protection this
+   * app recommends — could not sign anything here.
+   */
+  const [gpgPassphrase, setGpgPassphrase] = useState("");
   const [envelopeArmored, setEnvelopeArmored] = useState("");
   /** §31c — pasted JWK/PEM for `keypair`. Runtime-only, never serialized. */
   const [keypairMaterial, setKeypairMaterial] = useState("");
@@ -556,6 +566,10 @@ export function useNotebook() {
         uid: k.uid,
         email: k.email,
         protection: k.protection,
+        // Absent on legacy records, which are pgp — the reading `agent-ops.js`
+        // and `keyring-service.js` both give it. The projection dropped this
+        // and the Keyring cast it back out of a type that never had it.
+        kind: k.kind || "pgp",
         // Carried so GpgKeyBinder (§39b) can warn before you sign with a key
         // that is about to expire — the vault has always known this, the
         // projection just dropped it.
@@ -573,6 +587,8 @@ export function useNotebook() {
             email: "",
             protection: "session",
             expires: s.expiresAt,
+            // No vault record to read a kind from, so the id shape answers it.
+            kind: vaultKindFromId(s.fingerprint),
           });
         }
       }
@@ -1456,9 +1472,13 @@ export function useNotebook() {
     if (needs.includes("text") || inputText.trim()) {
       inputs.text = { value: inputText };
     }
-    if (needs.includes("gpg") || ciphertext.trim()) {
+    // `gpgPass` is its own need — it is what a bound `key=$slot` still leaves
+    // owed — so a notebook that needs only the passphrase still gets the
+    // binding built for it.
+    if (needs.includes("gpg") || needs.includes("gpgPass") || ciphertext.trim() || gpgPassphrase) {
       inputs.gpg = {
         armoredMessages: ciphertext.trim() ? [ciphertext.trim()] : [],
+        ...(gpgPassphrase ? { passphrase: gpgPassphrase } : {}),
       };
     }
     const mnemonics = shareRows.map((s) => s.trim()).filter(Boolean);
@@ -1503,6 +1523,7 @@ export function useNotebook() {
     ciphertext,
     shareRows,
     sharePassphrase,
+    gpgPassphrase,
     envelopeArmored,
     keypairMaterial,
     source,
@@ -1765,6 +1786,7 @@ export function useNotebook() {
     setCiphertext("");
     setShareRows([""]);
     setSharePassphrase("");
+    setGpgPassphrase("");
     setEnvelopeArmored("");
     boundRecipientsRef.current = [];
     setSessionTick((n) => n + 1);
@@ -2168,6 +2190,8 @@ export function useNotebook() {
     setShareRows,
     sharePassphrase,
     setSharePassphrase,
+    gpgPassphrase,
+    setGpgPassphrase,
     envelopeArmored,
     setEnvelopeArmored,
     keypairMaterial,

@@ -108,7 +108,9 @@ import {
   toolkitShareUrl,
 } from "../lib/toolkit/fragment.js";
 import {
+  keyOwesPassphrase,
   parseInviteAudience,
+  sessionKeyChoices,
   sessionRecipe,
   startIssues,
 } from "../lib/toolkit/session-flow.js";
@@ -1037,19 +1039,33 @@ export function ToolkitShell() {
   /**
    * An invite arriving as a link — the joiner's entry point.
    *
-   * Read once, at mount, and only for `#j=`. Every other hash form is
-   * `useNotebook.loadFromHash`'s, and this deliberately loads *nothing*: an
-   * invite carries no recipe and must not, so all that happens is the sheet
-   * opens with the audience filled in and the role set to the one the link
-   * implies. The press is still the reader's, and so is the choice of key.
+   * Only `#j=`. Every other hash form is `useNotebook.loadFromHash`'s, and this
+   * deliberately loads *nothing*: an invite carries no recipe and must not, so
+   * all that happens is the sheet opens with the audience filled in and the
+   * role set to the one the link implies. The press is still the reader's, and
+   * so is the choice of key.
+   *
+   * **On `hashchange` as well as at mount**, which it was not. Clicking a link
+   * to `/toolkit#j=…` while the toolkit is *already open* is a same-document
+   * navigation: the URL changes, no document loads, and a mount-only effect
+   * never runs again. That is the likeliest way an invite is ever opened — the
+   * two of you are talking, they already have Basilisk up, the link arrives —
+   * and it did nothing at all. No sheet, no audience, no error.
+   *
+   * Re-running is safe for the reason the guard is written the way it is: the
+   * notebook rewrites its own `#r=` as you type, and every one of those hashes
+   * leaves here at the first line.
    */
   useEffect(() => {
-    const action = parseToolkitHash(window.location.hash || "");
-    if (action.kind !== "join") return;
-    setSessionDraft((d) => ({ ...d, role: "join", audience: action.audience }));
-    nb.setSheet("session");
-    // Mount only: re-running on every hash change would reopen the sheet each
-    // time the notebook rewrites its own `#r=`, which it does as you type.
+    const openFromHash = () => {
+      const action = parseToolkitHash(window.location.hash || "");
+      if (action.kind !== "join") return;
+      setSessionDraft((d) => ({ ...d, role: "join", audience: action.audience }));
+      nb.setSheet("session");
+    };
+    openFromHash();
+    window.addEventListener("hashchange", openFromHash);
+    return () => window.removeEventListener("hashchange", openFromHash);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1061,15 +1077,46 @@ export function ToolkitShell() {
     if (!sessionLive) setOwedBack([]);
   }, [sessionLive]);
 
+  /**
+   * The vault rows that could actually open a session.
+   *
+   * One derivation feeding the picker, its suggestions and the count behind
+   * "there is nothing to choose". `nb.vaultKeys` holds all three vault kinds,
+   * and the count used to be its length — so an ssh key made "you have not
+   * chosen yet" the answer for somebody with nothing to choose, which is the
+   * original report one layer down.
+   */
+  const sessionKeys = useMemo(() => sessionKeyChoices(nb.vaultKeys), [nb.vaultKeys]);
+
+  /**
+   * The chosen key, with whatever the agent session observed about its armor.
+   *
+   * Re-read on `now` for the reason the Keyring rows are: a session entry
+   * expires on a clock, so "what is loaded" is a question with a different
+   * answer a minute later and no event to announce it.
+   */
+  const chosenSessionKey = useMemo(() => {
+    void now;
+    const row = sessionKeys.find((k) => k.fingerprint === sessionDraft.keyFingerprint);
+    if (!row) return null;
+    const entry = nb.sessionList().find((e) => e.fingerprint === row.fingerprint);
+    return { ...row, locked: entry?.locked };
+  }, [sessionKeys, sessionDraft.keyFingerprint, nb.sessionList, now]);
+
   const sessionIssues = useMemo(
     () =>
       startIssues({
         audience: sessionDraft.audience,
         keyFingerprint: sessionDraft.keyFingerprint,
         live: sessionLive,
-        keyCount: nb.vaultKeys.length,
+        keyCount: sessionKeys.length,
+        key: chosenSessionKey,
+        // The field `agent.unlock` reads. Bound here rather than checked inside
+        // the run, so the refusal arrives while the reader is still looking at
+        // the choice that caused it.
+        passphraseBound: Boolean(nb.gpgPassphrase),
       }),
-    [sessionDraft, sessionLive, nb.vaultKeys.length]
+    [sessionDraft, sessionLive, sessionKeys.length, chosenSessionKey, nb.gpgPassphrase]
   );
 
   /**
@@ -2883,13 +2930,9 @@ export function ToolkitShell() {
                             className="rounded-[9px] border border-[var(--border)] bg-[var(--surface-raised)] p-3"
                           >
                             <div className="font-semibold">
-                              {(k as { kind?: string }).kind &&
-                              (k as { kind?: string }).kind !== "pgp" ? (
-                                <span
-                                  className="key-kind-badge"
-                                  data-key-kind={(k as { kind?: string }).kind}
-                                >
-                                  {String((k as { kind?: string }).kind).toUpperCase()}
+                              {k.kind && k.kind !== "pgp" ? (
+                                <span className="key-kind-badge" data-key-kind={k.kind}>
+                                  {k.kind.toUpperCase()}
                                 </span>
                               ) : null}
                               {k.uid || k.email || "Key"}
@@ -2897,8 +2940,7 @@ export function ToolkitShell() {
                             {/* SHA256: ids pass formatFingerprint verbatim (§28a);
                                 the /key page is PGP-shaped, so non-pgp ids render
                                 as plain text rather than a dead link. */}
-                            {(k as { kind?: string }).kind &&
-                            (k as { kind?: string }).kind !== "pgp" ? (
+                            {k.kind && k.kind !== "pgp" ? (
                               <span className="break-all font-mono text-xs text-[var(--muted-foreground)]">
                                 {k.fingerprint}
                               </span>
@@ -2916,7 +2958,16 @@ export function ToolkitShell() {
                               {k.protection || "device"}
                               {session ? (
                                 <>
-                                  {" · unlocked · "}
+                                  {/* "unlocked" was a claim about the vault
+                                      envelope being open, printed where a reader
+                                      takes it to mean the key is usable. For a
+                                      passphrase-protected key it is not: OpenPGP's
+                                      own S2K lock is still on the armor, and the
+                                      run said so several steps later in OpenPGP's
+                                      words. Two words for two states. */}
+                                  {keyOwesPassphrase({ ...k, locked: session.locked }) === true
+                                    ? " · open, needs its passphrase · "
+                                    : " · unlocked · "}
                                   <span className="font-mono text-[length:10.5px] text-[var(--warn)]">
                                     {formatCountdown(session.expiresAt - now)} left
                                   </span>
@@ -3539,6 +3590,37 @@ export function ToolkitShell() {
                       </div>
                     ) : null}
 
+                    {/* The panel `input-needs.js` has derived since it was
+                        written and nothing ever rendered. `agent.unlock`,
+                        `agent.save` and `resolveGpgPrivateKey` all read
+                        `inputs.gpg.passphrase`, and `agent.save`'s refusal names
+                        this panel out loud — so the reader, the derivation and
+                        the error message all existed and the field did not.
+                        Without it a passphrase-protected key, which is the
+                        protection this app recommends, could not sign anything
+                        here: the run reached OpenPGP with an empty passphrase
+                        and failed in OpenPGP's words. */}
+                    {notebookNeeds.has("gpgPass") ? (
+                      <div className="rounded-[9px] border border-[var(--border)] bg-[var(--surface-raised)] p-2.5">
+                        <p className="mb-1.5 text-[length:11px] font-bold">Key passphrase</p>
+                        <input
+                          type="password"
+                          className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm"
+                          autoComplete="off"
+                          aria-label="OpenPGP key passphrase"
+                          value={nb.gpgPassphrase}
+                          onChange={(e) => nb.setGpgPassphrase(e.target.value)}
+                        />
+                        <p className="mt-1 text-[length:10px] text-[var(--muted-foreground)]">
+                          OpenPGP's own lock on the private key, which is not the
+                          same as the vault's. Only passphrase-protected keys want
+                          one — a device or passkey key needs nothing here. Held in
+                          memory for this notebook only; <strong>Clear session</strong>{" "}
+                          removes it.
+                        </p>
+                      </div>
+                    ) : null}
+
                     {notebookNeeds.has("envelope") ? (
                       <div className="rounded-[9px] border border-[var(--border)] bg-[var(--surface-raised)] p-2.5">
                         <p className="mb-1.5 text-[length:11px] font-bold">
@@ -3776,7 +3858,7 @@ export function ToolkitShell() {
           start={{
             role: sessionDraft.role,
             onRole: (role) => setSessionDraft((d) => ({ ...d, role })),
-            keys: nb.vaultKeys.map((k) => ({
+            keys: sessionKeys.map((k) => ({
               fingerprint: k.fingerprint,
               uid: k.uid,
             })),
@@ -3791,7 +3873,7 @@ export function ToolkitShell() {
                 audience: fpr && !d.audience.includes(fpr) ? [...d.audience, fpr] : d.audience,
               })),
             audience: sessionDraft.audience,
-            suggestions: nb.vaultKeys.map((k) => ({
+            suggestions: sessionKeys.map((k) => ({
               fingerprint: k.fingerprint,
               uid: k.uid,
             })),

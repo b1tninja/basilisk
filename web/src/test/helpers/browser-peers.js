@@ -72,6 +72,49 @@ const CLEAN_URLS = {
   "/preferences": "/preferences.html",
 };
 
+/**
+ * The keyserver hosts `Settings.csp_connect_src` puts in the header policy.
+ * `_DEFAULT_UPSTREAM_ALLOWLIST` in `basilisk/config.py`, which is what a
+ * deployment runs with unless it overrides the allowlist.
+ */
+const UPSTREAM_ALLOWLIST = ["keys.openpgp.org", "keys.mailvelope.com"];
+
+/**
+ * The response-header CSP, as `basilisk/serve.py` builds it.
+ *
+ * **This is the half of the policy the suite could not see.** Every page ships
+ * its own `<meta http-equiv>` policy, and serving the bytes unmodified made
+ * that one the policy under test — which is what the note on `serveDist` used
+ * to claim was "the production CSP". It is not. Flask sets a second policy as a
+ * response header on every response, the browser **intersects** the two, and a
+ * source only one of them names is blocked. So a page could carry a source in
+ * its meta tag, pass every test here, and be refused in production by a header
+ * no test had ever sent. `quorum.html`'s `stun:` entries are exactly that
+ * shape: named in the meta, absent from `csp_connect_src()`.
+ *
+ * Built from the same parts in the same order so a reader can diff them by eye.
+ * `connect-src` omits the signalling socket deliberately — a deployment adds
+ * its Web PubSub origin there, and this suite tunnels signalling through the
+ * page's own origin, which `'self'` already covers.
+ *
+ * Only the CSP is mirrored. The other headers `security_headers` sets —
+ * nosniff, frame options, referrer policy, permissions policy — cannot refuse a
+ * connection, so sending them would add surface without adding a question this
+ * harness can answer.
+ */
+export const HEADER_CSP = [
+  "default-src 'none'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "style-src 'self'",
+  `connect-src ${["'self'", ...UPSTREAM_ALLOWLIST.map((h) => `https://${h}`)].join(" ")}`,
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ") + ";";
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -319,9 +362,11 @@ function encodeTextFrame(text) {
 /**
  * Serve a directory on loopback.
  *
- * No headers are added on top of what the files declare. That is the point:
- * the toolkit page ships its policy in a `<meta http-equiv>` tag, so serving
- * the bytes unmodified is what makes the production CSP the one under test.
+ * The bytes are served unmodified and `HEADER_CSP` is sent alongside them, so
+ * the policy under test is the one a browser actually computes in production:
+ * the page's own `<meta http-equiv>` intersected with Flask's response header.
+ * Serving the files alone tested one of the two and called it the production
+ * CSP — see the note on `HEADER_CSP` for what that hid.
  *
  * One escape hatch: `routes`. A page can construct an `RTCPeerConnection` off
  * static files alone, but it cannot run a *quorum session* — that bootstraps
@@ -367,6 +412,11 @@ export async function serveDist(root = DIST_ROOT, routes = null, upgradeTarget =
           "content-type": MIME[extname(file).toLowerCase()] || "application/octet-stream",
           "content-length": String(body.byteLength),
           "cache-control": "no-store",
+          // On every response, not just documents — `security_headers` in
+          // `serve.py` is an `after_request` hook and does the same. A policy
+          // header on a subresource is inert, so this costs nothing and keeps
+          // the two servers diffable.
+          "content-security-policy": HEADER_CSP,
         });
         res.end(body);
       })

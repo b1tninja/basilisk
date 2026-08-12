@@ -96,6 +96,56 @@ describe("a positional value the parser cannot read bare is quoted", () => {
     expect(errors).toEqual([]);
   });
 
+  it("quotes a delimiter in the middle of an otherwise ordinary value", () => {
+    // The shipped blocker. Every fixture above that contained a comma also
+    // *began* with a character the leading-character rule already quoted for
+    // (`.p12,.pfx`), so the comma was never the thing being tested — the value
+    // was rescued on the way in and the middle of it was never exercised. A
+    // value starting with a letter or digit takes the bare path, and the comma
+    // then ends the token and leaves the rest where the grammar wants a new
+    // argument: `Unexpected "," · Unexpected "<next>"`.
+    for (const v of ["a,b", "9F2A,D772", "one,two,three"]) {
+      const { text, errors } = roundTrip(`hkp.search ${JSON.stringify(v)}`);
+      expect(text, `${v} serialized bare`).toContain(JSON.stringify(v));
+      expect(errors, `${v} round-tripped to ${text}`).toEqual([]);
+    }
+  });
+
+  it("decides by the parser's alphabet, not by a list of known-bad characters", () => {
+    // The predicate this replaced was a denylist and had been patched twice —
+    // once for space/pipe/`=`, once for the leading character — and still had
+    // no comma in it. Sweeping every ASCII punctuation mark is the only way to
+    // assert the *rule* rather than the last three symptoms of breaking it.
+    const bad = [];
+    for (let c = 0x21; c < 0x7f; c += 1) {
+      const ch = String.fromCharCode(c);
+      const v = `a${ch}b`;
+      // The fixture has to be spellable before the round trip means anything.
+      // `readString` implements no escape, so a value holding *both* quote
+      // characters cannot be written in this grammar at all — `quoteArg` picks
+      // the quote the value does not contain, which covers each one alone. The
+      // both-at-once case is a missing language feature, named in `quoteArg`,
+      // and it is excluded here rather than silently passing.
+      const src = `hkp.search ${ch === '"' ? `'${v}'` : JSON.stringify(v)}`;
+      if (compileRecipe(src).validation.errors.length) {
+        bad.push(`fixture unspellable: ${src}`);
+        continue;
+      }
+      const { text, errors } = roundTrip(src);
+      if (errors.length) bad.push(`${JSON.stringify(v)} -> ${text}: ${errors.join(" · ")}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("spells an embedded double quote with the other quote", () => {
+    // `JSON.stringify` emitted `\"`, and `readString` scans to the next quote
+    // rather than honouring an escape — so the value came back cut at the
+    // backslash with the rest left as loose tokens.
+    const { text, errors } = roundTrip(`hkp.search 'say "hi"'`);
+    expect(text).toContain(`'say "hi"'`);
+    expect(errors).toEqual([]);
+  });
+
   it("covers the whole class, not just a leading dot", () => {
     // Asserted through the parser rather than against a character blacklist:
     // the rule is "the argument loop dispatches on letter, digit or @", and a

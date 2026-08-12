@@ -22,6 +22,19 @@ export type VaultKeyRow = {
   email?: string;
   protection?: string;
   /**
+   * What this record actually holds: OpenPGP armor, an openssh-key-v1 block,
+   * or a bare private JWK (§28a/§28d).
+   *
+   * Absent means a legacy record, which is definitionally pgp — the same
+   * reading `agent-ops.js` gives it. It was absent from this type entirely
+   * while the Keyring read `k.kind` through a cast six times over, so the badge
+   * that distinguishes the three was dead code and ssh and raw keys rendered as
+   * PGP with a `/key?fpr=` link that leads nowhere for them. Worse, they were
+   * offered as candidates to sign a session invite, which only PGP armor can
+   * do; `sessionKeyChoices` is the reader that needs this to be here.
+   */
+  kind?: "pgp" | "ssh" | "raw";
+  /**
    * When this key stops being good, or null when it never does.
    *
    * Two shapes, because two sources fill it: the vault stores an ISO

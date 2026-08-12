@@ -655,6 +655,90 @@ export function canonicalizeRecipe(source) {
 }
 
 /**
+ * ## When an argument may be written without quotes
+ *
+ * The three constants below mirror `recipe-parse.js`'s own reading paths. They
+ * are an allowlist because the predicate they replaced was a denylist —
+ * `/[\s|=]/` — and a denylist can only ever be patched one symptom at a time.
+ * It had been, twice: once for space, pipe and `=`, once for the leading
+ * character. It still had no comma in it, which is how every shared session
+ * serialized to a notebook that could not parse: an audience is a comma-joined
+ * list and must hold at least two fingerprints to be a room at all, so the
+ * comma was not an edge case, it was every case.
+ *
+ * The rule is asked of the position as well as the value, because the parser
+ * reads the two positions differently and the narrower one is not the one you
+ * would guess.
+ */
+
+/** A `$slot` reference, which must stay bare or it stops being a reference. */
+const SLOT_REF = /^\$[A-Za-z][A-Za-z0-9_-]*$/;
+
+/**
+ * A value `readNamedArgValue` reads back whole: its start set is narrower than
+ * its continuation set, and both are mirrored here rather than approximated.
+ */
+const BARE_AFTER_EQUALS = /^[A-Za-z0-9_+./-][A-Za-z0-9_+./:@$-]*$/;
+
+/**
+ * A value the *positional* path reads back whole, which is narrower still.
+ *
+ * The argument loop does not call `readArgValue` for a letter-leading token. It
+ * calls `readIdent` — `[A-Za-z][A-Za-z0-9_-]*`, **no dot** — and only re-scans
+ * the whole token when the character that stopped it is one of `/ : @ + $`.
+ * So `ec/p256` survives bare (the `/` triggers the re-scan) and `a.b` does not:
+ * it reads as `a` and leaves `.b` where the grammar wants a new argument.
+ *
+ * A digit-leading positional of string type goes through `readNamedArgValue`,
+ * hence the third branch.
+ *
+ * Writing the three paths out is the point. One combined character class read
+ * off `readArgValue` looked right and was wrong for `.`, because that function
+ * is not the one this path uses.
+ */
+const BARE_POSITIONAL =
+  /^(?:[A-Za-z][A-Za-z0-9_-]*(?:[/:@+$][A-Za-z0-9_+./:@$-]*)?|[0-9][A-Za-z0-9_+./:@$-]*)$/;
+
+/**
+ * Whether `raw` can be written without quotes in this position and read back
+ * as itself.
+ *
+ * @param {string} raw
+ * @param {boolean} positional
+ * @returns {boolean}
+ */
+function readsBackBare(raw, positional) {
+  if (raw === "") return true;
+  if (SLOT_REF.test(raw)) return true;
+  return positional ? BARE_POSITIONAL.test(raw) : BARE_AFTER_EQUALS.test(raw);
+}
+
+/**
+ * Quote a value the parser cannot read bare.
+ *
+ * Not `JSON.stringify`, which was the previous spelling and emits `\"` for an
+ * embedded double quote — an escape `readString` does not implement. It scans
+ * to the next matching quote character and stops, so a JSON-escaped value came
+ * back truncated at the first `\` and left the rest as loose tokens: the same
+ * silent corruption as the unquoted comma, one layer along.
+ *
+ * The grammar already offers the way out — `readString` honours whichever
+ * quote opened the literal — so a value containing `"` is written in `'`.
+ *
+ * A value containing **both** quote characters still cannot be spelled: the
+ * grammar has no escape, and giving it one is a change to the language rather
+ * than to how this function spells things. No op ships such a default and
+ * nothing in the notebook generates one; a recipe that needs it wants
+ * `readString` to learn escapes first.
+ *
+ * @param {string} raw
+ * @returns {string}
+ */
+function quoteArg(raw) {
+  return raw.includes('"') && !raw.includes("'") ? `'${raw}'` : JSON.stringify(raw);
+}
+
+/**
  * Serialize one step (no body) to recipe text.
  * @param {RecipeStep} step
  * @returns {string}
@@ -708,28 +792,21 @@ export function serializeStep(step) {
         (step.name === "out" || step.name === "text" || step.name === "peek");
       if (omitName || !p.positional) continue;
     }
-    // Positional values need the same quoting as named ones: a bare
-    // `hkp.search john doe` or `bytes aGVsbG8=` does not reparse, so without
-    // this the round trip silently corrupts Copy recipe, share links, and
-    // Workspace saves for any value holding a space, pipe, or `=`.
-    const needsQuote = /[\s|=]/.test(String(v));
-    const quoted = needsQuote ? JSON.stringify(String(v)) : String(v);
+    // A value that survives compiling but not the round trip is not a cosmetic
+    // defect: the chip flow re-serializes on every mutation and Copy link
+    // serializes to build the URL, so editing any chip nearby — or sharing the
+    // notebook — hands back text that will not parse. Two spellings have
+    // already been shipped broken this way, `file.read accept=.pem` and every
+    // shared session's comma-joined audience, so the question is asked of the
+    // grammar rather than of a list of characters known to have caused it.
+    const raw = String(v);
+    const bare = readsBackBare(raw, Boolean(p.positional && parts.length === 1));
+    const spelled = bare ? raw : quoteArg(raw);
     if (p.positional && parts.length === 1) {
-      // …and it is not only those three characters. A *bare* positional has to
-      // begin the way `recipe-parse.js`'s argument loop expects one to begin —
-      // it dispatches on a letter, a digit, or a slot sigil, and nothing
-      // else. (`.` and `/` are recognised, but only for `out`/`in`, where they
-      // raise "File paths are not supported yet".) So `file.read accept=.pem`,
-      // which is the op's own documented example, serialized bare to
-      // `file.read .pem` and came back `Unexpected "."` — a round trip that
-      // destroys the recipe. That is not a rare path: the chip flow
-      // re-serializes on every mutation and Copy link serializes to build the
-      // URL, so editing any chip nearby, or sharing the notebook, handed back
-      // something that would not parse.
-      parts.push(/^[A-Za-z0-9$@]/.test(String(v)) ? quoted : JSON.stringify(String(v)));
+      parts.push(spelled);
       continue;
     }
-    parts.push(`${p.name}=${quoted}`);
+    parts.push(`${p.name}=${spelled}`);
   }
   return parts.join(" ");
 }
