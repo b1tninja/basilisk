@@ -45,7 +45,13 @@ export { PlanPanel, type PlanPanelProps } from "./PlanPanel";
 export { CellAssign, type CellAssignProps } from "./CellAssign";
 export { ShareSheet, type ShareSheetProps, type RecipeLink } from "./ShareSheet";
 export { InviteCard, type InviteCardProps } from "./InviteCard";
-export { SessionStart, type SessionStartProps, type SessionKeyChoice } from "./SessionStart";
+export {
+  SessionStart,
+  type SessionStartProps,
+  type SessionKeyChoice,
+  type RecipientChoice,
+  type PasteResult,
+} from "./SessionStart";
 export { SessionLive, type SessionLiveProps, type SessionLiveState } from "./SessionLive";
 export { SessionSheet, type SessionSheetProps } from "./SessionSheet";
 export {

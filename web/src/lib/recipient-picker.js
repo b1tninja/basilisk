@@ -378,7 +378,13 @@ function originRank(origin) {
 
 /**
  * Locally trusted (then marginal) keys from the device pubkey cache.
- * @returns {Promise<object[]>}
+ *
+ * Typed as key hits rather than `object[]` because two callers now read the
+ * rows rather than only handing them back to `renderRecipientHits` — the
+ * session panel offers them as one-press chips and needs `fingerprint` and a
+ * label out of each one.
+ *
+ * @returns {Promise<import("./key-hit.js").KeyHitItem[]>}
  */
 export async function listTrustedRecipientSuggestions() {
   const marks = listTrusted().filter(
@@ -487,7 +493,7 @@ export async function searchRecipientsPayload(q, opts = {}) {
 /**
  * Search keys by query (email / fpr / key id).
  * @param {string} q
- * @returns {Promise<object[]>}
+ * @returns {Promise<import("./key-hit.js").KeyHitItem[]>}
  */
 export async function searchRecipients(q) {
   return (await searchRecipientsPayload(q)).results;

@@ -25,6 +25,7 @@ import {
   INVITE_OMITS,
   confirmationReadout,
   parseInviteAudience,
+  pasteReadout,
   rosterCounts,
   sessionReadout,
   sessionRecipe,
@@ -34,6 +35,7 @@ import {
   sessionKeyChoices,
 } from "../lib/toolkit/session-flow.js";
 import { hashForJoin, parseToolkitHash } from "../lib/toolkit/fragment.js";
+import { formatFingerprint } from "../lib/utils.js";
 import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
 import { STEPS } from "../lib/toolkit/registry.js";
 import { deriveRoomId } from "../lib/notebook/room.js";
@@ -432,6 +434,20 @@ describe("the invite is an audience and nothing else", () => {
     expect(parseInviteAudience("nothing here")).toEqual([]);
   });
 
+  it("takes the form this product prints, which is the one it used to refuse", () => {
+    // The reported bug. `formatFingerprint` groups hex into four-character
+    // blocks, so My Keys, the Keyring and every roster row show `AABB CCDD …`
+    // — and this parser wanted a contiguous run, which is a stricter alphabet
+    // than `normalizeFingerprintInput` two calls later already accepted. Every
+    // paste of a fingerprint the product itself displayed yielded zero, in
+    // silence. Extraction now happens in `findFingerprints`, beside the
+    // normaliser it has to agree with.
+    expect(parseInviteAudience(formatFingerprint(ADA))).toEqual([ADA]);
+    expect(
+      parseInviteAudience(`${formatFingerprint(GRACE)}\n${formatFingerprint(ADA)}`)
+    ).toEqual([ADA, GRACE].sort());
+  });
+
   it("states what it does not carry, as data rather than as copy", () => {
     // A security claim owned by a component is a claim no test can pin.
     expect(INVITE_OMITS.join(" ")).toMatch(/room id/);
@@ -440,6 +456,107 @@ describe("the invite is an audience and nothing else", () => {
     expect(INVITE_CARRIES.join(" ")).toMatch(/public fingerprints/);
     expect(INVITE).toMatch(/INVITE_CARRIES\.map/);
     expect(INVITE).toMatch(/INVITE_OMITS\.map/);
+  });
+});
+
+/* ─────────────────────── what a paste says it did ───────────────────────── */
+
+describe("a paste says what it found, in four distinguishable states", () => {
+  it("names how many an invite carries, and settles the role", () => {
+    // A link says something a list cannot: whoever sent it is the end that
+    // publishes. Leaving the role as a toggle beside that is leaving the one
+    // decision that decides whether anybody meets at all to a guess.
+    const read = pasteReadout(
+      `https://basilisk.pages.dev/toolkit#j=${ADA},${GRACE},${LIN}`,
+      { audience: [ADA] }
+    );
+    expect(read.kind).toBe("invite");
+    expect(read.role).toBe("join");
+    expect(read.sentence).toMatch(/names 3 people/);
+    expect(read.sentence).toMatch(/joining/);
+    expect(read.audience).toEqual([ADA, GRACE, LIN].sort());
+  });
+
+  it("counts what was added apart from what was already there", () => {
+    const read = pasteReadout(`${formatFingerprint(ADA)}\n${GRACE}\n${LIN}`, {
+      audience: [ADA],
+    });
+    expect(read.kind).toBe("fingerprints");
+    expect(read.added.sort()).toEqual([GRACE, LIN].sort());
+    expect(read.already).toEqual([ADA]);
+    expect(read.sentence).toBe("Added 2. One was already in the room.");
+    // The role is not this paste's to settle — a bare list says nothing about
+    // which end you are.
+    expect(read.role).toBeNull();
+  });
+
+  it("says so when a paste added nobody, rather than looking like a no-op", () => {
+    const read = pasteReadout(GRACE, { audience: [ADA, GRACE] });
+    expect(read.kind).toBe("fingerprints");
+    expect(read.added).toEqual([]);
+    expect(read.sentence).toMatch(/^Nothing new\./);
+    expect(read.audience).toEqual([ADA, GRACE].sort());
+  });
+
+  it("tells a short key id apart from nothing at all", () => {
+    // 8, 16 and 32 are the lengths `SEARCH_HEX_LENGTHS` accepts for a lookup
+    // and the search page already warns are collision-prone. A room is
+    // `SHA-256(hostname | sorted fingerprints)`, so an id that can name more
+    // than one key names no room — and this state used to read as nothing
+    // having happened, which is the worst possible answer for somebody who
+    // pasted a real identifier.
+    for (const id of [ADA.slice(-8), ADA.slice(-16), ADA.slice(0, 32)]) {
+      const read = pasteReadout(id, { audience: [ADA] });
+      expect(read.kind, id).toBe("short-id");
+      expect(read.sentence, id).toMatch(/more than one key/i);
+      expect(read.sentence, id).toMatch(/room is derived from full fingerprints/);
+      expect(read.audience, id).toEqual([ADA]);
+    }
+  });
+
+  it("says what a fingerprint looks like when it found none", () => {
+    const read = pasteReadout("see you at three", { audience: [] });
+    expect(read.kind).toBe("nothing");
+    expect(read.sentence).toMatch(/40 hex characters/);
+    expect(read.sentence).toMatch(/64 for a v6/);
+    // The two things a reader would otherwise have to guess: that the printed
+    // form is acceptable, and that the one arrangement the extractor refuses is
+    // two fingerprints with nothing between them.
+    expect(read.sentence).toMatch(/spaces, colons and hyphens/);
+    expect(read.sentence).toMatch(/own line|commas/);
+  });
+
+  it("is what the box renders, and the box commits on a press", () => {
+    // Three halves of one report. The trigger was `onBlur`, which commits at a
+    // moment the reader did not choose and — when it found nothing — left no
+    // message and nothing to press again. Blur is no longer a commit, Add is,
+    // and the sentence is rendered every time whatever it found.
+    expect(START).toMatch(/import \{ pasteReadout \}/);
+    expect(START).not.toMatch(/onBlur/);
+    expect(START).toMatch(/const result = pasteReadout\(pasted, \{ audience \}\)/);
+    expect(START).toMatch(/onClick=\{addPasted\}/);
+    expect(START).toMatch(/aria-live="polite"/);
+    expect(START).toMatch(/read\?\.sentence/);
+  });
+
+  it("hands the shell the reading rather than the text", () => {
+    // Parsing the paste a second time in the shell would be two answers to
+    // "who did that add", one of them on screen and one of them in the room.
+    expect(SHELL).toMatch(/onPaste: \(result\) =>/);
+    expect(SHELL).toMatch(/audience: result\.audience/);
+    // Only a link settles which end you are; a bare list leaves it alone.
+    expect(SHELL).toMatch(/role: result\.role \|\| d\.role/);
+    expect(SHELL).not.toMatch(/parseInviteAudience/);
+  });
+
+  it("keeps all four apart, which is the whole point of having four", () => {
+    const kinds = [
+      pasteReadout(`#j=${ADA},${GRACE}`, {}).kind,
+      pasteReadout(formatFingerprint(ADA), {}).kind,
+      pasteReadout("DEADBEEF", {}).kind,
+      pasteReadout("hello", {}).kind,
+    ];
+    expect(new Set(kinds).size).toBe(4);
   });
 });
 
@@ -465,6 +582,54 @@ describe("the flow has a way in — three of them", () => {
   it("opens it from an invite link, without loading anything", () => {
     expect(SHELL).toMatch(/action\.kind !== "join"/);
     expect(SHELL).toMatch(/role: "join", audience: action\.audience/);
+  });
+});
+
+describe("naming a room is a picker, and the picker was already built", () => {
+  it("wires the search that existed and this panel never reached", () => {
+    // `recipient-picker.js` has exported `searchRecipients` and
+    // `listTrustedRecipientSuggestions` since the encrypt side was written, and
+    // `RecipientBinderHost` already hosts them for recipients. The session
+    // panel used neither: its only suggestion source was `nb.vaultKeys` —
+    // this browser's *own* keys, the one group that is mostly not your peers,
+    // and the one that is already in the room the moment a key is chosen.
+    expect(SHELL).toMatch(/listTrustedRecipientSuggestions,?\n?\s*searchRecipients/);
+    expect(SHELL).toMatch(/trusted: trustedPeers/);
+    expect(SHELL).toMatch(/onSearch: async \(query: string\) =>/);
+    expect(SHELL).toMatch(/await searchRecipients\(query\)/);
+    expect(SHELL).not.toMatch(/suggestions: sessionKeys\.map/);
+  });
+
+  it("keeps the widget prop-driven, which is the design surface's own rule", () => {
+    // `ds-entry.ts` states that every widget on the surface takes plain props
+    // and reads no store. A component that opened IndexedDB and searched a
+    // keyserver on mount would make that sentence false for the sync *and* for
+    // the next person who reads it.
+    expect(START).not.toMatch(/recipient-picker/);
+    expect(START).toMatch(/onSearch\?: \(query: string\) => Promise<RecipientChoice\[\]>/);
+    expect(START).toMatch(/trusted\?: RecipientChoice\[\]/);
+  });
+
+  it("makes the pick the add — one press, no second confirm", () => {
+    expect(START).toMatch(/onClick=\{\(\) => add\(t\.fingerprint\)\}/);
+    expect(START).toMatch(/onClick=\{\(\) => add\(hit\.fingerprint\)\}/);
+    // The whole fingerprint, never the short form. `shortFpr` is a label here
+    // and a truncated identity is what caused a live bug one layer down.
+    expect(START).toMatch(/onAudience\(\[\.\.\.audience, clean\]\)/);
+  });
+
+  it("never opens on a bare hex prompt", () => {
+    // The empty state, in the order the reader can act on: your own key (which
+    // the shell adds the moment it is chosen), the peers you have met, a
+    // search, and only then the paste box for somebody who was sent something.
+    expect(START).toMatch(/Choosing the key you are joining as puts you in the/);
+    const order = ["data-session-trusted", "data-session-search", "data-session-paste"];
+    const at = order.map((attr) => START.indexOf(attr));
+    expect(at.every((i) => i > 0), order.join(" · ")).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    // And the key choice really is what puts you in the room, so that sentence
+    // is not a promise the shell fails to keep.
+    expect(SHELL).toMatch(/audience: fpr && !d\.audience\.includes\(fpr\)/);
   });
 });
 

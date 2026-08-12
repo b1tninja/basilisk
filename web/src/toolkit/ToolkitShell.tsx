@@ -85,6 +85,7 @@ import {
   TopBar,
   type HandoffRow,
   type OwedBack,
+  type RecipientChoice,
   type SuiteTone,
   type SuiteDetail,
 } from "./widgets/index";
@@ -109,11 +110,18 @@ import {
 } from "../lib/toolkit/fragment.js";
 import {
   keyOwesPassphrase,
-  parseInviteAudience,
   sessionKeyChoices,
   sessionRecipe,
   startIssues,
 } from "../lib/toolkit/session-flow.js";
+// The picker the encryption side has always had, on the side that had none.
+// `SessionStart` cannot reach for these itself — it is on the design surface,
+// where a widget takes plain props and reads no store.
+import {
+  listTrustedRecipientSuggestions,
+  searchRecipients,
+} from "../lib/recipient-picker.js";
+import { primaryUidLabel } from "../lib/key-hit.js";
 import { qrSvg } from "../lib/qr.js";
 import { stepOverridesProfile } from "../lib/pgp/profile-from-step.js";
 import {
@@ -1025,6 +1033,45 @@ export function ToolkitShell() {
   const sessionAudience = sessionLive
     ? nb.quorumState.audience || []
     : sessionDraft.audience;
+
+  /**
+   * The peers offered as one press each, when there is a room to name.
+   *
+   * `listTrustedRecipientSuggestions` is the same source the recipient binder
+   * opens on — keys you marked trusted, resolved from the device key cache —
+   * and it is the group the session panel had no access to. Its only
+   * suggestions were `nb.vaultKeys`, this browser's own private keys, which is
+   * the one group that is mostly *not* the people you are meeting.
+   *
+   * Loaded here rather than in the widget because `SessionStart` is on the
+   * design surface, where the rule is that a widget takes plain props and
+   * reads no store.
+   */
+  const [trustedPeers, setTrustedPeers] = useState<RecipientChoice[]>([]);
+  const sessionSheetOpen = nb.sheet === "session";
+  useEffect(() => {
+    if (!sessionSheetOpen) return;
+    let live = true;
+    void (async () => {
+      try {
+        const rows = await listTrustedRecipientSuggestions();
+        if (live) {
+          setTrustedPeers(
+            rows.map((hit) => ({
+              fingerprint: String(hit.fingerprint || "").toUpperCase(),
+              label: primaryUidLabel(hit),
+            }))
+          );
+        }
+      } catch {
+        // A cache that will not open leaves the search field and the paste box,
+        // which are the two paths that do not depend on it.
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [sessionSheetOpen, trustTick]);
 
   /**
    * The invite link. `hashForJoin` refuses an audience that names fewer than
@@ -3873,17 +3920,30 @@ export function ToolkitShell() {
                 audience: fpr && !d.audience.includes(fpr) ? [...d.audience, fpr] : d.audience,
               })),
             audience: sessionDraft.audience,
-            suggestions: sessionKeys.map((k) => ({
-              fingerprint: k.fingerprint,
-              uid: k.uid,
-            })),
+            trusted: trustedPeers,
+            // One press, one lookup. `searchRecipients` is the encrypt side's
+            // own search — same cache, same keyserver, same trust ordering —
+            // so a person found here is a person found there.
+            onSearch: async (query: string) =>
+              (await searchRecipients(query))
+                .map((hit) => ({
+                  fingerprint: String(hit.fingerprint || "").toUpperCase(),
+                  label: primaryUidLabel(hit),
+                }))
+                // `mergeSearchHits` admits a hit at 16 characters, and a room
+                // is derived from whole fingerprints — offering one would be a
+                // press that silently adds nobody.
+                .filter((hit) => hit.fingerprint.length >= 40),
             onAudience: (audience) => setSessionDraft((d) => ({ ...d, audience })),
-            onPaste: (text) =>
+            // The readout did the reading. Applying its audience rather than
+            // re-parsing the text is what keeps the sentence on screen and the
+            // room in the draft from ever being answers to different questions
+            // — and `role` is the one thing only a link can settle.
+            onPaste: (result) =>
               setSessionDraft((d) => ({
                 ...d,
-                audience: [
-                  ...new Set([...d.audience, ...parseInviteAudience(text)]),
-                ],
+                audience: result.audience,
+                role: result.role || d.role,
               })),
             issues: sessionIssues,
             inviteUrl,

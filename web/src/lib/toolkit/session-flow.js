@@ -43,6 +43,7 @@
  */
 
 import { canonicalAudience } from "../notebook/room.js";
+import { findFingerprints, findShortKeyIds } from "../pgp/verify-fpr.js";
 
 /**
  * What the invite carries, and what it does not.
@@ -454,15 +455,158 @@ export function sessionRecipe(draft) {
  *
  * Takes an invite URL, a bare `#j=` fragment, or somebody typing four
  * fingerprints into a box, because all three happen and none of them is wrong.
- * Anything that is not a 40- or 64-character hex fingerprint is dropped by
- * `canonicalAudience` rather than reported: this is a paste box, and a
- * complaint about the `https://` in front of the list would be a complaint
- * about the reader having pasted the thing they were sent.
+ * Anything that is not a fingerprint is dropped rather than reported here:
+ * this is a paste box, and a complaint about the `https://` in front of the
+ * list would be a complaint about the reader having pasted the thing they were
+ * sent. What *is* said about a paste is `pasteReadout`'s job, below.
+ *
+ * The extraction itself belongs to `findFingerprints`, beside the normaliser
+ * it has to agree with. It used to live here as a contiguous
+ * `[0-9a-fA-F]{40,64}`, which is a stricter alphabet than
+ * `normalizeFingerprintInput` accepts — so the grouped form this product
+ * prints everywhere matched nothing and every such paste silently yielded an
+ * empty audience.
+ *
+ * `pasteReadout` is what the product calls, because an audience is not an
+ * answer to a person: this returns the same empty list for text with no
+ * fingerprint in it, text holding a short key id, and a paste of people who
+ * were already in the room. This is that reading, and the readout below is
+ * built on it so the sentence and the room can never disagree.
  *
  * @param {string} text
  * @returns {string[]}
  */
 export function parseInviteAudience(text) {
-  const found = String(text || "").match(/[0-9a-fA-F]{40,64}/g) || [];
-  return canonicalAudience(found);
+  return canonicalAudience(findFingerprints(text));
+}
+
+/**
+ * The marker an invite link carries — see `hashForJoin`, which writes it.
+ *
+ * A test for the *shape*, not a second parser: the fingerprints still come out
+ * of the one extractor, so a link and a bare list cannot be read as different
+ * audiences. What the marker adds is the one thing the list alone cannot say —
+ * that this text was sent by somebody who is starting the session, which
+ * settles the role.
+ */
+const INVITE_MARKER = /[#&?]j=/;
+
+/**
+ * @typedef {object} PasteReadout
+ * @property {"invite"|"fingerprints"|"short-id"|"nothing"} kind
+ * @property {string[]} added     fingerprints this paste puts in the room
+ * @property {string[]} already   fingerprints it named that were already there
+ * @property {string[]} audience  the room after the paste, canonical
+ * @property {"join"|null} role   the role this paste settles, or null to leave it
+ * @property {"brand"|"warn"|"muted"} tone
+ * @property {string} sentence
+ */
+
+/**
+ * What a paste did, in a sentence — the half that was missing entirely.
+ *
+ * The box committed on blur, at a moment the reader did not choose, and said
+ * nothing afterwards in any case. When it found nothing there was no message
+ * and nothing to press again, so the only two outcomes a person could tell
+ * apart were "the list grew" and "something is broken".
+ *
+ * Four states, because they ask for four different next moves:
+ *
+ * - **invite** — a link. It carries the whole audience *and* the fact that
+ *   whoever sent it is the one publishing, so the role is settled here rather
+ *   than left as a toggle the reader has to reason about.
+ * - **fingerprints** — a list. Says how many were added and how many were
+ *   already in the room, because "nothing appeared to happen" is otherwise
+ *   indistinguishable from a paste that did nothing.
+ * - **short-id** — 8, 16 or 32 hex characters. A short id is a suffix of a
+ *   fingerprint, so it can name more than one key and no room can be derived
+ *   from it. This read as nothing at all before, which is the worst reading:
+ *   the reader pasted a real identifier and was told silence.
+ * - **nothing** — says what a fingerprint looks like, that the spaces and
+ *   colons in a printed one are fine, and that two of them need a delimiter
+ *   between them, which is the one arrangement the extractor refuses.
+ *
+ * It lives here rather than in the widget for the reason at the top of this
+ * module: a sentence written inside a component is a sentence no test can pin.
+ *
+ * @param {string} text
+ * @param {{ audience?: string[] }} [opts] the room as it stands
+ * @returns {PasteReadout}
+ */
+export function pasteReadout(text, opts = {}) {
+  const current = canonicalAudience(opts?.audience || []);
+  const inRoom = new Set(current);
+  const raw = String(text || "");
+  const found = parseInviteAudience(raw);
+  const added = found.filter((fpr) => !inRoom.has(fpr));
+  const already = found.filter((fpr) => inRoom.has(fpr));
+  const audience = canonicalAudience([...current, ...found]);
+  const people = (n) => `${n} ${n === 1 ? "person" : "people"}`;
+  // "One was already in the room" rather than "1": these are people, and the
+  // count is being read mid-sentence, not scanned in a table.
+  const alreadySentence =
+    already.length === 1
+      ? "One was already in the room."
+      : `${already.length} were already in the room.`;
+
+  // An invite is checked first because the same text is also a list of
+  // fingerprints, and the two readings differ in what they settle rather than
+  // in what they contain.
+  if (INVITE_MARKER.test(raw) && found.length >= 2) {
+    return {
+      kind: "invite",
+      added,
+      already,
+      audience,
+      role: "join",
+      tone: "brand",
+      sentence:
+        `That invite names ${people(found.length)}. ` +
+        (added.length ? `Added ${added.length}. ` : "They were all here already. ") +
+        "You are set to joining, because whoever sent it is the one who publishes the invite — press Join before they start.",
+    };
+  }
+
+  if (found.length) {
+    return {
+      kind: "fingerprints",
+      added,
+      already,
+      audience,
+      role: null,
+      tone: added.length ? "brand" : "muted",
+      sentence: added.length
+        ? `Added ${added.length}.${already.length ? ` ${alreadySentence}` : ""}`
+        : `Nothing new. ${alreadySentence}`,
+    };
+  }
+
+  const shortIds = findShortKeyIds(raw);
+  if (shortIds.length) {
+    return {
+      kind: "short-id",
+      added,
+      already,
+      audience,
+      role: null,
+      tone: "warn",
+      sentence:
+        `${shortIds[0]} is a short key id, not a fingerprint. More than one key can end in the same ` +
+        "characters, so it names a person only by luck — and a room is derived from full fingerprints, " +
+        "so there is nothing here to derive one from. Paste the whole fingerprint, or search for them by name.",
+    };
+  }
+
+  return {
+    kind: "nothing",
+    added,
+    already,
+    audience,
+    role: null,
+    tone: "warn",
+    sentence:
+      "No fingerprint in that. One is 40 hex characters, or 64 for a v6 key — the spaces, colons and " +
+      "hyphens in a printed one are fine. For several, put each on its own line or separate them with " +
+      "commas; two run together cannot be told apart.",
+  };
 }

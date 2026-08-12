@@ -2,12 +2,23 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
+import { pasteReadout } from "../../lib/toolkit/session-flow.js";
 import { InviteCard } from "./InviteCard";
 
 export type SessionKeyChoice = {
   fingerprint: string;
   uid?: string;
 };
+
+/** Somebody who could be in the room — a trusted mark, or a search hit. */
+export type RecipientChoice = {
+  fingerprint: string;
+  /** Their uid or email. Absent for a key nothing local knows a name for. */
+  label?: string;
+};
+
+/** What `pasteReadout` hands back — the sentence and what it did. */
+export type PasteResult = ReturnType<typeof pasteReadout>;
 
 export type SessionStartProps = {
   /**
@@ -24,11 +35,27 @@ export type SessionStartProps = {
   onKeyFingerprint: (fpr: string) => void;
   /** Everyone in the room, canonical, including you. */
   audience: string[];
-  /** Fingerprints this notebook already knows about — one press each to add. */
-  suggestions?: SessionKeyChoice[];
+  /**
+   * Peers you have marked trusted, resolved from the device key cache.
+   *
+   * The suggestion list used to be this browser's *own* vault keys, which is
+   * the one group that is mostly not the people you are meeting: your own key
+   * joins the room the moment you choose it above, so every remaining
+   * suggestion was a second identity of yours. These are the keys you have
+   * actually met.
+   */
+  trusted?: RecipientChoice[];
+  /**
+   * Look somebody up by name, email or fingerprint.
+   *
+   * A callback rather than a search this component performs, so this widget
+   * still takes plain props and reads no store — the rule `ds-entry.ts` states
+   * for everything on the design surface.
+   */
+  onSearch?: (query: string) => Promise<RecipientChoice[]>;
   onAudience: (audience: string[]) => void;
-  /** Whatever was pasted into the invite box, parsed into an audience. */
-  onPaste: (text: string) => void;
+  /** What the paste box found, as `pasteReadout` read it. */
+  onPaste: (result: PasteResult) => void;
   /** `startIssues` output — every reason this cannot start yet, as sentences. */
   issues: string[];
   /** The link this audience would produce, or null while it would produce none. */
@@ -46,6 +73,13 @@ function shortFpr(fpr: string): string {
   return f.length > 12 ? `${f.slice(0, 8)}…${f.slice(-4)}` : f;
 }
 
+/** The paste readout's tone, in this app's tokens. */
+const PASTE_TONE: Record<string, string> = {
+  brand: "text-[var(--brand)]",
+  warn: "text-[var(--warn)]",
+  muted: "text-[var(--muted-foreground)]",
+};
+
 /**
  * Starting a shared session — naming the room, which is the only decision here.
  *
@@ -54,6 +88,15 @@ function shortFpr(fpr: string): string {
  * which room this is; there is nothing else to configure and no code to
  * allocate. Everything on this panel is therefore about the list and the key
  * that proves you belong in it.
+ *
+ * **Naming the room is a picker, not a hex prompt.** The room is derived from
+ * fingerprints, so a box wanting fingerprints is the shape the derivation
+ * suggests — and it is the wrong shape for a person, who knows the name of who
+ * they are meeting and not their key. So the order here is: your own key, which
+ * joins the room when you choose it; the peers you have marked trusted, one
+ * press each; a search; and only then a paste box, for somebody who was sent
+ * something. Every one of those hands back a whole fingerprint — a truncated
+ * form is only ever a label here, never an identity.
  *
  * **Start writes cells.** It does not call the transport — it appends
  * `agent.unlock` and `quorum.offer`/`quorum.join` to the notebook and runs
@@ -77,7 +120,8 @@ export function SessionStart({
   keyFingerprint,
   onKeyFingerprint,
   audience,
-  suggestions = [],
+  trusted = [],
+  onSearch,
   onAudience,
   onPaste,
   issues,
@@ -88,9 +132,54 @@ export function SessionStart({
   className,
 }: SessionStartProps) {
   const [pasted, setPasted] = useState("");
+  const [read, setRead] = useState<PasteResult | null>(null);
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<RecipientChoice[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [showRecipe, setShowRecipe] = useState(false);
   const inRoom = new Set(audience.map((f) => f.toUpperCase()));
   const offering = role === "offer";
+
+  /** The pick *is* the add. A picker that then wants a confirm is a form. */
+  const add = (fpr: string) => {
+    const clean = String(fpr || "").toUpperCase();
+    if (!clean || inRoom.has(clean)) return;
+    onAudience([...audience, clean]);
+  };
+
+  const runSearch = async () => {
+    const q = query.trim();
+    if (!onSearch || !q) return;
+    setSearching(true);
+    setSearchError("");
+    try {
+      setHits(await onSearch(q));
+    } catch (err) {
+      setHits(null);
+      setSearchError(err instanceof Error ? err.message : "Could not search for keys.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  /**
+   * Parse on the press, and say what happened either way.
+   *
+   * The box used to commit on blur — at a moment the reader did not choose,
+   * and with no message afterwards, so a paste that found nothing left nothing
+   * to read and nothing to press again.
+   */
+  const addPasted = () => {
+    const result = pasteReadout(pasted, { audience });
+    setRead(result);
+    onPaste(result);
+    // Cleared only when it took something. Text that yielded nothing is text
+    // the reader is about to fix.
+    if (result.added.length) setPasted("");
+  };
+
+  const offerable = trusted.filter((t) => !inRoom.has(t.fingerprint.toUpperCase()));
 
   return (
     <div className={cn("flex flex-col gap-3", className)} data-session-start={role}>
@@ -155,67 +244,176 @@ export function SessionStart({
         </span>
       </label>
 
-      <div className="flex flex-col gap-1.5" data-session-audience>
+      <div className="flex flex-col gap-1.5">
         <span className="text-[11px] font-bold text-[var(--foreground)]">Who is in the room</span>
-        {audience.length ? (
-          <ul className="flex list-none flex-col gap-0.5 p-0">
-            {audience.map((fpr) => (
-              <li key={fpr} className="flex items-center gap-1.5">
-                <code
-                  className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-[var(--foreground)]"
-                  title={fpr}
-                >
-                  {shortFpr(fpr)}
-                </code>
-                <button
-                  type="button"
-                  className="link-action"
-                  aria-label={`Remove ${shortFpr(fpr)} from the room`}
-                  onClick={() => onAudience(audience.filter((f) => f !== fpr))}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-[10.5px] text-[var(--muted-foreground)]">
-            Nobody yet. Add yourself and at least one other key.
-          </p>
-        )}
+        {/* The room itself. Nothing else may put an `li` in here — the roster
+            e2e counts them against the audience. */}
+        <div data-session-audience>
+          {audience.length ? (
+            <ul className="flex list-none flex-col gap-0.5 p-0">
+              {audience.map((fpr) => (
+                <li key={fpr} className="flex items-center gap-1.5">
+                  <code
+                    className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-[var(--foreground)]"
+                    title={fpr}
+                  >
+                    {shortFpr(fpr)}
+                  </code>
+                  <button
+                    type="button"
+                    className="link-action"
+                    aria-label={`Remove ${shortFpr(fpr)} from the room`}
+                    onClick={() => onAudience(audience.filter((f) => f !== fpr))}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            /* Never a bare hex prompt. The first person in the room is you, and
+               choosing the key above is what puts you there — saying so is the
+               difference between an empty list and an empty list you know how
+               to fill. */
+            <p className="text-[10.5px] leading-snug text-[var(--muted-foreground)]">
+              Nobody yet. Choosing the key you are joining as puts you in the
+              room; add at least one other person below.
+            </p>
+          )}
+        </div>
 
-        {suggestions.length ? (
-          <div className="flex flex-wrap gap-1.5" data-session-suggestions>
-            {suggestions
-              .filter((s) => !inRoom.has(s.fingerprint.toUpperCase()))
-              .map((s) => (
+        {offerable.length ? (
+          <div className="flex flex-col gap-1" data-session-trusted>
+            <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
+              Keys you have marked trusted
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {offerable.map((t) => (
                 <button
-                  key={s.fingerprint}
+                  key={t.fingerprint}
                   type="button"
                   className="link-action"
-                  onClick={() => onAudience([...audience, s.fingerprint])}
+                  title={t.fingerprint}
+                  onClick={() => add(t.fingerprint)}
                 >
-                  + {s.uid || shortFpr(s.fingerprint)}
+                  + {t.label || shortFpr(t.fingerprint)}
                 </button>
               ))}
+            </div>
           </div>
         ) : null}
 
-        {/* One box for both directions. A person who was sent an invite pastes
-            a URL; a person building one pastes fingerprints out of an email.
-            `parseInviteAudience` takes either, because refusing the `https://`
-            in front of a list would be complaining that they pasted what they
-            were sent. */}
-        <Textarea
-          className="min-h-[52px] font-mono text-[10.5px]"
-          placeholder="Paste an invite link, or fingerprints"
-          value={pasted}
-          aria-label="Paste an invite link or fingerprints"
-          onChange={(e) => setPasted(e.currentTarget.value)}
-          onBlur={() => {
-            if (pasted.trim()) onPaste(pasted);
-          }}
-        />
+        {onSearch ? (
+          <div className="flex flex-col gap-1" data-session-search>
+            <label
+              className="text-[10px] font-bold text-[var(--muted-foreground)]"
+              htmlFor="session-recipient-search"
+            >
+              Find someone
+            </label>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <input
+                id="session-recipient-search"
+                type="search"
+                autoComplete="off"
+                className="min-w-[180px] flex-1 rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--foreground)]"
+                placeholder="Name, email, or fingerprint"
+                value={query}
+                onChange={(e) => setQuery(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  // Every other search field on this site submits on Enter, and
+                  // the recipient binder's did not until somebody reported it
+                  // as the binder being broken.
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    void runSearch();
+                  }
+                }}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!query.trim() || searching}
+                onClick={() => void runSearch()}
+              >
+                {searching ? "Searching…" : "Search"}
+              </Button>
+            </div>
+            {searchError ? (
+              <p className="text-[10.5px] leading-snug text-[var(--warn)]">{searchError}</p>
+            ) : null}
+            {hits && !searchError ? (
+              hits.length ? (
+                <div className="flex flex-col gap-0.5" data-session-hits>
+                  {hits.map((hit) => {
+                    const here = inRoom.has(hit.fingerprint.toUpperCase());
+                    return (
+                      <button
+                        key={hit.fingerprint}
+                        type="button"
+                        className="flex items-center gap-1.5 text-left link-action"
+                        disabled={here}
+                        title={hit.fingerprint}
+                        onClick={() => add(hit.fingerprint)}
+                      >
+                        <span className="min-w-0 truncate">
+                          {hit.label || shortFpr(hit.fingerprint)}
+                        </span>
+                        <code className="font-mono text-[10px] text-[var(--muted-foreground)]">
+                          {shortFpr(hit.fingerprint)}
+                        </code>
+                        <span className="text-[10px] text-[var(--muted-foreground)]">
+                          {here ? "in the room" : "add"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-[10.5px] leading-snug text-[var(--muted-foreground)]">
+                  No key here answers to that. They may not have published one to
+                  this site — a fingerprint they send you works below.
+                </p>
+              )
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* One box for both directions, and last, because it is the fallback:
+            a person who was sent an invite pastes a URL; a person building one
+            pastes fingerprints out of an email. `pasteReadout` takes either,
+            because refusing the `https://` in front of a list would be
+            complaining that they pasted what they were sent. */}
+        <div className="flex flex-col gap-1" data-session-paste>
+          <Textarea
+            className="min-h-[52px] font-mono text-[10.5px]"
+            placeholder="Paste an invite link, or fingerprints"
+            value={pasted}
+            aria-label="Paste an invite link or fingerprints"
+            onChange={(e) => setPasted(e.currentTarget.value)}
+          />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button size="sm" variant="ghost" disabled={!pasted.trim()} onClick={addPasted}>
+              Add
+            </Button>
+            <span className="text-[10px] text-[var(--muted-foreground)]">
+              A printed fingerprint pastes as it is shown — spaces and all.
+            </span>
+          </div>
+          {/* Always rendered once a press has happened, whatever it found. The
+              live region is what makes "nothing was found" an answer rather
+              than the silence it used to be. */}
+          <p
+            aria-live="polite"
+            data-paste-kind={read?.kind || ""}
+            className={cn(
+              "text-[10.5px] leading-snug",
+              PASTE_TONE[read?.tone || "muted"]
+            )}
+          >
+            {read?.sentence || ""}
+          </p>
+        </div>
       </div>
 
       <InviteCard

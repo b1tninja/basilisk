@@ -23,6 +23,132 @@ export function normalizeFingerprintInput(raw) {
  */
 const SEARCH_HEX_LENGTHS = new Set([8, 16, 32, 40, 64]);
 
+/* ───────────────── pulling ids out of pasted text ───────────────── */
+
+/**
+ * The separators that appear *inside* one printed fingerprint.
+ *
+ * Space and tab because `formatFingerprint` prints hex in four-character
+ * blocks — every fingerprint this product shows a person is grouped, so a
+ * grouped fingerprint is the normal thing to be handed back. Colon because
+ * `openpgp4fpr:` URIs and QR payloads use one, hyphen because people type one.
+ *
+ * Newline and comma are deliberately absent: both separate one fingerprint
+ * from the *next* in the forms this product emits — `hashForJoin` writes
+ * `#j=a,b`, and a paste box gets one per line. Folding either in here would
+ * join two grouped fingerprints across the break into a single 80-character
+ * run and lose both of them.
+ */
+const FPR_SEPARATORS = /[ \t:-]+/;
+
+/** One hex run, or several joined by those separators. */
+const HEX_RUN = /[0-9a-fA-F]+(?:[ \t:-]+[0-9a-fA-F]+)*/g;
+
+/**
+ * @param {number} n
+ * @returns {boolean} whether that many hex characters is a fingerprint —
+ *   40 for v4, 64 for v6, and nothing else.
+ */
+function isFprLength(n) {
+  return n === 40 || n === 64;
+}
+
+/**
+ * Every hex value pasted text unambiguously contains.
+ *
+ * Extraction and normalisation used to sit at opposite ends of the codebase
+ * with different alphabets — `parseInviteAudience` matched a *contiguous*
+ * `[0-9a-fA-F]{40,64}` and only then handed the result to something that knew
+ * about spaces and colons. A grouped fingerprint is ten runs of four, so it
+ * matched nothing at all, and the product's own printed form was the one form
+ * its paste box refused. This module is where both now live.
+ *
+ * A run is read in two passes because prose is noisy. A token that is *itself*
+ * a whole fingerprint stands alone — that is `<fpr> <fpr>`, and the `f:` a
+ * bare `openpgp4fpr:` prefix leaves in front of one. Everything else is read
+ * as grouping, and only within a stretch of tokens that are all the same
+ * width: a printed fingerprint is uniform blocks of four, so the stray `e` in
+ * “here: AABB CCDD …” ends its own stretch instead of being absorbed into the
+ * fingerprint behind it and taking the length to 41.
+ *
+ * What is left over is left over. Two fingerprints run together, or two
+ * grouped ones with a single space between, are a length no split can justify
+ * — and picking one anyway is how `{40,64}` came to match the first 64
+ * characters of an 80-character pair and hand back an id belonging to nobody.
+ *
+ * @param {string} text
+ * @returns {string[]} uppercase hex, in the order encountered, one entry per
+ *   reading — including lengths that are not fingerprints, which is what lets
+ *   `findShortKeyIds` see a key id this can never accept
+ */
+function hexReadings(text) {
+  /** @type {string[]} */
+  const out = [];
+  for (const match of String(text || "").match(HEX_RUN) || []) {
+    const tokens = match.split(FPR_SEPARATORS).filter(Boolean);
+    /** @type {string[]} */
+    let group = [];
+    const flush = () => {
+      if (group.length) out.push(group.join("").toUpperCase());
+      group = [];
+    };
+    for (const token of tokens) {
+      if (isFprLength(token.length)) {
+        flush();
+        out.push(token.toUpperCase());
+        continue;
+      }
+      if (group.length && group[0].length !== token.length) flush();
+      group.push(token);
+    }
+    flush();
+  }
+  return out;
+}
+
+/**
+ * The fingerprints in a paste — the only place text is searched for one.
+ *
+ * The anti-drift guard is a round trip: everything `formatFingerprint` can
+ * print, this recovers, v4 and v6, singly and in the lists this product emits.
+ * That is the property that was violated, and it fails loudly if either end
+ * changes.
+ *
+ * @param {string} text
+ * @returns {string[]} uppercase, each one once, in the order encountered
+ */
+export function findFingerprints(text) {
+  return [...new Set(hexReadings(text).filter((hex) => isFprLength(hex.length)))];
+}
+
+/**
+ * Hex lengths that name a key without identifying one: 8, 16 and 32.
+ *
+ * Derived from `SEARCH_HEX_LENGTHS` rather than listed again, so search and
+ * this cannot come to disagree about which lengths are the short ones.
+ */
+const SHORT_ID_HEX_LENGTHS = new Set(
+  [...SEARCH_HEX_LENGTHS].filter((n) => !isFprLength(n))
+);
+
+/**
+ * The short key ids in a paste — the ones search accepts and a room cannot use.
+ *
+ * A short id is a *suffix* of a fingerprint, so more than one key can answer to
+ * it; the search page already carries that warning. It matters here because a
+ * room is `SHA-256(hostname | sorted fingerprints)` — an id that names several
+ * keys names no room, and without this the whole state reads as nothing having
+ * happened.
+ *
+ * @param {string} text
+ * @returns {string[]} uppercase, each one once, in the order encountered
+ */
+export function findShortKeyIds(text) {
+  return [
+    ...new Set(hexReadings(text).filter((hex) => SHORT_ID_HEX_LENGTHS.has(hex.length))),
+  ];
+}
+
 /**
  * True when the query is only hex (optional 0x / spaces / colons) — not email/name.
  * @param {string} raw
@@ -58,7 +184,7 @@ export function normalizeSearchQuery(raw) {
  * @returns {boolean}
  */
 function isValidFprLength(hex) {
-  return hex.length === 40 || hex.length === 64;
+  return isFprLength(hex.length);
 }
 
 /**
