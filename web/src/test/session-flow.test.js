@@ -508,22 +508,27 @@ describe("an empty vault is a different problem from an unmade choice", () => {
     // the only stated reason was an instruction that cannot be followed when
     // there is nothing in the list to pick.
     const none = startIssues({ audience: [], keyFingerprint: "", keyCount: 0 });
-    expect(none.join(" ")).toMatch(/no keys yet/i);
-    expect(none.join(" ")).toMatch(/My Keys/);
+    expect(none.join(" ")).toMatch(/no private key in this browser/i);
     expect(none.join(" ")).not.toMatch(/^Choose the key/m);
+    // Names the store that can sign, and says why the other one cannot. My Keys
+    // shows both under headings that both say "keys"; sending someone there
+    // without distinguishing them is how this was reported a second time, with
+    // three account keys on screen and a session insisting there were none.
+    expect(none.join(" ")).toMatch(/Your browser vault/);
+    expect(none.join(" ")).toMatch(/public keys on your account and cannot sign/);
   });
 
   it("still says choose when there is something to choose", () => {
     const some = startIssues({ audience: [], keyFingerprint: "", keyCount: 3 });
     expect(some.join(" ")).toMatch(/Choose the key you are joining as/);
-    expect(some.join(" ")).not.toMatch(/no keys yet/i);
+    expect(some.join(" ")).not.toMatch(/no private key in this browser/i);
   });
 
   it("says nothing about keys once one is picked, either way", () => {
     const fpr = "A".repeat(40);
     for (const keyCount of [0, 3]) {
       const picked = startIssues({ audience: [fpr], keyFingerprint: fpr, keyCount });
-      expect(picked.join(" ")).not.toMatch(/no keys yet|Choose the key/i);
+      expect(picked.join(" ")).not.toMatch(/no private key|Choose the key/i);
     }
   });
 });

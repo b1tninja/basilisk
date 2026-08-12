@@ -140,7 +140,7 @@ export function SessionStart({
               over no options reads as a control that has not loaded, and it
               was the visible half of a Start button that did nothing. */}
           <option value="">
-            {keys.length ? "Choose a key…" : "No keys yet — make one in My Keys"}
+            {keys.length ? "Choose a key…" : "No private key in this browser"}
           </option>
           {keys.map((k) => (
             <option key={k.fingerprint} value={k.fingerprint}>

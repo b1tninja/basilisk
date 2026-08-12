@@ -283,7 +283,14 @@ export function confirmationReadout(peer) {
  *
  * `keyCount` is separate from `keyFingerprint` because "you have not chosen
  * one yet" and "there is nothing to choose" are different states that had the
- * same sentence. With an empty vault, "Choose the key you are joining as" is an
+ * same sentence.
+ *
+ * The empty sentence names *which* store, because My Keys shows two and calls
+ * both of them keys: “Your keys” is `/api/v1/me/keys`, the public keys on your
+ * account, and “Your browser vault” is `vault.js`'s IndexedDB private keys.
+ * Only the second can sign. Sending someone to My Keys without saying which is
+ * how this was reported the second time -- three keys on screen and a session
+ * insisting there were none. With an empty vault, "Choose the key you are joining as" is an
  * instruction nobody can follow, and the Start button sat disabled beside it
  * with no reason attached -- so pressing it did nothing and said nothing, which
  * is how this was reported.
@@ -308,7 +315,7 @@ export function startIssues(draft) {
     // of the two situations this is, because only one of them is a choice.
     issues.push(
       Number(draft?.keyCount || 0) === 0
-        ? "You have no keys yet, and a session is signed from end to end. Make or import one in My Keys, then come back — the key you pick here signs the invite and every envelope after it."
+        ? "No private key in this browser. A session signs the invite and every envelope after it, so it needs a key held here — the ones under “Your keys” on My Keys are public keys on your account and cannot sign. Make or import one under “Your browser vault”."
         : "Choose the key you are joining as — it signs the invite and every envelope after it."
     );
   }
