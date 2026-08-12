@@ -120,9 +120,16 @@ export function finalize({ myId, contributions }) {
     if (!verify({ share: c.share, id: myId, commitments: c.commitments })) {
       // Named, because the remedy is to restart without this dealer — there
       // is no complaint round to adjudicate it.
-      throw new Error(
+      const err = new Error(
         `dkg: share from ${shortId(c.from)}… does not match their commitments — restart excluding that participant`
       );
+      // The id as well as the sentence. A surface reporting this has to say
+      // *which* participant, and parsing it back out of a shortened id in a
+      // message is how two spellings of one fact start. `dkg-session.js` is
+      // emphatic that the remedy here is social — the id identifies who to
+      // talk to, and there is deliberately nothing that acts on it.
+      Object.assign(err, { dealer: c.from });
+      throw err;
     }
   }
 

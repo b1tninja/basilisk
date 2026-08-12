@@ -48,9 +48,22 @@ export const DKG_SHARE = "dkg-share";
 
 /**
  * @typedef {object} DkgProgress
- * @property {number} commitments  participants whose commitments have arrived
- * @property {number} shares       participants whose share to us has arrived
- * @property {number} expected     peers we are waiting on (excludes us)
+ * @property {string[]} commitments  who has broadcast commitments, in the
+ *   caller's own spelling of the ids. Never includes us.
+ * @property {string[]} shares       who has dealt us our share. Never includes us.
+ * @property {string[]} expected     every peer this run is waiting on, so a
+ *   reader can subtract rather than guess at the roster.
+ *
+ * Identity, not totals — and that is the whole of this type's design. It used
+ * to report three numbers, which is enough to draw "2 of 5 commitments" and not
+ * enough to draw a roster: a surface wanting to say *which* participant is
+ * still silent had to invent it. `DkgPanel`'s central claim is per-participant
+ * state on three independent axes never merged, so counts made it unmountable.
+ * `.length` still gives the numbers, so nothing is lost by carrying names.
+ *
+ * The ids are the caller's, not the scalars the arithmetic runs on. A shell
+ * matching progress against a room roster should not have to know that this
+ * layer reduces ids to field elements.
  */
 
 /**
@@ -88,6 +101,14 @@ export async function runDkg({
   const peers = parties.filter((p) => p !== me);
   if (!peers.length) throw new Error("dkg: a distributed key generation needs at least two participants");
 
+  // Back to the caller's spelling. `normalizeIds` is a `map`, so `parties[i]`
+  // is `ids[i]` reduced to a field element and the correspondence is positional
+  // — which is why progress can name participants without this layer inventing
+  // a second identifier for them.
+  /** @type {Map<string, string>} */
+  const labelOf = new Map(parties.map((p, i) => [p, String(ids[i])]));
+  const label = (p) => labelOf.get(p) ?? p;
+
   const dealt = round1({ ids: parties, threshold });
 
   /** @type {Map<string, string[]>} dealer id → their commitments */
@@ -95,11 +116,20 @@ export async function runDkg({
   /** @type {Map<string, string>} dealer id → the share they dealt us */
   const shares = new Map([[me, dealt.shares[me]]]);
 
+  // Ordered by the canonical participant list rather than by arrival, so two
+  // participants watching the same run see the same roster order — and so a
+  // reader can diff `expected` against either list positionally.
+  const arrived = (held) => peers.filter((p) => held.has(p)).map(label);
+
   const report = () =>
     onProgress?.({
-      commitments: commitments.size - 1,
-      shares: shares.size - 1,
-      expected: peers.length,
+      // Duplicates cannot appear here even if a peer broadcasts twice: both
+      // maps are written first-wins above, and this reads the map rather than
+      // counting messages. A second commitment from one dealer is a split-view
+      // attempt, not a second participant.
+      commitments: arrived(commitments),
+      shares: arrived(shares),
+      expected: peers.map(label),
     });
 
   /** @type {(() => void) | null} */

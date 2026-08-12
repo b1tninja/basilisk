@@ -60,6 +60,7 @@ import {
   CellTypeErrors,
   GpgKeyBinder,
   ConnectionsPanel,
+  DkgPanel,
   CeremonySheet,
   ShareCheck,
   IntegrityPanel,
@@ -88,6 +89,7 @@ import {
 } from "./widgets/index";
 import { getStep } from "../lib/toolkit/registry.js";
 import { stepUnboundSlots } from "../lib/toolkit/input-needs.js";
+import type { DkgParticipant } from "../lib/quorum/dkg-session.js";
 import {
   compileRecipe,
   outSlotLabels,
@@ -341,6 +343,87 @@ function collectProfileOverrides(chains: RecipeChain[]): ChipPath[] {
 }
 
 /**
+ * One `basilisk:dkg-progress` event. `running` while contributions land, then
+ * exactly one terminal phase — see `lib/toolkit/dkg-ops.js`, which is the only
+ * thing that dispatches it.
+ */
+type DkgProgressDetail = {
+  phase: "running" | "complete" | "refused" | "failed";
+  threshold?: number;
+  participants?: number;
+  commitments?: string[];
+  shares?: string[];
+  expected?: string[];
+  publicKey?: string;
+  /** Fingerprint of the participant whose share did not check. */
+  dealer?: string;
+  message?: string;
+};
+
+/**
+ * What a `dkg.run` has told us so far, in the shape `DkgPanel` reads.
+ *
+ * `dkg.run` blocks its cell for up to two minutes and dispatches
+ * `basilisk:dkg-progress` as contributions land. Nothing listened, so the only
+ * thing on screen for two minutes was a spinning cell — and if the run refused,
+ * the reason a bad share matters (see `lib/quorum/dkg-session.js`) never reached
+ * anybody at all.
+ *
+ * The roster is the exchange's, not a second one: connected and authenticated
+ * come from the same rows `ConnectionsPanel` draws, and only `round` comes from
+ * the run. That is the panel's own rule — three axes, never merged — and it is
+ * why the progress event had to learn to name participants before this could
+ * exist. Counts could not have filled this in without inventing it.
+ *
+ * `verified` is claimed for a peer only when the whole run completed, because
+ * until `finalize` returns nobody has checked anything: a share that has
+ * *arrived* is not a share that *checks*, and drawing "checked" early would be
+ * the one lie this panel exists to avoid.
+ */
+function dkgParticipants(
+  peers: { id: string; fingerprint: string; state?: string; authenticated?: boolean }[],
+  selfFpr: string,
+  progress: DkgProgressDetail
+): DkgParticipant[] {
+  const commitments = new Set(progress.commitments || []);
+  const shares = new Set(progress.shares || []);
+  const out: DkgParticipant[] = [];
+  if (selfFpr) {
+    out.push({
+      id: "you",
+      fingerprint: selfFpr,
+      self: true,
+      // True rather than decorative: this participant dealt its own polynomial
+      // before anything was sent. Never read — `dkg-session.js` filters `self`
+      // out of every count — but a value on screen should not be a placeholder.
+      round: "verified",
+      state: "connected",
+      authenticated: true,
+    });
+  }
+  for (const p of peers) {
+    const fpr = p.fingerprint || "";
+    out.push({
+      id: p.id,
+      fingerprint: fpr,
+      round:
+        progress.phase === "refused" && progress.dealer === fpr
+          ? "bad"
+          : progress.phase === "complete"
+            ? "verified"
+            : shares.has(fpr)
+              ? "share"
+              : commitments.has(fpr)
+                ? "commitments"
+                : "waiting",
+      state: (p.state || "new") as DkgParticipant["state"],
+      authenticated: !!p.authenticated,
+    });
+  }
+  return out;
+}
+
+/**
  * Params in one cell that only a `$slot` can fill and that nothing will ask for.
  *
  * The fourth entry in `ReadinessBar`'s own priority list — "blocked required
@@ -486,6 +569,28 @@ export function ToolkitShell() {
    * happens.
    */
   const [owedBack, setOwedBack] = useState<OwedBack[]>([]);
+  /**
+   * The live `dkg.run`, or null when none has spoken.
+   *
+   * Null rather than an idle object so the panel is absent rather than empty:
+   * a distributed key generation is a thing you deliberately start, and a
+   * permanently-mounted "no DKG" card would be furniture. Cleared when the
+   * exchange ends, because a completed run's roster describes a room that is
+   * gone.
+   */
+  const [dkgProgress, setDkgProgress] = useState<DkgProgressDetail | null>(null);
+  useEffect(() => {
+    const onDkg = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as DkgProgressDetail;
+      if (detail?.phase) setDkgProgress(detail);
+    };
+    window.addEventListener("basilisk:dkg-progress", onDkg);
+    return () => window.removeEventListener("basilisk:dkg-progress", onDkg);
+  }, []);
+  useEffect(() => {
+    if (nb.quorumState.phase === "idle") setDkgProgress(null);
+  }, [nb.quorumState.phase]);
+
   /** The last handoff attempt's outcome, in the handoff layer's own words. */
   const [handoffNote, setHandoffNote] = useState<string | null>(null);
   /** Gap click sets pending insert; next shelf append / drop uses it. */
@@ -2962,6 +3067,38 @@ export function ToolkitShell() {
                     onCloseLink={(id) => void closeLink(id)}
                     onRestartLink={(id) => void restartLink(id)}
                   />
+
+                  {/* A running (or just-finished) distributed key generation.
+                      Beside the connections because it is a property *of* them:
+                      a DKG is a full mesh, and the roster below is the same
+                      roster above with one more axis on it.
+
+                      No action handlers, deliberately. `DkgPanel` draws "Deal
+                      round 1", "Finalize" and "Start a new session" when it is
+                      given them, and `dkg.run` is one op that deals every
+                      round and finalizes itself — so there is nothing for two
+                      of those buttons to call, and the third would be a restart
+                      the op layer does not offer. Omitting them renders none:
+                      the panel is a progress view here, and the cell's own Run
+                      is the start button. Growing `dkg.run` a stepwise sibling
+                      to justify three affordances would be designing the op
+                      around a drawing. */}
+                  {dkgProgress ? (
+                    <section className="mt-3 border-t border-[var(--border)] pt-3">
+                      <DkgPanel
+                        participants={dkgParticipants(
+                          nb.quorumState.peers || [],
+                          nb.quorumState.self || "",
+                          dkgProgress
+                        )}
+                        started
+                        threshold={dkgProgress.threshold || 0}
+                        jointPublicKey={
+                          dkgProgress.phase === "complete" ? dkgProgress.publicKey || "" : ""
+                        }
+                      />
+                    </section>
+                  ) : null}
 
                   {/* Below the connections, because it is what the connections
                       are *for*. The plan says where a cell runs, the panel

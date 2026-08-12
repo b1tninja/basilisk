@@ -29,18 +29,39 @@ export type DkgPanelProps = {
 /**
  * Distributed key generation, as a session.
  *
- * **Designed ahead of the op layer** — `lib/quorum/dkg.js` has the rounds,
- * nothing yet runs them over the live exchange, and this panel is deliberately
- * not wired into the shell. It is here so that the failure path is designed
- * before the transport is, and so the catalog can show what "waiting for 2 of 5
- * commitments" and "refused, and here is why that is not simply someone's
- * fault" look like. `lib/quorum/dkg-session.js` owns every sentence.
- *
  * Three axes are reported separately for each participant and never merged:
  * **connected** (the pipe), **authenticated** (who is on the other end), and
  * **round** (what they have contributed). They are genuinely independent — a
  * fully connected, fully verified participant can still have dealt a share that
  * does not check out, and that is exactly the case the panel exists for.
+ *
+ * `lib/quorum/dkg-session.js` owns every sentence and every phase; nothing here
+ * decides what state the session is in.
+ *
+ * ## Mounted as a progress view, with its buttons unrendered
+ *
+ * This was designed ahead of the op layer and sat in the catalog for a while,
+ * which is why it draws a session someone hand-cranks: *Deal round 1*,
+ * *Finalize*, *Start a new session*. What shipped instead is `dkg.run` — one op
+ * that deals every round, finalizes itself, and blocks its cell for up to two
+ * minutes.
+ *
+ * So `ToolkitShell` mounts it with **no handlers**, and every handler is
+ * optional, so none of those buttons render. That is not a gap being papered
+ * over: a person watching a cell block for two minutes needs to know it is
+ * still going and who it is waiting on, and this answers both. The start button
+ * is the cell's own Run.
+ *
+ * The buttons are waiting on a decision, not broken. Whether a DKG should also
+ * be drivable a round at a time is a question about the op layer — it would
+ * need a session that outlives a cell — and it should be answered because a
+ * ceremony needs it, not because a panel has affordances drawn for it.
+ *
+ * What must not appear, whatever is decided: an **Exclude them** button. A
+ * refusal is total, and pairwise shares make "X dealt badly" indistinguishable
+ * from "you are claiming X dealt badly" from every other seat, so the remedy is
+ * social and the panel offers a restart and says so. `dkg-session.js` states
+ * the whole argument.
  */
 export function DkgPanel({
   participants,

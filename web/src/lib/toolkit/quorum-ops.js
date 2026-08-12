@@ -881,8 +881,14 @@ export function execQuorumClose(value) {
  *   transport: import("../quorum/dkg-run.js").DkgTransport,
  *   myId: string,
  *   ids: string[],
+ *   fingerprintOf: (id: string) => string,
  *   release: () => void,
  * }}
+ *   `fingerprintOf` turns a participant id back into the fingerprint the room
+ *   knows them by. The scalar is the right identity for the arithmetic and the
+ *   wrong one for a person: a surface reporting who a round is waiting on has
+ *   to match the roster, and it should not have to learn that this layer
+ *   reduces fingerprints to field elements to do it.
  */
 export function createExchangeTransport(op = "dkg.run") {
   const ex = requireExchange(op);
@@ -916,6 +922,7 @@ export function createExchangeTransport(op = "dkg.run") {
   return {
     myId,
     ids: [...byId.keys()],
+    fingerprintOf: (id) => byId.get(String(id)) || String(id),
     transport: {
       broadcast: (m) => session.sendChat(JSON.stringify(m)),
       sendTo: (id, m) => {

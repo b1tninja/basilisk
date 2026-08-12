@@ -130,3 +130,66 @@ export const BadShare = () => (
     />
   </div>
 );
+
+/**
+ * **How the shell actually mounts it, and why there are no buttons.**
+ *
+ * The stories above draw a session someone hand-cranks, which is what this
+ * panel was designed for. What shipped is `dkg.run`: one op that deals every
+ * round, finalizes itself, and blocks its cell for up to two minutes. Two of
+ * the three buttons have nothing to call and the third would be a restart the
+ * op layer does not offer — so `ToolkitShell` passes no handlers, and every
+ * handler being optional means none of them render.
+ *
+ * This is the state a person actually sits with: a cell that has been busy for
+ * ninety seconds, and the answer to *is it still going* and *who is it waiting
+ * on*. `@lin` has dealt nothing yet and is the reason this run has not
+ * finished; a session-level progress bar would have hidden that, which is why
+ * `round` is per participant.
+ *
+ * The buttons are waiting on a decision, not broken. Whether a DKG should also
+ * be drivable a round at a time needs a session that outlives a cell, and that
+ * is a question about the op layer — to be answered because a ceremony needs
+ * it, not because a panel has affordances drawn for it.
+ */
+export const AsTheShellMountsIt = () => (
+  <div style={frame}>
+    <DkgPanel
+      started
+      threshold={2}
+      participants={[
+        { id: "you", fingerprint: ADA, self: true, round: "verified", state: "connected", authenticated: true },
+        { id: "@grace", fingerprint: GRACE, round: "share", state: "connected", authenticated: true },
+        { id: "@lin", fingerprint: LIN, round: "waiting", state: "connected", authenticated: true },
+      ]}
+    />
+  </div>
+);
+
+/**
+ * A refusal, as the shell shows it — and the button that is **not** here.
+ *
+ * `dkg.run` throws when a share does not check, and the panel is the only place
+ * that says what that means: the run is over, there is no partial key, and the
+ * group restarts from round 1. It offers a restart and nothing else.
+ *
+ * There is deliberately no *Exclude them*. Feldman commitments are broadcast
+ * but shares are pairwise, so a dealer who sends one bad share corrupts exactly
+ * one participant's view — which makes "@lin dealt badly" indistinguishable,
+ * from every other seat, from "you are claiming @lin dealt badly". A confident
+ * eviction button would be the adjudication primitive without the adjudication.
+ * The remedy is people talking to each other, and the last paragraph says so.
+ */
+export const RefusedInTheShell = () => (
+  <div style={frame}>
+    <DkgPanel
+      started
+      threshold={2}
+      participants={[
+        { id: "you", fingerprint: ADA, self: true, round: "verified", state: "connected", authenticated: true },
+        { id: "@grace", fingerprint: GRACE, round: "verified", state: "connected", authenticated: true },
+        { id: "@lin", fingerprint: LIN, round: "bad", state: "connected", authenticated: true },
+      ]}
+    />
+  </div>
+);
