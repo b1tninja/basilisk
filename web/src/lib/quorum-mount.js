@@ -355,7 +355,7 @@ async function resolvePrivateKey() {
     const opts = {};
     try {
       if (meta?.protection === "passkey") {
-        opts.prfIkm = await getPasskeyPrf();
+        opts.prfIkm = await getPasskeyPrf(vaultFpr);
       } else if (meta?.protection === "passphrase") {
         opts.passphrase = pass;
       }

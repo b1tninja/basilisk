@@ -1321,9 +1321,23 @@ in $a | recipients.merge with=$b | out $merged`,
       recipe: "webauthn.prf | encode hex",
       mode: "run",
       setup: async () => {
-        // Ensure prf-meta exists (create may not have run yet if tests reorder).
-        const { createPasskeyPrf } = await import("../../lib/vault.js");
-        await createPasskeyPrf("verb-smoke-prf-setup");
+        // PRF metadata is keyed by the fingerprint it wraps, so a ceremony on
+        // its own leaves nothing behind — the enrolment is stored by the save
+        // that uses it. `webauthn.prf` needs *some* enrolled key in the vault,
+        // so this puts one there rather than relying on `agent.save.passkey`
+        // having run first, which reordering would break.
+        const { createPasskeyPrf, saveKey } = await import("../../lib/vault.js");
+        const prf = await createPasskeyPrf("verb-smoke-prf-setup");
+        await saveKey({
+          fingerprint: "0".repeat(39) + "1",
+          armoredPrivate: "-----BEGIN PGP PRIVATE KEY BLOCK-----\nsmoke\n-----END PGP PRIVATE KEY BLOCK-----",
+          uid: "verb smoke <prf@example.com>",
+          email: "prf@example.com",
+          protection: "passkey",
+          prfIkm: prf.prfIkm,
+          prfEnrolment: prf.enrolment,
+          onConflict: "replace",
+        });
       },
       assert: (arts) => {
         if (!arts.some((a) => /^[0-9a-f]{64}$/.test(String(a.content || "")))) {

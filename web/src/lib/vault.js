@@ -15,6 +15,7 @@ import { readPrivateKey } from "openpgp";
 import { parseAttestationObject } from "./webauthn/attestation.js";
 import { normalizeVaultFingerprint } from "./vault-session.js";
 import { lookupAaguidInMds } from "./webauthn/mds.js";
+import { bytesToBase64Url } from "./toolkit/encode.js";
 
 const DB_NAME = "basilisk-vault";
 /** Schema v3 adds `pubkeys` (third-party public key cache; see pubkey-cache.js). */
@@ -23,7 +24,15 @@ const STORE_KEYS = "keys";
 const STORE_KEK = "kek";
 const STORE_PUBKEYS = "pubkeys";
 const DEVICE_KEK_ID = "device-aes-gcm";
+/**
+ * The pre-per-key PRF row: one credential id and one random salt for the whole
+ * vault. Nothing writes it any more — see `putPrfEnrolment` — but it is still
+ * read, because keys saved while it was the only shape have no row of their
+ * own and it is the only description of how they were wrapped.
+ */
 const PRF_META_ID = "prf-meta";
+/** `prf:<fingerprint>` — the enrolment that wraps exactly that key. */
+const PRF_ROW_PREFIX = "prf:";
 const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
 
 /** @typedef {"passphrase"|"passkey"|"device"} VaultProtection */
@@ -60,9 +69,21 @@ const PRF_INFO = new TextEncoder().encode("Basilisk Vault PRF KEK v1");
  */
 
 /**
+ * What the vault has to keep to ask an authenticator for the same PRF output
+ * twice: which credential to address, and the salt it was evaluated over. The
+ * salt is drawn fresh per enrolment and is not derivable from anything else,
+ * so it is the half that cannot be reconstructed if it is lost.
+ *
+ * @typedef {object} PrfEnrolment
+ * @property {ArrayBuffer} credentialId
+ * @property {Uint8Array} firstSalt
+ */
+
+/**
  * @typedef {object} PasskeyPrfCreateResult
  * @property {Uint8Array} prfIkm
  * @property {import("./webauthn/mds.js").MdsLookupResult} mds
+ * @property {PrfEnrolment} enrolment  Hand to `saveKey` as `prfEnrolment`
  */
 
 /**
@@ -133,6 +154,40 @@ async function withStore(storeName, mode, fn) {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
       tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Run one transaction spanning several object stores.
+ *
+ * `withStore` covers the single-store case, which is nearly all of them. This
+ * exists for the one write that spans two: a key record and the PRF enrolment
+ * that opens it are a single fact, and committing half of it produces either a
+ * record nothing can unlock or an enrolment that outlives its key.
+ *
+ * @template T
+ * @param {string[]} storeNames
+ * @param {IDBTransactionMode} mode
+ * @param {(tx: IDBTransaction) => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function withStores(storeNames, mode, fn) {
+  const db = await openDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(storeNames, mode);
+      tx.onerror = () => reject(tx.error);
+      let result;
+      try {
+        result = fn(tx);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      Promise.resolve(result).then(resolve, reject);
     });
   } finally {
     db.close();
@@ -225,47 +280,159 @@ export async function isPasskeyPrfAvailable() {
 }
 
 /**
- * @returns {Promise<{ credentialId: ArrayBuffer, firstSalt: Uint8Array, mds?: object } | null>}
+ * @param {string} fingerprint
+ * @returns {string}
  */
-async function getPrfMeta() {
-  const row = await withStore(STORE_KEK, "readonly", (s) => s.get(PRF_META_ID));
+function prfRowId(fingerprint) {
+  return `${PRF_ROW_PREFIX}${fingerprint}`;
+}
+
+/**
+ * @param {*} row
+ * @returns {PrfEnrolment|null}
+ */
+function rowToEnrolment(row) {
   if (!row?.credentialId || !row?.firstSalt) return null;
   return {
     credentialId: row.credentialId,
     firstSalt: new Uint8Array(row.firstSalt),
-    mds: row.mds || null,
   };
 }
 
 /**
- * @param {ArrayBuffer} credentialId
- * @param {Uint8Array} firstSalt
- * @param {import("./webauthn/mds.js").MdsLookupResult} [mds]
+ * The enrolment that opens one key, or null.
+ *
+ * The row is keyed by the fingerprint it belongs to, so this answers about
+ * *that* key rather than about whichever passkey was enrolled most recently —
+ * which is the whole of the bug this shape replaced.
+ *
+ * @param {string} fingerprint
+ * @returns {Promise<PrfEnrolment|null>}
  */
-async function savePrfMeta(credentialId, firstSalt, mds) {
-  await withStore(STORE_KEK, "readwrite", (s) =>
-    s.put({
-      id: PRF_META_ID,
-      credentialId,
-      firstSalt: firstSalt.buffer.slice(
-        firstSalt.byteOffset,
-        firstSalt.byteOffset + firstSalt.byteLength
-      ),
-      mds: mds
-        ? {
-            status: mds.status,
-            aaguid: mds.aaguid,
-            description: mds.description || "",
-            detail: mds.detail || "",
-          }
-        : undefined,
-    })
-  );
+async function getPrfEnrolment(fingerprint) {
+  const row = await withStore(STORE_KEK, "readonly", (s) => s.get(prfRowId(fingerprint)));
+  return rowToEnrolment(row);
+}
+
+/**
+ * The singleton enrolment written by versions before per-key rows.
+ *
+ * It is never rewritten and never deleted. A key saved back then carries no
+ * row of its own, and this is the only record of how it was wrapped; copying
+ * it onto those keys would assert an association nothing can check, and for a
+ * key stranded by the overwrite that assertion would be false.
+ *
+ * @returns {Promise<PrfEnrolment|null>}
+ */
+async function getLegacyPrfEnrolment() {
+  const row = await withStore(STORE_KEK, "readonly", (s) => s.get(PRF_META_ID));
+  return rowToEnrolment(row);
+}
+
+/**
+ * Every enrolment this vault holds — one per passkey-protected key, plus the
+ * legacy singleton if this vault predates them.
+ *
+ * @returns {Promise<PrfEnrolment[]>}
+ */
+async function listPrfEnrolments() {
+  const rows = await withStore(STORE_KEK, "readonly", (s) => s.getAll());
+  /** @type {PrfEnrolment[]} */
+  const out = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    const id = String(row?.id || "");
+    if (id !== PRF_META_ID && !id.startsWith(PRF_ROW_PREFIX)) continue;
+    const enrolment = rowToEnrolment(row);
+    if (!enrolment) continue;
+    // One passkey may wrap several keys, each with its own salt. Addressing it
+    // once is enough for a ceremony that only needs *a* credential to answer.
+    const credential = bytesToBase64Url(new Uint8Array(enrolment.credentialId));
+    if (seen.has(credential)) continue;
+    seen.add(credential);
+    out.push(enrolment);
+  }
+  return out;
+}
+
+/**
+ * The enrolment row for a record, written inside the record's own transaction.
+ *
+ * Passing `null` deletes the row, which is the correct answer whenever the
+ * record being written is not wrapped by a stored enrolment: a row describing a
+ * wrapping that no longer exists is worse than no row, because unlock would
+ * present a credential and get bytes that decrypt nothing.
+ *
+ * @param {IDBTransaction} tx
+ * @param {string} fingerprint
+ * @param {PrfEnrolment|null} enrolment
+ * @returns {IDBRequest}
+ */
+function putPrfEnrolment(tx, fingerprint, enrolment) {
+  const store = tx.objectStore(STORE_KEK);
+  if (!enrolment) return store.delete(prfRowId(fingerprint));
+  const salt = enrolment.firstSalt;
+  return store.put({
+    id: prfRowId(fingerprint),
+    fingerprint,
+    credentialId: enrolment.credentialId,
+    firstSalt: salt.buffer.slice(salt.byteOffset, salt.byteOffset + salt.byteLength),
+  });
+}
+
+/**
+ * Named by `getPasskeyPrf` when a passkey-protected key has no enrolment to
+ * present — neither its own row nor the legacy one. It names the key because
+ * the vault may hold other passkey keys that unlock perfectly well, and "your
+ * passkey is not registered" would read as a claim about all of them.
+ *
+ * @param {string} fingerprint
+ * @returns {string}
+ */
+export function prfEnrolmentMissingMessage(fingerprint) {
+  return `This key is passkey-protected, but this vault holds no passkey enrolment for ${fingerprint} — neither the credential to ask nor the salt to ask it about. Neither can be re-derived, so restore this key from an exported or paper backup.`;
+}
+
+/**
+ * Named when a record that does not say which enrolment wrapped it fails to
+ * unwrap. That is nearly always a key saved before per-key rows existed, but
+ * it is also any key wrapped under PRF IKM the vault never enrolled, so the
+ * first sentence states the observation and the overwrite appears as the
+ * explanation it probably is rather than as a finding.
+ *
+ * This is the data-loss message, and it says so. A vault that kept one PRF row
+ * replaced that row on the next enrolment, taking the 32 random bytes of salt
+ * with it, and a PRF cannot be re-evaluated over a salt nobody kept. There is
+ * no remedy inside the product to offer, so it offers the only one there is.
+ *
+ * @returns {string}
+ */
+export function prfLegacyEnrolmentLostMessage() {
+  return "This key's record does not say which passkey wrapped it, and the one passkey enrolment this vault still holds did not open it. Versions before per-key enrolments kept a single enrolment for the whole vault, so enrolling a second passkey overwrote the first — including the 32-byte random salt the earlier key's wrapping was derived from. If that is what happened here, this key cannot be unlocked again on this or any other device: the salt is gone, and no authenticator can reproduce a PRF output without it. Restore this key from an exported or paper backup.";
+}
+
+/**
+ * Named when the enrolment recorded for a key answers and its PRF output still
+ * does not open the record. The two are written in one transaction, so this
+ * states the disjunction rather than picking a cause it cannot observe.
+ *
+ * @param {string} fingerprint
+ * @returns {string}
+ */
+export function prfEnrolmentMismatchMessage(fingerprint) {
+  return `The passkey enrolled for ${fingerprint} answered, but its PRF output did not decrypt this key — either the stored wrapping or the enrolment has changed since the key was saved. Restore this key from an exported or paper backup.`;
 }
 
 /**
  * Create a passkey with PRF (platform or roaming / YubiKey).
  * Requests direct attestation for soft MDS lookup; never blocks on MDS failure.
+ *
+ * This performs the ceremony and persists nothing. The enrolment it returns is
+ * only meaningful beside the key it wraps, and the ceremony does not know which
+ * key that is — `saveKey` does, and writes the two together. That is also why
+ * enrolling a second passkey is no longer destructive: there is no vault-wide
+ * row left for it to land on, so nothing needs a confirmation gate in front of
+ * it. A cancelled or failed save now leaves no orphan enrolment either.
  *
  * @param {string} userEmail
  * @returns {Promise<PasskeyPrfCreateResult>}
@@ -330,31 +497,71 @@ export async function createPasskeyPrf(userEmail) {
     };
   }
 
-  await savePrfMeta(cred.rawId, firstSalt, mds);
-  return { prfIkm: new Uint8Array(prfResults), mds };
+  return {
+    prfIkm: new Uint8Array(prfResults),
+    mds,
+    enrolment: { credentialId: cred.rawId, firstSalt },
+  };
 }
 
 /**
  * Get PRF output from an existing passkey (unlock gesture).
+ *
+ * With a fingerprint this addresses that key's own enrolment: one credential,
+ * one salt, both read from the row written when the key was saved. Unlock is
+ * never asking "which passkey is current" — it is asking the passkey this key
+ * was wrapped under.
+ *
+ * Without one (the `webauthn.prf` toolkit step, which has no key in hand) it
+ * offers every enrolment this vault holds and lets the authenticator answer for
+ * whichever credential is present. A single candidate keeps the plain `eval`
+ * form that every PRF implementation supports; `evalByCredential` appears only
+ * where there is genuinely more than one salt to choose between, so nothing
+ * that works today starts depending on it.
+ *
+ * @param {string} [fingerprint]  The key being unlocked, when there is one
  * @returns {Promise<Uint8Array>}
  */
-export async function getPasskeyPrf() {
-  const meta = await getPrfMeta();
-  if (!meta) {
-    throw new Error("No passkey registered for this vault. Generate a key with passkey protection first.");
+export async function getPasskeyPrf(fingerprint) {
+  const fpr = fingerprint ? normalizeVaultFingerprint(fingerprint) : "";
+  /** @type {PrfEnrolment[]} */
+  let candidates;
+  if (fpr) {
+    const own = (await getPrfEnrolment(fpr)) || (await getLegacyPrfEnrolment());
+    if (!own) throw new Error(prfEnrolmentMissingMessage(fpr));
+    candidates = [own];
+  } else {
+    candidates = await listPrfEnrolments();
+    if (!candidates.length) {
+      throw new Error(
+        "No passkey registered for this vault. Generate a key with passkey protection first."
+      );
+    }
   }
+
+  const prf =
+    candidates.length === 1
+      ? { eval: { first: candidates[0].firstSalt } }
+      : {
+          evalByCredential: Object.fromEntries(
+            candidates.map((e) => [
+              bytesToBase64Url(new Uint8Array(e.credentialId)),
+              { first: e.firstSalt },
+            ])
+          ),
+        };
+
   const cred = /** @type {PublicKeyCredential} */ (
     await navigator.credentials.get({
       publicKey: {
         challenge: crypto.getRandomValues(new Uint8Array(32)),
-        allowCredentials: [
-          { type: "public-key", id: meta.credentialId },
-        ],
+        allowCredentials: candidates.map((e) => ({
+          type: /** @type {const} */ ("public-key"),
+          id: e.credentialId,
+        })),
         userVerification: "required",
         timeout: 120_000,
-        extensions: {
-          prf: { eval: { first: meta.firstSalt } },
-        },
+        extensions: { prf },
       },
     })
   );
@@ -575,8 +782,8 @@ export function protectionDowngradeMessage(existing, next) {
 }
 
 /**
- * Write a record, refusing a protection downgrade unless the caller has
- * explicitly asked to replace.
+ * Write a record and its PRF enrolment, refusing a protection downgrade unless
+ * the caller has explicitly asked to replace.
  *
  * The read and the write share one readwrite transaction rather than the
  * obvious check-then-call in the caller: two tabs are one vault, and the
@@ -585,16 +792,24 @@ export function protectionDowngradeMessage(existing, next) {
  * protect. IndexedDB gives us the atomicity for free as long as the `put` is
  * issued from the `get`'s success callback, so it is issued from there.
  *
+ * The enrolment row rides in the same transaction, and is written from the
+ * record's own success callback for the same reason. The row must describe the
+ * wrapping the record actually carries or not exist at all — a refused write
+ * that had already replaced the row would leave the *previous* wrapping
+ * undescribed, which is the failure mode this whole change is about.
+ *
  * @param {VaultKeyRecord} record
  * @param {"refuse"|"replace"} onConflict
+ * @param {PrfEnrolment|null} enrolment
  * @returns {Promise<void>}
  */
-function putGuardingProtection(record, onConflict) {
-  return withStore(
-    STORE_KEYS,
+function putGuardingProtection(record, onConflict, enrolment) {
+  return withStores(
+    [STORE_KEYS, STORE_KEK],
     "readwrite",
-    (store) =>
+    (tx) =>
       new Promise((resolve, reject) => {
+        const store = tx.objectStore(STORE_KEYS);
         const read = store.get(record.fingerprint);
         read.onerror = () => reject(read.error);
         read.onsuccess = () => {
@@ -609,7 +824,11 @@ function putGuardingProtection(record, onConflict) {
           }
           const write = store.put(record);
           write.onerror = () => reject(write.error);
-          write.onsuccess = () => resolve(undefined);
+          write.onsuccess = () => {
+            const row = putPrfEnrolment(tx, record.fingerprint, enrolment);
+            row.onerror = () => reject(row.error);
+            row.onsuccess = () => resolve(undefined);
+          };
         };
       })
   );
@@ -633,6 +852,7 @@ function putGuardingProtection(record, onConflict) {
  * @param {string|null} [opts.expires]  ISO
  * @param {VaultProtection} opts.protection
  * @param {Uint8Array} [opts.prfIkm]  Required when protection === "passkey"
+ * @param {PrfEnrolment} [opts.prfEnrolment]  From `createPasskeyPrf`; what lets a later unlock ask the authenticator again
  * @param {import("./webauthn/mds.js").MdsLookupResult} [opts.mds]  Soft MDS result from PRF create
  * @param {string[]} [opts.keyIds]  Optional; extracted from armoredPrivate when omitted
  * @param {string} [opts.publicArmored]  Optional armored public; derived from private when omitted
@@ -761,7 +981,15 @@ export async function saveKey(opts) {
     record.wrapped = new ArrayBuffer(0);
   }
 
-  await putGuardingProtection(record, onConflict);
+  // Only a passkey save that came with an enrolment leaves a row behind. A
+  // caller holding PRF IKM from somewhere the vault never enrolled — the
+  // toolkit pipeline, a test — still gets its key wrapped, but the vault does
+  // not claim to know how to ask for those bytes again, because it does not.
+  // Every other protection deletes the row: the record no longer carries a PRF
+  // wrap, so an enrolment for it would describe nothing.
+  const enrolment =
+    opts.protection === "passkey" && opts.prfEnrolment ? opts.prfEnrolment : null;
+  await putGuardingProtection(record, onConflict, enrolment);
   return {
     fingerprint: fpr,
     uid: record.uid,
@@ -795,7 +1023,20 @@ export async function unlockKey(fingerprint, opts = {}) {
   if (record.protection === "passkey") {
     if (!opts.prfIkm) throw new Error("Passkey unlock required");
     const prfKek = await derivePrfKek(opts.prfIkm);
-    deviceCipher = await aesGcmDecrypt(prfKek, record.outerIv, record.outerWrapped);
+    try {
+      deviceCipher = await aesGcmDecrypt(prfKek, record.outerIv, record.outerWrapped);
+    } catch (err) {
+      // Re-raised, not retried and not swallowed: AES-GCM has already refused
+      // and there is no second thing to try. What is added is which state the
+      // reader is in, since a bare OperationError reads as "something went
+      // wrong" for a key that may be permanently gone. The read happens only
+      // here, on the failure path, because the answer is only needed here.
+      const own = await getPrfEnrolment(fpr);
+      throw new Error(
+        own ? prfEnrolmentMismatchMessage(fpr) : prfLegacyEnrolmentLostMessage(),
+        { cause: err }
+      );
+    }
   } else {
     deviceCipher = record.wrapped;
   }
@@ -860,6 +1101,13 @@ async function derivePublicArmored(armoredPrivate) {
 
 /**
  * Delete a vault entry, overwriting wrapped blobs with zeros first.
+ *
+ * The key's PRF enrolment goes with it. Keyed by fingerprint, the row has an
+ * obvious lifetime — exactly the record's — where a vault-wide row had no
+ * correct moment to be deleted at all. The salt is not wiped on the way out:
+ * it is a public PRF input, and pretending otherwise would put a scrubbing
+ * comment next to something that never needed scrubbing.
+ *
  * @param {string} fingerprint
  */
 export async function deleteKey(fingerprint) {
@@ -890,6 +1138,7 @@ export async function deleteKey(fingerprint) {
     );
   }
   await withStore(STORE_KEYS, "readwrite", (s) => s.delete(fpr));
+  await withStore(STORE_KEK, "readwrite", (s) => s.delete(prfRowId(fpr)));
 }
 
 /**

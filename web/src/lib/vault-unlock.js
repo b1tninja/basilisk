@@ -132,7 +132,10 @@ export async function unlockVaultForUse(fingerprint, opts = {}) {
       if (opts.prfIkm) {
         unlockOpts.prfIkm = opts.prfIkm;
       } else {
-        unlockOpts.prfIkm = await getPasskeyPrf();
+        // The fingerprint is the whole point: it selects the enrolment this
+        // key was wrapped under, rather than whichever passkey was enrolled
+        // last.
+        unlockOpts.prfIkm = await getPasskeyPrf(fpr);
         ownedPrf = true;
       }
     }

@@ -167,6 +167,8 @@ export async function execAgentSave(value, params = {}, bindings = {}) {
   let prfIkm;
   /** @type {import("../webauthn/mds.js").MdsLookupResult|undefined} */
   let mds;
+  /** @type {import("../vault.js").PrfEnrolment|undefined} */
+  let prfEnrolment;
 
   try {
     if (protection === "passphrase") {
@@ -183,6 +185,7 @@ export async function execAgentSave(value, params = {}, bindings = {}) {
       const prf = await createPasskeyPrf(email || "basilisk-vault");
       prfIkm = prf.prfIkm;
       mds = prf.mds;
+      prfEnrolment = prf.enrolment;
     }
 
     await saveKey({
@@ -194,6 +197,7 @@ export async function execAgentSave(value, params = {}, bindings = {}) {
       expires: expiryIsoFromPreset(expiryPreset),
       protection: /** @type {"device"|"passphrase"|"passkey"} */ (protection),
       prfIkm,
+      prfEnrolment,
       mds,
       // A recipe that says `agent.save protection=device` said it out loud,
       // with the fingerprint in front of it; the vault's default refusal is
@@ -414,11 +418,14 @@ async function saveKeypairKind(value, params, bindings = {}) {
   let prfIkm;
   /** @type {import("../webauthn/mds.js").MdsLookupResult|undefined} */
   let mds;
+  /** @type {import("../vault.js").PrfEnrolment|undefined} */
+  let prfEnrolment;
   try {
     if (protection === "passkey") {
       const prf = await createPasskeyPrf(comment || "basilisk-vault");
       prfIkm = prf.prfIkm;
       mds = prf.mds;
+      prfEnrolment = prf.enrolment;
     }
     await saveKey({
       fingerprint: id,
@@ -429,6 +436,7 @@ async function saveKeypairKind(value, params, bindings = {}) {
       expires: expiryIsoFromPreset(String(params.expiry || "none")),
       protection: /** @type {"device"|"passphrase"|"passkey"} */ (protection),
       prfIkm,
+      prfEnrolment,
       mds,
       kind,
       publicLine,

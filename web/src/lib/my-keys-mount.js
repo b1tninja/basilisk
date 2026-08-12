@@ -671,6 +671,8 @@ function wireGenerateForm(user) {
     let prfIkm;
     /** @type {import("../lib/webauthn/mds.js").MdsLookupResult|undefined} */
     let mds;
+    /** @type {import("../lib/vault.js").PrfEnrolment|undefined} */
+    let prfEnrolment;
     try {
       const keyExpirationTime = EXPIRY_PRESETS[expiryPreset] ?? null;
       const gen = await generateKeyViaWorker({
@@ -686,6 +688,7 @@ function wireGenerateForm(user) {
         const prf = await createPasskeyPrf(email);
         prfIkm = prf.prfIkm;
         mds = prf.mds;
+        prfEnrolment = prf.enrolment;
       }
 
       if (status) status.textContent = "Storing in browser vault…";
@@ -700,6 +703,7 @@ function wireGenerateForm(user) {
         expires: expiryIsoFromPreset(expiryPreset),
         protection: /** @type {"passphrase"|"passkey"|"device"} */ (mode),
         prfIkm,
+        prfEnrolment,
         mds,
       });
 
@@ -868,7 +872,7 @@ async function runVaultExport(fpr, format, btn) {
   const unlockOpts = {};
   try {
     if (meta?.protection === "passkey") {
-      unlockOpts.prfIkm = await getPasskeyPrf();
+      unlockOpts.prfIkm = await getPasskeyPrf(fpr);
     }
     let armored = await vaultUnlockKey(fpr, unlockOpts);
 

@@ -3848,7 +3848,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "webauthn",
     shelf: "essentials",
-    doc: "Unlock PRF IKM from the vault passkey (same ceremony as My Keys unlock). Pipe into `hkdf` / `aes-gcm`. Main-thread only. Example: `webauthn.prf | hkdf length=32 | …`.",
+    doc: "Unlock PRF IKM from a vault passkey enrolment (same ceremony as My Keys unlock; offers every enrolled credential, and the authenticator answers for the one it holds). Pipe into `hkdf` / `aes-gcm`. Main-thread only. Example: `webauthn.prf | hkdf length=32 | …`.",
     input: "none",
     output: "bytes",
     // keying by the safe default rather than by a settled argument: the only
