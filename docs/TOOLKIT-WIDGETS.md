@@ -66,6 +66,23 @@
  * no peers, no vault key ids and no pinned inputs, because unlike a run
  * manifest it is meant to be handed to somebody who was never in the room.
  *
+ * The **workspace library** is the other end of it. It imports a `.asc`
+ * playbook and lists it beside ordinary saved recipes, and three rules govern
+ * that row. It **verifies on load**, never at import, because a verdict stored
+ * in localStorage is a verdict localStorage can be edited to lie about. The
+ * recipe it loads comes out of the *verified* bytes and never out of the row's
+ * `recipe` field, which is a preview for the list to count steps with. And an
+ * entry nothing vouches for is **listed, not hidden** — hiding it would make a
+ * tampered playbook indistinguishable from one that was never saved — while
+ * being impossible to open without the reason on screen. The row names *who*
+ * signed, because "signed by a key you hold" and "signed by a key you trust"
+ * are different sentences and only the first is something software can check.
+ *
+ * The library's playbook button writes the *cell*, not the document.
+ * `attest.js` and `documents.js` both state the rule: the recipe is the thing
+ * somebody reads before pressing Run, and a signer behind a button signs
+ * without anybody having read one.
+ *
  * ## The other end of the ceremony (`#sharecheck`)
  *
  * `ShareCards` makes cards; `ShareCheck` answers the question their holders

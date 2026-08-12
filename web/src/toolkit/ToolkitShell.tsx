@@ -124,6 +124,9 @@ import {
   newWorkspaceId,
 } from "../lib/toolkit/workspace-store.js";
 import type { ToolkitWorkspace } from "../lib/toolkit/workspace-store.js";
+import { openSignedPlaybook } from "../lib/toolkit/playbook.js";
+import type { PlaybookOpening } from "../lib/toolkit/playbook.js";
+import { listKeys } from "../lib/vault.js";
 import { exposureTrace } from "../lib/toolkit/slot-graph.js";
 import { copyText } from "../lib/utils.js";
 import type { ArmedBranch, ChipPath, ChipStemView } from "./widgets/RecipeChipFlow";
@@ -928,6 +931,16 @@ export function ToolkitShell() {
   }, [now, approvalAsk]);
   const [workspaces, setWorkspaces] = useState<ToolkitWorkspace[]>(() => listWorkspaces());
   const [workspaceError, setWorkspaceError] = useState("");
+  /**
+   * What checking each playbook entry's signature said, keyed by entry id.
+   *
+   * Filled on Load and kept, so the row goes on saying who vouched — or that
+   * nobody this browser knows did — rather than flashing a verdict and
+   * forgetting it. Absent means "not checked yet", which is a third state and
+   * is drawn as one.
+   */
+  const [playbookState, setPlaybookState] = useState<Record<string, PlaybookOpening>>({});
+  const [workspaceOpening, setWorkspaceOpening] = useState("");
   const [inspectedSlot, setInspectedSlot] = useState<string | null>(null);
   const [suiteStatus, setSuiteStatus] = useState<ToolkitSuiteStatus>(() => ({
     openpgp: "unverified",
@@ -1064,6 +1077,31 @@ export function ToolkitShell() {
     setWorkspaces(listWorkspaces());
   };
 
+  /**
+   * Write the cell that turns this notebook into a signed playbook.
+   *
+   * A button, not a document. Signing here would mint a signature nobody read
+   * a recipe for, which is the rule `attest.js` and `documents.js` both state
+   * — so this puts `playbook … | gpg.sign key=$me | out $playbook` in front of
+   * the person and they press Run. Downloading the result is the artifact
+   * tile's existing `download` action; a second file path here would be a
+   * second answer to a question the notebook already answers.
+   */
+  const writePlaybookCell = () => {
+    const title = String(nb.title || "").trim() || "Untitled notebook";
+    const signer = nb.vaultKeys[0]?.fingerprint || "";
+    const sign = signer ? ` | gpg.sign key=$${signer}` : " | gpg.sign";
+    const ok = nb.appendRecipeCell(
+      `playbook ${JSON.stringify(title)} purpose=""${sign} | out $playbook`
+    );
+    if (!ok) {
+      setWorkspaceError("Could not write the playbook cell.");
+      return;
+    }
+    setWorkspaceError("");
+    nb.setSheet(null);
+  };
+
   const importWorkspaceFile = async (file: File) => {
     const text = await file.text();
     const result = parseWorkspaceFile(text, { filename: file.name });
@@ -1075,6 +1113,7 @@ export function ToolkitShell() {
       id: result.workspace.id,
       title: result.workspace.title,
       recipe: result.workspace.recipe,
+      playbook: result.workspace.playbook,
     });
     if (!saved.ok) {
       setWorkspaceError(saved.reason);
@@ -1082,6 +1121,38 @@ export function ToolkitShell() {
     }
     setWorkspaceError("");
     setWorkspaces(listWorkspaces());
+  };
+
+  /**
+   * Load a library entry, verifying first when it is a playbook.
+   *
+   * The recipe a playbook entry loads comes out of the **verified** bytes,
+   * never out of the stored preview: `workspace-store.js` is localStorage and
+   * localStorage is XSS-writable, so the row you are looking at is a claim and
+   * the signature is the only thing that answers it.
+   *
+   * A failure is shown and the notebook is left alone. It is deliberately not
+   * a silent skip — see the sheet's copy: an entry nobody's key verifies is the
+   * row a person most needs to see, and one that cannot be opened without the
+   * reason on screen is the point of listing it at all.
+   */
+  const loadWorkspaceEntry = async (ws: ToolkitWorkspace) => {
+    if (!ws.playbook) {
+      nb.loadRecipeText(ws.title, ws.recipe);
+      nb.setSheet(null);
+      return;
+    }
+    setWorkspaceOpening(ws.id);
+    try {
+      const keys = await listKeys();
+      const opened = await openSignedPlaybook(ws.playbook, keys);
+      setPlaybookState((prev) => ({ ...prev, [ws.id]: opened }));
+      if (!opened.ok || !opened.playbook) return;
+      nb.loadRecipeText(ws.title, opened.playbook.recipeSource);
+      nb.setSheet(null);
+    } finally {
+      setWorkspaceOpening("");
+    }
   };
 
   /**
@@ -3580,16 +3651,31 @@ export function ToolkitShell() {
             <SheetHeader>
               <div className="flex items-center justify-between gap-2">
                 <SheetTitle>Workspace library</SheetTitle>
-                <Button
-                  className="h-auto rounded-[7px] px-[11px] py-[5px] text-[length:11.5px] font-bold"
-                  onClick={saveCurrentWorkspace}
-                >
-                  + Save current
-                </Button>
+                <div className="flex shrink-0 gap-1.5">
+                  {/* Writes the cell rather than the document: signing is a
+                      thing a person does by reading a recipe and pressing Run,
+                      never a thing a button does behind them. */}
+                  <Button
+                    variant="secondary"
+                    className="h-auto rounded-[7px] px-[11px] py-[5px] text-[length:11.5px] font-semibold"
+                    onClick={writePlaybookCell}
+                    title="Add a cell that signs this notebook as a recovery playbook"
+                  >
+                    Playbook cell
+                  </Button>
+                  <Button
+                    className="h-auto rounded-[7px] px-[11px] py-[5px] text-[length:11.5px] font-bold"
+                    onClick={saveCurrentWorkspace}
+                  >
+                    + Save current
+                  </Button>
+                </div>
               </div>
               <SheetDescription>
                 Named recipes saved in this browser — title and steps only, never Inputs, kernel
-                slots, or private keys.
+                slots, or private keys. A saved <strong>playbook</strong> is checked against your
+                keys when you load it; this browser&rsquo;s storage can be rewritten, so the
+                signature is what answers for it, not the row.
               </SheetDescription>
             </SheetHeader>
             <Separator />
@@ -3603,29 +3689,60 @@ export function ToolkitShell() {
                 </p>
               ) : (
                 <ul className="space-y-2 py-3">
-                  {workspaces.map((ws) => (
-                    <li
-                      key={ws.id}
-                      className="flex items-center justify-between gap-3 rounded-[9px] border border-[var(--border)] bg-[var(--surface)] px-[11px] py-[9px]"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-[12.5px] font-bold">{ws.title}</div>
-                        <div className="text-[length:10.5px] text-[var(--muted-foreground)]">
-                          {relativeTime(ws.updatedAt)} · {workspaceStepCount(ws.recipe)} steps
-                        </div>
-                      </div>
-                      <Button
-                        variant="secondary"
-                        className="h-auto shrink-0 rounded-md px-[9px] py-[4px] text-[10.5px] font-semibold"
-                        onClick={() => {
-                          nb.loadRecipeText(ws.title, ws.recipe);
-                          nb.setSheet(null);
-                        }}
+                  {workspaces.map((ws) => {
+                    const opened = playbookState[ws.id];
+                    return (
+                      <li
+                        key={ws.id}
+                        className="flex flex-col gap-1.5 rounded-[9px] border border-[var(--border)] bg-[var(--surface)] px-[11px] py-[9px]"
+                        data-workspace={ws.id}
+                        data-playbook={ws.playbook ? "yes" : "no"}
+                        data-verified={opened ? (opened.ok ? "yes" : "no") : "unchecked"}
                       >
-                        Load
-                      </Button>
-                    </li>
-                  ))}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-[12.5px] font-bold">{ws.title}</div>
+                            <div className="text-[length:10.5px] text-[var(--muted-foreground)]">
+                              {relativeTime(ws.updatedAt)} · {workspaceStepCount(ws.recipe)} steps
+                              {ws.playbook ? " · signed playbook" : ""}
+                            </div>
+                          </div>
+                          <Button
+                            variant="secondary"
+                            className="h-auto shrink-0 rounded-md px-[9px] py-[4px] text-[10.5px] font-semibold"
+                            disabled={workspaceOpening === ws.id}
+                            onClick={() => void loadWorkspaceEntry(ws)}
+                          >
+                            {workspaceOpening === ws.id ? "Checking…" : "Load"}
+                          </Button>
+                        </div>
+                        {/*
+                          Who vouched, not that somebody did. "Signed by a key
+                          you hold" and "signed by a key you trust" are different
+                          sentences, so the name and the fingerprint are on
+                          screen and the word "verified" never stands alone.
+                        */}
+                        {ws.playbook && opened?.ok && opened.by ? (
+                          <p className="text-[length:10.5px] text-[var(--ok,var(--muted-foreground))]">
+                            Signed by <strong>{opened.by.uid || "a key with no name on it"}</strong>{" "}
+                            <code>…{opened.by.fingerprint.slice(-16)}</code>, from My Keys. That it
+                            is a key you hold is not the same as a key you trust.
+                          </p>
+                        ) : null}
+                        {ws.playbook && opened && !opened.ok ? (
+                          <p className="text-[length:10.5px] text-[var(--error)]">
+                            {opened.message}
+                          </p>
+                        ) : null}
+                        {ws.playbook && !opened ? (
+                          <p className="text-[length:10.5px] text-[var(--muted-foreground)]">
+                            Not checked yet — Load verifies it against your keys and refuses to
+                            open it if nothing vouches for it.
+                          </p>
+                        ) : null}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </ScrollArea>
@@ -3636,7 +3753,7 @@ export function ToolkitShell() {
                 </span>
                 <input
                   type="file"
-                  accept=".json,.txt,.recipe"
+                  accept=".json,.txt,.recipe,.asc"
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
