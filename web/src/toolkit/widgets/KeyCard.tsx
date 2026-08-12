@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
-import { formatFingerprint } from "../../lib/utils.js";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { sshIdentityFromJwk } from "../../lib/toolkit/ssh-ops.js";
 
 /**
@@ -118,7 +118,16 @@ export function KeyCard({
     };
   }, [content, jwkSource, comment]);
 
-  const shownFingerprint = ssh?.fingerprint || (fingerprint ? formatFingerprint(fingerprint) : null);
+  /**
+   * The id this card is about, raw — `<Fingerprint>` owns the spelling now.
+   *
+   * It was `formatFingerprint`'d here and printed as inert text, which was the
+   * whole card's answer to "which key is this": correct characters, all of
+   * them, and no way to take them anywhere. The value is the same; it is a
+   * control now, and an SSH digest still passes through ungrouped because that
+   * is what `ssh-keygen -lf` prints.
+   */
+  const shownFingerprint = ssh?.fingerprint || fingerprint || "";
 
   return (
     <div className={cn("flex flex-col gap-1 pl-[1px]", className)} data-key-card>
@@ -141,9 +150,10 @@ export function KeyCard({
       </div>
 
       {shownFingerprint ? (
-        <code className="artifact-body block break-all font-mono text-[var(--muted-foreground)]">
-          {shownFingerprint}
-        </code>
+        <Fingerprint
+          className="artifact-body text-[var(--muted-foreground)]"
+          fpr={shownFingerprint}
+        />
       ) : null}
 
       {ssh?.publicLine ? (

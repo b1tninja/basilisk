@@ -440,16 +440,22 @@ describe("the roster and the state agree", () => {
     const state = q.getQuorumState();
     expect(state.phase).toBe("waiting");
     expect(state.connected).toBe(0);
-    // `id` was `B2B2B2B2…B2B2` and is now the peer's label. The abbreviation
-    // moved to `display`: `id` is written into notebook source as `@<id>` and
-    // keys `planRun`'s roster, and an elided fingerprint is not a legal peer
-    // label — it stopped notebooks compiling and made `normalizeRoster` throw.
-    // `peer2` rather than `peer1` because labels are ordered by the canonical
-    // audience, and `FPR_B` sorts second in it.
+    // `id` was `B2B2B2B2…B2B2` and is now the peer's label: `id` is written
+    // into notebook source as `@<id>` and keys `planRun`'s roster, and an
+    // elided fingerprint is not a legal peer label — it stopped notebooks
+    // compiling and made `normalizeRoster` throw. `peer2` rather than `peer1`
+    // because labels are ordered by the canonical audience, and `FPR_B` sorts
+    // second in it.
+    //
+    // `display` was where the abbreviation went, and it is gone from the row
+    // entirely. A projection has no business printing `B2B2B2B2…B2B2` at all:
+    // twelve of forty characters is a value a reader compares and cannot check,
+    // which is what `pages/index.tsx` warns about at eight. The panels render
+    // `<Fingerprint variant="compact" label={id}>` from `fingerprint` now, so
+    // the whole value is one press away and no part of it is on the row.
     expect(state.peers).toEqual([
       {
         id: "peer2",
-        display: "B2B2B2B2…B2B2",
         fingerprint: FPR_B,
         state: "failed",
         authenticated: false,

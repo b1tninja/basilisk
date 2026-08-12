@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
-import { formatFingerprint } from "../../lib/utils.js";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import {
   expiryNote,
   openpgpKeyForm,
@@ -72,7 +72,8 @@ export function OpenPgpKeyCard({
    */
   const form = openpgpKeyForm(content);
 
-  const shownFingerprint = formatFingerprint(parsed?.fingerprint || fingerprint || "");
+  /** Raw — `<Fingerprint>` owns the spelling, and prints all of it. */
+  const shownFingerprint = parsed?.fingerprint || fingerprint || "";
 
   /**
    * The verdict beside the date (§48b) — **tier 1, so no timer.**
@@ -120,9 +121,10 @@ export function OpenPgpKeyCard({
       </div>
 
       {shownFingerprint ? (
-        <code className="artifact-body block break-all font-mono text-[var(--muted-foreground)]">
-          {shownFingerprint}
-        </code>
+        <Fingerprint
+          className="artifact-body text-[var(--muted-foreground)]"
+          fpr={shownFingerprint}
+        />
       ) : null}
 
       {parsed ? (

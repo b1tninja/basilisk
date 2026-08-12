@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { cn } from "@/lib/cn";
 import { PEER_SIGIL, SLOT_SIGIL } from "../../lib/toolkit/recipe-parse.js";
 
@@ -55,11 +56,6 @@ const NO_SESSION =
 
 const slot = (label: string) => `${SLOT_SIGIL}${label}`;
 const peer = (label: string) => `${PEER_SIGIL}${label}`;
-
-function shortFpr(fpr: string): string {
-  const f = String(fpr || "").toUpperCase();
-  return f.length > 12 ? `${f.slice(0, 8)}…${f.slice(-4)}` : f;
-}
 
 /**
  * Cells crossing between machines, and the press each one is waiting for.
@@ -185,12 +181,14 @@ export function HandoffQueue({
                 <span className="text-[11px] text-[var(--foreground)]">
                   cell {h.cell}
                 </span>
-                <code
-                  className="min-w-0 flex-1 truncate font-mono text-[10px] text-[var(--muted-foreground)]"
-                  title={h.from}
-                >
-                  from {shortFpr(h.from)}
-                </code>
+                {/* Whole, because nothing here names this key. `HandoffRow.from`
+                    is a bare fingerprint the session verified and no label is
+                    known for it — so there is no compact form to reach for, and
+                    the row that decides whether to accept somebody's values is
+                    the last place to print part of who they are. */}
+                <span className="min-w-0 flex-1 text-[10px] text-[var(--muted-foreground)]">
+                  from <Fingerprint fpr={h.from} />
+                </span>
               </div>
               <span className="text-[10px] leading-snug text-[var(--muted-foreground)]">
                 {h.kind === "result"

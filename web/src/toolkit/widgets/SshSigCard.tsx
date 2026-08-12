@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { sshsigSummary } from "../../lib/toolkit/artifact-readouts.js";
 
 type Summary = Awaited<ReturnType<typeof sshsigSummary>>;
@@ -57,9 +58,12 @@ export function SshSigCard({
           {summary.hashAlg ? ` · ${summary.hashAlg}` : ""}
         </span>
       </div>
-      <code className="artifact-body block break-all font-mono text-[var(--muted-foreground)]">
-        {summary.fingerprint}
-      </code>
+      {/* Which key signed it, and now a control that hands the whole digest to
+          whoever is checking an `allowed_signers` line against it. */}
+      <Fingerprint
+        className="artifact-body text-[var(--muted-foreground)]"
+        fpr={summary.fingerprint}
+      />
       <div className="flex flex-col gap-1">
         <button
           type="button"

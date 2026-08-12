@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { cn } from "@/lib/cn";
 import type { ConnectionPeer } from "./ConnectionsPanel";
 
@@ -198,16 +199,22 @@ export function SessionStrip({
                 data-peer-state={p.state}
                 aria-hidden
               />
-              {/* Label then key, for the reason ConnectionsPanel gives. */}
-              <code
-                className="min-w-0 shrink-0 font-mono text-[10px] text-[var(--foreground)]"
-                title={p.fingerprint || undefined}
-              >
-                {p.id}
-              </code>
-              <code className="min-w-0 flex-1 truncate font-mono text-[9px] text-[var(--muted-foreground)]">
-                {p.display}
-              </code>
+              {/* Label and key in one control, for the reason ConnectionsPanel
+                  gives. This strip is the tightest row in the app, which is
+                  exactly where the elided fingerprint used to be argued for —
+                  and the compact form is *shorter* than what it replaced. */}
+              {p.fingerprint ? (
+                <Fingerprint
+                  className="min-w-0 flex-1 text-[10px] text-[var(--foreground)]"
+                  fpr={p.fingerprint}
+                  variant="compact"
+                  label={p.id}
+                />
+              ) : (
+                <code className="min-w-0 flex-1 truncate font-mono text-[10px] text-[var(--foreground)]">
+                  {p.id}
+                </code>
+              )}
               {p.via ? (
                 <span className="shrink-0 font-mono text-[9px] text-[var(--muted-foreground)]">
                   {p.via}

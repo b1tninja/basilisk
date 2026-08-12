@@ -13,6 +13,7 @@ import {
   Cable,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -3057,23 +3058,18 @@ export function ToolkitShell() {
                               ) : null}
                               {k.uid || k.email || "Key"}
                             </div>
-                            {/* SHA256: ids pass formatFingerprint verbatim (§28a);
-                                the /key page is PGP-shaped, so non-pgp ids render
-                                as plain text rather than a dead link. */}
-                            {k.kind && k.kind !== "pgp" ? (
-                              <span className="break-all font-mono text-xs text-[var(--muted-foreground)]">
-                                {k.fingerprint}
-                              </span>
-                            ) : (
-                              <a
-                                className="font-mono text-xs text-[var(--brand)]"
-                                href={`/key?fpr=${k.fingerprint}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                {nb.formatFingerprint(k.fingerprint)}
-                              </a>
-                            )}
+                            {/* One element for both kinds, where there were two.
+                                The keyserver link used to be the fingerprint
+                                itself, so an SSH id — which has no `/key` page
+                                — had to be drawn as inert text and lost the
+                                only thing the row offered. It is a menu row
+                                now, refusing with a sentence that says the
+                                keyserver holds OpenPGP keys, and every kind
+                                keeps the copy control. */}
+                            <Fingerprint
+                              className="text-xs text-[var(--muted-foreground)]"
+                              fpr={k.fingerprint}
+                            />
                             <div className="mt-1 text-xs text-[var(--muted-foreground)]">
                               {k.protection || "device"}
                               {session ? (
@@ -4196,7 +4192,7 @@ export function ToolkitShell() {
                         {ws.playbook && opened?.ok && opened.by ? (
                           <p className="text-[length:10.5px] text-[var(--ok,var(--muted-foreground))]">
                             Signed by <strong>{opened.by.uid || "a key with no name on it"}</strong>{" "}
-                            <code>…{opened.by.fingerprint.slice(-16)}</code>, from My Keys. That it
+                            <Fingerprint fpr={opened.by.fingerprint} />, from My Keys. That it
                             is a key you hold is not the same as a key you trust.
                           </p>
                         ) : null}

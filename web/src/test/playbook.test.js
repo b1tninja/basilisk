@@ -604,7 +604,12 @@ describe("the ceremony can reach the playbook, not only a recipe author", () => 
     expect(shell).toContain("{workspaces.map((ws) => {");
     // …and the row carries the failure and the signer, in the row itself.
     expect(shell).toContain("opened.message");
-    expect(shell).toContain("opened.by.fingerprint.slice(-16)");
+    // Was `opened.by.fingerprint.slice(-16)`. Sixteen hex characters is 64 bits
+    // of the key that vouched for a playbook, printed on the row where somebody
+    // decides whether to load one — the same "compare part of it and hope"
+    // the short key ID warning on the search page is about. The whole
+    // fingerprint is on the row now, as a control that copies all of it.
+    expect(shell).toContain("<Fingerprint fpr={opened.by.fingerprint} />");
     expect(shell).toContain('data-verified={opened ? (opened.ok ? "yes" : "no") : "unchecked"}');
   });
 });

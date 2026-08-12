@@ -8,7 +8,7 @@ import { signOpenPgp } from "../pgp/sign.js";
 import {
   digestForApproval,
   requireApproval,
-  shortKeyId,
+  keyIdText,
 } from "./approval-gate.js";
 import { ensurePassphraseProtected, inspectPrivateKey } from "../key-export.js";
 import { bytesToBase64 } from "./encode.js";
@@ -612,12 +612,12 @@ export async function execAgentSign(value, params = {}, bindings = {}) {
   if (format === "auto") format = kind === "pgp" ? "gpg" : "ssh";
   if (format === "gpg" && kind !== "pgp") {
     throw new Error(
-      `agent.sign: key ${shortKeyId(result.fingerprint)} is an ${kind.toUpperCase()} key — format=gpg needs a pgp-kind key.`
+      `agent.sign: key ${keyIdText(result.fingerprint)} is an ${kind.toUpperCase()} key — format=gpg needs a pgp-kind key.`
     );
   }
   if (format === "ssh" && kind === "pgp") {
     throw new Error(
-      `agent.sign: key ${shortKeyId(result.fingerprint)} is an OpenPGP key — format=ssh needs an ssh-kind key.`
+      `agent.sign: key ${keyIdText(result.fingerprint)} is an OpenPGP key — format=ssh needs an ssh-kind key.`
     );
   }
 
@@ -679,7 +679,7 @@ export async function execAgentDecrypt(value, params = {}, bindings = {}) {
   );
   if (kind !== "pgp") {
     throw new Error(
-      `agent.decrypt: key ${shortKeyId(result.fingerprint)} is an ${kind === "ssh" ? "SSH signing key — it cannot decrypt" : "raw key — it has no OpenPGP decryption path"}. Only pgp-kind keys decrypt.`
+      `agent.decrypt: key ${keyIdText(result.fingerprint)} is an ${kind === "ssh" ? "SSH signing key — it cannot decrypt" : "raw key — it has no OpenPGP decryption path"}. Only pgp-kind keys decrypt.`
     );
   }
   const privateKey = await readOpenPgpPrivate(result, bindings);

@@ -17,6 +17,7 @@ import {
 } from "openpgp";
 import { signatureVerificationDate } from "../pgp/clock.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
+import { formatFingerprint } from "../utils.js";
 import { canonicalAudience, deriveRoomId } from "./room.js";
 
 /** Max age for a signed invite (ms). */
@@ -527,12 +528,16 @@ export async function fetchAudienceKeys(fingerprints) {
     const r = await fetch(
       `/pks/lookup?op=get&search=${encodeURIComponent(`0x${fpr}`)}`
     );
+    // Whole, both of them. These two lines are what a person sees when a room
+    // will not open, and they are usually the last thing before somebody pastes
+    // a fingerprint into the invite box to compare it — `findFingerprints`
+    // recovers this spelling, so the message and the paste box agree.
     if (!r.ok) {
-      throw new Error(`Failed to fetch key ${fpr.slice(0, 8)}… (${r.status})`);
+      throw new Error(`Failed to fetch key ${formatFingerprint(fpr)} (${r.status})`);
     }
     const armored = await r.text();
     if (!armored.includes("BEGIN PGP")) {
-      throw new Error(`No public key for ${fpr.slice(0, 8)}…`);
+      throw new Error(`No public key for ${formatFingerprint(fpr)}`);
     }
     const key = await readKey({ armoredKey: armored });
     map.set(normalizeFingerprintInput(key.getFingerprint()), key);

@@ -24,9 +24,8 @@ import { canonicalAudience } from "./room.js";
  * @property {string} id            the peer's label — a legal `@peer` name,
  *   stable across machines, and what a cell header addresses. Not a shortened
  *   fingerprint: see `peerLabels`.
- * @property {string} display       `AABBCCDD…EEFF` — which key the label is
- *   attached to, for a reader. Never an identity: nothing addresses by it.
- * @property {string} fingerprint   full fingerprint, for tooltips/addressing
+ * @property {string} fingerprint   the whole fingerprint, for addressing and
+ *   for the `<Fingerprint>` the panels render beside the label
  * @property {"new"|"connecting"|"connected"|"disconnected"|"failed"|"closed"} state
  * @property {boolean} authenticated
  * @property {string} [via]         ICE candidate type actually selected
@@ -41,16 +40,6 @@ const STATE_BY_STATUS = {
   failed: "failed",
 };
 
-/**
- * @param {string} fpr
- * @returns {string} `AABBCCDD…EEFF` — matches how fingerprints are shortened
- *   elsewhere (rtc.js error messages, SessionStrip).
- */
-export function shortFpr(fpr) {
-  const f = String(fpr || "").toUpperCase();
-  return f.length > 12 ? `${f.slice(0, 8)}…${f.slice(-4)}` : f;
-}
-
 /** What a positional peer label is called before its number. */
 const PEER_LABEL_PREFIX = "peer";
 
@@ -60,11 +49,17 @@ const PEER_LABEL_PREFIX = "peer";
  * **Why a label is not an abbreviated fingerprint.** A row's `id` is written
  * into notebook source as `@<id>` and is the key of `planRun`'s roster, so it
  * has to satisfy the peer-label grammar — a letter followed by letters,
- * digits, `_` or `-`. `shortFpr`'s output satisfies none of it: the ellipsis
- * is not an identifier character. Removing the ellipsis would not rescue it
- * either, because `peerLooksLikeFingerprint` refuses hex-only labels on
- * purpose — a fingerprint in shared recipe text hands over the audience, and
- * `room.js` derives the room from a digest of exactly that audience.
+ * digits, `_` or `-`. The `AABBCCDD…EEFF` this module used to produce satisfies
+ * none of it: the ellipsis is not an identifier character. Removing the
+ * ellipsis would not rescue it either, because `peerLooksLikeFingerprint`
+ * refuses hex-only labels on purpose — a fingerprint in shared recipe text
+ * hands over the audience, and `room.js` derives the room from a digest of
+ * exactly that audience.
+ *
+ * The label is now the *only* thing a dense roster row prints. The elided form
+ * that used to sit beside it is gone from the product entirely (see
+ * `components/ui/fingerprint.tsx`), and this label is what `variant="compact"`
+ * shows in its place — a name the row already had, carrying no bits of the key.
  *
  * **Why the audience orders them.** The label has to mean the same person in
  * every browser, because the notebook it is written into round-trips through
@@ -124,7 +119,6 @@ export function projectRosterPeers(peersByFpr, viaByFpr, audienceFprs) {
     const via = viaByFpr?.get(fpr);
     rows.push({
       id: labels.get(String(fpr || "").toUpperCase()) || "",
-      display: shortFpr(fpr),
       fingerprint: fpr,
       state: STATE_BY_STATUS[peer?.status] || "new",
       authenticated: !!(peer?.pgpVerified && peer?.kcVerified),

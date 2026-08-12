@@ -87,7 +87,14 @@ function render() {
                   ${trusted
                     .map(
                       (t) =>
-                        `<button type="button" class="btn btn-ghost btn-compact trusted-add" data-fpr="${escapeHtml(t.fingerprint)}">${escapeHtml(formatFingerprint(t.fingerprint).slice(-14))} ${trustBadgeHtml(t.fingerprint)}</button>`
+                        // `.slice(-14)` — the last ten hex characters of a
+                        // grouped fingerprint — on the chip that adds somebody
+                        // to a room. This page builds its markup as strings and
+                        // cannot mount `<Fingerprint>`, so it does not get the
+                        // copy control or the actions menu; what it does get is
+                        // the rule those exist to serve, which is that no part
+                        // of a key is printed where a reader will compare it.
+                        `<button type="button" class="btn btn-ghost btn-compact trusted-add" data-fpr="${escapeHtml(t.fingerprint)}">${escapeHtml(formatFingerprint(t.fingerprint))} ${trustBadgeHtml(t.fingerprint)}</button>`
                     )
                     .join("")}
                 </div>
@@ -320,7 +327,11 @@ function renderChat() {
   if (!el) return;
   el.innerHTML = chatLog
     .map((m) => {
-      const who = m.self ? "you" : formatFingerprint(m.from).slice(-10);
+      // Whole, in a chat line, for the same reason as the chip above: eight hex
+      // characters is the length the search page warns about, and a room where
+      // two members' last eight agreed would attribute one's messages to the
+      // other with nothing on screen to notice it by.
+      const who = m.self ? "you" : formatFingerprint(m.from);
       return `<div class="quorum-chat-line ${m.self ? "self" : ""}">
         <span class="muted fs-sm mono">${escapeHtml(who)}</span>
         <span>${escapeHtml(m.text)}</span>

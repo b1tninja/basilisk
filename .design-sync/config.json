@@ -17,6 +17,7 @@
     "DropdownMenu": "src/components/ui/dropdown-menu.tsx",
     "Tooltip": "src/components/ui/tooltip.tsx",
     "ToggleGroup": "src/components/ui/toggle-group.tsx",
+    "Fingerprint": "src/components/ui/fingerprint.tsx",
     "SuggestChip": "src/toolkit/widgets/SuggestChip.tsx",
     "ArtifactAction": "src/toolkit/widgets/ArtifactAction.tsx",
     "Glyph": "src/toolkit/widgets/Glyph.tsx",
@@ -68,6 +69,10 @@
     "Tooltip": {
       "cardMode": "single",
       "primaryStory": "Default"
+    },
+    "Fingerprint": {
+      "cardMode": "single",
+      "primaryStory": "Whole"
     },
     "PresetMenu": {
       "cardMode": "single",
