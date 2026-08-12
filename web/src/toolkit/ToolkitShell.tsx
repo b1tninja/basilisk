@@ -87,6 +87,7 @@ import {
   type SuiteDetail,
 } from "./widgets/index";
 import { getStep } from "../lib/toolkit/registry.js";
+import { stepUnboundSlots } from "../lib/toolkit/input-needs.js";
 import {
   compileRecipe,
   outSlotLabels,
@@ -337,6 +338,44 @@ function collectProfileOverrides(chains: RecipeChain[]): ChipPath[] {
 }
 
 /**
+ * Params in one cell that only a `$slot` can fill and that nothing will ask for.
+ *
+ * The fourth entry in `ReadinessBar`'s own priority list — "blocked required
+ * param" — which has been in its doc comment since §20e and had no producer.
+ * `unmetForCell` cannot supply it: it is built from `inputNeeds`, and a param
+ * with no runtime panel behind it is by definition not one. So the cell reads
+ * ready, Run starts, and `ssh.sign` dies on "key= (private key slot) is
+ * required" with the recipe still on screen saying nothing.
+ *
+ * Nests are walked the same way `collectProfileOverrides` walks them, and for
+ * the same reason: a step inside a tee branch is a step, and a warning that
+ * stopped at the top level would be quietly wrong exactly where a recipe is
+ * hardest to read. The `ChipPath` is what makes the blocker's button able to
+ * open the field it is talking about rather than a tray that cannot help.
+ */
+function unboundSlotBlockers(
+  chain: RecipeChain | undefined,
+  cell: number
+): { path: ChipPath; step: string; param: string }[] {
+  const out: { path: ChipPath; step: string; param: string }[] = [];
+  const add = (step: RecipeStep, path: ChipPath) => {
+    for (const u of stepUnboundSlots(step)) {
+      out.push({ path, step: u.step, param: u.param });
+    }
+  };
+  (chain?.steps || []).forEach((step, stem) => {
+    add(step, { cell, stem, branch: null, body: null });
+    (step.body || []).forEach((bs: RecipeStep, body: number) =>
+      add(bs, { cell, stem, branch: null, body })
+    );
+    (step.branches || []).forEach((br: { body?: RecipeStep[] }, branch: number) =>
+      (br.body || []).forEach((bs, body) => add(bs, { cell, stem, branch, body }))
+    );
+  });
+  return out;
+}
+
+/**
  * Write the notebook to a file the reader can carry.
  *
  * The third offline path, and the only one with no size limit. A link needs a
@@ -400,8 +439,19 @@ function cascadeNote(gone: { droppedBranch: boolean; droppedStem: boolean }) {
 export function ToolkitShell() {
   const nb = useNotebook();
   const [chipEdit, setChipEdit] = useState<ChipPath | null>(null);
-  /** One-shot field to autofocus once chipEdit lands (design v2 §22b). */
-  const [focusParamHint, setFocusParamHint] = useState<string | null>(null);
+  /**
+   * One-shot field to autofocus once chipEdit lands (design v2 §22b).
+   *
+   * Carries the op as well as the param. It used to be a bare param name and
+   * the editor gated it on `selectedStep.name === "rtc.ice"` — correct while
+   * "Configure TURN" was the only sender, and a trap the moment a second one
+   * existed: `key` is a param on a dozen ops, so a hint meant for `ssh.sign`
+   * would have focused whichever of them the editor happened to be showing.
+   */
+  const [focusParamHint, setFocusParamHint] = useState<{
+    step: string;
+    param: string;
+  } | null>(null);
   useEffect(() => {
     if (!focusParamHint) return;
     const t = window.setTimeout(() => setFocusParamHint(null), 50);
@@ -1117,7 +1167,7 @@ export function ToolkitShell() {
           nb.setFocusedCell(cell);
           setCellView(cell, "pipeline");
           setChipEdit({ cell, stem, branch: null, body: null });
-          setFocusParamHint("turn");
+          setFocusParamHint({ step: "rtc.ice", param: "turn" });
           return true;
         }
       }
@@ -1550,6 +1600,11 @@ export function ToolkitShell() {
                   const status = nb.cellStatuses[i] || "idle";
                   const needs = nb.unmetForCell(i);
                   const focused = i === nb.focusedCell;
+                  // Derived from the cell's own chain rather than asked of the
+                  // hook: `unmetForCell` answers "what will the run ask for",
+                  // and the whole point of these is that it will ask for
+                  // nothing — it will stop.
+                  const unbound = focused ? unboundSlotBlockers(chain, i) : [];
                   return (
                     <article
                       key={i}
@@ -1682,28 +1737,48 @@ export function ToolkitShell() {
                           </div>
                         ) : null}
 
-                        {focused && needs.length ? (
+                        {focused && (needs.length || unbound.length) ? (
                           <ReadinessBar
-                            blockers={needs
-                              .map((n) => ({
-                                need: n,
-                                spec: NEED_BLOCKER[n] || {
-                                  priority: 2,
-                                  label: n.replace(/^needs\s+/, "") + " is missing",
-                                  action: "Open tray",
-                                  tray: "inputs" as const,
-                                },
-                              }))
-                              .sort((a, b) => a.spec.priority - b.spec.priority)
-                              .map(({ need, spec }) => ({
-                                id: need,
-                                label: spec.label,
-                                action: spec.action,
+                            blockers={[
+                              ...needs
+                                .map((n) => ({
+                                  need: n,
+                                  spec: NEED_BLOCKER[n] || {
+                                    priority: 2,
+                                    label: n.replace(/^needs\s+/, "") + " is missing",
+                                    action: "Open tray",
+                                    tray: "inputs" as const,
+                                  },
+                                }))
+                                .map(({ need, spec }) => ({
+                                  priority: spec.priority,
+                                  id: need,
+                                  label: spec.label,
+                                  action: spec.action,
+                                  onAction: () => {
+                                    setTrayOpen(true);
+                                    setTrayTab(spec.tray);
+                                  },
+                                })),
+                              // Priority 3 — last in ReadinessBar's own order
+                              // (§20e), because everything above it is a value
+                              // a tray can hand over, and this one is a line of
+                              // recipe the author has to write.
+                              ...unbound.map(({ path, step, param }) => ({
+                                priority: 3,
+                                id: `slot:${path.cell}:${path.stem}:${path.branch ?? ""}:${path.body ?? ""}:${param}`,
+                                label: `${step} ${param}= isn't bound to a slot, and nothing will ask for it`,
+                                // Names the param, so the button and the field
+                                // it opens say the same word.
+                                action: `Bind ${param}=`,
                                 onAction: () => {
-                                  setTrayOpen(true);
-                                  setTrayTab(spec.tray);
+                                  nb.setFocusedCell(path.cell);
+                                  setCellView(path.cell, "pipeline");
+                                  setChipEdit(path);
+                                  setFocusParamHint({ step, param });
                                 },
-                              }))}
+                              })),
+                            ].sort((a, b) => a.priority - b.priority)}
                           />
                         ) : null}
 
@@ -2284,8 +2359,8 @@ export function ToolkitShell() {
                                               setTrayTab("slots");
                                             }}
                                             focusParam={
-                                              selectedStep.name === "rtc.ice"
-                                                ? focusParamHint
+                                              focusParamHint?.step === selectedStep.name
+                                                ? focusParamHint.param
                                                 : null
                                             }
                                           />

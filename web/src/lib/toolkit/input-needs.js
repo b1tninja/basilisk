@@ -183,6 +183,67 @@ export function stepInputNeeds(step, spec) {
 }
 
 /**
+ * @typedef {object} UnboundSlot
+ * @property {string} step   op name
+ * @property {string} param  the param nothing will supply
+ * @property {import("./registry.js").IoType[]} of  what a ref must resolve to
+ */
+
+/**
+ * Params that only a `$slot` can fill, that no panel will ask for, and that
+ * this step leaves empty.
+ *
+ * The other half of this module. `stepInputRequirements` finds what the *run*
+ * will stop and ask a person for; this finds what it will not — a param
+ * declaring `slot: "required"` and no `unresolvedInput` has no tray behind it,
+ * so leaving it blank is not a question deferred, it is an error deferred.
+ * `input | utf8 | ssh.sign` compiles clean today and dies mid-run on "SSH: key=
+ * (private key slot) is required", which was knowable before a byte moved.
+ *
+ * Three declarations say a blank is deliberate, and all three are read here
+ * rather than a list of exceptions being kept:
+ *
+ * - a non-empty `default` — the value is supplied, just not by the author;
+ * - `emptyMeans` — the field whose entire purpose is naming what blank *does*
+ *   (`ssh.encode passphrase=` blank writes the block unencrypted). A param that
+ *   is optional and does not say so is the same defect one level down, and the
+ *   fix is the same either way: write the phrase, which the field editor, its
+ *   hint and the tool card all already render;
+ * - `requiredWith` — the requirement is not armed (`rtc.ice credential=` means
+ *   nothing without a `turn=` to authenticate against).
+ *
+ * Nothing else is exempt, and `positional` in particular is not. It looked like
+ * it should be — a step written with nothing after it is a visible mistake, and
+ * `in` alone is already refused by name. But `age.decrypt`'s key is positional
+ * too, and `in $ct | age.decrypt` compiles clean today and dies on "key=
+ * $identity (or passphrase=) is required". An exemption that covers one op it
+ * was written for and one it was not is how the switch this module replaced
+ * used to fail.
+ *
+ * @param {{ name: string, params?: Record<string, *> }} step
+ * @param {import("./registry.js").StepSpec} [spec]
+ * @returns {UnboundSlot[]}
+ */
+export function stepUnboundSlots(step, spec = getStep(step?.name)) {
+  if (!spec) return [];
+  /** @type {UnboundSlot[]} */
+  const out = [];
+  for (const p of spec.params || []) {
+    if (p.slot !== "required" || p.unresolvedInput) continue;
+    if (p.emptyMeans) continue;
+    if (p.default !== undefined && String(p.default).trim() !== "") continue;
+    if (p.requiredWith && !step?.params?.[p.requiredWith]) continue;
+    if (isBound(step, p.name)) continue;
+    out.push({
+      step: spec.name,
+      param: p.name,
+      of: Array.isArray(p.slotOf) ? [...p.slotOf] : p.slotOf ? [p.slotOf] : [],
+    });
+  }
+  return out;
+}
+
+/**
  * The panels a *bare* instance of an op needs — nothing bound, every guarded
  * entry at its default. What the tool card advertises before the op is placed.
  * @param {import("./registry.js").StepSpec} spec

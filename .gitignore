@@ -21,6 +21,9 @@ marketplace/package/
 *.zip
 web/node_modules/
 web/dist/
+# The browser suite's JUnit output — one run's failures, kept so a flake that
+# only shows up under load leaves something to read after the terminal scrolls.
+web/test-results/
 
 # Ephemeral agent worktrees — separate checkouts of this same repo, never
 # content of it. Without this, `git add -A` commits them as gitlinks.

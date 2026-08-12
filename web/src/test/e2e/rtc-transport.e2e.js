@@ -192,13 +192,30 @@ describe.runIf(availability.ok)("WebRTC transport, two real browsers", () => {
           };
         });
 
-      // Counters are sampled after a beat: SCTP accounting trails the send.
-      await until(
-        () => selected(A),
-        (v) => v.dc?.messagesReceived >= 1,
-        { timeout: 10000, what: "channel counters" }
+      // The snapshot is taken once **both** ends report every state the tests
+      // below read, and not before.
+      //
+      // `connected` is not one of those states. A nominated pair carries
+      // traffic from the moment it is nominated, so DTLS, SCTP and the two
+      // messages can all be through while the pair's own connectivity check is
+      // still `in-progress` in `getStats` — which is exactly the read that
+      // failed: `expected 'in-progress' to be 'succeeded'`, once, on a machine
+      // still busy from the node suite. Waiting on the channel counters was
+      // long enough for the pair state on an idle box and guaranteed nothing;
+      // B was not waited on at all, though three assertions sample it.
+      //
+      // This is a wait for a precondition, in the same shape as the two waits
+      // above it, not a retry of an assertion: if either end never gets there,
+      // `until` throws with the last sample and the suite fails on it.
+      result = await until(
+        async () => ({ a: await selected(A), b: await selected(B) }),
+        (v) =>
+          v.a.pair?.state === "succeeded" &&
+          v.b.pair?.state === "succeeded" &&
+          v.a.dc?.messagesReceived >= 1 &&
+          v.b.dc?.messagesReceived >= 1,
+        { timeout: 15000, what: "nominated pair succeeded and channel counters, both ends" }
       );
-      result = { a: await selected(A), b: await selected(B) };
     });
 
     it("reaches connected through checking, over a host candidate pair", () => {

@@ -1791,6 +1791,12 @@ export const STEPS = [
         slot: "required",
         slotOf: ["key", "keypair", "bytes", "text"],
         default: "",
+        // Blank is the ordinary case, not an omission: `commitmentsFor` reads
+        // them off the share set the pipeline carries and only wants a slot
+        // once the shares have been split from them. Said here because
+        // `input-needs.js` reads this field to decide whether an empty
+        // `slot: "required"` param is a choice or a run that will die.
+        emptyMeans: "the commitments carried by the share set itself",
         doc: "Slot holding the dealer's public commitments (when not carried on the shares)",
       },
     ],
@@ -2590,6 +2596,11 @@ export const STEPS = [
         slotOf: ["key", "keypair", "bytes", "text"],
         secret: true,
         default: "",
+        // Most blocks are not protected, and a protected one can still be
+        // opened with the Inputs passphrase `execSshDecode` falls back to. So
+        // blank is a choice with an outcome, which is what this field is for —
+        // and what keeps `input-needs.js` from calling it a missing binding.
+        emptyMeans: "no passphrase, or the one in Inputs",
         doc: "$slot holding the passphrase for a protected openssh-key-v1 block (`input | out $pw` then `passphrase=$pw`). Ignored for public lines and unencrypted blocks.",
       },
     ],
@@ -3469,6 +3480,11 @@ export const STEPS = [
         slotOf: ["bytes", "text"],
         positional: true,
         default: "",
+        // The one param here that is required *or* — `execAgeDecrypt` takes an
+        // identity or a passphrase and refuses only when it has neither. Said
+        // as a phrase rather than a `requiredWith`, which can only name a
+        // sibling that arms a need, not one that answers it instead.
+        emptyMeans: "decrypt with passphrase= instead — one of the two is required",
         doc: "Slot holding an `AGE-SECRET-KEY-1…` identity (never write the identity inline — recipe text is shareable)",
       },
       {
@@ -3988,6 +4004,11 @@ export const STEPS = [
         slotOf: ["bytes", "text"],
         secret: true,
         default: "",
+        // A credential authenticates to a relay, so there is nothing to supply
+        // until `turn=` names one — the STUN-only config every quorum exchange
+        // starts from wants no credential at all. Declaring the gate is what
+        // stops `input-needs.js` reporting a missing binding on the common case.
+        requiredWith: "turn",
         doc: "TURN credential — bind an $slot from Inputs; never stored/shared as literal text",
       },
     ],

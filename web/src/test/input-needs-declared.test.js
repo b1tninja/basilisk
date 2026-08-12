@@ -37,6 +37,7 @@ import {
   specInputNeeds,
   stepInputDeclarations,
   stepInputNeeds,
+  stepUnboundSlots,
 } from "../lib/toolkit/input-needs.js";
 import { PRESETS, compileRecipe, parseRecipe, recipeChains } from "../lib/toolkit/recipe.js";
 
@@ -310,5 +311,156 @@ describe("the derivation knows no op names", () => {
     expect(stepInputNeeds({ name: pgp.name, params: { key: "$k" } }, pgp)).toEqual([
       "gpgPass",
     ]);
+  });
+});
+
+/* ─────────────── the other half: what nothing will ask for ─────────────── */
+
+/**
+ * `stepInputRequirements` finds the params a run will *stop and ask* about.
+ * These are the ones it will not: `slot: "required"` and no `unresolvedInput`
+ * means there is no tray behind the param, so an empty one is not a question
+ * deferred to run time, it is an error deferred to run time.
+ *
+ * `input | utf8 | ssh.sign` compiles with no error and no warning, and dies
+ * on "SSH: key= (private key slot) is required" — which is the fourth entry in
+ * `ReadinessBar`'s own priority list, "blocked required param", written into
+ * its doc comment at §20e and never given a producer.
+ */
+describe("a param nothing will ask for is named before the run", () => {
+  /** An op no registry has heard of, so nothing here can be a list lookup. */
+  const invented = (param) => ({
+    name: "nobody.knows.this.op",
+    kind: "transform",
+    toolbox: "webcrypto",
+    doc: "",
+    input: "bytes",
+    output: "bytes",
+    params: [{ name: "key", type: "bytes", slot: "required", slotOf: ["key"], ...param }],
+  });
+
+  const flags = (spec, params = {}) =>
+    stepUnboundSlots({ name: spec.name, params }, spec).map((u) => u.param);
+
+  it("flags a slot-only param with no panel, no default and no declared blank", () => {
+    expect(getStep("nobody.knows.this.op")).toBeFalsy();
+    expect(flags(invented({}))).toEqual(["key"]);
+    expect(flags(invented({ default: "" }))).toEqual(["key"]);
+  });
+
+  it("is quiet once the recipe binds it", () => {
+    expect(flags(invented({}), { key: "$k" })).toEqual([]);
+  });
+
+  it("is quiet when a declaration says an empty one is a choice", () => {
+    // The three ways to say so, each meaning something different: the value
+    // arrives anyway, blank has a named effect, or the need is not armed.
+    expect(flags(invented({ default: "builtin" }))).toEqual([]);
+    expect(flags(invented({ emptyMeans: "the key already in the pipeline" }))).toEqual([]);
+    const gated = invented({ requiredWith: "sign" });
+    gated.params.push({ name: "sign", type: "bool", default: false });
+    expect(flags(gated)).toEqual([]);
+    expect(flags(gated, { sign: true })).toEqual(["key"]);
+  });
+
+  it("is quiet when the run has a panel to ask through", () => {
+    // The two halves must not both fire: a param with a tray behind it is
+    // `stepInputRequirements`' business, and reporting it here as well would
+    // put two sentences on screen for one missing value.
+    const withPanel = invented({ unresolvedInput: true });
+    expect(stepInputNeeds({ name: withPanel.name, params: {} }, withPanel)).toEqual(["key"]);
+    expect(flags(withPanel)).toEqual([]);
+  });
+
+  it("exempts nothing in the registry by accident", () => {
+    // The reverse direction, and the one that keeps the derivation honest: for
+    // every slot-only param it stays quiet about, some declaration has to say
+    // why. Silence with nothing behind it is how the old switch went stale.
+    const unexplained = [];
+    for (const s of STEPS) {
+      const params = {};
+      for (const p of s.params || []) if (p.default !== undefined) params[p.name] = p.default;
+      const flagged = new Set(stepUnboundSlots({ name: s.name, params }, s).map((u) => u.param));
+      for (const p of s.params || []) {
+        if (p.slot !== "required" || flagged.has(p.name)) continue;
+        const declared =
+          p.unresolvedInput ||
+          p.emptyMeans ||
+          p.requiredWith ||
+          (p.default !== undefined && String(p.default).trim() !== "");
+        if (!declared) unexplained.push(`${s.name}.${p.name}`);
+      }
+    }
+    expect(
+      unexplained,
+      `${unexplained.join(", ")} take only a $slot, will not be asked for, and ` +
+        `are passed over anyway with no declaration saying an empty one is ` +
+        `allowed. Either the run needs them — in which case they should be ` +
+        `flagged — or write \`emptyMeans\`, which the field, its hint and the ` +
+        `tool card all render.`
+    ).toEqual([]);
+  });
+
+  it("stays off the four params whose blank state was undeclared", () => {
+    // These four read as missing bindings until each was given the declaration
+    // its behaviour already had. Pinned because losing one turns a true warning
+    // into a false one on an ordinary recipe, which is how a warning becomes
+    // noise: `ssh.decode` opens an unprotected block or uses the Inputs
+    // passphrase; `vss.verify` reads commitments off the share set;
+    // `rtc.ice credential=` means nothing without a `turn=`; and `age.decrypt`
+    // takes an identity *or* a passphrase.
+    const bare = (name) => {
+      const spec = getStep(name);
+      const params = {};
+      for (const p of spec.params || []) if (p.default !== undefined) params[p.name] = p.default;
+      return stepUnboundSlots({ name, params }, spec).map((u) => u.param);
+    };
+    expect(bare("ssh.decode")).not.toContain("passphrase");
+    expect(bare("vss.verify")).not.toContain("commitments");
+    expect(bare("rtc.ice")).not.toContain("credential");
+    expect(bare("age.decrypt")).not.toContain("key");
+    // …and the gate really is the `turn=` that arms it, not a blanket exemption.
+    expect(
+      stepUnboundSlots({ name: "rtc.ice", params: { turn: "turn:relay.example:3478" } })
+        .map((u) => u.param)
+    ).toEqual(["credential"]);
+  });
+
+  it("names a case the compiler passes clean today", () => {
+    // The whole justification, stated as a fact about the compiler rather than
+    // an opinion: this recipe has no error and no warning about `key=`, and
+    // will not run.
+    const { validation } = compileRecipe("input | utf8 | ssh.sign");
+    expect(validation.ok).toBe(true);
+    expect(validation.errors).toEqual([]);
+    expect(validation.warnings.map((w) => w.message).join(" ")).not.toMatch(/key=/);
+    expect(stepUnboundSlots({ name: "ssh.sign", params: {} }).map((u) => u.param)).toEqual([
+      "key",
+    ]);
+  });
+});
+
+describe("the readiness line is where it lands", () => {
+  const SHELL = read("../toolkit/ToolkitShell.tsx");
+
+  it("feeds ReadinessBar rather than inventing a second panel", () => {
+    expect(SHELL).toMatch(/import \{ stepUnboundSlots \}/);
+    expect(SHELL).toMatch(/unbound = focused \? unboundSlotBlockers\(chain, i\) : \[\]/);
+    expect(SHELL).toMatch(/focused && \(needs\.length \|\| unbound\.length\)/);
+  });
+
+  it("walks nests, so a step inside a tee is not quietly exempt", () => {
+    // `collectProfileOverrides` set the shape; a walk that stopped at the top
+    // level would be wrong exactly where a recipe is hardest to read.
+    expect(SHELL).toMatch(/\(step\.body \|\| \[\]\)\.forEach[\s\S]{0,200}branches/);
+  });
+
+  it("opens the field it is talking about", () => {
+    // A tray cannot supply this — the fix is a line of recipe — so the action
+    // has to reach the param editor. `setFocusParamHint` now carries the op
+    // with the param because `key` is a param on a dozen ops.
+    expect(SHELL).toMatch(/setChipEdit\(path\);\s*\n\s*setFocusParamHint\(\{ step, param \}\);/);
+    expect(SHELL).toMatch(/focusParamHint\?\.step === selectedStep\.name/);
+    expect(SHELL).toMatch(/action: `Bind \$\{param\}=`/);
   });
 });

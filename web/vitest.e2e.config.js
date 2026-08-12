@@ -31,5 +31,13 @@ export default defineConfig({
     // candidates, and parallel files racing for the same loopback interface
     // turns a real result into a scheduling artifact.
     fileParallelism: false,
+    // Every run also lands on disk, because a failure here is expensive to
+    // reproduce. A rare one — three sightings before it was caught, always
+    // straight after a full node suite — was chased twice with nothing left to
+    // read: the terminal had scrolled and the run had already passed on a
+    // retry. `expected 'in-progress' to be 'succeeded'` is the whole diagnosis
+    // and it fits in one line of this file. Overwritten each run; the node
+    // suite is fast enough to re-run and does not need one.
+    reporters: ["default", ["junit", { outputFile: "test-results/e2e.xml" }]],
   },
 });
