@@ -158,55 +158,56 @@ export async function basiliskAvailability() {
 }
 
 /**
- * `n` free TCP ports, distinct from each other.
+ * One free TCP port.
  *
- * Naming a port before the process that wants it exists is unavoidable here:
- * Flask is told its port on the command line, and the signalling double is told
- * its port inside a connection string that has to be in the environment before
- * the interpreter starts. So the probe binds 0, reads what the OS gave, and
- * lets go — a gap another process can win.
+ * Naming a port before the process that wants it exists is unavoidable for
+ * **Flask**, which is told its port on the command line. So the probe binds 0,
+ * reads what the OS gave, and lets go — a gap another process can win. That
+ * gap cannot be closed here, but it is loud: `startBasilisk` waits for
+ * `/health` and throws with everything the process wrote, so a lost race
+ * surfaces as "Address already in use" rather than as a hang.
  *
- * That gap cannot be closed, but it can be made *loud* and it can be stopped
- * from being self-inflicted. Loud: `startBasilisk` waits for `/health` and
- * throws with everything the process wrote, so a lost race surfaces as
- * "Address already in use" rather than a hang. Self-inflicted: the probes are
- * all held **at the same time**, so the OS cannot hand the same number to two
- * of them. Calling a one-port helper twice in a row could, and
- * `placed-run-arc.e2e.js` did exactly that — one port for Flask and one for the
- * hub it starts, and the same number for both means the double silently fails
- * to bind inside a server that came up fine.
+ * **The signalling double is no longer allocated this way, and that is the
+ * point.** It used to be handed a number through its connection string, which
+ * had to exist before the interpreter started; now it binds its own socket and
+ * `basilisk/serve.py` publishes the result back into its own configuration
+ * before the app is built, so the address the page is given is one that is
+ * already listening. That is why this returns one port instead of `n`: there
+ * was exactly one caller for a second one.
  *
- * @param {number} [n]
- * @returns {Promise<number[]>}
+ * @returns {Promise<number>}
  */
-export function freePorts(n = 1) {
-  /** @type {import("node:net").Server[]} */
-  const probes = [];
-  return Promise.all(
-    Array.from(
-      { length: n },
-      () =>
-        new Promise((resolve, reject) => {
-          const probe = createServer();
-          probes.push(probe);
-          probe.once("error", reject);
-          probe.listen(0, "127.0.0.1", () => {
-            resolve(
-              /** @type {import("node:net").AddressInfo} */ (probe.address()).port
-            );
-          });
-        })
-    )
-  ).finally(
-    () =>
-      // Released together, once every number is known — holding one while
-      // another is still being chosen is what keeps them distinct.
-      new Promise((done) => {
-        let left = probes.length;
-        if (!left) return done(undefined);
-        for (const p of probes) p.close(() => --left || done(undefined));
-      })
+export function freePort() {
+  const probe = createServer();
+  return new Promise((resolve, reject) => {
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      resolve(/** @type {import("node:net").AddressInfo} */ (probe.address()).port);
+    });
+  }).finally(
+    // Released once the number is known: a probe still listening would turn
+    // every allocation into a port nothing else can use.
+    () => new Promise((done) => probe.close(() => done(undefined)))
   );
+}
+
+/**
+ * The signalling socket a CSP names, or `""`.
+ *
+ * `connect-src` carries at most one `ws:`/`wss:` source — `csp_connect_src()`
+ * appends exactly the one the deployment configured — so the first match is
+ * the answer and a policy without one means signalling is off.
+ *
+ * Exported because it is the same read a spec makes of the page's `<meta>`,
+ * and the two agreeing is the property worth asserting.
+ *
+ * @param {string|null} policy
+ * @returns {string}
+ */
+export function wsSource(policy) {
+  const connect = /connect-src ([^;"]+)/.exec(String(policy || ""));
+  if (!connect) return "";
+  return connect[1].trim().split(/\s+/).find((s) => /^wss?:\/\//.test(s)) || "";
 }
 
 /**
@@ -244,6 +245,12 @@ export function easyAuthHeaders(user) {
 /**
  * @typedef {object} BasiliskServer
  * @property {string} origin          where Flask is listening
+ * @property {string} signalingOrigin
+ *   `ws://127.0.0.1:<port>` for the local Web PubSub double this server
+ *   started, or `""` when signalling is unconfigured. Read back off the
+ *   server's own CSP header rather than dictated: the double picks its port at
+ *   bind time, so this is the first moment anything outside that process can
+ *   know it.
  * @property {string} dataDir         the temp dir its SQLite file and blobs live in
  * @property {(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => boolean} routes
  *   `serveDist`'s hook: proxies the directory paths, declines everything else.
@@ -266,26 +273,22 @@ export function easyAuthHeaders(user) {
  *   key that was revoked *after* it was accepted, which is the only way that
  *   state is reachable and is what a client has to cope with.
  * @param {number} [opts.timeout]       readiness deadline, ms
- * @param {number} [opts.port]
- *   A port already reserved by the caller. Only for a caller that needs a
- *   *second* port beside this one — the signalling double's — so both can come
- *   out of one `freePorts` call and cannot be the same number. Omitted, this
- *   takes its own.
  * @param {Record<string, string>} [opts.env]
  *   Extra environment for the server process, merged last so a caller can set
  *   what this harness does not. It exists for one deployment fact the harness
  *   cannot know: notebook signalling is configured by a connection string, and
  *   `basilisk.serve` starts its own local Web PubSub double when that string
- *   points at loopback. A suite that needs signalling therefore has to name the
- *   port before the server starts, and every other caller keeps exactly the
- *   environment it had.
+ *   points at loopback. A suite that needs signalling therefore has to say so
+ *   before the server starts — but not *where*, which the double decides for
+ *   itself; read `signalingOrigin` afterwards. Every other caller keeps exactly
+ *   the environment it had.
  * @returns {Promise<BasiliskServer>}
  */
 export async function startBasilisk(opts = {}) {
   const python = opts.python || (await basiliskAvailability()).python;
   if (!python) throw new Error("startBasilisk: no usable python");
 
-  const port = opts.port ?? (await freePorts(1))[0];
+  const port = await freePort();
   const dataDir = await mkdtemp(join(tmpdir(), "basilisk-e2e-"));
   const origin = `http://127.0.0.1:${port}`;
 
@@ -331,12 +334,19 @@ export async function startBasilisk(opts = {}) {
 
   const deadline = Date.now() + (opts.timeout || 60000);
   let ready = false;
+  let signalingOrigin = "";
   while (Date.now() < deadline) {
     if (died) break;
     try {
       const r = await fetch(`${origin}/health`);
       if (r.ok) {
         ready = true;
+        // The `ws:`/`wss:` source in `security_headers`' own policy. Taken from
+        // the header rather than from anything this harness chose, because the
+        // double picks its port at bind time and `serve.py` publishes it back
+        // into the settings both the header and every negotiate grant are
+        // built from — so this is that value, at its source.
+        signalingOrigin = wsSource(r.headers.get("content-security-policy"));
         break;
       }
     } catch {
@@ -427,6 +437,7 @@ export async function startBasilisk(opts = {}) {
 
   return {
     origin,
+    signalingOrigin,
     dataDir,
     routes,
     counts: () => ({ ...counts }),

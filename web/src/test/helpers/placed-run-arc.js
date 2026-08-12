@@ -66,31 +66,27 @@ const WEB_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export const ARC_PATH = "/e2e/placed-run-arc.js";
 
 /**
- * Ports, named before anything claims them — because the connection string has
- * to carry one and the connection string has to exist before Flask starts.
- *
- * Re-exported rather than reimplemented: this file had a second copy, and the
- * copy is how the two ports this suite needs came to be allocated one after the
- * other instead of together. See `freePorts` for why together matters.
- */
-export { freePorts } from "./basilisk-server.js";
-
-/**
  * The environment that turns notebook signalling on for a spawned server.
  *
  * `AZURE_WEBPUBSUB_CONNECTION_STRING` is read by `basilisk/config.py` and does
  * three things at once: it makes `/api/v1/notebook/negotiate` answer instead of
- * returning 503, it puts `ws://127.0.0.1:<port>` into the page's `connect-src`,
+ * returning 503, it puts the double's ws origin into the page's `connect-src`,
  * and — because the endpoint is loopback — it makes `basilisk.serve` start the
- * local double on that port. One string, no flags.
+ * local double. One string, no flags.
  *
- * @param {number} port  where the double will listen
+ * **It names no port, deliberately.** This used to reserve one and write it in,
+ * which meant the number was chosen while nothing held it and claimed a moment
+ * later by a process that might by then have lost it. The double now binds
+ * first and `serve.py` publishes the result back into its own settings, so the
+ * port arrives from the server — `startBasilisk`'s `signalingOrigin` — instead
+ * of being predicted for it.
+ *
  * @param {string} [accessKey]
  * @returns {Record<string, string>}
  */
-export function signalingEnv(port, accessKey = "placed-run-arc-e2e-key") {
+export function signalingEnv(accessKey = "placed-run-arc-e2e-key") {
   return {
-    AZURE_WEBPUBSUB_CONNECTION_STRING: `Endpoint=http://127.0.0.1;Port=${port};AccessKey=${accessKey};Version=1.0;`,
+    AZURE_WEBPUBSUB_CONNECTION_STRING: `Endpoint=http://127.0.0.1;AccessKey=${accessKey};Version=1.0;`,
     BASILISK_WEBPUBSUB_HUB: "notebook",
   };
 }

@@ -19,7 +19,16 @@ _DEFAULT_UPSTREAM_DEFAULT = "keys.openpgp.org"
 # connection-string shape, same token, same subprotocol. This is the azurite
 # pattern: unset means "use the local one" in dev, and setting the real
 # connection string is the only difference in production.
-_DEV_WEBPUBSUB_CONNECTION = "Endpoint=http://127.0.0.1:8081;AccessKey=dev-webpubsub-key;Version=1.0;"
+#
+# No port, and that is the point. This string used to name 8081, so every
+# process that fell back to it went for the same socket — two e2e specs, or a
+# dev run beside a test run — and on Linux the second one raised EADDRINUSE
+# before Flask started. The double now takes a free port at bind time and
+# `basilisk.serve` writes what it got back into the environment, so this
+# setting is only ever incomplete for the moment before the socket exists. A
+# deployment that needs a fixed port names it in the whole connection string,
+# which is what `docker-compose.e2e.yml` does to publish one.
+_DEV_WEBPUBSUB_CONNECTION = "Endpoint=http://127.0.0.1;AccessKey=dev-webpubsub-key;Version=1.0;"
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

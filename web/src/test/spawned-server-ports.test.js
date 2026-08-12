@@ -15,38 +15,33 @@ afterEach(async () => {
 });
 
 /**
- * Ports named before the process that wants them.
+ * One port, named before the process that wants it.
  *
- * Flask takes its port on the command line and the signalling double takes its
- * own inside a connection string that must be in the environment before the
- * interpreter starts, so both are chosen by probe: bind 0, read what the OS
- * gave, let go. The window between letting go and the server binding is real
- * and cannot be closed here — but it fails loudly (`startBasilisk` waits for
- * `/health` and throws with the process's own "Address already in use").
+ * Flask takes its port on the command line, so it has to be chosen by probe:
+ * bind 0, read what the OS gave, let go. The window between letting go and the
+ * server binding is real and cannot be closed here — but it fails loudly
+ * (`startBasilisk` waits for `/health` and throws with the process's own
+ * "Address already in use").
  *
- * What was *silent* is the collision this suite caused itself.
- * `placed-run-arc.e2e.js` called a one-port helper twice in a row, once for the
- * hub and once for Flask, and nothing stopped the OS handing back the same
- * number twice — after which the double fails to bind inside a server that
- * came up fine, and the arc simply never signals.
+ * **There used to be a second port,** for the signalling double, and this file
+ * existed mostly because of it: `placed-run-arc.e2e.js` called a one-port
+ * helper twice in a row, nothing stopped the OS handing back the same number
+ * twice, and the double then failed to bind inside a server that came up fine.
+ * That is gone rather than guarded. The double binds its own socket and
+ * `basilisk/serve.py` publishes the port back into its own settings before the
+ * app is built, so no caller needs two numbers and none can conflate them —
+ * which is why the allocator now returns one port and this file no longer
+ * asserts that a batch of them is distinct.
  */
 describe("port allocation for spawned servers", () => {
-  it("hands back distinct ports, because it holds them all at once", async () => {
-    const { freePorts } = await import("./helpers/basilisk-server.js");
-    // Enough that a sequential allocator reusing a just-released number would
-    // show up; the property is structural, not statistical, but a single pair
-    // would pass by luck on any implementation.
-    const ports = await freePorts(40);
-    expect(ports).toHaveLength(40);
-    expect(new Set(ports).size).toBe(40);
-    for (const p of ports) expect(p).toBeGreaterThan(0);
-  });
+  it("hands back a usable port, and lets go of it", async () => {
+    // Held during the choosing and released after: a probe still listening
+    // would turn every allocation into a port nothing else can use, and the
+    // server it was chosen for is the thing that must be able to bind.
+    const { freePort } = await import("./helpers/basilisk-server.js");
+    const port = await freePort();
+    expect(port).toBeGreaterThan(0);
 
-  it("releases them, so the server they were chosen for can bind", async () => {
-    // Held during the choosing and let go after: a probe still listening would
-    // turn every allocation into a port nothing else can use.
-    const { freePorts } = await import("./helpers/basilisk-server.js");
-    const [port] = await freePorts(1);
     const taken = createServer();
     await new Promise((resolve, reject) => {
       taken.once("error", reject);
@@ -61,5 +56,20 @@ describe("port allocation for spawned servers", () => {
     expect(
       /** @type {import("node:net").AddressInfo} */ (taken.address()).port
     ).toBe(port);
+  });
+
+  it("reads the signalling socket out of a policy, and says so when there is none", async () => {
+    // How `startBasilisk` learns the port it did not choose. A deployment
+    // without signalling has no ws source at all, and "" has to mean that
+    // rather than being mistaken for one.
+    const { wsSource } = await import("./helpers/basilisk-server.js");
+    expect(
+      wsSource("default-src 'none'; connect-src 'self' https://keys.openpgp.org ws://127.0.0.1:5051; img-src 'self'")
+    ).toBe("ws://127.0.0.1:5051");
+    expect(wsSource("connect-src 'self' wss://x.webpubsub.azure.com;")).toBe(
+      "wss://x.webpubsub.azure.com"
+    );
+    expect(wsSource("default-src 'none'; connect-src 'self';")).toBe("");
+    expect(wsSource(null)).toBe("");
   });
 });

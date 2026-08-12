@@ -119,7 +119,6 @@ import {
 import {
   ARC_PATH,
   buildArcBundle,
-  freePorts,
   makeIdentities,
   proxyToBasilisk,
   signalingEnv,
@@ -692,15 +691,10 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     // fails loudly rather than meshing with a stranger.
     [mara, okafor] = await makeIdentities(["mara@placed.test", "okafor@placed.test"]);
 
-    // Both ports out of one allocation. Two sequential calls could hand back
-    // the same number, and the same number for both means the signalling
-    // double silently fails to bind inside a Flask that came up fine.
-    const [wsPort, httpPort] = await freePorts(2);
-    server = await startBasilisk({
-      python: python.python,
-      port: httpPort,
-      env: signalingEnv(wsPort),
-    });
+    // One port, Flask's, and this suite does not choose it either. The
+    // signalling double binds its own and the server reports it back, so there
+    // is no second number to keep distinct from the first.
+    server = await startBasilisk({ python: python.python, env: signalingEnv() });
     const seeded = await seedDirectory(server, [mara.corpus, okafor.corpus]);
     if (seeded.refused.length) {
       throw new Error(`the directory refused a test key: ${JSON.stringify(seeded.refused)}`);
@@ -735,7 +729,8 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     out.csp = await A.page.evaluate(() =>
       document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content") || ""
     );
-    out.wsPort = wsPort;
+    // The header's answer to the same question the document was just asked.
+    out.signalingOrigin = server.signalingOrigin;
 
     roster = { mara: mara.fpr, okafor: okafor.fpr };
     audience = [mara.fpr, okafor.fpr].sort();
@@ -974,8 +969,16 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     // The CSP a deployment emits, not the one in the built file. `connect-src`
     // gained exactly one source — the double's ws origin — which is what
     // `static.py` exists to do and what a raw `dist/` would not have.
+    //
+    // The port is not a number this suite picked and handed over; it is the one
+    // the double bound, arriving here from the response *header* while
+    // `out.csp` is the document's *meta*. Front Door once served pages whose
+    // meta lacked the origin its header carried, and the browser enforces the
+    // intersection — so the two naming the same socket is the assertion, and a
+    // literal could not have made it.
+    expect(out.signalingOrigin).toMatch(/^ws:\/\/127\.0\.0\.1:\d+$/);
     expect(out.csp).toContain("connect-src 'self'");
-    expect(out.csp).toContain(`ws://127.0.0.1:${out.wsPort}`);
+    expect(out.csp).toContain(out.signalingOrigin);
     expect(out.csp).toContain("default-src 'none'");
   });
 

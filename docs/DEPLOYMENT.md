@@ -595,7 +595,7 @@ This replaced an in-process mailbox that could not work on Consumption Functions
 
 
 
-**Locally and in CI**, leave `AZURE_WEBPUBSUB_CONNECTION_STRING` unset (or point it at loopback) and `python -m basilisk.serve` starts a local double that speaks the same subprotocol — the azurite pattern. `docker-compose.e2e.yml` publishes it on `8081`.
+**Locally and in CI**, leave `AZURE_WEBPUBSUB_CONNECTION_STRING` unset (or point it at loopback) and `python -m basilisk.serve` starts a local double that speaks the same subprotocol — the azurite pattern. A connection string that names a port gets that port, which is how `docker-compose.e2e.yml` publishes it on `8081`; one that names none — including the unset default — makes the double take a free port at bind time, and `serve.py` writes the result back into `AZURE_WEBPUBSUB_CONNECTION_STRING` before the app is built so the grant and both policies name it. That is what lets two servers run at once: the constant that used to be here was a socket every one of them tried to bind.
 
 
 

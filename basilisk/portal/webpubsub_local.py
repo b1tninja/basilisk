@@ -31,6 +31,7 @@ import logging
 import socket
 import struct
 import threading
+from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
 from basilisk.portal.webpubsub import (
@@ -162,13 +163,33 @@ class LocalWebPubSub:
     def start(self, port: int | None = None) -> int:
         if self._server is not None:
             return self.port
-        wanted = port if port is not None else (urlsplit(self.endpoint.endpoint).port or 8081)
+        # Three sources for the port, in order: the caller, the endpoint, and —
+        # when neither names one — the OS. There used to be a constant here
+        # instead of that last case, and a constant is a socket every process on
+        # the machine tries to take. Two ``basilisk.serve`` runs side by side
+        # meant the second one lost: on Linux it raised ``EADDRINUSE`` here and
+        # took the whole server down before Flask started, and where
+        # ``SO_REUSEADDR`` also permits a live second binder it came up sharing
+        # a port with a double it cannot see. Neither is survivable, so the
+        # contention is removed rather than handled.
+        named = port if port is not None else urlsplit(self.endpoint.endpoint).port
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind((self._host, wanted))
+        srv.bind((self._host, named or 0))
         srv.listen(64)
         self._server = srv
         self.port = srv.getsockname()[1]
+        if named is None:
+            # Nobody named an address, so nobody can have handed one out yet:
+            # this is the last moment at which the endpoint can still be made
+            # true, and it has to be, because ``verify_token`` checks every
+            # token's ``aud`` against it. A caller that *did* name a port keeps
+            # its endpoint — ``webpubsub-hub.js`` passes 0 precisely so the
+            # advertised endpoint and the bound socket can differ.
+            split = urlsplit(self.endpoint.endpoint)
+            self.endpoint = replace(
+                self.endpoint, endpoint=f"{split.scheme}://{split.hostname}:{self.port}"
+            )
         self._thread = threading.Thread(target=self._accept_loop, name="webpubsub-local", daemon=True)
         self._thread.start()
         logger.info("Local Web PubSub double listening on ws://%s:%d", self._host, self.port)
@@ -434,6 +455,9 @@ def main() -> None:  # pragma: no cover - developer entry point
     if not args.connection_string:
         raise SystemExit("No Web PubSub connection string configured")
     double = start_local_double(args.connection_string, args.hub)
+    # The address, on stdout, because a connection string that names no port
+    # gets one from the OS and this process is the only thing that knows it.
+    print(f"Local Web PubSub double listening on {double.endpoint.ws_origin()}", flush=True)
     try:
         threading.Event().wait()
     except KeyboardInterrupt:

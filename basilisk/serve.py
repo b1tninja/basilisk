@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import os
+from typing import TYPE_CHECKING, Any
 
 from flask import Flask, Response, redirect, request
 
@@ -28,6 +29,9 @@ from basilisk.security.rate_limit import (
     check_upload_rate,
     client_ip,
 )
+
+if TYPE_CHECKING:  # the module is imported lazily, only when signalling is local
+    from basilisk.portal.webpubsub_local import LocalWebPubSub
 
 
 def _to_flask(resp: HttpResponse) -> Response:
@@ -238,6 +242,57 @@ def create_app() -> Flask:
     return app
 
 
+def start_local_signalling(host: str = "0.0.0.0") -> LocalWebPubSub | None:
+    """Start the local Web PubSub double, and return it, or None.
+
+    Notebook signalling lives in a service. When the connection string points at
+    loopback, that service is the local double — started alongside the app, so
+    "run the server and the notebook works" is true here as well as in
+    production. A string pointing at Azure, or no string at all, means there is
+    nothing to start and this returns None.
+
+    **Call this before :func:`create_app`.** The CSP header is built once, at
+    app creation, and it has to name the same socket the page is later told to
+    dial; a header and a ``<meta>`` that disagree leave signalling with no
+    reachable origin at all, which is the failure ``portal/static.py``
+    documents at length.
+    """
+    settings = get_settings()
+    conn = settings.web_pubsub_connection
+    if not conn:
+        return None
+    from basilisk.portal.webpubsub import WebPubSubConfigError, parse_connection_string
+
+    try:
+        endpoint = parse_connection_string(conn)
+    except WebPubSubConfigError:
+        return None
+    if endpoint.host.split(":")[0] not in ("127.0.0.1", "localhost", "::1"):
+        return None
+
+    from basilisk.portal.webpubsub_local import LocalWebPubSub
+
+    # Bound where the app is bound. The client is handed the endpoint's own URL
+    # verbatim, so in a container the double has to listen on the published
+    # interface or the browser dials a port nothing owns.
+    double = LocalWebPubSub(endpoint, hub=settings.web_pubsub_hub, host=host)
+    double.start()
+    if double.endpoint != endpoint:
+        # The connection string named no port, so the double took a free one
+        # and this process is the only thing that knows it. Publishing it back
+        # into the environment is what makes it reachable:
+        # `/api/v1/notebook/negotiate` hands the client that URL verbatim and
+        # `csp_connect_src()` builds the policy from it, and both read
+        # `get_settings()` — so the cached settings are what has to be
+        # replaced, not a second copy of the value kept somewhere else.
+        os.environ["AZURE_WEBPUBSUB_CONNECTION_STRING"] = (
+            f"Endpoint={double.endpoint.endpoint};"
+            f"AccessKey={double.endpoint.access_key};Version=1.0;"
+        )
+        get_settings.cache_clear()
+    return double
+
+
 def main() -> None:
     import argparse
 
@@ -245,26 +300,8 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
+    start_local_signalling(args.host)
     app = create_app()
-    # Notebook signalling lives in a service. When the connection string points
-    # at loopback, that service is the local double — start it alongside, so
-    # "run the server and the notebook works" is true here as well as in production.
-    settings = get_settings()
-    conn = settings.web_pubsub_connection
-    if conn:
-        from basilisk.portal.webpubsub import WebPubSubConfigError, parse_connection_string
-
-        try:
-            endpoint = parse_connection_string(conn)
-        except WebPubSubConfigError:
-            endpoint = None
-        if endpoint is not None and endpoint.host.split(":")[0] in ("127.0.0.1", "localhost", "::1"):
-            from basilisk.portal.webpubsub_local import LocalWebPubSub
-
-            # Bound where the app is bound. The client is handed the endpoint's
-            # own URL verbatim, so in a container the double has to listen on
-            # the published interface or the browser dials a port nothing owns.
-            LocalWebPubSub(endpoint, hub=settings.web_pubsub_hub, host=args.host).start()
     app.run(host=args.host, port=args.port, debug=False)
 
 
