@@ -27,7 +27,8 @@ const FPR_C = "C3".repeat(20);
 
 /**
  * A `NotebookSession` with the shape `quorum-ops` actually consumes: a `peers`
- * **Map**, the four callbacks, and `start`/`stop`/`sendChat*`. The Map is the
+ * **Map**, the callbacks (chat, offer, result and the rest), and
+ * `start`/`stop`/`sendChat*`. The Map is the
  * load-bearing detail — `restartLiveIce` read it as an array of peers.
  */
 const { FakeSession } = vi.hoisted(() => {
@@ -730,5 +731,72 @@ describe("an abandoned open cannot reach into the exchange that replaced it", ()
     expect(second.stopped).toBe(0);
     expect(q.getLiveSession()).toBe(second);
     expect(q.getQuorumState().phase).toBe("connected");
+  });
+});
+
+describe("a handed-over cell waits for a person", () => {
+  /** What the session hands `onOffer` when a peer offers a cell. */
+  const OFFER_DOC = {
+    from: FPR_B,
+    cell: 2,
+    manifest: "4C1D9E07B8A2",
+    ts: 1_700_000_000_000,
+    offer: { v: 1, cell: 2, needs: [] },
+  };
+
+  /** And `onResult`, coming back the other way. */
+  const RESULT_DOC = {
+    from: FPR_B,
+    cell: 2,
+    manifest: "4C1D9E07B8A2",
+    ts: 1_700_000_001_000,
+    signed: "-----BEGIN PGP SIGNED MESSAGE-----",
+    result: { v: 1, cell: 2, values: [] },
+  };
+
+  it("holds an offer pending instead of dropping it", async () => {
+    // Before this, `quorum-ops` passed no `onOffer`, so the session's optional
+    // call made a missing handler look exactly like a refusal — an offer the
+    // sender was told had landed went on the floor.
+    const { session } = await open();
+    expect(q.getPendingHandoffs()).toEqual([]);
+    session.opts.onOffer(OFFER_DOC);
+    const pending = q.getPendingHandoffs();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ kind: "offer", from: FPR_B, cell: 2 });
+  });
+
+  it("holds a result pending too, which is the end that matters more", async () => {
+    // A result that resumed the run on a peer's say-so would continue *this*
+    // machine on values nobody looked at.
+    const { session } = await open();
+    session.opts.onResult(RESULT_DOC);
+    const pending = q.getPendingHandoffs();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ kind: "result", from: FPR_B, cell: 2 });
+    expect(pending[0].signed).toBe(RESULT_DOC.signed);
+  });
+
+  it("hands each document out once, so a click cannot act on it twice", async () => {
+    const { session } = await open();
+    session.opts.onOffer(OFFER_DOC);
+    const [only] = q.getPendingHandoffs();
+    expect(q.takeHandoff(only.id)).toMatchObject({ cell: 2 });
+    expect(q.takeHandoff(only.id)).toBeNull();
+    expect(q.getPendingHandoffs()).toEqual([]);
+  });
+
+  it("hands back a copy, so a caller cannot mutate the queue in place", async () => {
+    const { session } = await open();
+    session.opts.onOffer(OFFER_DOC);
+    q.getPendingHandoffs()[0].cell = 99;
+    expect(q.getPendingHandoffs()[0].cell).toBe(2);
+  });
+
+  it("keeps nothing across a closed session", async () => {
+    const { session } = await open();
+    session.opts.onOffer(OFFER_DOC);
+    q.closeQuorumExchange("closed");
+    expect(q.getPendingHandoffs()).toEqual([]);
   });
 });

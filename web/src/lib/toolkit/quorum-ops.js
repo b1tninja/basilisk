@@ -162,6 +162,33 @@ export function getQuorumState() {
   return current ? { ...current.state } : { ...IDLE_STATE };
 }
 
+/**
+ * Offers and results a peer has sent, still waiting on a person.
+ *
+ * Read-only and a copy: the shell renders these, and the *only* way one leaves
+ * the list is `takeHandoff`, which a caller reaches because somebody clicked.
+ */
+export function getPendingHandoffs() {
+  return current ? current.handoffs.map((h) => ({ ...h })) : [];
+}
+
+/**
+ * Remove one pending item and hand it back, or `null` if it is already gone.
+ *
+ * Taking is separate from accepting on purpose. `acceptHandoffOffer` and
+ * `acceptCellResult` return bindings a caller registers, and registering is
+ * the consent; this only stops the same document being acted on twice.
+ *
+ * @param {string} id
+ */
+export function takeHandoff(id) {
+  const ex = current;
+  if (!ex) return null;
+  const at = ex.handoffs.findIndex((h) => h.id === id);
+  if (at < 0) return null;
+  return ex.handoffs.splice(at, 1)[0];
+}
+
 /** Close the live exchange (Clear session, quorum.close, Cancel). */
 export function closeQuorumExchange(reason = "closed") {
   const ex = current;
@@ -174,6 +201,7 @@ export function closeQuorumExchange(reason = "closed") {
     /* ignore */
   }
   ex.inbox.length = 0;
+  ex.handoffs.length = 0;
   // A failed exchange keeps its last roster so the panel can show *which*
   // links died; a clean close clears it — the session ended, nothing is live.
   ex.state = {
@@ -419,6 +447,49 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     // party, and `undefined` is the session's cue to substitute defaults.
     // The two must not be spelled the same on the way in.
     iceServers: iceServers ?? undefined,
+    /**
+     * A cell offered by a peer. **Pending, and nothing more.**
+     *
+     * `handoff.js` states the rule this obeys: an offer arrives pending,
+     * nothing registers a binding or starts a run, and accepting is
+     * `acceptHandoffOffer` plus a person. So this only remembers it. Before
+     * this callback existed the session dropped offers on the floor — the
+     * optional-call in `_onOffer` made a missing handler indistinguishable
+     * from a refusal, which is the wrong default for a document a peer was
+     * told had landed.
+     */
+    onOffer: (doc) => {
+      const ex = current;
+      if (!ex) return;
+      ex.handoffs.push({
+        id: `offer-${doc.from}-${doc.cell}-${doc.ts}`,
+        kind: "offer",
+        from: doc.from,
+        cell: doc.cell,
+        manifest: doc.manifest,
+        ts: doc.ts,
+        offer: doc.offer,
+      });
+    },
+    /**
+     * A result a peer computed for a cell. Pending for the same reason, and
+     * the worse end of the two: a result that resumed a run on a peer's
+     * say-so would continue *this* machine on values nobody looked at.
+     */
+    onResult: (doc) => {
+      const ex = current;
+      if (!ex) return;
+      ex.handoffs.push({
+        id: `result-${doc.from}-${doc.cell}-${doc.ts}`,
+        kind: "result",
+        from: doc.from,
+        cell: doc.cell,
+        manifest: doc.manifest,
+        ts: doc.ts,
+        signed: doc.signed,
+        result: doc.result,
+      });
+    },
     onChat: (msg) => {
       const ex = current;
       if (!ex) return;
@@ -475,6 +546,7 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     },
     inbox: [],
     recvWaiters: [],
+    handoffs: [],
     cancelled: false,
     viaByFpr: new Map(),
     viaPending: new Set(),
