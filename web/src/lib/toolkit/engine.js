@@ -3425,7 +3425,40 @@ async function resolveEncryptRecipients(bindings, toParam, policy = "ask") {
   let list = [];
 
   if (token.kind === "empty") {
-    const binderKeys = bindings.recipients || [];
+    /**
+     * Two callers bind recipients, and they hand them over differently.
+     *
+     * `executeToolkitRun` — the worker path — reads the armor into openpgp
+     * `Key` objects before the run and sets `recipients`. The notebook's
+     * in-page kernel hands `bindings` to `runRecipe` untouched, and what the
+     * Keys tray produced is a `ResolvedRecipient`: armor and a fingerprint,
+     * because that is what survives being held in React state.
+     *
+     * Reading only `recipients` meant a notebook run saw nothing no matter
+     * what the tray said, and refused with advice to bind a recipient — which
+     * the person had just done. Parsed keys still win when a caller supplies
+     * them, so the worker path is untouched.
+     */
+    let binderKeys = bindings.recipients || [];
+    const armored = bindings.recipientKeysArmored || [];
+    if (!binderKeys.length && armored.length) {
+      const { readKey } = await import("openpgp");
+      binderKeys = [];
+      for (const armor of armored) {
+        // One bad key is a named failure, not a silent short recipient list:
+        // encrypting to three of four people is the kind of quiet wrong this
+        // whole path exists to prevent.
+        try {
+          binderKeys.push(await readKey({ armoredKey: String(armor) }));
+        } catch (err) {
+          throw new Error(
+            `gpg.encrypt: a bound recipient's key could not be read — ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      }
+    }
     const fps = bindings.recipientFingerprints || [];
     if (!binderKeys.length) {
       return { keys: [], fingerprints: [] };
