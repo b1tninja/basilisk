@@ -15,6 +15,7 @@ import {
 import { CIPHER_DISPATCH_TARGETS } from "../../lib/toolkit/step-names.js";
 import { listTypes, type TypeMeta } from "../../lib/toolkit/type-registry.js";
 import type { RecipeParams } from "../../lib/toolkit/recipe.js";
+import type { SuiteStatusMap } from "../../lib/toolkit/suite-gate.js";
 import { TypeCard } from "./TypeCard";
 import { cn } from "@/lib/cn";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -55,9 +56,9 @@ type Props = {
   /** Caret banner — where the next append/insert lands, named so it agrees with the pipeline gap. */
   caretBanner?: ReactNode;
   /** Suite self-test map (CAST). Lights the status dot on each toolbox header. */
-  castStatus?: Record<string, string> | null;
+  castStatus?: SuiteStatusMap | null;
   /** Append a literal step built from the Types tab's constructor. */
-  onInsertLiteral?: (step: { name: string; params: Record<string, unknown> }) => void;
+  onInsertLiteral?: (step: { name: string; params: RecipeParams }) => void;
 };
 
 function asStep(op: OpsShelfOp): StepSpec {
@@ -266,7 +267,7 @@ function SectionHeader({
   /** Toolbox id — decides whether this suite makes a CAST claim at all. */
   toolbox: string;
   /** Suite self-test map; absent while the POST is still running. */
-  castStatus?: Record<string, string> | null;
+  castStatus?: SuiteStatusMap | null;
   open: boolean;
   onToggle: () => void;
 }) {

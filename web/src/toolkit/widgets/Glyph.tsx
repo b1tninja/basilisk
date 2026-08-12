@@ -1,6 +1,7 @@
 import { GLYPH_PATHS } from "../../lib/toolkit/glyphs.js";
 import { TOOLBOX_META, SHELF_META, getShelfMeta } from "../../lib/toolkit/registry.js";
 import { toolboxVerification } from "../../lib/toolkit/suite-gate.js";
+import type { SuiteStatusMap } from "../../lib/toolkit/suite-gate.js";
 import { cn } from "@/lib/cn";
 
 /**
@@ -82,7 +83,8 @@ export function CastDot({
   className,
 }: {
   op: { toolbox?: string };
-  status?: Record<string, string> | null;
+  /** The gate's own map — three named suites, not an open string bag. */
+  status?: SuiteStatusMap | null;
   className?: string;
 }) {
   if (!status) return null;

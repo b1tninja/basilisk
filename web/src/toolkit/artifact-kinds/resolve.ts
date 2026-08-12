@@ -36,7 +36,16 @@ export type ResolvableArtifact = {
   tags?: string[];
 };
 
-export type ArtifactKind<A = unknown, S = unknown> = {
+/**
+ * `never` rather than `unknown` as the defaults, because `A` is used in
+ * contravariant positions — `badge` and `view` *take* an artifact. Under
+ * `unknown` the bare `ArtifactKind` was a type no real kind satisfied:
+ * `ArtifactKind<Specific>` is not assignable to `ArtifactKind<unknown>`, so
+ * every function here that named the bare form rejected the very registry it
+ * exists to search. `badgeNameFor` below already had it right, spelling its
+ * own callback `(artifact: never)`.
+ */
+export type ArtifactKind<A = never, S = never> = {
   /** Stable id — rides `data-artifact-kind` and names the catalog fixture. */
   id: string;
   match: ArtifactMatch;

@@ -53,7 +53,10 @@ describe("CastDot reports the self-test", () => {
     // The dot renders nothing without a status map, so an unwired prop would
     // look exactly like the regression it fixes.
     expect(SHELL).toMatch(/castStatus=\{suiteStatus\}/);
-    expect(SHELF).toMatch(/castStatus\?: Record<string, string> \| null;/);
+    // `SuiteStatusMap`, not an open string map: the gate reports three named
+    // suites, and the loose spelling was what let the shelf hand `CastDot` a
+    // map it could not read.
+    expect(SHELF).toMatch(/castStatus\?: SuiteStatusMap \| null;/);
   });
 
   it("sits on the toolbox header, at the granularity of the claim", () => {

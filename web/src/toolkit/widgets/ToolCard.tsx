@@ -36,7 +36,10 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 function paramTypeBits(p: ParamSpec): string {
-  const typeBits = [p.type];
+  // Display strings, not param types. Inference took the annotation from
+  // `p.type` and then refused every phrase below it, none of which is a
+  // ParamType — they describe how the value may arrive, not what it is.
+  const typeBits: string[] = [p.type];
   // `type` names the value kind and nothing else now, so the card has to say
   // how the value may arrive. It used to fall out of `type: "slot"` — which is
   // exactly why the value kind of 36 params went unwritten.
@@ -129,11 +132,13 @@ export function ToolCard({
       data-dir={decode ? "decode" : "encode"}
       data-pinned={pinned || undefined}
     >
-      {/* Header: glyph + title + metadata row */}
+      {/* Header: glyph + title + metadata row. The glyph is 22 rather than the
+          20 it used to be: GlyphSize is the scale, and 20 is not on it — this
+          was the only off-scale glyph in the app. */}
       <header className="flex gap-3 border-b border-[var(--border)] p-3.5">
         <Glyph
           id={glyphIdFor(op)}
-          size={compact ? 18 : 20}
+          size={compact ? 18 : 22}
           className="mt-0.5 text-[var(--foreground)]"
         />
         <div className="flex-1 min-w-0">

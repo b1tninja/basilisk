@@ -325,7 +325,10 @@ describe("a fully refused row states its guard (§33d, the secret-key row)", () 
     // come from outside the table and are live, so their presence means the
     // row is not dead at all.
     const tile = stripComments(TILE);
-    expect(tile).toMatch(/rowActions = actionsFor\(resolvedKind\)\.filter\(/);
+    // The cast sits on `actionsFor`'s result rather than on the filtered list,
+    // so the predicate below is checked against a typed `action` instead of an
+    // implicit any. Still one filter over the actions this row renders.
+    expect(tile).toMatch(/rowActions = \(actionsFor\(resolvedKind\) as ArtifactActionSpec\[\]\)\.filter\(/);
     expect(tile).toMatch(/action\.tier === "outward" && a\.publishedAs/);
     expect(tile).toMatch(/onExpand \|\| a\.diagnosticAction \? null : gatedRowReason\(rowActions, ctx\)/);
   });

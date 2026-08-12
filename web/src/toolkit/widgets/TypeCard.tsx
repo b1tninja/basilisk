@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { RecipeParams } from "../../lib/toolkit/recipe.js";
 import {
   consumersOf,
   producersOf,
@@ -11,7 +12,7 @@ import { KindGlyph } from "./kind-glyphs";
 type Props = {
   meta: TypeMeta;
   /** Append a constructed literal step to the pipeline. */
-  onInsertLiteral?: (step: { name: string; params: Record<string, unknown> }) => void;
+  onInsertLiteral?: (step: { name: string; params: RecipeParams }) => void;
   /** Append one of the producing/consuming ops. */
   onPickOp?: (name: string) => void;
   /** Compact hover layout — drops the constructor and the op lists. */
@@ -72,7 +73,7 @@ function LiteralConstructor({
   onInsertLiteral,
 }: {
   meta: TypeMeta;
-  onInsertLiteral?: (step: { name: string; params: Record<string, unknown> }) => void;
+  onInsertLiteral?: (step: { name: string; params: RecipeParams }) => void;
 }) {
   const literal = meta.literal;
   const [raw, setRaw] = useState("");

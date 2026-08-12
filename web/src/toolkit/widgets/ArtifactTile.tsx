@@ -350,9 +350,9 @@ export function ArtifactTile({
    * dead, so there is nothing to explain and the buttons keep their own private
    * descriptions.
    */
-  const rowActions = actionsFor(resolvedKind).filter(
+  const rowActions = (actionsFor(resolvedKind) as ArtifactActionSpec[]).filter(
     (action) => !(action.tier === "outward" && a.publishedAs)
-  ) as ArtifactActionSpec[];
+  );
   const rowGate =
     onExpand || a.diagnosticAction ? null : gatedRowReason(rowActions, ctx);
   const rowGateId = rowGate ? `artifact-row-gate-${uid}` : undefined;

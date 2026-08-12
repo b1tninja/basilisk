@@ -240,7 +240,13 @@ export function KindGlyph({
   className,
 }: {
   kind: string | undefined | null;
-  size?: number;
+  /**
+   * On the glyph scale, because this hands `size` straight to `Glyph`, which
+   * only draws the scale. It was `number` with a cast at the call below, which
+   * made an off-scale badge a compile-time success and a design-system
+   * violation. Every caller was already on the scale.
+   */
+  size?: GlyphSize;
   className?: string;
 }) {
   const glyph = kindGlyph(kind);
@@ -251,7 +257,7 @@ export function KindGlyph({
     return (
       <Glyph
         id={glyph}
-        size={size as GlyphSize}
+        size={size}
         className={className}
         svgClassName="shrink-0"
       />
