@@ -1504,6 +1504,24 @@ dkg.run threshold=2 | out $dkg`,
       skipReason: "needs a live mesh with every participant present",
     },
     {
+      // Compiled, not run, for the same reason `dkg.run` is: the value is a
+      // digest over contributions from participants who are not here. What the
+      // compile case does prove is that a pooled cell type-checks in a notebook
+      // that opened a room first — `entropy.pool` is a source, so a recipe that
+      // piped into it would be refused before any of this mattered.
+      //
+      // `pool-run.test.js` is where the ceremony itself is proven, with N
+      // participants in one process over an injected transport.
+      id: "entropy.pool.compile",
+      recipe: `gpg.genkey email="pool-smoke@example.com" | out $me
+
+quorum.join to="${"A".repeat(40)},${"B".repeat(40)},${"C".repeat(40)}" key=$me | out $session
+
+entropy.pool | out $salt`,
+      mode: "compile",
+      skipReason: "needs a live mesh with every participant present",
+    },
+    {
       id: "rtc.restart.compile",
       recipe: "rtc.restart | out $state",
       mode: "compile",

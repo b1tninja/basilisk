@@ -447,6 +447,13 @@ export const SHELF_META = {
    * legible as the same errand with different protection.
    */
   exchange: { label: "Exchange", order: 0, glyph: "quorum" },
+  /**
+   * Things the room does *together*, once it is open. `exchange` opens and
+   * closes a room and `channel` moves bytes across one; drawing a value every
+   * participant helped choose is neither, and folding it into either would
+   * misfile the one shelf where an op is worthless alone.
+   */
+  ceremony: { label: "Ceremony", order: 3, glyph: "quorum" },
 };
 
 /**
@@ -1866,6 +1873,48 @@ export const STEPS = [
         max: 16,
         doc: "Participants required to reconstruct later (K)",
       },
+      {
+        name: "wait",
+        type: "int",
+        default: 120000,
+        doc: "How long to wait for the other participants (ms)",
+      },
+    ],
+  },
+  {
+    /**
+     * The other half of `entropy: { mode: "pool" }`.
+     *
+     * `manifest.js` has declared the mode and shipped the refusal that guards
+     * it — a pooled run may contain no op that draws `keying` randomness —
+     * while saying in its own header that nothing produced the value. This
+     * produces it.
+     *
+     * One op, not a step per round: commit and reveal each block on every
+     * other participant, and two chained steps would be two places to stall
+     * with no way to say which. Same reasoning as `dkg.run`.
+     */
+    name: "entropy.pool",
+    kind: "source",
+    // Placed by what it *is*, the way `dkg.run` was moved to the shelf that
+    // owns Feldman VSS rather than the one that owns live connections. This is
+    // not SubtleCrypto — nothing here calls it — it is a ceremony the room
+    // performs, so it sits beside the other ops that only mean anything with an
+    // exchange open. Its own shelf, because `exchange` opens and closes a room
+    // and `channel` moves bytes across one; drawing a value together is
+    // neither.
+    toolbox: "quorum",
+    shelf: "ceremony",
+    glyph: "ports",
+    doc: "Draw randomness the whole room chose: every participant commits to a nonce, then reveals it, and the pool is a digest over all the reveals — so no participant can pick the value by moving last. Needs a live `quorum.offer`/`quorum.join` with every participant present; a participant who commits and never reveals stalls the round rather than deciding it. **Public-safe randomness only** — salts, nonces, IVs, challenges. Never key material: a value everyone can recompute is a key everyone can recompute, which `manifest.js` refuses before the run. Example: `entropy.pool | out $salt`.",
+    input: "none",
+    output: "bytes",
+    // `public` is the whole point rather than a concession: this value is
+    // published to the room by construction, and every participant recomputes
+    // it. Declaring `keying` would be false, and declaring nothing reads as
+    // `keying` and would make a pooled run refuse itself.
+    entropy: "public",
+    params: [
       {
         name: "wait",
         type: "int",

@@ -287,6 +287,10 @@ export function closeQuorumExchange(reason = "closed") {
   }
   ex.inbox.length = 0;
   ex.handoffs.length = 0;
+  // A pool describes the room that drew it. Kept past the close it would be
+  // recorded against the next room's manifest, which is a document claiming a
+  // value those participants never chose.
+  void import("./entropy-pool-ops.js").then((m) => m.clearPooledEntropy());
   // A failed exchange keeps its last roster so the panel can show *which*
   // links died; a clean close clears it — the session ended, nothing is live.
   ex.state = {

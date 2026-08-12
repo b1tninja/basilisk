@@ -2915,6 +2915,12 @@ async function execStepBody(step, value, bindings, artifacts) {
       const { execDkgRun } = await import("./dkg-ops.js");
       return execDkgRun(step.params || {});
     }
+    case "entropy.pool": {
+      // Same reason as `dkg.run`: it runs rounds over the live exchange, which
+      // only the main thread holds.
+      const { execEntropyPool } = await import("./entropy-pool-ops.js");
+      return execEntropyPool(step.params || {});
+    }
     case "qr.scan": {
       // Lazy + main-thread: BarcodeDetector and canvas rasterization are not
       // available in the worker.
@@ -3185,10 +3191,15 @@ async function currentRunReceipt(bindings, artifacts, params) {
  * it says something. The cells still carry their `@peer` headers, which is what
  * the recipe actually knows.
  *
- * `entropy` and `clock` are left at `buildRunManifest`'s fail-closed defaults
- * (`local`, `free`), because they are true of every run this build performs: no
- * op reads a pool and no op reads a pinned `t0`. `manifestReproducibility` will
- * say so, which is the honest answer rather than a flattering one.
+ * `clock` is left at `buildRunManifest`'s fail-closed default (`free`), because
+ * it is true of every run this build performs: no op reads a pinned `t0`.
+ *
+ * `entropy` is no longer a default. If this run drew a pool, the digest it drew
+ * is recorded — and if it did not, `local` stands. The distinction is the whole
+ * value of the field: a manifest that said `pool` because the notebook
+ * *mentions* `entropy.pool` would be a claim, and one that records what the run
+ * actually pooled is a record. A cell that refused leaves nothing behind, so a
+ * failed pool cannot be recorded as a drawn one.
  *
  * @param {RuntimeBindings} bindings
  * @param {Record<string, *>} params
@@ -3233,11 +3244,18 @@ async function currentRunManifest(bindings, params) {
 
   const title =
     String(params?.title || "").trim() || String(ctx.label || "").trim() || undefined;
+  // Dynamic, like every other import here, and safe for the worker path: a
+  // pool can only be drawn where the live exchange is, so a manifest built
+  // anywhere else reads `null` and keeps the `local` default — which is true
+  // there.
+  const { lastPooledEntropy } = await import("./entropy-pool-ops.js");
+  const pool = lastPooledEntropy();
   return buildRunManifest({
     title,
     registry: opsRegistryVersion(),
     recipeSource,
     cells,
+    ...(pool ? { entropy: { mode: "pool", digest: pool.digest } } : {}),
   });
 }
 

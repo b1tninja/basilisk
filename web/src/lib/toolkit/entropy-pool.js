@@ -107,6 +107,26 @@ function requireNonce(raw, who) {
 }
 
 /**
+ * A nonce to contribute.
+ *
+ * Here rather than in the driver because this module defines what a nonce *is*
+ * — hex, even-length, lowercase — and a minter that disagreed with the reader
+ * beside it would be two answers to one question. 32 bytes because the pool is
+ * a SHA-256 digest and a contribution smaller than the output it feeds is a
+ * contribution somebody could search.
+ *
+ * @param {number} [byteLength]
+ * @returns {string} lowercase hex
+ */
+export function randomNonce(byteLength = 32) {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  let hex = "";
+  for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+  return hex;
+}
+
+/**
  * A participant's commitment to a nonce they have not published yet.
  *
  * @param {{ id: string, nonce: string }} reveal

@@ -529,6 +529,14 @@ export function inferSourceType(name, params = {}) {
       // rather than a handle: unlike `session`, this outlives the run — it is
       // the thing you keep.
       return typeOf("text", { kind: "opaque" });
+    case "entropy.pool":
+      // 32 bytes the whole room chose, and deliberately **not** `kind:
+      // "master"` the way `random 32` is. The kinds are not decoration: a
+      // master is key material, and this value is published to every
+      // participant by construction. Typing it as one would offer it to the
+      // ops that take a master — which is exactly the mistake
+      // `mirroredRunRefusals` refuses a whole run to prevent.
+      return typeOf("bytes", { length: 32 });
     case "file.read": {
       // `as` decides, and nothing else does — `execFileRead` reads the same
       // param and makes the same call, so this is a promise rather than a
