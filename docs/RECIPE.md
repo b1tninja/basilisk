@@ -74,7 +74,8 @@ A chain may open with a header naming the party the cell is written for.
 
 ```text
 chain     := header? pipeline
-header    := "@" peer (SP "publish")?    # at the chain head, before the first step
+header    := "@" peer (SP "publish" ("=" slots)?)?   # at the chain head
+slots     := "$" LABEL ("," "$" LABEL)*  # which `out`s leave; default is all
 peer      := LABEL | "*"                 # "*" = every participant (rendezvous)
 LABEL     := /^[A-Za-z][A-Za-z0-9_-]*$/  # the slot label grammar, shared
 ```
@@ -93,15 +94,41 @@ random 32 | out $nonce
 | Form | Meaning |
 |------|---------|
 | `@alice` | This cell belongs to the peer named `alice` |
-| `@alice publish` | …and its `out` artifacts are meant to leave the machine |
+| `@alice publish` | …and every `out` it writes is meant to leave the machine |
+| `@alice publish=$a,$b` | …and only `$a` and `$b` are; every other `out` stays with alice |
 | `@*` | Rendezvous: every participant, together |
+
+A cell often writes several things with different destinations. A verifiable
+split writes commitments the room needs, shares that must never leave, and a
+digest to check against later — all three nested under `tee` / `foreach`,
+because a fan-out is how one cell writes several things:
+
+```text
+@mara publish=$commitments
+random 32 | tee
+  - digest | encode hex | out $expected
+| vss.split threshold=2 shares=3 | tee
+  - vss.commitments | out $commitments
+| blip39 | foreach
+  - out $share | qr
+```
 
 Rules:
 
 - One peer per cell; a header with no steps under it is an error.
 - The header owns its own line in pretty form and is space-joined in compact
   form (`@alice publish random 32|out $x`), so it survives `#r=` unchanged.
-- `publish` needs an `out` to publish, and a peer to publish from.
+- `publish` needs an `out` to publish — at any depth, a `tee` branch's and a
+  `foreach` body's included — and a peer to publish from.
+- `publish=` names slots the cell writes. A name nothing answers to is an
+  error, not a header that quietly publishes nothing.
+- The names are comma-separated, never space-separated: the compact form puts
+  the header and the first step on one line, so a space would make
+  `@alice publish $kpA|:public` ambiguous with recipes that already exist.
+- A named slot is public; **every other `out` of that cell is that peer's
+  private value**, exactly as if the cell carried no `publish` at all. So
+  narrowing a header narrows what a plan will let travel, and a cell that reads
+  a withheld slot is refused with `two-owners`.
 - `*` is spelled `*` rather than `all` because it cannot be a label, so the
   wildcard can never collide with a participant actually called `all`.
 - **A peer is a name, never a fingerprint.** A hex label of 16 characters or

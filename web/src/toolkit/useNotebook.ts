@@ -1280,17 +1280,19 @@ export function useNotebook() {
     const chain = ast.chains?.[0] || { steps: ast.steps || [] };
     setChains((prev) => {
       const next = [...prev];
-      // `peer` and `publish` come with the chain and have to be carried over.
-      // Rebuilding from `steps` alone dropped them, which made a `@peer`
-      // header impossible to write anywhere in the product: the grammar reads
-      // it (`recipe-parse.js` sets `chain.peer`), `serializeChain` writes it
-      // back out, `planRun` places cells by it and `placementGate` enforces it
-      // — and this one assignment threw it away between the parse and the
-      // state, so typing `@mara publish` parsed cleanly and then vanished.
+      // `peer`, `publish` and the slots `publish` names come with the chain and
+      // have to be carried over. Rebuilding from `steps` alone dropped them,
+      // which made a `@peer` header impossible to write anywhere in the
+      // product: the grammar reads it (`recipe-parse.js` sets `chain.peer`),
+      // `serializeChain` writes it back out, `planRun` places cells by it and
+      // `placementGate` enforces it — and this one assignment threw it away
+      // between the parse and the state, so typing `@mara publish` parsed
+      // cleanly and then vanished.
       next[cellIndex] = {
         steps: [...(chain.steps || [])],
         ...(chain.peer == null ? {} : { peer: chain.peer }),
         ...(chain.publish ? { publish: true } : {}),
+        ...(chain.publishSlots?.length ? { publishSlots: [...chain.publishSlots] } : {}),
       };
       return next;
     });
@@ -1314,16 +1316,32 @@ export function useNotebook() {
    * `publish` is only meaningful alongside a peer — it says this cell's output
    * may leave the machine that made it — so clearing the peer clears it too
    * rather than leaving a modifier attached to nobody.
+   *
+   * `publishSlots` narrows that claim to named `out` slots (`publish=$a,$b`).
+   * An empty list is not "publish nothing": it is the bare `publish` the
+   * grammar has always had, meaning every `out` the cell writes. Saying
+   * nothing leaves is what dropping `publish` is for, and the two must not be
+   * spelled the same way in state or one of them becomes unreachable.
    */
   const setCellPeer = useCallback(
-    (cellIndex: number, peer: string | null, publish = false) => {
+    (
+      cellIndex: number,
+      peer: string | null,
+      publish = false,
+      publishSlots: string[] = []
+    ) => {
       setChains((prev) => {
         const next = [...prev];
         const chain = next[cellIndex];
         if (!chain) return prev;
-        const { peer: _p, publish: _pub, ...rest } = chain;
+        const { peer: _p, publish: _pub, publishSlots: _slots, ...rest } = chain;
         next[cellIndex] = peer
-          ? { ...rest, peer, ...(publish ? { publish: true } : {}) }
+          ? {
+              ...rest,
+              peer,
+              ...(publish ? { publish: true } : {}),
+              ...(publish && publishSlots.length ? { publishSlots: [...publishSlots] } : {}),
+            }
           : rest;
         return next;
       });

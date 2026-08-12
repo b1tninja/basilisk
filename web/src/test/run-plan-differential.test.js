@@ -159,7 +159,12 @@ describe("every docs/RECIPE.md fence that compiles plans exactly as it runs toda
   });
   it("is inert across the normative grammar doc", () => {
     let planned = 0;
-    /** @type {number[]} */
+    /**
+     * The headered fences, named by their own first header line rather than by
+     * their index in the file. An index re-points itself the moment a fence is
+     * added above it, which is how a pin like this stops meaning anything.
+     * @type {string[]}
+     */
     const headered = [];
     for (const [i, block] of fences.entries()) {
       // A fence is prose, EBNF or a recipe, and the doc does not label which.
@@ -168,14 +173,18 @@ describe("every docs/RECIPE.md fence that compiles plans exactly as it runs toda
       const compiled = compileRecipe(block);
       if (!compiled.validation.ok) continue;
       if (hasHeader(compiled)) {
-        headered.push(i);
+        headered.push(String(block.split("\n").find((l) => l.startsWith("@")) || `fence ${i}`));
         continue;
       }
       expectInert(`RECIPE.md fence ${i}`, block);
       planned++;
     }
     expect(planned).toBeGreaterThanOrEqual(5);
-    expect(headered).toHaveLength(1);
+    // Two, and this says which. The second arrived with `publish=$slot`: the
+    // doc has to show a dealer publishing one of the three things its cell
+    // writes, because that is the case the modifier exists for and a grammar
+    // reference that only shows the all-or-nothing form does not document it.
+    expect(headered).toEqual(["@alice", "@mara publish=$commitments"]);
   });
 
   it("plans the doc's own placement example the way the doc reads it", () => {

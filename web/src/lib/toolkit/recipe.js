@@ -13,7 +13,7 @@
  * bare `out kp` / `key=cek` → `migrateRecipe` / Upgrade. Bare `$kp` ≡ `in $kp` on load.
  * A pre-swap `@kp` still parses in step/param position and is rewritten to `$kp`
  * with a compile warning; `@` at the head of a chain names the peer the cell
- * runs for (`@alice`, `@alice publish`, `@*`).
+ * runs for (`@alice`, `@alice publish`, `@alice publish=$a,$b`, `@*`).
  */
 
 import {
@@ -35,6 +35,7 @@ import {
   peerFingerprintError,
   peerLooksLikeFingerprint,
   PEER_PUBLISH_KEYWORD,
+  PEER_PUBLISH_SEPARATOR,
   PEER_SIGIL,
   SLOT_SIGIL,
   slotLabelKey,
@@ -439,6 +440,10 @@ function validateStepSlotParams(
  * @property {RecipeStep[]} steps
  * @property {string} [peer]  canonical peer label (no sigil), or `*` for everyone
  * @property {boolean} [publish]  this cell's `out` artifacts go to the room
+ * @property {string[]} [publishSlots]  which of them, when the header says so
+ *   (`publish=$a,$b`). Absent means all of them, which is what a bare
+ *   `publish` has always meant — so a chain that never named any carries no
+ *   field at all. Labels, no sigil, in the order they were written.
  * @property {number} [headerStart]  char offsets — a complaint about the header
  * @property {number} [headerEnd]    must anchor to it, not to step 0's span
  */
@@ -770,6 +775,76 @@ function serializeChainSteps(steps, opts = {}) {
 }
 
 /**
+ * Every slot a cell writes, at any depth, in the order it writes them.
+ *
+ * A `tee` branch's `out` and a `foreach` body's `out` are this cell's output —
+ * the fan-out is *how* a cell writes several things, not a different cell. One
+ * definition, here, because three passes ask the question and each of them
+ * would otherwise answer it slightly differently: the header validator used to
+ * look only at the top-level steps and told a cell with three nested `out`s
+ * that it had none.
+ * @param {RecipeStep[]} steps
+ * @returns {string[]}  labels, no sigil, first spelling wins
+ */
+export function outSlotLabels(steps) {
+  /** @type {string[]} */
+  const labels = [];
+  const walk = (list) => {
+    for (const step of list || []) {
+      if (step?.name === "out") {
+        const label = slotLabelKey(String(step.params?.name || ""));
+        if (label && !labels.includes(label)) labels.push(label);
+      }
+      walk(step?.body || []);
+      for (const br of step?.branches || []) walk(br?.body || []);
+    }
+  };
+  walk(steps);
+  return labels;
+}
+
+/**
+ * Which of a cell's `out` artifacts its header sends to the room.
+ *
+ * The one answer to *what does this header let out*, asked by the planner and
+ * by the handoff. Three cases and no fourth:
+ *
+ * - no `publish` — nothing;
+ * - `publish` — everything the cell writes, which is what it has always meant;
+ * - `publish=$a,$b` — those, intersected with what the cell actually writes.
+ *
+ * The intersection matters rather than being defensive tidiness: a header
+ * naming a slot the cell does not write publishes *nothing under that name*,
+ * and the compile error beside it says so. Returning the raw list would let a
+ * typo read as a licence for a slot some other cell owns.
+ * @param {RecipeChain} chain
+ * @returns {string[]}
+ */
+export function publishedSlots(chain) {
+  if (!chain?.publish) return [];
+  const written = outSlotLabels(chain.steps || []);
+  const named = chain.publishSlots;
+  if (!named || !named.length) return written;
+  return written.filter((label) => named.includes(label));
+}
+
+/**
+ * The header text for a chain, or "" when it has no peer to hang one on.
+ * @param {RecipeChain} chain
+ * @returns {string}
+ */
+function chainHeaderText(chain) {
+  const peer = chain?.peer == null ? "" : String(chain.peer);
+  if (!peer.length) return "";
+  if (!chain.publish) return `${PEER_SIGIL}${peer}`;
+  const named = chain.publishSlots || [];
+  const which = named.length
+    ? `=${named.map((l) => `${SLOT_SIGIL}${l}`).join(PEER_PUBLISH_SEPARATOR)}`
+    : "";
+  return `${PEER_SIGIL}${peer} ${PEER_PUBLISH_KEYWORD}${which}`;
+}
+
+/**
  * Serialize one chain, header included.
  *
  * The header is emitted only when the chain has steps to hang it on: a
@@ -782,11 +857,8 @@ function serializeChainSteps(steps, opts = {}) {
  */
 function serializeChain(chain, opts = {}) {
   const body = serializeChainSteps(chain?.steps || [], opts);
-  const peer = chain?.peer == null ? "" : String(chain.peer);
-  if (!body.length || !peer.length) return body;
-  const head = chain.publish
-    ? `${PEER_SIGIL}${peer} ${PEER_PUBLISH_KEYWORD}`
-    : `${PEER_SIGIL}${peer}`;
+  const head = chainHeaderText(chain);
+  if (!body.length || !head.length) return body;
   return opts.compact === true ? `${head} ${body}` : `${head}\n${body}`;
 }
 
@@ -1049,9 +1121,10 @@ function validateChainHeader(chain, firstStepIndex, errors) {
     end: chain?.headerEnd ?? steps[0]?.end,
     stepIndex: firstStepIndex,
   };
+  const named = chain?.publishSlots || [];
   const peer = chain?.peer;
   if (peer == null || peer === "") {
-    if (chain?.publish) {
+    if (chain?.publish || named.length) {
       errors.push({
         message:
           `\`${PEER_PUBLISH_KEYWORD}\` says where this cell's \`out\` ` +
@@ -1060,6 +1133,19 @@ function validateChainHeader(chain, firstStepIndex, errors) {
         ...anchor,
       });
     }
+    return;
+  }
+  // Names without the keyword. Unspellable in text — the parser only reads a
+  // list after `publish` — and reachable through the AST, where it would
+  // serialize to a header that no longer says it.
+  if (named.length && !chain?.publish) {
+    errors.push({
+      message:
+        `This cell names slots to publish without \`${PEER_PUBLISH_KEYWORD}\` ` +
+        `— write \`${PEER_SIGIL}${peer} ${PEER_PUBLISH_KEYWORD}=` +
+        `${SLOT_SIGIL}${named[0]}\`, or drop the names`,
+      ...anchor,
+    });
     return;
   }
   const norm = normalizePeerRef(String(peer));
@@ -1071,7 +1157,14 @@ function validateChainHeader(chain, firstStepIndex, errors) {
     errors.push({ message: peerFingerprintError(norm.peer), ...anchor });
     return;
   }
-  if (chain?.publish && !steps.some((s) => s?.name === "out")) {
+  if (!chain?.publish) return;
+  // At any depth. A verifiable split writes its commitments inside a `tee` and
+  // its shares inside a `foreach`, and this used to look only at the cell's
+  // top-level steps — so the message below was printed about a cell with three
+  // `out`s in it, which made the shape unwritable and said something untrue
+  // while doing it.
+  const written = outSlotLabels(steps);
+  if (!written.length) {
     // A cell that publishes nothing is a ceremony that quietly did nothing —
     // an error rather than a runtime skip, for the same reason.
     errors.push({
@@ -1079,6 +1172,21 @@ function validateChainHeader(chain, firstStepIndex, errors) {
         `\`${PEER_SIGIL}${norm.peer} ${PEER_PUBLISH_KEYWORD}\` publishes this ` +
         `cell's \`out\` artifacts, but the cell has no \`out\` — add ` +
         `\`out $name\`, or drop \`${PEER_PUBLISH_KEYWORD}\``,
+      ...anchor,
+    });
+    return;
+  }
+  // A name nothing answers to. Left as an error rather than ignored: the
+  // header would read as publishing something and publish nothing, which is
+  // the same silent ceremony one paragraph up.
+  for (const label of named) {
+    if (written.includes(label)) continue;
+    errors.push({
+      message:
+        `\`${PEER_SIGIL}${norm.peer} ${PEER_PUBLISH_KEYWORD}=` +
+        `${SLOT_SIGIL}${label}\` publishes \`${SLOT_SIGIL}${label}\`, but this ` +
+        `cell does not write it — it writes ` +
+        `${written.map((l) => `\`${SLOT_SIGIL}${l}\``).join(", ")}`,
       ...anchor,
     });
   }

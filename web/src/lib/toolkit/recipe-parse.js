@@ -22,11 +22,11 @@
  * reference token, which is what keeps `to=alice@example.com` and
  * `passphrase=my$ecret` literal.
  *
- * Chain header. A chain (a notebook cell) may open with `@peer` or
- * `@peer publish`, before its first step: `@` is who, `$` is what. The header
- * is inert grammar — it names the party a cell belongs to and says whether the
- * cell's `out` artifacts are meant to leave the machine; nothing here runs
- * anything anywhere.
+ * Chain header. A chain (a notebook cell) may open with `@peer`,
+ * `@peer publish` or `@peer publish=$a,$b`, before its first step: `@` is who,
+ * `$` is what. The header is inert grammar — it names the party a cell belongs
+ * to and says which of the cell's `out` artifacts are meant to leave the
+ * machine; nothing here runs anything anywhere.
  */
 
 import { canonicalName, getStep } from "./registry.js";
@@ -43,6 +43,17 @@ import {
  */
 
 /** @typedef {{ type: string, value: string, start: number, end: number }} Tok */
+
+/**
+ * A chain header, read.
+ * @typedef {object} ChainHead
+ * @property {string} peer
+ * @property {boolean} publish
+ * @property {string[]} publishSlots  labels `publish=` named, empty for a bare
+ *   `publish` — which means every `out` the cell writes
+ * @property {number} start
+ * @property {number} end
+ */
 
 const SELECTOR_MEMBERS = new Set([
   "private",
@@ -91,6 +102,20 @@ export const PEER_WILDCARD = "*";
 
 /** The `publish` keyword, the header's only modifier. */
 export const PEER_PUBLISH_KEYWORD = "publish";
+
+/**
+ * What separates two names in `publish=$a,$b`.
+ *
+ * A comma rather than a space, and that is forced rather than chosen. The
+ * compact header spelling puts the header and the first step on one line —
+ * `@alice publish $kpA|:public` is a real recipe that rides in a `#r=` link
+ * today — so a space-separated list after `publish` would re-read that
+ * existing text as *publish `$kpA`, then a pipeline that starts with a bare
+ * selector*. One separator that cannot begin a step is the whole requirement,
+ * and `comma/space separated` is already how this grammar spells a list of
+ * values (`gpg.encrypt to=`, `age.encrypt to=`).
+ */
+export const PEER_PUBLISH_SEPARATOR = ",";
 
 /**
  * `$` or the legacy `@`, at the *start* of a reference token only.
@@ -499,7 +524,7 @@ class Parser {
     const chains = [];
     /** @type {RecipeStep[]} */
     let current = [];
-    /** @type {{ peer: string, publish: boolean, start: number, end: number }|null} */
+    /** @type {ChainHead|null} */
     let head = null;
 
     const flush = () => {
@@ -509,6 +534,10 @@ class Parser {
         if (head) {
           chain.peer = head.peer;
           if (head.publish) chain.publish = true;
+          // Only when it names some. A chain that publishes everything carries
+          // no list at all, so `Object.keys(chain)` on a headerless cell — and
+          // on a plain `@peer publish` one — is what it always was.
+          if (head.publishSlots.length) chain.publishSlots = head.publishSlots;
           chain.headerStart = head.start;
           chain.headerEnd = head.end;
         }
@@ -624,13 +653,14 @@ class Parser {
   }
 
   /**
-   * `@peer` / `@peer publish` at the head of a chain. Positioned on the `@`.
+   * `@peer`, `@peer publish` or `@peer publish=$a,$b` at the head of a chain.
+   * Positioned on the `@`.
    *
    * Returns null when the token is not a peer name; the error is already
    * recorded and the whole bad token consumed, so the caller can carry on
    * reading the pipeline instead of producing a second complaint about the
    * same characters.
-   * @returns {{ peer: string, publish: boolean, start: number, end: number }|null}
+   * @returns {ChainHead|null}
    */
   parseChainHeader() {
     const start = this.pos;
@@ -650,8 +680,11 @@ class Parser {
     }
 
     // `publish`, and only as a whole token — `@alice publishing` is a peer
-    // followed by a step name the registry will not know.
+    // followed by a step name the registry will not know. `=` is not a label
+    // character, so `publish=$a` still reads as the whole keyword.
     let publish = false;
+    /** @type {string[]} */
+    let publishSlots = [];
     const afterPeer = this.pos;
     this.skipSpaces();
     const kwEnd = this.pos + PEER_PUBLISH_KEYWORD.length;
@@ -661,6 +694,10 @@ class Parser {
     ) {
       this.pos = kwEnd;
       publish = true;
+      if (this.peek() === "=") {
+        this.pos++;
+        publishSlots = this.parsePublishSlots(start);
+      }
     } else {
       this.pos = afterPeer;
     }
@@ -681,7 +718,60 @@ class Parser {
       });
       this.pos++;
     }
-    return { peer: norm.peer, publish, start, end };
+    return { peer: norm.peer, publish, publishSlots, start, end };
+  }
+
+  /**
+   * The `$a,$b` after `publish=`. Positioned just past the `=`.
+   *
+   * Every name is refused unless it carries the `$`. That is stricter than
+   * `out`/`in`, which still read a pre-swap `@label`, and deliberately so:
+   * `publish=` is newer than the sigil swap, so no recipe in the wild spells a
+   * name here at all. Accepting `@` would be reviving an ambiguity for text
+   * that cannot exist, at the one position where `@` already means a peer.
+   *
+   * Errors are recorded and the rest of the list still read, so a typo in the
+   * first name does not turn the second one into a stray step.
+   * @param {number} headerStart  the `@`, so a complaint spans the whole header
+   * @returns {string[]}  canonical labels, no sigil, first spelling wins
+   */
+  parsePublishSlots(headerStart) {
+    /** @type {string[]} */
+    const labels = [];
+    for (;;) {
+      const tokStart = this.pos;
+      while (!this.eof() && !/[\s|#,]/.test(this.peek())) this.pos++;
+      const raw = this.src.slice(tokStart, this.pos);
+      const at = { start: headerStart, end: Math.max(this.pos, tokStart + 1) };
+      if (!raw) {
+        this.errors.push({
+          message:
+            `\`${PEER_PUBLISH_KEYWORD}=\` names the slots this cell sends to ` +
+            `the room — write \`${PEER_PUBLISH_KEYWORD}=${SLOT_SIGIL}name\`, ` +
+            `or drop the \`=\` to publish every \`out\` the cell writes`,
+          ...at,
+        });
+      } else if (raw[0] === LEGACY_SLOT_SIGIL) {
+        this.errors.push({
+          message:
+            `Slots after \`${PEER_PUBLISH_KEYWORD}=\` are written ` +
+            `\`${SLOT_SIGIL}${raw.slice(1)}\` — \`${LEGACY_SLOT_SIGIL}\` names ` +
+            `a peer at the head of a cell, which is where this is`,
+          ...at,
+        });
+      } else {
+        const norm = normalizeSlotRef(raw, { allowIndex: false });
+        if (!norm.ok) this.errors.push({ message: norm.error, ...at });
+        else {
+          const label = slotLabelKey(norm.ref);
+          // A repeated name is the same claim twice, not a second one.
+          if (label && !labels.includes(label)) labels.push(label);
+        }
+      }
+      if (this.peek() !== PEER_PUBLISH_SEPARATOR) break;
+      this.pos++;
+    }
+    return labels;
   }
 
   /**
