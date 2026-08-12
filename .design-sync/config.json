@@ -52,7 +52,8 @@
     "DkgPanel": "src/toolkit/widgets/DkgPanel.tsx",
     "ShareCards": "src/toolkit/widgets/ShareCards.tsx",
     "ShareCheck": "src/toolkit/widgets/ShareCheck.tsx",
-    "ShareIdentity": "src/toolkit/widgets/ShareIdentity.tsx"
+    "ShareIdentity": "src/toolkit/widgets/ShareIdentity.tsx",
+    "IntegrityPanel": "src/toolkit/widgets/IntegrityPanel.tsx"
   },
   "overrides": {
     "Sheet": {

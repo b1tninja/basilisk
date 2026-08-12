@@ -34,12 +34,27 @@
  * @returns {Promise<Uint8Array>}
  */
 async function sha256(bytes) {
-  if (globalThis.crypto?.subtle) {
-    return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  // One implementation, and it is the platform's.
+  //
+  // There used to be a `node:crypto` fallback here for the node suite, written
+  // before Node exposed WebCrypto globally. It has been unreachable since —
+  // `globalThis.crypto.subtle` is present in every browser this ships to and in
+  // Node from 19 — but a bundler resolves a dynamic import whether or not the
+  // branch runs, so one dead line pulled a node builtin into the browser graph.
+  // That is the whole reason `IntegrityPanel` sat outside the design sync: it
+  // reaches this module through `deployment-check.js`, and a browser bundle of
+  // it failed on "Could not resolve node:crypto".
+  //
+  // Refusing rather than falling back is also the rule `deployment-check.js`
+  // states about itself: two implementations of one security check drift, and
+  // the one that drifts is the one nobody reads. A runtime with no WebCrypto
+  // cannot compute this root, and saying so is the honest answer.
+  if (!globalThis.crypto?.subtle) {
+    throw new Error(
+      "module integrity: this runtime has no WebCrypto (crypto.subtle), so a module root cannot be computed"
+    );
   }
-  // Node vitest fallback
-  const { createHash } = await import("node:crypto");
-  return new Uint8Array(createHash("sha256").update(bytes).digest());
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
 }
 
 /**

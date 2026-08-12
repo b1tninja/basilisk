@@ -176,3 +176,24 @@ export { DkgPanel } from "./toolkit/widgets/DkgPanel";
 export { ShareCards } from "./toolkit/widgets/ShareCards";
 export { ShareCheck } from "./toolkit/widgets/ShareCheck";
 export { ShareIdentity } from "./toolkit/widgets/ShareIdentity";
+
+/**
+ * `IntegrityPanel`, which was the one widget this file left out.
+ *
+ * It was excluded because a browser bundle of it did not build: it reaches
+ * `lib/module-integrity.js` through `deployment-check.js`, and that module
+ * carried an `await import("node:crypto")` fallback written before Node exposed
+ * WebCrypto globally. The branch was unreachable — it sits behind
+ * `if (!globalThis.crypto?.subtle)` — but a bundler resolves a dynamic import
+ * whether or not it runs, so the whole export surface failed on "Could not
+ * resolve node:crypto". The line is gone and the module now refuses instead of
+ * falling back, which is what `deployment-check.js` already says about having
+ * two implementations of one security check.
+ *
+ * It needed no injectable in the end. The panel already renders from plain
+ * props — `verdict` supplies the state and `live={false}` suppresses the
+ * automatic run, which is how `pages/toolkit-widgets.tsx` has drawn its six
+ * outcomes all along. Nothing about the component changed to get it here.
+ */
+export { IntegrityPanel, type IntegrityPanelProps } from "./toolkit/widgets/IntegrityPanel";
+export { LIMIT_NOTE, type DeploymentVerdict } from "./lib/toolkit/deployment-check.js";
