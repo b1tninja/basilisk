@@ -76,6 +76,12 @@ export { ShareCheck, type ShareCheckProps } from "./ShareCheck";
 export { IntegrityPanel, type IntegrityPanelProps } from "./IntegrityPanel";
 export { DkgPanel, type DkgPanelProps } from "./DkgPanel";
 export {
+  PoolPanel,
+  type PoolPanelProps,
+  type PoolParticipant,
+  type PoolParticipantState,
+} from "./PoolPanel";
+export {
   CeremonySheet,
   type CeremonySheetProps,
   type CeremonyRunState,

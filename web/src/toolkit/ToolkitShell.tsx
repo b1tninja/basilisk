@@ -61,6 +61,7 @@ import {
   GpgKeyBinder,
   ConnectionsPanel,
   DkgPanel,
+  PoolPanel,
   CeremonySheet,
   ShareCheck,
   IntegrityPanel,
@@ -90,6 +91,10 @@ import {
 import { getStep } from "../lib/toolkit/registry.js";
 import { stepUnboundSlots } from "../lib/toolkit/input-needs.js";
 import type { DkgParticipant } from "../lib/quorum/dkg-session.js";
+import type {
+  PoolParticipant,
+  PoolParticipantState,
+} from "./widgets/PoolPanel";
 import {
   compileRecipe,
   outSlotLabels,
@@ -424,6 +429,72 @@ function dkgParticipants(
 }
 
 /**
+ * One `basilisk:entropy-pool` event. `running` while contributions land, then
+ * exactly one terminal phase — see `lib/toolkit/entropy-pool-ops.js`, the only
+ * thing that dispatches it.
+ */
+type PoolProgressDetail = {
+  phase: "running" | "complete" | "refused" | "failed";
+  round?: "committing" | "revealing";
+  participants?: number;
+  commitments?: string[];
+  reveals?: string[];
+  expected?: string[];
+  digest?: string;
+  /** Fingerprints whose reveal did not open their commitment. */
+  broken?: string[];
+  /** Fingerprints who committed and never revealed. */
+  silent?: string[];
+  message?: string;
+};
+
+/**
+ * What an `entropy.pool` has told us so far, in the shape `PoolPanel` reads.
+ *
+ * Built the way `dkgParticipants` is — from the exchange's own roster plus the
+ * run's progress — and with the same rule: **a state is claimed only when
+ * something established it.** A reveal that has *arrived* is not one that opens
+ * its commitment; `openEntropyPool` checks every reveal at the end, together.
+ * So `verified` waits for the round to open and `broken` for the refusal that
+ * names who. Merging "revealed" into "checked" would be the same lie as calling
+ * a DKG share checked on arrival, and it costs more here: the whole ceremony
+ * exists because a participant may choose theirs after seeing the others.
+ */
+function poolParticipants(
+  peers: { id: string; fingerprint: string }[],
+  selfFpr: string,
+  progress: PoolProgressDetail
+): PoolParticipant[] {
+  const commitments = new Set(progress.commitments || []);
+  const reveals = new Set(progress.reveals || []);
+  const broken = new Set(progress.broken || []);
+  const silent = new Set(progress.silent || []);
+  const out: PoolParticipant[] = [];
+  if (selfFpr) {
+    // True rather than decorative: this participant committed and revealed
+    // before anything was sent, and its own contribution opens its own
+    // commitment by construction.
+    out.push({ id: "you", fingerprint: selfFpr, self: true, state: "verified" });
+  }
+  for (const p of peers) {
+    const fpr = p.fingerprint || "";
+    const state: PoolParticipantState = broken.has(fpr)
+      ? "broken"
+      : silent.has(fpr)
+        ? "silent"
+        : progress.phase === "complete"
+          ? "verified"
+          : reveals.has(fpr)
+            ? "revealed"
+            : commitments.has(fpr)
+              ? "committed"
+              : "waiting";
+    out.push({ id: p.id, fingerprint: fpr, state });
+  }
+  return out;
+}
+
+/**
  * Params in one cell that only a `$slot` can fill and that nothing will ask for.
  *
  * The fourth entry in `ReadinessBar`'s own priority list — "blocked required
@@ -579,6 +650,20 @@ export function ToolkitShell() {
    * gone.
    */
   const [dkgProgress, setDkgProgress] = useState<DkgProgressDetail | null>(null);
+  /**
+   * The live `entropy.pool`, or null when none has spoken. Same shape and same
+   * reasons as `dkgProgress`: absent rather than empty, and cleared with the
+   * exchange, because a pool describes the room that drew it.
+   */
+  const [poolProgress, setPoolProgress] = useState<PoolProgressDetail | null>(null);
+  useEffect(() => {
+    const onPool = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as PoolProgressDetail;
+      if (detail?.phase) setPoolProgress(detail);
+    };
+    window.addEventListener("basilisk:entropy-pool", onPool);
+    return () => window.removeEventListener("basilisk:entropy-pool", onPool);
+  }, []);
   useEffect(() => {
     const onDkg = (ev: Event) => {
       const detail = (ev as CustomEvent).detail as DkgProgressDetail;
@@ -588,7 +673,9 @@ export function ToolkitShell() {
     return () => window.removeEventListener("basilisk:dkg-progress", onDkg);
   }, []);
   useEffect(() => {
-    if (nb.quorumState.phase === "idle") setDkgProgress(null);
+    if (nb.quorumState.phase !== "idle") return;
+    setDkgProgress(null);
+    setPoolProgress(null);
   }, [nb.quorumState.phase]);
 
   /** The last handoff attempt's outcome, in the handoff layer's own words. */
@@ -3096,6 +3183,33 @@ export function ToolkitShell() {
                         jointPublicKey={
                           dkgProgress.phase === "complete" ? dkgProgress.publicKey || "" : ""
                         }
+                      />
+                    </section>
+                  ) : null}
+
+                  {/* A running (or just-finished) entropy pool, beside the DKG
+                      for the same reason: both are the room doing something
+                      together, and the roster is the connections roster with
+                      one more axis on it.
+
+                      No handlers either, and here the reason is sharper than
+                      "the op does everything". A "reveal now" control would be
+                      an affordance for the one act the protocol exists to
+                      prevent — revealing before every commitment is in hands
+                      the last mover the choice committing took away. The cell's
+                      Run is the start button; there is nothing else to press. */}
+                  {poolProgress ? (
+                    <section className="mt-3 border-t border-[var(--border)] pt-3">
+                      <PoolPanel
+                        phase={poolProgress.phase}
+                        round={poolProgress.round}
+                        participants={poolParticipants(
+                          nb.quorumState.peers || [],
+                          nb.quorumState.self || "",
+                          poolProgress
+                        )}
+                        digest={poolProgress.digest}
+                        message={poolProgress.message}
                       />
                     </section>
                   ) : null}

@@ -116,10 +116,24 @@ export async function execEntropyPool(params) {
       },
     };
   } catch (err) {
-    announce({
-      phase: "failed",
-      message: err instanceof Error ? err.message : String(err),
-    });
+    // A round that refused is not the same event as one that broke, and the
+    // panel has to tell them apart: `broken` is a participant who revealed
+    // something that does not open their commitment — a contribution chosen
+    // after seeing the others — and `silent` is one who committed and went
+    // away. Everything else (a timeout, a cancelled run, a peer that dropped)
+    // is reported as itself.
+    const broken = /** @type {any} */ (err)?.broken;
+    const silent = /** @type {any} */ (err)?.silent;
+    announce(
+      broken?.length || silent?.length
+        ? {
+            phase: "refused",
+            broken: (broken || []).map(fingerprintOf),
+            silent: (silent || []).map(fingerprintOf),
+            message: err instanceof Error ? err.message : String(err),
+          }
+        : { phase: "failed", message: err instanceof Error ? err.message : String(err) }
+    );
     // Rethrown unchanged: the cell still fails, and a pool that refused must
     // not leave a digest behind for the manifest to record.
     throw err;

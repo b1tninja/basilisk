@@ -53,7 +53,8 @@
     "ShareCards": "src/toolkit/widgets/ShareCards.tsx",
     "ShareCheck": "src/toolkit/widgets/ShareCheck.tsx",
     "ShareIdentity": "src/toolkit/widgets/ShareIdentity.tsx",
-    "IntegrityPanel": "src/toolkit/widgets/IntegrityPanel.tsx"
+    "IntegrityPanel": "src/toolkit/widgets/IntegrityPanel.tsx",
+    "PoolPanel": "src/toolkit/widgets/PoolPanel.tsx"
   },
   "overrides": {
     "Sheet": {

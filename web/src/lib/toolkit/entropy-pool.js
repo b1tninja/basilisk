@@ -222,10 +222,17 @@ export async function openEntropyPool({ commitments, reveals }) {
 
   const silent = [...promised.keys()].filter((id) => !opened.some((r) => r.id === id)).sort();
   if (silent.length) {
-    throw new Error(
+    const err = new Error(
       `entropy pool: ${silent.join(", ")} committed and did not reveal. The round is not ` +
         "complete, and pooling without them would let whoever is left choose the value."
     );
+    // The ids as well as the sentence, so a surface can mark the right rows
+    // without parsing them back out of a message — the same reason `finalize`
+    // carries `dealer`. `silent` and `broken` stay separate because they are
+    // different events: somebody offline is not somebody who cheated, and a
+    // panel that merged them would accuse the first of being the second.
+    Object.assign(err, { silent });
+    throw err;
   }
 
   /** @type {string[]} */
@@ -240,12 +247,14 @@ export async function openEntropyPool({ commitments, reveals }) {
     if ((await entropyCommitment(r)) !== promised.get(r.id)) broken.push(r.id);
   }
   if (broken.length) {
-    throw new Error(
+    const err = new Error(
       `entropy pool: ${broken.join(", ")} revealed a nonce that does not open their ` +
         "commitment. That is a contribution chosen after seeing the others, which is the " +
         "one thing committing first was for — so the round is refused rather than pooled " +
         "without them."
     );
+    Object.assign(err, { broken });
+    throw err;
   }
 
   return {

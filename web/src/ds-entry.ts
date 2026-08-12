@@ -173,6 +173,11 @@ export { ModeToggle } from "./toolkit/widgets/ModeToggle";
 export { PresetMenu } from "./toolkit/widgets/PresetMenu";
 export { CeremonySheet } from "./toolkit/widgets/CeremonySheet";
 export { DkgPanel } from "./toolkit/widgets/DkgPanel";
+export {
+  PoolPanel,
+  type PoolPanelProps,
+  type PoolParticipant,
+} from "./toolkit/widgets/PoolPanel";
 export { ShareCards } from "./toolkit/widgets/ShareCards";
 export { ShareCheck } from "./toolkit/widgets/ShareCheck";
 export { ShareIdentity } from "./toolkit/widgets/ShareIdentity";

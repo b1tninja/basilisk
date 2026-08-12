@@ -2396,3 +2396,129 @@ input[type="file"][data-basilisk-file-picker] {
 .param-empty-means-key {
   font-family: var(--font-mono, ui-monospace, monospace);
 }
+
+/* ── entropy.pool ceremony ────────────────────────────────────────────────
+   Deliberately the same shape as `.dkg-*` rather than a second vocabulary:
+   both are "the room is doing something together and here is who it waits
+   on", and a reader who has learned one roster should not have to learn a
+   second. Only the state chips differ, because the states differ. */
+.pool-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pool-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pool-phase {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pool-count,
+.pool-blurb,
+.pool-waiting,
+.pool-note {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  line-height: 1.45;
+}
+
+.pool-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+}
+
+.pool-progress li[data-complete="yes"] {
+  color: var(--success);
+}
+
+.pool-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.pool-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.pool-state {
+  flex-shrink: 0;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+  color: var(--muted-foreground);
+}
+
+/* `revealed` stays muted on purpose: bytes have arrived and nothing has
+   checked them, so it must not read like an achievement. */
+.pool-state[data-pool-state="verified"] {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+
+.pool-state[data-pool-state="broken"] {
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+  color: var(--error);
+}
+
+.pool-state[data-pool-state="silent"] {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+
+.pool-facts {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 4px 8px;
+  margin: 0;
+  font-size: 10.5px;
+}
+
+.pool-facts dt {
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.pool-digest {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.pool-refusal {
+  font-size: 10.5px;
+  line-height: 1.45;
+  border-left: 2px solid var(--error);
+  padding-left: 8px;
+  color: var(--foreground);
+}
