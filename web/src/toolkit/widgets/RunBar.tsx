@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useId, type ReactNode } from "react";
 import { Play, Square } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { setCssVar } from "@/lib/css-vars.js";
@@ -21,8 +21,18 @@ type Props = {
   state: RunBarState;
   /** Human-readable reason the notebook can't run (blocked state's inline chip). */
   blocker?: string | null;
-  /** Disable Run all even when idle (e.g. recipe validation failed). */
-  runDisabled?: boolean;
+  /**
+   * Why Run all refuses even though nothing is blocked — the compiler's own
+   * words, not a flag.
+   *
+   * It was `runDisabled?: boolean`, set from `!nb.compiled.validation?.ok`, and
+   * it is the clearest case in the app of a control that could not have said
+   * why: the shell holds `validation.errors`, the bar held one bit of it, and
+   * the bit is the half that does not survive the trip. So the reason travels
+   * instead of the boolean — the same fix `MenuPopover.disabledReason` needed,
+   * and the reason this prop is a sentence and not a count.
+   */
+  runRefusal?: string | null;
   /** Focused cell index — shows "Run from [N]" when > 0. */
   focusedCell?: number;
   /** Running-state progress; null while busy but between cells. */
@@ -46,7 +56,7 @@ type Props = {
 export function RunBar({
   state,
   blocker = null,
-  runDisabled = false,
+  runRefusal = null,
   focusedCell = 0,
   progress = null,
   onRunAll,
@@ -68,6 +78,9 @@ export function RunBar({
         : 0;
     setCssVar("--run-progress", pct, "%");
   }, [progress?.cell, progress?.total]);
+  const chipId = useId();
+  /** The warn chip beside Run all — on screen only in the blocked state. */
+  const blockedChipShown = state === "blocked" && !!blocker;
   return (
     <div
       className={cn(
@@ -173,10 +186,18 @@ export function RunBar({
             <TooltipTrigger asChild>
               <span>
                 <Button
-                  disabled={state === "blocked" || runDisabled}
-                  title={blocker || "Run all cells"}
+                  // `state === "blocked"` is derived from `blocker` in the one
+                  // caller, so the state and its sentence arrive together; the
+                  // compiler's refusal is the other half, and used to be a
+                  // bare boolean with the words left behind in the shell.
+                  disabledReason={runRefusal || blocker || undefined}
+                  // Only when the chip below is already showing it. Otherwise
+                  // the button prints its own, because a `title` reaches
+                  // neither touch nor most screen readers — which is how a
+                  // validation error stayed invisible next to a dead button.
+                  reasonId={blockedChipShown ? chipId : undefined}
                   onClick={onRunAll}
-                  className="disabled:bg-[var(--surface-raised)] disabled:text-[var(--muted-foreground)] disabled:opacity-100"
+                  className="aria-disabled:bg-[var(--surface-raised)] aria-disabled:text-[var(--muted-foreground)] aria-disabled:opacity-100"
                 >
                   <Play />
                   Run all
@@ -202,7 +223,9 @@ export function RunBar({
                   className="h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--warn)]"
                   aria-hidden
                 />
-                <span className="text-[length:11.5px]">{blocker}</span>
+                <span id={chipId} className="text-[length:11.5px]" data-disabled-reason>
+                  {blocker}
+                </span>
                 {onBind ? (
                   <Button
                     size="sm"

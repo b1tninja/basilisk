@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
+import { useRefusal } from "@/components/ui/refusal";
 import { pasteReadout } from "../../lib/toolkit/session-flow.js";
 import { InviteCard } from "./InviteCard";
 
@@ -113,6 +114,45 @@ const PASTE_TONE: Record<string, string> = {
  * is a correctness question, not a preference, and it is stated where the
  * choice is made rather than discovered as a timeout two minutes later.
  */
+/**
+ * A search hit, as its own component so `useRefusal` is called once per row.
+ *
+ * Hooks cannot vary in number across renders, so the refusal could not live
+ * inside the `.map`. Already-in-the-room is a refusal rather than a hidden
+ * row: the reader should see that the search found them, and be told why
+ * pressing it would do nothing.
+ */
+function SearchHitRow({
+  hit,
+  here,
+  onAdd,
+}: {
+  hit: { fingerprint: string; label?: string };
+  here: boolean;
+  onAdd: (fpr: string) => void;
+}) {
+  const refusal = useRefusal(
+    here ? "This key is already in the room, so there is nothing to add." : undefined
+  );
+  return (
+    <button
+      type="button"
+      className="flex items-center gap-1.5 text-left link-action"
+      {...refusal.aria}
+      title={hit.fingerprint}
+      onClick={refusal.guard(() => onAdd(hit.fingerprint))}
+    >
+      <span className="min-w-0 truncate">{hit.label || shortFpr(hit.fingerprint)}</span>
+      <code className="font-mono text-[10px] text-[var(--muted-foreground)]">
+        {shortFpr(hit.fingerprint)}
+      </code>
+      <span className="text-[10px] text-[var(--muted-foreground)]">
+        {here ? "in the room" : "add"}
+      </span>
+    </button>
+  );
+}
+
 export function SessionStart({
   role,
   onRole,
@@ -138,6 +178,7 @@ export function SessionStart({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [showRecipe, setShowRecipe] = useState(false);
+  const issuesId = useId();
   const inRoom = new Set(audience.map((f) => f.toUpperCase()));
   const offering = role === "offer";
 
@@ -219,10 +260,15 @@ export function SessionStart({
         <span className="text-[11px] font-bold text-[var(--foreground)]">
           Joining as
         </span>
+        {/* Live even with nothing in it. Disabling it was the second half of
+            the original report: the chooser went grey, the Start button went
+            grey, and neither said the vault was empty — while the one string
+            that would have explained both was sitting in the option below. A
+            select holding one honest line is reachable, focusable, and says
+            what it knows. */}
         <select
           className="rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--foreground)]"
           value={keyFingerprint}
-          disabled={!keys.length}
           onChange={(e) => onKeyFingerprint(e.currentTarget.value)}
         >
           {/* The empty case says which emptiness it is. A lone "Choose a key…"
@@ -333,7 +379,13 @@ export function SessionStart({
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={!query.trim() || searching}
+                {...(searching
+                  ? { busy: true }
+                  : {
+                      disabledReason: query.trim()
+                        ? undefined
+                        : "Type a name, an address or a fingerprint to search for.",
+                    })}
                 onClick={() => void runSearch()}
               >
                 {searching ? "Searching…" : "Search"}
@@ -345,29 +397,14 @@ export function SessionStart({
             {hits && !searchError ? (
               hits.length ? (
                 <div className="flex flex-col gap-0.5" data-session-hits>
-                  {hits.map((hit) => {
-                    const here = inRoom.has(hit.fingerprint.toUpperCase());
-                    return (
-                      <button
-                        key={hit.fingerprint}
-                        type="button"
-                        className="flex items-center gap-1.5 text-left link-action"
-                        disabled={here}
-                        title={hit.fingerprint}
-                        onClick={() => add(hit.fingerprint)}
-                      >
-                        <span className="min-w-0 truncate">
-                          {hit.label || shortFpr(hit.fingerprint)}
-                        </span>
-                        <code className="font-mono text-[10px] text-[var(--muted-foreground)]">
-                          {shortFpr(hit.fingerprint)}
-                        </code>
-                        <span className="text-[10px] text-[var(--muted-foreground)]">
-                          {here ? "in the room" : "add"}
-                        </span>
-                      </button>
-                    );
-                  })}
+                  {hits.map((hit) => (
+                    <SearchHitRow
+                      key={hit.fingerprint}
+                      hit={hit}
+                      here={inRoom.has(hit.fingerprint.toUpperCase())}
+                      onAdd={add}
+                    />
+                  ))}
                 </div>
               ) : (
                 <p className="text-[10.5px] leading-snug text-[var(--muted-foreground)]">
@@ -393,7 +430,16 @@ export function SessionStart({
             onChange={(e) => setPasted(e.currentTarget.value)}
           />
           <div className="flex flex-wrap items-center gap-1.5">
-            <Button size="sm" variant="ghost" disabled={!pasted.trim()} onClick={addPasted}>
+            {/* The box is empty, which is a different thing from a paste that
+                found nothing — that one produces a sentence in the readout. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabledReason={
+                pasted.trim() ? undefined : "Paste an invite link or some fingerprints first."
+              }
+              onClick={addPasted}
+            >
               Add
             </Button>
             <span className="text-[10px] text-[var(--muted-foreground)]">
@@ -423,8 +469,17 @@ export function SessionStart({
         onCopy={onCopyInvite}
       />
 
+      {/* The list Start points at. `startIssues` already writes one sentence
+          per blocker, in the register this panel wants, and it is already on
+          screen — so the button borrows it rather than emitting a copy, which
+          would put the same refusal on the page twice and announce it twice. */}
       {issues.length ? (
-        <ul className="flex list-none flex-col gap-1 p-0" data-session-issues>
+        <ul
+          id={issuesId}
+          className="flex list-none flex-col gap-1 p-0"
+          data-session-issues
+          data-disabled-reason
+        >
           {issues.map((issue) => (
             <li
               key={issue}
@@ -458,7 +513,14 @@ export function SessionStart({
         ) : null}
       </div>
 
-      <Button onClick={onStart} disabled={issues.length > 0}>
+      <Button
+        onClick={onStart}
+        // Every sentence, not the first. `startIssues` orders nothing, and
+        // fixing the one blocker a button chose to name only to find the
+        // button still dead is the report this panel already generated once.
+        disabledReason={issues.length ? issues.join(" ") : undefined}
+        reasonId={issues.length ? issuesId : undefined}
+      >
         {offering ? "Start shared session" : "Join shared session"}
       </Button>
     </div>

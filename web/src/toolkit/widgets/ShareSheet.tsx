@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -19,6 +19,14 @@ export type RecipeLink =
    * not-yet, and painting it red makes a blank page look like a fault.
    */
   | { ok: false; reason: string; tone?: "refused" | "not-yet" };
+
+/**
+ * One string for one condition — the section prints it and the button refuses
+ * with it. Two copies would be two places for one sentence to drift, which is
+ * what `artifact-reasons.js` exists to prevent one layer down.
+ */
+const NO_PROOF_YET =
+  "No proof in this notebook yet — add run.manifest and run.receipt cells, then run it.";
 
 export type ShareSheetProps = {
   open: boolean;
@@ -153,32 +161,45 @@ export function ShareSheet({
             tone={recipeLink.ok ? undefined : (recipeLink.tone ?? "refused")}
             value={recipeLink.ok ? recipeLink.url : ""}
           >
-            <Button onClick={onCopyRecipeLink} disabled={!recipeLink.ok}>
-              Copy link
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setShowQr((v) => !v)}
-              disabled={!recipeLink.ok}
-              aria-expanded={showQr}
-            >
-              {showQr ? "Hide QR" : "QR"}
-            </Button>
-            <Button variant="outline" onClick={onSaveRecipe} disabled={!recipeLink.ok}>
-              Save file
-            </Button>
-            {showQr ? <RecipeQr qr={recipeQr} /> : null}
+            {(why) => (
+              <>
+                {/* `hashForNotebook`'s own words, carried whole: the secret
+                    guard refusing and an empty notebook having nothing to send
+                    are different states, and this row must not flatten them. */}
+                <Button
+                  onClick={onCopyRecipeLink}
+                  disabledReason={recipeLink.ok ? undefined : recipeLink.reason}
+                  reasonId={why}
+                >
+                  Copy link
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowQr((v) => !v)}
+                  disabledReason={recipeLink.ok ? undefined : recipeLink.reason}
+                  reasonId={why}
+                  aria-expanded={showQr}
+                >
+                  {showQr ? "Hide QR" : "QR"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={onSaveRecipe}
+                  disabledReason={recipeLink.ok ? undefined : recipeLink.reason}
+                  reasonId={why}
+                >
+                  Save file
+                </Button>
+                {showQr ? <RecipeQr qr={recipeQr} /> : null}
+              </>
+            )}
           </Tier>
 
           <Tier
             title="Send what you ran"
             what="The signed manifest and receipt alongside the recipe, so they can check your run reproduced. Nobody needs to be online."
             trust="They need your public key to check it"
-            blocked={
-              proof
-                ? null
-                : "No proof in this notebook yet — add run.manifest and run.receipt cells, then run it."
-            }
+            blocked={proof ? null : NO_PROOF_YET}
             tone="not-yet"
             value={
               proof
@@ -188,9 +209,15 @@ export function ShareSheet({
                 : ""
             }
           >
-            <Button onClick={onExportProof} disabled={!proof}>
-              Export proof
-            </Button>
+            {(why) => (
+              <Button
+                onClick={onExportProof}
+                disabledReason={proof ? undefined : NO_PROOF_YET}
+                reasonId={why}
+              >
+                Export proof
+              </Button>
+            )}
           </Tier>
 
           <Tier
@@ -200,20 +227,22 @@ export function ShareSheet({
             blocked={null}
             value={session ? `room ${session.room}` : ""}
           >
-            {session ? (
-              <>
-                <Button variant="outline" onClick={onCopyInvite}>
-                  Copy invite
-                </Button>
-                <RosterCount
-                  joined={session.joined}
-                  verified={session.verified}
-                  expected={session.expected}
-                />
-              </>
-            ) : (
-              <Button onClick={onStartSession}>Start shared session</Button>
-            )}
+            {() =>
+              session ? (
+                <>
+                  <Button variant="outline" onClick={onCopyInvite}>
+                    Copy invite
+                  </Button>
+                  <RosterCount
+                    joined={session.joined}
+                    verified={session.verified}
+                    expected={session.expected}
+                  />
+                </>
+              ) : (
+                <Button onClick={onStartSession}>Start shared session</Button>
+              )
+            }
           </Tier>
         </div>
       </SheetContent>
@@ -279,8 +308,15 @@ function Tier({
    */
   tone?: "refused" | "not-yet";
   value: string;
-  children: ReactNode;
+  /**
+   * A function of the blocked sentence's id, not a node, so this row's buttons
+   * can point at the sentence the section already prints. Three buttons each
+   * emitting their own copy of "no proof in this notebook yet" would be one
+   * refusal said four times on one card.
+   */
+  children: (reasonId: string | undefined) => ReactNode;
 }) {
+  const blockedId = useId();
   return (
     <section
       className={cn(
@@ -299,11 +335,13 @@ function Tier({
       ) : null}
       {blocked ? (
         <p
+          id={blockedId}
           className={cn(
             "text-[10.5px]",
             tone === "refused" ? "text-[var(--error)]" : "text-[var(--muted-foreground)]"
           )}
           data-blocked-reason
+          data-disabled-reason
           data-tone={tone}
         >
           {blocked}
@@ -311,7 +349,9 @@ function Tier({
       ) : (
         <p className="text-[10px] text-[var(--muted-foreground)]">{trust}</p>
       )}
-      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">{children}</div>
+      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+        {children(blocked ? blockedId : undefined)}
+      </div>
     </section>
   );
 }

@@ -356,8 +356,14 @@ function VerifyPage() {
               if (st) st.innerHTML = trustBadgeHtml(fpr);
               const btn = document.getElementById("mark-trusted-btn") as HTMLButtonElement | null;
               if (btn) {
+                // The label is the reason: the state it names is the state the
+                // press produced. `aria-disabled` rather than the attribute so
+                // the button keeps its accessible name and stays reachable —
+                // the same rule as everywhere else, and a second press is
+                // harmless here because marking trusted is idempotent.
                 btn.textContent = "Marked trusted";
-                btn.disabled = true;
+                btn.setAttribute("aria-disabled", "true");
+                btn.setAttribute("aria-describedby", "mark-trusted-status");
               }
             }
           }}

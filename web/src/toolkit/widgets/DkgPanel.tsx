@@ -4,8 +4,8 @@ import {
   DKG_EXPERIMENTAL_NOTE,
   DKG_STAGES,
   badDealers,
-  canFinalize,
   dkgPhase,
+  finalizeIssue,
   refusalReport,
   roundProgress,
   stageFor,
@@ -159,12 +159,22 @@ export function DkgPanel({
 
       <div className="dkg-actions">
         {phase === "assembling" && onStart ? (
-          <Button onClick={onStart} disabled={participants.length < 2}>
+          <Button
+            onClick={onStart}
+            // Not "needs 2" — the number is what the reader can already count
+            // in the roster above. What they cannot see is why one is not
+            // enough, and that is a property of the protocol, not a minimum.
+            disabledReason={
+              participants.length < 2
+                ? `Only ${participants.length === 1 ? "you are" : "nobody is"} in this session. A joint key is the sum of every participant's contribution, so dealing to yourself would produce an ordinary key with extra steps — wait for at least one more.`
+                : undefined
+            }
+          >
             Deal round 1
           </Button>
         ) : null}
         {phase === "finalizing" && onFinalize ? (
-          <Button onClick={onFinalize} disabled={!canFinalize(participants)}>
+          <Button onClick={onFinalize} disabledReason={finalizeIssue(participants) ?? undefined}>
             Finalize
           </Button>
         ) : null}

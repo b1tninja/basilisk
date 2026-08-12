@@ -44,24 +44,46 @@ describe("an op that doesn't fit still explains itself", () => {
     expect(TILE).toMatch(/dim \? "text-\[var\(--muted-foreground\)\]"/);
   });
 
-  it("keeps the solo control in place, disabled, rather than removing it", () => {
+  it("keeps the solo control in place, refused, rather than removing it", () => {
     // Removing it made rows shift sideways as the caret moved and left the
     // row unable to say anything about its own state.
-    expect(SHELF_CODE).toMatch(/<AddButton\s+disabled=\{unfit\}/);
+    //
+    // `disabled={unfit}` until the refusal rule landed: the boolean turned the
+    // button off and the sentence went out separately as a `title`, which is
+    // unreachable by touch and by keyboard. Now the sentence *is* the off
+    // switch, and `reasonId` points it at the row's own right-aligned caption
+    // so the same words are not printed twice on one line.
+    expect(SHELF_CODE).toMatch(/<AddButton\s+disabledReason=\{\s*unfit\s*$/m);
+    expect(SHELF_CODE).toMatch(/reasonId=\{why\}/);
+    expect(SHELF_CODE).not.toMatch(/<AddButton\s+disabled=/);
     expect(SHELF_CODE).not.toMatch(/!fit && tipFit \? null : \(/);
   });
 
   it("makes an unfitting direction handle genuinely inert", () => {
     expect(TILE).toMatch(/const forwardLive = hasForward && !needs\?\.forward;/);
     expect(TILE).toMatch(/const reverseLive = hasReverse && !needs\?\.reverse;/);
-    expect(TILE).toMatch(/disabled=\{!forwardLive\}/);
-    expect(TILE).toMatch(/disabled=\{!reverseLive\}/);
+    // The `disabled` attribute is gone from both handles — it took them out of
+    // the tab order, and with them the `aria-describedby` carrying the reason.
+    // `useRefusal` supplies `aria-disabled` + `aria-describedby` together, so
+    // the handle stays reachable and the caption under it is what is read.
+    expect(TILE).not.toMatch(/disabled=\{!forwardLive\}/);
+    expect(TILE).not.toMatch(/disabled=\{!reverseLive\}/);
+    expect(TILE).toMatch(/\{\.\.\.forwardRefusal\.aria\}/);
+    expect(TILE).toMatch(/\{\.\.\.reverseRefusal\.aria\}/);
     expect(TILE).toMatch(/draggable=\{forwardLive\}/);
     expect(TILE).toMatch(/draggable=\{reverseLive\}/);
-    // The click and drag handlers must be gated on the same predicate, not
-    // on `hasForward` — that was the bug: styled disabled, wired live.
-    expect(TILE).not.toMatch(/onClick=\{hasForward \?/);
-    expect(TILE).not.toMatch(/onClick=\{\s*hasReverse \?/);
+    // The original bug was styled-disabled and wired-live, so the click has to
+    // be stopped by the same thing that draws the refusal. `guard` is that
+    // thing — and it *stops the event* rather than omitting a handler, which
+    // an `aria-disabled` button needs because the click still bubbles.
+    expect(TILE).toMatch(/forwardRefusal\.guard\(\(\) => onAppend\(forwardName/);
+    expect(TILE).toMatch(/reverseRefusal\.guard\(\(\) => onAppend\(reverseName/);
+    // A row with no direction at all draws an empty aligned square. That is an
+    // omission, not a refusal (§33d): no sentence, no handler, and out of the
+    // tab order, because it is aria-hidden and a focusable aria-hidden control
+    // is a trap.
+    expect(TILE).toMatch(/tabIndex=\{hasForward \? undefined : -1\}/);
+    expect(TILE).toMatch(/tabIndex=\{hasReverse \? undefined : -1\}/);
   });
 
   it("names the blocked state to a screen reader", () => {

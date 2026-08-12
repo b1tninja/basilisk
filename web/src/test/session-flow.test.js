@@ -612,7 +612,11 @@ describe("naming a room is a picker, and the picker was already built", () => {
 
   it("makes the pick the add — one press, no second confirm", () => {
     expect(START).toMatch(/onClick=\{\(\) => add\(t\.fingerprint\)\}/);
-    expect(START).toMatch(/onClick=\{\(\) => add\(hit\.fingerprint\)\}/);
+    // The hit row became its own component so `useRefusal` is called once
+    // per row rather than conditionally inside the map, and the press now
+    // goes through `refusal.guard` so an already-added key refuses instead
+    // of silently doing nothing. Still one press, still no second confirm.
+    expect(START).toMatch(/onClick=\{refusal\.guard\(\(\) => onAdd\(hit\.fingerprint\)\)\}/);
     // The whole fingerprint, never the short form. `shortFpr` is a label here
     // and a truncated identity is what caused a live bug one layer down.
     expect(START).toMatch(/onAudience\(\[\.\.\.audience, clean\]\)/);

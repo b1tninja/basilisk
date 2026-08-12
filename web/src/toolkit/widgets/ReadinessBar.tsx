@@ -18,6 +18,14 @@ export type ReadinessBlocker = {
 
 type Props = {
   blockers: ReadinessBlocker[];
+  /**
+   * So a refused Run can point `aria-describedby` here instead of printing its
+   * own copy of the same blocker three inches above. The line is the visible
+   * half of that button's explanation, which is why it carries
+   * `data-disabled-reason` — the sweep in `disabled-needs-reason.test.js`
+   * refuses to let anything a control describes itself with become invisible.
+   */
+  id?: string;
   className?: string;
 };
 
@@ -26,12 +34,14 @@ type Props = {
  * cell — no green checkmark row. "+N more" stays silent about what the rest
  * are; the cell's own inline dims already say which.
  */
-export function ReadinessBar({ blockers, className }: Props) {
+export function ReadinessBar({ blockers, id, className }: Props) {
   if (!blockers.length) return null;
   const [first] = blockers;
   const rest = blockers.length - 1;
   return (
     <div
+      id={id}
+      data-disabled-reason
       className={cn(
         "flex flex-wrap items-center gap-2 rounded-[7px] border border-[color-mix(in_srgb,var(--warn)_25%,transparent)] bg-[color-mix(in_srgb,var(--warn)_6%,transparent)] px-2.5 py-2",
         className

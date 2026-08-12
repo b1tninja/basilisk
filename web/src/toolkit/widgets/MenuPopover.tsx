@@ -15,7 +15,16 @@ export type MenuPopoverItem = {
   label: string;
   onSelect?: () => void;
   href?: string;
-  disabled?: boolean;
+  /**
+   * Why this row declines, when it does.
+   *
+   * It was `disabled?: boolean`, which is the shape of the bug rather than an
+   * instance of it: a menu is built by whoever calls this, so the *caller* is
+   * the only thing that knows why a row is off, and a boolean is exactly the
+   * channel that cannot carry it across. Nothing passed `true` — a dead row
+   * with no explanation was simply the only row this type could describe.
+   */
+  disabledReason?: string;
   separatorBefore?: boolean;
 };
 
@@ -54,13 +63,13 @@ export function MenuPopover({
         {items.map((item) => (
           <span key={item.id}>
             {item.separatorBefore ? <DropdownMenuSeparator /> : null}
-            {item.href ? (
-              <DropdownMenuItem asChild disabled={item.disabled}>
+            {item.href && !item.disabledReason ? (
+              <DropdownMenuItem asChild>
                 <a href={item.href}>{item.label}</a>
               </DropdownMenuItem>
             ) : (
               <DropdownMenuItem
-                disabled={item.disabled}
+                disabledReason={item.disabledReason}
                 onSelect={() => item.onSelect?.()}
               >
                 {item.label}

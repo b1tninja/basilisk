@@ -1,6 +1,7 @@
 import * as React from "react";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { cn } from "@/lib/cn";
+import { useRefusal } from "./refusal";
 
 export const DropdownMenu = DropdownMenuPrimitive.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
@@ -29,20 +30,68 @@ DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
 
 export const DropdownMenuItem = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & {
+  Omit<React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item>, "disabled"> & {
     inset?: boolean;
+    /**
+     * Why this item declines — the same contract as `Button.disabledReason`,
+     * and for the same reason: a menu row that does nothing when pressed is the
+     * defect at its least visible, because the menu closes and the reader is
+     * left where they started with nothing to read.
+     *
+     * Radix's own `disabled` is deliberately not used. It takes the row out of
+     * the arrow-key walk, which puts the explanation out of reach of exactly
+     * the people it was written for; the row stays reachable and refuses on
+     * select instead. The sentence renders under the label, in the menu.
+     */
+    disabledReason?: string;
+    /** Not a prop — a boolean cannot say why. Write `disabledReason`. */
+    disabled?: never;
   }
->(({ className, inset, ...props }, ref) => (
-  <DropdownMenuPrimitive.Item
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none focus:bg-[var(--accent)] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-      inset && "pl-8",
-      className
-    )}
-    {...props}
-  />
-));
+>(({ className, inset, disabledReason, children, onSelect, asChild, ...props }, ref) => {
+  const refusal = useRefusal(disabledReason);
+  /**
+   * `asChild` hands the row's markup to the caller, and a Slot takes exactly
+   * one child — so there is nowhere to put the sentence. Rather than drop it
+   * silently, the refused row renders as an ordinary item: the caller's element
+   * is almost always an `<a>`, and a link that cannot be followed should not be
+   * offering itself as one.
+   */
+  const slotted = asChild && !refusal.refused;
+  return (
+    <DropdownMenuPrimitive.Item
+      ref={ref}
+      className={cn(
+        "relative flex cursor-default select-none gap-2 rounded-sm px-2 py-1.5 text-sm outline-none focus:bg-[var(--accent)] aria-disabled:cursor-not-allowed",
+        // Two lines when there is a reason under the label, so the row's
+        // leading content aligns with the label rather than with their centre.
+        refusal.refused ? "items-start" : "items-center",
+        inset && "pl-8",
+        className
+      )}
+      asChild={slotted}
+      {...refusal.aria}
+      onSelect={(event) => {
+        // `preventDefault` keeps the menu open, so the sentence is still on
+        // screen after the press that asked for it.
+        if (refusal.inert) {
+          event.preventDefault();
+          return;
+        }
+        onSelect?.(event);
+      }}
+      {...props}
+    >
+      {refusal.note ? (
+        <span className="flex min-w-0 flex-col gap-[3px]">
+          <span className="opacity-60">{children}</span>
+          {refusal.note}
+        </span>
+      ) : (
+        children
+      )}
+    </DropdownMenuPrimitive.Item>
+  );
+});
 DropdownMenuItem.displayName = DropdownMenuPrimitive.Item.displayName;
 
 export const DropdownMenuSubTrigger = React.forwardRef<

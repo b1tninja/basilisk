@@ -182,6 +182,36 @@ export function canFinalize(participants) {
 }
 
 /**
+ * The same question, answered in a sentence — why finalize is not offered yet.
+ *
+ * `canFinalize` returns a boolean, and a boolean is what a control has to
+ * render as a dead button with nothing to read. The two states behind that
+ * false are not alike: nobody has dealt to you yet, or somebody's shares have
+ * not checked out — and the second is the one where waiting is the wrong thing
+ * to do. It counts rather than naming, because the roster above the button
+ * already names every participant and their round.
+ *
+ * Kept beside `canFinalize` so the condition and its explanation cannot drift;
+ * `startIssues` in `session-flow.js` sets the pattern.
+ *
+ * @param {DkgParticipant[]} participants
+ * @returns {string|null} null when finalize is possible
+ */
+export function finalizeIssue(participants) {
+  const others = (participants || []).filter((p) => !p.self);
+  if (!others.length) {
+    return "Nobody else is in this session. A joint key sums every participant's contribution, so there is nothing to finalize on your own.";
+  }
+  const unverified = others.filter((p) => p.round !== "verified");
+  if (!unverified.length) return null;
+  const bad = unverified.filter((p) => p.round === "bad").length;
+  if (bad) {
+    return `${bad} of ${others.length} dealt shares that do not check against their commitments. Finalizing would fold a bad contribution into the key — start a new session rather than waiting.`;
+  }
+  return `${unverified.length} of ${others.length} have not dealt shares that check out yet. Every contribution is summed into the joint key, so a missing one makes a different key rather than a smaller quorum.`;
+}
+
+/**
  * The phase, derived rather than tracked.
  *
  * Derived because a stored phase and a participant list can disagree, and when
