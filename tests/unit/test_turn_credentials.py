@@ -33,6 +33,11 @@ from basilisk.portal.cloudflare_turn import (
     generate_ice_servers,
 )
 from basilisk.security.rate_limit import check_upload_rate, reset_limiter
+from basilisk.portal.turn_credentials import (
+    MESH_SOFT_CAP,
+    TURN_BURST,
+    TURN_REFILL_SEC,
+)
 
 KEY_ID = "turn-key-id"
 API_TOKEN = "super-secret-turn-token"
@@ -295,3 +300,59 @@ def test_reaching_cloudflare_needs_no_widening_of_the_page_policy(monkeypatch):
     connect_src = get_settings().csp_connect_src()
     assert "rtc.live.cloudflare.com" not in connect_src
     assert "'self'" in connect_src
+
+
+@pytest.mark.unit
+def test_a_mesh_that_fails_together_gets_a_relay_each(monkeypatch):
+    """The blip that needs the relay is the blip that fails every link at once.
+
+    `turn-credentials.js` keeps no cache — "no prefetch, no cache, no warm" —
+    so each escalating link mints on its own, and one browser in a full mesh
+    holds `MESH_SOFT_CAP - 1` of them. A shared uplink drop fails all of them in
+    the same instant, which is precisely when the fallback is supposed to work.
+
+    The 5-second gap this replaced served the first and refused the rest, and
+    `relay-fallback.js` does not retry: its `catch` sets phase `unavailable` and
+    no further connection-state change re-triggers `_evaluate`. So the refusal
+    did not delay those links, it stranded them until a manual restart.
+    """
+    client = _client(monkeypatch)
+    _mint(monkeypatch)
+    ip = "198.51.100.11"
+
+    # One browser's worth of links, escalating together.
+    for i in range(MESH_SOFT_CAP - 1):
+        r = client.post("/api/v1/turn/credentials", headers={"X-Forwarded-For": ip})
+        assert r.status_code == 200, f"link {i} was refused a relay: {r.get_json()}"
+
+
+@pytest.mark.unit
+def test_the_burst_is_stricter_than_the_gap_it_replaced(monkeypatch):
+    """More permissive in the instant, and less permissive over time.
+
+    A bucket is not simply a loosening. The 5-second gap allowed a mint every
+    five seconds indefinitely — twelve a minute, forever — while this allows
+    `TURN_BURST` together and then one per `TURN_REFILL_SEC`, which is two a
+    minute. Against a 600-second credential TTL that is the difference between
+    roughly twenty concurrently-valid credentials and a hundred and twenty, and
+    a relay mint spends real egress.
+
+    So the budget is spent, and the next caller waits.
+    """
+    client = _client(monkeypatch)
+    _mint(monkeypatch)
+    ip = "198.51.100.12"
+
+    for _ in range(TURN_BURST):
+        assert (
+            client.post("/api/v1/turn/credentials", headers={"X-Forwarded-For": ip}).status_code
+            == 200
+        )
+
+    spent = client.post("/api/v1/turn/credentials", headers={"X-Forwarded-For": ip})
+    assert spent.status_code == 429, spent.get_json()
+    assert "rate limit" in spent.get_json()["error"].lower()
+
+    # And the sustained rate really is slower than the gap it replaced: five
+    # seconds of waiting bought a mint before, and buys none now.
+    assert TURN_REFILL_SEC > 5.0

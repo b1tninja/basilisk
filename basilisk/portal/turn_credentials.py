@@ -50,6 +50,10 @@ from basilisk.security.rate_limit import (
     client_ip,
     get_limiter,
 )
+# The documented full-mesh ceiling, imported rather than restated: a second
+# copy is a second thing that can disagree about how large a room may be.
+from basilisk.portal.notebook_signaling import MESH_SOFT_CAP
+
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +76,42 @@ def _json(body: dict, status: int = 200) -> Response:
     return Response(json.dumps(body), status=status, mimetype="application/json")
 
 
-def check_turn_rate(ip: str) -> None:
-    """One mint per failed connection, not one per candidate pair.
+#: One browser in a full mesh holds ``MESH_SOFT_CAP - 1`` links, and
+#: ``turn-credentials.js`` states it keeps no cache — "no prefetch, no cache, no
+#: warm" — so every link that escalates mints on its own. A shared uplink blip
+#: fails all of them in the same instant, which is the burst this must survive.
+#: Eight is that ceiling plus one, and deliberately not a budget for eight
+#: browsers behind one address all relaying at once: that is the case where the
+#: egress bill should push back.
+TURN_BURST = MESH_SOFT_CAP
 
-    Looser than it looks: escalation happens once per link and the client is
-    forbidden from asking twice for the same one, so a caller hitting this
-    window is retrying by hand or is not the client.
+#: Slower than negotiate's two seconds, because the two workloads differ in the
+#: way that matters. A negotiation recycles every 240 s forever; a relay
+#: escalation happens **once per link, ever** (`relay-fallback.js`: "One
+#: escalation per link"), so there is no steady state to fund — only a later,
+#: independent incident. Thirty seconds refills the whole bucket in four
+#: minutes, which covers a second blip without funding a stream of mints.
+#:
+#: Note this is *stricter* sustained than the gap it replaces: 5 s allowed 12
+#: mints a minute indefinitely, this allows 2. Against a 600 s credential TTL
+#: that caps a caller at roughly twenty concurrently-valid credentials rather
+#: than a hundred and twenty. The bucket is more permissive only in the instant,
+#: which is the only place the real client needed it.
+TURN_REFILL_SEC = 30.0
+
+
+def check_turn_rate(ip: str) -> None:
+    """One mint per failed link, and a mesh's worth of links may fail together.
+
+    The gap this replaced assumed links fail one at a time, and said a caller
+    hitting the window "is retrying by hand or is not the client". That was
+    wrong in the case the fallback exists for: when a shared uplink drops,
+    every link fails at once, and `relay-fallback.js` does not retry a refused
+    mint -- its `catch` sets phase `unavailable` and no further connection-state
+    change re-triggers `_evaluate`. So a refusal here did not delay a link, it
+    stranded it until the user restarted the connection by hand.
     """
-    if not get_limiter().allow(f"turn:ip:{ip}", 5.0):
+    if not get_limiter().allow_burst(f"turn:ip:{ip}", TURN_BURST, TURN_REFILL_SEC):
         raise RateLimitError("TURN credential rate limit exceeded for this IP")
 
 
