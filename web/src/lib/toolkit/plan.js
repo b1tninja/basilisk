@@ -89,7 +89,12 @@ import {
   peerLooksLikeFingerprint,
   slotLabelKey,
 } from "./recipe-parse.js";
-import { boundAsSlotRef, recipeChains } from "./recipe.js";
+import {
+  boundAsSlotRef,
+  outSlotLabels,
+  publishedSlots,
+  recipeChains,
+} from "./recipe.js";
 import { getStep, stepEntropy } from "./registry.js";
 import { artifactMetaFromType, formatType, walkPipelineTypes } from "./types.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
@@ -134,7 +139,11 @@ import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
  * @property {string} why        one sentence, always present
  * @property {string[]} runsOn   resolved labels; empty means every participant
  * @property {boolean} mine      `me` runs this cell
- * @property {boolean} publish
+ * @property {boolean} publish  the header says some of what it writes leaves
+ * @property {string[]} publishes  which labels do — every one of `produces`
+ *   for a bare `publish`, the named subset for `publish=$a,$b`, and empty
+ *   without a `publish` at all. This is the field to read when the question is
+ *   *what leaves this machine*; `publish` alone cannot answer it any more.
  * @property {string[]} produces slot labels this cell writes
  * @property {ConsumedSlot[]} consumes
  * @property {number} [start]    header anchor, for a complaint about placement
@@ -375,23 +384,6 @@ function collectConsumed(steps, add) {
 }
 
 /**
- * Every slot a cell writes, at any depth — a `foreach` body's `out` is still
- * this cell's output.
- * @param {import("./recipe.js").RecipeStep[]} steps
- * @param {(label: string) => void} add
- */
-function collectProduced(steps, add) {
-  for (const step of steps || []) {
-    if (step.name === "out") {
-      const label = slotLabelKey(String(step.params?.name || ""));
-      if (label) add(label);
-    }
-    collectProduced(step.body || [], add);
-    for (const br of step.branches || []) collectProduced(br.body || [], add);
-  }
-}
-
-/**
  * The chains a plan calls cells, in the order it numbers them.
  *
  * **This is the only definition of "cell index" in the placement stack, and it
@@ -480,13 +472,18 @@ function slotOrigins(chains) {
   for (let i = 0; i < chains.length; i++) {
     const steps = chains[i]?.steps || [];
     const peer = String(chains[i]?.peer || "");
-    const published = !!chains[i]?.publish;
-    collectProduced(steps, (label) => {
+    // Per slot, not per cell. `@mara publish=$commitments` publishes one of the
+    // three things its cell writes; the other two stay mara's, and a reader
+    // that treated the whole cell as published would place a cell needing a
+    // share on somebody who does not have one.
+    const published = new Set(publishedSlots(chains[i]));
+    for (const label of outSlotLabels(steps)) {
       // First writer wins, matching `validateRecipe` — a duplicate `out` is
       // already an error there, so this only decides which cell a plan blames
       // in a recipe that will not compile anyway.
-      if (!owners.has(label)) owners.set(label, { cell: i, peer, published });
-    });
+      if (owners.has(label)) continue;
+      owners.set(label, { cell: i, peer, published: published.has(label) });
+    }
   }
   return { owners, types };
 }
@@ -714,11 +711,10 @@ export function planRun(compiled, opts = {}) {
       });
     });
 
-    /** @type {string[]} */
-    const produces = [];
-    collectProduced(steps, (l) => {
-      if (!produces.includes(l)) produces.push(l);
-    });
+    const produces = outSlotLabels(steps);
+    // What the header lets out of the machine, which is a subset of what the
+    // cell writes and is often none of it.
+    const publishes = publishedSlots(chain);
 
     const privateOwners = [...new Set(consumes.filter((c) => c.private).map((c) => c.owner))].sort();
 
@@ -852,40 +848,42 @@ export function planRun(compiled, opts = {}) {
       );
     }
 
-    // `publish` moves this cell's `out` artifacts into the room. What may move
+    // `publish` moves the named `out` artifacts into the room. What may move
     // is a question about the value, and the type walk already answered it.
-    if (chain.publish) {
-      for (const label of produces) {
-        const { known, publishable } = publishability(types.get(label));
-        if (!known) {
-          asks.push({
-            cell: i,
-            reason: "publish-untyped",
-            question:
-              `Cell ${i} publishes \`${SLOT_SIGIL}${label}\`, and this pass ` +
-              "could not work out what is in it. Confirm it is safe to send to " +
-              "the room before running.",
-            choices: [],
-            start: anchor.start,
-            end: anchor.end,
-          });
-          continue;
-        }
-        if (publishable) continue;
-        refuse(
-          anchor,
-          "publish",
-          "a value that may leave this machine",
-          `${SLOT_SIGIL}${label} (${formatType(types.get(label))})`,
-          "publish-secret",
-          `Cell ${i} is marked \`${PEER_SIGIL}${declaredPeer || "peer"} publish\` ` +
-            `but \`${SLOT_SIGIL}${label}\` is ` +
-            `${formatType(types.get(label))}, which is not a value that may ` +
-            "leave the machine that made it. Publish the public half instead " +
-            `(\`${SLOT_SIGIL}${label} | :public | out ${SLOT_SIGIL}pub\`), or ` +
-            "drop `publish` from this cell."
-        );
+    // The list is the header's own — a cell that publishes one of the three
+    // things it writes is asked about one of them.
+    for (const label of publishes) {
+      const { known, publishable } = publishability(types.get(label));
+      if (!known) {
+        asks.push({
+          cell: i,
+          reason: "publish-untyped",
+          question:
+            `Cell ${i} publishes \`${SLOT_SIGIL}${label}\`, and this pass ` +
+            "could not work out what is in it. Confirm it is safe to send to " +
+            "the room before running.",
+          choices: [],
+          start: anchor.start,
+          end: anchor.end,
+        });
+        continue;
       }
+      if (publishable) continue;
+      const header = `${PEER_SIGIL}${declaredPeer || "peer"} publish`;
+      refuse(
+        anchor,
+        "publish",
+        "a value that may leave this machine",
+        `${SLOT_SIGIL}${label} (${formatType(types.get(label))})`,
+        "publish-secret",
+        `Cell ${i} is marked \`${header}\` ` +
+          `but \`${SLOT_SIGIL}${label}\` is ` +
+          `${formatType(types.get(label))}, which is not a value that may ` +
+          "leave the machine that made it. Publish the public half instead " +
+          `(\`${SLOT_SIGIL}${label} | :public | out ${SLOT_SIGIL}pub\`), name ` +
+          `only what may leave (\`${header}=${SLOT_SIGIL}…\`), or drop ` +
+          "`publish` from this cell."
+      );
     }
 
     // Two questions no dataflow fact answers.
@@ -944,6 +942,7 @@ export function planRun(compiled, opts = {}) {
       runsOn,
       mine,
       publish: !!chain.publish,
+      publishes,
       produces,
       consumes,
       ...(anchor.start == null ? {} : { start: anchor.start }),

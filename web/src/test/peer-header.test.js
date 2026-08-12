@@ -212,7 +212,18 @@ describe("one label grammar, two sigils", () => {
 });
 
 describe("the header round-trips", () => {
-  const HEADERS = ["@alice", "@alice publish", "@*", "@* publish", "@ops-team"];
+  // `publish=$kp` names the one `out` in BODY. It rides the same sweep as the
+  // bare forms on purpose: the named header is the one that can quietly widen
+  // if a trip drops the list, and a trip that dropped it would still produce a
+  // header that parses.
+  const HEADERS = [
+    "@alice",
+    "@alice publish",
+    "@alice publish=$kp",
+    "@*",
+    "@* publish",
+    "@ops-team",
+  ];
 
   for (const header of HEADERS) {
     it(`survives serialize and \`#r=\` unchanged: ${header}`, () => {

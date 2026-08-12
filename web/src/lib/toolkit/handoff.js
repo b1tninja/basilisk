@@ -45,6 +45,14 @@
  * chose to leave on a value; the question here is what the recipe says the slot
  * holds, and it is answerable before anything runs.
  *
+ * A third guard applies to the one header that says which of a cell's outputs
+ * may travel. `@mara publish=$commitments` withholds every other slot that cell
+ * writes, and `withheldByHeader` refuses to carry one — read off the *recipe*
+ * rather than off a plan, so a peer whose ownership analysis disagrees does not
+ * get the value anyway. It is silent for every other header, including a cell
+ * with no `publish` at all: a handoff has never required one, because a placed
+ * cell's inputs and outputs travel by placement rather than by publication.
+ *
  * ## Which index a cell is named by
  *
  * There is one numbering and everything uses it: a cell's index is its position
@@ -182,7 +190,7 @@ import { manifestDigest } from "./manifest.js";
 import { planChains, publishability, slotTypes } from "./plan.js";
 import { PEER_SIGIL, PEER_WILDCARD, SLOT_SIGIL, slotLabelKey } from "./recipe-parse.js";
 import { canonicalJson, digestText, isoTimestamp, mismatchLog } from "./receipt.js";
-import { serializeRecipe } from "./recipe.js";
+import { outSlotLabels, publishedSlots, serializeRecipe } from "./recipe.js";
 
 /**
  * Offer envelope version. Bump when the *shape* changes, or when a field keeps
@@ -330,7 +338,7 @@ const DIGEST_RE = /^[0-9a-f]{64}$/;
  *   |"unknown-manifest"|"not-mine"|"mine-already"|"rendezvous"|"private-value"
  *   |"untyped-value"|"uncarriable"|"absent-value"|"unasked-slot"|"incomplete"
  *   |"slot-present"|"unattributed"|"not-theirs"|"not-offered"
- *   |"nothing-to-return"} reason
+ *   |"nothing-to-return"|"withheld-value"} reason
  * @property {string} message
  */
 
@@ -683,6 +691,46 @@ const onlyRunsOn = (cell, peer) =>
   cell.runsOn.length > 0 && !!peer && cell.runsOn.every((p) => p === peer);
 
 /**
+ * Does the header of the cell that wrote this slot say it stays home?
+ *
+ * Only a header that *names* slots can answer yes. A bare `publish` publishes
+ * everything the cell writes and a cell with no header at all makes no claim
+ * either way, so both are silent here and the two guards below decide as they
+ * always have. What this catches is the case those two cannot see: a slot the
+ * author explicitly excluded, in a cell whose other outputs do travel.
+ *
+ * Read from the chain, not from the plan. The plan derives ownership from who
+ * reads a slot, and the whole point of asking again is to not depend on that
+ * derivation being right at both ends.
+ *
+ * @param {import("./recipe.js").RecipeChain|undefined} chain
+ * @param {string} label
+ * @returns {boolean}
+ */
+function withheldByHeader(chain, label) {
+  if (!chain?.publishSlots?.length) return false;
+  if (!outSlotLabels(chain.steps || []).includes(label)) return false;
+  return !publishedSlots(chain).includes(label);
+}
+
+/**
+ * The sentence a peer reads when a value was excluded by name.
+ * @param {import("./recipe.js").RecipeChain} chain @param {number} cell
+ * @param {string} label
+ */
+function withheldMessage(chain, cell, label) {
+  const published = publishedSlots(chain).map((l) => slot(l));
+  return (
+    `Cell ${cell} publishes ${published.length ? published.join(" and ") : "nothing"} ` +
+    `and ${slot(label)} is not among them — its header names which of the ` +
+    "slots it writes may leave this machine, and that is a claim about a " +
+    "boundary rather than a preference. Nothing here overrides it: to hand " +
+    `${slot(label)} over, add it to the header and let the plan and the type ` +
+    "walk have their say about it too."
+  );
+}
+
+/**
  * Both private-value guards, over one slot.
  *
  * @param {{ label: string, private: boolean, type: string }} row
@@ -843,6 +891,17 @@ export async function buildOfferFor(spec) {
           `does not hold, and an offer that left it out would tell ${who(runner)} ` +
           "to run a cell that stops the moment it reads that slot. The offer " +
           `${who(row.peer)} makes is theirs to make.`
+      );
+      continue;
+    }
+    if (withheldByHeader(chains[row.from], row.label)) {
+      refuse(
+        at,
+        "publish",
+        `a slot cell ${row.from}'s header publishes`,
+        row.label,
+        "withheld-value",
+        withheldMessage(chains[row.from], row.from, row.label)
       );
       continue;
     }
@@ -1293,6 +1352,17 @@ export async function buildResultFor(spec) {
     // this peer runs alone has it already, and sending it would be this peer
     // handing itself a value.
     if (!row.readers.some((reader) => !onlyRunsOn(reader, me))) continue;
+    if (withheldByHeader(chains[cell], row.label)) {
+      refuse(
+        at,
+        "publish",
+        "a slot this cell's header publishes",
+        row.label,
+        "withheld-value",
+        withheldMessage(chains[cell], cell, row.label)
+      );
+      continue;
+    }
     const verdict = publicEnough(row, types);
     if (!verdict.ok) {
       refuse(at, verdict.field, verdict.expected, verdict.actual, verdict.reason, verdict.message);

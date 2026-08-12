@@ -63,5 +63,10 @@ describe("the cell editor carries the header into state", () => {
     const body = src.slice(start, end);
     expect(body).toContain("chain.peer");
     expect(body).toContain("chain.publish");
+    // `publishSlots` is the third field the parser populates and the third one
+    // a rebuild from `steps` would drop — and dropping *it* is quieter than
+    // dropping the other two: the header survives, still says `publish`, and
+    // silently widens from one named slot to everything the cell writes.
+    expect(body).toContain("chain.publishSlots");
   });
 });

@@ -186,7 +186,11 @@ const AUDIENCE_DOMAIN = "basilisk.run-manifest/audience/v1\n";
  *   number the plan places and the number the run log records. It is always the
  *   row's own position in `cells`; a document where the two differ is malformed.
  * @property {string} peer           chain-header peer label, `*`, or "" for everyone
- * @property {boolean} publish       this cell's `out` artifacts are meant to leave the machine
+ * @property {boolean} publish       some of this cell's `out` artifacts are
+ *   meant to leave the machine. Which ones is a question `recipe` answers —
+ *   a `publish=$a,$b` header is part of the cell's text and so is inside
+ *   `recipeDigest` already. There is no second field for it, because a
+ *   document with two spellings of one claim has two things that can disagree
  * @property {string} recipe         the cell's recipe text, as it will be run —
  *   "" for an empty cell, which is a cell with nothing in it rather than a gap
  * @property {string} recipeDigest   digest of `recipe`, so one cell can be

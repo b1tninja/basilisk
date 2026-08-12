@@ -87,7 +87,11 @@ import {
   type SuiteDetail,
 } from "./widgets/index";
 import { getStep } from "../lib/toolkit/registry.js";
-import { compileRecipe, projectTypeForMember } from "../lib/toolkit/recipe.js";
+import {
+  compileRecipe,
+  outSlotLabels,
+  projectTypeForMember,
+} from "../lib/toolkit/recipe.js";
 import { planRun } from "../lib/toolkit/plan.js";
 import {
   hashForJoin,
@@ -1596,10 +1600,15 @@ export function ToolkitShell() {
                           className="ml-1"
                           peer={(chain as { peer?: string }).peer ?? null}
                           publish={!!(chain as { publish?: boolean }).publish}
+                          // The cell's own `out` labels, at any depth — the
+                          // menu cannot offer to publish a slot the cell does
+                          // not write, and `validateChainHeader` refuses one.
+                          outSlots={outSlotLabels(chain.steps || [])}
+                          publishSlots={(chain as { publishSlots?: string[] }).publishSlots ?? []}
                           choices={peerChoices}
-                          onAssign={(peer, publish) => {
+                          onAssign={(peer, publish, publishSlots) => {
                             nb.setFocusedCell(i);
-                            nb.setCellPeer(i, peer, publish);
+                            nb.setCellPeer(i, peer, publish, publishSlots);
                           }}
                         />
                         <div className="ml-auto flex gap-1">
