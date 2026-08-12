@@ -110,6 +110,52 @@ const MIME = {
 function pumpFrames(socket, upstream, onSignal, onFault) {
   let buf = Buffer.alloc(0);
   let chain = Promise.resolve();
+  /**
+   * The fragmented text message currently open, held until its final frame.
+   *
+   * `payloads` is what `onSignal` will be shown; `frames` is the wire exactly
+   * as the client wrote it, kept so an unchanged message can be forwarded
+   * byte-for-byte rather than re-encoded into a shape the client never sent.
+   * @type {{ payloads: Buffer[], frames: Buffer[] }|null}
+   */
+  let open = null;
+
+  /** Let go of a half-built message, loudly — it is a message nobody saw. */
+  const abandonOpen = (why) => {
+    if (!open) return;
+    onFault(why);
+    upstream.write(Buffer.concat(open.frames));
+    open = null;
+  };
+
+  /**
+   * @param {string} text     the whole message
+   * @param {Buffer} original the frames it arrived in
+   */
+  const deliver = async (text, original) => {
+    let out;
+    try {
+      out = await onSignal(text);
+    } catch (err) {
+      // A hook that threw must not silently drop the message *or* the fact
+      // that it threw. The original goes on so the peers still mesh; the fault
+      // is what stops the run reading as a clean pass over an envelope the
+      // relay never actually inspected.
+      onFault(`onSignal threw: ${err instanceof Error ? err.message : String(err)}`);
+      try {
+        upstream.write(original);
+      } catch {
+        /* the socket is already gone */
+      }
+      return;
+    }
+    // A rewrite is re-encoded as one unfragmented frame. That is a shape the
+    // client did not send, and it is the right one: the hub reads messages,
+    // the fragmentation was the client's own buffering, and preserving it
+    // would mean splitting a payload whose length just changed.
+    upstream.write(typeof out === "string" && out !== text ? encodeTextFrame(out) : original);
+  };
+
   socket.on("data", (chunk) => {
     buf = Buffer.concat([buf, chunk]);
     for (;;) {
@@ -119,51 +165,86 @@ function pumpFrames(socket, upstream, onSignal, onFault) {
       const { fin, opcode, payload, bytes } = frame;
       chain = chain
         .then(async () => {
-          // Control frames — close, ping, pong — carry no signalling and are
-          // forwarded untouched. That is not a gap; there is nothing to see.
+          // Control frames — close, ping, pong — carry no signalling, are never
+          // fragmented, and RFC 6455 lets them arrive *between* the fragments
+          // of a message. So they go straight on rather than into the buffer;
+          // a ping overtaking held fragments is a keepalive arriving early and
+          // means nothing to the hub.
+          //
+          // Close is the exception: it ends the conversation, so whatever is
+          // being held has to go first or the server never sees it at all.
           if (opcode >= 0x8) {
+            if (opcode === 0x8) {
+              abandonOpen(
+                "closed mid-message: a fragmented text message was still open when the" +
+                  " client sent close, so its fragments were forwarded unread"
+              );
+            }
             upstream.write(bytes);
             return;
           }
-          // A text message split across frames, or a continuation of one. The
-          // tunnel reads one frame at a time, so it cannot show `onSignal` a
-          // whole message here — and forwarding it quietly is the dangerous
-          // half: the envelope crosses, the peers mesh, and the *observation*
-          // is gone. `room.signalled()` then under-counts and a tamper is
-          // never applied, which is how a security test passes while proving
-          // nothing. Loud, therefore, and forwarded so the run still completes
-          // and fails on the assertion rather than on a dead peer.
-          if (opcode === 0x0 || !fin) {
+
+          // Binary. The hub speaks `json.webpubsub.azure.v1`, which is text, so
+          // this is signalling in a form the tunnel cannot read — forwarded, and
+          // named, because "the relay saw everything" would stop being true.
+          if (opcode === 0x2) {
             onFault(
-              `uninterceptable frame (fin=${fin}, opcode=${opcode}, ${payload.length} bytes):` +
-                ` a fragmented text message crossed the tunnel unseen. Chromium does not` +
-                ` fragment below ~128 KB and today's largest envelope is ~2 KB, so this` +
-                ` means the envelopes grew — reassemble continuations here before it can` +
-                ` be mistaken for a signalling relay that saw everything.`
+              `binary frame (${payload.length} bytes): signalling here is text, so a` +
+                " binary message crossed without being read"
             );
             upstream.write(bytes);
             return;
           }
-          const text = payload.toString("utf8");
-          const out = await onSignal(text);
-          upstream.write(typeof out === "string" && out !== text ? encodeTextFrame(out) : bytes);
+
+          if (opcode === 0x1) {
+            // A new message while one is open is a protocol error on the
+            // client's side. Nothing sensible can be reassembled from it.
+            abandonOpen(
+              "a new text message began while a fragmented one was still open;" +
+                " the unfinished fragments were forwarded unread"
+            );
+            if (fin) {
+              await deliver(payload.toString("utf8"), bytes);
+              return;
+            }
+            open = { payloads: [payload], frames: [bytes] };
+            return;
+          }
+
+          // Continuation.
+          if (!open) {
+            onFault(
+              "continuation frame with no message open; it was forwarded unread"
+            );
+            upstream.write(bytes);
+            return;
+          }
+          open.payloads.push(payload);
+          open.frames.push(bytes);
+          if (!fin) return;
+          const whole = open;
+          open = null;
+          await deliver(
+            Buffer.concat(whole.payloads).toString("utf8"),
+            Buffer.concat(whole.frames)
+          );
         })
         .catch((err) => {
-          // A hook that threw must not silently drop the frame *or* the fact
-          // that it threw. The original is forwarded so the peers still mesh;
-          // the fault is what stops the run reading as a clean pass over an
-          // envelope the relay never actually inspected.
-          onFault(`onSignal threw: ${err instanceof Error ? err.message : String(err)}`);
-          try {
-            upstream.write(bytes);
-          } catch {
-            /* the socket is already gone */
-          }
+          // `deliver` forwards its own bytes on every path, so anything landing
+          // here is the tunnel itself failing. Recorded rather than swallowed;
+          // writing again could duplicate a frame.
+          onFault(`tunnel failed on a frame: ${err instanceof Error ? err.message : String(err)}`);
         });
     }
   });
   socket.on("end", () => {
-    chain.finally(() => upstream.end());
+    chain.finally(() => {
+      abandonOpen(
+        "the client went away mid-message: a fragmented text message was never" +
+          " finished, so its fragments were forwarded unread"
+      );
+      upstream.end();
+    });
   });
 }
 

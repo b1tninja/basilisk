@@ -22,6 +22,59 @@ import { canonicalAudience, deriveRoomId } from "./room.js";
 export const INVITE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * How far ahead of *our* clock a peer's signature may be created.
+ *
+ * OpenPGP verification is evaluated at an instant, and openpgp.js defaults that
+ * instant to `new Date()`. A signature stamped even one second later than the
+ * verifier's clock is refused outright with "Signature creation time is in the
+ * future" — measured, not assumed: at +1s the envelope below does not open.
+ *
+ * Two peers do not share a clock. Between two machines this is ordinary skew,
+ * and ordinary skew is seconds; a person whose clock runs slightly fast could
+ * not mesh with anybody, and the failure reached them as a peer who never
+ * arrived. It surfaced first as a sub-second race in the browser suite, where
+ * signer and verifier are the same machine and the two timestamps land either
+ * side of one tick.
+ *
+ * ## Why sixty seconds
+ *
+ * A tolerance is a security parameter in both directions: it is exactly how far
+ * a signer may *postdate* an envelope before we notice. So it is bounded, it is
+ * not disabled, and the number is argued rather than picked.
+ *
+ * - It has to cover real skew. Two NTP-synchronised machines agree to
+ *   milliseconds; two consumer machines that are not agree to seconds, and
+ *   occasionally a minute.
+ * - It must not become the weakest thing in the chain. The relay's own client
+ *   access token carries `nbf` at issue and expires 300 s later, so a clock far
+ *   enough out to defeat a minute is already close to failing to get a token at
+ *   all — the tolerance sits well inside a limit the deployment already has.
+ * - What it costs is small *here* specifically. Nothing in this protocol treats
+ *   a signature's creation time as freshness: replays are dropped by the
+ *   envelope seen-set, and liveness comes from the per-peer ECDH nonces and the
+ *   room id. Sixty seconds of postdating buys an attacker nothing they do not
+ *   already have. Unbounded would, which is why this is a number.
+ *
+ * Applied by verifying *as of* now-plus-tolerance. Every other check openpgp.js
+ * makes at that instant — key expiry, signature expiry — therefore reads a
+ * minute early, which is the conservative direction: it can refuse a key about
+ * to expire, never accept one that has.
+ */
+export const SIGNATURE_FUTURE_TOLERANCE_MS = 60 * 1000;
+
+/**
+ * The instant to verify a peer's signature at.
+ *
+ * A function rather than a value: it has to be *now* plus the tolerance at the
+ * moment of verification, and a module-level constant would freeze the clock at
+ * import time.
+ * @returns {Date}
+ */
+export function peerVerificationDate() {
+  return new Date(Date.now() + SIGNATURE_FUTURE_TOLERANCE_MS);
+}
+
+/**
  * @typedef {object} NotebookEnvelopePayload
  * @property {1} v
  * @property {"invite"|"hello"|"offer"|"answer"|"ice"|"rotate"} type
@@ -451,6 +504,9 @@ export async function openSignalingEnvelope({
     message: await readMessage({ armoredMessage: armored }),
     decryptionKeys: decryptionKey,
     verificationKeys,
+    // Not "now": see `SIGNATURE_FUTURE_TOLERANCE_MS`. The peer that signed this
+    // is a different machine with a different clock.
+    date: peerVerificationDate(),
   });
   if (!signatures?.length) {
     throw new Error("Signaling envelope missing signature");

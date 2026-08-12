@@ -12,18 +12,19 @@
  * counted one fewer envelope and the tamper was simply never applied, so a
  * security test could report a refusal it had not provoked. Nothing said so.
  *
- * Two frames do it, and both are exercised here against the real tunnel rather
- * than a description of it:
+ * A **fragmented** text message was the first way in, and it is now reassembled
+ * rather than merely reported: the fragments are held, joined, and shown to the
+ * hook as one message. Chromium does not fragment below about 128 KB and the
+ * largest envelope measured in that suite is ~2 KB, so this is not a live bug
+ * today — but a placed-run handoff carries a cell's produced values and a
+ * manifest cell can carry an armored key, and the gap between 2 KB and 128 KB is
+ * smaller than it sounds.
  *
- * - a **fragmented** text message (`fin=0`, then continuations), which the
- *   reader cannot hand over whole;
- * - an `onSignal` that **throws**, whose `.catch` forwarded the original and
- *   dropped the error with it.
- *
- * Both are dormant today — Chromium does not fragment below about 128 KB and
- * the largest envelope in that suite is ~2 KB — so this is not a fix aimed at a
- * live bug. It removes the ability to be silently wrong, and these are the two
- * tests that would notice if it came back.
+ * The fault is what reassembly *cannot* handle, and stays for exactly that: a
+ * continuation with nothing open, a message interrupted by another, a binary
+ * frame, a close or a disconnect mid-message, and a hook that throws. Every one
+ * of them still forwards the bytes — the peers keep meshing and the run fails on
+ * an assertion rather than on a dead peer — but none of them is silent any more.
  *
  * Node-only: a raw socket speaking the frame format, and a stub hub. No
  * browser, so it belongs in the fast suite where CI actually runs it.
@@ -127,25 +128,113 @@ describe("the signalling tunnel", () => {
     expect(hub.bytes().length).toBeGreaterThan(0);
   });
 
-  it("records a fault for a fragmented text message rather than passing it on unseen", async () => {
+  it("reassembles a fragmented text message and shows the hook the whole thing", async () => {
     /** @type {string[]} */
     const seen = [];
     const { socket, server, hub } = await tunnel(async (text) => {
       seen.push(text);
       return text;
     });
-    // `fin=0` opens the message; opcode 0 continues it. Neither can be shown
-    // to the hook whole, and both used to be forwarded without a word.
+    // `fin=0` opens the message; opcode 0 continues it; `fin=1` ends it. Three
+    // fragments rather than two, so "joined in order" is a real claim and not
+    // a coincidence of concatenating a pair.
     socket.write(clientFrame(0x1, '{"type":"sendTo', false));
-    socket.write(clientFrame(0x0, 'Group"}', true));
+    socket.write(clientFrame(0x0, 'Group","data":"', false));
+    socket.write(clientFrame(0x0, 'abc"}', true));
     await settle();
 
-    expect(seen, "a fragment must not be handed over as if it were a message").toEqual([]);
-    const faults = server.tunnelFaults();
-    expect(faults).toHaveLength(2);
-    for (const f of faults) expect(f).toMatch(/uninterceptable frame/);
-    // Still forwarded: the point is that the run reaches its assertions and
-    // fails on the fault, not that the peers die mid-handshake.
+    expect(seen).toEqual(['{"type":"sendToGroup","data":"abc"}']);
+    expect(server.tunnelFaults()).toEqual([]);
+    // Unchanged, so the client's own frames go on byte for byte — the hub sees
+    // what it would have seen with no tunnel in the way.
+    expect(hub.bytes().length).toBeGreaterThan(0);
+  });
+
+  it("holds nothing back when a control frame lands between fragments", async () => {
+    // RFC 6455 §5.4 lets a ping arrive in the middle of a fragmented message,
+    // and it is the case people get wrong: treat it as a continuation and the
+    // message is corrupt; buffer it and the keepalive never arrives. It goes
+    // straight on, and the message still reassembles around it.
+    /** @type {string[]} */
+    const seen = [];
+    const { socket, server, hub } = await tunnel(async (text) => {
+      seen.push(text);
+      return text;
+    });
+    socket.write(clientFrame(0x1, "one ", false));
+    socket.write(clientFrame(0x9, "hb")); // ping, mid-message
+    socket.write(clientFrame(0x0, "two", true));
+    await settle();
+
+    expect(seen).toEqual(["one two"]);
+    expect(server.tunnelFaults()).toEqual([]);
+    // The ping reached the hub ahead of the fragments it interrupted, which is
+    // what "forwarded immediately" means and is harmless: it is out of band.
+    const wire = hub.bytes();
+    expect(wire.length).toBeGreaterThan(0);
+    expect(wire[0] & 0x0f, "the ping is first on the wire").toBe(0x9);
+  });
+
+  it("rewrites a reassembled message as one frame when the hook changes it", async () => {
+    // The tamper path, over a fragmented message. The rewrite cannot preserve
+    // the client's fragmentation — the payload length just changed — so it goes
+    // as a single frame, which is what the hub reads anyway.
+    const { socket, server, hub } = await tunnel(async () => "REWRITTEN");
+    socket.write(clientFrame(0x1, "one ", false));
+    socket.write(clientFrame(0x0, "two", true));
+    await settle();
+
+    expect(server.tunnelFaults()).toEqual([]);
+    const wire = hub.bytes();
+    expect(wire[0] & 0x80, "fin").toBe(0x80);
+    expect(wire[0] & 0x0f, "text opcode").toBe(0x1);
+    const mask = wire.subarray(2, 6);
+    const body = Buffer.from(wire.subarray(6));
+    for (let i = 0; i < body.length; i += 1) body[i] ^= mask[i % 4];
+    expect(body.toString("utf8")).toBe("REWRITTEN");
+  });
+
+  it("names a continuation that continues nothing, and forwards it", async () => {
+    // Reassembly has no answer for this; the fault is the answer.
+    /** @type {string[]} */
+    const seen = [];
+    const { socket, server, hub } = await tunnel(async (text) => {
+      seen.push(text);
+      return text;
+    });
+    socket.write(clientFrame(0x0, "orphan", true));
+    await settle();
+
+    expect(seen).toEqual([]);
+    expect(server.tunnelFaults()).toEqual([
+      "continuation frame with no message open; it was forwarded unread",
+    ]);
+    expect(hub.bytes().length).toBeGreaterThan(0);
+  });
+
+  it("names a message left unfinished when the client goes away", async () => {
+    // Held fragments are not quietly discarded on disconnect: they go on, and
+    // the fact that nobody read them is recorded.
+    const { socket, server, hub } = await tunnel(async (text) => text);
+    socket.write(clientFrame(0x1, "never finished", false));
+    await settle();
+    socket.end();
+    await settle();
+
+    expect(server.tunnelFaults()).toEqual([
+      "the client went away mid-message: a fragmented text message was never" +
+        " finished, so its fragments were forwarded unread",
+    ]);
+    expect(hub.bytes().length).toBeGreaterThan(0);
+  });
+
+  it("names a binary frame, because signalling here is text", async () => {
+    const { socket, server, hub } = await tunnel(async (text) => text);
+    socket.write(clientFrame(0x2, " "));
+    await settle();
+
+    expect(server.tunnelFaults()).toHaveLength(1);
+    expect(server.tunnelFaults()[0]).toMatch(/binary frame/);
     expect(hub.bytes().length).toBeGreaterThan(0);
   });
 

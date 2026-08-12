@@ -95,3 +95,16 @@ jobs:
       - name: Browser suite
         working-directory: web
         run: npx vitest run -c vitest.e2e.config.js
+      # The vitest JUnit report, kept whether or not the run passed. This is not
+      # a nicety: the clock-skew defect in `openSignalingEnvelope` was found
+      # because a rare failure left `expected [...] to deeply equal []` with the
+      # fault text inside it, on a run nobody was watching. A log line scrolls;
+      # this does not.
+      - name: Keep the browser suite's report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-suite-report
+          path: web/test-results/e2e.xml
+          if-no-files-found: warn
+          retention-days: 30
