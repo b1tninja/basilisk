@@ -28,6 +28,7 @@
  * @module lib/toolkit/ceremony
  */
 
+import { compactRecipeText } from "./fragment.js";
 import { SLOT_SIGIL } from "./recipe-parse.js";
 
 /** @typedef {"setup"|"split"|"verify"|"cards"|"receipt"} CeremonyStageId */
@@ -66,8 +67,12 @@ export const CEREMONY_STAGES = Object.freeze([
   {
     id: "cards",
     title: "Print the cards",
-    blurb: "One card per share holder. This is the step that puts a secret on paper.",
-    runsCells: false,
+    blurb:
+      "One card per share holder, and the playbook that goes in the envelope with them — a signed procedure for recovering the secret when nobody is left to ask. This is the step that puts a secret on paper.",
+    // Was `false` until the playbook joined it. A card names the split, the
+    // threshold and the op that recombines; it has no room for the procedure,
+    // and the procedure is what a custodian is missing years later.
+    runsCells: true,
   },
   {
     id: "receipt",
@@ -204,6 +209,93 @@ export function verifyRecipe() {
 }
 
 /**
+ * The recipe a custodian runs to get the secret back.
+ *
+ * Not `verifyRecipe`, and the difference is the whole point of having both.
+ * Verification proves the shares recombine *without showing the secret again*,
+ * which is right at the table and useless in a recovery — the person running
+ * this one wants the master, not a digest of it. `vss.verify` stays in front of
+ * `vss.combine` for the reason it is there at the table: combining a corrupted
+ * set returns a *different* secret rather than an error, so without the check a
+ * recovery quietly succeeds with the wrong bytes.
+ *
+ * **Two cells, because a recovery notebook has to stand on its own.** The
+ * verify cell inside a ceremony reads `$commitments` from the split that just
+ * ran; a custodian years later has no such cell, only the commitments document
+ * out of the envelope. So the first cell is where they paste it, and the
+ * procedure compiles by itself — which is what `playbook` checks before it will
+ * vouch for one.
+ *
+ * @returns {string}
+ */
+export function recoveryRecipe() {
+  return [
+    "input | out $commitments",
+    "",
+    "shares | blip39.decode | vss.verify commitments=$commitments | vss.combine | out $master",
+  ].join("\n");
+}
+
+/**
+ * The playbook cell — what goes in the envelope with the cards.
+ *
+ * The card carries the split id, the threshold and the op that recombines,
+ * because `share-cards.js` puts those on paper. What it cannot carry is the
+ * order of the steps, or what to do with the secret once it is back. This cell
+ * writes that down, signs it with the same key the receipt uses, and it is
+ * printed and stored beside the cards rather than kept in the browser.
+ *
+ * `purpose` is prose on purpose: `#` comments do not survive
+ * `serializeRecipe`, so the recipe inside the playbook cannot hold a sentence
+ * addressed to a person. This is that sentence, and it names the threshold and
+ * the count because a custodian reading it may hold one card and no memory of
+ * the room.
+ *
+ * `splitId` is what tells two envelopes apart. It arrives from the split that
+ * just ran rather than being invented here — `share-cards.js` derives it from
+ * the commitments, and this takes that answer rather than computing a second.
+ *
+ * **`recipe=` is the recovery, not this notebook.** Left to default, the op
+ * would vouch for the notebook it is written in — which begins `random 32 |
+ * vss.split`, so a custodian following it literally would mint a fresh secret
+ * and split that instead of recovering anything. A playbook is followed by
+ * somebody with no one left to ask, so the procedure it names has to be the one
+ * they want.
+ *
+ * @param {CeremonyParams & { splitId?: string }} params
+ * @returns {string}
+ */
+export function playbookRecipe(params = /** @type {*} */ ({})) {
+  const k = Number(params.threshold) || 2;
+  const n = Number(params.shares) || 3;
+  const label = String(params.label || "").trim();
+  const title = `${label || "Key ceremony"} — recovery`;
+  const purpose =
+    `Any ${k} of the ${n} printed cards recover this secret. Type the ` +
+    `mnemonics into the Inputs panel, run the recipe below, and check each ` +
+    `card against the published commitments first — the split id on the card ` +
+    `must match the commitments document you were given.`;
+  const splitId = String(params.splitId || "").trim();
+  const split = splitId ? ` split=${splitId}` : "";
+  const key = String(params.signWith || "").trim();
+  // Compacted, because a quoted param cannot hold a newline: the string grammar
+  // has no escapes, so a literal `\n` would arrive as two characters. `~` is
+  // how a `#r=` payload already carries a multi-cell recipe on one line, and
+  // `playbook` expands it with the same function the share link uses.
+  const head =
+    `playbook ${JSON.stringify(title)} purpose=${JSON.stringify(purpose)}${split} ` +
+    `recipe=${JSON.stringify(compactRecipeText(recoveryRecipe()))}`;
+  // Unsigned when no key is unlocked, exactly as the receipt is. A playbook
+  // nobody signed still says what to do; it just cannot say who vouched for it,
+  // and refusing to write one would fail the ceremony at the step that puts
+  // recovery on paper.
+  if (key) {
+    return `${head} | gpg.sign key=$${key.replace(/^[$@]/, "")} | out $playbook`;
+  }
+  return `${head} | out $playbook`;
+}
+
+/**
  * The receipt cell. Signed when the ceremony picked a key, plain otherwise —
  * an unsigned receipt is still a useful record, and refusing to make one
  * because no vault key is unlocked would fail the ceremony at its last step.
@@ -228,13 +320,17 @@ export function receiptRecipe(params = /** @type {*} */ ({})) {
  * `runFrom(i)` runs every cell from `i` onward — a notebook pre-loaded with the
  * receipt cell would mint a receipt the moment the verify step ran.
  *
- * @param {CeremonyParams} params
+ * @param {CeremonyParams & { splitId?: string }} params
  * @returns {{ stage: CeremonyStageId, recipe: string }[]}
  */
 export function ceremonyCells(params) {
   return [
     { stage: "split", recipe: splitRecipe(params) },
     { stage: "verify", recipe: verifyRecipe() },
+    // Before the receipt, because the playbook is part of what the receipt
+    // records: a receipt written first would describe a ceremony that had not
+    // yet written down how to undo itself.
+    { stage: "cards", recipe: playbookRecipe(params) },
     { stage: "receipt", recipe: receiptRecipe(params) },
   ];
 }

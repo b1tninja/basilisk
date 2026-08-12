@@ -904,6 +904,20 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * The playbook panel, at the cards stage. Separated from the cards above it by
+ * a rule rather than by spacing alone: the cards are the secret and this is the
+ * instructions, two things that go in the same envelope and must not read as
+ * one block on a screen where the next action is Print.
+ */
+.ceremony-playbook {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/*
  * Share cards (key-ceremony kit) — the one toolkit view whose job is to end up
  * on paper, so it carries a real print stylesheet rather than hoping the screen
  * layout survives.

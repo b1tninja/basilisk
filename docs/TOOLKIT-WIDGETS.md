@@ -29,7 +29,7 @@
  * | **PresetMenu** | Templates gallery (categories, search, companion pairs) |
  * | **TypeCard** | Pipeline-type docs / producers / consumers / literal constructor |
  * | **ShareCards** | Print-ready card per share (mnemonic, QR, index, threshold, label, date) |
- * | **CeremonySheet** | Guided key ceremony — quorum → split → verify → print → receipt |
+ * | **CeremonySheet** | Guided key ceremony — quorum → split → verify → cards + playbook → receipt |
  * | **ShareCheck** | Custodian verification — one card, no session, against published commitments |
  * | **IntegrityPanel** | Verify-this-deployment — module root vs published pin, and its limits |
  * | **DkgPanel** | Distributed key generation session (design-ahead; not wired) |
@@ -53,6 +53,18 @@
  * verification compares two SHA-256 digests rather than showing the recovered
  * secret. Verification is sequenced *before* printing — proving the shares
  * recombine after the room has dispersed is not a ceremony.
+ *
+ * The cards stage writes a **playbook** as well as printing cards, and the two
+ * go in the same envelope. A card names the split, the threshold and the op
+ * that recombines, because that is what fits on paper beside a mnemonic; what
+ * it cannot hold is the order of the steps or what to do with the secret once
+ * it is back, and that is exactly what a custodian is missing years later when
+ * the dealer is gone. The playbook is a signed document (`playbook` /
+ * `playbook.verify`) carrying the **recovery** recipe — deliberately not the
+ * ceremony that produced it, since a procedure beginning `random 32 |
+ * vss.split` would mint a fresh secret rather than recover theirs. It carries
+ * no peers, no vault key ids and no pinned inputs, because unlike a run
+ * manifest it is meant to be handed to somebody who was never in the room.
  *
  * ## The other end of the ceremony (`#sharecheck`)
  *

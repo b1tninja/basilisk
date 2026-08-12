@@ -39,6 +39,7 @@ import {
   tileForSlot,
   type CeremonyStageId,
 } from "../lib/toolkit/ceremony.js";
+import { collectShareCards } from "../lib/toolkit/share-cards.js";
 import {
   MESSAGING_STARTERS,
   parseToolkitHash,
@@ -1620,9 +1621,35 @@ export function useNotebook() {
     setSheet("ceremony");
   }, []);
 
+  /**
+   * The split id of the ceremony that has already run, or "".
+   *
+   * Derived from the split cell's own tiles through `collectShareCards`, which
+   * is where the derivation lives — the cards print this label and the playbook
+   * has to name the same one, and two derivations of one label is how two
+   * documents come to disagree about which envelope they belong to.
+   *
+   * Empty until the split has run, and empty for a plain (unverifiable) split,
+   * which is correct: there is no split to name.
+   */
+  const ceremonySplitId = useCallback((splitCellIndex: number) => {
+    if (splitCellIndex < 0) return "";
+    const outs = kernelRef.current.getCellOutputs(splitCellIndex) as ArtifactTile[];
+    if (!outs.length) return "";
+    const cards = collectShareCards(outs, {});
+    return String(cards[0]?.splitId || "");
+  }, []);
+
   const runCeremonyStage = useCallback(
     async (stage: CeremonyStageId) => {
-      const cells = ceremonyCells(ceremonyParams);
+      // The cards cell names the split that just ran, so the params it is built
+      // from are the ceremony's plus that label. Indices are unaffected — the
+      // label changes one cell's text, never how many there are.
+      const shape = ceremonyCells(ceremonyParams);
+      const splitId = ceremonySplitId(shape.findIndex((c) => c.stage === "split"));
+      const cells = splitId
+        ? ceremonyCells({ ...ceremonyParams, splitId })
+        : shape;
       const at = cells.findIndex((c) => c.stage === stage);
       if (at < 0) return;
       const compiled = cells.slice(0, at + 1).map((c) => {
@@ -1654,7 +1681,7 @@ export function useNotebook() {
         setCeremonyRun("error");
       }
     },
-    [buildBindings, ceremonyParams]
+    [buildBindings, ceremonyParams, ceremonySplitId]
   );
 
   /** Which notebook cell each ceremony stage's outputs live in. */
@@ -1663,6 +1690,7 @@ export function useNotebook() {
     return {
       split: cells.findIndex((c) => c.stage === "split"),
       verify: cells.findIndex((c) => c.stage === "verify"),
+      cards: cells.findIndex((c) => c.stage === "cards"),
       receipt: cells.findIndex((c) => c.stage === "receipt"),
     };
   }, [ceremonyParams]);
@@ -1683,6 +1711,10 @@ export function useNotebook() {
       shareArtifacts: splitOut.filter(
         (a) => a.role === "share" || a.role === "qr"
       ) as ArtifactTile[],
+      // The sheet that goes in the envelope with the cards. Shown at the cards
+      // stage rather than kept for the receipt, because it is a thing to print
+      // and hand over, not a record of what happened.
+      playbookText: tileForSlot(outs(ceremonyCellIndex.cards), "playbook"),
       receiptText: tileForSlot(outs(ceremonyCellIndex.receipt), "receipt"),
     };
   }, [ceremonyCellIndex, kernelEpoch]);

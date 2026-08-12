@@ -1,0 +1,399 @@
+/**
+ * Recipe playbooks — the document, the two ops, and what a stranger can do
+ * with one years later.
+ *
+ * The weight of this file is on refusals, for `manifest-attest.test.js`'s
+ * reason: a reader that only ever passes proves nothing. Three groups of them:
+ *
+ * 1. **What the document may not carry.** `parsePlaybook` refuses any field
+ *    outside `PLAYBOOK_FIELDS`, because "must not carry a fingerprint, a vault
+ *    key id or an audience" is a property of the shape or it is a comment — and
+ *    unlike a manifest, this document is *meant* to be handed to somebody who
+ *    was never in the room.
+ * 2. **What it may not say.** A playbook whose digest does not describe the
+ *    recipe beside it is refused before anybody runs the recipe.
+ * 3. **What may not open one.** There is no unverified read: `playbook.verify`
+ *    refuses an unsigned document, a document signed by somebody else, and a
+ *    document edited inside its cleartext wrapper. That last one is the reason
+ *    the op parses out of the bytes OpenPGP hashed rather than unwrapping the
+ *    armor a second time.
+ *
+ * The fourth thing under test is the seam nobody would notice breaking: the
+ * ceremony's playbook names the **recovery**, not the ceremony. A playbook
+ * carrying the notebook that produced it would tell a custodian to run
+ * `random 32 | vss.split`, which mints a fresh secret rather than recovering
+ * theirs — a booby trap dressed as an instruction, signed.
+ */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { generateKey } from "openpgp";
+import { describe, expect, it } from "vitest";
+import {
+  PLAYBOOK_FIELDS,
+  PLAYBOOK_KIND,
+  PLAYBOOK_VERSION,
+  assertPlaybookIntegrity,
+  buildPlaybook,
+  parsePlaybook,
+  playbookDigest,
+  playbookToJson,
+  summarizePlaybook,
+} from "../lib/toolkit/playbook.js";
+import { ceremonyCells, playbookRecipe, recoveryRecipe } from "../lib/toolkit/ceremony.js";
+import { digestText, opsRegistryVersion } from "../lib/toolkit/receipt.js";
+import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
+import { runRecipe } from "../lib/toolkit/engine.js";
+
+const RECIPE = "input | out $commitments\n\nshares | blip39.decode | vss.combine | out $master";
+
+/** The notebook context `useNotebook`'s `buildBindings` hands an op. */
+const notebook = (source, label = "") => ({ receipt: { recipeSource: source, label } });
+
+/** One key, reused: generating an OpenPGP key is the slow part of this file. */
+let cached = null;
+async function key() {
+  if (!cached) {
+    cached = await generateKey({
+      type: "ecc",
+      curve: "curve25519",
+      userIDs: [{ name: "Playbook Author", email: "author@example.com" }],
+      format: "armored",
+    });
+  }
+  return cached;
+}
+
+/** A second key, for "signed by somebody else". */
+let cachedOther = null;
+async function otherKey() {
+  if (!cachedOther) {
+    cachedOther = await generateKey({
+      type: "ecc",
+      curve: "curve25519",
+      userIDs: [{ name: "Somebody Else", email: "else@example.com" }],
+      format: "armored",
+    });
+  }
+  return cachedOther;
+}
+
+/** Bindings that give an op a vault key to sign and verify with. */
+async function withKey(source, k) {
+  const pair = k || (await key());
+  return {
+    ...notebook(source),
+    inputs: {
+      gpg: {
+        privateKeyArmored: pair.privateKey,
+        publicKeyArmored: pair.publicKey,
+        passphrase: "",
+        armoredMessages: [],
+      },
+    },
+  };
+}
+
+/* ────────────────────────────── the document ────────────────────────────── */
+
+describe("a playbook is a procedure and the prose to follow it", () => {
+  it("carries the recipe itself, not only a digest of it", async () => {
+    // The reason is the whole feature: in a recovery the reader has the
+    // playbook and nothing else, so a digest would send them to find the text
+    // somewhere they would then have to trust.
+    const pb = await buildPlaybook({ title: "Board key recovery", recipeSource: RECIPE });
+    expect(pb.recipeSource).toBe(RECIPE);
+    expect(pb.recipeDigest).toBe(await digestText(RECIPE));
+    expect(pb.kind).toBe(PLAYBOOK_KIND);
+    expect(pb.v).toBe(PLAYBOOK_VERSION);
+  });
+
+  it("round-trips through its canonical JSON", async () => {
+    const pb = await buildPlaybook({
+      title: "Board key recovery",
+      purpose: "Any 2 of the 3 cards.",
+      splitId: "A1B2-C3D4",
+      registry: opsRegistryVersion(),
+      recipeSource: RECIPE,
+    });
+    expect(parsePlaybook(playbookToJson(pb))).toEqual(pb);
+    expect(await playbookDigest(pb)).toMatch(/^[0-9a-f]{64}$/);
+    expect(summarizePlaybook(pb)).toContain("A1B2-C3D4");
+  });
+
+  it("refuses to vouch for nothing", async () => {
+    await expect(buildPlaybook({ title: "Empty" })).rejects.toThrow(
+      /no recipe to write a playbook for/
+    );
+  });
+});
+
+/* ─────────────────── what it may not carry (the closed list) ─────────────── */
+
+describe("the field list is enforced, not described", () => {
+  it("refuses a field outside the list", async () => {
+    const pb = await buildPlaybook({ title: "t", recipeSource: RECIPE });
+    const forged = JSON.stringify({ ...pb, note: "hello" });
+    expect(() => parsePlaybook(forged)).toThrow(/unexpected field note/);
+  });
+
+  it("refuses the field a fingerprint would arrive in", async () => {
+    // Named separately from the case above because this is *why* the list is
+    // closed. A playbook goes to people who were never in the room, and the
+    // room is a digest of its audience.
+    const pb = await buildPlaybook({ title: "t", recipeSource: RECIPE });
+    const forged = JSON.stringify({
+      ...pb,
+      author: "4F2AC1B39D8E7C6A5B4938271605F4E3D2C1B0A9",
+    });
+    expect(() => parsePlaybook(forged)).toThrow(/nowhere to carry/);
+  });
+
+  it("leaves no field a fingerprint fits through", async () => {
+    // `splitId` is the one free-ish string, and it is narrow on purpose.
+    await expect(
+      buildPlaybook({
+        title: "t",
+        recipeSource: RECIPE,
+        splitId: "4F2AC1B39D8E7C6A5B4938271605F4E3D2C1B0A9",
+      })
+    ).rejects.toThrow(/not a split id/);
+  });
+
+  it("names every field it does carry, so the list cannot drift", async () => {
+    const pb = await buildPlaybook({ title: "t", recipeSource: RECIPE });
+    expect(Object.keys(pb).sort()).toEqual([...PLAYBOOK_FIELDS].sort());
+  });
+
+  it("refuses another Basilisk document read as a playbook", () => {
+    expect(() =>
+      parsePlaybook(JSON.stringify({ v: 2, kind: "basilisk.run-receipt" }))
+    ).toThrow(/not a Basilisk recipe playbook/);
+  });
+});
+
+/* ───────────────────── what it may not say about itself ──────────────────── */
+
+describe("a playbook that contradicts itself is refused", () => {
+  it("catches a digest that does not describe the recipe beside it", async () => {
+    const pb = await buildPlaybook({ title: "t", recipeSource: RECIPE });
+    const swapped = { ...pb, recipeSource: "random 32 | out $oops" };
+    await expect(assertPlaybookIntegrity(swapped)).rejects.toThrow(
+      /not the recipe its digest names/
+    );
+  });
+
+  it("passes the one that agrees with itself", async () => {
+    const pb = await buildPlaybook({ title: "t", recipeSource: RECIPE });
+    await expect(assertPlaybookIntegrity(pb)).resolves.toBe(pb);
+  });
+
+  it("refuses a document with no procedure in it", async () => {
+    const pb = await buildPlaybook({ title: "t", recipeSource: RECIPE });
+    expect(() => parsePlaybook(JSON.stringify({ ...pb, recipeSource: "" }))).toThrow(
+      /carries no recipe/
+    );
+  });
+});
+
+/* ─────────────────────────── the ops, end to end ─────────────────────────── */
+
+describe("playbook / playbook.verify through the engine", () => {
+  const SRC = `bytes deadbeef | encode hex | out $a
+
+playbook "Thursday recovery" purpose="Paste the cards." | gpg.sign | out $signed
+
+in $signed | playbook.verify | out $recipe`;
+
+  it("writes one, signs it, and hands the recipe back", async () => {
+    const { ast, validation } = compileRecipe(SRC);
+    expect(validation.errors).toEqual([]);
+    const arts = await runRecipe(ast, await withKey(SRC));
+    const recipe = arts.find((a) => a.label === "recipe");
+    expect(recipe).toBeTruthy();
+    // The procedure, not the envelope: this is what a reader pastes.
+    expect(String(recipe.content)).toContain("out $a");
+    expect(String(recipe.content)).not.toContain("recipe-playbook");
+  }, 60_000);
+
+  it("describes the whole notebook, not the cell it sits in", async () => {
+    const { ast } = compileRecipe(SRC);
+    const arts = await runRecipe(ast, await withKey(SRC));
+    const signed = arts.find((a) => a.label === "signed");
+    const pb = parsePlaybook(String(signed.content));
+    expect(pb.title).toBe("Thursday recovery");
+    expect(pb.recipeSource).toContain("out $a");
+    expect(pb.registry).toBe(opsRegistryVersion());
+  }, 60_000);
+
+  it("refuses an unsigned playbook — there is no unverified open", async () => {
+    // The property the whole design rests on. A reader who can open an
+    // unsigned procedure has learned nothing about who wrote it, and the op
+    // would be lending its name to that.
+    const pb = await buildPlaybook({ title: "t", recipeSource: RECIPE });
+    const src = "in $doc | playbook.verify | out $recipe";
+    const { ast } = compileRecipe(`input | out $doc\n\n${src}`);
+    const bindings = await withKey(src);
+    await expect(
+      runRecipe(ast, { ...bindings, inputs: { ...bindings.inputs, text: { value: playbookToJson(pb) } } })
+    ).rejects.toThrow(/not an OpenPGP cleartext-signed document/);
+  }, 60_000);
+
+  it("refuses one signed by somebody else", async () => {
+    const mine = await key();
+    const theirs = await otherKey();
+    const write = 'playbook "Theirs" | gpg.sign | out $signed';
+    const { ast: writeAst } = compileRecipe(write);
+    const signed = (await runRecipe(writeAst, await withKey(write, theirs))).find(
+      (a) => a.label === "signed"
+    );
+    // Read back against a key that did not sign it.
+    const read = "in $doc | playbook.verify | out $recipe";
+    const { ast } = compileRecipe(`input | out $doc\n\n${read}`);
+    const bindings = await withKey(read, mine);
+    await expect(
+      runRecipe(ast, {
+        ...bindings,
+        inputs: { ...bindings.inputs, text: { value: String(signed.content) } },
+      })
+    ).rejects.toThrow(/does not verify against that key|signature/i);
+  }, 60_000);
+
+  it("refuses one edited inside its cleartext wrapper", async () => {
+    // The case that makes verify-and-parse one act rather than two. An armor
+    // unwrapper reading the tampered body would hand back a procedure the
+    // signature never covered.
+    const write = 'playbook "Original" | gpg.sign | out $signed';
+    const { ast: writeAst } = compileRecipe(write);
+    const signed = (await runRecipe(writeAst, await withKey(write))).find(
+      (a) => a.label === "signed"
+    );
+    const tampered = String(signed.content).replace("Original", "Tampered");
+    expect(tampered).not.toBe(String(signed.content));
+    const read = "in $doc | playbook.verify | out $recipe";
+    const { ast } = compileRecipe(`input | out $doc\n\n${read}`);
+    const bindings = await withKey(read);
+    await expect(
+      runRecipe(ast, {
+        ...bindings,
+        inputs: { ...bindings.inputs, text: { value: tampered } },
+      })
+    ).rejects.toThrow(/does not verify against that key|signature/i);
+  }, 60_000);
+
+  it("refuses to vouch for a procedure that will not run", async () => {
+    const src = 'playbook "Broken" recipe="genkey nonsense-curve | out $k" | out $pb';
+    const { ast } = compileRecipe(src);
+    await expect(runRecipe(ast, notebook(src))).rejects.toThrow(
+      /the procedure does not compile/
+    );
+  });
+
+  it("takes a multi-cell procedure through the share-link spelling", async () => {
+    // A quoted param cannot hold a newline — the string grammar has no escapes
+    // — so `~` carries a multi-cell recipe the way a `#r=` payload does.
+    const src = 'playbook "Two cells" recipe="random 32|out $a~in $a|encode hex|out $b" | out $pb';
+    const { ast, validation } = compileRecipe(src);
+    expect(validation.errors).toEqual([]);
+    const arts = await runRecipe(ast, notebook(src));
+    const pb = parsePlaybook(String(arts.find((a) => a.label === "pb").content));
+    expect(compileRecipe(pb.recipeSource).ast.chains).toHaveLength(2);
+  });
+});
+
+/* ─────────────────────────── the ceremony's own ──────────────────────────── */
+
+describe("the ceremony writes a playbook for the recovery, not for itself", () => {
+  it("puts the cards stage in the run, between verify and receipt", () => {
+    // The playbook is part of what the receipt records, so it is written first.
+    expect(ceremonyCells({ threshold: 2, shares: 3 }).map((c) => c.stage)).toEqual([
+      "split",
+      "verify",
+      "cards",
+      "receipt",
+    ]);
+  });
+
+  it("names a recovery that compiles on its own", () => {
+    // A custodian has the commitments document out of the envelope and no cell
+    // that produced it, so the procedure has to include somewhere to paste it.
+    const recovery = recoveryRecipe();
+    expect(compileRecipe(recovery).validation.errors).toEqual([]);
+    expect(recovery).toContain("vss.verify");
+    expect(recovery.indexOf("vss.verify")).toBeLessThan(recovery.indexOf("vss.combine"));
+    expect(recovery).toContain("out $master");
+  });
+
+  it("does not tell a custodian to split a fresh secret", () => {
+    // Left to default, `playbook` would vouch for the notebook it runs in —
+    // which begins `random 32 | vss.split`. Following that literally destroys
+    // nothing and recovers nothing, which is worse than an error.
+    const cell = playbookRecipe({ threshold: 2, shares: 3, label: "Board key" });
+    expect(cell).toContain("recipe=");
+    expect(cell).not.toContain("vss.split");
+    expect(cell).toContain("vss.combine");
+  });
+
+  it("carries the split label, so two envelopes can be told apart", () => {
+    const cell = playbookRecipe({ threshold: 2, shares: 3, splitId: "A1B2-C3D4" });
+    expect(cell).toContain("split=A1B2-C3D4");
+    // …and omits it rather than writing an empty one when the split is not
+    // verifiable, because there is then no split to name.
+    expect(playbookRecipe({ threshold: 2, shares: 3 })).not.toContain("split=");
+  });
+
+  it("signs with the ceremony's key when one was chosen, and still writes one when not", () => {
+    expect(playbookRecipe({ signWith: "me" })).toContain("gpg.sign key=$me");
+    expect(playbookRecipe({})).not.toContain("gpg.sign");
+    expect(playbookRecipe({})).toContain("out $playbook");
+  });
+
+  it("round-trips as recipe text, so it survives the notebook it is written in", () => {
+    const cell = playbookRecipe({ threshold: 2, shares: 3, label: "Board key" });
+    const once = serializeRecipe(compileRecipe(cell).ast);
+    expect(serializeRecipe(compileRecipe(once).ast)).toBe(once);
+  });
+});
+
+/* ──────────────────────────── an entry point ─────────────────────────────── */
+
+/**
+ * The recurring defect in this stack is a finished mechanism nothing can
+ * reach — `CellAssign` exists because the `@peer` header was one. A playbook
+ * op with no surface would be the same defect in a document that only matters
+ * years after anybody would notice.
+ *
+ * Source assertions because the suite is `environment: "node"` and cannot
+ * mount a component, and because what these catch is a *missing* wire, which
+ * no rendering of the correct output would have shown.
+ */
+describe("the ceremony can reach the playbook, not only a recipe author", () => {
+  const read = (rel) =>
+    readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("runs the cards stage instead of only showing it", async () => {
+    // `goNext` runs the next stage's cells when `runsCells` is true, so this
+    // flag is the difference between a playbook that writes itself on entering
+    // the stage and one nobody ever asks for.
+    const { CEREMONY_STAGES } = await import("../lib/toolkit/ceremony.js");
+    expect(CEREMONY_STAGES.find((s) => s.id === "cards").runsCells).toBe(true);
+  });
+
+  it("carries the tile from the kernel to the sheet", () => {
+    const hook = read("../toolkit/useNotebook.ts");
+    expect(hook).toContain('cards: cells.findIndex((c) => c.stage === "cards")');
+    expect(hook).toContain('tileForSlot(outs(ceremonyCellIndex.cards), "playbook")');
+    const shell = read("../toolkit/ToolkitShell.tsx");
+    expect(shell).toContain("playbookText={nb.ceremonyView.playbookText}");
+  });
+
+  it("shows it at the cards stage, with a way to write one that failed", () => {
+    const sheet = read("../toolkit/widgets/CeremonySheet.tsx");
+    expect(sheet).toContain("ceremony-playbook");
+    expect(sheet).toContain("Write the playbook");
+    // The panel lives under `stage === "cards"`, not under the receipt: the
+    // playbook goes in the envelope with the cards, and a person who stopped
+    // at printing must still have been offered it.
+    const cards = sheet.slice(sheet.indexOf('stage === "cards"'), sheet.indexOf('stage === "receipt"'));
+    expect(cards).toContain("playbookText");
+  });
+});

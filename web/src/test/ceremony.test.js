@@ -220,13 +220,32 @@ describe("the whole ceremony, through the kernel", () => {
     expect(cards.length).toBe(3);
     expect(cards.every((c) => c.threshold === 2 && c.qrSvg)).toBe(true);
 
-    // ── receipt: covers all three cells, contains no share ──
-    const receiptArts = await kernel.runCell(2, chains[2], {});
+    // ── playbook: what goes in the envelope with the cards ──
+    // Cell 2 since the cards stage started writing one. The indices below moved
+    // with it rather than the assertions being relaxed: a ceremony that prints
+    // cards and no procedure leaves a custodian holding words and no
+    // instructions, which is the case this cell exists for.
+    const playbookArts = await kernel.runCell(2, chains[2], {});
+    const playbook = JSON.parse(tileForSlot(playbookArts, "playbook"));
+    expect(playbook.kind).toBe("basilisk.recipe-playbook");
+    // The **recovery**, not this notebook. A playbook that carried the ceremony
+    // would tell a custodian to run `random 32 | vss.split`, which mints a
+    // fresh secret instead of recovering theirs.
+    expect(playbook.recipeSource).toContain("vss.combine");
+    expect(playbook.recipeSource).not.toContain("vss.split");
+    // And it stands on its own: the commitments are pasted, not read from a
+    // cell that only exists inside this ceremony.
+    expect(compileRecipe(playbook.recipeSource).validation.errors).toEqual([]);
+    // No secret in it, on `receipt.js`'s invariant.
+    for (const c of cards) expect(playbook.recipeSource).not.toContain(c.mnemonic);
+
+    // ── receipt: covers all four cells, contains no share ──
+    const receiptArts = await kernel.runCell(3, chains[3], {});
     const receipt = parseReceipt(
       receiptArts.find((a) => a.role === "receipt").content
     );
     expect(receipt.label).toBe("Board key");
-    expect(receipt.cells.length).toBe(3);
+    expect(receipt.cells.length).toBe(4);
     const body = JSON.stringify(receipt);
     for (const c of cards) expect(body).not.toContain(c.mnemonic);
     // It records that three shares existed, by digest, and that the receipt
@@ -235,7 +254,7 @@ describe("the whole ceremony, through the kernel", () => {
       (c.outputs || []).filter((o) => o.role === "share")
     );
     expect(shareRows.length).toBe(3);
-    expect(receipt.cells[2].outputs).toEqual([]);
+    expect(receipt.cells[3].outputs).toEqual([]);
 
     kernel.destroy();
   }, 60_000);

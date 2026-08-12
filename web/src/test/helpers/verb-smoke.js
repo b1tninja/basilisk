@@ -1635,6 +1635,89 @@ in $manifest | run.attest | out $attestation`,
       },
     },
 
+    {
+      id: "playbook",
+      // The document a custodian finds in the envelope years later. Written
+      // over a two-cell notebook so the assertion can check that the whole
+      // procedure travels, not only the cell the op sits in.
+      recipe: `bytes deadbeef | encode hex | out $a
+
+playbook "Verb smoke recovery" purpose="Recombine two cards, then decrypt envelope.asc" split=A1B2-C3D4 | out $playbook`,
+      mode: "run",
+      bindings: () => ({
+        receipt: {
+          recipeSource:
+            "bytes deadbeef | encode hex | out $a\n\n" +
+            'playbook "Verb smoke recovery" purpose="Recombine two cards, then decrypt envelope.asc" split=A1B2-C3D4 | out $playbook',
+          label: "verb smoke",
+        },
+      }),
+      assert: (arts) => {
+        const tile = arts.find((a) => /recipe-playbook/.test(String(a.content || "")));
+        if (!tile) throw new Error("expected a playbook tile");
+        const playbook = JSON.parse(String(tile.content));
+        if (playbook.title !== "Verb smoke recovery") {
+          throw new Error("playbook did not take the title argument");
+        }
+        if (!/Recombine two cards/.test(String(playbook.purpose))) {
+          throw new Error("playbook did not take the purpose argument");
+        }
+        if (playbook.splitId !== "A1B2-C3D4") {
+          throw new Error(`playbook lost the split label, got ${playbook.splitId}`);
+        }
+        // The whole notebook, not the cell the op sits in — a procedure that
+        // stopped at its own cell would tell a custodian to run one step of it.
+        if (!/out \$a/.test(String(playbook.recipeSource))) {
+          throw new Error("playbook should carry every cell of the notebook");
+        }
+        // The closed field list, enforced rather than described. A playbook
+        // goes to somebody who was never in the room.
+        const fields = Object.keys(playbook).sort().join(",");
+        if (
+          fields !==
+          "createdAt,kind,purpose,recipeDigest,recipeSource,registry,splitId,title,v"
+        ) {
+          throw new Error(`playbook carries a field it should not: ${fields}`);
+        }
+        if (/\b[0-9A-F]{40}\b/.test(String(tile.content))) {
+          throw new Error("playbook contains fingerprint-shaped hex");
+        }
+      },
+    },
+    {
+      id: "playbook.verify",
+      // The recovery, end to end: sign a playbook, then check it against the
+      // same key and get the procedure back. `key` is omitted so it resolves
+      // the vault key, which is the path a custodian with one key in the panel
+      // actually takes.
+      recipe: `bytes deadbeef | encode hex | out $a
+
+playbook "Verb smoke recovery" | gpg.sign | out $signed
+
+in $signed | playbook.verify | out $recipe`,
+      mode: "run",
+      timeoutMs: 60_000,
+      bindings: async () => {
+        const source =
+          "bytes deadbeef | encode hex | out $a\n\n" +
+          'playbook "Verb smoke recovery" | gpg.sign | out $signed\n\n' +
+          "in $signed | playbook.verify | out $recipe";
+        return { ...(await gpgBindings()), receipt: { recipeSource: source, label: "verb smoke" } };
+      },
+      assert: (arts) => {
+        const recipe = arts.find((a) => a.label === "recipe");
+        if (!recipe) throw new Error("expected the recipe the playbook vouches for");
+        if (!/out \$a/.test(String(recipe.content))) {
+          throw new Error("playbook.verify should emit the recipe, not the document");
+        }
+        // What comes out is recipe text, never the JSON envelope: a reader
+        // pastes this into a notebook.
+        if (/recipe-playbook/.test(String(recipe.content))) {
+          throw new Error("playbook.verify emitted the document instead of the recipe");
+        }
+      },
+    },
+
     // ── Clipboard as a signaling channel (§32d) — both need the browser's
     // clipboard plus (for read) the UI's permission gate, so compile-only.
     {

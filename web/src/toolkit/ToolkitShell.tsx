@@ -3522,6 +3522,7 @@ export function ToolkitShell() {
           recoveredDigest={nb.ceremonyView.recoveredDigest}
           shareArtifacts={nb.ceremonyView.shareArtifacts}
           commitmentsText={nb.ceremonyView.commitmentsText}
+          playbookText={nb.ceremonyView.playbookText}
           receiptText={nb.ceremonyView.receiptText}
           onScanQr={scanCardPhoto}
         />
