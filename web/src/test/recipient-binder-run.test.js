@@ -100,3 +100,83 @@ describe("a recipient bound in the Keys tray reaches the run", () => {
     kernel.destroy();
   });
 });
+
+describe("a key unlocked in My Keys reaches the decrypt", () => {
+  /** A message only `key` can open, plus that key's armor. */
+  async function sealed() {
+    const { encrypt, createMessage } = await import("openpgp");
+    const key = await generateKey({
+      type: "ecc",
+      curve: "curve25519",
+      userIDs: [{ name: "Okafor", email: "okafor@example.com" }],
+      format: "object",
+    });
+    const armoredMessage = await encrypt({
+      message: await createMessage({ text: "the quiet part" }),
+      encryptionKeys: key.publicKey,
+    });
+    return {
+      armoredMessage,
+      privateKeyArmored: key.privateKey.armor(),
+      fingerprint: key.publicKey.getFingerprint().toUpperCase(),
+    };
+  }
+
+  it("decrypts with a session-unlocked key, which the notebook never binds", async () => {
+    const s = await sealed();
+    const { sessionPut } = await import("../lib/vault-session.js");
+    // What `unlockVaultForUse` does after a human unlocks the key.
+    sessionPut(s.fingerprint, s.privateKeyArmored);
+
+    const kernel = createKernel();
+    const compiled = compileRecipe("gpg.decrypt");
+    const artifacts = await kernel.runCell(0, compiled.ast.chains[0], {
+      inputs: { gpg: { armoredMessages: [s.armoredMessage] } },
+    });
+
+    const seen = artifacts.map((a) => String(a.content || "")).join("\n");
+    expect(seen).toContain("the quiet part");
+    kernel.destroy();
+  });
+
+  it("does not unlock anything itself — a locked vault still refuses", async () => {
+    // The point of reading the session rather than the vault: this reads a
+    // decision a human already made. With nothing unlocked there is no
+    // decision to read, and the run says so instead of reaching for a key.
+    const s = await sealed();
+    sessionClear();
+
+    const kernel = createKernel();
+    const compiled = compileRecipe("gpg.decrypt");
+    await expect(
+      kernel.runCell(0, compiled.ast.chains[0], {
+        inputs: { gpg: { armoredMessages: [s.armoredMessage] } },
+      })
+    ).rejects.toThrow(/still need a browser-unlockable private key/);
+    kernel.destroy();
+  });
+
+  it("still prefers a bound key over the session", async () => {
+    const bound = await sealed();
+    const other = await sealed();
+    // An unrelated key is open; the bound one is what must be used.
+    const { sessionPut } = await import("../lib/vault-session.js");
+    sessionPut(other.fingerprint, other.privateKeyArmored);
+
+    const kernel = createKernel();
+    const compiled = compileRecipe("gpg.decrypt");
+    const artifacts = await kernel.runCell(0, compiled.ast.chains[0], {
+      inputs: {
+        gpg: {
+          armoredMessages: [bound.armoredMessage],
+          privateKeyArmored: bound.privateKeyArmored,
+        },
+      },
+    });
+
+    expect(artifacts.map((a) => String(a.content || "")).join("\n")).toContain(
+      "the quiet part"
+    );
+    kernel.destroy();
+  });
+});

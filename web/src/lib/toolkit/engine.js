@@ -3657,28 +3657,66 @@ async function decryptGpgSource(bindings, _artifacts) {
     );
   }
 
-  /** @type {import("openpgp").PrivateKey|null} */
-  let privateKey = null;
+  /**
+   * Every private key this run may decrypt with.
+   *
+   * A bound `privateKeyArmored` wins — that is the worker message's field, and
+   * a caller who names a key means that key. With none bound this falls back to
+   * the keys already unlocked in My Keys this session, which is what the
+   * shipped "OpenPGP decrypt" preset means by "unlock My Keys when prompted".
+   *
+   * Nothing here unlocks anything. `sessionGet` only ever returns armor a human
+   * put there by unlocking it, and it expires on its own — so this reads a
+   * decision already made rather than making one. A step that wants to unlock a
+   * *locked* key is `agent.decrypt`, which asks through `requireApproval`.
+   *
+   * Until this existed the notebook could not decrypt at all: `buildBindings`
+   * sets `inputs.gpg.armoredMessages` and has never set a private key, so the
+   * preset's own recipe refused every time — the same seam that stranded bound
+   * recipients.
+   */
+  /** @type {import("openpgp").PrivateKey[]} */
+  let privateKeys = [];
   try {
     if (ciphertexts.length) {
-      if (!gpg?.privateKeyArmored) {
+      if (gpg?.privateKeyArmored) {
+        let bound = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
+        if (!bound.isDecrypted()) {
+          bound = await decryptKey({
+            privateKey: bound,
+            passphrase: gpg.passphrase || "",
+          });
+        }
+        privateKeys = [bound];
+      } else {
+        const { sessionGet, sessionList } = await import("../vault-session.js");
+        for (const entry of sessionList()) {
+          const armored = sessionGet(entry.fingerprint);
+          if (!armored) continue;
+          try {
+            const candidate = await readPrivateKey({ armoredKey: armored });
+            // Only keys that are actually open. The vault holds ssh and raw
+            // material too, and neither reads as an OpenPGP private key.
+            if (candidate.isDecrypted()) privateKeys.push(candidate);
+          } catch (_) {
+            /* not an OpenPGP private key — skip it rather than fail the run */
+          }
+        }
+      }
+      if (!privateKeys.length) {
         throw new Error(
           `${ciphertexts.length} OpenPGP message(s) still need a browser-unlockable private key. ` +
-            `YubiKey/OpenPGP smartcards are not available to the browser — decrypt those shares in Kleopatra/gpg, then paste the mnemonics into the share rows.`
+            `Unlock the key in My Keys, or bind one — YubiKey/OpenPGP smartcards are not available to the browser, so decrypt those shares in Kleopatra/gpg and paste the mnemonics into the share rows.`
         );
-      }
-      privateKey = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
-      if (!privateKey.isDecrypted()) {
-        privateKey = await decryptKey({
-          privateKey,
-          passphrase: gpg.passphrase || "",
-        });
       }
       for (const armored of ciphertexts) {
         try {
           const result = await openpgpDecrypt({
             message: await readMessage({ armoredMessage: armored }),
-            decryptionKeys: privateKey,
+            // openpgp picks the key whose id matches the message; handing it
+            // every unlocked key is how "which of my keys is this for" gets
+            // answered without asking the person to say.
+            decryptionKeys: privateKeys,
             config: { allowInsecureDecryptionWithSigningKeys: true },
           });
           const plaintext =
@@ -3737,7 +3775,11 @@ async function decryptGpgSource(bindings, _artifacts) {
       },
     };
   } finally {
-    if (privateKey) zeroKeyMaterial(privateKey);
+    // Every key this run opened, not just the last one. A session key is a
+    // *copy* read out of the vault's armor, so wiping it here does not lock
+    // the vault entry — it clears this run's copy, which is the rule in
+    // `src/lib/memory-safety.js`.
+    for (const key of privateKeys) zeroKeyMaterial(key);
   }
 }
 
