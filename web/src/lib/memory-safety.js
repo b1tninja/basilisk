@@ -14,13 +14,13 @@
  *
  * Inline idiom (Uint8Array — preferred):
  *
- *   try { secret.fill(0); } catch (_) { /* never throw from cleanup */ }
+ *   try { secret.fill(0); } catch (_) {}   // never throw from cleanup
  *
  * Inline idiom (ArrayBuffer | Uint8Array):
  *
  *   try {
  *     (buf instanceof Uint8Array ? buf : new Uint8Array(buf)).fill(0);
- *   } catch (_) { /* never throw from cleanup */ }
+ *   } catch (_) {}   // never throw from cleanup
  *
  * After postMessage(…, [bytes.buffer]) transfer, the sender view is detached
  * (byteLength → 0). If a live view remains:
