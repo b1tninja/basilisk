@@ -17,6 +17,7 @@ const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)),
 const TOOLCARD = read("../toolkit/widgets/ToolCard.tsx");
 const BANNER = read("../toolkit/widgets/ApprovalBanner.tsx");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
+const KEYVAULT = read("../toolkit/widgets/KeyVault.tsx");
 const CHIP = read("../toolkit/widgets/SuggestChip.tsx");
 const FLOW = read("../toolkit/widgets/RecipeChipFlow.tsx");
 const RUNBAR = read("../toolkit/widgets/RunBar.tsx");
@@ -122,15 +123,26 @@ describe("the shell wires the gate and can revoke it (§27c)", () => {
     expect(BANNER).not.toMatch(/position:\s*fixed|Dialog|Modal/);
   });
 
-  it("revokes grants on Lock and on Lock all", () => {
-    expect(SHELL).toMatch(/revokeApprovalGrants\(k\.fingerprint\)/);
+  it("revokes grants on Lock, on Delete, and on Lock all", () => {
+    // The row moved into `KeyVault`, so the shell's Lock handler takes the
+    // fingerprint as an argument rather than closing over `k` — same call, one
+    // parameter name. Delete is new here and revokes for a stronger reason
+    // than Lock does: the key it granted use of no longer exists.
+    expect(SHELL).toMatch(/onLock=\{\(fpr\) => \{[\s\S]{0,200}revokeApprovalGrants\(fpr\)/);
+    expect(SHELL).toMatch(/deleteFromVault[\s\S]{0,400}revokeApprovalGrants\(fingerprint\)/);
     expect(SHELL).toMatch(/lockAllSessions[\s\S]{0,400}clearApprovalGrants\(\)/);
   });
 
-  it("shows a live, counting grant on the Keyring row", () => {
-    expect(SHELL).toMatch(/data-approval-grant/);
-    expect(SHELL).toMatch(/approved: \{g\.use\}/);
-    expect(SHELL).toMatch(/\{g\.uses\}/);
+  it("shows a live, counting grant on the key's row", () => {
+    // The Keyring became the vault's own panel (`KeyVault.tsx`), which is where
+    // a key's row now lives. The treatment is unchanged and pinned in its new
+    // file rather than loosened here — a grant nobody can watch is the rubber
+    // stamp §27c exists to prevent, wherever the row is drawn.
+    expect(KEYVAULT).toMatch(/data-approval-grant/);
+    expect(KEYVAULT).toMatch(/approved: \{g\.use\}/);
+    expect(KEYVAULT).toMatch(/\{g\.uses\}/);
+    // …and the shell is what puts the grants there, keyed to the right key.
+    expect(SHELL).toMatch(/grants: approvalGrants[\s\S]{0,120}g\.keyId === k\.fingerprint/);
   });
 });
 

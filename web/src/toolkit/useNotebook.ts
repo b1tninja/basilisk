@@ -574,6 +574,11 @@ export function useNotebook() {
         // that is about to expire — the vault has always known this, the
         // projection just dropped it.
         expires: k.expires ?? null,
+        // §28b: the OpenSSH public line is public material and the single most
+        // common thing anybody does with an ssh key. `/my-keys` has offered it
+        // on the row since kinds landed; the notebook's projection dropped it,
+        // so the Keys tray could not.
+        publicLine: k.publicLine,
       }));
       // Session-only keys (unlocked/minted in memory, never persisted) are
       // still keys the user holds — the binder lists them so recipes can sign
@@ -2153,10 +2158,17 @@ export function useNotebook() {
     );
   }, [opsFilter]);
 
-  const unlockedCount = useMemo(() => {
-    void sessionTick;
-    return sessionList().length;
-  }, [sessionTick]);
+  /*
+   * `unlockedCount` was here, and it is gone rather than rewired.
+   *
+   * It counted `sessionList().length` and had exactly one reader: a header
+   * inside the Keys tray, which needed the tray open *and* that tab selected
+   * before the number existed on screen. The shell now derives the same count
+   * from `keyViews` — the one list that also draws the rows, feeds the tab's
+   * badge and feeds the run bar's chip — so keeping this would be a second
+   * derivation of one number, which is the drift the key-power vocabulary was
+   * introduced to remove. See `loadedCount` in `lib/toolkit/key-power.js`.
+   */
 
   const usesPgp = useMemo(
     () =>
@@ -2234,7 +2246,6 @@ export function useNotebook() {
     publishArtifact,
     readinessBlocker,
     unmetForCell,
-    unlockedCount,
     usesPgp,
     presets: PRESETS,
     compiled,

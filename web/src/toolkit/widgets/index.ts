@@ -65,6 +65,16 @@ export { InspectorArtifact, hasInspectorRenderer, type InspectSnapshot } from ".
 export { CellTypeErrors, type CellTypeError } from "./CellTypeErrors";
 export { GpgKeyBinder } from "./GpgKeyBinder";
 export {
+  KeyVault,
+  type KeyVaultProps,
+  type VaultKeyView,
+  type KeyPower,
+  type KeyGrant,
+  type GenerateSpec,
+  type ImportSpec,
+  type ExportSpec,
+} from "./KeyVault";
+export {
   ConnectionsPanel,
   type ConnectionPeer,
   type ConnectionsSession,

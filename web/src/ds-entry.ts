@@ -158,6 +158,28 @@ export { ShareSheet } from "./toolkit/widgets/ShareSheet";
  * context — and `SessionSheet` is the only one that is a portal, which is why it
  * carries a `primaryStory` in `.design-sync/config.json`.
  */
+/**
+ * The vault, which is now a panel in the notebook rather than a page.
+ *
+ * It belongs on this surface for the rule at the top of the file, checked
+ * rather than assumed: it takes plain props (`keys`, `now`, callbacks that
+ * return promises) and imports no store, no vault and no `useNotebook`. The
+ * acts are the shell's; what ships here is the panel and its states.
+ *
+ * `keyPowerReadout` rides along for the reason `startIssues` does — the rows
+ * draw a badge and a sentence they do not write, and a catalog without the
+ * function can only invent wording that will drift from the product's. The five
+ * states are the whole design; a design tool that had to guess them would guess
+ * "unlocked/locked", which is the two-state model this replaced.
+ */
+export { KeyVault } from "./toolkit/widgets/KeyVault";
+export {
+  KEY_POWERS,
+  keyPower,
+  keyPowerReadout,
+  loadedCount,
+  strongestPower,
+} from "./lib/toolkit/key-power.js";
 export { InviteCard } from "./toolkit/widgets/InviteCard";
 export { SessionStart } from "./toolkit/widgets/SessionStart";
 export { SessionLive } from "./toolkit/widgets/SessionLive";

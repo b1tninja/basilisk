@@ -31,9 +31,16 @@ import {
   sessionRecipe,
   sessionStage,
   startIssues,
-  keyOwesPassphrase,
   sessionKeyChoices,
 } from "../lib/toolkit/session-flow.js";
+/**
+ * `keyOwesPassphrase` moved to `key-power.js` — it is the fact that separates
+ * `loaded` from `ready`, so it belongs to the vocabulary rather than to the
+ * session's refusals, and the layering has to run that way round for
+ * `startIssues` to be able to ask what a key can do. The assertions below are
+ * unchanged; only where the function is imported from is.
+ */
+import { keyOwesPassphrase } from "../lib/toolkit/key-power.js";
 import { hashForJoin, parseToolkitHash } from "../lib/toolkit/fragment.js";
 import { formatFingerprint } from "../lib/utils.js";
 import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
@@ -778,6 +785,31 @@ describe("an empty vault is a different problem from an unmade choice", () => {
       expect(picked.join(" ")).not.toMatch(/no private key|Choose the key/i);
     }
   });
+
+  it("does not say the vault is empty when it is full of keys that cannot sign", () => {
+    // The correction that made `keyCount` count only choosable keys has a
+    // failure mode of its own: a browser holding three ssh keys, or one expired
+    // OpenPGP key, has `keyCount === 0` — and "No private key in this browser"
+    // is then a refusal naming a state the reader is not in, said to somebody
+    // looking straight at their keys.
+    const nothingChoosable = startIssues({
+      audience: [],
+      keyFingerprint: "",
+      keyCount: 0,
+      heldCount: 3,
+    });
+    expect(nothingChoosable.join(" ")).toMatch(/None of the keys in this browser can open a session/);
+    expect(nothingChoosable.join(" ")).not.toMatch(/No private key in this browser/);
+    // …and it says why, because "cannot" with no reason is the word that ends
+    // the question and leaves the reader where they were.
+    expect(nothingChoosable.join(" ")).toMatch(/SSH or raw key/);
+    expect(nothingChoosable.join(" ")).toMatch(/expired/);
+  });
+
+  it("still says the vault is empty when it is", () => {
+    const empty = startIssues({ audience: [], keyFingerprint: "", keyCount: 0, heldCount: 0 });
+    expect(empty.join(" ")).toMatch(/No private key in this browser/);
+  });
 });
 
 describe("only a key that can sign is a key you can choose", () => {
@@ -796,6 +828,27 @@ describe("only a key that can sign is a key you can choose", () => {
 
   it("treats a record with no kind as pgp, which is what a legacy row is", () => {
     expect(sessionKeyChoices([{ fingerprint: ADA }])).toHaveLength(1);
+  });
+
+  it("drops an expired OpenPGP key, which failed at the same distance", () => {
+    // `kind: "pgp"` and unusable: the vault stores no opinion about validity,
+    // so an expired key unlocked without complaint and then failed at the
+    // signature — the ssh case again, in a different word.
+    const now = Date.parse("2026-08-12T12:00:00Z");
+    const rows = [
+      { fingerprint: ADA, kind: "pgp", expires: "2027-01-01T00:00:00Z" },
+      { fingerprint: GRACE, kind: "pgp", expires: "2026-08-01T00:00:00Z" },
+    ];
+    expect(sessionKeyChoices(rows, now).map((k) => k.fingerprint)).toEqual([ADA]);
+  });
+
+  it("keeps a session-only row, whose expires is the session's clock", () => {
+    // The five-minute agent TTL rides in the same field. Read as validity it
+    // would delete the one key the reader just made by hand from their own
+    // chooser, minutes after making it.
+    const now = Date.parse("2026-08-12T12:00:00Z");
+    const rows = [{ fingerprint: ADA, protection: "session", expires: now - 1000 }];
+    expect(sessionKeyChoices(rows, now)).toHaveLength(1);
   });
 
   it("counts the same rows the picker offers", () => {
@@ -865,6 +918,37 @@ describe("an open vault envelope is not a key that can sign", () => {
         key: { fingerprint: ADA, protection: "passphrase" },
         passphraseBound: true,
       })
+    ).toEqual([]);
+  });
+
+  it("blocks a chosen key the picker would no longer offer", () => {
+    // Removing a key from the list is not a refusal. The draft holds a
+    // fingerprint while the list is re-derived every render, so a key that
+    // expires with the sheet open leaves Start available with nothing behind
+    // it — the same shape as the original report, arrived at from the other
+    // side. The sentence is the tray row's, so both name one state.
+    for (const key of [
+      { fingerprint: ADA, kind: "ssh" },
+      { fingerprint: ADA, kind: "pgp", expires: "2000-01-01T00:00:00Z" },
+    ]) {
+      const issues = startIssues({
+        audience: [ADA, GRACE],
+        keyFingerprint: ADA,
+        keyCount: 1,
+        key,
+        passphraseBound: true,
+      });
+      expect(issues).toHaveLength(1);
+      expect(issues[0]).toMatch(/cannot|expired/i);
+    }
+  });
+
+  it("judges a chosen key only when the caller supplies the row", () => {
+    // Every caller that knows nothing about the key passes no `key`, and
+    // "absent" is not what that means — it means unasked. Inventing a blocker
+    // for it would refuse every draft this function has ever been handed.
+    expect(
+      startIssues({ audience: [ADA, GRACE], keyFingerprint: ADA, keyCount: 1 })
     ).toEqual([]);
   });
 
