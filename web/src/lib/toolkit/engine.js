@@ -164,6 +164,13 @@ import {
  * @typedef {object} RuntimeBindings
  * @property {import("openpgp").Key[]} [recipients]  ordered; for foreach encrypt, one per share
  * @property {string[]} [recipientFingerprints]
+ * @property {string[]} [recipientKeysArmored]  what the Keys tray binds — armor,
+ *   because that is what a ResolvedRecipient holds. Read when `recipients` is
+ *   absent, which is every in-page run.
+ * @property {{ recipeSource?: string, label?: string, chains?: unknown[] }} [receipt]
+ *   What the run should be recorded as. `kernel.js` reads `receipt.recipeSource`
+ *   and `receipt.label` and had to cast `bindings` to `*` to reach them, because
+ *   this was never declared.
  * @property {Record<string, string[]>} [recipientResolutions]  email/query → chosen fingerprints
  * @property {(ref: string) => PipelineValue|null|undefined} [resolveSlot]
  * @property {{

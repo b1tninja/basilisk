@@ -21,8 +21,16 @@ export type VaultKeyRow = {
   uid?: string;
   email?: string;
   protection?: string;
-  /** Epoch ms, or null when the key does not expire. */
-  expires?: number | null;
+  /**
+   * When this key stops being good, or null when it never does.
+   *
+   * Two shapes, because two sources fill it: the vault stores an ISO
+   * timestamp, and a session-only key carries epoch ms. `expiryInstant` in
+   * `artifact-readouts.js` — which every reader goes through — takes a string,
+   * a number or a Date, so both have always worked at runtime. This said
+   * "Epoch ms" and typed only the number, describing one of its two callers.
+   */
+  expires?: string | number | null;
 };
 
 export type SlotMeta = {

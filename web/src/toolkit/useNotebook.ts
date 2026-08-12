@@ -520,7 +520,10 @@ export function useNotebook() {
   const refreshVault = useCallback(async () => {
     try {
       const keys = await listKeys();
-      const rows: VaultKeyRow[] = (keys || []).map((k: VaultKeyRow) => ({
+      // Inferred, not annotated: `listKeys` returns the vault's own VaultKeyMeta
+      // and this narrows it to the row the notebook shows. Naming the *result*
+      // type on the parameter claimed the projection was its own input.
+      const rows: VaultKeyRow[] = (keys || []).map((k) => ({
         fingerprint: k.fingerprint,
         uid: k.uid,
         email: k.email,
@@ -1769,7 +1772,7 @@ export function useNotebook() {
       const built = await offerForSkipped(ctx, skipped, (l: string) =>
         slots.has(l) ? slots.resolve(l) : null
       );
-      if (!built.ok) return { ok: false, why: summarizeHandoff({ refusals: built.refusals }) };
+      if (!built.ok) return { ok: false, why: summarizeHandoff(built) };
       const to = roster[built.peer];
       if (!to) return { ok: false, why: `Nobody in this room answers to @${built.peer}.` };
       const session = getLiveSession();
@@ -1796,10 +1799,17 @@ export function useNotebook() {
       const built = await resultForCell(ctx, cell, (l: string) =>
         slots.has(l) ? slots.resolve(l) : null
       );
-      if (!built.ok) return { ok: false, why: summarizeHandoff({ refusals: built.refusals }) };
+      if (!built.ok) return { ok: false, why: summarizeHandoff(built) };
       const session = getLiveSession();
       const to = roster[toPeer];
       if (!session || !to) return { ok: false, why: "No live session, or no such peer." };
+      // `ok` does not narrow `result` — the shell's return is not a
+      // discriminated union — and a result really can be absent. Refused with a
+      // sentence rather than asserted away, because sending nothing back and
+      // reporting success is the failure this whole exchange is built to avoid.
+      if (!built.result) {
+        return { ok: false, why: "That cell produced no result to send back." };
+      }
       const signed = await signSessionDocument(resultToJson(built.result));
       await session.sendResult(to, signed);
       return { ok: true, cell, peer: toPeer };

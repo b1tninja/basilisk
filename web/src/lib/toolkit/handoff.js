@@ -1733,10 +1733,15 @@ export function offerAwaiting(state) {
  * Every one of them ends with a document in somebody's hand and a person who has
  * not clicked yet, which is the property this file is built around.
  *
- * @param {Awaited<ReturnType<typeof acceptHandoffOffer>> |
- *   Awaited<ReturnType<typeof buildOfferFor>> |
- *   Awaited<ReturnType<typeof acceptCellResult>> |
- *   Awaited<ReturnType<typeof buildResultFor>>} verdict
+ * Typed as what it reads rather than as the four functions it summarises.
+ * Naming their return types looked stricter and was not: `handoff-shell.js`
+ * refuses early with `{ ok: false, refusals }` and never builds a full
+ * verdict, so the one shape that reaches here most often was not in the union
+ * at all. The optional members below are the ones the happy branch reaches
+ * for, and it already guards each with `?.`.
+ *
+ * @param {{ ok?: boolean, refusals: HandoffRefusal[], cell?: number,
+ *   offer?: * , result?: *, bindings?: unknown[] }} verdict
  * @returns {string}
  */
 export function summarizeHandoff(verdict) {

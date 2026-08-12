@@ -318,9 +318,11 @@ export function createKernel() {
       runLog: [...runLog],
       cellIndex,
       cellRecipe,
-      recipeSource:
-        /** @type {*} */ (bindings)?.receipt?.recipeSource || cellRecipe,
-      label: /** @type {*} */ (bindings)?.receipt?.label || "",
+      // No cast: `receipt` is declared on RuntimeBindings now. The casts were
+      // here because it was not, which is the only thing that made reaching
+      // through `bindings` for it look unsafe.
+      recipeSource: bindings?.receipt?.recipeSource || cellRecipe,
+      label: bindings?.receipt?.label || "",
       startedAt: new Date(startedAt).toISOString(),
     };
     try {
