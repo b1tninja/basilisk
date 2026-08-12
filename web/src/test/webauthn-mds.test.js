@@ -1,7 +1,37 @@
 /**
  * WebAuthn attestation parse + soft MDS JWT helpers.
  */
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+
+/**
+ * A localStorage for Node, the way `device-label.test.js` and `key-hit.test.js`
+ * already do it.
+ *
+ * `mds.js` caches the blob in localStorage, and these tests clear that cache so
+ * the mocked fetch is the thing under test. Without a stub they ran one path
+ * locally and a different one in CI: Node 22 has no `localStorage`, Node 25
+ * does, so the cache branch was exercised on a developer's machine and skipped
+ * on the runner. The stub makes it the same code either way, which is the point
+ * of the clearing.
+ *
+ * The old guard was `localStorage?.removeItem?.(…)`, which reads as safe and is
+ * not: optional chaining protects a binding whose *value* may be nullish, never
+ * one that was never declared. On Node 22 that line threw ReferenceError, and
+ * the surrounding `try` had a `finally` and no `catch`, so it propagated.
+ */
+beforeAll(() => {
+  // Installed unconditionally. Node 25 *has* a `localStorage` global under its
+  // experimental web storage, but without a backing store file its methods are
+  // not callable — so deferring to the ambient one trades a ReferenceError on
+  // Node 22 for a TypeError on Node 25. The tests own this object.
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => store.get(k) ?? null,
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+    clear: () => store.clear(),
+  };
+});
 import {
   ZERO_AAGUID,
   decodeCbor,
@@ -133,7 +163,7 @@ describe("mds helpers", () => {
         text: async () => jwt,
       });
     try {
-      localStorage?.removeItem?.("basilisk.mdsBlob.v1");
+      localStorage.removeItem("basilisk.mdsBlob.v1");
       const r = await lookupAaguidInMds("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
       // lookupAaguidInMds returns one of "verified" | "unverified" |
       // "unavailable" — never a boolean-ish string.
@@ -172,7 +202,7 @@ describe("mds helpers", () => {
         text: async () => jwt,
       });
     try {
-      localStorage?.removeItem?.("basilisk.mdsBlob.v1");
+      localStorage.removeItem("basilisk.mdsBlob.v1");
       const r = await lookupAaguidInMds("11111111-2222-3333-4444-555555555555");
       expect(r.status).toBe("unverified");
       expect(r.detail).toMatch(/REVOKED/);

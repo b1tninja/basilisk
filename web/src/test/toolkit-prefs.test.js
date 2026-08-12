@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_TOOLKIT_PREFS,
   getIdleClearMs,
@@ -8,12 +8,27 @@ import {
   TOOLKIT_PREFS_KEY,
 } from "../lib/toolkit/prefs.js";
 
+/**
+ * Prefs live in localStorage, so the tests have to own one.
+ *
+ * The `try`/`catch` below used to be the whole story, which meant that on a
+ * runtime without `localStorage` -- CI's Node 22 -- the clear silently did
+ * nothing and `setToolkitPrefs` silently stored nothing, so these assertions
+ * passed by reading defaults rather than by round-tripping. Green for the
+ * wrong reason on one runtime and the right one on another.
+ */
+beforeAll(() => {
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => store.get(k) ?? null,
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+    clear: () => store.clear(),
+  };
+});
+
 beforeEach(() => {
-  try {
-    localStorage.removeItem(TOOLKIT_PREFS_KEY);
-  } catch {
-    /* ignore */
-  }
+  localStorage.removeItem(TOOLKIT_PREFS_KEY);
   setToolkitPrefs({ ...DEFAULT_TOOLKIT_PREFS });
 });
 
