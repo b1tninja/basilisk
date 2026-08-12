@@ -3276,6 +3276,73 @@ export const STEPS = [
     ],
   },
   {
+    name: "playbook",
+    kind: "source",
+    toolbox: "io",
+    shelf: "receipt",
+    conjugate: "playbook.verify",
+    pairCaption: "Recipe playbook",
+    pairLabels: { forward: "Write", reverse: "Verify" },
+    doc: "Write a signed playbook for a procedure — what somebody follows when nobody is left to ask. Carries the canonical recipe text (not a digest of it: in a recovery there is nowhere else to get the text from), a `purpose` sentence, and the op-registry version. `recipe=` names the procedure and defaults to the notebook this runs in — a *recovery* playbook usually names the recovery, not the ceremony that would mint a new secret. Sign it and put it in the envelope with the printed cards — `playbook \"Board key recovery\" purpose=\"…\" | gpg.sign key=$me | out $playbook`. Unlike a run manifest it carries no peers, no vault key ids and no pinned inputs, because it is meant to be handed to somebody who was never in the room. Example: `playbook \"Board key recovery\" | out $playbook`.",
+    input: "none",
+    output: "text",
+    // none, on `run.manifest`'s reading: canonical JSON over recipe text and a
+    // digest of it. It re-runs to a different document only where the recipe
+    // changed — or where the clock did, which is a declared axis and not entropy.
+    entropy: "none",
+    params: [
+      {
+        name: "title",
+        type: "string",
+        positional: true,
+        default: "",
+        doc: "What this procedure is called (defaults to the notebook title)",
+      },
+      {
+        name: "purpose",
+        type: "string",
+        default: "",
+        doc: "The sentence the recipe cannot hold — `#` comments do not survive canonicalization, and a stranger needs to be told what this is for",
+      },
+      {
+        name: "split",
+        type: "string",
+        default: "",
+        doc: "Split label these cards belong to (`share-check.js`'s `A1B2-C3D4-E5F6`), so a custodian holding two envelopes can tell which playbook is which",
+      },
+      {
+        name: "recipe",
+        type: "string",
+        slot: true,
+        slotOf: ["text"],
+        default: "",
+        doc: "The procedure to vouch for — recipe text, or a `$slot` holding some. Defaults to the notebook this runs in. Refused if it does not compile: a playbook nobody can follow is worse than none",
+      },
+    ],
+  },
+  {
+    name: "playbook.verify",
+    kind: "transform",
+    toolbox: "io",
+    shelf: "receipt",
+    conjugateOf: "playbook",
+    doc: "Check a signed playbook against a key and emit the recipe it vouches for. Fail-loud with no soft mode, on `jose.verify`'s reasoning — an unverified procedure is attacker-chosen, and there is nothing to branch on. The document is parsed out of the bytes the signature covered, never out of the armor separately. Paste the result into a notebook and read it before running it. Example: `input | playbook.verify key=$author | out $recipe`.",
+    input: "text",
+    output: "text",
+    entropy: "none",
+    params: [
+      {
+        name: "key",
+        type: "bytes",
+        slot: "required",
+        unresolvedInput: true,
+        slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
+        default: "",
+        doc: "The author's public key slot (`$pub`); omit to use the vault key / recipients",
+      },
+    ],
+  },
+  {
     name: "qr.scan",
     kind: "transform",
     toolbox: "io",

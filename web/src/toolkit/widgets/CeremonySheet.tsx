@@ -55,6 +55,15 @@ export type CeremonySheetProps = {
   shareArtifacts: ShareCardArtifact[];
   /** JSON from the split cell's `$commitments` tile — the public half. */
   commitmentsText?: string;
+  /**
+   * The signed playbook from the cards cell's `$playbook` tile.
+   *
+   * Separate from `receiptText` because they answer different questions and
+   * leave the room by different routes: a receipt records what happened and
+   * stays with the dealer, a playbook says what to do next and goes in the
+   * envelope with the cards.
+   */
+  playbookText?: string;
   receiptText: string;
   /** `file.read | qr.scan`, supplied by the host; absent hides the scan button. */
   onScanQr?: () => Promise<string>;
@@ -94,11 +103,13 @@ export function CeremonySheet({
   recoveredDigest,
   shareArtifacts,
   commitmentsText = "",
+  playbookText = "",
   receiptText,
   onScanQr,
 }: CeremonySheetProps) {
   const [advanced, setAdvanced] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [showPlaybook, setShowPlaybook] = useState(false);
   const issues = ceremonyIssues({ threshold, shares });
   const current = CEREMONY_STAGES[stageIndex(stage)] ?? CEREMONY_STAGES[0];
   const verification = verificationResult(expectedDigest, recoveredDigest);
@@ -330,6 +341,50 @@ export function CeremonySheet({
                   onScanQr={onScanQr}
                 />
               ) : null}
+
+              {/*
+                The playbook. A card names the split, the threshold and the op
+                that recombines; it has no room for the order of the steps or
+                what to do with the secret once it is back, and that is what a
+                custodian is missing years later when the dealer is gone. It
+                prints with the cards because the envelope is the only storage
+                that outlives the browser, the machine and the author.
+              */}
+              <div className="ceremony-playbook">
+                {playbookText ? (
+                  <>
+                    <p className="ceremony-status" data-tone="ok">
+                      Playbook written. It holds the recipe and the instructions —
+                      no shares, no secret, no fingerprints. Print it and put it in
+                      the envelope with the cards.
+                    </p>
+                    <button
+                      type="button"
+                      className="ceremony-disclosure"
+                      onClick={() => setShowPlaybook((v) => !v)}
+                    >
+                      {showPlaybook ? "Hide" : "Show"} playbook
+                    </button>
+                    {showPlaybook ? (
+                      <pre className="ceremony-receipt">{playbookText}</pre>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <p className="ceremony-status" data-tone="pending">
+                      No playbook yet. Without one the cards say <em>what</em> they
+                      are and nothing says <em>how</em> to use them.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      onClick={() => void onRunStage("cards")}
+                      disabled={busy}
+                    >
+                      Write the playbook
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           ) : null}
 

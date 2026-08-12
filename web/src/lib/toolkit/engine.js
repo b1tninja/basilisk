@@ -2816,6 +2816,50 @@ async function execStepBody(step, value, bindings, artifacts) {
         meta: { sensitive: false, kind: "opaque" },
       };
     }
+    case "playbook": {
+      const { playbookToJson } = await import("./playbook.js");
+      const playbook = await currentPlaybook(bindings, step.params || {});
+      return {
+        type: "text",
+        data: playbookToJson(playbook),
+        // Recipe text and prose, and the document exists to be handed to
+        // somebody who was not in the room — masking it would be theatre,
+        // exactly as for a manifest and a receipt.
+        meta: { sensitive: false, kind: "opaque" },
+      };
+    }
+    case "playbook.verify": {
+      if (!value || value.type !== "text") {
+        throw new Error(
+          "playbook.verify expects a signed playbook (use `input` to paste one)"
+        );
+      }
+      const { assertPlaybookIntegrity, parsePlaybook } = await import("./playbook.js");
+      const { verifiedCleartextOpenPgp } = await import("../pgp/sign.js");
+      const keys = await resolveGpgVerificationKeys(
+        bindings,
+        step.params?.key,
+        "playbook.verify"
+      );
+      // Verify first, then parse **the bytes the signature covered**. Not two
+      // steps a recipe could put in the other order, and not `unwrapCleartext`
+      // beside a boolean check: see `playbook.js` and `documents.js` on the one
+      // answer to "which bytes were signed".
+      const signedText = await verifiedCleartextOpenPgp(
+        String(value.data),
+        keys,
+        "playbook"
+      );
+      const playbook = await assertPlaybookIntegrity(parsePlaybook(signedText));
+      return {
+        type: "text",
+        data: playbook.recipeSource,
+        // Recipe text, and nothing here runs it. `useNotebook.loadFromHash`
+        // loads an `#r=` recipe without running it for the same reason: a
+        // procedure a stranger signed is a thing to read first.
+        meta: { sensitive: false, kind: "opaque" },
+      };
+    }
     case "run.verify": {
       if (!value || value.type !== "text") {
         throw new Error("run.verify expects receipt text (use `input` to paste one)");
@@ -3198,6 +3242,112 @@ async function currentRunManifest(bindings, params) {
 }
 
 /**
+ * A `param=` that holds text directly or names a slot holding some.
+ *
+ * The `$slot`-or-literal dance is written inline at `rtc.ice credential=` and
+ * `gpg.verify signature=`, and neither is refactored into this: each has its
+ * own fallback for the empty case (a bindings input, a pasted signature) and
+ * folding three different defaults into one helper would be a helper with a
+ * mode switch. This one has no fallback — empty means the caller wants the
+ * default, and the caller decides what that is.
+ *
+ * @param {RuntimeBindings} bindings
+ * @param {string|undefined|null} refOrText
+ * @param {string} what  the step and param, for the error a person reads
+ * @returns {string}
+ */
+function resolveTextParam(bindings, refOrText, what) {
+  const raw = String(refOrText ?? "").trim();
+  if (!raw.startsWith(SLOT_SIGIL)) return String(refOrText ?? "");
+  const resolve = bindings?.resolveSlot;
+  if (typeof resolve !== "function") {
+    throw new Error(`${what}=${raw}: runtime slot resolver missing`);
+  }
+  const value = resolve(raw);
+  if (!value) throw new Error(`${what}=${raw}: unknown slot`);
+  if (value.type === "text") return String(value.data);
+  if (value.type === "bytes") return bytesToText(value.data);
+  throw new Error(`${what}=${raw}: slot must be text or bytes`);
+}
+
+/**
+ * The playbook for a procedure — `recipe=`, or the notebook this run belongs to.
+ *
+ * **The default is a convenience and the parameter is the primitive.** A
+ * recovery playbook usually names the *recovery*, which is not the notebook it
+ * is written in: the ceremony's notebook begins `random 32 | vss.split`, and a
+ * procedure handed to a custodian that begins by minting a fresh secret is a
+ * booby trap rather than an instruction. So `ceremony.js` passes the recovery
+ * recipe explicitly, and a person saving the notebook they are looking at gets
+ * the default.
+ *
+ * Either way the text is **compiled and re-serialized**, which does two things.
+ * It refuses a procedure that will not run — a playbook nobody can follow is
+ * worse than no playbook, and the refusal happens in the author's hands rather
+ * than in a stranger's years later. And it stores canonical text, so a reader
+ * who opens the playbook and saves the notebook gets the same bytes and the
+ * same digest back; `playbook.js` gives that reason at length.
+ *
+ * With no `recipe=` it reads the same `ctx.chains` / `ctx.recipeSource` pair
+ * `currentRunManifest` does, in the same order, so a manifest and a playbook
+ * written in one run describe one notebook.
+ *
+ * @param {RuntimeBindings} bindings
+ * @param {Record<string, *>} params
+ */
+async function currentPlaybook(bindings, params) {
+  const { buildPlaybook } = await import("./playbook.js");
+  const { opsRegistryVersion } = await import("./receipt.js");
+  const { compileRecipe, serializeRecipe } = await import("./recipe.js");
+  const { parseRecipeSource } = await import("./recipe-parse.js");
+  const ctx = /** @type {*} */ (bindings).receipt || {};
+
+  const given = resolveTextParam(bindings, params?.recipe, "playbook recipe");
+  let source;
+  if (given.trim()) {
+    // `~` back into a blank line, the way a `#r=` payload carries a multi-cell
+    // recipe on one line. A quoted param cannot hold a newline — the string
+    // grammar has no escapes, so `"a\nb"` is four literal characters — and a
+    // recovery procedure is more than one cell (paste the commitments, then
+    // recombine). Rather than inventing an escape, this reuses the convention
+    // the share link already has, and `expandShareRecipe` leaves text that
+    // already contains newlines alone, so a `$slot` holding real recipe source
+    // passes through untouched.
+    const { expandShareRecipe } = await import("./fragment.js");
+    source = expandShareRecipe(given);
+  } else {
+    const recipeSource = String(ctx.recipeSource || ctx.cellRecipe || "");
+    const notebook = /** @type {*} */ (ctx).chains;
+    const chains = notebook?.length
+      ? recipeChains(notebook)
+      : recipeChains(parseRecipeSource(recipeSource).ast);
+    source = serializeRecipe({ chains });
+  }
+
+  const compiled = compileRecipe(source);
+  // Compiles, not merely parses. A procedure that loads and then refuses to run
+  // is the failure this document exists to prevent, and it fails in the
+  // author's hands here instead of in a stranger's years later — which is the
+  // only moment anybody can still fix it.
+  if (!compiled.ast?.chains?.length || compiled.validation?.ok === false) {
+    throw new Error(
+      `playbook: the procedure does not compile (${
+        compiled.validation?.errors?.[0]?.message || "empty recipe"
+      }) — a playbook is what somebody runs when nobody is left to ask, so one ` +
+        "carrying a recipe that will not run is worse than none"
+    );
+  }
+
+  return buildPlaybook({
+    title: String(params?.title || "").trim() || String(ctx.label || "").trim(),
+    purpose: String(params?.purpose ?? ""),
+    splitId: String(params?.split ?? ""),
+    registry: opsRegistryVersion(),
+    recipeSource: serializeRecipe(compiled.ast),
+  });
+}
+
+/**
  * Resolve OpenPGP envelope.asc from runtime bindings.
  * @param {RuntimeBindings} bindings
  * @returns {string}
@@ -3561,12 +3711,16 @@ async function resolveEncryptRecipients(bindings, toParam, policy = "ask") {
 /**
  * @param {RuntimeBindings} bindings
  * @param {string|undefined|null} [keyRef]  `key=$slot` armored public or private
+ * @param {string} [what]  the step asking, so its errors name it and not a
+ *   neighbour — `playbook.verify` resolves keys the same way and a message
+ *   telling that author to check the "gpg.verify key" would send them looking
+ *   at a step their recipe does not contain
  * @returns {Promise<import("openpgp").Key[]>}
  */
-async function resolveGpgVerificationKeys(bindings, keyRef) {
+async function resolveGpgVerificationKeys(bindings, keyRef, what = "gpg.verify") {
   const ref = String(keyRef || "").trim();
   if (ref) {
-    const armored = resolveGpgArmoredFromSlot(bindings, ref, "gpg.verify key");
+    const armored = resolveGpgArmoredFromSlot(bindings, ref, `${what} key`);
     try {
       const pub = await readKey({ armoredKey: armored });
       return [pub];
@@ -3587,7 +3741,7 @@ async function resolveGpgVerificationKeys(bindings, keyRef) {
   const recipients = bindings.recipients || [];
   if (recipients.length) return recipients;
   throw new Error(
-    "gpg.verify needs an OpenPGP public key (key=$slot, vault key panel, or recipients)"
+    `${what} needs an OpenPGP public key (key=$slot, vault key panel, or recipients)`
   );
 }
 

@@ -49,7 +49,13 @@ import { splitIdFor } from "./share-check.js";
  * @property {boolean} [sensitive]
  * @property {number} [shareIndex]
  * @property {string} [mime]
- * @property {{ shareOf?: number, threshold?: number }} [traits]
+ * @property {Record<string, unknown> & { shareOf?: number, threshold?: number }} [traits]
+ *   Open-ended, and the intersection is the point. `traits` is the one bag
+ *   every artifact projection copies wholesale, so a typedef naming only the
+ *   two fields this module reads made a real tile unassignable to it — the
+ *   `ShareCards` widget had already widened its own copy for exactly that
+ *   reason, and the two spellings disagreeing is what made a caller in
+ *   `useNotebook` fail to typecheck against the module the widget calls.
  */
 
 /**

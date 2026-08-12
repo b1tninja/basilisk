@@ -435,11 +435,17 @@ export function inferSourceType(name, params = {}) {
     case "run.receipt":
     case "run.manifest":
     case "run.attest":
+    case "playbook":
       // Canonical JSON, so the tip is plain opaque text — exactly what
       // `gpg.sign` and `out` already consume. No new type is warranted for it.
-      // All three documents share this line on purpose: the moment a manifest
+      // All four documents share this line on purpose: the moment a manifest
       // or an attestation had a type of its own, `gpg.sign` would need to learn
       // about it, and signing by composition is the whole idiom.
+      return typeOf("text", { kind: "opaque" });
+    case "playbook.verify":
+      // Recipe text, whatever the playbook said. The output type is a property
+      // of the step and not of the document it read — a verified playbook and a
+      // refused one differ by throwing, never by emitting a different type.
       return typeOf("text", { kind: "opaque" });
     case "lit": {
       const kind = String(params.kind || "text");
