@@ -65,7 +65,7 @@ Product split (intentional today):
 | `capabilities.js` | Done | SEIPDv2 feature bit / modern vs legacy recipients |
 | `preferences.js` | Done | Preferred algos from key self-sig |
 | `armor.js` / `inspect.js` / `identity.js` | Done | Armor split, packet inspect, key IDs |
-| `intended-recipient.js` | Done | Intended Recipient Fingerprint (subpacket 35) |
+| `intended-recipient.js` | **Parsed, not enforced** | Reads Intended Recipient Fingerprint (subpacket 35). `crypto-worker.js` extracts the fingerprints onto each signature status and **nothing reads them**; `checkIntendedRecipient()` — the comparison that would detect surreptitious forwarding (RFC 9580 §13.12) — has no caller. Do not read this row as a defence that is in force. |
 | `notations.js` / `deprecation.js` | Done | Notation data; RFC 9580 deprecation *warnings* |
 | `memory.js` | Done | `zeroKeyMaterial()` wipe of OpenPGP `privateParams` |
 | `passphrase.js` | Done | Soft strength estimate (not a KDF) |
