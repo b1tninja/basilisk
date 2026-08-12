@@ -658,7 +658,52 @@ function serializePipeline(steps, opts = {}) {
 }
 
 /**
+ * Can this body line be folded into a neighbour with a `|`?
+ *
+ * Only a line with no selector. `- digest sha-256` and `- out $a` are two items
+ * of one flat list — `parseBranchLineInto` pushes each item's whole pipeline
+ * into the same `listBody`, so joining them with `|` parses to the same steps.
+ * `- :public | export spki` does not: a selector item becomes **one branch**,
+ * and folding two of them together would merge two branches into one.
+ *
+ * `bodyLines` writes every item as `- ` followed by the selector, when there is
+ * one, so the two forms are told apart by that one character.
+ * @param {string} line
+ * @returns {boolean}
+ */
+function isPlainBodyItem(line) {
+  return !/^- *[:[]/.test(line);
+}
+
+/**
  * Serialize one chain's steps to recipe text.
+ *
+ * ## Compact does not re-spell a nested body
+ *
+ * `compact` minifies the *stem* — `|` instead of ` | ` — and stops there. It
+ * used to flatten a `tee` / `foreach` body onto one line whatever the author
+ * wrote, joining the items with a space (`tee{ - digest sha-256 - encode hex
+ * - out $a }`), and that text does not parse: a step's argument loop runs to
+ * `|`, `}`, `#` or end of line, so it swallowed the `-` that was meant to
+ * begin the next item. Every notebook with a body of more than one step
+ * produced a "Copy link" that handed the recipient a parse error.
+ *
+ * The parser cannot simply stop at a hyphen — `aes-gcm -d` is a real argument
+ * — so there is no one-line separator to switch to. That leaves two honest
+ * fixes, and this is the second: **keep the body's own form.** A brace body
+ * stays braces, an indent body stays indented, and only a brace body whose
+ * items carry no selector folds onto one line, where `|` is a separator the
+ * argument loop already stops at.
+ *
+ * Declining to re-spell buys more than a parse. `serializeRecipe` is what a
+ * manifest, a receipt, an attestation and a handoff offer all digest a cell
+ * with, so a body that came back from a link wearing braces it was not written
+ * with digests differently from the same cell pasted as text — two peers, one
+ * notebook, `cell-mismatch`. The cost is length, and it is affordable: the
+ * longest shipped preset is 316 characters of `#r=` against `TOOLKIT_HASH_MAX_LEN`
+ * (6000) and the 2953-byte QR ceiling, and no compact form is longer than the
+ * pretty text it came from. `recipe-roundtrip.test.js` holds both.
+ *
  * @param {RecipeStep[]} steps
  * @param {{ compact?: boolean }} [opts]
  * @returns {string}
@@ -758,10 +803,13 @@ function serializeChainSteps(steps, opts = {}) {
 
     if (chunks.length) chunks.push(pipeJoin);
     const lines = bodyLines(step);
-    const useBrace = compact || step.bodyForm === "brace";
-    if (compact) {
-      // One-line brace body: foreach{ - out $share }
-      chunks.push(`${head}{ ${lines.join(" ")} }`);
+    const useBrace = step.bodyForm === "brace";
+    if (compact && useBrace && lines.length && lines.every(isPlainBodyItem)) {
+      // One line, and it is the line the author most likely wrote. A list body
+      // holds a flat step list — `parseBranchLineInto` pushes a whole pipeline
+      // into it — so `- a|b|c` and three separate `- ` items parse to exactly
+      // the same steps, and `|` is a separator the argument loop stops at.
+      chunks.push(`${head}{ - ${lines.map((l) => l.slice(2)).join(pipeJoin)} }`);
     } else if (useBrace) {
       chunks.push(`${head} {\n`);
       for (const line of lines) chunks.push(`  ${line}\n`);
@@ -866,6 +914,20 @@ function serializeChain(chain, opts = {}) {
  * Serialize an AST (or steps / chains) back to recipe text.
  * Chains are joined with a blank line (or `~` when `compact`).
  * Canonical names; `$` slot sugar, `@` peer header.
+ *
+ * **The compact separator depends on whether any cell needed a second line.**
+ * `expandShareRecipe` tells a compact payload from a legacy pretty one by
+ * asking whether it contains a raw newline: no newline and a `~` means
+ * `~`-separated cells, anything else is already blank-line separated. A cell
+ * with a selector body cannot be written on one line at all (see
+ * `isPlainBodyItem`), so emitting `~` alongside those newlines would hand
+ * `expandShareRecipe` a payload it reads as one cell — a multi-cell notebook
+ * silently collapsing into one on the far end of a link.
+ *
+ * Deciding it here keeps that invariant in one place and leaves
+ * `expandShareRecipe` — which also reads links written before any of this —
+ * untouched. The cost is `\n\n` instead of `~` per cell boundary, and only for
+ * the notebooks that already gave up the one-line form.
  * @param {RecipeAst|RecipeStep[]|RecipeChain[]} astOrSteps
  * @param {{ compact?: boolean }} [opts]
  * @returns {string}
@@ -873,10 +935,9 @@ function serializeChain(chain, opts = {}) {
 export function serializeRecipe(astOrSteps, opts = {}) {
   const compact = opts.compact === true;
   const chains = recipeChains(astOrSteps);
-  return chains
-    .map((c) => serializeChain(c, opts))
-    .filter((t) => t.length)
-    .join(compact ? "~" : "\n\n");
+  const parts = chains.map((c) => serializeChain(c, opts)).filter((t) => t.length);
+  const sep = compact && !parts.some((t) => t.includes("\n")) ? "~" : "\n\n";
+  return parts.join(sep);
 }
 
 /**
