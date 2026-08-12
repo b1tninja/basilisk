@@ -310,6 +310,111 @@ export async function assertPlaybookIntegrity(playbook) {
 }
 
 /**
+ * Who vouched for a playbook, and what it said.
+ *
+ * `by` is the key that actually verified it, not the key somebody hoped would.
+ * A caller renders it: **"signed by a key you hold" and "signed by a key you
+ * trust" are different sentences**, and a surface that showed a tick without a
+ * name would be saying the second while meaning the first.
+ *
+ * @typedef {object} PlaybookOpening
+ * @property {boolean} ok
+ * @property {RecipePlaybook|null} playbook  parsed out of the *verified* bytes
+ * @property {{ fingerprint: string, uid: string }|null} by
+ * @property {"unsigned"|"no-keys"|"not-yours"|"malformed"|""} reason  a
+ *   machine-readable why, so a surface can tell "I have no key for this" from
+ *   "this signature is bad" — they call for different actions and only one of
+ *   them is alarming
+ * @property {string} message  the sentence a person reads
+ */
+
+/**
+ * Verify a signed playbook against keys you hold, and say who signed it.
+ *
+ * The same act `playbook.verify` performs, against a *set* of candidate keys
+ * rather than one named in a recipe — a person opening a file from an envelope
+ * has a keyring, not a `key=$author`. It goes through the same
+ * `verifiedCleartextOpenPgp`, so there is one answer to "which bytes were
+ * signed" across the op and every surface.
+ *
+ * Imported lazily for `engine.js`'s reason: this module is the document shape
+ * and is cheap to load, and OpenPGP is not. Nothing pays for it until somebody
+ * opens a playbook.
+ *
+ * **Refusing is not the same as failing.** A document nobody's key matches is
+ * not evidence of tampering — it is a key you do not have — and `reason` keeps
+ * the two apart so a surface can say the true one.
+ *
+ * @param {string} armored  the cleartext-signed document, as stored or imported
+ * @param {{ fingerprint?: string, uid?: string, publicArmored?: string }[]} candidates
+ * @returns {Promise<PlaybookOpening>}
+ */
+export async function openSignedPlaybook(armored, candidates = []) {
+  const text = String(armored ?? "").trim();
+  /** @param {PlaybookOpening["reason"]} reason @param {string} message */
+  const no = (reason, message) => ({ ok: false, playbook: null, by: null, reason, message });
+
+  if (!/^-----BEGIN PGP SIGNED MESSAGE-----/m.test(text)) {
+    return no(
+      "unsigned",
+      "This is not a signed playbook. A playbook says what to do with a secret " +
+        "when nobody is left to ask, so an unsigned one names nobody who stands " +
+        "behind it — read it by eye if you like, but nothing here will vouch for it."
+    );
+  }
+  const usable = candidates.filter((c) => String(c?.publicArmored || "").trim());
+  if (!usable.length) {
+    return no(
+      "no-keys",
+      "There is no public key here to check this signature against. Add the " +
+        "author's key to My Keys, or fetch it with `hkp.get`, and open it again."
+    );
+  }
+
+  const { readKey } = await import("openpgp");
+  const { verifiedCleartextOpenPgp } = await import("../pgp/sign.js");
+  for (const candidate of usable) {
+    /** @type {string} */
+    let verified;
+    try {
+      const key = await readKey({ armoredKey: String(candidate.publicArmored) });
+      verified = await verifiedCleartextOpenPgp(text, [key], "playbook");
+    } catch (_) {
+      // Wrong key, revoked key, mangled body: all of them are "not this key",
+      // and the next candidate gets its turn. The distinction that matters is
+      // made once, below, after every key has failed.
+      continue;
+    }
+    try {
+      const playbook = await assertPlaybookIntegrity(parsePlaybook(verified));
+      return {
+        ok: true,
+        playbook,
+        by: {
+          fingerprint: String(candidate.fingerprint || ""),
+          uid: String(candidate.uid || ""),
+        },
+        reason: "",
+        message: "",
+      };
+    } catch (err) {
+      // The signature is good and the document is not. Reported as itself
+      // rather than as a signature failure — telling somebody their key is
+      // wrong when the document is malformed sends them hunting for the wrong
+      // thing.
+      return no("malformed", err instanceof Error ? err.message : String(err));
+    }
+  }
+  return no(
+    "not-yours",
+    "This playbook is signed, and not by any key you hold. That is not proof " +
+      "it was tampered with — a signature that verifies against some key is " +
+      "not one that verifies against yours — but nothing here can tell you who " +
+      "wrote it until you have their key."
+  );
+}
+
+/**
  * A one-line human summary — the shape `summarizePlan`, `summarizeHonour` and
  * `summarizeAttestation` return.
  * @param {RecipePlaybook} playbook

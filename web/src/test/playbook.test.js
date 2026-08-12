@@ -34,11 +34,17 @@ import {
   PLAYBOOK_VERSION,
   assertPlaybookIntegrity,
   buildPlaybook,
+  openSignedPlaybook,
   parsePlaybook,
   playbookDigest,
   playbookToJson,
   summarizePlaybook,
 } from "../lib/toolkit/playbook.js";
+import {
+  listWorkspaces,
+  parseWorkspaceFile,
+  saveWorkspace,
+} from "../lib/toolkit/workspace-store.js";
 import { ceremonyCells, playbookRecipe, recoveryRecipe } from "../lib/toolkit/ceremony.js";
 import { digestText, opsRegistryVersion } from "../lib/toolkit/receipt.js";
 import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
@@ -354,6 +360,159 @@ describe("the ceremony writes a playbook for the recovery, not for itself", () =
   });
 });
 
+/* ─────────────────────── opening one from the library ───────────────────── */
+
+/**
+ * `openSignedPlaybook` is the surfaces' half of `playbook.verify`: a person
+ * opening a file out of an envelope has a keyring, not a `key=$author`. Both
+ * go through `verifiedCleartextOpenPgp`, so there is one answer to *which
+ * bytes were signed*.
+ *
+ * The four outcomes are told apart on purpose. "I have no key for this" and
+ * "this signature is bad" call for different actions, and only one of them is
+ * alarming — a surface that collapsed them would cry wolf at every playbook
+ * from somebody whose key you have not fetched yet.
+ */
+describe("opening a signed playbook against the keys you hold", () => {
+  /** A signed playbook, and the armored public key that signed it. */
+  async function signedBy(pair) {
+    const write = 'playbook "Envelope" purpose="Recombine." | gpg.sign | out $signed';
+    const { ast } = compileRecipe(write);
+    const arts = await runRecipe(ast, await withKey(write, pair));
+    return String(arts.find((a) => a.label === "signed").content);
+  }
+
+  it("names who signed it, not merely that somebody did", async () => {
+    const pair = await key();
+    const armored = await signedBy(pair);
+    const opened = await openSignedPlaybook(armored, [
+      { fingerprint: "AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555", uid: "Playbook Author", publicArmored: pair.publicKey },
+    ]);
+    expect(opened.ok).toBe(true);
+    expect(opened.playbook.title).toBe("Envelope");
+    expect(opened.by.uid).toBe("Playbook Author");
+  }, 60_000);
+
+  it("tells a key you do not have from a signature that is wrong", async () => {
+    const theirs = await otherKey();
+    const mine = await key();
+    const armored = await signedBy(theirs);
+    const notYours = await openSignedPlaybook(armored, [
+      { fingerprint: "F".repeat(40), uid: "Me", publicArmored: mine.publicKey },
+    ]);
+    expect(notYours.ok).toBe(false);
+    expect(notYours.reason).toBe("not-yours");
+    // The sentence has to say it is not proof of tampering, because it is not.
+    expect(notYours.message).toMatch(/not proof/i);
+
+    const noKeys = await openSignedPlaybook(armored, []);
+    expect(noKeys.reason).toBe("no-keys");
+  }, 60_000);
+
+  it("refuses an unsigned document without pretending it failed a check", async () => {
+    const pb = await buildPlaybook({ title: "t", recipeSource: RECIPE });
+    const opened = await openSignedPlaybook(playbookToJson(pb), [
+      { fingerprint: "F".repeat(40), publicArmored: (await key()).publicKey },
+    ]);
+    expect(opened.ok).toBe(false);
+    expect(opened.reason).toBe("unsigned");
+  }, 60_000);
+
+  it("reports a good signature over a bad document as the document's fault", async () => {
+    // Reached by signing something that is not a playbook: the signature
+    // verifies and the parse does not, and blaming the key would send somebody
+    // hunting for a key problem they do not have.
+    const pair = await key();
+    const write = '"not a playbook" | gpg.sign | out $signed';
+    const { ast } = compileRecipe(write);
+    const arts = await runRecipe(ast, await withKey(write, pair));
+    const opened = await openSignedPlaybook(String(arts.find((a) => a.label === "signed").content), [
+      { fingerprint: "F".repeat(40), publicArmored: pair.publicKey },
+    ]);
+    expect(opened.ok).toBe(false);
+    expect(opened.reason).toBe("malformed");
+  }, 60_000);
+});
+
+describe("the library stores a playbook without trusting its own storage", () => {
+  it("imports a signed playbook as an entry whose recipe is a preview", async () => {
+    const pair = await key();
+    const write = 'playbook "Envelope" | gpg.sign | out $signed';
+    const { ast } = compileRecipe(write);
+    const arts = await runRecipe(ast, await withKey(write, pair));
+    const armored = String(arts.find((a) => a.label === "signed").content);
+
+    const parsed = parseWorkspaceFile(armored, { filename: "playbook.asc" });
+    expect(parsed.ok).toBe(true);
+    expect(parsed.workspace.title).toBe("Envelope");
+    // Trimmed, not reformatted: the armor's trailing newline is outside the
+    // signed text, and the stored document still verifies — which the next
+    // case proves by opening it.
+    expect(parsed.workspace.playbook).toBe(armored.trim());
+    // The preview is the document's recipe — for the list to show a step
+    // count, never for Load to run.
+    expect(parsed.workspace.recipe).toContain("gpg.sign");
+  }, 60_000);
+
+  it("takes the recipe from the signature, not from the row beside it", async () => {
+    // The property the whole design turns on. localStorage is XSS-*writable*,
+    // so an attacker who can edit a row edits `recipe` — the field a naive
+    // Load would use. Rewriting it here changes nothing about what opening the
+    // entry produces, because the signature is what answers.
+    const pair = await key();
+    const write = 'playbook "Envelope" | gpg.sign | out $signed';
+    const { ast } = compileRecipe(write);
+    const arts = await runRecipe(ast, await withKey(write, pair));
+    const armored = String(arts.find((a) => a.label === "signed").content);
+
+    const parsed = parseWorkspaceFile(armored, {});
+    const tampered = { ...parsed.workspace, recipe: "random 32 | out $oops" };
+    const opened = await openSignedPlaybook(tampered.playbook, [
+      { fingerprint: "F".repeat(40), uid: "Author", publicArmored: pair.publicKey },
+    ]);
+    expect(opened.ok).toBe(true);
+    expect(opened.playbook.recipeSource).not.toContain("$oops");
+    expect(opened.playbook.recipeSource).toContain("gpg.sign");
+  }, 60_000);
+
+  it("refuses a signed file that is not a playbook, saying which it was", () => {
+    const signed = [
+      "-----BEGIN PGP SIGNED MESSAGE-----",
+      "Hash: SHA256",
+      "",
+      '{"v":2,"kind":"basilisk.run-receipt"}',
+      "-----BEGIN PGP SIGNATURE-----",
+      "-----END PGP SIGNATURE-----",
+    ].join("\n");
+    const parsed = parseWorkspaceFile(signed, {});
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toMatch(/not a playbook/);
+  });
+
+  it("keeps an ordinary saved recipe free of the field", () => {
+    const storage = {
+      _d: /** @type {Record<string,string>} */ ({}),
+      getItem(k) {
+        return this._d[k] ?? null;
+      },
+      setItem(k, v) {
+        this._d[k] = String(v);
+      },
+    };
+    const plain = saveWorkspace({ title: "Plain", recipe: "random 32 | out $a" }, storage);
+    expect(plain.ok).toBe(true);
+    expect("playbook" in plain.workspace).toBe(false);
+    const withDoc = saveWorkspace(
+      { title: "Doc", recipe: "random 32 | out $a", playbook: "-----BEGIN PGP SIGNED MESSAGE-----" },
+      storage
+    );
+    expect(withDoc.ok).toBe(true);
+    expect(withDoc.workspace.playbook).toBeTruthy();
+    // …and it survives the store, which is what the list reads back.
+    expect(listWorkspaces(storage).find((w) => w.title === "Doc")?.playbook).toBeTruthy();
+  });
+});
+
 /* ──────────────────────────── an entry point ─────────────────────────────── */
 
 /**
@@ -395,5 +554,49 @@ describe("the ceremony can reach the playbook, not only a recipe author", () => 
     // at printing must still have been offered it.
     const cards = sheet.slice(sheet.indexOf('stage === "cards"'), sheet.indexOf('stage === "receipt"'));
     expect(cards).toContain("playbookText");
+  });
+
+  it("offers a playbook cell from the library, and does not sign behind anybody", () => {
+    const shell = read("../toolkit/ToolkitShell.tsx");
+    const start = shell.indexOf("const writePlaybookCell");
+    expect(start).toBeGreaterThan(-1);
+    const body = shell.slice(start, shell.indexOf("\n  };", start));
+    // It writes a cell. The private key never comes near this function — the
+    // recipe is what a person reads before pressing Run, and a button that
+    // signed would be a signature nobody read one for.
+    expect(body).toContain("appendRecipeCell");
+    expect(body).toContain("gpg.sign");
+    expect(body).not.toContain("signOpenPgp");
+    expect(body).not.toContain("unlock");
+  });
+
+  it("verifies on load, and refuses to open what nothing vouches for", () => {
+    const shell = read("../toolkit/ToolkitShell.tsx");
+    const start = shell.indexOf("const loadWorkspaceEntry");
+    expect(start).toBeGreaterThan(-1);
+    const body = shell.slice(start, shell.indexOf("\n  };", start));
+    expect(body).toContain("openSignedPlaybook");
+    // A plain saved recipe still loads from `ws.recipe` — it is all there is,
+    // and nobody signed anything about it. The assertion is about the other
+    // branch: past the `!ws.playbook` guard, the preview must never be the
+    // thing that loads, because that is the field XSS can rewrite.
+    const signedBranch = body.slice(body.indexOf("setWorkspaceOpening"));
+    expect(signedBranch).toContain("opened.playbook.recipeSource");
+    expect(signedBranch).not.toContain("ws.recipe");
+    // A failure stops the load and is kept on screen rather than thrown away.
+    expect(body).toContain("if (!opened.ok || !opened.playbook) return;");
+    expect(body).toContain("setPlaybookState");
+  });
+
+  it("lists an entry it could not verify, rather than hiding it", () => {
+    // The coordinator's rule, and the reason: hiding a failing entry makes a
+    // tampered playbook indistinguishable from one that was never saved.
+    const shell = read("../toolkit/ToolkitShell.tsx");
+    // No filter drops unverified rows from the list…
+    expect(shell).toContain("{workspaces.map((ws) => {");
+    // …and the row carries the failure and the signer, in the row itself.
+    expect(shell).toContain("opened.message");
+    expect(shell).toContain("opened.by.fingerprint.slice(-16)");
+    expect(shell).toContain('data-verified={opened ? (opened.ok ? "yes" : "no") : "unchecked"}');
   });
 });

@@ -3,12 +3,39 @@
  *
  * Stores title + recipe source only — never Inputs, kernel slots, or private keys.
  * XSS can read localStorage; refuse recipes that look like secret material.
+ *
+ * ## Playbook entries, and why storage is not trusted here
+ *
+ * An entry may also carry a **signed playbook** (`playbook`), the armored
+ * document `playbook | gpg.sign` produced. Its `recipe` is then a *preview*
+ * only — parsed out of the document for the list to show a title and a step
+ * count, exactly as `jose.decode` reads a token it has not verified. **Loading
+ * one never uses it.** `openSignedPlaybook` verifies the armor and the recipe
+ * comes out of the bytes that signature covered.
+ *
+ * That split is the whole reason the field exists rather than storing the
+ * recipe alone: localStorage is XSS-*writable*, so a stored recipe is a
+ * suggestion and a stored signature is a claim somebody can be held to. A
+ * preview that disagrees with the verified document is exactly the case a
+ * person needs to see, which is why a failing entry is still listed — see
+ * `ToolkitShell`'s library sheet.
  */
 
 import { recipeLooksSecret } from "./fragment.js";
+import { parsePlaybook } from "./playbook.js";
 
 export const WORKSPACE_STORE_KEY = "basilisk.toolkit.workspaces";
-export const WORKSPACE_SCHEMA_VERSION = 1;
+/**
+ * v2 added `playbook`.
+ *
+ * Bumped rather than treated as an additive field because a v1 reader does not
+ * merely lose a field — it loads `recipe`, which for a playbook entry is the
+ * unverified preview, and runs it as though it were the procedure somebody
+ * signed. The version does not stop that (v1 never read it); it records that
+ * the entry means something different, so the next person to widen this store
+ * finds the sentence before the bug.
+ */
+export const WORKSPACE_SCHEMA_VERSION = 2;
 export const WORKSPACE_MAX_ENTRIES = 40;
 /** Soft cap on serialized library JSON size. */
 export const WORKSPACE_MAX_BYTES = 1_500_000;
@@ -20,7 +47,10 @@ export const WORKSPACE_MAX_BYTES = 1_500_000;
  *   title: string,
  *   recipe: string,
  *   updatedAt: string,
+ *   playbook?: string,
  * }} ToolkitWorkspace
+ *   `recipe` is what Load uses — **except** on an entry carrying `playbook`,
+ *   where it is a preview and the verified document is what Load uses.
  */
 
 /**
@@ -57,12 +87,17 @@ export function normalizeWorkspace(raw) {
     typeof o.updatedAt === "string" && o.updatedAt
       ? o.updatedAt
       : new Date().toISOString();
+  const playbook = String(o.playbook ?? "").trim();
   return {
     v: WORKSPACE_SCHEMA_VERSION,
     id,
     title: title.slice(0, 120),
     recipe,
     updatedAt,
+    // Only when there is one. An entry without this field is an ordinary saved
+    // recipe, and `Object.keys` on one must not grow a key that makes it look
+    // like a document nobody signed.
+    ...(playbook ? { playbook } : {}),
   };
 }
 
@@ -125,7 +160,7 @@ export function getWorkspace(id, storage = typeof localStorage !== "undefined" ?
 }
 
 /**
- * @param {{ id?: string, title?: string, recipe: string }} input
+ * @param {{ id?: string, title?: string, recipe: string, playbook?: string }} input
  * @param {{ getItem?: (k: string) => string|null, setItem?: (k: string, v: string) => void }} [storage]
  * @returns {{ ok: true, workspace: ToolkitWorkspace } | { ok: false, reason: string }}
  */
@@ -148,6 +183,7 @@ export function saveWorkspace(
   let list = listWorkspaces(storage);
   const id = String(input?.id || "").trim() || newWorkspaceId();
   const existing = list.findIndex((w) => w.id === id);
+  const playbook = String(input?.playbook ?? "").trim();
   /** @type {ToolkitWorkspace} */
   const workspace = {
     v: WORKSPACE_SCHEMA_VERSION,
@@ -155,6 +191,7 @@ export function saveWorkspace(
     title: title.slice(0, 120),
     recipe,
     updatedAt: new Date().toISOString(),
+    ...(playbook ? { playbook } : {}),
   };
   if (existing >= 0) {
     list[existing] = workspace;
@@ -201,7 +238,16 @@ export function exportWorkspaceBlob(ws) {
 }
 
 /**
- * Parse a downloaded workspace JSON or plain recipe text.
+ * Parse a downloaded workspace JSON, a signed playbook, or plain recipe text.
+ *
+ * **A playbook is read here, never trusted here.** `parsePlaybook` checks the
+ * document's shape so the library can show a title and a step count; the
+ * signature is checked when somebody loads it, by `openSignedPlaybook`, against
+ * the keys they hold at that moment. That is deliberate rather than lazy: this
+ * function is synchronous and verification is not, and more importantly a
+ * signature checked at import time and then stored as a boolean would be a
+ * verdict this store could be edited to lie about.
+ *
  * @param {string} text
  * @param {{ filename?: string }} [opts]
  * @returns {{ ok: true, workspace: Omit<ToolkitWorkspace, "id"|"updatedAt"> & { id?: string, updatedAt?: string } }
@@ -211,6 +257,30 @@ export function parseWorkspaceFile(text, opts = {}) {
   const raw = String(text ?? "").trim();
   if (!raw) {
     return { ok: false, reason: "File is empty." };
+  }
+  if (/^-----BEGIN PGP SIGNED MESSAGE-----/m.test(raw)) {
+    /** @type {import("./playbook.js").RecipePlaybook} */
+    let playbook;
+    try {
+      playbook = parsePlaybook(raw);
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `Signed file, but not a playbook: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+    return {
+      ok: true,
+      workspace: {
+        v: WORKSPACE_SCHEMA_VERSION,
+        title: playbook.title || "Imported playbook",
+        // The preview. Load re-reads it out of the verified bytes.
+        recipe: playbook.recipeSource,
+        playbook: raw,
+      },
+    };
   }
   if (recipeLooksSecret(raw)) {
     return {

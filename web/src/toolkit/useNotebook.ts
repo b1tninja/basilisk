@@ -1406,6 +1406,34 @@ export function useNotebook() {
     });
   }, []);
 
+  /**
+   * Append `text` as one or more cells and focus the first of them.
+   *
+   * Appends rather than replacing, because the caller has something to add to
+   * the notebook rather than a notebook to open — `loadRecipeText` is the other
+   * one. It exists so a surface can put a recipe in front of a person **without
+   * running it**: writing a playbook means signing, and `attest.js` states the
+   * rule this follows — the recipe is the thing somebody reads before pressing
+   * Run, and a signer buried behind a button signs without anybody having read
+   * one. So the button writes the cell and the person presses Run.
+   *
+   * Returns false when the text does not parse, leaving the notebook alone.
+   */
+  const appendRecipeCell = useCallback((text: string) => {
+    const { ast } = compileRecipe(text);
+    const added = ast?.chains?.length ? ast.chains : ast ? [{ steps: ast.steps || [] }] : [];
+    if (!added.length) return false;
+    setChains((prev) => {
+      // A single empty cell is what a fresh notebook is, and appending after it
+      // would leave a blank cell above the thing the person just asked for.
+      const base = prev.length === 1 && !prev[0]?.steps?.length ? [] : prev;
+      const next = [...base, ...added.map((c) => ({ ...c, steps: [...(c.steps || [])] }))];
+      setFocusedCell(base.length);
+      return next;
+    });
+    return true;
+  }, []);
+
   const deleteCell = useCallback((index: number) => {
     setChains((prev) => {
       if (prev.length <= 1) return [{ steps: [] }];
@@ -2211,6 +2239,7 @@ export function useNotebook() {
     cellRecipeSource,
     upgradeCellRecipe,
     addCell,
+    appendRecipeCell,
     deleteCell,
     runFrom,
     clearSensitive,
