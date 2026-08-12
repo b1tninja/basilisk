@@ -14,8 +14,16 @@
  * `Example:` strings means the next op to add one is covered the day it lands.
  */
 import { describe, expect, it } from "vitest";
-import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
+import { PRESETS, compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
 import { STEPS } from "../lib/toolkit/registry.js";
+import {
+  TOOLKIT_HASH_MAX_LEN,
+  compactRecipeText,
+  decodeSharePayload,
+  encodeSharePayload,
+  expandShareRecipe,
+  hashForRecipe,
+} from "../lib/toolkit/fragment.js";
 
 /** Compile → serialize → compile, returning the second pass's errors. */
 const roundTrip = (src) => {
@@ -95,6 +103,141 @@ describe("a positional value the parser cannot read bare is quoted", () => {
     for (const accept of [".pem", ".p12,.pfx", "-weird", "+plus"]) {
       const { text, errors } = roundTrip(`file.read accept=${JSON.stringify(accept)}`);
       expect(errors, `accept=${accept} round-tripped to ${text}`).toEqual([]);
+    }
+  });
+});
+
+/* ─────────────────────────── the compact form ───────────────────────────── */
+
+/**
+ * The compact form is the one that travels.
+ *
+ * `hashForRecipe` is the only production caller of `serializeRecipe(…, {
+ * compact: true })`, through `compactRecipeText`, and it is what "Copy link"
+ * puts in a `#r=` fragment. So a compact spelling that does not parse back is
+ * not a cosmetic defect: a person shares a notebook that was fine, and the
+ * recipient opens a parse error.
+ *
+ * It was one, for every notebook containing a `tee` or `foreach` body of more
+ * than one step. The one-line brace form joined the body's items with a space
+ * — `tee{ - digest sha-256 - encode hex - out $a }` — and a step's argument
+ * loop runs to `|`, `}`, `#` or end of line, so it swallowed the `-` that was
+ * meant to start the next item. `aes-gcm -d` is why the parser cannot simply
+ * stop at a hyphen: a leading `-` is a real argument token.
+ *
+ * The sweep below is the guard. It is over `PRESETS` rather than over a fixture
+ * list because the presets are the shapes we ship and the ones a person is
+ * most likely to press Copy link on — and because the defect went unnoticed for
+ * exactly as long as nothing swept them.
+ */
+/**
+ * Compact → encode → decode → expand: the path a shared notebook actually
+ * takes, and the only one worth asserting. `~` is the compact chain separator
+ * and the *parser* has never known about it — `expandShareRecipe` turns it back
+ * into a blank line — so a sweep that compiled the compact text directly would
+ * fail on every multi-cell preset for a reason no user can hit.
+ * @param {string} src
+ */
+const throughLink = (src) =>
+  expandShareRecipe(decodeSharePayload(encodeSharePayload(compactRecipeText(src))));
+
+describe("every preset survives the compact round trip", () => {
+  const compiled = PRESETS.map((p) => [p.id, p.recipe, compileRecipe(p.recipe)])
+    .filter(([, , c]) => c.validation.ok);
+
+  it("finds presets to check, so the sweep cannot pass by being empty", () => {
+    expect(compiled.length).toBeGreaterThan(20);
+  });
+
+  it("includes presets with nested bodies, which is the shape that broke", () => {
+    const nested = compiled.filter(([, recipe]) => /\n\s*-\s/.test(String(recipe)));
+    expect(nested.length).toBeGreaterThan(5);
+  });
+
+  for (const [id, recipe] of compiled) {
+    it(`${id} re-parses from its compact spelling`, () => {
+      const text = throughLink(recipe);
+      const back = compileRecipe(text);
+      expect(
+        back.validation.errors.map((e) => e.message),
+        `compact spelling of ${id} did not parse:\n${text}`
+      ).toEqual([]);
+      // …and says the same thing. A form that parsed to a *different* pipeline
+      // would pass the check above and still lose the recipe.
+      expect(serializeRecipe(back.ast), id).toBe(
+        serializeRecipe(compileRecipe(recipe).ast)
+      );
+    });
+  }
+});
+
+describe("a compact payload survives the `#r=` link it exists for", () => {
+  it("keeps a multi-cell notebook multi-cell", () => {
+    // The chain separator and the body form interact: `expandShareRecipe`
+    // reads a payload with no raw newline as `~`-separated and one with
+    // newlines as already blank-line separated. A notebook whose body cannot
+    // be flattened onto one line has to pick the second, or its cells merge.
+    const src =
+      "genkey ec/p256 | tee\n  - :public | export spki | pem | out $pub\n  - :private | export pkcs8 | out $priv\n\nin $pub | inspect";
+    const back = compileRecipe(throughLink(src));
+    expect(back.validation.errors).toEqual([]);
+    expect(back.ast.chains).toHaveLength(2);
+    expect(serializeRecipe(back.ast)).toBe(serializeRecipe(compileRecipe(src).ast));
+  });
+
+  it("hands back a cell that digests as the one that was shared", () => {
+    // The reason the compact form stopped re-spelling bodies, rather than only
+    // stopping where it failed to parse. `serializeRecipe({ chains: [chain] })`
+    // is what `handoff.js` digests a cell with, and what a manifest records —
+    // so two spellings of one body are two digests, and two peers holding the
+    // same notebook by different routes refuse each other with `cell-mismatch`.
+    const brace = "random 32 | foreach { - out $share }";
+    const indent = "random 32 | foreach\n  - out $share";
+    const cellText = (src) =>
+      serializeRecipe({ chains: [compileRecipe(src).ast.chains[0]] });
+    // The two spellings genuinely differ, which is what makes the trip matter.
+    expect(cellText(brace)).not.toBe(cellText(indent));
+    for (const src of [brace, indent]) {
+      expect(cellText(throughLink(src)), src).toBe(cellText(src));
+    }
+  });
+
+  it("still uses `~` when every cell fits on one line", () => {
+    // The short spelling is the point of the compact form, and the notebooks
+    // that can use it are the majority. Losing it for every recipe would be a
+    // fix that cost more than the bug.
+    const compact = compactRecipeText("random 32 | out $a\n\nin $a | encode hex");
+    expect(compact).toContain("~");
+    expect(compact).not.toContain("\n");
+  });
+
+  it("costs length, and the budget says how much is left", () => {
+    // Keeping a body's own form makes some links longer, which is the whole
+    // price of the fix and the number worth watching. Two ceilings: the
+    // fragment budget `hashForRecipe` enforces, and the 2953 bytes a QR holds
+    // — `ShareSheet` falls back to a file above it, so exceeding it is a
+    // different flow rather than a failure, but it is still a cliff.
+    const lengths = PRESETS.map((p) => [p.id, hashForRecipe(p.recipe)])
+      .filter(([, h]) => h.ok)
+      .map(([id, h]) => [String(id), h.hash.length]);
+    expect(lengths.length).toBeGreaterThan(20);
+    const worst = lengths.reduce((a, b) => (b[1] > a[1] ? b : a));
+    // A ceiling with room in it, not the exact number — re-pinning this on
+    // every preset that gets added is how a budget check stops being read.
+    expect(worst[1], `longest preset link is ${worst[0]}`).toBeLessThan(1000);
+    expect(worst[1]).toBeLessThan(TOOLKIT_HASH_MAX_LEN);
+  });
+
+  it("is never longer than the pretty text it came from", () => {
+    // The property that says compact is still doing its job. It is not a
+    // tautology once a body stops being flattened: what is left of the
+    // minification is the stem, and this asserts the stem still pays for the
+    // newlines the body keeps.
+    for (const p of PRESETS) {
+      const c = compileRecipe(p.recipe);
+      if (!c.validation.ok) continue;
+      const compact = compactRecipeText(p.recipe);
+      expect(compact.length, p.id).toBeLessThanOrEqual(serializeRecipe(c.ast).length);
     }
   });
 });

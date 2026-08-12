@@ -63,11 +63,26 @@ describe("parseToolkitHash", () => {
 });
 
 describe("compact share form", () => {
-  it("minifies pipes, chains, and foreach bodies", () => {
+  it("minifies pipes and chains, and leaves a body's own form alone", () => {
+    // This pinned `foreach{ - out $share }` until the compact form stopped
+    // re-spelling bodies. Two reasons it had to change, and the second is why
+    // the fix went further than the cases that failed to parse:
+    //
+    // 1. Joining body items with a space does not parse back the moment there
+    //    is more than one of them — a step's argument loop runs past the `-`.
+    //    `recipe-roundtrip.test.js` sweeps every preset for that now.
+    // 2. Even for the single-item body here, which did parse, the brace
+    //    spelling came back as `bodyForm: "brace"` and serialized as
+    //    `foreach {\n  - out $share\n}`. `serializeRecipe` is what a manifest,
+    //    a receipt and a handoff offer digest a cell with, so the same cell
+    //    pasted as text and opened from a link digested two ways — a
+    //    `cell-mismatch` between two peers holding one notebook.
+    //
+    // So the stem still minifies and the body is left exactly as written.
     const foreachPretty = `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out $share`;
     expect(compactRecipeText(foreachPretty)).toBe(
-      "random 32|sss.split|blip39.encode|foreach{ - out $share }"
+      "random 32|sss.split|blip39.encode|foreach\n  - out $share"
     );
 
     const chained = `genkey ec/p256 | out $kp
