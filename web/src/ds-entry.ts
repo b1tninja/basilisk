@@ -128,6 +128,7 @@ export { GateBanner, GateFact } from "./toolkit/widgets/GateBanner";
  * "quorum"` is a live link kind), and — in `ShareCards` and `CeremonySheet` —
  * the Shamir threshold, where "any k of these n" is simply what a quorum is.
  */
+export { CellAssign } from "./toolkit/widgets/CellAssign";
 export { PlanPanel } from "./toolkit/widgets/PlanPanel";
 export { ShareSheet } from "./toolkit/widgets/ShareSheet";
 export { SessionStrip } from "./toolkit/widgets/SessionStrip";

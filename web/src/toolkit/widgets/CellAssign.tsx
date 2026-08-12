@@ -22,6 +22,13 @@ export type CellAssignProps = {
    */
   choices: string[];
   onAssign: (peer: string | null, publish: boolean) => void;
+  /**
+   * Start with the menu open. For a catalog, which cannot press the trigger —
+   * the same reason `ShareSheet` takes `defaultQrOpen` and `OtpCodeCard` takes
+   * an injectable `nowMs`. A menu that only exists after a click is a menu no
+   * sheet can photograph, and the items are the whole of what this control is.
+   */
+  defaultOpen?: boolean;
   className?: string;
 };
 
@@ -47,10 +54,17 @@ export type CellAssignProps = {
  * no header genuinely runs wherever the notebook runs, which is a real answer
  * and not an absence of one.
  */
-export function CellAssign({ peer, publish, choices, onAssign, className }: CellAssignProps) {
+export function CellAssign({
+  peer,
+  publish,
+  choices,
+  onAssign,
+  defaultOpen = false,
+  className,
+}: CellAssignProps) {
   const label = peer ? `${PEER_SIGIL}${peer}` : "anyone";
   return (
-    <DropdownMenu>
+    <DropdownMenu defaultOpen={defaultOpen} modal={false}>
       <DropdownMenuTrigger asChild>
         <Button
           size="sm"

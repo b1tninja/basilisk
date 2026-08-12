@@ -34,6 +34,7 @@
     "RecipientsCard": "src/toolkit/widgets/RecipientsCard.tsx",
     "QrArtifact": "src/toolkit/widgets/QrArtifact.tsx",
     "GateBanner": "src/toolkit/widgets/GateBanner.tsx",
+    "CellAssign": "src/toolkit/widgets/CellAssign.tsx",
     "PlanPanel": "src/toolkit/widgets/PlanPanel.tsx",
     "ShareSheet": "src/toolkit/widgets/ShareSheet.tsx",
     "SessionStrip": "src/toolkit/widgets/SessionStrip.tsx",
@@ -72,6 +73,10 @@
     "ShareSheet": {
       "cardMode": "single",
       "primaryStory": "SessionJoinedNotVerified"
+    },
+    "CellAssign": {
+      "cardMode": "single",
+      "primaryStory": "Assigned"
     }
   },
   "readmeHeader": ".design-sync/conventions.md"
