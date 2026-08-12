@@ -133,9 +133,15 @@ export function SessionStart({
         <select
           className="rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--foreground)]"
           value={keyFingerprint}
+          disabled={!keys.length}
           onChange={(e) => onKeyFingerprint(e.currentTarget.value)}
         >
-          <option value="">Choose a key…</option>
+          {/* The empty case says which emptiness it is. A lone "Choose a key…"
+              over no options reads as a control that has not loaded, and it
+              was the visible half of a Start button that did nothing. */}
+          <option value="">
+            {keys.length ? "Choose a key…" : "No keys yet — make one in My Keys"}
+          </option>
           {keys.map((k) => (
             <option key={k.fingerprint} value={k.fingerprint}>
               {k.uid || shortFpr(k.fingerprint)}

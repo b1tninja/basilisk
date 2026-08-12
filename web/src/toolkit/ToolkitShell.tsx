@@ -1067,8 +1067,9 @@ export function ToolkitShell() {
         audience: sessionDraft.audience,
         keyFingerprint: sessionDraft.keyFingerprint,
         live: sessionLive,
+        keyCount: nb.vaultKeys.length,
       }),
-    [sessionDraft, sessionLive]
+    [sessionDraft, sessionLive, nb.vaultKeys.length]
   );
 
   /**

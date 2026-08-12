@@ -281,7 +281,15 @@ export function confirmationReadout(peer) {
  * opinion — the transport still refuses — it is the same refusal where the
  * reader can still act on it.
  *
- * @param {{ audience?: string[], keyFingerprint?: string, live?: boolean }} draft
+ * `keyCount` is separate from `keyFingerprint` because "you have not chosen
+ * one yet" and "there is nothing to choose" are different states that had the
+ * same sentence. With an empty vault, "Choose the key you are joining as" is an
+ * instruction nobody can follow, and the Start button sat disabled beside it
+ * with no reason attached -- so pressing it did nothing and said nothing, which
+ * is how this was reported.
+ *
+ * @param {{ audience?: string[], keyFingerprint?: string, live?: boolean,
+ *   keyCount?: number }} draft
  * @returns {string[]}
  */
 export function startIssues(draft) {
@@ -296,7 +304,13 @@ export function startIssues(draft) {
     .replace(/\s+/g, "")
     .toUpperCase();
   if (!key) {
-    issues.push("Choose the key you are joining as — it signs the invite and every envelope after it.");
+    // A session is signed, so it cannot start without a key at all. Say which
+    // of the two situations this is, because only one of them is a choice.
+    issues.push(
+      Number(draft?.keyCount || 0) === 0
+        ? "You have no keys yet, and a session is signed from end to end. Make or import one in My Keys, then come back — the key you pick here signs the invite and every envelope after it."
+        : "Choose the key you are joining as — it signs the invite and every envelope after it."
+    );
   }
   if (audience.length < 2) {
     issues.push(

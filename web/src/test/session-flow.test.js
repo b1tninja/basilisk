@@ -501,3 +501,29 @@ describe("the session's window is a window, and not a fourth Share row", () => {
     expect(SHEET).toMatch(/never crosses/);
   });
 });
+
+describe("an empty vault is a different problem from an unmade choice", () => {
+  it("does not tell someone with no keys to choose one", () => {
+    // The reported bug: Start sat disabled and pressing it did nothing, while
+    // the only stated reason was an instruction that cannot be followed when
+    // there is nothing in the list to pick.
+    const none = startIssues({ audience: [], keyFingerprint: "", keyCount: 0 });
+    expect(none.join(" ")).toMatch(/no keys yet/i);
+    expect(none.join(" ")).toMatch(/My Keys/);
+    expect(none.join(" ")).not.toMatch(/^Choose the key/m);
+  });
+
+  it("still says choose when there is something to choose", () => {
+    const some = startIssues({ audience: [], keyFingerprint: "", keyCount: 3 });
+    expect(some.join(" ")).toMatch(/Choose the key you are joining as/);
+    expect(some.join(" ")).not.toMatch(/no keys yet/i);
+  });
+
+  it("says nothing about keys once one is picked, either way", () => {
+    const fpr = "A".repeat(40);
+    for (const keyCount of [0, 3]) {
+      const picked = startIssues({ audience: [fpr], keyFingerprint: fpr, keyCount });
+      expect(picked.join(" ")).not.toMatch(/no keys yet|Choose the key/i);
+    }
+  });
+});
