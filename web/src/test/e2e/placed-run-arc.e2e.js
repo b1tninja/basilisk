@@ -66,10 +66,18 @@
  * any of them puts the arc back in the bundle-less state this suite was
  * written to describe.
  *
- * The modules are still compiled from `src/lib/toolkit/` and imported into the
- * page rather than resolved out of the chunks. That is now a property of this
- * harness rather than of the product, and moving it onto the shipped chunk is
- * the obvious next tightening.
+ * Most of the arc is still compiled from `src/lib/toolkit/` and imported into
+ * the page rather than resolved out of the chunks — a property of this harness
+ * rather than of the product, and the reason the chunk assertions below exist
+ * at all.
+ *
+ * One function no longer takes that on trust. "plans the same way in the bytes
+ * the browser shipped" pulls `planRun` back out of the `/assets/` chunks the
+ * page already fetched, finds it by a sentence only it ships, plans this same
+ * notebook with it, and requires the answer to match the compiled planner's
+ * cell for cell. So the entry point is checked as *shipped bytes* and not only
+ * as a file; the remaining four are still checked for presence only, and
+ * extending the same treatment to them is the next tightening.
  *
  * ## What may skip, and what may not
  *
@@ -105,6 +113,59 @@ import {
   proxyToBasilisk,
   signalingEnv,
 } from "../helpers/placed-run-arc.js";
+
+
+/**
+ * Resolve `planRun` out of the chunks the page actually loaded, and plan the
+ * same notebook with it.
+ *
+ * The suite drives modules compiled from `src/lib/toolkit/` because for most of
+ * this file's life there were no shipped bytes to drive. There are now — all
+ * five arc functions ship — and this is the first assertion that reaches them.
+ *
+ * A **string**, for two reasons. Vitest rewrites `import()` in anything it
+ * transforms, so this cannot be a function literal in this file; and the page's
+ * own CSP carries no `unsafe-eval`, so it cannot be `eval`ed in the page
+ * either. Passed to `evaluate` as a string it is compiled by the runner, the
+ * same way `LOAD` is — and because a string is evaluated as an *expression*
+ * rather than called, it is an IIFE with its arguments baked in by
+ * `JSON.stringify`, the same way this file already inlines `ARC_PATH`. Only chunks the page already fetched are considered, so
+ * this re-reads an evaluated module rather than pulling a second copy of the
+ * graph.
+ *
+ * Found by a sentence `planRun` ships and nothing else does — the same needle
+ * `ONLY_IN` uses on disk — because export bindings are minified and function
+ * names with them, while a string literal survives intact.
+ */
+const shippedPlanExpr = (args) => `(async () => {
+  const { src, me, roster } = ${JSON.stringify(args)};
+  const paths = [...new Set(
+    performance.getEntriesByType("resource")
+      .map((x) => new URL(x.name).pathname)
+      .filter((n) => n.startsWith("/assets/") && n.endsWith(".js"))
+  )];
+  const found = [];
+  for (const p of paths) {
+    let mod;
+    try { mod = await import(p); } catch (_) { continue; }
+    for (const k of Object.keys(mod)) {
+      const v = mod[k];
+      if (typeof v !== "function") continue;
+      if (!String(v).includes("keying-unplaced")) continue;
+      found.push(v);
+    }
+  }
+  if (found.length !== 1) {
+    throw new Error("expected exactly one shipped planRun, found " + found.length);
+  }
+  const compiled = window.__arc.compileRecipe(window.__arc.migrateRecipe(src).recipe);
+  const plan = found[0](compiled, { me, roster });
+  return {
+    ok: plan.ok,
+    play: plan.play,
+    cells: plan.cells.map((c) => ({ index: c.index, peer: c.peer, mine: c.mine })),
+  };
+})()`;
 
 /* ─────────────────────────── what may stand down ─────────────────────────── */
 
@@ -591,6 +652,12 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
       roster,
     });
 
+    // Plan it a second time with the `planRun` the browser actually shipped,
+    // so the run below is checked against the bytes and not only the sources.
+    out.shippedPlanA = await A.page.evaluate(
+      shippedPlanExpr({ src: NOTEBOOK, me: "mara", roster })
+    );
+
     // The joiner first, and then a pause. The joiner-first ordering is
     // `notebook-pair.js`'s: an invite is published once, the moment the
     // creator's room is joined, and a creator who is first publishes it to an
@@ -806,6 +873,29 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
   });
 
   /* ─────────────────────────── plan and gate ───────────────────────────── */
+
+  it("plans the same way in the bytes the browser shipped", () => {
+    // Everything else in this file drives modules compiled from
+    // `src/lib/toolkit/`, which proves the arc works but not that the *build*
+    // carries it. The sibling assertions below prove the five functions are
+    // present in the chunks; this one runs one of them and checks the answer.
+    //
+    // Compared against `planA` — the compiled planner's own output for the same
+    // notebook, roster and identity — so a build that shipped a stale or
+    // differently-configured planner would disagree here rather than pass.
+    // `play` is compared only against a literal below: `__setup` does not
+    // return it, and the comparison is limited to what both sides expose.
+    expect(out.shippedPlanA.ok).toBe(out.planA.ok);
+    expect(out.shippedPlanA.cells).toEqual(
+      out.planA.cells.map((c) => ({ index: c.index, peer: c.peer, mine: c.mine }))
+    );
+
+    // And it is a placed run, not a trivially-equal pair of empties: the
+    // notebook has three cells across two peers, two of which are not Mara's.
+    expect(out.shippedPlanA.play).toBe("placed");
+    expect(out.shippedPlanA.cells.map((c) => c.peer)).toEqual(["mara", "okafor", "mara"]);
+    expect(out.shippedPlanA.cells.filter((c) => !c.mine)).toHaveLength(1);
+  });
 
   it("plans the same notebook two ways, one for each peer", () => {
     expect(out.planA.ok).toBe(true);
