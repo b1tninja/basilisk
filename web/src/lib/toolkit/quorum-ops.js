@@ -37,6 +37,7 @@ import { idFromFingerprint, scalarToHex } from "../quorum/vss.js";
 
 /** @type {QuorumExchangeState} */
 const IDLE_STATE = Object.freeze({
+  self: "",
   phase: "idle",
   room: "",
   role: "",
@@ -543,6 +544,11 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       expected: audience.length - 1,
       status: "starting…",
       peers: [],
+      // Which fingerprint this browser is. The shell needs it to work out
+      // which `@label` in the notebook is *me* — the plan speaks in labels and
+      // the roster maps them to fingerprints, so without this end of the pair
+      // every cell reads as somebody else's and nothing is ever mine.
+      self: myFpr,
     },
     inbox: [],
     recvWaiters: [],

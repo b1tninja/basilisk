@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createKernel } from "../lib/toolkit/kernel.js";
+import {
+  handoffContext,
+  reviewOffer,
+  reviewResult,
+} from "../lib/toolkit/handoff-shell.js";
+import { getPendingHandoffs, takeHandoff } from "../lib/toolkit/quorum-ops.js";
+import { summarizeHandoff } from "../lib/toolkit/handoff.js";
 import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
 import { clearActivity } from "../lib/toolkit/activity-log.js";
 import {
@@ -1641,6 +1648,67 @@ export function useNotebook() {
     window.location.hash = "";
   }, [clearSensitive]);
 
+  /**
+   * Offers and results a peer has sent, still waiting on a person.
+   *
+   * Read straight from the exchange rather than mirrored into state: the list
+   * lives for as long as the session does, and a copy here would be a second
+   * place for it to be wrong.
+   */
+  const pendingHandoffs = useCallback(() => getPendingHandoffs(), []);
+
+  /**
+   * Accept one, which is the click the whole arc is gated on.
+   *
+   * `handoff.js` returns *bindings a caller would register* and registers
+   * nothing itself, so this is where a handoff stops being a document and
+   * starts being values in the registry — and it happens here, in a function
+   * only a person's press reaches, rather than anywhere a running recipe could
+   * arrive at.
+   *
+   * `me` is derived, not guessed: the exchange knows which fingerprint this
+   * browser is, and the roster maps labels to fingerprints, so the label that
+   * matches is the one the plan means by "mine". With no match the plan is
+   * unbound, `handoff.js` refuses, and nothing is registered — which is the
+   * right outcome for a notebook that does not name us.
+   */
+  const acceptHandoff = useCallback(
+    async (id: string) => {
+      const doc = takeHandoff(id);
+      if (!doc) return { ok: false, why: "That handoff is no longer pending." };
+
+      const peers = quorumState.peers || [];
+      const roster = Object.fromEntries(
+        peers.filter((p: any) => p.fingerprint).map((p: any) => [
+          String(p.id || "").replace(/^@/, ""),
+          String(p.fingerprint).toUpperCase(),
+        ])
+      );
+      const self = String((quorumState as any).self || "").toUpperCase();
+      const me =
+        Object.keys(roster).find((label) => roster[label] === self) || "";
+
+      const ctx = await handoffContext({ source, me, roster, title });
+      const slots = kernelRef.current.slots;
+      const verdict =
+        doc.kind === "offer"
+          ? await reviewOffer(ctx, doc.offer, (l: string) => slots.has(l))
+          : await reviewResult(ctx, doc.result, {
+              by: doc.from,
+              offered: [{ manifest: doc.manifest, cell: doc.cell, to: me }],
+              hasSlot: (l: string) => slots.has(l),
+            });
+
+      if (!verdict.ok) return { ok: false, why: summarizeHandoff(verdict) };
+      for (const b of verdict.bindings || []) {
+        slots.register(b.label, b.value, { allowReplace: true });
+      }
+      setSessionTick((n) => n + 1);
+      return { ok: true, cell: doc.cell, registered: (verdict.bindings || []).length };
+    },
+    [quorumState, source, title]
+  );
+
   const copyShareLink = useCallback(async () => {
     const result = hashForNotebook(source);
     if (result.ok === false) {
@@ -1838,6 +1906,8 @@ export function useNotebook() {
     clearSensitive,
     resetNotebook,
     copyShareLink,
+    pendingHandoffs,
+    acceptHandoff,
     copyRecipe,
     unlockKey,
     lockKey,

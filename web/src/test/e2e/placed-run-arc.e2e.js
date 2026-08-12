@@ -46,24 +46,36 @@
  * 3. **The clicks are `page.evaluate` calls.** There is no UI to click, which
  *    is not a limitation of the harness; see the next paragraph.
  *
- * ## The shipped bundle cannot do this, and that is the finding
+ * ## What the bundle can do, and what it still cannot
  *
+ * This used to say the shipped bundle could do none of it: all five of
  * `planRun`, `buildOfferFor`, `acceptHandoffOffer`, `buildResultFor` and
- * `acceptCellResult` are not in `dist/`. Nothing in the application calls them —
- * no page, no op, no mount — so Rollup drops all five, and `engine.js`'s
- * `placement` option, which is the gate's only door, is never passed by anything
- * that ships. `placementGate` survives into the toolkit chunk and returns `null`
- * on every path a user can reach.
+ * `acceptCellResult` were dropped by Rollup because nothing called them, and
+ * the assertion below required every one to be missing. Two things have since
+ * been written, so the finding has moved rather than gone.
  *
- * So the arc is a library with no caller. That is asserted below rather than
- * worked around silently: *"the product cannot accept an offer at all"* reads
- * `dist/assets/*.js` and requires every one of those five to be missing. If a
- * shell is ever written for this, that test fails, and it should — the suite
- * would then be able to drive the shipped chunk and this bundle should go.
+ * `planRun` ships: `PlanPanel` reads it and the Connections tab renders where
+ * every cell runs. Both accept halves ship: `useNotebook.acceptHandoff` checks
+ * an offer or a result that arrived and registers the bindings it returns —
+ * from a function only a person's press reaches, which is the consent rule
+ * `handoff.js` states, held one layer out.
  *
- * Until then the modules are compiled from source by `helpers/placed-run-arc.js`
- * and imported into the page. They are the real files; they are not the shipped
- * bytes, because there are no shipped bytes to be.
+ * `buildOfferFor` and `buildResultFor` are still dropped, and the reason is
+ * specific rather than incidental. Building an offer needs the gate to have
+ * skipped a cell, which means a *placed* run, and nothing in the shell passes
+ * `engine.js`'s `placement` yet. Building a result needs that and a signing
+ * key, since `sendResult` takes a cleartext-signed document. So a cell placed
+ * on a peer still cannot leave this machine — the notebook can now say where
+ * it should run and accept the answer, and cannot yet ask.
+ *
+ * The assertion below is split along exactly that line, in both directions, so
+ * neither half can quietly stop being true. When the send side lands it fails,
+ * and it should: the suite would then drive the shipped chunk for the whole
+ * arc rather than the bundle `helpers/placed-run-arc.js` compiles from source.
+ *
+ * Until then the build half is still compiled from `src/lib/toolkit/` and
+ * imported into the page. Those are the real files; they are not the shipped
+ * bytes, because for those two there are still no shipped bytes to be.
  *
  * ## What may skip, and what may not
  *
@@ -1056,13 +1068,25 @@ describe("the product cannot accept an offer at all", () => {
     expect(chunks.some((c) => c.text.includes(ONLY_IN.planRun))).toBe(true);
   });
 
-  it("still ships no way to make or accept an offer", () => {
-    // The other four remain dropped: nothing plans a handoff, builds an offer,
-    // accepts one, builds a result or accepts one. A readout is not a
-    // transport — `PlanPanel` says where a cell *would* run, and no code yet
-    // carries a cell to the peer it names or brings an answer back.
-    const { planRun: _planner, ...handoff } = ONLY_IN;
-    const present = Object.entries(handoff)
+  it("ships both halves of accepting, because a person can now press accept", () => {
+    // `useNotebook.acceptHandoff` calls them: an offer or a result that a peer
+    // sent is checked, and the bindings it returns are registered — by a
+    // function only a click reaches, never by a running recipe.
+    expect(chunks.some((c) => c.text.includes(ONLY_IN.acceptHandoffOffer))).toBe(true);
+    expect(chunks.some((c) => c.text.includes(ONLY_IN.acceptCellResult))).toBe(true);
+  });
+
+  it("still ships no way to *make* an offer or a result", () => {
+    // `buildOfferFor` needs the gate to have skipped a cell in a placed run,
+    // which nothing in the shell asks for yet; `buildResultFor` needs that and
+    // a signing key, since `sendResult` takes a cleartext-signed document.
+    // Both are reachable from `handoff-shell.js` and neither has a caller, so
+    // Rollup drops them — which is why a cell placed on a peer still cannot
+    // leave this machine.
+    const present = [
+      ["buildOfferFor", ONLY_IN.buildOfferFor],
+      ["buildResultFor", ONLY_IN.buildResultFor],
+    ]
       .filter(([, needle]) => chunks.some((c) => c.text.includes(needle)))
       .map(([fn]) => fn);
     expect(present).toEqual([]);
