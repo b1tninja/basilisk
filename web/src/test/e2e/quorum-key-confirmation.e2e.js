@@ -546,6 +546,12 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
     // crossed the tunnel opened. A harness that dropped signalling would read
     // as a dead transport rather than a failure.
     expect(room.faults()).toEqual([]);
+    // And the tunnel saw everything it forwarded. `room.faults()` can only
+    // speak for envelopes that reached it; a frame the tunnel could not read —
+    // a fragmented text message, or a hook that threw — used to be forwarded
+    // with no record at all, so the room simply counted one fewer and said
+    // nothing. This is the other half of "nothing was dropped".
+    expect(fx.tunnelFaults()).toEqual([]);
     expect(room.counts().lookups).toBeGreaterThanOrEqual(4);
     // `posts` and `polls` are deliberately not asserted. They counted mailbox
     // traffic, and there is no mailbox: signalling is a WebSocket to the hub
@@ -839,6 +845,12 @@ describe.runIf(availability.ok)("key confirmation refuses a substituted DTLS fin
     // The fixture did what it claimed: exactly the offerer's fingerprint
     // rewritten, every envelope re-sealed, nothing dropped.
     expect(room.faults()).toEqual([]);
+    // This one matters most here. A tamper is only applied to an envelope the
+    // tunnel could show the room, so a frame it forwarded unseen is a lie that
+    // was never told — and the suite would report a refused confirmation it
+    // never actually provoked. `tampered.length` below catches losing *every*
+    // envelope; this catches losing any.
+    expect(fx.tunnelFaults()).toEqual([]);
     const tampered = room.signalled().filter((s) => s.tampered);
     expect(tampered.length).toBeGreaterThan(0);
     for (const s of tampered) expect(s.signer).toBe(lo.fpr);

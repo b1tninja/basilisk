@@ -28,3 +28,70 @@ jobs:
       - run: python -m pytest tests/e2e -m e2e -v --timeout=300
       - if: always()
         run: docker compose -f docker-compose.e2e.yml down -v
+
+  # The portal's browser suite: `web/src/test/e2e/**`, 152 tests across 8 files,
+  # driving the built `dist/` in Chromium against a real spawned keyserver — the
+  # two-browser key confirmation, the DTLS-binding tamper, the placed-run arc and
+  # the search page. Until now it ran only on whichever laptop someone happened
+  # to type the command on.
+  #
+  # ## Why it is here and not in `ci.yml`
+  #
+  # It does not gate pull requests, and that is deliberate rather than
+  # provisional. Two load-sensitive flakes have been found in it: one was an
+  # assertion waiting on the wrong value and is fixed; the second — in
+  # `quorum-key-confirmation.e2e.js` — has been seen three times and has not
+  # reproduced in fourteen back-to-back cycles since, so it is open. Gating every
+  # PR on a suite with an open flake teaches people to re-run red CI, and that
+  # habit costs more than this coverage buys.
+  #
+  # So it runs on `main` and on demand, where a failure lands somewhere it can be
+  # investigated instead of in front of someone waiting to merge. **Move it to
+  # `ci.yml`'s `pull_request` trigger once that flake is understood** — the
+  # vitest JUnit report (`web/test-results/e2e.xml`, written every run) is what
+  # will name it; the assertion text is also in this job's log.
+  #
+  # Its own job, not more steps on the Python one above: this needs Chromium and
+  # a built bundle and none of the docker stack, and a 45-second browser failure
+  # should not have to be told apart from a pytest failure at a glance.
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      # The suite spawns `basilisk.serve` itself and refuses to skip when an
+      # interpreter is present but the server will not start, so these are the
+      # dependency it checks for: `flask` and `pysequoia`, both in this file.
+      - name: Install dependencies
+        run: pip install --require-hashes -r requirements-dev.txt
+      # The same preparation the job above does. `startBasilisk` passes each
+      # spawned server its own secret and dev flags, so this is belt and braces
+      # rather than a requirement.
+      - name: Prepare environment files
+        run: bash scripts/prepare-ci-env.sh
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install portal dependencies
+        working-directory: web
+        run: npm ci
+      # Chromium only. `playwright` is already a devDependency; `--with-deps`
+      # pulls the shared libraries a headless browser needs on a bare runner.
+      - name: Install Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      # The suite serves `dist/` and asserts against the shipped bytes under the
+      # production CSP, so there is nothing to run before this.
+      - name: Build portal
+        working-directory: web
+        run: npm run build
+      - name: Browser suite
+        working-directory: web
+        run: npx vitest run -c vitest.e2e.config.js

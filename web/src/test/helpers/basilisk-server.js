@@ -157,16 +157,56 @@ export async function basiliskAvailability() {
   };
 }
 
-/** A free TCP port, released immediately before Flask claims it. */
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = /** @type {import("node:net").AddressInfo} */ (probe.address());
-      probe.close(() => resolve(port));
-    });
-  });
+/**
+ * `n` free TCP ports, distinct from each other.
+ *
+ * Naming a port before the process that wants it exists is unavoidable here:
+ * Flask is told its port on the command line, and the signalling double is told
+ * its port inside a connection string that has to be in the environment before
+ * the interpreter starts. So the probe binds 0, reads what the OS gave, and
+ * lets go — a gap another process can win.
+ *
+ * That gap cannot be closed, but it can be made *loud* and it can be stopped
+ * from being self-inflicted. Loud: `startBasilisk` waits for `/health` and
+ * throws with everything the process wrote, so a lost race surfaces as
+ * "Address already in use" rather than a hang. Self-inflicted: the probes are
+ * all held **at the same time**, so the OS cannot hand the same number to two
+ * of them. Calling a one-port helper twice in a row could, and
+ * `placed-run-arc.e2e.js` did exactly that — one port for Flask and one for the
+ * hub it starts, and the same number for both means the double silently fails
+ * to bind inside a server that came up fine.
+ *
+ * @param {number} [n]
+ * @returns {Promise<number[]>}
+ */
+export function freePorts(n = 1) {
+  /** @type {import("node:net").Server[]} */
+  const probes = [];
+  return Promise.all(
+    Array.from(
+      { length: n },
+      () =>
+        new Promise((resolve, reject) => {
+          const probe = createServer();
+          probes.push(probe);
+          probe.once("error", reject);
+          probe.listen(0, "127.0.0.1", () => {
+            resolve(
+              /** @type {import("node:net").AddressInfo} */ (probe.address()).port
+            );
+          });
+        })
+    )
+  ).finally(
+    () =>
+      // Released together, once every number is known — holding one while
+      // another is still being chosen is what keeps them distinct.
+      new Promise((done) => {
+        let left = probes.length;
+        if (!left) return done(undefined);
+        for (const p of probes) p.close(() => --left || done(undefined));
+      })
+  );
 }
 
 /**
@@ -226,6 +266,11 @@ export function easyAuthHeaders(user) {
  *   key that was revoked *after* it was accepted, which is the only way that
  *   state is reachable and is what a client has to cope with.
  * @param {number} [opts.timeout]       readiness deadline, ms
+ * @param {number} [opts.port]
+ *   A port already reserved by the caller. Only for a caller that needs a
+ *   *second* port beside this one — the signalling double's — so both can come
+ *   out of one `freePorts` call and cannot be the same number. Omitted, this
+ *   takes its own.
  * @param {Record<string, string>} [opts.env]
  *   Extra environment for the server process, merged last so a caller can set
  *   what this harness does not. It exists for one deployment fact the harness
@@ -240,7 +285,7 @@ export async function startBasilisk(opts = {}) {
   const python = opts.python || (await basiliskAvailability()).python;
   if (!python) throw new Error("startBasilisk: no usable python");
 
-  const port = await freePort();
+  const port = opts.port ?? (await freePorts(1))[0];
   const dataDir = await mkdtemp(join(tmpdir(), "basilisk-e2e-"));
   const origin = `http://127.0.0.1:${port}`;
 

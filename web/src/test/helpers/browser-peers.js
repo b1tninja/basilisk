@@ -107,7 +107,7 @@ const MIME = {
  * The hook is async and delivery order is the protocol's, so frames are
  * chained rather than raced.
  */
-function pumpFrames(socket, upstream, onSignal) {
+function pumpFrames(socket, upstream, onSignal, onFault) {
   let buf = Buffer.alloc(0);
   let chain = Promise.resolve();
   socket.on("data", (chunk) => {
@@ -119,7 +119,28 @@ function pumpFrames(socket, upstream, onSignal) {
       const { fin, opcode, payload, bytes } = frame;
       chain = chain
         .then(async () => {
-          if (!fin || opcode !== 1) {
+          // Control frames — close, ping, pong — carry no signalling and are
+          // forwarded untouched. That is not a gap; there is nothing to see.
+          if (opcode >= 0x8) {
+            upstream.write(bytes);
+            return;
+          }
+          // A text message split across frames, or a continuation of one. The
+          // tunnel reads one frame at a time, so it cannot show `onSignal` a
+          // whole message here — and forwarding it quietly is the dangerous
+          // half: the envelope crosses, the peers mesh, and the *observation*
+          // is gone. `room.signalled()` then under-counts and a tamper is
+          // never applied, which is how a security test passes while proving
+          // nothing. Loud, therefore, and forwarded so the run still completes
+          // and fails on the assertion rather than on a dead peer.
+          if (opcode === 0x0 || !fin) {
+            onFault(
+              `uninterceptable frame (fin=${fin}, opcode=${opcode}, ${payload.length} bytes):` +
+                ` a fragmented text message crossed the tunnel unseen. Chromium does not` +
+                ` fragment below ~128 KB and today's largest envelope is ~2 KB, so this` +
+                ` means the envelopes grew — reassemble continuations here before it can` +
+                ` be mistaken for a signalling relay that saw everything.`
+            );
             upstream.write(bytes);
             return;
           }
@@ -127,10 +148,12 @@ function pumpFrames(socket, upstream, onSignal) {
           const out = await onSignal(text);
           upstream.write(typeof out === "string" && out !== text ? encodeTextFrame(out) : bytes);
         })
-        .catch(() => {
-          // A hook that threw must not silently drop the frame: forward the
-          // original so the failure shows up as a protocol error rather than
-          // as a peer that never answered.
+        .catch((err) => {
+          // A hook that threw must not silently drop the frame *or* the fact
+          // that it threw. The original is forwarded so the peers still mesh;
+          // the fault is what stops the run reading as a clean pass over an
+          // envelope the relay never actually inspected.
+          onFault(`onSignal threw: ${err instanceof Error ? err.message : String(err)}`);
           try {
             upstream.write(bytes);
           } catch {
@@ -217,6 +240,16 @@ function encodeTextFrame(text) {
  * @returns {Promise<{ origin: string, close: () => Promise<void> }>}
  */
 export async function serveDist(root = DIST_ROOT, routes = null, upgradeTarget = null, onSignal = null) {
+  /**
+   * Frames the tunnel could not show `onSignal`, and hooks that threw.
+   *
+   * Read by whoever asserts on the intercepted traffic. Both entries mean the
+   * same thing — an envelope crossed and the relay did not see it — and both
+   * used to be silent, which made `room.signalled()` a count nobody could
+   * trust and a tamper something that might simply never have been applied.
+   * @type {string[]}
+   */
+  const tunnelFaults = [];
   const server = createServer((req, res) => {
     if (routes && routes(req, res)) return;
     const url = req.url || "/";
@@ -271,8 +304,9 @@ export async function serveDist(root = DIST_ROOT, routes = null, upgradeTarget =
       upstream.write(lines.join(CRLF) + CRLF + CRLF);
       if (head?.length) upstream.write(head);
       upstream.pipe(socket);
-      if (onSignal) pumpFrames(socket, upstream, onSignal);
-      else socket.pipe(upstream);
+      if (onSignal) {
+        pumpFrames(socket, upstream, onSignal, (why) => tunnelFaults.push(why));
+      } else socket.pipe(upstream);
     });
     const bail = () => {
       upstream.destroy();
@@ -290,6 +324,7 @@ export async function serveDist(root = DIST_ROOT, routes = null, upgradeTarget =
   const addr = /** @type {import("node:net").AddressInfo} */ (server.address());
   return {
     origin: `http://127.0.0.1:${addr.port}`,
+    tunnelFaults: () => tunnelFaults.slice(),
     close: () =>
       new Promise((resolve) => {
         server.closeAllConnections?.();
@@ -463,6 +498,8 @@ export async function openPeers(opts = {}) {
     origin: server.origin,
     peers,
     browser,
+    /** Envelopes the signalling tunnel forwarded without being able to see them. */
+    tunnelFaults: server.tunnelFaults,
     close: async () => {
       await browser.close();
       await server.close();

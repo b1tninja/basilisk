@@ -55,7 +55,7 @@
  * @module test/helpers/placed-run-arc
  */
 
-import { createServer, request as httpRequest } from "node:http";
+import { request as httpRequest } from "node:http";
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -66,22 +66,14 @@ const WEB_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export const ARC_PATH = "/e2e/placed-run-arc.js";
 
 /**
- * A free TCP port, released immediately.
+ * Ports, named before anything claims them — because the connection string has
+ * to carry one and the connection string has to exist before Flask starts.
  *
- * Named before anything claims it, because the connection string has to carry
- * the port and the connection string has to exist before Flask starts.
- * @returns {Promise<number>}
+ * Re-exported rather than reimplemented: this file had a second copy, and the
+ * copy is how the two ports this suite needs came to be allocated one after the
+ * other instead of together. See `freePorts` for why together matters.
  */
-export function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = /** @type {import("node:net").AddressInfo} */ (probe.address());
-      probe.close(() => resolve(port));
-    });
-  });
-}
+export { freePorts } from "./basilisk-server.js";
 
 /**
  * The environment that turns notebook signalling on for a spawned server.

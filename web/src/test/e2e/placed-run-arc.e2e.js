@@ -119,7 +119,7 @@ import {
 import {
   ARC_PATH,
   buildArcBundle,
-  freePort,
+  freePorts,
   makeIdentities,
   proxyToBasilisk,
   signalingEnv,
@@ -692,8 +692,15 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     // fails loudly rather than meshing with a stranger.
     [mara, okafor] = await makeIdentities(["mara@placed.test", "okafor@placed.test"]);
 
-    const wsPort = await freePort();
-    server = await startBasilisk({ python: python.python, env: signalingEnv(wsPort) });
+    // Both ports out of one allocation. Two sequential calls could hand back
+    // the same number, and the same number for both means the signalling
+    // double silently fails to bind inside a Flask that came up fine.
+    const [wsPort, httpPort] = await freePorts(2);
+    server = await startBasilisk({
+      python: python.python,
+      port: httpPort,
+      env: signalingEnv(wsPort),
+    });
     const seeded = await seedDirectory(server, [mara.corpus, okafor.corpus]);
     if (seeded.refused.length) {
       throw new Error(`the directory refused a test key: ${JSON.stringify(seeded.refused)}`);
