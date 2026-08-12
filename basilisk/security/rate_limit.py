@@ -16,6 +16,7 @@ class RateLimiter:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._last: dict[str, float] = {}
+        self._buckets: dict[str, tuple[float, float]] = {}
 
     def allow(self, key: str, interval_sec: float) -> bool:
         now = time.monotonic()
@@ -24,6 +25,29 @@ class RateLimiter:
             if last is not None and (now - last) < interval_sec:
                 return False
             self._last[key] = now
+            return True
+
+    def allow_burst(self, key: str, capacity: int, refill_sec: float) -> bool:
+        """Token bucket: `capacity` calls may land together, then one more
+        every `refill_sec`.
+
+        ``allow`` enforces a minimum gap, which suits a caller acting alone —
+        one person publishing one key. It cannot express a workload where
+        several legitimate callers act at the same instant under one key, and
+        refusing those is not a delay when the refusal aborts the operation.
+        A bucket separates the two questions a gap conflates: how many may
+        arrive together, and how fast they may keep coming.
+        """
+        now = time.monotonic()
+        with self._lock:
+            tokens, last = self._buckets.get(key, (float(capacity), now))
+            tokens = min(float(capacity), tokens + (now - last) / refill_sec)
+            if tokens < 1.0:
+                # Refused calls still advance the refill clock but spend
+                # nothing, so hammering cannot push the recovery further away.
+                self._buckets[key] = (tokens, now)
+                return False
+            self._buckets[key] = (tokens - 1.0, now)
             return True
 
     def check_or_raise(self, key: str, interval_sec: float) -> None:

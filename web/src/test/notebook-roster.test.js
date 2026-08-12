@@ -10,6 +10,8 @@
 import { describe, expect, it } from "vitest";
 import { projectRosterPeers, shortFpr } from "../lib/notebook/roster.js";
 import { selectedCandidateType } from "../lib/webrtc/candidates.js";
+import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { normalizeRoster, planRun } from "../lib/toolkit/plan.js";
 
 const FPR_A = "AAAA111122223333444455556666777788889999";
 const FPR_B = "BBBB111122223333444455556666777788889999";
@@ -59,10 +61,16 @@ describe("projectRosterPeers", () => {
     expect(rows[0].authenticated).toBe(false);
   });
 
-  it("carries the full fingerprint beside the short label", () => {
+  it("carries the full fingerprint beside the label", () => {
     const [row] = projectRosterPeers(new Map([[FPR_A, peer()]]));
     expect(row.fingerprint).toBe(FPR_A);
-    expect(row.id).toBe("AAAA1111…9999");
+    // `id` was `AAAA1111…9999`, `shortFpr`'s output. Changed because `id` is
+    // the name a cell header addresses and the key of `planRun`'s roster, and
+    // an elided fingerprint is not a legal peer label — it stopped notebooks
+    // compiling and made `normalizeRoster` throw. The abbreviation did not go
+    // away, it moved to `display`, which the panels render beside the label.
+    expect(row.id).toBe("peer1");
+    expect(row.display).toBe("AAAA1111…9999");
   });
 
   it("attaches via only for peers whose ICE lookup has resolved", () => {
@@ -134,5 +142,87 @@ describe("selectedCandidateType", () => {
       })
     ).toBe("");
     expect(await selectedCandidateType(fakePc([]))).toBe("");
+  });
+});
+
+/**
+ * A roster row's `id` is an identity, not a caption.
+ *
+ * Two surfaces read it as one. `ToolkitShell` offers it in `CellAssign`, which
+ * writes `@<id>` into the notebook source; and it builds `planRun`'s roster —
+ * `{ label: fingerprint }` — by keying on the same value. Both go through the
+ * peer-label grammar, so an `id` that is not a legal label is not a cosmetic
+ * problem: the notebook stops compiling and `normalizeRoster` throws, which
+ * `ToolkitShell` catches into a null plan. The feature fails silently.
+ *
+ * The abbreviation `shortFpr` produces cannot be that value. It carries U+2026,
+ * which no label grammar admits, and the elided form could not be an identity
+ * even if it parsed — it is a truncation, and `peerLooksLikeFingerprint`
+ * refuses fingerprint-shaped labels on the security ground that a fingerprint
+ * in shared recipe text gives away the audience the room is derived from.
+ */
+describe("peer labels are legal, stable identities", () => {
+  const FPR_C = "CCCC111122223333444455556666777788889999";
+  const AUDIENCE = [FPR_B, FPR_A, FPR_C]; // deliberately unsorted
+
+  const connected = () =>
+    new Map([
+      [FPR_A, peer({ status: "connected", pgpVerified: true, kcVerified: true })],
+      [FPR_B, peer({ status: "connected" })],
+    ]);
+
+  it("names peers with something a notebook can compile", () => {
+    const rows = projectRosterPeers(connected(), undefined, AUDIENCE);
+    for (const row of rows) {
+      // Exactly what `peerChoices` hands `CellAssign`, and what it writes.
+      const { validation } = compileRecipe(`@${row.id}\nrandom 32 | out $x`);
+      expect(validation.ok, `@${row.id} did not compile`).toBe(true);
+    }
+  });
+
+  it("names peers with something planRun can bind", () => {
+    const rows = projectRosterPeers(connected(), undefined, AUDIENCE);
+    // The roster ToolkitShell assembles, in the shape `planRun` takes.
+    const roster = Object.fromEntries(rows.map((r) => [r.id, r.fingerprint]));
+    expect(() => normalizeRoster(roster)).not.toThrow();
+    expect(planRun(compileRecipe("@" + rows[0].id + "\nrandom 32 | out $x"), { roster }).bound).toBe(
+      true
+    );
+  });
+
+  it("gives every audience member the same label on every machine", () => {
+    // The room is a digest of the audience, so the audience is fixed for the
+    // session and identical everywhere. Ordering the labels by it — rather than
+    // by who happened to arrive first — is what makes `@peer2` mean one person
+    // in a notebook that round-trips through text between two browsers.
+    const asCreator = projectRosterPeers(connected(), undefined, AUDIENCE);
+    const asJoiner = projectRosterPeers(
+      new Map([...connected()].reverse()),
+      undefined,
+      [FPR_C, FPR_A, FPR_B]
+    );
+    const labelOf = (rows) =>
+      Object.fromEntries(rows.map((r) => [r.fingerprint, r.id]));
+    expect(labelOf(asJoiner)).toEqual(labelOf(asCreator));
+
+    // And a peer arriving later must not renumber the peers already placed.
+    const late = projectRosterPeers(
+      new Map([...connected(), [FPR_C, peer({ status: "connected" })]]),
+      undefined,
+      AUDIENCE
+    );
+    expect(labelOf(late)).toMatchObject(labelOf(asCreator));
+  });
+
+  it("still shortens a fingerprint for display, but not as a name", () => {
+    // `shortFpr` is unchanged and still what the panels put in front of a
+    // reader; the defect was using its output where an identity was wanted.
+    // Both forms now ride on the row, so neither surface has to recompute the
+    // other and the identity is never the abbreviation by accident.
+    expect(shortFpr(FPR_A)).toBe("AAAA1111…9999");
+    const rows = projectRosterPeers(connected(), undefined, AUDIENCE);
+    expect(rows.every((r) => !r.id.includes("…"))).toBe(true);
+    expect(rows.map((r) => r.display)).toEqual(["AAAA1111…9999", "BBBB1111…9999"]);
+    expect(rows.map((r) => r.fingerprint)).toEqual([FPR_A, FPR_B]);
   });
 });

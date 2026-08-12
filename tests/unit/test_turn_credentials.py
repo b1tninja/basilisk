@@ -32,7 +32,7 @@ from basilisk.portal.cloudflare_turn import (
     TurnProviderError,
     generate_ice_servers,
 )
-from basilisk.security.rate_limit import reset_limiter
+from basilisk.security.rate_limit import check_upload_rate, reset_limiter
 
 KEY_ID = "turn-key-id"
 API_TOKEN = "super-secret-turn-token"
@@ -224,6 +224,29 @@ def test_credentials_are_refused_without_a_valid_proof(monkeypatch):
     )
     assert good.status_code == 200
     assert len(calls) == 1
+
+
+@pytest.mark.unit
+def test_publishing_a_key_does_not_cost_a_failing_link_its_relay(monkeypatch):
+    """Escalation happens at the worst possible moment to be refused.
+
+    This route is reached only once a link has already failed, and
+    `relay-fallback.js` asks once: a refusal sets the link's phase to
+    `unavailable` and there is no further state change to re-trigger it, so the
+    link stays down until the user restarts the connection by hand. Charging
+    that mint to the key-publishing budget meant an unrelated upload — or a
+    session negotiation, which was charged there too — could take a peer's one
+    relay attempt away and leave "1 link down" behind it.
+    """
+    monkeypatch.setenv("BASILISK_UPLOAD_RATE_LIMIT_SEC", "60")
+    client = _client(monkeypatch)
+    _mint(monkeypatch)
+
+    ip = "198.51.100.7"
+    check_upload_rate(ip)  # what `/pks/v2/certs` charges
+
+    r = client.post("/api/v1/turn/credentials", headers={"X-Forwarded-For": ip})
+    assert r.status_code == 200, r.get_json()
 
 
 @pytest.mark.unit

@@ -17,10 +17,13 @@ stateless mint in front of a vendor file:
   within seconds. A cache here would be a secret with a lifetime to manage, in
   a process that recycles when idle.
 * **Anti-abuse.** ``verify_proof`` gates it exactly as it gates
-  ``notebook_negotiate``, ``sendtoken`` and both v2 upload routes, and the same
-  IP limiter runs behind it. Unlike those, an unmetered caller here spends the
-  deployment's *own* relay egress — Cloudflare's free tier is 1 TB/month — so
-  the gate is the difference between a fallback and an open relay.
+  ``notebook_negotiate``, ``sendtoken`` and both v2 upload routes, and
+  ``check_turn_rate`` meters it behind that. The meter is this route's own and
+  not the key-publishing one: a relay mint and a key upload are unrelated acts,
+  and a shared bucket meant either could take a failing link's one escalation
+  away. Unlike those routes, an unmetered caller here spends the deployment's
+  *own* relay egress — Cloudflare's free tier is 1 TB/month — so the gate is
+  the difference between a fallback and an open relay.
 * **Provider-neutral above, vendor-specific below.** This file deals in an
   ``iceServers`` list; ``cloudflare_turn.py`` knows the URL, the bearer token
   and the response shape. Nothing above this route names a vendor.
@@ -44,7 +47,6 @@ from basilisk.portal.cloudflare_turn import TurnKey, TurnProviderError, generate
 from basilisk.security.proof import ProofError, verify_proof
 from basilisk.security.rate_limit import (
     RateLimitError,
-    check_upload_rate,
     client_ip,
     get_limiter,
 )
@@ -87,7 +89,6 @@ def register_turn_credentials(app: Flask) -> None:
         ip = client_ip(dict(request.headers), request.remote_addr)
         try:
             verify_proof(request.headers.get("X-Basilisk-Proof"))
-            check_upload_rate(ip)
             check_turn_rate(ip)
         except (ProofError, RateLimitError) as exc:
             inc("rate_limited")

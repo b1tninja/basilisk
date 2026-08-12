@@ -24,8 +24,14 @@ import type { SessionStripState } from "./SessionStrip";
  */
 
 export type ConnectionPeer = {
-  /** Short label — room-scoped id, or a verified identity once authenticated. */
+  /**
+   * The peer's name — a legal `@peer` label, stable across machines, and what
+   * a cell header addresses. Not an abbreviated fingerprint: see `peerLabels`
+   * in `lib/notebook/roster.js` for why a truncation cannot be an identity.
+   */
   id: string;
+  /** `AABBCCDD…EEFF` — which key the label is attached to, for a reader. */
+  display?: string;
   /** Full key fingerprint when the row comes from a live quorum roster. */
   fingerprint?: string;
   state: "new" | "connecting" | "connected" | "disconnected" | "failed" | "closed";
@@ -98,11 +104,19 @@ function PeerRow({ peer }: { peer: ConnectionPeer }) {
         data-peer-state={peer.state}
         aria-hidden
       />
+      {/* The label is what a cell header addresses (`@peer2`), so it is what
+          the row is named by; the short fingerprint beside it says which key
+          that label is attached to. They are different questions and the row
+          answers both — reading only the abbreviation is how a display form
+          came to be used as an identity in the first place. */}
       <code
-        className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]"
+        className="min-w-0 shrink-0 font-mono text-[11px] text-[var(--foreground)]"
         title={peer.fingerprint || undefined}
       >
         {peer.id}
+      </code>
+      <code className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-[var(--muted-foreground)]">
+        {peer.display}
       </code>
       {peer.via ? (
         <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">

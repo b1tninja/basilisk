@@ -30,11 +30,15 @@ from basilisk.portal.webpubsub import (
     room_roles,
     verify_token,
 )
-from basilisk.security.rate_limit import reset_limiter
+from basilisk.security.rate_limit import RateLimitError, check_upload_rate, reset_limiter
 
 CONNECTION = "Endpoint=https://basilisk.webpubsub.azure.com;AccessKey=super-secret-key;Version=1.0;"
 ROOM = "ABCD2345EFGH67YZ"
 OTHER_ROOM = "ZYXW7654VUTS32BA"
+
+#: One address for a whole room — the shape a NAT presents, and the reason a
+#: per-IP budget has to hold a room's worth of simultaneous negotiations.
+NAT_IP = "198.51.100.7"
 
 #: A room key is the whole base32 digest and a room id is its first 16
 #: characters, so a key that belongs to `ROOM` has to start with it.
@@ -287,6 +291,83 @@ def test_negotiate_says_so_when_signalling_is_unconfigured(monkeypatch):
     get_settings.cache_clear()
     r = create_app().test_client().post("/api/v1/notebook/negotiate", json={"room": ROOM})
     assert r.status_code == 503
+
+
+@pytest.mark.unit
+def test_a_session_can_be_started_and_rejoined_without_waiting(monkeypatch):
+    """A start, a join and a reconnect are three separate negotiations, and the
+    burst of them is the normal case rather than the abusive one.
+
+    Two things make the burst legitimate. Peers behind one NAT share an IP, so
+    a room formed by an office is one address negotiating once per participant
+    at the same instant. And a reconnect is *correlated*: when a shared uplink
+    blips every link fails together, so every peer re-dials together. A refusal
+    here is not a delay — `signaling.js` rejects the `ready` promise on a failed
+    first dial, so `quorum.offer` throws and the run stops.
+
+    ``MESH_SOFT_CAP`` in ``lib/notebook/relay.js`` is 8, so a full room behind
+    one address is the ceiling this has to clear.
+    """
+    client = _client(monkeypatch)
+    for i in range(8):
+        r = client.post(
+            "/api/v1/notebook/negotiate",
+            json={"room": ROOM, "key": ROOM_KEY},
+            headers={"X-Forwarded-For": NAT_IP},
+        )
+        assert r.status_code == 200, f"negotiation {i + 1} of 8 was refused: {r.get_json()}"
+
+
+@pytest.mark.unit
+def test_publishing_a_key_does_not_spend_the_sessions_budget(monkeypatch):
+    """Two unrelated actions must not share one budget.
+
+    ``check_upload_rate`` is what the key-publishing routes charge, at a
+    shipped 60 seconds. When negotiation was charged to that same bucket,
+    publishing a key locked the publisher out of their own session for a
+    minute — and, because the bucket is keyed by IP alone, locked out everyone
+    behind their NAT too. The reverse held as well.
+    """
+    monkeypatch.setenv("BASILISK_UPLOAD_RATE_LIMIT_SEC", "60")
+    client = _client(monkeypatch)
+
+    # Exactly what `/pks/v2/certs` and the certification routes charge.
+    check_upload_rate(NAT_IP)
+
+    r = client.post(
+        "/api/v1/notebook/negotiate",
+        json={"room": ROOM, "key": ROOM_KEY},
+        headers={"X-Forwarded-For": NAT_IP},
+    )
+    assert r.status_code == 200, r.get_json()
+
+    # And the other direction: negotiating did not spend the upload budget.
+    with pytest.raises(RateLimitError):
+        check_upload_rate(NAT_IP)
+
+
+@pytest.mark.unit
+def test_a_refused_negotiation_names_negotiation(monkeypatch):
+    """The reader started a session; they did not upload anything.
+
+    Kept as an exact-string assertion because the wrong wording is the defect:
+    the endpoint once answered "Upload rate limit exceeded for this IP" to
+    someone who had only tried to reconnect, which names a state the reader is
+    not in and sends them looking at their keys.
+    """
+    client = _client(monkeypatch)
+    seen = set()
+    # Drain the per-IP burst, then read the refusal.
+    for _ in range(40):
+        r = client.post(
+            "/api/v1/notebook/negotiate",
+            json={"room": ROOM, "key": ROOM_KEY},
+            headers={"X-Forwarded-For": "198.51.100.4"},
+        )
+        if r.status_code == 429:
+            seen.add(r.get_json()["error"])
+            break
+    assert seen == {"Session negotiation rate limit exceeded for this IP"}
 
 
 @pytest.mark.unit

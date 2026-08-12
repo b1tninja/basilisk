@@ -53,7 +53,6 @@ from basilisk.portal.webpubsub import (
 from basilisk.security.proof import ProofError, verify_proof
 from basilisk.security.rate_limit import (
     RateLimitError,
-    check_upload_rate,
     client_ip,
     get_limiter,
 )
@@ -75,14 +74,48 @@ def _json(body: dict, status: int = 200) -> Response:
     return Response(json.dumps(body), status=status, mimetype="application/json")
 
 
+#: A full mesh — ``MESH_SOFT_CAP`` in ``lib/notebook/relay.js`` is 8, and the
+#: room panel says so out loud past that. One NAT can present a whole room as
+#: one address, so a per-IP budget that cannot hold a full mesh refuses an
+#: office starting a session together.
+MESH_SOFT_CAP = 8
+
+#: A room's audience is fixed when the room is derived, so the largest
+#: legitimate burst is every member negotiating at once. Doubled because a
+#: reconnect is correlated — when a shared uplink blips, every link fails and
+#: every peer re-dials in the same instant — so a full mesh may plausibly spend
+#: its whole membership twice before anything has had time to refill. The same
+#: size serves both keys: they differ in what they cap (one address, versus one
+#: room across every address), not in how large a legitimate burst is. If
+#: anything the correlation is stronger per-IP, because sharing an address is
+#: sharing the uplink whose blip dropped every link at once.
+NEGOTIATE_BURST = MESH_SOFT_CAP * 2
+
+#: Steady state is one negotiation per peer per recycle cycle: at the shipped
+#: 300 s token TTL ``signaling.js`` recycles at 240 s, so a full mesh behind one
+#: address is one call every 30 s. Two seconds is fifteen times that and still
+#: holds a client that has stopped backing off to half a call per second.
+NEGOTIATE_REFILL_SEC = 2.0
+
+
 def check_negotiate_rate(ip: str, room_id: str) -> None:
-    """One negotiation per session rather than one call per signalling message,
-    so these windows are far looser than they look next to the old mailbox."""
+    """One negotiation per session rather than one call per signalling message.
+
+    A burst rather than a minimum gap, because refusing here is not a delay:
+    ``signaling.js`` rejects its ``ready`` promise on a failed first dial, so a
+    refused negotiation surfaces as ``quorum.offer`` throwing and the run
+    stopping. The calls that arrive together are a start, a join and a
+    reconnect from every peer that shares an address — all of them ordinary.
+
+    This is deliberately *not* ``check_upload_rate``. Publishing a key and
+    starting a session are unrelated acts, and charging them to one bucket made
+    each one lock the other out for the upload window.
+    """
     limiter = get_limiter()
-    if not limiter.allow(f"notebook:ip:{ip}", 0.5):
-        raise RateLimitError("Notebook rate limit exceeded for this IP")
-    if not limiter.allow(f"notebook:room:{room_id}", 0.25):
-        raise RateLimitError("Notebook rate limit exceeded for this room")
+    if not limiter.allow_burst(f"notebook:ip:{ip}", NEGOTIATE_BURST, NEGOTIATE_REFILL_SEC):
+        raise RateLimitError("Session negotiation rate limit exceeded for this IP")
+    if not limiter.allow_burst(f"notebook:room:{room_id}", NEGOTIATE_BURST, NEGOTIATE_REFILL_SEC):
+        raise RateLimitError("Session negotiation rate limit exceeded for this room")
 
 
 def register_notebook_signaling(app: Flask) -> None:
@@ -105,7 +138,6 @@ def register_notebook_signaling(app: Flask) -> None:
         ip = client_ip(dict(request.headers), request.remote_addr)
         try:
             verify_proof(request.headers.get("X-Basilisk-Proof"))
-            check_upload_rate(ip)
             check_negotiate_rate(ip, room_id)
         except (ProofError, RateLimitError) as exc:
             inc("rate_limited")

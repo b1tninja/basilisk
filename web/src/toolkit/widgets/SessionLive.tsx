@@ -140,11 +140,15 @@ export function SessionLive({
                       data-peer-state={p.state}
                       aria-hidden
                     />
+                    {/* Label then key, for the reason ConnectionsPanel gives. */}
                     <code
-                      className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]"
+                      className="min-w-0 shrink-0 font-mono text-[11px] text-[var(--foreground)]"
                       title={p.fingerprint || undefined}
                     >
                       {p.id}
+                    </code>
+                    <code className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-[var(--muted-foreground)]">
+                      {p.display}
                     </code>
                     {p.via ? (
                       <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
