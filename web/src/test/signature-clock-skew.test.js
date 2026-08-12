@@ -25,11 +25,10 @@
  */
 import { createCleartextMessage, createMessage, encrypt, generateKey, sign } from "openpgp";
 import { beforeAll, describe, expect, it } from "vitest";
-import {
-  SIGNATURE_FUTURE_TOLERANCE_MS,
-  openSignalingEnvelope,
-} from "../lib/notebook/crypto.js";
+import { SIGNATURE_FUTURE_TOLERANCE_MS } from "../lib/pgp/clock.js";
+import { openSignalingEnvelope } from "../lib/notebook/crypto.js";
 import { verifySignedBy } from "../lib/notebook/documents.js";
+import { verifiedCleartextOpenPgp } from "../lib/pgp/sign.js";
 
 const SECOND = 1000;
 
@@ -169,5 +168,102 @@ describe("a signed document from a peer whose clock runs fast", () => {
     // message: `verifySignedBy` deliberately does not tell a remote peer which
     // way their signature failed. What matters is that it still fails.
     await expect(bobReads(await manifestSignedAt(far))).rejects.toThrow();
+  });
+});
+
+/* ───────────────── the same clock, over an untrusted document ───────────── */
+
+/**
+ * `gpg.verify` and `playbook.verify` read a document a person pasted in, and had
+ * the same missing tolerance with a much worse consequence. Every refusal shared
+ * one sentence — *"it may be a perfectly good signature by somebody else"* — so
+ * a colleague whose clock ran one second fast was told their document was
+ * probably signed by an impostor. That is a conclusion the code had not reached:
+ * the check that failed was a date comparison.
+ *
+ * Two separable things were wrong, and both are fixed here. The tolerance is now
+ * shared with the mesh, because a colleague's clock is the overwhelmingly common
+ * cause of a slightly-future signature and a verifier that fails the common case
+ * is not a verifier. And past the tolerance the refusal names *which* check
+ * failed, because the verifier knows.
+ */
+describe("a pasted document whose signer's clock runs fast", () => {
+  const signedAt = async (date, text = "the procedure") =>
+    sign({
+      message: await createCleartextMessage({ text }),
+      signingKeys: alice.privateKey,
+      format: "armored",
+      date,
+    });
+
+  /** Bob has Alice's key and reads what she signed. */
+  const read = (doc, keys = [alice.publicKey]) =>
+    verifiedCleartextOpenPgp(doc, keys, "playbook");
+
+  it("reads it, where it used to accuse the signer of impostorship", async () => {
+    expect(await read(await signedAt(new Date(Date.now() + 1 * SECOND)))).toBe(
+      "the procedure"
+    );
+    expect(await read(await signedAt(new Date(Date.now() + 30 * SECOND)))).toBe(
+      "the procedure"
+    );
+  });
+
+  it("past the tolerance, says the signature is good and the date is not", async () => {
+    // Two hours, absolute. Written as a multiple of the tolerance this would
+    // scale with it and a widened window would leave the test green — the
+    // failure mode a security parameter's own test must not have.
+    const message = await read(await signedAt(new Date(Date.now() + 7200 * SECOND))).then(
+      () => "",
+      (e) => e.message
+    );
+    expect(message).toMatch(/the signature is good/);
+    expect(message).toMatch(/2 hours ahead of this device's clock/);
+    // And emphatically not the other sentence. This is the whole defect: a
+    // clock disagreement must never read as an accusation.
+    expect(message).not.toMatch(/somebody else/);
+  });
+
+  it("keeps the impostor sentence for the case that is actually impostorship", async () => {
+    // Signed by a key the reader was not given. Here "it may be a perfectly
+    // good signature by somebody else" is exactly true, so it stays.
+    const message = await read(await signedAt(new Date()), [bob.publicKey]).then(
+      () => "",
+      (e) => e.message
+    );
+    expect(message).toMatch(/is not one of the keys you gave me/);
+    expect(message).toMatch(/somebody else/);
+  });
+
+  it("says a tampered document is tampered, not somebody else's", async () => {
+    // The right key over the wrong bytes. The old sentence called this
+    // impostorship too, which sent the reader looking for the wrong thing.
+    const doc = (await signedAt(new Date())).replace("the procedure", "the sabotage");
+    const message = await read(doc).then(
+      () => "",
+      (e) => e.message
+    );
+    expect(message).toMatch(/not the document that signature covers/);
+    expect(message).toMatch(/edited since, or paired with the wrong document/);
+    expect(message).not.toMatch(/somebody else/);
+  });
+
+  it("never calls a tampered document's signature good, whatever its date says", async () => {
+    // Future-dated *and* tampered — the combination that could turn the clock
+    // sentence into a lie. openpgp reports the bad digest ahead of the bad
+    // date, so this is answered as tampering and the date never gets a say.
+    // The assertion that matters is the negative one: whichever branch runs,
+    // nothing tells the reader this signature is fine.
+    const doc = (await signedAt(new Date(Date.now() + 7200 * SECOND))).replace(
+      "the procedure",
+      "the sabotage"
+    );
+    const message = await read(doc).then(
+      () => "",
+      (e) => e.message
+    );
+    expect(message).toMatch(/not the document that signature covers/);
+    expect(message).not.toMatch(/the signature is good/);
+    expect(message).not.toMatch(/somebody else/);
   });
 });

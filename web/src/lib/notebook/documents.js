@@ -67,7 +67,7 @@
  */
 
 import { readCleartextMessage, verify } from "openpgp";
-import { peerVerificationDate } from "./crypto.js";
+import { signatureVerificationDate } from "../pgp/clock.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 import { parseAttestation } from "../toolkit/attest.js";
 import { parseCellResult, parseHandoffOffer } from "../toolkit/handoff.js";
@@ -211,7 +211,7 @@ export async function verifySignedBy(signed, { key, fpr, what = "document" }) {
   const { signatures } = await verify({
     message: clear,
     verificationKeys: [key],
-    date: peerVerificationDate(),
+    date: signatureVerificationDate(),
   });
   if (!signatures?.length) {
     throw new Error(`notebook: ${what} from ${short(expected)} carries no signature`);

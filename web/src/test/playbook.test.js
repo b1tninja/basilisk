@@ -261,7 +261,12 @@ in $signed | playbook.verify | out $recipe`;
         ...bindings,
         inputs: { ...bindings.inputs, text: { value: String(signed.content) } },
       })
-    ).rejects.toThrow(/does not verify against that key|signature/i);
+      // Tightened from `/does not verify against that key|signature/`, which
+      // matched every refusal alike. The two cases in this file are now told
+      // apart — this one really is "signed by a key you did not give me", and
+      // the next one is not — so each pins the sentence it should get. A
+      // regex that both still match would be the old defect in a test.
+    ).rejects.toThrow(/is not one of the keys you gave me/);
   }, 60_000);
 
   it("refuses one edited inside its cleartext wrapper", async () => {
@@ -283,7 +288,10 @@ in $signed | playbook.verify | out $recipe`;
         ...bindings,
         inputs: { ...bindings.inputs, text: { value: tampered } },
       })
-    ).rejects.toThrow(/does not verify against that key|signature/i);
+      // The right key over the wrong bytes. It used to be reported as somebody
+      // else's signature, which sent the reader looking for an impostor
+      // instead of for the edit.
+    ).rejects.toThrow(/not the document that signature covers/);
   }, 60_000);
 
   it("refuses to vouch for a procedure that will not run", async () => {
