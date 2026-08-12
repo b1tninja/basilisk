@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
@@ -89,6 +89,7 @@ export function SessionStart({
 }: SessionStartProps) {
   const [pasted, setPasted] = useState("");
   const [showRecipe, setShowRecipe] = useState(false);
+  const issuesId = useId();
   const inRoom = new Set(audience.map((f) => f.toUpperCase()));
   const offering = role === "offer";
 
@@ -130,10 +131,15 @@ export function SessionStart({
         <span className="text-[11px] font-bold text-[var(--foreground)]">
           Joining as
         </span>
+        {/* Live even with nothing in it. Disabling it was the second half of
+            the original report: the chooser went grey, the Start button went
+            grey, and neither said the vault was empty — while the one string
+            that would have explained both was sitting in the option below. A
+            select holding one honest line is reachable, focusable, and says
+            what it knows. */}
         <select
           className="rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--foreground)]"
           value={keyFingerprint}
-          disabled={!keys.length}
           onChange={(e) => onKeyFingerprint(e.currentTarget.value)}
         >
           {/* The empty case says which emptiness it is. A lone "Choose a key…"
@@ -225,8 +231,17 @@ export function SessionStart({
         onCopy={onCopyInvite}
       />
 
+      {/* The list Start points at. `startIssues` already writes one sentence
+          per blocker, in the register this panel wants, and it is already on
+          screen — so the button borrows it rather than emitting a copy, which
+          would put the same refusal on the page twice and announce it twice. */}
       {issues.length ? (
-        <ul className="flex list-none flex-col gap-1 p-0" data-session-issues>
+        <ul
+          id={issuesId}
+          className="flex list-none flex-col gap-1 p-0"
+          data-session-issues
+          data-disabled-reason
+        >
           {issues.map((issue) => (
             <li
               key={issue}
@@ -260,7 +275,14 @@ export function SessionStart({
         ) : null}
       </div>
 
-      <Button onClick={onStart} disabled={issues.length > 0}>
+      <Button
+        onClick={onStart}
+        // Every sentence, not the first. `startIssues` orders nothing, and
+        // fixing the one blocker a button chose to name only to find the
+        // button still dead is the report this panel already generated once.
+        disabledReason={issues.length ? issues.join(" ") : undefined}
+        reasonId={issues.length ? issuesId : undefined}
+      >
         {offering ? "Start shared session" : "Join shared session"}
       </Button>
     </div>

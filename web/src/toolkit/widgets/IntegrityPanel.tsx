@@ -147,7 +147,9 @@ export function IntegrityPanel({ verdict, policy, live = true }: IntegrityPanelP
       </details>
 
       <div className="integrity-actions">
-        <Button variant="secondary" onClick={() => void run()} disabled={busy}>
+        {/* Busy, not refused. The check is running and the label says so, so
+            there is no state to explain — only a re-entry to prevent. */}
+        <Button variant="secondary" onClick={() => void run()} busy={busy}>
           {busy ? "Checking…" : "Check again"}
         </Button>
       </div>

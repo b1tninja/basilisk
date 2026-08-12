@@ -115,16 +115,43 @@ export function CeremonySheet({
   const verification = verificationResult(expectedDigest, recoveredDigest);
   const busy = runState === "running";
 
-  const canAdvance =
+  /**
+   * Why this stage will not hand over to the next — a sentence, not a boolean.
+   *
+   * It was `canAdvance`, and every stage collapsed a different situation into
+   * the same dead button: an impossible threshold, a split that had not run, a
+   * digest that did not match. The last of those is the one that mattered — a
+   * mismatch means *do not distribute these cards*, and the control that knew
+   * it said nothing at all. Each branch now speaks in the words its own stage
+   * already uses, so the button and the panel above it cannot disagree.
+   */
+  const advanceIssue: string | null =
     stage === "setup"
-      ? issues.length === 0
+      ? issues.length
+        ? issues.join(" ")
+        : null
       : stage === "split"
-        ? !!expectedDigest && !busy
+        ? expectedDigest
+          ? null
+          : "The split has not produced a digest of the original secret yet, and the next step is a comparison against it. Run this stage first."
         : stage === "verify"
           ? verification.status === "match"
+            ? null
+            : verification.message
           : stage === "cards"
-            ? true
-            : false;
+            ? null
+            : "This is the last stage — there is nothing after the receipt.";
+
+  /**
+   * A stage's cells are running. Separate from `advanceIssue` because it is a
+   * different kind of no: nothing is wrong and nothing needs fixing, the answer
+   * simply is not in yet. The wording is the stage's own status line.
+   */
+  const runningNote = busy
+    ? `${
+        CEREMONY_STAGES[stageIndex(stage)]?.title ?? "This stage"
+      } is still running. Its cells decide what the next stage is given, so it has to finish first.`
+    : null;
 
   const advanceLabel =
     stage === "setup"
@@ -378,7 +405,7 @@ export function CeremonySheet({
                     <Button
                       variant="secondary"
                       onClick={() => void onRunStage("cards")}
-                      disabled={busy}
+                      busy={busy}
                     >
                       Write the playbook
                     </Button>
@@ -433,7 +460,7 @@ export function CeremonySheet({
                   ) : null}
                 </>
               ) : (
-                <Button onClick={() => void onRunStage("receipt")} disabled={busy}>
+                <Button onClick={() => void onRunStage("receipt")} busy={busy}>
                   Write the receipt
                 </Button>
               )}
@@ -452,13 +479,15 @@ export function CeremonySheet({
             <Button
               variant="secondary"
               onClick={() => onStage(prevStage(stage) as CeremonyStageId)}
-              disabled={busy}
+              // Not `busy`: Back is not what is running. Going back mid-stage
+              // would leave cells writing into a stage the reader has left.
+              disabledReason={runningNote ?? undefined}
             >
               Back
             </Button>
           ) : null}
           {advanceLabel ? (
-            <Button onClick={goNext} disabled={!canAdvance || busy}>
+            <Button onClick={goNext} disabledReason={runningNote ?? advanceIssue ?? undefined}>
               {advanceLabel}
             </Button>
           ) : (

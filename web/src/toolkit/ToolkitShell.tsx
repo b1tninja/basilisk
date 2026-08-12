@@ -168,6 +168,47 @@ async function scanCardPhoto(): Promise<string> {
   return String(scanned.data ?? "");
 }
 
+/**
+ * Why Run all refuses when the recipe does not compile.
+ *
+ * The shell is the only thing that holds `validation.errors`, and until this
+ * existed it handed the run bar a single bit derived from them — the one shape
+ * of defect this whole area keeps producing, a control that declines with the
+ * words for it sitting one component away.
+ *
+ * The first error verbatim, then a count. Verbatim because these sentences
+ * already name the step and the reason ("Unknown step \"foo\""), and a
+ * paraphrase here would be a second vocabulary for the compiler's complaints.
+ * The count because Run all is a whole-notebook control: fixing the named error
+ * and finding the button still dead is precisely the report this change exists
+ * to end.
+ */
+function runRefusal(
+  validation: { ok?: boolean; errors?: { message: string }[] } | undefined
+): string | null {
+  if (!validation || validation.ok) return null;
+  const errors = validation.errors || [];
+  const [first] = errors;
+  if (!first) {
+    // `ok: false` with nothing in `errors` is a compiler bug, not a user state,
+    // and saying "the recipe has a problem" would be the contentless reason
+    // this rule forbids. Naming it as ours is the honest sentence available.
+    return "The recipe did not compile, and the compiler returned no message — that is a fault in this build rather than something in the notebook. Copy the recipe before reloading.";
+  }
+  const rest = errors.length - 1;
+  return `The recipe does not compile: ${first.message}${
+    rest > 0 ? ` — and ${rest} more error${rest > 1 ? "s" : ""} after it` : ""
+  }.`;
+}
+
+/**
+ * The id of a cell's readiness line, so its Run button can describe itself
+ * with the sentence already on screen. Index-keyed rather than `useId`: this
+ * is inside a `.map` where hooks cannot go, and a cell index is unique on the
+ * page by construction.
+ */
+const cellReadinessId = (cell: number) => `cell-readiness-${cell}`;
+
 /** Collapse an artifact's content to one displayable line for OutputList (§20h). */
 function oneLinePreview(content: string, max = 140): string {
   const flat = content.replace(/\s+/g, " ").trim();
@@ -1614,7 +1655,13 @@ export function ToolkitShell() {
                   : "idle"
           }
           blocker={nb.readinessBlocker}
-          runDisabled={!nb.compiled.validation?.ok}
+          // The compiler's own message, not `!validation.ok`. Every one of
+          // these already names a cell and a step — "Unknown step \"foo\"",
+          // "tee/foreach list body is empty" — and the boolean this used to be
+          // threw all of it away one prop before it reached the button that
+          // needed it. The count is here because a reader who fixes the first
+          // and finds Run still dead has learned nothing about the second.
+          runRefusal={runRefusal(nb.compiled.validation)}
           focusedCell={nb.focusedCell}
           progress={nb.runProgress}
           waitingCell={nb.runningCell ?? undefined}
@@ -1978,9 +2025,27 @@ export function ToolkitShell() {
                           }}
                         />
                         <div className="ml-auto flex gap-1">
+                          {/* Three different states shared one grey button.
+                              The readiness bar under this cell already names
+                              the missing bindings when there are any, so Run
+                              points at it rather than repeating them in the
+                              header; the other two have nothing on screen and
+                              say it themselves. */}
                           <Button
                             size="sm"
-                            disabled={!!needs.length || !chain.steps?.length || nb.busy}
+                            disabledReason={
+                              !chain.steps?.length
+                                ? "This cell is empty — drop an op into it, or type one, and Run has something to do."
+                                : needs.length
+                                  ? `This cell still needs ${needs.join(", ")} before it can run — the line under it says which value and opens the field.`
+                                  : undefined
+                            }
+                            reasonId={
+                              focused && needs.length && chain.steps?.length
+                                ? cellReadinessId(i)
+                                : undefined
+                            }
+                            busy={nb.busy}
                             onClick={(e) => {
                               e.stopPropagation();
                               nb.setFocusedCell(i);
@@ -1993,8 +2058,15 @@ export function ToolkitShell() {
                             size="sm"
                             variant="ghost"
                             className="text-[var(--error)]"
-                            disabled={nb.chains.length <= 1}
-                            title="Delete cell"
+                            // A notebook is never zero cells — deleting the
+                            // last one would leave nothing to type into. Say
+                            // that rather than leaving an ✕ that does nothing,
+                            // which reads as a delete that failed.
+                            disabledReason={
+                              nb.chains.length <= 1
+                                ? "This is the only cell. A notebook always has one — clear its contents instead, or add a cell first and delete this one after."
+                                : undefined
+                            }
                             aria-label="Delete cell"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2050,6 +2122,7 @@ export function ToolkitShell() {
 
                         {focused && (needs.length || unbound.length) ? (
                           <ReadinessBar
+                            id={cellReadinessId(i)}
                             blockers={[
                               ...needs
                                 .map((n) => ({
@@ -3558,7 +3631,11 @@ export function ToolkitShell() {
                                 size="sm"
                                 variant="ghost"
                                 className="text-[var(--error)]"
-                                disabled={nb.shareRows.length <= 1}
+                                disabledReason={
+                                  nb.shareRows.length <= 1
+                                    ? "This is the only share box. Recombining needs somewhere to paste at least one mnemonic — clear the box instead of removing it."
+                                    : undefined
+                                }
                                 aria-label="Remove share"
                                 onClick={() =>
                                   nb.setShareRows(nb.shareRows.filter((_, x) => x !== ri))
@@ -4044,7 +4121,7 @@ export function ToolkitShell() {
                           <Button
                             variant="secondary"
                             className="h-auto shrink-0 rounded-md px-[9px] py-[4px] text-[10.5px] font-semibold"
-                            disabled={workspaceOpening === ws.id}
+                            busy={workspaceOpening === ws.id}
                             onClick={() => void loadWorkspaceEntry(ws)}
                           >
                             {workspaceOpening === ws.id ? "Checking…" : "Load"}

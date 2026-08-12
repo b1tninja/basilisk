@@ -2,9 +2,13 @@ import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
+import { RefusalLayout, useRefusal, type RefusalOptions } from "./refusal";
 
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  // `aria-disabled`, not `:disabled` — see the note on `disabledReason`. The
+  // refused button keeps its pointer events, because it has to receive the
+  // click in order to refuse it, and hover has to be able to reach it.
+  "inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -31,16 +35,64 @@ export const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
+  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "disabled">,
+    VariantProps<typeof buttonVariants>,
+    RefusalOptions {
   asChild?: boolean;
+  /**
+   * Why this button declines, *here and now* — a sentence naming the state the
+   * reader is in, not a restatement of the fact that it is off.
+   *
+   * Its presence is what makes the button inert, so "off with no explanation"
+   * has no spelling: the two cannot drift apart, and the 33 controls that could
+   * go dead in front of a person with nothing to read cannot come back one at a
+   * time. The button renders it under itself and points `aria-describedby` at
+   * it; pass `reasonId` instead where the panel already says it out loud.
+   *
+   * Undefined when the button works. A button that is *meaningless* here rather
+   * than merely impossible should not render at all (§33d) — the reason is for
+   * a control the reader could reasonably expect to press.
+   */
+  disabledReason?: string;
+  /**
+   * Not a prop. `disabled` is a boolean, and a boolean cannot say why — which
+   * is the entire defect. Write `disabledReason` and let its presence do this.
+   */
+  disabled?: never;
 }
 
+/**
+ * The button, and the one rule it enforces for every control in the app: it
+ * cannot be turned off without saying why. See `refusal.tsx` for the mechanism
+ * and the reasoning behind `aria-disabled` over the `disabled` attribute.
+ */
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  (
+    {
+      className,
+      variant,
+      size,
+      asChild = false,
+      disabledReason,
+      reasonId,
+      busy,
+      onClick,
+      ...props
+    },
+    ref
+  ) => {
+    const refusal = useRefusal(disabledReason, { busy, reasonId });
     const Comp = asChild ? Slot : "button";
     return (
-      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
+      <RefusalLayout note={refusal.note}>
+        <Comp
+          className={cn(buttonVariants({ variant, size, className }))}
+          ref={ref}
+          {...refusal.aria}
+          onClick={refusal.guard(onClick)}
+          {...props}
+        />
+      </RefusalLayout>
     );
   }
 );

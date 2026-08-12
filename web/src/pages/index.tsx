@@ -259,7 +259,17 @@ function IndexPage() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          <button className="search-submit-btn" type="submit" disabled={searching}>
+          {/* Busy, not refused: the search this button started is running and
+              the label says so. `aria-busy` keeps the accessible name, which
+              `disabled` was dropping at the one moment it is wanted. */}
+          <button
+            className="search-submit-btn"
+            type="submit"
+            aria-busy={searching || undefined}
+            onClick={(e) => {
+              if (searching) e.preventDefault();
+            }}
+          >
             {searching ? "Searching…" : "Search"}
           </button>
         </div>

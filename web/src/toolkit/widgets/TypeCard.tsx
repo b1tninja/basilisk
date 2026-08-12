@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { RecipeParams } from "../../lib/toolkit/recipe.js";
 import {
   consumersOf,
@@ -7,6 +7,7 @@ import {
 } from "../../lib/toolkit/type-registry.js";
 import { cn } from "@/lib/cn";
 import { Input } from "@/components/ui/input";
+import { useRefusal } from "@/components/ui/refusal";
 import { KindGlyph } from "./kind-glyphs";
 
 type Props = {
@@ -77,11 +78,40 @@ function LiteralConstructor({
 }) {
   const literal = meta.literal;
   const [raw, setRaw] = useState("");
-  if (!literal) return null;
-
   const touched = raw.trim().length > 0;
-  const parsed = literal.parse(raw);
-  const canInsert = parsed.ok && !!onInsertLiteral;
+  const parsed = literal ? literal.parse(raw) : null;
+  const canInsert = !!parsed?.ok && !!onInsertLiteral;
+  /**
+   * Three different reasons Insert declines, and they were one grey button.
+   *
+   * The empty-field case is the one worth separating: "nothing typed yet" and
+   * "what you typed is not a {type}" are different states, and the parse error
+   * is already written for the second — reusing it before anything is typed
+   * would accuse the reader of a mistake they have not made. Same distinction
+   * `startIssues` draws between "there is nothing to choose" and "you have not
+   * chosen yet".
+   */
+  const insertIssue = !literal
+    ? undefined
+    : !onInsertLiteral
+      ? "This card is a reference — there is no pipeline open for it to insert into."
+      : !touched
+        ? `Type a ${meta.label} value in the field first — Insert writes what that field parses.`
+        : !parsed?.ok
+          ? parsed?.error ||
+            // The parser's own message where it wrote one; this is the branch
+            // where it refused without saying anything, and a reader who is
+            // told only "no" is the case this whole rule is about.
+            `The field does not hold a ${meta.label} value yet, and Insert writes what it parses.`
+          : undefined;
+  const hintId = useId();
+  // Before the early return: hooks cannot sit behind a condition. Where the
+  // line under the field is already showing the parse error, Insert points at
+  // it rather than printing the same sentence a second time three pixels away.
+  const refusal = useRefusal(insertIssue, {
+    reasonId: touched && !parsed?.ok ? hintId : undefined,
+  });
+  if (!literal || !parsed) return null;
 
   return (
     <div className="border-b border-[var(--border)] px-3.5 py-3">
@@ -105,24 +135,26 @@ function LiteralConstructor({
         />
         <button
           type="button"
-          disabled={!canInsert}
+          {...refusal.aria}
           className={cn(
             "shrink-0 rounded-[6px] border px-2 py-1 text-[11px] font-semibold transition-colors",
             canInsert
               ? "border-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_14%,transparent)] text-[var(--brand)] hover:bg-[color-mix(in_srgb,var(--brand)_22%,transparent)]"
               : "cursor-not-allowed border-[color-mix(in_srgb,var(--border)_60%,transparent)] text-[var(--muted-foreground)] opacity-60"
           )}
-          onClick={() => {
-            if (!canInsert) return;
+          onClick={refusal.guard(() => {
             onInsertLiteral?.(literal.build(raw));
             setRaw("");
-          }}
+          })}
         >
           Insert
         </button>
       </div>
+      {refusal.note}
       {/* Only complain once the user has typed — an empty field is not an error. */}
       <p
+        id={hintId}
+        data-disabled-reason
         className={cn(
           "mt-1 font-mono text-[11px]",
           touched && !parsed.ok ? "text-[var(--warn)]" : "text-[var(--muted-foreground)]"

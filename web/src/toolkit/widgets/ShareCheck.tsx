@@ -128,7 +128,7 @@ export function ShareCheck({
       {onScanQr ? (
         <div className="share-check-scan">
           {canScan ? (
-            <Button variant="secondary" onClick={() => void scan()} disabled={scanning}>
+            <Button variant="secondary" onClick={() => void scan()} busy={scanning}>
               {scanning ? "Reading…" : "Scan a photo of the card"}
             </Button>
           ) : (

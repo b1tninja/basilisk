@@ -1,6 +1,16 @@
+import { useId } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { INVITE_CARRIES, INVITE_OMITS } from "../../lib/toolkit/session-flow.js";
+
+/**
+ * Why there is no link yet — the card's line and Copy's refusal, one string.
+ *
+ * It names the audience rule rather than the link, because the link is derived:
+ * a room is its audience, so "there is no link" is never the state to fix.
+ */
+const NO_LINK_YET =
+  "Name at least two people, including yourself, and there is a link to send.";
 
 export type InviteCardProps = {
   /** The link, or why there is not one yet. */
@@ -58,6 +68,7 @@ export function InviteCard({
   className,
 }: InviteCardProps) {
   const me = String(self || "").toUpperCase();
+  const blockedId = useId();
   return (
     <section
       className={cn(
@@ -110,8 +121,13 @@ export function InviteCard({
           {url}
         </code>
       ) : (
-        <p className="text-[10.5px] text-[var(--muted-foreground)]" data-invite-blocked>
-          Name at least two people, including yourself, and there is a link to send.
+        <p
+          id={blockedId}
+          className="text-[10.5px] text-[var(--muted-foreground)]"
+          data-invite-blocked
+          data-disabled-reason
+        >
+          {NO_LINK_YET}
         </p>
       )}
 
@@ -138,7 +154,15 @@ export function InviteCard({
       </dl>
 
       <div className="flex flex-wrap gap-1.5">
-        <Button size="sm" variant="outline" onClick={onCopy} disabled={!url}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onCopy}
+          // The card already says this above; the button borrows it rather
+          // than printing a second copy under itself.
+          disabledReason={url ? undefined : NO_LINK_YET}
+          reasonId={url ? undefined : blockedId}
+        >
           Copy invite
         </Button>
       </div>

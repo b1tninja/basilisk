@@ -144,6 +144,10 @@ describe("one shape for one gesture", () => {
     // the pipeline is built around.
     const add = SHELF.match(/function AddButton[\s\S]*?\n\}\r?\n/)[0];
     expect(add).toMatch(/setData\(STEP_MIME/);
-    expect(add).toMatch(/draggable=\{!disabled && !!dragName\}/);
+    // `!disabled` until the refusal rule landed. The predicate is the same
+    // one — a row that does not fit the caret can be neither clicked nor
+    // dragged — but it now comes from the reason rather than from a boolean
+    // beside it, so a refused handle and a silent one are the same state.
+    expect(add).toMatch(/draggable=\{!refusal\.refused && !!dragName\}/);
   });
 });

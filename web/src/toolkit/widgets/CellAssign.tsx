@@ -150,15 +150,23 @@ export function CellAssign({
             {outSlots.map((slot) => {
               const on = publishes(slot);
               // Never down to nothing: an empty list is the bare `publish`, so
-              // an item that emptied it would silently publish everything.
-              const disabled = on && named.length === 1;
+              // an item that emptied it would silently publish everything —
+              // which is why the refusal has to say what it is protecting.
+              // "Keep here" greyed out with nothing beside it reads as a bug,
+              // and the state it is in is the exact opposite of what a reader
+              // assumes a dead row means.
+              const lastOne = on && named.length === 1;
               const next = on
                 ? named.filter((s) => s !== slot)
                 : outSlots.filter((s) => named.includes(s) || s === slot);
               return (
                 <DropdownMenuItem
                   key={slot}
-                  disabled={disabled}
+                  disabledReason={
+                    lastOne
+                      ? `${SLOT_SIGIL}${slot} is the only value this cell still publishes. Keeping it here too would leave an empty list, which the notebook writes as a bare \`publish\` — every output, rather than none. Send the cell to nobody instead.`
+                      : undefined
+                  }
                   onSelect={() =>
                     // A list of everything is the bare `publish` written long.
                     // Collapsing it keeps the header as short as the claim, and

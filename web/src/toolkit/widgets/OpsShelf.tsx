@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react";
 import {
   TOOLBOX_META,
   getShelfMeta,
@@ -20,6 +28,7 @@ import { TypeCard } from "./TypeCard";
 import { cn } from "@/lib/cn";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
+import { useRefusal } from "@/components/ui/refusal";
 import { CastDot, Glyph, glyphIdFor } from "./Glyph";
 import { OpsTile } from "./OpsTile";
 import { STEP_MIME, stepDragPayload } from "./mime";
@@ -148,9 +157,16 @@ function OpsRow({
   name: string;
   hint?: ReactNode;
   dim?: boolean;
-  action: ReactNode;
+  /**
+   * A function of the hint's id, because on a row that doesn't fit the caret
+   * the hint *is* the action's refusal — right-aligned, already on screen, in
+   * the same words. The control describes itself with it instead of hiding the
+   * sentence in a `title` on a 22-pixel square, which is what it did.
+   */
+  action: (hintId: string | undefined) => ReactNode;
   className?: string;
 }) {
+  const hintId = useId();
   return (
     <div
       className={cn(
@@ -174,11 +190,15 @@ function OpsRow({
         {name}
       </code>
       {hint ? (
-        <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
+        <span
+          id={hintId}
+          data-disabled-reason
+          className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]"
+        >
           {hint}
         </span>
       ) : null}
-      {action}
+      {action(hint ? hintId : undefined)}
     </div>
   );
 }
@@ -197,7 +217,8 @@ function AddButton({
   onClick,
   title,
   dragName,
-  disabled = false,
+  disabledReason,
+  reasonId,
 }: {
   onClick: () => void;
   title?: string;
@@ -206,20 +227,28 @@ function AddButton({
    * single step to drag (the HMAC kit's sugar rows).
    */
   dragName?: string;
-  /** Doesn't fit the caret — states the reason and refuses both gestures. */
-  disabled?: boolean;
+  /**
+   * Doesn't fit the caret — refuses both gestures, and says which type the
+   * caret is holding. It was `disabled: boolean` with the sentence passed
+   * separately as `title`, which is the arrangement that let a row go dead
+   * with its explanation reachable only by hovering a 22×20 square.
+   */
+  disabledReason?: string;
+  /** The row's own caption, where it is already printing this sentence. */
+  reasonId?: string;
 }) {
+  const refusal = useRefusal(disabledReason, { reasonId });
   const label = title || "Add to the recipe";
   return (
     <button
       type="button"
       title={label}
       aria-label={label}
-      disabled={disabled}
-      draggable={!disabled && !!dragName}
-      onClick={disabled ? undefined : onClick}
+      {...refusal.aria}
+      draggable={!refusal.refused && !!dragName}
+      onClick={refusal.guard(onClick)}
       onDragStart={
-        !disabled && dragName
+        !refusal.refused && dragName
           ? (e: DragEvent<HTMLButtonElement>) => {
               e.dataTransfer.setData(STEP_MIME, stepDragPayload(dragName, false));
               e.dataTransfer.setData("text/plain", dragName);
@@ -229,7 +258,7 @@ function AddButton({
       }
       className={cn(
         "flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border text-[12px] font-bold leading-none transition-colors",
-        disabled
+        refusal.refused
           ? "cursor-not-allowed border-dashed border-[var(--border)] bg-transparent text-[color-mix(in_srgb,var(--muted-foreground)_55%,transparent)]"
           : "cursor-grab border-[var(--border)] bg-[var(--surface-raised)] text-[var(--muted-foreground)] hover:border-[var(--brand)] hover:text-[var(--brand)] active:cursor-grabbing"
       )}
@@ -765,18 +794,23 @@ export function OpsShelf({
                                        Removing it made rows jump sideways as
                                        the caret moved, and left the row with
                                        no explanation of its own state. */
-                                    action={
+                                    action={(why) => (
                                       <AddButton
-                                        disabled={unfit}
-                                        dragName={row.step.name}
+                                        disabledReason={
+                                          unfit
+                                            ? `${row.step!.name} ${needsReason(row.step!)} — the caret is holding something else. Move the caret, or pick a row that fits.`
+                                            : undefined
+                                        }
+                                        reasonId={why}
+                                        dragName={row.step!.name}
                                         title={
                                           unfit
-                                            ? `${row.step.name} ${needsReason(row.step)}`
-                                            : row.step.doc
+                                            ? `${row.step!.name} ${needsReason(row.step!)}`
+                                            : row.step!.doc
                                         }
                                         onClick={() => onAppend(row.step!.name)}
                                       />
-                                    }
+                                    )}
                                   />
                                 );
                               }
@@ -1029,6 +1063,11 @@ function FormatKit({
                   tip?.base === "text" ||
                   tip?.base === "none" ||
                   !tip;
+            /* The solo rows print this to the right of the name; these did
+               not, so the only thing saying why the + was dead was a `title`.
+               Same words, same place, now on both kinds of row. */
+            const needs = direction === "export" ? "needs a key" : "needs bytes";
+            const whyId = `key-format-why-${direction}-${fmt}`;
             return (
               <div
                 key={fmt}
@@ -1051,8 +1090,22 @@ function FormatKit({
                 >
                   {meta.label}
                 </code>
+                {fit ? null : (
+                  <span
+                    id={whyId}
+                    data-disabled-reason
+                    className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]"
+                  >
+                    {needs}
+                  </span>
+                )}
                 <AddButton
-                  disabled={!fit}
+                  disabledReason={
+                    fit
+                      ? undefined
+                      : `${direction} ${meta.label} ${needs}, and the caret is holding something else. Move the caret to a step that produces one.`
+                  }
+                  reasonId={fit ? undefined : whyId}
                   title={
                     fit
                       ? `${direction}: ${meta.title}`
@@ -1079,24 +1132,24 @@ function MacKit({ onAppend }: { onAppend: Props["onAppend"] }) {
       <OpsRow
         op={{ toolbox: "webcrypto" }}
         name="hmac"
-        action={
+        action={() => (
           <AddButton
             dragName="sign"
             title="Insert sign (HMAC keys via genkey hmac/sha256)"
             onClick={() => onAppend("sign")}
           />
-        }
+        )}
       />
       <OpsRow
         op={{ toolbox: "webcrypto" }}
         name="verify"
-        action={
+        action={() => (
           <AddButton
             dragName="verify"
             title="Insert verify (recipe sugar: hmac.verify)"
             onClick={() => onAppend("verify")}
           />
-        }
+        )}
       />
     </div>
   );

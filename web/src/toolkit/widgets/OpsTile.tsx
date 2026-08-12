@@ -1,4 +1,4 @@
-import type { DragEvent } from "react";
+import { useId, type DragEvent } from "react";
 import {
   TOOLBOX_META,
   getShelfMeta,
@@ -11,6 +11,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useRefusal } from "@/components/ui/refusal";
 import { Glyph, glyphIdFor } from "./Glyph";
 import { ToolCard, type ToolCardOp } from "./ToolCard";
 import { STEP_MIME, stepDragPayload } from "./mime";
@@ -121,6 +122,32 @@ export function OpsTile({
   const splitNeeds = sharedNeed ? undefined : needs;
   const hasCaptions = !!(splitNeeds?.forward || splitNeeds?.reverse);
 
+  const sharedNeedId = useId();
+  const forwardNeedId = useId();
+  const reverseNeedId = useId();
+  /**
+   * The refusal for each handle, and the caption that already carries it.
+   *
+   * Two conditions are folded into one sentence each, deliberately. A handle
+   * with `needs` set is refused because the caret is holding the wrong thing —
+   * fixable, and the caption says what it wants. A handle with no direction at
+   * all (`hasForward === false`) is not a control the reader can do anything
+   * about, and it is `aria-hidden` and empty: an omission, not a refusal
+   * (§33d), so it gets no sentence and none is invented for it.
+   */
+  const forwardRefusal = useRefusal(
+    hasForward && needs?.forward
+      ? `${forwardName} encodes ${needs.forward.replace(/^needs\s+/, "")}, and the caret is holding something else.`
+      : undefined,
+    { reasonId: sharedNeed ? sharedNeedId : forwardNeedId }
+  );
+  const reverseRefusal = useRefusal(
+    hasReverse && needs?.reverse
+      ? `${reverseDisplayName} decodes ${needs.reverse.replace(/^needs\s+/, "")}, and the caret is holding something else.`
+      : undefined,
+    { reasonId: sharedNeed ? sharedNeedId : reverseNeedId }
+  );
+
   const row = (
     <div
       className={cn(
@@ -149,7 +176,11 @@ export function OpsTile({
         {op.name}
       </code>
       {sharedNeed ? (
-        <span className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]">
+        <span
+          id={sharedNeedId}
+          data-disabled-reason
+          className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]"
+        >
           {sharedNeed}
         </span>
       ) : null}
@@ -157,9 +188,14 @@ export function OpsTile({
         <button
           type="button"
           draggable={forwardLive}
-          disabled={!forwardLive}
+          {...forwardRefusal.aria}
           data-dir={forwardDir}
           aria-hidden={!hasForward}
+          // A row with no encode direction draws an empty square to keep the
+          // two handles aligned. It is a spacer, not a refused control: §33d
+          // omission rather than a disabled state, so it says nothing and —
+          // being aria-hidden — must not be reachable by Tab either.
+          tabIndex={hasForward ? undefined : -1}
           className={cn(
             "flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border text-[10px] font-semibold transition-colors",
             directionButtonClass(hasForward, fit.forward, "encode"),
@@ -173,7 +209,11 @@ export function OpsTile({
               : undefined
           }
           title={hasForward ? needs?.forward || "Encode" : undefined}
-          onClick={forwardLive ? () => onAppend(forwardName, { decode: false }) : undefined}
+          onClick={
+            hasForward
+              ? forwardRefusal.guard(() => onAppend(forwardName, { decode: false }))
+              : undefined
+          }
           onDragStart={
             forwardLive
               ? (e: DragEvent<HTMLButtonElement>) => {
@@ -187,7 +227,11 @@ export function OpsTile({
           {hasForward ? <Glyph id="encode" size={16} /> : null}
         </button>
         {splitNeeds?.forward ? (
-          <span className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]">
+          <span
+            id={forwardNeedId}
+            data-disabled-reason
+            className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]"
+          >
             {splitNeeds.forward}
           </span>
         ) : null}
@@ -196,9 +240,10 @@ export function OpsTile({
         <button
           type="button"
           draggable={reverseLive}
-          disabled={!reverseLive}
+          {...reverseRefusal.aria}
           data-dir={reverseDir}
           aria-hidden={!hasReverse}
+          tabIndex={hasReverse ? undefined : -1}
           className={cn(
             "flex h-5 w-[22px] shrink-0 items-center justify-center rounded-[4px] border text-[10px] font-semibold transition-colors",
             directionButtonClass(hasReverse, fit.reverse, "decode"),
@@ -213,7 +258,9 @@ export function OpsTile({
           }
           title={hasReverse ? needs?.reverse || "Decode" : undefined}
           onClick={
-            reverseLive ? () => onAppend(reverseName, { decode: reverseDecode }) : undefined
+            hasReverse
+              ? reverseRefusal.guard(() => onAppend(reverseName, { decode: reverseDecode }))
+              : undefined
           }
           onDragStart={
             reverseLive
@@ -231,7 +278,11 @@ export function OpsTile({
           {hasReverse ? <Glyph id="decode" size={16} /> : null}
         </button>
         {splitNeeds?.reverse ? (
-          <span className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]">
+          <span
+            id={reverseNeedId}
+            data-disabled-reason
+            className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]"
+          >
             {splitNeeds.reverse}
           </span>
         ) : null}

@@ -43,6 +43,16 @@ export type HandoffQueueProps = {
   className?: string;
 };
 
+/**
+ * Why nothing can be handed over — one string for both directions.
+ *
+ * It names the session rather than the button, because the button is fine: the
+ * cell is still planned, still declined at run time, and still theirs. There is
+ * simply no channel, and the remedy is one flight up in Share.
+ */
+const NO_SESSION =
+  "No session is open, so there is nowhere to send this. The cell stays planned and stays theirs — open a shared session under Share, and this becomes one press.";
+
 const slot = (label: string) => `${SLOT_SIGIL}${label}`;
 const peer = (label: string) => `${PEER_SIGIL}${label}`;
 
@@ -146,7 +156,7 @@ export function HandoffQueue({
                 <Button
                   size="sm"
                   variant="secondary"
-                  disabled={!live}
+                  disabledReason={live ? undefined : NO_SESSION}
                   onClick={() => onOffer(c.cell)}
                 >
                   Hand cell {c.cell} to {peer(c.peer)}
@@ -216,7 +226,7 @@ export function HandoffQueue({
                 <Button
                   size="sm"
                   variant="secondary"
-                  disabled={!live}
+                  disabledReason={live ? undefined : NO_SESSION}
                   onClick={() => onSendResult(o.cell, o.label)}
                 >
                   Send cell {o.cell} back

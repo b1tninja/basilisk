@@ -99,11 +99,20 @@ export function ConsequenceBanner({
       }
       actions={
         <>
+          {/* Not busy — Cancel is not the thing running. It is refused, and
+              the state is that the answer has already been given: `onConfirm`
+              is in flight and there is nothing left here to call off. Naming
+              the verb rather than saying "busy" is the difference between a
+              reader who waits and a reader who clicks again. */}
           <Button
             ref={cancelRef}
             size="sm"
             variant="ghost"
-            disabled={busy}
+            disabledReason={
+              busy
+                ? `${spec.confirmLabel} is already running. Cancelling is no longer one of the answers — this banner closes when it finishes or reports why it did not.`
+                : undefined
+            }
             onClick={onCancel}
           >
             Cancel

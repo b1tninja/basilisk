@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import type { ParamSpec } from "../../lib/toolkit/registry.js";
 import { cn } from "@/lib/cn";
+import { useRefusal } from "@/components/ui/refusal";
 
 export type { ParamSpec };
 
@@ -59,12 +60,27 @@ export function ParamField({
   autoFocus = false,
   className,
 }: Props) {
-  if (!visibility.show) return null;
-  const val = visibility.forced != null ? visibility.forced : value ?? param.default ?? "";
-  const title = param.doc || undefined;
   // An unexplained lock is a bug, not a state — no reason, no lock.
   const locked = !!visibility.locked && !!visibility.lockedReason;
   const lockedReason = visibility.lockedReason;
+  /**
+   * The label already prints `lockedReason` beside the param name, so the
+   * control points at it rather than printing a second copy under itself.
+   * Above the `show` guard because hooks cannot sit behind a condition.
+   */
+  const lockedId = useId();
+  const bindRefusal = useRefusal(
+    // The tray is the only way to bind a secret, and a builder rendered
+    // without `onRequestBind` has no tray behind it — a catalog or a preview.
+    // "Not available" would be true and useless; what the reader needs to know
+    // is that this copy of the field is a picture of one.
+    onRequestBind
+      ? undefined
+      : "This field is a preview — there is no Inputs tray open for it to bind from. Open the same step in a notebook to bind a value."
+  );
+  if (!visibility.show) return null;
+  const val = visibility.forced != null ? visibility.forced : value ?? param.default ?? "";
+  const title = param.doc || undefined;
 
   // Secret params (design v2 §22a): no free text, ever — bind-only. The literal
   // value never renders even when bound; only the $slotRef name is shown.
@@ -102,14 +118,17 @@ export function ParamField({
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            className="flex h-[26px] w-full items-center rounded-[5px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-2 text-left text-[10.5px] text-[var(--text-muted)] hover:border-[var(--brand)] hover:text-[var(--text)]"
-            onClick={onRequestBind}
-            disabled={!onRequestBind}
-          >
-            Bind a value from Inputs…
-          </button>
+          <>
+            <button
+              type="button"
+              className="flex h-[26px] w-full items-center rounded-[5px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-2 text-left text-[10.5px] text-[var(--text-muted)] hover:border-[var(--brand)] hover:text-[var(--text)]"
+              onClick={bindRefusal.guard(onRequestBind)}
+              {...bindRefusal.aria}
+            >
+              Bind a value from Inputs…
+            </button>
+            {bindRefusal.note}
+          </>
         )}
         {/* Unbound is the empty case for a secret: `ssh.encode passphrase=`
             left alone writes the private block in the clear, which is the
@@ -193,7 +212,11 @@ export function ParamField({
           <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] block mb-2">
             {param.name}
             {locked && (
-              <span className="ml-2 text-xs font-normal normal-case text-[var(--text-muted)]">
+              <span
+                id={lockedId}
+                data-disabled-reason
+                className="ml-2 text-xs font-normal normal-case text-[var(--text-muted)]"
+              >
                 ({lockedReason})
               </span>
             )}
@@ -202,8 +225,15 @@ export function ParamField({
             {enumValues.map((e) => (
               <button
                 key={e}
-                disabled={locked}
-                onClick={() => onChange(param.name, e)}
+                aria-disabled={locked || undefined}
+                aria-describedby={locked ? lockedId : undefined}
+                onClick={(event) => {
+                  if (locked) {
+                    event.preventDefault();
+                    return;
+                  }
+                  onChange(param.name, e);
+                }}
                 className={cn(
                   "px-3 py-1.5 text-sm font-bold border-l border-[var(--border)] first:border-l-0 transition-colors",
                   String(val) === e
@@ -223,15 +253,27 @@ export function ParamField({
       <div className={cn("param-field", className)} title={title}>
         <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] block mb-1.5">
           {param.name}
+          {/* `lockedReason`, not "locked by format": the second was a guess
+              about which of the lock's several causes this one was, printed
+              beside a control that had been handed the real answer. */}
           {locked && (
-            <span className="ml-2 text-xs font-normal normal-case text-[var(--text-muted)]">
-              (locked by format)
+            <span
+              id={lockedId}
+              data-disabled-reason
+              className="ml-2 text-xs font-normal normal-case text-[var(--text-muted)]"
+            >
+              ({lockedReason})
             </span>
           )}
         </label>
+        {/* The one place the native attribute stays. `aria-disabled` on a
+            <select> is advisory — the popup still opens and the value still
+            changes — so the control has to be genuinely off, and the reason
+            reaches it by description instead. */}
         <select
           className="w-full px-2.5 py-1.5 text-sm border border-[var(--border)] rounded-md bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)] focus:ring-offset-1"
           disabled={locked}
+          aria-describedby={locked ? lockedId : undefined}
           value={String(val)}
           onChange={(e) => onChange(param.name, e.target.value)}
         >

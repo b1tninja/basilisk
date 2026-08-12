@@ -5,6 +5,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useRefusal } from "@/components/ui/refusal";
 import { cn } from "@/lib/cn";
 import {
   bridgeModeMeta,
@@ -234,6 +235,19 @@ export function PresetMenu({
     [presets, groups, filter]
   );
   const searching = !!filter.trim();
+  /**
+   * One sentence for the whole category rail, because it is one state.
+   *
+   * Search spans every category, so a category is not a filter you can also
+   * apply — picking one would have to throw the search away. The rail dims and
+   * declines; what it never did was say that the search box above it is the
+   * thing holding it, which is the one fact that turns a dead sidebar into a
+   * box you can clear.
+   */
+  const searchOwnsTheRail = searching
+    ? "Search looks through every category at once, so there is no category left to pick. Clear the search box above to browse by category again."
+    : undefined;
+  const catRefusal = useRefusal(searchOwnsTheRail);
 
   const runAndClose = (fn: () => void) => {
     fn();
@@ -356,17 +370,20 @@ export function PresetMenu({
                       active && "is-active",
                       dim && "is-dim"
                     )}
-                    disabled={searching}
-                    onClick={() => {
+                    {...catRefusal.aria}
+                    onClick={catRefusal.guard(() => {
                       setActiveGroup(g);
                       setFilter("");
-                    }}
+                    })}
                   >
                     <span>{g}</span>
                     <span className="preset-cat-count">{n}</span>
                   </button>
                 );
               })}
+              {/* Once, under the rail — not once per category button, which
+                  would repeat one sentence eight times down a sidebar. */}
+              {catRefusal.note}
             </nav>
             <div className="preset-menu-panel">{panel}</div>
           </div>
