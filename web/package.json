@@ -2,6 +2,9 @@
   "name": "basilisk-portal",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "basilisk": "cli/basilisk.js"
   },
