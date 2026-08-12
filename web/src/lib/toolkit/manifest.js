@@ -146,10 +146,17 @@ export const MANIFEST_VERSION = 2;
  * challenge — safe to seed) or `keying`. A `pool` manifest whose cells contain
  * a `keying` op is refused before the run, naming the cell and the op.
  *
- * What is still not wired is the other half: no op *reads* a pool. So `pool`
- * remains a declared non-reproducible dependency in `manifestReproducibility` —
- * a run that says `pool` still draws locally today — even though the refusal it
- * exists to make possible is now real.
+ * The value itself now exists: `lib/toolkit/entropy-pool.js` is the
+ * commit-then-reveal that produces `entropy.digest`, domain-separated in the
+ * same family as `PEERS_DOMAIN` and `AUDIENCE_DOMAIN` so a pool digest can
+ * never be some other digest of the same bytes. It is pure — reveals in, digest
+ * out — and refuses a round rather than pooling without a contributor.
+ *
+ * What is still not wired is the last piece: no op *reads* a pool, and nothing
+ * yet collects the commitments over a live exchange. So `pool` remains a
+ * declared non-reproducible dependency in `manifestReproducibility` — a run
+ * that says `pool` still draws locally today — even though both the refusal it
+ * exists to make possible and the value it names are now real.
  * @type {readonly string[]}
  */
 export const ENTROPY_MODES = Object.freeze(["none", "pool", "local"]);

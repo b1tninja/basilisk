@@ -17,10 +17,14 @@
  * ## What this does not do
  *
  * There is no complaint/resolution round. If a dealer's share fails
- * verification, `finalize` refuses and names them; the participants must
- * restart excluding that dealer. Real complaint handling (the accused
- * publishes the disputed share, everyone adjudicates) is a third round and is
- * deliberately absent rather than half-implemented.
+ * verification, `finalize` refuses and names them — and stops there, because
+ * naming is the whole of what this layer can justify. Shares are pairwise, so
+ * the recipient is the only participant who can see the fault; from every other
+ * seat it is indistinguishable from an accusation. Real complaint handling (the
+ * accused publishes the disputed share, everyone adjudicates) is a third round
+ * and is deliberately absent rather than half-implemented, and what to *do*
+ * about a refusal is `lib/quorum/dkg-session.js`'s to say, with that caution
+ * attached.
  *
  * A rudimentary DKG is **not** a substitute for an audited threshold-signature
  * implementation. It gives you a shared key; it does not give you threshold
@@ -118,10 +122,28 @@ export function finalize({ myId, contributions }) {
     }
     seen.add(c.from);
     if (!verify({ share: c.share, id: myId, commitments: c.commitments })) {
-      // Named, because the remedy is to restart without this dealer — there
-      // is no complaint round to adjudicate it.
+      // Named, and stopping there.
+      //
+      // This used to end "restart excluding that participant", which is a
+      // remedy stated as a conclusion — and it is the one conclusion the
+      // reader is not entitled to draw alone. `dkg-session.js` does prescribe
+      // starting again without them, but only after the room has compared
+      // notes out of band, because from every other seat this observation and
+      // an accusation are the same thing. A message that skipped the caution
+      // sent a person looking for an "exclude" control that must not exist,
+      // and the panel's absent button then read as missing rather than
+      // deliberate.
+      //
+      // So this layer says what the arithmetic knows — whose share failed,
+      // that the run yielded nothing, and that nobody else can check it — and
+      // `refusalReport` says what to do about it, with the caution attached.
       const err = new Error(
-        `dkg: share from ${shortId(c.from)}… does not match their commitments — restart excluding that participant`
+        `dkg: share from ${shortId(c.from)}… does not match their commitments. ` +
+          "Nothing usable came out of this run: the joint key is the sum of every " +
+          "contribution, so one bad contribution is a different key rather than a " +
+          "share short. Only the recipient can see this — commitments are broadcast " +
+          "but shares are pairwise, so from every other seat it is indistinguishable " +
+          "from a claim about them."
       );
       // The id as well as the sentence. A surface reporting this has to say
       // *which* participant, and parsing it back out of a shortened id in a
