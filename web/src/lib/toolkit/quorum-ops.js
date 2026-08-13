@@ -62,11 +62,38 @@ const IDLE_STATE = Object.freeze({
  *   inbox: { from: string, text: string, ts: number }[],
  *   recvWaiters: ((msg: { from: string, text: string, ts: number } | null) => void)[],
  *   cancelled: boolean,
+ *   ownKeyElsewhere: boolean,
  *   viaByFpr: Map<string, string>,
  *   viaPending: Set<string>,
  * } | null}
  */
 let current = null;
+
+/**
+ * What a room says when a second session turns up holding this session's key.
+ *
+ * The state, then the route. `NotebookSession` proves the first half and
+ * refuses to act on it — self is not a peer and must not become one — so this
+ * is where it becomes something a person can do anything about. Reported as a
+ * run stuck on `Paused at cell [1] — waiting for peer…`, from the most
+ * ordinary way to reach it: a second tab, opened to play the other side, run
+ * off the same vault under the same key.
+ *
+ * Two tabs is a legitimate way to test this and it works, so the sentence says
+ * how rather than treating the attempt as a mistake. It does not promise the
+ * other fingerprint is a key this browser holds — an audience routinely names
+ * people whose private keys are elsewhere, and a refusal that assumed
+ * otherwise would send a reader looking in the tray for something that was
+ * never there.
+ */
+const OWN_KEY_ELSEWHERE =
+  "quorum: another session in this room is signing as the key this one is " +
+  "using — an invite arrived carrying this session's own fingerprint. A " +
+  "session is never its own peer, so neither end will see the other however " +
+  "long it waits. Two tabs of one browser share a vault, not an identity: to " +
+  "run both sides yourself, open the session in each tab under a different " +
+  "key that this audience names. Otherwise close the other session and start " +
+  "this one again.";
 
 /**
  * Roster → panel rows, plus best-effort ICE `via` enrichment.
@@ -625,6 +652,17 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       });
     },
     onStatus: (status) => patchState({ status }),
+    /**
+     * Latched on the exchange rather than thrown from here: this fires inside
+     * an envelope handler, and an exception there would land in the session's
+     * own error path with nothing waiting for it. `waitForPeers` is what is
+     * holding the run, so that is what has to hear about it.
+     */
+    onOwnKeyElsewhere: () => {
+      const ex = current;
+      if (!ex) return;
+      ex.ownKeyElsewhere = true;
+    },
     onError: () => {
       /* surfaced via status + timeout */
     },
@@ -653,6 +691,7 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     handoffs: [],
     privateKey,
     cancelled: false,
+    ownKeyElsewhere: false,
     viaByFpr: new Map(),
     viaPending: new Set(),
     /** @type {((msg: { from: string, text: string }) => boolean)[]} */
@@ -724,10 +763,24 @@ function waitForPeers(ex, needPeers, wait) {
         resolve(undefined);
         return;
       }
+      // After the connected check, deliberately: a room that meshed is a room
+      // that meshed, and a duplicate of this key somewhere else is not a reason
+      // to refuse a peer who is really there. This only ever cuts short a wait
+      // that was going to end in the timeout below.
+      if (ex.ownKeyElsewhere) {
+        reject(new Error(OWN_KEY_ELSEWHERE));
+        return;
+      }
       if (Date.now() - started > wait) {
+        // Three things stop a peer arriving, and the message used to name one.
+        // The second — both ends the same role — was already implied by asking
+        // about the counterpart step. The third is the one that stranded the
+        // report this rule came from, and only the *other* end can prove it
+        // (it is the end an invite reaches), so this end has to raise it as a
+        // question rather than wait for a proof that will never come here.
         reject(
           new Error(
-            `quorum: no peer within ${Math.round(wait / 1000)}s — is the other side running quorum.${ex.state.role === "creator" ? "join" : "offer"}?`
+            `quorum: no peer within ${Math.round(wait / 1000)}s — nobody else in this audience arrived. Is the other side running quorum.${ex.state.role === "creator" ? "join" : "offer"}, and is it signing as a different key from this one? Two tabs of one browser share a vault, so both ends can end up on the same key, and a session is never its own peer.`
           )
         );
         return;

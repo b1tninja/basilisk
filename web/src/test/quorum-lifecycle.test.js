@@ -93,6 +93,10 @@ const { FakeSession } = vi.hoisted(() => {
     status(s) {
       this.opts.onStatus?.(s);
     }
+    /** What the real session reports when an invite arrives signed by our key. */
+    ownKeyElsewhere() {
+      this.opts.onOwnKeyElsewhere?.();
+    }
   }
   return { FakeSession };
 });
@@ -410,8 +414,52 @@ describe("opening an exchange", () => {
 
   it("gives up with an actionable message when no peer arrives", async () => {
     FakeSession.onStart = () => {};
-    await expect(open({ wait: 1000 })).rejects.toThrow(/no peer within 1s.*quorum\.join/s);
+    const failing = expect(open({ wait: 1000 })).rejects;
+    await failing.toThrow(/no peer within 1s.*quorum\.join/s);
+    // The second half of that sentence is new, and pinned rather than left to
+    // the `.*`: a creator whose counterpart tab picked the *same* key waits
+    // out the whole timeout with no proof available at this end — only the
+    // side an invite reaches can prove it (see `_noteOwnKeyElsewhere`). So the
+    // cause has to be named here as a question, or that reader is told to
+    // check the one thing they already did.
+    await failing.toThrow(/signing as a different key from this one/);
     expect(q.getQuorumState().phase).toBe("idle");
+  });
+
+  it("stops waiting the moment another session is found signing as this key", async () => {
+    // The reported defect: two tabs, one vault, one key chosen twice. The wait
+    // is bounded either way — this is not a hang — but two minutes of "waiting
+    // for peer" for a peer that is structurally excluded is a refusal the
+    // product declines to make until it is too late to act on.
+    FakeSession.onStart = (s) => s.ownKeyElsewhere();
+    const started = Date.now();
+    await expect(open({ wait: 120000 })).rejects.toThrow(
+      /another session in this room is signing as the key this one is using/
+    );
+    // Refused on its own account, not by outliving `wait=`.
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(q.getQuorumState().phase).toBe("idle");
+  });
+
+  it("names the way out, because two tabs is a fair thing to want", async () => {
+    // A refusal that only says no leaves a tester with a working plan and no
+    // way to run it: the two tabs mesh perfectly well under two keys.
+    FakeSession.onStart = (s) => s.ownKeyElsewhere();
+    await expect(open({ wait: 120000 })).rejects.toThrow(
+      /open the session in each tab under a different key that this audience names/
+    );
+  });
+
+  it("lets a meshed room stand even so", async () => {
+    // A duplicate of this key somewhere else is not a reason to refuse a peer
+    // who is really there — the check sits behind the connected one.
+    FakeSession.onStart = (s) => {
+      s.ownKeyElsewhere();
+      s.connect(FPR_B);
+    };
+    const { value } = await open({ wait: 120000 });
+    expect(value.data.connected).toBe(1);
+    expect(q.getQuorumState().phase).toBe("connected");
   });
 });
 

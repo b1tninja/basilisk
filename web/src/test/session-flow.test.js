@@ -280,6 +280,19 @@ describe("a room is refused before it is derived, not after", () => {
     expect(issues[0]).toMatch(/not in the audience/);
   });
 
+  it("counts an audience by identities, not by entries", () => {
+    // Reported the other way round — as a session that waits forever for a
+    // peer who is structurally excluded, because a room whose only distinct
+    // fingerprint is yours has a roster of nobody. It cannot get that far:
+    // `canonicalAudience` dedupes, so naming one identity twice is one
+    // identity here, in `execQuorumOpen`'s `to=`, and again in
+    // `requireSelfInAudience` — three refusals before a room is derived, and
+    // this is the one a reader can still act on.
+    const issues = startIssues({ audience: [ADA, ADA], keyFingerprint: ADA });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(/at least two people/);
+  });
+
   it("refuses a second exchange, as the transport does", () => {
     const issues = startIssues({ audience: [ADA, GRACE], keyFingerprint: ADA, live: true });
     expect(issues[0]).toMatch(/already open/);

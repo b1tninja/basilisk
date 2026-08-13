@@ -225,6 +225,11 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   a person answers both, and the run this result unblocks is restarted by
  *   whoever presses Run.
  * @property {(status: string) => void} [onStatus]
+ * @property {() => void} [onOwnKeyElsewhere]
+ *   Another session is signing as this session's key — see
+ *   `_noteOwnKeyElsewhere`. Called at most once, and it changes nothing about
+ *   the room: it is a fact the layer above needs in order to say why a wait is
+ *   never going to end.
  * @property {(err: Error) => void} [onError]
  */
 
@@ -260,7 +265,16 @@ export class NotebookSession {
     this.onOffer = opts.onOffer;
     this.onResult = opts.onResult;
     this.onStatus = opts.onStatus;
+    this.onOwnKeyElsewhere = opts.onOwnKeyElsewhere;
     this.onError = opts.onError;
+
+    /**
+     * Whether an envelope this session did not send has arrived signed by this
+     * session's key — `_noteOwnKeyElsewhere` is what sets it, and it is latched
+     * because the condition is a fact about who holds the key rather than a
+     * state that comes and goes.
+     */
+    this.ownKeyElsewhere = false;
 
     /** @type {Map<string, NotebookPeerState>} */
     this.peers = new Map();
@@ -923,7 +937,10 @@ export class NotebookSession {
       return;
     }
     const { payload, signerFpr } = opened;
-    if (signerFpr === this.myFpr) return;
+    if (signerFpr === this.myFpr) {
+      this._noteOwnKeyElsewhere(payload);
+      return;
+    }
     // Everyone is in the same relay room — a message for someone else is
     // simply not ours; forwarding is a channel-path concern.
     if (payload.to && payload.to !== this.myFpr) return;
@@ -955,7 +972,10 @@ export class NotebookSession {
       return;
     }
     const { payload, signerFpr } = opened;
-    if (signerFpr === this.myFpr) return;
+    if (signerFpr === this.myFpr) {
+      this._noteOwnKeyElsewhere(payload);
+      return;
+    }
     if (payload.to && payload.to !== this.myFpr) {
       // Not ours: pass it one link onward. Introductions ride only
       // authenticated links, directly to the target when we hold that link,
@@ -979,6 +999,46 @@ export class NotebookSession {
       return;
     }
     await this._handleSignal(payload, signerFpr);
+  }
+
+  /**
+   * An envelope signed by this session's own key, which this session did not
+   * send: somebody else is holding this private key and is in this room.
+   *
+   * **The drop above it stands.** Self is not a peer — the roster is the
+   * audience minus this fingerprint — and meshing with a second session under
+   * one identity would key-confirm a transcript against our own key and file
+   * the result as a witness. What was missing is not a peer, it is a sentence:
+   * both ends sat on "waiting for peer" while the one fact that explained it
+   * was arriving, verified, every few seconds.
+   *
+   * **Why only an invite counts.** This has to be proof, not a guess, because
+   * what the layer above does with it is stop a run. An invite is the one
+   * payload whose provenance is decidable without trusting the dedupe set: a
+   * joiner never publishes one at all, and a creator's own invite always
+   * carries the nonce it minted a line before broadcasting it. So an invite
+   * bearing this fingerprint and any other nonce cannot have come from here —
+   * and it could only have been signed by this key. `hello`, `offer`, `answer`
+   * and `ice` carry no such marker, and the copy of our own that a relay
+   * echoes back looks exactly like a stranger's; those go on being dropped in
+   * silence, which costs nothing, because the invite is published first and
+   * reaches the same place.
+   *
+   * The most ordinary way to be here is two tabs of one browser: they share an
+   * IndexedDB vault, so a tester opening a second tab to play the other side
+   * can pick the same key without noticing. That is a fine thing to want and
+   * it works — the two tabs must simply choose *different* keys — but it is
+   * not a thing this layer can say. What is said, and where, is the caller's:
+   * `quorum-ops.js` owns the sentence.
+   *
+   * @param {import("./crypto.js").NotebookEnvelopePayload} payload
+   */
+  _noteOwnKeyElsewhere(payload) {
+    if (this.ownKeyElsewhere) return;
+    if (payload?.type !== "invite") return;
+    if (this.role === "creator" && payload.nonce === this.inviteNonce) return;
+    this.ownKeyElsewhere = true;
+    this.onOwnKeyElsewhere?.();
   }
 
   /**

@@ -50,6 +50,8 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  *   the sender's key and parsed — equally pending: no slot registered, no run
  *   restarted, and nothing in the session that could do either
  * @property {string[]} statuses
+ * @property {number} ownKeyElsewhere  times this session was told another
+ *   session is signing as its key
  */
 
 /**
@@ -57,6 +59,13 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  * @param {(payload: any, fromFpr: string) => any} [opts.tamper]
  *   Called on every signalling payload after it is opened and before it is
  *   re-sealed. Return the payload (mutated or not) to deliver it.
+ * @param {boolean} [opts.sameKey]
+ *   Give **both** sides `a`'s private key and `a`'s fingerprint, leaving the
+ *   audience the same two fingerprints. That is two tabs of one browser whose
+ *   user picked the same key in each: they share an IndexedDB vault, so both
+ *   halves of the pair are one identity, and the second identity in the
+ *   audience is nobody. Everything else — relay, keyserver, transport — is
+ *   untouched, so what the pair does differently is only ever the key.
  * @returns {Promise<{
  *   roomId: string,
  *   audience: string[],
@@ -67,7 +76,7 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  *   stop: () => void,
  * }>}
  */
-export async function makeQuorumPair({ tamper } = {}) {
+export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
   const [a, b] = await Promise.all([
     generateKey({
       type: "ecc",
@@ -185,6 +194,7 @@ export async function makeQuorumPair({ tamper } = {}) {
       offers: [],
       results: [],
       statuses: [],
+      ownKeyElsewhere: 0,
     };
     side.session = new NotebookSession({
       roomId,
@@ -198,6 +208,9 @@ export async function makeQuorumPair({ tamper } = {}) {
       onOffer: (/** @type {any} */ d) => side.offers.push(d),
       onResult: (/** @type {any} */ d) => side.results.push(d),
       onStatus: (/** @type {string} */ s) => side.statuses.push(s),
+      onOwnKeyElsewhere: () => {
+        side.ownKeyElsewhere += 1;
+      },
       onError: (/** @type {Error} */ err) => side.errors.push(err),
     });
     sides.push(side);
@@ -205,7 +218,9 @@ export async function makeQuorumPair({ tamper } = {}) {
   }
 
   const creator = makeSide(a.privateKey, aFpr, "creator");
-  const joiner = makeSide(b.privateKey, bFpr, "joiner");
+  const joiner = sameKey
+    ? makeSide(a.privateKey, aFpr, "joiner")
+    : makeSide(b.privateKey, bFpr, "joiner");
 
   /** Let every queued envelope, and everything it causes, drain. */
   async function settle() {
