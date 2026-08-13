@@ -304,7 +304,7 @@ function IndexPage() {
       ) : null}
 
       <p className="mt-lg text-center">
-        <a className="text-link" href="/my-keys">
+        <a className="text-link" href="/published">
           Submit a public key
         </a>
       </p>

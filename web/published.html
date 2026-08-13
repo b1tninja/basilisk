@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="en" data-toolkit-hash="encrypt">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https://keys.openpgp.org https://keys.mailvelope.com; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
-  <meta http-equiv="refresh" content="0;url=/toolkit#encrypt">
-  <title>Encrypt — Basilisk</title>
+  <title>Published keys — Basilisk</title>
   <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body>
-  <p>Encrypt moved to the <a href="/toolkit#encrypt">Toolkit</a>.</p>
-  <script type="module" src="/src/pages/redirect-toolkit.js"></script>
+  <div id="app"></div>
+
+  <script type="module" src="/src/pages/published.tsx"></script>
 </body>
 </html>

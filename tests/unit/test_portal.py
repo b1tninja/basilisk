@@ -223,3 +223,39 @@ def test_api_search(sample_armored, sample_fingerprint):
     assert "key_expiration" in hit
     assert hit["revoked"] is False
     assert "label" in hit
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("path", "destination"),
+    [
+        ("/encrypt", "/toolkit#encrypt"),
+        ("/decrypt", "/toolkit#decrypt"),
+        ("/quorum", "/toolkit"),
+        ("/my-keys", "/published"),
+    ],
+)
+def test_a_retired_page_moves_rather_than_disappears(path, destination):
+    """Every path the toolkit absorbed still answers, and says where it went.
+
+    The rule the retirement was run under: nothing is deleted before its
+    replacement is reachable, and no route ever becomes a 404. These four are in
+    bookmarks, in chat logs, and in every link this project has handed out — a
+    404 would say the feature is gone, and it is not, it moved.
+
+    No build is needed to assert this: the redirect is decided before any
+    document is read, which is also why a missing ``dist/`` cannot break it.
+    """
+    from basilisk.serve import create_app
+
+    response = create_app().test_client().get(path)
+    assert response.status_code == 301
+    assert response.headers["Location"] == destination
+
+
+@pytest.mark.unit
+def test_a_page_and_a_redirect_are_never_the_same_name():
+    """A path that is both would resolve by lookup order, which is not a decision."""
+    from basilisk.portal.static import _RETIRED_PAGES, _STATIC_PAGES
+
+    assert set(_STATIC_PAGES) & set(_RETIRED_PAGES) == set()

@@ -123,19 +123,20 @@ describe.runIf(availability.ok)("STUN discovery in a real browser", () => {
       expect(header, "no policy header — the intersection is untested again").toMatch(
         /connect-src/
       );
-      // The finding that made this matter: `quorum.html` names two `stun:`
-      // sources in its meta tag and `Settings.csp_connect_src` names none, so
-      // the intersection permits none. If the header ever grows them, this line
-      // is where the two beliefs stop disagreeing.
+      // The finding that made this matter: `quorum.html` named two `stun:`
+      // sources in its meta tag and `Settings.csp_connect_src` named none, so
+      // the intersection permitted none. That page is retired and no page
+      // ships a `stun:` source now, which makes this the assertion that the
+      // header did not quietly acquire the belief the meta gave up.
       expect(header).not.toMatch(/stun:/);
     });
 
     it("does not refuse a stun: server the policy never allowed", async () => {
-      // **The empirical answer.** `quorum.html` carries `stun:` sources in its
-      // meta CSP and `static.py` speaks of keeping them intact, which only
+      // **The empirical answer.** `quorum.html` carried `stun:` sources in its
+      // meta CSP and `static.py` spoke of keeping them intact, which only
       // means something if `connect-src` governs ICE. The header names none, so
-      // under that belief STUN is refused on every page — including the one
-      // page that lists them — and `/toolkit`, which has never listed them,
+      // under that belief STUN was refused on every page — including the one
+      // page that listed them — and `/toolkit`, which has never listed them,
       // would have been broken in production all along.
       //
       // It is not. Chromium gathers against a `stun:` URL no directive permits

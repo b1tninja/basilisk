@@ -134,10 +134,13 @@ green, and a reinstall can disrupt a concurrent session working in this tree.
 
 - **`quorum` is not stale naming.** It survives the shared-notebook redesign as
   two live things: the authenticated transport the session sits on top of
-  (`quorum.offer`/`quorum.join` are implemented steps — `registry.js`,
-  `engine.js` — `origin: "quorum"` is a live link kind, and `quorum.html` is a
-  built page), and the Shamir threshold in `ShareCards`/`CeremonySheet`, where
-  "any k of n" is simply what a quorum is. Do not "clean it up".
+  (`quorum.offer`/`quorum.join`/`quorum.send`/`quorum.recv` are implemented
+  steps — `registry.js`, `engine.js` — and `origin: "quorum"` is a live link
+  kind), and the Shamir threshold in `ShareCards`/`CeremonySheet`, where "any k
+  of n" is simply what a quorum is. Do not "clean it up".
+  `quorum.html` **was** a built page and is not one any more: the room moved
+  into the toolkit's session sheet and `/quorum` 301s to `/toolkit`. The steps
+  and the link kind are untouched by that, which is the point of this note.
 - **The session/peer/share widgets are not coupled.** The exclusion rule at the
   top of `ds-entry.ts` is about `ToolCard`/`OutputList`/`ToolkitShell`, which
   need the op registry or the notebook. The twelve added here read no context

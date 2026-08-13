@@ -1,10 +1,12 @@
 /**
  * The vault's verbs, lifted out of `my-keys-mount.js`'s click handlers.
  *
- * The refusals are the half that has to be identical between the Keys tray and
- * `/my-keys`, and they were the half that could not be tested at all: each one
- * lived inside a `submit` listener beside a `setStatus` call. These are the
- * same decisions as functions.
+ * The refusals had to be identical between the Keys tray and `/my-keys`, and
+ * they were the half that could not be tested at all: each one lived inside a
+ * `submit` listener beside a `setStatus` call. These are the same decisions as
+ * functions — which is why they outlive the page. `/my-keys` is retired and the
+ * tray is the only caller now, and the sentences are still asserted here rather
+ * than in a browser.
  */
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";

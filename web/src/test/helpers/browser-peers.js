@@ -60,15 +60,12 @@ export const DIST_ROOT = fileURLToPath(new URL("../../../dist/", import.meta.url
 const CLEAN_URLS = {
   "/": "/index.html",
   "/search": "/index.html",
-  "/my-keys": "/my-keys.html",
+  "/published": "/published.html",
   "/key": "/key.html",
   "/stats": "/stats.html",
-  "/encrypt": "/encrypt.html",
-  "/decrypt": "/decrypt.html",
   "/verify": "/verify.html",
   "/toolkit": "/toolkit.html",
   "/toolkit-widgets": "/toolkit-widgets.html",
-  "/quorum": "/quorum.html",
   "/preferences": "/preferences.html",
 };
 
@@ -89,8 +86,10 @@ const UPSTREAM_ALLOWLIST = ["keys.openpgp.org", "keys.mailvelope.com"];
  * response header on every response, the browser **intersects** the two, and a
  * source only one of them names is blocked. So a page could carry a source in
  * its meta tag, pass every test here, and be refused in production by a header
- * no test had ever sent. `quorum.html`'s `stun:` entries are exactly that
- * shape: named in the meta, absent from `csp_connect_src()`.
+ * no test had ever sent. `quorum.html` was exactly that shape while it existed:
+ * `stun:` sources named in its meta and absent from `csp_connect_src()`. That
+ * page is retired, so no page ships that mismatch today — which is a fact about
+ * the current set, not a reason to stop sending the header.
  *
  * Built from the same parts in the same order so a reader can diff them by eye.
  * `connect-src` omits the signalling socket deliberately — a deployment adds

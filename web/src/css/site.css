@@ -1093,7 +1093,7 @@ p { margin: 0.5rem 0; }
 }
 .btn-ghost:hover { background: var(--surface-raised); color: var(--text); }
 
-/* Provider sign-in buttons (large, used on my-keys page) */
+/* Provider sign-in buttons (large, used on the published-keys page) */
 .provider-btn {
   display: flex;
   align-items: center;

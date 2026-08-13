@@ -72,9 +72,12 @@ describe("module-integrity", () => {
   it("pageKeyFromPath maps clean URLs", async () => {
     const { pageKeyFromPath } = await import("../lib/module-integrity.js");
     expect(pageKeyFromPath("/")).toBe("index.html");
-    expect(pageKeyFromPath("/encrypt")).toBe("encrypt.html");
+    // Pages the build still produces. `/encrypt` and `/decrypt.html` stood
+    // here until those two were retired into toolkit fragments; a pin key for
+    // a page that ships no bytes is a key nothing can ever match.
+    expect(pageKeyFromPath("/published")).toBe("published.html");
     expect(pageKeyFromPath("/preferences")).toBe("preferences.html");
-    expect(pageKeyFromPath("/decrypt.html")).toBe("decrypt.html");
+    expect(pageKeyFromPath("/verify.html")).toBe("verify.html");
   });
 
   it("verifyModuleRootAgainstPins matches agreeing mirrors", async () => {
@@ -86,7 +89,7 @@ describe("module-integrity", () => {
       version: 1,
       algorithm: "sha256-merkle-v1",
       builtAt: new Date().toISOString(),
-      pages: { "encrypt.html": { root, leafCount: 2 } },
+      pages: { "toolkit.html": { root, leafCount: 2 } },
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () =>
@@ -96,7 +99,7 @@ describe("module-integrity", () => {
       });
     try {
       const r = await verifyModuleRootAgainstPins(root, {
-        pageKey: "encrypt.html",
+        pageKey: "toolkit.html",
         document: null,
         pinUrls: ["/integrity/module-roots.json", "https://mirror.example/pin.json"],
         requirePins: true,
@@ -117,7 +120,7 @@ describe("module-integrity", () => {
       version: 1,
       algorithm: "sha256-merkle-v1",
       builtAt: new Date().toISOString(),
-      pages: { "encrypt.html": { root: "b".repeat(64), leafCount: 2 } },
+      pages: { "toolkit.html": { root: "b".repeat(64), leafCount: 2 } },
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () =>
@@ -127,7 +130,7 @@ describe("module-integrity", () => {
       });
     try {
       const r = await verifyModuleRootAgainstPins("a".repeat(64), {
-        pageKey: "encrypt.html",
+        pageKey: "toolkit.html",
         document: null,
         pinUrls: ["/integrity/module-roots.json"],
         requirePins: true,
@@ -154,13 +157,13 @@ describe("module-integrity", () => {
           version: 1,
           algorithm: "sha256-merkle-v1",
           builtAt: new Date().toISOString(),
-          pages: { "encrypt.html": { root, leafCount: 1 } },
+          pages: { "toolkit.html": { root, leafCount: 1 } },
         }),
       });
     };
     try {
       const r = await verifyModuleRootAgainstPins("a".repeat(64), {
-        pageKey: "encrypt.html",
+        pageKey: "toolkit.html",
         document: null,
         pinUrls: ["/a.json", "/b.json"],
         requirePins: true,

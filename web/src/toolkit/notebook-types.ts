@@ -51,7 +51,8 @@ export type VaultKeyRow = {
    * export: `authorized_keys` and pasting into GitHub are what an ssh key is
    * mostly *for*. The vault has stored it since kinds landed and this
    * projection dropped it, so the Keys tray had no way to offer what
-   * `/my-keys` already did.
+   * `/my-keys` already did — and the tray is now the only place it can be
+   * offered at all.
    */
   publicLine?: string;
 };

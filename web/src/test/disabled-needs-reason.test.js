@@ -251,26 +251,30 @@ describe("no control in the app can go dead with nothing to read", () => {
    *
    * `btn.disabled = true` is the same dead control with no type system in
    * front of it — `verify.tsx` did exactly this after marking a key trusted,
-   * and it is fixed. What is left is the pre-React surface: four imperative
+   * and it is fixed. What is left is the pre-React surface: the imperative
    * `*-mount.js` files that build their markup as strings, where the shared
    * control this change is built around does not exist.
    *
    * They are counted rather than converted because they are not one job with
-   * the toolkit's 37, and because they are mostly a different thing: sixteen
-   * of the nineteen are in-flight guards — `disabled = true`, label to
-   * "Saving…", `disabled = false` when the promise settles — which this
-   * mechanism answers with `aria-busy` and which owe no explanation. The three
-   * in `quorum-mount.js` are the real ones: `leave`, `chat-input` and
-   * `chat-send-btn` go dead together whenever no session is open, and the page
-   * says so only in a status span they are not associated with.
+   * the toolkit's 37, and because they are mostly a different thing: in-flight
+   * guards — `disabled = true`, label to "Saving…", `disabled = false` when the
+   * promise settles — which this mechanism answers with `aria-busy` and which
+   * owe no explanation.
+   *
+   * Fifteen of the original nineteen went with the pages that held them.
+   * `my-keys-mount.js` (12) and `quorum-mount.js` (3) are deleted: the vault
+   * moved to `KeyVault.tsx`, which uses `disabledReason`, and the account half
+   * moved to `published-mount.js`, which is **not** on this list and must not
+   * join it — it is new code, and new code has `aria-busy` available to it.
+   * The three in `quorum-mount.js` were the only real ones (`leave`,
+   * `chat-input`, `chat-send-btn` going dead together with no session), and
+   * `SessionStart`/`RunBar` say that with a reason now.
    *
    * A number here may go down. It may not go up, and no file may join.
    */
   const IMPERATIVE_BASELINE = {
     "src/lib/key-mount.js": 2,
     "src/lib/keys.js": 2,
-    "src/lib/my-keys-mount.js": 12,
-    "src/lib/quorum-mount.js": 3,
   };
 
   function imperativeCounts() {

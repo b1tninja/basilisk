@@ -151,7 +151,13 @@ export function ProfileMenu({ redirectPath }: { redirectPath?: string }) {
             </div>
             <div className="profile-dropdown-items">
               <DropdownMenu.Item asChild>
-                <a className="profile-dropdown-item" href="/my-keys"><KeyringIcon />Keyring</a>
+                {/* The keyring is the browser vault, and the vault's home is
+                    the toolkit's Keys tray. It needs no account — this menu is
+                    just where the word has always been. */}
+                <a className="profile-dropdown-item" href="/toolkit#keys"><KeyringIcon />Keyring</a>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item asChild>
+                <a className="profile-dropdown-item" href="/published"><KeyringIcon />Published keys</a>
               </DropdownMenu.Item>
               <DropdownMenu.Item asChild>
                 <a className="profile-dropdown-item" href="/preferences"><PreferencesIcon />Preferences</a>

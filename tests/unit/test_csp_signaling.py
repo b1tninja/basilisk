@@ -88,7 +88,11 @@ def test_the_signalling_host_comes_from_config_and_never_from_a_literal(monkeypa
     # a literal would silently be the first deployment's.
     for path in (
         ROOT / "web" / "toolkit.html",
-        ROOT / "web" / "quorum.html",
+        # `quorum.html` stood here until it was retired into the toolkit's
+        # session sheet. `published.html` replaces it as the second page: the
+        # point is that *no* built page carries a deployment's hostname, so the
+        # list needs a page that is not the one opening the socket.
+        ROOT / "web" / "published.html",
         ROOT / "terraform" / "modules" / "basilisk" / "frontdoor.tf",
         ROOT / "basilisk" / "serve.py",
     ):
@@ -115,13 +119,18 @@ def test_a_malformed_connection_string_turns_signalling_off_rather_than_crashing
 
 @pytest.mark.unit
 def test_merging_adds_the_source_without_disturbing_the_page_it_found():
-    # `quorum.html` carries `stun:` sources the other pages do not. Merging has
-    # to be additive, or enabling signalling would silently remove them.
-    page = (ROOT / "web" / "quorum.html").read_text(encoding="utf-8")
+    # Merging has to be additive, or enabling signalling would silently remove
+    # whatever the page already allowed. `quorum.html` was the example while it
+    # existed, because its `stun:` sources appeared on no other page; those were
+    # shown to buy nothing (`stun-discovery.e2e.js`) and went with the page. The
+    # upstream keyservers are the sources that remain, and dropping one would
+    # break every search — the same failure, one directive over.
+    page = (ROOT / "web" / "published.html").read_text(encoding="utf-8")
     merged = merge_connect_src(page, ("wss://x.webpubsub.azure.com",))
     before, after = _connect_src(page), _connect_src(merged)
+    assert len(before) > 1, "a one-source page cannot show that merging is additive"
     assert after == [*before, "wss://x.webpubsub.azure.com"]
-    assert "stun:stun.cloudflare.com:3478" in after
+    assert "https://keys.openpgp.org" in after
     # Idempotent: a page served twice does not grow a duplicate source.
     assert merge_connect_src(merged, ("wss://x.webpubsub.azure.com",)) == merged
     assert merge_connect_src(page, ()) == page

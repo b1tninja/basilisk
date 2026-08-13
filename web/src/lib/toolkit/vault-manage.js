@@ -11,8 +11,10 @@
  * vault is not two implementations of the verbs — it is one module of verbs and
  * two surfaces. So the refusals below are **functions that return sentences**,
  * separate from the acts that follow them: a refusal is the part that has to be
- * identical between a tray and a page, and it is also the only part that can be
- * tested in node.
+ * identical wherever it is said, and it is also the only part that can be
+ * tested in node. `/my-keys` has since been retired and the tray is the only
+ * caller left, which is what makes this module worth keeping rather than
+ * inlining: the sentences are testable here and nowhere else.
  *
  * Nothing here writes to the DOM or reads a form. `downloadFile` is the one
  * exception and it is a browser act by definition — the same one `key-export.js`
@@ -147,11 +149,12 @@ export function exportRefusal(spec) {
 /**
  * Generate a keypair in the worker and store it in the vault.
  *
- * It does **not** publish. `my-keys-mount.js` follows this with a POST to
- * `/api/v1/me/keys`, because that page is behind a sign-in and publishing is an
- * account act; the tray has no account and a key that exists only here is a
- * complete, usable key. Publishing stays where the session that authorizes it
- * is.
+ * It does **not** publish. Publishing is an account act — it needs the sign-in
+ * `/published` is behind — and the tray has no account, while a key that exists
+ * only here is already a complete, usable key. `/my-keys` ran the two together
+ * in one "Generate & publish" button and that is exactly the conflation this
+ * change undid: making a key and telling a server about it are separate
+ * decisions, and only the second is irreversible.
  *
  * @param {{ name?: string, email: string, expiryPreset?: string,
  *   protection?: "passphrase"|"passkey"|"device", passphrase?: string }} spec
@@ -212,8 +215,8 @@ export async function generateVaultKey(spec) {
     return { fingerprint: gen.fingerprint, publicArmored: gen.armoredPublic, mds };
   } finally {
     // Strings are immutable, so this drops the reference rather than the bytes
-    // — the same best effort `my-keys-mount.js` makes, and the same one
-    // `sessionEvict` documents.
+    // — the same best effort `/my-keys` made, and the same one `sessionEvict`
+    // documents.
     armoredPrivate = "";
     try {
       prfIkm?.fill?.(0);

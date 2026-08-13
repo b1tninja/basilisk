@@ -365,7 +365,8 @@ export const ARTIFACT_ACTIONS = Object.freeze([
      * The label says "My Keys" because that is what the app calls the vault
      * everywhere else, including in `ACTION_REASONS.noVault`; the id stays
      * `keyring.add`, and id ≠ label is already true elsewhere (`key.publish` →
-     * "Publish").
+     * "Publish"). It is the *store's* name and always was — the page that once
+     * shared it is retired, and the vault it names lives in the Keys tray.
      */
     id: "keyring.add",
     label: "Add to My Keys",
@@ -422,7 +423,7 @@ export const ARTIFACT_ACTIONS = Object.freeze([
           term: "Protection",
           detail:
             "Device protection: no passkey, no passphrase. Anyone who can reach this browser profile can use the key without being asked for anything.",
-          sub: "Enrol a passkey from My Keys afterwards, or write agent.save protection=passkey in the recipe.",
+          sub: "Enrol a passkey from the Keys tray afterwards, or write agent.save protection=passkey in the recipe.",
         },
         {
           term: "Reversible",

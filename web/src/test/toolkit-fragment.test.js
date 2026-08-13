@@ -56,6 +56,23 @@ describe("parseToolkitHash", () => {
     expect(action).toEqual({ kind: "recipe", recipe });
   });
 
+  it("names a tray without naming a notebook", () => {
+    // `/toolkit#keys` is the nav's Keys entry. It has to be its own kind: a
+    // starter *replaces the notebook*, and opening the vault must not throw
+    // away what somebody was writing — the same rule `#j=` follows.
+    expect(parseToolkitHash("#keys")).toEqual({ kind: "tray", tray: "keys" });
+    expect(parseToolkitHash("KEYS")).toEqual({ kind: "tray", tray: "keys" });
+  });
+
+  it("carries no ciphertext seed onto a tray", () => {
+    // A seed is Inputs, and a tray is a panel. `#keys&ct=…` names a panel and
+    // a payload with nothing to put it in; taking the seed anyway would mean
+    // the shell had to decide what to do with it, silently.
+    const action = parseToolkitHash("#keys&ct=AAAA");
+    expect(action).toEqual({ kind: "tray", tray: "keys" });
+    expect(action.inputs).toBeUndefined();
+  });
+
   it("empty / unknown", () => {
     expect(parseToolkitHash("#")).toEqual({ kind: "empty" });
     expect(parseToolkitHash("#nope").kind).toBe("unknown");

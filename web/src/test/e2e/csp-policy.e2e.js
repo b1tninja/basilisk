@@ -21,8 +21,10 @@
  * page that refuses part of it silently drops a capability. The reverse — a
  * meta naming something the header does not — is *also* a dead source, but it
  * is a page asking for more than the deployment grants, which `quorum.html`
- * does deliberately with its `stun:` entries. So only the first direction
- * fails here; the second is reported so it cannot accumulate unnoticed.
+ * did deliberately with its `stun:` entries until it was retired. So only the
+ * first direction fails here; the second is reported so it cannot accumulate
+ * unnoticed, which is how those `stun:` entries stayed visible long enough to
+ * be shown, in `stun-discovery.e2e.js`, to have bought nothing.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

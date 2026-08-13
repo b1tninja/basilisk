@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flask import Flask, Response, send_from_directory
+from flask import Flask, Response, redirect, send_from_directory
 
 from basilisk.config import get_settings
 
@@ -18,16 +18,36 @@ _DIST = _WEB_ROOT / "dist"
 _LEGACY = _WEB_ROOT / "static"
 
 _STATIC_PAGES = {
-    "my-keys": "my-keys.html",
+    "published": "published.html",
     "key": "key.html",
     "stats": "stats.html",
     "search": "index.html",
-    "encrypt": "encrypt.html",
-    "decrypt": "decrypt.html",
     "verify": "verify.html",
     "toolkit": "toolkit.html",
-    "quorum": "quorum.html",
     "preferences": "preferences.html",
+}
+
+# Pages that were retired into the toolkit, and where each one's errand went.
+#
+# A permanent redirect rather than a deletion, because every one of these paths
+# is in somebody's bookmarks, in a chat log, and in the two years of links this
+# project has handed out. A 404 tells a reader the feature is gone; it is not,
+# it moved, and the destination is the fragment that opens exactly what the old
+# page did.
+#
+# `/quorum` is the one that does not point at a fragment. The room it opened is
+# the toolkit's session sheet, which a link cannot address without an audience
+# to derive a room from — an invite is `/toolkit#j=<fingerprints>` and nobody
+# arriving at `/quorum` has one. So it lands on the toolkit itself, which is
+# where creating a session now starts.
+#
+# 301 and not 308: these are GET-only documents, no method is being preserved,
+# and 301 is the status every cache and crawler already implements.
+_RETIRED_PAGES = {
+    "encrypt": "/toolkit#encrypt",
+    "decrypt": "/toolkit#decrypt",
+    "quorum": "/toolkit",
+    "my-keys": "/published",
 }
 
 # HTML pins SRI hashes for that deploy. Content-hashed /assets/* and
@@ -127,4 +147,9 @@ def register_static_portal(app: Flask) -> None:
         filename = _STATIC_PAGES.get(page)
         if filename:
             return _send_html(filename)
+        # Checked after the pages, so a name can never be both. A retired path
+        # must not 404: see `_RETIRED_PAGES`.
+        moved = _RETIRED_PAGES.get(page)
+        if moved:
+            return redirect(moved, code=301)
         return Response("Not found", status=404)

@@ -1522,7 +1522,7 @@ function CatalogApp() {
                       term: "Protection",
                       detail:
                         "Device protection: no passkey, no passphrase. Anyone who can reach this browser profile can use the key without being asked for anything.",
-                      sub: "Enrol a passkey from My Keys afterwards, or write agent.save protection=passkey in the recipe.",
+                      sub: "Enrol a passkey from the Keys tray afterwards, or write agent.save protection=passkey in the recipe.",
                     },
                     {
                       term: "Reversible",
