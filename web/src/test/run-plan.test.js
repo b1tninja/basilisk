@@ -468,13 +468,32 @@ describe("the roster is the binding, and it is checked like one", () => {
     expect(labelForFingerprint({ mara: FPR_A }, FPR_C)).toBe("");
   });
 
-  it("refuses a fingerprint written where a label belongs", () => {
-    // The same refusal `validateRecipe` applies to a chain header, applied at
-    // the other end of the binding — a roster is assembled from a session, and
-    // a session speaks fingerprints, so this is where one gets typed by
-    // mistake.
-    expect(() => normalizeRoster({ D2C1B0A94F2AC1B39D8E7C6A5B4938271605F4E3: FPR_A })).toThrow(
-      /named, not fingerprinted/
+  it("takes a fingerprint as a peer, on both sides of the binding", () => {
+    // The roster is identity-mapped now: a peer *is* a key, so both sides of
+    // the pair are the same forty characters. This used to throw — a
+    // fingerprint in the peer column was the shape the old rule refused — and
+    // it is the ordinary case the product writes.
+    const { byLabel, byFpr } = normalizeRoster({ [FPR_A]: FPR_A });
+    expect(byLabel.get(FPR_A)).toBe(FPR_A);
+    expect(byFpr.get(FPR_A)).toBe(FPR_A);
+  });
+
+  it("refuses a part of a key written where a peer belongs", () => {
+    // The refusal that survived, applied at the other end of the binding — a
+    // roster is assembled from a session, and a session speaks fingerprints, so
+    // this is where a short id gets typed by mistake. A suffix names more than
+    // one key, so a roster keyed by one binds nothing and the `peersSha`
+    // computed over it commits to nothing in particular.
+    //
+    // Both halves of the asymmetry are exercised: a key id beginning with a
+    // letter is a structurally valid *name* and has to be refused by the
+    // semantic rule, and one beginning with a digit must reach the same refusal
+    // rather than a different complaint about the grammar.
+    expect(() => normalizeRoster({ D2C1B0A94F2AC1B3: FPR_A })).toThrow(
+      /part of a key rather than a key/
+    );
+    expect(() => normalizeRoster({ "42C1B0A94F2AC1B3": FPR_A })).toThrow(
+      /part of a key rather than a key/
     );
   });
 

@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Fingerprint } from "@/components/ui/fingerprint";
 import { cn } from "@/lib/cn";
+import { formatFingerprint } from "../../lib/utils.js";
 import { InviteCard } from "./InviteCard";
 import {
   confirmationReadout,
@@ -135,14 +136,24 @@ export function SessionLive({
                       data-peer-state={p.state}
                       aria-hidden
                     />
-                    {/* Label and key in one control, for the reason
-                        ConnectionsPanel gives. */}
-                    {p.fingerprint ? (
+                    {/* The placard, degraded only where this browser has a name to
+                        degrade to. `compact` prints a name and never a piece of
+                        the key, so it is right exactly when `name` is set and
+                        wrong when it is not: a peer is the whole fingerprint
+                        now, and passing that as the "name" would print the key
+                        while claiming to print something that is not the key.
+                        With no name, the full form. */}
+                    {p.fingerprint && p.name ? (
                       <Fingerprint
                         className="min-w-0 flex-1 text-[11px] text-[var(--foreground)]"
                         fpr={p.fingerprint}
                         variant="compact"
-                        label={p.id}
+                        label={p.name}
+                      />
+                    ) : p.fingerprint ? (
+                      <Fingerprint
+                        className="min-w-0 flex-1 text-[11px] text-[var(--foreground)]"
+                        fpr={p.fingerprint}
                       />
                     ) : (
                       <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]">
@@ -166,7 +177,7 @@ export function SessionLive({
                       <button
                         type="button"
                         className="link-action"
-                        aria-label={`Remove ${p.id} from the room`}
+                        aria-label={`Remove ${formatFingerprint(p.fingerprint || p.id)} from the room`}
                         onClick={() => onRemove(p.fingerprint as string)}
                       >
                         Remove from room

@@ -111,9 +111,10 @@ const OWN_KEY_ELSEWHERE =
  * Cached per exchange — the selected pair does not change without a
  * reconnection, and a reconnection makes a new exchange.
  *
- * The audience goes in because it is what orders the peer labels: it is fixed
- * for the session and identical in every participant's browser, so `@peer2`
- * names the same person on both ends of a notebook that travels as text.
+ * The audience used to go in because it was what *ordered* the peer labels —
+ * they were positions in it, and both browsers had to sort the same list to
+ * agree about who `@peer2` was. A peer is the whole fingerprint now, so a row
+ * names itself and the projection needs nothing but the peer map.
  *
  * @param {Map<string, import("../notebook/session.js").NotebookPeerState>} peersMap
  * @returns {import("../notebook/roster.js").ConnectionPeerRow[]}
@@ -138,10 +139,10 @@ function projectPeers(peersMap) {
       ex.viaPending.delete(fpr);
       if (!via || current !== ex || ex.cancelled) return;
       ex.viaByFpr.set(fpr, via);
-      patchState({ peers: projectRosterPeers(peersMap, ex.viaByFpr, ex.session?.audienceFprs) });
+      patchState({ peers: projectRosterPeers(peersMap, ex.viaByFpr) });
     });
   }
-  return projectRosterPeers(peersMap, ex.viaByFpr, ex.session?.audienceFprs);
+  return projectRosterPeers(peersMap, ex.viaByFpr);
 }
 
 function emitState() {

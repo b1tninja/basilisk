@@ -38,6 +38,7 @@ import {
 } from "./recipe.js";
 // Imported *and* re-exported at the foot of this file: a bare re-export creates
 // no local binding, and `hashForRecipe` below is one of the rule's callers.
+import { fingerprintPeersInText } from "./recipe-parse.js";
 import { recipeLooksSecret } from "./recipe-secrets.js";
 
 /**
@@ -507,6 +508,53 @@ export function hashForRecipe(recipe) {
     };
   }
   return { hash, ok: true };
+}
+
+/**
+ * What a `#r=` link would tell whoever opens it about who is in the room.
+ *
+ * **This is the sentence that had to be written when the refusal came out.**
+ * `recipeLooksSecret` used to treat a fingerprint written as a peer as secret
+ * material and refuse to build a link at all, so the Share sheet could claim
+ * "No trust needed" about every link it ever produced. A peer is now the whole
+ * fingerprint, on purpose, and the link is produced — so the claim would have
+ * become false for exactly the notebooks people care most about, and false
+ * quietly, at the moment of copying.
+ *
+ * The other half of the sheet's copy stays true and is not touched here: the
+ * fragment never reaches a server. What changes is who can read it once it has
+ * been passed on.
+ *
+ * **It says nothing when there is nothing to say.** An unplaced recipe — no
+ * `@peer` header anywhere, which is most of them — discloses no audience, and a
+ * warning printed over it would be prose describing a product that does not
+ * exist, which is the defect this repo landed a fix for the same night
+ * (`42875a2`) *because a test was enforcing the false sentence*. So the empty
+ * list is the ordinary answer and the caller draws nothing for it.
+ *
+ * Counted from the text rather than from a compiled plan, because that is what
+ * the link is built from: `hashForRecipe` takes text and never compiles, so a
+ * disclosure derived from a plan could describe a notebook the link does not
+ * carry. The detector is `fingerprintPeersInText`, which is the *same* regex
+ * the refusal used — one reading of "does this text name keys", so the sentence
+ * and the link cannot disagree.
+ *
+ * @param {string} recipe  the notebook text a link would carry
+ * @returns {{ peers: string[], sentence: string }} `sentence` is "" when the
+ *   notebook names nobody
+ */
+export function recipeLinkDiscloses(recipe) {
+  const peers = fingerprintPeersInText(recipe || "");
+  if (!peers.length) return { peers, sentence: "" };
+  return {
+    peers,
+    sentence:
+      `This notebook places cells on ${peers.length === 1 ? "1 key" : `${peers.length} keys`}, ` +
+      `so the link carries ${peers.length === 1 ? "that fingerprint" : "those fingerprints"} ` +
+      `— anyone who opens it learns who is in the room, and a room is derived ` +
+      `from its audience. The link still reaches no server. Send it the way you ` +
+      `would send the invite.`,
+  };
 }
 
 /**

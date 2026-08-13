@@ -114,12 +114,13 @@ import {
 } from "../lib/toolkit/recipe.js";
 import { planRun } from "../lib/toolkit/plan.js";
 import { roomRoster } from "../lib/notebook/roster.js";
-import { relabelAudience, relabelPlacements } from "../lib/toolkit/peer-relabel.js";
+import { departedPeers, unassignDeparted } from "../lib/toolkit/peer-relabel.js";
 import {
   hashForJoin,
   hashForNotebook,
   hashForToolkitState,
   parseToolkitHash,
+  recipeLinkDiscloses,
   toolkitShareUrl,
   writeToolkitHash,
 } from "../lib/toolkit/fragment.js";
@@ -1116,21 +1117,20 @@ export function ToolkitShell() {
     : sessionDraft.audience;
 
   /**
-   * Who the `@peer` labels mean — including before anybody has connected.
+   * Who is in the room a `@peer` header can address — including before anybody
+   * has connected.
    *
    * The room's answer once there is a room, and the *draft's* answer before
    * that, which is the whole of what made composing impossible. `handoffWho` is
    * `roomRoster` over `quorumState.audience`, and that list is empty until Start
-   * is pressed, so every surface that asked "which labels exist" was told "none"
+   * is pressed, so every surface that asked "which peers exist" was told "none"
    * at exactly the moment somebody was trying to write a ceremony to run later.
    *
-   * Both branches are `roomRoster`, so there is one numbering rule and no second
-   * copy of it: the labels a cell is assigned to while the room is being named
-   * are computed by the same function that will name the room's peers, over the
-   * same audience `startSession` is about to be handed. That is what makes the
-   * promise below hold — the labels you composed against are the labels the room
-   * uses — rather than making it a coincidence that survives until somebody
-   * changes one of the two.
+   * Both branches are `roomRoster`, so the assignment menu offers what the room
+   * will bind, over the same audience `startSession` is about to be handed. That
+   * used to be load-bearing in a second way as well — it was what stopped a
+   * draft numbering the peers differently from the room — and that half is gone:
+   * a peer is the key, so there is no numbering left to agree about.
    *
    * `me` is the key you are joining as, for the same reason it is the live
    * session's `self`: your own key joins the room the moment you choose it, so
@@ -1146,23 +1146,6 @@ export function ToolkitShell() {
   );
 
   /**
-   * The same binding the other way round, for the panel that draws it.
-   *
-   * Inverted rather than recomputed: `composeWho.roster` is `peerLabels`'
-   * answer, and a second pass over the audience to produce the same pairs in
-   * the opposite direction is the second copy of the numbering rule this file
-   * spent a defect learning not to keep.
-   */
-  const draftLabels = useMemo(() => {
-    /** @type {Record<string, string>} */
-    const byFingerprint: Record<string, string> = {};
-    for (const [label, fpr] of Object.entries(composeWho.roster)) {
-      byFingerprint[String(fpr || "").toUpperCase()] = label;
-    }
-    return byFingerprint;
-  }, [composeWho]);
-
-  /**
    * What the last audience change did to the notebook's placements, or "".
    *
    * A live region on the session panel rather than a toast: the sentence is
@@ -1174,15 +1157,20 @@ export function ToolkitShell() {
   const [relabelNote, setRelabelNote] = useState("");
 
   /**
-   * Change who is in the draft room, and carry the placements with it.
+   * Change who is in the draft room, and deal with the cells it strands.
    *
    * Every door onto the draft audience goes through here — the picker, the
    * paste box, the fingerprint menu's "add to the room", choosing your own key,
    * and an invite link arriving as `#j=` — because the hazard is a property of
-   * the *change*, not of the control that made it. A second door that set
-   * `sessionDraft.audience` directly would renumber the room and leave the
-   * notebook pointing at the old numbers, which is the silent version of this
-   * and the reason `peer-relabel.js` exists.
+   * the *change*, not of the control that made it.
+   *
+   * **Adding somebody now does nothing to the notebook, and that is the whole
+   * of what changed here.** A peer used to be a position in the sorted
+   * audience, so every add renumbered whoever sorted below it and every header
+   * had to be rewritten to keep meaning the same person; a peer is the key now,
+   * and a key does not move when somebody else arrives. What is left is
+   * removal: a cell placed on a key that has left the room will never run, so
+   * it is unassigned and the reader is told which cells.
    *
    * The edits go through `setCellPeer`, the same mutator `CellAssign` presses,
    * so the header is written by `serializeChain` exactly as a person writing it
@@ -1190,8 +1178,10 @@ export function ToolkitShell() {
    */
   const setDraftAudience = useCallback(
     (next: string[]) => {
-      const moved = relabelAudience(sessionDraft.audience, next);
-      const { edits, note } = relabelPlacements(nb.chains as RecipeChain[], moved);
+      const { edits, note } = unassignDeparted(
+        nb.chains as RecipeChain[],
+        departedPeers(sessionDraft.audience, next)
+      );
       setSessionDraft((d) => ({ ...d, audience: next }));
       for (const edit of edits) {
         nb.setCellPeer(edit.cell, edit.peer, edit.publish, edit.publishSlots);
@@ -1230,7 +1220,14 @@ export function ToolkitShell() {
   const [trustedPeers, setTrustedPeers] = useState<RecipientChoice[]>([]);
   const sessionSheetOpen = nb.sheet === "session";
   useEffect(() => {
-    if (!sessionSheetOpen) return;
+    // Not gated on the sheet being open any more, and that is the change: this
+    // list is the only source of a *name* for a key, and a peer is drawn as a
+    // placard on the notebook itself now — the assignment menu, the cell's
+    // header — long before anybody opens the session sheet. Gating it there
+    // meant every placard was nameless until the reader had visited a panel
+    // that has nothing to do with the cell they are looking at. It still
+    // re-reads when the sheet opens and when a trust mark changes, because
+    // those are the two moments the answer can differ.
     let live = true;
     void (async () => {
       try {
@@ -1252,6 +1249,41 @@ export function ToolkitShell() {
       live = false;
     };
   }, [sessionSheetOpen, localMarkTick]);
+
+  /**
+   * A name for a key, where this browser has met it.
+   *
+   * The vault's uids and the trusted marks, which are the two groups a reader
+   * has already put a name to — your own keys, and the people you have decided
+   * about. Nothing is fetched for this: a key with no name behind it says so
+   * rather than sending a lookup because a menu was opened.
+   *
+   * **It is declared here, above every surface that draws a peer, and that
+   * position is load-bearing.** A peer is a fingerprint now, so this map is
+   * the *only* thing standing between a reader and forty characters of hex
+   * wherever a person is named — the session sheet's room list, the
+   * assignment menu, the connections roster. It used to sit below the first
+   * two of those, which is a temporal dead zone rather than an ordering
+   * preference (see `handoffWho` in `useNotebook` for what that cost last
+   * time).
+   *
+   * No second source: `listTrustedRecipientSuggestions` is the recipient
+   * binder's own list and `nb.vaultKeys` is the Keys tray's. A placard that
+   * resolved a name some other way would be a second opinion about whose key
+   * this is, one component away from the first.
+   */
+  const peerNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const row of nb.vaultKeys) {
+      if (row.uid) names.set(String(row.fingerprint || "").toUpperCase(), row.uid);
+    }
+    for (const row of trustedPeers) {
+      if (row.label) names.set(String(row.fingerprint || "").toUpperCase(), row.label);
+    }
+    return names;
+  }, [nb.vaultKeys, trustedPeers]);
+
+
 
   /**
    * The invite link. `hashForJoin` refuses an audience that names fewer than
@@ -1474,61 +1506,56 @@ export function ToolkitShell() {
     );
   }, [nb.busy, nb.skippedCells, nb.autoOffered]);
 
-  /**
-   * A name for a key, where this browser has met it.
-   *
-   * The vault's uids and the trusted marks, which are the two groups a reader
-   * has already put a name to — your own keys, and the people you have decided
-   * about. Nothing is fetched for this: a label with no name behind it says so
-   * rather than sending a lookup because a menu was opened.
-   */
-  const peerNames = useMemo(() => {
-    const names = new Map<string, string>();
-    for (const row of nb.vaultKeys) {
-      if (row.uid) names.set(String(row.fingerprint || "").toUpperCase(), row.uid);
-    }
-    for (const row of trustedPeers) {
-      if (row.label) names.set(String(row.fingerprint || "").toUpperCase(), row.label);
-    }
-    return names;
-  }, [nb.vaultKeys, trustedPeers]);
 
   /**
-   * Labels a cell can be assigned to, and who each one is.
+   * The live roster's rows with a name attached, where this browser has one.
    *
-   * The room *and* the labels this notebook already names, unioned. Only the
+   * `projectRosterPeers` is the transport's projection and knows nothing about
+   * uids — deliberately, it is a pure function over session state in `lib/`.
+   * This is the one place the two are joined, so the connections panel and the
+   * live session sheet cannot come to show different names for one key.
+   */
+  const rosterRows = useMemo(
+    () =>
+      (nb.quorumState.peers || []).map((row) => {
+        const name = peerNames.get(String(row.fingerprint || "").toUpperCase());
+        return name ? { ...row, name } : row;
+      }),
+    [nb.quorumState.peers, peerNames]
+  );
+
+  /**
+   * Peers a cell can be assigned to, and who each one is.
+   *
+   * The room *and* the peers this notebook already names, unioned. Only the
    * room would make a header impossible to write before anybody joins, which
    * is backwards — a ceremony is written first and run when the other person
    * is free, and `planRun` reports on an unbound notebook precisely so it can
    * be. Only the notebook would mean a peer who joins can never be given a
-   * cell without someone typing their label by hand.
-   *
-   * (This comment was ten declarations up, above `runPlan`, which is not a list
-   * of labels and does not decide what a cell may be assigned to.)
+   * cell without someone typing their key by hand.
    *
    * **"The room" is `composeWho`, not the live exchange.** It used to be
    * `handoffWho`, whose roster is `quorumState.audience` — empty until Start is
    * pressed — so the sentence above described a behaviour the code did not
-   * have: the union was the room's nothing plus whatever labels the reader had
+   * have: the union was the room's nothing plus whatever peers the reader had
    * already typed by hand, which meant the menu was empty exactly when somebody
    * wanted to compose, and the only way to fill it was to write the grammar the
    * menu exists to spare them. Picking two people in the session sheet now
-   * hands out `peer1` and `peer2` immediately, and those are the labels the room
-   * will use — see `composeWho` for why the two cannot disagree, and
-   * `peer-relabel.js` for what happens to them when a third person arrives.
+   * offers both of their keys immediately.
    *
-   * It includes *this browser's* label. Before that it was the peer rows, which
-   * are the audience minus self — so the one label a user could never pick from
-   * this list was their own, and assigning a cell to yourself meant typing
-   * `@peerN` by hand and guessing N.
+   * It includes *this browser's* own key. Before that it was the peer rows,
+   * which are the audience minus self — so the one peer a user could never pick
+   * from this list was themselves.
    *
-   * Each choice carries who it is, because `@peer2` is a position and a reader
-   * assigning work is choosing a person. `name` is only ever a uid or a trust
-   * mark — never a piece of the fingerprint — for the reason
+   * Each choice carries who it is, because a reader assigning work is choosing
+   * a person and forty characters of hex is not a person. `name` is a uid or a
+   * trust mark and nothing derived from the key, for the reason
    * `components/ui/fingerprint.tsx` gives at length; where this browser knows
-   * no name the row says so instead of inventing a shortened key to fill the
-   * gap. The key itself is one press away in the session sheet's room list,
-   * which is where the label was bound to it.
+   * no name the row says so rather than inventing a shortened key to fill the
+   * gap. The union's second half is the case that makes `fingerprint` optional:
+   * a peer the *notebook* names and the room does not has no key here at all —
+   * a `@peer1` left in a notebook written before a peer was a key, or a name
+   * somebody typed — and it gets a caption of its own.
    */
   const peerChoices = useMemo(() => {
     const { roster, me } = composeWho;
@@ -3670,7 +3697,7 @@ export function ToolkitShell() {
                       invite: nb.quorumState.invite,
                       connected: nb.quorumState.connected,
                       expected: nb.quorumState.expected,
-                      peers: nb.quorumState.peers,
+                      peers: rosterRows,
                     }}
                     links={nb.peerLinks}
                     onCopyInvite={() =>
@@ -4316,6 +4343,10 @@ export function ToolkitShell() {
           open={shareOpen}
           onOpenChange={setShareOpen}
           recipeLink={recipeLink}
+          // What *this* notebook's link would give away, or "" for one that
+          // gives nothing away. Derived from the same text the link is built
+          // from, so the sentence and the link cannot describe two notebooks.
+          recipeDiscloses={recipeLinkDiscloses(nb.source).sentence}
           onCopyRecipeLink={() => void nb.copyShareLink()}
           recipeQr={recipeQr}
           onSaveRecipe={() => saveNotebookFile(nb.title, nb.source)}
@@ -4362,7 +4393,7 @@ export function ToolkitShell() {
                     status: nb.quorumState.status,
                     audience: nb.quorumState.audience || [],
                     self: String(nb.quorumState.self || ""),
-                    peers: nb.quorumState.peers,
+                    peers: rosterRows,
                   },
                   inviteUrl,
                   onCopyInvite: () => void copyText(inviteUrl || ""),
@@ -4393,18 +4424,18 @@ export function ToolkitShell() {
               // you are not in derives a different room, so leaving that to a
               // second press is leaving a footgun where a default belongs.
               //
-              // Through `setDraftAudience` like every other door, because this
-              // one is the *likeliest* renumbering of all: it is usually the
-              // first fingerprint in the room, and it arrives after somebody
-              // has already added the person they are meeting.
+              // Through `setDraftAudience` like every other door, so that the
+              // one function which knows what an audience change costs the
+              // notebook stays the only one that changes an audience.
               if (fpr && !sessionDraft.audience.includes(fpr)) {
                 setDraftAudience([...sessionDraft.audience, fpr]);
               }
             },
             audience: sessionDraft.audience,
-            // Which label each member holds — the `@peerN` a cell is assigned
-            // to, from the one function that hands them out.
-            labels: draftLabels,
+            // A name for each key, where this browser has one. The room list
+            // draws a placard per member, and this is its human half — the
+            // other half is the fingerprint the row already has.
+            names: Object.fromEntries(peerNames),
             relabelNote,
             trusted: trustedPeers,
             // One press, one lookup. `searchRecipients` is the encrypt side's

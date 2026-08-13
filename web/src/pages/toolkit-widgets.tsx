@@ -603,14 +603,19 @@ function CatalogApp() {
                 connected={2}
                 /* `id` was `AAAA1111…9999` in this fixture — the catalog was
                    still showing the elided form as a peer's name a commit after
-                   `projectRosterPeers` stopped producing one. A real `id` is
-                   `peer1`, ordered by the canonical audience, and the row draws
-                   it through `<Fingerprint variant="compact">`: press the label
-                   and the whole key is on the clipboard. */
+                   `projectRosterPeers` stopped producing one — and then `peer1`,
+                   a position in the canonical audience. A real `id` is the whole
+                   key, which is what a `@peer` header writes.
+
+                   Two of these carry a `name` and one does not, because that is
+                   the difference the row has to draw: with a name it is a
+                   placard with the name as the compact form, and without one it
+                   is the whole fingerprint and a line saying this browser knows
+                   no name for it. */
                 peers={[
-                  { id: "peer1", fingerprint: "A".repeat(40), state: "connected", authenticated: true, via: "srflx" },
-                  { id: "peer2", fingerprint: "B".repeat(40), state: "connected", authenticated: false, via: "relay" },
-                  { id: "peer3", fingerprint: "C".repeat(40), state: "failed", authenticated: true },
+                  { id: "A".repeat(40), fingerprint: "A".repeat(40), name: "Ada Lovelace <ada@example.org>", state: "connected", authenticated: true, via: "srflx" },
+                  { id: "B".repeat(40), fingerprint: "B".repeat(40), name: "ops-team", state: "connected", authenticated: false, via: "relay" },
+                  { id: "C".repeat(40), fingerprint: "C".repeat(40), state: "failed", authenticated: true },
                 ]}
                 onRestartIce={() => {}}
               />
@@ -621,14 +626,14 @@ function CatalogApp() {
                 state="waiting"
                 room="KJ8XW2PQZM4RT9FQ"
                 invite="quorum KJ8XW2PQZM4RT9FQ · 3 keys · localhost"
-                /* No `fingerprint` on these three on purpose: a peer can be in
-                   the roster before its key is known, and the row falls back to
-                   the plain label rather than offering a control with nothing
-                   behind it. */
+                /* No `fingerprint` on these three on purpose: a direct `peer.*`
+                   link has no identity at all, and the row falls back to the
+                   plain `id` rather than offering a control with nothing behind
+                   it. That is the one case where `id` is not a key. */
                 peers={[
-                  { id: "peer1", state: "connected", authenticated: true },
-                  { id: "peer2", state: "connecting" },
-                  { id: "peer3", state: "new" },
+                  { id: "link-a", state: "connected", authenticated: true },
+                  { id: "link-b", state: "connecting" },
+                  { id: "link-c", state: "new" },
                 ]}
                 onCopyInvite={() => {}}
                 onCancel={() => {}}

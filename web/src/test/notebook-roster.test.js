@@ -62,14 +62,15 @@ describe("projectRosterPeers", () => {
     expect(rows[0].authenticated).toBe(false);
   });
 
-  it("carries the whole fingerprint beside the label, and nothing in between", () => {
+  it("carries the whole fingerprint, and nothing in between", () => {
     const [row] = projectRosterPeers(new Map([[FPR_A, peer()]]));
     expect(row.fingerprint).toBe(FPR_A);
     // `id` was `AAAA1111…9999`, the output of a `shortFpr` this module used to
-    // export. Changed because `id` is the name a cell header addresses and the
-    // key of `planRun`'s roster, and an elided fingerprint is not a legal peer
-    // label — it stopped notebooks compiling and made `normalizeRoster` throw.
-    expect(row.id).toBe("peer1");
+    // export; then `peer1`, a position in the sorted audience; and it is the key
+    // itself now. Each step removed a layer between the row and what a `@peer`
+    // header actually says, and this is the last one — the row's name for a
+    // person and the notebook's name for them are one value.
+    expect(row.id).toBe(FPR_A);
     // The abbreviation then moved to `display`, and `display` is now gone too.
     // It was twelve of forty characters — 48 bits, against the 32 the search
     // page already warns are collision-prone — printed where a reader compares
@@ -105,9 +106,14 @@ describe("the projection prints no fingerprint at all", () => {
     // map that names the peers has to be the map that names you; see
     // `handoff-who.test.js`. It shortens no fingerprint either: it hands back
     // labels and whole keys, the same two honest things a row carries.
+    // `peerLabels` left this list rather than joining it. It handed out
+    // positional labels — `peer1`, `peer2`, numbered over the canonical
+    // audience — and a position is not a name a reader can use, and it moved
+    // whenever the room changed size. What is left is the *order*, which
+    // several callers still want, and a roster that maps each key to itself.
     expect(Object.keys(roster).sort()).toEqual([
-      "peerLabels",
       "projectRosterPeers",
+      "roomMembers",
       "roomRoster",
     ]);
   });
@@ -168,23 +174,24 @@ describe("selectedCandidateType", () => {
  * A roster row's `id` is an identity, not a caption.
  *
  * Two surfaces read it as one. `ToolkitShell` offers it in `CellAssign`, which
- * writes `@<id>` into the notebook source; and it builds `planRun`'s roster —
- * `{ label: fingerprint }` — by keying on the same value. Both go through the
- * peer-label grammar, so an `id` that is not a legal label is not a cosmetic
- * problem: the notebook stops compiling and `normalizeRoster` throws, which
- * `ToolkitShell` catches into a null plan. The feature fails silently.
+ * writes `@<id>` into the notebook source; and it builds `planRun`'s roster by
+ * keying on the same value. Both go through the peer grammar, so an `id` that is
+ * not a legal peer is not a cosmetic problem: the notebook stops compiling and
+ * `normalizeRoster` throws, which `ToolkitShell` catches into a null plan. The
+ * feature fails silently.
  *
- * The abbreviation this module used to produce cannot be that value. It carries
- * U+2026, which no label grammar admits, and the elided form could not be an
- * identity even if it parsed — it is a truncation, and
- * `peerLooksLikeFingerprint` refuses fingerprint-shaped labels on the security
- * ground that a fingerprint in shared recipe text gives away the audience the
- * room is derived from.
+ * The abbreviation this module used to produce cannot be that value — it carries
+ * U+2026, which no grammar admits — and neither can any other truncation, for a
+ * reason that has outlived the label layer entirely: a suffix of a fingerprint
+ * names more than one key, so it identifies nobody, and `peerLooksLikeKeyId`
+ * refuses one wherever it is written.
  *
- * That abbreviation is now gone from the product altogether rather than merely
- * demoted, because being an illegal name was the smaller of its two problems.
+ * The positional label that replaced the abbreviation has now gone the same way.
+ * It was legal and it was stable and it was not an *identity*: `peer2` names a
+ * place in a sorted list, the list is sorted over key material, and it therefore
+ * moved whenever the room changed size. A row's `id` is the whole key.
  */
-describe("peer labels are legal, stable identities", () => {
+describe("a peer is a legal, stable identity", () => {
   const FPR_C = "CCCC111122223333444455556666777788889999";
   const AUDIENCE = [FPR_B, FPR_A, FPR_C]; // deliberately unsorted
 
@@ -195,7 +202,7 @@ describe("peer labels are legal, stable identities", () => {
     ]);
 
   it("names peers with something a notebook can compile", () => {
-    const rows = projectRosterPeers(connected(), undefined, AUDIENCE);
+    const rows = projectRosterPeers(connected());
     for (const row of rows) {
       // Exactly what `peerChoices` hands `CellAssign`, and what it writes.
       const { validation } = compileRecipe(`@${row.id}\nrandom 32 | out $x`);
@@ -204,7 +211,7 @@ describe("peer labels are legal, stable identities", () => {
   });
 
   it("names peers with something planRun can bind", () => {
-    const rows = projectRosterPeers(connected(), undefined, AUDIENCE);
+    const rows = projectRosterPeers(connected());
     // The roster ToolkitShell assembles, in the shape `planRun` takes.
     const roster = Object.fromEntries(rows.map((r) => [r.id, r.fingerprint]));
     expect(() => normalizeRoster(roster)).not.toThrow();
@@ -213,41 +220,37 @@ describe("peer labels are legal, stable identities", () => {
     );
   });
 
-  it("gives every audience member the same label on every machine", () => {
-    // The room is a digest of the audience, so the audience is fixed for the
-    // session and identical everywhere. Ordering the labels by it — rather than
-    // by who happened to arrive first — is what makes `@peer2` mean one person
-    // in a notebook that round-trips through text between two browsers.
-    const asCreator = projectRosterPeers(connected(), undefined, AUDIENCE);
-    const asJoiner = projectRosterPeers(
-      new Map([...connected()].reverse()),
-      undefined,
-      [FPR_C, FPR_A, FPR_B]
-    );
-    const labelOf = (rows) =>
+  it("names every member the same way on every machine, with nothing carried", () => {
+    // This used to be a property bought with an ordering rule: a label was a
+    // position in the canonical audience, so both browsers had to sort the same
+    // list the same way to agree about who `@peer2` was. It is a property of the
+    // *value* now — a key names itself — so arrival order, audience order and
+    // the audience contents are all irrelevant to it, which is why the
+    // assertions below no longer pass an audience in at all.
+    const asCreator = projectRosterPeers(connected());
+    const asJoiner = projectRosterPeers(new Map([...connected()].reverse()));
+    const nameOf = (rows) =>
       Object.fromEntries(rows.map((r) => [r.fingerprint, r.id]));
-    expect(labelOf(asJoiner)).toEqual(labelOf(asCreator));
+    expect(nameOf(asJoiner)).toEqual(nameOf(asCreator));
 
-    // And a peer arriving later must not renumber the peers already placed.
+    // And a peer arriving later must not rename the peers already placed —
+    // which was the hazard, and is now not expressible.
     const late = projectRosterPeers(
-      new Map([...connected(), [FPR_C, peer({ status: "connected" })]]),
-      undefined,
-      AUDIENCE
+      new Map([...connected(), [FPR_C, peer({ status: "connected" })]])
     );
-    expect(labelOf(late)).toMatchObject(labelOf(asCreator));
+    expect(nameOf(late)).toMatchObject(nameOf(asCreator));
   });
 
-  it("hands a panel a name and a whole key, and no third thing", () => {
-    // This used to assert that the abbreviation survived on `display` — "still
-    // what the panels put in front of a reader; the defect was using its output
-    // where an identity was wanted". That reading of the defect was too narrow.
-    // `AAAA1111…9999` was also unsafe to *read*: a reader who compares it has
-    // checked 48 of 160 bits and has no way to know it. So the row carries the
-    // label, which is a name and admits it, and the fingerprint, which is
-    // whole — and a panel renders one or the other, never a blend of the two.
-    const rows = projectRosterPeers(connected(), undefined, AUDIENCE);
-    expect(rows.every((r) => !r.id.includes("…"))).toBe(true);
-    expect(rows.map((r) => r.id)).toEqual(["peer1", "peer2"]);
+  it("hands a panel a whole key and no piece of one", () => {
+    // The abbreviation used to survive on `display` — "still what the panels put
+    // in front of a reader; the defect was using its output where an identity
+    // was wanted". That reading was too narrow: `AAAA1111…9999` was also unsafe
+    // to *read*, because a reader who compares it has checked 48 of 160 bits and
+    // has no way to know it. Nothing partial is on the row in any field, and
+    // that is asserted over the serialized object rather than over the two
+    // fields this test happens to name.
+    const rows = projectRosterPeers(connected());
+    expect(rows.map((r) => r.id)).toEqual([FPR_A, FPR_B]);
     expect(rows.map((r) => r.fingerprint)).toEqual([FPR_A, FPR_B]);
     expect(rows.some((r) => JSON.stringify(r).includes("…"))).toBe(false);
   });

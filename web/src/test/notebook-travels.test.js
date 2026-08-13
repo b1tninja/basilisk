@@ -254,12 +254,21 @@ describe("a notebook proposal", () => {
     expect(() => parseNotebookProposal(forged)).toThrow(/private key material/);
   });
 
-  it("refuses a fingerprint written where a peer label belongs", () => {
-    // The third arm of `recipeLooksSecret`, and the reason the predicate was
-    // moved out of the URL codec rather than copied: one rule, every boundary.
-    expect(() =>
-      buildNotebookProposal({ title: TITLE, source: `@${FPR_1} publish\nbytes ca | out $x` })
-    ).toThrow(/looks like it holds secret material/);
+  it("proposes a placed notebook, fingerprints and all", () => {
+    // This used to throw. `recipeLooksSecret` counted a fingerprint written as
+    // a peer among the material it refuses to let across a boundary, and a
+    // placed notebook is now exactly that on purpose — so refusing it here
+    // would mean the one kind of notebook worth sharing over a session is the
+    // one kind that cannot be.
+    //
+    // The other three arms of the predicate are untouched and are asserted
+    // elsewhere in this file: this boundary still refuses private armor.
+    const doc = buildNotebookProposal({
+      title: TITLE,
+      source: `@${FPR_1} publish
+bytes ca | out $x`,
+    });
+    expect(doc.source).toContain(FPR_1);
   });
 
   it("refuses armor, so there is one answer to which bytes were signed", () => {

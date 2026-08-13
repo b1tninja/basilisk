@@ -184,27 +184,33 @@ describe("peersSha, never fingerprints", () => {
     expect(audience).not.toBe(await peersDigest({ mara: FPR_A, okafor: FPR_B }));
   });
 
-  it("refuses a fingerprint written where a peer name belongs", async () => {
-    // The same refusal `validateRecipe` applies to a chain header, and for the
-    // same reason: a fingerprint in shared text gives away the audience, and
-    // the room is derived from the audience. Both halves of the asymmetry
-    // `630dc96` names are exercised — a fingerprint beginning with a letter is
-    // a structurally valid label and has to be refused by the security rule,
-    // while one beginning with a digit never parses as a label at all.
+  it("takes a fingerprint as a peer, and refuses a piece of one", async () => {
+    // A peer *is* a key now, so the peer column of the roster holds
+    // fingerprints and both sides of `peersSha`'s binding are the same value.
+    // The first of these used to reject.
     await expect(
       buildRunManifest({ peers: { [FPR_LETTER_FIRST]: FPR_A } })
-    ).rejects.toThrow(/A peer is named, not fingerprinted/);
+    ).resolves.toBeTruthy();
     await expect(
       buildRunManifest({
-        peers: { mara: FPR_A },
+        peers: { [FPR_LETTER_FIRST]: FPR_LETTER_FIRST },
         cells: [{ index: 0, peer: FPR_LETTER_FIRST }],
       })
-    ).rejects.toThrow(/A peer is named, not fingerprinted/);
-    await expect(buildRunManifest({ peers: { [FPR_A]: FPR_A } })).rejects.toThrow(
-      /Invalid peer name/
-    );
+    ).resolves.toBeTruthy();
+
+    // What did not change: a *part* of a key. A short id is a suffix of a
+    // fingerprint, so several keys answer to it — a digest over a roster keyed
+    // by one commits to none of them, which is the whole value of `peersSha`.
+    // Both halves of the asymmetry, because two key ids in three begin with a
+    // digit and the old rule answered differently for those.
+    await expect(
+      buildRunManifest({ peers: { D2C1B0A94F2AC1B3: FPR_A } })
+    ).rejects.toThrow(/part of a key rather than a key/);
+    await expect(
+      buildRunManifest({ peers: { "42C1B0A94F2AC1B3": FPR_A } })
+    ).rejects.toThrow(/part of a key rather than a key/);
     await expect(buildRunManifest({ peers: { "not a name": FPR_A } })).rejects.toThrow(
-      /Invalid peer name/
+      /Invalid peer/
     );
   });
 });

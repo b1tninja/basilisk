@@ -99,8 +99,8 @@ import {
   PEER_WILDCARD,
   normalizePeerRef,
   parseRecipeSource,
-  peerFingerprintError,
-  peerLooksLikeFingerprint,
+  peerKeyIdError,
+  peerLooksLikeKeyId,
 } from "./recipe-parse.js";
 import { getStep, stepEntropy } from "./registry.js";
 
@@ -311,14 +311,22 @@ export async function audienceDigest(fingerprints) {
 }
 
 /**
+ * One peer, canonicalised, or a throw naming why it is not one.
+ *
+ * A *whole* fingerprint is the ordinary case and is what the product writes.
+ * What is still refused here is a **part** of a key — 8, 16 or 32 hex
+ * characters — because a suffix of a fingerprint names more than one key, so a
+ * `peersSha` computed over one commits to nothing in particular. That is the
+ * refusal `peerLooksLikeKeyId` owns and this echoes with the compiler's copy.
+ *
  * @param {string} label
- * @returns {string} the canonical label
+ * @returns {string} the canonical peer
  */
 function assertPeerLabel(label) {
   const norm = normalizePeerRef(String(label ?? ""));
   if (!norm.ok) throw new Error(`manifest: ${norm.error}`);
-  if (peerLooksLikeFingerprint(norm.peer)) {
-    throw new Error(`manifest: ${peerFingerprintError(norm.peer)}`);
+  if (peerLooksLikeKeyId(norm.peer)) {
+    throw new Error(`manifest: ${peerKeyIdError(norm.peer)}`);
   }
   return norm.peer;
 }

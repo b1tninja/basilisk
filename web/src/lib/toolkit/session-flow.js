@@ -470,11 +470,19 @@ export function startIssues(draft) {
  * derive different manifests, and cell indices are the coordinate every offer
  * is addressed by, which a strip renumbers differently on each machine.
  *
- * The label is `roomRoster`'s, over the same audience the room is derived from,
- * so it is the one every other browser in the room hands out for this key. With
- * no key of ours in the audience there is no label to write and none is written
- * — the state `startIssues` refuses the press for, and a header naming nobody
- * would be a worse account of it than none.
+ * The header is `roomRoster`'s answer for this key, which is now the key's own
+ * fingerprint — so it is what every other browser in the room calls this
+ * machine, with nothing carried between them to make it so. With no key of ours
+ * in the audience `roomRoster` returns "" and no header is written: that is the
+ * state `startIssues` refuses the press for, and a header naming nobody would be
+ * a worse account of it than none.
+ *
+ * It reads `roomRoster` rather than the fingerprint in `keyFingerprint`
+ * directly, although the two are now the same forty characters. The question
+ * being asked is "what does the room call me", and answering it from the
+ * roster is what keeps `sessionRecipe` writing whatever `planRun` will bind
+ * against — including the empty answer for a key the audience does not contain,
+ * which a direct read could not produce.
  *
  * A hand-typed `agent.unlock` is untouched by all of this. It is the author's
  * sentence about their own notebook: solo, it runs here as it always has;

@@ -165,6 +165,20 @@ const EXPECTED_B64 = "3q2+7w==";
 const cell = (page, i) => page.locator("article").nth(i);
 
 /**
+ * A fingerprint as this product prints one: `formatFingerprint`'s grouping.
+ *
+ * Reproduced here rather than imported, deliberately. Every other value in this
+ * file crosses through the product; this one is what a *person reads on screen*,
+ * and importing the formatter would make the assertion "the row agrees with the
+ * formatter" instead of "the row shows the whole key in the shape this product
+ * always shows one in".
+ */
+const printFpr = (fpr) => String(fpr).match(/.{1,4}/g).join(" ");
+
+/** Escape a printed fingerprint for a `RegExp` — the spaces are fine, `+` is not. */
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
  * The session tray, as a scope.
  *
  * Every panel this journey reads — the slot list, the connections roster, the
@@ -218,7 +232,13 @@ async function writeCell(page, i, text) {
 async function assignCell(page, i, label, { publish = false } = {}) {
   const art = cell(page, i);
   await art.locator("[data-cell-assign]").click();
-  const item = page.getByRole("menuitem", { name: new RegExp(`@${label}(\\D|$)`) });
+  // The row prints the key the way `formatFingerprint` does — grouped in fours
+  // — because a `DropdownMenuItem` cannot hold the `Fingerprint` placard and the
+  // degradation is never a truncation. So the menu is found by the *printed*
+  // spelling rather than by the raw hex, which is also the assertion that the
+  // row is showing all of it: a truncated row would not match.
+  const printed = printFpr(label);
+  const item = page.getByRole("menuitem", { name: new RegExp(escapeRe(`@${printed}`)) });
   await item.waitFor({ state: "visible", timeout: 10000 });
   await item.click();
   if (!publish) return;
@@ -304,11 +324,14 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
   /** @type {import("playwright").Page} */ let joiner;
   /** @type {string} */ let origin = "";
   /**
-   * The two labels, as the *product* hands them out. `room.members` is in
-   * canonical audience order and `peerLabels` numbers that order, so member 0 is
-   * `peer1` — but the numbering is asked for rather than written down, because a
-   * label this file invented would be a label the room might not agree with, and
-   * that disagreement is precisely what `96dde48` is about.
+   * What each end's `@peer` header says, as the *product* derives it.
+   *
+   * Asked of `roomRoster` rather than written down, and that is still the rule
+   * even though the answer is now each browser's own fingerprint: what a room
+   * calls a member is the room's answer, and a name this file invented would be
+   * one the room might not agree with. That disagreement is what `96dde48` was
+   * about, and it is the class of defect this whole change removes rather than
+   * repairs.
    * @type {{ creator: string, joiner: string }}
    */
   let L = { creator: "", joiner: "" };
@@ -347,9 +370,16 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       creator: roster.me,
       joiner: roomRoster(room.audience, [], room.members[1].fpr).me,
     };
-    expect(L.creator, "the room could not label its own creator").toMatch(/^peer\d+$/);
-    expect(L.joiner).toMatch(/^peer\d+$/);
+    // The whole key, upper case — what `@peer` headers carry and what
+    // `peersSha` binds. This used to be `/^peer\d+$/`: a position in the sorted
+    // audience, which said nothing about who would run a cell and moved
+    // whenever the room changed size.
+    expect(L.creator, "the room could not name its own creator").toBe(room.members[0].fpr);
+    expect(L.joiner).toBe(room.members[1].fpr);
     expect(L.creator).not.toBe(L.joiner);
+    // And it is the room's answer, not this file's: a key the audience does not
+    // contain gets "" rather than a place in a room it is not in.
+    expect(roomRoster(room.audience, [], "F".repeat(40)).me).toBe("");
   }, 180_000);
 
   afterAll(async () => {
@@ -391,8 +421,30 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     await creator.locator("[data-session-key] select").selectOption(room.members[0].fpr);
     expect(
       await creator.locator(`[data-session-member="${L.joiner}"]`).count(),
-      "the sheet did not label the invited key"
+      "the sheet did not name the invited key"
     ).toBe(1);
+    // **The row is a placard, and the placard is the whole key.** This is what
+    // replaced `@peer2`: the value the row shows and the value a cell header
+    // writes are one string, so there is nothing binding them that could come
+    // apart. `variant="compact"` used to stand the label in for the key here,
+    // and it must not stand the key in for itself — it prints a name carrying
+    // no bits of the key, and passing the key as that name would print all of
+    // it while claiming to print something that is not it.
+    const row = creator.locator(`[data-session-member="${L.joiner}"]`);
+    expect(await row.locator('[data-fingerprint="full"]').count()).toBe(1);
+    expect(await row.locator('[data-fingerprint="compact"]').count()).toBe(0);
+    expect((await row.innerText()).replace(/\s/g, "")).toContain(L.joiner);
+    // …and the human half beside it, which is the thing forty hex characters
+    // cannot supply. This browser has never met the joiner's key, so the row
+    // says so rather than filling the gap with characters off the key.
+    expect(await row.innerText()).toContain("no name for this key in this browser");
+    // The creator's own row does have a name — the uid seeded into this vault
+    // — which is the pair that makes the sentence above an assertion rather
+    // than a coincidence.
+    const mine = creator.locator(`[data-session-member="${L.creator}"]`);
+    expect(await mine.innerText()).toContain("Creator <creator@journey.test>");
+    // Nothing anywhere in the room list is a truncation.
+    expect(await creator.locator("[data-session-audience]").innerText()).not.toContain("…");
     await creator.keyboard.press("Escape");
     await sheet.waitFor({ state: "hidden", timeout: 10000 });
 
@@ -429,6 +481,43 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     expect(cells[0].split("\n")[0]).toBe(`@${L.creator} publish`);
     expect(cells[2].split("\n")[0]).toBe(`@${L.creator}`);
     expect(cells[2]).toContain("$b64");
+    // And not one positional label anywhere in it. This is the assertion that
+    // says which product this notebook came out of: `@peer1`/`@peer2` still
+    // parse and still compile — a notebook written before this change has to —
+    // so their absence here is a fact about what the menu writes rather than
+    // about what the grammar allows.
+    expect(creatorSource).not.toMatch(/^@peer\d/m);
+  });
+
+  /* ── 1b. what the notebook's own link now gives away, said on the sheet ─── */
+
+  it("says what a placed notebook's link discloses, and only once it is placed", async () => {
+    // The honest half of the trade. A `@peer` header is a whole fingerprint, so
+    // a placed notebook's `#r=` link carries the audience to whoever opens it —
+    // and `hashForRecipe` used to refuse to build one at all, which is what let
+    // this row promise "No trust needed" about every link it produced.
+    //
+    // Read off the shipped sheet rather than from `recipeLinkDiscloses`,
+    // because the defect this guards against is the one `42875a2` landed for:
+    // a sentence that is true of the function and not of the screen.
+    await creator.getByRole("button", { name: "Share", exact: true }).click();
+    const sheet = creator.locator("[data-share-sheet]");
+    await sheet.waitFor({ state: "visible", timeout: 20000 });
+    const recipeTier = sheet.locator('[data-tier="Send the recipe"]');
+    const trust = recipeTier.locator("[data-tier-trust]");
+    expect(await trust.getAttribute("data-trust-tone")).toBe("warn");
+    const said = await trust.innerText();
+    expect(said).toContain("2 keys");
+    expect(said).toContain("who is in the room");
+    // The half of the old promise that survived, in the same sentence, so the
+    // reader is not left to work out which half did.
+    expect(said).toContain("reaches no server");
+    expect(said).not.toContain("No trust needed");
+    // The link is built rather than refused, which is the change that made the
+    // sentence necessary.
+    expect(await recipeTier.getAttribute("data-blocked")).toBe("no");
+    await creator.keyboard.press("Escape");
+    await sheet.waitFor({ state: "hidden", timeout: 10000 });
   });
 
   /* ── 2. start it ────────────────────────────────────────────────────────── */
@@ -680,6 +769,10 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     const away = tray(creator).locator("[data-handoff-outgoing] li");
     await expect.poll(async () => await away.count(), { timeout: 20000 }).toBe(1);
     expect(await away.first().innerText()).toContain(`@${L.joiner}`);
+    // Whole, in the queue too. This row is the densest place a peer is drawn
+    // in the product and is exactly the column that has argued itself into a
+    // truncation before.
+    expect(await away.first().innerText()).not.toContain("…");
     await expect
       .poll(
         async () => await away.first().locator("[data-offer-state]").getAttribute("data-offer-state"),

@@ -13,7 +13,7 @@
  *
  *  - every cell planned as somebody else's (`mine: false`), including the ones
  *    the author placed on themselves;
- *  - `planRun` refusing this browser's own label as a peer "no one in this room
+ *  - `planRun` refusing this browser's own key as a peer "no one in this room
  *    answers to", so `plan.ok` was false and `summarizePlan` said the run was
  *    refused;
  *  - `runFrom` therefore building no placement gate at all — its condition is
@@ -48,7 +48,15 @@ import { createSlotRegistry } from "../lib/toolkit/slot-registry.js";
 
 const FPR_M = "4F2AC1B39D8E7C6A5B4938271605F4E3D2C1B0A9";
 const FPR_O = "91C7E6D5C4B3A29180716253443526170819AABB";
-/** Unsorted on purpose: the labels are positions in the *canonical* audience. */
+/**
+ * Unsorted on purpose.
+ *
+ * It used to matter to the *answer*: a peer was a position in the canonical
+ * audience, so a test passing the list in a different order was testing whether
+ * both browsers sorted it the same way. It matters to nothing now, and staying
+ * unsorted is the assertion — a derivation that quietly reacquired an ordering
+ * dependence would still pass a sorted fixture.
+ */
 const AUDIENCE = [FPR_O, FPR_M];
 
 /** A peer row's transport state, meshed and both-ways verified. */
@@ -65,25 +73,28 @@ const MET = { status: "connected", pgpVerified: true, kcVerified: true };
  */
 function exchange(selfFpr) {
   const peersMap = new Map(AUDIENCE.filter((f) => f !== selfFpr).map((f) => [f, { ...MET }]));
-  const rows = projectRosterPeers(peersMap, undefined, AUDIENCE);
+  const rows = projectRosterPeers(peersMap);
   return { rows, self: selfFpr, ...roomRoster(AUDIENCE, rows.map((r) => r.fingerprint), selfFpr) };
 }
 
 /**
- * peer1 seeds the room, peer2 transforms it, peer1 reads the answer.
+ * mara seeds the room, okafor transforms it, mara reads the answer.
  *
- * Written against the labels the derivation hands out rather than against
+ * Written against the keys the derivation hands out rather than against
  * `@mara`/`@okafor`, because that substitution is where the defect hid: a
- * notebook whose labels a test invents is a notebook whose `me` a test can
- * invent too.
+ * notebook whose peers a test invents is a notebook whose `me` a test can
+ * invent too. It reads more directly than it used to — the peers are the two
+ * fingerprints at the top of this file, so a reader can see which machine each
+ * cell belongs to without holding a numbering in their head, which is most of
+ * the point of the change this file was rewritten for.
  */
-const NOTEBOOK = `@peer1 publish
+const NOTEBOOK = `@${FPR_M} publish
 bytes deadbeef | encode hex | out $seed
 
-@peer2 publish
+@${FPR_O} publish
 in $seed | decode hex | encode base64 | out $b64
 
-@peer1
+@${FPR_M}
 in $b64 | decode base64 | encode hex | out $final
 `;
 
@@ -101,22 +112,23 @@ async function runPlaced(ctx) {
   return { registry, skipped };
 }
 
-describe("the label this browser occupies", () => {
-  it("is a position in the audience, which is the one place it can be", () => {
+describe("which peer this browser is", () => {
+  it("is its own key, which the audience has to contain", () => {
     const mara = exchange(FPR_M);
     // The fact that made the old derivation impossible, stated rather than
     // implied: this browser is not among its own peer rows and never will be.
     expect(mara.rows.some((r) => r.fingerprint === FPR_M)).toBe(false);
-    expect(mara.rows.map((r) => r.id)).toEqual(["peer2"]);
-    // And it still has a label, because the audience has a position for it.
-    expect(mara.me).toBe("peer1");
-    expect(mara.roster).toEqual({ peer1: FPR_M, peer2: FPR_O });
+    expect(mara.rows.map((r) => r.id)).toEqual([FPR_O]);
+    // And it is still named, because the *audience* contains it — which is the
+    // thing `roomRoster` reads and the peer rows are not.
+    expect(mara.me).toBe(FPR_M);
+    expect(mara.roster).toEqual({ [FPR_M]: FPR_M, [FPR_O]: FPR_O });
   });
 
-  it("cannot disagree with the labels the panel draws", () => {
-    // One `peerLabels` map answers both questions, so there is no second
-    // derivation to drift: every row's `id` is this roster's key for that
-    // fingerprint, and `me` is a key of the same map.
+  it("cannot disagree with what the panel draws", () => {
+    // One derivation answers both questions, so there is no second one to
+    // drift: every row's `id` is this roster's key for that fingerprint, and
+    // `me` is a key of the same object.
     for (const self of AUDIENCE) {
       const { rows, roster, me } = exchange(self);
       for (const row of rows) expect(roster[row.id]).toBe(row.fingerprint);
@@ -128,20 +140,22 @@ describe("the label this browser occupies", () => {
     const mara = exchange(FPR_M);
     const okafor = exchange(FPR_O);
     expect(okafor.roster).toEqual(mara.roster);
-    expect([mara.me, okafor.me]).toEqual(["peer1", "peer2"]);
+    expect([mara.me, okafor.me]).toEqual([FPR_M, FPR_O]);
   });
 
   it("names nobody for a fingerprint the room was not derived from", () => {
-    // A browser the audience does not contain has no position in it, and
-    // inventing one would place somebody else's cells here. `planRun` has a
-    // question for exactly this state (`who-am-i`); the empty string is what
-    // leaves it standing.
+    // A browser the audience does not contain is not in this room, and claiming
+    // a place in it would place somebody else's cells here. This is the one
+    // assertion that keeps `roomRoster` from collapsing into "return the
+    // fingerprint you were given": the mapping is identity, and it is still a
+    // *lookup*. `planRun` has a question for exactly this state (`who-am-i`);
+    // the empty string is what leaves it standing.
     const stranger = "0000111122223333444455556666777788889999";
     expect(roomRoster(AUDIENCE, [FPR_M, FPR_O], stranger).me).toBe("");
     expect(roomRoster([], [], FPR_M).me).toBe("");
   });
 
-  it("does not renumber anybody when a peer is still on their way", () => {
+  it("does not change under anybody when a peer is still on their way", () => {
     // The roster is the audience, not the arrivals, so it is the same map
     // before and after the second peer meshes — which is what lets the two
     // sides commit to one `peersSha`.
@@ -150,15 +164,15 @@ describe("the label this browser occupies", () => {
   });
 });
 
-describe("a cell placed on this browser's own label", () => {
+describe("a cell placed on this browser's own key", () => {
   it("is this browser's to run", () => {
     const mara = exchange(FPR_M);
     const plan = planRun(compileRecipe(NOTEBOOK), { me: mara.me, roster: mara.roster });
-    // No refusal: `@peer1` is a peer this room contains, and it is us. The old
-    // resolution refused it here — "no one in this room answers to that name"
-    // — about the label of the browser doing the asking.
+    // No refusal: the header names a key this room contains, and it is ours.
+    // The old resolution refused it here — "no one in this room answers to that
+    // name" — about the browser doing the asking.
     expect(plan.ok, plan.refusals.map((r) => r.reason).join(", ")).toBe(true);
-    expect(plan.me).toBe("peer1");
+    expect(plan.me).toBe(FPR_M);
     expect(plan.cells.map((c) => c.mine)).toEqual([true, false, true]);
     // The mirror image on the other machine. The two plans have to agree about
     // cell 1 independently — an offer says nothing about who runs a cell.
@@ -168,7 +182,7 @@ describe("a cell placed on this browser's own label", () => {
     // And the plan can now say what this peer is waiting for, which the wait
     // loop records only for cells that are `mine`.
     expect(plan.waits).toEqual([
-      { cell: 2, on: 1, peer: "peer2", slot: "b64", reason: "published-slot" },
+      { cell: 2, on: 1, peer: FPR_O, slot: "b64", reason: "published-slot" },
     ]);
   });
 
@@ -210,18 +224,18 @@ describe("the handoff the resolution gates", () => {
     // old resolution each side's roster was the *other* peer and nothing else,
     // and the two digests could not match.
     expect(await manifestDigest(ctxM.manifest)).toBe(await manifestDigest(ctxO.manifest));
-    expect(ctxM.manifest.peers).toEqual(["peer1", "peer2"]);
+    expect(ctxM.manifest.peers).toEqual([FPR_M, FPR_O].sort());
 
     // mara runs, and the gate declines the cell that is not hers.
     const { registry, skipped } = await runPlaced(ctxM);
     expect(skipped.map((s) => s.cell)).toEqual([1]);
-    expect(skipped[0].waitingOn).toBe("peer2");
+    expect(skipped[0].waitingOn).toBe(FPR_O);
 
     const built = await offerForSkipped(ctxM, skipped[0], (l) =>
       registry.has(l) ? registry.resolve(l) : null
     );
     expect(built.ok).toBe(true);
-    expect(built.peer).toBe("peer2");
+    expect(built.peer).toBe(FPR_O);
 
     // okafor's own plan says cell 1 is his, so the offer is something he can
     // be asked about. `not-mine` is the branch this file exists to stay out of.

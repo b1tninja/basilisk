@@ -87,28 +87,35 @@ export type SessionStartProps = {
   /** Everyone in the room, canonical, including you. */
   audience: string[];
   /**
-   * Fingerprint → the `@peer` label that member holds, from `peerLabels`.
+   * Fingerprint → a name this browser has for that key, where it has one.
    *
-   * Passed in rather than derived, for the rule this widget is held to — plain
-   * props, no store — and for a stronger reason: the labels shown here are the
-   * ones a cell will be assigned to, and computing a second set from the same
-   * audience would be a second copy of the numbering rule sitting one component
-   * away from the first. One call, one answer, two places it is drawn.
+   * **This prop used to carry the labels and now carries the names**, which is
+   * the same slot answering the opposite half of the question. A `@peer` header
+   * is the key itself now, so the row already holds everything the notebook
+   * will say; what it cannot derive is who the key *belongs* to, and that comes
+   * from the two lists the shell already loads — the trusted marks and the
+   * vault's uids.
    *
-   * A room this list can *name* is a room somebody can write a notebook for
-   * before anyone connects, which is the whole point of showing them: `@peer2`
-   * is not a name, and this is the row where it acquires one.
+   * Passed in rather than looked up, for the rule this widget is held to —
+   * plain props, no store — and for the stronger reason `ToolkitShell` gives
+   * where the map is built: a placard that resolved a name some other way would
+   * be a second opinion about whose key this is, one component away from the
+   * first.
+   *
+   * A key with no entry is drawn with no name and says so. There is no fallback
+   * derived from the fingerprint, ever.
    */
-  labels?: Record<string, string>;
+  names?: Record<string, string>;
   /**
    * What the last change to this list did to the notebook's placements.
    *
-   * The audience is sorted, so adding somebody renumbers everyone below them
-   * and a cell that said `@peer2` would come to mean a different person. The
-   * placements are rewritten to follow the person (`peer-relabel.js` argues
-   * it), and this is that rewrite said out loud — the cells it touched are not
-   * on screen from here, so a change nobody narrates is a change nobody can
-   * check.
+   * Only removals produce one now. Adding somebody used to renumber everyone
+   * who sorted below them — a peer was a position — and every header had to be
+   * rewritten to keep meaning the same person; a peer is the key itself, so an
+   * add disturbs nothing. What survives is the cell placed on somebody who has
+   * *left*, which will never run and is handed back to the author
+   * (`peer-relabel.js` argues it). Those cells are not on screen from here, so
+   * a change nobody narrates is a change nobody can check.
    */
   relabelNote?: string;
   /**
@@ -276,7 +283,7 @@ export function SessionStart({
   keyFingerprint,
   onKeyFingerprint,
   audience,
-  labels = {},
+  names = {},
   relabelNote = "",
   trusted = [],
   onSearch,
@@ -460,42 +467,40 @@ export function SessionStart({
             e2e counts them against the audience. */}
         <div data-session-audience>
           {audience.length ? (
-            <ul className="flex list-none flex-col gap-0.5 p-0">
+            <ul className="flex list-none flex-col gap-1 p-0">
               {audience.map((fpr) => {
-                const label = labels[fpr.toUpperCase()] || "";
-                const name = nameOf(fpr);
+                const hex = fpr.toUpperCase();
+                const name = names[hex] || nameOf(fpr);
                 return (
-                  <li key={fpr} className="flex items-center gap-1.5" data-session-member={label}>
-                    {/* The label *is* the compact form. `peer2` is a name this
-                        row already has for the key — the one a cell header
-                        writes and the one the other browser reads — so it is
-                        exactly what `variant="compact"` was built to print
-                        instead of `AABBCCDD…EEFF`, and pressing it copies all
-                        forty characters. The whole value is still on this
-                        panel: `InviteCard` below draws every member of this
-                        list in full, and argues why it must.
+                  <li
+                    key={fpr}
+                    className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5"
+                    data-session-member={hex}
+                  >
+                    {/* The placard, and the whole key in it. This row is where a
+                        member of the room is identified, and a `@peer` header is
+                        now this exact value — so the row and the notebook say
+                        the same forty characters and nothing has to be
+                        reconciled between them. `variant="compact"` is what used
+                        to be drawn here, standing in a peer label for the key;
+                        there is no label left to stand in, and the compact form
+                        exists precisely so that nobody reaches for a truncation
+                        when the column is tight. It is not tight: the row wraps.
 
-                        A member with no label has nothing compact to be, and
-                        gets the full form — the inverse of the fallback
-                        `ConnectionsPanel` makes for a row with no key. */}
-                    {label ? (
-                      <Fingerprint
-                        className="shrink-0 text-[10.5px] text-[var(--foreground)]"
-                        fpr={fpr}
-                        variant="compact"
-                        label={label}
-                      />
-                    ) : (
-                      <Fingerprint
-                        className="min-w-0 flex-1 text-[10.5px] text-[var(--foreground)]"
-                        fpr={fpr}
-                      />
-                    )}
-                    {label ? (
-                      <span className="min-w-0 flex-1 truncate text-[10.5px] text-[var(--muted-foreground)]">
-                        {name || "no name for this key in this browser"}
-                      </span>
-                    ) : null}
+                        `Fingerprint` carries the rest of the placard on its own
+                        — the trust mark, the keyserver page, Copy — because it
+                        is the one component in this app entitled to act on a
+                        key. */}
+                    <Fingerprint
+                      className="text-[10.5px] text-[var(--foreground)]"
+                      fpr={fpr}
+                    />
+                    <span
+                      className="min-w-0 flex-1 truncate text-[10.5px] text-[var(--muted-foreground)]"
+                      data-session-member-name={name ? "1" : ""}
+                    >
+                      {name || "no name for this key in this browser"}
+                    </span>
                     {/* The accessible name carries the whole fingerprint too. A
                         list of buttons all called "Remove" is one announcement
                         repeated (4.1.2), and naming twelve of forty characters
@@ -532,11 +537,10 @@ export function SessionStart({
             reads as the app losing track of an assignment. */}
         {audience.length ? (
           <p className="text-[10px] leading-snug text-[var(--muted-foreground)]">
-            These labels are what a cell header addresses — assign work to them
-            now and it runs on these keys when the session opens. They are
-            numbered by fingerprint, so adding or removing somebody renumbers
-            the rest; placements already in the notebook are moved to follow the
-            person.
+            A cell header addresses one of these keys, in full — assign work to
+            somebody now and it runs on their key when the session opens.
+            Removing somebody leaves their cells assigned to nobody, and the
+            line below says which.
           </p>
         ) : null}
 

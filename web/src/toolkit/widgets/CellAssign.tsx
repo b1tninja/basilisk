@@ -8,37 +8,43 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
-import { PEER_SIGIL, SLOT_SIGIL } from "../../lib/toolkit/recipe-parse.js";
+import { PEER_SIGIL, SLOT_SIGIL, peerIsFingerprint } from "../../lib/toolkit/recipe-parse.js";
+import { formatFingerprint } from "../../lib/utils.js";
 
 /**
- * One label a cell can be assigned to, and who holds it.
+ * One peer a cell can be assigned to, and who they are.
  *
- * **The label is the value and the name is the caption**, never the other way
- * round: `@peer2` is what goes in the notebook, is what `planRun` binds and is
- * what the other browser reads, while the name is this browser's private
- * knowledge of whose key sits at that position. Two people can hold different
- * names for the same key and still agree about every header in the notebook,
- * which is the property the positional label exists to buy.
+ * **The key is the value and the name is the caption**, never the other way
+ * round: the whole fingerprint is what goes in the notebook, is what `planRun`
+ * binds and is what the other browser reads, while the name is this browser's
+ * private knowledge of whose key it is. Two people can hold different names for
+ * the same key and still agree about every header in the notebook — which used
+ * to be the property a positional label was invented to buy, and is now free,
+ * because both notebooks name the key itself.
  *
  * `name` is a uid or a trust mark and **nothing derived from the fingerprint**.
  * `components/ui/fingerprint.tsx` argues at length why a shortened key is not
  * an identifier a person may be asked to compare, and a menu row is exactly the
- * dense column that has historically argued itself into one. A label whose key
- * this browser knows no name for carries no `name` and says as much; the key
- * behind it is drawn in full, next to this same label, in the session sheet's
- * room list — the row where the two were bound together in the first place.
+ * dense column that has historically argued itself into one. A peer this
+ * browser knows no name for carries no `name` and says as much; the key behind
+ * it is drawn here in full, and again in the session sheet's room list, where
+ * it can be copied and marked.
  */
 export type PeerChoice = {
-  /** The label a header writes, with no sigil: `peer2`. */
+  /**
+   * What a header writes, with no sigil: a whole fingerprint for anybody the
+   * room binds, or whatever name a hand-written header used.
+   */
   label: string;
   /** Whose key it is, when this browser has a name for it. */
   name?: string;
-  /** This browser's own label — the reader is "you" to themselves. */
+  /** This browser's own key — the reader is "you" to themselves. */
   self?: boolean;
   /**
-   * Set when the room binds this label to a key. Absent for a label the
-   * notebook names and the room does not — typed by hand, or left behind by a
-   * room that has changed — which is a real state and a different sentence.
+   * Set when the room binds this peer to a key. Absent for a peer the notebook
+   * names and the room does not — typed by hand, or a `@peer1` left in a
+   * notebook written before a peer was a key — which is a real state and a
+   * different sentence.
    */
   fingerprint?: string;
 };
@@ -83,7 +89,7 @@ export type CellAssignProps = {
 };
 
 /**
- * The line under a label, saying who holds it.
+ * The line under a peer, saying who they are.
  *
  * Exported for the reason `fingerprintActions` is: the rows live in a portal,
  * so nothing short of a browser can read them, and a sentence no test can
@@ -92,9 +98,14 @@ export type CellAssignProps = {
  *
  * Four states and no fifth, and each names the one it is actually in. "In the
  * room, and this browser has never put a name to the key" is a different fact
- * from "the notebook names this label and the room does not", and a reader
- * about to hand a cell to one of them is owed the difference: the first will
- * run, the second is waiting for somebody who has not been invited.
+ * from "the notebook names this peer and the room does not", and a reader about
+ * to hand a cell to one of them is owed the difference: the first will run, the
+ * second is waiting for somebody who has not been invited.
+ *
+ * The fourth state is the one a notebook written before this change lands in. A
+ * `@peer1` header is still a legal peer and still compiles; nothing in the room
+ * answers to it, `planRun` refuses the cell as `unknown-peer`, and this row is
+ * where the reader is told so at the moment they can fix it.
  */
 export function peerCaption(choice: PeerChoice): string {
   if (choice.self) return "you — the key you are joining as";
@@ -103,6 +114,32 @@ export function peerCaption(choice: PeerChoice): string {
     return "in the room; no name for this key in this browser";
   }
   return "not in the room — this notebook names them and the audience does not";
+}
+
+/**
+ * A peer as a trigger or a menu row can print it.
+ *
+ * **Neither of those two places can hold a placard, and the reason is
+ * structural rather than a layout preference.** `Fingerprint` is a button plus
+ * its own `DropdownMenu`; the trigger below is already a `DropdownMenuTrigger
+ * asChild` wrapping a `Button`, and the rows below that are
+ * `DropdownMenuItem`s inside a Radix menu. Nesting an interactive element in
+ * either one produces a button inside a button and a menu inside a menu item —
+ * invalid markup, and a keyboard trap where Radix's roving focus meets a second
+ * focusable child.
+ *
+ * So both degrade the same way, and the degradation is **never a truncation**:
+ * the whole value, grouped exactly as `Fingerprint` prints it, with the name on
+ * a caption line of its own. What is lost is the *actions* — copy, trust,
+ * keyserver — and they are one press away on the same key in the session
+ * sheet's room list, which is a placard in full.
+ *
+ * A hand-written name is returned untouched: `formatFingerprint` groups hex in
+ * fours and would make nonsense of `alice`.
+ */
+export function peerPrinted(peer: string): string {
+  const s = String(peer || "");
+  return peerIsFingerprint(s) ? formatFingerprint(s) : s;
 }
 
 /**
@@ -145,7 +182,13 @@ export function CellAssign({
   defaultOpen = false,
   className,
 }: CellAssignProps) {
-  const label = peer ? `${PEER_SIGIL}${peer}` : "anyone";
+  const label = peer ? `${PEER_SIGIL}${peerPrinted(peer)}` : "anyone";
+  // The name beside the key, where this browser has one. The trigger is the one
+  // place in the notebook that says who runs a cell without the reader opening
+  // anything, so a header of forty hex characters and nothing else would be a
+  // regression in exactly the thing this change is for. Both are drawn: the
+  // value the notebook holds, and who it is.
+  const who = choices.find((c) => c.label === peer);
   // A cell that publishes everything shows every slot as published, because it
   // does. The list is only a *narrowing*, so the empty list and the full list
   // mean the same thing and the menu says so.
@@ -164,11 +207,16 @@ export function CellAssign({
         <Button
           size="sm"
           variant="ghost"
-          className={cn("font-mono", className)}
+          className={cn("cell-assign-trigger font-mono", className)}
           data-cell-assign={peer ?? ""}
-          title="Who runs this cell"
+          title={peer ? `Who runs this cell: ${peerPrinted(peer)}` : "Who runs this cell"}
         >
-          {label}
+          <span className="cell-assign-peer">{label}</span>
+          {who?.name || who?.self ? (
+            <span className="ml-1 text-[10px] text-[var(--muted-foreground)]">
+              {who.self ? "you" : who.name}
+            </span>
+          ) : null}
           {modifier ? (
             <span className="ml-1 text-[10px] text-[var(--muted-foreground)]">
               {modifier}
@@ -183,11 +231,15 @@ export function CellAssign({
           anyone — wherever the notebook runs
         </DropdownMenuItem>
         {choices.length ? <DropdownMenuSeparator /> : null}
-        {/* Label over name, in that order and that weight. The label is what
-            the cell will say and what the other end will read; the name is how
-            this reader recognises it. Reversing them would put the private
-            fact first and leave somebody comparing notebooks with no idea
-            which line was the one that travels. */}
+        {/* Key over name, in that order and that weight. The key is what the
+            cell will say and what the other end will read; the name is how this
+            reader recognises it. Reversing them would put the private fact
+            first and leave somebody comparing notebooks with no idea which line
+            was the one that travels.
+
+            Not a `Fingerprint` placard: see `peerPrinted` for why a
+            `DropdownMenuItem` cannot hold one, and for what is given up. The
+            whole value is printed, wrapped rather than cut. */}
         {choices.map((c) => (
           <DropdownMenuItem
             key={c.label}
@@ -198,9 +250,9 @@ export function CellAssign({
             }
           >
             <span className="flex min-w-0 flex-col gap-[2px]">
-              <span className="font-mono">
+              <span className="cell-assign-peer font-mono">
                 {PEER_SIGIL}
-                {c.label}
+                {peerPrinted(c.label)}
               </span>
               <span className="text-[10px] text-[var(--muted-foreground)]">
                 {peerCaption(c)}

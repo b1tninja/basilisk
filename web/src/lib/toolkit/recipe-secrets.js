@@ -19,15 +19,30 @@
  *
  * **A heuristic, and it says so.** It cannot see a passphrase typed as a step
  * parameter or a key pasted into a slot; what it catches is the material that
- * announces itself — private armor, a JWK with a private component, and a
- * fingerprint written where a peer label belongs. Every caller is a boundary
- * where the honest answer to "am I sure" is no, and refusing on a strong hint is
- * better than carrying on because the check was not certain.
+ * announces itself — private armor and a JWK with a private component. Every
+ * caller is a boundary where the honest answer to "am I sure" is no, and
+ * refusing on a strong hint is better than carrying on because the check was
+ * not certain.
+ *
+ * ## What this used to refuse and no longer does
+ *
+ * A fingerprint written where a peer belongs was on this list, and it was the
+ * only entry that was not secret material at all: a fingerprint is what a
+ * keyserver hands to strangers. It was here because the *audience* it discloses
+ * is what a room is derived from, and the product's answer at the time was an
+ * invented positional label (`@peer1`) that disclosed nothing and meant nothing.
+ * The product now writes the key itself, so this check would refuse every placed
+ * notebook a person composed on purpose.
+ *
+ * It is not simply gone: the disclosure is real and is now *stated* rather than
+ * prevented. `fingerprintPeersInText` is the same detector, and the Share
+ * sheet's recipe row says what a link carries whenever it finds anything. A
+ * refusal was the wrong shape for it — this predicate's other three entries are
+ * things nobody could want to share, and that one was a thing somebody had
+ * deliberately built.
  *
  * @module lib/toolkit/recipe-secrets
  */
-
-import { textHasFingerprintPeer } from "./recipe-parse.js";
 
 /**
  * Heuristic: refuse to copy private armor / obvious secret blobs anywhere a
@@ -40,11 +55,5 @@ export function recipeLooksSecret(recipe) {
   if (/BEGIN PGP PRIVATE KEY BLOCK/i.test(s)) return true;
   if (/BEGIN PRIVATE KEY/i.test(s)) return true;
   if (/"kty"\s*:\s*"[^"]+"/i.test(s) && /"d"\s*:/i.test(s)) return true;
-  // A fingerprint written where a peer is named. `validateRecipe` refuses the
-  // same shape at compile, and the callers here never compile — `hashForRecipe`
-  // builds a URL out of text and `buildNotebookProposal` builds a document out
-  // of it — so the refusal has to be made twice or it is only made where it does
-  // not matter.
-  if (textHasFingerprintPeer(s)) return true;
   return false;
 }

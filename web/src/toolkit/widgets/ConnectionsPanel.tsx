@@ -26,13 +26,20 @@ import type { SessionStripState } from "./SessionStrip";
 
 export type ConnectionPeer = {
   /**
-   * The peer's name — a legal `@peer` label, stable across machines, and what
-   * a cell header addresses. Not an abbreviated fingerprint: see `peerLabels`
-   * in `lib/notebook/roster.js` for why a truncation cannot be an identity.
+   * What a cell header addresses this peer as — the whole fingerprint, upper
+   * case, for a row from a live quorum roster. A direct `peer.*` link has no
+   * identity at all and carries its connection name here instead, which is why
+   * this is a separate field from `fingerprint` and not the same string twice.
    */
   id: string;
   /** The whole key fingerprint when the row comes from a live quorum roster. */
   fingerprint?: string;
+  /**
+   * A name this browser has for the key — a uid or a trust mark, never
+   * anything derived from the fingerprint. Absent where it knows none, and the
+   * row says so rather than inventing something to fill the column.
+   */
+  name?: string;
   state: "new" | "connecting" | "connected" | "disconnected" | "failed" | "closed";
   /** Verified against a published key, per the signed-transcript design. */
   authenticated?: boolean;
@@ -103,21 +110,27 @@ function PeerRow({ peer }: { peer: ConnectionPeer }) {
         data-peer-state={peer.state}
         aria-hidden
       />
-      {/* One element for both questions, where there used to be two. The label
-          is what a cell header addresses (`@peer2`), so it is what the row is
-          named by — and pressing it copies the whole fingerprint of the key it
-          is attached to. What sat beside it was `AABBCCDD…EEFF`, which invited
-          the reader to check twelve of forty characters and told them nothing
-          about the rest; the row is shorter now and publishes none of the key.
+      {/* The placard. A peer is the key now, so the row and the notebook name
+          the same value and there is nothing to reconcile between them — which
+          is what `variant="compact"` used to do here, standing a positional
+          label in for the key. There is no label left to stand in.
+
+          `Fingerprint` brings the rest of the placard with it: Copy, the trust
+          mark, the keyserver page. The name beside it is this browser's own
+          knowledge and never part of the key.
+
           Rows with no fingerprint (a direct link, no identity) keep the plain
-          label: there is nothing to copy and nothing to act on. */}
+          id: there is nothing to copy and nothing to act on. */}
       {peer.fingerprint ? (
-        <Fingerprint
-          className="min-w-0 flex-1 text-[11px] text-[var(--foreground)]"
-          fpr={peer.fingerprint}
-          variant="compact"
-          label={peer.id}
-        />
+        <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-1.5">
+          <Fingerprint
+            className="text-[11px] text-[var(--foreground)]"
+            fpr={peer.fingerprint}
+          />
+          <span className="min-w-0 truncate text-[10px] text-[var(--muted-foreground)]">
+            {peer.name || "no name for this key in this browser"}
+          </span>
+        </span>
       ) : (
         <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--foreground)]">
           {peer.id}

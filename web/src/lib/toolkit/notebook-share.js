@@ -164,9 +164,9 @@ export function buildNotebookProposal(spec) {
   if (recipeLooksSecret(source)) {
     throw new Error(
       "notebook proposal: this notebook looks like it holds secret material — " +
-        "private key armor, a JWK with a private component, or a fingerprint " +
-        "written where a peer label belongs. It is refused whole rather than " +
-        "redacted: a recipe carries a secret because somebody typed it into a " +
+        "private key armor, or a JWK with a private component. It is refused " +
+        "whole rather than redacted: a recipe carries a secret because " +
+        "somebody typed it into a " +
         "cell, and the fix is to move it into Inputs, where it stays on this " +
         "machine, rather than to send a version of the notebook that does not run."
     );

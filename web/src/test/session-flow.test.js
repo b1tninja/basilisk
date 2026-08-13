@@ -369,11 +369,13 @@ describe("starting a session is a recipe, not a code path", () => {
     // participant runs; headed, the gate that already declines a peer's cells
     // declines these.
     //
-    // The label is asserted against `roomRoster`'s rather than written down
-    // here: a label this test invented would be one the room might not agree
-    // with, and the agreement is the whole mechanism.
+    // Asked of `roomRoster` rather than written down here: what the room calls
+    // a member is the room's answer, and a test that spelled it itself would
+    // pass on the day the two stopped agreeing. It is the key now — the roster
+    // is identity-mapped — and that is asserted rather than assumed, because it
+    // is the whole of what replaced the positional label.
     const { me } = roomRoster([ADA, GRACE], [], ADA);
-    expect(me, "the room could not label a key in its own audience").toMatch(/^peer\d+$/);
+    expect(me, "the room could not name a key in its own audience").toBe(ADA);
     const text = sessionRecipe({ audience: [GRACE, ADA], keyFingerprint: ADA });
     for (const cell of text.split("\n\n")) {
       expect(cell.split("\n")[0]).toBe(`@${me}`);

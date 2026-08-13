@@ -32,6 +32,22 @@ export type ShareSheetProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   recipeLink: RecipeLink;
+  /**
+   * What this particular link would tell whoever opens it — `recipeLinkDiscloses`'
+   * sentence, or "" when the notebook names nobody.
+   *
+   * A prop rather than a constant, because it is the one claim on this sheet
+   * that is **true of some notebooks and false of others**. A `@peer` header is
+   * a whole key fingerprint, so a placed notebook's link carries its audience;
+   * an unplaced one carries nothing about anybody, which is most of them. The
+   * row's standing "No trust needed" line is only replaced when there is
+   * something to replace it with — prose that overstates is exactly as wrong as
+   * prose that understates, and this sheet has had one of each.
+   *
+   * The sentence is written in `fragment.js`, beside the encoder that builds
+   * the link, so it cannot describe a link this product does not produce.
+   */
+  recipeDiscloses?: string;
   onCopyRecipeLink?: () => void;
   /**
    * The link as a QR, or why it is not one.
@@ -78,7 +94,11 @@ export type ShareSheetProps = {
  * actually crosses the wire, and therefore in what trust they need:
  *
  * - **The recipe** — text, in the URL fragment, which never reaches a server.
- *   No trust required; the reader gets an identical, unrun notebook.
+ *   The reader gets an identical, unrun notebook. **No trust required, unless
+ *   the notebook places cells**: a `@peer` header is a whole key fingerprint,
+ *   so a placed notebook's link tells whoever opens it who is in the room, and
+ *   a room is derived from its audience. That row says so when it is true and
+ *   says nothing when it is not — see `recipeDiscloses`.
  * - **A run's proof** — the signed manifest and receipt. Still nobody online;
  *   the reader needs your public key to check it.
  * - **The doing of it** — a live session where cells placed with `@peer`
@@ -105,6 +125,7 @@ export function ShareSheet({
   open,
   onOpenChange,
   recipeLink,
+  recipeDiscloses = "",
   onCopyRecipeLink,
   recipeQr,
   onSaveRecipe,
@@ -147,8 +168,8 @@ export function ShareSheet({
           >
             {session.joined - session.verified} of {session.joined} who joined
             are still unconfirmed. Confirmation is automatic and there is
-            nothing for you to compare — until it lands, a label names nobody
-            and no cell will run on them.
+            nothing for you to compare — until it lands, a cell placed on them
+            will not run.
           </p>
         ) : null}
 
@@ -156,7 +177,8 @@ export function ShareSheet({
           <Tier
             title="Send the recipe"
             what="The notebook text, carried in the link's fragment — it never reaches a server. They open an identical, unrun notebook."
-            trust="No trust needed"
+            trust={recipeDiscloses || "No trust needed"}
+            trustTone={recipeDiscloses ? "warn" : "muted"}
             blocked={recipeLink.ok ? null : recipeLink.reason}
             tone={recipeLink.ok ? undefined : (recipeLink.tone ?? "refused")}
             value={recipeLink.ok ? recipeLink.url : ""}
@@ -290,6 +312,7 @@ function Tier({
   title,
   what,
   trust,
+  trustTone = "muted",
   blocked,
   tone = "refused",
   value,
@@ -298,6 +321,14 @@ function Tier({
   title: string;
   what: string;
   trust: string;
+  /**
+   * How loudly the trust line reads. `muted` is the ordinary case — a standing
+   * fact about this transfer. `warn` is for a line that is true of *this*
+   * notebook and would not be true of the next one, which is the recipe row's
+   * disclosure: a reader who has learned to skim the grey line under a section
+   * has to notice when it stops being the line they learned.
+   */
+  trustTone?: "muted" | "warn";
   blocked: string | null;
   /**
    * Why it is unavailable, which is not one thing. `refused` is the guard
@@ -347,7 +378,18 @@ function Tier({
           {blocked}
         </p>
       ) : (
-        <p className="text-[10px] text-[var(--muted-foreground)]">{trust}</p>
+        <p
+          className={cn(
+            "text-[10px]",
+            trustTone === "warn"
+              ? "text-[var(--warn)]"
+              : "text-[var(--muted-foreground)]"
+          )}
+          data-trust-tone={trustTone}
+          data-tier-trust
+        >
+          {trust}
+        </p>
       )}
       <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
         {children(blocked ? blockedId : undefined)}

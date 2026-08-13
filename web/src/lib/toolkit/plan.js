@@ -44,28 +44,39 @@
  *
  * ## The roster, and the binding this module owns
  *
- * A recipe names peers. `@alice` is a *label*, deliberately never a
- * fingerprint (`630dc96`), because recipe text travels in a `#r=` link and the
- * room is a digest of the audience. A session, at the other end, knows only
- * fingerprints: `NotebookSession.attestersOf()` returns them and says in its
- * own doc comment that turning one into the other belongs to whoever holds the
- * binding `peersSha` commits to.
+ * **A recipe names peers by fingerprint.** `@83421F2C…` — the whole of it, 40
+ * characters for v4 and 64 for v6, never a part. This module's header used to
+ * state the opposite rule at length: a peer was "a *label*, deliberately never
+ * a fingerprint", because recipe text travels in a `#r=` link and the room is a
+ * digest of the audience, so a fingerprint in shared text hands a stranger the
+ * room. That reasoning was sound and the conclusion drawn from it was an
+ * invented label layer — `@peer1`, `@peer2`, positions in the sorted audience —
+ * which told a reader nothing about who would run a cell and moved under them
+ * every time the room changed size.
  *
- * **This is that holder.** The roster is `{ label: fingerprint }` — the same
- * shape `peersDigest` already hashes, so the thing planned against and the
- * thing committed to are one object. `labelForFingerprint` and
- * `attesterLabels` are the crossing, and they are the only crossing: nothing
- * here derives a label from a fingerprint by pattern, and nothing puts a
- * fingerprint where a label goes (a fingerprint-shaped roster key is refused
- * with `peerFingerprintError`, the same copy the compiler uses).
+ * The disclosure is real and is now *stated* rather than designed around: a
+ * placed notebook's link carries its audience's fingerprints, and the Share
+ * sheet says so whenever the notebook names any. What was bought with it is
+ * that a peer means exactly one key, everywhere, with nothing carried between
+ * the two ends to make it so.
+ *
+ * **This is still the holder of the binding.** The roster is
+ * `{ peer: fingerprint }` — the same shape `peersDigest` hashes, so the thing
+ * planned against and the thing committed to are one object — and it is now
+ * identity-mapped, which is what makes `peersSha` agree between two browsers
+ * *by construction*. `labelForFingerprint` and `attesterLabels` are the
+ * crossing and are the only crossing; they are trivial now and are kept because
+ * a session speaks fingerprints and a plan speaks peers, and one call at one
+ * layer is what stops a second, cleverer crossing appearing somewhere else.
  *
  * A recipe naming a peer the roster does not have is **refused**, and that is
- * the common case rather than an edge — an author writes `@alice` and the room
- * is mara and okafor. It is not a warning: a cell addressed to a label nobody
- * answers to never runs, and a plan that says otherwise is a plan that hangs.
- * With *no* roster the plan is `bound: false`: placement is still computed, in
- * label space, so the structural refusals bite while authoring, and nothing is
- * claimed about who is in the room.
+ * the case a notebook written before this change lands in: `@peer1` still
+ * parses, still compiles, and is refused as `unknown-peer` naming exactly what
+ * is true — no key in this room answers to it. It is not a warning: a cell
+ * addressed to a peer nobody answers to never runs, and a plan that says
+ * otherwise is a plan that hangs. With *no* roster the plan is `bound: false`:
+ * placement is still computed, in peer space, so the structural refusals bite
+ * while authoring, and nothing is claimed about who is in the room.
  *
  * ## What does not change
  *
@@ -85,8 +96,8 @@ import {
   PEER_WILDCARD,
   SLOT_SIGIL,
   normalizePeerRef,
-  peerFingerprintError,
-  peerLooksLikeFingerprint,
+  peerKeyIdError,
+  peerLooksLikeKeyId,
   slotLabelKey,
 } from "./recipe-parse.js";
 import {
@@ -258,12 +269,16 @@ const PUBLISHABLE_ROLES = new Set([
 const VAULT_TOOLBOX = "agent";
 
 /**
- * The roster: peer label → fingerprint, canonicalised.
+ * The roster: peer → fingerprint, canonicalised.
  *
- * Refuses a fingerprint written as a label with the compiler's own copy. A
- * roster is assembled from a session and a session speaks fingerprints, so
- * this is the exact place a fingerprint would be dropped into the label
- * column by a caller in a hurry.
+ * Refuses a *partial* key written as a peer with the compiler's own copy. A
+ * roster is assembled from a session and a session speaks fingerprints, so this
+ * is the exact place a short key id would be dropped into the peer column by a
+ * caller in a hurry — and a suffix of a fingerprint names more than one key, so
+ * a roster keyed by one binds nothing.
+ *
+ * A *whole* fingerprint is no longer refused: it is the spelling this module
+ * expects on both sides.
  *
  * @param {Record<string, string>|null|undefined} roster
  * @returns {{ labels: string[], byLabel: Map<string, string>, byFpr: Map<string, string> }}
@@ -282,8 +297,8 @@ export function normalizeRoster(roster) {
           "participant — it cannot be bound to a fingerprint"
       );
     }
-    if (peerLooksLikeFingerprint(norm.peer)) {
-      throw new Error(`roster: ${peerFingerprintError(norm.peer)}`);
+    if (peerLooksLikeKeyId(norm.peer)) {
+      throw new Error(`roster: ${peerKeyIdError(norm.peer)}`);
     }
     const fpr = normalizeFingerprintInput(String(rawFpr ?? ""));
     if (!fpr) {
@@ -899,8 +914,9 @@ export function planRun(compiled, opts = {}) {
           question:
             `Cell ${i} runs \`${vault}\`, which reaches the vault of whoever ` +
             "runs it — and a fingerprint in a recipe does not say whose vault " +
-            `holds it. Which peer runs this cell? Write \`${PEER_SIGIL}peer\` ` +
-            "at the head of it.",
+            `holds it. Which peer runs this cell? Write their fingerprint as a ` +
+            `\`${PEER_SIGIL}\` header at the top of it — the assignment menu ` +
+            "writes one from the room's own list.",
           choices: bound ? rosterLabels : peers,
           start: anchor.start,
           end: anchor.end,
@@ -917,7 +933,8 @@ export function planRun(compiled, opts = {}) {
             `${produces.length ? `\`${SLOT_SIGIL}${produces[0]}\`` : "result"}. ` +
             "That is right for a key each peer keeps, and wrong for a key the " +
             `room is supposed to share — say which by writing ` +
-            `\`${PEER_SIGIL}peer\`, or leave it if per-peer is what you meant.`,
+            `a \`${PEER_SIGIL}\` header naming whose it is, or leave it if per-peer ` +
+            "is what you meant.",
           choices: bound ? rosterLabels : peers,
           start: anchor.start,
           end: anchor.end,

@@ -17,7 +17,7 @@
  * handoff stops being JSON and becomes bindings in a registry, and that stays a
  * press. What the automatic send removes is not a decision; it is a second press
  * that only restates the first. The reader already said "run this notebook", and
- * this notebook says cell 3 is `@peer2`'s. Making them say it again per cell is
+ * this notebook says whose cell 3 is. Making them say it again per cell is
  * the same "finished mechanism with no entry point" defect one layer along: the
  * entry point exists, and it is on the wrong side of the decision.
  *
@@ -131,7 +131,7 @@ export function pendingOffers(skipped, already) {
  * The sentence a run appends to its own verdict, built from what happened.
  *
  * Built here, from the outcomes, rather than assembled by the caller — the rule
- * `relabelPlacements` states for the same reason: a narration written apart
+ * `unassignDeparted` states for the same reason: a narration written apart
  * from the acts it describes is a narration that can be applied without them, or
  * they without it. This one cannot claim a cell went out unless `ok` says it
  * did.

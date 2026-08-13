@@ -210,85 +210,142 @@ export function normalizeSlotRef(raw, opts = {}) {
  * Longest peer name accepted.
  *
  * `SLOT_LABEL_RE` carries no length bound, which is right for a slot — the
- * label is local to the recipe and nothing else reads it. A peer label is a
- * *person's name in shared text*, so an unbounded one is an unbounded string
- * riding out in a `#r=` link under a grammar that looks like it only holds
- * names. 64 is far past any name and short enough that the bound is real.
+ * label is local to the recipe and nothing else reads it. A peer is a *name in
+ * shared text*, so an unbounded one is an unbounded string riding out in a
+ * `#r=` link under a grammar that looks like it only holds short things.
+ *
+ * 64 is not an arbitrary generous number any more: it is the length of a v6
+ * fingerprint, which is now the *canonical* spelling of a peer (see
+ * `peerIsFingerprint`). So the bound is exactly "a whole fingerprint, and
+ * nothing longer", and a hand-written name has all the room a name needs
+ * underneath it.
  */
 export const MAX_PEER_LABEL_LEN = 64;
 
 /**
- * Hex-only labels long enough to identify a key.
+ * A whole OpenPGP fingerprint: 40 hex for v4, 64 for v6, and nothing between.
  *
- * The exact shapes are a v4 fingerprint (40 hex) and a v6 / SHA-256
- * fingerprint (64), but the rule is deliberately wider: a 16-hex long key id
- * identifies its holder just as well as the fingerprint does, in fewer
- * characters, and no one names a peer `deadbeefdeadbeef`. See
- * `peerLooksLikeFingerprint` for why any of this matters.
+ * These two lengths are the *only* hex spellings a peer may have, and the
+ * exactness is the point — see `peerLooksLikeKeyId` immediately below for what
+ * the lengths in between are and why they stay refused. `normalizePeerRef` does
+ * not consult this: it admits every hex spelling structurally and leaves the
+ * whole/partial question to the two predicates here, which is what keeps the
+ * question answered once.
  */
-const PEER_FINGERPRINT_SRC = "[0-9A-Fa-f]{16,}";
+const PEER_FINGERPRINT_SRC = "(?:[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})";
 const PEER_FINGERPRINT_RE = new RegExp(`^${PEER_FINGERPRINT_SRC}$`);
 
 /**
- * Is this peer label a key fingerprint (or long key id) wearing a name's
- * clothes?
+ * Any hex run long enough to name a key and short enough to be one — the
+ * superset the two rules split. Used only to tell "this was meant as a key"
+ * from "this is a name".
  *
- * The label grammar is shared with slots, and `SLOT_LABEL_RE` is
- * `/^[A-Za-z][A-Za-z0-9_-]*$/` with no length bound — so a 40-character hex
- * fingerprint that happens to begin `A`–`F` is a *structurally valid* peer
- * label while one beginning with a digit is not. That asymmetry is what makes
- * it dangerous: roughly 37% of fingerprints parse, so casual testing says it
- * does not work while it silently does for some users.
+ * Bounded above at 64 rather than left open, and the bound is load-bearing
+ * rather than tidy: `MAX_PEER_LABEL_LEN` is 64, so a 65-character string is
+ * refused for its *length* and has to reach that refusal. Left open, a long
+ * name that happened to be spelled out of `a`–`f` would be read as a malformed
+ * key and told to write the whole fingerprint, which is advice about a key
+ * nobody was holding.
+ */
+const PEER_HEXISH_RE = /^[0-9A-Fa-f]{16,64}$/;
+
+/**
+ * Is this peer a whole key fingerprint?
  *
- * It has to be refused because the design's central privacy property depends
- * on it. `notebook/room.js` derives the room from a *digest* of the audience
- * precisely so fingerprints never cross the wire, and the manifest carries
- * `audienceSha` rather than a list. A fingerprint written as a peer label
- * rides out verbatim in a shared `#r=` link, and the room is a function of
- * exactly that audience — so the link would let a stranger derive the room.
- * @param {string} peer  canonical peer label (no sigil)
+ * **This used to be the shape a peer could not have, and it is now the shape a
+ * peer is.** The old rule reasoned that a fingerprint in shared recipe text
+ * hands over the audience, and the room is a digest of exactly that audience —
+ * true then and true now. What changed is the answer to it: an invented label
+ * layer (`@peer1`, numbered by position in the sorted audience) bought that
+ * privacy with a name that meant nothing to a reader and that *moved under
+ * them* every time the room changed size. The product now writes the key
+ * itself, whole, and pays the disclosure openly — `fingerprintPeersInText`
+ * exists so the Share sheet can say what a link carries instead of a refusal
+ * pretending the situation cannot arise.
+ *
+ * It is exported because two very different callers need it and neither may
+ * sniff for hex on its own: `normalizePeerRef` below, which must let a
+ * fingerprint through a grammar that otherwise demands a leading letter, and
+ * the surfaces that draw a peer, which render a *placard* for a key and plain
+ * text for a name.
+ *
+ * @param {string} peer  canonical peer (no sigil)
  * @returns {boolean}
  */
-export function peerLooksLikeFingerprint(peer) {
+export function peerIsFingerprint(peer) {
   return PEER_FINGERPRINT_RE.test(String(peer ?? ""));
 }
 
 /**
- * The same refusal, applied to recipe *text* rather than to a parsed label.
+ * Is this peer a *part* of a key — a short or long key id?
  *
- * A compile error is not enough on its own: `hashForRecipe` builds a `#r=`
- * link from text without compiling it, so the refusal has to exist in both
- * places or the fingerprint leaves anyway.
+ * The refusal that survived the change, and the one worth being careful about:
+ * "a fingerprint may now name a peer" is not "any hex may now name a peer".
+ * 8, 16 and 32 hex characters are all suffixes of a fingerprint, so each of
+ * them names *more than one key*; a roster keyed by fingerprint cannot bind
+ * one, and a reader shown one is being asked to compare part of a value while
+ * believing they compared the whole — which is the defect
+ * `components/ui/fingerprint.tsx` exists to refuse, arriving through the
+ * grammar instead of through a layout.
  *
- * Anchored to the header position — start of text, start of a line, or after
- * the compact `~` separator — and nowhere else. That is what keeps
- * `hkp.get 4F2AC1…` and `gpg.encrypt to=4F2AC1…` shareable, which they must
- * be: a fingerprint is an ordinary public argument in every position except
- * the one that names a person.
- * @param {string} text
+ * So the hex peers now split in two rather than all being refused together:
+ * whole is right, partial is wrong, and 16 is where "somebody typed a key id"
+ * becomes a better reading than "somebody chose a name".
+ *
+ * @param {string} peer  canonical peer (no sigil)
  * @returns {boolean}
  */
-export function textHasFingerprintPeer(text) {
-  const sigil = escapeSlotRefForRegExp(PEER_SIGIL);
-  return new RegExp(
-    `(^|[\\n~])[ ]*${sigil}${PEER_FINGERPRINT_SRC}(?![0-9A-Za-z_-])`
-  ).test(String(text ?? ""));
+export function peerLooksLikeKeyId(peer) {
+  const s = String(peer ?? "");
+  return PEER_HEXISH_RE.test(s) && !PEER_FINGERPRINT_RE.test(s);
 }
 
 /**
- * The refusal copy for a fingerprint-shaped peer label. One home, so the
- * compile-time refusal and anything that echoes it cannot drift apart.
- * @param {string} peer  canonical peer label (no sigil)
+ * The refusal copy for a partial-key peer. One home, so the compile-time
+ * refusal and anything that echoes it cannot drift apart.
+ * @param {string} peer  canonical peer (no sigil)
  * @returns {string}
  */
-export function peerFingerprintError(peer) {
+export function peerKeyIdError(peer) {
   const s = String(peer ?? "");
-  const shown = s.length > 6 ? `${s.slice(0, 6)}…` : s;
   return (
-    `A peer is named, not fingerprinted — write \`@alice\`, not \`@${shown}\`. ` +
-    `A fingerprint in shared recipe text gives away the audience, and the ` +
-    `room is derived from the audience.`
+    `\`${PEER_SIGIL}${s}\` is ${s.length} hex characters, which is part of a ` +
+    `key rather than a key. A short id is a suffix of a fingerprint, so more ` +
+    `than one key answers to it and no room can bind it — write the whole ` +
+    `fingerprint (40 characters for v4, 64 for v6), or a name.`
   );
+}
+
+/**
+ * The fingerprints a recipe's text names as peers.
+ *
+ * **The detector that used to power a refusal, now powering a disclosure.**
+ * `recipeLooksSecret` called this shape a secret and stopped `#r=` links being
+ * built from any notebook that had one; a placed notebook now legitimately
+ * carries its audience's keys, so the link is built and the *Share sheet says
+ * what is in it* instead. Same regex, opposite job, and it is the same regex
+ * deliberately: a sentence about what a link discloses that could disagree
+ * with what the link actually contains would be worse than no sentence.
+ *
+ * Anchored to the header position — start of text, start of a line, or after
+ * the compact `~` separator — and nowhere else, exactly as the refusal was.
+ * That is what keeps `hkp.get 4F2AC1…` and `gpg.encrypt to=4F2AC1…` out of
+ * the count: a fingerprint is an ordinary public argument in those positions
+ * and discloses nothing about who is in a room.
+ *
+ * @param {string} text
+ * @returns {string[]} upper-case, each one once, in the order encountered
+ */
+export function fingerprintPeersInText(text) {
+  const sigil = escapeSlotRefForRegExp(PEER_SIGIL);
+  const re = new RegExp(
+    `(?:^|[\\n~])[ ]*${sigil}(${PEER_FINGERPRINT_SRC})(?![0-9A-Za-z_-])`,
+    "g"
+  );
+  /** @type {Set<string>} */
+  const found = new Set();
+  for (const m of String(text ?? "").matchAll(re)) found.add(m[1].toUpperCase());
+  return [...found];
 }
 
 /**
@@ -298,10 +355,20 @@ export function peerFingerprintError(peer) {
  * `SLOT_LABEL_RE` with it rather than restating the label rules, so there is
  * one label grammar and two sigils, not two grammars.
  *
- * A fingerprint-shaped label is *structurally* fine and is returned as one:
- * this function answers "is this a label", and `validateRecipe` answers "is
- * this label a thing a person may be called". Splitting them keeps the
- * security refusal somewhere it can carry a sentence instead of a token error.
+ * **A whole fingerprint is a peer, and is canonicalised to upper case here.**
+ * That is the one place the case can be settled: the roster is keyed by
+ * `normalizeFingerprintInput`'s upper-case hex, `peersSha` digests it, and a
+ * notebook that said `@aabb…` on one machine and `@AABB…` on the other would
+ * derive two different manifests out of one identical intent. Settling it in
+ * the canonicaliser means `serializeChain` writes one spelling and every
+ * comparison downstream is against that spelling.
+ *
+ * A *partial* key is still structurally fine here and is returned as one: this
+ * function answers "is this a peer", and `validateRecipe` answers "is this a
+ * peer a room could bind" (`peerLooksLikeKeyId`). Splitting them keeps the
+ * refusal somewhere it can carry a sentence instead of a token error — and
+ * keeps *one* hex branch here, so the whole/partial line is drawn in exactly
+ * one place rather than twice with a chance to disagree.
  * @param {string} raw  with or without the `@`
  * @returns {{ ok: true, peer: string } | { ok: false, error: string }}
  */
@@ -312,16 +379,37 @@ export function normalizePeerRef(raw) {
     return {
       ok: false,
       error:
-        "Expected a peer name after `@` — write `@alice`, or `@*` for everyone",
+        "Expected a peer after `@` — write `@<fingerprint>`, or `@*` for everyone",
     };
   }
   if (bare === PEER_WILDCARD) return { ok: true, peer: PEER_WILDCARD };
+  // **One branch for every hex spelling, whole or partial, and it comes before
+  // the name grammar.** `SLOT_LABEL_RE` demands a leading letter, and roughly
+  // two hex strings in three begin with a digit; testing the name shape first
+  // is what made the old rule accept some keys and reject others for a reason
+  // nobody could see, and doing it here for whole fingerprints and there for
+  // partial ones would rebuild that asymmetry inside the refusal.
+  //
+  // A *partial* key is admitted here on purpose, and refused by
+  // `validateRecipe` (`peerLooksLikeKeyId`). Refusing it as a token would lose
+  // the header — `parseChainHeader` consumes the bad token and carries on
+  // reading the pipeline — so a mistyped key would leave a cell with no `@` at
+  // all, and the notebook would compile as `solo` and run every cell here. The
+  // semantic refusal keeps the header, anchors the complaint to it, and stops
+  // the run.
+  //
+  // Upper case is settled here and nowhere else: the roster is keyed by
+  // `normalizeFingerprintInput`'s upper-case hex, `peersSha` digests it, and a
+  // notebook saying `@aabb…` on one machine and `@AABB…` on the other would be
+  // one intent deriving two manifests.
+  if (PEER_HEXISH_RE.test(bare)) return { ok: true, peer: bare.toUpperCase() };
   if (!SLOT_LABEL_RE.test(bare)) {
     return {
       ok: false,
       error:
-        `Invalid peer name "${PEER_SIGIL}${bare}" — a peer is a letter ` +
-        `followed by letters, digits, \`_\` or \`-\` (or \`@*\` for everyone)`,
+        `Invalid peer "${PEER_SIGIL}${bare}" — a peer is a whole key ` +
+        `fingerprint, or a letter followed by letters, digits, \`_\` or \`-\` ` +
+        `(or \`@*\` for everyone)`,
     };
   }
   if (bare.length > MAX_PEER_LABEL_LEN) {

@@ -517,12 +517,15 @@ describe("the roster and the state agree", () => {
     // `display` was where the abbreviation went, and it is gone from the row
     // entirely. A projection has no business printing `B2B2B2B2…B2B2` at all:
     // twelve of forty characters is a value a reader compares and cannot check,
-    // which is what `pages/index.tsx` warns about at eight. The panels render
-    // `<Fingerprint variant="compact" label={id}>` from `fingerprint` now, so
-    // the whole value is one press away and no part of it is on the row.
+    // which is what `pages/index.tsx` warns about at eight.
+    //
+    // `id` is the whole key now rather than `peer2`. The positional label was
+    // legal and stable and still not an identity — it named a place in the
+    // sorted audience, so it moved whenever the room changed size, which is
+    // precisely the hazard the test below used to pin and can no longer state.
     expect(state.peers).toEqual([
       {
-        id: "peer2",
+        id: FPR_B,
         fingerprint: FPR_B,
         state: "failed",
         authenticated: false,
@@ -580,28 +583,35 @@ describe("a room that moved without this machine ordering it", () => {
     expect(state.peers.map((p) => p.fingerprint)).toEqual([FPR_C]);
   });
 
-  it("renumbers the labels the notebook addresses, which is the hazard", async () => {
-    // `peerLabels` is positional over the canonical audience, so the row that
-    // said `peer3` says `peer2` once the member above it is gone — and the key
-    // behind it is a different key. This is the fact `useNotebook` watches for;
-    // `live-relabel-drift.test.js` pins what it does about it.
+  it("leaves everybody else named exactly as they were, which was the hazard", async () => {
+    // **This test used to assert the opposite, and the inversion is the fix.**
+    // `peerLabels` was positional over the canonical audience, so the row that
+    // said `peer3` said `peer2` once the member above it left — and the key
+    // behind it was a different key. A cell reading `@peer3` came to mean
+    // somebody else with nothing on screen moving, and `useNotebook` had to
+    // watch for it and rewrite every header.
+    //
+    // A peer is the key, so removing anybody renames nobody. What is left for
+    // `useNotebook` to do is the cells placed on the member who *left*, which
+    // is a different question and is pinned in `live-relabel-drift.test.js`.
     //
     // Read off the rows the panel draws, which is the audience minus this
-    // browser: `peer1` is FPR_A and has no row because a session is never its
-    // own peer.
+    // browser: FPR_A has no row because a session is never its own peer.
     const { session } = await openThree();
     const was = Object.fromEntries(
       q.getQuorumState().peers.map((p) => [p.id, p.fingerprint])
     );
-    expect(was).toEqual({ peer2: FPR_B, peer3: FPR_C });
+    expect(was).toEqual({ [FPR_B]: FPR_B, [FPR_C]: FPR_C });
 
     session.rotate(FPR_B);
 
     const now = Object.fromEntries(
       q.getQuorumState().peers.map((p) => [p.id, p.fingerprint])
     );
-    expect(now).toEqual({ peer2: FPR_C });
-    expect(now.peer2).not.toBe(was.peer2);
+    expect(now).toEqual({ [FPR_C]: FPR_C });
+    // The one that stayed answers to the same name it did before the removal.
+    // Under the old numbering this assertion was `not.toBe`.
+    expect(now[FPR_C]).toBe(was[FPR_C]);
   });
 
   it("emits it, so a shell following the event and one polling agree", async () => {

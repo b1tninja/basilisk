@@ -1,117 +1,91 @@
 /**
- * Renumbering the room, and what it does to a notebook already written for it.
+ * The room shrinking, and what it does to a notebook already written for it.
  *
- * A `@peer` header is the one thing in a recipe that names a *person*, and it
- * names them by position. `peerLabels` numbers the audience in
- * `canonicalAudience` order because a label has to mean the same human in every
- * browser — the notebook round-trips through text and is digested into
- * manifests — and sorted fingerprints are the only ordering two machines can
- * agree on without talking first. That is the right choice, and it carries a
- * consequence nobody chose: the sort is over key material, so a third person
- * added to a room of two lands wherever their fingerprint happens to fall, and
- * every label from that position on shifts by one. A cell that said `@peer2`
- * still says `@peer2`, now means a different person, and nothing on screen
- * moved.
+ * ## What this module used to be, and why most of it is gone
  *
- * That is the hazard this module exists to refuse. It has to be refused *here*,
- * in a pure function, because it is a rule about whose work runs on whose
- * machine and a rule like that should be decidable without a browser.
+ * A `@peer` header names a *person*, and it used to name them by **position**:
+ * `peerLabels` numbered the audience in `canonicalAudience` order, because a
+ * positional label was the only naming two browsers could agree on without
+ * talking first. That bought agreement and cost meaning — `@peer2` tells a
+ * reader nothing — and it cost more than meaning. The sort is over key
+ * material, so a third person added to a room of two landed wherever their
+ * fingerprint happened to fall and every label from that position on shifted by
+ * one. A cell that said `@peer2` still said `@peer2`, now meant somebody else,
+ * and nothing on screen moved.
  *
- * ## The decision: the header follows the person
+ * This module existed to repair that drift: `relabelAudience` worked out how the
+ * numbers had moved and `relabelPlacements` rewrote every header to follow the
+ * person it was placed on. Two commits (`96dde48` for a draft audience,
+ * `4b3305d` for a live room) were spent building and then extending it.
  *
- * When the audience changes, the placements are rewritten so that a cell
- * assigned to Grace is still assigned to Grace under whatever number she now
- * holds. The alternative — leave the numbers alone and refuse to renumber — was
- * considered and is not available, for two reasons rather than one:
+ * **A peer is now the whole fingerprint, so a peer cannot renumber.** Adding
+ * somebody changes nothing about what anyone else is called; the drift is gone
+ * at the root rather than repaired, and the machinery that repaired it is gone
+ * with it. What is left is the one case that was never about renumbering at all.
  *
- * 1. **The author picked a person, not a position.** Nobody looks at a room and
- *    chooses "second in sorted fingerprint order". They choose Grace, from a
- *    list that showed them Grace. The number is an encoding the room imposes so
- *    that two machines can say the same thing, and an encoding that changes
- *    under a statement is the encoding's problem to fix, not the author's.
- * 2. **"Refuse to renumber" cannot mean what it sounds like.** The sort is not
- *    a display choice this layer could opt out of: `deriveRoomMaterial` and
- *    `peerLabels` both go through `canonicalAudience`, so the room the session
- *    actually opens will be numbered that way whatever a draft decides. Holding
- *    a draft's numbering fixed would make the labels right while composing and
- *    wrong the moment Start is pressed — the same drift, moved later, and
- *    harder to see because by then there is a session to blame. The only honest
- *    reading of "refuse" is refusing to change the audience at all once a cell
- *    is placed, which strands the ceremony the reader is in the middle of
- *    writing. That is the uselessness this work exists to remove.
+ * ## Somebody who leaves still has to be dealt with
  *
- * `relabel-drift.test.js` pins the choice from both sides: a cell placed on
- * `@peer2` must read `@peer3` after a lower-sorting key joins, and must still
- * resolve to the fingerprint it was placed on. Under "refuse" the first
- * assertion fails; under a rewrite that follows the *number* instead of the
- * person, the second does.
+ * A member removed from the audience is no longer anywhere in the room, and a
+ * cell still addressed to them will never run: `planRun` refuses it as
+ * `unknown-peer`, and a run that reached it would stop. So their cells are
+ * unassigned, and the reader is told which ones.
+ *
+ * This part is *unchanged in substance* and its reasoning is simpler than it
+ * was. Under positional labels the argument had a second, worse half — the
+ * vacated number was immediately occupied by whoever sorted into it, so leaving
+ * a departed member's header alone would have handed their cell to the person
+ * who *stayed*. That cannot happen now. A fingerprint is not inherited. What
+ * remains is only the first half: a cell addressed to somebody who is not in the
+ * room is a cell that does not run, and the honest thing to do with it is to say
+ * so and hand it back to the author.
  *
  * ## What is never done silently
  *
- * Every rewrite produces a sentence naming the cells it touched. A notebook
- * that changed under the reader with no word about it is the defect whichever
+ * Every rewrite produces a sentence naming the cells it touched. A notebook that
+ * changed under the reader with no word about it is the defect whichever
  * direction the change went in, and the sentence is generated here — beside the
  * edit that earns it — rather than in the shell, so nothing can apply the edits
  * and forget to say so.
  *
- * ## Somebody who leaves cannot be followed
- *
- * A member removed from the audience has no new label, so their cells are
- * unassigned rather than left pointing at the number they used to hold. Leaving
- * it is the worst form of the drift: the vacated number is immediately occupied
- * by whoever sorts into that position, so a cell placed on the person who left
- * would come to name the person who stayed, and it would arrive there through
- * an edit the reader made for an unrelated reason.
- *
  * ## What no rewrite can rescue
  *
- * A label typed by hand that named nobody — `@peer3` in a room of two — is not
- * reported and not touched. It was bound to no fingerprint, so there is no
- * person for it to follow; `planRun` said "no one in this room answers to it"
- * and goes on saying so until a third person makes it true. That it acquires a
- * meaning when the room grows is the only meaning the room can give it, and it
- * is the meaning the author was anticipating by typing it.
+ * A peer typed by hand that named nobody — `@alice` in a room of two keys, or a
+ * `@peer1` left in a notebook written before this change — is not reported and
+ * not touched. It was bound to no fingerprint, so there is no person for it to
+ * follow; `planRun` says "no one in this room answers to it" and goes on saying
+ * so. Reassigning it is the author's act, through the same menu they would have
+ * used to place it.
  *
  * @module lib/toolkit/peer-relabel
  */
 
-import { peerLabels } from "../notebook/roster.js";
-import { PEER_SIGIL } from "./recipe-parse.js";
+import { canonicalAudience } from "../notebook/room.js";
 
 /**
- * How the labels move when the audience changes.
+ * Who is in the notebook's headers and no longer in the room.
  *
- * Both sides go through `peerLabels`, which is the only thing in the product
- * that hands out a label. Deriving the "before" numbering by any other route —
- * remembering what was shown, counting the list, keeping a parallel map — would
- * be a second copy of the numbering rule, and the two copies would eventually
- * disagree about exactly the question this function exists to answer.
+ * Derived from the two audiences and nothing else. Under positional labels this
+ * had to go through `peerLabels` on both sides — the only thing that handed out
+ * a label — and the comparison was between two numberings. There are no
+ * numberings now, so this is a set difference over fingerprints, which is what
+ * the question always was underneath.
  *
- * Labels whose meaning did not change are left out, so an empty result is the
- * honest "nothing to say" and a caller cannot narrate a renumbering that did
- * not happen. Adding somebody whose fingerprint sorts last is the common case
- * of that.
+ * Canonicalised on both sides so that a caller passing raw input (spaced
+ * fingerprints out of a paste box, mixed case out of a link) cannot report
+ * somebody as having left because the two lists were spelled differently.
  *
  * @param {string[]} [beforeFprs] the audience the notebook's headers were
  *   written against
  * @param {string[]} [afterFprs] the audience as it stands now
- * @returns {Map<string, string|null>} old label → the label that member holds
- *   now, or `null` when they are no longer in the audience at all
+ * @returns {Set<string>} members of `before` that `after` does not contain
  */
-export function relabelAudience(beforeFprs, afterFprs) {
-  const before = peerLabels(beforeFprs || []);
-  const after = peerLabels(afterFprs || []);
-  /** @type {Map<string, string|null>} */
-  const moved = new Map();
-  for (const [fpr, label] of before) {
-    const now = after.get(fpr) ?? null;
-    if (now !== label) moved.set(label, now);
-  }
-  return moved;
+export function departedPeers(beforeFprs, afterFprs) {
+  const after = new Set(canonicalAudience(afterFprs || []));
+  return new Set(canonicalAudience(beforeFprs || []).filter((f) => !after.has(f)));
 }
 
 /**
- * One cell's header, rewritten — in the shape `setCellPeer` takes.
+ * One cell's header, cleared — in the shape `setCellPeer` takes.
  *
  * Edits rather than a new chain list, and deliberately: the notebook's text is
  * `serializeRecipe(chains)`, so the only safe way to change a header is to
@@ -123,67 +97,55 @@ export function relabelAudience(beforeFprs, afterFprs) {
  *
  * @typedef {object} PlacementEdit
  * @property {number} cell  index into the chain list, as the plan numbers them
- * @property {string|null} peer  the label it should carry now, or null to clear
+ * @property {string|null} peer  the peer it should carry now — always null here
  * @property {boolean} publish
  * @property {string[]} publishSlots
  */
 
 /**
- * Move every placement onto the label its person holds now, and say so.
+ * Unassign every cell placed on somebody who has left, and say which.
  *
- * `publish` and `publishSlots` ride along untouched when the cell keeps a peer:
- * they say what of this cell's output may leave the machine, which is a
- * decision about the same person and is not up for review because their number
- * changed. A cleared placement drops them, for the reason `setCellPeer` gives —
- * a modifier attached to nobody is not a claim about anything.
+ * `publish` and `publishSlots` are dropped along with the peer, for the reason
+ * `setCellPeer` gives: a modifier attached to nobody is not a claim about
+ * anything. There is no longer a branch that *keeps* them, because there is no
+ * longer a case where a placement survives with a different name.
  *
  * @param {import("./recipe.js").RecipeChain[]} [chains]
- * @param {Map<string, string|null>} [moved] `relabelAudience`'s answer
+ * @param {Set<string>|Iterable<string>} [gone] `departedPeers`' answer
  * @returns {{ edits: PlacementEdit[], note: string }} `note` is "" when there
  *   was nothing to do, so a caller can show it unconditionally and stay quiet
  */
-export function relabelPlacements(chains, moved) {
+export function unassignDeparted(chains, gone) {
   /** @type {PlacementEdit[]} */
   const edits = [];
-  const followed = [];
+  const left = gone instanceof Set ? gone : new Set(gone || []);
+  // There is no early return for an empty `gone`, deliberately. It would be a
+  // second way to produce the "nothing to say" answer, indistinguishable from
+  // the one below by any caller and by any test — mutating it away changed no
+  // assertion in this repo, which is the definition of a branch nobody
+  // consumes. The walk over an empty set finds nothing and falls out the same
+  // door.
+  /** @type {string[]} */
   const stranded = [];
-  if (!moved || !moved.size) return { edits, note: "" };
-
   (chains || []).forEach((chain, cell) => {
-    const was = String(chain?.peer || "");
-    if (!was || !moved.has(was)) return;
-    const now = moved.get(was) ?? null;
-    edits.push({
-      cell,
-      peer: now,
-      publish: now ? !!chain.publish : false,
-      publishSlots: now && chain.publish ? [...(chain.publishSlots || [])] : [],
-    });
-    if (now) {
-      followed.push(
-        `cell ${cell} says ${PEER_SIGIL}${now} where it said ${PEER_SIGIL}${was}`
-      );
-    } else {
-      stranded.push(`cell ${cell}`);
-    }
+    // Upper-cased on the way in, because a header carries whatever
+    // `normalizePeerRef` canonicalised and the departed set is canonical hex. A
+    // hand-typed name never matches, which is the intended outcome — see the
+    // module note on what no rewrite can rescue.
+    const was = String(chain?.peer || "").toUpperCase();
+    if (!was || !left.has(was)) return;
+    edits.push({ cell, peer: null, publish: false, publishSlots: [] });
+    stranded.push(`cell ${cell}`);
   });
 
-  const parts = [];
-  if (followed.length) {
-    parts.push(
-      `The room is numbered by fingerprint, so changing who is in it moves the ` +
-        `labels: ${followed.join(", ")}. The same key is behind each of them — ` +
-        `the placement followed the person, only the number moved.`
-    );
-  }
-  if (stranded.length) {
-    parts.push(
+  if (!stranded.length) return { edits, note: "" };
+  return {
+    edits,
+    note:
       `${stranded.length === 1 ? "One cell was" : `${stranded.length} cells were`} ` +
-        `placed on somebody who is no longer in the room (${stranded.join(", ")}), ` +
-        `and nobody inherits a number. ${
-          stranded.length === 1 ? "It runs" : "They run"
-        } anywhere now — assign ${stranded.length === 1 ? "it" : "them"} again.`
-    );
-  }
-  return { edits, note: parts.join(" ") };
+      `placed on somebody who is no longer in the room (${stranded.join(", ")}), ` +
+      `and a key nobody else holds is not inherited. ${
+        stranded.length === 1 ? "It runs" : "They run"
+      } anywhere now — assign ${stranded.length === 1 ? "it" : "them"} again.`,
+  };
 }

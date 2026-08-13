@@ -1,31 +1,39 @@
 /**
- * A cell says who it runs for, and a peer is a name rather than a fingerprint.
+ * A cell says who it runs for, and a peer is a whole key rather than a part of
+ * one.
  *
- * `@alice` at the head of a chain is grammar and nothing else — it names the
- * party a cell belongs to, and `publish` says the cell's `out` artifacts are
- * meant to leave the machine. Nothing runs differently for having read one.
- * The tests below therefore spend most of their effort on the two things that
- * are expensive to get wrong later: that a header survives every round trip a
- * recipe takes, and that a *fingerprint* can never be written as one.
+ * `@<fingerprint>` at the head of a chain is grammar and nothing else — it names
+ * the party a cell belongs to, and `publish` says the cell's `out` artifacts are
+ * meant to leave the machine. Nothing runs differently for having read one. The
+ * tests below therefore spend most of their effort on the two things that are
+ * expensive to get wrong later: that a header survives every round trip a recipe
+ * takes, and that a *partial* key can never be written as one.
  *
- * The fingerprint refusal is the reason this landed as grammar first. The peer
- * label grammar is shared with slots — `SLOT_LABEL_RE`, deliberately, so there
- * is one label rule and two sigils — and that rule has no length bound. A
- * 40-character hex fingerprint beginning `A`–`F` is therefore a *structurally
- * valid* peer label, while one beginning with a digit is not. Roughly 37% of
- * fingerprints parse: enough that it silently works for some users, rare
- * enough that casual testing says it does not work at all.
+ * ## This file used to assert the opposite, and the inversion is the point
  *
- * It has to be refused because `notebook/room.js` derives the room from a
- * digest of the audience precisely so fingerprints never cross the wire, and
- * the manifest carries `audienceSha` rather than a list. A fingerprint written
- * as `@AABBCC…` rides out verbatim in a shared `#r=` link, and the room is a
- * function of exactly that audience.
+ * A peer was an invented label — `@peer1`, a position in the sorted audience —
+ * and a fingerprint written in that position was refused, because a fingerprint
+ * rides out verbatim in a shared `#r=` link and `notebook/room.js` derives the
+ * room from a digest of exactly that audience. The reasoning was sound; what it
+ * bought was a name that meant nothing to a reader and that moved under them
+ * whenever the room changed size. The product now writes the key, and pays the
+ * disclosure openly — see `recipeLinkDiscloses`, asserted below in the place the
+ * old refusal stood.
  *
- * So the gate is not "is 40-hex rejected". It is: *derive* fingerprints the
- * way real ones are derived — digest hex — cover every leading character, and
- * require the refusal to be symmetric where the grammar is not. Reading the
- * pattern would miss the asymmetry; the sweep below cannot.
+ * What did **not** invert is the refusal of a *piece* of a key. 8, 16 and 32 hex
+ * characters are suffixes of a fingerprint, so each names more than one key: a
+ * roster keyed by whole fingerprints cannot bind one, and a reader shown one has
+ * compared part of a value believing they compared all of it. That is the same
+ * defect `components/ui/fingerprint.tsx` exists to refuse, and the sweep below
+ * is what keeps it refused while its neighbour was opened up.
+ *
+ * So the gate is not "is 40-hex accepted". It is: *derive* fingerprints the way
+ * real ones are derived — digest hex — cover every leading character, and
+ * require the answer to be symmetric where the grammar underneath is not. The
+ * label grammar demands a leading letter and roughly two fingerprints in three
+ * begin with a digit, so a rule that tested the name shape first would work for
+ * some keys and not others. Reading the pattern would miss that; the sweep
+ * cannot.
  */
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -42,12 +50,14 @@ import {
   normalizePeerRef,
   normalizeSlotRef,
 } from "../lib/toolkit/recipe-parse.js";
+import { buildRunManifest } from "../lib/toolkit/manifest.js";
 import {
   compactRecipeText,
   decodeSharePayload,
   encodeSharePayload,
   expandShareRecipe,
   hashForRecipe,
+  recipeLinkDiscloses,
   recipeLooksSecret,
 } from "../lib/toolkit/fragment.js";
 
@@ -74,88 +84,156 @@ const shapeOf = (chain) => ({
  * A v4 fingerprint is SHA-1 hex and a v6 / SHA-256 one is SHA-256 hex, so
  * digesting a counter produces the real shapes with real character
  * distributions — including, across enough of them, every possible leading
- * character. A long key id is the fingerprint's tail, and identifies its
- * holder just as well in fewer characters.
+ * character.
  */
 const FINGERPRINTS = [];
+/** Suffixes of a real fingerprint: a short id, a long key id, and half of one. */
+const KEY_IDS = [];
 for (let i = 0; i < 64; i++) {
   const sha1 = createHash("sha1").update(`peer-${i}`).digest("hex");
   const sha256 = createHash("sha256").update(`peer-${i}`).digest("hex");
   FINGERPRINTS.push(sha1.toUpperCase(), sha1, sha256.toUpperCase(), sha256);
-  FINGERPRINTS.push(sha1.slice(-16).toUpperCase());
+  KEY_IDS.push(sha1.slice(-16).toUpperCase(), sha1.slice(-16), sha1.slice(-32));
 }
 
-/** The ones a *label* grammar would happily accept — the actual hazard. */
-const PARSEABLE_FINGERPRINTS = FINGERPRINTS.filter(
-  (f) => normalizePeerRef(f).ok
-);
-
-describe("the hazard this file exists for is real", () => {
-  it("lets a fingerprint through the label grammar, but only sometimes", () => {
-    // If this ever became "none", the refusal below would be untestable
-    // theatre; if it became "all", the asymmetry argument would be wrong.
-    // Either way the file above needs rewriting rather than deleting.
-    expect(PARSEABLE_FINGERPRINTS.length).toBeGreaterThan(0);
-    expect(PARSEABLE_FINGERPRINTS.length).toBeLessThan(FINGERPRINTS.length);
-
-    // …and the split is exactly "starts with a letter", which is the slot
-    // label rule doing the deciding — not anything peers chose.
+describe("a peer is a whole key", () => {
+  it("takes every fingerprint, whatever it starts with", () => {
+    // The asymmetry that made the old rule dangerous, asserted from the other
+    // side. Both halves are named so that a grammar accepting nothing could not
+    // pass this by accident: the corpus has to cover the leading characters,
+    // *and* every member of it has to parse and compile.
+    const leading = new Set(FINGERPRINTS.map((f) => f[0].toUpperCase()));
+    expect(
+      leading.size,
+      "the corpus does not cover enough leading characters to see the asymmetry"
+    ).toBeGreaterThan(10);
     for (const f of FINGERPRINTS) {
-      expect(normalizePeerRef(f).ok, f).toBe(/^[A-Fa-f]/.test(f));
+      expect(normalizePeerRef(f).ok, f).toBe(true);
+      expect(compileRecipe(cellFor(f)).validation.ok, f).toBe(true);
     }
+  });
+
+  it("settles the case, because the roster is keyed upper", () => {
+    // `peersSha` digests `{ peer: fingerprint }` and the fingerprint side is
+    // `normalizeFingerprintInput`'s upper-case hex. A notebook that said
+    // `@aabb…` on one machine and `@AABB…` on the other would be one intent
+    // deriving two manifests, so the canonicaliser settles it once and the
+    // serializer writes the settled spelling.
+    for (const f of FINGERPRINTS.slice(0, 8)) {
+      expect(normalizePeerRef(f).peer).toBe(f.toUpperCase());
+      expect(normalizePeerRef(f.toLowerCase()).peer).toBe(f.toUpperCase());
+    }
+    const lower = FINGERPRINTS[1].toLowerCase();
+    const { ast } = parseRecipe(cellFor(lower));
+    expect(ast.chains[0].peer).toBe(lower.toUpperCase());
+    expect(serializeRecipe(ast)).toContain(`@${lower.toUpperCase()}`);
   });
 });
 
-describe("a peer is named, not fingerprinted", () => {
-  it("refuses every fingerprint shape the grammar would have accepted", () => {
-    const accepted = PARSEABLE_FINGERPRINTS.filter(
-      (f) => compileRecipe(cellFor(f)).validation.ok
-    );
+describe("a peer is not a piece of a key", () => {
+  it("refuses every key-id shape the grammar would have accepted", () => {
+    const accepted = KEY_IDS.filter((f) => compileRecipe(cellFor(f)).validation.ok);
     expect(
       accepted.slice(0, 4),
-      `${accepted.length} fingerprint-shaped peer labels compiled. A ` +
-        `fingerprint in shared recipe text gives away the audience, and the ` +
-        `room is derived from the audience — refuse them in validateRecipe.`
+      `${accepted.length} partial-key peers compiled. A short id is a suffix ` +
+        `of a fingerprint, so more than one key answers to it and no room can ` +
+        `bind it — refuse them in validateRecipe.`
     ).toEqual([]);
   });
 
   it("says what to write instead", () => {
     // The remedy is the sentence, not the diagnosis. A rule that only lives in
     // prose drifts; this is the executable copy.
-    const [message] = errorsFor(cellFor(PARSEABLE_FINGERPRINTS[0]));
-    expect(message).toMatch(/named, not fingerprinted/);
-    expect(message).toMatch(/@alice/);
-    expect(message).toMatch(/audience/);
-    expect(message).toMatch(/room is derived from the audience/);
+    const [message] = errorsFor(cellFor(KEY_IDS[0]));
+    expect(message).toMatch(/part of a key rather than a key/);
+    expect(message).toMatch(/more than one key answers to it/);
+    expect(message).toMatch(/write the whole fingerprint/);
   });
 
-  it("refuses the same shape at share time, where nothing compiles", () => {
-    // `hashForRecipe` builds a `#r=` link from text without ever compiling it,
-    // so a compile-only refusal is made exactly where it does not matter.
-    for (const f of PARSEABLE_FINGERPRINTS.slice(0, 8)) {
-      const share = hashForRecipe(cellFor(f));
-      expect(share.ok, f).toBe(false);
-      expect(recipeLooksSecret(compactRecipeText(cellFor(f))), f).toBe(true);
+  it("refuses it in the manifest too, where `peersSha` is committed", async () => {
+    // The digest is what a partial key would corrupt: a roster key naming
+    // several keys commits to none of them, and both ends would agree on a
+    // `peersSha` that means nothing.
+    await expect(
+      buildRunManifest({
+        title: "t",
+        recipe: cellFor("alice"),
+        cells: [],
+        peers: { [KEY_IDS[0]]: FINGERPRINTS[0] },
+      })
+    ).rejects.toThrow(/part of a key/);
+  });
+
+  it("anchors its complaints to the header, not to step 0", () => {
+    const src = cellFor(KEY_IDS[0]);
+    const { ast } = parseRecipe(src);
+    const [error] = validateRecipe(ast).errors;
+    expect(error.start).toBe(ast.chains[0].headerStart);
+    expect(error.end).toBe(ast.chains[0].headerEnd);
+    expect(src.slice(error.start, error.end)).toBe(src.split("\n")[0]);
+  });
+});
+
+describe("what a placed notebook's link gives away, said out loud", () => {
+  it("no longer refuses to build one", () => {
+    // `hashForRecipe` used to refuse this outright through `recipeLooksSecret`,
+    // which is what let the Share sheet promise "No trust needed" about every
+    // link it produced. The link is built now, and that is why the sentence
+    // below has to exist at all.
+    for (const f of FINGERPRINTS.slice(0, 8)) {
+      expect(hashForRecipe(cellFor(f)).ok, f).toBe(true);
+      expect(recipeLooksSecret(compactRecipeText(cellFor(f))), f).toBe(false);
     }
   });
 
-  it("leaves a fingerprint alone in every position that is not a peer", () => {
-    // The collateral half, and the one that would make this rule unusable if
+  it("names the keys the link carries, and how many", () => {
+    const two = `${cellFor(FINGERPRINTS[0])}\n\n@${FINGERPRINTS[4]}\n${BODY}`;
+    const said = recipeLinkDiscloses(two);
+    expect(said.peers).toEqual([
+      FINGERPRINTS[0].toUpperCase(),
+      FINGERPRINTS[4].toUpperCase(),
+    ]);
+    expect(said.sentence).toMatch(/2 keys/);
+    expect(said.sentence).toMatch(/who is in the room/);
+    // The half of the old promise that is still true, kept in the same sentence
+    // so a reader is not left to work out which half survived.
+    expect(said.sentence).toMatch(/reaches no server/);
+  });
+
+  it("says nothing about a notebook that names nobody", () => {
+    // The failure mode this repo landed a fix for the same night (`42875a2`):
+    // prose describing a product that does not exist. Most notebooks are
+    // unplaced and disclose no audience, and a warning over them would be
+    // exactly that — so the empty answer is asserted, not merely allowed.
+    expect(recipeLinkDiscloses(BODY)).toEqual({ peers: [], sentence: "" });
+    expect(recipeLinkDiscloses(cellFor("alice"))).toEqual({ peers: [], sentence: "" });
+  });
+
+  it("counts only the peer position, not every fingerprint in the text", () => {
+    // The collateral half, and the one that would make the sentence useless if
     // it were wrong: a fingerprint is an ordinary public argument everywhere
-    // except the position that names a person.
-    const fpr = PARSEABLE_FINGERPRINTS[0];
+    // except the position that names a person, and one in an argument says
+    // nothing about who is in a room.
+    const fpr = FINGERPRINTS[0];
     const asArgument = `hkp.get ${fpr} | out $pub`;
     expect(errorsFor(asArgument)).toEqual([]);
     expect(hashForRecipe(asArgument).ok).toBe(true);
-    expect(recipeLooksSecret(asArgument)).toBe(false);
+    expect(recipeLinkDiscloses(asArgument).sentence).toBe("");
 
     const asRecipient = `input | gpg.encrypt to=${fpr}`;
     expect(hashForRecipe(asRecipient).ok).toBe(true);
+    expect(recipeLinkDiscloses(asRecipient).sentence).toBe("");
   });
+});
 
+describe("a peer may still be a name", () => {
   it("still accepts the names people actually have", () => {
-    // Without this the suite would pass by refusing everything.
-    for (const name of ["alice", "mara", "okafor", "ops-team", "node_1", "d"]) {
+    // Nothing forces a hand-written notebook to speak in fingerprints, and a
+    // `@peer1` written before this change still has to parse — `planRun` is
+    // where it is told that nobody in the room answers to it, which is a
+    // refusal naming a true state rather than a compile error naming a
+    // grammar that has not changed.
+    for (const name of ["alice", "mara", "okafor", "ops-team", "node_1", "d", "peer1"]) {
       expect(compileRecipe(cellFor(name)).validation.ok, name).toBe(true);
     }
   });
@@ -177,14 +255,22 @@ describe("one label grammar, two sigils", () => {
     "aé",
   ];
 
-  it("agrees with the slot grammar on what a label is", () => {
+  it("agrees with the slot grammar on what a *name* is", () => {
     // `normalizePeerRef` shares SLOT_LABEL_RE rather than restating it. If it
     // ever grew its own copy, the two would drift apart here first.
+    //
+    // Peers are a strict superset now — a whole fingerprint is a peer — so the
+    // agreement is asserted over the names, and the case the superset adds is
+    // asserted beside it rather than left as a silent hole in this sweep.
     for (const label of LABELS) {
       expect(normalizePeerRef(label).ok, label).toBe(
         normalizeSlotRef(`$${label}`).ok
       );
     }
+    const fpr = createHash("sha1").update("superset").digest("hex").toUpperCase();
+    const digitFirst = `1${fpr.slice(1)}`;
+    expect(normalizePeerRef(digitFirst).ok).toBe(true);
+    expect(normalizeSlotRef(`$${digitFirst}`).ok).toBe(false);
   });
 
   it("keeps the rendezvous wildcard outside the label grammar", () => {
@@ -201,13 +287,18 @@ describe("one label grammar, two sigils", () => {
   });
 
   it("bounds a peer name, where a slot label is unbounded", () => {
-    // A slot label is local to the recipe; a peer label is a person's name in
-    // text that gets shared, so an unbounded one is an unbounded string riding
-    // out in a link under a grammar that looks like it only holds names.
+    // A slot label is local to the recipe; a peer is a name in text that gets
+    // shared, so an unbounded one is an unbounded string riding out in a link
+    // under a grammar that looks like it only holds short things. The bound is
+    // the length of a v6 fingerprint, which is the longest legal peer there is.
     const long = `a${"b".repeat(MAX_PEER_LABEL_LEN)}`;
     expect(normalizeSlotRef(`$${long}`).ok).toBe(true);
     expect(normalizePeerRef(long).ok).toBe(false);
     expect(normalizePeerRef(long.slice(0, MAX_PEER_LABEL_LEN)).ok).toBe(true);
+    // The bound is exactly a v6 fingerprint and not a character less.
+    const v6 = createHash("sha256").update("bound").digest("hex").toUpperCase();
+    expect(v6).toHaveLength(MAX_PEER_LABEL_LEN);
+    expect(normalizePeerRef(v6).ok).toBe(true);
   });
 });
 
@@ -216,6 +307,10 @@ describe("the header round-trips", () => {
   // bare forms on purpose: the named header is the one that can quietly widen
   // if a trip drops the list, and a trip that dropped it would still produce a
   // header that parses.
+  //
+  // A fingerprint header is in the list because it is the *long* one, and the
+  // compact `#r=` spelling is where a length problem would first show.
+  const FPR = createHash("sha1").update("roundtrip").digest("hex").toUpperCase();
   const HEADERS = [
     "@alice",
     "@alice publish",
@@ -223,6 +318,8 @@ describe("the header round-trips", () => {
     "@*",
     "@* publish",
     "@ops-team",
+    `@${FPR}`,
+    `@${FPR} publish=$kp`,
   ];
 
   for (const header of HEADERS) {
@@ -353,14 +450,5 @@ describe("the header refuses what it cannot mean", () => {
     expect(validateRecipe(forged).errors[0].message).toMatch(
       /needs a peer to go from/
     );
-  });
-
-  it("anchors its complaints to the header, not to step 0", () => {
-    const src = cellFor(PARSEABLE_FINGERPRINTS[0]);
-    const { ast } = parseRecipe(src);
-    const [error] = validateRecipe(ast).errors;
-    expect(error.start).toBe(ast.chains[0].headerStart);
-    expect(error.end).toBe(ast.chains[0].headerEnd);
-    expect(src.slice(error.start, error.end)).toBe(src.split("\n")[0]);
   });
 });

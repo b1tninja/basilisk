@@ -32,8 +32,8 @@ import {
   DEFAULT_OUT_SLOT,
   normalizePeerRef,
   parseRecipeSource,
-  peerFingerprintError,
-  peerLooksLikeFingerprint,
+  peerKeyIdError,
+  peerLooksLikeKeyId,
   PEER_PUBLISH_KEYWORD,
   PEER_PUBLISH_SEPARATOR,
   PEER_SIGIL,
@@ -1337,13 +1337,18 @@ function validateBodySteps(body, startType, ctx) {
 /**
  * Check one chain's `@peer` header.
  *
- * The parser already refused everything that is not a label, so what is left
- * here is the question a label grammar cannot answer: whether a well-formed
- * label is a thing a *person* may be called. `peerLooksLikeFingerprint` is the
- * whole of it, and it is a security rule rather than a style one — a
- * fingerprint written as a peer name rides out verbatim in a shared `#r=`
- * link, and `notebook/room.js` derives the room from a digest of exactly that
- * audience, so the link would hand a stranger the room.
+ * The parser already refused everything that is not a peer, so what is left
+ * here is the question the grammar cannot answer: whether a well-formed peer
+ * is a thing a room could ever bind. `peerLooksLikeKeyId` is the whole of it,
+ * and it is a security rule rather than a style one — 8, 16 and 32 hex
+ * characters are all *suffixes* of a fingerprint, so each names more than one
+ * key. A roster keyed by whole fingerprints cannot bind one, and a reader shown
+ * one has compared part of a value believing they compared all of it.
+ *
+ * A **whole** fingerprint is no longer refused here and is the spelling the
+ * product writes: see `peerIsFingerprint` for the trade that was made and
+ * `fingerprintPeersInText` for where the disclosure it costs is now stated out
+ * loud instead.
  *
  * Anchored to `headerStart`/`headerEnd` and to the chain's first step index,
  * so the complaint lands on the header in Source view and on the right cell in
@@ -1391,10 +1396,11 @@ function validateChainHeader(chain, firstStepIndex, errors) {
     errors.push({ message: norm.error, ...anchor });
     return;
   }
-  if (peerLooksLikeFingerprint(norm.peer)) {
-    errors.push({ message: peerFingerprintError(norm.peer), ...anchor });
+  if (peerLooksLikeKeyId(norm.peer)) {
+    errors.push({ message: peerKeyIdError(norm.peer), ...anchor });
     return;
   }
+
   // `@*` parses, and it plans: `planRun` places a rendezvous cell on everyone
   // and records the barrier as a wait. Nothing *performs* it — no peer
   // announces arrival, and no peer waits for one.

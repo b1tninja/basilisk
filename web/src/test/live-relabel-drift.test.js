@@ -1,56 +1,57 @@
 /**
- * The same drift, on a room that is already running.
+ * Removing somebody from a room that is already running.
  *
- * `peer-relabel.js` closed this for the *draft* audience, where one person is
- * composing and one person presses the control that renumbers everybody. A live
- * room is the harder half and was deliberately left: removing somebody moves the
- * room (`NotebookSession.rotateRoom`), the audience shrinks, and `peerLabels`
- * numbers what is left. It is the same arithmetic, reproduced here with nothing
- * of the fix involved — a three-key room [ADA, BEA, CEC] hands out
+ * ## The drift this file was written for, and where it went
+ *
+ * `peerLabels` numbered the audience in `canonicalAudience` order, so a
+ * three-key room [ADA, BEA, CEC] handed out
  *
  *     peer1=AAAA  peer2=BBBB  peer3=CCCC
  *
- * and removing BEA leaves
+ * and removing BEA left
  *
  *     peer1=AAAA  peer2=CCCC
  *
- * so a cell placed on CEC still says `@peer3` and now names nobody at all,
- * while a cell placed on the person who was just removed still says `@peer2`
- * and is now addressed to CEC — the removed member's number, taken over by the
- * member who stayed, with nothing on screen having moved.
+ * so a cell placed on CEC still said `@peer3` and named nobody, while a cell
+ * placed on the member who had just been removed still said `@peer2` and was now
+ * addressed to CEC — the removed member's number, taken over by the member who
+ * stayed, with nothing on screen having moved. `4b3305d` closed that by
+ * rewriting every header whenever the audience changed.
  *
- * ## What makes the live case a different decision
+ * **A peer is the whole fingerprint now, so the renumbering half of that is
+ * gone.** Removing BEA renames nobody: CEC is called what CEC was called, and no
+ * header anywhere has to move. This file therefore asserts the *absence* of the
+ * rewrite on the members who stayed, which is the strongest form of the claim
+ * and fails loudly if any positional naming returns.
+ *
+ * ## What is left, and why it is still here
+ *
+ * The cells placed on the member who **left**. Those never ran and never will —
+ * `planRun` refuses them `unknown-peer` — so they are unassigned and the reader
+ * is told. That was always a separate question from renumbering; it simply used
+ * to have a second and worse reason behind it (the vacated number was occupied
+ * immediately), and that reason is now unavailable rather than merely unused.
+ *
+ * ## What makes the live case a different decision from the draft
  *
  * On a draft, one browser holds the notebook. Here every member holds one, and
  * `buildRunManifest` digests the roster into `peersSha`: two peers committing to
- * different `{label: fingerprint}` bindings produce offers neither can accept.
- * So it is not enough for the machine that pressed Remove to do the right thing
- * — the room has to arrive at *one* binding, and this file's job is to
- * demonstrate that rather than to assert that one machine behaved.
+ * different bindings produce offers neither can accept. So it is not enough for
+ * the machine that pressed Remove to do the right thing — the room has to arrive
+ * at *one* binding.
  *
- * The rewrite is therefore **local and derived, not carried**: the mapping is a
- * pure function of the audience before and the audience after, both of which
- * every remaining member already holds identically, so no new message is sent
- * and none is needed. `useNotebook.followRotation` argues it at length. The
- * tests below are written so that the alternatives fail:
- *
- *  - "leave the numbers alone" fails on the literal labels asserted;
- *  - "follow the number rather than the person" fails on the independent check
- *    that each label resolves back to the key the cell was placed on;
- *  - "let one machine rewrite and the others not" fails on the convergence
- *    tests, which apply the rotation to two notebooks and require one binding
- *    and one manifest digest out the other end.
- *
- * Nothing here builds an expectation out of `peerLabels`. It is the function the
- * rule reads, so an expectation derived from it would assert only that the rule
- * agrees with itself.
+ * It does, and now it does so for a stronger reason than the rewrite ever gave:
+ * the binding is identity-mapped, so two members holding the same audience agree
+ * by construction with nothing derived and nothing carried. The convergence
+ * tests below are kept — they are what would fail if a naming layer came back —
+ * and they no longer depend on two machines performing the same edit.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
-import { peerLabels, roomRoster } from "../lib/notebook/roster.js";
-import { relabelAudience, relabelPlacements } from "../lib/toolkit/peer-relabel.js";
+import { roomRoster } from "../lib/notebook/roster.js";
+import { departedPeers, unassignDeparted } from "../lib/toolkit/peer-relabel.js";
 import { manifestDigest } from "../lib/toolkit/manifest.js";
 import { handoffContext, offerForSkipped, reviewOffer } from "../lib/toolkit/handoff-shell.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
@@ -91,81 +92,88 @@ function applyEdits(source, edits) {
   return serializeRecipe(chains);
 }
 
-/** One member's copy of a notebook, rewritten as `followRotation` rewrites it. */
+/** One member's copy, after `dropDepartedPlacements` has run on it. */
 function follow(source, beforeFprs, afterFprs) {
-  const moved = relabelAudience(beforeFprs, afterFprs);
-  const { edits, note } = relabelPlacements(compileRecipe(source).ast.chains, moved);
+  const gone = departedPeers(beforeFprs, afterFprs);
+  const { edits, note } = unassignDeparted(compileRecipe(source).ast.chains, gone);
   return { source: applyEdits(source, edits), edits, note };
 }
 
 /* ─────────────────────────── the drift itself ─────────────────────────── */
 
 describe("what removing somebody does to a notebook already written", () => {
-  it("hands the removed member's number to the member who stayed", () => {
-    // No fix involved: this is what the product does today, on both machines.
-    const before = peerLabels(BEFORE);
-    const after = peerLabels(AFTER);
-    expect(before.get(BEA)).toBe("peer2");
-    expect(after.get(CEC)).toBe("peer2");
-    // And CEC's old number now names nobody, so a cell left on it runs nowhere.
-    expect([...after.values()]).not.toContain("peer3");
+  it("does not hand the removed member's name to the member who stayed", () => {
+    // The inversion. Under the numbering, BEA was `peer2` and CEC became
+    // `peer2` the instant BEA left, so a cell placed on the removed member came
+    // to address somebody still in the room who would run it. Nobody inherits a
+    // key.
+    const before = roomRoster(BEFORE).roster;
+    const after = roomRoster(AFTER).roster;
+    expect(before[BEA]).toBe(BEA);
+    expect(after[BEA]).toBeUndefined();
+    // And CEC answers to exactly what CEC answered to before. Under the old
+    // rule this was the assertion that CEC's *name* had changed.
+    expect(after[CEC]).toBe(before[CEC]);
   });
 
   it("is a shrink and never a grow, which is why nobody is ever added here", () => {
     // `rotateRoom` filters the audience by a remove list and cannot extend it,
     // so the live half of this hazard is always somebody leaving. The draft
-    // half is the one where people arrive.
-    const moved = relabelAudience(BEFORE, AFTER);
-    expect([...moved]).toEqual([
-      ["peer2", null],
-      ["peer3", "peer2"],
-    ]);
+    // half is the one where people arrive — and neither half renames anybody.
+    expect([...departedPeers(BEFORE, AFTER)]).toEqual([BEA]);
+    expect([...departedPeers(AFTER, BEFORE)]).toEqual([]);
   });
 });
 
 /* ──────────────────────── the decision, both sides ─────────────────────── */
 
-describe("a live placement follows the person, not the number", () => {
-  const SOURCE = ["@peer1", "random 32 | out $a", "", "@peer3 publish", "random 32 | out $b"].join(
+describe("a live placement outlasts everybody except its own person", () => {
+  const SOURCE = [`@${ADA}`, "random 32 | out $a", "", `@${CEC} publish`, "random 32 | out $b"].join(
     "\n"
   );
 
-  it("moves the header to the label that member holds after the rotation", () => {
+  it("leaves the notebook alone when the person stayed", () => {
     const { source, edits, note } = follow(SOURCE, BEFORE, AFTER);
 
-    // Literals, so "refuse to renumber" — which would leave `@peer3` — fails
-    // right here rather than somewhere downstream.
-    expect(edits).toEqual([{ cell: 1, peer: "peer2", publish: true, publishSlots: [] }]);
-    expect(source).toBe("@peer1\nrandom 32 | out $a\n\n@peer2 publish\nrandom 32 | out $b");
-
-    // The independent check, from the other end: the label the cell now carries
-    // has to resolve to the key it was placed on. A rewrite that followed the
-    // *number* would have left `@peer3`, which the room no longer binds at all.
-    expect(roomRoster(AFTER).roster.peer2).toBe(CEC);
-    expect(note).toContain("cell 1 says @peer2 where it said @peer3");
+    // Byte for byte. This is the assertion that "leave the numbers alone" could
+    // never have passed under the old rule, and it is now the correct one — the
+    // room really did move, and no header in it named a position.
+    expect(edits).toEqual([]);
+    expect(source).toBe(SOURCE);
+    expect(note).toBe("");
+    // The independent check, from the other end: the peer each cell names still
+    // resolves in the room that is left.
+    expect(roomRoster(AFTER).roster[CEC]).toBe(CEC);
+    expect(roomRoster(AFTER).roster[ADA]).toBe(ADA);
   });
 
-  it("unassigns the removed member's cells rather than leaving the number", () => {
-    // The draft's rule, and it holds here for the same reason and more sharply:
-    // the vacated number is not merely reused later, it is occupied the instant
-    // the rotation lands. Leaving `@peer2` in place would hand BEA's cell to
-    // CEC, who is still in the room and would run it.
-    const src = "@peer2 publish\nrandom 32 | out $secret";
+  it("unassigns the removed member's cells", () => {
+    // The half that stayed. It is the same rule the draft applies, and its
+    // reason is now the simpler of the two the old file gave: a cell addressed
+    // to a key that is not in the room will never run.
+    const src = `@${BEA} publish\nrandom 32 | out $secret`;
     const { source, edits, note } = follow(src, BEFORE, AFTER);
     expect(edits).toEqual([{ cell: 0, peer: null, publish: false, publishSlots: [] }]);
     expect(source).toBe("random 32 | out $secret");
-    expect(roomRoster(AFTER).roster.peer2).toBe(CEC);
     expect(note).toContain("no longer in the room");
+    // The worse reason, gone: nobody in the room after the rotation answers to
+    // the departed key, so leaving the header would have stranded the cell
+    // rather than handing it to the member who stayed.
+    expect(roomRoster(AFTER).roster[BEA]).toBeUndefined();
   });
 
   it("writes the header through the recipe layer, so it parses back", () => {
     // `serializeStep`'s quoting has broken this repo before. Nothing in the
     // rewrite touches text — this is the assertion that would notice if it did.
-    const { source } = follow(SOURCE, BEFORE, AFTER);
+    const src = `${SOURCE}\n\n@${BEA} publish=$c\nrandom 32 | out $c`;
+    const { source } = follow(src, BEFORE, AFTER);
     const { ast, validation } = compileRecipe(source);
     expect(validation.errors.map((e) => e.message)).toEqual([]);
-    expect(ast.chains.map((c) => c.peer || "")).toEqual(["peer1", "peer2"]);
+    expect(ast.chains.map((c) => c.peer || "")).toEqual([ADA, CEC, ""]);
     expect(ast.chains[1].publish).toBe(true);
+    // `publish` left with the peer: a modifier attached to nobody is not a
+    // claim about anything, and a header that kept it would not compile.
+    expect(ast.chains[2].publish).toBeUndefined();
   });
 });
 
@@ -173,15 +181,15 @@ describe("a live placement follows the person, not the number", () => {
 
 /**
  * The notebook both members hold. Placed on all three so the rotation has
- * something to move, something to strand, and something to leave alone.
+ * something to strand and something to leave alone.
  */
-const SHARED = `@peer1 publish
+const SHARED = `@${ADA} publish
 bytes deadbeef | encode hex | out $seed
 
-@peer3 publish
+@${CEC} publish
 in $seed | decode hex | encode base64 | out $b64
 
-@peer1
+@${ADA}
 in $b64 | decode base64 | encode hex | out $final
 `;
 
@@ -192,61 +200,57 @@ async function memberContext(source, audience, selfFpr) {
 }
 
 describe("both members reach the same binding without exchanging one", () => {
-  it("rewrites two copies identically, because the mapping is the same fact", async () => {
+  it("holds two identical copies, because neither had anything to change", async () => {
     // ADA ordered the rotation; CEC was told about it. Neither sent the other
-    // anything about labels — each derived the mapping from the audience it
-    // held before and the audience it holds now, which `_handleSignal` makes
-    // identical on both.
+    // anything about who is called what, and neither had to derive it: the
+    // binding is the key. This used to be the test that two independently
+    // computed rewrites agreed.
     const ada = follow(SHARED, BEFORE, AFTER);
     const cec = follow(SHARED, BEFORE, AFTER);
     expect(ada.source).toBe(cec.source);
-    // Literal, so a rewrite that produced *some* agreed answer rather than the
-    // right one still fails: peer3 became peer2 and peer1 was not disturbed.
-    expect(ada.source).toContain("@peer2 publish\n$seed | decode hex");
-    expect(ada.source).toContain("@peer1 publish\nbytes deadbeef");
+    // Against the *serialized* original rather than the literal: `applyEdits`
+    // re-serializes whatever it is given, so comparing to the source string
+    // would be asserting that the serializer is a no-op on it, which is a
+    // different claim and not this one.
+    expect(ada.source).toBe(applyEdits(SHARED, []));
 
-    // And each label resolves to the key its cell was placed on, on both
-    // machines, checked against the roster rather than against the rewrite.
+    // And each header resolves to the key its cell was placed on, checked
+    // against the roster rather than against the rewrite.
     const { roster } = roomRoster(AFTER);
-    expect(roster.peer1).toBe(ADA);
-    expect(roster.peer2).toBe(CEC);
+    expect(roster[ADA]).toBe(ADA);
+    expect(roster[CEC]).toBe(CEC);
   });
 
   it("digests to one manifest, which is what `peersSha` requires of them", async () => {
-    const ada = follow(SHARED, BEFORE, AFTER);
-    const cec = follow(SHARED, BEFORE, AFTER);
-    const ctxA = await memberContext(ada.source, AFTER, ADA);
-    const ctxC = await memberContext(cec.source, AFTER, CEC);
+    const ctxA = await memberContext(SHARED, AFTER, ADA);
+    const ctxC = await memberContext(SHARED, AFTER, CEC);
 
-    expect(ctxA.manifest.peers).toEqual(["peer1", "peer2"]);
+    expect(ctxA.manifest.peers).toEqual([ADA, CEC].sort());
     expect(await manifestDigest(ctxA.manifest)).toBe(await manifestDigest(ctxC.manifest));
     // Two machines, two answers to "which of these am I" — that part must not
     // converge, or every cell would be somebody else's on both.
-    expect([ctxA.plan.me, ctxC.plan.me]).toEqual(["peer1", "peer2"]);
+    expect([ctxA.plan.me, ctxC.plan.me]).toEqual([ADA, CEC]);
     expect(ctxA.plan.cells.map((c) => c.mine)).toEqual([true, false, true]);
     expect(ctxC.plan.cells.map((c) => c.mine)).toEqual([false, true, false]);
   });
 
   it("carries a cell across the rotation and has it accepted on the other side", async () => {
     // The whole arc, after the room moved: ADA runs, the gate declines the cell
-    // that is now CEC's under a number CEC did not hold when the notebook was
-    // written, and CEC accepts an offer for it.
-    const ada = follow(SHARED, BEFORE, AFTER);
-    const cec = follow(SHARED, BEFORE, AFTER);
-    const ctxA = await memberContext(ada.source, AFTER, ADA);
-    const ctxC = await memberContext(cec.source, AFTER, CEC);
+    // that is CEC's, and CEC accepts an offer for it.
+    const ctxA = await memberContext(SHARED, AFTER, ADA);
+    const ctxC = await memberContext(SHARED, AFTER, CEC);
 
     const registry = createSlotRegistry();
     /** @type {any[]} */
     const skipped = [];
-    await runRecipe(compileRecipe(ada.source).ast, {}, {
+    await runRecipe(compileRecipe(SHARED).ast, {}, {
       slotRegistry: registry,
       placement: { plan: ctxA.plan, onSkip: (s) => skipped.push(s) },
     }).catch(() => {
       /* a placed run stops at the cell whose input lives elsewhere — by design */
     });
     expect(skipped.map((s) => s.cell)).toEqual([1]);
-    expect(skipped[0].waitingOn).toBe("peer2");
+    expect(skipped[0].waitingOn).toBe(CEC);
 
     const built = await offerForSkipped(ctxA, skipped[0], (l) =>
       registry.has(l) ? registry.resolve(l) : null
@@ -259,20 +263,17 @@ describe("both members reach the same binding without exchanging one", () => {
 
   it("converges the binding even where the two notebooks have diverged", async () => {
     // `notebook-share.js` lets a peer decline a proposal, so two members can be
-    // holding different text. The rewrite is per-notebook, so what converges is
-    // the *binding* and not the text: both end up meaning the same key by
-    // `@peer2`, and both still refuse each other's offers on the digest — which
-    // they did before the rotation and for the same reason.
-    const ada = follow(SHARED, BEFORE, AFTER);
-    const cec = follow(`${SHARED}\n@peer3\nrandom 8 | out $extra\n`, BEFORE, AFTER);
-    const ctxA = await memberContext(ada.source, AFTER, ADA);
-    const ctxC = await memberContext(cec.source, AFTER, CEC);
+    // holding different text. What converges is the *binding* and not the text:
+    // both mean the same key by the same header, and both still refuse each
+    // other's offers on the digest — which they did before the rotation and for
+    // the same reason.
+    const cecSource = `${SHARED}\n@${CEC}\nrandom 8 | out $extra\n`;
+    const ctxA = await memberContext(SHARED, AFTER, ADA);
+    const ctxC = await memberContext(cecSource, AFTER, CEC);
 
     expect(ctxA.manifest.peers).toEqual(ctxC.manifest.peers);
     expect(ctxA.manifest.peersSha).toBe(ctxC.manifest.peersSha);
     expect(await manifestDigest(ctxA.manifest)).not.toBe(await manifestDigest(ctxC.manifest));
-    // The extra cell followed the same person as the shared one did.
-    expect(cec.source.match(/@peer2/g)).toHaveLength(2);
   });
 });
 
@@ -280,13 +281,12 @@ describe("both members reach the same binding without exchanging one", () => {
 
 describe("between one member applying the rotation and the other", () => {
   it("refuses, naming a state that is true, and heals when the second follows", async () => {
-    // ADA has rotated and rewritten; CEC has not yet seen the announce, so it
-    // is still deriving the three-key roster. That is a real window — the
-    // announce is a sealed envelope over the relay — and what it must not
-    // produce is a *binding* that silently disagrees. A refusal is the right
-    // answer while it lasts.
-    const ada = follow(SHARED, BEFORE, AFTER);
-    const ctxA = await memberContext(ada.source, AFTER, ADA);
+    // ADA has rotated; CEC has not yet seen the announce, so it is still
+    // deriving the three-key roster. That is a real window — the announce is a
+    // sealed envelope over the relay — and the disagreement is now purely about
+    // *who is in the room*, which is the thing a `peersSha` is supposed to
+    // commit to. A refusal is the right answer while it lasts.
+    const ctxA = await memberContext(SHARED, AFTER, ADA);
     const stale = await memberContext(SHARED, BEFORE, CEC);
 
     expect(await manifestDigest(ctxA.manifest)).not.toBe(await manifestDigest(stale.manifest));
@@ -295,7 +295,7 @@ describe("between one member applying the rotation and the other", () => {
     const registry = createSlotRegistry();
     /** @type {any[]} */
     const skipped = [];
-    await runRecipe(compileRecipe(ada.source).ast, {}, {
+    await runRecipe(compileRecipe(SHARED).ast, {}, {
       slotRegistry: registry,
       placement: { plan: ctxA.plan, onSkip: (s) => skipped.push(s) },
     }).catch(() => {});
@@ -308,11 +308,10 @@ describe("between one member applying the rotation and the other", () => {
     expect(early.refusals.map((r) => r.reason)).toContain("unknown-manifest");
     expect(early.refusals[0].message).toContain("not holding the same notebook");
 
-    // The same offer, once CEC applies the same rotation to the same notebook.
-    // Nothing was re-sent and nothing was re-derived from a message: the
-    // announce that moved CEC's room is what moved CEC's labels.
-    const cec = follow(SHARED, BEFORE, AFTER);
-    const ctxC = await memberContext(cec.source, AFTER, CEC);
+    // The same offer, once CEC's room has moved too. Nothing was re-sent and
+    // nothing was re-derived from a message: the announce that moved CEC's room
+    // is the whole of what had to happen.
+    const ctxC = await memberContext(SHARED, AFTER, CEC);
     const healed = await reviewOffer(ctxC, built.json, () => false);
     expect(healed.ok, healed.refusals.map((r) => r.reason).join(", ")).toBe(true);
   });
@@ -322,9 +321,9 @@ describe("between one member applying the rotation and the other", () => {
 
 /**
  * The hook is React and this suite runs in node, so what can be pinned here is
- * that the rewrite is hung off the *observation* and not off the press, and
- * that the fact it observes is one every member receives. The behaviour of the
- * two ends of that wire is pinned where it can run: `notebook-rotation.test.js`
+ * that the edit is hung off the *observation* and not off the press, and that
+ * the fact it observes is one every member receives. The behaviour of the two
+ * ends of that wire is pinned where it can run: `notebook-rotation.test.js`
  * drives two live sessions through a rotation, and `quorum-lifecycle.test.js`
  * drives the snapshot a member who ordered nothing ends up holding.
  */
@@ -334,28 +333,28 @@ describe("the hook watches the room rather than the button", () => {
   const OPS = read("../lib/toolkit/quorum-ops.js");
   const SESSION = read("../lib/notebook/session.js");
 
-  it("does not rewrite anything inside `removeFromRoom`", () => {
-    // The press happens on one machine. A rewrite here would relabel the
-    // initiator and leave everybody else on the old numbering, which is the
-    // one outcome worse than the drift: today the room is wrong together.
+  it("does not edit anything inside `removeFromRoom`", () => {
+    // The press happens on one machine. An edit here would strand cells on the
+    // initiator and leave everybody else holding them, which is the one outcome
+    // worse than doing nothing: today the room is wrong together.
     const at = HOOK.indexOf("const removeFromRoom");
     const body = HOOK.slice(at, HOOK.indexOf("}, []);", at));
     expect(body).toContain("rotateQuorumRoom([fingerprint])");
-    expect(body).not.toContain("relabelPlacements");
+    expect(body).not.toContain("unassignDeparted");
     expect(body).not.toContain("setCellPeer");
   });
 
-  it("rewrites from the audience change, through the mutator CellAssign presses", () => {
+  it("edits from the audience change, through the mutator CellAssign presses", () => {
     expect(HOOK).toMatch(
-      /import \{ relabelAudience, relabelPlacements \} from "\.\.\/lib\/toolkit\/peer-relabel\.js"/
+      /import \{ departedPeers, unassignDeparted \} from "\.\.\/lib\/toolkit\/peer-relabel\.js"/
     );
-    expect(HOOK).toMatch(/const moved = relabelAudience\(before, after\)/);
-    expect(HOOK).toMatch(/followRotation\(was\.audience, audience\)/);
+    expect(HOOK).toMatch(/departedPeers\(before, after\)/);
+    expect(HOOK).toMatch(/dropDepartedPlacements\(was\.audience, audience\)/);
     expect(HOOK).toMatch(
       /setCellPeer\(edit\.cell, edit\.peer, edit\.publish, edit\.publishSlots\)/
     );
     // The epoch is the guard, not the audience: a different room opening is not
-    // this room renumbering.
+    // this room shrinking.
     expect(HOOK).toMatch(/if \(!was \|\| epoch <= was\.epoch\) return;/);
   });
 

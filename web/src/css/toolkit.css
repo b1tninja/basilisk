@@ -263,6 +263,40 @@ body.layout-app:has(#app > .toolkit-shell) {
   background: color-mix(in srgb, var(--error) var(--tile-tint), transparent);
 }
 /*
+ * A peer, printed where a placard cannot go.
+ *
+ * A `@peer` header is a whole key fingerprint — 49 characters once
+ * `formatFingerprint` has grouped it — and the two places it has to be drawn
+ * are a `DropdownMenuTrigger` and a `DropdownMenuItem`, neither of which may
+ * contain the `Fingerprint` component (see `peerPrinted` in `CellAssign.tsx`
+ * for why). So the value is printed whole and *wrapped*, never cut: the break
+ * is on the grouping spaces first, and `anywhere` is the fallback for a
+ * container narrower than one group so that a phone shows all of it in three
+ * lines rather than clipping it into a truncation nobody chose.
+ *
+ * Declared here rather than as a style prop because the page runs under
+ * `style-src 'self'`, which blocks every `element.style` write — including the
+ * ones React makes from a style object.
+ */
+.cell-assign-peer {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+/*
+ * The trigger holds the header and, beside it, who that key is. It is a button,
+ * so it will not wrap by default; this lets it, because the alternative for a
+ * value this long is an ellipsis, and an elided fingerprint is the one thing
+ * `components/ui/fingerprint.tsx` exists to keep out of the product.
+ */
+.cell-assign-trigger {
+  height: auto;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: normal;
+}
+
+/*
  * The fourth tone, added with the relay readout. "No relay is configured and
  * none will be contacted" is the *quiet* answer, not a warning — drawing it in
  * `--warn` beside the states that mean a third party is involved would invert

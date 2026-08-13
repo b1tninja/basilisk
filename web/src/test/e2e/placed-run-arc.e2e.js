@@ -1182,17 +1182,23 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
   it("lets each browser work out which peer it is, from its own live session", () => {
     // The assertion this suite could not make while it wrote the roster itself.
     // Each side asked `roomRoster` over its *own* session — its audience, its
-    // peer map (which does not contain it) and its own fingerprint — and got a
-    // label back. Empty here is the state the product shipped in for the whole
+    // peer map (which does not contain it) and its own fingerprint — and got an
+    // answer back. Empty here is the state the product shipped in for the whole
     // life of the placed run, and it is the one thing this must never be.
-    expect(out.whoA.me).toMatch(/^peer\d+$/);
-    expect(out.whoB.me).toMatch(/^peer\d+$/);
+    //
+    // The answer is each browser's own key rather than `peerN`. Asserted
+    // against the fingerprints this fixture minted, which is stronger than the
+    // shape check it replaces: a derivation that returned *some* peer would
+    // have satisfied `/^peer\d+$/`.
+    expect(out.whoA.me).toBe(mara.fpr);
+    expect(out.whoB.me).toBe(okafor.fpr);
     expect(out.whoA.me).not.toBe(out.whoB.me);
 
-    // One roster, reached twice. The labels are positions in the audience, so
-    // two browsers that share a room agree about who is who without either
-    // being told — which is what makes `@peerN` in a notebook that travels as
-    // text mean one person, and what makes both manifests digest one binding.
+    // One roster, reached twice. Two browsers that share a room agree about who
+    // is who without either being told — which is what makes a `@peer` header
+    // in a notebook that travels as text mean one person, and what makes both
+    // manifests digest one binding. It used to be bought with an ordering rule
+    // over the canonical audience; it is a property of the value now.
     expect(out.whoA.roster).toEqual(out.whoB.roster);
     expect(Object.keys(out.whoA.roster).sort()).toEqual([out.whoA.me, out.whoB.me].sort());
     expect(out.whoA.roster[out.whoA.me]).toBe(mara.fpr);

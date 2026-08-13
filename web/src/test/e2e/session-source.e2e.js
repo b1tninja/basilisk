@@ -217,17 +217,19 @@ describe.runIf(availability.ok)("what a session writes into the notebook", () =>
      * until the session was live, which is useless — a ceremony is written
      * first and run when the other person is free.
      *
-     * This has to be a browser, and it has to be these presses. The labels come
+     * This has to be a browser, and it has to be these presses. The peers come
      * from a draft audience that only the shell holds, the menu they appear in
      * is rendered into a portal, and the notebook they are written into is
      * serialized by the hook: there is no seam below the UI where any of that
      * can be observed. `relabel-drift.test.js` proves the rule; this proves a
      * person can reach it.
      *
-     * Three fingerprints chosen for their sort order, because the sort is the
-     * hazard. `LOWEST` is below both of the others, so adding it renumbers
-     * every label in the room — which is precisely the move that used to change
-     * what a written `@peer2` meant with nothing on screen to say so.
+     * Three fingerprints chosen for their sort order, because the sort *was*
+     * the hazard. `LOWEST` is below both of the others, so adding it used to
+     * renumber every label in the room — which is precisely the move that
+     * changed what a written `@peer2` meant with nothing on screen to say so.
+     * A peer is the whole key now, so the second half of this test asserts that
+     * the same move changes nothing at all, in the notebook's own text.
      */
     const LOWEST = "0".repeat(40);
     const LOW = "1".repeat(40);
@@ -260,39 +262,53 @@ describe.runIf(availability.ok)("what a session writes into the notebook", () =>
     // The room is named and nobody has connected. This is the exact state the
     // assignment menu used to be empty in.
     await named(`#j=${LOW},${HIGH}`);
-    expect(await page.locator('[data-session-member="peer1"]').count()).toBe(1);
-    expect(await page.locator('[data-session-member="peer2"]').count()).toBe(1);
+    expect(await page.locator(`[data-session-member="${LOW}"]`).count()).toBe(1);
+    expect(await page.locator(`[data-session-member="${HIGH}"]`).count()).toBe(1);
     await page.keyboard.press("Escape");
     await sheet.waitFor({ state: "hidden", timeout: 10000 });
 
+    // The menu prints the key grouped in fours, which is how this product
+    // prints every fingerprint: a `DropdownMenuItem` cannot hold the
+    // `Fingerprint` placard, and the degradation is the whole value rather than
+    // a truncation. Finding the row by that spelling is also the assertion that
+    // all of it is on screen.
+    const printed = (fpr) => fpr.match(/.{1,4}/g).join(" ");
     const assign = page.locator("[data-cell-assign]").first();
     await assign.click();
-    const second = page.getByRole("menuitem", { name: /@peer2/ });
+    const second = page.getByRole("menuitem", { name: `@${printed(HIGH)}`, exact: false });
     await second.waitFor({ state: "visible", timeout: 10000 });
     // Both of them, from an audience nobody has joined — the assertion whose
     // absence shipped an empty menu.
-    expect(await page.getByRole("menuitem", { name: /@peer1/ }).count()).toBe(1);
+    expect(
+      await page.getByRole("menuitem", { name: `@${printed(LOW)}`, exact: false }).count()
+    ).toBe(1);
     await second.click();
 
     await expect
       .poll(async () => await readNotebookSource(page), { timeout: 10000 })
-      .toMatch(/^@peer2$/m);
+      .toMatch(new RegExp(`^@${HIGH}$`, "m"));
 
-    // Now the renumbering, arriving the way it most plausibly does: a corrected
-    // invite with one more person in it.
+    // Now the move that used to renumber the room, arriving the way it most
+    // plausibly does: a corrected invite with one more person in it, whose key
+    // sorts below both of the others.
     await named(`#j=${LOWEST},${LOW},${HIGH}`);
-    await expect
-      .poll(async () => await page.locator("[data-relabel-note]").innerText(), {
-        timeout: 10000,
-      })
-      .toContain("@peer3");
+    expect(await page.locator(`[data-session-member="${LOWEST}"]`).count()).toBe(1);
+    // **Nothing was said, because nothing happened.** Under the numbering this
+    // was where the shell announced "cell 0 says @peer3 where it said @peer2";
+    // the live region is still here and still empty, which is the assertion —
+    // a narration for a rewrite that did not occur would be as wrong as silence
+    // about one that did.
+    expect(await page.locator("[data-relabel-note]").innerText()).toBe("");
+    expect(await page.locator("[data-relabel-note]").getAttribute("data-relabel-note")).toBe("");
     await page.keyboard.press("Escape");
     await sheet.waitFor({ state: "hidden", timeout: 10000 });
 
-    // The header moved with the person: `HIGH` was peer2 in a room of two and
-    // is peer3 in a room of three. A notebook that still said `@peer2` would be
-    // addressing `LOW` — a different machine, silently.
-    expect(await readNotebookSource(page)).toMatch(/^@peer3$/m);
+    // And the header is the one the author wrote. It named `HIGH` before the
+    // third person arrived and it names `HIGH` now — under the old numbering
+    // this same text would have had to be rewritten from `@peer2` to `@peer3`
+    // to go on meaning the same machine.
+    expect(await readNotebookSource(page)).toMatch(new RegExp(`^@${HIGH}$`, "m"));
+    expect(await readNotebookSource(page)).not.toMatch(/^@peer\d/m);
   });
 
   it("keeps the audience readable as itself, not merely parseable", async () => {
