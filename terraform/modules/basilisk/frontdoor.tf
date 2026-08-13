@@ -241,11 +241,143 @@ resource "azurerm_cdn_frontdoor_rule" "security_headers_extra" {
   }
 }
 
+# The four pages commit 4983e1e retired into the toolkit, and where each one's
+# errand went. Written here because Flask's copy cannot fire on the deployed
+# site: `static-route` below matches `/` and `/*` and sends them to the storage
+# account's `$web` container — the same routing fact this file's header
+# describes for CSP. Only /pks/*, /api/*, /claim/*, /.auth/* and /health reach
+# the Function App, so `_RETIRED_PAGES` in basilisk/portal/static.py covers `docker
+# compose`, `basilisk serve` and the test client, and on keys.b1tninja.com a
+# bookmark to /my-keys was a blob 404 until these rules existed.
+#
+# THIS TABLE IS ONE OF THREE STATEMENTS OF ONE FACT. The others are
+# `_RETIRED_PAGES` in basilisk/portal/static.py and `RETIRED_PAGES` in
+# web/scripts/basilisk-dev-server.js. They cannot be collapsed into a shared file
+# without this module reaching outside itself for repo content, so instead
+# tests/unit/test_portal.py::test_a_retired_redirect_says_the_same_thing_in_all_three_places
+# parses all three and fails when they disagree. Change one, change all three.
+#
+# The fragment is a separate field. `destination_path = "/toolkit#encrypt"` would
+# be emitted as a literal %23; the `#` part is `destination_fragment`, given
+# without the `#`. `/quorum` and `/my-keys` have no fragment (see static.py for
+# why /quorum cannot address a room), so they pass "" — documented as "leave
+# blank to preserve the incoming fragment", and a request never carries one,
+# because browsers do not send the fragment to the server at all.
+#
+# `match_paths` HAS NO LEADING SLASH AND `destination_path` MUST HAVE ONE. Every
+# other path in this file is written `/like/this`, so the asymmetry looks like a
+# typo and is not. A Front Door request path "is the part of the URL after the
+# hostname and a slash" and the configured value must match that form — "Don't
+# include the leading slash (`/`)" (azurerm 4.81.0 docs, `url_path_condition`);
+# `destination_path` is the opposite, "must be a string and include the leading
+# `/`". Get this backwards and the rule silently never matches, which looks
+# exactly like not having deployed it.
+#
+# `Equal`, never `Contains`: a redirect that over-matches is worse than the 404
+# it replaces — `Contains "my-keys"` would swallow a future /my-keys-export, and
+# nothing here may touch /pks/*, /api/*, /claim/*, /.auth/*, /health, /toolkit,
+# /published or any other live page. `Equal` matches the whole path and nothing
+# else. The trailing-slash variant is listed because blob storage 404s it, where
+# Flask's router would have folded it onto the bare path first.
+#
+# No case transform: Flask matches these names case-sensitively, so a rule that
+# also caught /Encrypt would be a behaviour the local server does not have.
+locals {
+  retired_pages = {
+    encrypt = {
+      name                 = "RetiredPageEncrypt"
+      order                = 1
+      match_paths          = ["encrypt", "encrypt/"]
+      destination_path     = "/toolkit"
+      destination_fragment = "encrypt"
+    }
+    decrypt = {
+      name                 = "RetiredPageDecrypt"
+      order                = 2
+      match_paths          = ["decrypt", "decrypt/"]
+      destination_path     = "/toolkit"
+      destination_fragment = "decrypt"
+    }
+    quorum = {
+      name                 = "RetiredPageQuorum"
+      order                = 3
+      match_paths          = ["quorum", "quorum/"]
+      destination_path     = "/toolkit"
+      destination_fragment = ""
+    }
+    my_keys = {
+      name                 = "RetiredPageMyKeys"
+      order                = 4
+      match_paths          = ["my-keys", "my-keys/"]
+      destination_path     = "/published"
+      destination_fragment = ""
+    }
+  }
+}
+
+# In `static_cache` at orders 1-4, ahead of the two cache rules, rather than in a
+# rule set of their own: `cdn_frontdoor_rule_set_ids` on a route is a set, so the
+# order two rule sets are evaluated in is not something this configuration can
+# state. Order *within* a rule set is, and the rule these must beat —
+# `static_html_cache` — lives in this one. Putting them anywhere else would make
+# correctness depend on whether a `url_redirect_action` outranks a
+# `route_configuration_override_action` when both match, which is not documented.
+#
+# `Stop`, where the rules around them use `Continue`, because those are additive
+# — headers and cache configuration that should all land on one request — and
+# this one is terminal. The response is manufactured at the edge; there is no
+# origin fetch left for `static_assets_cache` or `static_html_cache` to
+# configure, and no body for a CSP to govern. The cost is that the `security`
+# rule set's headers may not be applied to the 301 (whether they are depends on
+# that same undefined rule-set order). That is acceptable: an empty redirect
+# response has nothing for nosniff, X-Frame-Options or CSP to protect, and the
+# destination is same-origin over https, where the full header set applies.
+#
+# `Moved` is Front Door's name for 301. The trap is `PermanentRedirect`, which
+# reads like the right answer and is 308 — the status static.py explicitly did
+# not pick, these being GET-only documents with no method to preserve. 301 is
+# cached by browsers effectively forever, so it is deliberately hard to walk
+# back: these retirements are permanent, the destinations are pages that already
+# exist, and a 302 would ask every client to re-check a URL that is never
+# coming back.
+#
+# `destination_hostname = ""` keeps the incoming host, so this works on both the
+# *.azurefd.net endpoint and the custom domain. `query_string` is omitted, which
+# preserves the incoming query string: nothing in these paths' history has a
+# meaningful query, but dropping one would silently discard a UTM tag or a
+# `?q=` that a reader pasted, and the toolkit ignores what it does not read.
+resource "azurerm_cdn_frontdoor_rule" "retired_page" {
+  for_each = local.retired_pages
+
+  name                      = each.value.name
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
+  order                     = each.value.order
+  behavior_on_match         = "Stop"
+
+  conditions {
+    url_path_condition {
+      operator     = "Equal"
+      match_values = each.value.match_paths
+    }
+  }
+
+  actions {
+    url_redirect_action {
+      redirect_type        = "Moved"
+      redirect_protocol    = "Https"
+      destination_hostname = ""
+      destination_path     = each.value.destination_path
+      destination_fragment = each.value.destination_fragment
+    }
+  }
+}
+
 resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
   name                      = "CacheStaticAssets"
   cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
-  order                     = 1
-  behavior_on_match         = "Continue"
+  # Orders 1-4 are the retired-page redirects above; these two run after them.
+  order             = 5
+  behavior_on_match = "Continue"
 
   conditions {
     url_path_condition {
@@ -269,7 +401,7 @@ resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
 resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
   name                      = "CacheStaticHtml"
   cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
-  order                     = 2
+  order                     = 6
   behavior_on_match         = "Continue"
 
   conditions {

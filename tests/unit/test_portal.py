@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import pytest
 
 from basilisk.auth.azure import require_principal
@@ -259,3 +262,79 @@ def test_a_page_and_a_redirect_are_never_the_same_name():
     from basilisk.portal.static import _RETIRED_PAGES, _STATIC_PAGES
 
     assert set(_STATIC_PAGES) & set(_RETIRED_PAGES) == set()
+
+
+def _retired_pages_from_dev_server(repo_root):
+    """`RETIRED_PAGES` as written in web/scripts/basilisk-dev-server.js."""
+    text = (repo_root / "web" / "scripts" / "basilisk-dev-server.js").read_text(
+        encoding="utf-8"
+    )
+    block = re.search(r"const RETIRED_PAGES = \{(.*?)\n\};", text, re.S)
+    assert block, "RETIRED_PAGES literal not found in basilisk-dev-server.js"
+    return {
+        (m.group(1) or m.group(2)): m.group(3)
+        for m in re.finditer(
+            r'(?:"([^"]+)"|([A-Za-z_$][\w$]*))\s*:\s*"([^"]+)"', block.group(1)
+        )
+    }
+
+
+def _retired_pages_from_terraform(repo_root):
+    """`local.retired_pages` as written in terraform/modules/basilisk/frontdoor.tf.
+
+    Rebuilt into the same shape the other two use: Front Door splits a
+    destination across ``destination_path`` and ``destination_fragment`` (a `#`
+    in the path would be sent as a literal ``%23``), and it matches the request
+    path with no leading slash, so both are put back here.
+    """
+    text = (
+        repo_root / "terraform" / "modules" / "basilisk" / "frontdoor.tf"
+    ).read_text(encoding="utf-8")
+    entries = re.findall(
+        r'match_paths\s*=\s*\[([^\]]*)\]\s*'
+        r'destination_path\s*=\s*"([^"]*)"\s*'
+        r'destination_fragment\s*=\s*"([^"]*)"',
+        text,
+    )
+    pages = {}
+    for raw_paths, destination, fragment in entries:
+        paths = re.findall(r'"([^"]*)"', raw_paths)
+        # A bookmarked `/encrypt/` reaches blob storage, which 404s it, where
+        # Flask's router would have folded the trailing slash away first.
+        assert paths == [paths[0], f"{paths[0]}/"], (
+            f"{paths[0]}: expected the bare path and its trailing-slash variant, got {paths}"
+        )
+        pages[paths[0]] = destination + (f"#{fragment}" if fragment else "")
+    return pages
+
+
+@pytest.mark.unit
+def test_a_retired_redirect_says_the_same_thing_in_all_three_places():
+    """One fact, stated three times, so this asserts the three still agree.
+
+    A retired path has to redirect wherever the request lands, and requests land
+    in three different places. Flask's ``_RETIRED_PAGES`` answers for ``docker
+    compose``, ``basilisk serve`` and the test client. The Vite plugin answers
+    for ``npm run dev``. Front Door answers for the deployed site, and it is the
+    one that matters most and is checked least: ``static-route`` sends ``/*`` to
+    the storage account's ``$web`` container, so Flask never sees these paths on
+    keys.b1tninja.com and its table cannot cover them there.
+
+    Collapsing all three into one shared file would mean the Terraform module
+    reaching outside itself for repo content, so they stay three declarations
+    and this test is what makes them move together. It reads the files as text
+    rather than importing them, because two of the three are not Python.
+    """
+    from basilisk.portal.static import _RETIRED_PAGES
+
+    repo_root = Path(__file__).resolve().parents[2]
+    dev_server = _retired_pages_from_dev_server(repo_root)
+    front_door = _retired_pages_from_terraform(repo_root)
+
+    assert len(front_door) == len(_RETIRED_PAGES), (
+        "frontdoor.tf's local.retired_pages did not parse into the expected "
+        f"number of rules (got {sorted(front_door)}); if its field order or "
+        "naming changed, this parser has to change with it"
+    )
+    assert dev_server == _RETIRED_PAGES
+    assert front_door == _RETIRED_PAGES
