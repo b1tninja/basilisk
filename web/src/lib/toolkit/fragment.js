@@ -4,6 +4,7 @@
  * Forms (first match wins):
  *   #encrypt | #decrypt | #symencrypt  — named messaging starters
  *     (#symencrypt = mode=passphrase + generated $pw)
+ *   #keys                              — open the Keys tray; loads no notebook
  *   #t=<presetId>                      — Templates preset
  *   #j=<fpr,fpr,…>                     — a shared-session invite: the audience,
  *                                        which is the only thing both ends need
@@ -78,10 +79,23 @@ input | gpg.symencrypt mode=passphrase passphrase=$pw | out $msg`,
 };
 
 /**
+ * A tray the fragment can ask for by name.
+ *
+ * One member, and it earns the shape: `/toolkit#keys` is the nav's "Keys"
+ * entry, and the vault it names sits in a tray that may be collapsed. Spelled
+ * as a kind rather than folded into the starters because a starter *replaces
+ * the notebook* — landing on the vault must not throw away what you were
+ * writing, which is the same rule `#j=` follows for the same reason.
+ *
+ * @typedef {"keys"} ToolkitTray
+ */
+
+/**
  * @typedef {{ kind: "starter", starter: MessagingStarter, inputs?: ToolkitInputSeeds }
  *   | { kind: "preset", id: string, inputs?: ToolkitInputSeeds }
  *   | { kind: "recipe", recipe: string, inputs?: ToolkitInputSeeds }
  *   | { kind: "join", audience: string[] }
+ *   | { kind: "tray", tray: ToolkitTray }
  *   | { kind: "empty" }
  *   | { kind: "unknown", raw: string }} ToolkitHashAction
  */
@@ -310,6 +324,14 @@ export function parseToolkitHash(hash) {
       },
       ct
     );
+  }
+
+  // A tray by name, carrying no seed and no recipe. This is where "Keys" in
+  // the nav points: the vault's home is the tray, and a link that opened the
+  // toolkit without opening it would be a nav entry named for something the
+  // page it loads does not show.
+  if (headLower === "keys") {
+    return { kind: "tray", tray: "keys" };
   }
 
   // Mini query on head: t=… or r=…

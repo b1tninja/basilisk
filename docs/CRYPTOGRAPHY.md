@@ -582,4 +582,4 @@ When adding an op: registry entry + refined types + engine case + `tests/` + upd
 - [CAST-AND-TEST-GAPS.md](CAST-AND-TEST-GAPS.md) — CAST / FIPS-mode / test gap plan
 - [TESTING.md](TESTING.md) — server/pytest and e2e
 - [DEPLOYMENT.md](DEPLOYMENT.md) — CSP / Front Door tunables
-- Portal UI: `/toolkit`, `/encrypt`, `/decrypt`, `/quorum`, My Keys
+- Portal UI: `/toolkit` (with `#encrypt`, `#decrypt` and `#keys` fragments), `/published`, `/verify`, `/key`. `/encrypt`, `/decrypt`, `/quorum` and `/my-keys` were retired into the toolkit and 301 to their replacements.

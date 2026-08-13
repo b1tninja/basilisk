@@ -158,7 +158,8 @@ function profileMenuHtml(user) {
           <span class="profile-dropdown-email" title="${escapeHtml(user.email)}">${escapeHtml(user.email)}</span>
         </div>
         <div class="profile-dropdown-items">
-          <a class="profile-dropdown-item" href="/my-keys" role="menuitem">${ICON_KEYRING}Keyring</a>
+          <a class="profile-dropdown-item" href="/toolkit#keys" role="menuitem">${ICON_KEYRING}Keyring</a>
+          <a class="profile-dropdown-item" href="/published" role="menuitem">${ICON_KEYRING}Published keys</a>
           <a class="profile-dropdown-item" href="/preferences" role="menuitem">${ICON_PREFERENCES}Preferences</a>
           <a class="profile-dropdown-item" href="/stats" role="menuitem">${ICON_STATS}Stats</a>
         </div>

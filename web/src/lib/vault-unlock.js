@@ -1,5 +1,9 @@
 /**
- * Shared My Keys unlock path for Encrypt / Decrypt / Toolkit / agent.unlock.
+ * Shared My Keys unlock path for the Toolkit and `agent.unlock`.
+ *
+ * It named Encrypt and Decrypt too, and those were pages: `/encrypt` and
+ * `/decrypt` are toolkit fragments now, so both of those callers are the third
+ * one under different starters.
  */
 
 import {

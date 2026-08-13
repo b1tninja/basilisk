@@ -248,7 +248,9 @@ The workflow applies Terraform, publishes function code, uploads the static port
 
 
 
-Portal pages (`/`, `/search`, `/my-keys`, `/key`) are **static HTML/JS/CSS** in [`web/static/`](../web/static/). Front Door routes them to the storage account static website (`$web`); only API, HKP, claim, Easy Auth, and `/health` hit the Function App.
+Portal pages (`/`, `/search`, `/published`, `/key`, `/toolkit`, `/verify`, `/preferences`, `/stats`) are **static HTML/JS/CSS** built by Vite into `web/dist/`. Front Door routes them to the storage account static website (`$web`); only API, HKP, claim, Easy Auth, and `/health` hit the Function App.
+
+`/encrypt`, `/decrypt`, `/quorum` and `/my-keys` no longer exist as pages. Flask 301s each to where its errand went (`basilisk/portal/static.py`, `_RETIRED_PAGES`) — but Front Door serves `/*` from `$web`, so **a deployment that needs those old links to keep working has to carry the same four redirects in its own rules**; the Flask route covers `basilisk serve`, docker and the test client, not the storage-account path.
 
 
 

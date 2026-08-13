@@ -764,12 +764,15 @@ describe("an empty vault is a different problem from an unmade choice", () => {
     const none = startIssues({ audience: [], keyFingerprint: "", keyCount: 0 });
     expect(none.join(" ")).toMatch(/no private key in this browser/i);
     expect(none.join(" ")).not.toMatch(/^Choose the key/m);
-    // Names the store that can sign, and says why the other one cannot. My Keys
-    // shows both under headings that both say "keys"; sending someone there
-    // without distinguishing them is how this was reported a second time, with
-    // three account keys on screen and a session insisting there were none.
+    // Names the store that can sign, and says why the other one cannot. The
+    // two used to share the `/my-keys` heading and both said "keys"; sending
+    // somebody there without distinguishing them is how this was reported a
+    // second time, with three account keys on screen and a session insisting
+    // there were none. The page split into Published and the Keys tray, so the
+    // sentence names those — a refusal that points at a retired page names a
+    // state the reader cannot get to.
     expect(none.join(" ")).toMatch(/Your browser vault/);
-    expect(none.join(" ")).toMatch(/public keys on your account and cannot sign/);
+    expect(none.join(" ")).toMatch(/the ones on Published are public keys on your account and cannot sign/);
   });
 
   it("still says choose when there is something to choose", () => {

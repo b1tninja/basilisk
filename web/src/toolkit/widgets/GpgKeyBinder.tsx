@@ -129,7 +129,7 @@ export function GpgKeyBinder({
         // Not "no keys" — say what to do. The vault being empty is the normal
         // first-run state, not an error.
         <p className="rounded-[6px] border border-dashed border-[var(--border)] px-2 py-2 text-[11px] italic text-[var(--muted-foreground)]">
-          No keys with a private half yet — generate or import one on My Keys, or run{" "}
+          No keys with a private half yet — generate or import one in the Keys tray, or run{" "}
           <code className="font-mono not-italic">gpg.genkey</code>.
         </p>
       )}

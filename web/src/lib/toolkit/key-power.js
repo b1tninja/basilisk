@@ -2,9 +2,9 @@
  * What a key can do for you, here, now.
  *
  * The split that produced the original report was on **where the bytes live**:
- * `my-keys-mount.js` draws "Your keys" (the public keys `/api/v1/me/keys` holds
- * for your account) above "Your browser vault" (the private keys `vault.js`
- * keeps in IndexedDB) and calls both of them keys. So a person with three
+ * `/my-keys` drew "Your keys" (the public keys `/api/v1/me/keys` holds for your
+ * account) above "Your browser vault" (the private keys `vault.js` keeps in
+ * IndexedDB) and called both of them keys. So a person with three
  * account keys was told by the session that they had none, and both statements
  * were true about different things. Storage is not a property anybody is asking
  * about. What they are asking is whether *this* key can sign the thing in front

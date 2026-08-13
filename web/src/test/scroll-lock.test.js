@@ -184,12 +184,14 @@ describe("the policy is not asked to bless the injection", () => {
     // A `sha256-` exemption would have silenced the report and left a runtime
     // <style> write on the page — the thing style-src exists to stop — and
     // would need re-deriving every time the library changed a byte of that CSS.
+    // `my-keys.html` and `quorum.html` were retired into the toolkit;
+    // `published.html` is the page that inherited the first one's account half
+    // and its scrolling body, which is the property that put it on this list.
     for (const page of [
       "toolkit.html",
-      "my-keys.html",
+      "published.html",
       "index.html",
       "key.html",
-      "quorum.html",
       "preferences.html",
     ]) {
       const html = read(`../../${page}`);

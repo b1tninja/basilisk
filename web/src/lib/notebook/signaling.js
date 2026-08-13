@@ -1,10 +1,10 @@
 /**
  * Notebook signalling — an opaque relay for sealed envelopes, in room terms.
  *
- * This module is the seam. Above it (`session.js`, `quorum-ops.js`,
- * `quorum-mount.js`) the vocabulary is *join a room, send to the room, receive
- * from the room*; below it lives one provider's protocol. A grep for the
- * vendor's name lands in `webpubsub.js` and nowhere else.
+ * This module is the seam. Above it (`session.js`, `quorum-ops.js`) the
+ * vocabulary is *join a room, send to the room, receive from the room*; below
+ * it lives one provider's protocol. A grep for the vendor's name lands in
+ * `webpubsub.js` and nowhere else.
  *
  * **What replaced the mailbox.** Signalling used to be a POST-and-poll against
  * a process-global dict on the server. On Consumption Functions there is no

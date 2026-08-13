@@ -1182,6 +1182,34 @@ export function ToolkitShell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * `/toolkit#keys` — the nav's Keys entry, and the vault's front door.
+   *
+   * The tray defaults to open on the Keys tab, so most of the time this
+   * changes nothing. It matters in the two states where it is the difference
+   * between a working link and a dead one: a reader who collapsed the tray
+   * (`trayOpen` survives nothing, but a click does) or who is sitting on
+   * another tab, and — the likelier case — anyone already on `/toolkit` when
+   * they press Keys. That is a same-document navigation: the hash changes, no
+   * document loads, and nothing would happen at all.
+   *
+   * Deliberately separate from the `#j=` effect below rather than folded into
+   * it. They read the same hash and share nothing else: one opens a panel, the
+   * other assembles a room from an audience, and merging them would put a
+   * session's rules in front of a tray.
+   */
+  useEffect(() => {
+    const openFromHash = () => {
+      const action = parseToolkitHash(window.location.hash || "");
+      if (action.kind !== "tray" || action.tray !== "keys") return;
+      setTrayOpen(true);
+      setTrayTab("keys");
+    };
+    openFromHash();
+    window.addEventListener("hashchange", openFromHash);
+    return () => window.removeEventListener("hashchange", openFromHash);
+  }, []);
+
   // An answer owed to a peer is owed *on a session*. When the exchange ends
   // there is no channel to send it on and no peer to send it to, and a button
   // still offering to would fail with a transport error rather than saying the
@@ -1898,7 +1926,7 @@ export function ToolkitShell() {
                   href: "/preferences",
                   separatorBefore: true,
                 },
-                { id: "keys", label: "My Keys", href: "/my-keys" },
+                { id: "published", label: "Published keys", href: "/published" },
               ]}
             />
         </TopBar>

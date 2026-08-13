@@ -332,12 +332,13 @@ export function sessionKeyChoices(rows, now = Date.now()) {
  * one yet" and "there is nothing to choose" are different states that had the
  * same sentence.
  *
- * The empty sentence names *which* store, because My Keys shows two and calls
- * both of them keys: “Your keys” is `/api/v1/me/keys`, the public keys on your
- * account, and “Your browser vault” is `vault.js`'s IndexedDB private keys.
- * Only the second can sign. Sending someone to My Keys without saying which is
- * how this was reported the second time -- three keys on screen and a session
- * insisting there were none. With an empty vault, "Choose the key you are joining as" is an
+ * The empty sentence names *which* store, because there are two and both were
+ * once called keys on one page: `/api/v1/me/keys` holds the public keys on your
+ * account — `/published` now, and only that — while `vault.js`'s IndexedDB
+ * holds the private keys, in the Keys tray. Only the second can sign. Pointing
+ * somebody at "My Keys" without saying which half is how this was reported the
+ * second time -- three keys on screen and a session insisting there were none.
+ * With an empty vault, "Choose the key you are joining as" is an
  * instruction nobody can follow, and the Start button sat disabled beside it
  * with no reason attached -- so pressing it did nothing and said nothing, which
  * is how this was reported.
@@ -387,7 +388,7 @@ export function startIssues(draft) {
         ? "Choose the key you are joining as — it signs the invite and every envelope after it."
         : held > 0
           ? "None of the keys in this browser can open a session. A session signs an OpenPGP invite, so an SSH or raw key cannot open one and neither can an expired key — the Keys tray says which each of yours is. Generate or import an OpenPGP key there."
-          : "No private key in this browser. A session signs the invite and every envelope after it, so it needs a key held here — the ones under “Your keys” on My Keys are public keys on your account and cannot sign. Make or import one in the Keys tray, under “Your browser vault”."
+          : "No private key in this browser. A session signs the invite and every envelope after it, so it needs a key held here — the ones on Published are public keys on your account and cannot sign. Make or import one in the Keys tray, under “Your browser vault”."
     );
   }
   if (key && draft?.key && keyPower(draft.key) === "unusable") {

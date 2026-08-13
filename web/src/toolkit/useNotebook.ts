@@ -575,9 +575,10 @@ export function useNotebook() {
         // projection just dropped it.
         expires: k.expires ?? null,
         // §28b: the OpenSSH public line is public material and the single most
-        // common thing anybody does with an ssh key. `/my-keys` has offered it
-        // on the row since kinds landed; the notebook's projection dropped it,
-        // so the Keys tray could not.
+        // common thing anybody does with an ssh key. `/my-keys` offered it on
+        // the row from the moment kinds landed; the notebook's projection
+        // dropped it, so the Keys tray could not — and the tray is the only
+        // surface now.
         publicLine: k.publicLine,
       }));
       // Session-only keys (unlocked/minted in memory, never persisted) are
@@ -629,11 +630,16 @@ export function useNotebook() {
     // run a reproducible build — so a link that opened a session *and* replaced
     // your notebook would be exactly the thing this design refuses. The shell
     // reads `#j=` for itself and opens the session sheet; nothing here does.
+    //
+    // `tray` for the milder version of the same rule: `#keys` asks for a panel,
+    // and opening the vault is not a reason to discard the notebook somebody
+    // was already writing. The shell reads it, as it does `#j=`.
     if (
       !action ||
       action.kind === "empty" ||
       action.kind === "unknown" ||
-      action.kind === "join"
+      action.kind === "join" ||
+      action.kind === "tray"
     ) {
       return;
     }

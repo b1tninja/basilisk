@@ -134,11 +134,15 @@ const MODULES = walk("../");
  * Who may name the default list, and why.
  *
  * Not an allowlist for its own sake: each entry is a *different* use. `ice.js`
- * declares it and owns the one substitution. `quorum-mount.js` prefills a
- * textarea with the URLs so a user of the standalone page can read them and
- * delete them — rendering the list, never deciding with it.
+ * declares it and owns the one substitution — and it is now the only one.
+ *
+ * `lib/quorum-mount.js` was the second entry: it prefilled a textarea with the
+ * URLs so a reader of the standalone page could see them and delete them —
+ * rendering the list, never deciding with it. That page is retired, and the
+ * entry went with it rather than staying as a name nothing matches. A stale
+ * allowance is an allowance nobody rechecks.
  */
-const MAY_IMPORT_DEFAULTS = ["lib/webrtc/ice.js", "lib/quorum-mount.js"];
+const MAY_IMPORT_DEFAULTS = ["lib/webrtc/ice.js"];
 
 describe("the substitution has one home", () => {
   it("is imported only where the list is owned or drawn", () => {

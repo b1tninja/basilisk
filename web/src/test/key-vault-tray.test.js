@@ -3,9 +3,9 @@
  * blocks anything.
  *
  * Two defects with one shape, closed here. The first is the split that produced
- * the original report: `my-keys-mount.js` divides keys by *where the bytes
- * live* — "Your keys" on your account, "Your browser vault" in this browser —
- * and a session told somebody with three of the first that they had none of the
+ * the original report: `/my-keys` divided keys by *where the bytes live* —
+ * "Your keys" on your account, "Your browser vault" in this browser — and a
+ * session told somebody with three of the first that they had none of the
  * second. Both statements were true. The second is this repo's signature
  * defect: `unlockedCount` and `sessionEarliestExpiry` were both computed,
  * correct, and reaching almost nobody — the count needed the tray open *and*
@@ -16,7 +16,7 @@
  * consumer exists and reads the right thing. Behaviour lives in
  * `key-power.test.js` and `vault-manage.test.js`, which test functions.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { KEY_POWERS } from "../lib/toolkit/key-power.js";
@@ -27,7 +27,6 @@ const VAULT = read("../toolkit/widgets/KeyVault.tsx");
 const RUNBAR = read("../toolkit/widgets/RunBar.tsx");
 const START = read("../toolkit/widgets/SessionStart.tsx");
 const CSS = read("../css/toolkit.css");
-const MYKEYS = read("../lib/my-keys-mount.js");
 
 describe("every state in the vocabulary has a rule to draw it", () => {
   it("enumerates all five, because the CSP refuses the alternative", () => {
@@ -173,18 +172,60 @@ describe("the vault's verbs have a consumer in the tray", () => {
     }
   });
 
-  it("still lets /my-keys do all of it, because nothing was deleted yet", () => {
-    // Both surfaces working at once is the point of this phase: the retirement
-    // of the standalone pages depends on this landing first, and a vault with
-    // one door that has just moved is a vault somebody cannot open.
-    for (const fn of [
-      "function renderVaultSection",
-      "function renderGenerateCard",
-      "function renderImportCard",
-      "function renderExportPanel",
-      "async function runVaultExport",
+  it("is now the only door, and the old one is gone rather than dimmed", () => {
+    // This used to assert the opposite — that `/my-keys` still did all of it,
+    // "because nothing was deleted yet". Both surfaces working at once was the
+    // condition for retiring the page, not the end state, and the condition is
+    // discharged: the four verbs above are wired to the shared module, so the
+    // page whose copies of them this file used to check is deleted.
+    //
+    // Asserted as an absence because a half-deleted page is the worse outcome:
+    // a file still on disk, unreachable from the nav, drifting away from the
+    // module that now owns the same decisions.
+    for (const gone of [
+      "../lib/my-keys-mount.js",
+      "../lib/quorum-mount.js",
+      "../pages/my-keys.tsx",
+      "../pages/quorum.tsx",
+      "../pages/redirect-toolkit.js",
     ]) {
-      expect(MYKEYS, fn).toContain(fn);
+      expect(existsSync(fileURLToPath(new URL(gone, import.meta.url))), gone).toBe(false);
     }
+  });
+
+  it("keeps every retired path alive as a redirect, so none of them 404s", () => {
+    // The rule the whole retirement was run under: nothing is deleted before
+    // its replacement is reachable, and no route ever becomes a 404. Every one
+    // of these paths is in somebody's bookmarks.
+    const STATIC = read("../../../basilisk/portal/static.py");
+    for (const [path, dest] of [
+      ["encrypt", "/toolkit#encrypt"],
+      ["decrypt", "/toolkit#decrypt"],
+      ["quorum", "/toolkit"],
+      ["my-keys", "/published"],
+    ]) {
+      expect(STATIC, path).toMatch(
+        new RegExp(`"${path}":\\s*"${dest.replace(/[#/]/g, "\\$&")}"`)
+      );
+    }
+    expect(STATIC).toMatch(/redirect\(moved, code=301\)/);
+  });
+
+  it("puts the vault behind a fragment, so the nav's Keys entry reaches it", () => {
+    // "Keys" in the nav is `/toolkit#keys`, and the tray it names can be
+    // collapsed or sitting on another tab. Without a reader for the fragment
+    // the link lands on a notebook with no keys in sight — and pressing it
+    // while already on /toolkit is a same-document navigation, so a mount-only
+    // effect would never run at all.
+    expect(read("../lib/toolkit/fragment.js")).toMatch(
+      /headLower === "keys"[\s\S]{0,80}kind: "tray", tray: "keys"/
+    );
+    expect(SHELL).toMatch(
+      /action\.kind !== "tray" \|\| action\.tray !== "keys"[\s\S]{0,120}setTrayTab\("keys"\)/
+    );
+    expect(SHELL).toMatch(/window\.addEventListener\("hashchange", openFromHash\)/);
+    expect(read("../components/Layout.tsx")).toMatch(
+      /id: "keys", label: "Keys", href: "\/toolkit#keys"/
+    );
   });
 });

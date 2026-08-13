@@ -10,23 +10,23 @@ import type { TrustLevel } from "@/lib/trust.js";
 /**
  * The browser vault, where the notebook can reach it.
  *
- * ## Why this is a panel and not a link to `/my-keys`
+ * ## Why this is a panel and not a link to another page
  *
  * The Keys tray used to be a read-only picker with a sentence pointing at
  * another page: "Full vault management is on My Keys." Everything a person
  * needed while holding a notebook — make a key, take one in, get one out, throw
  * one away — was one navigation away from the thing they were doing, on a page
  * behind a sign-in, under a heading that calls two different stores "keys". The
- * split that produced the original report is exactly that: `/my-keys` draws
+ * split that produced the original report is exactly that: `/my-keys` drew
  * "Your keys" (public keys on your account) above "Your browser vault" (private
  * keys in this browser) and a session told somebody with three of the first
  * that they had none of the second. Both statements were true.
  *
- * So the vault's home is here, beside the run that needs it. The verbs are
- * `lib/toolkit/vault-manage.js`'s, shared with `/my-keys` rather than
- * reimplemented, and **every refusal on this panel is one of that module's
- * sentences** — which is what stops a tray and a page from disagreeing about
- * why the same key cannot be exported.
+ * So the vault's home is here, beside the run that needs it, and `/my-keys` is
+ * retired — its account half is `/published`, named for that errand alone. The
+ * verbs are `lib/toolkit/vault-manage.js`'s, and **every refusal on this panel
+ * is one of that module's sentences**, which is what stops the panel and the
+ * module's other callers from disagreeing about why a key cannot be exported.
  *
  * ## What the rows say
  *
@@ -946,6 +946,18 @@ export function KeyVault({
             Private keys held in this browser, envelope-encrypted with a
             device-bound key. Unlocking one loads its armor into the agent
             session for five minutes.
+          </p>
+          {/* The one link off this panel, and what the place it leads to
+              cannot do. Said plainly because these are the two stores the old
+              `/my-keys` heading ran together, and a reader has no way to tell
+              them apart from the word "keys" alone. */}
+          <p className="mt-1 text-[length:10.5px] text-[var(--muted-foreground)]">
+            <a className="underline" href="/published">
+              Published keys
+            </a>{" "}
+            are the public halves on your account, which this server hands to
+            anyone who searches. None of them can sign or decrypt, and none of
+            them says anything about what this browser holds.
           </p>
         </div>
         {loaded > 0 ? (

@@ -1035,7 +1035,10 @@ describe("Add to My Keys is local, masked-safe, and refuses by default (§34a/§
     // plus the remedy — a reason with no way forward just gets clicked again.
     expect(fact("Protection").detail).toMatch(/no passkey, no passphrase/);
     expect(fact("Protection").detail).toMatch(/without being asked for anything/);
-    expect(fact("Protection").sub).toMatch(/Enrol a passkey from My Keys/);
+    // "the Keys tray", not "My Keys": the enrolment control is on the tray's
+    // generate card, and the page that used to carry it is retired. The store
+    // is still called My Keys — this line is about where a reader goes.
+    expect(fact("Protection").sub).toMatch(/Enrol a passkey from the Keys tray/);
     expect(fact("Protection").sub).toMatch(/agent\.save protection=passkey/);
     // The contrast with Publish's "Permanent" is the useful information.
     expect(fact("Reversible").detail).toMatch(/Deleting the key from My Keys removes it/);

@@ -350,7 +350,7 @@ export async function collectSriLeavesFromHtml(html, loadImportMap) {
 }
 
 /**
- * Map location pathname → pin page key (e.g. /encrypt → encrypt.html).
+ * Map location pathname → pin page key (e.g. /published → published.html).
  * @param {string} [pathname]
  * @param {string} [explicitPage]
  * @returns {string}

@@ -9,15 +9,12 @@ import { join } from "node:path";
 
 /** @type {Record<string, string>} */
 const STATIC_PAGES = {
-  "my-keys": "/my-keys.html",
+  published: "/published.html",
   key: "/key.html",
   stats: "/stats.html",
   search: "/index.html",
-  encrypt: "/encrypt.html",
-  decrypt: "/decrypt.html",
   verify: "/verify.html",
   toolkit: "/toolkit.html",
-  quorum: "/quorum.html",
   preferences: "/preferences.html",
   // Local visual fixtures (not registered on Flask)
   "tool-card-preview": "/tool-card-preview.html",
@@ -27,6 +24,23 @@ const STATIC_PAGES = {
   // style would look fine in exactly the place it was supposed to be caught.
   // Vite resolved the route anyway, so nothing appeared broken.
   "toolkit-widgets": "/toolkit-widgets.html",
+};
+
+/**
+ * The retired pages, mirroring `_RETIRED_PAGES` in `basilisk/portal/static.py`.
+ *
+ * Here for the same reason `STATIC_PAGES` is: a local URL that behaves
+ * differently from the deployed one is a difference nobody finds until it
+ * ships. Without this, `/encrypt` in dev is a 404 from Vite's own fallback
+ * while in production it lands on the toolkit.
+ *
+ * @type {Record<string, string>}
+ */
+const RETIRED_PAGES = {
+  encrypt: "/toolkit#encrypt",
+  decrypt: "/toolkit#decrypt",
+  quorum: "/toolkit",
+  "my-keys": "/published",
 };
 
 /**
@@ -93,6 +107,11 @@ export function basiliskDevServer() {
           const target = STATIC_PAGES[page];
           if (target) {
             req.url = `${target}${query}`;
+          } else if (RETIRED_PAGES[page]) {
+            res.statusCode = 301;
+            res.setHeader("Location", RETIRED_PAGES[page]);
+            res.end();
+            return;
           }
         }
 
