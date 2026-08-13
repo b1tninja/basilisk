@@ -21,7 +21,7 @@ import {
 } from "../lib/toolkit/notebook-share.js";
 import { sessionRecipe } from "../lib/toolkit/session-flow.js";
 import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
-import { planRun } from "../lib/toolkit/plan.js";
+import { labelForFingerprint, planRun } from "../lib/toolkit/plan.js";
 import { roomRoster } from "../lib/notebook/roster.js";
 import { relabelAudience, relabelPlacements } from "../lib/toolkit/peer-relabel.js";
 import {
@@ -2658,12 +2658,50 @@ export function useNotebook() {
       const { roster, me } = handoffWho();
       const ctx = await handoffContext({ source, me, roster, title });
       const slots = kernelRef.current.slots;
+      /**
+       * Which label the peer who returned this answers to.
+       *
+       * **A label, never a fingerprint, and this line is why the returning half
+       * of the arc had never worked.** `acceptCellResult` checks `by` against
+       * `plan.cells[n].runsOn`, which holds `@peer2` and cannot hold a key — the
+       * plan speaks in labels because a notebook that travels as text has to.
+       * The fingerprint was passed straight through, so every result that ever
+       * came back was refused `not-theirs` ("Cell 1 is not `@<forty hex>`'s to
+       * run"), on a machine that had just handed that peer the cell.
+       *
+       * `handoff.js` and `attest.js` are explicit that the session never learns
+       * a label and the caller resolves one — this is the caller. `roomRoster`
+       * above is the binding to resolve it through, and it is the same one the
+       * offer went out under, so the two directions cannot disagree about who a
+       * peer is. An unknown fingerprint resolves to `""` and `acceptCellResult`
+       * refuses it as unattributed, which is the state that is actually true.
+       *
+       * Nothing caught it because the arc's own e2e proof resolves the label
+       * itself before calling in — `placed-run-arc.e2e.js` does
+       * `labelForFingerprint(roster, from)` inside its own driver, so it
+       * exercises the layer under this one doing the right thing with an
+       * argument this layer never supplied. `placed-journey.e2e.js` presses the
+       * button instead, and the button is where it was wrong.
+       */
+      const by = doc.kind === "result" ? labelForFingerprint(roster, doc.from) : "";
       const verdict =
         doc.kind === "offer"
           ? await reviewOffer(ctx, doc.offer, (l: string) => slots.has(l))
           : await reviewResult(ctx, doc.result, {
-              by: doc.from,
-              offered: [{ manifest: doc.manifest, cell: doc.cell, to: me }],
+              by,
+              // **This is not a bound, and saying so is the point.** Every field
+              // of it is read off the document being judged, so
+              // `acceptCellResult`'s `not-offered` refusal — "an answer to a
+              // question nobody asked" — cannot fire here however wrong the
+              // result is. A real record would be what *this* machine handed out
+              // and to whom; `offerCell` knows both and writes neither down past
+              // the current run, and `HandoffQueue` already states in writing
+              // that the shell's memory of a handoff does not survive a reload.
+              // So the check is left standing rather than quietly deleted, and
+              // named as the hole it is: closing it needs a durable record of
+              // outgoing offers, which is its own decision and not a corner of
+              // this one.
+              offered: [{ manifest: doc.manifest, cell: doc.cell, to: by }],
               hasSlot: (l: string) => slots.has(l),
             });
 

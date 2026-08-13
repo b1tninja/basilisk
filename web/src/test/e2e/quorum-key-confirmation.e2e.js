@@ -98,10 +98,12 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { chromiumAvailability, openPeers, until } from "../helpers/browser-peers.js";
+import { chromiumAvailability, until } from "../helpers/browser-peers.js";
 import { createQuorumRoom } from "../helpers/quorum-room.js";
-import { connectionFor, startLocalHub } from "../helpers/webpubsub-hub.js";
-import { mintClientAccessToken, roomRoles } from "../helpers/webpubsub-double.js";
+// The pages, the hub and the room, wired together. It was assembled inline here
+// until `placed-journey.e2e.js` needed the identical arrangement; the note that
+// used to sit on `openMesh` in this file travelled with it.
+import { openMesh } from "../helpers/browser-mesh.js";
 // Run in node against descriptions produced by two real engines — the parser
 // the transcript depends on, fed the one input a fake can never supply.
 import { extractDtlsFingerprint } from "../../lib/webrtc/sdp.js";
@@ -200,120 +202,6 @@ const LOAD_SESSION = `(async () => {
  * @param {import("../helpers/browser-peers.js").Peer} peer
  * @param {{ roomId: string, audience: string[], fpr: string, armoredPrivate: string, role: string }} cfg
  */
-/**
- * Open the pages and the hub, and wire signalling between them.
- *
- * The order matters and is the awkward part. The token's audience is the
- * origin the page dials, which is the dist server's — so the server has to
- * exist before the connection string can be written, and the hub has to exist
- * before a grant can name a port. Nothing negotiates until `startSession`, so
- * filling `state` after `openPeers` is in time.
- *
- * `routes` answers negotiate itself rather than proxying Flask: the real
- * endpoint is gated by proof-of-work and two rate limits that have nothing to
- * do with key confirmation, and minting the grant here keeps the subject of
- * this suite the session rather than the portal.
- *
- * @param {Awaited<ReturnType<typeof createQuorumRoom>>} room
- */
-const openMesh = async (room) => {
-  const accessKey = "browser-suite-access-key";
-  const hubName = "notebook";
-  /** @type {{ port: number|null, origin: string }} */
-  const state = { port: null, origin: "" };
-
-  const routes = (req, res) => {
-    const [path] = (req.url || "/").split("?");
-    if (path === "/api/v1/notebook/negotiate") {
-      let body = "";
-      req.on("data", (d) => (body += d));
-      req.on("end", async () => {
-        const parsed = JSON.parse(body || "{}");
-        const group = String(parsed.key || parsed.room || "").toUpperCase();
-        const token = await mintClientAccessToken({
-          accessKey,
-          audience: `${state.origin}/client/hubs/${hubName}`,
-          userId: `peer-${Math.random().toString(36).slice(2, 8)}`,
-          roles: roomRoles(group),
-        });
-        const url = `${state.origin.replace(/^http/, "ws")}/client/hubs/${hubName}?access_token=${token}`;
-        const grant = {
-          v: 1,
-          room: String(parsed.room || "").toUpperCase(),
-          group,
-          scope: parsed.key ? "room" : "lobby",
-          transport: "webpubsub",
-          url,
-          protocol: "json.webpubsub.azure.v1",
-          expires_at: Math.floor(Date.now() / 1000) + 300,
-        };
-        const payload = JSON.stringify(grant);
-        res.writeHead(200, {
-          "content-type": "application/json",
-          "content-length": String(Buffer.byteLength(payload)),
-        });
-        res.end(payload);
-      });
-      return true;
-    }
-    return room.routes(req, res);
-  };
-
-  /**
-   * Every signalling envelope, on its way to the hub.
-   *
-   * The room used to see these as mailbox POSTs, which is where its `tamper`
-   * hook and its record of what was signalled both lived. Signalling is a
-   * WebSocket now, so the frames are handed to the same function instead —
-   * `intercept` opens, records, rewrites and re-seals under the signer's own
-   * key exactly as before. The hub rebroadcasts whatever it receives, so
-   * rewriting on the way in *is* a relay rewriting in flight.
-   *
-   * Frames that are not a `sendToGroup` carrying text, and envelopes the room
-   * leaves alone, are returned unchanged so the tunnel forwards the original
-   * bytes.
-   */
-  const onSignal = async (text) => {
-    /** @type {any} */
-    let msg;
-    try {
-      msg = JSON.parse(text);
-    } catch {
-      return text;
-    }
-    if (msg?.type !== "sendToGroup" || typeof msg.data !== "string") return text;
-    const out = await room.intercept(msg.data);
-    return out === msg.data ? text : JSON.stringify({ ...msg, data: out });
-  };
-
-  const fx = await openPeers({
-    path: "/toolkit",
-    count: 2,
-    routes,
-    upgrade: () => state.port,
-    onSignal,
-  });
-  state.origin = fx.origin;
-
-  const started = await startLocalHub({
-    connection: connectionFor(fx.origin, accessKey),
-    hub: hubName,
-  });
-  if (!started.ok) {
-    await fx.close();
-    return { ok: false, reason: started.reason, kind: started.kind };
-  }
-  state.port = started.hub.port;
-  return {
-    ok: true,
-    fx,
-    close: async () => {
-      await started.hub.stop();
-      await fx.close();
-    },
-  };
-};
-
 const startSession = (peer, cfg) =>
   peer.page.evaluate(async (c) => {
     const Session = window.__NotebookSession;

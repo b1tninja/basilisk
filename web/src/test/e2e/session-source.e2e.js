@@ -44,6 +44,9 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromiumAvailability, openPeers } from "../helpers/browser-peers.js";
+// The reader moved out when `placed-journey.e2e.js` needed the same one. It
+// carries a correction a second copy would not — see its own note.
+import { readNotebookSource } from "../helpers/toolkit-ui.js";
 import { compileRecipe } from "../../lib/toolkit/recipe.js";
 import { hashForNotebook } from "../../lib/toolkit/fragment.js";
 
@@ -109,19 +112,6 @@ const MINT_VAULT_KEY = `(async () => {
   });
   return fpr;
 })()`;
-
-/** The notebook's own text, as the shell renders it under Source view. */
-async function readNotebookSource(page) {
-  const summary = page.locator("summary", { hasText: "Notebook source (text)" });
-  await summary.waitFor({ state: "visible", timeout: 15000 });
-  const details = summary.locator("xpath=..");
-  // `!== null`, not truthiness. An open `<details>` carries `open=""`, which is
-  // falsy — so a second call on the same page clicked the summary *closed* and
-  // read an empty string out of a collapsed panel. Nothing noticed while every
-  // caller loaded a fresh page first; the compose test below reads twice.
-  if ((await details.getAttribute("open")) === null) await summary.click();
-  return (await details.locator("pre").innerText()).trim();
-}
 
 /**
  * Press Start the way a person does, and hand back what the notebook then says.
