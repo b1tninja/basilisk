@@ -146,6 +146,12 @@ export async function buildArcBundle(distRoot) {
  * the suite writes that second line itself so that a reader can see the human
  * act it stands for. `approval-gate.js` states the rule; this entry is shaped
  * so the suite cannot quietly break it.
+ *
+ * `roomRoster` is here for the opposite reason to the rest: it is not part of
+ * the arc, it is the thing the suite used to *substitute for*. The peer labels
+ * and `me` were the test's own literals, so the arc passed for a year while the
+ * shell's own resolution of `me` could not return anything but `""`. Exporting
+ * it means the suite asks the product who this browser is instead of telling it.
  */
 const ARC_ENTRY = `
 export { compileRecipe, migrateRecipe, serializeRecipe } from "./src/lib/toolkit/recipe.js";
@@ -160,6 +166,7 @@ export { runRecipe } from "./src/lib/toolkit/engine.js";
 export { buildRunManifest, manifestDigest, parseManifest } from "./src/lib/toolkit/manifest.js";
 export { createSlotRegistry } from "./src/lib/toolkit/slot-registry.js";
 export { canonicalAudience, deriveRoomId } from "./src/lib/notebook/room.js";
+export { roomRoster } from "./src/lib/notebook/roster.js";
 export { signOpenPgp } from "./src/lib/pgp/sign.js";
 export {
   acceptCellResult,

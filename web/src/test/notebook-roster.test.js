@@ -99,7 +99,17 @@ describe("the projection prints no fingerprint at all", () => {
     // import, because the defect was never the duplication. See
     // `components/ui/fingerprint.tsx` for what replaced it and why there is no
     // safer number of characters to have chosen instead.
-    expect(Object.keys(roster).sort()).toEqual(["peerLabels", "projectRosterPeers"]);
+    // `roomRoster` joined the list when the shell stopped answering "which peer
+    // am I" by searching the peer rows — which are the audience minus self, so
+    // the search never matched. It is here rather than in the shell because the
+    // map that names the peers has to be the map that names you; see
+    // `handoff-who.test.js`. It shortens no fingerprint either: it hands back
+    // labels and whole keys, the same two honest things a row carries.
+    expect(Object.keys(roster).sort()).toEqual([
+      "peerLabels",
+      "projectRosterPeers",
+      "roomRoster",
+    ]);
   });
 });
 

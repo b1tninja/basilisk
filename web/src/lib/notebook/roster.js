@@ -18,6 +18,7 @@
  */
 
 import { canonicalAudience } from "./room.js";
+import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 
 /**
  * @typedef {object} ConnectionPeerRow
@@ -91,6 +92,51 @@ export function peerLabels(audienceFprs, presentFprs = []) {
   const labels = new Map();
   order.forEach((fpr, i) => labels.set(fpr, `${PEER_LABEL_PREFIX}${i + 1}`));
   return labels;
+}
+
+/**
+ * The room's roster — every member bound to their label — and which of those
+ * labels this browser occupies.
+ *
+ * **Why this is here and not in the shell.** A label means a position in the
+ * audience and nothing else, so the only thing that can say which label is
+ * *yours* is the function that hands the labels out. The shell used to answer
+ * it by searching the peer rows for its own fingerprint, and `session.peers`
+ * is the audience *minus* self — deliberately, `NotebookSession` refuses to be
+ * its own peer — so the search could not succeed and `me` was always `""`.
+ * Every cell then planned as somebody else's, `planRun` refused this browser's
+ * own label as a peer "no one in this room answers to", and the placed-run gate
+ * was never built at all.
+ *
+ * Answering it from `peerLabels` instead means the two cannot disagree: the map
+ * that names peer1 and peer2 is the map that says which one you are, so there
+ * is no second derivation to drift. Self is still not a peer anywhere — this
+ * adds nothing to `session.peers` and projects no row for it.
+ *
+ * **The roster is the audience, not who has arrived.** Both ends must reach the
+ * same `{label: fingerprint}` binding: `buildRunManifest` digests it into
+ * `peersSha`, and two peers committing to different bindings is an offer the
+ * other side cannot accept. The audience is fixed for the session and identical
+ * everywhere (the room id is a digest of it); who has meshed so far is neither.
+ *
+ * A fingerprint outside the audience cannot be positioned by it, so a `selfFpr`
+ * that is not a member returns `""` — the honest answer, and the one that
+ * leaves `planRun`'s `who-am-i` question standing rather than inventing a
+ * position for a browser the room does not contain.
+ *
+ * @param {string[]} [audienceFprs]  every member, present or not
+ * @param {Iterable<string>} [presentFprs]  who has arrived — passed on to
+ *   `peerLabels` so this roster and the panel rows are labelled from one call
+ *   with one set of inputs
+ * @param {string} [selfFpr]  this browser's own fingerprint
+ * @returns {{ roster: Record<string, string>, me: string }}
+ */
+export function roomRoster(audienceFprs, presentFprs = [], selfFpr = "") {
+  const labels = peerLabels(audienceFprs, presentFprs);
+  /** @type {Record<string, string>} */
+  const roster = {};
+  for (const [fpr, label] of labels) roster[label] = fpr;
+  return { roster, me: labels.get(normalizeFingerprintInput(selfFpr)) || "" };
 }
 
 /**

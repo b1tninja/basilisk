@@ -37,12 +37,22 @@
  *    with the same code that mints them, and `basilisk.serve` starts it in
  *    production-shaped conditions whenever the connection string is loopback.
  *    Azure cannot run on a laptop; this is the closest thing that can.
- * 2. **The peer labels are the test's.** `@mara` and `@okafor` are bound to
- *    fingerprints by a roster the suite supplies, and the label a signature
- *    resolves to is passed to `acceptCellResult` as `by`. Both are the caller's
- *    job by design — `attest.js` and `handoff.js` are explicit that the session
- *    never learns a label — so there is no layer here that could have supplied
- *    them and no stub standing in for one.
+ * 2. **The label a signature resolves to is the caller's.** `acceptCellResult`
+ *    takes it as `by`, and that is the caller's job by design — `attest.js` and
+ *    `handoff.js` are explicit that the session never learns a label — so there
+ *    is no layer here that could have supplied it and no stub standing in.
+ *
+ *    The *roster* used to be the test's too, and that was not a limitation of
+ *    the harness; it was a hole. `@mara` and `@okafor` were bound to
+ *    fingerprints by a literal this file wrote, and `me` was a string this file
+ *    passed, so every assertion below held while the shell's own answer to
+ *    "which peer is this browser" was `""` in every browser and had never been
+ *    anything else — it searched `session.peers` for its own fingerprint, and
+ *    that map is the audience *minus* self. The notebook is now written against
+ *    labels this suite asks the product for: `roomRoster`, over the audience,
+ *    the peer map and the fingerprint of the *live session*, which is exactly
+ *    the three facts the shell hands it. Nothing here can name a peer the
+ *    product would not name, or claim a `me` the product cannot resolve.
  * 3. **The clicks are `page.evaluate` calls.** There is no UI to click, which
  *    is not a limitation of the harness; see the next paragraph.
  *
@@ -223,17 +233,24 @@ it(
  *
  * mara publishes a seed. okafor's cell turns it into `$b64`. **mara's last cell
  * reads `$b64`** — so mara's run does not merely skip a cell and walk on, it
- * stops, which is the state a returned result exists to end. Lifted verbatim
- * from `handoff-result.test.js`'s `ROUND_TRIP` so that a difference between node
- * and a browser is a difference in the runtime and not in the notebook.
+ * stops, which is the state a returned result exists to end. Lifted from
+ * `handoff-result.test.js`'s `ROUND_TRIP` so that a difference between node and
+ * a browser is a difference in the runtime and not in the notebook.
+ *
+ * A function of the two labels rather than a literal, because the labels are no
+ * longer this file's to choose: they are positions in the audience, the product
+ * derives them, and which of `peer1`/`peer2` mara gets depends on where her
+ * freshly generated fingerprint sorts. Writing `@mara` here would be writing a
+ * notebook the room cannot bind — which is the same substitution that hid the
+ * defect, made once more at the top of the file.
  */
-const NOTEBOOK = `@mara publish
+const notebookFor = (mara, okafor) => `@${mara} publish
 bytes deadbeef | encode hex | out $seed
 
-@okafor publish
+@${okafor} publish
 in $seed | decode hex | encode base64 | out $b64
 
-@mara
+@${mara}
 in $b64 | out $done
 `;
 
@@ -667,6 +684,23 @@ const INSTALL = `(() => {
   };
 
   window.__roomId = (audience) => window.__arc.deriveRoomId(audience);
+
+  /**
+   * Who this browser is, and who else the room contains — asked of the product.
+   *
+   * The three arguments are read off the live session, which is where the shell
+   * reads them too: "quorum-ops" puts the same audience, the same peer map and
+   * the same fingerprint into the state "useNotebook.handoffWho" derives from.
+   * The peer map is deliberately passed as-is — it does not contain this
+   * browser, and a resolution that needed it to would be the defect again.
+   *
+   * (Quoted with " and not with a backtick, per this block's own rule: a
+   * template literal is what carries it, and a backtick would end it early.)
+   */
+  window.__who = () => {
+    const s = window.__session;
+    return window.__arc.roomRoster(s.audienceFprs, [...s.peers.keys()], s.myFpr);
+  };
   return true;
 })()`;
 
@@ -684,6 +718,15 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
   /** @type {string} */ let roomId = "";
   /** @type {string[]} */ let audience = [];
   /** @type {Record<string, string>} */ let roster = {};
+  /**
+   * The two labels, as the product hands them out — `L.mara` is whichever of
+   * `peer1`/`peer2` her fingerprint sorts into. Every assertion below names
+   * these rather than a string, so a run where the derivation changed its mind
+   * about who is who fails instead of quietly asserting about nobody.
+   * @type {{ mara: string, okafor: string }}
+   */
+  let L = { mara: "", okafor: "" };
+  /** @type {string} */ let NOTEBOOK = "";
 
   beforeAll(async () => {
     // The identities first: the directory has to hold both public keys before
@@ -732,27 +775,8 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     // The header's answer to the same question the document was just asked.
     out.signalingOrigin = server.signalingOrigin;
 
-    roster = { mara: mara.fpr, okafor: okafor.fpr };
     audience = [mara.fpr, okafor.fpr].sort();
     roomId = await A.page.evaluate((a) => window.__roomId(a), audience);
-
-    // Both sides plan the same notebook, each for themselves.
-    out.planA = await A.page.evaluate((c) => window.__setup(c), {
-      src: NOTEBOOK,
-      me: "mara",
-      roster,
-    });
-    out.planB = await B.page.evaluate((c) => window.__setup(c), {
-      src: NOTEBOOK,
-      me: "okafor",
-      roster,
-    });
-
-    // Plan it a second time with the `planRun` the browser actually shipped,
-    // so the run below is checked against the bytes and not only the sources.
-    out.shippedPlanA = await A.page.evaluate(
-      shippedPlanExpr({ src: NOTEBOOK, me: "mara", roster })
-    );
 
     // The joiner first, and then a pause. The joiner-first ordering is
     // `notebook-pair.js`'s: an invite is published once, the moment the
@@ -787,6 +811,38 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
       },
       (v) => v.a.peers[0]?.kcVerified === true && v.b.peers[0]?.kcVerified === true,
       { timeout: 90000, interval: 250, what: "key confirmation on both ends" }
+    );
+
+    /* ── 0. who each browser is, asked of the product rather than assigned ── */
+
+    // After the mesh, because this is the question the shell answers from a
+    // live exchange — and before the notebook exists, because the notebook is
+    // written in the labels the answer hands out. Neither browser is told
+    // anything: each reads its own session and each gets a different `me`.
+    out.whoA = await A.page.evaluate(() => window.__who());
+    out.whoB = await B.page.evaluate(() => window.__who());
+    roster = out.whoA.roster;
+    L = { mara: out.whoA.me, okafor: out.whoB.me };
+    NOTEBOOK = notebookFor(L.mara, L.okafor);
+
+    // Both sides plan the same notebook, each as whoever their own session says
+    // they are. `me` is passed through from `__who` — this file no longer has
+    // one of its own to pass.
+    out.planA = await A.page.evaluate((c) => window.__setup(c), {
+      src: NOTEBOOK,
+      me: out.whoA.me,
+      roster: out.whoA.roster,
+    });
+    out.planB = await B.page.evaluate((c) => window.__setup(c), {
+      src: NOTEBOOK,
+      me: out.whoB.me,
+      roster: out.whoB.roster,
+    });
+
+    // Plan it a second time with the `planRun` the browser actually shipped,
+    // so the run below is checked against the bytes and not only the sources.
+    out.shippedPlanA = await A.page.evaluate(
+      shippedPlanExpr({ src: NOTEBOOK, me: out.whoA.me, roster: out.whoA.roster })
     );
 
     /* ── 1. mara commits to the run and publishes what she committed to ── */
@@ -828,7 +884,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     await A.page.evaluate((row) => window.__recordOffer(row), {
       manifest: out.manifestDigest,
       cell: 1,
-      to: "okafor",
+      to: L.okafor,
     });
     await until(
       () => B.page.evaluate(() => window.__mesh()),
@@ -1045,7 +1101,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     // And it is a placed run, not a trivially-equal pair of empties: the
     // notebook has three cells across two peers, two of which are not Mara's.
     expect(out.shippedPlanA.play).toBe("placed");
-    expect(out.shippedPlanA.cells.map((c) => c.peer)).toEqual(["mara", "okafor", "mara"]);
+    expect(out.shippedPlanA.cells.map((c) => c.peer)).toEqual([L.mara, L.okafor, L.mara]);
     expect(out.shippedPlanA.cells.filter((c) => !c.mine)).toHaveLength(1);
   });
 
@@ -1106,7 +1162,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     // `acceptCellResult`: mara's verdict on the result that came back, checked
     // against her own pre-click check of the same bytes from the same peer.
     expect(out.aCheckedShipped.ok).toBe(true);
-    expect(out.aCheckedShipped.by).toBe("okafor");
+    expect(out.aCheckedShipped.by).toBe(L.okafor);
     expect(out.aCheckedShipped.cell).toBe(out.aBeforeClick.checked.cell);
     expect(out.aCheckedShipped.bindings).toEqual(out.aBeforeClick.checked.bindings);
     expect(out.aCheckedShipped.summary).toBe(out.aBeforeClick.checked.summary);
@@ -1119,18 +1175,44 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     expect(out.aCheckedShipped.bindings.length).toBeGreaterThan(0);
   });
 
+  it("lets each browser work out which peer it is, from its own live session", () => {
+    // The assertion this suite could not make while it wrote the roster itself.
+    // Each side asked `roomRoster` over its *own* session — its audience, its
+    // peer map (which does not contain it) and its own fingerprint — and got a
+    // label back. Empty here is the state the product shipped in for the whole
+    // life of the placed run, and it is the one thing this must never be.
+    expect(out.whoA.me).toMatch(/^peer\d+$/);
+    expect(out.whoB.me).toMatch(/^peer\d+$/);
+    expect(out.whoA.me).not.toBe(out.whoB.me);
+
+    // One roster, reached twice. The labels are positions in the audience, so
+    // two browsers that share a room agree about who is who without either
+    // being told — which is what makes `@peerN` in a notebook that travels as
+    // text mean one person, and what makes both manifests digest one binding.
+    expect(out.whoA.roster).toEqual(out.whoB.roster);
+    expect(Object.keys(out.whoA.roster).sort()).toEqual([out.whoA.me, out.whoB.me].sort());
+    expect(out.whoA.roster[out.whoA.me]).toBe(mara.fpr);
+    expect(out.whoB.roster[out.whoB.me]).toBe(okafor.fpr);
+
+    // And the label each browser claims is *not* one of its own peer rows —
+    // the room names it, the mesh cannot, and the resolution that searched the
+    // mesh for it is why this arc ran on labels a test supplied.
+    expect(out.meshA.peers.map((p) => p.fpr)).toEqual([okafor.fpr]);
+    expect(out.meshB.peers.map((p) => p.fpr)).toEqual([mara.fpr]);
+  });
+
   it("plans the same notebook two ways, one for each peer", () => {
     expect(out.planA.ok).toBe(true);
     expect(out.planB.ok).toBe(true);
-    expect(out.planA.me).toBe("mara");
-    expect(out.planB.me).toBe("okafor");
+    expect(out.planA.me).toBe(L.mara);
+    expect(out.planB.me).toBe(L.okafor);
     // Cell 1 is okafor's on both sides. That agreement is the whole basis of
     // the exchange: the offer says nothing about who runs the cell, so the two
     // plans have to reach it independently or nothing can be accepted.
     expect(out.planA.cells.map((c) => c.mine)).toEqual([true, false, true]);
     expect(out.planB.cells.map((c) => c.mine)).toEqual([false, true, false]);
-    expect(out.planA.cells[1].runsOn).toEqual(["okafor"]);
-    expect(out.planB.cells[1].runsOn).toEqual(["okafor"]);
+    expect(out.planA.cells[1].runsOn).toEqual([L.okafor]);
+    expect(out.planB.cells[1].runsOn).toEqual([L.okafor]);
   });
 
   it("stops mara's run at the cell that needed what okafor holds", () => {
@@ -1140,14 +1222,14 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     expect(out.maraStopped.slots).toEqual(["seed"]);
     expect(out.maraStopped.skipped.map((s) => s.cell)).toEqual([1]);
     expect(out.maraStopped.skipped[0]).toMatchObject({
-      waitingOn: "okafor",
+      waitingOn: L.okafor,
       produces: ["b64"],
     });
     expect(out.maraStopped.withheld).toEqual({
       cell: 2,
       slot: "b64",
       from: 1,
-      peer: "okafor",
+      peer: L.okafor,
     });
     expect(out.maraStopped.stopped).toContain("Cell 2 reads `$b64`");
   });
@@ -1160,7 +1242,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
       cell: 1,
       slot: "seed",
       from: 0,
-      peer: "mara",
+      peer: L.mara,
     });
     expect(out.bBeforeClick.run.slots).toEqual([]);
   });
@@ -1224,7 +1306,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
       cell: 1,
       slot: "seed",
       from: 0,
-      peer: "mara",
+      peer: L.mara,
     });
     expect(out.bStillStopped.slots).toEqual([]);
   });
@@ -1273,7 +1355,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     // The same rule at the end where the machine that would carry on is the
     // origin's own, on values nobody has looked at.
     expect(out.aBeforeClick.checked.ok, out.aBeforeClick.checked.summary).toBe(true);
-    expect(out.aBeforeClick.checked.by).toBe("okafor");
+    expect(out.aBeforeClick.checked.by).toBe(L.okafor);
     expect(out.aBeforeClick.checked.bindings).toEqual(["b64"]);
     expect(out.aBeforeClick.checked.registered).toBe(false);
     expect(out.aBeforeClick.held).toEqual([]);
@@ -1282,7 +1364,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
       cell: 2,
       slot: "b64",
       from: 1,
-      peer: "okafor",
+      peer: L.okafor,
     });
   });
 

@@ -15,6 +15,7 @@ import {
 import { sessionRecipe } from "../lib/toolkit/session-flow.js";
 import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
 import { planRun } from "../lib/toolkit/plan.js";
+import { roomRoster } from "../lib/notebook/roster.js";
 import { offerForSkipped, resultForCell } from "../lib/toolkit/handoff-shell.js";
 import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
 import { clearActivity } from "../lib/toolkit/activity-log.js";
@@ -1957,37 +1958,32 @@ export function useNotebook() {
   const skippedCells = useCallback(() => skippedRef.current.slice(), []);
 
   /**
-   * Accept one, which is the click the whole arc is gated on.
-   *
-   * `handoff.js` returns *bindings a caller would register* and registers
-   * nothing itself, so this is where a handoff stops being a document and
-   * starts being values in the registry — and it happens here, in a function
-   * only a person's press reaches, rather than anywhere a running recipe could
-   * arrive at.
-   *
-   * `me` is derived, not guessed: the exchange knows which fingerprint this
-   * browser is, and the roster maps labels to fingerprints, so the label that
-   * matches is the one the plan means by "mine". With no match the plan is
-   * unbound, `handoff.js` refuses, and nothing is registered — which is the
-   * right outcome for a notebook that does not name us.
-   */
-  /**
    * The roster and which label this browser is, from the live exchange.
    *
-   * One derivation, used by every handoff step. Two of them disagreeing about
-   * who "me" is would be an offer addressed to the wrong half of the notebook.
+   * One derivation, used by every handoff step and by the plan the Connections
+   * tab draws. Two of them disagreeing about who "me" is would be an offer
+   * addressed to the wrong half of the notebook.
+   *
+   * **Not a search of `quorumState.peers`.** It used to be one — the rows were
+   * scanned for this browser's own fingerprint — and that could never match:
+   * `session.peers` is the audience minus self, on purpose, because a session is
+   * never its own peer. So `me` was always `""`, every cell planned as somebody
+   * else's, `planRun` refused this browser's own label as a peer nobody answers
+   * to, and the placed-run gate `runFrom` builds from `me` was never built.
+   *
+   * `roomRoster` answers it from the same `peerLabels` map that names the peers,
+   * over the audience the room was derived from — see its own note for why the
+   * audience rather than who has arrived, and why self is still not a peer.
    */
-  const handoffWho = useCallback(() => {
-    const peers = (quorumState.peers || []) as any[];
-    const roster = Object.fromEntries(
-      peers
-        .filter((p) => p.fingerprint)
-        .map((p) => [String(p.id || "").replace(/^@/, ""), String(p.fingerprint).toUpperCase()])
-    );
-    const self = String((quorumState as any).self || "").toUpperCase();
-    const me = Object.keys(roster).find((label) => roster[label] === self) || "";
-    return { roster, me, self };
-  }, [quorumState]);
+  const handoffWho = useCallback(
+    () =>
+      roomRoster(
+        quorumState.audience || [],
+        (quorumState.peers || []).map((p) => p.fingerprint),
+        quorumState.self || ""
+      ),
+    [quorumState]
+  );
 
   /**
    * Hand a skipped cell to the peer it belongs to.
@@ -2013,7 +2009,16 @@ export function useNotebook() {
       if (!to) return { ok: false, why: `Nobody in this room answers to @${built.peer}.` };
       const session = getLiveSession();
       if (!session) return { ok: false, why: "No live session to hand it over on." };
-      await session.sendOffer(to, built.json);
+      // The roster is the audience, so a label can name a member who was
+      // invited and has not meshed — `sendOffer` throws for exactly that, and
+      // its sentence names the state (which fingerprint, and that no verified
+      // peer holds it). Returned rather than thrown because the caller is a
+      // click handler that reads `why` and does not catch.
+      try {
+        await session.sendOffer(to, built.json);
+      } catch (err) {
+        return { ok: false, why: err instanceof Error ? err.message : String(err) };
+      }
       return { ok: true, cell, peer: built.peer };
     },
     [handoffWho, source, title]
@@ -2047,12 +2052,31 @@ export function useNotebook() {
         return { ok: false, why: "That cell produced no result to send back." };
       }
       const signed = await signSessionDocument(resultToJson(built.result));
-      await session.sendResult(to, signed);
+      // `sendResult` throws when the peer that asked is no longer reachable —
+      // the same reason `offerCell` catches, and the same click handler.
+      try {
+        await session.sendResult(to, signed);
+      } catch (err) {
+        return { ok: false, why: err instanceof Error ? err.message : String(err) };
+      }
       return { ok: true, cell, peer: toPeer };
     },
     [handoffWho, source, title]
   );
 
+  /**
+   * Accept one, which is the click the whole arc is gated on.
+   *
+   * `handoff.js` returns *bindings a caller would register* and registers
+   * nothing itself, so this is where a handoff stops being a document and
+   * starts being values in the registry — and it happens here, in a function
+   * only a person's press reaches, rather than anywhere a running recipe could
+   * arrive at.
+   *
+   * This paragraph sat three declarations up, stacked above `handoffWho` with
+   * nothing of its own beneath it, so the function it describes had no comment
+   * and the one it was attached to had two.
+   */
   const acceptHandoff = useCallback(
     async (id: string) => {
       const doc = takeHandoff(id);
@@ -2289,6 +2313,7 @@ export function useNotebook() {
     startSession,
     removeFromRoom,
     handoffTick,
+    handoffWho,
     pendingHandoffs,
     skippedCells,
     offerCell,

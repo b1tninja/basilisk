@@ -960,27 +960,26 @@ export function ToolkitShell() {
    * editor's. That is the defect the cell-index work closed, and it comes back
    * the moment a caller rebuilds the text instead of using it.
    *
-   * The roster is only the peers whose key we actually have — a label with no
-   * fingerprint is somebody we have not verified, and handing that to the
-   * planner as though it were a person is how `@alice` comes to mean whoever
-   * answered. Absent peers, `planRun` is still worth running: it reports the
-   * solo case, and it is the surface that makes a `@peer` header mean anything
-   * before a session exists.
+   * The roster and `me` are `handoffWho`'s, which is the same answer the run
+   * and every handoff step uses. This panel used to build its own roster from
+   * the peer rows and pass no `me` at all, and both halves of that were wrong
+   * in the same direction: the rows are the audience *minus this browser*, so
+   * a cell the author placed on their own label was reported as running on
+   * "no one in this room", and with no `me` the planner asked `who-am-i`
+   * forever. Neither is a fabrication being avoided — the exchange knows the
+   * audience and knows which fingerprint this browser is, so the label is a
+   * fact — and a panel that answers it differently from the run would be
+   * drawing a placement the run does not use.
    *
-   * `me` is deliberately not guessed. Nothing yet binds this browser to a
-   * label, and the planner has a question for exactly that (`who-am-i`) which
-   * the panel renders — a fabricated `me` would silently mark somebody else's
-   * cells as mine.
+   * Absent a session there is no audience, so the roster is empty and the plan
+   * is `bound: false`: placement is still computed in label space, which is
+   * what makes a `@peer` header mean something while it is being written.
    */
   const runPlan = useMemo(() => {
     let plan;
     try {
-      const roster = Object.fromEntries(
-        (nb.quorumState.peers || [])
-          .filter((p) => p.fingerprint)
-          .map((p) => [p.id.replace(/^@/, ""), p.fingerprint as string])
-      );
-      plan = planRun(compileRecipe(nb.source), { roster });
+      const { roster, me } = nb.handoffWho();
+      plan = planRun(compileRecipe(nb.source), { roster, me });
     } catch {
       return null;
     }
@@ -992,18 +991,8 @@ export function ToolkitShell() {
     // that conversation; this panel only answers where cells run.
     if (plan.refusals.some((r) => r.reason === "uncompiled")) return null;
     return plan;
-  }, [nb.source, nb.quorumState.peers]);
+  }, [nb.source, nb.handoffWho]);
 
-  /**
-   * Labels a cell can be assigned to.
-   *
-   * The room *and* the labels this notebook already names, unioned. Only the
-   * room would make a header impossible to write before anybody joins, which
-   * is backwards — a ceremony is written first and run when the other person
-   * is free, and `planRun` reports on an unbound notebook precisely so it can
-   * be. Only the notebook would mean a peer who joins can never be given a
-   * cell without someone typing their label by hand.
-   */
   /**
    * The recipe's share link, or the reason there is not one.
    *
@@ -1307,14 +1296,28 @@ export function ToolkitShell() {
     );
   }, [nb.busy, nb.skippedCells]);
 
+  /**
+   * Labels a cell can be assigned to.
+   *
+   * The room *and* the labels this notebook already names, unioned. Only the
+   * room would make a header impossible to write before anybody joins, which
+   * is backwards — a ceremony is written first and run when the other person
+   * is free, and `planRun` reports on an unbound notebook precisely so it can
+   * be. Only the notebook would mean a peer who joins can never be given a
+   * cell without someone typing their label by hand.
+   *
+   * (This comment was ten declarations up, above `runPlan`, which is not a list
+   * of labels and does not decide what a cell may be assigned to.)
+   *
+   * "The room" is `handoffWho`'s roster, so it includes *this browser's* label.
+   * It used to be the peer rows, which are the audience minus self — so the one
+   * label a user could never pick from this list was their own, and assigning a
+   * cell to yourself meant typing `@peerN` by hand and guessing N.
+   */
   const peerChoices = useMemo(() => {
-    const fromRoster = (nb.quorumState.peers || []).map((p) =>
-      String(p.id || "").replace(/^@/, "")
-    );
-    return [...new Set([...fromRoster, ...(runPlan?.peers || [])])]
-      .filter(Boolean)
-      .sort();
-  }, [nb.quorumState.peers, runPlan]);
+    const room = Object.keys(nb.handoffWho().roster);
+    return [...new Set([...room, ...(runPlan?.peers || [])])].filter(Boolean).sort();
+  }, [nb.handoffWho, runPlan]);
   /**
    * The Activity log (§36). Session-scoped and never persisted: it names key
    * ids and destinations, and localStorage is XSS-readable.
