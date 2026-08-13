@@ -81,6 +81,25 @@ const { FakeSession } = vi.hoisted(() => {
       });
       this.opts.onRoster?.(this.peers);
     }
+    /**
+     * Follow the room somewhere else, the way `_applyRotation` finishes.
+     *
+     * A driver rather than a call into `rotateQuorumRoom`, and that is the
+     * point: this is the rotation a member is *told* about, which is every
+     * member except the one that pressed Remove. The real session reaches this
+     * same callback down both paths.
+     */
+    rotate(removeFpr, { epoch = 1, roomId = "ROTATEDROOMID" } = {}) {
+      this.audienceFprs = this.audienceFprs.filter((f) => f !== removeFpr);
+      this.peers.delete(removeFpr);
+      this.roomId = roomId;
+      this.opts.onRotate?.({
+        epoch,
+        roomId,
+        audience: [...this.audienceFprs],
+        removed: [removeFpr],
+      });
+    }
     /** Drop a peer the way a mid-session close looks to the roster. */
     drop(fpr, status = "failed") {
       const p = this.peers.get(fpr);
@@ -524,6 +543,82 @@ describe("the roster and the state agree", () => {
     const { session } = await open();
     session.connect(FPR_C);
     expect(events.at(-1)).toEqual(q.getQuorumState());
+  });
+});
+
+describe("a room that moved without this machine ordering it", () => {
+  /** Three in the room, so there is somebody to remove and somebody left. */
+  const openThree = async () => {
+    FakeSession.onStart = (s) => {
+      s.connect(FPR_B);
+      s.connect(FPR_C);
+    };
+    return open({ to: `${FPR_A} ${FPR_B} ${FPR_C}` });
+  };
+
+  it("updates the audience, which nothing used to do", async () => {
+    // The defect underneath the label drift. `rotateQuorumRoom` patched the
+    // snapshot, and only the initiator calls it; every other member followed
+    // the rotation at the transport and kept a snapshot naming the room it had
+    // left and the person who had just been removed from it.
+    const { session } = await openThree();
+    expect(q.getQuorumState().audience).toEqual([FPR_A, FPR_B, FPR_C]);
+
+    session.rotate(FPR_B);
+
+    const state = q.getQuorumState();
+    expect(state.audience).toEqual([FPR_A, FPR_C]);
+    expect(state.epoch).toBe(1);
+    expect(state.room).toBe("ROTATEDROOMID");
+    // All of it together or none of it: an invite naming three keys beside an
+    // audience of two describes two different rooms.
+    expect(state.expected).toBe(1);
+    expect(state.invite).toContain("ROTATEDROOMID");
+    expect(state.invite).toContain("2 keys");
+    // The roster is the audience minus self, so this is everybody left that is
+    // not this browser — the removed member is off it as well.
+    expect(state.peers.map((p) => p.fingerprint)).toEqual([FPR_C]);
+  });
+
+  it("renumbers the labels the notebook addresses, which is the hazard", async () => {
+    // `peerLabels` is positional over the canonical audience, so the row that
+    // said `peer3` says `peer2` once the member above it is gone — and the key
+    // behind it is a different key. This is the fact `useNotebook` watches for;
+    // `live-relabel-drift.test.js` pins what it does about it.
+    //
+    // Read off the rows the panel draws, which is the audience minus this
+    // browser: `peer1` is FPR_A and has no row because a session is never its
+    // own peer.
+    const { session } = await openThree();
+    const was = Object.fromEntries(
+      q.getQuorumState().peers.map((p) => [p.id, p.fingerprint])
+    );
+    expect(was).toEqual({ peer2: FPR_B, peer3: FPR_C });
+
+    session.rotate(FPR_B);
+
+    const now = Object.fromEntries(
+      q.getQuorumState().peers.map((p) => [p.id, p.fingerprint])
+    );
+    expect(now).toEqual({ peer2: FPR_C });
+    expect(now.peer2).not.toBe(was.peer2);
+  });
+
+  it("emits it, so a shell following the event and one polling agree", async () => {
+    const { session } = await openThree();
+    session.rotate(FPR_B);
+    expect(events.at(-1)).toEqual(q.getQuorumState());
+  });
+
+  it("says nothing once the exchange is gone", async () => {
+    // The rotation completes inside an envelope handler, and a session torn
+    // down underneath it must not resurrect a snapshot for a room nobody is in.
+    const { session } = await openThree();
+    q.closeQuorumExchange("closed");
+    const after = events.length;
+    session.rotate(FPR_B);
+    expect(events).toHaveLength(after);
+    expect(q.getQuorumState().phase).toBe("idle");
   });
 });
 

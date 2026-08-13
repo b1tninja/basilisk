@@ -23,6 +23,7 @@ import { sessionRecipe } from "../lib/toolkit/session-flow.js";
 import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
 import { planRun } from "../lib/toolkit/plan.js";
 import { roomRoster } from "../lib/notebook/roster.js";
+import { relabelAudience, relabelPlacements } from "../lib/toolkit/peer-relabel.js";
 import { offerForSkipped, resultForCell } from "../lib/toolkit/handoff-shell.js";
 import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
 import { clearActivity } from "../lib/toolkit/activity-log.js";
@@ -127,6 +128,14 @@ export type QuorumUiState = {
    * it holds who arrived, not who was asked.
    */
   audience: string[];
+  /**
+   * How many times this room has moved, counting from zero.
+   *
+   * The one field that distinguishes "the room I am in lost a member" from
+   * "a different room opened", since both show up here as a new `audience` and
+   * a new `room`. `followRotation` below is the reason it is carried.
+   */
+  epoch?: number;
   connected: number;
   expected: number;
   status: string;
@@ -514,6 +523,7 @@ export function useNotebook() {
     role: "",
     invite: "",
     audience: [],
+    epoch: 0,
     connected: 0,
     expected: 0,
     status: "",
@@ -1939,6 +1949,11 @@ export function useNotebook() {
    * to a name derived from a new epoch and a secret the remaining members are
    * sent sealed, and the removed key is left holding a token for a group nobody
    * is in.
+   *
+   * **The notebook's placements are not rewritten here**, though this is where
+   * the removal is asked for and the drift it causes starts. See
+   * `followRotation` below for why the press is the wrong thing to hang the
+   * rewrite off.
    */
   const removeFromRoom = useCallback(async (fingerprint: string) => {
     try {
@@ -1951,6 +1966,157 @@ export function useNotebook() {
       return { ok: false as const, why };
     }
   }, []);
+
+  /**
+   * The chain list as it stands right now, for a listener that must not be
+   * rebuilt between keystrokes.
+   *
+   * `notebookRef` further down keeps `{title, source}` for the arrival path and
+   * gives the argument at length; this is the same trick for the same reason,
+   * over the structure the rewrite below actually edits. Text would not do:
+   * `followRotation` produces `setCellPeer` edits addressed by cell index, and
+   * re-deriving the chains from source to find those indices would be a second
+   * parse of a notebook this hook already holds parsed.
+   */
+  const chainsRef = useRef(chains);
+  useEffect(() => {
+    chainsRef.current = chains;
+  });
+
+  /**
+   * The audience the placements in this notebook were written against.
+   *
+   * Null until there is a live room to be written against. Held as a ref rather
+   * than state because writing it must not itself cause a render — it is
+   * updated on every snapshot the exchange emits, which is several a second
+   * while a mesh is coming up.
+   */
+  const placedAgainst = useRef<{ epoch: number; audience: string[] } | null>(null);
+
+  /**
+   * Move the notebook's `@peer` headers when the room moves under it.
+   *
+   * ## Why this is an observation and not a handler
+   *
+   * `removeFromRoom` is the obvious place and it is the wrong one. A rotation
+   * is ordered on one machine and *happens* on all of them: the initiator calls
+   * `rotateRoom`, everybody else reaches the identical state through the
+   * `rotate` branch of `_handleSignal`, and on those machines nobody pressed
+   * anything. A rewrite hung off the press would fire on exactly one member of
+   * the room and leave the rest pointing at the old numbering — which is worse
+   * than the drift it set out to fix, because today every member is wrong the
+   * same way and that would make them wrong in different ways. `peersSha`
+   * digests the roster, so "wrong the same way" still lets two peers exchange a
+   * cell; "wrong differently" is an offer neither side can accept.
+   *
+   * So it hangs off the audience changing, which is the fact the whole room
+   * shares. `onRotate` is what makes that fact reach this layer at all — see
+   * `quorum-ops.js`, where the room, the audience and the epoch used to be
+   * patched only on the machine that ordered the move.
+   *
+   * ## Why the rewrite is local, and not carried in the rotation
+   *
+   * The `rotate` envelope could have carried the new placements, or a signed
+   * mapping, and it must not. The old→new label mapping is a pure function of
+   * two audiences; every member that stays holds the *same* before-audience
+   * (the room id is a one-way digest of it, so a member holding a different one
+   * was never in this room) and applies the *same* `remove` list, from a single
+   * sender `_handleSignal` insists is the initiator and key-confirmed. Both
+   * inputs are already identical on every machine, so the mapping is derived,
+   * not delivered — and a delivered copy would be a second answer that can
+   * disagree with the first, on the one question where disagreement is exactly
+   * what breaks the handoff. It would also put one member in charge of what
+   * another member's notebook says, which is the opposite of the arrangement
+   * `notebook-share.js` protects: text is adopted by a person, never pushed.
+   *
+   * Refusing was the third option and is not available for the reason
+   * `peer-relabel.js` gives about the draft: the numbering is not a display
+   * choice this layer can decline. `deriveRoomMaterial` and `peerLabels` both
+   * go through `canonicalAudience`, so the room really has renumbered whatever
+   * the notebook decides to say, and "refuse" would only mean leaving the
+   * headers pointing at people they no longer name.
+   *
+   * ## Two notebooks that are not the same notebook
+   *
+   * The rewrite is per-notebook: each member applies the shared mapping to its
+   * own chains. Peers whose text has diverged — `notebook-share.js` allows it,
+   * adoption being a person's decision — stay diverged and were already
+   * refusing each other's offers on `recipeSha`. What converges regardless is
+   * the *binding*: `@peerN` means the same key in both, because both took it
+   * from the same mapping. Nothing here can make two different notebooks agree,
+   * and nothing here makes two agreeing notebooks disagree.
+   *
+   * ## The window where one has moved and one has not
+   *
+   * Rotations do not arrive everywhere at once. Between them the two ends
+   * derive different rosters, so `peersSha` differs, so `acceptHandoffOffer`
+   * refuses with `unknown-manifest` — an accurate refusal naming a state that
+   * is true, and it heals as soon as the second machine applies the same
+   * rotation and lands on the same binding. A member that never gets the
+   * announce cannot get the next one either: it is published into the room the
+   * announce is moving *away* from, so a peer that missed one is not in the
+   * room the next is sent to. Nobody skips a step in this sequence and quietly
+   * lands somewhere else.
+   *
+   * ## What counts as a rotation
+   *
+   * The epoch, not the audience. A fresh exchange opens at epoch 0 with a
+   * different audience and a different room, which is not a renumbering of
+   * anything — it is a different room, and the notebook's headers mean whatever
+   * that room says they mean. Only an epoch strictly above the one these
+   * placements were written against is the room they were written against
+   * having moved.
+   *
+   * @param before the audience these placements were written against
+   * @param after  the audience the room has moved to
+   */
+  const followRotation = useCallback(
+    (before: string[], after: string[]) => {
+      const moved = relabelAudience(before, after);
+      const { edits, note } = relabelPlacements(chainsRef.current, moved);
+      for (const edit of edits) {
+        setCellPeer(edit.cell, edit.peer, edit.publish, edit.publishSlots);
+      }
+      // The run-status line, which is the only surface on screen whatever else
+      // is open. The draft's version of this sentence lives on the session
+      // sheet because that is where the reader just pressed something; here the
+      // reader on the machine that matters most pressed nothing, and a live
+      // region inside a closed sheet announces to nobody. `upgradeCellRecipe`
+      // narrates its own header rewrite in the same place for the same reason.
+      //
+      // Silent when nothing moved, so `removeFromRoom`'s own line survives the
+      // ordinary case and a rotation that disturbed no placement is not
+      // reported as one that did.
+      if (note) {
+        setRunStatus(`The room moved and somebody is no longer in it. ${note}`);
+      }
+    },
+    [setCellPeer]
+  );
+
+  /**
+   * Watch the room, and hand `followRotation` the two audiences when it moves.
+   *
+   * Every snapshot the exchange emits arrives here — several a second while a
+   * mesh is coming up — so the guards below are what make a rotation
+   * distinguishable from a roster tick and from a different room opening.
+   */
+  useEffect(() => {
+    const audience = quorumState.audience || [];
+    const epoch = Number(quorumState.epoch || 0);
+    if (!audience.length) {
+      placedAgainst.current = null;
+      return;
+    }
+    const was = placedAgainst.current;
+    placedAgainst.current = { epoch, audience };
+    // Nothing to move from. An exchange this hook joined mid-flight — the only
+    // way to reach a non-zero epoch with no memory — is a room whose earlier
+    // numbering this browser never saw, and inventing one to rewrite against
+    // would be worse than the silence.
+    if (!was || epoch <= was.epoch) return;
+    followRotation(was.audience, audience);
+  }, [quorumState, followRotation]);
 
   /**
    * Offers and results a peer has sent, still waiting on a person.

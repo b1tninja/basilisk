@@ -34,6 +34,13 @@ import { idFromFingerprint, scalarToHex } from "../quorum/vss.js";
  *   a one-way digest of them: a shell holding only the id can say *which* room
  *   is open and cannot build an invite to it, and re-deriving the audience from
  *   the roster would miss everyone who has not arrived yet.
+ * @property {number} epoch
+ *   How many times this room has moved. Carried because it is the only thing in
+ *   this snapshot that says two audiences are *the same exchange, one removal
+ *   apart* — `room` changes with every rotation and a fresh exchange starts at
+ *   zero, so a shell watching `audience` alone cannot tell a rotation from a
+ *   different session opening. `useNotebook` needs exactly that distinction to
+ *   decide whether the notebook's placements have to follow anybody.
  * @property {number} connected
  * @property {number} expected
  * @property {string} status   last human-readable session status line
@@ -48,6 +55,7 @@ const IDLE_STATE = Object.freeze({
   role: "",
   invite: "",
   audience: Object.freeze([]),
+  epoch: 0,
   connected: 0,
   expected: 0,
   status: "",
@@ -247,26 +255,21 @@ export function restartLiveIce() {
  * delivered sealed to the people who stay, so the name it moves to is not a
  * function of anything the removed party holds.
  *
- * The state is patched afterwards rather than waited for on the roster: `room`,
- * `audience` and `expected` all change together at the rotation, and a panel
- * showing the new roster beside the old room code would be describing two
- * different rooms.
+ * **It no longer patches the snapshot.** It used to, and that was the whole of
+ * the reporting: the room, the audience, the expected count and the invite were
+ * updated on the machine that called this and nowhere else, because this is the
+ * only place a rotation is *ordered* and it is not the only place one *happens*.
+ * The members who were told about the move followed it at the transport and
+ * kept showing the room they had left. `onRotate` in `execQuorumOpen` patches
+ * the snapshot now, on every member, and this returns what it always did so a
+ * caller can say what the press achieved.
  *
  * @param {string[]} remove  fingerprints to leave behind
  * @returns {Promise<{ epoch: number, roomId: string, audience: string[] }>}
  */
 export async function rotateQuorumRoom(remove) {
   const ex = requireExchange("quorum.rotate");
-  const out = await ex.session.rotateRoom({ remove: remove || [] });
-  if (current !== ex || ex.cancelled) return out;
-  patchState({
-    room: out.roomId,
-    audience: [...out.audience],
-    expected: Math.max(0, out.audience.length - 1),
-    invite: `quorum ${out.roomId} · ${out.audience.length} keys · ${quorumHost()}`,
-    peers: projectPeers(ex.session.peers),
-  });
-  return out;
+  return ex.session.rotateRoom({ remove: remove || [] });
 }
 
 /** Current exchange snapshot (UI polls this on mount, then follows events). */
@@ -731,6 +734,48 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
               : ex.state.phase,
       });
     },
+    /**
+     * The room moved, on this machine, however it came to.
+     *
+     * **This is where the rotation reaches the shell, and it used not to reach
+     * it at all on most of the room.** `rotateQuorumRoom` patched the snapshot
+     * itself, and `rotateQuorumRoom` runs only where somebody pressed Remove.
+     * Every other member followed the rotation perfectly at the transport —
+     * new room, new epoch, one fewer fingerprint in `session.audienceFprs`,
+     * pairwise keys rebuilt — and went on showing the old room code, the old
+     * invite and, worst of the four, the old `audience`. `onRoster` fires
+     * during a rotation and carries none of them, so nothing ever corrected it.
+     *
+     * The old `audience` is not a stale caption. `roomRoster` over it is what
+     * `buildRunManifest` digests into `peersSha`, so the members who stayed
+     * were deriving a roster that still contained the person who had just been
+     * removed, while the machine that removed them derived one that did not.
+     * Two peers committing to different bindings is an offer neither can
+     * accept: removing somebody quietly ended the handoff arc for everyone left
+     * in the room, and the only report was that the manifests did not match.
+     *
+     * So the patch moved here, where every member arrives — see `onRotate` in
+     * `session.js` for why every member does. `rotateQuorumRoom` now only
+     * rotates, and there is one place that turns a moved room into a snapshot
+     * rather than one place per way of finding out.
+     */
+    onRotate: ({ epoch, roomId, audience }) => {
+      const ex = current;
+      if (!ex) return;
+      // All of it in one patch, for the reason `rotateQuorumRoom` gave when it
+      // held this code: the room, its audience, the count of who is still
+      // expected, the invite that names them and the roster drawn from them all
+      // describe one room, and a panel showing any two of them from different
+      // epochs is describing two.
+      patchState({
+        epoch,
+        room: roomId,
+        audience: [...audience],
+        expected: Math.max(0, audience.length - 1),
+        invite: `quorum ${roomId} · ${audience.length} keys · ${quorumHost()}`,
+        peers: projectPeers(ex.session.peers),
+      });
+    },
     onStatus: (status) => patchState({ status }),
     /**
      * Latched on the exchange rather than thrown from here: this fires inside
@@ -756,6 +801,9 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       role,
       invite: `quorum ${room} · ${audience.length} keys · ${quorumHost()}`,
       audience: [...audience],
+      // Every exchange opens here, at zero, which is what lets a shell tell
+      // "the room I am watching moved" from "a different room opened".
+      epoch: 0,
       connected: 0,
       expected: audience.length - 1,
       status: "starting…",

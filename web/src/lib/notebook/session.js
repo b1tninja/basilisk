@@ -253,6 +253,13 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   a person answers both, and the run this result unblocks is restarted by
  *   whoever presses Run.
  * @property {(status: string) => void} [onStatus]
+ * @property {(moved: { epoch: number, roomId: string, audience: string[],
+ *   removed: string[] }) => void} [onRotate]
+ *   The room has moved and this session has finished following it — see
+ *   `_applyRotation`. Fired on **every** member that stays, whether it ordered
+ *   the rotation or was told about one, because the audience is what orders the
+ *   peer labels a notebook is written against and a layer that only heard about
+ *   its own rotations would be right on one machine in the room.
  * @property {() => void} [onOwnKeyElsewhere]
  *   Another session is signing as this session's key — see
  *   `_noteOwnKeyElsewhere`. Called at most once, and it changes nothing about
@@ -309,6 +316,7 @@ export class NotebookSession {
     this.onOffer = opts.onOffer;
     this.onResult = opts.onResult;
     this.onStatus = opts.onStatus;
+    this.onRotate = opts.onRotate;
     this.onOwnKeyElsewhere = opts.onOwnKeyElsewhere;
     this.onError = opts.onError;
 
@@ -718,6 +726,31 @@ export class NotebookSession {
     this.onStatus?.(`Rotating room (epoch ${epoch})…`);
     await this._deriveRoom();
     await this._openRelay();
+
+    // Said here, and said by every member that stays.
+    //
+    // Here, because this is the first line at which the epoch, the room id and
+    // the audience are all the new ones — a listener told any earlier would be
+    // handed a room code and an audience that name different rooms, which is
+    // the confusion `rotateQuorumRoom` already refuses to create — and it is
+    // the last line before `_beginMeshing` spends a round trip re-confirming
+    // keys, which nothing above the transport should have to wait through to
+    // find out who is in the room.
+    //
+    // By everyone, because the audience is what orders the peer labels a
+    // notebook's `@peer` headers are written against, and only the initiator
+    // ever calls `rotateRoom`. The rest arrive at this same line through the
+    // `rotate` branch of `_handleSignal`, from the same authorised sender and
+    // the same `remove` list, so the layer above learns the identical fact on
+    // every machine that is still in the room. Reporting it only to the caller
+    // of `rotateRoom` would leave that layer correct on exactly one browser.
+    this.onRotate?.({
+      epoch: this.epoch,
+      roomId: this.roomId,
+      audience: [...this.audienceFprs],
+      removed: [...removed],
+    });
+
     // `_beginMeshing` re-announces and re-offers; the existing transports are
     // kept (a live link is not torn down for a rename), so what actually
     // re-runs is the ECDH exchange, the transcript and the key confirmation.

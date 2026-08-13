@@ -54,6 +54,12 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  *   the sender's key and parsed — equally pending: no slot registered, no run
  *   restarted, and nothing in the session that could do either
  * @property {string[]} statuses
+ * @property {{ epoch: number, roomId: string, audience: string[],
+ *   removed: string[] }[]} rotations
+ *   Every time this session finished following the room to a new epoch —
+ *   whether it ordered the move or was told about it. The layer above reads
+ *   this to find out who is in the room, so which sides receive it is the
+ *   whole question `notebook-rotation.test.js` asks of it.
  * @property {number} ownKeyElsewhere  times this session was told another
  *   session is signing as its key
  */
@@ -199,6 +205,7 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
       offers: [],
       results: [],
       statuses: [],
+      rotations: [],
       ownKeyElsewhere: 0,
     };
     side.session = new NotebookSession({
@@ -214,6 +221,7 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
       onOffer: (/** @type {any} */ d) => side.offers.push(d),
       onResult: (/** @type {any} */ d) => side.results.push(d),
       onStatus: (/** @type {string} */ s) => side.statuses.push(s),
+      onRotate: (/** @type {any} */ m) => side.rotations.push(m),
       onOwnKeyElsewhere: () => {
         side.ownKeyElsewhere += 1;
       },

@@ -166,6 +166,84 @@ describe("rotating the room", () => {
     );
   });
 
+  it("tells every member that stays, not only the one that ordered it", async () => {
+    // What the layer above a session needs, and what it could not get. The
+    // audience is what orders the `@peer` labels a notebook's cell headers are
+    // written against (`roster.js`), and `quorum-ops` used to learn that it had
+    // changed by patching its own snapshot inside `rotateQuorumRoom` — a
+    // function only the initiator ever calls. So the members who *followed* a
+    // rotation flawlessly at this layer went on telling the shell above them
+    // that the room still contained the person who had just been removed.
+    //
+    // A third audience member with no transport, which is the shape of somebody
+    // removed before they ever connect, and the only shape a two-session pair
+    // can offer a removal at all: taking one of these two out leaves a room of
+    // one, which `rotateRoom` refuses.
+    pair = await makeQuorumPair();
+    const p = /** @type {any} */ (pair);
+    await p.start();
+    expect(await meshed(p)).toBe(true);
+
+    const ghost = "D4".repeat(20);
+    for (const side of [p.creator, p.joiner]) {
+      side.session.audienceFprs = [...side.session.audienceFprs, ghost].sort();
+    }
+
+    await p.creator.session.rotateRoom({ remove: [ghost] });
+    expect(await until(() => p.joiner.rotations.length > 0, 8000)).toBe(true);
+
+    // Both fired, and both were handed the same three facts — which is what
+    // makes the label mapping derivable on each machine rather than something
+    // one of them has to be sent.
+    expect(p.creator.rotations).toHaveLength(1);
+    expect(p.joiner.rotations).toHaveLength(1);
+    const [mine] = p.creator.rotations;
+    const [theirs] = p.joiner.rotations;
+    expect(theirs.audience).toEqual(mine.audience);
+    expect(theirs.removed).toEqual(mine.removed);
+    expect(theirs.epoch).toBe(mine.epoch);
+    expect(theirs.roomId).toBe(mine.roomId);
+    expect(mine.audience).not.toContain(ghost);
+
+    // And the report is the session's own state at the moment it was made, not
+    // a copy of the arguments somebody passed in.
+    expect(mine.roomId).toBe(p.creator.session.roomId);
+    expect(theirs.audience).toEqual(p.joiner.session.audienceFprs);
+  });
+
+  it("does not move the member it is leaving behind", async () => {
+    // The premise the whole local-rewrite decision rests on: a removed peer
+    // never follows, so its audience never shrinks and its labels never
+    // renumber. The announce is sealed to the members who stay
+    // (`recipients: next`) precisely so the removed party cannot derive the new
+    // room, which means the same envelope that moves everybody else is opaque
+    // to them — they are still in the room they were in, and their notebook
+    // still means what it meant.
+    pair = await makeQuorumPair();
+    const p = /** @type {any} */ (pair);
+    await p.start();
+    expect(await meshed(p)).toBe(true);
+
+    const ghost = "D4".repeat(20);
+    for (const side of [p.creator, p.joiner]) {
+      side.session.audienceFprs = [...side.session.audienceFprs, ghost].sort();
+    }
+    const wasRoom = p.joiner.session.roomId;
+
+    // The joiner is the one being left behind this time. The envelope is still
+    // broadcast into the room the joiner is sitting in — the relay has no
+    // per-recipient delivery — and it is the seal, not the routing, that keeps
+    // it from reading it.
+    await p.creator.session.rotateRoom({ remove: [p.joiner.fpr] });
+    await p.settle();
+
+    expect(p.creator.session.epoch).toBe(1);
+    expect(p.joiner.session.epoch).toBe(0);
+    expect(p.joiner.session.roomId).toBe(wasRoom);
+    expect(p.joiner.session.audienceFprs).toContain(p.joiner.fpr);
+    expect(p.joiner.rotations).toEqual([]);
+  });
+
   it("drops the removed member's transport, its key and its place", async () => {
     // Three in the room, so there is somewhere to rotate to. The removed
     // member's link is closed, its key is dropped, and its fingerprint is out
