@@ -6,6 +6,7 @@ import { generateKey, readKey } from "openpgp";
 import { cellRunErrorFrom, createKernel, runChain } from "../lib/toolkit/kernel.js";
 import { createSlotRegistry } from "../lib/toolkit/slot-registry.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { planRun } from "../lib/toolkit/plan.js";
 import { recipientsPipelineValue } from "../lib/toolkit/recipients-ops.js";
 
 beforeEach(() => {
@@ -109,6 +110,90 @@ describe("kernel cell runs", () => {
     );
     expect(artifacts.length).toBeGreaterThan(0);
     expect(slots.has("$n")).toBe(true);
+  });
+
+  /* ── a cell the gate declined ─────────────────────────────────────────────
+   *
+   * `runCell` stamps `ok` and a fresh timing on every normal return from
+   * `runRecipe`, and a gated cell returns normally with no artifacts — so the
+   * dot beside a cell placed on somebody else said "ran 0s ago · 3ms" on the
+   * machine that had just refused to perform it. `placed-journey.e2e.js` found
+   * it by pressing Run and reading the header; this is the same fact one layer
+   * down, where the status is written.
+   *
+   * The plan is a real `planRun` over a real two-peer notebook rather than a
+   * literal, because `placementGate` refuses a plan it cannot check — a
+   * hand-built one would either be refused or would prove something about a
+   * shape the product never produces.
+   */
+  describe("a cell the placement gate declined", () => {
+    const ADA = "D772078C5C7C2A0EDCA09ED32C5EBBB46AD01388";
+    const GRACE = "9F2A4C1B77E5D0A83B6C41E9F0D2A7B5C8E31460";
+    const roster = { peer1: ADA, peer2: GRACE };
+    const notebook = `@peer1 publish\nrandom 8 | encode hex | out $a\n\n@peer2\nin $a | out $b`;
+
+    /** The gate as `runFrom` builds one, for whichever peer this browser is. */
+    const placementFor = (me, skips) => {
+      const plan = planRun(compileRecipe(notebook), { me, roster });
+      expect(plan.ok, JSON.stringify(plan.refusals)).toBe(true);
+      return { plan, onSkip: (sk) => skips.push(sk) };
+    };
+
+    it("is not stamped as a cell that ran", async () => {
+      const kernel = createKernel();
+      const chains = compileRecipe(notebook).ast.chains;
+      const skips = [];
+      const placement = placementFor("peer1", skips);
+
+      await kernel.runCell(0, chains[0], {}, placement);
+      expect(kernel.getCellStatus(0)).toBe("ok");
+
+      const arts = await kernel.runCell(1, chains[1], {}, placement);
+      expect(arts).toEqual([]);
+      expect(kernel.getCellStatus(1)).toBe("declined");
+      // No duration, because nothing here took any time. This is the field the
+      // header renders as "ran 0s ago · 3ms", so its absence is the fix.
+      expect(kernel.getCellTiming(1)).toBeNull();
+      expect(kernel.getCellOutputs(1)).toEqual([]);
+      // Not in this machine's receipt either: the run log is what ran here.
+      expect(kernel.getRunLog().map((c) => c.index)).toEqual([0]);
+      // The caller's own report still arrives — the wrapper notices, it does
+      // not intercept — because that is what the offer is built from.
+      expect(skips.map((s) => s.cell)).toEqual([1]);
+    });
+
+    it("clears what a previous run of the same cell left behind", async () => {
+      // The cell ran here before the room existed; the notebook now places it
+      // elsewhere. Leaving the old tiles under a `declined` status would be the
+      // same lie the status just stopped telling.
+      const kernel = createKernel();
+      const chains = compileRecipe(notebook).ast.chains;
+      await kernel.runCell(0, chains[0]);
+      await kernel.runCell(1, chains[1]);
+      expect(kernel.getCellStatus(1)).toBe("ok");
+      expect(kernel.getCellOutputs(1).length).toBeGreaterThan(0);
+
+      await kernel.runCell(1, chains[1], {}, placementFor("peer1", []));
+      expect(kernel.getCellStatus(1)).toBe("declined");
+      expect(kernel.getCellOutputs(1)).toEqual([]);
+      expect(kernel.getCellTiming(1)).toBeNull();
+    });
+
+    it("still stamps the cell that is this peer's own", async () => {
+      // The other half, so `declined` cannot be reached by a gate that declines
+      // everything: the same notebook, from the other machine.
+      const kernel = createKernel();
+      const chains = compileRecipe(notebook).ast.chains;
+      const placement = placementFor("peer2", []);
+      await kernel.runCell(0, chains[0], {}, placement);
+      expect(kernel.getCellStatus(0)).toBe("declined");
+      // `$a` is published, so peer2 may hold it — seeded here the way a handoff
+      // would, which is what lets their own cell run at all.
+      kernel.slots.register("$a", { type: "text", data: "deadbeef" });
+      await kernel.runCell(1, chains[1], {}, placement);
+      expect(kernel.getCellStatus(1)).toBe("ok");
+      expect(kernel.getCellTiming(1)).not.toBeNull();
+    });
   });
 
   it("remapCells + markAllWithOutputsStale after reorder", async () => {

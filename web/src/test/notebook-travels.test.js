@@ -496,6 +496,35 @@ describe("who consumes this", () => {
     expect(HOOK).not.toMatch(/here\.source\.trim\(\)/);
   });
 
+  it("hands the kernel the notebook it is now holding", () => {
+    // `loadRecipeText` replaced `chains` and told the kernel nothing, so every
+    // per-cell status, timing, run error and artifact tile stayed attached to
+    // its *index* while the cell underneath became somebody else's. A freshly
+    // adopted cell read "ran 0s ago · 293ms" with the previous notebook's
+    // `$session` tile beneath it. `placed-journey.e2e.js` step 6 is the check
+    // that can see the header; this is the line that has to be there for it.
+    const loader = /const loadRecipeText = useCallback\([\s\S]*?\n  \}, \[\]\);/.exec(HOOK);
+    expect(loader, "loadRecipeText is not where this test thinks it is").toBeTruthy();
+    expect(loader[0]).toMatch(/clearCellOutputs/);
+    // Not the other two: staleness presumes the tile is still this cell's
+    // answer, and a remap presumes a correspondence between old index and new.
+    // Opening a different notebook has neither.
+    expect(loader[0]).not.toMatch(/markAllWithOutputsStale|remapCells/);
+  });
+
+  it("bumps the counter the slot tray is memoised on when it registers one", () => {
+    // `acceptHandoff` bumped `sessionTick` — the vault's counter — while
+    // `slotMetas` is memoised on `kernelEpoch`, so the tray went on saying "No
+    // slots yet" about a value the shell had just reported registering.
+    const accept = /const acceptHandoff = useCallback\([\s\S]*?\n  \);/.exec(HOOK);
+    expect(accept, "acceptHandoff is not where this test thinks it is").toBeTruthy();
+    expect(accept[0]).toMatch(/setKernelEpoch/);
+    expect(accept[0]).not.toMatch(/setSessionTick/);
+    // And the memo really is the one being bumped, so this is not two names for
+    // a counter nothing reads.
+    expect(HOOK).toMatch(/const slotMetas[\s\S]{0,600}\}, \[kernelEpoch\]\);/);
+  });
+
   it("keeps one secret predicate for the URL and the wire", () => {
     // Moved to `recipe-secrets.js` and re-exported under the name every caller
     // already used. Two copies would agree until the first case only one of them

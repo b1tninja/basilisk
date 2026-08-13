@@ -61,7 +61,14 @@ function wipeArtifacts(list) {
 }
 
 /**
- * @typedef {"idle"|"running"|"ok"|"error"|"stale"} CellStatus
+ * What one cell's last brush with a run amounts to.
+ *
+ * `declined` is the placement gate's answer and is not a milder `ok`: the cell
+ * was not performed here, produced nothing here, and has no timing, because
+ * there is no duration for something that did not happen. It is separate from
+ * `idle` for the same reason — "never run" is what a cell says before anybody
+ * pressed anything, and this one was reached, considered and left to its owner.
+ * @typedef {"idle"|"running"|"ok"|"error"|"stale"|"declined"} CellStatus
  */
 
 /**
@@ -314,6 +321,26 @@ export function createKernel() {
     // enough context to name this one. Passed through bindings — the same
     // runtime channel `input`/`shares` use — so none of it can leak into the
     // recipe text or a share link.
+    /**
+     * Whether the placement gate declined *this* cell.
+     *
+     * The gate reports through `onSkip`, which the caller owns and uses to
+     * build the offers a declined cell turns into. It is wrapped rather than
+     * replaced: the caller's callback still gets every skip, in order, and this
+     * only notices the one that is about this cell. A run walking several cells
+     * reports several, and `firstCell` is what makes the index comparable.
+     */
+    let declined = false;
+    const gated = placement
+      ? {
+          ...placement,
+          /** @param {import("./placement.js").SkippedCell} sk */
+          onSkip: (sk) => {
+            if (sk?.cell === cellIndex) declined = true;
+            placement.onSkip?.(sk);
+          },
+        }
+      : undefined;
     const receiptCtx = {
       runLog: [...runLog],
       cellIndex,
@@ -332,11 +359,28 @@ export function createKernel() {
         {
           slotRegistry: slots,
           allowReplaceSlots: true,
-          ...(placement
-            ? { placement: { ...placement, firstCell: cellIndex } }
-            : {}),
+          ...(gated ? { placement: { ...gated, firstCell: cellIndex } } : {}),
         }
       );
+      // A cell the gate declined returns from `runRecipe` exactly as a cell that
+      // ran and produced nothing does, and every line below this used to treat
+      // it as one: `ok`, a fresh timing, and an entry in the run log. The dot
+      // beside a cell placed on somebody else therefore read "ran 0s ago · 3ms"
+      // on the machine that had just refused to perform it — the gate's whole
+      // purpose is that this cell did not run here, and the one line a reader
+      // checks to find that out said the opposite.
+      //
+      // Nothing is stamped and nothing is logged. `clearCellOutputs` rather
+      // than leaving the previous tiles in place, because a cell that ran here
+      // before and is somebody else's now holds no current answer either — and
+      // it is what wipes the old one rather than dropping the reference.
+      // `invalidateFrom` is not called: this run changed nothing, so nothing
+      // below it became stale.
+      if (declined) {
+        clearCellOutputs(cellIndex);
+        setCellStatus(cellIndex, "declined");
+        return artifacts;
+      }
       cellOutputs.set(cellIndex, artifacts);
       setCellStatus(cellIndex, "ok");
       cellTimings.set(cellIndex, { ranAt: Date.now(), durationMs: Date.now() - startedAt });

@@ -328,14 +328,23 @@ export function sameNotebook(a, b) {
  *   to ask: a peer sharing the text you are holding has told you something
  *   reassuring, not something to decide.
  * - **`adopt`** — take it without asking. Two states reach this, and both are
- *   states where there is no local work to lose. *Nothing here at all* is the
- *   joiner's case and the entire reason this document exists: arriving into a
- *   room with an empty notebook is what made every offer refuse
- *   `unknown-manifest`, and requiring a press before the first notebook may be
- *   *received* would reproduce that with a button in front of it. *Here, and
- *   untouched since this same peer's last proposal* is the second: a room where
- *   one person is driving should not need a press per revision, and what is
- *   being protected is the local user's own work, of which there is none.
+ *   states where there is no local work to lose. *Nothing here at all* is one,
+ *   and the reading of it in this comment was wrong: it was written as "the
+ *   joiner's case and the entire reason this document exists", and it is not
+ *   the joiner's case, because a joiner is never empty. Pressing Join runs
+ *   `startSession`, which appends `agent.unlock` and `quorum.join` to the
+ *   notebook *before* the exchange it opens can carry anything — and a proposal
+ *   can only arrive over an exchange. So the shell reaches this branch by one
+ *   route only: a notebook emptied by hand while a session is already live.
+ *   The rule is still the right rule for that state — an empty notebook has no
+ *   work to lose — and the argument for it is the smaller one, not the founding
+ *   one. What the founding argument actually justified is the *document*: until
+ *   it existed nobody could give a joiner the text, so every offer was refused
+ *   `unknown-manifest` against a manifest derived from two session cells.
+ *   *Here, and untouched since this same peer's last proposal* is the second: a
+ *   room where one person is driving should not need a press per revision, and
+ *   what is being protected is the local user's own work, of which there is
+ *   none.
  * - **`ask`** — there is work here, it is not their text, and this browser did
  *   not get it from them. Do not clobber it.
  *

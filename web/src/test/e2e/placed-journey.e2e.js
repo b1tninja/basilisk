@@ -77,15 +77,27 @@
  *    `useNotebook.acceptHandoff` passed `doc.from` — a bare fingerprint — as
  *    `by`, where `acceptCellResult` checks it against `plan.cells[n].runsOn`,
  *    which holds labels. Every result a peer ever sent back was refused
- *    `not-theirs`. Fixed in this change; step 7 is the guard.
+ *    `not-theirs`. Fixed in `5022bbf`; step 7 is the guard.
  * 2. **A cell the gate declined is drawn as a cell that ran** — `ok`, with a
- *    timing, on the machine that just refused to perform it. Pinned in step 5.
+ *    timing, on the machine that just refused to perform it. Fixed: `runCell`
+ *    stamps `declined`, with no timing and no run-log entry. Step 5.
  * 3. **Adopting a peer's notebook leaves the old notebook's runs attached** to
- *    the new cells: `loadRecipeText` replaces `chains` and tells the kernel
- *    nothing. Pinned in step 6.
+ *    the new cells: `loadRecipeText` replaced `chains` and told the kernel
+ *    nothing. Fixed: it clears the per-cell buckets of the notebook it is
+ *    closing. Step 6.
  * 4. **The notebook that travels carries the sender's session cells**, so the
- *    receiver's Run stops at `agent.unlock <the sender's fingerprint>` with "Key
- *    not found in vault". Pinned in step 6.
+ *    receiver's Run stopped at `agent.unlock <the sender's fingerprint>` with
+ *    "Key not found in vault". Fixed in `sessionRecipe`, which places both
+ *    cells on the peer opening the session — `agent.unlock` reaches the vault
+ *    of whoever runs it and `plan.js` has always asked whose vault that is.
+ *    Nothing about the transport changed: both ends still hold
+ *    character-identical text, and the gate that declines a peer's cells
+ *    declines these. Steps 4 and 6.
+ *
+ * A fifth, which the accept in step 6 now shows: `acceptHandoff` registered into
+ * the kernel and bumped `sessionTick`, while `slotMetas` is memoised on
+ * `kernelEpoch`, so the tray said "No slots yet" about a value the shell had
+ * just reported registering.
  *
  * Two more are recorded in prose only, because pinning them would mean asserting
  * something a fix should be free to change: `decideProposal`'s
@@ -242,14 +254,21 @@ async function answerSlots(page) {
 /**
  * What the cell's own status dot says — `idle` draws "never run" beside it.
  *
- * **It is not a usable answer to "did this cell run here", and this file uses it
- * only to pin the two places where it lies.** A cell the placement gate declined
- * comes back from `runCell` normally with no artifacts and is stamped `ok` with
- * a fresh timing, and a cell that arrived by adopting a peer's notebook inherits
- * whatever the cell at its index did before. Both are asserted below as they
- * are, with a message saying so, so that fixing either fails loudly instead of
- * passing quietly. Everything load-bearing goes through `answerSlots` or the
- * cell's own outputs.
+ * **It was not a usable answer to "did this cell run here", and this file used
+ * to pin the two places where it lied.** A cell the placement gate declined came
+ * back from `runCell` normally with no artifacts and was stamped `ok` with a
+ * fresh timing, and a cell that arrived by adopting a peer's notebook inherited
+ * whatever the cell at its index did before. Both were asserted as they were, so
+ * that fixing either failed loudly instead of passing quietly, and both are
+ * fixed: the gate's cells report `declined`, and adopting clears what the
+ * previous notebook's cells left at each index.
+ *
+ * So the three answers this file now reads off it are distinct facts and each is
+ * asserted as one — `ok` ran here, `declined` was left to its owner, `idle` has
+ * not been reached. What is still true is that it is the *cheapest* answer and
+ * not the deepest: everything about where a value was computed goes through
+ * `answerSlots` or the cell's own outputs, because a status is one word about a
+ * cell and those are the value itself.
  */
 const cellStatus = (page, i) =>
   cell(page, i).locator("[data-cell-status]").getAttribute("data-cell-status");
@@ -533,7 +552,19 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     const before = await readNotebookSource(joiner);
     expect(before).toContain("quorum.join");
     expect(before).not.toContain("decode hex");
-    expect(before).not.toContain(`@${L.joiner}`);
+    // Their own two cells are placed on *them*, which is the Join end of the
+    // same fix the creator's end gets below — the label is this browser's, so
+    // whoever ends up holding this text can read whose vault it asks for.
+    for (const c of before.split(/\n\s*\n+/)) {
+      expect(c.trim().split("\n")[0]).toBe(`@${L.joiner}`);
+    }
+    // And not one of the creator's, which is what this line has always been
+    // about. It used to say `@${L.joiner}` — the header the creator wrote on the
+    // cell they placed here — and that string is now also the joiner's own two
+    // cells, so it is asked as the two things it meant: no cell of the creator's
+    // is here, and nothing here publishes.
+    expect(before).not.toContain(`@${L.creator}`);
+    expect(before).not.toMatch(new RegExp(`^@${L.joiner} publish$`, "m"));
     await trayTab(joiner, "Connections");
     expect(
       await joiner.locator("[data-notebook-proposed]").count(),
@@ -547,6 +578,21 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     sharedSource = await readNotebookSource(creator);
     expect(sharedSource).toContain(creatorSource);
     expect(sharedSource).toContain("quorum.offer");
+    // And those two cells are placed on the creator, by the creator's own
+    // label, which is what makes them survivable at the other end. This is the
+    // whole of the fix for the blocker: they still travel — a session that
+    // happened without a recipe saying so would be the one thing in this app
+    // that did — and the machine that adopts them can now read who they belong
+    // to instead of being asked to unlock a key it has never held.
+    const shared = sharedSource.split(/\n\s*\n+/).map((c) => c.trim());
+    const unlock = shared.find((c) => c.includes("agent.unlock"));
+    const opens = shared.find((c) => c.includes("quorum.offer"));
+    expect(unlock, "Start wrote no agent.unlock cell").toBeTruthy();
+    expect(unlock.split("\n")[0]).toBe(`@${L.creator}`);
+    expect(opens.split("\n")[0]).toBe(`@${L.creator}`);
+    // Never `publish`. `$me` is an unlocked private key and the header is the
+    // thing that would let it out of this machine.
+    expect(unlock).not.toContain("publish");
 
     await trayTab(creator, "Connections");
     await tray(creator).getByRole("button", { name: "Share this notebook" }).click();
@@ -609,21 +655,22 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // declined cell writes, and `placementGate` says so in its own words.
     expect(await runLine(creator)).toContain("$b64");
 
-    // **And the cell the gate declined is drawn as a cell that ran.** This is
-    // asserted as it is rather than as it should be, and it is a finding — see
-    // this file's report. `runCell` sets `ok` and stamps a fresh timing on
-    // *every* return from `runRecipe`, and a gated cell returns normally with no
-    // artifacts, so the dot beside the joiner's cell says "ran 0s ago" on the
-    // machine that just refused to perform it. The gate's entire purpose is that
-    // this cell did not run here, and the one line a reader would check to find
-    // that out says the opposite. It is pinned here so that fixing it fails this
-    // line rather than passing silently; the assertion above — the absent slot —
-    // is the one carrying the weight.
+    // **And the cell the gate declined says so.** It used to be drawn as a cell
+    // that ran: `runCell` set `ok` and stamped a fresh timing on *every* return
+    // from `runRecipe`, and a gated cell returns normally with no artifacts, so
+    // the dot beside the joiner's cell read "ran 0s ago" on the machine that had
+    // just refused to perform it. The gate's entire purpose is that this cell
+    // did not run here, and the one line a reader checks to find that out said
+    // the opposite.
+    //
+    // The creator's own cell is asserted beside it, and that pairing is the
+    // point: `declined` reached by declining everything would be no better than
+    // `ok` reached by stamping everything. One run, one notebook, two answers.
+    expect(await cellStatus(creator, 0)).toBe("ok");
     expect(
       await cellStatus(creator, 1),
-      "a declined cell no longer reports itself as run — update this, the old " +
-        "behaviour was the defect"
-    ).toBe("ok");
+      "the cell the gate declined is drawn as a cell that ran"
+    ).toBe("declined");
 
     // And the run handed the declined cell over without being asked. `a4f9399`
     // again, the other half: `offerCell` had exactly one caller in the product —
@@ -654,21 +701,26 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // answer. The control is the half that makes the rest mean anything.
     expect(await answerSlots(joiner)).toEqual([]);
     expect(await cell(joiner, 1).innerText()).not.toContain(EXPECTED_B64);
-    // **A second finding, pinned the same way.** This cell has never run on this
-    // machine, and it says "ran 0s ago · 293ms" with the *previous* notebook's
+    // **A second finding, fixed.** This cell has never run on this machine, and
+    // it used to say "ran 0s ago · 293ms" with the *previous* notebook's
     // `$session` artifact under it. Adopting goes through `loadRecipeText`,
-    // which replaces `chains` and tells the kernel nothing — no
+    // which replaced `chains` and told the kernel nothing — no
     // `markAllWithOutputsStale`, no `clearCellOutputs`, no `remapCells` — so
-    // every per-cell status, timing and output stays attached to its index while
-    // the cell underneath it becomes somebody else's. Index 1 was `quorum.join`
-    // a second ago and is the placed cell now, and it wears the old one's run.
-    // Asserted so a fix fails here; the b64 above is the assertion that means
-    // something either way.
-    expect(
-      await cellStatus(joiner, 1),
-      "adopting a notebook no longer leaves the old run attached to the new " +
-        "cells — update this, the old behaviour was the defect"
-    ).toBe("ok");
+    // every per-cell status, timing and output stayed attached to its index
+    // while the cell underneath it became somebody else's. Index 1 was
+    // `quorum.join` a second ago and is the placed cell now, and it wore the old
+    // one's run.
+    //
+    // `idle` — "never run" — is the true answer, and it has to hold for the
+    // whole notebook rather than for this cell: the joiner's two Join cells were
+    // at 0 and 1, so a clear that stopped at the incoming length would leave the
+    // tail wearing them.
+    for (const i of [0, 1, 2, 3, 4]) {
+      expect(
+        await cellStatus(joiner, i),
+        `cell ${i} of an adopted notebook wears the previous notebook's run`
+      ).toBe("idle");
+    }
     await trayTab(joiner, "Connections");
     expect(
       await tray(joiner).locator("[data-handoff-owed] li").count(),
@@ -685,13 +737,16 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // Accepted, and still not run: the value that arrived is the one the cell
     // *reads*, not the answer.
     //
-    // The Slots tab is deliberately not consulted on this line, and that is a
-    // finding rather than a preference — see this file's report. `acceptHandoff`
-    // registers into the kernel and bumps `sessionTick`, while `slotMetas` is
-    // memoised on `kernelEpoch`, so the tray goes on saying "No slots yet" about
-    // a value the shell has just told the reader it registered. The dot below is
-    // the observable that is not a render behind, and the value shows up in the
-    // tray on the next line, after a run has bumped the epoch.
+    // The Slots tab **is** consulted here, and it used not to be: `acceptHandoff`
+    // registered into the kernel and bumped `sessionTick`, while `slotMetas` is
+    // memoised on `kernelEpoch`, so the tray went on saying "No slots yet" about
+    // a value the shell had just told the reader it registered — until some
+    // later run bumped the epoch for reasons of its own. One press, one value,
+    // and the tray says so on the same press.
+    expect(
+      await answerSlots(joiner),
+      "the tray does not show the value the accept just reported registering"
+    ).toEqual(["seed"]);
     expect(await cell(joiner, 1).innerText()).not.toContain(EXPECTED_B64);
 
     // Press two: run it. The cell's own Run, which is how a person runs the cell
@@ -703,19 +758,38 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     expect(await answerSlots(joiner)).toEqual(["b64", "seed"]);
     expect(await cell(joiner, 1).innerText()).toContain(EXPECTED_B64);
 
-    // **And the run this press started did not survive the notebook it was
-    // given.** Third finding, and the largest of the three. Pressing Run on a
-    // cell runs every cell from there on, and the notebook that travelled is the
-    // creator's *whole* notebook — including the two cells Start appended, which
-    // are `agent.unlock <the creator's fingerprint>` and a `quorum.offer` over
-    // the room. Neither is runnable here: the key is not in this vault, and this
-    // browser is already in the session that cell would open. So the joiner's
-    // run stops at cell 3 with "Key not found in vault", every time, on a
-    // notebook a peer told them to adopt. The cell they were handed still ran,
-    // which is why the journey continues; nothing past it can.
-    expect(await runLine(joiner)).toContain("Key not found in vault");
-    expect(await cellStatus(joiner, 3)).toBe("error");
+    // **And the run this press started survived the notebook it was given.**
+    // Third finding, and the largest of the three, fixed at the point the cells
+    // are written. Pressing Run on a cell runs every cell from there on, and the
+    // notebook that travelled is the creator's *whole* notebook — including the
+    // two cells Start appended, which are `agent.unlock <the creator's
+    // fingerprint>` and a `quorum.offer` over the room. Neither is runnable
+    // here: the key is not in this vault, and this browser is already in the
+    // session that cell would open. The run used to stop at cell 3 with "Key not
+    // found in vault", every time, on a notebook a peer told them to adopt.
+    //
+    // They are the creator's cells and now say so, so the same gate that
+    // declined cell 2 declines them, and the run walks to the end of the
+    // notebook. Asserted as an absence *and* as the state that replaced it: a
+    // run that stopped one cell earlier for some new reason would also not
+    // mention the vault.
+    expect(await runLine(joiner)).not.toContain("Key not found in vault");
+    expect(await runLine(joiner)).toMatch(/^Done\b/);
+    expect(await cellStatus(joiner, 2)).toBe("declined");
+    expect(await cellStatus(joiner, 3)).toBe("declined");
+    expect(await cellStatus(joiner, 4)).toBe("declined");
+    // The cell they were handed is the one that ran, and it is the only one.
+    expect(await cellStatus(joiner, 1)).toBe("ok");
 
+    // Recorded in prose rather than pinned, for this file's usual reason: the
+    // run above handed *three* cells back — cell 2, which carries the `$b64`
+    // the creator's own cell is waiting for and is the point of the exchange,
+    // and cells 3 and 4, the creator's session cells, which the creator ran
+    // half an hour of wall-clock ago to open the room this offer travelled
+    // over. Those two are noise: `handOffPlaced` offers every cell the gate
+    // declined, and "declined" is not the same question as "this machine needs
+    // its answer". Asserting a count here would pin the noise.
+    //
     // Still not sent. `a4f9399` argues this one at length and refuses to
     // automate it: `runFrom` runs every cell from an index onward and nothing
     // records *why* a cell ran, so a send hung off "this cell was accepted once"

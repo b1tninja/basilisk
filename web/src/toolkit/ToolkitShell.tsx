@@ -333,6 +333,11 @@ function describeCellStatus(
   if (status === "running") return "running…";
   if (status === "error") return timing ? `failed ${relativeTimeShort(timing.ranAt, now)}` : "failed";
   if (status === "stale") return "edited since last run";
+  // No timing, and none is withheld: a declined cell has no duration because
+  // nothing here took any time. This line is the only place a reader finds out
+  // that the gate fired, so it says both halves — where the cell runs, and that
+  // this is not where.
+  if (status === "declined") return "placed elsewhere — not run here";
   if (status === "ok" && timing) {
     return `ran ${relativeTimeShort(timing.ranAt, now)} · ${timing.durationMs}ms`;
   }

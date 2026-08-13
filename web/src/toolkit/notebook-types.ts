@@ -14,7 +14,15 @@
  */
 export type { RecipeStep, RecipeChain, RecipeParams } from "../lib/toolkit/recipe.js";
 
-export type CellStatus = "idle" | "ok" | "error" | "stale" | "running";
+/**
+ * Re-exported for the reason above rather than spelled again.
+ *
+ * It was a hand-written union here, and `declined` — the placement gate's
+ * answer — landed in the kernel's typedef first, which is the only place that
+ * ever writes one. A second list would have been a second opinion about what a
+ * cell can be, decided by whichever file a reader opened.
+ */
+export type { CellStatus } from "../lib/toolkit/kernel.js";
 
 export type VaultKeyRow = {
   fingerprint: string;

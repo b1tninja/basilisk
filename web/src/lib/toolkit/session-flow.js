@@ -50,6 +50,7 @@
  */
 
 import { canonicalAudience } from "../notebook/room.js";
+import { roomRoster } from "../notebook/roster.js";
 import { findFingerprints, findShortKeyIds } from "../pgp/verify-fpr.js";
 import { keyOwesPassphrase, keyPower, keyPowerReadout } from "./key-power.js";
 
@@ -446,6 +447,41 @@ export function startIssues(draft) {
  * this app. Splitting it into its own cell keeps that mark where a reader
  * looks.
  *
+ * ## Both cells are placed on the person opening the session
+ *
+ * `agent.unlock` reaches the vault of *whoever runs it*, and `plan.js` already
+ * asks about exactly that: a cell running a vault op under no `@peer` header
+ * raises `vault-locality` — "a fingerprint in a recipe does not say whose vault
+ * holds it. Which peer runs this cell? Write `@peer` at the head of it." This
+ * used to ship a cell that tripped its own product's question and then answered
+ * it nowhere, and the cost was paid by whoever received the notebook: these
+ * cells travel with it (`notebook-share.js`), so a peer who adopted a shared
+ * notebook and pressed Run stopped at `agent.unlock <the sender's fingerprint>`
+ * with "Key not found in vault" — asked to open a key that is, correctly, not
+ * theirs. The `quorum.` cell is placed for the same reason one step on: it is
+ * this machine entering the room, and re-entering a room somebody else is
+ * already in is not a cell anybody else can perform.
+ *
+ * So the header is written here, where the answer is known, and nothing about
+ * how a notebook travels changes: both ends still hold *character-identical*
+ * text, so every manifest and cell digest still meets, and the placement gate
+ * that already declines a peer's cells declines these ones too. Stripping them
+ * on the way out instead would break both halves of that — the two ends would
+ * derive different manifests, and cell indices are the coordinate every offer
+ * is addressed by, which a strip renumbers differently on each machine.
+ *
+ * The label is `roomRoster`'s, over the same audience the room is derived from,
+ * so it is the one every other browser in the room hands out for this key. With
+ * no key of ours in the audience there is no label to write and none is written
+ * — the state `startIssues` refuses the press for, and a header naming nobody
+ * would be a worse account of it than none.
+ *
+ * A hand-typed `agent.unlock` is untouched by all of this. It is the author's
+ * sentence about their own notebook: solo, it runs here as it always has;
+ * placed, `planRun` puts the same `vault-locality` question to them and the
+ * gate carries their answer. Guessing at one by matching the fingerprint would
+ * be this module deciding what somebody else's cell meant.
+ *
  * @param {{ audience: string[], keyFingerprint: string, role?: "offer"|"join" }} draft
  * @returns {string}
  */
@@ -455,10 +491,12 @@ export function sessionRecipe(draft) {
     .replace(/\s+/g, "")
     .toUpperCase();
   const role = draft?.role === "join" ? "join" : "offer";
+  const { me } = roomRoster(audience, [], key);
+  const header = me ? `@${me}\n` : "";
   return [
-    `agent.unlock ${key} | out $me`,
+    `${header}agent.unlock ${key} | out $me`,
     "",
-    `quorum.${role} to="${audience.join(",")}" key=$me | out $session`,
+    `${header}quorum.${role} to="${audience.join(",")}" key=$me | out $session`,
   ].join("\n");
 }
 

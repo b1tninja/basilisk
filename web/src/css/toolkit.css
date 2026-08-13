@@ -412,6 +412,17 @@ body.layout-app:has(#app > .toolkit-shell) {
 .cell-status-dot[data-cell-status="idle"] {
   background: var(--muted-foreground);
 }
+/*
+ * A cell the placement gate declined. Neither `--success` nor `--error`: this
+ * machine was never going to run it, so there is nothing here that went right
+ * or wrong. Hollow rather than filled for the same reason — every solid dot on
+ * this row stands for something that happened locally, and nothing did.
+ * `box-shadow` draws the ring because a border would eat the 6px box.
+ */
+.cell-status-dot[data-cell-status="declined"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--muted-foreground);
+}
 
 /*
  * Suite-status tones (TopBar §21e) — same CSP conversion as the peer dots.

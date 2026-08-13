@@ -631,12 +631,71 @@ export function useNotebook() {
     void refreshVault();
   }, [refreshVault, sessionTick]);
 
-  /** Compile `text` and replace the notebook's title/chains with it. Returns whether it parsed. */
+  /**
+   * The chain list as it stands right now, for a caller that must not be
+   * rebuilt between keystrokes.
+   *
+   * `notebookRef` further down keeps `{title, source}` for the arrival path and
+   * gives the argument at length; this is the same trick for the same reason,
+   * over the structure the rewrites below actually edit. Text would not do:
+   * `followRotation` produces `setCellPeer` edits addressed by cell index, and
+   * re-deriving the chains from source to find those indices would be a second
+   * parse of a notebook this hook already holds parsed.
+   *
+   * **It is declared here, above `loadRecipeText`, and that position is
+   * load-bearing** for the same reason `handoffWho`'s is: it sat six hundred
+   * lines down, beside `followRotation`, and the loader below needs to know how
+   * many cells the *outgoing* notebook had. Reading `chains` there instead would
+   * put the whole notebook in `loadRecipeText`'s dependency list, and that
+   * callback is what `considerProposal` is built on — so every keystroke would
+   * re-decide a peer's pending proposal.
+   */
+  const chainsRef = useRef(chains);
+  useEffect(() => {
+    chainsRef.current = chains;
+  });
+
+  /**
+   * Compile `text` and replace the notebook's title/chains with it. Returns
+   * whether it parsed.
+   *
+   * **This opens a different notebook, so the kernel's per-cell state goes with
+   * the old one.** It used to replace `chains` and tell the kernel nothing,
+   * which left every status, timing, run error and artifact tile attached to
+   * its *index* while the cell underneath that index became somebody else's.
+   * The visible form was a freshly adopted cell reading "ran 0s ago · 293ms"
+   * with the previous notebook's `$session` tile under it, on a machine that
+   * had never run it — see `placed-journey.e2e.js` step 6, which is where it
+   * was found.
+   *
+   * `clearCellOutputs` rather than `markAllWithOutputsStale` or `remapCells`,
+   * and the difference is what each of the three claims. Stale says "this was
+   * computed from something that has since changed", which presumes the tile is
+   * still *this cell's* answer; it is not, and marking it would leave the same
+   * lie one shade quieter. A remap presumes a correspondence between old index
+   * and new, and there is none — index 1 was `quorum.join` a second ago and is a
+   * placed cell now. Clearing says the only true thing: this cell has no last
+   * run here. It is also the one of the three that wipes the artifacts it drops.
+   *
+   * Slots are deliberately untouched. They are values this machine holds, not
+   * claims about cells — the joiner's own `$me` is still theirs after adopting,
+   * and `acceptHandoff` registers into the same registry. Discarding those is
+   * Clear session's job and it says so.
+   *
+   * The sweep runs past the incoming notebook's length because a shorter one
+   * would leave the tail buckets alive and invisible, waiting for the notebook
+   * to grow back into them — the same defect, deferred.
+   */
   const loadRecipeText = useCallback((title: string, text: string) => {
     const { ast } = compileRecipe(text);
     if (!ast) return false;
+    const next = ast.chains?.length ? ast.chains : [{ steps: ast.steps || [] }];
+    for (let i = 0; i < Math.max(chainsRef.current.length, next.length); i++) {
+      kernelRef.current.clearCellOutputs?.(i);
+    }
+    setKernelEpoch((n) => n + 1);
     setTitle(title);
-    setChains(ast.chains?.length ? ast.chains : [{ steps: ast.steps || [] }]);
+    setChains(next);
     setFocusedCell(0);
     return true;
   }, []);
@@ -2068,22 +2127,6 @@ export function useNotebook() {
   }, []);
 
   /**
-   * The chain list as it stands right now, for a listener that must not be
-   * rebuilt between keystrokes.
-   *
-   * `notebookRef` further down keeps `{title, source}` for the arrival path and
-   * gives the argument at length; this is the same trick for the same reason,
-   * over the structure the rewrite below actually edits. Text would not do:
-   * `followRotation` produces `setCellPeer` edits addressed by cell index, and
-   * re-deriving the chains from source to find those indices would be a second
-   * parse of a notebook this hook already holds parsed.
-   */
-  const chainsRef = useRef(chains);
-  useEffect(() => {
-    chainsRef.current = chains;
-  });
-
-  /**
    * The audience the placements in this notebook were written against.
    *
    * Null until there is a live room to be written against. Held as a ref rather
@@ -2709,7 +2752,16 @@ export function useNotebook() {
       for (const b of verdict.bindings || []) {
         slots.register(b.label, b.value, { allowReplace: true });
       }
-      setSessionTick((n) => n + 1);
+      // `kernelEpoch`, because what just changed is the kernel's slot registry.
+      // This bumped `sessionTick` — which is the vault's counter, read by
+      // `refreshVault` and by nothing that draws a slot — while `slotMetas`,
+      // `cellOutputs` and every other read of `kernelRef` are memoised on
+      // `kernelEpoch`. So the Slots tray went on saying "No slots yet" about a
+      // value the shell had just told the reader it registered, until the next
+      // run bumped the epoch for its own reasons. Registering a binding changes
+      // nothing about which keys this browser holds, so the tick it used to
+      // send was answering a question nobody had asked.
+      setKernelEpoch((n) => n + 1);
       return { ok: true, cell: doc.cell, registered: (verdict.bindings || []).length };
     },
     [handoffWho, source, title]

@@ -45,7 +45,9 @@ import { hashForJoin, parseToolkitHash } from "../lib/toolkit/fragment.js";
 import { formatFingerprint } from "../lib/utils.js";
 import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
 import { STEPS } from "../lib/toolkit/registry.js";
+import { planRun } from "../lib/toolkit/plan.js";
 import { deriveRoomId } from "../lib/notebook/room.js";
+import { roomRoster } from "../lib/notebook/roster.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
@@ -346,11 +348,75 @@ describe("starting a session is a recipe, not a code path", () => {
     // such everywhere — the registry's `exposure`, the chip's warn underline,
     // the exposure trace across the notebook. Folding it into a `key=`
     // parameter would erase that mark at the moment it matters most.
+    //
+    // Two cells, read as cells rather than as lines: each now carries a `@peer`
+    // header of its own (see below), so the first line of the text is a header
+    // and not the op. Splitting on the blank line is what "its own cell" means
+    // anyway — the line arithmetic was standing in for it.
     const text = sessionRecipe({ audience: [ADA, GRACE], keyFingerprint: ADA });
-    const [first, blank, second] = text.split("\n");
-    expect(first.startsWith("agent.unlock")).toBe(true);
-    expect(blank).toBe("");
-    expect(second.startsWith("quorum.")).toBe(true);
+    const cells = text.split("\n\n");
+    expect(cells).toHaveLength(2);
+    expect(cells[0].split("\n").at(-1).startsWith("agent.unlock")).toBe(true);
+    expect(cells[1].split("\n").at(-1).startsWith("quorum.")).toBe(true);
+  });
+
+  it("places both cells on the person opening the session", () => {
+    // The blocker `placed-journey.e2e.js` walked into: these two cells travel
+    // inside the notebook `shareNotebook` sends, so a peer who adopted one and
+    // pressed Run stopped at `agent.unlock <the sender's fingerprint>` with
+    // "Key not found in vault" — asked to open a key that is not theirs and
+    // never will be. Unheaded, they are `no-private-input` cells that every
+    // participant runs; headed, the gate that already declines a peer's cells
+    // declines these.
+    //
+    // The label is asserted against `roomRoster`'s rather than written down
+    // here: a label this test invented would be one the room might not agree
+    // with, and the agreement is the whole mechanism.
+    const { me } = roomRoster([ADA, GRACE], [], ADA);
+    expect(me, "the room could not label a key in its own audience").toMatch(/^peer\d+$/);
+    const text = sessionRecipe({ audience: [GRACE, ADA], keyFingerprint: ADA });
+    for (const cell of text.split("\n\n")) {
+      expect(cell.split("\n")[0]).toBe(`@${me}`);
+    }
+    // Not `publish`. `$me` is an unlocked private key, and a header that let it
+    // out of this machine would be the one thing placement exists to prevent —
+    // `planRun` refuses `publish-secret` for it, which is a refusal this must
+    // never have to reach.
+    expect(text).not.toContain("publish");
+
+    // And it is the *reader's* label, not a fixed one: the other member of the
+    // same room writes their own.
+    expect(
+      sessionRecipe({ audience: [ADA, GRACE], keyFingerprint: GRACE, role: "join" }).split("\n")[0]
+    ).toBe(`@${roomRoster([ADA, GRACE], [], GRACE).me}`);
+  });
+
+  it("makes the session cells run on one machine and no other", () => {
+    // The property the header exists for, asserted through `planRun` rather
+    // than by reading the text: the gate acts on `mine`, so a header that
+    // parsed and planned as everybody's would be a header that changed nothing.
+    const { roster } = roomRoster([ADA, GRACE], []);
+    const source = sessionRecipe({ audience: [ADA, GRACE], keyFingerprint: ADA });
+    const compiled = compileRecipe(source);
+    expect(compiled.validation.errors).toEqual([]);
+
+    const mine = planRun(compiled, { me: ADA, roster });
+    expect(mine.ok, JSON.stringify(mine.refusals)).toBe(true);
+    expect(mine.cells.map((c) => c.mine)).toEqual([true, true]);
+    // The ask this header answers, gone because it is answered.
+    expect(mine.asks.map((a) => a.reason)).not.toContain("vault-locality");
+
+    const theirs = planRun(compiled, { me: GRACE, roster });
+    expect(theirs.ok, JSON.stringify(theirs.refusals)).toBe(true);
+    expect(theirs.cells.map((c) => c.mine)).toEqual([false, false]);
+
+    // Not vacuous: without the header the same two cells are everybody's, which
+    // is what put "Key not found in vault" in front of the peer who adopted it.
+    const bare = planRun(
+      compileRecipe(`agent.unlock ${ADA} | out $me\n\nquorum.offer to="${ADA},${GRACE}" key=$me | out $session`),
+      { me: GRACE, roster }
+    );
+    expect(bare.cells.map((c) => c.mine)).toEqual([true, true]);
   });
 
   it("writes cells the notebook can still read back", () => {
