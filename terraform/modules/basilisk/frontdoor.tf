@@ -349,6 +349,24 @@ locals {
 resource "azurerm_cdn_frontdoor_rule" "retired_page" {
   for_each = local.retired_pages
 
+  # Azure refuses two rules holding one order *within a rule set*, and it
+  # refuses them per request rather than at the end of the apply. These take
+  # orders 1-4, which the two cache rules held (1 and 2) before this change
+  # moved them to 5 and 6 — so on the upgrade apply, Terraform has no reason of
+  # its own to renumber before creating, and it does both at once. The first
+  # apply proved it: quorum, my-keys and decrypt landed after the renumbering
+  # completed, and encrypt raced it and came back 400 "The delivery rules order
+  # values cannot have duplicates."
+  #
+  # Ordering is a property of the rule set, not of any one rule, so nothing in
+  # the resource arguments expresses it and only an explicit edge can. A fresh
+  # apply has no old rules to collide with; this exists for the upgrade, and
+  # costs a fresh apply nothing.
+  depends_on = [
+    azurerm_cdn_frontdoor_rule.static_assets_cache,
+    azurerm_cdn_frontdoor_rule.static_html_cache,
+  ]
+
   name                      = each.value.name
   cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
   order                     = each.value.order
