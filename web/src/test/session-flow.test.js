@@ -823,8 +823,23 @@ describe("the session's window is a window, and not a fourth Share row", () => {
     expect(SHEET).toMatch(/\{live \? <SessionLive \{\.\.\.live\} \/> : <SessionStart \{\.\.\.start\} \/>\}/);
   });
 
-  it("says the notebook does not cross", () => {
-    expect(SHEET).toMatch(/never crosses/);
+  it("says what actually crosses, which changed under it", () => {
+    // This assertion used to read `toMatch(/never crosses/)`, and it was true
+    // when it was written: an offer was checked against the recipient's own
+    // copy of the notebook, and the only way to have that copy was to be sent
+    // an `#r=` link out of band and paste it. Then the notebook itself began
+    // to travel, signed and adopted — and this test went on enforcing the
+    // sentence the change had made false, on the one screen whose whole job is
+    // to tell somebody what is about to leave their machine.
+    //
+    // So it is pinned by property now, not by phrase: the sheet has to name
+    // the notebook as something that crosses, has to say the crossing is
+    // signed, and must not be able to go back to claiming otherwise.
+    expect(SHEET).toMatch(/notebook\s+crosses signed/);
+    expect(SHEET).not.toMatch(/never crosses/);
+    // The half that did not change, and is the reason the first half is safe
+    // to say out loud: what crosses is a proposal, not a replacement.
+    expect(SHEET).toMatch(/without their say-so/);
   });
 });
 

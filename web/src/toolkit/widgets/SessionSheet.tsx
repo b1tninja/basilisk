@@ -54,9 +54,10 @@ export function SessionSheet({ open, onOpenChange, live, start }: SessionSheetPr
         <SheetHeader>
           <SheetTitle>Run it together</SheetTitle>
           <SheetDescription>
-            Cells marked for somebody else run on their machine. The notebook
-            itself never crosses — both sides hold the same recipe text, and only
-            offers, results and attestations move.
+            Cells marked for somebody else run on their machine. Your notebook
+            crosses signed when you press Share, and replaces nothing anybody
+            has written without their say-so; offers, results and attestations
+            cross the same way. Private keys never leave this browser.
           </SheetDescription>
         </SheetHeader>
 
