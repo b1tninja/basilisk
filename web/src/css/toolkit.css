@@ -279,8 +279,24 @@ body.layout-app:has(#app > .toolkit-shell) {
  * ones React makes from a style object.
  */
 .cell-assign-peer {
-  overflow-wrap: anywhere;
+  /*
+   * `break-word`, never `anywhere` — the two wrap identically and size the box
+   * nothing alike. `anywhere` is counted when the browser works out min-content
+   * width, so a flex item holding one collapses to the width of a single
+   * character: the trigger measured 24px wide and 697px tall, a whole key
+   * running down the page one character per line. `break-word` leaves
+   * min-content at the widest unbreakable run and only breaks when the text
+   * would genuinely overflow.
+   *
+   * The floor is what actually decides the shape. Grouped, a fingerprint is
+   * ten runs of four separated by spaces, so min-content is one group and a
+   * squeezing row would still stack ten lines. `min(28ch, 100%)` asks for five
+   * groups a line — two lines for a whole key — and yields entirely on a
+   * narrow viewport rather than forcing a horizontal scroll.
+   */
+  overflow-wrap: break-word;
   word-break: normal;
+  min-width: 28ch;
 }
 /*
  * The trigger holds the header and, beside it, who that key is. It is a button,
