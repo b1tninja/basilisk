@@ -121,23 +121,32 @@ describe("the stage splits the two phases that cover four situations", () => {
 /* ──────────────────── what the reader is actually told ──────────────────── */
 
 describe("the readout carries the transport facts a phase name cannot", () => {
-  it("explains a silent room by the relay keeping no history", () => {
-    // The load-bearing sentence of the whole flow. `NotebookSession.start()`
-    // publishes the signed invite exactly once, and Web PubSub brokers only to
-    // the connections in the group at that instant — so a joiner arriving a
-    // second later is in the right room and will never see the introduction.
+  it("explains a silent room by nobody being in it", () => {
+    // This assertion used to be `/published once|keeps no history/` with a
+    // remedy of `/start this again/`, and both are now false. The invite is
+    // published again for any member who joins later and announces itself
+    // (`NotebookSession._onKnock`), so a late arrival is no longer a cause of
+    // silence and restarting the creator no longer fixes anything — it was only
+    // ever a way to re-publish while the other side happened to be listening.
+    //
+    // Pinned tighter rather than looser: an empty room now has exactly two
+    // causes a reader can act on, and the copy must name them instead of
+    // teaching a ritual.
     const read = sessionReadout({ phase: "waiting", role: "creator", peers: [] });
     expect(read.tone).toBe("warn");
-    expect(read.why).toMatch(/published once|keeps no history/);
-    // And therefore the remedy is "start again", not "wait longer" — which is
-    // the opposite of what a spinner would have taught.
-    expect(read.next).toMatch(/start this again/);
+    expect(read.why).toMatch(/published again for anyone who joins later/);
+    expect(read.why).toMatch(/derives a different room/);
+    expect(read.next).toMatch(/Restarting this side changes nothing/);
   });
 
   it("inverts that advice for the joiner", () => {
     const joiner = sessionReadout({ phase: "waiting", role: "joiner", peers: [] });
     expect(joiner.headline).toBe("Waiting for the invite");
-    expect(joiner.next).toMatch(/start the session again/);
+    // Was `/start the session again/` — the joiner used to be told to ask the
+    // creator to restart. It announces itself now, so the only thing left that
+    // it can act on is whether the two audiences agree.
+    expect(joiner.why).toMatch(/whether they started before you or after/);
+    expect(joiner.next).toMatch(/nothing to restart on this side/);
   });
 
   it("says what confirmation actually bound, and never asks for a comparison", () => {
@@ -298,14 +307,23 @@ describe("a room is refused before it is derived, not after", () => {
     expect(issues[0]).toMatch(/already open/);
   });
 
-  it("makes the two roles a visible choice, and says why the order matters", () => {
-    // Which end presses first is a correctness question, not a preference: the
-    // invite is published once onto a relay with no history. Collapsing the two
-    // into one "Connect" would make that failure look like a network problem.
+  it("makes the two roles a visible choice, and says what each one does", () => {
+    // The roles stay a visible choice — one end publishes the introduction and
+    // the other verifies it, and two browsers that pick the same role are a room
+    // where nobody is ever introduced. Collapsing them into one "Connect" would
+    // make that look like a network problem.
+    //
+    // What is gone is the *ordering*. This used to pin `/relay keeps no
+    // history/` and `/let them press Join first/`, which asked two people to
+    // coordinate the order they pressed buttons in and left them with silence
+    // when they failed. A joiner announces itself now and the creator
+    // republishes for it, so the copy has to say the order does not decide it —
+    // that is pinned below, so the old instruction cannot come back.
     expect(START).toMatch(/I am starting it/);
     expect(START).toMatch(/I was invited/);
-    expect(START).toMatch(/relay keeps no history/);
-    expect(START).toMatch(/let them press Join first/);
+    expect(START).toMatch(/the order the two of you press in does not decide whether you meet/);
+    expect(START).toMatch(/Arriving late costs nothing/);
+    expect(START).not.toMatch(/press Join first/);
   });
 
   it("shows the cells before it writes them", () => {

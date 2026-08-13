@@ -72,9 +72,11 @@ export type PasteResult = ReturnType<typeof pasteReadout>;
 export type SessionStartProps = {
   /**
    * Which end this browser is. Not a mode toggle for its own sake: the creator
-   * publishes the signed invite and the joiner verifies it, and the relay keeps
-   * no history — so which one presses first decides whether anybody meets at
-   * all. See the note on the ordering line below.
+   * publishes the signed invite and the joiner verifies it, and a room with two
+   * creators or two joiners is a room where nobody is introduced. It is no
+   * longer an *ordering* question — a joiner announces itself on arrival and the
+   * creator republishes to it — so the line below says what each role does and
+   * stops telling the reader who has to press first.
    */
   role: "offer" | "join";
   onRole: (role: "offer" | "join") => void;
@@ -338,7 +340,10 @@ export function SessionStart({
     <div className={cn("flex flex-col gap-3", className)} data-session-start={role}>
       {/* Two roles, side by side, because the difference between them is not
           "advanced": one publishes an invite and one waits for it, and picking
-          the wrong one is a room where both ends wait forever. */}
+          the wrong one is a room where both ends wait forever. Which one presses
+          first is no longer part of that — a joiner announces itself when it
+          arrives and the creator publishes the invite again for it — so this
+          copy names the two jobs and asks nothing of the reader's timing. */}
       <fieldset className="m-0 flex flex-col gap-1.5 border-0 p-0" data-session-role>
         <legend className="p-0 text-[11px] font-bold text-[var(--foreground)]">
           Which end are you
@@ -363,8 +368,8 @@ export function SessionStart({
         </div>
         <p className="text-[10.5px] leading-snug text-[var(--muted-foreground)]">
           {offering
-            ? "You publish a signed invite the moment your room is joined, and it is published once — the relay keeps no history of it. Whoever you invited has to be here already, so let them press Join first."
-            : "You wait for the creator's signed invite and mesh only after verifying it. Press Join before they start; an invite broadcast before you arrived is gone."}
+            ? "You publish a signed invite the moment your room is joined, and again for anyone who arrives after that and announces themselves. Press whenever you like — the order the two of you press in does not decide whether you meet."
+            : "You wait for the creator's signed invite and mesh only after verifying it. Arriving late costs nothing: you announce yourself when you join, and an invite already published is republished for you."}
         </p>
       </fieldset>
 

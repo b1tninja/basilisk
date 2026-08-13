@@ -26,7 +26,12 @@ export const INVITE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /**
  * @typedef {object} NotebookEnvelopePayload
  * @property {1} v
- * @property {"invite"|"hello"|"offer"|"answer"|"ice"|"rotate"} type
+ * @property {"invite"|"knock"|"hello"|"offer"|"answer"|"ice"|"rotate"} type
+ *   `knock` carries nothing but its own signature: it is an audience member
+ *   saying *I am in this room and I have not seen an invite*. It is deliberately
+ *   the one type with no ECDH key, no nonce and no transport claim, because a
+ *   joiner sends it **before** it has verified an invite, and a joiner that has
+ *   verified nothing has nothing it may assert. See `NotebookSession._onKnock`.
  * @property {string} from
  * @property {string|null} [to]
  * @property {string} roomId
@@ -460,7 +465,22 @@ export async function openSignalingEnvelope({
   if (!signatures?.length) {
     throw new Error("Signaling envelope missing signature");
   }
-  await signatures[0].verified;
+  // Who signed it, then whether the signature holds — in that order, and the
+  // order is the whole point of this block.
+  //
+  // Verifying first meant that an envelope from a key this room does not hold
+  // never reached the audience check below at all: OpenPGP cannot verify a
+  // signature it has no key for, so `verified` rejected with *"Could not find
+  // signing key with key ID <16 hex>"* and that string was what a reader got.
+  // The sentence underneath it — the one that says what a room *is* — could
+  // only ever fire for a signer present in `audienceKeyByFpr` and absent from
+  // `audienceFprs`, which is two views of one list disagreeing and does not
+  // happen. A refusal that cannot fire is not a refusal.
+  //
+  // Naming the signer first costs nothing in strength. The key id is an
+  // unauthenticated packet header and is used here only to pick which refusal
+  // to raise; `verified` is still awaited before anything is returned, and
+  // still decides whether this envelope is believed at all.
   const kidHex = String(signatures[0].keyID?.toHex?.() || "")
     .toUpperCase()
     .replace(/[^0-9A-F]/g, "");
@@ -486,7 +506,25 @@ export async function openSignalingEnvelope({
     if (signerFpr) break;
   }
   if (!signerFpr || !allowed.has(signerFpr)) {
-    throw new Error("Signaling signer is not in the room audience");
+    // The state the reader is in, not the key id they cannot look up: a room is
+    // derived from its audience's fingerprints and admits exactly those keys, so
+    // there is no list to add this signer to — the audience is the list, and it
+    // names a different room.
+    throw new Error(
+      "Signaling signer is not in the room audience — this room is derived from " +
+        "its audience's fingerprints and admits only those keys"
+    );
+  }
+  // Only now, and unconditionally: this is what decides whether the envelope is
+  // believed. A signer we *can* name whose signature does not hold is a
+  // different failure from a signer we cannot, and it says so.
+  try {
+    await signatures[0].verified;
+  } catch (err) {
+    throw new Error(
+      `Signaling signature from ${formatFingerprint(signerFpr)} did not verify — ` +
+        `${err instanceof Error ? err.message : String(err)}`
+    );
   }
   /** @type {NotebookEnvelopePayload} */
   let payload;

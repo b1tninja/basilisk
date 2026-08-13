@@ -284,6 +284,24 @@ export class NotebookSession {
     /** @type {CryptoKeyPair|null} */
     this._inviteEcdh = null;
     this.inviteNonce = "";
+    /**
+     * Audience members this session has already put an invite in front of, by
+     * fingerprint.
+     *
+     * The bound on republishing, and it is a bound on *who* rather than on how
+     * often: a peer is served once per session and never again, so a member
+     * that re-announces — a relay recycle, a reload, a peer with a bug — gets
+     * silence rather than another invite. A timer would have made the storm
+     * slower instead of impossible, and two creators in one room would still
+     * have answered each other forever.
+     *
+     * Empty for a joiner, always: a joiner holds the *nonce* of the invite it
+     * verified but not the material to mint one, and re-signing the creator's
+     * invite under its own key fails `assertInvite`'s "initiator must match
+     * signer". Only the session that published an invite can publish it again.
+     * @type {Set<string>}
+     */
+    this._invited = new Set();
     this.initiatorFpr = this.role === "creator" ? this.myFpr : "";
     this.inviteVerified = this.role === "creator";
     this._meshing = this.role === "creator";
@@ -403,20 +421,83 @@ export class NotebookSession {
     if (this.role === "creator") {
       this.onStatus?.("Publishing signed invite…");
       this._inviteEcdh = await generateEcdhKeyPair();
-      const inviteJwk = await exportEcdhPublicJwk(this._inviteEcdh.publicKey);
       this.inviteNonce = randomNonceHex(32);
-      const invite = buildInvitePayload({
-        roomId: this.roomId,
-        audience: this.audienceFprs,
-        initiator: this.myFpr,
-        ecdhPublicJwk: inviteJwk,
-        nonce: this.inviteNonce,
-      });
-      await this._broadcast(invite);
+      await this._publishInvite(null);
       await this._beginMeshing();
     } else {
+      // Knock before waiting. The relay keeps no history, so a creator that
+      // started first published its invite into a room this session was not in
+      // yet — and nothing would ever say so, because a joiner that has verified
+      // no invite sends nothing at all. That silence *was* the bug: both ends
+      // waited, and the only way through it was to stop the creator and start
+      // it again while this side was already listening.
+      //
+      // So the joiner speaks first, and a knock is the least it can say — no
+      // ECDH key, no nonce, no transport claim, nothing this session would be
+      // asserting before it has verified who it is talking to. It is a signed
+      // envelope to the audience and its whole content is that an audience
+      // member is here without an introduction.
+      await this._broadcast({ type: "knock" });
       this.onStatus?.("Waiting for signed invite…");
     }
+  }
+
+  /**
+   * Put this session's invite on the relay — the first time, and every time
+   * after.
+   *
+   * **The nonce is minted once and reused for every copy**, which is the whole
+   * decision here. An invite is a fact about this session rather than an event:
+   * *I am this room's initiator, here is my invite ECDH, and here is the nonce
+   * that binds this room's transcripts.* Two things break if a republish mints a
+   * fresh one.
+   *
+   * The first is key agreement. `inviteNonce` is in the HKDF salt of every
+   * pairwise key (`derivePairwiseSessionKey`), and `_maybeDeriveSession` reads
+   * `this.inviteNonce` for *every* peer at the moment it derives. A new nonce
+   * halfway through would leave a peer that already sent its `hello` deriving
+   * over the old one while this side derives over the new one — a transcript
+   * disagreement, which surfaces as key confirmation failing between two honest
+   * peers.
+   *
+   * The second is `_noteOwnKeyElsewhere`, which tells a creator apart from a
+   * second session holding its private key by exactly one test: *an invite
+   * signed by my key carrying a nonce that is not the one I minted cannot have
+   * come from me*. That is sound only while this session has minted one. With a
+   * fresh nonce per republish, an echo or a gossiped copy of an earlier invite —
+   * our own, correctly signed — would carry a nonce no longer equal to
+   * `this.inviteNonce` and be read as proof of a stranger, which stops a run and
+   * names the wrong cause. Reusing the nonce keeps that check as airtight as it
+   * was: every invite this key ever puts on the wire carries the one nonce.
+   *
+   * What does differ per copy is the timestamp (`buildInvitePayload` stamps it,
+   * and `assertInvite` enforces `INVITE_MAX_AGE_MS`, so a republish an hour
+   * later must be freshly dated) and the OpenPGP session key, so the armor is
+   * never byte-identical and `_envSeen` cannot mistake a republish for a replay.
+   *
+   * **The relay, not `_sendTo`.** A peer that needs an invite is by definition a
+   * peer with no data channel, so the channel-first routing in `_sealAndSend`
+   * has nothing to offer it — worse, it would hand the envelope to some *other*
+   * meshed peer to forward and count that as sent, and that peer has no link to
+   * the newcomer either. The relay is the only wire a knocker is on.
+   *
+   * @param {string|null} toFpr  the one member this copy is for, or null to
+   *   broadcast it to whoever is in the room
+   */
+  async _publishInvite(toFpr) {
+    if (!this._inviteEcdh || !this.inviteNonce) return;
+    const inviteJwk = await exportEcdhPublicJwk(this._inviteEcdh.publicKey);
+    const invite = buildInvitePayload({
+      roomId: this.roomId,
+      audience: this.audienceFprs,
+      initiator: this.myFpr,
+      ecdhPublicJwk: inviteJwk,
+      nonce: this.inviteNonce,
+    });
+    // `to` last: `_broadcast` spreads these fields over its own `to: null`.
+    // Addressed, so the members who already meshed drop it in `_onRelayEnvelope`
+    // rather than re-running an introduction they finished long ago.
+    await this._broadcast(toFpr ? { ...invite, to: toFpr } : invite);
   }
 
   /**
@@ -429,10 +510,12 @@ export class NotebookSession {
    * envelopes in a group whose members cannot open them.
    *
    * Separate from `_openRelay` and always called well before it, because the
-   * digest is an `await` and joining is a race the room can lose: a creator
-   * publishes its invite the moment *its* room is joined, and the invite is
-   * published once. Any await between "the peer decided to join" and "the peer
-   * is in the group" is a window in which the introduction happens without it.
+   * digest is an `await` and every await between "this peer decided to join"
+   * and "this peer is in the group" is time spent outside the room. A joiner
+   * that misses the creator's broadcast is no longer stranded by it — it knocks
+   * and is answered (`_onKnock`) — but the shortest path is still the one where
+   * nothing has to be re-sent, and a creator's own room must be joined before
+   * its invite can be published into it at all.
    */
   async _deriveRoom() {
     const material = await deriveRoomMaterial(this.audienceFprs, {
@@ -597,6 +680,7 @@ export class NotebookSession {
     this._roomKey = "";
     this._inviteEcdh = null;
     this.inviteNonce = "";
+    this._invited.clear();
     for (const fpr of this.peers.keys()) {
       // Out of the shared inventory before the transports go: the session owns
       // these connections and is tearing them down itself, so `deregisterLink`
@@ -1069,6 +1153,11 @@ export class NotebookSession {
       await this._maybeDeriveSession(signerFpr);
     }
 
+    if (payload.type === "knock") {
+      await this._onKnock(signerFpr);
+      return;
+    }
+
     if (payload.type === "rotate") {
       // Who may move the room: the peer that published the invite this
       // session locked onto, and only once we have confirmed a key with them.
@@ -1222,6 +1311,109 @@ export class NotebookSession {
         err instanceof Error ? err : new Error(String(err))
       );
     }
+  }
+
+  /**
+   * An audience member is in this room and has not been introduced.
+   *
+   * The answer is this session's own invite again, addressed to them. Nothing
+   * about what an invite *means* changes: same initiator, same invite ECDH, same
+   * nonce, freshly signed and freshly dated — see `_publishInvite` for why the
+   * nonce is the one that was minted at `start`, and what it would cost to mint
+   * another.
+   *
+   * **Three things bound this, and none of them is a timer.**
+   *
+   * *Who may answer.* Only a session holding invite material, which is only the
+   * session that published one. A joiner that has verified an invite is meshing
+   * and reaches this line, and leaves on the first check — so a room of one
+   * creator and four joiners has exactly one answerer however many knocks fly.
+   *
+   * *Who has been served.* `_invited` is a set of fingerprints, not a count and
+   * not a clock. A member is answered once per session; knocking again gets
+   * silence, so a peer stuck in a reconnect loop cannot pull an invite out of
+   * this room on every pass.
+   *
+   * *Who is a member at all.* A knock from outside the audience never arrives
+   * here to be refused: `openSignalingEnvelope` cannot name a signer it holds no
+   * key for, and refuses it through `onError` with the sentence that says what a
+   * room *is* — derived from its audience's fingerprints, admitting only those
+   * keys. That refusal used to be unreachable, which is worth knowing here,
+   * because this method is the first thing that leans on it. `_handleSignal`'s
+   * own `peers.get` drops the one audience fingerprint left over: our own, which
+   * is not a peer and is handled a layer up by `_noteOwnKeyElsewhere`.
+   *
+   * @param {string} peerFpr
+   */
+  async _onKnock(peerFpr) {
+    // Not our introduction to give. Said before the served-set is touched, so a
+    // joiner never records having answered something it cannot answer.
+    if (!this._inviteEcdh || !this.inviteNonce) return;
+    if (this._invited.has(peerFpr)) return;
+    this._invited.add(peerFpr);
+    // Everything already sent to this peer went into a room they were not in —
+    // the invite, the `hello`, and (when this end is the offerer) an offer and
+    // its candidates. The offer is the one that does not heal on its own:
+    // `_ensurePeerConnection` will not rebuild a link that already exists, so
+    // the `hello` this knock is about to earn would find a half-negotiated
+    // connection aimed at nobody and make no second offer. A knock says nothing
+    // this session sent has arrived, so the transport for that peer starts over.
+    //
+    // Never for a confirmed peer. Their link carries traffic under a key both
+    // ends proved, and a knock is not proof of anything but presence — dropping
+    // a working channel on it would let one audience member reset another's.
+    const peer = this.peers.get(peerFpr);
+    if (peer && !peer.kcVerified) this._resetPeerTransport(peerFpr, peer);
+    // The prelude above set `pgpVerified` from the one fact a knock carries —
+    // an audience member's signature over this room id — and the roster is the
+    // only path that fact travels on.
+    this._emitRoster();
+    this.onStatus?.("Re-publishing signed invite for a late arrival…");
+    await this._publishInvite(peerFpr);
+  }
+
+  /**
+   * Drop one peer's transport and every key derived over it, keeping what a
+   * signature established.
+   *
+   * The split is `_applyRotation`'s and it is the same rule: a session key says
+   * which transport is live, a signature says what somebody put their name to,
+   * and losing the first does not un-sign the second. So `attested`, `offered`,
+   * `returned` and `publishedManifest` stay — they are records of documents this
+   * session checked against this peer's own key, and an unauthenticated frame
+   * must never be able to erase one.
+   *
+   * @param {string} peerFpr
+   * @param {NotebookPeerState} peer
+   */
+  _resetPeerTransport(peerFpr, peer) {
+    deregisterLink(peerFpr);
+    try {
+      peer.channel?.close();
+    } catch (_) {
+      /* ignore */
+    }
+    peer.link?.close();
+    peer.channel = null;
+    peer.link = null;
+    peer.sessionKey = null;
+    peer.transcriptHash = null;
+    peer.kcSent = false;
+    peer.kcVerified = false;
+    peer.ecdhPublicJwk = null;
+    peer.helloNonce = null;
+    // Both halves of the ECDH and both DTLS fingerprints, because the next link
+    // mints a new local certificate: a transcript that kept the old fingerprint
+    // would bind to a transport that no longer exists, which is the one failure
+    // `notebook-dtls-binding.test.js` exists to make impossible.
+    peer.localEcdh = null;
+    peer.localEcdhJwk = null;
+    peer.localHelloNonce = null;
+    peer.localDtls = "";
+    peer.remoteDtls = "";
+    peer.makingOffer = false;
+    peer.ignoreOffer = false;
+    peer.status = "unknown";
   }
 
   async _beginMeshing() {

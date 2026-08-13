@@ -96,9 +96,16 @@ export const Live = () => (
 
 /**
  * Open, and nobody has answered. Kept as its own cell because it is the state
- * that most needs the sheet's full width: the reason (an invite published once,
- * onto a relay with no history) and the remedy (start again with the other side
- * already waiting) are two sentences a strip could not have carried.
+ * that most needs the sheet's full width: the reason (nobody has arrived, or the
+ * two audiences differ and each side derived a room of its own) and the remedy
+ * (check the fingerprint list, not the order you pressed in) are two sentences a
+ * strip could not have carried.
+ *
+ * It used to say "an invite published once, onto a relay with no history" and
+ * "start again with the other side already waiting". The relay still keeps no
+ * history; the protocol stopped depending on it — a joiner announces itself and
+ * the creator republishes (`NotebookSession._onKnock`) — so restarting is no
+ * longer a remedy for anything and naming it would hide the real cause.
  */
 export const WaitingForSomebody = () => (
   <SessionSheet

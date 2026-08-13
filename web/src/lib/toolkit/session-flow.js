@@ -21,14 +21,21 @@
  *    audience, before a single byte moves, and an invite is a list of public
  *    fingerprints rather than a token.
  *
- * 2. **The signalling relay keeps no history.** Azure Web PubSub brokers to the
- *    connections that are in the group at the moment of the send; there is no
- *    backlog for a late arrival. `NotebookSession.start()` publishes the
- *    creator's signed invite exactly once, the instant its own room is joined
- *    — so a joiner who arrives afterwards is in the right room and will never
- *    see the introduction. That is the *whole* reason `sessionReadout` tells a
- *    creator to have the other side waiting first, and the reason the remedy
- *    for a stalled room is "start it again", not "wait longer".
+ * 2. **The signalling relay keeps no history, and the protocol no longer needs
+ *    it to.** Azure Web PubSub brokers to the connections that are in the group
+ *    at the moment of the send; there is no backlog for a late arrival. That
+ *    used to mean the ordering was load-bearing — the creator's invite went out
+ *    exactly once, and a joiner arriving a second later was in the right room
+ *    and never saw the introduction. `sessionReadout` said so, and told a
+ *    stalled creator to start over with the other side already listening.
+ *
+ *    A joiner now announces itself when it joins (`NotebookSession._onKnock`)
+ *    and the creator answers with the same invite, once per member. So the
+ *    remedy for a silent room is no longer "start it again": if nothing is
+ *    happening, nobody is there — the other end has not opened the room, or the
+ *    two audiences differ and each side derived a room of its own. That is what
+ *    the copy below has to say, because "restart it" would now be advice that
+ *    fixes nothing and hides the real cause.
  *
  * 3. **Key confirmation is automatic, and it is not a word you compare.**
  *    Peers exchange a `kc` frame carrying a `transcriptHash` that binds the
@@ -176,11 +183,11 @@ export function sessionReadout(state) {
       tone: "warn",
       headline: creator ? "Nobody has answered" : "Waiting for the invite",
       why: creator
-        ? "The signed invite went out once, when this browser joined the room, and the relay keeps no history of it. Anyone who joins after that moment is in the right room and will never see the introduction."
-        : "The creator's invite is broadcast once and not stored, so it only reaches whoever is already in the room. If they started before you, there is nothing left on the wire for you to verify.",
+        ? "Your signed invite is published, and it is published again for anyone who joins later and announces themselves — so this is not about who pressed first. An empty room means nobody has arrived: either they have not started their side, or their list of fingerprints differs from yours and derives a different room."
+        : "You are in the room and you have announced yourself, so a creator who is here answers with a signed invite whether they started before you or after. Nothing is arriving, which means nobody is publishing one — they have not started, or their audience differs from yours and names another room.",
       next: creator
-        ? "Have them open the invite and press Join, then start this again — the introduction has to be published while they are already listening."
-        : "Stay here and ask them to start the session again; you are in the room now, so the next invite reaches you.",
+        ? "Check they pressed Join, and that their audience is the same list of fingerprints as yours — every one, including your own. Restarting this side changes nothing."
+        : "Stay here; there is nothing to restart on this side. Check that their audience is the same list of fingerprints as yours — a list that differs by one puts each of you in a room of your own.",
     };
   }
   if (stage === "unconfirmed") {

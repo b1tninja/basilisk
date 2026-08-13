@@ -237,19 +237,36 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
     joiner,
     settle,
     /**
-     * The joiner first, deliberately.
+     * The joiner first — the shortest path, no longer the only one.
      *
-     * The invite is published exactly once, the moment the creator's own room
-     * is joined, and the relay does not replay. So "creator first" only ever
-     * worked here because the transform's OpenPGP round trip happened to
-     * outlast the joiner's handshake — a margin measured in milliseconds that
-     * any change to either side could spend. Starting the joiner first removes
-     * the race rather than winning it, and matches the only ordering in which
-     * a joiner is guaranteed to hear an invite at all.
+     * This ordering used to be a *requirement*: the invite was published exactly
+     * once, the relay does not replay, and a creator that went first published
+     * into an empty room and stranded the other end for good. A joiner now
+     * knocks when it arrives and the creator answers (`NotebookSession._onKnock`),
+     * so either order meshes — `startCreatorFirst` is the same pair the other way
+     * round, and `notebook-late-join.test.js` drives both.
+     *
+     * It stays the default because it is still the cheapest: nothing has to be
+     * re-sent, and no test that is about something else should pay for a second
+     * round trip.
      */
     async start() {
       await joiner.session.start();
       await creator.session.start();
+    },
+    /**
+     * The creator alone in the room first, and only then the joiner.
+     *
+     * `settle()` between them is the point rather than a precaution: it lets the
+     * creator's invite, its `hello` and its offer all reach the relay and be
+     * broadcast to nobody, so the joiner starts into a room where every
+     * introduction has already been spent. That is the reported failure, made to
+     * happen on purpose rather than raced for.
+     */
+    async startCreatorFirst() {
+      await creator.session.start();
+      await settle();
+      await joiner.session.start();
     },
     stop() {
       stopped = true;

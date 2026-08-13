@@ -778,10 +778,14 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     audience = [mara.fpr, okafor.fpr].sort();
     roomId = await A.page.evaluate((a) => window.__roomId(a), audience);
 
-    // The joiner first, and then a pause. The joiner-first ordering is
-    // `notebook-pair.js`'s: an invite is published once, the moment the
-    // creator's room is joined, and a creator who is first publishes it to an
-    // empty room. The pause is this harness's own — `/api/v1/notebook/negotiate`
+    // The joiner first, and then a pause. The ordering is `notebook-pair.js`'s
+    // default and is now only a preference: an invite published into an empty
+    // room is re-published for whoever announces themselves afterwards
+    // (`NotebookSession._onKnock`), and `quorum-key-confirmation.e2e.js` drives
+    // that ordering against a real hub. This arc is about a *placed run*, so it
+    // takes the path with the fewest round trips before the first cell.
+    //
+    // The pause is this harness's own — `/api/v1/notebook/negotiate`
     // rate-limits one call per half second per IP and one per quarter second
     // per room, and both peers are one IP asking about one room. A collision is
     // survivable (the signalling channel re-negotiates on its retry ladder) but

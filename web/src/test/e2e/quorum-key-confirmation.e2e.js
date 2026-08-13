@@ -81,12 +81,20 @@
  * Flask, whose endpoint is gated by proof-of-work and two rate limits that have
  * nothing to do with key confirmation.
  *
- * **The joiner starts first, and is seen to be waiting before the creator
- * publishes.** Web PubSub has no history: the invite is broadcast once, and
- * `_beginMeshing` only announces to peers the creator already knows about, so a
- * joiner that has not joined the group yet never learns the session exists. The
- * HTTP mailbox replayed on poll, which is the only reason creator-first ever
- * worked here.
+ * **The two describes start their peers in opposite orders, on purpose.** Web
+ * PubSub has no history, so this used to be a correctness question with one
+ * answer: the joiner had to be in the group and seen to be waiting before the
+ * creator published, because the invite went out once and `_beginMeshing` only
+ * announced to peers the creator already knew about. Creator-first worked only
+ * against the HTTP mailbox that replayed on poll.
+ *
+ * A joiner now announces itself on arrival and the creator republishes for it
+ * (`NotebookSession._onKnock`), so both orders mesh — and both are driven here.
+ * The confirmation suite below takes **creator first**, waiting until the invite
+ * has demonstrably been published into an empty room, because that is the
+ * ordering the defect was reported in and a real hub is the only place it can be
+ * disproved. The DTLS-substitution suite keeps joiner-first: a refusal test
+ * should vary the thing it is about and nothing else.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -458,31 +466,38 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
     lo = { peer: A, ...loM };
     hi = { peer: B, ...hiM };
 
-    // The joiner first, and *seen* to be listening before the creator
-    // publishes. Web PubSub has no history: the invite is broadcast once,
-    // and a joiner that has not joined the group yet never sees it. The HTTP
-    // mailbox this replaced replayed on poll, which is the only reason the
-    // original creator-first order worked. Nothing in the session re-sends —
-    // `_beginMeshing` announces to peers the creator already knows about, and
-    // a joiner that missed the invite is not one of them.
-    await startSession(B, {
-      roomId: room.roomId,
-      audience: room.audience,
-      fpr: hi.fpr,
-      armoredPrivate: hi.armoredPrivate,
-      role: "joiner",
-    });
-    await until(
-      () => snapshot(B),
-      (v) => v.statuses.includes("Waiting for signed invite…"),
-      { what: "the joiner listening", timeout: 30000 }
-    );
+    // **The creator first, and seen to have published before the joiner even
+    // exists.** This ordering used to be the one that could not work, and this
+    // block used to say so: Web PubSub has no history, the invite was broadcast
+    // exactly once, and a joiner that had not joined the group yet never saw it
+    // — the HTTP mailbox this hub replaced replayed on poll, which was the only
+    // reason creator-first ever worked here. So the suite started the joiner
+    // first and waited to *see* it listening.
+    //
+    // That requirement is gone, and driving the old failure is how this proves
+    // it. A joiner announces itself when it joins and the creator answers with
+    // the same invite (`NotebookSession._onKnock`), so waiting for "Invite
+    // published — waiting for peers…" before the other side exists is now the
+    // *hard* case rather than the broken one — against a real hub, over a real
+    // connection, with nothing replaying underneath.
     await startSession(A, {
       roomId: room.roomId,
       audience: room.audience,
       fpr: lo.fpr,
       armoredPrivate: lo.armoredPrivate,
       role: "creator",
+    });
+    await until(
+      () => snapshot(A),
+      (v) => v.statuses.includes("Invite published — waiting for peers…"),
+      { what: "the creator publishing into an empty room", timeout: 30000 }
+    );
+    await startSession(B, {
+      roomId: room.roomId,
+      audience: room.audience,
+      fpr: hi.fpr,
+      armoredPrivate: hi.armoredPrivate,
+      role: "joiner",
     });
 
     // `until` throws with the last observed state on timeout, so reaching past
@@ -560,9 +575,25 @@ describe.runIf(availability.ok)("two browsers confirm a pairwise key", () => {
     // asserting it is what keeps this test honest rather than merely passing.
     expect(room.signalled().length).toBeGreaterThan(0);
     // The invite is the creator's, and only the creator's.
+    //
+    // This was `toHaveLength(1)`, and it was pinning the defect: one invite is
+    // what the creator-first ordering *could* produce, because the second
+    // browser was not in the group to be answered. There are two now — the
+    // broadcast into the empty room and the one answering the joiner's knock —
+    // and pinning the count at two rather than "at least one" is what keeps the
+    // bound honest. One per member served, never a stream.
     const invites = room.signalled().filter((s) => s.type === "invite");
-    expect(invites).toHaveLength(1);
-    expect(invites[0].signer).toBe(lo.fpr);
+    expect(invites).toHaveLength(2);
+    // Still only the creator's, still one room. A joiner never publishes an
+    // invite, and the republished one carries the nonce the creator minted at
+    // start — that reuse is what `_noteOwnKeyElsewhere` rests on, and a second
+    // nonce here would be this suite's first sight of it going wrong.
+    expect(invites.map((s) => s.signer)).toEqual([lo.fpr, lo.fpr]);
+    // And the joiner announced itself exactly once, which is the whole reason
+    // the second invite exists.
+    const knocks = room.signalled().filter((s) => s.type === "knock");
+    expect(knocks).toHaveLength(1);
+    expect(knocks[0].signer).toBe(hi.fpr);
   });
 
   it("confirms the key on both ends, over a live connection", () => {
@@ -760,12 +791,11 @@ describe.runIf(availability.ok)("key confirmation refuses a substituted DTLS fin
     hi = { peer: B, ...hiM };
 
     // The joiner first, and *seen* to be listening before the creator
-    // publishes. Web PubSub has no history: the invite is broadcast once,
-    // and a joiner that has not joined the group yet never sees it. The HTTP
-    // mailbox this replaced replayed on poll, which is the only reason the
-    // original creator-first order worked. Nothing in the session re-sends —
-    // `_beginMeshing` announces to peers the creator already knows about, and
-    // a joiner that missed the invite is not one of them.
+    // publishes — the shortest path to a mesh, with no republish in the middle
+    // of it. Deliberately not the confirmation suite's creator-first ordering:
+    // this is a refusal test, and a tampered fingerprint is the only thing it
+    // should be varying. Either order works now (`NotebookSession._onKnock`),
+    // which is what makes keeping this one a choice rather than a requirement.
     await startSession(B, {
       roomId: room.roomId,
       audience: room.audience,
