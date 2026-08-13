@@ -524,6 +524,109 @@ export function hashForNotebook(recipe, hint = {}) {
 }
 
 /**
+ * The hash forms this product writes *for* a reader, as opposed to ones a
+ * reader navigates to. `#keys` is the counter-example and the reason this
+ * exists: it is a nav destination, so the address bar may replace it with
+ * something better but must never blank it and leave the tray's own link
+ * pointing at nothing.
+ *
+ * @param {string} hash  with or without leading #
+ */
+function isWrittenHash(hash) {
+  const action = parseToolkitHash(hash);
+  return (
+    action.kind === "recipe" ||
+    action.kind === "preset" ||
+    action.kind === "starter" ||
+    action.kind === "join"
+  );
+}
+
+/**
+ * What the address bar should say about the toolkit right now.
+ *
+ * The whole point is copy-and-paste: whatever is in the URL bar at any moment
+ * should be the thing a reader would want to send someone, without them first
+ * having to find a button. So this answers one question — *what is the
+ * shareable artifact on screen* — and the caller writes it with
+ * `writeToolkitHash`.
+ *
+ * **A live session outranks the notebook.** While a room is up, the useful
+ * thing to paste into a chat is the way in; a recipe your peer can also just
+ * ask you for is not. When the session ends the notebook takes the bar back.
+ *
+ * **The invite still carries no recipe**, exactly as `parseToolkitHash` reads
+ * them: no `r=` is merged into the `j=` form and no `ct=` is carried onto it.
+ * Both ends arriving at the same text independently is what makes a shared run
+ * a reproducible build rather than a screen share, and a URL that quietly
+ * shipped one person's notebook with the invitation would undo that without
+ * anybody choosing it.
+ *
+ * **`write: false` is not the same as clearing.** A notebook that cannot be
+ * linked — secret material in it, or too long — must not leave a stale `#r=`
+ * behind, because that link would claim to be the notebook on screen and be a
+ * different one. But blanking a hash this writer did not put there would break
+ * `#keys`. So it clears what it owns (`isWrittenHash`) and otherwise keeps its
+ * hands off.
+ *
+ * @param {{
+ *   recipe?: string,
+ *   sessionLive?: boolean,
+ *   audience?: string[],
+ *   currentHash?: string,
+ *   starter?: MessagingStarter|null,
+ *   presetId?: string|null,
+ *   presetRecipe?: string|null,
+ * }} state
+ * @returns {{ write: true, hash: string, kind: "join"|"notebook"|"clear" }
+ *          | { write: false, reason: string }}
+ */
+export function hashForToolkitState(state = {}) {
+  const current = String(state.currentHash ?? "");
+  /**
+   * @param {string} reason
+   * @returns {{ write: true, hash: string, kind: "clear" } | { write: false, reason: string }}
+   */
+  const keepOrClear = (reason) =>
+    isWrittenHash(current)
+      ? { write: true, hash: "#", kind: "clear" }
+      : { write: false, reason };
+
+  if (state.sessionLive) {
+    const join = hashForJoin(state.audience || []);
+    // A live room always has an audience of at least two, so this branch is
+    // reachable only while one is being assembled. The bar is left as it was
+    // rather than flicking to a half-built invite somebody might copy.
+    if (!join.ok) return { write: false, reason: join.reason || "No room to link yet." };
+    return { write: true, hash: join.hash, kind: "join" };
+  }
+
+  const recipe = normalizeRecipeText(state.recipe || "");
+  if (!recipe) return keepOrClear("Nothing in the notebook to link.");
+
+  const result = hashForNotebook(recipe, {
+    starter: state.starter ?? null,
+    presetId: state.presetId ?? null,
+    presetRecipe: state.presetRecipe ?? null,
+  });
+  if (!result.ok) return keepOrClear(result.reason || "This notebook cannot be shared in a link.");
+
+  // Carry a ciphertext seed across the rewrite. Someone who opened
+  // `#decrypt&ct=…` and then edited a step would otherwise watch the message
+  // fall out of their own URL — the seed is an input, independent of the recipe
+  // text, so an edit is no reason to drop it. If the pair no longer fits, the
+  // recipe link wins and the ciphertext stays where it already is, in Inputs.
+  const { ct } = splitCtParam(current.startsWith("#") ? current.slice(1) : current);
+  if (ct) {
+    const withSeed = `${result.hash}&ct=${ct}`;
+    if (withSeed.length <= TOOLKIT_HASH_MAX_LEN) {
+      return { write: true, hash: withSeed, kind: "notebook" };
+    }
+  }
+  return { write: true, hash: result.hash, kind: "notebook" };
+}
+
+/**
  * @param {string} text
  */
 export function normalizeRecipeText(text) {

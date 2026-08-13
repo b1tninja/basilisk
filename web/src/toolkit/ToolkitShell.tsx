@@ -108,8 +108,10 @@ import { planRun } from "../lib/toolkit/plan.js";
 import {
   hashForJoin,
   hashForNotebook,
+  hashForToolkitState,
   parseToolkitHash,
   toolkitShareUrl,
+  writeToolkitHash,
 } from "../lib/toolkit/fragment.js";
 import {
   sessionKeyChoices,
@@ -1137,6 +1139,44 @@ export function ToolkitShell() {
     const hash = hashForJoin(sessionAudience);
     return hash.ok ? toolkitShareUrl(hash.hash) : null;
   }, [sessionAudience]);
+
+  /**
+   * Keep the address bar on whatever is worth sending — a live room's invite,
+   * otherwise the notebook — so that copying the URL is always a way to share.
+   *
+   * Every piece of this existed and none of it was wired: `writeToolkitHash`
+   * had no caller anywhere in the product, so the two share links this file
+   * builds were reachable only through a button somebody had to find first,
+   * and the URL of a session you had already started still said `/toolkit`.
+   *
+   * **`history.replaceState`, never `location.hash =`.** `useNotebook` listens
+   * for `hashchange` and *loads* the notebook from whatever it finds, so
+   * assigning the hash would feed each keystroke's own link back in as a fresh
+   * recipe to compile — a loop through the editor, taking the cursor with it.
+   * `replaceState` fires no such event. It also writes no history entry, which
+   * is the behaviour you want when the URL is tracking a text field: Back
+   * belongs to the reader's navigation, not to their typing.
+   *
+   * Debounced because a rewrite per keystroke is both wasted work and, in
+   * Safari, a rate limit that throws.
+   *
+   * `hashForToolkitState` decides *what* to write, and can decline — see its
+   * refusals for why a notebook holding secret material clears the bar rather
+   * than leaving a link that would misdescribe it.
+   */
+  const audienceKey = sessionAudience.join(",");
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const next = hashForToolkitState({
+        recipe: nb.source,
+        sessionLive,
+        audience: audienceKey ? audienceKey.split(",") : [],
+        currentHash: window.location.hash || "",
+      });
+      if (next.write) writeToolkitHash(next.hash);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [nb.source, sessionLive, audienceKey]);
 
   /**
    * An invite arriving as a link — the joiner's entry point.

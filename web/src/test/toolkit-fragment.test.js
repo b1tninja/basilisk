@@ -12,10 +12,12 @@ import {
   encodeSharePayload,
   expandShareRecipe,
   hashForDecryptLink,
+  hashForJoin,
   hashForNotebook,
   hashForPreset,
   hashForRecipe,
   hashForStarter,
+  hashForToolkitState,
   parseToolkitHash,
   recipeLooksSecret,
   seedLooksSecret,
@@ -334,6 +336,123 @@ describe("hash writers", () => {
         path: "/toolkit",
       })
     ).toBe("https://example.test/toolkit#decrypt&ct=abc");
+  });
+});
+
+describe("the address bar tracks the shareable thing", () => {
+  const ADA = "83421F2C1E5D4A9B7C0E6F3A2D8B4E19A7C5B650";
+  const GRACE = "9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B";
+  const RECIPE = "input | gpg.encrypt";
+
+  it("hands the bar to a live room's invite", () => {
+    const next = hashForToolkitState({
+      recipe: RECIPE,
+      sessionLive: true,
+      audience: [ADA, GRACE],
+      currentHash: "#r=input%7Cgpg.encrypt",
+    });
+    expect(next).toEqual({ write: true, hash: hashForJoin([ADA, GRACE]).hash, kind: "join" });
+  });
+
+  it("never ships the notebook or a seed with the invitation", () => {
+    // The rule `parseToolkitHash` already enforces on the way in, enforced on
+    // the way out: both ends reaching the same text independently is what
+    // makes a shared run a reproducible build. A URL that carried one side's
+    // recipe into the other's notebook would end that quietly.
+    const next = hashForToolkitState({
+      recipe: RECIPE,
+      sessionLive: true,
+      audience: [ADA, GRACE],
+      currentHash: "#decrypt&ct=Zm9vYmFy",
+    });
+    expect(next.write && next.hash).not.toMatch(/[&?]r=|&ct=/);
+  });
+
+  it("leaves the bar alone while an audience is still being assembled", () => {
+    const next = hashForToolkitState({
+      recipe: RECIPE,
+      sessionLive: true,
+      audience: [ADA],
+      currentHash: "#keys",
+    });
+    expect(next.write).toBe(false);
+  });
+
+  it("writes the notebook when no room is up, and it reads back", () => {
+    const next = hashForToolkitState({ recipe: "input | gpg.symencrypt mode=passphrase" });
+    expect(next.write).toBe(true);
+    const back = parseToolkitHash(next.write ? next.hash : "");
+    expect(back.kind).toBe("recipe");
+    expect(back.recipe).toContain("gpg.symencrypt");
+  });
+
+  it("prefers the short starter form over a spelled-out r=", () => {
+    const next = hashForToolkitState({ recipe: MESSAGING_STARTERS.encrypt.recipe });
+    expect(next.write && next.hash).toBe("#encrypt");
+  });
+
+  it("carries a ciphertext seed across an edit to the recipe", () => {
+    // Someone opens `#decrypt&ct=…`, changes a step, and copies the URL. The
+    // seed is an input, not part of the recipe text, so editing one is no
+    // reason to drop the other.
+    const next = hashForToolkitState({
+      recipe: "gpg.decrypt | out $plain",
+      currentHash: "#decrypt&ct=Zm9vYmFy",
+    });
+    expect(next.write && next.hash).toMatch(/&ct=Zm9vYmFy$/);
+    expect(parseToolkitHash(next.write ? next.hash : "").kind).toBe("recipe");
+  });
+
+  it("drops a seed that no longer fits rather than declining to write", () => {
+    const next = hashForToolkitState({
+      recipe: RECIPE,
+      currentHash: `#decrypt&ct=${"A".repeat(TOOLKIT_HASH_MAX_LEN)}`,
+    });
+    expect(next.write).toBe(true);
+    expect(next.write && next.hash).not.toContain("&ct=");
+    expect((next.write ? next.hash : "").length).toBeLessThanOrEqual(TOOLKIT_HASH_MAX_LEN);
+  });
+
+  it("clears a link of its own that has stopped being true", () => {
+    // A notebook holding private armor cannot be linked. Leaving the previous
+    // `#r=` there would leave a URL claiming to be this notebook and holding a
+    // different one — worse than an empty bar, because it copies clean.
+    const secret = `input | gpg.decrypt key="-----BEGIN PGP PRIVATE KEY BLOCK-----"`;
+    expect(recipeLooksSecret(secret)).toBe(true);
+    const next = hashForToolkitState({ recipe: secret, currentHash: "#r=input%7Cgpg.encrypt" });
+    expect(next).toEqual({ write: true, hash: "#", kind: "clear" });
+  });
+
+  it("will not blank a hash somebody navigated to", () => {
+    // `#keys` is the nav's own destination. The bar may replace it with
+    // something better, but blanking it would leave that link pointing at a
+    // page that no longer opens the tray.
+    for (const recipe of ["", `x | gpg.decrypt key="-----BEGIN PGP PRIVATE KEY BLOCK-----"`]) {
+      expect(hashForToolkitState({ recipe, currentHash: "#keys" }).write).toBe(false);
+    }
+  });
+
+  it("is wired into the shell, by replaceState and not by assignment", () => {
+    // `writeToolkitHash` shipped with no caller in the product at all, which
+    // is why a session you had started still showed `/toolkit`. And the write
+    // has to be `replaceState`: `useNotebook` loads the notebook on
+    // `hashchange`, so assigning `location.hash` would feed every keystroke's
+    // link back through the compiler.
+    const SHELL = readFileSync(
+      fileURLToPath(new URL("../toolkit/ToolkitShell.tsx", import.meta.url)),
+      "utf8"
+    );
+    expect(SHELL).toMatch(/writeToolkitHash\(next\.hash\)/);
+    expect(SHELL).toMatch(/hashForToolkitState\(\{/);
+    const FRAGMENT = readFileSync(
+      fileURLToPath(new URL("../lib/toolkit/fragment.js", import.meta.url)),
+      "utf8"
+    );
+    const body = FRAGMENT.slice(FRAGMENT.indexOf("export function writeToolkitHash"));
+    expect(body).toContain("history.replaceState");
+    // `=` and not `===`: the function compares `location.hash` to decide
+    // whether there is anything to do, and only assignment is the hazard.
+    expect(body).not.toMatch(/location\.hash\s*=(?!=)/);
   });
 });
 
