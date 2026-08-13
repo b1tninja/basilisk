@@ -312,7 +312,27 @@ describe("the shell asks the derivation and does not re-derive it", () => {
 
   it("offers this browser's own label as somewhere a cell can go", () => {
     // `peerChoices` used to be built from the peer rows, so the one label a
-    // user could never assign a cell to was their own.
-    expect(SHELL).toMatch(/const room = Object\.keys\(nb\.handoffWho\(\)\.roster\)/);
+    // user could never assign a cell to was their own. It is built from a
+    // roster now, which contains it.
+    expect(SHELL).toMatch(/const \{ roster, me \} = composeWho;/);
+    expect(SHELL).toMatch(/\[\.\.\.new Set\(\[\.\.\.Object\.keys\(roster\)/);
+  });
+
+  it("offers those labels before anyone has joined, which is the point of them", () => {
+    // `handoffWho` is `roomRoster` over `quorumState.audience`, and that list is
+    // empty until Start is pressed — so a menu built from it alone was empty at
+    // exactly the moment somebody was writing a ceremony to run later, and the
+    // only way to place a cell was to type the grammar the menu exists to
+    // spare them. The draft audience answers it before there is a session, and
+    // it answers with `roomRoster`, so the labels a notebook is composed
+    // against are the ones the room will hand out.
+    expect(SHELL).toMatch(
+      /sessionLive\s*\?\s*nb\.handoffWho\(\)\s*:\s*roomRoster\(sessionDraft\.audience, \[\], sessionDraft\.keyFingerprint\)/
+    );
+    // No second numbering rule in the shell. `peerLabels` is never imported
+    // here — it is reached only through `roomRoster`, which both branches go
+    // through — so the labels a cell is assigned to and the labels the room
+    // hands out cannot be two derivations that agree today.
+    expect(SHELL).not.toMatch(/import[\s\S]{0,80}peerLabels/);
   });
 });

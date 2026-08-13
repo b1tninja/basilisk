@@ -581,7 +581,12 @@ describe("a paste says what it found, in four distinguishable states", () => {
     // Parsing the paste a second time in the shell would be two answers to
     // "who did that add", one of them on screen and one of them in the room.
     expect(SHELL).toMatch(/onPaste: \(result\) =>/);
-    expect(SHELL).toMatch(/audience: result\.audience/);
+    // The readout's audience still goes straight in — through
+    // `setDraftAudience`, which is the one door every audience change takes so
+    // that a paste renumbering the room carries the notebook's placements with
+    // it. A paste that set `sessionDraft.audience` directly would be the drift
+    // `peer-relabel.js` exists to refuse, arriving through the box.
+    expect(SHELL).toMatch(/setDraftAudience\(result\.audience\)/);
     // Only a link settles which end you are; a bare list leaves it alone.
     expect(SHELL).toMatch(/role: result\.role \|\| d\.role/);
     expect(SHELL).not.toMatch(/parseInviteAudience/);
@@ -619,7 +624,12 @@ describe("the flow has a way in — three of them", () => {
 
   it("opens it from an invite link, without loading anything", () => {
     expect(SHELL).toMatch(/action\.kind !== "join"/);
-    expect(SHELL).toMatch(/role: "join", audience: action\.audience/);
+    expect(SHELL).toMatch(/role: "join"/);
+    // The audience the link carried, through the same door as every other
+    // audience change. An invite is a room arriving from outside, and a
+    // notebook may already be placed against a different one — via a ref
+    // because this listener is mounted once and must not re-subscribe.
+    expect(SHELL).toMatch(/draftAudienceRef\.current\(action\.audience\)/);
   });
 });
 
@@ -660,6 +670,32 @@ describe("naming a room is a picker, and the picker was already built", () => {
     expect(START).toMatch(/onAudience\(\[\.\.\.audience, clean\]\)/);
   });
 
+  it("sends every door onto the room through one function", () => {
+    // The audience is sorted, so any change to it can renumber every `@peerN`
+    // in the notebook. `setDraftAudience` is what carries the placements over
+    // that change; a control that set `sessionDraft.audience` itself would be
+    // the silent drift arriving through whichever door was added last, which is
+    // exactly how a guard with four callers loses its fifth.
+    const doors = {
+      "the picker (and the fingerprint menu behind it)": /onAudience: setDraftAudience/,
+      "the paste box": /setDraftAudience\(result\.audience\)/,
+      "choosing your own key": /setDraftAudience\(\[\.\.\.sessionDraft\.audience, fpr\]\)/,
+      "an invite link": /draftAudienceRef\.current\(action\.audience\)/,
+    };
+    for (const [door, pattern] of Object.entries(doors)) {
+      expect(SHELL, door).toMatch(pattern);
+    }
+    // And nothing sets the draft's audience behind its back: exactly one
+    // `setSessionDraft` updater writes `audience`, and it is the one inside
+    // `setDraftAudience`, immediately above the loop that carries the
+    // placements. A second would be a door that skipped the relabel.
+    const writes = SHELL.match(/setSessionDraft\(\(d\) => \(\{[^}]*audience:/g) || [];
+    expect(writes.length, "only setDraftAudience may write the audience").toBe(1);
+    expect(SHELL).toMatch(
+      /setSessionDraft\(\(d\) => \(\{ \.\.\.d, audience: next \}\)\);\s*for \(const edit of edits\)/
+    );
+  });
+
   it("never opens on a bare hex prompt", () => {
     // The empty state, in the order the reader can act on: your own key (which
     // the shell adds the moment it is chosen), the peers you have met, a
@@ -670,8 +706,13 @@ describe("naming a room is a picker, and the picker was already built", () => {
     expect(at.every((i) => i > 0), order.join(" · ")).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
     // And the key choice really is what puts you in the room, so that sentence
-    // is not a promise the shell fails to keep.
-    expect(SHELL).toMatch(/audience: fpr && !d\.audience\.includes\(fpr\)/);
+    // is not a promise the shell fails to keep. It goes through
+    // `setDraftAudience` like every other door: your own key is usually the
+    // *lowest*-numbered member and arrives after the person you are meeting, so
+    // this is the likeliest renumbering in the product.
+    expect(SHELL).toMatch(
+      /if \(fpr && !sessionDraft\.audience\.includes\(fpr\)\) \{\s*setDraftAudience\(\[\.\.\.sessionDraft\.audience, fpr\]\)/
+    );
   });
 });
 

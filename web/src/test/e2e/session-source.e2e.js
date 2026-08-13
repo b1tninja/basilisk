@@ -45,6 +45,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromiumAvailability, openPeers } from "../helpers/browser-peers.js";
 import { compileRecipe } from "../../lib/toolkit/recipe.js";
+import { hashForNotebook } from "../../lib/toolkit/fragment.js";
 
 const availability = await chromiumAvailability();
 
@@ -114,7 +115,11 @@ async function readNotebookSource(page) {
   const summary = page.locator("summary", { hasText: "Notebook source (text)" });
   await summary.waitFor({ state: "visible", timeout: 15000 });
   const details = summary.locator("xpath=..");
-  if (!(await details.getAttribute("open"))) await summary.click();
+  // `!== null`, not truthiness. An open `<details>` carries `open=""`, which is
+  // falsy — so a second call on the same page clicked the summary *closed* and
+  // read an empty string out of a collapsed panel. Nothing noticed while every
+  // caller loaded a fresh page first; the compose test below reads twice.
+  if ((await details.getAttribute("open")) === null) await summary.click();
   return (await details.locator("pre").innerText()).trim();
 }
 
@@ -214,6 +219,90 @@ describe.runIf(availability.ok)("what a session writes into the notebook", () =>
     await start.waitFor({ state: "visible", timeout: 15000 });
     expect(await start.getAttribute("data-session-start")).toBe("join");
     expect(await joiner.page.locator("[data-session-audience] li").count()).toBe(audience.length);
+  });
+
+  it("assigns a cell to a named room before any session exists", async () => {
+    /**
+     * The half of the report that was still open: nothing could be *assigned*
+     * until the session was live, which is useless — a ceremony is written
+     * first and run when the other person is free.
+     *
+     * This has to be a browser, and it has to be these presses. The labels come
+     * from a draft audience that only the shell holds, the menu they appear in
+     * is rendered into a portal, and the notebook they are written into is
+     * serialized by the hook: there is no seam below the UI where any of that
+     * can be observed. `relabel-drift.test.js` proves the rule; this proves a
+     * person can reach it.
+     *
+     * Three fingerprints chosen for their sort order, because the sort is the
+     * hazard. `LOWEST` is below both of the others, so adding it renumbers
+     * every label in the room — which is precisely the move that used to change
+     * what a written `@peer2` meant with nothing on screen to say so.
+     */
+    const LOWEST = "0".repeat(40);
+    const LOW = "1".repeat(40);
+    const HIGH = "F".repeat(40);
+    const [creator] = fx.peers;
+    const { page } = creator;
+
+    // A notebook first, through the link that carries one. An invite carries no
+    // recipe by design, so the two hashes are used for the two things they are
+    // each for.
+    const recipe = hashForNotebook("random 32 | out $secret");
+    expect(recipe.ok).toBe(true);
+    await page.goto(`${fx.origin}/toolkit${recipe.hash}`, { waitUntil: "load" });
+    // The context is shared with the tests above and one of them left a live
+    // session on this page. `goto` to the same path with only the hash changed
+    // is a same-document navigation, so React would never remount and this
+    // would be asserting against `SessionLive` — the panel with no picker on
+    // it. `startFromTheSheet` reloads for the same reason.
+    await page.reload({ waitUntil: "load" });
+    await page.waitForSelector(".toolkit-shell", { timeout: 20000 });
+
+    const sheet = page.locator("[data-session-sheet]");
+    const named = async (h) => {
+      await page.evaluate((next) => {
+        window.location.hash = next;
+      }, h);
+      await sheet.waitFor({ state: "visible", timeout: 15000 });
+    };
+
+    // The room is named and nobody has connected. This is the exact state the
+    // assignment menu used to be empty in.
+    await named(`#j=${LOW},${HIGH}`);
+    expect(await page.locator('[data-session-member="peer1"]').count()).toBe(1);
+    expect(await page.locator('[data-session-member="peer2"]').count()).toBe(1);
+    await page.keyboard.press("Escape");
+    await sheet.waitFor({ state: "hidden", timeout: 10000 });
+
+    const assign = page.locator("[data-cell-assign]").first();
+    await assign.click();
+    const second = page.getByRole("menuitem", { name: /@peer2/ });
+    await second.waitFor({ state: "visible", timeout: 10000 });
+    // Both of them, from an audience nobody has joined — the assertion whose
+    // absence shipped an empty menu.
+    expect(await page.getByRole("menuitem", { name: /@peer1/ }).count()).toBe(1);
+    await second.click();
+
+    await expect
+      .poll(async () => await readNotebookSource(page), { timeout: 10000 })
+      .toMatch(/^@peer2$/m);
+
+    // Now the renumbering, arriving the way it most plausibly does: a corrected
+    // invite with one more person in it.
+    await named(`#j=${LOWEST},${LOW},${HIGH}`);
+    await expect
+      .poll(async () => await page.locator("[data-relabel-note]").innerText(), {
+        timeout: 10000,
+      })
+      .toContain("@peer3");
+    await page.keyboard.press("Escape");
+    await sheet.waitFor({ state: "hidden", timeout: 10000 });
+
+    // The header moved with the person: `HIGH` was peer2 in a room of two and
+    // is peer3 in a room of three. A notebook that still said `@peer2` would be
+    // addressing `LOW` — a different machine, silently.
+    expect(await readNotebookSource(page)).toMatch(/^@peer3$/m);
   });
 
   it("keeps the audience readable as itself, not merely parseable", async () => {

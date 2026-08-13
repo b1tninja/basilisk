@@ -87,6 +87,31 @@ export type SessionStartProps = {
   /** Everyone in the room, canonical, including you. */
   audience: string[];
   /**
+   * Fingerprint → the `@peer` label that member holds, from `peerLabels`.
+   *
+   * Passed in rather than derived, for the rule this widget is held to — plain
+   * props, no store — and for a stronger reason: the labels shown here are the
+   * ones a cell will be assigned to, and computing a second set from the same
+   * audience would be a second copy of the numbering rule sitting one component
+   * away from the first. One call, one answer, two places it is drawn.
+   *
+   * A room this list can *name* is a room somebody can write a notebook for
+   * before anyone connects, which is the whole point of showing them: `@peer2`
+   * is not a name, and this is the row where it acquires one.
+   */
+  labels?: Record<string, string>;
+  /**
+   * What the last change to this list did to the notebook's placements.
+   *
+   * The audience is sorted, so adding somebody renumbers everyone below them
+   * and a cell that said `@peer2` would come to mean a different person. The
+   * placements are rewritten to follow the person (`peer-relabel.js` argues
+   * it), and this is that rewrite said out loud — the cells it touched are not
+   * on screen from here, so a change nobody narrates is a change nobody can
+   * check.
+   */
+  relabelNote?: string;
+  /**
    * Peers you have marked trusted, resolved from the device key cache.
    *
    * The suggestion list used to be this browser's *own* vault keys, which is
@@ -251,6 +276,8 @@ export function SessionStart({
   keyFingerprint,
   onKeyFingerprint,
   audience,
+  labels = {},
+  relabelNote = "",
   trusted = [],
   onSearch,
   neverTrusted = [],
@@ -284,6 +311,21 @@ export function SessionStart({
   const inRoom = new Set(audience.map((f) => f.toUpperCase()));
   const refused = new Set(neverTrusted.map((f) => f.toUpperCase()));
   const offering = role === "offer";
+  /**
+   * A name for a key, out of what this panel was already given.
+   *
+   * The vault rows and the trusted marks — the two lists on this screen that
+   * already carry a name somebody chose. Nothing is looked up: a key with no
+   * name here simply shows its label and its fingerprint, which are both true.
+   */
+  const nameOf = (fpr: string): string => {
+    const hex = String(fpr || "").toUpperCase();
+    return (
+      trusted.find((t) => t.fingerprint.toUpperCase() === hex)?.label ||
+      keys.find((k) => k.fingerprint.toUpperCase() === hex)?.uid ||
+      ""
+    );
+  };
 
   /** The pick *is* the add. A picker that then wants a confirm is a form. */
   const add = (fpr: string) => {
@@ -419,27 +461,57 @@ export function SessionStart({
         <div data-session-audience>
           {audience.length ? (
             <ul className="flex list-none flex-col gap-0.5 p-0">
-              {audience.map((fpr) => (
-                <li key={fpr} className="flex items-center gap-1.5">
-                  <Fingerprint
-                    className="min-w-0 flex-1 text-[10.5px] text-[var(--foreground)]"
-                    fpr={fpr}
-                  />
-                  {/* The accessible name carries the whole fingerprint too. A
-                      list of buttons all called "Remove" is one announcement
-                      repeated (4.1.2), and naming twelve of forty characters
-                      here would put the elided form back into the one place a
-                      screen-reader user has no way to check it. */}
-                  <button
-                    type="button"
-                    className="link-action"
-                    aria-label={`Remove ${formatFingerprint(fpr)} from the room`}
-                    onClick={() => onAudience(audience.filter((f) => f !== fpr))}
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
+              {audience.map((fpr) => {
+                const label = labels[fpr.toUpperCase()] || "";
+                const name = nameOf(fpr);
+                return (
+                  <li key={fpr} className="flex items-center gap-1.5" data-session-member={label}>
+                    {/* The label *is* the compact form. `peer2` is a name this
+                        row already has for the key — the one a cell header
+                        writes and the one the other browser reads — so it is
+                        exactly what `variant="compact"` was built to print
+                        instead of `AABBCCDD…EEFF`, and pressing it copies all
+                        forty characters. The whole value is still on this
+                        panel: `InviteCard` below draws every member of this
+                        list in full, and argues why it must.
+
+                        A member with no label has nothing compact to be, and
+                        gets the full form — the inverse of the fallback
+                        `ConnectionsPanel` makes for a row with no key. */}
+                    {label ? (
+                      <Fingerprint
+                        className="shrink-0 text-[10.5px] text-[var(--foreground)]"
+                        fpr={fpr}
+                        variant="compact"
+                        label={label}
+                      />
+                    ) : (
+                      <Fingerprint
+                        className="min-w-0 flex-1 text-[10.5px] text-[var(--foreground)]"
+                        fpr={fpr}
+                      />
+                    )}
+                    {label ? (
+                      <span className="min-w-0 flex-1 truncate text-[10.5px] text-[var(--muted-foreground)]">
+                        {name || "no name for this key in this browser"}
+                      </span>
+                    ) : null}
+                    {/* The accessible name carries the whole fingerprint too. A
+                        list of buttons all called "Remove" is one announcement
+                        repeated (4.1.2), and naming twelve of forty characters
+                        here would put the elided form back into the one place a
+                        screen-reader user has no way to check it. */}
+                    <button
+                      type="button"
+                      className="link-action"
+                      aria-label={`Remove ${formatFingerprint(fpr)} from the room`}
+                      onClick={() => onAudience(audience.filter((f) => f !== fpr))}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             /* Never a bare hex prompt. The first person in the room is you, and
@@ -452,6 +524,32 @@ export function SessionStart({
             </p>
           )}
         </div>
+
+        {/* Said once, where the labels are, because it is the one thing about
+            them a reader cannot work out by looking: the order is over key
+            material, not over this list, so it is neither the order they were
+            added in nor anything they chose. Without this the rewrite below
+            reads as the app losing track of an assignment. */}
+        {audience.length ? (
+          <p className="text-[10px] leading-snug text-[var(--muted-foreground)]">
+            These labels are what a cell header addresses — assign work to them
+            now and it runs on these keys when the session opens. They are
+            numbered by fingerprint, so adding or removing somebody renumbers
+            the rest; placements already in the notebook are moved to follow the
+            person.
+          </p>
+        ) : null}
+
+        {/* What that move actually did, cell by cell. Always rendered, for the
+            reason the refusal below is: a live region created at the moment of
+            its first message is a message some screen readers never announce. */}
+        <p
+          aria-live="polite"
+          data-relabel-note={relabelNote ? "1" : ""}
+          className="text-[10.5px] leading-snug text-[var(--brand)]"
+        >
+          {relabelNote}
+        </p>
 
         {/* Whichever door the add came through. Always rendered so the region
             is there before it has anything to say — a live region created at

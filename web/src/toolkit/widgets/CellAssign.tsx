@@ -10,6 +10,39 @@ import {
 import { cn } from "@/lib/cn";
 import { PEER_SIGIL, SLOT_SIGIL } from "../../lib/toolkit/recipe-parse.js";
 
+/**
+ * One label a cell can be assigned to, and who holds it.
+ *
+ * **The label is the value and the name is the caption**, never the other way
+ * round: `@peer2` is what goes in the notebook, is what `planRun` binds and is
+ * what the other browser reads, while the name is this browser's private
+ * knowledge of whose key sits at that position. Two people can hold different
+ * names for the same key and still agree about every header in the notebook,
+ * which is the property the positional label exists to buy.
+ *
+ * `name` is a uid or a trust mark and **nothing derived from the fingerprint**.
+ * `components/ui/fingerprint.tsx` argues at length why a shortened key is not
+ * an identifier a person may be asked to compare, and a menu row is exactly the
+ * dense column that has historically argued itself into one. A label whose key
+ * this browser knows no name for carries no `name` and says as much; the key
+ * behind it is drawn in full, next to this same label, in the session sheet's
+ * room list — the row where the two were bound together in the first place.
+ */
+export type PeerChoice = {
+  /** The label a header writes, with no sigil: `peer2`. */
+  label: string;
+  /** Whose key it is, when this browser has a name for it. */
+  name?: string;
+  /** This browser's own label — the reader is "you" to themselves. */
+  self?: boolean;
+  /**
+   * Set when the room binds this label to a key. Absent for a label the
+   * notebook names and the room does not — typed by hand, or left behind by a
+   * room that has changed — which is a real state and a different sentence.
+   */
+  fingerprint?: string;
+};
+
 export type CellAssignProps = {
   /** The cell's current header, or null when it has none. */
   peer: string | null;
@@ -19,8 +52,13 @@ export type CellAssignProps = {
    * Labels that can be chosen: everyone in the room, plus every label this
    * notebook already names. Both, because a notebook is written before anyone
    * joins and a header has to be typeable against a peer who is not here yet.
+   *
+   * "The room" includes a room that has only been *named* — an audience picked
+   * in the session sheet with nobody connected yet. That is the ordinary case
+   * for this menu, not an edge of it: a ceremony is written first and run when
+   * the other person is free.
    */
-  choices: string[];
+  choices: PeerChoice[];
   /**
    * Every `out` slot this cell writes, at any depth. The menu can only offer to
    * publish a slot the cell actually has, and the cell is the only thing that
@@ -43,6 +81,29 @@ export type CellAssignProps = {
   defaultOpen?: boolean;
   className?: string;
 };
+
+/**
+ * The line under a label, saying who holds it.
+ *
+ * Exported for the reason `fingerprintActions` is: the rows live in a portal,
+ * so nothing short of a browser can read them, and a sentence no test can
+ * assert is a sentence that quietly becomes wrong. The component renders
+ * exactly this — it is not a second opinion about it.
+ *
+ * Four states and no fifth, and each names the one it is actually in. "In the
+ * room, and this browser has never put a name to the key" is a different fact
+ * from "the notebook names this label and the room does not", and a reader
+ * about to hand a cell to one of them is owed the difference: the first will
+ * run, the second is waiting for somebody who has not been invited.
+ */
+export function peerCaption(choice: PeerChoice): string {
+  if (choice.self) return "you — the key you are joining as";
+  if (choice.name) return choice.name;
+  if (choice.fingerprint) {
+    return "in the room; no name for this key in this browser";
+  }
+  return "not in the room — this notebook names them and the audience does not";
+}
 
 /**
  * Who runs this cell, and what of it leaves.
@@ -122,17 +183,29 @@ export function CellAssign({
           anyone — wherever the notebook runs
         </DropdownMenuItem>
         {choices.length ? <DropdownMenuSeparator /> : null}
+        {/* Label over name, in that order and that weight. The label is what
+            the cell will say and what the other end will read; the name is how
+            this reader recognises it. Reversing them would put the private
+            fact first and leave somebody comparing notebooks with no idea
+            which line was the one that travels. */}
         {choices.map((c) => (
           <DropdownMenuItem
-            key={c}
+            key={c.label}
             onSelect={() =>
-              c === peer
-                ? onAssign(c, publish, publishSlots)
-                : onAssign(c, false, [])
+              c.label === peer
+                ? onAssign(c.label, publish, publishSlots)
+                : onAssign(c.label, false, [])
             }
           >
-            {PEER_SIGIL}
-            {c}
+            <span className="flex min-w-0 flex-col gap-[2px]">
+              <span className="font-mono">
+                {PEER_SIGIL}
+                {c.label}
+              </span>
+              <span className="text-[10px] text-[var(--muted-foreground)]">
+                {peerCaption(c)}
+              </span>
+            </span>
           </DropdownMenuItem>
         ))}
         {peer ? (
