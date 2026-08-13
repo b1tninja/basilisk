@@ -1439,21 +1439,35 @@ export function ToolkitShell() {
   }, [nb.handoffTick, nb.pendingHandoffs]);
 
   /**
-   * Cells the last run declined, paired with the label that owns them.
+   * Cells the last run declined, paired with the label that owns them and with
+   * what the run already did about it.
    *
    * `skippedCells` carries `waitingOn`; the plan carries what each cell writes.
    * Both come from the same run, so this is a join rather than a re-derivation.
+   *
+   * `autoOffered` is the third column and the one that changes what the row
+   * *means*. A run now hands these over by itself, so a row drawn without it
+   * would offer to do a thing that has already been done — the reader would
+   * press Hand over on a cell the peer is holding. It lands after `busy` drops
+   * (the send is an effect, one render later), which is why it is a dependency
+   * of its own rather than something the `busy` flip could have carried.
    */
   const placedAway = useMemo(() => {
     void nb.busy;
+    const done = new Map(nb.autoOffered.map((o) => [o.cell, o]));
     return (nb.skippedCells() as { cell: number; waitingOn?: string; produces?: string[] }[]).map(
-      (s) => ({
-        cell: s.cell,
-        peer: String(s.waitingOn || ""),
-        produces: [...(s.produces || [])],
-      })
+      (s) => {
+        const sent = done.get(s.cell);
+        return {
+          cell: s.cell,
+          peer: String(s.waitingOn || ""),
+          produces: [...(s.produces || [])],
+          offered: sent ? (sent.ok ? ("sent" as const) : ("refused" as const)) : ("none" as const),
+          why: sent && !sent.ok ? sent.why : undefined,
+        };
+      }
     );
-  }, [nb.busy, nb.skippedCells]);
+  }, [nb.busy, nb.skippedCells, nb.autoOffered]);
 
   /**
    * A name for a key, where this browser has met it.

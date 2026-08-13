@@ -20,6 +20,16 @@ export type PlacedAway = {
   /** The label the plan says owns it. */
   peer: string;
   produces: string[];
+  /**
+   * What the run itself already did about it.
+   *
+   * `none` is not "not yet" — the run offers as it ends, so by the time this
+   * list is on screen the attempt has happened or been ruled out. It means the
+   * run was stopped by hand, or the session went away before the run did.
+   */
+  offered: "sent" | "refused" | "none";
+  /** The handoff layer's own sentence, when `offered` is `refused`. */
+  why?: string;
 };
 
 /** A cell run here on somebody else's behalf, whose answer is owed back. */
@@ -71,8 +81,9 @@ const peer = (label: string) => `${PEER_SIGIL}${label}`;
  * **Three lists, because there are three different waits**, and a single
  * "pending" would hide which of them is on you:
  *
- * - *You are waiting on them* — a cell the run declined. The press hands it
- *   over; nothing happens until they accept it.
+ * - *You are waiting on them* — a cell the run declined. **The run hands it
+ *   over as it ends**; the button is the retry, for a peer who was not in the
+ *   room at the time. Nothing happens on their machine until they accept it.
  * - *They are waiting on you* — an offer or a result that arrived. It is
  *   **pending and nothing more**: the session parses it, checks the signature
  *   on a result against that one peer's key, and registers nothing. Accepting
@@ -85,6 +96,20 @@ const peer = (label: string) => `${PEER_SIGIL}${label}`;
  * result that resumed a run on a peer's say-so would continue *this* machine on
  * values nobody looked at. The signature says who made the claim; it does not
  * say the claim is about a cell you asked for, and only the accept checks that.
+ *
+ * ## Why the first list sends itself and the third does not
+ *
+ * The asymmetry is deliberate and is the reason this panel now has two
+ * different kinds of row. An outgoing offer is bounded by the run that produced
+ * it: the gate wrote that cell into the run's own skipped list because the
+ * notebook places it on somebody else, and the reader asked for that notebook
+ * to run. Sending it restates a decision already made and starts nothing.
+ *
+ * The third list has no such bound. `runFrom` runs every cell from an index
+ * onward, so a cell accepted from a peer runs again on every later press of Run
+ * — for reasons that have nothing to do with the peer waiting — and nothing
+ * anywhere records *why* a cell ran. An automatic send back could not tell the
+ * two apart, so the result stays a press, and this list is what asks for it.
  */
 export function HandoffQueue({
   live,
@@ -111,7 +136,7 @@ export function HandoffQueue({
         <>
           <p className="text-[10.5px] leading-snug text-[var(--muted-foreground)]">
             {live
-              ? "Nothing is waiting on anybody. Give a cell an @peer header and run — the cells that are not yours are declined here and offered to whoever owns them."
+              ? "Nothing is waiting on anybody. Give a cell an @peer header and run — the cells that are not yours are declined here, and handed to whoever owns them as the run ends. Nothing runs on their machine until they accept, and what they send back waits here for you."
               : "No session, so nothing can cross. A cell with an @peer header is still planned and still declined at run time; it just has nowhere to go."}
           </p>
           {/* The third list is shell state built when a person presses accept,
@@ -144,9 +169,21 @@ export function HandoffQueue({
                 Cell {c.cell} is {peer(c.peer)}&apos;s
                 {c.produces.length ? ` — it writes ${c.produces.map(slot).join(" · ")}` : ""}.
               </span>
-              <span className="text-[10px] leading-snug text-[var(--muted-foreground)]">
-                Handing it over sends the values that cell reads and nothing
-                else. Nothing runs until they accept it.
+              {/* Three sentences for three states, because the button under
+                  them means something different in each. A row that said
+                  "handing it over sends the values that cell reads" beside a
+                  cell the run had *already* handed over would invite a press
+                  for work that is done — the reader would be reading the panel
+                  from before this run sent anything by itself. */}
+              <span
+                className="text-[10px] leading-snug text-[var(--muted-foreground)]"
+                data-offer-state={c.offered}
+              >
+                {c.offered === "sent"
+                  ? `Handed to ${peer(c.peer)} when the run finished, carrying the values that cell reads and nothing else. Nothing runs there until they accept it. Send it again only if they say it never arrived.`
+                  : c.offered === "refused"
+                    ? `The run tried to hand this over and could not. ${c.why || "The handoff was refused and gave no reason."}`
+                    : "Nothing has gone out for this cell. Handing it over sends the values that cell reads and nothing else, and nothing runs until they accept it."}
               </span>
               <div className="flex flex-wrap gap-1.5">
                 <Button
@@ -156,6 +193,7 @@ export function HandoffQueue({
                   onClick={() => onOffer(c.cell)}
                 >
                   Hand cell {c.cell} to {peer(c.peer)}
+                  {c.offered === "none" ? "" : " again"}
                 </Button>
               </div>
             </li>
@@ -215,10 +253,18 @@ export function HandoffQueue({
               <span className="text-[11px] text-[var(--foreground)]">
                 Cell {o.cell} ran here for {peer(o.label)}.
               </span>
+              {/* Why this one is not sent for you, said where the wait is. The
+                  outgoing list above goes by itself and this does not, and a
+                  reader who noticed that difference deserves the reason rather
+                  than a missing feature. */}
               <span className="text-[10px] leading-snug text-[var(--muted-foreground)]">
                 Sending it back signs what the cell wrote with the key this
                 session was opened under — their end refuses an unsigned result,
                 because otherwise it is a value from whoever reached the channel.
+                This one is not sent for you: Run runs every cell from where you
+                started, so this cell runs again whenever you run your own
+                notebook, and nothing here can tell a run made for them from a
+                run made for you.
               </span>
               <div className="flex flex-wrap gap-1.5">
                 <Button

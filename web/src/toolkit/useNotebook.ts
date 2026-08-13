@@ -24,6 +24,11 @@ import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
 import { planRun } from "../lib/toolkit/plan.js";
 import { roomRoster } from "../lib/notebook/roster.js";
 import { relabelAudience, relabelPlacements } from "../lib/toolkit/peer-relabel.js";
+import {
+  narrateNoSession,
+  narrateOffers,
+  pendingOffers,
+} from "../lib/toolkit/run-offers.js";
 import { offerForSkipped, resultForCell } from "../lib/toolkit/handoff-shell.js";
 import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
 import { clearActivity } from "../lib/toolkit/activity-log.js";
@@ -1567,6 +1572,42 @@ export function useNotebook() {
     title,
   ]);
 
+  /**
+   * The roster and which label this browser is, from the live exchange.
+   *
+   * One derivation, used by every handoff step and by the plan the Connections
+   * tab draws. Two of them disagreeing about who "me" is would be an offer
+   * addressed to the wrong half of the notebook.
+   *
+   * **Not a search of `quorumState.peers`.** It used to be one — the rows were
+   * scanned for this browser's own fingerprint — and that could never match:
+   * `session.peers` is the audience minus self, on purpose, because a session is
+   * never its own peer. So `me` was always `""`, every cell planned as somebody
+   * else's, `planRun` refused this browser's own label as a peer nobody answers
+   * to, and the placed-run gate `runFrom` builds from `me` was never built.
+   *
+   * `roomRoster` answers it from the same `peerLabels` map that names the peers,
+   * over the audience the room was derived from — see its own note for why the
+   * audience rather than who has arrived, and why self is still not a peer.
+   *
+   * **It is declared here, above `runFrom`, and that position is load-bearing.**
+   * It used to sit six hundred lines down among the handoff calls, which meant
+   * `runFrom` could close over it but could not name it in a dependency list —
+   * a `const` referenced before its own declaration is a temporal dead zone
+   * error at the moment the hook runs, so the omission was not an oversight
+   * that could simply be corrected in place. See `runFrom`'s dependency list
+   * for what the omission cost.
+   */
+  const handoffWho = useCallback(
+    () =>
+      roomRoster(
+        quorumState.audience || [],
+        (quorumState.peers || []).map((p) => p.fingerprint),
+        quorumState.self || ""
+      ),
+    [quorumState]
+  );
+
   const runFrom = useCallback(
     async (from: number) => {
       if (!compiled.validation?.ok) {
@@ -1603,6 +1644,16 @@ export function useNotebook() {
        * insists is a different thing from a gate that admits everything.
        */
       skippedRef.current = [];
+      // A run of its own, with its own record of what it has handed out. Both
+      // are reset here rather than after the loop, so a run that throws still
+      // leaves the next one a clean bound — and the throwing run is the *usual*
+      // one, since a cell reading a slot somebody else's cell writes is what
+      // stops a placed run in the first place.
+      const seq = (runSeqRef.current += 1);
+      offersSentRef.current = { run: seq, sent: new Set<string>() };
+      // Cleared with them, so the queue never annotates this run's declined
+      // cells with what happened to the last one's.
+      setAutoOffered([]);
       const { roster, me } = handoffWho();
       let placement: any;
       if (me && Object.keys(roster).length) {
@@ -1665,9 +1716,58 @@ export function useNotebook() {
         setBusy(false);
         setRunProgress(null);
         setRunningCell(null);
+        // The run is over however it got here, and `skippedRef` now holds what
+        // it declined. Handing those over is asked for as *state* rather than
+        // done on this line, for `autoRunFrom`'s reason one screen down:
+        // `offerCell` reads `source`, `title` and the roster through closures
+        // this callback does not depend on, so calling it here would offer the
+        // notebook as it stood when `runFrom` was built. The effect below fires
+        // after the re-render, where the `offerCell` in scope is the one built
+        // from what is on screen.
+        //
+        // **Not after a Stop.** The argument for sending without a press is
+        // that it only restates the decision Run already made; a reader who
+        // pressed Stop has taken that decision back, and an outward document
+        // sent on the strength of a press they withdrew would be the one act
+        // here nobody asked for. Their cells stay in the queue with the press
+        // still on them, and `runStatus` says so rather than going quiet.
+        if (stopRunRef.current) {
+          const waiting = pendingOffers(skippedRef.current, offersSentRef.current.sent);
+          if (waiting.length) {
+            setRunStatus(
+              `Stopped — nothing was handed over. ${waiting.length === 1 ? "Cell" : "Cells"} ` +
+                `${waiting.map((o) => o.cell).join(", ")} ${
+                  waiting.length === 1 ? "is" : "are"
+                } still theirs, and handing ${
+                  waiting.length === 1 ? "it" : "them"
+                } over is one press in Connections.`
+            );
+          }
+        } else {
+          setFinishedRun(seq);
+        }
       }
     },
-    [buildBindings, chains, compiled.validation, unmetForCell]
+    // `handoffWho` was missing, and its absence was the gate quietly not
+    // existing. It is rebuilt from `quorumState`, so a `runFrom` that does not
+    // depend on it keeps whichever roster was current the last time `chains`
+    // changed — which for the flow `96dde48` opened up (place the cells, *then*
+    // press Start) is the roster from before anybody was in the room. `me` is
+    // "" there, no plan is built, `runCell` is handed no placement, and the
+    // notebook runs every cell locally including the ones belonging to other
+    // people: no decline, nothing in `skippedRef`, and nothing for this run to
+    // hand over. Reproduced in the browser — the same notebook and the same
+    // room gated only after a keystroke made the callback fresh.
+    //
+    // Listing it needed `handoffWho` moved above this callback first. It was
+    // declared six hundred lines down, so naming it here threw "cannot access
+    // 'handoffWho' before initialization" the moment the page mounted — which
+    // is presumably how it came to be closed over silently instead.
+    //
+    // `source` is not listed because it is `serializeRecipe(chains)` and cannot
+    // move without `chains` moving; adding it would be a second name for a
+    // dependency already here.
+    [buildBindings, chains, compiled.validation, handoffWho, unmetForCell]
   );
 
   /**
@@ -2139,32 +2239,55 @@ export function useNotebook() {
   const skippedCells = useCallback(() => skippedRef.current.slice(), []);
 
   /**
-   * The roster and which label this browser is, from the live exchange.
+   * Runs, counted, so an offer can be bounded by the one that caused it.
    *
-   * One derivation, used by every handoff step and by the plan the Connections
-   * tab draws. Two of them disagreeing about who "me" is would be an offer
-   * addressed to the wrong half of the notebook.
-   *
-   * **Not a search of `quorumState.peers`.** It used to be one — the rows were
-   * scanned for this browser's own fingerprint — and that could never match:
-   * `session.peers` is the audience minus self, on purpose, because a session is
-   * never its own peer. So `me` was always `""`, every cell planned as somebody
-   * else's, `planRun` refused this browser's own label as a peer nobody answers
-   * to, and the placed-run gate `runFrom` builds from `me` was never built.
-   *
-   * `roomRoster` answers it from the same `peerLabels` map that names the peers,
-   * over the audience the room was derived from — see its own note for why the
-   * audience rather than who has arrived, and why self is still not a peer.
+   * Not a timestamp and not a flag. The question an automatic offer has to
+   * answer is "has this cell already gone out *for this run*", and a run is the
+   * only thing that makes the answer stable: `skippedRef` is replaced per run,
+   * so a number that moves with it is the whole of the identity needed.
    */
-  const handoffWho = useCallback(
-    () =>
-      roomRoster(
-        quorumState.audience || [],
-        (quorumState.peers || []).map((p) => p.fingerprint),
-        quorumState.self || ""
-      ),
-    [quorumState]
-  );
+  const runSeqRef = useRef(0);
+
+  /**
+   * What the current run has handed out, by `offerKey`.
+   *
+   * `NotebookSession._invited`'s pattern, and for its reason: a set of what has
+   * been served, consulted before serving and written *before* the send is
+   * awaited, so a second pass that arrives while the first is in flight finds
+   * the cell claimed. The run number rides along because the set is only an
+   * answer about one run — a later run starts a fresh one, which is what lets a
+   * peer who was not meshed the first time be tried again by pressing Run.
+   *
+   * A ref, not state, for `skippedRef`'s reason: it is written between a render
+   * and the send that follows it, and a render in between would be a render
+   * that could arrive after the read.
+   */
+  const offersSentRef = useRef<{ run: number; sent: Set<string> }>({
+    run: 0,
+    sent: new Set<string>(),
+  });
+
+  /**
+   * The run whose declined cells have not been handed over yet, or null.
+   *
+   * State rather than a ref precisely because it must cause a render: it is the
+   * hop that gets `handOffPlaced` out of `runFrom`'s closure and into one built
+   * from the notebook as it now stands. `autoRunFrom` above is the same device
+   * for the same hazard.
+   */
+  const [finishedRun, setFinishedRun] = useState<number | null>(null);
+
+  /**
+   * What the last run's automatic offers did, for the queue to draw beside the
+   * cells they were about.
+   *
+   * The narration goes to `runStatus`, which is the line always on screen; this
+   * is the same facts per cell, so the row offering to hand cell 3 over can say
+   * whether cell 3 has already gone and stop reading as though nothing had.
+   */
+  const [autoOffered, setAutoOffered] = useState<
+    { cell: number; peer: string; ok: boolean; why?: string }[]
+  >([]);
 
   /**
    * The notebook as it stands right now, for the arrival path to read.
@@ -2402,6 +2525,77 @@ export function useNotebook() {
     },
     [handoffWho, source, title]
   );
+
+  /**
+   * Hand over everything this run left on somebody else, without being asked
+   * twice.
+   *
+   * This is the last mile of the placed run, and until it existed the product
+   * described it and did not do it: the queue's empty state promised that
+   * declined cells "are offered to whoever owns them", while `offerCell`'s only
+   * caller in the whole application was a per-row button. A placed run was Run,
+   * and then one press per cell.
+   *
+   * **Nothing runs anywhere because of this.** An offer is a document; the peer
+   * that receives it holds it pending until they press accept, and accepting is
+   * what turns it into bindings. `acceptHandoff` keeps that boundary and keeps
+   * it in a function only a press reaches. What is removed here is a press that
+   * restated a decision already made — the reader said "run this notebook", and
+   * the notebook says which cells are not theirs.
+   *
+   * **The bound is what has gone out, never a clock.** `offerCell` deliberately
+   * does not consume the skipped cell — that non-destructiveness is what makes
+   * recovery after a reload possible, and `HandoffQueue` promises it in writing
+   * — so nothing downstream would stop a second pass from sending the same cell
+   * twice. `offersSentRef` is `NotebookSession._invited` one layer up: marked
+   * before the await, so a re-entry finds the cell claimed rather than in
+   * flight, and scoped to the run so that pressing Run again is a real retry
+   * for a peer who was not reachable the first time.
+   *
+   * **Failures are said out loud, in the handoff layer's words.** A run that
+   * silently handed nothing over is the experience this whole arc exists to
+   * end, and `offerCell` refuses for states that are distinguishable and worth
+   * distinguishing: nobody answers to that label, the peer is in the audience
+   * but has not meshed, the cell was left to nobody. They go to `runStatus`
+   * rather than the session sheet for `followRotation`'s reason — the sheet is
+   * very likely closed, and a live region inside a closed sheet announces to
+   * nobody — appended to the run's own verdict rather than replacing it, so
+   * "Failed" and why a cell did not go out are on screen together.
+   */
+  const handOffPlaced = useCallback(
+    async (run: number) => {
+      const bound = offersSentRef.current;
+      // A newer run has already replaced the bound this one would mark against.
+      // Sending now would be offering the previous run's answers under the
+      // current run's numbering.
+      if (bound.run !== run) return;
+      const waiting = pendingOffers(skippedRef.current, bound.sent);
+      if (!waiting.length) return;
+      if (!getLiveSession()) {
+        setRunStatus((prev) => `${prev} ${narrateNoSession(waiting)}`.trim());
+        return;
+      }
+      const outcomes: { cell: number; peer: string; ok: boolean; why?: string }[] = [];
+      for (const o of waiting) {
+        // Claimed before the send, not after it. `_onKnock` adds to `_invited`
+        // on the line above its own await for the same reason: the failure this
+        // prevents is two passes overlapping, and a mark written after the
+        // answer comes back is not written during the window that matters.
+        bound.sent.add(o.key);
+        const r = await offerCell(o.cell);
+        outcomes.push({ cell: o.cell, peer: o.peer, ok: !!r.ok, why: r.ok ? undefined : r.why });
+      }
+      setAutoOffered(outcomes);
+      setRunStatus((prev) => `${prev} ${narrateOffers(outcomes)}`.trim());
+    },
+    [offerCell]
+  );
+
+  useEffect(() => {
+    if (finishedRun == null) return;
+    setFinishedRun(null);
+    void handOffPlaced(finishedRun);
+  }, [finishedRun, handOffPlaced]);
 
   /**
    * Send back what a cell wrote, signed.
@@ -2695,6 +2889,7 @@ export function useNotebook() {
     handoffWho,
     pendingHandoffs,
     skippedCells,
+    autoOffered,
     offerCell,
     sendCellResult,
     acceptHandoff,
