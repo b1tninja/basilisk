@@ -28,8 +28,8 @@ import { makeQuorumPair, until } from "./helpers/notebook-pair.js";
 /** @type {any} */
 let pair = null;
 
-afterEach(() => {
-  pair?.stop();
+afterEach(async () => {
+  await pair?.stop();
   pair = null;
 });
 

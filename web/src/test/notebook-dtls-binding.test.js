@@ -55,8 +55,8 @@ beforeEach(() => {
   derived.length = 0;
 });
 
-afterEach(() => {
-  pair?.stop();
+afterEach(async () => {
+  await pair?.stop();
   pair = null;
 });
 

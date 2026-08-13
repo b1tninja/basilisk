@@ -20,8 +20,8 @@ import { deriveRoomMaterial } from "../lib/notebook/room.js";
 /** @type {Awaited<ReturnType<typeof makeQuorumPair>>|null} */
 let pair = null;
 
-afterEach(() => {
-  pair?.stop();
+afterEach(async () => {
+  await pair?.stop();
   pair = null;
 });
 

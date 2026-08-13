@@ -33,10 +33,10 @@ let pair = null;
 /** @type {(() => void)|null} */
 let unpatch = null;
 
-afterEach(() => {
+afterEach(async () => {
   unpatch?.();
   unpatch = null;
-  pair?.stop();
+  await pair?.stop();
   pair = null;
 });
 

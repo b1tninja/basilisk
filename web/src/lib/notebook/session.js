@@ -346,6 +346,12 @@ export class NotebookSession {
      * @type {Set<string>}
      */
     this._invited = new Set();
+    /**
+     * Whether `stop()` has run. Read only by `_sealAndSend`, which explains
+     * there why a torn-down session's late signalling is dropped in silence
+     * while `_publish`'s refusal keeps its voice.
+     */
+    this._stopped = false;
     this.initiatorFpr = this.role === "creator" ? this.myFpr : "";
     this.inviteVerified = this.role === "creator";
     this._meshing = this.role === "creator";
@@ -719,6 +725,9 @@ export class NotebookSession {
   }
 
   stop() {
+    // First, before the relay and the key go: everything below this line makes
+    // an in-flight send fail, and this is what tells it not to try.
+    this._stopped = true;
     this._relay?.stop();
     this._relay = null;
     this._roomKey = "";
@@ -2090,6 +2099,25 @@ export class NotebookSession {
    */
   async _publish(armored) {
     this._envSeen.seen(armored);
+    // A stopped session, before an absent relay: two different facts, and only
+    // one of them is anybody's news.
+    //
+    // The refusal below is a sentence somebody reads — `rotateRoom` reaches it
+    // through `_broadcast`, `removeFromRoom` in `quorum-ops.js` awaits that, and
+    // a person who pressed Remove while the relay was down is owed the reason.
+    // So it stays, and it keeps meaning what it says: this session is running
+    // and has no signalling.
+    //
+    // A send arriving after `stop()` is not that. The session tore its own
+    // links down; what is still arriving is their late callbacks — an ICE
+    // candidate gathered between `close()` and the connection actually going
+    // (`onIceCandidate` is a bare `void this._sendTo`), a `_publishInvite` that
+    // was already in `_handleSignal`'s queue. Nobody awaits those and nobody can
+    // read an answer from them, so throwing only produces an unhandled rejection
+    // blamed on whichever test happened to be running. Nothing a person presses
+    // gets here after `stop()`: the private key is zeroed and the sealing above
+    // would fail on it first.
+    if (this._stopped) return;
     if (!this._relay) throw new Error("Notebook signalling is not connected");
     await this._relay.send(armored);
   }
@@ -2136,6 +2164,14 @@ export class NotebookSession {
    * @param {{ recipients?: string[] }} opts
    */
   async _sealAndSend(toFpr, fields, opts) {
+    // Checked here as well as in `_publish`, and for a second reason: sealing
+    // *signs*, and `stop()` zeroes this session's private key in place. A late
+    // ICE candidate that got as far as the seal did not merely fail to send, it
+    // signed with wiped material and surfaced as OpenPGP's "Invalid keyData" —
+    // the same teardown race wearing a different error. Refusing before the
+    // signature means the key is never reached at all. `_publish` carries the
+    // argument for why this is silence rather than a refusal.
+    if (this._stopped) return;
     const only = opts.recipients
       ? new Set(opts.recipients.map((f) => normalizeFingerprintInput(f)))
       : null;

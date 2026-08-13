@@ -77,7 +77,7 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  *   joiner: PairSide,
  *   settle: () => Promise<void>,
  *   start: () => Promise<void>,
- *   stop: () => void,
+ *   stop: () => Promise<void>,
  * }>}
  */
 export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
@@ -274,8 +274,32 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
       await settle();
       await joiner.session.start();
     },
-    stop() {
+    /**
+     * Tear the pair down, and **drain the relay first**.
+     *
+     * `NotebookSession.stop()` zeroes its OpenPGP private key in place, which is
+     * right — key material should not outlive the session holding it. But this
+     * double re-signs every envelope it carries, with the *sender's* key, on a
+     * queue; and under `sameKey` the two sides and this transform are all
+     * holding the one key object. A transform already past the `stopped` check
+     * when `stop()` ran went on to sign with a key that had just been wiped
+     * underneath it, which OpenPGP reports as `Invalid keyData` — an unhandled
+     * rejection with no test to attach it to, of the kind vitest warns "might
+     * cause false positive tests".
+     *
+     * So: stop accepting work, let what is already in flight finish while its
+     * key is still alive, and only then tear down. Awaiting `settled()` before
+     * `session.stop()` rather than after is the whole of the fix — after would
+     * be draining a queue whose signer is already gone.
+     *
+     * Async for that await, which is why every `afterEach` that calls this one
+     * awaits it. The session's own late traffic is a different problem with a
+     * different fix — see `_sealAndSend`'s `_stopped` guard, which is about
+     * transport callbacks nobody asked for rather than about this queue.
+     */
+    async stop() {
       stopped = true;
+      await relay.settled();
       for (const side of sides) {
         try {
           side.session.stop();
