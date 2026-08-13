@@ -44,6 +44,10 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  * @property {{ from: string, text: string, ts: number }[]} chats
  * @property {any[]} manifests      manifests that arrived, verified and parsed
  * @property {any[]} attestations   attestations that arrived, verified and parsed
+ * @property {any[]} notebooks      notebook proposals that arrived, were checked
+ *   against the sender's key and parsed — pending, exactly as the rest are:
+ *   nothing in the session adopts one, and this side has no notebook to adopt
+ *   into. Adopting is `decideProposal` plus the shell.
  * @property {any[]} offers         handoff offers that arrived and parsed — pending,
  *   never accepted: nothing in the session can accept one
  * @property {any[]} results        cell results that arrived, were checked against
@@ -191,6 +195,7 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
       chats: [],
       manifests: [],
       attestations: [],
+      notebooks: [],
       offers: [],
       results: [],
       statuses: [],
@@ -205,6 +210,7 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
       onChat: (/** @type {any} */ m) => side.chats.push(m),
       onManifest: (/** @type {any} */ d) => side.manifests.push(d),
       onAttestation: (/** @type {any} */ d) => side.attestations.push(d),
+      onNotebook: (/** @type {any} */ d) => side.notebooks.push(d),
       onOffer: (/** @type {any} */ d) => side.offers.push(d),
       onResult: (/** @type {any} */ d) => side.results.push(d),
       onStatus: (/** @type {string} */ s) => side.statuses.push(s),

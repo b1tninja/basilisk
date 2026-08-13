@@ -36,7 +36,9 @@ import {
   canonicalizeRecipe,
   serializeRecipe,
 } from "./recipe.js";
-import { textHasFingerprintPeer } from "./recipe-parse.js";
+// Imported *and* re-exported at the foot of this file: a bare re-export creates
+// no local binding, and `hashForRecipe` below is one of the rule's callers.
+import { recipeLooksSecret } from "./recipe-secrets.js";
 
 /**
  * Re-armor binary OpenPGP message bytes via OpenPGP.js (RFC ASCII armor).
@@ -340,10 +342,20 @@ export function parseToolkitHash(hash) {
       const params = new URLSearchParams(head);
       const t = params.get("t");
       if (t) return withCtSeed({ kind: "preset", id: t }, ct);
-      // Before `r=`, because an invite carries no recipe and never should: the
-      // notebook travels by `#r=` and the session does not carry it. Two people
-      // arriving at the same text independently is what makes a shared run a
-      // reproducible build rather than a screen share.
+      // Before `r=`, because an invite carries no recipe and never should. Both
+      // ends holding the same text, and proving it by digest, is what makes a
+      // shared run a reproducible build rather than a screen share — and a link
+      // that opened a room *and* replaced the notebook you were writing would
+      // decide that for you at the moment you clicked something else.
+      //
+      // How a notebook reaches the other end is `notebook-share.js`: a signed
+      // proposal on the session channel, which a peer with an empty notebook
+      // adopts and a peer with work of their own is asked about. That is a
+      // change to who may *receive* the text, not to the doctrine — the digest
+      // check on every handed-over cell is exactly as it was. Before it existed
+      // the doctrine had no mechanism at all: nothing in this product ever gave
+      // a joiner the recipe, so every offer they were sent was refused against a
+      // manifest derived from an empty notebook.
       const j = params.get("j");
       if (j) {
         const audience = joinAudienceFromParam(j);
@@ -557,10 +569,13 @@ function isWrittenHash(hash) {
  *
  * **The invite still carries no recipe**, exactly as `parseToolkitHash` reads
  * them: no `r=` is merged into the `j=` form and no `ct=` is carried onto it.
- * Both ends arriving at the same text independently is what makes a shared run
- * a reproducible build rather than a screen share, and a URL that quietly
- * shipped one person's notebook with the invitation would undo that without
- * anybody choosing it.
+ * Both ends holding the same text, and proving it by digest, is what makes a
+ * shared run a reproducible build rather than a screen share, and a URL that
+ * quietly shipped one person's notebook with the invitation would undo that
+ * without anybody choosing it. The notebook does travel now — signed, over the
+ * session, as `notebook-share.js` describes — and that is why this stays true
+ * rather than a reason to relax it: receiving a notebook is a thing a person
+ * can see happen and answer, and a link that carried one silently is not.
  *
  * **`write: false` is not the same as clearing.** A notebook that cannot be
  * linked — secret material in it, or too long — must not leave a stale `#r=`
@@ -636,21 +651,16 @@ export function normalizeRecipeText(text) {
 }
 
 /**
- * Heuristic: refuse to put private armor / obvious secret blobs in the hash.
- * @param {string} recipe
+ * Refuse to put private armor / obvious secret blobs in the hash.
+ *
+ * Re-exported, not defined here. The rule moved to `recipe-secrets.js` when a
+ * second boundary needed it — a notebook proposal on the session wire, which is
+ * not a URL and must not import a URL codec to ask whether a recipe holds a
+ * private key. The name stays because every caller in this module and in
+ * `workspace-store.js` already spells it this way, and because one predicate
+ * with two names is still one predicate; two predicates would be the defect.
  */
-export function recipeLooksSecret(recipe) {
-  const s = String(recipe || "");
-  if (/BEGIN PGP PRIVATE KEY BLOCK/i.test(s)) return true;
-  if (/BEGIN PRIVATE KEY/i.test(s)) return true;
-  if (/"kty"\s*:\s*"[^"]+"/i.test(s) && /"d"\s*:/i.test(s)) return true;
-  // A fingerprint written where a peer is named. `validateRecipe` refuses the
-  // same shape at compile, but this function is what stands between a recipe
-  // and a URL — `hashForRecipe` never compiles — so the refusal has to be
-  // made twice or it is only made where it does not matter.
-  if (textHasFingerprintPeer(s)) return true;
-  return false;
-}
+export { recipeLooksSecret };
 
 /**
  * Absolute share URL for the current page + hash.

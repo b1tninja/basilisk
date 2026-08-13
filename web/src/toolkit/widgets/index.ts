@@ -61,6 +61,11 @@ export {
   type PlacedAway,
   type OwedBack,
 } from "./HandoffQueue";
+export {
+  NotebookShare,
+  type NotebookShareProps,
+  type ProposedNotebook,
+} from "./NotebookShare";
 export { InspectorArtifact, hasInspectorRenderer, type InspectSnapshot } from "./InspectorArtifact";
 export { CellTypeErrors, type CellTypeError } from "./CellTypeErrors";
 export { GpgKeyBinder } from "./GpgKeyBinder";

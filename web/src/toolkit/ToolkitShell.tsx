@@ -83,6 +83,7 @@ import {
   ShareSheet,
   SessionSheet,
   HandoffQueue,
+  NotebookShare,
   PlanPanel,
   SessionStrip,
   TopBar,
@@ -749,6 +750,15 @@ export function ToolkitShell() {
 
   /** The last handoff attempt's outcome, in the handoff layer's own words. */
   const [handoffNote, setHandoffNote] = useState<string | null>(null);
+  /**
+   * The same, one row up: what happened to the *notebook*.
+   *
+   * Kept apart from `handoffNote` because they answer different questions and
+   * one would overwrite the other at the worst moment — "that cell was refused
+   * as a notebook this peer has not seen" and "the notebook was shared" belong
+   * on screen together, since the second is the answer to the first.
+   */
+  const [notebookShareNote, setNotebookShareNote] = useState<string | null>(null);
   /** Gap click sets pending insert; next shelf append / drop uses it. */
   const [pendingInsert, setPendingInsert] = useState<ChipPath | null>(null);
   /**
@@ -3553,6 +3563,45 @@ export function ToolkitShell() {
                       />
                     </section>
                   ) : null}
+
+                  {/* Above the handoff queue, because it is what the queue
+                      presumed. Every check under it compares an arriving offer
+                      to the text on *this* machine, and nothing in this product
+                      ever put that text here — a joiner refused every offer with
+                      a manifest derived from an empty notebook. The queue below
+                      only works once both ends are holding the same notebook, so
+                      the control that makes that true is drawn first. */}
+                  <section className="mt-3 border-t border-[var(--border)] pt-3">
+                    <NotebookShare
+                      live={sessionLive}
+                      hasNotebook={!!nb.source.trim()}
+                      proposed={nb.proposedNotebook}
+                      note={notebookShareNote}
+                      onShare={() => {
+                        void nb.shareNotebook().then((r) => {
+                          setNotebookShareNote(
+                            r.ok
+                              ? `Notebook signed and shared with ${r.sent} peer${r.sent === 1 ? "" : "s"}. A peer with an empty notebook takes it straight away; one with their own work is asked.`
+                              : r.why || "That notebook could not be shared."
+                          );
+                        });
+                      }}
+                      onAdopt={() => {
+                        const r = nb.adoptProposedNotebook();
+                        setNotebookShareNote(
+                          r.ok
+                            ? "Adopted. Both ends now hold the same text, so a cell handed across can be checked against it by digest."
+                            : r.why || "That notebook could not be adopted."
+                        );
+                      }}
+                      onDismiss={() => {
+                        nb.dismissProposedNotebook();
+                        setNotebookShareNote(
+                          "Kept yours. Nothing was sent to them — until one of you holds the other's text, a cell handed across is refused as a notebook this peer has not seen."
+                        );
+                      }}
+                    />
+                  </section>
 
                   {/* Below the connections, because it is what the connections
                       are *for*. The plan says where a cell runs, the panel

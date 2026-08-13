@@ -2,10 +2,14 @@
  * The documents a notebook session carries between peers, and the checks that
  * must pass before any of them is believed.
  *
- * Three are signed — a run manifest, a manifest attestation and a cell result —
- * and everything below about "signed by *this* peer" is about them. The fourth,
- * a cell handoff offer, is not signed and says why at `readHandoffOffer`; the
- * result travelling the other way is signed, and says why at `readSignedResult`.
+ * Four are signed — a run manifest, a manifest attestation, a cell result and a
+ * notebook proposal — and everything below about "signed by *this* peer" is
+ * about them. The fifth, a cell handoff offer, is not signed and says why at
+ * `readHandoffOffer`; the result travelling the other way is signed, and says
+ * why at `readSignedResult`. The proposal is the newest and the one with the
+ * least excuse for going unsigned — see `readSignedNotebook`: it is the only
+ * carried document the recipient has nothing of their own to check against,
+ * because it is what they will check everything else against afterwards.
  *
  * **The session is a courier, not a signer.** A run manifest and a manifest
  * attestation are produced by recipes the user read before pressing Run —
@@ -73,6 +77,7 @@ import { formatFingerprint } from "../utils.js";
 import { parseAttestation } from "../toolkit/attest.js";
 import { parseCellResult, parseHandoffOffer } from "../toolkit/handoff.js";
 import { manifestDigest, parseManifest } from "../toolkit/manifest.js";
+import { parseNotebookProposal } from "../toolkit/notebook-share.js";
 
 /**
  * The largest signed document this session will send or accept, in bytes of
@@ -336,6 +341,41 @@ export async function readSignedResult(signed, { key, fpr }) {
   const text = await verifySignedBy(signed, { key, fpr, what: "cell result" });
   const result = parseCellResult(text);
   return { result, digest: String(result.manifest), text };
+}
+
+/**
+ * A verified notebook proposal — the recipe text a peer is offering to be the
+ * notebook both ends run.
+ *
+ * **Signed, and this is the document where the argument for signing is
+ * strongest.** An offer travels unsigned because every field of it is checked
+ * against the recipient's own plan, their own notebook and a manifest they
+ * already hold. Turn that sentence around and you have this document: there is
+ * nothing on the receiving machine to check it against, because it *is* the
+ * notebook the later checks are made against. Adopting it decides what every
+ * cell digest covers, what the manifest digest the offer names is derived from,
+ * and what a receipt shown to somebody outside the room says was run. A pairwise
+ * session key answers who is on the channel now; only a signature is still there
+ * afterwards.
+ *
+ * The parse is `parseNotebookProposal` over `verifySignedBy`'s return, which is
+ * `CleartextMessage.getText()` — the bytes OpenPGP hashed. `parseNotebookProposal`
+ * refuses armor outright rather than unwrapping it a second way, so there is one
+ * answer to which bytes were signed and this is the only path that produces it.
+ *
+ * What the signature does **not** say is that the notebook is any good, or that
+ * running it is wise. It says whose text it is, which is the question a person
+ * deciding whether to adopt it is actually asking.
+ *
+ * @param {string} signed
+ * @param {{ key: import("openpgp").Key|undefined, fpr: string }} opts
+ * @returns {Promise<{ proposal: import("../toolkit/notebook-share.js").NotebookProposal,
+ *   text: string }>}
+ */
+export async function readSignedNotebook(signed, { key, fpr }) {
+  assertDocumentFits(signed, "notebook proposal");
+  const text = await verifySignedBy(signed, { key, fpr, what: "notebook proposal" });
+  return { proposal: parseNotebookProposal(text), text };
 }
 
 /**

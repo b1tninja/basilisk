@@ -305,7 +305,17 @@ bytes 00 | encode hex | out $seed
 /* ─────────────────────────────── the refusals ───────────────────────────── */
 
 describe("an offer against a manifest this peer has not seen is refused", () => {
-  it("says which of the two it might be, and guesses neither", async () => {
+  it("names where a manifest comes from, and what to press", async () => {
+    // This used to assert the refusal said the mismatch was "either a race,
+    // with the manifest still on its way, or a peer naming a run nobody
+    // committed to", and to end by telling the reader to ask for the signed
+    // manifest. Both halves described a product that did not exist: nothing
+    // published a manifest to be raced with, and `acceptHandoffOffer` never
+    // reads a received one anyway — `handoffContext` *derives* it from the
+    // notebook's text, title and roster. So the only thing a mismatch can mean
+    // is that the two ends are holding different notebooks, and the fix is the
+    // one press that ends that. `notebook-travels.test.js` is where the whole
+    // story is; this is the unit keeping the sentence honest.
     const { built } = await offerFrom();
     const verdict = await acceptHandoffOffer(built.offer, {
       plan: planFor(HANDED, "okafor"),
@@ -314,7 +324,11 @@ describe("an offer against a manifest this peer has not seen is refused", () => 
     });
     expect(verdict.ok).toBe(false);
     expect(verdict.refusals[0].reason).toBe("unknown-manifest");
-    expect(verdict.refusals[0].message).toContain("either a race");
+    expect(verdict.refusals[0].message).toContain(
+      "A manifest is derived from the notebook on this machine"
+    );
+    expect(verdict.refusals[0].message).toContain("The notebook itself");
+    expect(verdict.refusals[0].message).not.toContain("either a race");
     expect(verdict.bindings).toEqual([]);
   });
 });

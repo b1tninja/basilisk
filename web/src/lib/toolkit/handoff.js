@@ -1090,11 +1090,14 @@ export async function acceptHandoffOffer(offer, ctx) {
       held,
       "unknown-manifest",
       `This offer is against a run manifest this peer has not seen` +
-        `${held ? " — the manifest held here digests to something else" : ""}. ` +
-        "That is either a race, with the manifest still on its way, or a peer " +
-        "naming a run nobody committed to; both are answered the same way and " +
-        "neither is answered by guessing. Ask for the signed manifest, check it, " +
-        "and offer again against the digest it actually has."
+        `${held ? " — the one this notebook produces digests to something else" : ""}. ` +
+        "A manifest is derived from the notebook on this machine: its text, its " +
+        "title, and the roster the room agrees on. So this says the two ends are " +
+        "not holding the same notebook, and most often that nothing has been " +
+        "shared into this one yet. Have whoever is driving share theirs — " +
+        "Connections, under \"The notebook itself\" — and the same offer is then " +
+        "checked against the same text, which is the whole of what this gate is " +
+        "for."
     );
     return stop();
   }
@@ -1596,10 +1599,12 @@ export async function acceptCellResult(result, ctx) {
       held,
       "unknown-manifest",
       `This result is against a run manifest this peer has not seen` +
-        `${held ? " — the manifest held here digests to something else" : ""}. ` +
-        "Nothing was committed to under that digest here, so there is no run " +
-        "for a value to be returned into. Ask for the signed manifest and check " +
-        "it before anything is accepted against it."
+        `${held ? " — the one this notebook produces digests to something else" : ""}. ` +
+        "Nothing was committed to under that digest here, so there is no run for " +
+        "a value to be returned into. A manifest is derived from the notebook on " +
+        "this machine, so the two ends are not holding the same one — which for a " +
+        "result means the notebook here changed after the cell went out, since " +
+        "they could not have been offered it otherwise."
     );
     return stop();
   }

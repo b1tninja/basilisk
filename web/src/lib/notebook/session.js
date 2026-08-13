@@ -38,21 +38,37 @@
  * `readyState` — because the frames on it are this layer's own, sealed under a key
  * this layer holds and the transport cannot read.
  *
- * **The session is a courier, not a signer.** Four more payload kinds ride the
+ * **The session is a courier, not a signer.** Five more payload kinds ride the
  * `session` frame beside `kc` and `chat` — a signed run manifest, a signed
- * manifest attestation, a cell handoff offer and a signed cell result. The three
- * signed ones arrive already signed and leave already signed: `publishManifest`
- * and `sendResult` refuse anything that is not a cleartext-signed document, and
- * there is no path from a payload to `this.privateKey`. The private key is here
- * to seal signalling envelopes for a room this session is already in, and a
- * commitment about what a notebook will do is not that. `approval-gate.js` puts
- * it as *"Grants are minted only by a human clicking, never by a param."*
+ * manifest attestation, a signed notebook proposal, a cell handoff offer and a
+ * signed cell result. The four signed ones arrive already signed and leave
+ * already signed: `publishManifest`, `shareNotebook` and `sendResult` refuse
+ * anything that is not a cleartext-signed document, and there is no path from a
+ * payload to `this.privateKey`. The private key is here to seal signalling
+ * envelopes for a room this session is already in, and a commitment about what a
+ * notebook will do is not that. `approval-gate.js` puts it as *"Grants are
+ * minted only by a human clicking, never by a param."*
  *
  * The mirror of that rule is that **an arriving manifest runs nothing and
  * attests to nothing**. It is verified, parsed and handed to `onManifest` as an
  * object a person can look at — the same discipline as an `#r=` link, which
  * `useNotebook.loadFromHash` loads without running. Answering a manifest is a
  * recipe somebody types.
+ *
+ * **A notebook proposal is the one document that arrives before there is
+ * anything to check it against, and it is signed for exactly that reason.**
+ * `shareNotebook` broadcasts the recipe text a person pressed Share on, and
+ * `_onDocument` verifies it against the sending peer's own key before anybody
+ * sees it. Until it existed nothing in this product ever gave a joiner the
+ * notebook: an invite carries an audience and no recipe, and `acceptHandoffOffer`
+ * checks an arriving offer against the recipient's *own* text — so a joiner who
+ * had never been handed any refused every offer with `unknown-manifest`, a
+ * refusal whose own sentence names a step no code performed. Nothing about the
+ * digest gate changed. Both ends still hold the same text and still prove it by
+ * digest; one of them may now receive it, signed, instead of being required to
+ * retype it. **Adopting is still a person's**, and it happens in the shell:
+ * `onNotebook` hands up a parsed proposal and this class replaces nobody's
+ * notebook.
  *
  * **A handoff offer runs nothing either, and it is not signed.** `sendOffer`
  * carries the JSON `lib/toolkit/handoff.js` built, to *one* confirmed peer,
@@ -77,7 +93,7 @@
  * order to judge what comes back is a decision, and the deciding is done where
  * the plan is.
  *
- * All four kinds inherit `chat`'s refusal exactly: nothing is believed from a
+ * All five kinds inherit `chat`'s refusal exactly: nothing is believed from a
  * peer whose key is not confirmed. `lib/notebook/documents.js` holds what
  * happens after that — above all, that a document is checked against *this*
  * peer's key and no other.
@@ -123,6 +139,7 @@ import {
   readHandoffOffer,
   readSignedAttestation,
   readSignedManifest,
+  readSignedNotebook,
   readSignedResult,
 } from "./documents.js";
 import { canonicalAudience, deriveRoomMaterial, isValidRoomId } from "./room.js";
@@ -207,6 +224,17 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   attestation: import("../toolkit/attest.js").ManifestAttestation,
  * }) => void} [onAttestation]
  * @property {(doc: {
+ *   from: string, signed: string, ts: number,
+ *   proposal: import("../toolkit/notebook-share.js").NotebookProposal,
+ * }) => void} [onNotebook]
+ *   A notebook proposal that arrived, was checked against the sender's key, and
+ *   parsed. **Nothing has been adopted**: this is recipe text somebody can now
+ *   look at, and replacing a notebook with it is a decision made where a
+ *   notebook exists — which is not here. The rule the shell above keeps is that
+ *   an empty notebook adopts (that is the joiner's whole problem, and requiring
+ *   a press to receive the first one would reproduce it) while a notebook with
+ *   the local user's own work in it does not, and waits for one.
+ * @property {(doc: {
  *   from: string, cell: number, manifest: string, ts: number,
  *   offer: import("../toolkit/handoff.js").HandoffOffer,
  * }) => void} [onOffer]
@@ -243,6 +271,21 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  */
 const ATTESTED_PER_PEER_CAP = 64;
 
+/**
+ * What each broadcast document is called in a sentence a person reads.
+ *
+ * Two of the three are called what the wire calls them. `notebook` is not: the
+ * wire kind names the *thing* being carried and the sentence has to name the
+ * *document* carrying it, or a refusal reads as though a notebook were the file
+ * that failed rather than the proposal about one.
+ * @type {Record<string, string>}
+ */
+const DOCUMENT_NOUN = Object.freeze({
+  manifest: "manifest",
+  attestation: "attestation",
+  notebook: "notebook proposal",
+});
+
 export class NotebookSession {
   /** @param {NotebookSessionOpts} opts */
   constructor(opts) {
@@ -262,6 +305,7 @@ export class NotebookSession {
     this.onChat = opts.onChat;
     this.onManifest = opts.onManifest;
     this.onAttestation = opts.onAttestation;
+    this.onNotebook = opts.onNotebook;
     this.onOffer = opts.onOffer;
     this.onResult = opts.onResult;
     this.onStatus = opts.onStatus;
@@ -807,6 +851,34 @@ export class NotebookSession {
   }
 
   /**
+   * Put the notebook itself in front of the room, signed.
+   *
+   * **Broadcast, unlike an offer.** An offer is addressed because it hands one
+   * cell to one peer and the wire is the only place that addressing may live; a
+   * notebook is the thing the whole room has to agree on before any offer can be
+   * read at all, so every confirmed peer gets it. A peer who already holds this
+   * text sees a proposal identical to what they have and adopts nothing — the
+   * shell's own comparison, not this layer's.
+   *
+   * **Takes the signed document, not a proposal object**, exactly as
+   * `publishManifest` does and for a sharper version of the same reason: a
+   * `shareNotebook(proposal)` that reached for `this.privateKey` would put this
+   * session's name on text nobody read, and the receiving end's whole decision
+   * about whether to adopt is a decision about *whose* text it is.
+   *
+   * Returns a count, not a promise: only confirmed peers are written to, so a
+   * room mid-handshake is a room this returns a smaller number for, and a caller
+   * that needs everybody to hold the notebook must compare it against the
+   * roster. Nothing here can make an unmeshed peer appear.
+   *
+   * @param {string} signed  armored cleartext-signed notebook proposal
+   * @returns {Promise<number>} peers written to
+   */
+  async shareNotebook(signed) {
+    return this._publishDocument("notebook", signed);
+  }
+
+  /**
    * Hand one cell handoff offer to one peer.
    *
    * **Addressed, not broadcast**, and that is the only place an offer is
@@ -965,18 +1037,23 @@ export class NotebookSession {
    * that needs everyone to have seen a manifest must compare it against the
    * roster, because nothing here can make an unmeshed peer appear.
    *
-   * @param {"manifest"|"attestation"} kind
+   * @param {"manifest"|"attestation"|"notebook"} kind
    * @param {string} signed
    * @returns {Promise<number>}
    */
   async _publishDocument(kind, signed) {
     const doc = String(signed ?? "");
+    // The kind is the wire's word for the document; this is the reader's. They
+    // differ for exactly one of the three, and letting the wire's word into a
+    // sentence would produce "notebook: notebook must arrive already signed",
+    // which names the module twice and the document never.
+    const noun = DOCUMENT_NOUN[kind] || kind;
     // Refused before anything is encrypted, so an oversized document fails in
     // the author's hands and not in the room.
-    assertDocumentFits(doc, kind);
+    assertDocumentFits(doc, noun);
     if (!looksCleartextSigned(doc)) {
       throw new Error(
-        `notebook: ${kind} must arrive here already signed — pipe it through ` +
+        `notebook: ${noun} must arrive here already signed — pipe it through ` +
           "`gpg.sign key=$me` first. The session carries documents between " +
           "peers; it does not sign on anyone's behalf."
       );
@@ -1659,7 +1736,11 @@ export class NotebookSession {
         });
         return;
       }
-      if (msg.kind === "manifest" || msg.kind === "attestation") {
+      if (
+        msg.kind === "manifest" ||
+        msg.kind === "attestation" ||
+        msg.kind === "notebook"
+      ) {
         await this._onDocument(peerFpr, peer, msg);
         return;
       }
@@ -1678,7 +1759,7 @@ export class NotebookSession {
   }
 
   /**
-   * A signed manifest or attestation off a peer's channel.
+   * A signed manifest, attestation or notebook proposal off a peer's channel.
    *
    * **Dropped, not queued, before key confirmation.** The refusal is `chat`'s,
    * inherited on purpose: a peer whose key is not confirmed is not anyone in
@@ -1701,6 +1782,14 @@ export class NotebookSession {
    * on somebody else's signed manifest as if it were traffic: it verifies
    * against the original signer's key, not the forwarder's, and is refused.
    *
+   * The third kind arrived here rather than beside it because that paragraph is
+   * the whole argument for signing a notebook proposal, sharpened: a proposal is
+   * the one carried document the recipient holds nothing to check against, since
+   * it is what they will check everything else against. **Nothing is adopted
+   * here.** The parsed proposal goes up through `onNotebook` and the notebook on
+   * the machine is untouched, which is the same shape as a manifest arriving and
+   * running nothing.
+   *
    * Every failure here is reported and swallowed. A malformed document, a
    * signature from the wrong key, a manifest three versions old: each is one
    * peer's frame going nowhere, and none of them is a reason for a session
@@ -1712,11 +1801,18 @@ export class NotebookSession {
    */
   async _onDocument(peerFpr, peer, msg) {
     if (!peer.kcVerified) return;
-    const kind = msg.kind === "manifest" ? "manifest" : "attestation";
+    const kind = DOCUMENT_NOUN[msg.kind] ? msg.kind : "attestation";
     const doc = String(msg.doc ?? "");
     const ts = Number(msg.ts) || Date.now();
     const key = this.audienceKeys.get(peerFpr);
     try {
+      if (kind === "notebook") {
+        const { proposal } = await readSignedNotebook(doc, { key, fpr: peerFpr });
+        // Verified, parsed, and that is all. Nothing here replaces a notebook,
+        // and this class has none to replace.
+        this.onNotebook?.({ from: peerFpr, proposal, signed: doc, ts });
+        return;
+      }
       if (kind === "manifest") {
         const { manifest, digest } = await readSignedManifest(doc, {
           key,
@@ -1742,9 +1838,8 @@ export class NotebookSession {
     } catch (err) {
       this.onError?.(
         new Error(
-          `notebook: ${kind} from ${formatFingerprint(peerFpr)} refused — ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `notebook: ${DOCUMENT_NOUN[kind]} from ${formatFingerprint(peerFpr)} ` +
+            `refused — ${err instanceof Error ? err.message : String(err)}`
         )
       );
     }

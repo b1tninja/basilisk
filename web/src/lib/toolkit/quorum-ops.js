@@ -166,6 +166,23 @@ function emitHandoffs() {
   );
 }
 
+/**
+ * A notebook a peer proposed. The event carries nothing but *that one arrived*.
+ *
+ * The same shape as `emitHandoffs` and for the same reason: the document lives
+ * on the exchange and the shell reads it with `getProposedNotebook`, so there is
+ * one copy of it. An event that carried the recipe text would be a second copy
+ * that a listener could act on after the first had been superseded.
+ */
+function emitNotebookProposal() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent("basilisk:quorum-notebook", {
+      detail: { from: current?.notebook?.from || "" },
+    })
+  );
+}
+
 /** @param {Partial<QuorumExchangeState>} patch */
 function patchState(patch) {
   if (!current) return;
@@ -287,6 +304,38 @@ export function getPendingHandoffs() {
 }
 
 /**
+ * The notebook a peer last proposed, or null.
+ *
+ * **One slot, not a queue**, which is the opposite of `handoffs` and deliberate:
+ * an offer and a result each name a particular cell of a particular run and must
+ * be answered one at a time, while a notebook proposal is a peer saying *this is
+ * the notebook now*. A queue of them would let a person adopt the second-to-last
+ * text somebody sent, which is a state neither end asked for. The latest
+ * proposal replaces the one before it, exactly as `peer.publishedManifest` keeps
+ * one digest rather than a list, and for the same reason: what a peer is
+ * standing behind is whatever they last stood behind.
+ *
+ * A copy, so a caller cannot edit the exchange's own record of what arrived.
+ */
+export function getProposedNotebook() {
+  return current?.notebook ? { ...current.notebook } : null;
+}
+
+/**
+ * Forget the proposal on the slot.
+ *
+ * Called after the shell has adopted it, or after a person has dismissed it —
+ * both are "this one has been answered". Separate from adopting for
+ * `takeHandoff`'s reason: clearing the record and acting on the document are two
+ * different things, and only the second is consent.
+ */
+export function clearProposedNotebook() {
+  if (!current?.notebook) return;
+  current.notebook = null;
+  emitNotebookProposal();
+}
+
+/**
  * Remove one pending item and hand it back, or `null` if it is already gone.
  *
  * Taking is separate from accepting on purpose. `acceptHandoffOffer` and
@@ -318,6 +367,10 @@ export function closeQuorumExchange(reason = "closed") {
   }
   ex.inbox.length = 0;
   ex.handoffs.length = 0;
+  // The proposal goes with the room it was made in. Kept past the close it would
+  // invite adopting a notebook from a session that no longer exists, against a
+  // roster that no longer names anybody.
+  ex.notebook = null;
   // A pool describes the room that drew it. Kept past the close it would be
   // recorded against the next room's manifest, which is a document claiming a
   // value those participants never chose.
@@ -334,6 +387,7 @@ export function closeQuorumExchange(reason = "closed") {
   // After `current` is cleared, so the count it reports is the one a reader can
   // now observe: nothing pending, because there is nothing to be pending in.
   emitHandoffs();
+  emitNotebookProposal();
 }
 
 if (typeof window !== "undefined") {
@@ -615,6 +669,32 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       });
       emitHandoffs();
     },
+    /**
+     * The notebook a peer is proposing both ends run.
+     *
+     * Verified against that peer's key by `documents.js` before it gets here,
+     * and **adopted by nobody in this module**. It goes on one slot and the
+     * shell is told to look: whether it replaces the notebook on screen depends
+     * on whether there is anything on screen to replace, which is a question
+     * this layer cannot see the answer to.
+     *
+     * Recorded even when the shell will adopt it automatically. The slot is what
+     * a person reads to find out whose text they are looking at, and a proposal
+     * that arrived and left no trace would make "where did this notebook come
+     * from" unanswerable.
+     */
+    onNotebook: (doc) => {
+      const ex = current;
+      if (!ex) return;
+      ex.notebook = {
+        from: doc.from,
+        title: doc.proposal.title,
+        source: doc.proposal.source,
+        proposedAt: doc.proposal.proposedAt,
+        ts: doc.ts,
+      };
+      emitNotebookProposal();
+    },
     onChat: (msg) => {
       const ex = current;
       if (!ex) return;
@@ -689,6 +769,12 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     inbox: [],
     recvWaiters: [],
     handoffs: [],
+    /**
+     * The notebook a peer last proposed — one slot, see `getProposedNotebook`.
+     * @type {{ from: string, title: string, source: string, proposedAt: string,
+     *   ts: number } | null}
+     */
+    notebook: null,
     privateKey,
     cancelled: false,
     ownKeyElsewhere: false,

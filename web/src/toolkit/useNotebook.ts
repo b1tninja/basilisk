@@ -9,9 +9,16 @@ import {
   getPendingHandoffs,
   takeHandoff,
   getLiveSession,
+  getProposedNotebook,
+  clearProposedNotebook,
   rotateQuorumRoom,
   signSessionDocument,
 } from "../lib/toolkit/quorum-ops.js";
+import {
+  buildNotebookProposal,
+  decideProposal,
+  proposalToJson,
+} from "../lib/toolkit/notebook-share.js";
 import { sessionRecipe } from "../lib/toolkit/session-flow.js";
 import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
 import { planRun } from "../lib/toolkit/plan.js";
@@ -626,11 +633,19 @@ export function useNotebook() {
     // fall past the three branches, so the seed below can read `inputs` at all.
     //
     // `join` is here for a stronger reason than "carries no seed": an invite
-    // must never load a notebook. The session does not carry the recipe — both
-    // sides arrive at the same text independently, which is what makes a shared
-    // run a reproducible build — so a link that opened a session *and* replaced
-    // your notebook would be exactly the thing this design refuses. The shell
-    // reads `#j=` for itself and opens the session sheet; nothing here does.
+    // must never load a notebook. Both ends holding the same text and proving it
+    // by digest is what makes a shared run a reproducible build, and a link that
+    // opened a session *and* replaced your notebook would decide that for you
+    // while you were clicking something else. The shell reads `#j=` for itself
+    // and opens the session sheet; nothing here does.
+    //
+    // The recipe does now travel — signed, over the session, and adopted through
+    // `considerProposal` below. That is not this rule being relaxed: it is the
+    // mechanism the rule always presumed and never had. A joiner used to arrive
+    // with an empty notebook and refuse every cell handed to them, against a
+    // manifest derived from the emptiness. What changed is that one end may
+    // receive the text, from a named peer, visibly; the digest check on every
+    // handed-over cell is untouched.
     //
     // `tray` for the milder version of the same rule: `#keys` asks for a panel,
     // and opening the vault is not a reason to discard the notebook somebody
@@ -1986,6 +2001,204 @@ export function useNotebook() {
   );
 
   /**
+   * The notebook as it stands right now, for the arrival path to read.
+   *
+   * A ref rather than a dependency of the listener below, because the listener
+   * must see the notebook *at the moment a proposal lands* and re-subscribing on
+   * every keystroke would put an add/remove pair between each character and the
+   * one before it. Written in an effect with no dependency list, which runs after
+   * every render, so it is never behind what the editor shows.
+   */
+  const notebookRef = useRef({ title, source });
+  useEffect(() => {
+    notebookRef.current = { title, source };
+  });
+
+  /**
+   * The last text this browser adopted, and who from.
+   *
+   * This is how "has the local user edited since the last adopt" is answered,
+   * and it is answered by **comparing the text to itself**, not by watching for
+   * edits. A boolean flag would have to be set at each of the two dozen places
+   * that mutate `chains`, and the failure mode of missing one is silent and
+   * destructive: a peer's proposal overwrites work the flag said was not there.
+   * Text against text cannot miss a mutator, cannot be defeated by a new one,
+   * and gives the honest answer when somebody types a character and deletes it
+   * again. It is also not an inference from a proxy signal — focus, a dirty bit,
+   * a keypress count — it is the question itself.
+   */
+  const adoptedRef = useRef<{ from: string; title: string; source: string } | null>(null);
+
+  /**
+   * A notebook a peer proposed that this browser will not adopt on its own.
+   *
+   * Non-null only in the case that needs a person: there is work here, it is not
+   * the proposed text, and it is not text this browser adopted and left alone.
+   * Everything else is decided without a press — see `considerProposal`.
+   */
+  const [proposedNotebook, setProposedNotebook] = useState<{
+    from: string;
+    title: string;
+    source: string;
+    ts: number;
+  } | null>(null);
+
+  /**
+   * Replace this notebook with the one a peer proposed.
+   *
+   * The text is stored back as it will actually settle: `loadRecipeText`
+   * compiles and the editor's `source` is the *re-serialisation* of what it
+   * compiled, so recording the proposal's own bytes would leave this ref
+   * disagreeing with the notebook for any sender whose text was not already in
+   * that form — and the next proposal from them would then read as "the local
+   * user has edited" and stop. It is a fixed point for anything this build
+   * sends, and this line is what makes it not matter when it is not.
+   */
+  const adoptProposal = useCallback(
+    (p: { from: string; title: string; source: string }) => {
+      const { ast } = compileRecipe(p.source);
+      if (!ast) {
+        setRunError(
+          `The notebook ${formatFingerprint(p.from)} sent does not parse in this ` +
+            "build, so there is nothing to adopt. Nothing here was changed — ask " +
+            "them which version they are running."
+        );
+        return false;
+      }
+      loadRecipeText(p.title, p.source);
+      const settled = serializeRecipe(
+        ast.chains?.length ? ast.chains : [{ steps: ast.steps || [] }]
+      );
+      adoptedRef.current = { from: p.from, title: p.title, source: settled };
+      setProposedNotebook(null);
+      clearProposedNotebook();
+      return true;
+    },
+    [loadRecipeText]
+  );
+
+  /**
+   * What to do about the notebook a peer just proposed.
+   *
+   * The rule is `decideProposal`, in `notebook-share.js`, and it is there rather
+   * than here because it is the rule that decides whether somebody's work is
+   * replaced — a thing a test should be able to drive without a browser. This is
+   * the half that cannot be pure: it does the replacing.
+   */
+  const considerProposal = useCallback(() => {
+    const proposal = getProposedNotebook();
+    if (!proposal) {
+      setProposedNotebook(null);
+      return;
+    }
+    const { action } = decideProposal({
+      proposal,
+      here: notebookRef.current,
+      adopted: adoptedRef.current,
+    });
+    if (action === "same") {
+      // Recorded as adopted even though nothing was replaced: this browser and
+      // that peer are holding the same text, which is the state the untouched
+      // rule is asking about, and reaching it by typing along is no different
+      // from reaching it by pressing Adopt.
+      adoptedRef.current = {
+        from: proposal.from,
+        title: proposal.title,
+        source: notebookRef.current.source,
+      };
+      setProposedNotebook(null);
+      clearProposedNotebook();
+      return;
+    }
+    if (action === "adopt") {
+      adoptProposal(proposal);
+      return;
+    }
+    setProposedNotebook(proposal);
+  }, [adoptProposal]);
+
+  useEffect(() => {
+    const onProposal = () => considerProposal();
+    window.addEventListener("basilisk:quorum-notebook", onProposal);
+    // A proposal can land between the exchange opening and this listener
+    // existing — the session meshes inside `quorum.offer`, which is a cell of a
+    // run this hook started. Asking once on mount is what makes that arrival a
+    // late one rather than a lost one.
+    considerProposal();
+    return () => window.removeEventListener("basilisk:quorum-notebook", onProposal);
+  }, [considerProposal]);
+
+  /** Adopt the pending proposal. The press the fourth case above waits for. */
+  const adoptProposedNotebook = useCallback(() => {
+    if (!proposedNotebook) return { ok: false, why: "Nothing has been proposed." };
+    if (!adoptProposal(proposedNotebook)) {
+      return { ok: false, why: "That notebook does not parse in this build." };
+    }
+    return { ok: true, from: proposedNotebook.from };
+  }, [adoptProposal, proposedNotebook]);
+
+  /** Dismiss it, keeping what is here. Their text is gone; theirs still runs. */
+  const dismissProposedNotebook = useCallback(() => {
+    setProposedNotebook(null);
+    clearProposedNotebook();
+  }, []);
+
+  /**
+   * Put this notebook in front of the room, signed.
+   *
+   * **The transport the digest gate was always written against.** Every check in
+   * `handoff.js` compares an arriving offer to the recipient's *own* text, which
+   * is what makes a shared run a reproducible build rather than a screen share —
+   * and until this call existed nothing ever gave the other end that text, so a
+   * joiner refused every offer against a manifest derived from an empty
+   * notebook. Nothing about the gate is relaxed here. Both ends still hold the
+   * same text and still prove it by digest; one of them may now receive it.
+   *
+   * Signed with the key the session was opened under, at the moment a person
+   * presses Share — the same consent boundary `sendCellResult` crosses, and for
+   * a stronger reason: the receiving end has nothing of its own to check this
+   * against, because this is what it will check everything else against.
+   *
+   * `buildNotebookProposal` refuses a notebook that looks like it holds private
+   * key material, before anything is signed and before anything is sent.
+   */
+  const shareNotebook = useCallback(async () => {
+    const session = getLiveSession();
+    if (!session) return { ok: false, why: "No live session to share this notebook on." };
+    let signed: string;
+    try {
+      const proposal = buildNotebookProposal({ title, source });
+      signed = await signSessionDocument(proposalToJson(proposal));
+    } catch (err) {
+      return { ok: false, why: err instanceof Error ? err.message : String(err) };
+    }
+    let sent = 0;
+    try {
+      sent = await session.shareNotebook(signed);
+    } catch (err) {
+      return { ok: false, why: err instanceof Error ? err.message : String(err) };
+    }
+    if (!sent) {
+      // A count, not a promise — `_publishDocument` writes to confirmed peers
+      // only, so zero is a room that has not meshed rather than a failure to
+      // send, and saying "shared" here would be a claim nobody can act on.
+      return {
+        ok: false,
+        why:
+          "Nobody in this room has a confirmed channel yet, so the notebook went " +
+          "nowhere. It is still here — share it again once a peer is verified.",
+      };
+    }
+    // `adoptedRef` is deliberately not touched. It records what this browser
+    // took from a peer, and sharing is the other direction — writing this
+    // browser's own text into it would make the *next* proposal from whoever it
+    // last adopted from land silently on the strength of an act they had no part
+    // in. An echo of what was just sent is caught by the same-notebook branch of
+    // `considerProposal`, which needs no record at all.
+    return { ok: true, sent };
+  }, [source, title]);
+
+  /**
    * Hand a skipped cell to the peer it belongs to.
    *
    * The offer carries the values that cell reads and nothing else —
@@ -2319,6 +2532,10 @@ export function useNotebook() {
     offerCell,
     sendCellResult,
     acceptHandoff,
+    shareNotebook,
+    proposedNotebook,
+    adoptProposedNotebook,
+    dismissProposedNotebook,
     copyRecipe,
     unlockKey,
     lockKey,
