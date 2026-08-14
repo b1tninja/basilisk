@@ -148,6 +148,45 @@ export type SessionStartProps = {
   onAudience: (audience: string[]) => void;
   /** What the paste box found, as `pasteReadout` read it. */
   onPaste: (result: PasteResult) => void;
+  /**
+   * The ceremony this exact room would get, and the press that writes it.
+   *
+   * **It lives on the picker because the picker is what decides it.** A split
+   * ceremony needs one send cell and one receive cell per holder, a `shares`
+   * count equal to the room, and a whole fingerprint in every header and every
+   * `to=` — none of which can be written down before the audience exists. That
+   * is the chicken-and-egg this answers: choose who is in the room here, and the
+   * notebook falls out of the list rather than being composed against people who
+   * have not been named yet.
+   *
+   * Everything in it is computed by `lib/toolkit/room-ceremony.js`, which is
+   * where the arithmetic and the copy are argued. This widget takes plain props
+   * and reads no store, so the numbers in the sentences and the numbers in the
+   * recipe arrive together and cannot disagree.
+   */
+  ceremony?: {
+    /** `roomCeremonySummary` — one sentence per fact, each about this room. */
+    summary: string[];
+    /** `roomCeremonyIssues` — why it cannot be written, naming the count. */
+    issues: string[];
+    /** The notebook as `serializeRecipe` will hold it, headers and all. */
+    text: string;
+    /**
+     * One line per cell, in cell order, with the phase it belongs to.
+     *
+     * The recipe below it is the truth and this is the reading of it, and both
+     * are needed: eleven cells of forty-character fingerprints is not a thing a
+     * person can scan for "which of these run now and which run when I want the
+     * secret back" — which is the half of the product owner's report that is
+     * about *running* the ceremony rather than composing it.
+     */
+    cells: { phase: "deal" | "recover"; why: string }[];
+    threshold: number;
+    shares: number;
+    onWrite: () => void;
+    /** What the last press did, or "" — a live region, like `relabelNote`. */
+    note?: string;
+  };
   /** `startIssues` output — every reason this cannot start yet, as sentences. */
   issues: string[];
   /** The link this audience would produce, or null while it would produce none. */
@@ -290,6 +329,7 @@ export function SessionStart({
   neverTrusted = [],
   onAudience,
   onPaste,
+  ceremony,
   issues,
   inviteUrl,
   onCopyInvite,
@@ -304,6 +344,7 @@ export function SessionStart({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [showRecipe, setShowRecipe] = useState(false);
+  const [showCeremony, setShowCeremony] = useState(false);
   /**
    * The sentence an add refused with, or "".
    *
@@ -315,6 +356,7 @@ export function SessionStart({
    */
   const [addRefusal, setAddRefusal] = useState("");
   const issuesId = useId();
+  const ceremonyIssuesId = useId();
   const inRoom = new Set(audience.map((f) => f.toUpperCase()));
   const refused = new Set(neverTrusted.map((f) => f.toUpperCase()));
   const offering = role === "offer";
@@ -722,6 +764,166 @@ export function SessionStart({
           </p>
         </div>
       </div>
+
+      {/* The ceremony for these people, offered where they were chosen.
+
+          Above the invite rather than below it, because that is the order the
+          two acts happen in: the notebook has to exist before Share has
+          anything to send, and Share is what carries it to everyone the invite
+          brought in. Below the room list rather than beside the Start button,
+          because what it is generated *from* is the list — a reader who adds a
+          person watches the numbers in these sentences change. */}
+      {ceremony ? (
+        <section className="flex flex-col gap-1.5" data-room-ceremony>
+          <span className="text-[11px] font-bold text-[var(--foreground)]">
+            A split-key ceremony for this room
+          </span>
+
+          {/* Every sentence names something true of this room and this many
+              people. The one that corrects a wrong assumption — that this is
+              distributed key generation — is in the list rather than behind a
+              disclosure, because a reader who never opens the disclosure is
+              exactly the reader who will assume it. */}
+          {ceremony.summary.length ? (
+            <ul className="flex list-none flex-col gap-1 p-0" data-room-ceremony-summary>
+              {ceremony.summary.map((line) => (
+                <li
+                  key={line}
+                  className="text-[10.5px] leading-snug text-[var(--muted-foreground)]"
+                >
+                  {line}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {/* The refusals, drawn as their own list for the reason the Start
+              issues below are: the button borrows all of them rather than
+              choosing one to name, so fixing the one it picked and finding it
+              still dead cannot happen. */}
+          {ceremony.issues.length ? (
+            <ul
+              id={ceremonyIssuesId}
+              className="flex list-none flex-col gap-1 p-0"
+              data-room-ceremony-issues
+              data-disabled-reason
+            >
+              {ceremony.issues.map((issue) => (
+                <li
+                  key={issue}
+                  className="border-l-2 border-[var(--warn)] pl-2 text-[10.5px] leading-snug text-[var(--muted-foreground)]"
+                >
+                  {issue}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {/* The cells before they are written, on the same principle as "Show
+              the cells this writes" below: a generated notebook that could not
+              be read before it replaced yours would be the one thing in this
+              app you had to take on trust. The whole fingerprints are in it and
+              stay whole — a `pre` scrolls rather than eliding. */}
+          {ceremony.text ? (
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                className="self-start text-[10.5px] text-[var(--brand)] underline"
+                aria-expanded={showCeremony}
+                onClick={() => setShowCeremony((v) => !v)}
+              >
+                {showCeremony ? "Hide" : "Show"} the {ceremony.cells.length} cells this
+                writes
+              </button>
+              {showCeremony ? (
+                <>
+                  {/* The two phases, named and counted, before the recipe. A
+                      ceremony that could only be understood by reading eleven
+                      pipelines is the complaint this whole feature answers, and
+                      the ordering — deal now, recover when you need it — is the
+                      part of it that is about running rather than composing.
+
+                      Numbered from **zero**, because that is what the badge on
+                      the cell says. The notebook draws `[0]` on its first cell,
+                      so a list numbered from one would be a reading of the
+                      notebook that disagreed with the notebook by one row all
+                      the way down — worse than no numbers at all. */}
+                  {(["deal", "recover"] as const).map((phase) => {
+                    const rows = ceremony.cells
+                      .map((c, i) => ({ ...c, at: i }))
+                      .filter((c) => c.phase === phase);
+                    if (!rows.length) return null;
+                    return (
+                      <div key={phase} className="flex flex-col gap-0.5">
+                        <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
+                          {phase === "deal"
+                            ? `Dealing — ${rows.length} cells, run once, together`
+                            : `Recovering — ${rows.length} cells, run when the secret is wanted back`}
+                        </span>
+                        <ol
+                          className="flex list-none flex-col gap-0.5 p-0"
+                          data-room-ceremony-phase={phase}
+                        >
+                          {rows.map((c) => (
+                            <li
+                              key={c.at}
+                              className="text-[10px] leading-snug text-[var(--muted-foreground)]"
+                            >
+                              <span className="font-mono">[{c.at}]</span> {c.why}
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    );
+                  })}
+                  <pre
+                    className="overflow-x-auto rounded-[6px] border border-[var(--border)] bg-[var(--surface)] p-2 font-mono text-[10px] text-[var(--muted-foreground)]"
+                    data-room-ceremony-recipe
+                  >
+                    {ceremony.text}
+                  </pre>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="secondary"
+              // Every sentence, and pointed at the list above rather than
+              // printed again — the same arrangement Start has below, for the
+              // same reason: one refusal, on screen once, announced once.
+              disabledReason={
+                ceremony.issues.length ? ceremony.issues.join(" ") : undefined
+              }
+              reasonId={ceremony.issues.length ? ceremonyIssuesId : undefined}
+              onClick={ceremony.onWrite}
+            >
+              {ceremony.issues.length
+                ? "Write the ceremony"
+                : `Write the ${ceremony.threshold}-of-${ceremony.shares} ceremony`}
+            </Button>
+            {/* Named rather than implied. This replaces the notebook, and a
+                control that quietly discards what somebody was writing is the
+                one kind of press this app does not make. */}
+            <span className="text-[10px] leading-snug text-[var(--muted-foreground)]">
+              Replaces the notebook you have open.
+            </span>
+          </div>
+
+          {/* Always rendered, for the reason the two live regions above are: a
+              region created at the moment of its first message is a message
+              some screen readers never announce. */}
+          <p
+            aria-live="polite"
+            data-room-ceremony-note={ceremony.note ? "1" : ""}
+            className="text-[10.5px] leading-snug text-[var(--brand)]"
+          >
+            {ceremony.note || ""}
+          </p>
+        </section>
+      ) : null}
 
       <InviteCard
         url={inviteUrl}

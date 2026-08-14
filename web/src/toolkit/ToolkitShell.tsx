@@ -130,6 +130,10 @@ import {
   startIssues,
 } from "../lib/toolkit/session-flow.js";
 import {
+  roomCeremony,
+  roomCeremonySummary,
+} from "../lib/toolkit/room-ceremony.js";
+import {
   keyPower,
   keyPowerReadout,
   loadedCount,
@@ -1166,6 +1170,16 @@ export function ToolkitShell() {
   const [relabelNote, setRelabelNote] = useState("");
 
   /**
+   * What the last "Write the ceremony" press did, or "".
+   *
+   * Its own region rather than sharing `relabelNote`, because the two describe
+   * opposite events — one is a notebook being replaced on purpose, the other is
+   * cells being stranded by a room that moved — and one line holding whichever
+   * happened last would make the reader work out which.
+   */
+  const [ceremonyNote, setCeremonyNote] = useState("");
+
+  /**
    * Change who is in the draft room, and deal with the cells it strands.
    *
    * Every door onto the draft audience goes through here — the picker, the
@@ -1196,9 +1210,73 @@ export function ToolkitShell() {
         nb.setCellPeer(edit.cell, edit.peer, edit.publish, edit.publishSlots);
       }
       setRelabelNote(note);
+      // The room the last ceremony was written for is not this room any more,
+      // so the sentence saying what was written stops being true of what is on
+      // screen. Cleared rather than rewritten: what the notebook now holds is a
+      // question the notebook answers.
+      setCeremonyNote("");
     },
     [sessionDraft.audience, nb.chains, nb.setCellPeer]
   );
+
+  /**
+   * The split-key ceremony this draft room implies, recomputed as it is built.
+   *
+   * **Derived from the audience rather than configured beside it**, which is
+   * the whole of the answer to "how can I assign the cell before the notebook
+   * is shared". The cell count, the `shares` number, every `@peer` header and
+   * every `to=` are functions of who is in the list — so there is nothing to
+   * fill in first and no order to get wrong. Adding a person changes the
+   * sentences under the room while the reader is looking at them.
+   *
+   * `roomCeremony` refuses rooms it cannot write for and says which number is
+   * the problem; the panel prints those refusals and the button borrows them.
+   */
+  const draftCeremony = useMemo(
+    () =>
+      roomCeremony({
+        audience: sessionDraft.audience,
+        self: sessionDraft.keyFingerprint,
+      }),
+    [sessionDraft.audience, sessionDraft.keyFingerprint]
+  );
+
+  /**
+   * Write it into the notebook — bodies through the loader, headers through the
+   * mutator.
+   *
+   * **The two halves go in by different doors on purpose.** `loadRecipeText`
+   * takes the pipelines, which is text this generator composed and had to; the
+   * `@peer` header on each cell is then written by `setCellPeer`, the same
+   * mutator the "Who runs this cell" menu presses and the same one
+   * `setDraftAudience` uses when a room shrinks. So no header in this app is
+   * ever spelled by hand — `serializeChain` writes all of them — and a change to
+   * how a header is spelled cannot leave this path behind.
+   *
+   * It replaces the notebook rather than appending, and the panel says so above
+   * the button. Appending would put a ceremony's `out $set` beside whatever
+   * slots were already there and hand the reader a duplicate-slot error for a
+   * collision they did not make.
+   */
+  const writeRoomCeremony = useCallback(() => {
+    if (draftCeremony.issues.length || !draftCeremony.cells.length) return;
+    const bodies = draftCeremony.cells.map((c) => c.recipe).join("\n\n");
+    if (!nb.loadRecipeText(draftCeremony.title, bodies)) {
+      // Unreachable unless the generator emits something that does not parse,
+      // which is what `room-ceremony.test.js` sweeps every room size for. It
+      // says the state and stops; there is no remedy to offer a reader for a
+      // recipe they did not write.
+      setCeremonyNote(
+        "The ceremony that was generated for this room does not compile, so nothing was written. The notebook you had is untouched."
+      );
+      return;
+    }
+    draftCeremony.cells.forEach((c, i) => nb.setCellPeer(i, c.peer));
+    setCeremonyNote(
+      `Wrote ${draftCeremony.cells.length} cells — a ${draftCeremony.threshold}-of-${draftCeremony.shares} split, one share per person. Start the session, then Share this notebook: a cell only crosses to somebody holding the same text.`
+    );
+  }, [draftCeremony, nb.loadRecipeText, nb.setCellPeer]);
+
   /**
    * The same function, reachable from an effect that must not re-subscribe.
    *
@@ -4502,6 +4580,24 @@ export function ToolkitShell() {
             onPaste: (result) => {
               setSessionDraft((d) => ({ ...d, role: result.role || d.role }));
               setDraftAudience(result.audience);
+            },
+            // The one template in this product that is generated rather than
+            // typed, offered where the thing it is generated from is chosen.
+            // `quorum.send` / `quorum.recv` are named by no preset, so until
+            // this existed the only way anybody reached them was by typing two
+            // whole fingerprints into step params by hand.
+            ceremony: {
+              summary: roomCeremonySummary(draftCeremony),
+              issues: draftCeremony.issues,
+              text: draftCeremony.text,
+              // The phase and the sentence, not the pipeline: the widget draws
+              // the reading of the notebook beside the notebook, and the peer
+              // is already in the recipe below it whole.
+              cells: draftCeremony.cells.map((c) => ({ phase: c.phase, why: c.why })),
+              threshold: draftCeremony.threshold,
+              shares: draftCeremony.shares,
+              onWrite: writeRoomCeremony,
+              note: ceremonyNote,
             },
             issues: sessionIssues,
             inviteUrl,
