@@ -210,6 +210,77 @@ describe("kernel cell runs", () => {
     expect(kernel.getCellOutputs(1).length).toBeGreaterThan(0);
   });
 
+  /**
+   * The pair `deleteCell` performs, in the order it performs them.
+   *
+   * Two verbs rather than a third: the clear is what *wipes* the bytes the
+   * deleted cell owned, and the remap is what moves the cells beneath it up.
+   * Doing only the first is the defect `notebook-cells.e2e.js` shows on screen —
+   * every cell below a deletion left wearing its predecessor's answer — and
+   * doing only the second would drop the deleted artifacts without zeroizing
+   * them, which is the one thing this kernel is careful about.
+   */
+  it("clearCellOutputs + remapCells after a delete", async () => {
+    const kernel = createKernel();
+    await kernel.runCell(0, compileRecipe(`bytes deadbeef | encode hex | out $a`).ast.chains[0]);
+    await kernel.runCell(1, compileRecipe(`bytes cafebabe | encode hex | out $b`).ast.chains[0]);
+    await kernel.runCell(2, compileRecipe(`bytes f00dface | encode hex | out $c`).ast.chains[0]);
+    // Held before the clear, so the wipe can be observed on the object the cell
+    // was handing to the tile rather than on a bucket that has merely been
+    // forgotten. A dropped reference is not a wipe.
+    const doomed = kernel.getCellOutputs(0)[0];
+    expect(doomed.content).toContain("deadbeef");
+
+    // Delete cell 0.
+    kernel.clearCellOutputs(0);
+    kernel.remapCells((i) => (i === 0 ? null : i > 0 ? i - 1 : i));
+
+    expect(doomed.content, "the deleted cell's bytes were released, not wiped").toBe("");
+    expect(kernel.getCellOutputs(0)[0]?.content).toContain("cafebabe");
+    expect(kernel.getCellOutputs(1)[0]?.content).toContain("f00dface");
+    expect(kernel.getCellOutputs(2)).toEqual([]);
+    expect(kernel.getCellStatus(0)).toBe("ok");
+    expect(kernel.getCellStatus(1)).toBe("ok");
+    expect(kernel.getCellStatus(2)).toBe("idle");
+    expect(kernel.getCellTiming(0)).not.toBeNull();
+    expect(kernel.getCellTiming(2)).toBeNull();
+  });
+
+  /**
+   * `null` drops the bucket — the documented half of `remapCells` that nothing
+   * had ever asked it to do.
+   *
+   * Written because the delete above cannot demonstrate it: `clearCellOutputs`
+   * has already removed the bucket at the deleted index by the time the mapping
+   * runs, so the `null` arm `deleteCell` passes is unreachable in practice. It
+   * is still what stops a bucket at the hole mapping onto itself and colliding
+   * with the one shifting down into it, so the arm is a property of the mapping
+   * rather than of the caller — and a mapping nobody exercises is a mapping free
+   * to stop working.
+   */
+  it("drops a bucket the mapping sends to null, and wipes nothing doing it", async () => {
+    const kernel = createKernel();
+    await kernel.runCell(0, compileRecipe(`bytes deadbeef | encode hex | out $a`).ast.chains[0]);
+    await kernel.runCell(1, compileRecipe(`bytes cafebabe | encode hex | out $b`).ast.chains[0]);
+    await kernel.runCell(2, compileRecipe(`bytes f00dface | encode hex | out $c`).ast.chains[0]);
+    const dropped = kernel.getCellOutputs(1)[0];
+
+    // The middle one goes and the other two stay put. Deliberately *not* a
+    // drop-plus-shift: a mapping that ignored `null` and left the bucket where
+    // it was would be hidden by the shift landing on top of it, which is how a
+    // first attempt at this test passed against the mutation it was written for.
+    kernel.remapCells((i) => (i === 1 ? null : i));
+
+    expect(kernel.getCellOutputs(0)[0]?.content).toContain("deadbeef");
+    expect(kernel.getCellOutputs(1)).toEqual([]);
+    expect(kernel.getCellStatus(1)).toBe("idle");
+    expect(kernel.getCellTiming(1)).toBeNull();
+    expect(kernel.getCellOutputs(2)[0]?.content).toContain("f00dface");
+    // Released, not zeroized — which is exactly why `deleteCell` clears before
+    // it remaps rather than letting the mapping do the deleting.
+    expect(dropped.content).toContain("cafebabe");
+  });
+
   it("lockSensitive evicts private slots but keeps public recipients", async () => {
     const alice = await generateKey({
       type: "ecc",

@@ -540,6 +540,32 @@ describe("who consumes this", () => {
     expect(loader[0]).not.toMatch(/markAllWithOutputsStale|remapCells/);
   });
 
+  it("moves the kernel's buckets when a delete renumbers the notebook", () => {
+    // The same drift through the other mutation that changes what an index
+    // means. `deleteCell` cleared the deleted index and stopped, so every cell
+    // below it kept a bucket belonging to the cell above — the notebook drew a
+    // cell reading "never run" beside one reading "ran 0s ago · 7ms" with the
+    // *previous* cell's tile under a recipe that names a different slot.
+    // `notebook-cells.e2e.js` is the check that can see the screen; these are
+    // the two lines that have to be there for it, and `remapCells` had no
+    // product caller at all before this one.
+    const del = /const deleteCell = useCallback\([\s\S]*?\n  \}, \[\]\);/.exec(HOOK);
+    expect(del, "deleteCell is not where this test thinks it is").toBeTruthy();
+    // Both, in this order: the clear is what *wipes* the bytes the deleted cell
+    // owned, and a remap that dropped the bucket instead would release them
+    // without zeroizing. See the comment on `deleteCell` for the argument.
+    expect(del[0].indexOf("clearCellOutputs")).toBeGreaterThanOrEqual(0);
+    expect(del[0].indexOf("remapCells")).toBeGreaterThan(
+      del[0].indexOf("clearCellOutputs")
+    );
+    // The mapping itself, because an off-by-one here is exactly the defect:
+    // everything above the hole moves down one, and the hole is dropped.
+    expect(del[0]).toMatch(/i === index \? null : i > index \? i - 1 : i/);
+    // Nothing is marked stale — a cell that moved up is still holding its own
+    // last answer, which is what separates a delete from a reorder.
+    expect(del[0]).not.toMatch(/markAllWithOutputsStale/);
+  });
+
   it("bumps the counter the slot tray is memoised on when it registers one", () => {
     // `acceptHandoff` bumped `sessionTick` — the vault's counter — while
     // `slotMetas` is memoised on `kernelEpoch`, so the tray went on saying "No

@@ -1582,7 +1582,48 @@ export function useNotebook() {
     return true;
   }, []);
 
+  /**
+   * Remove one cell, and move the kernel's per-cell buckets up behind it.
+   *
+   * **Both halves, because the notebook renumbers and the kernel does not.**
+   * This used to clear the deleted index and stop, which is right for the cell
+   * that went and wrong for every cell under it: outputs, status, timing and run
+   * error are keyed by index, so deleting cell 0 of a three-cell notebook that
+   * had run left the cell now drawn as `[0]` reading "never run" and the cell
+   * now drawn as `[1]` reading "ran 0s ago · 7ms" with the tile `@b` under a
+   * recipe that says `out $c` — the cell above's answer, on a cell that never
+   * produced it. The third bucket was orphaned at an index the notebook no
+   * longer had, wiped by nothing. It is the drift `f990efd` fixed for adoption,
+   * arriving through the other mutation that changes what index means.
+   *
+   * `clearCellOutputs` **then** `remapCells`, and the order is the argument for
+   * using both rather than either. `remapCells` moves buckets and does not wipe
+   * them — a mapping that dropped the deleted index would release the artifacts
+   * at it without zeroizing the bytes they own, which for a cell that produced a
+   * share is the one thing this kernel is careful about. So the clear does the
+   * wiping first and the remap does the arithmetic after, on a map the deleted
+   * bucket has already left. The `null` arm is kept even though it can no longer
+   * fire: without it a bucket at `index` would map to `index` and collide with
+   * the one shifting down into it, and that is a property of the mapping rather
+   * than of what ran before it.
+   *
+   * Nothing is marked stale. A cell that moved up is still holding *its own*
+   * last answer, computed here, from inputs this delete did not touch — that is
+   * exactly what `markAllWithOutputsStale` is for after a *reorder*, where the
+   * pipeline above a cell changes. Deleting a producer can invalidate what a
+   * cell below it read, but the honest report of that is the validator's unknown
+   * slot on the next keystroke, not a status dot claiming the tile was recomputed.
+   *
+   * The remap is skipped when nothing was removed: a notebook is never zero
+   * cells, so deleting the only one empties it in place (the ✕ is inert then and
+   * says why), and shifting indices down for a notebook that did not shrink
+   * would be the same defect written the other way round.
+   */
   const deleteCell = useCallback((index: number) => {
+    // Read off `chainsRef` rather than from inside the updater below: the kernel
+    // is not React state, and a mutation performed inside a state updater runs
+    // however many times React chooses to call it.
+    const shrinks = chainsRef.current.length > 1;
     setChains((prev) => {
       if (prev.length <= 1) return [{ steps: [] }];
       const next = prev.filter((_, i) => i !== index);
@@ -1590,6 +1631,9 @@ export function useNotebook() {
       return next;
     });
     kernelRef.current.clearCellOutputs?.(index);
+    if (shrinks) {
+      kernelRef.current.remapCells?.((i) => (i === index ? null : i > index ? i - 1 : i));
+    }
     setKernelEpoch((n) => n + 1);
   }, []);
 

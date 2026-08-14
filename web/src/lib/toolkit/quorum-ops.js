@@ -16,6 +16,7 @@
  * @module lib/toolkit/quorum-ops
  */
 
+import { recordActivity } from "./activity-log.js";
 import { NotebookSession } from "../notebook/session.js";
 import { iceServersOrDefault } from "../webrtc/ice.js";
 import { deriveRoomId, canonicalAudience } from "../notebook/room.js";
@@ -1034,6 +1035,109 @@ function waitForPeers(ex, needPeers, wait) {
 }
 
 /**
+ * Who a send reached, as whole fingerprints, read off the snapshot the
+ * Connections tray draws from.
+ *
+ * The same two fields and the same prefix match `recvTimeoutMessage` below
+ * uses, deliberately: "which peers is this exchange actually talking to" is one
+ * question, and a second answer to it here would be free to disagree with the
+ * panel a reader checks it against.
+ *
+ * Whole, never a prefix — `to=` may itself be typed as one, and the record of
+ * where a secret went is the last place in this product to print part of a key.
+ *
+ * @param {NonNullable<typeof current>} ex
+ * @param {string} toFilter  uppercase fingerprint or prefix; empty = broadcast
+ * @returns {string[]}
+ */
+function sendAudience(ex, toFilter) {
+  const verified = (ex.state.peers || []).filter(
+    (p) => p.state === "connected" && p.authenticated
+  );
+  return verified
+    .map((p) => String(p.fingerprint || "").toUpperCase())
+    .filter((f) => !toFilter || f.startsWith(toFilter));
+}
+
+/**
+ * Write one Activity entry for a send that has already happened (§36).
+ *
+ * ## Why a sender gets a record and not a copy
+ *
+ * `quorum.send` has no `out`, so its tip is engine-materialised, masked and not
+ * `revealable`: the cell reads "sensitive — value not shown" and offers no
+ * Reveal. That is right and stays. Giving the step an `out` would put the
+ * *recipient's* share into the sender's Slots tray — `b1ce6d9` found the
+ * ceremony's `$set | at 1 | out $mine` actively harmful for exactly that reason
+ * — and a `revealable` tip is the same harm one layer down: it retains the value
+ * and re-displays it, on the machine that has just given it away.
+ *
+ * But "no copy" and "no evidence" are different asks, and the product had
+ * collapsed them. Dealing shares is the one action here that cannot be undone,
+ * and a person doing it had nothing on screen afterwards that said what left
+ * this machine, to whom, or when — the run status line, which the next press
+ * overwrites, and nothing else.
+ *
+ * The surface for this already existed and this is its second producer.
+ * `activity-log.js` is written for precisely this gap ("recipes record
+ * derivations, this records dispositions"), and its four rules are the four this
+ * needs: digests never values, session-scoped never persisted, exportable as
+ * text for a ceremony's minutes, and — the line this closes — *every* action
+ * that moves something is logged, because "a log that records only the dramatic
+ * actions answers the wrong question at 2am". `recordActivity` had one caller,
+ * the artifact tile's action runner, so the log held Copy and Download and did
+ * not hold the one act in this product that puts a secret on somebody else's
+ * machine.
+ *
+ * So the sender keeps the digest, the recipients and the clock, and keeps no
+ * bytes. The digest is the same `digestText` a run receipt uses, so "what did I
+ * send" is answerable by cross-reading the two records rather than by holding
+ * the value in a tray.
+ *
+ * ## The count and the names come from different places, and it says so
+ *
+ * `_sendChatFiltered` returns how many channels it wrote to and not which, so
+ * the number below is the session's own answer and the fingerprints are the
+ * roster's. They are printed as two facts rather than reconciled into one: a
+ * peer that dropped between the write and this line would make them disagree,
+ * and a reader seeing `2 peers` beside one fingerprint has learned something
+ * true, where a list silently trimmed to the count would not have.
+ *
+ * Only after the send returns. A `quorum.send` that threw moved nothing, and
+ * `sendChatTo` throws rather than reaching nobody quietly — recording a refusal
+ * as a delivery is the one direction this log must never be wrong in.
+ *
+ * @param {NonNullable<typeof current>} ex
+ * @param {{ to: string, wrote: number, text: string,
+ *   value: { type?: string, meta?: Record<string, unknown> } }} sent
+ */
+async function noteSend(ex, { to, wrote, text, value }) {
+  const named = sendAudience(ex, to.replace(/\s+/g, "").toUpperCase());
+  const peers = `${wrote} peer${wrote === 1 ? "" : "s"}`;
+  await recordActivity({
+    action: "quorum.send",
+    label: "Sent over the session",
+    // What a dealer is actually asking about. A selected share carries its own
+    // index through the pipe, and "which share went to whom" is the question the
+    // ceremony is made of; anything else falls back to what the pipe was
+    // carrying, which is all this layer honestly knows about it.
+    artifact:
+      value?.meta?.shareIndex != null
+        ? `share ${value.meta.shareIndex}`
+        : String(value?.type || "value"),
+    // Outward is the whole point: this left the machine, and it is the only
+    // tier whose entries answer "where did it go".
+    tier: "outward",
+    // Hashed by `recordActivity` and dropped — the entry keeps 16 hex
+    // characters of digest and never the text.
+    content: text,
+    detail: `room ${ex.state.room} · written to ${peers}${
+      named.length ? ` · ${named.join(" · ")}` : ""
+    }`,
+  });
+}
+
+/**
  * @param {{ type: string, data: unknown, meta?: Record<string, unknown> }} value
  */
 export async function execQuorumSend(value, params) {
@@ -1045,8 +1149,10 @@ export async function execQuorumSend(value, params) {
   const to = String(params?.to || "").trim();
   // Addressed sends throw when no verified peer matches, rather than quietly
   // reaching nobody — see NotebookSession.sendChatTo.
-  if (to) await ex.session.sendChatTo(to, text);
-  else await ex.session.sendChat(text);
+  const wrote = to
+    ? await ex.session.sendChatTo(to, text)
+    : await ex.session.sendChat(text);
+  await noteSend(ex, { to, wrote, text, value });
   return value;
 }
 

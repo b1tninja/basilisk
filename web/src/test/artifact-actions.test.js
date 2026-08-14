@@ -710,6 +710,28 @@ describe("the two user-visible promises of Download are now kept", () => {
     expect((stripComments(TILE).match(/recordActivity\(/g) || []).length).toBe(1);
   });
 
+  it("backs the other half of that sentence too, which is not a button", () => {
+    // The empty state now promises a `quorum.send` as well, and the rule above
+    // is what makes that a promise rather than a sentence: a value crossing to
+    // another machine is the one disposition in this product that no button
+    // performs, so the tile's runner cannot be the thing that records it.
+    //
+    // "One place for every action" is unchanged and is worth restating in the
+    // shape it now has: **one producer per surface, and each of them the only
+    // one on that surface.** The tile's runner is the only logger for anything a
+    // press does; `execQuorumSend` is the only logger for anything a run does.
+    // Two producers is not two policies — a third would be.
+    const QUORUM = read("../lib/toolkit/quorum-ops.js");
+    expect(SHELL).toMatch(/quorum\.send<\/code>/);
+    expect((stripComments(QUORUM).match(/recordActivity\(/g) || []).length).toBe(1);
+    // Only after the send returned. Recording a refusal as a delivery is the
+    // one direction this log must never be wrong in, and the ordering is the
+    // whole of what stops it.
+    expect(stripComments(QUORUM)).toMatch(
+      /await ex\.session\.sendChat[\s\S]{0,80}await noteSend\(/
+    );
+  });
+
   it("carries the engine's filename through both of the shell's mappings", () => {
     // This projection copies named fields, so a field it does not list is
     // dropped silently — which is exactly how `role`/`tags` went missing and

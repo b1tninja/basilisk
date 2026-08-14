@@ -862,6 +862,18 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
         timeout: 20000,
       })
       .toMatch(/Accepted — 1 value registered/);
+    // **And the row is gone, which nothing across this seam had ever checked.**
+    // `takeHandoff` may succeed exactly once and is the only way a document
+    // leaves the queue; `quorum-ops` says so, `useNotebook`'s `handoffTick` says
+    // so, and `ToolkitShell`'s memo says so — four comments arguing one
+    // invariant across three files, asserted at neither end of it. A row left
+    // behind would carry a live "Review and accept" for a document that is no
+    // longer there, and the second press would answer "That handoff is no longer
+    // pending" for a value the reader can see registered in the tray beside it.
+    expect(
+      await pending.count(),
+      "the accepted offer is still in the queue with the press still on it"
+    ).toBe(0);
     // Accepted, and still not run: the value that arrived is the one the cell
     // *reads*, not the answer.
     //
@@ -974,6 +986,14 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
         timeout: 20000,
       })
       .toMatch(/Accepted — 1 value registered/);
+    // The returning half of the same rule, on the other machine. A result is the
+    // more dangerous of the two arrivals — accepting one puts a peer's values
+    // into this registry — so a row that survived its own accept would be an
+    // invitation to register them twice.
+    expect(
+      await result.count(),
+      "the accepted result is still in the queue with the press still on it"
+    ).toBe(0);
     // The answer arrived; the cell did not. Read off the cell's own outputs
     // rather than its status dot, for the reason step 5 pins: a declined cell
     // reports itself as run, so the dot cannot answer this question here.
@@ -1291,6 +1311,54 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     ];
     for (const m of dealt) expect(m.split(/\s+/).length).toBeGreaterThan(8);
     expect(new Set(dealt).size, "the split produced the same share twice").toBe(3);
+
+    // **And what the dealer can see of it now: a record, which is not a copy.**
+    //
+    // The two paragraphs above are the designed behaviour and they stay. What
+    // they left was a person who had just performed the one act in this product
+    // that cannot be undone, with nothing on screen afterwards saying what left
+    // the machine, to whom, or when — the run status line, which the next press
+    // overwrites, and nothing else. Giving the step an `out` would have answered
+    // that by putting the *holder's* share in the dealer's own Slots tray, which
+    // is worse and is what `b1ce6d9` removed from this very ceremony.
+    //
+    // So the send writes to the Activity log, which `activity-log.js` was built
+    // for and whose rules are exactly the four this needs — digests never
+    // values, session-scoped never persisted, copyable as text for a ceremony's
+    // minutes, and every action that moves something logged, because "a log that
+    // records only the dramatic actions answers the wrong question at 2am". It
+    // held Copy and Download and did not hold this.
+    //
+    // Asserted on the dealer's screen rather than on the entry, because the
+    // recurring defect here is a finished mechanism with no consumer:
+    // `recordActivity` had one caller, the artifact tile's action runner, and no
+    // run has ever been able to reach it.
+    await trayTab(creator, "Activity");
+    const logged = tray(creator).locator("[data-activity-log] li");
+    await expect.poll(async () => await logged.count(), { timeout: 20000 }).toBe(1);
+    const row = logged.first();
+    expect(await row.getAttribute("data-action-tier")).toBe("outward");
+    const rowText = await row.innerText();
+    expect(rowText).toContain("Sent over the session");
+    // Which share went where — the question the ceremony is made of.
+    expect(rowText).toContain("share 2");
+    // Whole, in this column too. This is the record of where a secret went and
+    // it is the last place in the product to print part of a key.
+    expect(rowText.replace(/\s/g, "")).toContain(L.joiner);
+    // A digest and not the value. `dealt[1]` is the share that left; it was read
+    // off this same screen a moment ago, so this compares the record against
+    // what the dealer knows rather than against something recomputed here.
+    expect(rowText).toMatch(/sha256 [0-9a-f]{16}…/);
+    // The row's one ellipsis is the digest's own, and it is allowed: sixteen hex
+    // characters of a hash is a prefix of a *hash*, which carries no bits of
+    // anybody's key and is the same sixteen a run receipt prints. Removed before
+    // the sweep rather than exempted after it, so a truncation appearing
+    // anywhere else in this row — the fingerprint above all — still fails.
+    expect(rowText.replace(/sha256 [0-9a-f]{16}…/, "")).not.toContain("…");
+    expect(
+      rowText,
+      "the sender kept a copy of the share instead of a record of it"
+    ).not.toContain(dealt[1].split(/\s+/)[0]);
 
     // **What the run did with the cell it declined**, which is the third
     // question this section was written to answer and the one whose answer

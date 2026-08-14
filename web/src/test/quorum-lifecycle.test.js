@@ -59,11 +59,33 @@ const { FakeSession } = vi.hoisted(() => {
     stop() {
       this.stopped += 1;
     }
+    /**
+     * Both answer with how many channels were written to, as
+     * `_sendChatFiltered` does. The count is part of the contract rather than a
+     * convenience — `sendChatTo` throws instead of returning 0, and
+     * `execQuorumSend` reports it into the Activity log — and a fake that
+     * returned `undefined` was a double disagreeing with its subject about the
+     * one thing its callers read.
+     */
     async sendChat(text) {
       this.sent.push({ to: "", text });
+      return this.verified("").length;
     }
     async sendChatTo(to, text) {
       this.sent.push({ to, text });
+      return this.verified(to).length;
+    }
+    /** Key-confirmed, connected peers whose fingerprint starts with `prefix`. */
+    verified(prefix) {
+      const want = String(prefix || "").replace(/\s+/g, "").toUpperCase();
+      return [...this.peers.entries()]
+        .filter(
+          ([f, p]) =>
+            p.status === "connected" &&
+            p.kcVerified &&
+            (!want || String(f).toUpperCase().startsWith(want))
+        )
+        .map(([f]) => f);
     }
 
     /* ── drivers ── */
@@ -139,6 +161,11 @@ const q = await import("../lib/toolkit/quorum-ops.js");
 // above cannot reach it.
 const { DEFAULT_ICE_SERVERS } = await import("../lib/webrtc/ice.js");
 const { deriveRoomId } = await import("../lib/notebook/room.js");
+// The real log and the real digest, not doubles: what `quorum.send` is asserted
+// to leave behind is an entry a reader can find in the Activity tab, and a
+// digest that cross-reads against a run receipt's.
+const activity = await import("../lib/toolkit/activity-log.js");
+const { digestText } = await import("../lib/toolkit/receipt.js");
 
 /** Enough of an OpenPGP private key for `execQuorumOpen`. */
 const KEY_A = { getFingerprint: () => FPR_A.toLowerCase() };
@@ -716,6 +743,119 @@ describe("quorum.send", () => {
     const { session } = await open();
     await q.execQuorumSend({ type: "bytes", data: new TextEncoder().encode("raw") }, {});
     expect(session.sent[0].text).toBe("raw");
+  });
+
+  /* ── what the sender is left holding ─────────────────────────────────────
+   *
+   * `quorum.send` has no `out`, so its tip is masked and offers no Reveal, and
+   * that is deliberate: an `out` would put the *recipient's* share into the
+   * sender's own Slots tray. What it left instead was nothing at all — a person
+   * dealing shares had no way to check what had left their machine, on the one
+   * action in this product that cannot be undone.
+   *
+   * So the sender keeps a record and not a copy. These pin both halves of that
+   * sentence: the entry exists, names the room and the whole fingerprint it went
+   * to, and carries a digest — and the text itself appears nowhere in it.
+   */
+  it("records what left this machine, to whom, without keeping the value", async () => {
+    activity.clearActivity();
+    const { session } = await open();
+    // A second peer in the room, so "named the recipient" is a different claim
+    // from "named the roster". A share ceremony deals a *different* value to
+    // each holder, and a record that listed everyone present would answer the
+    // one question it exists for — which share went to whom — with the room.
+    session.connect(FPR_C);
+    await q.execQuorumSend(
+      { type: "text", data: "the share", meta: { sensitive: true, shareIndex: 2 } },
+      { to: FPR_B }
+    );
+
+    const [entry] = activity.listActivity();
+    expect(entry.action).toBe("quorum.send");
+    expect(entry.tier).toBe("outward");
+    // Which share went to whom is the question a ceremony is made of.
+    expect(entry.artifact).toBe("share 2");
+    // Whole, never a prefix — this is the record of where a secret went.
+    expect(entry.detail).toContain(FPR_B);
+    expect(entry.detail, "the record names a peer this share did not go to").not.toContain(
+      FPR_C
+    );
+    expect(entry.detail).toContain("written to 1 peer");
+    expect(entry.detail).toContain(await deriveRoomId([FPR_A, FPR_B]));
+    // The digest is the same `digestText` a run receipt takes, so the two
+    // records cross-read; it is the only trace of the bytes.
+    expect(entry.digest).toBe((await digestText("the share")).slice(0, 16));
+    expect(JSON.stringify(entry)).not.toContain("the share");
+  });
+
+  it("names every peer a broadcast reached, and how many channels took it", async () => {
+    activity.clearActivity();
+    const { session } = await open();
+    session.connect(FPR_C);
+    await q.execQuorumSend({ type: "text", data: "to the room" }, {});
+
+    const [entry] = activity.listActivity();
+    expect(entry.detail).toContain("written to 2 peers");
+    expect(entry.detail).toContain(FPR_B);
+    expect(entry.detail).toContain(FPR_C);
+    // Not a share, and the label says what the pipe was carrying rather than
+    // inventing an index for it.
+    expect(entry.artifact).toBe("text");
+  });
+
+  it("names nobody a broadcast could not reach", async () => {
+    // Two ways to be in the roster and not be a recipient, and the broadcast
+    // loop skips both. A peer whose key confirmation has not completed has no
+    // session key; a peer that meshed and then lost its link keeps the
+    // confirmation it earned and has no open channel. A record that read either
+    // half of `connected && authenticated` on its own would name somebody this
+    // value never went to, which is the one direction a log of where a secret
+    // went must never be wrong in.
+    const FPR_D = "D4".repeat(20);
+    activity.clearActivity();
+    const { session } = await open();
+    session.connect(FPR_C, { kcVerified: false });
+    session.connect(FPR_D, { status: "disconnected" });
+    await q.execQuorumSend({ type: "text", data: "to the room" }, {});
+
+    const [entry] = activity.listActivity();
+    expect(entry.detail).toContain("written to 1 peer");
+    expect(entry.detail).toContain(FPR_B);
+    expect(entry.detail, "an unconfirmed peer is named as a recipient").not.toContain(FPR_C);
+    expect(entry.detail, "a peer whose link is down is named as a recipient").not.toContain(
+      FPR_D
+    );
+  });
+
+  it("takes the number from the send and the names from the roster, and does not reconcile them", async () => {
+    // The one case the two sources can disagree, and the reason the entry
+    // prints them as two facts instead of one: `_sendChatFiltered` answers with
+    // how many channels it wrote to and never with which, so a peer that goes
+    // between the write and the record leaves a count that is smaller than the
+    // roster it is printed beside. A list quietly trimmed to the count would
+    // name a peer that may not have been the one that missed it.
+    activity.clearActivity();
+    const { session } = await open();
+    session.connect(FPR_C);
+    session.sendChat = async () => 1;
+    await q.execQuorumSend({ type: "text", data: "to the room" }, {});
+
+    const [entry] = activity.listActivity();
+    expect(entry.detail).toContain("written to 1 peer");
+    expect(entry.detail).toContain(FPR_B);
+    expect(entry.detail).toContain(FPR_C);
+  });
+
+  it("writes nothing when the send threw, because nothing left", async () => {
+    activity.clearActivity();
+    const { session } = await open();
+    session.sendChatTo = async () => {
+      throw new Error("quorum.send to=…: no verified peer with that fingerprint is connected");
+    };
+    await expect(
+      q.execQuorumSend({ type: "text", data: "never went" }, { to: FPR_C })
+    ).rejects.toThrow(/no verified peer/);
+    expect(activity.listActivity()).toEqual([]);
   });
 });
 
