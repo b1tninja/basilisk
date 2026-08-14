@@ -98,17 +98,17 @@ export function departedPeers(beforeFprs, afterFprs) {
  * @typedef {object} PlacementEdit
  * @property {number} cell  index into the chain list, as the plan numbers them
  * @property {string|null} peer  the peer it should carry now — always null here
- * @property {boolean} publish
- * @property {string[]} publishSlots
+ * @property {string[]} publishSlots  what still leaves — always none here
  */
 
 /**
  * Unassign every cell placed on somebody who has left, and say which.
  *
- * `publish` and `publishSlots` are dropped along with the peer, for the reason
- * `setCellPeer` gives: a modifier attached to nobody is not a claim about
- * anything. There is no longer a branch that *keeps* them, because there is no
- * longer a case where a placement survives with a different name.
+ * The cell's `publish` steps go with the peer, for the reason `setCellPeer`
+ * gives: a value sent to nobody is not a claim about anything, and a `publish`
+ * in a cell with no header does not compile. There is no branch that *keeps*
+ * them, because there is no case where a placement survives with a different
+ * name.
  *
  * @param {import("./recipe.js").RecipeChain[]} [chains]
  * @param {Set<string>|Iterable<string>} [gone] `departedPeers`' answer
@@ -134,7 +134,7 @@ export function unassignDeparted(chains, gone) {
     // module note on what no rewrite can rescue.
     const was = String(chain?.peer || "").toUpperCase();
     if (!was || !left.has(was)) return;
-    edits.push({ cell, peer: null, publish: false, publishSlots: [] });
+    edits.push({ cell, peer: null, publishSlots: [] });
     stranded.push(`cell ${cell}`);
   });
 

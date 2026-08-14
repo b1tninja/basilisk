@@ -46,7 +46,12 @@ import {
 import { signOpenPgp } from "../lib/pgp/sign.js";
 import { buildRunManifest, manifestDigest } from "../lib/toolkit/manifest.js";
 import { planChains, planRun } from "../lib/toolkit/plan.js";
-import { compileRecipe, migrateRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
+import {
+  compileRecipe,
+  migrateRecipe,
+  publishedSlots,
+  serializeRecipe,
+} from "../lib/toolkit/recipe.js";
 import { createSlotRegistry } from "../lib/toolkit/slot-registry.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { makeQuorumPair, until } from "./helpers/notebook-pair.js";
@@ -65,11 +70,11 @@ afterEach(async () => {
  * merely skip a cell, it stops, and stays stopped until okafor's result comes
  * back. One notebook for both legs, because it is one handoff.
  */
-const HANDED = `@mara publish
-bytes deadbeef | encode hex | out $seed
+const HANDED = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
-@okafor publish
-in $seed | decode hex | encode base64 | out $b64
+@okafor
+in $seed | decode hex | encode base64 | out $b64 | publish
 
 @mara
 in $b64 | out $done
@@ -93,7 +98,7 @@ function manifestFor(peers) {
     cells: planChains(compiled).map((chain, i) => ({
       index: i,
       peer: String(chain.peer || ""),
-      publish: !!chain.publish,
+      publish: publishedSlots(chain).length > 0,
       recipe: serializeRecipe({ chains: [chain] }),
     })),
   });

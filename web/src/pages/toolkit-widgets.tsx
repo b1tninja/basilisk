@@ -2305,7 +2305,11 @@ function CatalogApp() {
           <p className="text-xs text-[var(--muted-foreground)]">
             Four of the six outcomes mean <em>no answer</em>, and none of those is drawn
             as success. The limitation sits under every verdict including the successful
-            one, uncollapsed, because that is the verdict a reader stops reading at.
+            one, uncollapsed, because that is the verdict a reader stops reading at. One
+            outcome — <strong>mirrors disagree</strong> — is drawn here and reachable
+            nowhere: it compares two pin sources and every deployment this repo builds
+            configures one, which is why the live panel below says so in its pin-sources
+            row rather than leaving the count to speak for itself.
           </p>
           <IntegrityStates />
         </Section>
@@ -3125,13 +3129,17 @@ const INTEGRITY_FIXTURES: { note: string; verdict: DeploymentVerdict }[] = [
     },
   },
   {
-    note: "mirrors disagree — CDN split-brain",
+    note:
+      "mirrors disagree — CDN split-brain. No deployment built from this repo can " +
+      "reach this state: it needs two pin sources and every build configures one.",
     verdict: {
       status: "disagree",
       tone: "error",
       headline: "The pin mirrors do not agree with each other.",
       detail:
-        "Integrity pin mirrors disagree (9f2c1a44b8e07d31 vs 41bb90de77c2a8f5). Mirrors exist " +
+        "Integrity pin mirrors disagree " +
+        "(9f2c1a44b8e07d3155aa20c9b6de41f8027cc9d54ba1e37f66d0aa9188c3e021 vs " +
+        "41bb90de77c2a8f5b0e1cc7d2299a4531ff08b6ea72d40c3195e6b8aa04d7712). Mirrors exist " +
         "so that subverting one host is not enough; two answers means either a deploy caught " +
         "mid-flight or one of them is lying, and from here those look identical. Do not use " +
         "this tab for anything sensitive until the mirrors converge.",

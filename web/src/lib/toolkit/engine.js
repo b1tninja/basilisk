@@ -2455,6 +2455,17 @@ async function execStepBody(step, value, bindings, artifacts) {
       // Pass through so the recipe can continue (e.g. out | gpg.encrypt).
       return value;
     }
+    case "publish": {
+      // Inert at run time, and that is the design rather than a gap. A cell
+      // runs on its peer's own machine, so the value is already where it
+      // belongs; `publish` says it may *also* go to the room, and the thing
+      // that carries it there is the handoff — `planRun` reads `publishedSlots`
+      // to decide what an offer may include, and `buildResultFor` refuses a
+      // slot the recipe withheld. Making this step send anything itself would
+      // be a second road out of the cell, past the gate that exists.
+      if (!value) throw new Error("publish expects a value");
+      return value;
+    }
     case "text": {
       // Print as a message tile (not a named downloadable file — use `out` for that).
       if (!value) throw new Error("text expects a value");
@@ -3368,7 +3379,7 @@ async function currentRunReceipt(bindings, artifacts, params) {
 async function currentRunManifest(bindings, params) {
   const { buildRunManifest } = await import("./manifest.js");
   const { opsRegistryVersion } = await import("./receipt.js");
-  const { serializeRecipe } = await import("./recipe.js");
+  const { publishedSlots, serializeRecipe } = await import("./recipe.js");
   const { parseRecipeSource } = await import("./recipe-parse.js");
   const ctx = /** @type {*} */ (bindings).receipt || {};
   const recipeSource = String(ctx.recipeSource || ctx.cellRecipe || "");
@@ -3398,7 +3409,7 @@ async function currentRunManifest(bindings, params) {
     cells.push({
       index: i,
       peer: String(chain.peer || ""),
-      publish: !!chain.publish,
+      publish: publishedSlots(chain).length > 0,
       recipe,
     });
   }

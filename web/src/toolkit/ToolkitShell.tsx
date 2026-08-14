@@ -111,6 +111,7 @@ import {
   compileRecipe,
   outSlotLabels,
   projectTypeForMember,
+  publishedSlots,
 } from "../lib/toolkit/recipe.js";
 import { planRun } from "../lib/toolkit/plan.js";
 import { roomRoster } from "../lib/notebook/roster.js";
@@ -1207,7 +1208,7 @@ export function ToolkitShell() {
       );
       setSessionDraft((d) => ({ ...d, audience: next }));
       for (const edit of edits) {
-        nb.setCellPeer(edit.cell, edit.peer, edit.publish, edit.publishSlots);
+        nb.setCellPeer(edit.cell, edit.peer, edit.publishSlots);
       }
       setRelabelNote(note);
       // The room the last ceremony was written for is not this room any more,
@@ -2666,16 +2667,20 @@ export function ToolkitShell() {
                         <CellAssign
                           className="ml-1"
                           peer={(chain as { peer?: string }).peer ?? null}
-                          publish={!!(chain as { publish?: boolean }).publish}
                           // The cell's own `out` labels, at any depth — the
                           // menu cannot offer to publish a slot the cell does
-                          // not write, and `validateChainHeader` refuses one.
+                          // not write, because `publish` stands behind an `out`
+                          // and there would be nothing to stand behind.
                           outSlots={outSlotLabels(chain.steps || [])}
-                          publishSlots={(chain as { publishSlots?: string[] }).publishSlots ?? []}
+                          // Read off the steps, which is where the claim is —
+                          // the same call `planRun` and the handoff make, so
+                          // the menu cannot show one answer while the plan acts
+                          // on another.
+                          publishSlots={publishedSlots(chain as RecipeChain)}
                           choices={peerChoices}
-                          onAssign={(peer, publish, publishSlots) => {
+                          onAssign={(peer, publishSlots) => {
                             nb.setFocusedCell(i);
-                            nb.setCellPeer(i, peer, publish, publishSlots);
+                            nb.setCellPeer(i, peer, publishSlots);
                           }}
                         />
                         <div className="ml-auto flex gap-1">

@@ -468,7 +468,7 @@ const INSTALL = `(() => {
       cells: chains.map((chain, i) => ({
         index: i,
         peer: String(chain.peer || ""),
-        publish: !!chain.publish,
+        publish: arc.publishedSlots(chain).length > 0,
         recipe: arc.serializeRecipe({ chains: [chain] }),
       })),
     });

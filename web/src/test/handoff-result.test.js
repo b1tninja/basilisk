@@ -46,7 +46,12 @@ import { planChains, planRun } from "../lib/toolkit/plan.js";
 import { parseRecipeSource } from "../lib/toolkit/recipe-parse.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { buildRunManifest, manifestDigest } from "../lib/toolkit/manifest.js";
-import { compileRecipe, migrateRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
+import {
+  compileRecipe,
+  migrateRecipe,
+  publishedSlots,
+  serializeRecipe,
+} from "../lib/toolkit/recipe.js";
 import { createSlotRegistry } from "../lib/toolkit/slot-registry.js";
 
 const FPR_M = "4F2AC1B39D8E7C6A5B4938271605F4E3D2C1B0A9";
@@ -64,11 +69,11 @@ const ROOM_OF_THREE = { ...ROSTER, nkechi: FPR_N };
  * notebook, where mara's run merely skipped a cell and walked on. Here mara's
  * run *stops*, which is the state a result exists to end.
  */
-const ROUND_TRIP = `@mara publish
-bytes deadbeef | encode hex | out $seed
+const ROUND_TRIP = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
-@okafor publish
-in $seed | decode hex | encode base64 | out $b64
+@okafor
+in $seed | decode hex | encode base64 | out $b64 | publish
 
 @mara
 in $b64 | out $done
@@ -90,7 +95,7 @@ function manifestFor(src, peers = ROSTER) {
     cells: chains.map((chain, i) => ({
       index: i,
       peer: String(chain.peer || ""),
-      publish: !!chain.publish,
+      publish: publishedSlots(chain).length > 0,
       recipe: serializeRecipe({ chains: [chain] }),
     })),
   });
@@ -269,11 +274,11 @@ describe("a returned value ends the run that stopped for want of it", () => {
   });
 
   it("carries bytes as bytes, and drops the annotations an op left on them", async () => {
-    const src = `@mara publish
-bytes deadbeef | encode hex | out $seed
+    const src = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
-@okafor publish
-in $seed | decode hex | out $raw
+@okafor
+in $seed | decode hex | out $raw | publish
 
 @mara
 in $raw | encode base64 | out $done
@@ -398,8 +403,8 @@ describe("a result is answered from this peer's own plan and record", () => {
   });
 
   it("refuses a rendezvous however the document was built", async () => {
-    const src = `@mara publish
-bytes deadbeef | encode hex | out $seed
+    const src = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
 @*
 in $seed | decode hex | encode base64 | out $b64
@@ -543,11 +548,11 @@ describe("a result that would carry a private value is refused", () => {
    * wrong or was never run, so a test that only fed it plans it had already
    * validated would be testing the plan.
    */
-  const LEAKY = `@mara publish
-bytes deadbeef | encode hex | out $seed
+  const LEAKY = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
-@okafor publish
-genkey x25519 | out $kp
+@okafor
+genkey x25519 | out $kp | publish
 
 @mara
 in $kp | export spki | encode base64 | out $pub
@@ -612,8 +617,8 @@ in $kp | export spki | encode base64 | out $pub
    * this refusal shipped to a user. The property is the same one pinned in
    * `run-plan.test.js`: the advice appears only where following it compiles.
    */
-  const DEALT = `@mara publish
-random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $share
+  const DEALT = `@mara
+random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $share | publish
 
 @okafor
 in $share | out $back
@@ -630,7 +635,7 @@ in $share | out $back
     expect(built.ok).toBe(false);
     const r = built.refusals.find((x) => x.reason === "private-value");
     expect(r?.message).toContain("may leave the machine that made it");
-    expect(r?.message).not.toContain("| :public | out");
+    expect(r?.message).not.toContain("| public | out");
     expect(r?.message).toContain("one holder's piece of a split");
     // …and the compiler's own word on the advice it no longer gives, so this
     // is a claim about the product rather than about the sentence.
@@ -749,11 +754,11 @@ in $seed | out $copy
     // okafor ran the cell and nothing downstream is anybody's but his. Nobody
     // is stopped, so there is nothing for a result to end — and what is wanted
     // instead is said by name.
-    const src = `@mara publish
-bytes deadbeef | encode hex | out $seed
+    const src = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
-@okafor publish
-in $seed | decode hex | encode base64 | out $b64
+@okafor
+in $seed | decode hex | encode base64 | out $b64 | publish
 `;
     const okafor = await runAs(src, "okafor");
     const built = await buildResultFor({
@@ -787,8 +792,8 @@ in $seed | decode hex | encode base64 | out $b64
     const built = await buildResultFor({
       plan: ran.plan,
       compiled: ran.compiled,
-      manifest: await manifestFor(`@mara publish
-bytes 00 | encode hex | out $seed
+      manifest: await manifestFor(`@mara
+bytes 00 | encode hex | out $seed | publish
 `),
       cell: 1,
       readSlot: ran.readSlot,

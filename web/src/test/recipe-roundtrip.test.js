@@ -359,8 +359,8 @@ describe("a comment survives serialization", () => {
     // comment between the two would separate the header from the pipeline it
     // heads. It also has to stay parseable: `@peer` is only read at the head of
     // a chain, and a comment line does not end one.
-    const { first } = settle("@mara publish\n# who gets what\nrandom 32 | out $a");
-    expect(first).toBe("# who gets what\n@mara publish\nrandom 32 | out $a");
+    const { first } = settle("@mara\n# who gets what\nrandom 32 | out $a | publish");
+    expect(first).toBe("# who gets what\n@mara\nrandom 32 | out $a | publish");
   });
 
   it("is idempotent for every place a comment can be written", () => {

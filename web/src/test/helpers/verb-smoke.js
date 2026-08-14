@@ -1605,15 +1605,15 @@ run.receipt "verb smoke ceremony" | out $receipt`,
       // The commitment half. `bindings.receipt.recipeSource` is what the shell
       // hands over (`useNotebook`'s buildBindings), and without it the op has
       // only the cell it sits in — the same context `run.receipt` reads.
-      recipe: `@mara publish
-bytes deadbeef | encode hex | out $a
+      recipe: `@mara
+bytes deadbeef | encode hex | out $a | publish
 
 run.manifest "verb smoke commitment" | out $manifest`,
       mode: "run",
       bindings: () => ({
         receipt: {
           recipeSource:
-            "@mara publish\nbytes deadbeef | encode hex | out $a\n\n" +
+            "@mara\nbytes deadbeef | encode hex | out $a | publish\n\n" +
             'run.manifest "verb smoke commitment" | out $manifest',
           label: "verb smoke",
         },

@@ -308,8 +308,8 @@ const notebook = (source, label = "") => ({ receipt: { recipeSource: source, lab
 
 describe("run.manifest through the engine", () => {
   it("emits the notebook's manifest, cells and all", async () => {
-    const src = `@mara publish
-bytes deadbeef | encode hex | out $a
+    const src = `@mara
+bytes deadbeef | encode hex | out $a | publish
 
 in $a | out $b
 

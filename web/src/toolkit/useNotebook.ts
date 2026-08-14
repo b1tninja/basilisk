@@ -42,6 +42,7 @@ import {
   compileRecipe,
   migrateRecipe,
   serializeRecipe,
+  setPublishedSlots,
   validateRecipe,
   unresolvedRecipients,
 } from "../lib/toolkit/recipe.js";
@@ -1142,14 +1143,19 @@ export function useNotebook() {
     ) => {
       const step = makeStep(opName, opts);
       if (!step) return;
+      // A keypair half is a step, so the menu writes a step. Anything else is
+      // still a branch prefix — the same split the parser makes, and it has to
+      // be the same one or a branch inserted here would re-shape itself the
+      // first time the cell was parsed back from its own text.
+      const folded = selector === ":public" || selector === ":private";
       const next = stepsAt(cell).map((s, i) => {
         if (i !== stem) return s;
         const branches = [...(s.branches || [])];
-        branches.push({
-          selector,
-          member: selector.replace(/^:/, ""),
-          body: [step],
-        });
+        branches.push(
+          folded
+            ? { member: "", body: [{ name: "select", params: { selector } }, step] }
+            : { selector, member: selector.replace(/^:/, ""), body: [step] }
+        );
         return { ...s, branches };
       });
       setCellSteps(cell, next);
@@ -1424,19 +1430,18 @@ export function useNotebook() {
     const chain = ast.chains?.[0] || { steps: ast.steps || [] };
     setChains((prev) => {
       const next = [...prev];
-      // `peer`, `publish` and the slots `publish` names come with the chain and
-      // have to be carried over. Rebuilding from `steps` alone dropped them,
-      // which made a `@peer` header impossible to write anywhere in the
-      // product: the grammar reads it (`recipe-parse.js` sets `chain.peer`),
-      // `serializeChain` writes it back out, `planRun` places cells by it and
-      // `placementGate` enforces it — and this one assignment threw it away
-      // between the parse and the state, so typing `@mara publish` parsed
-      // cleanly and then vanished.
+      // `peer` comes with the chain and has to be carried over. Rebuilding from
+      // `steps` alone dropped it, which made a `@peer` header impossible to
+      // write anywhere in the product: the grammar reads it
+      // (`recipe-parse.js` sets `chain.peer`), `serializeChain` writes it back
+      // out, `planRun` places cells by it and `placementGate` enforces it — and
+      // this one assignment threw it away between the parse and the state, so
+      // typing `@mara` parsed cleanly and then vanished. What the cell
+      // publishes needs no such care any more: it is a `publish` step, so it
+      // rides in `steps` like every other step.
       next[cellIndex] = {
         steps: [...(chain.steps || [])],
         ...(chain.peer == null ? {} : { peer: chain.peer }),
-        ...(chain.publish ? { publish: true } : {}),
-        ...(chain.publishSlots?.length ? { publishSlots: [...chain.publishSlots] } : {}),
         // The `#` lines the author just typed. They come off the parse like the
         // header does, and dropping them here would mean a comment survived
         // `serializeRecipe` and died on the way back into the notebook — the
@@ -1454,44 +1459,34 @@ export function useNotebook() {
    *
    * The header was reachable only by typing it, which made placement a feature
    * you had to already know the grammar to use. This is the same edit the text
-   * makes — it sets the fields `serializeChain` writes as `@peer` /
-   * `@peer publish` — so the two views cannot drift: there is one
+   * makes — it sets the field `serializeChain` writes as `@peer`, and the
+   * steps it writes as `publish` — so the two views cannot drift: there is one
    * representation and both surfaces move it.
    *
    * `peer: null` clears the header rather than writing an empty one. An
    * unassigned cell has no `peer` field at all, which is what `planRun` reads
    * as "everyone", and a `@` with nothing after it is not a recipe.
    *
-   * `publish` is only meaningful alongside a peer — it says this cell's output
-   * may leave the machine that made it — so clearing the peer clears it too
-   * rather than leaving a modifier attached to nobody.
+   * `publishSlots` says which of the cell's `out` slots leave, and it is
+   * written into the **steps** — one `publish` after each named `out` — because
+   * that is where the claim lives now. `setPublishedSlots` makes the edit so
+   * that this and the source view make the identical one; a second walk here
+   * would be a second opinion about what a cell discloses.
    *
-   * `publishSlots` narrows that claim to named `out` slots (`publish=$a,$b`).
-   * An empty list is not "publish nothing": it is the bare `publish` the
-   * grammar has always had, meaning every `out` the cell writes. Saying
-   * nothing leaves is what dropping `publish` is for, and the two must not be
-   * spelled the same way in state or one of them becomes unreachable.
+   * Publishing is only meaningful alongside a peer — it says this cell's output
+   * may leave the machine that made it — so clearing the peer clears every
+   * `publish` step with it rather than leaving a claim attached to nobody, and
+   * a cell that kept one would not compile.
    */
   const setCellPeer = useCallback(
-    (
-      cellIndex: number,
-      peer: string | null,
-      publish = false,
-      publishSlots: string[] = []
-    ) => {
+    (cellIndex: number, peer: string | null, publishSlots: string[] = []) => {
       setChains((prev) => {
         const next = [...prev];
         const chain = next[cellIndex];
         if (!chain) return prev;
-        const { peer: _p, publish: _pub, publishSlots: _slots, ...rest } = chain;
-        next[cellIndex] = peer
-          ? {
-              ...rest,
-              peer,
-              ...(publish ? { publish: true } : {}),
-              ...(publish && publishSlots.length ? { publishSlots: [...publishSlots] } : {}),
-            }
-          : rest;
+        const { peer: _p, ...rest } = chain;
+        const steps = setPublishedSlots(chain.steps || [], peer ? publishSlots : []);
+        next[cellIndex] = peer ? { ...rest, steps, peer } : { ...rest, steps };
         return next;
       });
     },
@@ -2304,7 +2299,7 @@ export function useNotebook() {
         departedPeers(before, after)
       );
       for (const edit of edits) {
-        setCellPeer(edit.cell, edit.peer, edit.publish, edit.publishSlots);
+        setCellPeer(edit.cell, edit.peer, edit.publishSlots);
       }
       // The run-status line, which is the only surface on screen whatever else
       // is open. The draft's version of this sentence lives on the session

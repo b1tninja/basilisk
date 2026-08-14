@@ -41,6 +41,7 @@ import {
   PRESETS,
   compileRecipe,
   parseRecipe,
+  publishedSlots,
   serializeRecipe,
   validateRecipe,
 } from "../lib/toolkit/recipe.js";
@@ -303,28 +304,25 @@ describe("one label grammar, two sigils", () => {
 });
 
 describe("the header round-trips", () => {
-  // `publish=$kp` names the one `out` in BODY. It rides the same sweep as the
-  // bare forms on purpose: the named header is the one that can quietly widen
-  // if a trip drops the list, and a trip that dropped it would still produce a
-  // header that parses.
+  // A cell that publishes rides the same sweep as the bare forms on purpose:
+  // disclosure is the claim that can quietly widen or vanish if a trip drops
+  // it, and a trip that dropped it would still produce a recipe that parses.
   //
   // A fingerprint header is in the list because it is the *long* one, and the
   // compact `#r=` spelling is where a length problem would first show.
   const FPR = createHash("sha1").update("roundtrip").digest("hex").toUpperCase();
-  const HEADERS = [
-    "@alice",
-    "@alice publish",
-    "@alice publish=$kp",
-    "@*",
-    "@* publish",
-    "@ops-team",
-    `@${FPR}`,
-    `@${FPR} publish=$kp`,
+  const CELLS = [
+    `@alice\n${BODY}`,
+    `@alice\n${BODY} | publish`,
+    `@*\n${BODY}`,
+    `@*\n${BODY} | publish`,
+    `@ops-team\n${BODY}`,
+    `@${FPR}\n${BODY}`,
+    `@${FPR}\n${BODY} | publish`,
   ];
 
-  for (const header of HEADERS) {
-    it(`survives serialize and \`#r=\` unchanged: ${header}`, () => {
-      const src = `${header}\n${BODY}`;
+  for (const src of CELLS) {
+    it(`survives serialize and \`#r=\` unchanged: ${src.replace(/\n/g, " ⏎ ")}`, () => {
       const { ast } = parseRecipe(src);
       expect(serializeRecipe(ast)).toBe(src);
 
@@ -345,11 +343,11 @@ describe("the header round-trips", () => {
   it("reads the compact spelling the link carries", () => {
     // Compact puts the header and the first step on one line; pretty gives the
     // header its own. Both are the same cell.
-    const compact = parseRecipe("@alice publish random 32|out $x");
-    const pretty = parseRecipe("@alice publish\nrandom 32 | out $x");
+    const compact = parseRecipe("@alice random 32|out $x|publish");
+    const pretty = parseRecipe("@alice\nrandom 32 | out $x | publish");
     expect(compact.errors).toEqual([]);
     expect(compact.ast.chains[0].peer).toBe("alice");
-    expect(compact.ast.chains[0].publish).toBe(true);
+    expect(publishedSlots(compact.ast.chains[0])).toEqual(["x"]);
     expect(serializeRecipe(compact.ast)).toBe(serializeRecipe(pretty.ast));
   });
 
@@ -357,25 +355,25 @@ describe("the header round-trips", () => {
     const dh = `@alice
 genkey x25519 | out $kpA
 
-@alice publish
-$kpA | :public | out $pubA
+@alice
+$kpA | public | out $pubA | publish
 
 @bob
 genkey x25519 | out $kpB
 
-@bob publish
-$kpB | :public | out $pubB
+@bob
+$kpB | public | out $pubB | publish
 
 @alice
 ecdh private=$kpA peer=$pubB | out $shared`;
     const { ast, validation } = compileRecipe(dh);
     expect(validation.errors).toEqual([]);
-    expect(ast.chains.map((c) => [c.peer, !!c.publish])).toEqual([
-      ["alice", false],
-      ["alice", true],
-      ["bob", false],
-      ["bob", true],
-      ["alice", false],
+    expect(ast.chains.map((c) => [c.peer, publishedSlots(c)])).toEqual([
+      ["alice", []],
+      ["alice", ["pubA"]],
+      ["bob", []],
+      ["bob", ["pubB"]],
+      ["alice", []],
     ]);
     expect(serializeRecipe(ast)).toBe(dh);
     const share = hashForRecipe(dh);
@@ -389,7 +387,7 @@ describe("the header is inert", () => {
     // Grammar only: a parsed header must not move a single thing the compiler
     // says about the pipeline.
     const bare = compileRecipe(BODY);
-    const owned = compileRecipe(`@alice publish\n${BODY}`);
+    const owned = compileRecipe(`@alice\n${BODY}`);
     // Offsets aside — the header occupies characters — the steps are the same
     // steps, carrying the same params the registry filled in.
     expect(shapeOf(owned.ast.chains[0]).steps).toEqual(
@@ -437,18 +435,26 @@ describe("the header refuses what it cannot mean", () => {
 
   it("refuses `publish` with nothing to publish", () => {
     // A silently-not-published artifact is a ceremony that quietly did nothing.
+    // The retired header form said this about the cell; the step says it about
+    // the position it was written in, which is the more useful sentence.
     expect(errorsFor("@alice publish\nrandom 32 | inspect")[0]).toMatch(
       /has no `out`/
     );
+    expect(errorsFor("@alice\nrandom 32 | inspect | publish")[0]).toMatch(
+      /`inspect` does not name one/
+    );
   });
 
-  it("refuses a hand-built AST that says publish without a peer", () => {
-    // Unspellable in text, reachable through the AST, and it would serialize
-    // to a recipe that no longer says it.
-    const { ast } = parseRecipe(BODY);
-    const forged = { ...ast, chains: [{ ...ast.chains[0], publish: true }] };
+  it("refuses `publish` with no peer to publish from", () => {
+    // Reachable in text now — it used to need a hand-built AST, because the
+    // grammar could not spell `publish` without a peer in front of it. Leaving
+    // is a claim about a boundary, and an unassigned cell has not drawn one.
+    expect(errorsFor(`${BODY} | publish`)[0]).toMatch(/needs a peer to send it from/);
+    // And the same sentence for an AST nobody could have typed.
+    const { ast } = parseRecipe(`@alice\n${BODY} | publish`);
+    const forged = { ...ast, chains: [{ ...ast.chains[0], peer: undefined }] };
     expect(validateRecipe(forged).errors[0].message).toMatch(
-      /needs a peer to go from/
+      /needs a peer to send it from/
     );
   });
 });

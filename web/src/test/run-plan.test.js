@@ -96,8 +96,8 @@ describe("a recipe that names no peer plans as one runner", () => {
 
 describe("placement is derived from where the private value already is", () => {
   const SRC = `${TWO_KEYS}
-@mara publish
-in $kpM | :public | out $pubM
+@mara
+in $kpM | :public | out $pubM | publish
 
 ecdh private=$kpM peer=$pubM | out $shared
 `;
@@ -241,8 +241,8 @@ ecdh private=$kpM peer=$kpO | out $bad
 
   it("does not fire when the second key was published", () => {
     const ok = `${TWO_KEYS}
-@okafor publish
-in $kpO | :public | out $pubO
+@okafor
+in $kpO | :public | out $pubO | publish
 
 @mara
 ecdh private=$kpM peer=$pubO | out $shared
@@ -274,7 +274,12 @@ in $kpM | :public | out $pubM
   it("names the remedy on both sides", () => {
     const r = refusalFor(plan(SRC, { me: "okafor", roster: ROSTER }), "two-owners");
     expect(r?.message).toContain("Move the cell to `@mara`");
-    expect(r?.message).toContain("@mara publish");
+    // The other side: publish what the cell needs, from the cell that wrote it,
+    // named by the `out` a `publish` would stand behind. The remedy has to be
+    // performable as written — it used to say `@mara publish`, which is no
+    // longer a header this grammar has.
+    expect(r?.message).toContain("`publish`");
+    expect(r?.message).toContain("out $kpM");
   });
 });
 
@@ -325,7 +330,7 @@ genkey x25519 | out $kpA
 
 describe("refusal · publishing what must not leave the machine", () => {
   it("refuses a private half, and names the public one as the fix", () => {
-    const p = plan("@mara publish\ngenkey x25519 | out $kpM", {
+    const p = plan("@mara\ngenkey x25519 | out $kpM | publish", {
       me: "mara",
       roster: ROSTER,
     });
@@ -333,13 +338,18 @@ describe("refusal · publishing what must not leave the machine", () => {
     expect(p.ok).toBe(false);
     expect(r?.field).toBe("publish");
     expect(r?.actual).toBe("$kpM (keypair/x25519/private)");
-    expect(r?.message).toContain(":public");
+    // The remedy is written the way the notebook writes it: a keypair half is
+    // a step, and sending it needs the `publish` that was the whole complaint.
+    // A remedy the reader can paste is the point — this one used to name
+    // `:public`, which still compiles and is no longer what the cell would
+    // come back as.
+    expect(r?.message).toContain("$kpM | public | out $pub | publish");
     expect(r?.message).toContain("drop `publish`");
   });
 
   it("refuses a share, which is the case a ceremony gets wrong", () => {
     const p = plan(
-      "@mara publish\nrandom 32 | sss.split threshold=2 shares=3 | out $shares",
+      "@mara\nrandom 32 | sss.split threshold=2 shares=3 | out $shares | publish",
       { me: "mara", roster: ROSTER }
     );
     expect(refusalFor(p, "publish-secret")?.actual).toContain("$shares");
@@ -347,13 +357,13 @@ describe("refusal · publishing what must not leave the machine", () => {
 
   it("looks inside a tee branch, where the private half usually hides", () => {
     // This one compiles cleanly and reads as an ordinary key export. Both
-    // `out`s are secret and both are refused, which is what "publish is a
-    // property of the cell" means — a branch is not a way out of it.
+    // `out`s are secret and both are refused, which is what "a nested `out` is
+    // still this cell's output" means — a branch is not a way out of it.
     const p = plan(
-      `@mara publish
+      `@mara
 genkey ec/p256 | tee {
-  - :private | out $priv
-} | out $kp`,
+  - :private | out $priv | publish
+} | out $kp | publish`,
       { me: "mara", roster: ROSTER }
     );
     expect(p.refusals.map((r) => r.actual)).toEqual([
@@ -367,8 +377,8 @@ genkey ec/p256 | tee {
       `@mara
 genkey x25519 | out $kpM
 
-@mara publish
-in $kpM | :public | out $pubM`,
+@mara
+in $kpM | :public | out $pubM | publish`,
       { me: "mara", roster: ROSTER }
     );
     expect(p.refusals).toEqual([]);
@@ -400,19 +410,24 @@ in $kpM | :public | out $pubM`,
       what: "a whole split",
       cell: "random 32 | sss.split threshold=2 shares=3 | out $x",
     },
-    { what: "a projected private half", cell: "genkey ec/p256 | :private | out $x" },
+    { what: "a projected private half", cell: "genkey ec/p256 | private | out $x" },
     { what: "a master", cell: '"hi" | utf8 | gpg.symencrypt mode=master | out $x' },
   ];
 
   /** What the compiler says about the notebook the advice would produce. */
   const follow = (cell) =>
-    compileRecipe(`@mara\n${cell}\n\n@mara publish\nin $x | :public | out $pub`)
+    compileRecipe(`@mara\n${cell}\n\n@mara\nin $x | public | out $pub | publish`)
       .validation.errors.map((e) => e.message);
 
-  it.each(REFUSED)("offers `:public` for $what only if that compiles", ({ cell }) => {
-    const r = refusalFor(plan(`@mara publish\n${cell}`, { me: "mara", roster: ROSTER }), "publish-secret");
+  it.each(REFUSED)("offers the public half for $what only if that compiles", ({ cell }) => {
+    const r = refusalFor(
+      plan(`@mara\n${cell} | publish`, { me: "mara", roster: ROSTER }),
+      "publish-secret"
+    );
     expect(r).toBeTruthy();
-    expect(r.message.includes("$x | :public | out $pub")).toBe(follow(cell).length === 0);
+    expect(r.message.includes("$x | public | out $pub | publish")).toBe(
+      follow(cell).length === 0
+    );
   });
 
   it("has cases on both sides of that, or the row above asserts nothing", () => {
@@ -430,41 +445,70 @@ in $kpM | :public | out $pubM`,
     // "publish something else" — it is that a share has one holder and the
     // header already named them.
     const p = plan(
-      `@${FPR_A} publish
-random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $share`,
+      `@${FPR_A}
+random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $share | publish`,
       { me: FPR_A, roster: { [FPR_A]: FPR_A } }
     );
     const r = refusalFor(p, "publish-secret");
-    expect(r?.message).not.toContain("| :public | out");
+    expect(r?.message).not.toContain("| public | out");
     expect(r?.message).toContain("one holder's piece of a K-of-N split");
     expect(r?.message).toContain("runs on its peer's own machine");
     // Whole fingerprint wherever it appears, never a prefix of one.
     expect(r?.message).toContain(`@${FPR_A}`);
-    // Sentence-cased: it is the only remedy left, so it opens the list.
-    expect(r?.message).toContain("Drop `publish` from this cell.");
+    // Sentence-cased: it is the only remedy left, so it opens the list. It
+    // names the `out` the `publish` stands behind, because that is the edit —
+    // "drop `publish` from this cell" was true of a header and is ambiguous
+    // about a cell with several `out`s.
+    expect(r?.message).toContain("Drop `publish` from after `out $share`.");
   });
 
-  /** One cell, two `out`s, and a header that names both of them. */
-  const BOTH = `@mara publish=$hex,$share
+  /** One cell, two `out`s, and a `publish` on each. */
+  const BOTH = `@mara
 random 32 | tee
-  - encode hex | out $hex
-| sss.split threshold=2 shares=3 | blip39 | at 1 | out $share`;
+  - encode hex | out $hex | publish
+| sss.split threshold=2 shares=3 | blip39 | at 1 | out $share | publish`;
 
-  it("quotes the header the cell actually carries, list and all", () => {
-    // A `publish=$a,$b` header was printed as a bare `publish`, so the opening
-    // sentence described a cell marked something its author never wrote.
+  it("says which slot it is refusing, and what the cell is", () => {
+    // The opening sentence used to reassemble the header from two fields to
+    // avoid describing a cell as marked something its author never wrote.
+    // There is one thing a header can say now, and the refused slot is named
+    // beside it rather than reconstructed from it.
     const r = refusalFor(plan(BOTH, { me: "mara", roster: ROSTER }), "publish-secret");
-    expect(r?.message).toContain("marked `@mara publish=$hex,$share`");
+    expect(r?.message).toContain("Cell 0 is `@mara` and publishes `$share`");
+    expect(r?.message).not.toContain("$hex, which is");
   });
 
-  it("writes out the narrower header rather than `publish=$…`", () => {
+  it("reports what leaves as a list, with no boolean beside it to disagree", () => {
+    // `PlanCell.publish` used to sit next to `publishes` and was exactly
+    // `publishes.length > 0` — a summary of the list that could only agree
+    // with it or contradict it. Setting it to `false` outright was caught by
+    // nothing in this repo, which is what a redundant field buys. It is gone,
+    // and `PlanPanel` reads the list; this is the assertion that the list says
+    // enough for it to.
+    const p = plan(BOTH.replace(" | out $share | publish", " | out $share"), {
+      me: "mara",
+      roster: ROSTER,
+    });
+    expect(p.cells[0].publishes).toEqual(["hex"]);
+    expect(p.cells[0].produces).toEqual(["hex", "share"]);
+    expect("publish" in p.cells[0]).toBe(false);
+    // And a cell that publishes nothing says so with an empty list rather than
+    // with a second field.
+    const quiet = plan("@mara\nrandom 32 | encode hex | out $hex", {
+      me: "mara",
+      roster: ROSTER,
+    });
+    expect(quiet.cells[0].publishes).toEqual([]);
+  });
+
+  it("writes out the narrower disclosure rather than eliding it", () => {
     // The elided form asked the reader to solve the refusal before they could
     // take its advice — and on a cell with nothing else to publish there was
-    // no header to solve for at all. Taken literally, what it names now plans.
+    // no advice to solve for at all. Taken literally, what it names now plans.
     const r = refusalFor(plan(BOTH, { me: "mara", roster: ROSTER }), "publish-secret");
-    const narrowed = r?.message.match(/`(@mara publish=[^`]+)`\)/)?.[1];
-    expect(narrowed).toBe("@mara publish=$hex");
-    const fixed = plan(BOTH.replace(/^@mara publish=[^\n]*/, narrowed), {
+    const narrowed = r?.message.match(/`(out \$[^`]+ \| publish)`\)/)?.[1];
+    expect(narrowed).toBe("out $hex | publish");
+    const fixed = plan(BOTH.replace(" | out $share | publish", " | out $share"), {
       me: "mara",
       roster: ROSTER,
     });
@@ -478,7 +522,7 @@ random 32 | tee
     // cannot resolve, so `$x` is never typed, and an untyped value is a
     // question rather than a verdict. Fail-closed either way — the run does
     // not proceed on a shrug.
-    const { ast } = parseRecipe("@mara publish\nbytes deadbeef | sss.combine | out $x");
+    const { ast } = parseRecipe("@mara\nbytes deadbeef | sss.combine | out $x | publish");
     const p = planRun(ast, { me: "mara", roster: ROSTER });
     expect(p.refusals).toEqual([]);
     const ask = p.asks.find((a) => a.reason === "publish-untyped");

@@ -100,9 +100,10 @@
 import { cellKind } from "./manifest.js";
 import { mismatchLog } from "./receipt.js";
 import {
-  PEER_PUBLISH_SEPARATOR,
   PEER_SIGIL,
   PEER_WILDCARD,
+  PUBLISH_STEP,
+  SELECT_PUBLIC,
   SLOT_SIGIL,
   normalizePeerRef,
   peerKeyIdError,
@@ -165,11 +166,12 @@ import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
  * @property {string} why        one sentence, always present
  * @property {string[]} runsOn   resolved labels; empty means every participant
  * @property {boolean} mine      `me` runs this cell
- * @property {boolean} publish  the header says some of what it writes leaves
- * @property {string[]} publishes  which labels do — every one of `produces`
- *   for a bare `publish`, the named subset for `publish=$a,$b`, and empty
- *   without a `publish` at all. This is the field to read when the question is
- *   *what leaves this machine*; `publish` alone cannot answer it any more.
+ * @property {string[]} publishes  what leaves: one label per `out` a `publish`
+ *   step stands behind, in source order, and empty when nothing leaves. There
+ *   is no boolean beside it. There was, and it was exactly
+ *   `publishes.length > 0` — a summary that could only ever agree with the
+ *   list or contradict it, and a mutation setting it to `false` outright was
+ *   caught by nothing.
  * @property {string[]} produces slot labels this cell writes
  * @property {ConsumedSlot[]} consumes
  * @property {number} [start]    header anchor, for a complaint about placement
@@ -820,8 +822,9 @@ export function planRun(compiled, opts = {}) {
           `${pinned[0].from}). Running it on \`${PEER_SIGIL}${declaredPeer}\` ` +
           `means \`${PEER_SIGIL}${privateOwners[0]}\` hands over a private ` +
           `value. Move the cell to \`${PEER_SIGIL}${privateOwners[0]}\`, or ` +
-          `publish what it needs from cell ${pinned[0].from} with ` +
-          `\`${PEER_SIGIL}${privateOwners[0]} publish\`.`
+          `publish what it needs from cell ${pinned[0].from} by writing ` +
+          `\`${PUBLISH_STEP}\` after the \`out ${SLOT_SIGIL}${pinned[0].label}\` ` +
+          "there."
       );
       peer = privateOwners[0];
     }
@@ -887,10 +890,8 @@ export function planRun(compiled, opts = {}) {
         continue;
       }
       if (publishable) continue;
-      // The header as the author wrote it. `publish` cannot be parsed without a
-      // peer in front of it, so this is never the empty string here — and a
-      // header carrying `publish=$a,$b` has to be quoted with its list, or the
-      // refusal opens by describing a cell that is marked something else.
+      // The header as the author wrote it. `publish` does not compile without a
+      // peer on the cell, so this is never the empty string here.
       const header = chainHeaderText(chain);
       /**
        * What can be done about it — and only what can be done about *this*
@@ -912,29 +913,32 @@ export function planRun(compiled, opts = {}) {
       if (publicHalf) {
         remedies.push(
           "publish the public half instead " +
-            `(\`${SLOT_SIGIL}${label} | :public | out ${SLOT_SIGIL}pub\`)`
+            `(\`${SLOT_SIGIL}${label} | ${SELECT_PUBLIC} | out ` +
+            `${SLOT_SIGIL}pub | ${PUBLISH_STEP}\`)`
         );
       }
       // "Name only what may leave" was written as `publish=$…` for every cell
       // it was said to, which is advice a reader has to solve before they can
-      // take: a cell writing one slot has nothing to put there, and a header
-      // that already names slots was being told to do the thing it did. The
-      // list the cell could truthfully carry is knowable here — it is the rest
-      // of what the cell writes, minus whatever this pass would refuse in turn
-      // — so it is written out rather than elided, and left off entirely when
-      // it would be empty.
+      // take: a cell writing one slot had nothing to put there, and a header
+      // that already named slots was being told to do the thing it did. The
+      // slots the cell could truthfully publish are knowable here — the rest of
+      // what it writes, minus whatever this pass would refuse in turn — so they
+      // are written out rather than elided, and left off entirely when there
+      // are none.
       const sendable = produces.filter(
         (other) => other !== label && publishability(types.get(other)).publishable
       );
       if (sendable.length) {
         remedies.push(
-          `publish only what may leave (\`${PEER_SIGIL}${declaredPeer} publish=` +
-            `${sendable.map((l) => `${SLOT_SIGIL}${l}`).join(PEER_PUBLISH_SEPARATOR)}\`)`
+          `publish only what may leave (\`out ${SLOT_SIGIL}${sendable[0]} | ` +
+            `${PUBLISH_STEP}\`)`
         );
       }
       // The last one is always available, and is the reason this list is never
       // empty: a cell can always stop publishing.
-      remedies.push("drop `publish` from this cell");
+      remedies.push(
+        `drop \`${PUBLISH_STEP}\` from after \`out ${SLOT_SIGIL}${label}\``
+      );
       const joined =
         remedies.length > 1
           ? `${remedies.slice(0, -1).join(", ")}, or ${remedies.at(-1)}.`
@@ -995,9 +999,8 @@ export function planRun(compiled, opts = {}) {
         "a value that may leave the machine that made it",
         `${SLOT_SIGIL}${label} (${formatType(type)})`,
         "publish-secret",
-        `Cell ${i} is marked \`${header}\` ` +
-          `but \`${SLOT_SIGIL}${label}\` is ` +
-          `${formatType(type)}, which is not a value that may ` +
+        `Cell ${i} is \`${header}\` and publishes \`${SLOT_SIGIL}${label}\`, ` +
+          `which is ${formatType(type)} — not a value that may ` +
           `leave the machine that made it. ${because}${offer}`
       );
     }
@@ -1059,7 +1062,6 @@ export function planRun(compiled, opts = {}) {
       why,
       runsOn,
       mine,
-      publish: !!chain.publish,
       publishes,
       produces,
       consumes,

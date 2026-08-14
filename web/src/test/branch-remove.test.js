@@ -48,28 +48,37 @@ const recompile = (steps) =>
 
 describe("stepsWithBranchRemoved", () => {
   const two = `genkey ec/p256 | tee
-  - :public | inspect
-  - :private | inspect`;
+  - public | inspect
+  - private | inspect`;
+
+  /**
+   * What a branch is named by, now that a keypair half is a step.
+   *
+   * `br.selector` was the answer while the projection lived in the prefix
+   * grammar; `public` is an ordinary step in the branch's body, so the branch
+   * is identified by what it starts with. Asserted this way rather than on
+   * `selector` so the test says which branch was removed rather than which
+   * field happens to hold a colon.
+   */
+  const opensWith = (steps) =>
+    steps[1].branches.map((b) => String(b.body?.[0]?.params?.selector || b.selector || ""));
 
   it("removes the named branch and leaves the other one alone", () => {
     const { steps, droppedStem } = stepsWithBranchRemoved(stepsOf(two), 1, 0);
     expect(droppedStem).toBe(false);
     expect(steps[1].name).toBe("tee");
-    expect(steps[1].branches.map((b) => b.selector)).toEqual([":private"]);
+    expect(opensWith(steps)).toEqual([":private"]);
   });
 
   it("removes the second branch as readily as the first", () => {
     const { steps } = stepsWithBranchRemoved(stepsOf(two), 1, 1);
-    expect(steps[1].branches.map((b) => b.selector)).toEqual([":public"]);
+    expect(opensWith(steps)).toEqual([":public"]);
   });
 
   it("does not mutate the steps it was given", () => {
     const before = stepsOf(two);
     stepsWithBranchRemoved(before, 1, 0);
-    expect(before[1].branches.map((b) => b.selector)).toEqual([
-      ":public",
-      ":private",
-    ]);
+    expect(opensWith(before)).toEqual([":public", ":private"]);
   });
 
   it("is a no-op, identity included, when the branch is not there", () => {
@@ -223,15 +232,36 @@ describe("the shell wires it to the notebook", () => {
  * a time, and a branch with no steps serializes to `- :public |`, which does not
  * parse — "Expected a step name". The cascade exists so a delete the user asked
  * for can never hand back a recipe that no longer compiles.
+ *
+ * A keypair half is a step now, so a projecting branch holds one step more than
+ * it used to and the cascade fires one removal later. That is not a weakening:
+ * `- public` on its own is a branch that projects and shows the result, which
+ * *is* a recipe, so there is one fewer state a delete can strand the reader in.
+ * The fixtures below empty the branch rather than removing once, because "the
+ * last step" is the condition and the last step moved.
  */
 describe("emptying a branch by removing its last step", () => {
   const one = `genkey ec/p256 | tee
-  - :public | inspect
+  - public | inspect
 | export pkcs8 | pem`;
   const two = `genkey ec/p256 | tee
-  - :public | inspect
-  - :private | inspect
+  - public | inspect
+  - private | inspect
 | export pkcs8 | pem`;
+
+  /** Remove branch `br`'s first step until it is empty; report the last answer. */
+  const emptyBranch = (steps, stem, br) => {
+    let out = { steps, droppedBranch: false, droppedStem: false };
+    for (let guard = 0; guard < 8; guard++) {
+      const body = out.steps[stem]?.branches?.[br]?.body;
+      if (!body?.length) break;
+      out = stepsWithNestStepRemoved(out.steps, stem, br, 0);
+      // Once the branch itself goes, the index means the *next* branch and
+      // carrying on would empty a branch nobody asked about.
+      if (out.droppedBranch || out.droppedStem) break;
+    }
+    return out;
+  };
 
   it("is what the recipe language actually forbids", () => {
     // Pin the reason, not just the behaviour: if an empty branch ever became
@@ -242,15 +272,15 @@ describe("emptying a branch by removing its last step", () => {
   });
 
   it("takes the branch, and the recipe still compiles", () => {
-    const out = stepsWithNestStepRemoved(stepsOf(two), 1, 0, 0);
+    const out = emptyBranch(stepsOf(two), 1, 0);
     expect(out.droppedBranch).toBe(true);
     expect(out.droppedStem).toBe(false);
-    expect(out.steps[1].branches.map((b) => b.selector)).toEqual([":private"]);
+    expect(out.steps[1].branches).toHaveLength(1);
     expect(recompile(out.steps).validation.errors).toEqual([]);
   });
 
   it("takes the tee too when that was the last branch", () => {
-    const out = stepsWithNestStepRemoved(stepsOf(one), 1, 0, 0);
+    const out = emptyBranch(stepsOf(one), 1, 0);
     expect(out.droppedStem).toBe(true);
     expect(out.steps.map((s) => s.name)).toEqual(["genkey", "export", "pem"]);
     expect(recompile(out.steps).validation.errors).toEqual([]);
@@ -258,11 +288,11 @@ describe("emptying a branch by removing its last step", () => {
 
   it("does not cascade while other steps remain in the branch", () => {
     const src = `genkey ec/p256 | tee
-  - :public | inspect | out $a
+  - public | inspect | out $a
 | export pkcs8 | pem`;
-    const out = stepsWithNestStepRemoved(stepsOf(src), 1, 0, 1);
+    const out = stepsWithNestStepRemoved(stepsOf(src), 1, 0, 2);
     expect(out.droppedBranch).toBe(false);
-    expect(out.steps[1].branches[0].body).toHaveLength(1);
+    expect(out.steps[1].branches[0].body).toHaveLength(2);
     expect(recompile(out.steps).validation.errors).toEqual([]);
   });
 

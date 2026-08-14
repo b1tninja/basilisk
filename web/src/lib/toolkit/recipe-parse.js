@@ -23,11 +23,13 @@
  * what makes `passphrase=my$ecret` a literal the parser then refuses, because a
  * `secret` param takes a ref and nothing else.
  *
- * Chain header. A chain (a notebook cell) may open with `@peer`,
- * `@peer publish` or `@peer publish=$a,$b`, before its first step: `@` is who,
- * `$` is what. The header is inert grammar — it names the party a cell belongs
- * to and says which of the cell's `out` artifacts are meant to leave the
- * machine; nothing here runs anything anywhere.
+ * Chain header. A chain (a notebook cell) may open with `@peer` before its
+ * first step: `@` is who, `$` is what. The header is inert grammar — it names
+ * the party a cell belongs to and nothing else; what leaves that machine is a
+ * `publish` step standing behind the `out` it is a claim about. The retired
+ * `@peer publish` / `@peer publish=$a,$b` still read here and are rewritten
+ * into those steps, so a link written before the change opens into the
+ * notebook it meant.
  */
 
 import { canonicalName, getStep } from "./registry.js";
@@ -66,6 +68,18 @@ export const SECRET_LITERAL_REFUSAL = "a secret takes an $slot, never a literal"
  * @property {number} start
  * @property {number} end
  */
+
+/**
+ * The two selectors that are also step names.
+ *
+ * They project a keypair's halves — a pipeline value in, a pipeline value out
+ * — which is a verb's shape, so they are spelled as verbs. Exported because
+ * three modules have to agree on exactly which selectors lost their sigil:
+ * the parser reads them, `serializePipeline` writes them bare, and the ops
+ * drawer offers them.
+ */
+export const SELECT_PUBLIC = "public";
+export const SELECT_PRIVATE = "private";
 
 const SELECTOR_MEMBERS = new Set([
   "private",
@@ -112,13 +126,33 @@ export const PEER_SIGIL = "@";
  */
 export const PEER_WILDCARD = "*";
 
-/** The `publish` keyword, the header's only modifier. */
-export const PEER_PUBLISH_KEYWORD = "publish";
+/**
+ * The step that sends a value to the room: `… | out $a | publish`.
+ *
+ * A verb, because anything that leaves this machine is a verb. It used to be a
+ * modifier on the header — `@alice publish=$a,$b` — which put the claim about
+ * *this value* two lines away from the value and made the header answer two
+ * questions instead of one. `PEER_PUBLISH_KEYWORD` below is the same word in
+ * the position it used to occupy, still read so that recipes already riding in
+ * `#r=` links keep their meaning.
+ */
+export const PUBLISH_STEP = "publish";
 
 /**
- * What separates two names in `publish=$a,$b`.
+ * The retired header modifier, still read at the head of a cell.
  *
- * A comma rather than a space, and that is forced rather than chosen. The
+ * Deliberately the same word as the step: a reader who knew the old spelling
+ * meets the new one under the same name, and a recipe carrying the old one is
+ * rewritten into the new one on parse rather than refused — the same trade
+ * `split 3` makes, where an input form converges on the canonical text through
+ * `serializeRecipe` instead of living beside it.
+ */
+export const PEER_PUBLISH_KEYWORD = PUBLISH_STEP;
+
+/**
+ * What separates two names in the retired `publish=$a,$b`.
+ *
+ * A comma rather than a space, and that was forced rather than chosen. The
  * compact header spelling puts the header and the first step on one line —
  * `@alice publish $kpA|:public` is a real recipe that rides in a `#r=` link
  * today — so a space-separated list after `publish` would re-read that
@@ -447,6 +481,35 @@ export function slotLabelKey(ref) {
 }
 
 /**
+ * Every slot a cell writes, at any depth, in the order it writes them.
+ *
+ * A `tee` branch's `out` and a `foreach` body's `out` are this cell's output —
+ * the fan-out is *how* a cell writes several things, not a different cell. One
+ * definition, because four passes ask the question and each of them would
+ * otherwise answer it slightly differently: the header validator used to look
+ * only at the top-level steps and told a cell with three nested `out`s that it
+ * had none.
+ * @param {RecipeStep[]} steps
+ * @returns {string[]}  labels, no sigil, first spelling wins
+ */
+export function outSlotLabels(steps) {
+  /** @type {string[]} */
+  const labels = [];
+  const walk = (list) => {
+    for (const step of list || []) {
+      if (step?.name === "out") {
+        const label = slotLabelKey(String(step.params?.name || ""));
+        if (label && !labels.includes(label)) labels.push(label);
+      }
+      walk(step?.body || []);
+      for (const br of step?.branches || []) walk(br?.body || []);
+    }
+  };
+  walk(steps);
+  return labels;
+}
+
+/**
  * The message every legacy-sigil warning carries.
  * @param {string} ref  canonical (`$label`) ref
  * @returns {string}
@@ -667,11 +730,7 @@ class Parser {
         this.comments = [];
         if (head) {
           chain.peer = head.peer;
-          if (head.publish) chain.publish = true;
-          // Only when it names some. A chain that publishes everything carries
-          // no list at all, so `Object.keys(chain)` on a headerless cell — and
-          // on a plain `@peer publish` one — is what it always was.
-          if (head.publishSlots.length) chain.publishSlots = head.publishSlots;
+          if (head.publish) this.applyRetiredPublishHeader(chain, head);
           chain.headerStart = head.start;
           chain.headerEnd = head.end;
         }
@@ -732,7 +791,7 @@ class Parser {
         atChainHead = false;
       }
 
-      // `@peer` / `@peer publish` — who this cell runs for. Read only at the
+      // `@peer` — who this cell runs for. Read only at the
       // head of a chain, and only when this pass is not replaying the recipe
       // as pre-swap text (see parseRecipeSource).
       if (atChainHead && this.peek() === PEER_SIGIL && !this.legacyChainHeader) {
@@ -795,6 +854,85 @@ class Parser {
       this.comments = [];
     }
     return chains.length ? chains : [{ steps: [] }];
+  }
+
+  /**
+   * Rewrite a retired `@peer publish` header into `publish` steps.
+   *
+   * The header used to carry the disclosure and the steps now do, so a recipe
+   * written in the old spelling is *translated* on the way in rather than
+   * refused. Those recipes are not hypothetical: a notebook travels as a `#r=`
+   * fragment, and a link somebody mailed last week still has to open into the
+   * notebook they meant. Translating on parse means one canonical text comes
+   * out of `serializeRecipe` either way, which is the same trade `split 3`
+   * makes — an input form that converges rather than a second dialect that
+   * persists.
+   *
+   * `publish` with no list meant *every* `out` the cell writes, so that is what
+   * it becomes: a `publish` after each of them, at any depth. `publish=$a,$b`
+   * becomes one after each named `out`.
+   *
+   * A name the cell does not write is still an error, and still says what the
+   * cell does write. It cannot become a step — there is no `out` to stand
+   * behind — and dropping it silently would turn a typo into a cell that
+   * publishes nothing while reading as though it publishes something.
+   *
+   * @param {RecipeChain} chain
+   * @param {ChainHead} head
+   */
+  applyRetiredPublishHeader(chain, head) {
+    const written = outSlotLabels(chain.steps || []);
+    const named = head.publishSlots;
+    if (!written.length) {
+      this.errors.push({
+        message:
+          `\`${PEER_SIGIL}${head.peer} ${PEER_PUBLISH_KEYWORD}\` publishes ` +
+          `this cell's \`out\` artifacts, but the cell has no \`out\` — add ` +
+          `\`out ${SLOT_SIGIL}name | ${PUBLISH_STEP}\``,
+        start: head.start,
+        end: head.end,
+      });
+      return;
+    }
+    for (const label of named) {
+      if (written.includes(label)) continue;
+      this.errors.push({
+        message:
+          `\`${PEER_SIGIL}${head.peer} ${PEER_PUBLISH_KEYWORD}=` +
+          `${SLOT_SIGIL}${label}\` publishes \`${SLOT_SIGIL}${label}\`, but ` +
+          `this cell does not write it — it writes ` +
+          `${written.map((l) => `\`${SLOT_SIGIL}${l}\``).join(", ")}`,
+        start: head.start,
+        end: head.end,
+      });
+    }
+    const wanted = new Set(named.length ? named : written);
+    const walk = (list) => {
+      /** @type {RecipeStep[]} */
+      const next = [];
+      for (const step of list || []) {
+        if (step?.body || step?.branches) {
+          next.push({
+            ...step,
+            ...(step.body ? { body: walk(step.body) } : {}),
+            ...(step.branches
+              ? { branches: step.branches.map((br) => ({ ...br, body: walk(br.body) })) }
+              : {}),
+          });
+        } else {
+          next.push(step);
+        }
+        if (step?.name === "out") {
+          const label = slotLabelKey(String(step.params?.name || ""));
+          // Span-less on purpose: these steps are not in the source text, and a
+          // squiggle under characters the author did not write would point at
+          // the wrong thing. The next serialize gives them one.
+          if (label && wanted.has(label)) next.push({ name: PUBLISH_STEP, params: {} });
+        }
+      }
+      return next;
+    };
+    chain.steps = walk(chain.steps);
   }
 
   /**
@@ -1043,6 +1181,35 @@ class Parser {
       return {
         name: lower,
         params: {},
+        start: nameStart,
+        end: this.pos,
+      };
+    }
+
+    // `public` / `private` — the keypair halves, written as verbs.
+    //
+    // A sigil for something that is a step everywhere else was the whole of
+    // what `:public` bought. It projects a pipeline value and hands the result
+    // on, which is what every other transform does, and the type rule that
+    // refuses it on anything but a keypair is unchanged and unchanged in
+    // wording: `projectTypeForMember` still answers, and still says `selector
+    // ":public" requires keypair`.
+    //
+    // The colon form still reads (`parseSelectorStage`), and both spellings
+    // produce the one `select` step — so the AST has one shape and
+    // `serializePipeline` writes the bare word, which is what makes the two
+    // converge instead of persisting side by side.
+    //
+    // The *other* selectors keep their colon, and that is a distinction rather
+    // than an omission. `:key` and `:value` project a member of the item a
+    // `foreach :items` loop is currently holding, so a step named `value`
+    // would be an error everywhere in the language except inside one mode of
+    // one loop; `:items` / `:keys` / `:values` are not projections at all but
+    // the loop's own mode, written where the loop is declared.
+    if (lower === SELECT_PUBLIC || lower === SELECT_PRIVATE) {
+      return {
+        name: "select",
+        params: { selector: `:${lower}` },
         start: nameStart,
         end: this.pos,
       };
@@ -1792,10 +1959,33 @@ class Parser {
         listBody.push(...pipe);
       }
     } else {
+      // A keypair half is a step, so a branch line that opens with one opens
+      // with a step — the prefix grammar is not a second way to say it, it is
+      // the same thing spelled before the `|`. Folded into the body here so
+      // that `- :public | export spki` and `- public | export spki` produce
+      // one AST rather than two that serialize differently; the branch then
+      // runs on a clone of the stem, and its first step does the projecting,
+      // which is what the engine already does for `- encode hex | out $a`.
+      //
+      // `[n]` and `:key` / `:value` keep the prefix for now: they are steps in
+      // the stem too, so the same argument reaches them, but folding them is a
+      // change to what the builder draws as a branch's identity and wants its
+      // own pass rather than a ride on this one.
+      const folded = selector === `:${SELECT_PUBLIC}` || selector === `:${SELECT_PRIVATE}`;
       branches.push({
-        member: selector ? canonicalSelectorMember(selector) : "",
-        ...(selector ? { selector } : {}),
-        body: pipe,
+        member: selector && !folded ? canonicalSelectorMember(selector) : "",
+        ...(selector && !folded ? { selector } : {}),
+        body: folded
+          ? [
+              {
+                name: "select",
+                params: { selector },
+                start,
+                end: this.pos,
+              },
+              ...pipe,
+            ]
+          : pipe,
         start,
         end: this.pos,
       });

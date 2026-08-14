@@ -102,6 +102,13 @@ export const POLYMORPHIC_STEPS = new Set([
   "in",
   // Sink-with-passthrough like `out`: copies the value, pipes it on unchanged.
   "clipboard.write",
+  // Says the value the `out` before it named may leave this machine. It reads
+  // nothing out of the value, so restricting it by type would only decide
+  // which values a cell is allowed to *offer* — and that decision belongs to
+  // `publishability` in the planner, which answers it about the slot's own
+  // type and says why in a sentence. Refusing here would say it as
+  // "publish expects bytes".
+  "publish",
   // Same contract for disk. Anything worth writing out is worth writing to a
   // file, so restricting it to `bytes` would make `file.save` the one sink you
   // cannot put after a keypair or a shares set.
@@ -1399,6 +1406,7 @@ export function inferParamDrivenType(name, current, params = {}) {
     name === "tee" ||
     name === "peek" ||
     name === "out" ||
+    name === "publish" ||
     name === "clipboard.write" ||
     name === "file.save"
   ) {

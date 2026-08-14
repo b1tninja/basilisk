@@ -127,8 +127,13 @@ in $kp | :public | export spki | pem | out $public`;
     const out = serializeRecipe(ast);
     expect(out).toContain("\n\n");
     expect(out).toContain("out $kp");
-    expect(out).toContain("$kp | :public");
+    // Two sugars converge in this one line, and both are the same trade: an
+    // input form that is shorter to type, and a canonical form that is the one
+    // the two ends digest. `in $kp` is written `$kp`, and `:public` is written
+    // `public` — a keypair half is a step, so it is spelled like one.
+    expect(out).toContain("$kp | public");
     expect(out).not.toContain("in $kp");
+    expect(out).not.toContain(":public");
     expect(parseRecipe(out).errors).toEqual([]);
   });
 });

@@ -154,7 +154,12 @@ export async function buildArcBundle(distRoot) {
  * it means the suite asks the product who this browser is instead of telling it.
  */
 const ARC_ENTRY = `
-export { compileRecipe, migrateRecipe, serializeRecipe } from "./src/lib/toolkit/recipe.js";
+export {
+  compileRecipe,
+  migrateRecipe,
+  publishedSlots,
+  serializeRecipe,
+} from "./src/lib/toolkit/recipe.js";
 export {
   labelForFingerprint,
   planChains,

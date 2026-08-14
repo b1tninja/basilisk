@@ -73,11 +73,11 @@ const TITLE = "Thursday key ceremony";
  * as — position in the canonical audience — and a notebook that travels between
  * two browsers has to be written in the names both of them compute.
  */
-const HANDED = `@peer1 publish
-bytes deadbeef | encode hex | out $seed
+const HANDED = `@peer1
+bytes deadbeef | encode hex | out $seed | publish
 
-@peer2 publish
-$seed | decode hex | encode base64 | out $b64
+@peer2
+$seed | decode hex | encode base64 | out $b64 | publish
 
 @peer1
 $b64 | decode base64 | encode hex | out $final`;

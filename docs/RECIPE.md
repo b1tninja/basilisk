@@ -14,8 +14,8 @@ genkey ec/p256 | export pkcs8 | pem | out $private
 
 # Mid-stem fork (tee): one `-` line is one branch, run on a clone; stem continues
 genkey ec/p256 | tee
-  - :private | inspect
-  - :public | export spki | pem | out $public
+  - private | inspect
+  - public | export spki | pem | out $public
 | export pkcs8 | pem | out $private
 
 # The selector is optional — a branch without one forks the whole value
@@ -27,7 +27,7 @@ random 32 | tee
 # Multi-chain: blank line starts a new pipeline; $slot loads a prior out
 genkey ec/p256 | out $kp
 
-$kp | :public | export spki | pem | out $public
+$kp | public | export spki | pem | out $public
 $kp | export pkcs8 | pem | out $private
 
 # Shares collection → foreach body
@@ -47,8 +47,8 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - A recipe is one or more **chains** separated by blank lines.
 - Within a chain: flat `|` stem; a newline between stem lines is the same as `|`.
 - Blocks: `tee` / `foreach` take a **body** (braces `{ … }` or indented `-` lines).
-- **One `-` line is one branch, always.** Under `tee`, every line forks the stem — with a selector (`- :public | …`) or without one (`- encode hex | out $a`, which forks the whole value). Lines are never joined: a branch of several steps is written along its own line with `|`. `foreach` has exactly **one** body line, because the loop threads each item through it and there is no second thing a second line could be; a second `- ` there is refused.
-- Member / dict projection uses **colon selectors** (`:private`, `:items`, …). Dot (`.`) is reserved for namespaced ops (`gpg.encrypt`, `sss.split`) — not members.
+- **One `-` line is one branch, always.** Under `tee`, every line forks the stem — opening with a projection (`- public | …`) or without one (`- encode hex | out $a`, which forks the whole value). Lines are never joined: a branch of several steps is written along its own line with `|`. `foreach` has exactly **one** body line, because the loop threads each item through it and there is no second thing a second line could be; a second `- ` there is refused.
+- Keypair halves are **steps**: `public` / `private` (`:public` / `:private` still read and canonicalize to them). Item and loop projections keep their colon (`:value`, `foreach :items`). Dot (`.`) is reserved for namespaced ops (`gpg.encrypt`, `sss.split`) — never for members.
 - Slots: `out $label` registers a live pipeline value; load with bare `$label` (preferred) or `in $label` / `in 1`. `$kp | out` re-emits as `$kp`.
 - Named slot args pass live values into ops: `aes-gcm key=$cek` (stem stays the payload).
 - Namespaced product ops use dots (`gpg.encrypt`, `sss.combine`, `webauthn.prf`); cipher ops use hyphens (`aes-gcm`). OpenSSL-sized (`aes-256-gcm`) and JCE (`AES/GCM/NoPadding`) parse to the same canonical hyphen name — **serialize preserves** size/hash as `keyBits=` / `hash=` when implied by those forms. Bare `encrypt`/`decrypt` sugar is migrator-only.
@@ -77,12 +77,13 @@ Use **blank-line chains + `$slot` / `in`** when a later pipeline should reuse an
 ## Cell headers (`@peer`)
 
 A chain may open with a header naming the party the cell is written for.
-`@` is who; `$` is what.
+`@` is who; `$` is what. The header answers **one** question — *whose machine* —
+and what leaves that machine is said by the [`publish`](#publish) step, beside
+the value it is said about.
 
 ```text
 chain     := header? pipeline
-header    := "@" peer (SP "publish" ("=" slots)?)?   # at the chain head
-slots     := "$" LABEL ("," "$" LABEL)*  # which `out`s leave; default is all
+header    := "@" peer                    # at the chain head
 peer      := LABEL | "*"                 # "*" = every participant (rendezvous)
 LABEL     := /^[A-Za-z][A-Za-z0-9_-]*$/  # the slot label grammar, shared
 ```
@@ -91,8 +92,8 @@ LABEL     := /^[A-Za-z][A-Za-z0-9_-]*$/  # the slot label grammar, shared
 @alice
 genkey x25519 | out $kpA
 
-@alice publish
-$kpA | :public | out $pubA
+@alice
+$kpA | public | out $pubA | publish
 
 @bob
 random 32 | out $nonce
@@ -101,9 +102,12 @@ random 32 | out $nonce
 | Form | Meaning |
 |------|---------|
 | `@alice` | This cell belongs to the peer named `alice` |
-| `@alice publish` | …and every `out` it writes is meant to leave the machine |
-| `@alice publish=$a,$b` | …and only `$a` and `$b` are; every other `out` stays with alice |
 | `@*` | Rendezvous: every participant, together — **parses, and this build refuses to plan it** (see below) |
+
+`@alice publish` and `@alice publish=$a,$b` are the retired spelling. They still
+parse, so a link written before the change opens into the notebook it meant, and
+they are **rewritten into `publish` steps on the way in** — `publish` after every
+`out` the header covered. Canonical text only ever carries the step form.
 
 ### `@*` is refused, not performed
 
@@ -131,14 +135,15 @@ invented to satisfy a header nobody has needed yet.
 A cell often writes several things with different destinations. A verifiable
 split writes commitments the room needs, shares that must never leave, and a
 digest to check against later — all three nested under `tee` / `foreach`,
-because a fan-out is how one cell writes several things:
+because a fan-out is how one cell writes several things. Only the commitments
+carry a `publish`:
 
 ```text
-@mara publish=$commitments
+@mara
 random 32 | tee
   - digest | encode hex | out $expected
 | vss.split threshold=2 shares=3 | tee
-  - vss.commitments | out $commitments
+  - vss.commitments | out $commitments | publish
 | blip39 | foreach
   - out $share | qr
 ```
@@ -147,18 +152,11 @@ Rules:
 
 - One peer per cell; a header with no steps under it is an error.
 - The header owns its own line in pretty form and is space-joined in compact
-  form (`@alice publish random 32|out $x`), so it survives `#r=` unchanged.
-- `publish` needs an `out` to publish — at any depth, a `tee` branch's and a
-  `foreach` body's included — and a peer to publish from.
-- `publish=` names slots the cell writes. A name nothing answers to is an
-  error, not a header that quietly publishes nothing.
-- The names are comma-separated, never space-separated: the compact form puts
-  the header and the first step on one line, so a space would make
-  `@alice publish $kpA|:public` ambiguous with recipes that already exist.
-- A named slot is public; **every other `out` of that cell is that peer's
-  private value**, exactly as if the cell carried no `publish` at all. So
-  narrowing a header narrows what a plan will let travel, and a cell that reads
-  a withheld slot is refused with `two-owners`.
+  form (`@alice random 32|out $x`), so it survives `#r=` unchanged.
+- A published slot is public; **every other `out` of that cell is that peer's
+  private value**. So publishing fewer slots narrows what a plan will let
+  travel, and a cell that reads an unpublished one is refused with
+  `two-owners`.
 - `*` is spelled `*` rather than `all` because it cannot be a label, so the
   wildcard can never collide with a participant actually called `all`.
 - **A peer is a name, never a fingerprint.** A hex label of 16 characters or
@@ -168,6 +166,31 @@ Rules:
   fingerprint remains an ordinary argument everywhere else (`hkp.get 4F2A…`).
 - The header is **inert**. It records who a cell is for; it does not run
   anything, anywhere, for anyone.
+
+### `publish`
+
+`publish` is the step that says a value may leave the machine that made it.
+Anything that leaves is a verb; nothing about disclosure is a decoration on a
+header or on naming.
+
+```text
+@mara
+random 32 | digest | encode hex | out $expected | publish
+```
+
+| Rule | Behavior |
+|------|----------|
+| Binding | Publishes the slot the **immediately preceding `out`** named, and nothing else |
+| Not after an `out` | Compile error. `encode hex \| publish` has a value and no name for it to travel under, and a handoff is addressed by slot label |
+| No peer | Compile error. Leaving is a claim about a boundary, and an unassigned cell has not drawn one |
+| Depth | Anywhere an `out` can be written — a `tee` branch, a `foreach` body. A nested `out` is the cell's output, so it is the cell's disclosure |
+| Type | Accepts anything and passes it through unchanged. *Whether* a given value may travel is the planner's question, refused as `publish-secret` with the type named |
+| At run time | Nothing. `planRun` reads it to decide what a handoff may carry, and `buildResultFor` refuses a slot the cell did not publish |
+
+The last two rows are the point of the split. A `publish` that sent something
+itself would be a second road out of the cell, past the gate that already
+exists; what it does instead is *declare*, in the text both ends digest, and the
+gate is the one thing that moves a value.
 
 ## Notebook execution (toolkit UI)
 
@@ -619,7 +642,7 @@ Stage form only: `… | as TYPE`. Three kinds:
 random 16 | digest | as master | sss.split threshold=2 shares=3 | blip39 | foreach
   - out $share
 
-:public | export spki | pem | out $pub
+public | export spki | pem | out $pub
 in $pub | der | as key
 # or: in $pub | as key
 # or: in $priv | as keypair
@@ -652,23 +675,44 @@ Teach the concrete form; Upgrade recipe rewrites retired sugar.
 
 ## Selectors
 
-Bare selector stages become `select` under the hood; under `tee` / `foreach`
-they also appear as branch prefixes (`- :public | …`).
+A projection reads a member out of the pipeline value and hands the result on,
+which is a verb's shape. **The keypair halves are therefore spelled as verbs** —
+`public` and `private`, no sigil — in the stem and in a branch alike:
 
-### Projectors (stem or branch)
+```text
+genkey ec/p256 | public | export spki | pem | out $pub
+
+genkey ec/p256 | tee
+  - public | export spki | out $pub
+| out $kp
+```
+
+`:public` and `:private` still read, wherever they used to, and **canonicalize
+to the verb**: a link written before the change opens into the notebook it
+meant, and comes back out as `public`. The branch prefix folds the same way —
+`- :public | export spki` is one branch whose first step is `public`, which is
+what it always meant, running on a clone of the stem like every other branch.
+
+### Projectors
 
 These change the tip type:
 
 | Selector | Tip before | Tip after |
 |----------|------------|-----------|
-| `:public` / `:pub` | `keypair` | `key` (CryptoKey) + `which=public` |
-| `:private` / `:priv` / `:secret` | `keypair` | `key` (CryptoKey) + `which=private` |
+| `public` (`:public`) | `keypair` | `key` (CryptoKey) + `which=public` |
+| `private` (`:private`) | `keypair` | `key` (CryptoKey) + `which=private` |
 | `:key` | `item` | `text/opaque` |
 | `:value` | `item` | `text/mnemonic` or `bytes/opaque` |
 | `[n]` / `at n` | `shares` | one share (`text/mnemonic` or `bytes`) |
 | `[n:m]` / `at n:m` | `shares` | `shares` slice |
 
-After `:public`, use `export spki` (not `export pkcs8`). After `:private` or on a
+**`:key` and `:value` keep their colon, and that is a distinction rather than
+an omission.** They project a member of the *item* a `foreach :items` loop is
+currently holding, so a step named `value` would be an error everywhere in the
+language except inside one mode of one loop. `[n]` / `at n` keeps its bracket
+because `at` is already the verb for it.
+
+After `public`, use `export spki` (not `export pkcs8`). After `private` or on a
 full keypair stem, use `export pkcs8` / `export scalar`. The projected `key` tip
 selects the half — do **not** write `export which=…` (discouraged; compile warns).
 `format=spki` already means public; `pkcs8` / `scalar` already mean private.
@@ -679,19 +723,19 @@ OpenSSL analogs ([`pkey -pubout`](https://docs.openssl.org/1.1.1/man1/pkey/),
 
 | OpenSSL | Basilisk |
 |---------|----------|
-| `openssl pkey -pubout` | `:public \| export spki \| pem` |
-| private PEM (default) | `export pkcs8 \| pem` or `:private \| export pkcs8 \| pem` |
-| `openssl pkey -text` | `inspect` / `peek` (prefer on the full keypair or after a selector) |
+| `openssl pkey -pubout` | `public \| export spki \| pem` |
+| private PEM (default) | `export pkcs8 \| pem` or `private \| export pkcs8 \| pem` |
+| `openssl pkey -text` | `inspect` / `peek` (prefer on the full keypair or after a projection) |
 
 ASCII-armored round-trips keep the half through `pem` / `der`
 (`BEGIN PUBLIC KEY` ↔ SPKI, `BEGIN PRIVATE KEY` ↔ PKCS#8):
 
 ```text
-:public | export spki | pem | out $pub
+public | export spki | pem | out $pub
 in $pub | der | import spki
 # or: in $pub | as key
 
-:private | export pkcs8 | pem | out $priv
+private | export pkcs8 | pem | out $priv
 in $priv | der | import pkcs8
 # or: in $priv | as keypair
 ```
@@ -708,9 +752,12 @@ Stem `:items` / `:keys` / `:values` are rejected — use `foreach`.
 
 ### Casts vs selectors
 
-Selectors project live keypair halves (`:public`). Retag casts set `which` on
-serialized material (`as public`). Materializing casts (`as key`) import into
-CryptoKey tips. They are not interchangeable with selectors.
+Selectors project live keypair halves (`public`). Retag casts set `which` on
+serialized material (`as public`) — same word, and the difference is the whole
+reason both exist: `public` is a step that projects a live keypair, `as public`
+is an argument to `as` that relabels serialized material without touching it.
+Materializing casts (`as key`) import into CryptoKey tips. They are not
+interchangeable with selectors.
 ## Blocks
 
 ### `tee`
@@ -724,7 +771,7 @@ steps writes them along its own line with `|`.
 
 ```text
 genkey ec/p256 | tee
-  - :public | export spki | pem | out $public
+  - public | export spki | pem | out $public
 | export pkcs8 | pem | out $private
 ```
 
@@ -745,7 +792,7 @@ characters says, and no longer something the parser quietly disagrees with.
 
 Branches run in the order they are written, and serialize back in that order.
 
-Brace form is equivalent: `tee { - :public | … }`.
+Brace form is equivalent: `tee { - public | … }`.
 
 ### `foreach`
 
@@ -788,9 +835,11 @@ genkey ec/p256 | peek keypair | export pkcs8 | pem | out $private
 | `in` | Source: load a prior `out` slot by `$label` or 1-based index (also written bare as `$label`). |
 | `encode` / `decode` | Base-alphabet conjugate (`encode hex` / `decode base64`). |
 | `out` | Emit a tile, register a slot, pass the value through. After `$x` / `in $x`, bare `out` inherits `$x`. |
+| `publish` | Say the slot the preceding `out` named may leave this machine. Needs a `@peer`; inert at run time. |
 | `as` | Retag refined bytes kind (`master` / `scalar` / `opaque`). |
 | `input` | Free-form text at run time (not a slot). Legacy `paste`/`cat` migrate via Upgrade recipe. |
-| `select` | Internal name for a bare selector stage (usually written as `:public`). |
+| `public` / `private` | Project a keypair's half — a `key` tip with `which` set. `:public` / `:private` still read. |
+| `select` | Internal name for a projection stage (written `public`, or `:value` inside a loop). |
 
 ## EBNF
 
@@ -820,7 +869,7 @@ hex_int      = "0x" | "0X" , hexdigit , { hexdigit } ;
 bool_lit     = "true" | "false" ;
 
 apply        = name , { space , arg } ;
-name         = ident | dotted_name | hyphen_name | jce_name ;
+name         = half | ident | dotted_name | hyphen_name | jce_name ;
 dotted_name  = ident , "." , ident , { "." , ident } ;  (* ops only: gpg.encrypt *)
 hyphen_name  = ident , "-" , ident , { "-" , ident } ;
 jce_name     = letter , { letter | digit | "/" | "-" } ; (* allowlisted JCE transforms only *)
@@ -835,7 +884,9 @@ slot_ref     = "$" , ident | ident | number ;   (* legacy "@" , ident still read
 slot_source  = "$" , ident ;  (* ≡ in $ident ; serialize prefers this form.
                                  "@" , ident here is RESERVED (peer assignment)  *)
 
-(* Members use colon — dot is reserved for dotted_name ops *)
+(* Keypair halves are step names; the rest use colon.
+   Dot is reserved for dotted_name ops. *)
+half         = "public" | "private" ;
 selector     = ":" , ident
              | "[" , number , [ ":" , number ] , "]" ;
 
@@ -851,9 +902,12 @@ indent_body  = nl , { branch_line | blank_line | comment_line } ;
 branch_line  = indent , "-" , space , branch , space , nl ;
 indent       = "  " , { "  " } ;
 branch       = [ selector , space , "|" , space ] , pipeline ;
+(* A `half` prefix is not a case here: it is a step, so it is the first
+   stage of the branch's own pipeline. A `:public` prefix folds into the
+   same shape on parse. *)
 ```
 
-Parser alternatives are **ordered** (first match wins). Dot-prefixed members (`.public`) are **rejected** — use `:public` (Upgrade recipe rewrites old recipes).
+Parser alternatives are **ordered** (first match wins). Dot-prefixed members (`.public`) are **rejected** — write the step (`public`); Upgrade recipe rewrites old recipes.
 
 ## Semantics
 
@@ -895,8 +949,8 @@ the order they were written:
 
 ```text
 # deal 2-of-3 to the room
-@mara publish
-random 32 | sss.split threshold=2 shares=3 | out $set
+@mara
+random 32 | sss.split threshold=2 shares=3 | out $set | publish
 ```
 
 The cell is the unit because it is the unit everything else already uses — what
@@ -929,8 +983,9 @@ instead — that is what `run.playbook`'s `purpose` is for.
 |-----------|--------------|
 | Flat `foreach \| out` | `foreach` with a body: `- out $share` |
 | Trailing `merge` / `collect` | Omit — body closes by dedent or `}` |
-| Side-export / mid-stem fork | `tee` with `- :public \| …` (or multi-chain `out $kp` + `$kp`) |
+| Side-export / mid-stem fork | `tee` with `- public \| …` (or multi-chain `out $kp` + `$kp`) |
 | Dot member (`.public`) | Colon member (`:public`) — Upgrade recipe rewrites |
+| `:public` / `:private` | `public` / `private` (read on parse, rewritten) |
 | `in $x` only | Bare `$x` also loads the slot; serialize prefers `$x` |
 | Side inspect without a body | `peek $label` |
 | `encrypt gpg` / `gpg` / `decrypt gpg` | `gpg.encrypt` / `gpg.decrypt` |
@@ -943,6 +998,8 @@ instead — that is what `run.playbook`'s `purpose` is for.
 | `gpg.vault` / `gpg.vault.pub` | `agent.unlock` / `agent.pub` |
 | `hex` / `unhex` | `to hex` / `from hex` |
 | `from $slot` (slot alias) | `in $slot` (`from` is encoding only) |
+| `@alice publish` (header modifier) | `out $a \| publish` after each `out` (read on parse, rewritten) |
+| `@alice publish=$a,$b` | `out $a \| publish` on those `out`s only |
 
 Use `migrateRecipe(text)` (or the toolkit **Upgrade recipe** button) for a one-shot rewrite. The parser does not accept legacy tokens.
 

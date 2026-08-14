@@ -80,11 +80,15 @@ describe("nested list recipe syntax", () => {
   - inspect
   - :private | inspect`);
     expect(mixed.errors).toEqual([]);
-    expect(mixed.ast.steps[1].branches.map((b) => b.member)).toEqual([
-      "public",
-      "",
-      "private",
-    ]);
+    // Named by what each branch *starts with*, because a keypair half is a
+    // step now: `- :public | export spki` and `- public | export spki` fold to
+    // the same branch, running on a clone of the stem with `public` as its
+    // first step. `member` is empty on all three, and the middle one is the
+    // case that shows the count is still three.
+    expect(
+      mixed.ast.steps[1].branches.map((b) => b.body.map((x) => x.name).join("|"))
+    ).toEqual(["select|export", "inspect", "select|inspect"]);
+    expect(mixed.ast.steps[1].branches.map((b) => b.member)).toEqual(["", "", ""]);
   });
 
   // Order survives the round trip. It did not before: an unselected line lived
@@ -94,7 +98,7 @@ describe("nested list recipe syntax", () => {
   // from the one that was written.
   it("keeps branch order through serialize", () => {
     const src = `genkey ec/p256 | tee
-  - :public | export spki
+  - public | export spki
   - out $x`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
@@ -147,14 +151,16 @@ describe("nested list recipe syntax", () => {
 
   it("parses brace tee body", () => {
     const src = `genkey ec/p256 | tee {
-  - :private | inspect
-  - :public | export spki | out $pub
+  - private | inspect
+  - public | export spki | out $pub
 } | export pkcs8 | pem`;
     const { ast, errors } = parseRecipe(src);
     expect(errors).toEqual([]);
     const tee = ast.steps.find((s) => s.name === "tee");
     expect(tee.bodyForm).toBe("brace");
-    expect(tee.branches?.map((b) => b.member)).toEqual(["private", "public"]);
+    expect(
+      tee.branches?.map((b) => String(b.body[0].params.selector))
+    ).toEqual([":private", ":public"]);
   });
 
   // The compact `#r=` form folds a brace body onto one line, and that fold is
@@ -381,16 +387,56 @@ shares | blip39 -d | sss.combine | base64 | out $secret`;
     expect(by("a")).not.toBe(by("stem"));
   }, 30_000);
 
-  it("parses tee selector branches", () => {
-    const src = `genkey ec/p256 | tee
-  - :private | inspect
-  - :public | export spki | out $pub`;
-    const { ast, errors } = parseRecipe(src);
+  it("folds the prefixes that are steps, and keeps the ones that are not", () => {
+    // Where the line is drawn, and why it is drawn there rather than anywhere
+    // else. A keypair half is a step, so a branch that opens with one opens
+    // with a step and the prefix grammar is not a second way to say it.
+    //
+    // `[n]` and `:key` / `:value` are steps in the stem too, so the same
+    // argument reaches them and folding them would change nothing a run can
+    // see — it would change what the builder draws as a branch's *identity*,
+    // which is its own pass. Asserted rather than left to the comment: folding
+    // them as well passed every other test in this repo, which is exactly the
+    // state in which a boundary quietly moves.
+    const { ast, errors } = parseRecipe(`random 32 | sss.split threshold=2 shares=3 | tee
+  - [1] | out $one
+  - blip39 | out $words`);
     expect(errors).toEqual([]);
     const tee = ast.steps.find((s) => s.name === "tee");
-    expect(tee.branches?.map((b) => b.member)).toEqual(["private", "public"]);
-    expect(tee.branches?.[0].body.map((b) => b.name)).toEqual(["inspect"]);
-    expect(tee.branches?.[1].body.map((b) => b.name)).toEqual(["export", "out"]);
+    expect(tee.branches[0].selector).toBe("[1]");
+    expect(tee.branches[0].body.map((s) => s.name)).toEqual(["out"]);
+    expect(tee.branches[1].selector).toBeUndefined();
+    // And it comes back out as the prefix it was written as.
+    expect(serializeRecipe(ast)).toContain("- [1] | out $one");
+  });
+
+  it("parses a projecting branch as a branch whose first step projects", () => {
+    // Both spellings, one AST. The colon form is still read — a link written
+    // before the change has to open — and it produces exactly what the bare
+    // word produces, which is what stops the two persisting side by side.
+    for (const src of [
+      `genkey ec/p256 | tee
+  - :private | inspect
+  - :public | export spki | out $pub`,
+      `genkey ec/p256 | tee
+  - private | inspect
+  - public | export spki | out $pub`,
+    ]) {
+      const { ast, errors } = parseRecipe(src);
+      expect(errors, src).toEqual([]);
+      const tee = ast.steps.find((s) => s.name === "tee");
+      expect(tee.branches?.map((b) => b.member), src).toEqual(["", ""]);
+      expect(tee.branches?.[0].body.map((b) => b.name), src).toEqual([
+        "select",
+        "inspect",
+      ]);
+      expect(tee.branches?.[0].body[0].params.selector, src).toBe(":private");
+      expect(tee.branches?.[1].body.map((b) => b.name), src).toEqual([
+        "select",
+        "export",
+        "out",
+      ]);
+    }
   });
 
   // `type: key(?:pair)?` accepted both halves of the thing it was meant to

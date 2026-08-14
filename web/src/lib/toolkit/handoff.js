@@ -45,13 +45,14 @@
  * chose to leave on a value; the question here is what the recipe says the slot
  * holds, and it is answerable before anything runs.
  *
- * A third guard applies to the one header that says which of a cell's outputs
- * may travel. `@mara publish=$commitments` withholds every other slot that cell
- * writes, and `withheldByHeader` refuses to carry one — read off the *recipe*
- * rather than off a plan, so a peer whose ownership analysis disagrees does not
- * get the value anyway. It is silent for every other header, including a cell
- * with no `publish` at all: a handoff has never required one, because a placed
- * cell's inputs and outputs travel by placement rather than by publication.
+ * A third guard applies to the cells that say which of their outputs may
+ * travel. `out $commitments | publish` publishes that slot and withholds every
+ * other slot the cell writes, and `withheldByHeader` refuses to carry one —
+ * read off the *recipe* rather than off a plan, so a peer whose ownership
+ * analysis disagrees does not get the value anyway. It is silent for a cell
+ * with no `publish` in it at all: a handoff has never required one, because a
+ * placed cell's inputs and outputs travel by placement rather than by
+ * publication.
  *
  * ## Which index a cell is named by
  *
@@ -188,7 +189,14 @@
 import { base64ToBytes, bytesToBase64 } from "./encode.js";
 import { manifestDigest } from "./manifest.js";
 import { planChains, publishability, slotTypes } from "./plan.js";
-import { PEER_SIGIL, PEER_WILDCARD, SLOT_SIGIL, slotLabelKey } from "./recipe-parse.js";
+import {
+  PEER_SIGIL,
+  PEER_WILDCARD,
+  PUBLISH_STEP,
+  SELECT_PUBLIC,
+  SLOT_SIGIL,
+  slotLabelKey,
+} from "./recipe-parse.js";
 import { canonicalJson, digestText, isoTimestamp, mismatchLog } from "./receipt.js";
 import { outSlotLabels, publishedSlots, serializeRecipe } from "./recipe.js";
 
@@ -698,13 +706,19 @@ const onlyRunsOn = (cell, peer) =>
   cell.runsOn.length > 0 && !!peer && cell.runsOn.every((p) => p === peer);
 
 /**
- * Does the header of the cell that wrote this slot say it stays home?
+ * Does the cell that wrote this slot say it stays home?
  *
- * Only a header that *names* slots can answer yes. A bare `publish` publishes
- * everything the cell writes and a cell with no header at all makes no claim
- * either way, so both are silent here and the two guards below decide as they
- * always have. What this catches is the case those two cannot see: a slot the
- * author explicitly excluded, in a cell whose other outputs do travel.
+ * Only a cell that publishes *something* can answer yes. A cell with no
+ * `publish` step in it makes no claim either way, so it is silent here and the
+ * two guards below decide as they always have. What this catches is the case
+ * those two cannot see: a slot the author left un-published, in a cell whose
+ * other outputs do travel.
+ *
+ * The claim used to be a list on the header, which meant a bare `publish` — the
+ * commonest spelling — could not express exclusion at all, and this guard sat
+ * out every cell that used one. `out $a | publish` puts the claim on the value,
+ * so *not* writing it is now as legible as writing it, and the case this
+ * refuses is reachable from the ordinary form of the language.
  *
  * Read from the chain, not from the plan. The plan derives ownership from who
  * reads a slot, and the whole point of asking again is to not depend on that
@@ -715,13 +729,14 @@ const onlyRunsOn = (cell, peer) =>
  * @returns {boolean}
  */
 function withheldByHeader(chain, label) {
-  if (!chain?.publishSlots?.length) return false;
-  if (!outSlotLabels(chain.steps || []).includes(label)) return false;
-  return !publishedSlots(chain).includes(label);
+  const published = publishedSlots(chain);
+  if (!published.length) return false;
+  if (!outSlotLabels(chain?.steps || []).includes(label)) return false;
+  return !published.includes(label);
 }
 
 /**
- * The sentence a peer reads when a value was excluded by name.
+ * The sentence a peer reads when a value was left un-published.
  * @param {import("./recipe.js").RecipeChain} chain @param {number} cell
  * @param {string} label
  */
@@ -729,11 +744,11 @@ function withheldMessage(chain, cell, label) {
   const published = publishedSlots(chain).map((l) => slot(l));
   return (
     `Cell ${cell} publishes ${published.length ? published.join(" and ") : "nothing"} ` +
-    `and ${slot(label)} is not among them — its header names which of the ` +
-    "slots it writes may leave this machine, and that is a claim about a " +
-    "boundary rather than a preference. Nothing here overrides it: to hand " +
-    `${slot(label)} over, add it to the header and let the plan and the type ` +
-    "walk have their say about it too."
+    `and ${slot(label)} is not among them — the cell marks which of the slots ` +
+    "it writes may leave this machine, and that is a claim about a boundary " +
+    "rather than a preference. Nothing here overrides it: to hand " +
+    `${slot(label)} over, write \`${PUBLISH_STEP}\` after the \`out\` that ` +
+    "names it, and let the plan and the type walk have their say about it too."
   );
 }
 
@@ -763,7 +778,8 @@ function crossingRemedy(row, verdict) {
   if (verdict.publicHalf) {
     return (
       `Publish the public half (\`${SLOT_SIGIL}${row.label}` +
-      ` | :public | out ${SLOT_SIGIL}pub\`) and have the cell read that.`
+      ` | ${SELECT_PUBLIC} | out ${SLOT_SIGIL}pub | ${PUBLISH_STEP}\`) and ` +
+      "have the cell read that."
     );
   }
   if (verdict.role === "share") {

@@ -13,7 +13,8 @@
  * bare `out kp` / `key=cek` → `migrateRecipe` / Upgrade. Bare `$kp` ≡ `in $kp` on load.
  * A pre-swap `@kp` still parses in step/param position and is rewritten to `$kp`
  * with a compile warning; `@` at the head of a chain names the peer the cell
- * runs for (`@alice`, `@alice publish`, `@alice publish=$a,$b`, `@*`).
+ * runs for (`@alice`, `@*`), and `out $a | publish` says that slot may leave
+ * the machine that made it.
  */
 
 import {
@@ -34,10 +35,11 @@ import {
   parseRecipeSource,
   peerKeyIdError,
   peerLooksLikeKeyId,
-  PEER_PUBLISH_KEYWORD,
-  PEER_PUBLISH_SEPARATOR,
   PEER_SIGIL,
   PEER_WILDCARD,
+  PUBLISH_STEP,
+  SELECT_PRIVATE,
+  SELECT_PUBLIC,
   SLOT_SIGIL,
   slotLabelKey,
 } from "./recipe-parse.js";
@@ -51,6 +53,12 @@ import {
 } from "./types.js";
 
 export { migrateRecipe } from "./step-names.js";
+// Defined next to the parser rather than here, because the parser needs it too:
+// a cell carrying the retired `@alice publish` header is rewritten into
+// `publish` steps as it is read, and that rewrite has to know which slots the
+// cell writes. Re-exported so the twelve modules that import it from here keep
+// their import.
+export { outSlotLabels } from "./recipe-parse.js";
 
 /**
  * Retired *param values* — the `legacyRemovalHint` of the param world.
@@ -201,7 +209,7 @@ function pushExportWhichPolicy(step, current, ctx) {
     stepWarning(
       step,
       ctx.stepIndex,
-      `export which= is discouraged — prefer :public / :private before export (like openssl pkey -pubout)`
+      `export which= is discouraged — prefer \`public\` / \`private\` before export (like openssl pkey -pubout)`
     )
   );
   if (
@@ -544,19 +552,18 @@ function checkPooledPipelineValue(step, incoming, outgoing, errors, stepIndex) {
  * `recipeChains()` normalises bare step arrays into `{ steps }` and simply
  * carries no peer, which is why every existing consumer keeps working.
  *
- * They are inert. `peer` says which party a cell is *written for* and
- * `publish` says its `out` artifacts are meant to leave the machine; nothing
- * in the engine reads either one, and a header does not make a cell run
- * anywhere — the header names a peer, it does not command one.
+ * The header is inert, and now says one thing: `peer` is the party a cell is
+ * *written for*. Nothing in the engine reads it, and a header does not make a
+ * cell run anywhere — it names a peer, it does not command one.
+ *
+ * **What leaves the machine is no longer a header field.** It was `publish` /
+ * `publishSlots`, and it is now a `publish` step standing after the `out` whose
+ * value travels — see `publishedSlots`, which is the one place that question is
+ * answered from. A chain object therefore carries no disclosure fields at all.
  *
  * @typedef {object} RecipeChain
  * @property {RecipeStep[]} steps
  * @property {string} [peer]  canonical peer label (no sigil), or `*` for everyone
- * @property {boolean} [publish]  this cell's `out` artifacts go to the room
- * @property {string[]} [publishSlots]  which of them, when the header says so
- *   (`publish=$a,$b`). Absent means all of them, which is what a bare
- *   `publish` has always meant — so a chain that never named any carries no
- *   field at all. Labels, no sigil, in the order they were written.
  * @property {number} [headerStart]  char offsets — a complaint about the header
  * @property {number} [headerEnd]    must anchor to it, not to step 0's span
  * @property {string[]} [comments]  the `#` lines written in this cell, `#` and
@@ -829,6 +836,35 @@ export function serializeStep(step) {
 }
 
 /**
+ * How one step is spelled, wherever it appears.
+ *
+ * The sugared spellings — a bare selector, a bracket index — were written out
+ * twice, once in `serializePipeline` for branch bodies and once in
+ * `serializeChainSteps` for the stem, and the two lists had to be kept in step
+ * by hand. They were not: teaching `serializePipeline` that `:public` is now
+ * written `public` left the stem still spelling it with a colon, so the same
+ * cell serialized two ways depending on which side of a `tee` it was on.
+ * @param {RecipeStep} step
+ * @returns {string}
+ */
+function stepToken(step) {
+  if (step.name === "select" && step.params?.selector) {
+    // The keypair halves are verbs and are written as verbs. Every other
+    // selector keeps its colon — see the note in `parseStage` for why the item
+    // projections and the loop's own views are not steps.
+    const sel = String(step.params.selector);
+    return sel === `:${SELECT_PUBLIC}` || sel === `:${SELECT_PRIVATE}`
+      ? sel.slice(1)
+      : sel;
+  }
+  if (step.name === "at" && step.params?.selector != null) {
+    const sel = String(step.params.selector);
+    if (/^\d+(:\d+)?$/.test(sel)) return `[${sel}]`;
+  }
+  return serializeStep(step);
+}
+
+/**
  * Serialize one pipeline of steps (no block wrappers).
  * @param {RecipeStep[]} steps
  * @param {{ compact?: boolean }} [opts]
@@ -836,18 +872,7 @@ export function serializeStep(step) {
  */
 function serializePipeline(steps, opts = {}) {
   const join = opts.compact ? "|" : " | ";
-  return steps
-    .map((s) => {
-      if (s.name === "select" && s.params?.selector) {
-        return String(s.params.selector);
-      }
-      if (s.name === "at" && s.params?.selector != null) {
-        const sel = String(s.params.selector);
-        if (/^\d+(:\d+)?$/.test(sel)) return `[${sel}]`;
-      }
-      return serializeStep(s);
-    })
-    .join(join);
+  return steps.map(stepToken).join(join);
 }
 
 /**
@@ -941,11 +966,9 @@ function serializeChainSteps(steps, opts = {}) {
       step.branches.length > 0;
     const isBlock = hasListBody || hasBranches;
 
-    let head = serializeStep(step);
+    let head = stepToken(step);
     if (step.name === "foreach" && step.foreachSelector) {
       head = `foreach ${step.foreachSelector}`;
-    } else if (step.name === "lit") {
-      head = serializeStep(step);
     } else if (step.name === "in" && step.params?.ref) {
       const ref = String(step.params.ref);
       // Prefer bare `$label`; keep `in N` for 1-based indexes.
@@ -954,11 +977,6 @@ function serializeChainSteps(steps, opts = {}) {
         : ref.startsWith(SLOT_SIGIL)
           ? ref
           : `${SLOT_SIGIL}${ref}`;
-    } else if (step.name === "select" && step.params?.selector) {
-      head = String(step.params.selector);
-    } else if (step.name === "at" && step.params?.selector != null) {
-      const sel = String(step.params.selector);
-      if (/^\d+(:\d+)?$/.test(sel)) head = `[${sel}]`;
     }
 
     if (!isBlock) {
@@ -989,68 +1007,109 @@ function serializeChainSteps(steps, opts = {}) {
 }
 
 /**
- * Every slot a cell writes, at any depth, in the order it writes them.
+ * Which of a cell's `out` artifacts leave the machine, in source order.
  *
- * A `tee` branch's `out` and a `foreach` body's `out` are this cell's output —
- * the fan-out is *how* a cell writes several things, not a different cell. One
- * definition, here, because three passes ask the question and each of them
- * would otherwise answer it slightly differently: the header validator used to
- * look only at the top-level steps and told a cell with three nested `out`s
- * that it had none.
- * @param {RecipeStep[]} steps
- * @returns {string[]}  labels, no sigil, first spelling wins
+ * The one answer to *what does this cell disclose*, asked by the planner, by
+ * the handoff and by the notebook. It is read off the steps, because that is
+ * where the claim is now written: `out $a | publish` publishes `$a`, and a cell
+ * with no `publish` step publishes nothing.
+ *
+ * **A `publish` binds to the `out` immediately before it, and to nothing else.**
+ * That is what makes the answer a lookup rather than a reconstruction. The
+ * header form it replaces had to work backwards from a list of names to the
+ * `out`s a cell might write at any depth, and got it wrong in both directions —
+ * a name nothing answered to read as a licence, and an empty list meant *all of
+ * them*, so the menu could not offer "publish none" without it silently meaning
+ * "publish everything". Neither state is reachable now: the step sits on the
+ * value, and the value is whichever one `out` just named.
+ *
+ * Deduplicated because two `publish` steps after two `out $a`s are the same
+ * claim twice, not two claims.
+ * @param {RecipeChain} chain
+ * @returns {string[]}
  */
-export function outSlotLabels(steps) {
+export function publishedSlots(chain) {
   /** @type {string[]} */
   const labels = [];
   const walk = (list) => {
-    for (const step of list || []) {
-      if (step?.name === "out") {
-        const label = slotLabelKey(String(step.params?.name || ""));
-        if (label && !labels.includes(label)) labels.push(label);
+    const steps = list || [];
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      if (step?.name === PUBLISH_STEP) {
+        const prev = steps[i - 1];
+        if (prev?.name === "out") {
+          const label = slotLabelKey(String(prev.params?.name || ""));
+          if (label && !labels.includes(label)) labels.push(label);
+        }
       }
       walk(step?.body || []);
       for (const br of step?.branches || []) walk(br?.body || []);
     }
   };
-  walk(steps);
+  walk(chain?.steps || []);
   return labels;
 }
 
 /**
- * Which of a cell's `out` artifacts its header sends to the room.
+ * Rewrite a cell's steps so that exactly `labels` are published.
  *
- * The one answer to *what does this header let out*, asked by the planner and
- * by the handoff. Three cases and no fourth:
+ * The menu's edit, written once here rather than in the component, for the
+ * reason `CellAssign` exists at all: the source view and the menu must make the
+ * *same* edit or the two views of a notebook disagree about what leaves. A
+ * `publish` is added after every `out` whose label is named and removed from
+ * after every `out` whose label is not, at any depth — a `tee` branch's `out`
+ * and a `foreach` body's `out` are this cell's output, so they are this cell's
+ * disclosure too.
  *
- * - no `publish` — nothing;
- * - `publish` — everything the cell writes, which is what it has always meant;
- * - `publish=$a,$b` — those, intersected with what the cell actually writes.
+ * A `publish` standing after something that is not an `out` is left alone. It
+ * does not compile, and silently deleting the step a reader typed would answer
+ * their mistake by hiding it.
  *
- * The intersection matters rather than being defensive tidiness: a header
- * naming a slot the cell does not write publishes *nothing under that name*,
- * and the compile error beside it says so. Returning the raw list would let a
- * typo read as a licence for a slot some other cell owns.
- * @param {RecipeChain} chain
- * @returns {string[]}
+ * @param {RecipeStep[]} steps
+ * @param {string[]} labels  slot labels, no sigil
+ * @returns {RecipeStep[]}  a new list; the steps themselves are shared
  */
-export function publishedSlots(chain) {
-  if (!chain?.publish) return [];
-  const written = outSlotLabels(chain.steps || []);
-  const named = chain.publishSlots;
-  if (!named || !named.length) return written;
-  return written.filter((label) => named.includes(label));
+export function setPublishedSlots(steps, labels) {
+  const want = new Set((labels || []).map((l) => slotLabelKey(String(l || ""))));
+  const walk = (list) => {
+    /** @type {RecipeStep[]} */
+    const next = [];
+    const src = list || [];
+    for (let i = 0; i < src.length; i++) {
+      const step = src[i];
+      if (step?.name === PUBLISH_STEP && src[i - 1]?.name === "out") {
+        // Re-decided below, from the `out` it belongs to.
+        continue;
+      }
+      const rebuilt =
+        step?.body || step?.branches
+          ? {
+              ...step,
+              ...(step.body ? { body: walk(step.body) } : {}),
+              ...(step.branches
+                ? { branches: step.branches.map((br) => ({ ...br, body: walk(br.body) })) }
+                : {}),
+            }
+          : step;
+      next.push(rebuilt);
+      if (step?.name === "out") {
+        const label = slotLabelKey(String(step.params?.name || ""));
+        if (label && want.has(label)) next.push({ name: PUBLISH_STEP, params: {} });
+      }
+    }
+    return next;
+  };
+  return walk(steps);
 }
 
 /**
  * The header text for a chain, or "" when it has no peer to hang one on.
  *
  * Exported because a refusal that quotes a cell's header has to quote the one
- * the author wrote. `plan.js` used to assemble `@peer publish` by hand at its
- * `publish-secret` site, which told anyone using `publish=$a,$b` that their
- * cell was marked something it is not — and the whole contract of a refusal
- * here is that it names the state that is actually true. One spelling of a
- * header, in the module that defines what a header is.
+ * the author wrote, and there is now exactly one thing a header can say. It
+ * used to have to reassemble `publish=$a,$b` from two fields to avoid telling a
+ * reader their cell was marked something it is not; the modifier is a step now,
+ * so the reassembly is gone and the header is the peer.
  *
  * @param {RecipeChain} chain
  * @returns {string}
@@ -1058,12 +1117,7 @@ export function publishedSlots(chain) {
 export function chainHeaderText(chain) {
   const peer = chain?.peer == null ? "" : String(chain.peer);
   if (!peer.length) return "";
-  if (!chain.publish) return `${PEER_SIGIL}${peer}`;
-  const named = chain.publishSlots || [];
-  const which = named.length
-    ? `=${named.map((l) => `${SLOT_SIGIL}${l}`).join(PEER_PUBLISH_SEPARATOR)}`
-    : "";
-  return `${PEER_SIGIL}${peer} ${PEER_PUBLISH_KEYWORD}${which}`;
+  return `${PEER_SIGIL}${peer}`;
 }
 
 /**
@@ -1093,8 +1147,8 @@ export function chainHeaderText(chain) {
  * comment may sit.
  *
  * They go above the header rather than below it because the header is the
- * cell's first token and `@mara publish` reads as the subject of the sentence
- * the comment is introducing. Below it, a comment would separate the header
+ * cell's first token and `@mara` reads as the subject of the sentence the
+ * comment is introducing. Below it, a comment would separate the header
  * from the pipeline it heads.
  *
  * Comments are emitted in the **compact** form too. Dropping them there would
@@ -1405,31 +1459,23 @@ function validateChainHeader(chain, firstStepIndex, errors) {
     end: chain?.headerEnd ?? steps[0]?.end,
     stepIndex: firstStepIndex,
   };
-  const named = chain?.publishSlots || [];
   const peer = chain?.peer;
   if (peer == null || peer === "") {
-    if (chain?.publish || named.length) {
+    // `publish` is a claim about a boundary, and an unassigned cell has not
+    // drawn one. Anchored to the `publish` step rather than to the missing
+    // header, because that is the thing the reader wrote.
+    const site = firstPublishStep(steps);
+    if (site) {
       errors.push({
         message:
-          `\`${PEER_PUBLISH_KEYWORD}\` says where this cell's \`out\` ` +
-          `artifacts go, so it needs a peer to go from — write ` +
-          `\`${PEER_SIGIL}alice ${PEER_PUBLISH_KEYWORD}\``,
-        ...anchor,
+          `\`${PUBLISH_STEP}\` sends a value to the room, so it needs a peer ` +
+          `to send it from — give this cell a header (\`${PEER_SIGIL}alice\`), ` +
+          `or drop \`${PUBLISH_STEP}\``,
+        start: site.start,
+        end: site.end,
+        stepIndex: anchor.stepIndex,
       });
     }
-    return;
-  }
-  // Names without the keyword. Unspellable in text — the parser only reads a
-  // list after `publish` — and reachable through the AST, where it would
-  // serialize to a header that no longer says it.
-  if (named.length && !chain?.publish) {
-    errors.push({
-      message:
-        `This cell names slots to publish without \`${PEER_PUBLISH_KEYWORD}\` ` +
-        `— write \`${PEER_SIGIL}${peer} ${PEER_PUBLISH_KEYWORD}=` +
-        `${SLOT_SIGIL}${named[0]}\`, or drop the names`,
-      ...anchor,
-    });
     return;
   }
   const norm = normalizePeerRef(String(peer));
@@ -1472,39 +1518,78 @@ function validateChainHeader(chain, firstStepIndex, errors) {
     });
     return;
   }
-  if (!chain?.publish) return;
-  // At any depth. A verifiable split writes its commitments inside a `tee` and
-  // its shares inside a `foreach`, and this used to look only at the cell's
-  // top-level steps — so the message below was printed about a cell with three
-  // `out`s in it, which made the shape unwritable and said something untrue
-  // while doing it.
-  const written = outSlotLabels(steps);
-  if (!written.length) {
-    // A cell that publishes nothing is a ceremony that quietly did nothing —
-    // an error rather than a runtime skip, for the same reason.
-    errors.push({
-      message:
-        `\`${PEER_SIGIL}${norm.peer} ${PEER_PUBLISH_KEYWORD}\` publishes this ` +
-        `cell's \`out\` artifacts, but the cell has no \`out\` — add ` +
-        `\`out $name\`, or drop \`${PEER_PUBLISH_KEYWORD}\``,
-      ...anchor,
-    });
-    return;
+}
+
+/**
+ * The first `publish` step in a cell, at any depth, or null.
+ *
+ * Only the first: every complaint this file makes about `publish` is about the
+ * cell, so a cell publishing three things would otherwise say the same sentence
+ * three times and anchor it three places.
+ * @param {RecipeStep[]} steps
+ * @returns {RecipeStep|null}
+ */
+function firstPublishStep(steps) {
+  for (const step of steps || []) {
+    if (step?.name === PUBLISH_STEP) return step;
+    const nested =
+      firstPublishStep(step?.body || []) ||
+      (step?.branches || []).reduce(
+        (found, br) => found || firstPublishStep(br?.body || []),
+        null
+      );
+    if (nested) return nested;
   }
-  // A name nothing answers to. Left as an error rather than ignored: the
-  // header would read as publishing something and publish nothing, which is
-  // the same silent ceremony one paragraph up.
-  for (const label of named) {
-    if (written.includes(label)) continue;
-    errors.push({
-      message:
-        `\`${PEER_SIGIL}${norm.peer} ${PEER_PUBLISH_KEYWORD}=` +
-        `${SLOT_SIGIL}${label}\` publishes \`${SLOT_SIGIL}${label}\`, but this ` +
-        `cell does not write it — it writes ` +
-        `${written.map((l) => `\`${SLOT_SIGIL}${l}\``).join(", ")}`,
-      ...anchor,
-    });
-  }
+  return null;
+}
+
+/**
+ * `publish` sends the value the `out` before it named — so there has to be one.
+ *
+ * The binding is positional and that is the whole of it: `out $a | publish`
+ * publishes `$a`. Anything else standing before it is refused rather than
+ * quietly ignored, because "publish the current value" is not a thing this
+ * language can mean — a value that no `out` named has no name to travel under,
+ * and `planRun` addresses a handoff by slot label.
+ *
+ * `encode hex | publish` is the case worth stating: the value is real, and it
+ * is nameless. Refusing it here, at compile, is the difference between a reader
+ * learning the rule while writing the cell and learning it when the room does
+ * not receive what they meant to send.
+ *
+ * Walks bodies and branches, because a `tee` branch's `out` is this cell's
+ * output and so is its disclosure.
+ * @param {RecipeStep[]} steps
+ * @param {number} stepIndex  the cell's first step, for the editor's anchor
+ * @param {RecipeError[]} errors
+ */
+function validatePublishSteps(steps, stepIndex, errors) {
+  const walk = (list) => {
+    const src = list || [];
+    for (let i = 0; i < src.length; i++) {
+      const step = src[i];
+      if (step?.name === PUBLISH_STEP) {
+        const prev = src[i - 1];
+        if (prev?.name !== "out") {
+          errors.push({
+            message:
+              `\`${PUBLISH_STEP}\` sends the value the \`out\` before it named, ` +
+              `and ${
+                prev
+                  ? `\`${prev.name}\` does not name one`
+                  : "nothing comes before it here"
+              } — write \`out ${SLOT_SIGIL}name | ${PUBLISH_STEP}\``,
+            start: step.start,
+            end: step.end,
+            stepIndex,
+          });
+        }
+      }
+      walk(step?.body || []);
+      for (const br of step?.branches || []) walk(br?.body || []);
+    }
+  };
+  walk(steps);
 }
 
 /**
@@ -1547,6 +1632,7 @@ export function validateRecipe(ast) {
     if (!steps.length) continue;
 
     validateChainHeader(chains[ci], globalStepIndex, errors);
+    validatePublishSteps(steps, globalStepIndex, errors);
 
     /** @type {import("./types.js").RefinedType} */
     let current = tNone();
@@ -1887,6 +1973,11 @@ export function validateRecipe(ast) {
       step.name !== "peek" &&
       step.name !== "inspect" &&
       step.name !== "out" &&
+      // Reads nothing out of the set; it says the slot the `out` before it
+      // named may leave. Whether a *split* may leave is a real question and a
+      // different one, answered by `publishability` in the planner with the
+      // sentence about what a room handed every share has been handed.
+      step.name !== PUBLISH_STEP &&
       step.name !== "at" &&
       step.name !== "select"
     ) {
@@ -2275,7 +2366,7 @@ export const PRESETS = [
     blurb:
       "Tee the public SPKI PEM, then export PKCS#8 — mid-stem fork keeps the keypair on the stem.",
     recipe: `genkey ec/p256 | tee
-  - :public | export spki | pem | out $public
+  - public | export spki | pem | out $public
 | export pkcs8 | pem | out $private`,
   },
   {
@@ -2293,7 +2384,7 @@ export const PRESETS = [
       "Register the live keypair with out $kp, then reuse it across blank-line chains with in $kp.",
     recipe: `genkey ec/p256 | out $kp
 
-$kp | :public | export spki | pem | out $public
+$kp | public | export spki | pem | out $public
 $kp | export pkcs8 | pem | out $private`,
   },
   {
@@ -2355,7 +2446,7 @@ input | utf8 | ssh.sign key=$id namespace=git | out $sig`,
     blurb:
       "Both halves in one notebook so the check is readable: swap `$pub` and `$sig` for a signer's public line and their `BEGIN SSH SIGNATURE` block, and keep `namespace=` equal or a perfectly good signature fails.",
     recipe: `genkey ed25519 | tee
-  - :public | ssh.encode | out $pub
+  - public | ssh.encode | out $pub
 | out $id
 
 input | utf8 | out $msg
@@ -2438,7 +2529,7 @@ in $msg | hmac.verify key=$mac signature=$tag | out $ok`,
     title: "JWK SHA-256 digest",
     blurb:
       "Export a public JWK and SHA-256 digest the JSON text (handy fingerprint; not RFC 7638 canonical thumbprint).",
-    recipe: `genkey ec/p256 | :public | export jwk | out $jwk
+    recipe: `genkey ec/p256 | public | export jwk | out $jwk
 
 in $jwk | utf8 | digest | encode hex | out $thumb`,
   },
@@ -2448,7 +2539,7 @@ in $jwk | utf8 | digest | encode hex | out $thumb`,
     title: "Soft signature verify",
     blurb:
       "Fail-soft verify (`-q`): emits bool `true` or `false` instead of throwing. Bind signature= (or the sig panel) at run time; prefer fail-loud for auth.",
-    recipe: `genkey ed25519 | :public | export jwk | out $pub
+    recipe: `genkey ed25519 | public | export jwk | out $pub
 
 input | utf8 | verify -q key=$pub | out $result`,
   },
@@ -2643,7 +2734,7 @@ run.receipt | gpg.sign | out $receipt`,
     blurb:
       "Tee the public PEM, then SSS + BLIP39-split the 32-byte scalar (no envelope) — preferred for P-256 keys.",
     recipe: `genkey ec/p256 | tee
-  - :public | export spki | pem | out $public
+  - public | export spki | pem | out $public
 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
   - out $share`,
   },
@@ -2664,7 +2755,7 @@ run.receipt | gpg.sign | out $receipt`,
     blurb:
       "Tee the public PEM, SSS-split the 32-byte scalar 2-of-3, BLIP39-encode, encrypt each share to a different recipient.",
     recipe: `genkey ec/p256 | tee
-  - :public | export spki | pem | out $public
+  - public | export spki | pem | out $public
 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
   - gpg.encrypt`,
   },

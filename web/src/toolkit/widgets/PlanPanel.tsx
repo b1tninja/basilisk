@@ -203,9 +203,9 @@ function CellRow({
             one of the three things it writes says which one here, because
             "publishes" beside a verifiable split is the sentence a reader most
             needs to be exact. */}
-        {cell.publish ? (
+        {cell.publishes.length ? (
           <span className="text-[10px] text-[var(--muted-foreground)]">
-            {cell.publishes.length && cell.publishes.length < cell.produces.length
+            {cell.publishes.length < cell.produces.length
               ? `publishes ${cell.publishes.map(slot).join(" · ")}`
               : "publishes"}
           </span>

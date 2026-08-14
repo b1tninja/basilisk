@@ -49,7 +49,12 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
+import {
+  compileRecipe,
+  publishedSlots,
+  serializeRecipe,
+  setPublishedSlots,
+} from "../lib/toolkit/recipe.js";
 import { roomRoster } from "../lib/notebook/roster.js";
 import { departedPeers, unassignDeparted } from "../lib/toolkit/peer-relabel.js";
 import { manifestDigest } from "../lib/toolkit/manifest.js";
@@ -79,15 +84,11 @@ function applyEdits(source, edits) {
   for (const edit of edits) {
     const chain = chains[edit.cell];
     delete chain.peer;
-    delete chain.publish;
-    delete chain.publishSlots;
-    if (edit.peer) {
-      chain.peer = edit.peer;
-      if (edit.publish) chain.publish = true;
-      if (edit.publish && edit.publishSlots.length) {
-        chain.publishSlots = [...edit.publishSlots];
-      }
-    }
+    // The same call `setCellPeer` makes, rather than a second walk: what a cell
+    // discloses is written into its steps, and a helper here that decided it
+    // some other way would be testing this file's opinion of the edit.
+    chain.steps = setPublishedSlots(chain.steps || [], edit.peer ? edit.publishSlots : []);
+    if (edit.peer) chain.peer = edit.peer;
   }
   return serializeRecipe(chains);
 }
@@ -128,9 +129,13 @@ describe("what removing somebody does to a notebook already written", () => {
 /* ──────────────────────── the decision, both sides ─────────────────────── */
 
 describe("a live placement outlasts everybody except its own person", () => {
-  const SOURCE = [`@${ADA}`, "random 32 | out $a", "", `@${CEC} publish`, "random 32 | out $b"].join(
-    "\n"
-  );
+  const SOURCE = [
+    `@${ADA}`,
+    "random 32 | out $a",
+    "",
+    `@${CEC}`,
+    "random 32 | out $b | publish",
+  ].join("\n");
 
   it("leaves the notebook alone when the person stayed", () => {
     const { source, edits, note } = follow(SOURCE, BEFORE, AFTER);
@@ -151,9 +156,9 @@ describe("a live placement outlasts everybody except its own person", () => {
     // The half that stayed. It is the same rule the draft applies, and its
     // reason is now the simpler of the two the old file gave: a cell addressed
     // to a key that is not in the room will never run.
-    const src = `@${BEA} publish\nrandom 32 | out $secret`;
+    const src = `@${BEA}\nrandom 32 | out $secret | publish`;
     const { source, edits, note } = follow(src, BEFORE, AFTER);
-    expect(edits).toEqual([{ cell: 0, peer: null, publish: false, publishSlots: [] }]);
+    expect(edits).toEqual([{ cell: 0, peer: null, publishSlots: [] }]);
     expect(source).toBe("random 32 | out $secret");
     expect(note).toContain("no longer in the room");
     // The worse reason, gone: nobody in the room after the rotation answers to
@@ -165,15 +170,15 @@ describe("a live placement outlasts everybody except its own person", () => {
   it("writes the header through the recipe layer, so it parses back", () => {
     // `serializeStep`'s quoting has broken this repo before. Nothing in the
     // rewrite touches text — this is the assertion that would notice if it did.
-    const src = `${SOURCE}\n\n@${BEA} publish=$c\nrandom 32 | out $c`;
+    const src = `${SOURCE}\n\n@${BEA}\nrandom 32 | out $c | publish`;
     const { source } = follow(src, BEFORE, AFTER);
     const { ast, validation } = compileRecipe(source);
     expect(validation.errors.map((e) => e.message)).toEqual([]);
     expect(ast.chains.map((c) => c.peer || "")).toEqual([ADA, CEC, ""]);
-    expect(ast.chains[1].publish).toBe(true);
-    // `publish` left with the peer: a modifier attached to nobody is not a
-    // claim about anything, and a header that kept it would not compile.
-    expect(ast.chains[2].publish).toBeUndefined();
+    expect(publishedSlots(ast.chains[1])).toEqual(["b"]);
+    // The `publish` left with the peer: a value sent to nobody is not a claim
+    // about anything, and a cell that kept one would not compile.
+    expect(publishedSlots(ast.chains[2])).toEqual([]);
   });
 });
 
@@ -350,9 +355,7 @@ describe("the hook watches the room rather than the button", () => {
     );
     expect(HOOK).toMatch(/departedPeers\(before, after\)/);
     expect(HOOK).toMatch(/dropDepartedPlacements\(was\.audience, audience\)/);
-    expect(HOOK).toMatch(
-      /setCellPeer\(edit\.cell, edit\.peer, edit\.publish, edit\.publishSlots\)/
-    );
+    expect(HOOK).toMatch(/setCellPeer\(edit\.cell, edit\.peer, edit\.publishSlots\)/);
     // The epoch is the guard, not the audience: a different room opening is not
     // this room shrinking.
     expect(HOOK).toMatch(/if \(!was \|\| epoch <= was\.epoch\) return;/);

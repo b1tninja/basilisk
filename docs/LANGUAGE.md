@@ -82,34 +82,87 @@ Refusals the object makes easy to state:
 
 ## The changes
 
-### Disclosure is a step, not a header modifier
+### Disclosure is a step, not a header modifier — **done**
 
 ```text
-# now
+# was
 @ada publish=$a,$b
 random 32 | sha256 | out $a
 
-# proposed
+# is
 @ada
 random 32 | sha256 | out $a | publish
 ```
 
 The header goes back to answering one question: *who runs this*. Publishing
-happens where the value is. `publish=$a,$b` disappears, and with it the refusal
+happens where the value is. `publish=$a,$b` is gone, and with it the refusal
 machinery that had to reconstruct which of a cell's outs a header was talking
 about.
 
-### Selectors are steps
+Shipped. `publish` binds to the `out` immediately before it and to nothing
+else, which is what turns "what does this cell disclose" from a reconstruction
+into a lookup — `publishedSlots` walks the steps, and it is the one answer the
+planner, the handoff and the assign menu all take. `chain.publish` and
+`chain.publishSlots` are gone from the AST; there is no second place the answer
+could differ.
+
+Three things fell out of it:
+
+- **"Publishes nothing" stopped being spelled like "publishes everything."** On
+  the header, an empty list *meant* all of them, so the assign menu could not
+  offer to un-publish the last named slot without silently widening the cell to
+  every `out` it writes — it had to refuse the click and explain why. The list
+  is exactly what leaves now, and the refusal is gone with the hazard.
+- **The handoff's withheld-value guard became reachable from the ordinary form
+  of the language.** It could only fire on `publish=$a,$b`, so the commonest
+  spelling — a bare `publish` — sat outside it.
+- **The refusals name an edit rather than a header.** "Drop `publish` from this
+  cell" was true of a modifier and ambiguous about a cell with three `out`s;
+  it is "drop `publish` from after `out $share`".
+
+The retired header still parses and is rewritten into steps on the way in, for
+the reason `split 3` is accepted: a notebook travels as a `#r=` fragment, and a
+link somebody mailed last week has to open into the notebook they meant. One
+canonical text comes out either way, so the two spellings converge rather than
+persisting as two dialects.
+
+### Selectors are steps — **done**
 
 `:public` → `public`. One fewer sigil; the type rule is unchanged. `:public`
 already refuses anything that is not a keypair, and that refusal moves with it.
+
+Shipped, for the two keypair halves and no further. A projection reads a member
+out of a pipeline value and hands the result on, which is a verb's shape, so
+`public` and `private` are verbs. Both spellings produce the one `select` step
+and `serializeRecipe` writes the bare word, so they converge rather than living
+side by side. The refusal is the same sentence it always was, because it is the
+same predicate: `selector ":public" requires keypair, got text/mnemonic`.
+
+Two things fell out, and one is the more interesting:
+
+- **A branch prefix was a second spelling of a step.** `- :public | export spki`
+  and `- public | export spki` mean the same thing, and since `e8473b5` the
+  second already worked — a branch runs on a clone and its first step projects.
+  So the prefix folds into the branch's body on parse, and there is one AST for
+  the two texts rather than two that serialize differently.
+- The projection is now an ordinary chip in the builder, which the branch × and
+  the step × treat like any other. The step-delete cascade that exists so a
+  delete can never hand back an uncompilable recipe therefore fires one removal
+  later, because `- public` on its own **is** a recipe.
+
+What stayed on a colon, deliberately: `:key` and `:value` project a member of
+the *item* a `foreach :items` loop is holding, so a step named `value` would be
+an error everywhere in the language except inside one mode of one loop; and
+`:items` / `:keys` / `:values` are not projections at all but the loop's own
+mode, written where the loop is declared. `[n]` keeps its brackets because `at`
+is already the verb for it.
 
 ### A branch is a branch — **done**
 
 ```text
 genkey ec/p256 | tee
-  - :private | inspect
-  - :public | export spki | pem | out $public
+  - private | inspect
+  - public | export spki | pem | out $public
 ```
 
 reads as two branches and *is* two branches — because both lines begin with a
@@ -147,9 +200,9 @@ stem, which is what the single-line case always did and what the builder's
   a second `-` line could be. Rather than glue two lines together in silence,
   it now refuses and names the join that works. One body, one line.
 
-What is *not* done from the rest of this section's neighbourhood: `publish` as a
-step, `:public` as a step, elementwise application, `scatter` / `gather`, and
-the vocabulary aliases. Each is its own pass.
+What is *not* done from the rest of this section's neighbourhood: elementwise
+application, `scatter` / `gather`, and the vocabulary aliases. Each is its own
+pass.
 
 ### Steps apply elementwise
 
@@ -231,7 +284,7 @@ Order of work, bug fixes first:
    everything else rests on.
 2. **The quorum becomes an argument** (`split 2/3`). Fixes a real gap in what
    the two ends agree on.
-3. `publish` as a step; `:public` as a step.
+3. **`publish` as a step** — done. **`:public` as a step** — done.
 4. Elementwise, prototyped against the preset corpus — the round-trip sweep
    reports immediately how many recipes change meaning.
 5. `scatter` / `gather`, with the `@*` rule.

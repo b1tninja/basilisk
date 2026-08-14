@@ -381,8 +381,11 @@ describe("export which= policy", () => {
     );
     expect(validation.ok).toBe(true);
     expect(
+      // The remedy names the verb the notebook writes. It used to name
+      // `:public`, which still compiles and is no longer the spelling a reader
+      // would find in their own canonical text.
       validation.warnings.some((w) =>
-        /export which= is discouraged.*\:public/i.test(w.message)
+        /export which= is discouraged.*`public`/i.test(w.message)
       )
     ).toBe(true);
   });

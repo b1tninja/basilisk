@@ -38,7 +38,12 @@ import { planChains, planRun } from "../lib/toolkit/plan.js";
 import { placementGate } from "../lib/toolkit/placement.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { buildRunManifest, manifestDigest } from "../lib/toolkit/manifest.js";
-import { compileRecipe, migrateRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
+import {
+  compileRecipe,
+  migrateRecipe,
+  publishedSlots,
+  serializeRecipe,
+} from "../lib/toolkit/recipe.js";
 import { parseRecipeSource } from "../lib/toolkit/recipe-parse.js";
 import { createSlotRegistry } from "../lib/toolkit/slot-registry.js";
 
@@ -47,8 +52,8 @@ const FPR_O = "91C7E6D5C4B3A29180716253443526170819AABB";
 const ROSTER = { mara: FPR_M, okafor: FPR_O };
 
 /** mara writes a value into the room; okafor's cell reads it. */
-const HANDED = `@mara publish
-bytes deadbeef | encode hex | out $seed
+const HANDED = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
 @okafor
 in $seed | decode hex | encode base64 | out $b64
@@ -75,7 +80,7 @@ function manifestFor(src, peers = ROSTER) {
     cells: chains.map((chain, i) => ({
       index: i,
       peer: String(chain.peer || ""),
-      publish: !!chain.publish,
+      publish: publishedSlots(chain).length > 0,
       recipe: serializeRecipe({ chains: [chain] }),
     })),
   });
@@ -179,8 +184,8 @@ describe("a placed cell becomes something its assignee can accept", () => {
   });
 
   it("carries bytes as bytes, not as a string that happens to print the same", async () => {
-    const src = `@mara publish
-bytes deadbeef | out $raw
+    const src = `@mara
+bytes deadbeef | out $raw | publish
 
 @okafor
 in $raw | encode base64 | out $b64
@@ -248,7 +253,7 @@ describe("a cell index means one thing or the offer means nothing", () => {
         .map((chain, i) => ({
           index: i,
           peer: String(chain.peer || ""),
-          publish: !!chain.publish,
+          publish: publishedSlots(chain).length > 0,
           recipe: serializeRecipe({ chains: [chain] }),
         })),
     });
@@ -287,8 +292,8 @@ describe("a cell index means one thing or the offer means nothing", () => {
 
   it("refuses a manifest for a different notebook outright", async () => {
     const { built } = await offerFrom();
-    const other = await manifestFor(`@mara publish
-bytes 00 | encode hex | out $seed
+    const other = await manifestFor(`@mara
+bytes 00 | encode hex | out $seed | publish
 `);
     const verdict = await acceptHandoffOffer(built.offer, {
       plan: planFor(HANDED, "okafor"),
@@ -372,8 +377,8 @@ describe("an offer that would carry a private value is refused", () => {
    * it is wrong or was never checked, so a test that only ever fed it a plan it
    * had already validated would be testing the plan.
    */
-  const LEAKY = `@mara publish
-genkey x25519 | out $kp
+  const LEAKY = `@mara
+genkey x25519 | out $kp | publish
 
 @okafor
 in $kp | export spki | encode base64 | out $pub
@@ -502,11 +507,11 @@ describe("an offer writes only into slots the cell actually reads", () => {
   });
 
   it("will not build a partial offer when a third peer holds part of it", async () => {
-    const src = `@mara publish
-bytes deadbeef | encode hex | out $a
+    const src = `@mara
+bytes deadbeef | encode hex | out $a | publish
 
-@nkechi publish
-bytes cafebabe | encode hex | out $b
+@nkechi
+bytes cafebabe | encode hex | out $b | publish
 
 @okafor
 in $a | out $x
@@ -530,8 +535,8 @@ in $b | out $y
 });
 
 describe("a rendezvous cell is refused rather than half-supported", () => {
-  const RENDEZVOUS = `@mara publish
-bytes deadbeef | encode hex | out $seed
+  const RENDEZVOUS = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
 @*
 in $seed | decode hex | encode base64 | out $b64

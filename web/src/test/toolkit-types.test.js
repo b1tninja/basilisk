@@ -150,17 +150,57 @@ describe("refined types", () => {
     }
   });
 
-  it("walkPipelineTypes: tee :public branch is key then DER", () => {
+  it("walkPipelineTypes: a public branch is keypair, then key, then DER", () => {
     const compiled = compileRecipe(
-      "genkey ec/p256 | tee\n  - :public | export spki\n| export pkcs8"
+      "genkey ec/p256 | tee\n  - public | export spki\n| export pkcs8"
     );
     expect(compiled.validation.ok).toBe(true);
     const { edges } = walkPipelineTypes(compiled.ast.steps, { getStep });
     const tee = edges.find((e) => e.name === "tee");
-    expect(tee?.branches?.[0]?.member).toBe("public");
+    // The projection is a step in the branch rather than a prefix on it, so
+    // the branch starts on a clone of the stem and its first edge is the
+    // `public` that narrows it. The chain of types is the same one; it is now
+    // spelled out edge by edge instead of half of it living in `member`.
+    expect(tee?.branches?.[0]?.member).toBe("");
     const br0 = tee?.branches?.[0]?.edges || [];
-    expect(formatType(br0[0]?.input)).toBe("key/ec/p256/public");
-    expect(formatType(br0[0]?.output)).toMatch(/bytes\/der/);
+    expect(br0[0]?.name).toBe("select");
+    expect(formatType(br0[0]?.input)).toMatch(/^keypair\/ec\/p256/);
+    expect(formatType(br0[0]?.output)).toBe("key/ec/p256/public");
+    expect(formatType(br0[1]?.input)).toBe("key/ec/p256/public");
+    expect(formatType(br0[1]?.output)).toMatch(/bytes\/der/);
+  });
+
+  it("walkPipelineTypes: a keypair half refuses a value with no halves", () => {
+    // The rule that came with `public` when it stopped being `:public`: the
+    // spelling changed and the refusal did not. Asserted through the *type
+    // walk* rather than through `compileRecipe`, because there are two copies
+    // of this predicate and only one of them is on the compile path.
+    // `walkPipelineTypes` is the other, and it is what the builder's caret and
+    // the tee's ghost chips read — so a value with no halves has to be refused
+    // here too, or the drawer would offer `public` after `random 32`.
+    //
+    // Removing the guard in `resolveStepType` used to change nothing any test
+    // could see, because `projectTypeForMember` refused the same recipe one
+    // layer up. This is that gap.
+    const { edges } = walkPipelineTypes(
+      [
+        { name: "random", params: { length: 32 } },
+        { name: "select", params: { selector: ":public" } },
+      ],
+      { getStep }
+    );
+    expect(edges[1]?.error).toMatch(/requires keypair/);
+    expect(edges[1]?.error).toContain("bytes");
+    // And the same walk says yes on the value that does have halves.
+    const ok = walkPipelineTypes(
+      [
+        { name: "genkey", params: { alg: "ec/p256" } },
+        { name: "select", params: { selector: ":private" } },
+      ],
+      { getStep }
+    );
+    expect(ok.edges[1]?.error).toBeFalsy();
+    expect(formatType(ok.edges[1]?.output)).toBe("key/ec/p256/private");
   });
 
   it("walkPipelineTypes: in $slot resolves prior out tip", () => {

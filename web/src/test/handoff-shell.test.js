@@ -44,11 +44,11 @@ const ROSTER = { mara: FPR_M, okafor: FPR_O };
  * nothing about the way back. okafor publishes for the same reason mara does:
  * without it the value has no permission to leave the machine that made it.
  */
-const HANDED = `@mara publish
-bytes deadbeef | encode hex | out $seed
+const HANDED = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
-@okafor publish
-in $seed | decode hex | encode base64 | out $b64
+@okafor
+in $seed | decode hex | encode base64 | out $b64 | publish
 
 @mara
 in $b64 | decode base64 | encode hex | out $final

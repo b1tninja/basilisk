@@ -61,12 +61,26 @@ describe("§38a — agent.save stays, and its doc says why to prefer a button", 
   });
 });
 
-describe("§38b — publishing stays a UI path, and never becomes an op", () => {
-  it("registers no publish op at all", () => {
-    // A recipe that publishes on behalf of whoever runs it is the worst
-    // instance of the hazard this whole capability exists to remove.
+describe("§38b — publishing a key stays a UI path, and never becomes an op", () => {
+  it("registers no op that puts a key anywhere", () => {
+    // A recipe that publishes a key to a directory on behalf of whoever runs
+    // it is the worst instance of the hazard this whole capability exists to
+    // remove: the act is durable, it is somebody else's key, and a recipe is
+    // shared as a link and re-run by strangers.
     const names = listSteps().map((s) => s.name);
-    expect(names.filter((n) => /publish/i.test(n))).toEqual([]);
+    expect(names).not.toContain("key.publish");
+    // The recipe language's `publish` carries the word and is *not* the act.
+    // It is the disclosure marker — `out $a | publish` says the slot may leave
+    // the machine that made it — and it sends nothing itself: the engine's
+    // whole case for it returns the value unchanged, and the thing that moves
+    // a value is the handoff, behind the placement gate. So the property §38b
+    // protects is asserted where it lives, on the engine having no write path
+    // to a directory at all, rather than on nothing being spelled "publish".
+    expect(names.filter((n) => /publish/i.test(n))).toEqual(["publish"]);
+    expect(getStep("publish").kind).toBe("sink");
+    const ENGINE = stripComments(read("../lib/toolkit/engine.js"));
+    expect(ENGINE).not.toMatch(/directory[?.]*\.publish/);
+    expect(ENGINE).not.toMatch(/publishArmoredKey/);
   });
 
   it("has no upstream write path to name, so the banner cannot name one", () => {

@@ -483,8 +483,14 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // asserted: that the placement is there, and that the cell it is on is the
     // cell whose text says `$b64` — a menu that wrote the right label onto the
     // wrong cell is a notebook that compiles and runs on the wrong machine.
-    expect(creatorSource).toMatch(new RegExp(`^@${L.joiner} publish$`, "m"));
-    expect(creatorSource).toMatch(new RegExp(`^@${L.creator} publish$`, "m"));
+    expect(creatorSource).toMatch(new RegExp(`^@${L.joiner}$`, "m"));
+    expect(creatorSource).toMatch(new RegExp(`^@${L.creator}$`, "m"));
+    // …and that the menu wrote the disclosure too, on the `out` it belongs
+    // behind. `publish` is a step now, so "who runs this" and "what leaves" are
+    // two lines apart rather than two words, and the second one is the half a
+    // menu that only wrote headers would have silently dropped.
+    expect(creatorSource).toContain("out $seed | publish");
+    expect(creatorSource).toContain("out $b64 | publish");
     // Structural rather than string-equal to what was typed: `serializeRecipe`
     // writes a leading `in $x` as bare `$x`, so the notebook's own spelling of
     // this pipeline is not the one the editor was handed. Comparing against the
@@ -501,12 +507,12 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // back, and it came back above the header" is the property.
     expect(placed.split("\n").slice(0, 2)).toEqual([
       "# base64 of the seed, computed on the joiner's machine",
-      `@${L.joiner} publish`,
+      `@${L.joiner}`,
     ]);
     expect(placed).toContain("encode base64 | out $b64");
     // The other two are the creator's, and the last one reads what the placed
     // cell writes — which is what makes this an arc rather than a delivery.
-    expect(cells[0].split("\n")[0]).toBe(`@${L.creator} publish`);
+    expect(cells[0].split("\n")[0]).toBe(`@${L.creator}`);
     expect(cells[2].split("\n")[0]).toBe(`@${L.creator}`);
     expect(cells[2]).toContain("$b64");
     // And not one positional label anywhere in it. This is the assertion that
@@ -741,10 +747,10 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       await joiner.getByRole("button", { name: "Adopt their notebook" }).count(),
       "the joiner was asked about a notebook they had no work to lose to"
     ).toBe(0);
-    // Including the header this file never typed on either machine.
-    expect(await readNotebookSource(joiner)).toMatch(
-      new RegExp(`^@${L.joiner} publish$`, "m")
-    );
+    // Including the header this file never typed on either machine, and the
+    // `publish` it never typed either.
+    expect(await readNotebookSource(joiner)).toMatch(new RegExp(`^@${L.joiner}$`, "m"));
+    expect(await readNotebookSource(joiner)).toContain("out $b64 | publish");
   });
 
   /* ── 5. Run declines the joiner's cell, and hands it over by itself ─────── */

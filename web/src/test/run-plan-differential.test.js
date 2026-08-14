@@ -28,7 +28,13 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { PRESETS, compileRecipe, migrateRecipe, recipeChains } from "../lib/toolkit/recipe.js";
+import {
+  PRESETS,
+  compileRecipe,
+  migrateRecipe,
+  publishedSlots,
+  recipeChains,
+} from "../lib/toolkit/recipe.js";
 import { planRun, summarizePlan } from "../lib/toolkit/plan.js";
 import { listVerbSmokeCases } from "./helpers/verb-smoke.js";
 
@@ -142,7 +148,7 @@ describe("every verb-smoke case plans exactly as it runs today", () => {
     expect(plan.ok).toBe(true);
     expect(plan.play).toBe("placed");
     expect(plan.peers).toEqual(["mara"]);
-    // Cell 0 is `@mara publish`; cell 1 has no header and reads only what
+    // Cell 0 is `@mara` and publishes; cell 1 has no header and reads only what
     // cell 0 published, so everybody runs it.
     expect(plan.cells.map((x) => [x.kind, x.runsOn])).toEqual([
       ["placed", ["mara"]],
@@ -180,18 +186,24 @@ describe("every docs/RECIPE.md fence that compiles plans exactly as it runs toda
       planned++;
     }
     expect(planned).toBeGreaterThanOrEqual(5);
-    // Three, and this says which. The second arrived with `publish=$slot`: the
-    // doc has to show a dealer publishing one of the three things its cell
-    // writes, because that is the case the modifier exists for and a grammar
-    // reference that only shows the all-or-nothing form does not document it.
-    // The third is the Comments section's example, and it is headered on
-    // purpose — the rule it states is *where* a cell's comments go, and "above
-    // the header" cannot be shown by an example with no header.
-    expect(headered).toEqual([
-      "@alice",
-      "@mara publish=$commitments",
-      "@mara publish",
-    ]);
+    // Four, and the header line is no longer what tells them apart — every one
+    // of them is now just a peer, because that is all a header says. So the
+    // second half of this pins what each of them publishes, which is the thing
+    // the doc has to show and the thing that used to be readable off the
+    // header line.
+    //
+    // The first `@mara` is the dealer, publishing one of the three things its
+    // cell writes: that is the case the step exists for, and a grammar
+    // reference showing only the all-or-nothing form does not document it. The
+    // second is the `publish` section's own example. The third is the Comments
+    // section's, headered on purpose — the rule it states is *where* a cell's
+    // comments go, and "above the header" cannot be shown without one.
+    expect(headered).toEqual(["@alice", "@mara", "@mara", "@mara"]);
+    const published = fences
+      .map((b) => compileRecipe(b))
+      .filter((c) => c.validation.ok && hasHeader(c))
+      .map((c) => publishedSlots(c.ast.chains[0]));
+    expect(published).toEqual([[], ["commitments"], ["expected"], ["set"]]);
   });
 
   it("plans the doc's own placement example the way the doc reads it", () => {
@@ -201,7 +213,10 @@ describe("every docs/RECIPE.md fence that compiles plans exactly as it runs toda
     // header the planner refuses is worse than no manual. The third cell is now
     // an ordinary placed one, which is exactly what the paragraph beneath the
     // table tells a reader to write instead.
-    const block = docFences().find((b) => b.includes("\n@alice publish\n"));
+    // Found by the cell that publishes, not by a header spelling: what makes
+    // this the placement example is that it has three placed cells and one
+    // value crossing between them.
+    const block = docFences().find((b) => b.includes("out $pubA | publish"));
     const plan = planRun(compileRecipe(String(block)));
     expect(plan.ok).toBe(true);
     expect(plan.play).toBe("placed");

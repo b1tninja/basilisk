@@ -695,15 +695,22 @@ export function RecipeChipFlow({
           <span className="cell-recipe-indent-dash" aria-hidden>
             -
           </span>
-          {ghosts.map((sel) => (
-            <SuggestChip
-              key={sel}
-              label={`+ ${sel}`}
-              variant="ghost"
-              title={`Add a ${sel} branch`}
-              onClick={() => onArmBranch?.(i, sel)}
-            />
-          ))}
+          {ghosts.map((sel) => {
+            // Labelled the way the notebook will write it. A keypair half is a
+            // step, so the chip says `public`, not `:public` — a control that
+            // offers one spelling and produces another is the drift `CellAssign`
+            // exists to avoid, one layer down.
+            const token = sel === ":public" || sel === ":private" ? sel.slice(1) : sel;
+            return (
+              <SuggestChip
+                key={sel}
+                label={`+ ${token}`}
+                variant="ghost"
+                title={`Add a ${token} branch`}
+                onClick={() => onArmBranch?.(i, sel)}
+              />
+            );
+          })}
           <SuggestChip
             label="+ branch"
             variant="ghost"

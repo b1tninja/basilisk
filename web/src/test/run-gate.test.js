@@ -55,8 +55,8 @@ bytes cafebabe | encode hex | out $o
 `;
 
 /** `@mara` writes a value into the room; the next cell, anybody's, reads it. */
-const PUBLISHED = `@mara publish
-bytes deadbeef | encode hex | out $seed
+const PUBLISHED = `@mara
+bytes deadbeef | encode hex | out $seed | publish
 
 in $seed | decode hex | encode base64 | out $b64
 `;

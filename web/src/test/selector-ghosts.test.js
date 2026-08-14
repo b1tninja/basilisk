@@ -6,6 +6,8 @@
  * carets never see tee/foreach — the parser rejects nesting, so the ops are
  * absent from suggestions and fit, not dimmed.
  */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   PROJECTOR_SELECTORS,
@@ -49,8 +51,41 @@ describe("selectorGhostsFor", () => {
     expect(selectorGhostsFor(typeOf("shares", { kind: "mnemonic" }))).toEqual([]);
   });
 
-  it("every ghost renders with a colon, never a dot", () => {
+  it("every ghost is a selector value, never a dot member", () => {
+    // The *values* keep their colon: they are what goes into a `select` step's
+    // `selector` param, which is the AST spelling and did not change.
     for (const sel of PROJECTOR_SELECTORS) expect(sel.startsWith(":")).toBe(true);
+  });
+
+  it("labels a keypair half the way the notebook will write it", () => {
+    // The chip's caption is not the AST value. A keypair half is a step now,
+    // so the notebook writes `public`, and a control that offered `+ :public`
+    // and produced `public` is the drift between two views of one cell that
+    // `CellAssign` exists to avoid — one layer down, and just as invisible.
+    //
+    // A source assertion because the suite is `environment: "node"`: the
+    // chips live in a component this file cannot mount, and the defect would
+    // be a caption, which no rendering of the correct output would catch.
+    const FLOW = readFileSync(
+      fileURLToPath(new URL("../toolkit/widgets/RecipeChipFlow.tsx", import.meta.url)),
+      "utf8"
+    );
+    expect(FLOW).toContain(
+      'const token = sel === ":public" || sel === ":private" ? sel.slice(1) : sel;'
+    );
+    expect(FLOW).toContain("label={`+ ${token}`}");
+    // And the insert it arms still carries the selector value, so the two
+    // halves of the control cannot disagree about which projection it is.
+    expect(FLOW).toContain("onArmBranch?.(i, sel)");
+    // What that insert produces, in the library layer: the same step the text
+    // produces, so a branch inserted from the menu and one typed into Source
+    // are the same cell.
+    const HOOK = readFileSync(
+      fileURLToPath(new URL("../toolkit/useNotebook.ts", import.meta.url)),
+      "utf8"
+    );
+    expect(HOOK).toContain('const folded = selector === ":public" || selector === ":private";');
+    expect(HOOK).toContain('body: [{ name: "select", params: { selector } }, step]');
   });
 });
 

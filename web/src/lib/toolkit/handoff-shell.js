@@ -24,7 +24,12 @@
  * @module lib/toolkit/handoff-shell
  */
 
-import { compileRecipe, serializeRecipe, migrateRecipe } from "./recipe.js";
+import {
+  compileRecipe,
+  migrateRecipe,
+  publishedSlots,
+  serializeRecipe,
+} from "./recipe.js";
 import { planRun, planChains } from "./plan.js";
 import { buildRunManifest } from "./manifest.js";
 import {
@@ -67,7 +72,7 @@ export async function handoffContext({ source, me, roster, title = "notebook" })
     cells: chains.map((chain, i) => ({
       index: i,
       peer: String(chain.peer || ""),
-      publish: !!chain.publish,
+      publish: publishedSlots(chain).length > 0,
       recipe: serializeRecipe({ chains: [chain] }),
     })),
   });

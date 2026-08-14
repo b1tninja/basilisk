@@ -52,8 +52,6 @@ export type PeerChoice = {
 export type CellAssignProps = {
   /** The cell's current header, or null when it has none. */
   peer: string | null;
-  /** The `publish` modifier — only meaningful alongside a peer. */
-  publish: boolean;
   /**
    * Labels that can be chosen: everyone in the room, plus every label this
    * notebook already names. Both, because a notebook is written before anyone
@@ -73,11 +71,14 @@ export type CellAssignProps = {
    */
   outSlots?: string[];
   /**
-   * Which of them the header names. Empty means the header names none, which
-   * is the bare `publish`: every one of them.
+   * Which of them leave the machine — the `out`s a `publish` step stands
+   * behind. Empty means none of them, and that is now the only thing empty can
+   * mean: the header's list had "empty means all of them" baked into it, so
+   * this control could not offer "publish nothing" without spelling it as the
+   * one state that meant the opposite.
    */
   publishSlots?: string[];
-  onAssign: (peer: string | null, publish: boolean, publishSlots: string[]) => void;
+  onAssign: (peer: string | null, publishSlots: string[]) => void;
   /**
    * Start with the menu open. For a catalog, which cannot press the trigger —
    * the same reason `ShareSheet` takes `defaultQrOpen` and `OtpCodeCard` takes
@@ -161,20 +162,21 @@ export function peerPrinted(peer: string): string {
  * line nobody has drawn.
  *
  * **Naming slots is offered only once the cell writes more than one.** A cell
- * with a single `out` has nothing to choose between, and `publish=$only` and
- * `publish` are the same claim spelled at different lengths. With several, they
- * are not: a verifiable split writes commitments a room needs and shares that
- * must not leave, and "publish its output" cannot mean both. Each slot is
- * therefore its own item, named by the change it makes — `Publish $x` /
- * `Keep $x here` — matching the "Stop publishing its output" line above it.
+ * with a single `out` has nothing to choose between. With several it does: a
+ * verifiable split writes commitments a room needs and shares that must not
+ * leave, and "publish its output" cannot mean both. Each slot is therefore its
+ * own item, named by the change it makes — `Publish $x` / `Keep $x here` —
+ * matching the "Stop publishing its output" line above it.
  *
- * Turning the last named slot off is *not* the same as not publishing: an empty
- * list is the bare `publish`, meaning all of them. So the item that would empty
- * the list is not offered; stopping altogether is the line above.
+ * Turning the last one off is simply not publishing, and the item is offered.
+ * It used to be refused, because the header spelled "no slots named" and "every
+ * slot" the same way, so emptying the list published everything — a control
+ * whose last click did the opposite of what it said. `publish` on the step
+ * means the list is exactly what leaves, so there is nothing left to protect
+ * the reader from here.
  */
 export function CellAssign({
   peer,
-  publish,
   choices,
   outSlots = [],
   publishSlots = [],
@@ -183,24 +185,23 @@ export function CellAssign({
   className,
 }: CellAssignProps) {
   const label = peer ? `${PEER_SIGIL}${peerPrinted(peer)}` : "anyone";
+  const publish = publishSlots.length > 0;
   // The name beside the key, where this browser has one. The trigger is the one
   // place in the notebook that says who runs a cell without the reader opening
   // anything, so a header of forty hex characters and nothing else would be a
   // regression in exactly the thing this change is for. Both are drawn: the
   // value the notebook holds, and who it is.
   const who = choices.find((c) => c.label === peer);
-  // A cell that publishes everything shows every slot as published, because it
-  // does. The list is only a *narrowing*, so the empty list and the full list
-  // mean the same thing and the menu says so.
-  const named = publishSlots.length ? publishSlots : outSlots;
+  const named = publishSlots;
   const publishes = (slot: string) => named.includes(slot);
-  // The header text on the trigger, so a reader scanning a notebook for what
-  // leaves their machine does not have to open a menu to find out.
-  const modifier = !publish
-    ? ""
-    : publishSlots.length
-      ? `publish=${publishSlots.map((s) => `${SLOT_SIGIL}${s}`).join(",")}`
-      : "publish";
+  // What leaves, on the trigger, so a reader scanning a notebook for what
+  // crosses their machine's edge does not have to open a menu to find out. Not
+  // recipe syntax any more — the claim lives beside each `out` in the cell now,
+  // and a trigger that reprinted `publish=$a,$b` would be quoting a header the
+  // source view no longer shows.
+  const modifier = publish
+    ? `publish ${publishSlots.map((s) => `${SLOT_SIGIL}${s}`).join(" ")}`
+    : "";
   return (
     <DropdownMenu defaultOpen={defaultOpen} modal={false}>
       <DropdownMenuTrigger asChild>
@@ -227,7 +228,7 @@ export function CellAssign({
       <DropdownMenuContent align="start">
         <DropdownMenuLabel>Runs on</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => onAssign(null, false, [])}>
+        <DropdownMenuItem onSelect={() => onAssign(null, [])}>
           anyone — wherever the notebook runs
         </DropdownMenuItem>
         {choices.length ? <DropdownMenuSeparator /> : null}
@@ -244,9 +245,7 @@ export function CellAssign({
           <DropdownMenuItem
             key={c.label}
             onSelect={() =>
-              c.label === peer
-                ? onAssign(c.label, publish, publishSlots)
-                : onAssign(c.label, false, [])
+              c.label === peer ? onAssign(c.label, publishSlots) : onAssign(c.label, [])
             }
           >
             <span className="flex min-w-0 flex-col gap-[2px]">
@@ -263,7 +262,14 @@ export function CellAssign({
         {peer ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onAssign(peer, !publish, [])}>
+            <DropdownMenuItem
+              disabledReason={
+                outSlots.length
+                  ? undefined
+                  : "This cell writes no `out`, so it has nothing to send. `publish` sends the value an `out` names, and a cell with none has no name for anything to travel under."
+              }
+              onSelect={() => onAssign(peer, publish ? [] : outSlots)}
+            >
               {publish ? "Stop publishing its output" : "Publish its output"}
             </DropdownMenuItem>
           </>
@@ -274,31 +280,13 @@ export function CellAssign({
             <DropdownMenuLabel>What leaves this machine</DropdownMenuLabel>
             {outSlots.map((slot) => {
               const on = publishes(slot);
-              // Never down to nothing: an empty list is the bare `publish`, so
-              // an item that emptied it would silently publish everything —
-              // which is why the refusal has to say what it is protecting.
-              // "Keep here" greyed out with nothing beside it reads as a bug,
-              // and the state it is in is the exact opposite of what a reader
-              // assumes a dead row means.
-              const lastOne = on && named.length === 1;
+              // Source order, always: the list is written back as one `publish`
+              // per `out`, and the cell reads in the order it writes.
               const next = on
                 ? named.filter((s) => s !== slot)
                 : outSlots.filter((s) => named.includes(s) || s === slot);
               return (
-                <DropdownMenuItem
-                  key={slot}
-                  disabledReason={
-                    lastOne
-                      ? `${SLOT_SIGIL}${slot} is the only value this cell still publishes. Keeping it here too would leave an empty list, which the notebook writes as a bare \`publish\` — every output, rather than none. Send the cell to nobody instead.`
-                      : undefined
-                  }
-                  onSelect={() =>
-                    // A list of everything is the bare `publish` written long.
-                    // Collapsing it keeps the header as short as the claim, and
-                    // keeps one spelling for one meaning in the notebook text.
-                    onAssign(peer, true, next.length === outSlots.length ? [] : next)
-                  }
-                >
+                <DropdownMenuItem key={slot} onSelect={() => onAssign(peer, next)}>
                   {on ? "Keep" : "Publish"} {SLOT_SIGIL}
                   {slot}
                   {on ? " here" : ""}

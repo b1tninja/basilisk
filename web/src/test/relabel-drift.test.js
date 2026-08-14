@@ -36,7 +36,12 @@
  * whatever it says.
  */
 import { describe, expect, it } from "vitest";
-import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
+import {
+  compileRecipe,
+  publishedSlots,
+  serializeRecipe,
+  setPublishedSlots,
+} from "../lib/toolkit/recipe.js";
 import { roomRoster } from "../lib/notebook/roster.js";
 import { departedPeers, unassignDeparted } from "../lib/toolkit/peer-relabel.js";
 
@@ -60,15 +65,11 @@ function applyEdits(source, edits) {
   for (const edit of edits) {
     const chain = chains[edit.cell];
     delete chain.peer;
-    delete chain.publish;
-    delete chain.publishSlots;
-    if (edit.peer) {
-      chain.peer = edit.peer;
-      if (edit.publish) chain.publish = true;
-      if (edit.publish && edit.publishSlots.length) {
-        chain.publishSlots = [...edit.publishSlots];
-      }
-    }
+    // The same call `setCellPeer` makes, rather than a second walk: what a cell
+    // discloses is written into its steps, and a helper here that decided it
+    // some other way would be testing this file's opinion of the edit.
+    chain.steps = setPublishedSlots(chain.steps || [], edit.peer ? edit.publishSlots : []);
+    if (edit.peer) chain.peer = edit.peer;
   }
   return serializeRecipe(chains);
 }
@@ -100,13 +101,13 @@ describe("the drift the audience sort used to cause", () => {
     // rewrite narrated for a rewrite that did not happen.
     const gone = departedPeers([BEA, CEC], [ADA, BEA, CEC]);
     expect([...gone]).toEqual([]);
-    const placed = compileRecipe(`@${CEC} publish\nrandom 32 | out $secret`).ast.chains;
+    const placed = compileRecipe(`@${CEC}\nrandom 32 | out $secret | publish`).ast.chains;
     expect(unassignDeparted(placed, gone)).toEqual({ edits: [], note: "" });
   });
 });
 
 describe("a placement survives everything except its person leaving", () => {
-  const SOURCE = `@${CEC} publish\nrandom 32 | out $secret`;
+  const SOURCE = `@${CEC}\nrandom 32 | out $secret | publish`;
 
   it("is untouched by an add, in the notebook's own text", () => {
     const gone = departedPeers([BEA, CEC], [BEA, CEC, ADA]);
@@ -126,7 +127,7 @@ describe("a placement survives everything except its person leaving", () => {
     const gone = departedPeers([BEA, CEC], [BEA, ADA]);
     expect([...gone]).toEqual([CEC]);
     const { edits, note } = unassignDeparted(compileRecipe(SOURCE).ast.chains, gone);
-    expect(edits).toEqual([{ cell: 0, peer: null, publish: false, publishSlots: [] }]);
+    expect(edits).toEqual([{ cell: 0, peer: null, publishSlots: [] }]);
     expect(applyEdits(SOURCE, edits)).toBe("random 32 | out $secret");
     expect(note).toContain("no longer in the room");
     expect(note).toContain("cell 0");
@@ -141,16 +142,17 @@ describe("a placement survives everything except its person leaving", () => {
     // wrote a comma into an argument unquoted and the notebook stopped
     // compiling. Nothing here edits text — but the assertion that it round
     // trips is the one that would notice if somebody made it.
-    const src = `@${CEC} publish=$a\nrandom 32 | out $a | out $b`;
+    const src = `@${CEC}\nrandom 32 | out $a | publish | out $b`;
     const gone = departedPeers([BEA, CEC], [BEA, ADA]);
     const { edits } = unassignDeparted(compileRecipe(src).ast.chains, gone);
     const rewritten = applyEdits(src, edits);
     const { ast, validation } = compileRecipe(rewritten);
     expect(validation.errors.map((e) => e.message)).toEqual([]);
     expect(ast.chains[0].peer).toBeUndefined();
-    // `publish` goes with the peer: a modifier attached to nobody is not a
-    // claim about anything, and a header that kept it would not compile.
-    expect(ast.chains[0].publish).toBeUndefined();
+    // The `publish` goes with the peer: a value sent to nobody is not a claim
+    // about anything, and a cell that kept one would not compile.
+    expect(publishedSlots(ast.chains[0])).toEqual([]);
+    expect(rewritten).toBe("random 32 | out $a | out $b");
   });
 
   it("matches a header whatever case it was written in", () => {
@@ -159,7 +161,7 @@ describe("a placement survives everything except its person leaving", () => {
     // departure could silently miss a cell.
     const gone = departedPeers([BEA, CEC], [BEA, ADA]);
     const { edits } = unassignDeparted([{ steps: [], peer: CEC.toLowerCase() }], gone);
-    expect(edits).toEqual([{ cell: 0, peer: null, publish: false, publishSlots: [] }]);
+    expect(edits).toEqual([{ cell: 0, peer: null, publishSlots: [] }]);
   });
 
   it("leaves a peer the room never bound alone", () => {
