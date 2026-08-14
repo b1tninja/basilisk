@@ -196,6 +196,30 @@ describe("chainsWithCellSteps", () => {
     expect(next[2].steps).toEqual([]);
     expect(next[3].steps.map((s) => s.name)).toEqual(["peek"]);
   });
+
+  it("carries everything about a cell that is not its steps", () => {
+    // This seam rebuilt every chain as `{ steps }`, so clicking any chip's ×
+    // stripped `peer`, `publish` and `publishSlots` from the *whole* notebook —
+    // the defect `applyCellRecipeText` names in its own comment, still live on
+    // the chip path. `comments` joined that set when comments started surviving
+    // `serializeRecipe`: a sentence that survives the wire and then dies
+    // because somebody removed a step is the same loss one layer out.
+    //
+    // Asserted on the untouched neighbour *and* on the edited cell, because
+    // those are two different lines of the function and only one of them was
+    // ever the reported symptom.
+    const rich = [
+      { steps: [{ name: "genkey" }], peer: "mara", publish: true, comments: ["why"] },
+      { steps: [{ name: "out" }], peer: "ada", publishSlots: ["a"] },
+    ];
+    const next = chainsWithCellSteps(rich, 1, [{ name: "peek" }]);
+    expect(next[0]).toEqual(rich[0]);
+    expect(next[1]).toEqual({
+      steps: [{ name: "peek" }],
+      peer: "ada",
+      publishSlots: ["a"],
+    });
+  });
 });
 
 describe("the hook cannot express an ambiently-targeted mutation", () => {

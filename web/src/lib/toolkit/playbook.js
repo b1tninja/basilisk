@@ -37,10 +37,17 @@
  * typed. Two reasons, and the second is the one that bites: canonical text is
  * stable under load-and-save, so a reader who opens the playbook and saves the
  * notebook gets the same bytes and the same digest, which is the divergence
- * that shows up as `cell-mismatch` between two peers holding one notebook. And
- * `#` comments do not survive `serializeRecipe` — the parser skips them and
- * nothing in the AST holds them — which is why `purpose` is a field here rather
- * than a comment in the recipe. It is the one sentence the recipe cannot hold.
+ * that shows up as `cell-mismatch` between two peers holding one notebook.
+ *
+ * `purpose` used to be justified by the recipe being unable to hold a sentence
+ * at all — `#` comments were dropped by `serializeRecipe`. They survive now, so
+ * that is no longer the reason and this field stands on a narrower one: a
+ * comment is *inside* the recipe and therefore inside `recipeDigest`, which
+ * makes editing the instruction indistinguishable from editing the procedure.
+ * `purpose` is addressed to the custodian and is signed alongside the recipe
+ * without being part of what the recipe means. A comment explaining a step
+ * belongs in the recipe; the paragraph telling a stranger what to do with what
+ * they recover belongs here.
  *
  * `splitId` is a label, and the disaster-recovery case is the reason it is
  * here: a custodian holding two ceremonies' envelopes has no way to tell which
@@ -143,9 +150,10 @@ export const PLAYBOOK_PURPOSE_MAX = 2000;
  * @property {number} v
  * @property {"basilisk.recipe-playbook"} kind
  * @property {string} title         what this procedure is called
- * @property {string} purpose       the sentence the recipe cannot hold — `#`
- *   comments do not survive `serializeRecipe`, so this is where a human
- *   instruction to a stranger lives
+ * @property {string} purpose       the instruction to a stranger, kept beside
+ *   the recipe rather than inside it: a `#` comment survives serialization now
+ *   but is part of `recipeDigest`, so prose that belongs to the reader would
+ *   otherwise be indistinguishable from prose that changes the agreement
  * @property {string} splitId       `share-check.js`'s label for the split these
  *   cards belong to, "" when the procedure is not about one
  * @property {string} createdAt     ISO — the author's own word, witnessed by nothing

@@ -554,6 +554,16 @@ class Parser {
     this.sawLegacySlotSigil = false;
     /** A chain began with `@label`, which this grammar reads as a peer. */
     this.sawReservedChainHeader = false;
+    /**
+     * Comments read since the last chain was closed, in the order written.
+     *
+     * A comment belongs to the cell it was written in — see `flush` — so this
+     * is drained onto each chain rather than kept per step. It is the only
+     * parser state that survives a `flush`: comments written above a cell are
+     * read before the cell's first step exists.
+     * @type {string[]}
+     */
+    this.comments = [];
     this.lineStarts = [0];
     for (let i = 0; i < src.length; i++) {
       if (src[i] === "\n") this.lineStarts.push(i + 1);
@@ -599,9 +609,28 @@ class Parser {
 
   skipSpacesAndCommentsOnLine() {
     this.skipSpaces();
-    if (this.peek() === "#") {
-      while (!this.eof() && this.peek() !== "\n") this.pos++;
-    }
+    if (this.peek() === "#") this.consumeComment();
+  }
+
+  /**
+   * Read a `#` comment to end of line and keep it.
+   *
+   * Four places in this parser used to run this loop inline and throw the text
+   * away — a full line at stem level, a trailing one after a pipeline, and one
+   * inside each body form. Every character is consumed exactly once, so one
+   * collector here means a comment is kept exactly once no matter which of the
+   * four read it, and adding a fifth reading site cannot quietly reintroduce
+   * the loss.
+   *
+   * The text is stored without the `#` and trimmed, because that is the form
+   * `serializeChain` writes back: `#note`, `#  note` and `# note ` are one
+   * comment, so a round trip converges instead of drifting a space per pass.
+   * Positioned on the `#`.
+   */
+  consumeComment() {
+    const from = this.pos + 1;
+    while (!this.eof() && this.peek() !== "\n") this.pos++;
+    this.comments.push(this.src.slice(from, this.pos).trim());
   }
 
   /**
@@ -619,6 +648,11 @@ class Parser {
       if (current.length) {
         /** @type {RecipeChain} */
         const chain = { steps: current };
+        // A comment attaches to the cell, and only when the cell has one — an
+        // absent field is what `Object.keys(chain)` has always shown for a
+        // plain pipeline, and the manifest digests this shape.
+        if (this.comments.length) chain.comments = this.comments;
+        this.comments = [];
         if (head) {
           chain.peer = head.peer;
           if (head.publish) chain.publish = true;
@@ -659,7 +693,7 @@ class Parser {
 
       // Full-line comment — stays inside the current chain.
       if (this.peek() === "#") {
-        while (!this.eof() && this.peek() !== "\n") this.pos++;
+        this.consumeComment();
         if (this.peek() === "\n") this.pos++;
         continue;
       }
@@ -737,6 +771,17 @@ class Parser {
       }
     }
     flush();
+    // A comment written after the last cell has no cell of its own — a
+    // header-only chain is an error and a comment-only one would serialize to
+    // nothing, so there is nowhere to put it but the cell above. It joins that
+    // cell's comments rather than being dropped: the whole point of this change
+    // is that a sentence a person wrote for a reader is not silently destroyed,
+    // and "moved to the top of the last cell" is a thing a reader can see.
+    if (this.comments.length && chains.length) {
+      const last = chains[chains.length - 1];
+      last.comments = [...(last.comments || []), ...this.comments];
+      this.comments = [];
+    }
     return chains.length ? chains : [{ steps: [] }];
   }
 
@@ -1411,7 +1456,7 @@ class Parser {
         continue;
       }
       if (this.peek() === "#") {
-        while (!this.eof() && this.peek() !== "\n") this.pos++;
+        this.consumeComment();
         continue;
       }
       if (this.peek() === "}") {
@@ -1530,7 +1575,7 @@ class Parser {
       }
       if (this.src[j] === "#") {
         this.pos = j;
-        while (!this.eof() && this.peek() !== "\n") this.pos++;
+        this.consumeComment();
         if (this.peek() === "\n") this.pos++;
         continue;
       }

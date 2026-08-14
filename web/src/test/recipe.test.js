@@ -97,7 +97,16 @@ describe("parse / serialize", () => {
       "random 16|sss.split threshold=2 shares=2|foreach\n  - out $share"
     );
     expect(errors).toEqual([]);
-    expect(text).toBe("random 16 | sss.split shares=2 | foreach\n  - out $share");
+    // `threshold=2` used to disappear here because it equalled the registry
+    // default, so this recipe canonicalized to `sss.split shares=2` — a
+    // 2-of-2 whose quorum was half written down. The test is about spacing and
+    // body formatting; the quorum now rides along because `serialize: "always"`
+    // keeps it, which is what makes the split's K-of-N readable in the text
+    // both peers digest. Asserted in full rather than loosened, so a future
+    // change that drops either half fails here too.
+    expect(text).toBe(
+      "random 16 | sss.split threshold=2 shares=2 | foreach\n  - out $share"
+    );
   });
 
   it("rejects retired foreach aliases", () => {

@@ -273,15 +273,24 @@ export function stepsWithNestStepRemoved(
  * focused *before* the click, so clicking a chip's × in one cell silently
  * deleted a step from another. Threading the cell makes that unrepresentable:
  * there is no ambient "current cell" for a mutation to read stale.
+ *
+ * **Everything about a cell except its steps is carried over**, here and for
+ * the cell being edited. Rebuilding each chain as `{ steps }` dropped `peer`,
+ * `publish` and the slots `publish` names from *every* cell in the notebook, so
+ * clicking any chip's × unassigned the whole room — the same defect
+ * `applyCellRecipeText` fixed for the text path and this seam still had. A
+ * comment is now in that set too, which is why the copy is a spread rather
+ * than a field list: a field added to `RecipeChain` must not need a second
+ * edit here to survive being looked at sideways.
  */
 export function chainsWithCellSteps(
   chains: RecipeChain[],
   cellIndex: number,
   nextSteps: RecipeStep[]
 ): RecipeChain[] {
-  const copy = chains.map((c) => ({ steps: [...(c.steps || [])] }));
+  const copy: RecipeChain[] = chains.map((c) => ({ ...c, steps: [...(c.steps || [])] }));
   while (copy.length <= cellIndex) copy.push({ steps: [] });
-  copy[cellIndex] = { steps: nextSteps };
+  copy[cellIndex] = { ...(copy[cellIndex] || {}), steps: nextSteps };
   return copy;
 }
 
@@ -1329,7 +1338,7 @@ export function useNotebook() {
     const loaded: RecipeChain[] = (ast.chains?.length
       ? ast.chains
       : [{ steps: ast.steps || [] }]
-    ).map((c: RecipeChain) => ({ steps: [...(c.steps || [])] }));
+    ).map((c: RecipeChain) => ({ ...c, steps: [...(c.steps || [])] }));
     if (!loaded.length) return;
     setChains((prev) => {
       if (prev.length === 1 && !(prev[0].steps || []).length) {
@@ -1356,7 +1365,7 @@ export function useNotebook() {
     const loaded: RecipeChain[] = (ast.chains?.length
       ? ast.chains
       : [{ steps: ast.steps || [] }]
-    ).map((c: RecipeChain) => ({ steps: [...(c.steps || [])] }));
+    ).map((c: RecipeChain) => ({ ...c, steps: [...(c.steps || [])] }));
     if (!loaded.length) return null;
     const pairTitle = `${pair.forward.title} ⇄ ${pair.reverse.title}`;
     setChains((prev) => {
@@ -1411,6 +1420,11 @@ export function useNotebook() {
         ...(chain.peer == null ? {} : { peer: chain.peer }),
         ...(chain.publish ? { publish: true } : {}),
         ...(chain.publishSlots?.length ? { publishSlots: [...chain.publishSlots] } : {}),
+        // The `#` lines the author just typed. They come off the parse like the
+        // header does, and dropping them here would mean a comment survived
+        // `serializeRecipe` and died on the way back into the notebook — the
+        // same round trip, one layer out.
+        ...(chain.comments?.length ? { comments: [...chain.comments] } : {}),
       };
       return next;
     });
@@ -1910,7 +1924,7 @@ export function useNotebook() {
         // Show the cells in the notebook as they are added, so the ceremony is
         // never doing something the user cannot see in Source view.
         setTitle(ceremonyTitle(ceremonyParams));
-        setChains(compiled.map((c) => ({ steps: [...(c.steps || [])] })));
+        setChains(compiled.map((c) => ({ ...c, steps: [...(c.steps || [])] })));
         setFocusedCell(at);
         const bindings = {
           ...buildBindings(),

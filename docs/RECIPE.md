@@ -52,7 +52,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - Empty `tee` is invalid; use `peek` for a side inspect snapshot.
 - List marker is only `-`. Leading tabs are errors.
 - File paths (`./x.pem`, quoted paths, `file:…`) stay reserved as *tokens* — files enter and leave through the `file.read` / `file.save` **ops**, whose picker the browser owns. A recipe never names a path, so a shared recipe cannot reach into someone else's disk.
-- Comments: full-line `# …` (kept inside the current chain).
+- Comments: `# …`, full-line or trailing a step line. A comment belongs to the **cell** it is written in and **survives serialization** — see [Comments](#comments).
 - Ops-drawer **shelves**, **collections** (`OP_COLLECTIONS`: AES / RSA / Base64·Base32), and **conjugate rows** (encrypt | decrypt, encode | decode, sign | verify, `pem` | `der`, `encode` | `decode`) are UI only — friendly tile labels (`pairLabels` / collection `actionLabels`) do not change recipe tokens. Encoding twins canonicalize to `base64.encode` / `base64.decode` (`-d` parse-only); PEM armor uses `pem` ↔ `der`; base alphabets use `encode <alphabet>` / `decode <alphabet>`. Cipher twins keep `aes-gcm` / `aes-gcm -d`.
 
 ## Chains
@@ -290,7 +290,7 @@ Reference, and toolcards all read this schema — toolcards are views of
 | `allowIndex` | no | For slot params: allow 1-based index refs |
 | `unresolvedInput` | no | Leaving this unbound leaves an input the *run* asks for: the engine falls back to a panel instead of failing. Which panel is not declared — it is rendered from `slotOf` (`openpgp-key` in the set → the OpenPGP panel, otherwise the keys tray), so a panel is a view of the type and not a second vocabulary |
 | `requiredWith` | no | Names a sibling param whose truthiness arms the requirement (`gpg.encrypt key=` only when `sign` is set) |
-| `serialize` | no | `"always"` — emit `name=value` even when equal to default (e.g. `mode=`) |
+| `serialize` | no | `"always"` — emit `name=value` even when equal to default. For a param whose value is a decision about *this* secret and *these* people rather than a build-wide policy: `sss.split` / `vss.split` `threshold=` `shares=`, `dkg.run threshold=`, `gpg.symencrypt` / `gpg.symdecrypt` `mode=`. A quorum that matched the default used to serialize away, so a 2-of-3 and a 2-of-16 were the same text and the manifest both ends digest held neither |
 
 A recipe's runtime input needs are derived from these two fields plus the
 step-level `unresolvedInputs` (the panel a step's *pipeline* value arrives
@@ -842,6 +842,47 @@ Paste / blur canonicalize via `canonicalizeRecipe`:
 - migrator (Upgrade recipe): bare `hex` → `to hex`, `unhex` → `from hex`, slot `from $…` → `in $…`
 - joins chains with a blank line
 - formats `tee` / `foreach` bodies with indented `-` lines
+- writes each cell's comments back, as full lines above its header
+
+## Comments
+
+`# …` runs to end of line. It may be a whole line or trail a step line
+(`random 32 | out $a  # keep`), and it may appear inside a `tee` / `foreach`
+body.
+
+**A comment attaches to the cell, not to a step**, and canonical text writes a
+cell's comments as full lines at the top of it, above any `@peer` header, in
+the order they were written:
+
+```text
+# deal 2-of-3 to the room
+@mara publish
+random 32 | sss.split threshold=2 shares=3 | out $set
+```
+
+The cell is the unit because it is the unit everything else already uses — what
+a peer is assigned, what an offer carries, what a manifest row digests, what the
+notebook draws as one box. There is no finer attachment available: canonical
+text collapses a multi-line stem onto one `|`-joined line, so a comment written
+between two stem lines has no line left to sit above. Consequences:
+
+| Written | Comes back as |
+|---------|---------------|
+| Trailing a step line | A full line above the cell (promoted, not dropped) |
+| Inside a `tee` / `foreach` body | A full line above the cell |
+| After the last cell | A full line above the last cell |
+| Alone, with no steps | Nothing — a comment-only cell is not a recipe |
+
+Parse → serialize is **idempotent** for every one of those: the first pass moves
+a comment to the top of its cell and no later pass moves it again.
+
+**A comment is part of what the recipe means to the two ends.** It is inside
+`serializeRecipe`, so it is inside the per-cell digest and the `recipeSource`
+digest that a run manifest carries — two notebooks differing only in a comment
+are two agreements, and an offer between them is refused. That is the intent:
+the text is the agreement, and a comment is part of what a person read before
+agreeing. Prose that should *not* bind the agreement goes beside the recipe
+instead — that is what `run.playbook`'s `purpose` is for.
 
 ## Migration notes
 

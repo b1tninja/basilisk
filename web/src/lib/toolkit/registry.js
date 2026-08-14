@@ -1794,12 +1794,16 @@ export const STEPS = [
     output: "shares",
     entropy: "keying",
     params: [
+      // Never dropped on serialize, for the reason spelled out on `sss.split`:
+      // K-of-N is a decision about this secret and these custodians, not a
+      // build-wide default, so it has to be in the text both ends compare.
       {
         name: "threshold",
         type: "int",
         default: 2,
         min: 1,
         max: 16,
+        serialize: "always",
         doc: "Shares required to recover (K)",
       },
       {
@@ -1808,6 +1812,7 @@ export const STEPS = [
         default: 3,
         min: 1,
         max: 16,
+        serialize: "always",
         doc: "Total shares to produce (N)",
       },
     ],
@@ -1896,12 +1901,16 @@ export const STEPS = [
     // participant's share of a distributed key.
     entropy: "keying",
     params: [
+      // Never dropped on serialize, for the reason spelled out on `sss.split`.
+      // Here it decides how many of the room can reconstruct the group key
+      // afterwards, which is the one thing a participant is agreeing to.
       {
         name: "threshold",
         type: "int",
         default: 2,
         min: 1,
         max: 16,
+        serialize: "always",
         doc: "Participants required to reconstruct later (K)",
       },
       {
@@ -1966,12 +1975,38 @@ export const STEPS = [
     output: "shares",
     entropy: "keying",
     params: [
+      /**
+       * ## Why the quorum is never dropped on serialize
+       *
+       * `serializeStep` omits a named param equal to its default, which is
+       * right for a param whose default is a build-wide policy — every recipe
+       * in the corpus means the same thing by its absence. K and N are not
+       * that. They are a decision about *this* secret and *these* people, made
+       * per ceremony, printed on the share cards, and the whole of what the
+       * word quorum promises. `2` and `3` are one arbitrary point in a range
+       * of 1..16, not a policy.
+       *
+       * Left droppable, `sss.split threshold=2 shares=3` round-tripped to bare
+       * `sss.split`. The security property was then absent from the text a
+       * reader reads, from the text two peers compare, and from the manifest
+       * they digest — a 2-of-3 and a 2-of-16 were the same recipe, and only
+       * the second of them was written down. That is `LANGUAGE.md`'s principle
+       * 4, and this is the narrow half of its fix: the parameter keeps its
+       * spelling and stops being droppable. The designed half makes it the
+       * verb's object (`split 2/3`), where it cannot be defaulted away at all.
+       *
+       * The same reasoning applies verbatim to `vss.split` and to `dkg.run`'s
+       * threshold, and only to those — see the audit in the commit that added
+       * this. A param whose default is genuinely inert stays droppable,
+       * because noise in the text is its own readability cost.
+       */
       {
         name: "threshold",
         type: "int",
         default: 2,
         min: 1,
         max: 16,
+        serialize: "always",
         doc: "Shares required to recover (K)",
       },
       {
@@ -1980,6 +2015,7 @@ export const STEPS = [
         default: 3,
         min: 1,
         max: 16,
+        serialize: "always",
         doc: "Total shares to produce (N)",
       },
       {
@@ -3392,7 +3428,7 @@ export const STEPS = [
         name: "purpose",
         type: "string",
         default: "",
-        doc: "The sentence the recipe cannot hold — `#` comments do not survive canonicalization, and a stranger needs to be told what this is for",
+        doc: "What a stranger holding one card is meant to do — kept beside the recipe rather than as a `#` comment inside it, so rewording the instruction does not change the recipe digest",
       },
       {
         name: "split",

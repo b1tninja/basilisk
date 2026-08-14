@@ -545,6 +545,9 @@ function checkPooledPipelineValue(step, incoming, outgoing, errors, stepIndex) {
  *   field at all. Labels, no sigil, in the order they were written.
  * @property {number} [headerStart]  char offsets — a complaint about the header
  * @property {number} [headerEnd]    must anchor to it, not to step 0's span
+ * @property {string[]} [comments]  the `#` lines written in this cell, `#` and
+ *   surrounding space stripped, in the order they were written. See
+ *   `serializeChain` for where they go back and why the cell is the unit.
  */
 
 /**
@@ -1077,21 +1080,63 @@ export function chainHeaderText(chain) {
 }
 
 /**
- * Serialize one chain, header included.
+ * Serialize one chain, comments and header included.
  *
  * The header is emitted only when the chain has steps to hang it on: a
  * header-only cell does not parse, so writing one would be a round trip that
  * loses. Newline-joined in pretty form, space-joined in compact — where the
  * `~` chain separator already marks where a header may begin.
+ *
+ * ## A comment attaches to the cell, above everything else in it
+ *
+ * The cell is the unit every other part of this system already uses: it is
+ * what a peer is assigned, what an offer carries, what a manifest row digests,
+ * what the run log records and what the notebook draws as one box. There is no
+ * smaller unit a comment could attach to and survive, because there is no line
+ * model *inside* a cell to attach it to — `serializeChainSteps` collapses a
+ * multi-line stem into one `|`-joined line, so a comment written between two
+ * stem lines has no line left to sit above.
+ *
+ * So every comment in a cell — a full line, or one trailing a step line —
+ * comes back as full lines at the top of that cell, in the order it was
+ * written. A trailing comment is *promoted*, not dropped: `random 32 | out $a
+ * # keep` serializes as two lines. That is the one visible move this makes,
+ * and it buys the property that matters: parse → serialize is idempotent for
+ * every body form, brace and indent alike, with no second grammar for where a
+ * comment may sit.
+ *
+ * They go above the header rather than below it because the header is the
+ * cell's first token and `@mara publish` reads as the subject of the sentence
+ * the comment is introducing. Below it, a comment would separate the header
+ * from the pipeline it heads.
+ *
+ * Comments are emitted in the **compact** form too. Dropping them there would
+ * be cheaper in URL characters and wrong: `hashForRecipe` is how a notebook
+ * travels in a link, and a cell that came back from a link without its
+ * comments digests differently from the cell that was shared — the
+ * `cell-mismatch` two peers refuse each other with. The newline a comment
+ * forces is already handled: `serializeRecipe` switches the compact chain
+ * separator to a blank line whenever any cell needs a second line, which is
+ * exactly what `expandShareRecipe` reads back.
+ *
  * @param {RecipeChain} chain
  * @param {{ compact?: boolean }} [opts]
  * @returns {string}
  */
 function serializeChain(chain, opts = {}) {
   const body = serializeChainSteps(chain?.steps || [], opts);
+  if (!body.length) return body;
   const head = chainHeaderText(chain);
-  if (!body.length || !head.length) return body;
-  return opts.compact === true ? `${head} ${body}` : `${head}\n${body}`;
+  const lines = (chain?.comments || []).map((c) => {
+    const text = String(c ?? "").trim();
+    return text ? `# ${text}` : "#";
+  });
+  if (head.length) {
+    lines.push(opts.compact === true ? `${head} ${body}` : `${head}\n${body}`);
+  } else {
+    lines.push(body);
+  }
+  return lines.join("\n");
 }
 
 /**

@@ -180,11 +180,18 @@ describe("every docs/RECIPE.md fence that compiles plans exactly as it runs toda
       planned++;
     }
     expect(planned).toBeGreaterThanOrEqual(5);
-    // Two, and this says which. The second arrived with `publish=$slot`: the
+    // Three, and this says which. The second arrived with `publish=$slot`: the
     // doc has to show a dealer publishing one of the three things its cell
     // writes, because that is the case the modifier exists for and a grammar
     // reference that only shows the all-or-nothing form does not document it.
-    expect(headered).toEqual(["@alice", "@mara publish=$commitments"]);
+    // The third is the Comments section's example, and it is headered on
+    // purpose — the rule it states is *where* a cell's comments go, and "above
+    // the header" cannot be shown by an example with no header.
+    expect(headered).toEqual([
+      "@alice",
+      "@mara publish=$commitments",
+      "@mara publish",
+    ]);
   });
 
   it("plans the doc's own placement example the way the doc reads it", () => {

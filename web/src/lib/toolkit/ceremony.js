@@ -245,11 +245,12 @@ export function recoveryRecipe() {
  * writes that down, signs it with the same key the receipt uses, and it is
  * printed and stored beside the cards rather than kept in the browser.
  *
- * `purpose` is prose on purpose: `#` comments do not survive
- * `serializeRecipe`, so the recipe inside the playbook cannot hold a sentence
- * addressed to a person. This is that sentence, and it names the threshold and
- * the count because a custodian reading it may hold one card and no memory of
- * the room.
+ * `purpose` is prose on purpose, and beside the recipe rather than in it. A `#`
+ * comment survives `serializeRecipe` now, so the recipe *could* hold a sentence
+ * — but it would be inside `recipeDigest`, which makes rewording the
+ * instruction look exactly like rewriting the procedure. This is the sentence
+ * addressed to a person, and it names the threshold and the count because a
+ * custodian reading it may hold one card and no memory of the room.
  *
  * `splitId` is what tells two envelopes apart. It arrives from the split that
  * just ran rather than being invented here — `share-cards.js` derives it from

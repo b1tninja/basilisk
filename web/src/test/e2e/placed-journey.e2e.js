@@ -151,8 +151,22 @@ if (!availability.ok && availability.kind === "broken") {
 
 /** What the creator's first cell writes, before anything crosses. */
 const CELL_0 = "bytes deadbeef | encode hex | out $seed";
-/** The joiner's cell — the only one placed away from the machine composing. */
-const CELL_1 = "in $seed | decode hex | encode base64 | out $b64";
+/**
+ * The joiner's cell — the only one placed away from the machine composing.
+ *
+ * It carries the notebook's one `#` comment, and that is the point of it being
+ * here rather than in a unit test. A comment now survives `serializeRecipe`,
+ * so it is inside `manifest.recipeSource` and inside the placed cell's own
+ * `recipeDigest` — which means two peers whose notebooks differ by a comment
+ * derive different manifests and refuse each other. That is the intended
+ * behaviour (the text is the agreement, and a comment is part of what a person
+ * read before agreeing), and the risk it carries is the opposite case: a
+ * comment that survived on one machine and not the other would refuse an
+ * honest run. This road is where that would show, because the joiner's copy
+ * arrives over the wire and is never handed to them by this file.
+ */
+const CELL_1 =
+  "# base64 of the seed, computed on the joiner's machine\nin $seed | decode hex | encode base64 | out $b64";
 /** The creator's again, and it reads what cell 1 wrote somewhere else. */
 const CELL_2 = "in $b64 | out $done";
 
@@ -474,7 +488,15 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     expect(cells).toHaveLength(3);
     const placed = cells.find((c) => c.includes("decode hex"));
     expect(placed, "the joiner's pipeline is in no cell of its own").toBeTruthy();
-    expect(placed.split("\n")[0]).toBe(`@${L.joiner} publish`);
+    // The comment is above the header, which is where `serializeChain` puts a
+    // cell's comments — so the header is the cell's second line here and the
+    // first line everywhere else in this notebook. Asserted as written rather
+    // than by searching for a line starting `@`, because "the comment came
+    // back, and it came back above the header" is the property.
+    expect(placed.split("\n").slice(0, 2)).toEqual([
+      "# base64 of the seed, computed on the joiner's machine",
+      `@${L.joiner} publish`,
+    ]);
     expect(placed).toContain("encode base64 | out $b64");
     // The other two are the creator's, and the last one reads what the placed
     // cell writes — which is what makes this an arc rather than a delivery.

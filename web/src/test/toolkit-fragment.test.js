@@ -100,8 +100,13 @@ describe("compact share form", () => {
     // So the stem still minifies and the body is left exactly as written.
     const foreachPretty = `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out $share`;
+    // `sss.split threshold=2 shares=3` keeps its arguments through the compact
+    // form: they are `serialize: "always"` now, because a quorum dropped for
+    // matching a default is absent from the link the recipient reads and from
+    // the manifest both ends compare. Minifying the stem never meant minifying
+    // away what the recipe does.
     expect(compactRecipeText(foreachPretty)).toBe(
-      "random 32|sss.split|blip39.encode|foreach\n  - out $share"
+      "random 32|sss.split threshold=2 shares=3|blip39.encode|foreach\n  - out $share"
     );
 
     const chained = `genkey ec/p256 | out $kp
