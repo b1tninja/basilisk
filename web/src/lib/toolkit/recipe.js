@@ -495,10 +495,16 @@ function checkPooledPipelineValue(step, incoming, outgoing, errors, stepIndex) {
 }
 
 /**
- * Labeled tee branch (selector style: `- :private | …`).
+ * One `-` line under a `tee`: a side pipeline over a clone of the stem, or over
+ * a projection of it when the line opens with a selector.
+ *
+ * The selector is optional, and `member` is `""` when there is none — an
+ * unlabelled branch (`- encode hex | out $a`) forks the whole value. Every
+ * consumer that projects must check for the empty case rather than reach for
+ * `:${member}`, which would ask for a member named nothing.
  * @typedef {object} TeeBranch
- * @property {string} member  e.g. private | public | key | value
- * @property {string} [selector]  e.g. ":private"
+ * @property {string} member  e.g. private | public | key | value; "" = no selector
+ * @property {string} [selector]  e.g. ":private"; absent = no selector
  * @property {RecipeStep[]} body
  * @property {number} [start]
  * @property {number} [end]
@@ -845,24 +851,6 @@ function serializePipeline(steps, opts = {}) {
 }
 
 /**
- * Can this body line be folded into a neighbour with a `|`?
- *
- * Only a line with no selector. `- digest sha-256` and `- out $a` are two items
- * of one flat list — `parseBranchLineInto` pushes each item's whole pipeline
- * into the same `listBody`, so joining them with `|` parses to the same steps.
- * `- :public | export spki` does not: a selector item becomes **one branch**,
- * and folding two of them together would merge two branches into one.
- *
- * `bodyLines` writes every item as `- ` followed by the selector, when there is
- * one, so the two forms are told apart by that one character.
- * @param {string} line
- * @returns {boolean}
- */
-function isPlainBodyItem(line) {
-  return !/^- *[:[]/.test(line);
-}
-
-/**
  * Serialize one chain's steps to recipe text.
  *
  * ## Compact does not re-spell a nested body
@@ -916,38 +904,28 @@ function serializeChainSteps(steps, opts = {}) {
 
   /**
    * Collect brace/indent body lines (without leading indent / trailing newline).
+   *
+   * **One `-` line per branch, and one for the body.** A body line is a whole
+   * pipeline, so several steps are written along one line with `|` —
+   * `- export spki | pem | out $public`, never three lines. Spreading them out
+   * is read back as three branches, which is what `parseBranchLineInto` now
+   * makes of three lines, and three branches over a keypair are not the export
+   * chain that was written.
+   *
+   * `serializePipeline` already spells a `select` step as its bare selector, so
+   * a `foreach :items` body keeps its `- :value | out $share` shape without
+   * this function grouping steps by hand.
    * @returns {string[]}
    */
   function bodyLines(step) {
     /** @type {string[]} */
     const lines = [];
     const body = step.body || [];
-    let bi = 0;
-    while (bi < body.length) {
-      const b = body[bi];
-      if (b.name === "select" && b.params?.selector) {
-        const group = [b];
-        bi++;
-        while (
-          bi < body.length &&
-          body[bi].name !== "select" &&
-          !(body[bi].name === "tee" || body[bi].name === "foreach")
-        ) {
-          group.push(body[bi]);
-          bi++;
-        }
-        const sel = String(b.params.selector);
-        const rest = serializePipeline(group.slice(1), opts);
-        lines.push(rest ? `- ${sel}${pipeJoin}${rest}` : `- ${sel}${pipeJoin}inspect`);
-      } else {
-        lines.push(`- ${serializePipeline([b], opts)}`);
-        bi++;
-      }
-    }
+    if (body.length) lines.push(`- ${serializePipeline(body, opts)}`);
     for (const br of step.branches || []) {
-      const sel = br.selector || `:${br.member}`;
+      const sel = br.selector || (br.member ? `:${br.member}` : "");
       const pipe = serializePipeline(br.body || [], opts);
-      lines.push(`- ${sel}${pipeJoin}${pipe}`);
+      lines.push(sel ? `- ${sel}${pipeJoin}${pipe}` : `- ${pipe}`);
     }
     return lines;
   }
@@ -991,12 +969,13 @@ function serializeChainSteps(steps, opts = {}) {
     if (chunks.length) chunks.push(pipeJoin);
     const lines = bodyLines(step);
     const useBrace = step.bodyForm === "brace";
-    if (compact && useBrace && lines.length && lines.every(isPlainBodyItem)) {
-      // One line, and it is the line the author most likely wrote. A list body
-      // holds a flat step list — `parseBranchLineInto` pushes a whole pipeline
-      // into it — so `- a|b|c` and three separate `- ` items parse to exactly
-      // the same steps, and `|` is a separator the argument loop stops at.
-      chunks.push(`${head}{ - ${lines.map((l) => l.slice(2)).join(pipeJoin)} }`);
+    if (compact && useBrace && lines.length === 1) {
+      // One line stays one line: `tee{ - :public|export spki }` is the same
+      // single branch, and `}` is a terminator the argument loop already stops
+      // at. Folding *two* lines together with `|` would be the concatenation
+      // bug spelled backwards — two branches arriving at the far end of a link
+      // as one — so the fold is gated on there being nothing to merge.
+      chunks.push(`${head}{ ${lines[0]} }`);
     } else if (useBrace) {
       chunks.push(`${head} {\n`);
       for (const line of lines) chunks.push(`  ${line}\n`);
@@ -1156,8 +1135,9 @@ function serializeChain(chain, opts = {}) {
  * `expandShareRecipe` tells a compact payload from a legacy pretty one by
  * asking whether it contains a raw newline: no newline and a `~` means
  * `~`-separated cells, anything else is already blank-line separated. A cell
- * with a selector body cannot be written on one line at all (see
- * `isPlainBodyItem`), so emitting `~` alongside those newlines would hand
+ * whose block body has more than one `-` line cannot be written on one line at
+ * all (see the fold in `serializeChainSteps`, which merging two branches into
+ * one is the price of), so emitting `~` alongside those newlines would hand
  * `expandShareRecipe` a payload it reads as one cell — a multi-cell notebook
  * silently collapsing into one on the far end of a link.
  *
@@ -1841,10 +1821,13 @@ export function validateRecipe(ast) {
         if (bodyVal.encryptInBody) gpgSlots = Math.max(gpgSlots, 1);
       }
       for (const br of step.branches || []) {
-        const projected = projectTypeForMember(
-          current,
-          br.selector || br.member
-        );
+        // No selector means no projection: the branch sees the stem's own type.
+        // Typing it any other way would make `- encode hex | out $a` refuse
+        // under a `tee` while the identical line passes on the stem.
+        const sel = br.selector || (br.member ? String(br.member) : "");
+        const projected = sel
+          ? projectTypeForMember(current, sel)
+          : { ok: /** @type {const} */ (true), type: current };
         if (!projected.ok) {
           errors.push({
             message: projected.error || `tee selector "${br.member}" invalid`,

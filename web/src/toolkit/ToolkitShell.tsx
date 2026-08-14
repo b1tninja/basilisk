@@ -3021,8 +3021,15 @@ export function ToolkitShell() {
                                   const rawSel = String(
                                     br.selector || br.member || ""
                                   ).trim();
+                                  // A branch may have no selector at all — the
+                                  // grammar makes it optional and every `-`
+                                  // line under a `tee` is a branch now, so this
+                                  // arm is the common case, not a malformed
+                                  // one. It reads "branch" rather than the `:?`
+                                  // it used to, which claimed a selector was
+                                  // there and unrecognised: nothing is missing.
                                   const sel = !rawSel
-                                    ? ":?"
+                                    ? "branch"
                                     : rawSel.startsWith(":") ||
                                         rawSel.startsWith("[")
                                       ? rawSel
@@ -3966,9 +3973,11 @@ export function ToolkitShell() {
                   <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-bold">Activity</h3>
                     <p className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
-                      What was done with this run's artifacts. Recipes record
-                      what a value <em>is</em>; this records what you did with
-                      it. Session-only — it never leaves this tab.
+                      Where this run's values went. Recipes record what a value{" "}
+                      <em>is</em>; this records what became of it — the buttons
+                      you pressed, and the sends a cell made, which is the one
+                      thing here that cannot be undone. Digests, never values.
+                      Session-only — it never leaves this tab.
                     </p>
                   </div>
                   {activity.length ? (
@@ -3996,7 +4005,10 @@ export function ToolkitShell() {
                   {!activity.length ? (
                     <p className="py-4 text-sm text-[var(--muted-foreground)]">
                       Nothing yet. Copying, downloading or publishing an
-                      artifact records it here.
+                      artifact records it here, and so does a{" "}
+                      <code className="font-mono">quorum.send</code> — the
+                      sender keeps the digest of what went and to whom, never
+                      the value.
                     </p>
                   ) : (
                     <ul className="space-y-2 py-3" data-activity-log>

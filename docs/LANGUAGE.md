@@ -104,7 +104,7 @@ about.
 `:public` → `public`. One fewer sigil; the type rule is unchanged. `:public`
 already refuses anything that is not a keypair, and that refusal moves with it.
 
-### A branch is a branch
+### A branch is a branch — **done**
 
 ```text
 genkey ec/p256 | tee
@@ -113,7 +113,8 @@ genkey ec/p256 | tee
 ```
 
 reads as two branches and *is* two branches — because both lines begin with a
-selector. Without one, consecutive `-` lines concatenate into a single body:
+selector. Without one, consecutive `-` lines used to concatenate into a single
+body:
 
 ```text
 $set | tee
@@ -121,10 +122,34 @@ $set | tee
   - at 2 | send to=@bea
 ```
 
-becomes `at 1 | send to=@ada | at 2 | send to=@bea`, which then fails with a
-type error about `at`. The documented example only shows the selector form, so
-nothing reveals the rule. **Each `-` line is one branch, always.** This is less a
-redesign than making the syntax mean what every reader already assumes.
+became `at 1 | send to=@ada | at 2 | send to=@bea`, which then failed with a
+type error about `at`. The documented example only showed the selector form, so
+nothing revealed the rule. **Each `-` line is one branch, always.** This was
+less a redesign than making the syntax mean what every reader already assumes.
+
+Shipped. `parseBranchLineInto` puts every `-` line under a `tee` into
+`branches`, selector or not; a branch without one runs on a clone of the whole
+stem, which is what the single-line case always did and what the builder's
+"+ branch — no selector" affordance always meant. Three things fell out of it:
+
+- The count of `-` characters is the count of branches, including the mixed
+  case. A `tee` holding both kinds used to keep them in two different places and
+  `serializeRecipe` wrote all of one before all of the other, so
+  `- :public | export spki` followed by `- out $x` came back with its lines
+  **swapped** — a notebook that read differently after a round trip through a
+  link than it did when it was written. Order is now source order, both ways.
+- A branch of several steps is one line, joined with `|`, and the serializer
+  writes it that way. There is no continuation marker, and deliberately so: a
+  continuation would put back exactly the thing this removed — a line whose
+  meaning you cannot settle without reading the next one.
+- `foreach` does **not** fan out and never could: the loop threads each item's
+  value through the body and hands the result back, so there is no second thing
+  a second `-` line could be. Rather than glue two lines together in silence,
+  it now refuses and names the join that works. One body, one line.
+
+What is *not* done from the rest of this section's neighbourhood: `publish` as a
+step, `:public` as a step, elementwise application, `scatter` / `gather`, and
+the vocabulary aliases. Each is its own pass.
 
 ### Steps apply elementwise
 

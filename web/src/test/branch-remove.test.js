@@ -80,7 +80,12 @@ describe("stepsWithBranchRemoved", () => {
     expect(stepsWithBranchRemoved(before, 1, 7).droppedStem).toBe(false);
   });
 
-  it("keeps the tee when unselected body lines remain", () => {
+  // The property is that the `tee` survives while any `-` line is left, and it
+  // is asserted by recompiling rather than by naming the field the survivor
+  // sits in. That field moved: an unselected line used to parse into `body` and
+  // now parses into `branches` like every other line, and a test spelling the
+  // old field would have failed for a change that kept the behaviour intact.
+  it("keeps the tee when an unselected line remains", () => {
     const { steps, droppedStem } = stepsWithBranchRemoved(
       stepsOf(`genkey ec/p256 | tee
   - :public | inspect
@@ -90,8 +95,8 @@ describe("stepsWithBranchRemoved", () => {
     );
     expect(droppedStem).toBe(false);
     expect(steps[1].name).toBe("tee");
-    expect(steps[1].branches).toEqual([]);
-    expect(steps[1].body).toHaveLength(1);
+    expect(serializeRecipe(steps)).toBe(`genkey ec/p256 | tee\n  - inspect auto`);
+    expect(recompile(steps).validation.errors).toEqual([]);
   });
 });
 
@@ -190,6 +195,17 @@ describe("the shell wires it to the notebook", () => {
 
   it("cancels the armed branch with client state only", () => {
     expect(SHELL).toMatch(/onCancelArmed=\{\(\) => setArmedBranch\(null\)\}/);
+  });
+
+  // A branch line's selector is optional and every `-` line under a `tee` is a
+  // branch, so the no-selector arm is the ordinary case rather than a
+  // malformed one. It used to render `:?`, which names a state that is not
+  // true — there is no selector there to have failed to recognise — and which
+  // arrived on screen the moment a `- encode hex | out $a` came back from a
+  // link. The label is a word, and the `:?` must not come back.
+  it("labels an unselected branch as a branch, not as a broken selector", () => {
+    expect(SHELL).toMatch(/const sel = !rawSel\s*\?\s*"branch"/);
+    expect(SHELL).not.toContain('":?"');
   });
 
   it("does not delete a tee silently — it says so and offers the undo", () => {

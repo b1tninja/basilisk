@@ -1317,14 +1317,20 @@ class Parser {
   }
 
   /**
+   * A parsed `tee` carries its whole body in `branches` — one entry per `-`
+   * line, in the order they were written. `step.body` stays in the AST because
+   * the builder writes there (its "+ branch" affordance appends to the
+   * unlabelled side chain) and every consumer already reads both, but nothing
+   * in *text* can produce it any more, so `listBody` is empty here by
+   * construction.
    * @param {number} start
    * @param {number} parentIndent
    * @returns {RecipeStep}
    */
   parseTeeBlock(start, parentIndent) {
     this.skipSpaces();
-    const body = this.parseBody(parentIndent);
-    if (!body.listBody.length && !body.branches.length) {
+    const body = this.parseBody(parentIndent, "tee");
+    if (!body.branches.length) {
       this.errors.push({
         message:
           "tee requires a body — use `{ - :public | … }` or indented `-` lines (use `peek` for a side inspect)",
@@ -1339,7 +1345,6 @@ class Parser {
       start,
       end: this.pos,
     };
-    if (body.listBody.length) step.body = body.listBody;
     if (body.branches.length) step.branches = body.branches;
     if (body.brace) step.bodyForm = "brace";
     return step;
@@ -1390,7 +1395,7 @@ class Parser {
       this.skipSpaces();
     }
 
-    const body = this.parseBody(parentIndent);
+    const body = this.parseBody(parentIndent, "foreach");
     if (!body.listBody.length && !body.branches.length) {
       // branches shouldn't appear under foreach with selectors as member —
       // allow list body only; if someone used - :key under foreach :items it's a list body with selector prefix...
@@ -1436,26 +1441,40 @@ class Parser {
   }
 
   /**
+   * A `-` line is one thing, and which thing it is depends only on the block
+   * it hangs under — never on how many neighbours it has.
+   *
+   * Under `tee` it is **one branch**: a side pipeline over a clone of the stem,
+   * or over a projection of it when the line opens with a selector. Under
+   * `foreach` it is **the body**: the pipeline the loop applies to each item,
+   * of which there is exactly one, so a second `-` line there is a refusal
+   * rather than a second anything.
+   *
+   * `kind` is threaded down to `parseBranchLineInto` because that is the only
+   * place the distinction is decidable, and both body forms (`{ … }` and
+   * indented) route through it.
    * @param {number} parentIndent
+   * @param {"tee"|"foreach"} kind
    * @returns {{ listBody: RecipeStep[], branches: TeeBranch[], brace: boolean }}
    */
-  parseBody(parentIndent) {
+  parseBody(parentIndent, kind) {
     this.skipSpaces();
     if (this.peek() === "{") {
-      return this.parseBraceBody();
+      return this.parseBraceBody(kind);
     }
     // Indent body requires a newline next (after optional trailing spaces/comment)
     this.skipSpacesAndCommentsOnLine();
     if (this.peek() !== "\n") {
       return { listBody: [], branches: [], brace: false };
     }
-    return this.parseIndentBody(parentIndent);
+    return this.parseIndentBody(parentIndent, kind);
   }
 
   /**
+   * @param {"tee"|"foreach"} kind
    * @returns {{ listBody: RecipeStep[], branches: TeeBranch[], brace: boolean }}
    */
-  parseBraceBody() {
+  parseBraceBody(kind) {
     this.pos++; // {
     /** @type {RecipeStep[]} */
     const listBody = [];
@@ -1486,7 +1505,7 @@ class Parser {
       // optional indent then -
       this.skipSpaces();
       if (this.peek() === "-") {
-        this.parseBranchLineInto(listBody, branches, /*brace*/ true);
+        this.parseBranchLineInto(listBody, branches, kind);
         this.skipSpacesAndCommentsOnLine();
         if (this.peek() === "\n") this.pos++;
         continue;
@@ -1503,10 +1522,6 @@ class Parser {
     return { listBody, branches, brace: true };
   }
 
-  /**
-   * @param {number} parentIndent
-   * @returns {{ listBody: RecipeStep[], branches: TeeBranch[], brace: boolean }}
-   */
   /**
    * True when `newlinePos` points at `\n` that ends an empty/whitespace-only line
    * (or a full-line comment). Used to detect chain separators left by indent bodies.
@@ -1551,7 +1566,12 @@ class Parser {
     return -1;
   }
 
-  parseIndentBody(parentIndent) {
+  /**
+   * @param {number} parentIndent
+   * @param {"tee"|"foreach"} kind
+   * @returns {{ listBody: RecipeStep[], branches: TeeBranch[], brace: boolean }}
+   */
+  parseIndentBody(parentIndent, kind) {
     /** @type {RecipeStep[]} */
     const listBody = [];
     /** @type {TeeBranch[]} */
@@ -1636,7 +1656,7 @@ class Parser {
         if (this.peek() === "\n") this.pos++;
         continue;
       }
-      this.parseBranchLineInto(listBody, branches, false);
+      this.parseBranchLineInto(listBody, branches, kind);
       this.skipSpacesAndCommentsOnLine();
       if (this.peek() === "\n") this.pos++;
     }
@@ -1645,11 +1665,25 @@ class Parser {
 
   /**
    * Parse `- [selector |] pipeline` at current pos (on `-`).
+   *
+   * Under `tee` every line lands in `branches`, selector or not. It used to be
+   * that only a line opening with a selector became a branch and the rest were
+   * concatenated into one flat `listBody` — so `- digest sha-256 | out $a` and
+   * `- encode hex | out $b` ran as the single pipeline
+   * `digest sha-256 | out $a | encode hex | out $b`, and `$b` held the hex of
+   * the digest rather than of the stem. Nothing on the page said so; the two
+   * lines are two lines. The count of `-` characters is now the count of
+   * branches, which is the only reading anyone ever gave it.
+   *
+   * A branch with no selector runs on a clone of the whole stem value, which is
+   * what the old single-line `listBody` did and what the builder's
+   * "+ branch — no selector" affordance has always meant.
+   *
    * @param {RecipeStep[]} listBody
    * @param {TeeBranch[]} branches
-   * @param {boolean} _brace
+   * @param {"tee"|"foreach"} kind
    */
-  parseBranchLineInto(listBody, branches, _brace) {
+  parseBranchLineInto(listBody, branches, kind) {
     const start = this.pos;
     this.pos++; // -
     if (this.peek() !== " " && this.peek() !== "\t") {
@@ -1732,17 +1766,39 @@ class Parser {
     // parsePipeline stops at non-pipe; good. But it could parse across newlines inside?
     // Our parseStage for blocks could nest — rejected for foreach/tee inside body via validate.
 
-    if (selector) {
-      const member = canonicalSelectorMember(selector);
+    if (kind === "foreach") {
+      // `foreach` has one body and cannot have two: the loop threads each
+      // item's value through the body and hands the result back, so there is
+      // no second thing for a second line to be. Rather than quietly glue the
+      // lines together — the same silence this pass removed from `tee` — say
+      // that a body is already there and name the join that works.
+      if (listBody.length || branches.length) {
+        this.errors.push({
+          message:
+            "foreach already has its body on the line above — a loop body is one `- ` line; join the steps with `|` (`- inspect | out $share`)",
+          start,
+          end: this.pos,
+        });
+      }
+      if (selector) {
+        branches.push({
+          member: canonicalSelectorMember(selector),
+          selector,
+          body: pipe,
+          start,
+          end: this.pos,
+        });
+      } else {
+        listBody.push(...pipe);
+      }
+    } else {
       branches.push({
-        member: canonicalSelectorMember(selector),
-        selector,
+        member: selector ? canonicalSelectorMember(selector) : "",
+        ...(selector ? { selector } : {}),
         body: pipe,
         start,
         end: this.pos,
       });
-    } else {
-      listBody.push(...pipe);
     }
 
     // Reject nested block openers inside branch pipelines at parse time

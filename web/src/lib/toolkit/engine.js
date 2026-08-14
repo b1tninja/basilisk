@@ -422,8 +422,14 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
         await runTeeSide(clonePipelineValue(value), node.body);
       }
       for (const br of node.branches || []) {
+        // A branch without a selector is a branch: it gets a clone of the whole
+        // stem, exactly as `node.body` does. The selector is the *optional*
+        // half of a branch line, so its absence must not be read as a missing
+        // projection — `projectSelector(value, ":")` would refuse a value that
+        // is perfectly fine to fork.
+        const sel = br.selector || (br.member ? `:${br.member}` : "");
         await runTeeSide(
-          projectSelector(value, br.selector || `:${br.member}`),
+          sel ? projectSelector(value, sel) : clonePipelineValue(value),
           br.body
         );
       }

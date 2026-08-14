@@ -12,11 +12,17 @@ Implementation: `web/src/lib/toolkit/recipe-parse.js` (parse),
 # Linear stem
 genkey ec/p256 | export pkcs8 | pem | out $private
 
-# Mid-stem fork (tee): branches run on a clone; stem continues
+# Mid-stem fork (tee): one `-` line is one branch, run on a clone; stem continues
 genkey ec/p256 | tee
   - :private | inspect
   - :public | export spki | pem | out $public
 | export pkcs8 | pem | out $private
+
+# The selector is optional — a branch without one forks the whole value
+random 32 | tee
+  - encode hex | out $hex
+  - digest sha-256 | out $digest
+| base64 | out $secret
 
 # Multi-chain: blank line starts a new pipeline; $slot loads a prior out
 genkey ec/p256 | out $kp
@@ -41,6 +47,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - A recipe is one or more **chains** separated by blank lines.
 - Within a chain: flat `|` stem; a newline between stem lines is the same as `|`.
 - Blocks: `tee` / `foreach` take a **body** (braces `{ … }` or indented `-` lines).
+- **One `-` line is one branch, always.** Under `tee`, every line forks the stem — with a selector (`- :public | …`) or without one (`- encode hex | out $a`, which forks the whole value). Lines are never joined: a branch of several steps is written along its own line with `|`. `foreach` has exactly **one** body line, because the loop threads each item through it and there is no second thing a second line could be; a second `- ` there is refused.
 - Member / dict projection uses **colon selectors** (`:private`, `:items`, …). Dot (`.`) is reserved for namespaced ops (`gpg.encrypt`, `sss.split`) — not members.
 - Slots: `out $label` registers a live pipeline value; load with bare `$label` (preferred) or `in $label` / `in 1`. `$kp | out` re-emits as `$kp`.
 - Named slot args pass live values into ops: `aes-gcm key=$cek` (stem stays the payload).
@@ -214,7 +221,7 @@ Toolkit recipes are addressable in the **URL fragment** (never sent to the serve
 
 - Pipes without spaces: `input|gpg.encrypt`
 - Chains joined with `~` instead of blank lines
-- `tee` / `foreach` bodies as one-line braces: `foreach{ - out $share }`
+- `tee` / `foreach` bodies as one-line braces — only when the body is a single `-` line: `foreach{ - out $share }`. A `tee` with two branches keeps its newlines, because folding them onto one line would merge them into one branch
 - Spaces encoded as `+`; tokens like `|$@=~` stay readable in the address bar — `$` costs one character per slot, not three
 
 On load, the compact payload is expanded and **beautified** back to canonical multi-line recipe text (blank-line chains, spaced pipes, indented or brace bodies). Legacy fully percent-encoded pretty recipes still parse.
@@ -710,11 +717,33 @@ CryptoKey tips. They are not interchangeable with selectors.
 
 Side pipelines on a **clone** (or projected member). Stem value is unchanged.
 
+**Each `-` line is one branch.** The selector is the optional half of a branch
+line: with one, the branch sees that member; without one, it sees a clone of the
+whole stem value. Lines are never concatenated — a branch that needs several
+steps writes them along its own line with `|`.
+
 ```text
 genkey ec/p256 | tee
   - :public | export spki | pem | out $public
 | export pkcs8 | pem | out $private
 ```
+
+Without a selector the branch sees the stem itself, so these are two branches
+over the same 32 bytes and `$hex` and `$digest` are independent of each other:
+
+```text
+random 32 | tee
+  - encode hex | out $hex
+  - digest sha-256 | out $digest
+| base64 | out $secret
+```
+
+Split across more lines they would be more branches. `- encode hex` and
+`- out $hex` on two lines are two branches, and the second one writes the raw
+bytes to `$hex` rather than their hex — which is what the count of `-`
+characters says, and no longer something the parser quietly disagrees with.
+
+Branches run in the order they are written, and serialize back in that order.
 
 Brace form is equivalent: `tee { - :public | … }`.
 
@@ -729,7 +758,14 @@ The tip after `foreach` is a **`bundle`** of per-item tips (side effects via `ou
 
 … | blip39 | foreach :items
   - :value | out $share
+
+… | blip39 | foreach
+  - inspect | encode hex | out $share   # one body, one line, steps joined with `|`
 ```
+
+A loop body is **one** `- ` line. Unlike `tee`, `foreach` has nothing to fan out
+into: the item's value threads through the body and comes back out, so a second
+`- ` line is refused rather than glued onto the first.
 
 Nested `tee` / `foreach` inside a body is rejected in v1.
 
@@ -811,6 +847,7 @@ body         = brace_body | indent_body ;
 brace_body   = "{" , space , [ nl ] , { branch_line | blank_line | comment_line } , space , "}" ;
 indent_body  = nl , { branch_line | blank_line | comment_line } ;
 
+(* One branch_line is one branch. A tee takes any number; a foreach takes one. *)
 branch_line  = indent , "-" , space , branch , space , nl ;
 indent       = "  " , { "  " } ;
 branch       = [ selector , space , "|" , space ] , pipeline ;
@@ -827,7 +864,7 @@ out $x       emit tile + register cloned pipeline value as slot x
 in $x / in N load cloned slot (typed); must refer to an earlier out
 key=$x       named slot arg — resolve live value into the op (not the stem)
 as kind      retag bytes refined type (allowlisted)
-tee body     side branches on projection/clone; stem unchanged
+tee body     one branch per `-` line, on projection or clone; stem unchanged
 foreach      over values (default) or :items / :keys / :values
 peek         side inspect; stem unchanged
 ```
@@ -843,7 +880,7 @@ Paste / blur canonicalize via `canonicalizeRecipe`:
 - rewrites bare slot idents to `$label`
 - migrator (Upgrade recipe): bare `hex` → `to hex`, `unhex` → `from hex`, slot `from $…` → `in $…`
 - joins chains with a blank line
-- formats `tee` / `foreach` bodies with indented `-` lines
+- formats `tee` / `foreach` bodies with indented `-` lines — one line per branch, its steps joined with `|`
 - writes each cell's comments back, as full lines above its header
 
 ## Comments
