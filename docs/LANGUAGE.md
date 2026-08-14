@@ -31,6 +31,9 @@ everything below:
 4. **A security-relevant parameter is the verb's object, not an option.**
    Options get defaulted; defaults get dropped on serialize; a dropped default
    is absent from the text both ends compare.
+5. **Input may be abbreviated; the canonical text is always complete.**
+   Short to write, explicit once written down. These pull against each other
+   only if the same form has to do both jobs.
 
 Principle 4 is not theoretical. Today:
 
@@ -41,6 +44,41 @@ random 32 | sss.split threshold=2 shares=3 | out $set
 round-trips through `serializeRecipe` to `random 32 | sss.split | out $set`.
 The quorum — the whole security property — is not in the text that travels, and
 not in the manifest.
+
+### The quorum as a fraction
+
+The split is written `2/3` — two of three — as the verb's object:
+
+```text
+random 32 | split 2/3 | words | scatter
+```
+
+The threshold may be omitted, and then it is a **majority** of the shares:
+`split 3` and `split 2/3` mean the same thing. Majority is not a rounding
+convention: it is what makes any two qualifying sets intersect, so no two
+disjoint groups can ever reconstruct the secret independently. Exactly half
+would lose that — `2/4` lets two separate pairs each rebuild it without the
+other knowing, which is a different security object from the one the word
+quorum promises.
+
+**The abbreviation is an input form only.** `split 3` is accepted and
+*serializes* as `split 2/3`, by principle 5. A reader of a shared recipe never
+has to know the majority rule to know what the recipe does, and the text both
+ends digest states the quorum outright. This is the same shape as `@me`, which
+is short to author and resolves to a whole fingerprint before it travels: the
+language has an authoring form and a canonical form, and serialization is where
+they converge.
+
+Refusals the object makes easy to state:
+
+- `1/3` — one share reconstructs, so it is a copy rather than a quorum.
+  `ceremonyIssues` already refuses `threshold === 1` in those words.
+- `4/3` — more needed than exist; unrecoverable by construction.
+- `3/3` — legal, and worth saying out loud: no redundancy at all, and losing any
+  share loses the secret. The default for a two-member room is `2/2`, which has
+  the same property and is the most likely room there is.
+- More than 16 shares — `sss.split` refuses it, and the room picker should say so
+  by number rather than leaving it to compile time.
 
 ## The changes
 
@@ -100,7 +138,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out $share
 
 # proposed
-random 32 | split 2-of-3 | words | out $share
+random 32 | split 2/3 | words | out $share
 ```
 
 `foreach` stays as the explicit form. It stops being necessary.
@@ -116,7 +154,7 @@ for distribution, per-item recipients, and indexing:
 
 ```text
 @me
-random 32 | split 2-of-3 | words | scatter
+random 32 | split 2/3 | words | scatter
 
 @*
 gather | out $share
@@ -166,7 +204,7 @@ Order of work, bug fixes first:
 
 1. **Comments survive serialization.** Small, and it is the readability premise
    everything else rests on.
-2. **The quorum becomes an argument** (`split 2-of-3`). Fixes a real gap in what
+2. **The quorum becomes an argument** (`split 2/3`). Fixes a real gap in what
    the two ends agree on.
 3. `publish` as a step; `:public` as a step.
 4. Elementwise, prototyped against the preset corpus — the round-trip sweep
