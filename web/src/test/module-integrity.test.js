@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   bytesToHex,
@@ -142,6 +143,79 @@ describe("module-integrity", () => {
     }
   });
 
+  it("verifyModuleRootAgainstPins refuses an empty pin list when pins are required", async () => {
+    // The branch `requirePins` was written for and never reached: it was folded
+    // into `required` and then discarded by a hardcoded `ok: true`, so the only
+    // callers that passed the flag passed it alongside a non-empty list and
+    // nothing noticed. An empty list is the interesting case — on a served page
+    // it means the `basilisk-integrity-pins` meta is not in the bytes that
+    // arrived, and deleting one attribute is the cheapest way to switch the
+    // whole check off.
+    const { verifyModuleRootAgainstPins } = await import("../lib/module-integrity.js");
+    const r = await verifyModuleRootAgainstPins("a".repeat(64), {
+      pageKey: "toolkit.html",
+      document: null,
+      pinUrls: [],
+      requirePins: true,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.required).toBe(true);
+    // Names the state that is true — a page with SRI and no pin — rather than
+    // the dev-server wording, which would be a different and untrue claim.
+    expect(r.message).toMatch(/names no integrity pin document/i);
+    expect(r.message).not.toMatch(/dev \/ unsigned build/i);
+  });
+
+  it("verifyModuleRootAgainstPins still passes an empty pin list on an unpinned build", async () => {
+    // The dev server and the node suite have no SRI at all, so nothing asks
+    // them for pins. Tightening the required case must not turn those into
+    // failures, or the refusal above would be indistinguishable from `npm run
+    // dev` and would stop being read.
+    const { verifyModuleRootAgainstPins } = await import("../lib/module-integrity.js");
+    const r = await verifyModuleRootAgainstPins("a".repeat(64), {
+      pageKey: "toolkit.html",
+      document: null,
+      pinUrls: [],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.required).toBe(false);
+    expect(r.message).toMatch(/dev \/ unsigned build/i);
+  });
+
+  it("verifyModuleRootAgainstPins treats an empty pins meta as a demand, not a shrug", async () => {
+    // A page that carries the meta with nothing in it has asked to be checked
+    // and supplied nothing to check against. `required` already came out true
+    // for that shape; the verdict did not.
+    const { verifyModuleRootAgainstPins } = await import("../lib/module-integrity.js");
+    const doc = {
+      querySelector: (sel) =>
+        sel === 'meta[name="basilisk-integrity-pins"]'
+          ? { getAttribute: () => "   " }
+          : null,
+    };
+    const r = await verifyModuleRootAgainstPins("a".repeat(64), {
+      pageKey: "toolkit.html",
+      document: /** @type {any} */ (doc),
+    });
+    expect(r.required).toBe(true);
+    expect(r.ok).toBe(false);
+  });
+
+  it("the power-on self test is the caller that demands pins", async () => {
+    // Asserted against the source because the branch only runs in a document
+    // with real SRI attributes, which the node suite has no way to produce.
+    // What matters is that the flag reaches the one caller that knows the page
+    // carried SRI — the fix is worth nothing in a library nobody passes it to.
+    const src = readFileSync(
+      new URL("../lib/crypto-self-test.js", import.meta.url),
+      "utf8"
+    );
+    const call = /verifyModuleRootAgainstPins\(([\s\S]*?)\);/.exec(src);
+    expect(call, "the POST no longer calls verifyModuleRootAgainstPins").toBeTruthy();
+    expect(call[1]).toMatch(/requirePins:\s*true/);
+    expect(src).toMatch(/moduleIntegrity\.source === "sri"/);
+  });
+
   it("verifyModuleRootAgainstPins detects disagreeing mirrors", async () => {
     const { verifyModuleRootAgainstPins } = await import(
       "../lib/module-integrity.js"
@@ -170,6 +244,13 @@ describe("module-integrity", () => {
       });
       expect(r.ok).toBe(false);
       expect(r.message).toMatch(/disagree/i);
+      // In full, both of them. This branch leaves `expectedRoot` empty — there
+      // is no single expected root — so the panel's "Pinned root" row does not
+      // render and this sentence is the only place either value appears. A
+      // truncated root there is a number nobody can take to a second machine.
+      expect(r.message).toContain("a".repeat(64));
+      expect(r.message).toContain("c".repeat(64));
+      expect(r.expectedRoot).toBe("");
     } finally {
       globalThis.fetch = originalFetch;
     }

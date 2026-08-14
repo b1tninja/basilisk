@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   LIMIT_NOTE,
+  SINGLE_SOURCE_NOTE,
   checkDeployment,
   type DeploymentVerdict,
 } from "../../lib/toolkit/deployment-check.js";
@@ -133,6 +134,14 @@ export function IntegrityPanel({ verdict, policy, live = true }: IntegrityPanelP
           ) : (
             "none configured"
           )}
+          {/* Said here, next to the count, and not only in whichever verdict
+              happens to be showing. One source is the configuration every
+              deployment this repo builds actually has, so a reader who has just
+              been told the pin matched is looking at the row that explains what
+              that did and did not compare. */}
+          {state.status !== "checking" && state.pinUrls.length < 2 ? (
+            <p className="integrity-single-source">{SINGLE_SOURCE_NOTE}</p>
+          ) : null}
         </dd>
       </dl>
 

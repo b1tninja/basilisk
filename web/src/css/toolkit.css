@@ -1810,6 +1810,22 @@ input[type="file"][data-basilisk-file-picker] {
   overflow-wrap: anywhere;
 }
 
+/*
+ * Sits in the pin-sources row rather than beside the verdict, because it
+ * qualifies the count directly above it. Styled like `.integrity-limit` — the
+ * other sentence here that a reader is meant to finish — and not smaller than
+ * it, since shrinking a caveat is a way of retracting it.
+ */
+.integrity-single-source {
+  margin-top: 6px;
+  max-width: 64ch;
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+
 .integrity-policy summary {
   cursor: pointer;
   font-size: 11.5px;

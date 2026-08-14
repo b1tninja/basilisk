@@ -433,7 +433,8 @@ export async function fetchIntegrityPins(urls) {
  * @param {string} [opts.pageKey]
  * @param {Document|null} [opts.document]
  * @param {string[]} [opts.pinUrls]
- * @param {boolean} [opts.requirePins]  when true, zero successful fetches ⇒ fail
+ * @param {boolean} [opts.requirePins]  when true, an empty pin list or zero
+ *   successful fetches ⇒ fail
  * @returns {Promise<PinCheckResult>}
  */
 export async function verifyModuleRootAgainstPins(computedRoot, opts = {}) {
@@ -452,13 +453,33 @@ export async function verifyModuleRootAgainstPins(computedRoot, opts = {}) {
     !!doc?.querySelector?.('meta[name="basilisk-integrity-pins"]');
 
   if (!pinUrls.length) {
+    // `required` decides this, where it used to be hardcoded to a pass.
+    //
+    // The old return said `ok: true, required: false` no matter what the caller
+    // asked for, which made `requirePins: true` a parameter with no effect —
+    // it was folded into `required` on the line above and then discarded here.
+    // Every caller that passes it does so with a non-empty `pinUrls`, so the
+    // dead branch never showed up in a test; the case it was written for is the
+    // one where the list arrives empty.
+    //
+    // That case is not hypothetical. A production page always carries a
+    // `basilisk-integrity-pins` meta — `scripts/package-static.sh` fails the
+    // build for any page that does not — so on a served page an empty list
+    // means the attribute is gone, and deleting one attribute is a cheaper way
+    // to switch this check off than defeating it. A caller that already knows
+    // it is looking at a page with SRI on it (`crypto-self-test.js`) is
+    // entitled to say that no pins is a refusal.
     return {
-      ok: true,
-      required: false,
+      ok: !required,
+      required,
       matched: false,
       fetched: 0,
       expectedRoot: "",
-      message: "No integrity pins configured (dev / unsigned build).",
+      message: required
+        ? "This page declares SRI digests but names no integrity pin document, so " +
+          "there is nothing to compare its module root against. A build always " +
+          "writes both. Refusing to enable crypto."
+        : "No integrity pins configured (dev / unsigned build).",
     };
   }
 
@@ -513,7 +534,14 @@ export async function verifyModuleRootAgainstPins(computedRoot, opts = {}) {
       matched: false,
       fetched: okFetches.length,
       expectedRoot: "",
-      message: `Integrity pin mirrors disagree (${unique.map((r) => r.slice(0, 16)).join(" vs ")}). Possible CDN split-brain.`,
+      // Roots in full, unlike the mismatch branch below. There `expectedRoot`
+      // is populated and the panel prints it beside the live one, so a short
+      // form in the prose has the long form underneath it. Here `expectedRoot`
+      // is empty — there is no single expected root to put in that row — so
+      // this message is the *only* place these two values are ever rendered,
+      // and a reader who cannot copy them cannot ask a second machine which
+      // one it sees.
+      message: `Integrity pin mirrors disagree (${unique.join(" vs ")}). Possible CDN split-brain.`,
     };
   }
 

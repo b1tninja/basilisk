@@ -79,6 +79,29 @@ export const LIMIT_NOTE =
   "run the recipe through the CLI, where there is no served-code question at all.";
 
 /**
+ * The sentence that must appear wherever fewer than two pin sources do.
+ *
+ * `disagree` is the only one of these verdicts that catches a host serving one
+ * thing and claiming another, and it needs two independent pins to compare.
+ * Every deployment built from this repository configures exactly one:
+ * `VITE_INTEGRITY_PIN_MIRRORS` is read by `web/scripts/externalize-importmaps.js`
+ * and set by nothing, no upload step publishes a second copy, and Front Door
+ * overwrites the CSP header with one that would not allow fetching it anyway.
+ * So the verdict is drawable and not reachable, which is the failure mode the
+ * threat model is most careful about elsewhere: a stated protection that cannot
+ * fire is worse than an absent one, because people build on the claim.
+ *
+ * Kept beside the verdicts for the reason `LIMIT_NOTE` is: so the caveat cannot
+ * be dropped from the UI while the confident wording stays.
+ */
+export const SINGLE_SOURCE_NOTE =
+  "One source, so the check for two pins disagreeing did not run. That check is " +
+  "the one that survives a compromised host — it needs a second origin publishing " +
+  "the same pin, and no deployment built from this repository publishes one. " +
+  "Until that changes the second opinion has to be yours: fetch this pin document " +
+  "from another network or another machine and compare the root above by eye.";
+
+/**
  * @param {string} root
  * @returns {string}
  */

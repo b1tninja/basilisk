@@ -27,11 +27,22 @@ approximately nobody. What Basilisk does is narrow the gap and make tampering
 - **Subresource integrity on every module.** The build externalizes importmaps
   and emits SRI hashes, so a modified module fails to execute rather than
   running silently.
-- **A published Merkle root over those hashes.** `scripts/write-module-integrity-pin.mjs`
+- **A published Merkle root over those hashes.** `web/scripts/write-module-integrity-pin.mjs`
   writes `/integrity/module-roots.json` and injects pin `<meta>` tags, so the
-  running page can cross-check the code it loaded against an independently
-  cacheable pin document — optionally mirrored on other origins, so subverting
-  one host is not enough.
+  running page can cross-check the code it loaded against a separately cacheable
+  pin document. **That pin is served by the same origin as the code**, so an
+  edge that rewrites the assets can rewrite the pin to match and the check
+  agrees with itself. `verifyModuleRootAgainstPins` compares *all* configured
+  pin sources and refuses when they disagree, which is what would make
+  subverting one host insufficient — but nothing here configures a second one,
+  and the panel says so rather than implying the comparison ran. Making it real
+  needs four things this repository does not have: a value for
+  `VITE_INTEGRITY_PIN_MIRRORS` at build time, an origin outside the Front Door
+  profile that publishes the same pin document, an upload step in
+  `scripts/deploy-static.sh` that puts it there, and that origin added to the
+  `connect-src` in `terraform/modules/basilisk/frontdoor.tf` — because Front
+  Door overwrites the CSP header, and a mirror allowed only by the page's own
+  `<meta>` is a mirror the browser will refuse to fetch.
 - **A strict CSP with no escape hatches** (below), so injected code has nowhere
   to run even if it reaches the page.
 

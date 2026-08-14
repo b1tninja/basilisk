@@ -8,8 +8,14 @@
  * be non-`ok` here, by tone, so a later refactor cannot make one of them look
  * successful without failing this file.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { LIMIT_NOTE, checkDeployment, shortRoot } from "../lib/toolkit/deployment-check.js";
+import {
+  LIMIT_NOTE,
+  SINGLE_SOURCE_NOTE,
+  checkDeployment,
+  shortRoot,
+} from "../lib/toolkit/deployment-check.js";
 
 /** A minimal stand-in for the bits of `Document` the check actually reads. */
 function fakeDoc({ sri = [], pins = "", page = "" } = {}) {
@@ -91,5 +97,59 @@ describe("checkDeployment", () => {
   it("shows an em dash rather than an empty root", () => {
     expect(shortRoot("")).toBe("—");
     expect(shortRoot("abcdef0123456789ff")).toBe("abcdef0123456789…");
+  });
+});
+
+/**
+ * The verdict the panel can draw and no deployment can produce.
+ *
+ * `disagree` compares two independently fetched pin documents, which is the
+ * only one of these outcomes that survives a host serving one thing and
+ * claiming another. Reaching it needs `VITE_INTEGRITY_PIN_MIRRORS` set at build
+ * time, and nothing in this repository sets it — so on every deployed page the
+ * comparison is inert while the panel goes on rendering a card for it. These
+ * pin the two halves of the honest version: the sentence exists, and the panel
+ * shows it exactly when there are fewer than two sources.
+ */
+describe("the mirror comparison, when there is nothing to compare", () => {
+  const ROOT = new URL("../", import.meta.url);
+  const PANEL = readFileSync(new URL("toolkit/widgets/IntegrityPanel.tsx", ROOT), "utf8");
+
+  it("says the check did not run, rather than implying it did", () => {
+    expect(SINGLE_SOURCE_NOTE).toMatch(/did not run/i);
+    // Names what a second source would be for, so a reader knows what is
+    // missing rather than only that something is.
+    expect(SINGLE_SOURCE_NOTE).toMatch(/second origin/i);
+    // And a remedy the reader can actually perform. "Configure a mirror" would
+    // not be one: they do not run the deploy.
+    expect(SINGLE_SOURCE_NOTE).toMatch(/another network or another machine/i);
+  });
+
+  it("is rendered by the panel below two sources and not at two", () => {
+    expect(PANEL).toMatch(/SINGLE_SOURCE_NOTE/);
+    expect(PANEL).toMatch(/state\.pinUrls\.length < 2/);
+    // Not while the check is still running: at that point `pinUrls` is the
+    // empty array in `PENDING`, and the note would be describing a state
+    // nothing has established yet.
+    expect(PANEL).toMatch(/state\.status !== "checking" &&\s*state\.pinUrls\.length < 2/);
+  });
+
+  it("is not an inline style, and not a bare string in the component", () => {
+    // The note lives beside the verdicts for the reason LIMIT_NOTE does: so it
+    // cannot be dropped from the UI while the confident wording stays.
+    expect(PANEL).toMatch(/className="integrity-single-source"/);
+    const css = readFileSync(new URL("css/toolkit.css", ROOT), "utf8");
+    expect(css).toMatch(/\.integrity-single-source \{/);
+  });
+
+  it("still holds for the build that would make it reachable", () => {
+    // The one place the variable is read. If a future change moves that read,
+    // the note above is describing a mechanism that no longer exists and this
+    // fails rather than going quietly stale.
+    const plugin = readFileSync(
+      new URL("../scripts/externalize-importmaps.js", ROOT),
+      "utf8"
+    );
+    expect(plugin).toMatch(/VITE_INTEGRITY_PIN_MIRRORS/);
   });
 });

@@ -76,11 +76,17 @@
  *   After CASTs pass, computeLoadedModulesRoot() folds those SRI digests
  *   into a SHA-256 Merkle root. Production builds also emit
  *   /integrity/module-roots.json and inject pin <meta> tags; the POST then
- *   fetches the pin (cache: no-store) and fails closed on mismatch. Optional
- *   VITE_INTEGRITY_PIN_MIRRORS lists extra pin URLs (other CDN / origin) so a
- *   single compromised edge cannot rewrite assets and the expected root
- *   together — mirrors must agree. Packaging: externalize-importmaps.js,
- *   write-module-integrity-pin.mjs, scripts/package-static.sh.
+ *   fetches the pin (cache: no-store) and fails closed on mismatch, and on a
+ *   page that has SRI but names no pin at all. The pin is served by the same
+ *   origin as the code, so an edge that rewrites both agrees with itself:
+ *   VITE_INTEGRITY_PIN_MIRRORS would name pin copies on other origins and
+ *   `verifyModuleRootAgainstPins` requires all of them to agree, but nothing
+ *   in this repository sets that variable, publishes such a copy, or allows a
+ *   second origin in the deployed connect-src — so that comparison does not
+ *   run anywhere, and what is claimed above is the same-origin check alone.
+ *   docs/THREAT-MODEL.md lists what making it run would take. Packaging:
+ *   externalize-importmaps.js, write-module-integrity-pin.mjs,
+ *   scripts/package-static.sh.
  *
  * Called at page startup by decrypt.js and encrypt.js; also imported by
  * vitest for CI coverage (src/test/crypto-self-test.test.js).
@@ -548,12 +554,23 @@ async function _runAllTests() {
       selfModuleUrl: import.meta.url,
     });
 
-    // Cross-check live Merkle root against pin document(s). Same-origin pin
-    // catches CDN HTML/asset skew; optional mirrors (VITE_INTEGRITY_PIN_MIRRORS)
-    // make a single CDN rewriting HTML+JS+pin fail closed when another copy
-    // still publishes the prior root.
+    // Cross-check live Merkle root against pin document(s). The same-origin pin
+    // catches CDN HTML/asset skew. Mirrors on other origins would catch a
+    // single edge rewriting HTML, JS and pin together — no deployment in this
+    // repository publishes one, and `docs/THREAT-MODEL.md` says so rather than
+    // claiming the protection.
+    //
+    // `requirePins` because of the branch above: this runs only when the page
+    // carried real SRI digests, and every build that emits those also emits a
+    // `basilisk-integrity-pins` meta — `scripts/package-static.sh` refuses to
+    // package a page without one. So on a served page an empty pin list is not
+    // "unpinned build", it is "the meta is missing from the bytes I was sent",
+    // and treating that as a pass would make deleting one attribute the cheapest
+    // way to switch this check off.
     if (moduleIntegrity.source === "sri" && moduleIntegrity.root) {
-      const pin = await verifyModuleRootAgainstPins(moduleIntegrity.root);
+      const pin = await verifyModuleRootAgainstPins(moduleIntegrity.root, {
+        requirePins: true,
+      });
       moduleIntegrity.pin = pin;
       if (pin.required && !pin.ok) {
         enterErrorState("POST", "INTEGRITY", pin.message);
