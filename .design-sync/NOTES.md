@@ -4,7 +4,9 @@
 
 Basilisk is an **application**, not a published component library:
 `web/package.json` is `private: true` with no `main`/`module`/`exports`, and
-`web/dist/` holds built HTML pages, not a component dist. So:
+`web/dist/` holds built HTML pages, not a component dist. It does now carry a
+`types` entry — see "The type surface" below; that field is read by this sync
+and by nothing else. So:
 
 - `shape: "package"`, and the converter has no library entry of its own.
 - `web/src/ds-entry.ts` is a **hand-authored barrel** written for this sync —
@@ -19,14 +21,85 @@ Basilisk is an **application**, not a published component library:
 ## Build command
 
 ```sh
+cd web && npm run build:types    # emits web/.ds-types/ — the prop contracts
 cd web && npm run build          # produces dist/assets/toolkit-<hash>.css
 cp web/dist/assets/toolkit-*.css web/.ds-styles.css
 node .ds-sync/package-build.mjs --config .design-sync/config.json \
   --node-modules web/node_modules --entry web/src/ds-entry.ts --out ./ds-bundle
+node .ds-sync/package-validate.mjs ./ds-bundle
 ```
+
+`build:types` is **not** optional and **not** wired into `npm run build` — see
+"The type surface" below for both halves of that sentence. Skip it on a fresh
+checkout and every shipped `.d.ts` is `[key: string]: unknown` again; run it
+after the sources changed and forget it, and the contracts silently describe
+the previous commit. It takes about a second.
+
+The converter must be run from the **repo root**, not from `web/` — the paths
+in the command are root-relative and `cd web && node .ds-sync/…` is a
+MODULE_NOT_FOUND.
 
 Do **not** run `npm ci` reflexively — `node_modules` is already installed and
 green, and a reinstall can disrupt a concurrent session working in this tree.
+
+## The type surface
+
+The design agent's API contract for every component comes from the package's
+declared type root. Basilisk has no dist, so for the first several syncs there
+was no such root and all 50 `.d.ts` files shipped `[key: string]: unknown` —
+the whole contract blank, for every component, with the agent left to guess
+prop names. Fixed 2026-08-14; **50 total / 0 empty** as of that build.
+
+The mechanism is three small pieces, and the reasoning for each is the reason
+not to "simplify" it later:
+
+- **`web/tsconfig.dts.json`** — a declaration-only emit whose `files` list is
+  exactly `["src/ds-entry.ts"]`. TypeScript then emits the transitive closure
+  of the barrel, ~182 files. A whole-project emit is 487 files, most of them
+  the test tree, and it exits 1 on a TS4058 in
+  `src/test/helpers/verb-smoke.js` (openpgp's `KeyPair`). Scoping to the
+  barrel means the shipped type surface is the *same* reviewed decision
+  `ds-entry.ts` already is, rather than a second, wider list that can drift
+  from it. `rootDir: "src"` so `.ds-types/` mirrors `src/`.
+- **`"types": ".ds-types/ds-entry.d.ts"`** in `web/package.json`. This is the
+  pointer that was missing; emitting without it changes nothing, because
+  `findTypesRoot` (`.ds-sync/lib/dts.mjs`) reads the *declared* root. The
+  field is inert for everything else: nothing imports `basilisk-portal`, the
+  package is `private`, and Vite, vitest and `tsc --noEmit` never consult
+  `types`. Verified — all four gates unchanged (201 files / 3827, tsc 0,
+  `npm run build` ok, pytest 249). A `"//types"` comment key in the manifest
+  says this in place, since JSON cannot.
+- **`"build:types": "tsc -p tsconfig.dts.json"`**, deliberately *not* chained
+  onto `prebuild`. The constraint on this change was that a types entry must
+  not alter how the app builds; a failing emit hanging off `prebuild` would
+  break `npm run build` for everyone, for a file only this sync reads. The
+  cost of that choice is a staleness risk, recorded under "Re-sync risks"
+  alongside the identical one for `.ds-styles.css`.
+
+Two traps that were predicted and both landed:
+
+- **Most components declare a local `type Props`, not an exported
+  `<Name>Props`** (`ArtifactAction`, `SuggestChip`, `Glyph`, `ModeToggle`,
+  `PresetMenu`, `ReadinessBar`, `SessionStrip`, `ConnectionsPanel`). No rename
+  was needed and none should be done: `propsBodyFor` falls back to the
+  component symbol's first call signature, and declaration emit keeps the
+  local `type Props` in the file, so the parameter type resolves to the real
+  thing. `cfg.dtsPropsFor` is therefore **unused** — no component needed a
+  hand-written body, which is the outcome to protect. If a future component
+  comes back empty, check that it is reachable from `ds-entry.ts` before
+  reaching for a hand-written contract.
+- **A real type root widens the component set.** `source-kit.mjs` unions
+  `componentSrcMap` with every PascalCase value export the type root shows, so
+  the sync jumped 50 → 75 the moment `types` resolved: the 25 compound
+  subparts (`SheetContent`, `DropdownMenuItem`, `TooltipTrigger`,
+  `ToggleGroupItem`, `GateFact`, …). Each would have drawn its own floor card
+  for something that cannot render alone — `SheetContent` outside a `Sheet`
+  has no portal. They are excluded with `null` entries in `componentSrcMap`,
+  which is the sanctioned route and keeps them *importable* by previews (the
+  `null` only drops them from the component list, not from `exported`). This
+  is the same control point the "excluded by omission" note warns about,
+  except the default flipped: with a type root, an export added to
+  `ds-entry.ts` is now **included** unless someone says otherwise.
 
 ## Gotchas hit on the first sync
 
@@ -210,38 +283,32 @@ green, and a reinstall can disrupt a concurrent session working in this tree.
   the reverse ships a component nobody scoped. Keep the two in step.
 - **Coupled widgets are excluded by omission, not by a rule.** Someone adding
   an export to `ds-entry.ts` silently widens the sync. That is the intended
-  control point — but it is a control point, so review it.
-- **Every `.d.ts` this sync ships is empty**, and "weaker than a library build"
-  understated it: all 50 emit `[key: string]: unknown` and carry no props at
-  all. The design agent's whole API contract for every component is therefore
-  blank, and it will guess prop names. Diagnosed 2026-08-14 — the build log
-  says it in one line:
-
-  ```
-  [DTS] parsed 1 .d.ts files from D:\code\basilisk\web
-  ```
-
-  The extractor reads props from *shipped* `.d.ts` files and `web/` is an app
-  with none. The sources do declare them (`ArtifactAction`'s `Props` has
-  `label`, `tier`, `reason`, `busyLabel`, `busy`, `describedBy`, `className`
-  with the doc comments intact), and `npx tsc -p tsconfig.json
-  --emitDeclarationOnly --declarationDir .ds-types` produces 487 usable files
-  in about a minute — exit 1 on a `verb-smoke.js` TS4058 about openpgp's
-  `KeyPair`, which does not stop the emit.
-
-  **What is missing is only the pointer.** Emitting into `web/.ds-types` did
-  not change the `parsed 1` line, because the converter looks at the package's
-  declared type root and `web/package.json` is `private: true` with no
-  `types`. Making this work means adding a `types` entry (and probably a real
-  `build:types` script) to `web/package.json` — a deliberate toolchain change,
-  which is why the 2026-08-14 sync recorded it here instead of half-doing it
-  mid-run. Two things to check when someone does: the component props are
-  declared as a local `type Props`, not an exported `<Name>Props`, so the
-  extractor may still need `cfg.dtsPropsFor` or a rename; and 487 files
-  includes tests, so scope the emit.
-
-  This is the single highest-value improvement available to this design
-  system — it is the artifact the design agent codes against.
+  control point — but it is a control point, so review it. Since the type root
+  landed the widening is **automatic**: `source-kit.mjs` unions the type root's
+  PascalCase value exports with `componentSrcMap`, so a new barrel export
+  becomes a component with a card of its own unless it gets a `null` entry.
+  The 25 `null`s at the foot of `componentSrcMap` are the compound subparts
+  (`SheetContent`, `DropdownMenuItem`, `TooltipTrigger`, `ToggleGroupItem`,
+  `GateFact`) held out on exactly that ground — they cannot render alone.
+  Deleting one of those `null`s adds a floor card, not a component.
+- **`web/.ds-types/` goes stale exactly the way `.ds-styles.css` does**, and
+  it is the artifact the design agent codes against. It is gitignored build
+  output, `npm run build` does not regenerate it (on purpose — see "The type
+  surface"), and nothing warns. Two failure shapes, neither loud:
+  - *Absent* (fresh checkout, no `build:types`): `findTypesRoot` falls through
+    to `web/` itself, the log reads `[DTS] parsed 1 .d.ts files`, and all 50
+    contracts ship blank again. **The one-line canary is that log line** —
+    a healthy build says `parsed 182` and `[DTS] 50/50 components`.
+  - *Stale* (sources changed, emit not re-run): the contracts describe the
+    previous commit, and every count still looks right. A prop the design
+    agent is told exists and does not is worse than a blank contract, so
+    `build:types` belongs at the top of the sequence, not as a repair step.
+- **The `[DTS] N/50 components` line is the real check, not the file count.**
+  A component reachable from `ds-entry.ts` but whose props the extractor
+  cannot resolve is a silent single-component regression to
+  `[key: string]: unknown`; the bundle still validates and still ships. Count
+  it after every sync — `grep -c "\[key: string\]: unknown"` across
+  `ds-bundle/components/*/*/*.d.ts` should be 0.
 
 ## The upload step is bigger than it looks
 

@@ -2,6 +2,8 @@
   "name": "basilisk-portal",
   "private": true,
   "type": "module",
+  "//types": "Read by /design-sync only. The sync converter extracts each component's prop contract from the package's declared type root; this app has no dist, so without this pointer every shipped .d.ts was `[key: string]: unknown`. `.ds-types/` is gitignored build output — regenerate with `npm run build:types` (tsconfig.dts.json). Nothing imports basilisk-portal and it is `private`, so this field is inert for Vite, vitest, `tsc --noEmit` and anything that ships to users.",
+  "types": ".ds-types/ds-entry.d.ts",
   "engines": {
     "node": ">=22"
   },
@@ -16,6 +18,7 @@
     "pretest": "npm run glyphs",
     "dev": "vite",
     "build": "vite build",
+    "build:types": "tsc -p tsconfig.dts.json",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

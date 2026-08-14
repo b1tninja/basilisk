@@ -52,3 +52,8 @@ ds-bundle/
 .design-sync/learnings/
 .design-sync/node_modules
 web/.ds-styles.css
+# Declaration-only emit for /design-sync (web/tsconfig.dts.json). Build output,
+# not source: `cd web && npm run build:types` regenerates it in ~1s. It is the
+# tree web/package.json's `types` points at, and the only reason the synced
+# .d.ts files carry real props.
+web/.ds-types/
