@@ -56,6 +56,9 @@ export const Default = () => (
             ],
             "mine": true,
             "publish": true,
+            "publishes": [
+              "a"
+            ],
             "produces": [
               "a"
             ],
@@ -76,6 +79,7 @@ export const Default = () => (
             ],
             "mine": false,
             "publish": false,
+            "publishes": [],
             "produces": [
               "d"
             ],
@@ -141,6 +145,9 @@ export const WaitingOnAPeer = () => (
             ],
             "mine": false,
             "publish": true,
+            "publishes": [
+              "a"
+            ],
             "produces": [
               "a"
             ],
@@ -161,6 +168,7 @@ export const WaitingOnAPeer = () => (
             ],
             "mine": true,
             "publish": false,
+            "publishes": [],
             "produces": [
               "d"
             ],
@@ -235,6 +243,7 @@ export const RefusedTwoOwners = () => (
             ],
             "mine": true,
             "publish": false,
+            "publishes": [],
             "produces": [
               "a"
             ],
@@ -255,6 +264,7 @@ export const RefusedTwoOwners = () => (
             ],
             "mine": true,
             "publish": false,
+            "publishes": [],
             "produces": [
               "d"
             ],
@@ -334,6 +344,9 @@ export const UnknownPeer = () => (
             ],
             "mine": true,
             "publish": true,
+            "publishes": [
+              "a"
+            ],
             "produces": [
               "a"
             ],
@@ -354,6 +367,7 @@ export const UnknownPeer = () => (
             ],
             "mine": false,
             "publish": false,
+            "publishes": [],
             "produces": [
               "d"
             ],
@@ -430,6 +444,9 @@ export const Unbound = () => (
             ],
             "mine": false,
             "publish": true,
+            "publishes": [
+              "a"
+            ],
             "produces": [
               "a"
             ],
@@ -450,6 +467,7 @@ export const Unbound = () => (
             ],
             "mine": false,
             "publish": false,
+            "publishes": [],
             "produces": [
               "d"
             ],
@@ -509,19 +527,49 @@ export const Solo = () => (
             "runsOn": [],
             "mine": true,
             "publish": false,
+            "publishes": [],
             "produces": [
               "a"
             ],
             "consumes": [],
             "start": 0,
             "end": 15
+          },
+          {
+            "index": 1,
+            "peer": "",
+            "kind": "witnessed",
+            "declared": false,
+            "forced": false,
+            "basis": "solo",
+            "why": "this notebook names no peer, so the cell runs here — the same single runner every recipe without a `@peer` header has always had",
+            "runsOn": [],
+            "mine": true,
+            "publish": false,
+            "publishes": [],
+            "produces": [
+              "d"
+            ],
+            "consumes": [
+              {
+                "label": "a",
+                "via": "in",
+                "from": 0,
+                "owner": "",
+                "private": false,
+                "type": "text/opaque/hex",
+                "slotOf": []
+              }
+            ],
+            "start": 38,
+            "end": 44
           }
         ],
         "refusals": [],
         "asks": [],
         "waits": [],
         "counts": {
-          "solo": 1,
+          "solo": 2,
           "forced": 0,
           "chosen": 0,
           "witnessed": 0,

@@ -145,11 +145,14 @@ green, and a reinstall can disrupt a concurrent session working in this tree.
   top of `ds-entry.ts` is about `ToolCard`/`OutputList`/`ToolkitShell`, which
   need the op registry or the notebook. The twelve added here read no context
   and no store — checked, not assumed.
-- **`IntegrityPanel` is deliberately still out.** It reaches `node:crypto`
-  through `deployment-check.js` → `module-integrity.js` (a vitest-only fallback
-  branch). Vite tolerates the unresolved builtin; the converter's esbuild does
-  not, and there is no cfg hook for externals. Re-adding it means forking
-  `lib/bundle.mjs` via `cfg.libOverrides`.
+- **`IntegrityPanel` is in, as of the 2026-08-14 sync.** This note used to say
+  it was "deliberately still out" because it reached `node:crypto` through
+  `deployment-check.js` → `module-integrity.js` and the converter's esbuild
+  would not tolerate the unresolved builtin. It builds and renders now, and
+  arrived in that sync's `added` partition. If it ever regresses, the old
+  remedy was a `lib/bundle.mjs` fork via `cfg.libOverrides` — but check first
+  whether the import path still reaches a node builtin at all before assuming
+  that is still the cause.
 - **Portal/fixed components need `cfg.overrides.<Name> = {cardMode: "single",
   primaryStory}`** or `package-validate` raises `[GRID_OVERFLOW]` — no grid can
   present content that portals out of its cell. Applies to `Sheet`,
@@ -188,12 +191,54 @@ green, and a reinstall can disrupt a concurrent session working in this tree.
 - **`web/.ds-styles.css` goes stale silently.** It is a copy, gitignored, and
   nothing rebuilds it automatically. If the toolkit's CSS changed and this file
   did not, every card renders against the old tokens with no warning.
+- **A captured plan fixture goes stale when the planner gains a field, and it
+  fails as a blank card.** `PlanPanel`'s preview is real `planRun` output by
+  design ("a hand-written plan drifts from the shape the planner emits"), and
+  that is exactly what happened: `planRun` gained a per-cell `publishes`, the
+  six captured fixtures predated it, and `cell.publishes.length` threw
+  `TypeError: Cannot read properties of undefined` — `[RENDER] root empty`,
+  the only failure in the 2026-08-14 sync. The component was correct
+  throughout. Regenerate rather than patch: the six cases are the same
+  two-cell ceremony from different seats, and their inputs are recoverable
+  from each fixture's own scalars (`me`, `play`, `bound`, cell peers, refusal
+  reason) — reconstruct, run the real `planRun`, and check the scalars match
+  before writing. `WaitingOnAPeer` is the base ceremony from okafor's seat,
+  not a third cell; its `published-slot` **wait** is what identifies it.
+  Any other preview holding captured planner or engine output inherits this.
 - **`ds-entry.ts` drifts from the component set.** A component added to
   `componentSrcMap` but not exported from the barrel will not be in the bundle;
   the reverse ships a component nobody scoped. Keep the two in step.
 - **Coupled widgets are excluded by omission, not by a rule.** Someone adding
   an export to `ds-entry.ts` silently widens the sync. That is the intended
   control point — but it is a control point, so review it.
-- The `.d.ts` contracts come from source, not a real build, so prop types are
-  weaker than a library build would give. Adding a proper library build to
-  `web/` would improve them.
+- **Every `.d.ts` this sync ships is empty**, and "weaker than a library build"
+  understated it: all 50 emit `[key: string]: unknown` and carry no props at
+  all. The design agent's whole API contract for every component is therefore
+  blank, and it will guess prop names. Diagnosed 2026-08-14 — the build log
+  says it in one line:
+
+  ```
+  [DTS] parsed 1 .d.ts files from D:\code\basilisk\web
+  ```
+
+  The extractor reads props from *shipped* `.d.ts` files and `web/` is an app
+  with none. The sources do declare them (`ArtifactAction`'s `Props` has
+  `label`, `tier`, `reason`, `busyLabel`, `busy`, `describedBy`, `className`
+  with the doc comments intact), and `npx tsc -p tsconfig.json
+  --emitDeclarationOnly --declarationDir .ds-types` produces 487 usable files
+  in about a minute — exit 1 on a `verb-smoke.js` TS4058 about openpgp's
+  `KeyPair`, which does not stop the emit.
+
+  **What is missing is only the pointer.** Emitting into `web/.ds-types` did
+  not change the `parsed 1` line, because the converter looks at the package's
+  declared type root and `web/package.json` is `private: true` with no
+  `types`. Making this work means adding a `types` entry (and probably a real
+  `build:types` script) to `web/package.json` — a deliberate toolchain change,
+  which is why the 2026-08-14 sync recorded it here instead of half-doing it
+  mid-run. Two things to check when someone does: the component props are
+  declared as a local `type Props`, not an exported `<Name>Props`, so the
+  extractor may still need `cfg.dtsPropsFor` or a rename; and 487 files
+  includes tests, so scope the emit.
+
+  This is the single highest-value improvement available to this design
+  system — it is the artifact the design agent codes against.
