@@ -246,6 +246,143 @@ their own machine. "Mine" is the one that never crossed a wire.
 where any member is unverified — handing a share to a peer whose key
 confirmation has not completed is the one mistake this ceremony cannot take back.
 
+#### It is a zip, and the two lists are the shares and the room
+
+Four separate pieces of work have blocked on one operation, and it is narrower
+than "a map". `room-ceremony.js` writes the reason at the top of the file:
+"`foreach` declares `params: []`, so there is no `to=` for it to change between
+rounds; `tee`'s `-` lines concatenate a stem rather than branching to different
+addressees." Neither of those is a missing higher-order function. What is
+missing is **walking two same-length lists together** — N shares against N
+members — and applying a step per pair. Sealing *one* share to *one* named
+holder is expressible today; sealing the set is not, because `to=` cannot vary
+per item.
+
+So the shape is `foreach`'s, with a second list:
+
+```text
+@me
+random 32 | split 2/3 | words | scatter
+  - gpg.encrypt to=:key mode=combined | out $sealed | publish
+```
+
+One `-` line, one body, the rule the branch section already settled. The body
+runs once per pair. `scatter`'s own job is to produce the pairs and nothing
+else: it draws nothing, sends nothing, and encrypts nothing, so by principle 2
+it is not the verb by which anything leaves — `publish` is, in the body, where a
+reader can see it.
+
+#### What fixes the order, and why two machines cannot disagree
+
+Share *i* to holder *i* is a correspondence, and it has to be the same
+correspondence on both machines. The thing to notice is that **the manifest
+cannot check it.** `peersDigest` builds `{ fingerprint: fingerprint }` and hands
+it to `canonicalJson`, which sorts the keys; `audienceDigest` sorts its array
+outright. Both digests therefore commit to the room as a *set*, and neither
+commits to any order at all. A `peersSha` that matches is not evidence that two
+ends agree about who is second.
+
+That is safe today for exactly one reason, and it is worth naming because the
+reason is about to be removed. `room-ceremony.js` keeps the *panel's* insertion
+order — deliberately, so that share 2 goes to whoever is second on the screen
+the author is looking at — and it gets away with it because the generator writes
+the whole fingerprint into every `to=`. The pairing is in the recipe text, and
+the recipe text is what both ends digest. Order is not derived there; it is
+*written down*.
+
+A `scatter` that reads the same in a room of three and a room of seven has no
+fingerprints in it. So the pairing can no longer be written down, and the only
+orders left are the ones both ends can derive from something they already agree
+about. There is one such thing: the audience, which the room id is a digest of.
+So:
+
+> **The order is `canonicalAudience`'s — ascending whole fingerprint, deduped —
+> and it is derived, never chosen.** Two machines cannot disagree about it
+> because neither of them is deciding anything: `roomMembers` already returns
+> that order, `deriveRoomMaterial` already digests that list, and no panel, no
+> arrival order and nobody's typing enters into it.
+
+The cost is that the pairing becomes publicly computable — anybody in the room
+can work out that the third fingerprint by hex order holds share 3. That is not
+a new disclosure. **The ceremony already discloses it, in the text, to exactly
+the same audience**: the whole notebook travels to every member, and
+`$set | at 2 | quorum.send to=<fingerprint>` is a cell every one of them reads.
+Worth stating plainly because `f96a0d8` drops `shareIndex` from a sealed value
+on the grounds that it would "tell the whole room which share went to whom,
+which is the one fact a K-of-N split is keeping" — and the room is already told,
+one cell higher up. That meta-drop is still right for a published artifact,
+which travels further than a notebook does; the sentence justifying it claims
+more than the ceremony keeps.
+
+#### The count mismatch is a real refusal, and it cannot be designed away
+
+The hope was that if the share count derived from the room size, a mismatch
+would be unreachable by construction rather than refused. It cannot, and the
+reason is principle 4. `sss.split`'s `shares` param carries `serialize: "always"`
+precisely so N stays in the text both ends compare — a 2-of-3 and a 2-of-16
+must not be the same recipe. An N that came from the live roster would be the
+security-relevant number moved *out* of the text, which is the defect that
+docstring exists to prevent. So the split's N and the room's size are two
+independently authored numbers, and `split 3/5 | words | scatter` in a room of
+three is a recipe a person can write.
+
+`room-ceremony.js` makes it unreachable *at generation time* — the generator
+writes N from the room size — and not afterwards, because a member can leave
+between the notebook being written and the cell being run.
+
+The refusal belongs at plan time, since the audience is known before the run and
+`planRun` already holds the roster. **It cannot be written there yet.** The
+count is not in the static type: `random 32 | sss.split threshold=2 shares=5`
+walks to `{base:"shares", kind:"raw"}` with no `length`, and `blip39` retypes to
+`{base:"shares", kind:"mnemonic"}`, which would drop a refinement even if
+`sss.split` stamped one. `LIST_TYPES` already says `length` counts elements for
+`shares`, so the slot is there and empty. Stamping it — and carrying it through
+`blip39` and `at` — is a prerequisite for this section, not a detail of it.
+
+#### Output types stay statically known
+
+`scatter`'s tip is a bundle of per-pair tips, which is `foreach`'s answer and is
+fixed by the step name alone — no param decides it, so nothing here is as
+delicate as `quorum.recv count=` or `gpg.encrypt mode=`. A collection of `T` is a
+type, so the determinism rule holds for the same reason the elementwise section
+says it does.
+
+#### It does not need the polymorphic steps classified, and that is why it has a body
+
+The elementwise pass stopped because `out`, `publish` and `tee` declare
+`input: "any"`, so the "accepts text, handed a collection" rule cannot classify
+them — and the headline example of this document turns on `out`. A zip touches
+the same steps and does **not** ask the same question: the body is written by
+the author, so nothing is inferred about whether a step inside it applies per
+element. `foreach` has sidestepped this since the day it was written.
+
+A bare `scatter` meaning "apply the rest of the chain per pair" would ask it, and
+would stop exactly where item 4 stopped. The body is therefore not a stylistic
+choice; it is what keeps this pass out of that territory.
+
+#### What is still missing, and it is not the zip
+
+The body has to name the pair's member somewhere, and every step that takes a
+recipient takes it as a **parameter** — `gpg.encrypt to=`, `quorum.send to=`.
+That is the same wall `room-ceremony.js` hit. Pairing the two lists does not
+knock it down; it moves it one step in. Three spellings, none free:
+
+- **`to=:key`** — the projection in a param value, written above. `:key` and
+  `:value` are legal today as *steps* inside a `foreach :items` body and nowhere
+  else, so this makes them legal in a second grammatical position. It is the
+  only one of the three that reads.
+- **An omitted `to=` inside a `scatter` body**, meaning "this pair's member".
+  This is principle 4's exact failure mode — a security-relevant parameter
+  carried by an absence — and worse than the general case, because `to=`'s
+  absence already means something else: the recipients picked in the Run binder.
+- **A per-iteration slot**, which needs no new grammar at all and is legal
+  today, `to=` being `slot: true, slotOf: ["recipients", "openpgp-key", "text"]`.
+  It costs a `tee`, a projection and a slot per iteration to say one word, and
+  nobody would read it twice.
+
+Choosing between them is a decision about the language rather than about this
+feature, and it is where this section stops.
+
 ### Vocabulary
 
 `sss.split` → `split`, `blip39` → `words`, `quorum.send` → `send`. The dotted
@@ -258,7 +395,7 @@ aliases.
 squarely at a reader who did not write the recipe is destroyed at exactly the
 moment the recipe leaves for someone else.
 
-## `@*` needs a rule, not a convention
+## `@*` needs a rule, not a convention — **the rule is there; the sigil is not**
 
 A cell may run on every member **exactly when its value is inherently local to
 the machine running it** — `gather`, vault reads, `agent.unlock`. Those are
@@ -269,8 +406,29 @@ shared notebook runs on every machine and produces a different secret on each,
 while every digest still matches, because the text is identical. That is the one
 divergence the manifest comparison cannot see.
 
-The registry already marks vault-local operations, so this is checkable rather
-than remembered. It has to land with the design, not after it.
+**That rule is implemented, and against a better declaration than this section
+proposed.** `planRun` asks two questions of any cell in a placed notebook that
+names no peer and is not pinned by a private input:
+
+- `keying-unplaced`, from `keyingOp` — the first step whose registry `entropy` is
+  `keying`. This is the `random 32` case exactly, and entropy is the right
+  declaration for it: `vault-locality` would not have caught `random`, which
+  reaches no vault.
+- `vault-locality`, from `vaultOp` — a step in the `agent` toolbox, which is what
+  "the registry already marks vault-local operations" was pointing at. It is a
+  second question beside the first, not the same one.
+
+Both are **asks**, not refusals, and that is right: per-peer is a legitimate
+thing to mean, and the ask says so ("leave it if per-peer is what you meant").
+
+What is *not* there is the sigil. `@*` parses and plans as a `rendezvous`, and
+then `validateRecipe` refuses it outright — "this build can describe one but not
+perform one, so running it would have you enter alone while believing the room
+entered with you." So the `gather | out $share` cell above does not compile as
+written. It does not need to: a headerless cell already runs on every machine,
+and it is headerless cells the rule above is about. `@*` adds a barrier — every
+participant entering together — which is a distributed mechanism this build does
+not have and which `gather` does not need.
 
 ## Migration
 
@@ -287,10 +445,26 @@ Order of work, bug fixes first:
 3. **`publish` as a step** — done. **`:public` as a step** — done.
 4. Elementwise, prototyped against the preset corpus — the round-trip sweep
    reports immediately how many recipes change meaning.
-5. `scatter` / `gather`, with the `@*` rule.
+5. **The share count becomes a `length` refinement** on the `shares` type,
+   stamped by `sss.split` and carried through `blip39` and `at`. Small, and
+   nothing below can refuse a count mismatch at plan time without it.
+6. `scatter` / `gather`. The `@*` rule is already landed — see above — so what
+   this now waits on is one decision: how the body names the pair's member.
 
-## What gates all of it
+## What gated all of it — **met**
 
-Nothing has yet proven `quorum.send` / `quorum.recv` deliver under the placement
-gate in two real browsers. `placed-journey.e2e.js` is where that belongs, and it
-should be proven before a language is designed around it.
+This closed by saying nothing had yet proven `quorum.send` / `quorum.recv`
+deliver under the placement gate in two real browsers, and that
+`placed-journey.e2e.js` was where that belonged. It is there now, and it drives
+the five questions in order: the share arrives; both arrival orderings work (sent
+before the holder's cell runs, and sent into a waiting receive); the placement
+gate declines the holder's cell and hands it over; a holder who is sent nothing
+is told so in words about the room they are actually in; and the ceremony
+reverses — the holder recombines on a machine that never held the secret, and the
+two strings are compared through the screen.
+
+One thing that report also establishes is worth carrying here: `quorum.send` and
+`quorum.recv` are named by **zero** of the seventy presets, so the only way
+anybody has ever reached these verbs is by typing them. Whatever `scatter`
+becomes, it is the first thing that would put this road in front of a person who
+did not go looking for it.
