@@ -192,8 +192,17 @@ export type SessionStartProps = {
   /** The link this audience would produce, or null while it would produce none. */
   inviteUrl: string | null;
   onCopyInvite?: () => void;
-  /** The cells Start will write — `sessionRecipe`'s text, shown before it runs. */
-  recipe: string;
+  /**
+   * What Start does, and what it does not write — `START_OPENS`' sentences.
+   *
+   * This was `recipe`: the two cells Start appended, shown before it ran them.
+   * They are gone (see `START_OPENS` for the argument), and the honest
+   * replacement is not silence. A reader who was being shown a recipe is owed
+   * the reason there is no longer one, and the one fact the cells used to carry
+   * on screen — that this key is being held open — is true for longer than any
+   * cell was.
+   */
+  opens: readonly string[];
   onStart: () => void;
   className?: string;
 };
@@ -333,7 +342,7 @@ export function SessionStart({
   issues,
   inviteUrl,
   onCopyInvite,
-  recipe,
+  opens,
   onStart,
   className,
 }: SessionStartProps) {
@@ -343,7 +352,7 @@ export function SessionStart({
   const [hits, setHits] = useState<RecipientChoice[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
-  const [showRecipe, setShowRecipe] = useState(false);
+  const [showOpens, setShowOpens] = useState(false);
   const [showCeremony, setShowCeremony] = useState(false);
   /**
    * The sentence an add refused with, or "".
@@ -954,25 +963,28 @@ export function SessionStart({
         </ul>
       ) : null}
 
-      {/* The cells, before they are written. Not a debug affordance: this is the
-          claim that a session is an ordinary recipe, and a reader who cannot see
-          the recipe has only our word for it. */}
+      {/* What the press does. This used to be the two cells it wrote, shown
+          before it ran them; the cells are gone and the disclosure is not, for
+          the reason `START_OPENS` gives — the key is held for the whole session,
+          which is a longer claim than the cell that used to stand for it. */}
       <div className="flex flex-col gap-1">
         <button
           type="button"
           className="self-start text-[10.5px] text-[var(--brand)] underline"
-          aria-expanded={showRecipe}
-          onClick={() => setShowRecipe((v) => !v)}
+          aria-expanded={showOpens}
+          onClick={() => setShowOpens((v) => !v)}
         >
-          {showRecipe ? "Hide" : "Show"} the cells this writes
+          {showOpens ? "Hide" : "Show"} what this does to your notebook
         </button>
-        {showRecipe ? (
-          <pre
-            className="overflow-x-auto rounded-[6px] border border-[var(--border)] bg-[var(--surface)] p-2 font-mono text-[10px] text-[var(--muted-foreground)]"
-            data-session-recipe
+        {showOpens ? (
+          <ul
+            className="flex list-none flex-col gap-1.5 rounded-[6px] border border-[var(--border)] bg-[var(--surface)] p-2 text-[10.5px] leading-snug text-[var(--muted-foreground)]"
+            data-session-opens
           >
-            {recipe}
-          </pre>
+            {opens.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
         ) : null}
       </div>
 

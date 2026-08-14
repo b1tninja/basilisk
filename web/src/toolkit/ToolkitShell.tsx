@@ -125,8 +125,8 @@ import {
   writeToolkitHash,
 } from "../lib/toolkit/fragment.js";
 import {
+  START_OPENS,
   sessionKeyChoices,
-  sessionRecipe,
   startIssues,
 } from "../lib/toolkit/session-flow.js";
 import {
@@ -4602,13 +4602,9 @@ export function ToolkitShell() {
             issues: sessionIssues,
             inviteUrl,
             onCopyInvite: () => void copyText(inviteUrl || ""),
-            recipe: sessionRecipe({
-              audience: sessionDraft.audience,
-              keyFingerprint: sessionDraft.keyFingerprint,
-              role: sessionDraft.role,
-            }),
+            opens: START_OPENS,
             onStart: () => {
-              nb.startSession({
+              void nb.startSession({
                 audience: sessionDraft.audience,
                 keyFingerprint: sessionDraft.keyFingerprint,
                 role: sessionDraft.role,

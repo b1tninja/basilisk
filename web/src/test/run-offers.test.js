@@ -32,7 +32,6 @@ import { fileURLToPath } from "node:url";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { planRun } from "../lib/toolkit/plan.js";
 import { placementGate } from "../lib/toolkit/placement.js";
-import { sessionRecipe } from "../lib/toolkit/session-flow.js";
 import {
   narrateNoSession,
   narrateOffers,
@@ -102,23 +101,27 @@ function declined(source, me, members, pressed = {}) {
 }
 
 /**
- * `placed-journey`'s notebook, plus the two cells Start appends to it.
+ * `placed-journey`'s notebook, with a pair of session cells written by hand.
  *
  * The headers are the ones the journey's assignment menu writes, `publish` and
  * all: without it `$b64` is a private value and `plan.js` forces the cell that
  * reads it onto its owner, which is a different notebook from the one two
  * browsers are known to run.
  *
- * `sessionRecipe` is called rather than transcribed, because the defect is
- * precisely that those two cells travel inside the proposal placed on whoever
- * opened the room — a copy of their text here would stop reproducing it the
- * moment `session-flow.js` changed its mind.
+ * **The last two cells used to be `sessionRecipe`'s**, called rather than
+ * transcribed because Start appended them to every notebook and a copy here
+ * would have stopped reproducing that the moment `session-flow.js` changed its
+ * mind. Start writes no cells now, so there is no generator left for a copy to
+ * drift from — and the shape stays in this fixture on its own merits, because
+ * `quorum.offer` is still a verb anybody may type and the rule under test is
+ * about *any* placed cell this machine has no end of, not about that press.
  */
 const JOURNEY = [
   `@${ADA} publish\nbytes deadbeef | encode hex | out $seed`,
   `@${BEA} publish\nin $seed | decode hex | encode base64 | out $b64`,
   `@${ADA}\nin $b64 | out $done`,
-  sessionRecipe({ audience: [ADA, BEA], keyFingerprint: ADA }),
+  `@${ADA}\nagent.unlock ${ADA} | out $me`,
+  `@${ADA}\nquorum.offer to="${[ADA, BEA].sort().join(",")}" key=$me | out $session`,
 ].join("\n\n");
 
 /**

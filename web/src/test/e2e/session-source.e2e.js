@@ -1,45 +1,47 @@
 /**
- * A session leaves behind a notebook that still compiles.
+ * A session leaves the notebook exactly as it found it.
  *
- * This is the assertion whose absence shipped a blocker. `startSession` does
- * not call the transport — it appends the two cells a person could have typed
- * and runs them, which is the design's whole claim about reproducibility. So
- * the notebook's *text* is a product of pressing Start, and the text is what
- * every other feature reads: Source view, Copy link, Workspace save, the run
- * planner, and the compiler that decides whether the notebook can run at all.
+ * ## The claim this file used to make, and why it is the opposite one now
  *
- * It could not. `serializeStep` did not quote a comma, `quorum.offer`'s `to=`
- * is positional, and an audience is a comma-joined list that must hold at
- * least two fingerprints to be a room — so every session serialized to
- * `quorum.offer 9F2A…,D772… key=$me` and the notebook stopped compiling with
- * `Unexpected "," · Unexpected "<the next fingerprint's first character>"`.
+ * It opened: *"`startSession` does not call the transport — it appends the two
+ * cells a person could have typed and runs them, which is the design's whole
+ * claim about reproducibility."* The cells were `agent.unlock <me> | out $me`
+ * and `quorum.offer to="fpr,fpr,…" key=$me | out $session`, and this file
+ * existed because the *text* of them was a product of pressing Start: it was
+ * what Source view showed, what Copy link carried, what Workspace saved, and
+ * what the compiler had to accept. It could not — `serializeStep` did not quote
+ * a comma — and no test had ever read what the shell was holding after a press.
  *
- * Nothing caught it because every layer was tested against the layer above it.
- * `sessionRecipe`'s output compiles — asserted. The registry example sweep in
- * `recipe-roundtrip.test.js` skips `quorum.offer`, whose example names a slot
- * an earlier cell registers. And no test had ever read what the *shell* was
- * holding after a press. That is this file.
+ * That defect is fixed and its assertion has moved: `quorum.offer` is still a
+ * verb anybody may type, so the comma round trip is now driven from typed text
+ * in `session-flow.test.js`, where the shell is not in the way of the property.
  *
- * ## Why the UI, and not `page.evaluate`
+ * What replaced the claim is the argument that the two cells had outlived it.
+ * A run walks to the end of a notebook, so a Run all reached `quorum.offer` for
+ * a room that was already open, and `execQuorumOpen` refused it — correctly.
+ * The notebook a session left behind was the only notebook in this product that
+ * could not be run, which is the exact opposite of the reproducibility the
+ * cells were cited for. Three separate mechanisms had been taught to step
+ * around them (the `@me` header, the rule that stops them being offered back,
+ * an e2e pinning the run walking into them), and a record every reader has to
+ * be taught to skip is a record with no reader. Start opens the room now and
+ * writes nothing.
  *
- * The sibling suites drive modules directly, correctly: they are about the
- * transport, and there is no UI for a DTLS fingerprint. This defect lives
- * between the widget and the notebook — in what a press writes and what the
- * shell then serializes — so evaluating `sessionRecipe` in the page would
- * reproduce the half that always worked. The press has to be a press.
+ * ## So what is left worth a browser
  *
- * ## Why two contexts, and no mesh
+ * The property that survives is stronger than the one it replaces, and it is
+ * still a property of *the shell*, unreachable below the UI: **pressing Start
+ * changes no notebook text, and puts nobody's fingerprint into it.** The room
+ * is committed to the run record instead — `session-flow.test.js` proves the
+ * manifest digests are the same with and without those cells — and a manifest
+ * carries the audience as a digest, where recipe text carried it as a
+ * comma-joined list that travels in a `#r=` link.
  *
- * Both ends are checked because the user may be either, and the two write
- * different cells (`quorum.offer` / `quorum.join`). The joiner arrives through
- * `#j=`, so its audience is the one the *link* produced rather than one typed
- * by hand — the path with the most room to put something unexpected in the
- * text.
- *
- * They deliberately do not mesh. Joining is what made the user notice, but it
- * is not what wrote the text: the cells are on the page the instant Start is
- * pressed. A test that waited for a real handshake would be slower, would fail
- * for reasons that are not this one, and would assert nothing extra.
+ * Two contexts still, because the user may be either end and the two used to
+ * write different cells. Now neither writes any, and *that* is what both are
+ * checked for. They deliberately do not mesh: the notebook is decided at the
+ * instant of the press, and a real handshake would be slower and would fail for
+ * reasons that are not this one.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -116,29 +118,61 @@ const MINT_VAULT_KEY = `(async () => {
 /**
  * Press Start the way a person does, and hand back what the notebook then says.
  *
+ * `before` is read first and returned beside `after`, because the assertion is
+ * now an equality between the two rather than a shape the press produced. It is
+ * read before the room is named rather than immediately before the press, and
+ * the sheet's own overlay is why — see the note at the read.
+ *
  * @param {import("../helpers/browser-peers.js").Peer} peer
  * @param {string} origin
  * @param {"offer"|"join"} role
  * @param {string} otherFpr the peer this browser is not
+ * @param {string} [recipe] work to have on the page before the press
  */
-async function startFromTheSheet(peer, origin, role, otherFpr) {
+async function startFromTheSheet(peer, origin, role, otherFpr, recipe = "") {
   const { page } = peer;
   await page.goto(`${origin}/toolkit`, { waitUntil: "load" });
   const mine = await page.evaluate(MINT_VAULT_KEY);
 
   // The audience arrives the way an invited person's does — through the link —
-  // so the fingerprints in the notebook are the ones `parseToolkitHash`
-  // produced rather than ones this test typed into a box.
+  // so nothing in the notebook can have come from a fingerprint this test
+  // typed into a box.
   //
   // `goto` to the same path with only the hash changed is a *same-document*
   // navigation, so React never remounts. That is a real way to open an invite
   // and it is covered on its own below; here the intent is a cold arrival, so
-  // the document is loaded for real.
-  await page.goto(`${origin}/toolkit#j=${mine},${otherFpr}`, { waitUntil: "load" });
+  // the document is loaded for real. A recipe, when one is asked for, rides in
+  // on the same load — `#r=` and `#j=` are two hashes for two things, so the
+  // notebook is loaded first and the room named after it.
+  const carried = recipe ? hashForNotebook(recipe) : { ok: true, hash: "" };
+  expect(carried.ok, carried.reason).toBe(true);
+  await page.goto(`${origin}/toolkit${carried.hash}`, { waitUntil: "load" });
   await page.reload({ waitUntil: "load" });
+  await page.waitForSelector(".toolkit-shell", { timeout: 20000 });
+
+  // **Read before the room is named, and that ordering is forced.** The sheet
+  // is a modal: its overlay swallows every click on the notebook behind it, so
+  // there is no way to open Source view while the invite is up. That is the
+  // product's arrangement — `placed-journey` records the same constraint — and
+  // it is harmless here, because the only thing between this read and the press
+  // is naming a room, which is exactly what is being asserted not to write
+  // anything.
+  const before = await readNotebookSource(page);
+
+  await page.evaluate((h) => {
+    window.location.hash = h;
+  }, `#j=${mine},${otherFpr}`);
 
   const sheet = page.locator("[data-session-sheet]");
   await sheet.waitFor({ state: "visible", timeout: 20000 });
+
+  // What the panel promises, read before the press rather than inferred from
+  // it. The cells preview was here; this is what stands in its place, and a
+  // sentence claiming the notebook is untouched beside a press that touches it
+  // would be worse than no sentence.
+  await page.getByRole("button", { name: "Show what this does to your notebook" }).click();
+  const opens = await page.locator("[data-session-opens]").innerText();
+  expect(opens).toContain("writes no cells");
 
   await page.getByRole("button", { name: role === "offer" ? "I am starting it" : "I was invited" }).click();
 
@@ -155,10 +189,30 @@ async function startFromTheSheet(peer, origin, role, otherFpr) {
     .toBe(true);
   await start.click();
 
-  return { mine, source: await readNotebookSource(page) };
+  // The sheet closing is the press having been taken. Reading the notebook
+  // before that would be reading it before anything could have happened to it,
+  // which is how an "unchanged" assertion passes for the wrong reason.
+  await sheet.waitFor({ state: "hidden", timeout: 20000 });
+
+  // **There is no relay in this fixture and that is deliberate**, so the room
+  // never comes up: `openPeers` starts two browser contexts and no signalling
+  // hub, and opening one fails within a second or two. `placed-journey` and
+  // `room-ceremony` are where a room really opens, and both assert the run bar
+  // sits in `waiting-peer` while it does. What is asked here is what the press
+  // did to the notebook, which is decided at the instant of the press and not
+  // by whether anybody answers — so this waits for the attempt to be over
+  // rather than for it to succeed, and reads the notebook after it.
+  await expect
+    .poll(
+      async () => await page.locator("[data-run-state]").getAttribute("data-run-state"),
+      { timeout: 60000, intervals: [250] }
+    )
+    .toMatch(/^(idle|blocked)$/);
+
+  return { mine, before, after: await readNotebookSource(page) };
 }
 
-describe.runIf(availability.ok)("what a session writes into the notebook", () => {
+describe.runIf(availability.ok)("what a session does to the notebook", () => {
   /** @type {import("../helpers/browser-peers.js").PeerFixture} */
   let fx;
 
@@ -170,23 +224,56 @@ describe.runIf(availability.ok)("what a session writes into the notebook", () =>
     await fx?.close();
   });
 
-  it("leaves a notebook that still compiles, at both ends", async () => {
+  it("writes nothing into it, at both ends", async () => {
     const [creator, joiner] = fx.peers;
+    const WORK = "bytes deadbeef | encode hex | out $seed";
 
-    // Minted first so each end's audience can name the other for real. Two
+    // Minted inside, so each end's audience names the other for real. Two
     // passes rather than one shared list because the vault is per-context.
-    const a = await startFromTheSheet(creator, fx.origin, "offer", "0".repeat(40));
-    const b = await startFromTheSheet(joiner, fx.origin, "join", a.mine);
-    const again = await startFromTheSheet(creator, fx.origin, "offer", b.mine);
+    const a = await startFromTheSheet(creator, fx.origin, "offer", "0".repeat(40), WORK);
+    const b = await startFromTheSheet(joiner, fx.origin, "join", a.mine, WORK);
 
-    for (const [who, { source }] of Object.entries({
-      creator: again,
-      joiner: b,
-    })) {
-      expect(source, `${who} wrote no session cells`).toMatch(/quorum\.(offer|join)/);
-      const errors = compileRecipe(source).validation.errors.map((e) => e.message);
-      expect(errors, `${who}'s notebook does not compile:\n${source}`).toEqual([]);
+    for (const [who, seen] of Object.entries({ creator: a, joiner: b })) {
+      // The work is still there and nothing was appended after it — the whole
+      // claim, in one comparison. This used to assert the *presence* of
+      // `quorum.offer`; a run walked into that cell and errored, which is why
+      // the assertion is inverted rather than deleted.
+      expect(seen.before, `${who} did not load the notebook`).toContain("out $seed");
+      expect(seen.after, `${who}'s notebook was edited by pressing Start`).toBe(
+        seen.before
+      );
+      expect(seen.after).not.toMatch(/quorum\.(offer|join)/);
+      expect(seen.after).not.toMatch(/agent\.unlock/);
     }
+
+    // And nobody's key is in the text. This is the disclosure the cells cost:
+    // `recipeLinkDiscloses` counts `@peer` headers and deliberately not `to=`
+    // params, so a notebook whose only fingerprints were in `quorum.offer to=`
+    // told the reader it carried one key while the link carried the room.
+    for (const fpr of [a.mine, b.mine]) {
+      expect(a.after.toUpperCase()).not.toContain(fpr);
+      expect(b.after.toUpperCase()).not.toContain(fpr);
+    }
+    // The compile the old premise was about, still asked: an untouched notebook
+    // is a notebook that runs, which the appended one was not.
+    for (const [who, seen] of Object.entries({ creator: a, joiner: b })) {
+      const errors = compileRecipe(seen.after).validation.errors.map((e) => e.message);
+      expect(errors, `${who}'s notebook does not compile:\n${seen.after}`).toEqual([]);
+    }
+  });
+
+  it("leaves a joiner holding nothing, so the first share needs no press", async () => {
+    // The consequence of writing nothing, and it is a behaviour change worth a
+    // browser. `decideProposal` adopts without asking when there is no local
+    // work to lose, and while Start appended cells a joiner was never empty —
+    // so the creator's first notebook always arrived as a question. It arrives
+    // as a notebook now. Asserted here as the *state* that makes it so; that
+    // the adoption then happens silently is `room-ceremony.e2e.js`'s step 3,
+    // where there is a real exchange to carry one.
+    const [, joiner] = fx.peers;
+    const b = await startFromTheSheet(joiner, fx.origin, "join", "0".repeat(40));
+    expect(b.before, "the joiner started with work on the page").toBe("");
+    expect(b.after, "pressing Join gave the joiner a notebook to lose").toBe("");
   });
 
   it("opens an invite that arrives while the toolkit is already up", async () => {
@@ -311,17 +398,4 @@ describe.runIf(availability.ok)("what a session writes into the notebook", () =>
     expect(await readNotebookSource(page)).not.toMatch(/^@peer\d/m);
   });
 
-  it("keeps the audience readable as itself, not merely parseable", async () => {
-    // Compiling is not enough. A value can survive the round trip truncated —
-    // `{40,64}` on an unseparated pair yields one fabricated 64-character id —
-    // and a notebook that compiles to the wrong room is worse than one that
-    // does not compile, because nothing complains.
-    const [creator] = fx.peers;
-    const other = "9F2A11B4C8D30E5761AA0C4E88B2F6D5091C7E43";
-    const { mine, source } = await startFromTheSheet(creator, fx.origin, "offer", other);
-    const step = compileRecipe(source)
-      .ast.chains.flatMap((c) => c.steps || [])
-      .find((s) => String(s.name).startsWith("quorum."));
-    expect(String(step?.params?.to || "").split(",").sort()).toEqual([mine, other].sort());
-  });
 });

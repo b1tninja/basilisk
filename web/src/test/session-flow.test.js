@@ -30,12 +30,13 @@ import {
   pasteReadout,
   rosterCounts,
   sessionReadout,
-  sessionRecipe,
   sessionStage,
+  START_OPENS,
   startIssues,
   sessionKeyChoices,
 } from "../lib/toolkit/session-flow.js";
 import { buildAttestation, manifestAttestedBy } from "../lib/toolkit/attest.js";
+import { handoffContext } from "../lib/toolkit/handoff-shell.js";
 import { buildRunManifest } from "../lib/toolkit/manifest.js";
 /**
  * `keyOwesPassphrase` moved to `key-power.js` — it is the fact that separates
@@ -332,115 +333,222 @@ describe("a room is refused before it is derived, not after", () => {
     expect(START).not.toMatch(/press Join first/);
   });
 
-  it("shows the cells before it writes them", () => {
-    // The claim is that a session is an ordinary recipe. A reader who cannot see
-    // the recipe has only our word for it.
-    expect(START).toMatch(/the cells this writes/);
-    expect(START).toMatch(/data-session-recipe/);
+  it("says what the press does to the notebook, before it is pressed", () => {
+    // This used to show the two cells Start was about to write. It writes none,
+    // and the disclosure is not deleted with them: the reader is owed the fact
+    // that pressing this holds their private key open for the life of the
+    // session, which is a longer claim than the cell that used to stand for it.
+    expect(START).toMatch(/what this does to your notebook/);
+    expect(START).toMatch(/data-session-opens/);
+    // The sentences come from `session-flow.js` rather than being typed into
+    // the widget — the rule this whole module exists for.
+    expect(START).not.toMatch(/It writes no cells/);
   });
 });
 
-describe("starting a session is a recipe, not a code path", () => {
-  it("writes the two cells a person could have typed", () => {
-    const text = sessionRecipe({ audience: [GRACE, ADA], keyFingerprint: ADA });
-    expect(text).toContain(`agent.unlock ${ADA} | out $me`);
-    expect(text).toContain(`quorum.offer to="${[ADA, GRACE].sort().join(",")}" key=$me`);
-  });
+describe("starting a session is not a recipe, and the argument for that", () => {
+  /**
+   * ## What this block used to assert, and why none of it is here
+   *
+   * That `sessionRecipe` wrote `agent.unlock <me> | out $me` and `quorum.offer
+   * to="…" key=$me | out $session`, headed on the opener, and that the pair
+   * round-tripped through the serializer. Every one of those assertions passed.
+   * The claim they were in service of — that a session is an ordinary recipe,
+   * so nothing happens by a hidden code path — did not survive its own
+   * language: a run walks to the end of a notebook, so the notebook a session
+   * left behind was the only one in this product that could not be run.
+   * `execQuorumOpen` refuses a second exchange, correctly, and that refusal is
+   * what a Run all met. A step performable exactly once is the opposite of the
+   * reproducibility it was cited for.
+   *
+   * So Start opens the room and writes nothing, and what is asserted here is
+   * the set of properties that replaced it: the notebook is left alone, the
+   * audience does not reach its text, the room is still committed to the run
+   * record, and the verbs are still there for anybody who types them.
+   */
 
-  it("keeps agent.unlock its own cell", () => {
-    // It is the step that exports a private key into the run and is marked as
-    // such everywhere — the registry's `exposure`, the chip's warn underline,
-    // the exposure trace across the notebook. Folding it into a `key=`
-    // parameter would erase that mark at the moment it matters most.
-    //
-    // Two cells, read as cells rather than as lines: each now carries a `@peer`
-    // header of its own (see below), so the first line of the text is a header
-    // and not the op. Splitting on the blank line is what "its own cell" means
-    // anyway — the line arithmetic was standing in for it.
-    const text = sessionRecipe({ audience: [ADA, GRACE], keyFingerprint: ADA });
-    const cells = text.split("\n\n");
-    expect(cells).toHaveLength(2);
-    expect(cells[0].split("\n").at(-1).startsWith("agent.unlock")).toBe(true);
-    expect(cells[1].split("\n").at(-1).startsWith("quorum.")).toBe(true);
-  });
+  /** `startSession`'s body, so a rename cannot make these vacuous by moving. */
+  const startBody = () => {
+    const at = HOOK.indexOf("const startSession = useCallback(");
+    expect(at, "the hook has no startSession").toBeGreaterThan(-1);
+    const fn = HOOK.slice(at);
+    // Newline-agnostic for the reason the `quorum-ops.js` cut below spells out:
+    // a literal `"\n  );"` never matches a CRLF checkout, `indexOf` hands back
+    // -1, and every assertion is then made about the whole hook instead of this
+    // callback — which is how a "startSession does not call setChains" test
+    // passes on a `startSession` that does.
+    const end = /\r?\n  \);/.exec(fn);
+    expect(end, "startSession's callback has no end").toBeTruthy();
+    return fn.slice(0, end.index);
+  };
 
-  it("places both cells on the person opening the session", () => {
-    // The blocker `placed-journey.e2e.js` walked into: these two cells travel
-    // inside the notebook `shareNotebook` sends, so a peer who adopted one and
-    // pressed Run stopped at `agent.unlock <the sender's fingerprint>` with
-    // "Key not found in vault" — asked to open a key that is not theirs and
-    // never will be. Unheaded, they are `no-private-input` cells that every
-    // participant runs; headed, the gate that already declines a peer's cells
-    // declines these.
-    //
-    // Asked of `roomRoster` rather than written down here: what the room calls
-    // a member is the room's answer, and a test that spelled it itself would
-    // pass on the day the two stopped agreeing. It is the key now — the roster
-    // is identity-mapped — and that is asserted rather than assumed, because it
-    // is the whole of what replaced the positional label.
-    const { me } = roomRoster([ADA, GRACE], [], ADA);
-    expect(me, "the room could not name a key in its own audience").toBe(ADA);
-    const text = sessionRecipe({ audience: [GRACE, ADA], keyFingerprint: ADA });
-    for (const cell of text.split("\n\n")) {
-      expect(cell.split("\n")[0]).toBe(`@${me}`);
+  it("leaves the notebook alone, and reaches the transport once", () => {
+    // Read off the hook, in `boundary-ui.test.js`'s style, because the defect
+    // this file exists for is a mechanism with no consumer — and the inverse
+    // here would be a `startSession` that still edited the notebook behind a
+    // renamed function.
+    const body = startBody();
+    expect(body).toMatch(/await openQuorumSession\(\{/);
+    // Not one of these. Each was in the old implementation, and each is a way
+    // for a press that is not about the notebook to edit the notebook.
+    for (const forbidden of ["setChains(", "compileRecipe(", "setFocusedCell(", "runFrom("]) {
+      expect(body, `startSession still calls ${forbidden}`).not.toContain(forbidden);
     }
-    // Not `publish`. `$me` is an unlocked private key, and a header that let it
-    // out of this machine would be the one thing placement exists to prevent —
-    // `planRun` refuses `publish-secret` for it, which is a refusal this must
-    // never have to reach.
-    expect(text).not.toContain("publish");
-
-    // And it is the *reader's* label, not a fixed one: the other member of the
-    // same room writes their own.
-    expect(
-      sessionRecipe({ audience: [ADA, GRACE], keyFingerprint: GRACE, role: "join" }).split("\n")[0]
-    ).toBe(`@${roomRoster([ADA, GRACE], [], GRACE).me}`);
+    // And the shell hands it the draft it refuses against, not something else.
+    expect(SHELL).toMatch(/void nb\.startSession\(\{/);
   });
 
-  it("makes the session cells run on one machine and no other", () => {
-    // The property the header exists for, asserted through `planRun` rather
-    // than by reading the text: the gate acts on `mine`, so a header that
-    // parsed and planned as everybody's would be a header that changed nothing.
-    const { roster } = roomRoster([ADA, GRACE], []);
-    const source = sessionRecipe({ audience: [ADA, GRACE], keyFingerprint: ADA });
-    const compiled = compileRecipe(source);
-    expect(compiled.validation.errors).toEqual([]);
-
-    const mine = planRun(compiled, { me: ADA, roster });
-    expect(mine.ok, JSON.stringify(mine.refusals)).toBe(true);
-    expect(mine.cells.map((c) => c.mine)).toEqual([true, true]);
-    // The ask this header answers, gone because it is answered.
-    expect(mine.asks.map((a) => a.reason)).not.toContain("vault-locality");
-
-    const theirs = planRun(compiled, { me: GRACE, roster });
-    expect(theirs.ok, JSON.stringify(theirs.refusals)).toBe(true);
-    expect(theirs.cells.map((c) => c.mine)).toEqual([false, false]);
-
-    // Not vacuous: without the header the same two cells are everybody's, which
-    // is what put "Key not found in vault" in front of the peer who adopted it.
-    const bare = planRun(
-      compileRecipe(`agent.unlock ${ADA} | out $me\n\nquorum.offer to="${ADA},${GRACE}" key=$me | out $session`),
-      { me: GRACE, roster }
-    );
-    expect(bare.cells.map((c) => c.mine)).toEqual([true, true]);
+  it("keeps `busy` for the wait, which is the only thing that offers a way out", () => {
+    // `execQuorumOpen` blocks until somebody meshes or the wait expires, and
+    // `ToolkitShell` reads `busy` plus an `offering`/`waiting` phase as
+    // `waiting-peer` — the run-bar state carrying Cancel and Copy invite.
+    // Without the flag the bar sits `idle` through the one stretch where a
+    // person most needs a way out, so this is wiring and not bookkeeping.
+    const body = startBody();
+    expect(body).toMatch(/setBusy\(true\)/);
+    // Cleared in a `finally`, so a room that refuses to open does not leave the
+    // bar stuck in `waiting-peer` with a Cancel for an exchange that never
+    // existed.
+    expect(body).toMatch(/finally \{[\s\S]*setBusy\(false\)/);
+    expect(SHELL).toMatch(/nb\.busy &&\s*\(nb\.quorumState\.phase === "offering"/);
+    // And the sheet closes on the press. It is a modal — its overlay swallows
+    // every click on the notebook behind it — so a Start that left it up would
+    // hold the reader in front of a panel about a room that is already opening,
+    // with their own notebook unreachable behind it.
+    expect(body).toMatch(/setSheet\(null\)/);
   });
 
-  it("writes cells the notebook can still read back", () => {
-    // The shipped blocker, and the reason it was a blocker: `startSession`
-    // appends these cells and the notebook's `source` is `serializeRecipe` of
-    // what it holds. The audience is comma-joined, `serializeStep` did not
-    // quote a comma, and `to=` is positional — so the source came back as
-    // `quorum.offer 9F2A…,D772… key=$me` and the whole notebook stopped
-    // compiling with `Unexpected "," · Unexpected "<next fingerprint>"`. Every
-    // session did this; the run only surfaced it once it got far enough to
-    // matter.
-    //
-    // Compiling `sessionRecipe`'s own text was not enough to catch it — that
-    // always passed. The property is the *round trip*, because the text the
-    // user ends up holding is the serialized form, not the generated one.
+  it("unlocks the key the way the engine did, and not a second way", () => {
+    // `agent.unlock` went with the other cell — it existed to feed `key=$me`,
+    // and an `out` nothing reads is a slot with no consumer. The key still has
+    // to be opened, and the risk in moving that out of a cell is a *second*
+    // policy about what unlocking means. There is one: `execAgentUnlock`, then
+    // OpenPGP's own `decryptKey`, which is exactly the pair
+    // `resolveGpgPrivateKey` applies to `key=$slot`.
+    const OPS = read("../lib/toolkit/quorum-ops.js");
+    const at = OPS.indexOf("export async function openQuorumSession(");
+    expect(at, "quorum-ops exports no openQuorumSession").toBeGreaterThan(-1);
+    // Cut at a closing brace in column zero, matched newline-agnostically. A
+    // literal `"\n}\n"` was here and it silently read the *whole rest of the
+    // file*: these sources are checked out with CRLF endings, so the needle
+    // never matched, `indexOf` returned -1, and every assertion below was being
+    // asked of the module rather than of this function.
+    const fn = OPS.slice(at);
+    const end = /\r?\n\}\r?\n/.exec(fn);
+    expect(end, "openQuorumSession has no closing brace in column zero").toBeTruthy();
+    const body = fn.slice(0, end.index);
+    expect(body).toMatch(/execAgentUnlock/);
+    expect(body).toMatch(/execQuorumOpen\(/);
+    // The decrypt, and the condition it hangs off, spelled the way
+    // `resolveGpgPrivateKey` spells it. Both are asserted because either one
+    // alone is defeatable: a `decryptKey` behind a dead condition never runs,
+    // and a condition with nothing under it decides nothing. Nothing in this
+    // repo's browser fixtures uses a passphrase-protected key — they are all
+    // `protection: "device"` so the picker has a row that owes nothing — so no
+    // journey walks this branch, and the shape is what there is to hold.
+    expect(body).toMatch(/if \(!privateKey\.isDecrypted\(\)\)/);
+    expect(body).toMatch(/privateKey = await decryptKey\(\{/);
+    expect(body).toMatch(/\{ readPrivateKey, decryptKey \} = await import\("openpgp"\)/);
+    // The vault is not read directly here — `agent-ops.js` owns that, and a
+    // `listKeys` / `unlockVaultForUse` call in this function would be exactly
+    // the second opinion this test is about.
+    expect(body).not.toMatch(/unlockVaultForUse|listKeys/);
+  });
+
+  it("puts nobody's fingerprint in the notebook for having opened a room", () => {
+    // The disclosure this removes. `recipeLinkDiscloses` counts `@peer`
+    // headers and deliberately not `to=` params — a fingerprint in a `to=` is
+    // an ordinary public argument in `gpg.encrypt` and `hkp.get`. But
+    // `quorum.offer to="fpr,fpr,fpr"` *was* the room, written into text that
+    // travels in a `#r=` link, so the sheet counted one key while the link
+    // carried three. Asserted here as the thing no press can do any more.
+    expect(SHELL).not.toMatch(/quorum\.(offer|join) to=/);
+    expect(HOOK).not.toMatch(/quorum\.(offer|join) to=/);
+    const FLOW = read("../lib/toolkit/session-flow.js");
+    expect(FLOW).not.toMatch(/`quorum\.\$\{role\}/);
+  });
+
+  it("says the key is held for the session, not for a step", () => {
+    // What the removed `agent.unlock` cell used to say on screen, said where it
+    // is true for as long as it is true. A session signs the invite, every
+    // envelope, every attestation and every notebook proposal with this key —
+    // one cell marking the first of those read as though it marked all of them.
+    const held = START_OPENS.find((line) => /held for as long/.test(line));
+    expect(held, JSON.stringify(START_OPENS)).toBeTruthy();
+    expect(held).toMatch(/signs the invite/);
+    expect(held).toMatch(/attestation/);
+    // And it names why there are no cells rather than leaving their absence to
+    // be noticed. No remedy is offered: there is nothing here for the reader to
+    // do and nothing to undo, so naming one would be naming one that cannot be
+    // performed.
+    expect(START_OPENS.join(" ")).toMatch(/writes no cells/);
+    expect(START_OPENS.join(" ")).toMatch(/already open/);
+    // The third sentence answers "then where did the room go", and it has to say
+    // *digest*. `buildRunManifest` carries `audienceSha` and `peersSha` and
+    // domain-separates both precisely so a manifest is not admission to the
+    // room; copy promising that the manifest carries the audience would be this
+    // panel describing a document this product does not produce.
+    const kept = START_OPENS.find((line) => /manifest/.test(line));
+    expect(kept, JSON.stringify(START_OPENS)).toBeTruthy();
+    expect(kept).toMatch(/a digest of the audience/);
+    expect(kept).toMatch(/roster/);
+  });
+
+  it("still commits the room to the run record, with nothing read from the text", async () => {
+    // The counter-argument, tested rather than answered in prose: a recipe is
+    // meant to be a complete account, and "the room was opened this way" is
+    // part of that. It is — in the manifest, which is where it always actually
+    // lived. `handoffContext` builds one from `{source, roster, title}` and the
+    // roster is `roomRoster` over the *live exchange's* audience, so a notebook
+    // holding the two session cells and the same notebook without them commit
+    // to the same room.
+    const { roster } = roomRoster([ADA, GRACE], [], ADA);
+    const withCells = [
+      `@${ADA}`,
+      `agent.unlock ${ADA} | out $me`,
+      "",
+      `@${ADA}`,
+      `quorum.offer to="${[ADA, GRACE].sort().join(",")}" key=$me | out $session`,
+      "",
+      "random 32 | out $secret",
+    ].join("\n");
+    const a = await handoffContext({ source: withCells, me: ADA, roster, title: "t" });
+    const b = await handoffContext({
+      source: "random 32 | out $secret",
+      me: ADA,
+      roster,
+      title: "t",
+    });
+    expect(b.manifest.peersSha).toBe(a.manifest.peersSha);
+    expect(b.manifest.audienceSha).toBe(a.manifest.audienceSha);
+    expect(b.manifest.peers).toEqual(a.manifest.peers);
+    expect(b.manifest.peers).toEqual([ADA, GRACE].sort());
+    // Not vacuous: the notebook the room is committed *about* did change, and
+    // the digest covering the text says so. Were this equal too, the three
+    // comparisons above would be comparing one document with itself.
+    expect(b.manifest.recipeDigest).not.toBe(a.manifest.recipeDigest);
+    // And the audience digest is not the audience. `manifest.js` domain-separates
+    // it precisely so that holding a manifest is not admission to the room.
+    expect(a.manifest.audienceSha).toMatch(/^[0-9a-f]{64}$/);
+    expect(a.manifest.audienceSha).not.toContain(ADA.toLowerCase());
+  });
+
+  it("leaves the verbs writable by hand, comma-quoted and readable back", () => {
+    // Removing the appending is not removing the verbs, and this is the
+    // property that shipped as a blocker while the appending existed: the
+    // audience is comma-joined, `serializeStep` did not quote a comma, and
+    // `to=` is positional — so `quorum.offer to="9F2A…,D772…"` came back as
+    // `quorum.offer 9F2A…,D772… key=$me` and the notebook stopped compiling.
+    // Nothing writes that text for a person now, so the round trip is driven
+    // from text a person types, which is the only way one exists.
     for (const role of ["offer", "join"]) {
       for (const audience of [[ADA, GRACE], [ADA, GRACE, LIN]]) {
-        const first = compileRecipe(sessionRecipe({ audience, keyFingerprint: ADA, role }));
+        const typed = [
+          `agent.unlock ${ADA} | out $me`,
+          "",
+          `quorum.${role} to="${[...audience].sort().join(",")}" key=$me | out $session`,
+        ].join("\n");
+        const first = compileRecipe(typed);
         expect(first.validation.errors, `${role} ${audience.length}`).toEqual([]);
         const source = serializeRecipe({ chains: first.ast.chains });
         const second = compileRecipe(source);
@@ -448,7 +556,9 @@ describe("starting a session is a recipe, not a code path", () => {
           second.validation.errors.map((e) => e.message),
           `${role} with ${audience.length} members serialized to:\n${source}`
         ).toEqual([]);
-        // The audience has to survive as itself, not merely parse.
+        // The audience has to survive as itself, not merely parse: a notebook
+        // that compiles to the wrong room is worse than one that does not
+        // compile, because nothing complains.
         const quorumStep = second.ast.chains
           .flatMap((c) => c.steps || [])
           .find((s) => String(s.name).startsWith("quorum."));
@@ -472,23 +582,50 @@ describe("starting a session is a recipe, not a code path", () => {
       .toBeGreaterThan(0);
   });
 
-  it("writes quorum.join for the invited side", () => {
-    expect(
-      sessionRecipe({ audience: [ADA, GRACE], keyFingerprint: GRACE, role: "join" })
-    ).toContain("quorum.join");
+  it("plans a hand-written session cell on whoever is headed for it", () => {
+    // The `@peer` header on those cells is not deleted along with the thing
+    // that wrote them: somebody who types `agent.unlock` still gets `plan.js`'s
+    // `vault-locality` question, and answering it still makes the cell one
+    // machine's. That was `f990efd`'s fix and it belongs to the language rather
+    // than to the press that used to emit it.
+    const { roster } = roomRoster([ADA, GRACE], []);
+    const source = [
+      `@${ADA}`,
+      `agent.unlock ${ADA} | out $me`,
+      "",
+      `@${ADA}`,
+      `quorum.offer to="${[ADA, GRACE].sort().join(",")}" key=$me | out $session`,
+    ].join("\n");
+    const compiled = compileRecipe(source);
+    expect(compiled.validation.errors).toEqual([]);
+
+    const mine = planRun(compiled, { me: ADA, roster });
+    expect(mine.ok, JSON.stringify(mine.refusals)).toBe(true);
+    expect(mine.cells.map((c) => c.mine)).toEqual([true, true]);
+    expect(mine.asks.map((a) => a.reason)).not.toContain("vault-locality");
+
+    const theirs = planRun(compiled, { me: GRACE, roster });
+    expect(theirs.cells.map((c) => c.mine)).toEqual([false, false]);
+
+    // Not vacuous: unheaded, the same two cells are everybody's, which is what
+    // put "Key not found in vault" in front of the peer who adopted them.
+    const bare = planRun(
+      compileRecipe(
+        `agent.unlock ${ADA} | out $me\n\nquorum.offer to="${ADA},${GRACE}" key=$me | out $session`
+      ),
+      { me: GRACE, roster }
+    );
+    expect(bare.cells.map((c) => c.mine)).toEqual([true, true]);
   });
 
-  it("sorts the audience the way the room derivation does", async () => {
-    // The recipe's `to=` is what `execQuorumOpen` hands to `deriveRoomId`, and
-    // it canonicalises again — but a recipe whose text differed by order would
-    // be two spellings of one room in the notebook, in Source view, and in the
-    // receipt.
-    const text = sessionRecipe({ audience: [GRACE, ADA], keyFingerprint: ADA });
-    const to = text.match(/to="([^"]+)"/)[1].split(",");
-    expect(to).toEqual([ADA, GRACE].sort());
-    // Not vacuous: that list really is what names the room.
-    expect(await deriveRoomId(to, { relyingPartyId: "example.test" })).toBe(
-      await deriveRoomId([GRACE, ADA], { relyingPartyId: "example.test" })
+  it("still derives one room from either spelling of the audience", async () => {
+    // `execQuorumOpen` canonicalises what it is handed and `openQuorumSession`
+    // hands it `canonicalAudience` of the draft, so the order the reader built
+    // the list in cannot become a second room. This used to be asserted through
+    // the `to=` the recipe wrote; the property is the derivation's, not the
+    // text's, and it is asked of the derivation now.
+    expect(await deriveRoomId([GRACE, ADA], { relyingPartyId: "example.test" })).toBe(
+      await deriveRoomId([ADA, GRACE], { relyingPartyId: "example.test" })
     );
   });
 });
@@ -789,14 +926,16 @@ describe("naming a room is a picker, and the picker was already built", () => {
 });
 
 describe("the shell wires the flow to the real session", () => {
-  it("starts one by writing cells and running them", () => {
-    expect(SHELL).toMatch(/nb\.startSession\(\{/);
-    expect(HOOK).toMatch(/const text = sessionRecipe\(draft\)/);
-    // The run is deferred to an effect, because `runFrom` closes over the
-    // chains: calling it in the same handler that appended the cells would run
-    // the notebook as it was *before* the session cell existed.
-    expect(HOOK).toMatch(/setAutoRunFrom\(/);
-    expect(HOOK).toMatch(/if \(autoRunFrom == null\) return;[\s\S]{0,160}runFrom\(at\)/);
+  it("starts one by opening the room, and the sheet closes on the press", () => {
+    expect(SHELL).toMatch(/void nb\.startSession\(\{/);
+    expect(HOOK).toMatch(/await openQuorumSession\(\{/);
+    // This press used to append two cells and then need a deferred run to
+    // perform them — `runFrom` closes over the chains, so running in the same
+    // handler ran the notebook as it was before the append. Both halves of that
+    // device are gone with the cells, and their absence is asserted so that
+    // reintroducing the append cannot pass quietly.
+    expect(HOOK).not.toMatch(/setAutoRunFrom\(/);
+    expect(HOOK).not.toMatch(/autoRunFrom/);
   });
 
   it("builds the invite from the audience, never from the roster", () => {

@@ -61,7 +61,6 @@
 
 import { summarizeAttestation } from "./attest.js";
 import { canonicalAudience } from "../notebook/room.js";
-import { roomRoster } from "../notebook/roster.js";
 import { findFingerprints, findShortKeyIds } from "../pgp/verify-fpr.js";
 import { keyOwesPassphrase, keyPower, keyPowerReadout } from "./key-power.js";
 
@@ -552,80 +551,62 @@ export function startIssues(draft) {
 }
 
 /**
- * The cells that open a session.
+ * What pressing Start does, and what it deliberately does not write.
  *
- * Text, not a call into the transport. Everything else in this notebook is a
- * recipe you can read, save, share and re-run, and a session started by a
- * hidden code path would be the one thing on screen that is not reproducible —
- * the same argument `CeremonySheet` makes about owning sequence and wording but
- * never execution. What this returns is what a user could have typed, and what
- * Source view will show them afterwards.
+ * ## The two cells this replaced, and why they went
  *
- * `key=$me` rather than the fingerprint inline: `agent.unlock` is the step that
- * exports a private key into the run, and it is marked as such everywhere in
- * this app. Splitting it into its own cell keeps that mark where a reader
- * looks.
+ * Start used to *append* the session to the notebook: `agent.unlock <me> | out
+ * $me`, then `quorum.offer to="fpr,fpr,…" key=$me | out $session`, both placed
+ * on this machine, both then run. `sessionRecipe` composed that text and the
+ * argument for it was reproducibility — the session was cells a person could
+ * have typed, so nothing happened by a hidden code path.
  *
- * ## Both cells are placed on the person opening the session
+ * The text was typeable. The claim was still false, and the language itself
+ * says so: a run walks to the end of a notebook, so a run started anywhere
+ * above them reached `quorum.offer` for a room that was already open and
+ * `execQuorumOpen` refused it. The notebook a session left behind was the one
+ * notebook in this product that could not be run. Reproducible means *run it
+ * again and get the same thing*; a step that can only be performed once was
+ * evidence against the claim it was there to make. Three commits taught three
+ * other mechanisms to step around those cells — the header that stops them
+ * running on a peer's machine, the rule that stops them being offered back, the
+ * e2e that pins the run walking into them — and a record every reader has to be
+ * taught to skip is a record with no reader.
  *
- * `agent.unlock` reaches the vault of *whoever runs it*, and `plan.js` already
- * asks about exactly that: a cell running a vault op under no `@peer` header
- * raises `vault-locality` — "a fingerprint in a recipe does not say whose vault
- * holds it. Which peer runs this cell? Write `@peer` at the head of it." This
- * used to ship a cell that tripped its own product's question and then answered
- * it nowhere, and the cost was paid by whoever received the notebook: these
- * cells travel with it (`notebook-share.js`), so a peer who adopted a shared
- * notebook and pressed Run stopped at `agent.unlock <the sender's fingerprint>`
- * with "Key not found in vault" — asked to open a key that is, correctly, not
- * theirs. The `quorum.` cell is placed for the same reason one step on: it is
- * this machine entering the room, and re-entering a room somebody else is
- * already in is not a cell anybody else can perform.
+ * ## Where the room is written down instead
  *
- * So the header is written here, where the answer is known, and nothing about
- * how a notebook travels changes: both ends still hold *character-identical*
- * text, so every manifest and cell digest still meets, and the placement gate
- * that already declines a peer's cells declines these ones too. Stripping them
- * on the way out instead would break both halves of that — the two ends would
- * derive different manifests, and cell indices are the coordinate every offer
- * is addressed by, which a strip renumbers differently on each machine.
+ * In the run record, which is where it always actually was. `roomRoster` over
+ * the live exchange's audience is what `handoffContext` hands
+ * `buildRunManifest`, which digests it into `peers`, `peersSha` and
+ * `audienceSha` — none of which is ever derived by parsing recipe text. So
+ * *who was in the room* is still committed to every manifest, every offer and
+ * every attestation, and it is committed as a digest rather than as a
+ * comma-joined list of whole fingerprints inside text that travels in a `#r=`
+ * link. `manifest.js`'s `AUDIENCE_DOMAIN` note is the argument for that
+ * spelling; the notebook now agrees with it instead of contradicting it.
  *
- * The header is `roomRoster`'s answer for this key, which is now the key's own
- * fingerprint — so it is what every other browser in the room calls this
- * machine, with nothing carried between them to make it so. With no key of ours
- * in the audience `roomRoster` returns "" and no header is written: that is the
- * state `startIssues` refuses the press for, and a header naming nobody would be
- * a worse account of it than none.
+ * What the notebook goes on saying about the room is the `@peer` header on each
+ * cell — the part that differs per person, and the part `recipeLinkDiscloses`
+ * counts when it tells a reader what their link carries.
  *
- * It reads `roomRoster` rather than the fingerprint in `keyFingerprint`
- * directly, although the two are now the same forty characters. The question
- * being asked is "what does the room call me", and answering it from the
- * roster is what keeps `sessionRecipe` writing whatever `planRun` will bind
- * against — including the empty answer for a key the audience does not contain,
- * which a direct read could not produce.
+ * ## What is owed in exchange, and is said here
  *
- * A hand-typed `agent.unlock` is untouched by all of this. It is the author's
- * sentence about their own notebook: solo, it runs here as it always has;
- * placed, `planRun` puts the same `vault-locality` question to them and the
- * gate carries their answer. Guessing at one by matching the fingerprint would
- * be this module deciding what somebody else's cell meant.
+ * The private key. `agent.unlock` marked one exposure in a notebook, and the
+ * session holds that key for as long as it is open — signing the invite, every
+ * envelope, every attestation and every notebook proposal. A single cell
+ * marking the first of those read as though it marked all of them. So the
+ * sentence moves to the panel where the key is chosen, which is the surface
+ * that is true for the whole session rather than for one step of it.
  *
- * @param {{ audience: string[], keyFingerprint: string, role?: "offer"|"join" }} draft
- * @returns {string}
+ * Exported as sentences rather than written into the widget for this module's
+ * founding reason: prose inside a component is prose no test can pin.
+ * @type {readonly string[]}
  */
-export function sessionRecipe(draft) {
-  const audience = canonicalAudience(draft?.audience || []);
-  const key = String(draft?.keyFingerprint || "")
-    .replace(/\s+/g, "")
-    .toUpperCase();
-  const role = draft?.role === "join" ? "join" : "offer";
-  const { me } = roomRoster(audience, [], key);
-  const header = me ? `@${me}\n` : "";
-  return [
-    `${header}agent.unlock ${key} | out $me`,
-    "",
-    `${header}quorum.${role} to="${audience.join(",")}" key=$me | out $session`,
-  ].join("\n");
-}
+export const START_OPENS = Object.freeze([
+  "Start opens the room. It writes no cells — your notebook is your work, and opening a room is not a step anybody can perform twice: run it again and it refuses, because the room it names is already open.",
+  "This key is held for as long as the session is open. It signs the invite, every envelope after it, every attestation you make and every notebook you share — not one step at the top of the page.",
+  "Who is in the room is still committed to what you can prove afterwards: a run's manifest carries a digest of the audience and of the roster it binds. It is kept out of the notebook's text so that sharing the recipe does not hand over the room.",
+]);
 
 /**
  * Pull an audience out of whatever was pasted.

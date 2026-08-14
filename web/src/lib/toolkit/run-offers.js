@@ -52,14 +52,18 @@
  * apart constantly, and when they do the queue tells a second, wrong story about
  * how a value arrives.
  *
- * Two of them, both watched happening. A joiner who adopts a creator's notebook
- * adopts the creator's own session cells with it (`sessionRecipe` writes
- * `agent.unlock` and `quorum.offer` under the opener's header), so the joiner's
- * run declines them and offers them *back* to the creator, who ran them half an
- * hour ago to open the room the offer travels over. And in a ceremony the
- * holder's `quorum.recv` cell is placed on the holder, so the dealer's run
- * declines it and offers it to them — an offer to run a cell whose entire job is
- * to receive something the dealer is sending by another path.
+ * Two of them, both watched happening. A joiner who adopted a creator's notebook
+ * adopted the creator's own session cells with it — Start appended `agent.unlock`
+ * and `quorum.offer` under the opener's header — so the joiner's run declined
+ * them and offered them *back* to the creator, who ran them half an hour ago to
+ * open the room the offer travels over. Start writes no cells now
+ * (`START_OPENS`), so that particular pair can no longer be adopted by anybody;
+ * the case is kept here because it is the clearest statement of what the rule is
+ * for, and because a hand-written `quorum.offer` reaches the same shape. The
+ * second one is live and always was: in a ceremony the holder's `quorum.recv`
+ * cell is placed on the holder, so the dealer's run declines it and offers it to
+ * them — an offer to run a cell whose entire job is to receive something the
+ * dealer is sending by another path.
  *
  * So the rule is **this machine has to be on one end of the cell**:
  *

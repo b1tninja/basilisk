@@ -11,6 +11,7 @@ import {
   getLiveSession,
   getProposedNotebook,
   clearProposedNotebook,
+  openQuorumSession,
   rotateQuorumRoom,
   signSessionDocument,
 } from "../lib/toolkit/quorum-ops.js";
@@ -24,7 +25,6 @@ import {
   buildAttestation,
   manifestAttestedBy,
 } from "../lib/toolkit/attest.js";
-import { sessionRecipe } from "../lib/toolkit/session-flow.js";
 import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
 import { labelForFingerprint, planRun } from "../lib/toolkit/plan.js";
 import { roomRoster } from "../lib/notebook/roster.js";
@@ -1816,7 +1816,7 @@ export function useNotebook() {
         setRunningCell(null);
         // The run is over however it got here, and `skippedRef` now holds what
         // it declined. Handing those over is asked for as *state* rather than
-        // done on this line, for `autoRunFrom`'s reason one screen down:
+        // done on this line, for `finishedRun`'s reason one screen down:
         // `offerCell` reads `source`, `title` and the roster through closures
         // this callback does not depend on, so calling it here would offer the
         // notebook as it stood when `runFrom` was built. The effect below fires
@@ -2087,66 +2087,61 @@ export function useNotebook() {
   }, [clearSensitive]);
 
   /**
-   * A run this hook asked for itself, once the state it depends on has landed.
+   * Open a shared session, leaving the notebook alone.
    *
-   * `runFrom` closes over `chains` and `compiled`, so calling it in the same
-   * handler that just called `setChains` would run the notebook as it was
-   * *before* the cells were added — which for `startSession` means running
-   * everything except the session it was pressed to open. The effect below
-   * fires after the re-render, when `runFrom` is the one built from the new
-   * chains.
-   */
-  const [autoRunFrom, setAutoRunFrom] = useState<number | null>(null);
-
-  /**
-   * Open a shared session by writing the cells that open one.
+   * **It used to append two cells and run them** — `agent.unlock <me> | out
+   * $me`, then `quorum.offer`/`quorum.join` over the audience — on the argument
+   * that a session started by a hidden code path would be the one thing in this
+   * app that happened without a recipe saying so. `session-flow.js`'s
+   * `START_OPENS` carries the argument for why that stopped: a run walks to the
+   * end of the notebook, so the notebook a session left behind was the only one
+   * here that could not be run, and "reproducible" is exactly the property a
+   * once-only step does not have.
    *
-   * Not a call into the transport. `sessionRecipe` returns the same two cells a
-   * person could have typed — `agent.unlock` into `$me`, then
-   * `quorum.offer`/`quorum.join` over the audience — and this appends and runs
-   * them, so the session is in Source view, in the saved notebook and in the
-   * receipt like every other step. A session started by a hidden code path
-   * would be the one thing in this app that happened without a recipe saying
-   * so.
+   * `openQuorumSession` is the whole of what replaced them, and it makes the
+   * same two calls the engine made — the vault unlock, then `execQuorumOpen` —
+   * so there is no second opinion anywhere about what opening a key means.
    *
-   * `agent.unlock` stays its own cell rather than being folded in. It is the
-   * step that exports a private key into the run and is marked as such
-   * throughout — `exposure: "exports-secret"`, the warn underline on the chip,
-   * the exposure trace across the whole notebook — and a session that hid it
-   * inside a `key=` parameter would erase that mark at exactly the moment it
-   * matters.
+   * **`busy` is held for the duration, and that is not bookkeeping.** The room
+   * blocks until somebody meshes or the wait expires, and `busy` plus a
+   * `waiting`/`offering` phase is what `ToolkitShell` reads as `waiting-peer`:
+   * the state with Cancel and Copy invite on it. Without it the run bar would
+   * sit idle through the one stretch where a person most needs a way out, and
+   * `cancelQuorum` — the event that bar's Cancel dispatches — is what ends the
+   * await.
    */
   const startSession = useCallback(
-    (draft: { audience: string[]; keyFingerprint: string; role?: "offer" | "join" }) => {
-      const text = sessionRecipe(draft);
-      const { ast } = compileRecipe(text);
-      if (!ast) return false;
-      const added: RecipeChain[] = ast.chains?.length
-        ? ast.chains
-        : [{ steps: ast.steps || [] }];
-      setChains((prev) => {
-        // An untouched notebook is one empty cell, and appending after it would
-        // leave a blank cell above the session for the rest of the notebook's
-        // life. Every other loader in this hook treats that cell as a placeholder.
-        const base =
-          prev.length === 1 && !(prev[0].steps || []).length ? [] : prev;
-        const next = [...base, ...added];
-        setFocusedCell(next.length - 1);
-        setAutoRunFrom(next.length - added.length);
-        return next;
-      });
+    async (draft: { audience: string[]; keyFingerprint: string; role?: "offer" | "join" }) => {
       setSheet(null);
-      return true;
+      setRunError("");
+      setBusy(true);
+      setRunStatus(
+        draft.role === "join" ? "Joining the room…" : "Opening the room…"
+      );
+      try {
+        await openQuorumSession({
+          audience: draft.audience,
+          keyFingerprint: draft.keyFingerprint,
+          role: draft.role,
+          // The same field `agent.unlock` read when this was a cell. An unbound
+          // passphrase is refused before the press by `startIssues`, so an
+          // empty string here means the key does not owe one.
+          passphrase: gpgPassphrase,
+        });
+        return true;
+      } catch (err) {
+        // The transport's own sentence. It names the room, the audience or the
+        // key it refused, and paraphrasing it here would be this hook giving a
+        // second account of a failure it did not observe.
+        setRunError(err instanceof Error ? err.message : String(err));
+        return false;
+      } finally {
+        setBusy(false);
+        setRunStatus("");
+      }
     },
-    []
+    [gpgPassphrase]
   );
-
-  useEffect(() => {
-    if (autoRunFrom == null) return;
-    const at = autoRunFrom;
-    setAutoRunFrom(null);
-    void runFrom(at);
-  }, [autoRunFrom, runFrom]);
 
   /**
    * Leave somebody behind by moving the room.
@@ -2379,8 +2374,9 @@ export function useNotebook() {
    *
    * State rather than a ref precisely because it must cause a render: it is the
    * hop that gets `handOffPlaced` out of `runFrom`'s closure and into one built
-   * from the notebook as it now stands. `autoRunFrom` above is the same device
-   * for the same hazard.
+   * from the notebook as it now stands. `startSession` used to hold a second
+   * one of these — it appended cells and then had to run the notebook those
+   * cells were in — and it is gone with them; this is the last of the device.
    */
   const [finishedRun, setFinishedRun] = useState<number | null>(null);
 

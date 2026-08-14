@@ -41,19 +41,25 @@
  *    written to any slot, equal to a digest computed on the holder's machine of
  *    what the holder put back together out of two mnemonics that crossed a room.
  *
- * ## What the run bar does at the end, and why it is asserted rather than dodged
+ * ## What the run does at the end, and what that used to cost
  *
- * `startSession` **appends** its two cells, so after Start the notebook is the
- * ceremony followed by `agent.unlock` and `quorum.offer`. A run always walks to
- * the end of the notebook, so a run started at the ceremony's first cell reaches
- * a `quorum.offer` for an exchange that is already live, and `execQuorumOpen`
- * throws rather than opening a second one. That is a pre-existing property of
- * "Start appends" meeting "Run walks to the end" — `placed-journey` sidesteps it
- * by starting its run *after* the session cells — and the honest thing to do
- * with it here is to pin it: step 5 asserts the ceremony's own cells all
- * finished, and step 7 asserts what the last two cells did and said. A future
- * change that quietly makes a second `quorum.offer` succeed would be opening a
- * second exchange behind the reader's back, and this is where it would show.
+ * `startSession` **appended** two cells — `agent.unlock` and `quorum.offer` —
+ * so after Start the notebook was the ceremony followed by the session. A run
+ * always walks to the end of the notebook, so a run started at the ceremony's
+ * first cell reached a `quorum.offer` for an exchange that was already live and
+ * `execQuorumOpen` threw. This file pinned that as a wart: step 7 asserted a
+ * cell in `error` at the bottom of a ceremony that had otherwise succeeded, and
+ * `placed-journey` sidestepped the same thing by starting its run *after* the
+ * session cells.
+ *
+ * It is not a wart any more, because the cells are gone (`START_OPENS` carries
+ * the argument). Step 7 asserts the property that replaced it, which is the one
+ * a person actually wanted: **the notebook the ceremony wrote runs from the top
+ * and every cell in it is the ceremony's.** The refusal itself has not been
+ * weakened and has not moved — `execQuorumOpen` still declines a second
+ * exchange, `quorum-lifecycle.test.js` holds that assertion, and step 7 checks
+ * here that exactly one exchange is live and still verified on both ends. A
+ * change that let a second one open behind the reader's back would still show.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -399,16 +405,19 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
 
   it("carries the generated notebook to the holder, who wrote none of it", async () => {
     const before = await readNotebookSource(holder);
-    // Two cells, both the holder's own, and not one line of the ceremony. This
-    // is the assertion that the holder did not generate their own copy: the
-    // ceremony they end up running has to have arrived.
-    expect(before).toContain("quorum.join");
-    expect(before).not.toContain("sss.split");
-    expect(before).not.toContain(`@${L.dealer}`);
+    // **Nothing at all**, which is the assertion pressing Join used to make
+    // impossible: it appended `agent.unlock` and `quorum.join`, so a joiner was
+    // never empty and this line read `expect(before).toContain("quorum.join")`.
+    // The holder has not generated their own copy of anything — the ceremony
+    // they end up running has to have arrived over the wire.
+    expect(before).toBe("");
 
     sharedSource = await readNotebookSource(dealer);
-    expect(sharedSource).toContain(ceremonySource);
-    expect(sharedSource).toContain("quorum.offer");
+    // The dealer's notebook is the ceremony and only the ceremony. Byte for
+    // byte with what step 1 read off the same screen, so Start added nothing to
+    // it between then and now.
+    expect(sharedSource).toBe(ceremonySource);
+    expect(sharedSource).not.toContain("quorum.offer");
 
     await trayTab(dealer, "Connections");
     await tray(dealer).getByRole("button", { name: "Share this notebook" }).click();
@@ -418,12 +427,18 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
       })
       .toMatch(/signed and shared with 1 peer/);
 
-    const proposed = holder.locator("[data-notebook-proposed]");
-    await proposed.waitFor({ state: "visible", timeout: 30000 });
-    await holder.getByRole("button", { name: "Adopt their notebook" }).click();
+    // **No press.** `decideProposal` adopts without asking when there is no
+    // local work to lose, and an empty notebook is exactly that state — so the
+    // holder's first notebook arrives rather than being offered. While Start
+    // appended cells this could not happen to anybody, and the question came up
+    // for a notebook the reader had never written a line of.
     await expect
-      .poll(async () => await readNotebookSource(holder), { timeout: 20000 })
+      .poll(async () => await readNotebookSource(holder), { timeout: 30000 })
       .toBe(sharedSource);
+    expect(
+      await holder.getByRole("button", { name: "Adopt their notebook" }).count(),
+      "the holder was asked about a notebook they had no work to lose to"
+    ).toBe(0);
     // Byte for byte, which is what makes the run that follows a reproducible
     // build rather than two machines agreeing to agree. The generator produced
     // canonical text, so nothing was re-spelled on the way.
@@ -447,7 +462,7 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     // diagnosed by what the *other* cells did, and six separate `expect`s
     // report only the first.
     const dealerCells = {};
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 5; i++) {
       dealerCells[i] = `${await cellStatus(dealer, i)}${
         (await cellErrors(dealer, i)) ? ` — ${await cellErrors(dealer, i)}` : ""
       }`;
@@ -532,23 +547,32 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     expect(await ceremonySlots(dealer)).not.toContain("secret");
   });
 
-  /* ── 7. what the run does when it walks into the session's own cells ─────── */
+  /* ── 7. the notebook is the ceremony, and the run reaches its end ────────── */
 
-  it("refuses to open a second exchange, and says which room is already live", async () => {
-    // `startSession` appends, and a run walks to the end — so the dealer's run
-    // in step 4 reached `quorum.offer` for a room that was already open. This is
-    // pinned rather than dodged: the ceremony's own six cells are asserted above
-    // to have all finished, and what the two trailing cells did is asserted
-    // here. A change that let a second `quorum.offer` succeed would be opening a
-    // second exchange behind the reader's back.
-    expect(await cellStatus(dealer, 6)).toBe("error");
-    const said = await cellErrors(dealer, 6);
-    expect(said).toContain("already live");
-    // It names the room rather than saying "an error occurred", and it names a
-    // remedy that can be performed — `quorum.close` is a verb in this language.
-    expect(said).toContain("quorum.close");
-    // And it changed nothing: the exchange the ceremony ran over is still the
-    // one that was open, still verified, on both ends.
+  it("holds only the ceremony, all of which ran, and one live exchange", async () => {
+    // **This step used to assert an error.** `startSession` appended, a run
+    // walks to the end, so the dealer's run in step 4 reached `quorum.offer`
+    // for a room that was already open and cell 6 finished in `error` — pinned
+    // here as a wart of "Start appends" meeting "Run walks to the end". Start
+    // writes no cells now, and the property that replaced the wart is the one
+    // the reader wanted: the notebook is five cells, they are the ceremony's
+    // five, and the run that walked to the end of it walked into nothing else.
+    const source = await readNotebookSource(dealer);
+    expect(source).toBe(ceremonySource);
+    expect(source.split(/\n\s*\n+/)).toHaveLength(5);
+    expect(await dealer.locator("article").count()).toBe(5);
+    // Every cell of it settled — `ok` on this machine's, `declined` on the
+    // holder's — and none of them in `error`. Read as a map so a failure names
+    // every cell at once.
+    const settled = {};
+    for (let i = 0; i < 5; i++) settled[i] = await cellStatus(dealer, i);
+    expect(Object.values(settled), JSON.stringify(settled)).not.toContain("error");
+
+    // The refusal itself is not weakened and has not moved: `execQuorumOpen`
+    // still declines a second exchange, and `quorum-lifecycle.test.js` is where
+    // that sentence is pinned. What is checked here is the consequence a
+    // browser can see — exactly one exchange, still verified, on both ends. A
+    // change that opened a second one behind the reader's back would show.
     for (const page of [dealer, holder]) {
       await trayTab(page, "Connections");
       expect(await tray(page).locator('[data-verified="1"]').count()).toBe(1);

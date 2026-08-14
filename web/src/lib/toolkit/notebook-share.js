@@ -337,18 +337,20 @@ export function sameNotebook(a, b) {
  *   reassuring, not something to decide.
  * - **`adopt`** — take it without asking. Two states reach this, and both are
  *   states where there is no local work to lose. *Nothing here at all* is one,
- *   and the reading of it in this comment was wrong: it was written as "the
- *   joiner's case and the entire reason this document exists", and it is not
- *   the joiner's case, because a joiner is never empty. Pressing Join runs
- *   `startSession`, which appends `agent.unlock` and `quorum.join` to the
- *   notebook *before* the exchange it opens can carry anything — and a proposal
- *   can only arrive over an exchange. So the shell reaches this branch by one
- *   route only: a notebook emptied by hand while a session is already live.
- *   The rule is still the right rule for that state — an empty notebook has no
- *   work to lose — and the argument for it is the smaller one, not the founding
- *   one. What the founding argument actually justified is the *document*: until
- *   it existed nobody could give a joiner the text, so every offer was refused
- *   `unknown-manifest` against a manifest derived from two session cells.
+ *   and it **is** the joiner's ordinary case again. This comment has now been
+ *   wrong in both directions, which is worth recording. It first said "the
+ *   joiner's case and the entire reason this document exists"; that became
+ *   false when Start appended `agent.unlock` and `quorum.join` before the
+ *   exchange could carry anything, so a joiner was never empty and the only
+ *   route here was a notebook emptied by hand. Start writes no cells now — see
+ *   `session-flow.js`'s `START_OPENS` — so somebody who opens an invite link
+ *   and presses Join is holding an empty notebook, and the creator's first
+ *   share lands in it without a press. That is the right outcome and it is the
+ *   *same* rule, unchanged: an empty notebook has no work to lose. What the
+ *   founding argument actually justified is the *document*: until it existed
+ *   nobody could give a joiner the text, so every offer was refused
+ *   `unknown-manifest` against a manifest derived from a notebook the two ends
+ *   did not share.
  *   *Here, and untouched since this same peer's last proposal* is the second: a
  *   room where one person is driving should not need a press per revision, and
  *   what is being protected is the local user's own work, of which there is

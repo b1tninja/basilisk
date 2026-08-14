@@ -884,6 +884,94 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
   };
 }
 
+/**
+ * Open the room for a key the vault holds — the door Start presses.
+ *
+ * ## Why the shell opens a room instead of writing two cells
+ *
+ * It used to write them. `sessionRecipe` appended `agent.unlock <me> | out $me`
+ * and `quorum.offer to="…" key=$me | out $session` to the notebook and ran
+ * them, and the argument was reproducibility: the session was text a person
+ * could have typed, so nothing happened by a hidden code path.
+ *
+ * The text was typeable and the claim was still false, because the notebook
+ * those cells left behind is the one notebook in this product that cannot be
+ * run. A run walks to the end, reaches the `quorum.` cell, and the guard at the
+ * top of `execQuorumOpen` refuses it — the room it names is already open. Every
+ * other verb in this language gives you the same answer the second time you
+ * ask; these two gave you an error, and the error was the honest one.
+ * Reproducible means "run it again and get the same thing", so a step that
+ * could only ever be run once was evidence against the claim it was there to
+ * demonstrate.
+ *
+ * The room is not lost by leaving the text. It reaches the run record from the
+ * live exchange and never from recipe text: `roomRoster` over the audience
+ * below is what `handoffContext` digests into `peers`, `peersSha` and
+ * `audienceSha`, so a manifest still commits to who was in the room, and still
+ * does it as a digest rather than as a comma-joined list in a URL. What the
+ * notebook keeps saying is the `@peer` header on each cell, which is the part a
+ * reader needs and the part that differs per person.
+ *
+ * ## Why the unlock is here and not a second key path
+ *
+ * `agent.unlock` went with it, because it existed to feed `key=$me` and an
+ * `out` nothing reads is a slot with no consumer. So the key has to be opened
+ * somewhere, and this does it with the *same* two calls the engine makes —
+ * `execAgentUnlock`, then OpenPGP's own `decryptKey` under the key passphrase —
+ * rather than a second policy about what unlocking means. `startIssues` refuses
+ * the press before it happens when that passphrase is owed and unbound, which
+ * is where a person can still do something about it.
+ *
+ * The exposure the cell used to mark is not hidden by its absence: the session
+ * holds this key for as long as it is open and signs the invite, every
+ * envelope, every attestation and every notebook proposal with it. One cell
+ * marking the first of those read as though it marked all of them. It is the
+ * session panel that says so now, because the session is the thing that holds
+ * the key.
+ *
+ * @param {{ audience: string[], keyFingerprint: string,
+ *   role?: "offer"|"join", passphrase?: string,
+ *   ice?: RTCIceServer[]|null, wait?: number }} spec
+ * @returns {Promise<*>} `execQuorumOpen`'s own session handle, so a caller that
+ *   wants the summary reads one answer
+ */
+export async function openQuorumSession(spec) {
+  const audience = canonicalAudience(spec?.audience || []);
+  const fpr = String(spec?.keyFingerprint || "").replace(/\s+/g, "").toUpperCase();
+  const role = spec?.role === "join" ? "joiner" : "creator";
+  const { execAgentUnlock } = await import("./agent-ops.js");
+  const unlocked = await execAgentUnlock(
+    { fpr },
+    { inputs: { gpg: { passphrase: String(spec?.passphrase || "") } } }
+  );
+  const armored = String(unlocked?.data ?? "");
+  if (!armored.includes("BEGIN PGP")) {
+    // Reached by choosing an ssh or raw key, which `sessionKeyChoices` filters
+    // out of the picker — so this is the state where the filter and the vault
+    // disagree, and it says which of the two is being believed.
+    throw new Error(
+      "quorum: that key is not an OpenPGP key, and a session signs an OpenPGP invite. Choose a PGP key in the Keys tray."
+    );
+  }
+  const { readPrivateKey, decryptKey } = await import("openpgp");
+  let privateKey = await readPrivateKey({ armoredKey: armored });
+  if (!privateKey.isDecrypted()) {
+    privateKey = await decryptKey({
+      privateKey,
+      passphrase: String(spec?.passphrase || ""),
+    });
+  }
+  return execQuorumOpen(
+    {
+      to: audience.join(","),
+      ...(spec?.wait ? { wait: spec.wait } : {}),
+    },
+    privateKey,
+    spec?.ice || null,
+    role
+  );
+}
+
 function quorumHost() {
   try {
     return typeof location !== "undefined" ? location.hostname : "local";

@@ -59,9 +59,10 @@
  * ## What the ICE list is, and why it is not `[]`
  *
  * `quorum-key-confirmation.e2e.js` passes `iceServers: []` because it constructs
- * the session itself. This one cannot: the session is opened by a `quorum.offer`
- * cell, and `engine.js` passes `null` when no `ice=` param is written, which the
- * session reads as "use the shipped defaults". So this run gathers against the
+ * the session itself. This one cannot: the session is opened by pressing Start,
+ * and `openQuorumSession` passes `null` for the ICE config exactly as `engine.js`
+ * does for a `quorum.offer` cell with no `ice=` param — which the session reads
+ * as "use the shipped defaults". So this run gathers against the
  * shipped STUN servers exactly as a deployment does. The connection that
  * completes is still made of host candidates on the loopback interface — that is
  * what two contexts of one browser have — and a machine with no route to those
@@ -85,14 +86,16 @@
  *    the new cells: `loadRecipeText` replaced `chains` and told the kernel
  *    nothing. Fixed: it clears the per-cell buckets of the notebook it is
  *    closing. Step 6.
- * 4. **The notebook that travels carries the sender's session cells**, so the
+ * 4. **The notebook that travels carried the sender's session cells**, so the
  *    receiver's Run stopped at `agent.unlock <the sender's fingerprint>` with
- *    "Key not found in vault". Fixed in `sessionRecipe`, which places both
- *    cells on the peer opening the session — `agent.unlock` reaches the vault
- *    of whoever runs it and `plan.js` has always asked whose vault that is.
- *    Nothing about the transport changed: both ends still hold
- *    character-identical text, and the gate that declines a peer's cells
- *    declines these. Steps 4 and 6.
+ *    "Key not found in vault". It was fixed twice. First by placing both cells
+ *    on the peer opening the session — `agent.unlock` reaches the vault of
+ *    whoever runs it and `plan.js` has always asked whose vault that is — which
+ *    made the cells survivable at the other end. Then by not writing them:
+ *    Start opens the room and appends nothing (`START_OPENS`), so there is no
+ *    longer a cell in anybody's notebook that only one machine can perform.
+ *    Steps 4 and 6 assert the absence, which is a narrower thing to keep true
+ *    than a header on a travelling cell.
  *
  * A fifth, which the accept in step 6 now shows: `acceptHandoff` registered into
  * the kernel and bumped `sessionTick`, while `slotMetas` is memoised on
@@ -266,13 +269,13 @@ async function assignCell(page, i, label, { publish = false } = {}) {
  * Which of the notebook's three answers this browser is holding, as the Slots
  * tab prints them.
  *
- * Filtered to `seed`/`b64`/`done` rather than reported whole, and the filter is
- * the point rather than tidiness: pressing Start or Join runs `agent.unlock` and
- * `quorum.offer`, which register `$me` and `$session` on both machines. Those
- * are the session's own slots and say nothing about who ran which cell. Every
- * assertion below is about *where a value was computed*, so the list has to be
- * the values the notebook computes and nothing else — otherwise "the creator
- * holds two slots" would be true before the journey started.
+ * Filtered to `seed`/`b64`/`done` rather than reported whole. It used to be
+ * load-bearing: pressing Start or Join ran `agent.unlock` and `quorum.offer`,
+ * which registered `$me` and `$session` on both machines, so "the creator holds
+ * two slots" was true before the journey started. Start registers nothing now,
+ * and the filter stays because the ceremony half of this file adds `$set` and
+ * `$share` — every assertion below is about *where a value was computed*, so
+ * the list has to be the three values the notebook computes and nothing else.
  */
 async function answerSlots(page) {
   await trayTab(page, "Slots");
@@ -354,12 +357,15 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
   /** What the creator composed, read from the creator's own Source view. */
   let creatorSource = "";
   /**
-   * The creator's notebook at the moment Share is pressed, which is not what
-   * they composed: pressing Start *appends the two cells that open a session* —
-   * `agent.unlock` and `quorum.offer` — because a session that happened without
-   * a recipe saying so would be the one thing in this app that did. So the text
-   * that travels is read again, from the creator's own Source view, right before
-   * it is sent.
+   * The creator's notebook at the moment Share is pressed.
+   *
+   * It used to differ from what they composed — Start *appended the two cells
+   * that open a session* — and this variable existed because a test comparing
+   * the two ends against a string written down before the press would have been
+   * comparing them against a notebook neither of them held. Start appends
+   * nothing now, so the two are equal and step 4 asserts that equality rather
+   * than assuming it. Still read from the creator's own Source view right before
+   * it is sent, because "what travels is what is on screen" is the claim.
    */
   let sharedSource = "";
 
@@ -555,7 +561,8 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     await expect.poll(async () => await start.isEnabled(), { timeout: 15000 }).toBe(true);
     await start.click();
 
-    // `quorum.offer` blocks until somebody joins, so the run bar sitting in
+    // Opening the room blocks until somebody joins — `startSession` holds `busy`
+    // for the whole of it — so the run bar sitting in
     // `waiting-peer` *is* the session being open with nobody in it. This is the
     // state `fb178e4` reported as a dead end and made survivable; the joiner has
     // not been opened yet, so the creator is genuinely first.
@@ -614,8 +621,10 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       room.audience.length
     );
 
-    // Empty, and this is the last moment it is: pressing Join writes the two
-    // session cells into it. See step 4.
+    // Empty, and it stays empty: pressing Join opens the room and writes
+    // nothing. This line used to be captioned "the last moment it is" — Join
+    // appended two cells — and step 4 now asserts the same emptiness *after*
+    // the press, which is the assertion that had no way to exist before.
     //
     // The sheet is dismissed to read this, and put back the way it was reached:
     // it is a modal, so its overlay swallows every click on the notebook behind
@@ -658,24 +667,21 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
   /* ── 4. the notebook itself travels ─────────────────────────────────────── */
 
   it("carries the notebook to the joiner, who had none", async () => {
-    // What the joiner is holding before anything is shared: the two cells
-    // pressing Join wrote, and not one line of the creator's work.
+    // What the joiner is holding after pressing Join and before anything is
+    // shared: **nothing at all**. This block used to assert the two cells Join
+    // wrote and that both were headed on this browser — the fix that made them
+    // survivable in somebody else's notebook. They are not written now, so the
+    // question of whose vault a travelling cell asks for does not arise from
+    // this press, and the emptiness is the stronger statement of the same
+    // thing.
     const before = await readNotebookSource(joiner);
-    expect(before).toContain("quorum.join");
+    expect(before, "pressing Join put cells in the joiner's notebook").toBe("");
+    // Belt and braces on the two the press used to write, named, so a
+    // reintroduction cannot pass as "the notebook grew for some other reason".
+    expect(before).not.toContain("quorum.join");
+    expect(before).not.toContain("agent.unlock");
     expect(before).not.toContain("decode hex");
-    // Their own two cells are placed on *them*, which is the Join end of the
-    // same fix the creator's end gets below — the label is this browser's, so
-    // whoever ends up holding this text can read whose vault it asks for.
-    for (const c of before.split(/\n\s*\n+/)) {
-      expect(c.trim().split("\n")[0]).toBe(`@${L.joiner}`);
-    }
-    // And not one of the creator's, which is what this line has always been
-    // about. It used to say `@${L.joiner}` — the header the creator wrote on the
-    // cell they placed here — and that string is now also the joiner's own two
-    // cells, so it is asked as the two things it meant: no cell of the creator's
-    // is here, and nothing here publishes.
     expect(before).not.toContain(`@${L.creator}`);
-    expect(before).not.toMatch(new RegExp(`^@${L.joiner} publish$`, "m"));
     await trayTab(joiner, "Connections");
     expect(
       await joiner.locator("[data-notebook-proposed]").count(),
@@ -683,27 +689,30 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     ).toBe(0);
 
     // What the creator is actually about to send, read from their own Source
-    // view rather than remembered from step 1: Start appended two cells, and a
-    // test comparing the two ends against a string it wrote down before that
-    // would be comparing them against a notebook neither of them holds.
+    // view rather than remembered from step 1. This used to be a `toContain`
+    // because Start appended two cells to what they composed; it is an equality
+    // now, which is the assertion that Start added nothing between step 1 and
+    // this line.
     sharedSource = await readNotebookSource(creator);
-    expect(sharedSource).toContain(creatorSource);
-    expect(sharedSource).toContain("quorum.offer");
-    // And those two cells are placed on the creator, by the creator's own
-    // label, which is what makes them survivable at the other end. This is the
-    // whole of the fix for the blocker: they still travel — a session that
-    // happened without a recipe saying so would be the one thing in this app
-    // that did — and the machine that adopts them can now read who they belong
-    // to instead of being asked to unlock a key it has never held.
+    expect(sharedSource, "Start changed the creator's notebook").toBe(creatorSource);
+    // The three cells they typed, and nothing the session put there. What used
+    // to be asserted here — that Start's two cells were headed on the creator,
+    // so the machine adopting them could read whose vault they asked for — is
+    // no longer a property of anything, because there is nothing to head.
     const shared = sharedSource.split(/\n\s*\n+/).map((c) => c.trim());
-    const unlock = shared.find((c) => c.includes("agent.unlock"));
-    const opens = shared.find((c) => c.includes("quorum.offer"));
-    expect(unlock, "Start wrote no agent.unlock cell").toBeTruthy();
-    expect(unlock.split("\n")[0]).toBe(`@${L.creator}`);
-    expect(opens.split("\n")[0]).toBe(`@${L.creator}`);
-    // Never `publish`. `$me` is an unlocked private key and the header is the
-    // thing that would let it out of this machine.
-    expect(unlock).not.toContain("publish");
+    expect(shared).toHaveLength(3);
+    expect(sharedSource).not.toContain("quorum.offer");
+    expect(sharedSource).not.toContain("agent.unlock");
+    // And the room is not written down in it. `$me` was an unlocked private key
+    // and `to=` was the whole audience; neither is in the text a `#r=` link
+    // would carry, and the only fingerprints left are the `@peer` headers a
+    // reader chose, which is what the Share sheet counts.
+    for (const member of room.audience) {
+      const headers = sharedSource
+        .split("\n")
+        .filter((line) => line.startsWith(`@${member}`));
+      expect(sharedSource.toUpperCase().split(member).length - 1).toBe(headers.length);
+    }
 
     await trayTab(creator, "Connections");
     await tray(creator).getByRole("button", { name: "Share this notebook" }).click();
@@ -713,23 +722,25 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       })
       .toMatch(/signed and shared with 1 peer/);
 
-    // It arrives, and it waits. **A press, and the joiner's notebook was never
-    // empty when it landed** — see this file's report: `decideProposal`'s
-    // adopt-into-an-empty-notebook branch is unreachable from the UI, because
-    // Join writes two cells before any proposal can cross. So the assertion is
-    // the state that is actually true, not the one the module documents.
-    const proposed = joiner.locator("[data-notebook-proposed]");
-    await proposed.waitFor({ state: "visible", timeout: 30000 });
-    expect(await readNotebookSource(joiner)).toBe(before);
-
-    await joiner.getByRole("button", { name: "Adopt their notebook" }).click();
+    // **It arrives and it lands, with no press.** This block used to wait for a
+    // proposal card and click "Adopt their notebook", and the comment beside it
+    // recorded that `decideProposal`'s adopt-into-an-empty-notebook branch was
+    // unreachable from the UI because Join wrote two cells before any proposal
+    // could cross. That branch is the joiner's ordinary case again: the notebook
+    // here is empty, there is no work to lose, and asking would be asking about
+    // a notebook the reader has not written a line of.
+    //
     // Byte for byte the creator's text, in the joiner's own Source view. This is
     // the assertion `placed-run-arc.e2e.js` cannot make: it hands both peers one
     // `S.src` variable, so the question of how a joiner *obtains* the notebook
     // never comes up and `a47f630` was invisible to it.
     await expect
-      .poll(async () => await readNotebookSource(joiner), { timeout: 20000 })
+      .poll(async () => await readNotebookSource(joiner), { timeout: 30000 })
       .toBe(sharedSource);
+    expect(
+      await joiner.getByRole("button", { name: "Adopt their notebook" }).count(),
+      "the joiner was asked about a notebook they had no work to lose to"
+    ).toBe(0);
     // Including the header this file never typed on either machine.
     expect(await readNotebookSource(joiner)).toMatch(
       new RegExp(`^@${L.joiner} publish$`, "m")
@@ -823,14 +834,16 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // `markAllWithOutputsStale`, no `clearCellOutputs`, no `remapCells` — so
     // every per-cell status, timing and output stayed attached to its index
     // while the cell underneath it became somebody else's. Index 1 was
-    // `quorum.join` a second ago and is the placed cell now, and it wore the old
-    // one's run.
+    // `quorum.join` a second ago, when Join still wrote cells, and is the placed
+    // cell now — and it wore the old one's run.
     //
     // `idle` — "never run" — is the true answer, and it has to hold for the
-    // whole notebook rather than for this cell: the joiner's two Join cells were
-    // at 0 and 1, so a clear that stopped at the incoming length would leave the
-    // tail wearing them.
-    for (const i of [0, 1, 2, 3, 4]) {
+    // whole notebook rather than for this cell. When Join wrote two cells they
+    // sat at 0 and 1, so a clear that stopped at the incoming length left the
+    // tail wearing them; the joiner arrives with nothing now, so what this
+    // guards against is the *previous* notebook in this context — the one
+    // `loadRecipeText` is closing — rather than a shorter one.
+    for (const i of [0, 1, 2]) {
       expect(
         await cellStatus(joiner, i),
         `cell ${i} of an adopted notebook wears the previous notebook's run`
@@ -874,50 +887,51 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     expect(await cell(joiner, 1).innerText()).toContain(EXPECTED_B64);
 
     // **And the run this press started survived the notebook it was given.**
-    // Third finding, and the largest of the three, fixed at the point the cells
-    // are written. Pressing Run on a cell runs every cell from there on, and the
-    // notebook that travelled is the creator's *whole* notebook — including the
-    // two cells Start appended, which are `agent.unlock <the creator's
-    // fingerprint>` and a `quorum.offer` over the room. Neither is runnable
-    // here: the key is not in this vault, and this browser is already in the
-    // session that cell would open. The run used to stop at cell 3 with "Key not
-    // found in vault", every time, on a notebook a peer told them to adopt.
+    // Third finding, and the largest of the three. Pressing Run on a cell runs
+    // every cell from there on, and the notebook that travelled used to be the
+    // creator's whole notebook *plus* the two cells Start appended —
+    // `agent.unlock <the creator's fingerprint>` and a `quorum.offer` over the
+    // room. Neither was runnable here: the key is not in this vault, and this
+    // browser is already in the session that cell would open. The run stopped at
+    // cell 3 with "Key not found in vault", every time, on a notebook a peer had
+    // told them to adopt.
     //
-    // They are the creator's cells and now say so, so the same gate that
-    // declined cell 2 declines them, and the run walks to the end of the
-    // notebook. Asserted as an absence *and* as the state that replaced it: a
-    // run that stopped one cell earlier for some new reason would also not
-    // mention the vault.
+    // It was fixed by heading those cells on the creator, so the gate declined
+    // them; it is fixed now by their not existing. The absence is still
+    // asserted, because "the run walked to the end and never asked this vault
+    // for somebody else's key" is the property, however few cells are in the
+    // way of it.
     expect(await runLine(joiner)).not.toContain("Key not found in vault");
     expect(await runLine(joiner)).toMatch(/^Done\b/);
+    // One declined cell, and it is the creator's last: everything else in this
+    // notebook is either this machine's or already run.
     expect(await cellStatus(joiner, 2)).toBe("declined");
-    expect(await cellStatus(joiner, 3)).toBe("declined");
-    expect(await cellStatus(joiner, 4)).toBe("declined");
     // The cell they were handed is the one that ran, and it is the only one.
     expect(await cellStatus(joiner, 1)).toBe("ok");
 
-    // This used to be a paragraph explaining why the count could not be
-    // asserted: the run handed back *three* cells — cell 2, which carries the
+    // What this run owes the room, and it is one cell. The history is worth
+    // keeping: the run used to hand back *three* — cell 2, which carries the
     // `$b64` the creator's own cell waits on and is the point of the exchange,
-    // and cells 3 and 4, the creator's session cells, which the creator ran to
-    // open the room the offer travels over. Asserting a count would have
-    // pinned that noise, so the file described it instead.
+    // and cells 3 and 4, the creator's session cells, which the creator ran
+    // half an hour ago to open the room the offer travels over. Offering those
+    // back is what forced the rule this counts: a declined cell is handed over
+    // when this machine is on one end of it — it reads a value made here, or
+    // writes one read here.
     //
-    // The rule replaced the noise, so the count is now the thing worth
-    // pinning: a declined cell is handed over when this machine is on one end
-    // of it — it reads a value made here, or writes one read here. Cell 2 is
-    // both; cells 3 and 4 are neither, and are set aside rather than sent.
-    // Pinned as one sent and two aside, because "we send exactly the cells
-    // somebody is waiting on" is the claim, and a bare count of three would
-    // pass again the day the rule regressed to offering everything.
+    // Two of the three were the session's, and they are gone, so the *shape*
+    // that made the rule is no longer reachable from this press. The rule is
+    // not softened for that: `aside` still has to be demonstrated across two
+    // browsers, and step 9 is where it is — the dealer's run declines the
+    // holder's `quorum.recv`, a cell nothing here is waiting on, and that row
+    // is asserted `aside` by name.
     await trayTab(joiner, "Connections");
     const outgoing = tray(joiner).locator("[data-handoff-outgoing] li");
-    await expect.poll(async () => await outgoing.count(), { timeout: 20000 }).toBe(3);
+    await expect.poll(async () => await outgoing.count(), { timeout: 20000 }).toBe(1);
     const states = await outgoing.locator("[data-offer-state]").evaluateAll((els) =>
       els.map((el) => el.getAttribute("data-offer-state"))
     );
     expect(states.filter((s) => s === "sent")).toHaveLength(1);
-    expect(states.filter((s) => s === "aside")).toHaveLength(2);
+    expect(states.filter((s) => s === "aside")).toHaveLength(0);
     //
     // Still not sent. `a4f9399` argues this one at length and refuses to
     // automate it: `runFrom` runs every cell from an index onward and nothing
@@ -1038,8 +1052,8 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
    * ## Why this rides on the session steps 1–7 already opened
    *
    * Because that is the only way a person reaches these verbs: `quorum.send`
-   * refuses without a live exchange, and the exchange is opened by the
-   * `quorum.offer` / `quorum.join` cells Start and Join wrote. Standing a
+   * refuses without a live exchange, and the exchange is the room Start and
+   * Join opened in steps 2 and 3. Standing a
    * second room up here would be testing a session this file already proved and
    * would not be testing the thing that is new. The notebook simply grows: the
    * ceremony cells are appended to the notebook both browsers are holding, and
@@ -1185,9 +1199,9 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
   /* ── 8. the ceremony is written into the notebook both ends hold ─────────── */
 
   it("writes a split-and-send ceremony into the notebook, and it travels", async () => {
-    await appendCell(creator, 5, SPLIT, L.creator);
-    await appendCell(creator, 6, sendCell(L.joiner, 2), L.creator);
-    await appendCell(creator, 7, recvCell(L.creator, "share"), L.joiner);
+    await appendCell(creator, 3, SPLIT, L.creator);
+    await appendCell(creator, 4, sendCell(L.joiner, 2), L.creator);
+    await appendCell(creator, 5, recvCell(L.creator, "share"), L.joiner);
 
     const src = await readNotebookSource(creator);
     // **The quorum is in the text.** `docs/LANGUAGE.md` opens on this exact
@@ -1206,15 +1220,15 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     expect(src).toContain(`quorum.recv from=${L.creator}`);
     expect(src).not.toContain("…");
     const cells = src.split(/\n\s*\n+/).map((c) => c.trim());
-    expect(cells).toHaveLength(8);
-    expect(cells[5].split("\n")[0]).toBe(`@${L.creator}`);
-    expect(cells[6].split("\n")[0]).toBe(`@${L.creator}`);
-    expect(cells[7].split("\n")[0]).toBe(`@${L.joiner}`);
+    expect(cells).toHaveLength(6);
+    expect(cells[3].split("\n")[0]).toBe(`@${L.creator}`);
+    expect(cells[4].split("\n")[0]).toBe(`@${L.creator}`);
+    expect(cells[5].split("\n")[0]).toBe(`@${L.joiner}`);
     // Never `publish`. The whole point of `quorum.send` is that a value leaves
     // this machine because a *verb* said so — principle 2 of the language
     // design — and a header that also disclosed it would be the second road
     // out of the same cell.
-    expect(cells[6]).not.toContain("publish");
+    expect(cells[4]).not.toContain("publish");
 
     // It compiles, and it compiles *for the person* — read off the control
     // rather than out of the compiler, because "the recipe parses" and "Run all
@@ -1224,7 +1238,7 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     expect(
       await creator.getByRole("button", { name: "Run all" }).getAttribute("aria-disabled")
     ).toBe(null);
-    for (const i of [5, 6, 7]) expect(await cellErrors(creator, i)).toBe("");
+    for (const i of [3, 4, 5]) expect(await cellErrors(creator, i)).toBe("");
 
     const shared = await shareNotebook();
     expect(shared).toBe(src);
@@ -1233,7 +1247,7 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // wearing what stood at those indexes before — there was nothing at those
     // indexes before, and this is the assertion that says the clear reaches the
     // tail as well as the head.
-    for (const i of [5, 6, 7]) expect(await cellStatus(joiner, i)).toBe("idle");
+    for (const i of [3, 4, 5]) expect(await cellStatus(joiner, i)).toBe("idle");
     expect(await ceremonySlots(joiner)).toEqual([]);
   });
 
@@ -1241,16 +1255,16 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
 
   it("delivers a share to a holder whose receiving cell has not run yet", async () => {
     // The dealer's run: split, send, and stop at somebody else's cell. Started
-    // at cell 5 rather than with Run all, because Run all would re-run cells
-    // 0–4 and `out $seed` would refuse as a duplicate slot — which is the
+    // at cell 3 rather than with Run all, because Run all would re-run cells
+    // 0–2 and `out $seed` would refuse as a duplicate slot — which is the
     // notebook working correctly and would say nothing about this ceremony.
-    await cell(creator, 5).getByRole("button", { name: "Run", exact: true }).click();
+    await cell(creator, 3).getByRole("button", { name: "Run", exact: true }).click();
     await runSettled(creator);
     expect(await runLine(creator)).toMatch(/^Done\b/);
-    expect(await cellStatus(creator, 5)).toBe("ok");
-    expect(await cellStatus(creator, 6)).toBe("ok");
+    expect(await cellStatus(creator, 3)).toBe("ok");
+    expect(await cellStatus(creator, 4)).toBe("ok");
     // Step 5's finding, on this ceremony: the gate's cell says it did not run.
-    expect(await cellStatus(creator, 7)).toBe("declined");
+    expect(await cellStatus(creator, 5)).toBe("declined");
     expect(await ceremonySlots(creator)).toEqual(["set"]);
 
     // **What the dealer can see of what they just sent: nothing.** The send
@@ -1260,10 +1274,10 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // here rather than only in a unit test, because it is the reason the
     // comparison below has to go through `$set`: on this screen the share that
     // left the machine is a tile that says it is not being shown.
-    const sent = await cell(creator, 6).innerText();
+    const sent = await cell(creator, 4).innerText();
     expect(sent).toContain("sensitive — value not shown");
     expect(
-      await cell(creator, 6).getByRole("button", { name: "Reveal" }).count(),
+      await cell(creator, 4).getByRole("button", { name: "Reveal" }).count(),
       "the cell that sent a secret offers to show it"
     ).toBe(0);
 
@@ -1271,9 +1285,9 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // are read *before* the holder's cell runs, so nothing on the holder's
     // machine can have informed them.
     dealt = [
-      await reveal(creator, 5, "share 1"),
-      await reveal(creator, 5, "share 2"),
-      await reveal(creator, 5, "share 3"),
+      await reveal(creator, 3, "share 1"),
+      await reveal(creator, 3, "share 2"),
+      await reveal(creator, 3, "share 3"),
     ];
     for (const m of dealt) expect(m.split(/\s+/).length).toBeGreaterThan(8);
     expect(new Set(dealt).size, "the split produced the same share twice").toBe(3);
@@ -1301,33 +1315,36 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // `quorum.recv` cell *also* read a slot would get a handoff offering the
     // slot and saying nothing about the share.
     //
-    // Asserted as "not `sent`" rather than as the state's own name, because
-    // this behaviour was being changed in another chair while this was written
-    // and the fact this file needs from it is narrower than its spelling: the
-    // holder's cell ran below *without any offer being accepted*, so delivery
-    // does not go through the handoff arc at all.
+    // **Asserted by the state's own name now.** It used to be "not `sent`",
+    // deliberately narrower, because the behaviour was being changed in another
+    // chair while this was written. It has landed, and this row has become the
+    // only two-browser demonstration of `aside` in the repo: step 6 used to
+    // carry two of them, and both were the creator's session cells, which are
+    // no longer written. A rule with no journey behind it is the shape of
+    // defect this file exists to catch, so the narrower spelling is spent here
+    // rather than kept.
     await trayTab(creator, "Connections");
-    const away7 = tray(creator)
+    const away5 = tray(creator)
       .locator("[data-handoff-outgoing] li")
-      .filter({ hasText: "Cell 7 is" });
-    await expect.poll(async () => await away7.count(), { timeout: 20000 }).toBe(1);
+      .filter({ hasText: "Cell 5 is" });
+    await expect.poll(async () => await away5.count(), { timeout: 20000 }).toBe(1);
     // Whole, in this column too — step 5's rule, and this row now carries the
     // key twice (in the sentence and on the button).
-    expect((await away7.innerText()).replace(/\s/g, "")).toContain(L.joiner);
-    expect(await away7.innerText()).not.toContain("…");
+    expect((await away5.innerText()).replace(/\s/g, "")).toContain(L.joiner);
+    expect(await away5.innerText()).not.toContain("…");
     expect(
-      await away7.locator("[data-offer-state]").getAttribute("data-offer-state"),
+      await away5.locator("[data-offer-state]").getAttribute("data-offer-state"),
       "the run handed over a cell nothing on this machine is waiting on"
-    ).not.toBe("sent");
+    ).toBe("aside");
     // And nothing arrived at the holder for it. The only offer in their queue
     // is cell 1's, from step 6, which they have already accepted — the queue
     // does not clear a row once it is taken.
     await trayTab(joiner, "Connections");
-    const offered7 = tray(joiner)
+    const offered5 = tray(joiner)
       .locator('[data-handoff-pending] li[data-handoff-kind="offer"]')
-      .filter({ hasText: "cell 7" });
+      .filter({ hasText: "cell 5" });
     expect(
-      await offered7.count(),
+      await offered5.count(),
       "the holder was offered a cell whose value had already reached them by another road"
     ).toBe(0);
 
@@ -1350,9 +1367,9 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // 30000` measured afterwards never gets taken, and what a reader is handed
     // is "Test timed out in 120000ms" with no mention of a share. This fails
     // first, inside the window, in a sentence about the queue.
-    await cell(joiner, 7).getByRole("button", { name: "Run", exact: true }).click();
+    await cell(joiner, 5).getByRole("button", { name: "Run", exact: true }).click();
     await expect
-      .poll(async () => await cellStatus(joiner, 7), {
+      .poll(async () => await cellStatus(joiner, 5), {
         timeout: 30000,
         intervals: [250],
         message:
@@ -1370,7 +1387,7 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // half alone is satisfiable by accident: a holder that received nothing and
     // drew a blank tile would fail the first, and a road that delivered *the
     // set* rather than the share the recipe addressed would pass it.
-    held.early = await reveal(joiner, 7, "share");
+    held.early = await reveal(joiner, 5, "share");
     expect(held.early, "the holder's slot does not hold the share that was sent").toBe(dealt[1]);
     expect(held.early).not.toBe(dealt[0]);
     expect(held.early).not.toBe(dealt[2]);
@@ -1383,17 +1400,17 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
   /* ── 10. and the other order: the holder is listening first ──────────────── */
 
   it("delivers a share to a holder whose receiving cell is already waiting", async () => {
-    await appendCell(creator, 8, recvCell(L.creator, "late"), L.joiner);
-    await appendCell(creator, 9, sendCell(L.joiner, 3), L.creator);
+    await appendCell(creator, 6, recvCell(L.creator, "late"), L.joiner);
+    await appendCell(creator, 7, sendCell(L.joiner, 3), L.creator);
     await shareNotebook();
-    expect(await cellStatus(joiner, 8)).toBe("idle");
+    expect(await cellStatus(joiner, 6)).toBe("idle");
 
-    // Not awaited. This press starts a run that walks cell 8 — the holder's
+    // Not awaited. This press starts a run that walks cell 6 — the holder's
     // second `quorum.recv` — and there is nothing in the inbox for it, so it
     // parks in `recvWaiters` and the run stays in flight. Everything below
     // happens while this promise is outstanding, which is the whole of what
     // this step is for.
-    const running = cell(joiner, 8).getByRole("button", { name: "Run", exact: true }).click();
+    const running = cell(joiner, 6).getByRole("button", { name: "Run", exact: true }).click();
     await expect
       .poll(async () => await joiner.locator("[data-run-state]").getAttribute("data-run-state"), {
         timeout: 20000,
@@ -1411,16 +1428,16 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     ).toBe("running");
 
     // The dealer sends, now, into a channel somebody is listening on.
-    await cell(creator, 9).getByRole("button", { name: "Run", exact: true }).click();
+    await cell(creator, 7).getByRole("button", { name: "Run", exact: true }).click();
     await runSettled(creator);
-    expect(await cellStatus(creator, 9)).toBe("ok");
+    expect(await cellStatus(creator, 7)).toBe("ok");
 
     await running;
     // Bounded well inside the 120s the holder's cell would otherwise wait, for
     // step 9's reason: a delivery that never lands has to be reported as a
     // delivery that never landed, and not as a suite that ran out of patience.
     await expect
-      .poll(async () => await cellStatus(joiner, 8), {
+      .poll(async () => await cellStatus(joiner, 6), {
         timeout: 30000,
         intervals: [250],
         message:
@@ -1430,13 +1447,13 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       .toBe("ok");
     await runSettled(joiner);
     expect(await runLine(joiner)).toMatch(/^Done\b/);
-    // The dealer's cell 9 is declined here and was not run by this press, which
+    // The dealer's cell 7 is declined here and was not run by this press, which
     // is what makes the value below one that crossed rather than one this
     // machine made.
-    expect(await cellStatus(joiner, 9)).toBe("declined");
+    expect(await cellStatus(joiner, 7)).toBe("declined");
     expect((await ceremonySlots(joiner)).includes("late")).toBe(true);
 
-    held.late = await reveal(joiner, 8, "late");
+    held.late = await reveal(joiner, 6, "late");
     expect(held.late, "the waiting holder did not receive the share that was sent").toBe(
       dealt[2]
     );
@@ -1456,13 +1473,13 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // with one number changed. Nothing else about the path differs.
     await appendCell(
       creator,
-      10,
+      8,
       `quorum.recv from=${L.creator} wait=3000 | out $never`,
       L.joiner
     );
     await shareNotebook();
 
-    await cell(joiner, 10).getByRole("button", { name: "Run", exact: true }).click();
+    await cell(joiner, 8).getByRole("button", { name: "Run", exact: true }).click();
     await runSettled(joiner);
 
     // **The room is healthy while this is being said**, and that pairing was
@@ -1498,11 +1515,11 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // rule. Neither of them asks them to do something on the dealer's machine.
     expect(said).toContain("Press Run on this cell again");
     expect(said).toContain("longer wait=");
-    expect(await cellStatus(joiner, 10)).toBe("error");
+    expect(await cellStatus(joiner, 8)).toBe("error");
     // The same sentence is in the cell, which is where a reader looks after the
     // run bar tells them a cell stopped.
-    expect(await cellErrors(joiner, 10)).toContain("no message within 3s");
-    expect(await cellErrors(joiner, 10)).toContain("2 messages so far");
+    expect(await cellErrors(joiner, 8)).toContain("no message within 3s");
+    expect(await cellErrors(joiner, 8)).toContain("2 messages so far");
     expect(await ceremonySlots(joiner)).not.toContain("never");
   });
 
@@ -1524,16 +1541,16 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // anything before.
     await appendCell(
       creator,
-      11,
+      9,
       "$set | blip39 -d | sss.combine | encode hex | out $master",
       L.creator
     );
     await shareNotebook();
 
-    await cell(creator, 11).getByRole("button", { name: "Run", exact: true }).click();
+    await cell(creator, 9).getByRole("button", { name: "Run", exact: true }).click();
     await runSettled(creator);
-    expect(await cellStatus(creator, 11)).toBe("ok");
-    dealtSecret = await reveal(creator, 11, "master");
+    expect(await cellStatus(creator, 9)).toBe("ok");
+    dealtSecret = await reveal(creator, 9, "master");
     expect(dealtSecret, "the dealer's own recombination produced nothing").toMatch(
       /^[0-9a-f]{64}$/
     );
@@ -1541,9 +1558,9 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // which is the stronger of the two and worth saying why: `declined` is what
     // a run stamps on a cell it walked past and would not perform, and no run
     // on this browser has walked this cell at all — the holder's last press was
-    // cell 10, three cells and one proposal ago. There is no state here that
+    // cell 8, three cells and one proposal ago. There is no state here that
     // could have come from it.
-    expect(await cellStatus(joiner, 11)).toBe("idle");
+    expect(await cellStatus(joiner, 9)).toBe("idle");
     expect(await ceremonySlots(joiner)).not.toContain("master");
   });
 
@@ -1558,8 +1575,8 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // is right: this is the holder, alone, using the thing they were handed.
     // Nothing about it needs the dealer's agreement.
     await joiner.getByRole("button", { name: "Cell", exact: true }).click();
-    await writeCell(joiner, 12, "$share | blip39.decode | sss.combine | out $secret");
-    await assignCell(joiner, 12, L.joiner);
+    await writeCell(joiner, 10, "$share | blip39.decode | sss.combine | out $secret");
+    await assignCell(joiner, 10, L.joiner);
 
     // **The obvious spelling still does not compile**, and that is right rather
     // than a leftover: `quorum.recv count=1` emits `text` — deliberately, so the
@@ -1567,7 +1584,7 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // until something collects it into one. What changed is that the refusal
     // now names the step that does it, on the value it refused. It used to end
     // at `got text/opaque`, which is a true sentence with no way out of it.
-    const typed = await cellErrors(joiner, 12);
+    const typed = await cellErrors(joiner, 10);
     expect(typed).toContain("expects shares");
     expect(typed).toContain("text/opaque");
     expect(typed).toContain('add "shares" first');
@@ -1585,11 +1602,11 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // of these values crossed the room in steps 9 and 10.
     await writeCell(
       joiner,
-      12,
+      10,
       "$share | shares with=$late | blip39 -d | sss.combine | encode hex | out $secret"
     );
     await expect
-      .poll(async () => await cellErrors(joiner, 12), { timeout: 20000 })
+      .poll(async () => await cellErrors(joiner, 10), { timeout: 20000 })
       .toBe("");
     await expect
       .poll(async () => await runAll.getAttribute("aria-disabled"), { timeout: 20000 })
@@ -1601,16 +1618,16 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // Inputs tray — on a machine holding two shares of this very split, in slots
     // this very notebook wrote. The tray is now a need only when the recipe
     // named nothing, so a recipe that names its shares is runnable.
-    const run12 = cell(joiner, 12).getByRole("button", { name: "Run", exact: true });
+    const run10 = cell(joiner, 10).getByRole("button", { name: "Run", exact: true });
     expect(
-      await run12.getAttribute("aria-disabled"),
+      await run10.getAttribute("aria-disabled"),
       "the holder is still being sent to a paste panel for shares they are holding"
     ).toBe(null);
 
-    await run12.click();
+    await run10.click();
     await runSettled(joiner);
     expect(await runLine(joiner)).toMatch(/^Done\b/);
-    expect(await cellStatus(joiner, 12)).toBe("ok");
+    expect(await cellStatus(joiner, 10)).toBe("ok");
     expect(await ceremonySlots(joiner)).toContain("secret");
 
     // **And it is the dealer's secret**, uncovered by a press on this screen and
@@ -1618,7 +1635,7 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // drawn on a machine this browser has never run a `random` on, split there,
     // carried here as two mnemonics by two separate sends, and put back
     // together here out of the slots they landed in.
-    const recovered = await reveal(joiner, 12, "secret");
+    const recovered = await reveal(joiner, 10, "secret");
     expect(recovered, "the holder recombined their shares into the wrong secret").toBe(
       dealtSecret
     );
