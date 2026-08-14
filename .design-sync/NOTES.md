@@ -242,3 +242,21 @@ green, and a reinstall can disrupt a concurrent session working in this tree.
 
   This is the single highest-value improvement available to this design
   system — it is the artifact the design agent codes against.
+
+## The upload step is bigger than it looks
+
+- **`write_files` needs an explicit `localPath` on every entry** — `{path}`
+  alone is rejected (`Each file needs exactly one of "data" or "localPath"`),
+  and there is no glob or manifest form. This bundle is **256 content files**,
+  so the upload is ~23KB of enumerated path pairs across two ≤256-file calls,
+  and that has to be budgeted for *before* starting: a partially-written
+  content set is the one genuinely bad outcome, because the old
+  `_ds_sync.json` keeps vouching for files that were just replaced and the
+  next sync's diff will never repair them. Enumerate the list into
+  `.design-sync/.cache/upload-list.json` first (never a bare `/tmp` path — on
+  Windows, node's `/tmp` and Git Bash's `/tmp` are different directories), and
+  do the writes in one uninterrupted stretch.
+- Order is fixed: sentinel → all content → deletes → sentinel re-arm →
+  `_ds_sync.json` **absolutely last**, in its own call. Writing the sentinel
+  early is safe and idempotent on its own; it only asks the app to recompile
+  next time the project is opened.
