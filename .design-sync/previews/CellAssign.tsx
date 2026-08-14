@@ -15,7 +15,22 @@ import { CellAssign } from "basilisk-portal";
 
 const frame = { padding: "0 0 210px" };
 const tall = { padding: "0 0 360px" };
-const ROOM = ["ada", "grace", "lin"];
+const ADA = "D772878C5C7C2A0EDCA09ED32C5EBBB46AD01388";
+const GRACE = "9F2A11B4C8D30E5761AA0C4E88B2F6D5091C7E43";
+const LIN = "44C1D9E07B8A2F631E5D0A9C2B7E4F81D3A65029";
+
+/*
+ * A peer *is* a key (`3d69090`), so a choice's `label` is the whole
+ * fingerprint the header will carry and `name` is whatever this browser knows
+ * the holder as. The three rows are the three states the menu has to tell
+ * apart: your own key, a key with a name, and a key the room binds that this
+ * browser has no name for.
+ */
+const ROOM = [
+  { label: ADA, name: "ada@lovelace.dev", fingerprint: ADA, self: true },
+  { label: GRACE, name: "grace@example.org", fingerprint: GRACE },
+  { label: LIN, fingerprint: LIN },
+];
 
 /** What a verifiable split writes: a check, a public thing, and a secret. */
 const CEREMONY_SLOTS = ["expected", "commitments", "share"];
@@ -51,7 +66,7 @@ export const Default = () => (
 export const PublishingOneSlot = () => (
   <div style={tall}>
     <CellAssign
-      peer="ada"
+      peer={ADA}
       publish
       outSlots={CEREMONY_SLOTS}
       publishSlots={["commitments"]}
@@ -73,7 +88,7 @@ export const PublishingOneSlot = () => (
 export const PublishingEverything = () => (
   <div style={tall}>
     <CellAssign
-      peer="ada"
+      peer={ADA}
       publish
       outSlots={CEREMONY_SLOTS}
       choices={ROOM}
@@ -94,7 +109,7 @@ export const PublishingEverything = () => (
  */
 export const Assigned = () => (
   <div style={frame}>
-    <CellAssign peer="ada" publish={false} choices={ROOM} onAssign={() => {}} defaultOpen />
+    <CellAssign peer={ADA} publish={false} choices={ROOM} onAssign={() => {}} defaultOpen />
   </div>
 );
 
@@ -111,7 +126,7 @@ export const Assigned = () => (
 export const Publishing = () => (
   <div style={frame}>
     <CellAssign
-      peer="ada"
+      peer={ADA}
       publish
       outSlots={["pubA"]}
       choices={ROOM}
@@ -132,6 +147,6 @@ export const Publishing = () => (
  */
 export const BeforeAnyoneJoins = () => (
   <div style={frame}>
-    <CellAssign peer="witness" publish choices={["witness"]} onAssign={() => {}} defaultOpen />
+    <CellAssign peer="witness" publish choices={[{ label: "witness" }]} onAssign={() => {}} defaultOpen />
   </div>
 );
