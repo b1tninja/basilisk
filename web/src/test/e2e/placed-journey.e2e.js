@@ -1025,10 +1025,15 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
    *    has already arrived by a road the handoff arc knows nothing about. Step
    *    9 says what the two queues do about it and where their words stop being
    *    true of this ceremony.
-   * 4. **Is the 120s timeout a trap?** Step 11, with `wait=` turned down so the
-   *    suite does not sit for two minutes. The answer is in the assertions.
-   * 5. **Can the ceremony be reversed?** Step 12, and it is the one that
-   *    decides whether any of this can ship.
+   * 4. **What is a holder told when nothing is sent?** Step 11, with `wait=`
+   *    turned down so the suite does not sit for two minutes. The message has
+   *    to describe the room the holder is actually in — which, on the
+   *    recommended ordering, is a healthy one where the dealer is still
+   *    reading. The tray is asserted verified in the same breath.
+   * 5. **Can the ceremony be reversed?** Steps 12 and 13, and they are the ones
+   *    that decide whether any of this can ship. The dealer recovers the master
+   *    from their own set, the holder recovers it from the two shares that
+   *    crossed the room, and the two strings are compared through the screen.
    *
    * ## Why this rides on the session steps 1–7 already opened
    *
@@ -1096,7 +1101,7 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     const rows = tray(page).locator("li code");
     const out = [];
     for (const text of await rows.allInnerTexts()) {
-      const m = /^@(set|share|late|never|secret)$/.exec(text.trim());
+      const m = /^@(set|share|late|never|secret|master)$/.exec(text.trim());
       if (m) out.push(m[1]);
     }
     return out.sort();
@@ -1167,6 +1172,15 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
   let held = { early: "", late: "" };
   /** The dealer's three shares, as the dealer's own screen prints them. */
   let dealt = [];
+  /**
+   * The secret behind those shares, recovered on the dealer's own machine.
+   *
+   * Read off the dealer's screen rather than computed here, for the reason
+   * every other comparison in this file is: a value this test worked out would
+   * be a claim about the library, and what is being asked is whether two
+   * browsers agree.
+   */
+  let dealtSecret = "";
 
   /* ── 8. the ceremony is written into the notebook both ends hold ─────────── */
 
@@ -1434,7 +1448,7 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
 
   /* ── 11. what a holder is told when nothing is sent ──────────────────────── */
 
-  it("reports a receive that timed out in words about the clock and nothing else", async () => {
+  it("reports a receive that timed out in words about the room it is in", async () => {
     // `wait=3000` rather than the 120s default, and the shortening is the only
     // thing this step does differently from a real one: the message is built
     // from `wait` (`no message within ${Math.round(wait / 1000)}s`), so what a
@@ -1451,64 +1465,112 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     await cell(joiner, 10).getByRole("button", { name: "Run", exact: true }).click();
     await runSettled(joiner);
 
-    // **The room is healthy while this is being said.** That pairing is the
-    // finding, not the message on its own: the peer is connected and both
-    // proofs still hold at the moment the holder is told a message did not
-    // arrive, so the sentence describes a room that is fine in words a reader
-    // will spend on the transport.
+    // **The room is healthy while this is being said**, and that pairing was
+    // the whole finding: the peer is connected and both proofs still hold at
+    // the moment the holder is told a message did not arrive. The sentence used
+    // to be `quorum.recv: no message within 120s` and nothing else — a
+    // stopwatch, which a reader spends on the transport, which here is the one
+    // part that is working. It now says what this end can prove.
     await trayTab(joiner, "Connections");
     expect(await tray(joiner).locator('[data-verified="1"]').count()).toBe(1);
 
     const said = await runLine(joiner);
     expect(said).toContain("no message within 3s");
-    // What it does not say, asserted as absences because each one is a thing a
-    // reader needs and would have to guess at. It does not name the peer it was
-    // told to listen for, though `from=` gave it one; it does not say whether
-    // anything was ever sent; and it does not distinguish "nobody has sent this
-    // yet" — the ordinary case, which step 10 shows is a normal state of a
-    // healthy run — from a link that is down. `quorum.offer`'s timeout, three
-    // hundred lines above it in the same file, names three causes and asks a
-    // question; this one names a stopwatch.
-    expect(said).not.toContain(L.creator);
-    expect(said.toLowerCase()).not.toContain("sent");
+    // The peer `from=` named, whole — the same rule as every other fingerprint
+    // in this file. A prefix would still have matched at run time, which is
+    // exactly why it is worth pinning that the refusal prints the key.
+    expect(said).toContain(L.creator);
+    expect(said).not.toContain("…");
+    // The link, in the words the tray two lines above draws its own verdict
+    // from, so the message and the panel a reader checks it against cannot
+    // disagree.
+    expect(said).toContain("1 peer is connected and key-confirmed");
+    // What this room has actually carried. Two shares crossed it in steps 9 and
+    // 10 and both were read, so the inbox is empty and the count is not — which
+    // is the distinction the old message could not make and the one that
+    // separates a quiet room from a dead one.
+    expect(said).toContain("2 messages so far");
+    // And that waiting is normal, which it is: this is reachable on the
+    // recommended ordering, where the holder listens before the dealer sends.
+    expect(said).toContain("ordinary state of a healthy room");
+    expect(said).toContain("quorum.send");
+    // Both remedies performable by the person reading this screen — `47e7ffa`'s
+    // rule. Neither of them asks them to do something on the dealer's machine.
+    expect(said).toContain("Press Run on this cell again");
+    expect(said).toContain("longer wait=");
     expect(await cellStatus(joiner, 10)).toBe("error");
     // The same sentence is in the cell, which is where a reader looks after the
     // run bar tells them a cell stopped.
     expect(await cellErrors(joiner, 10)).toContain("no message within 3s");
+    expect(await cellErrors(joiner, 10)).toContain("2 messages so far");
     expect(await ceremonySlots(joiner)).not.toContain("never");
   });
 
-  /* ── 12. and then the holder tries to use what they were sent ────────────── */
+  /* ── 12. the dealer recombines their own set, so there is something to
+        compare the holder's answer against ───────────────────────────────── */
 
-  it("cannot turn a received share back into a share, and says two things about it", async () => {
+  it("puts the dealer's own secret on the dealer's screen", async () => {
+    // The other end of the assertion step 13 makes. The dealer holds the whole
+    // set and can recover the master from it; the holder holds two of the three
+    // shares and nothing else. If those two numbers match, the ceremony
+    // round-tripped — and they are recovered from *different pairs* of the same
+    // polynomial (`sss.combine` takes the first `threshold` shares, so this is
+    // 1 and 2, and the holder has 2 and 3), which a road that had simply copied
+    // a value across could not produce.
+    //
+    // It has to be a cell rather than something read out of the split, because
+    // `random 32 | sss.split` never writes the master anywhere: the secret is
+    // not `out`, which is the design and is why this file could not compare
+    // anything before.
+    await appendCell(
+      creator,
+      11,
+      "$set | blip39 -d | sss.combine | encode hex | out $master",
+      L.creator
+    );
+    await shareNotebook();
+
+    await cell(creator, 11).getByRole("button", { name: "Run", exact: true }).click();
+    await runSettled(creator);
+    expect(await cellStatus(creator, 11)).toBe("ok");
+    dealtSecret = await reveal(creator, 11, "master");
+    expect(dealtSecret, "the dealer's own recombination produced nothing").toMatch(
+      /^[0-9a-f]{64}$/
+    );
+    // And it is not on the holder's machine. `idle` rather than `declined`,
+    // which is the stronger of the two and worth saying why: `declined` is what
+    // a run stamps on a cell it walked past and would not perform, and no run
+    // on this browser has walked this cell at all — the holder's last press was
+    // cell 10, three cells and one proposal ago. There is no state here that
+    // could have come from it.
+    expect(await cellStatus(joiner, 11)).toBe("idle");
+    expect(await ceremonySlots(joiner)).not.toContain("master");
+  });
+
+  /* ── 13. and then the holder spends what they were sent ──────────────────── */
+
+  it("turns two received shares back into the secret the dealer split", async () => {
     // This is the step the ceremony ships or does not ship on. Everything above
     // proves a share can be *delivered*; a share exists to be *recombined*, and
     // the recombining ops in this product take a `shares` collection.
     //
     // The cells are written on the joiner's own notebook and not shared, which
-    // is right: this is the holder, alone, trying to use the thing they were
-    // handed. Nothing about it needs the dealer's agreement.
+    // is right: this is the holder, alone, using the thing they were handed.
+    // Nothing about it needs the dealer's agreement.
     await joiner.getByRole("button", { name: "Cell", exact: true }).click();
-    await writeCell(joiner, 11, "$share | blip39.decode | sss.combine | out $secret");
-    await assignCell(joiner, 11, L.joiner);
+    await writeCell(joiner, 12, "$share | blip39.decode | sss.combine | out $secret");
+    await assignCell(joiner, 12, L.joiner);
 
-    // **The obvious spelling does not compile**, and the cell says so before
-    // anything runs. `quorum.recv` emits `text/opaque` — `count=1` deliberately
-    // stays plain text so the two-party read is unremarkable — and there is no
-    // cast anywhere in the language from text to a share.
-    const typed = await cellErrors(joiner, 11);
+    // **The obvious spelling still does not compile**, and that is right rather
+    // than a leftover: `quorum.recv count=1` emits `text` — deliberately, so the
+    // two-party read stays unremarkable — and a mnemonic is not a share set
+    // until something collects it into one. What changed is that the refusal
+    // now names the step that does it, on the value it refused. It used to end
+    // at `got text/opaque`, which is a true sentence with no way out of it.
+    const typed = await cellErrors(joiner, 12);
     expect(typed).toContain("expects shares");
     expect(typed).toContain("text/opaque");
-    // And Run all refuses while it stands, in the compiler's own sentence
-    // rather than a paraphrase — `runRefusal` prints the first error verbatim.
-    //
-    // Read off the button's refusal note and *not* off `data-run-state`, which
-    // this file expected to say `blocked` and which says `idle`. That is not a
-    // defect: `blocked` is the readiness state — a run that would stop for an
-    // input nobody has supplied — and a recipe that does not compile is a
-    // different refusal with a different sentence, carried by the control
-    // instead of by the bar. Worth writing down, because "the bar says idle"
-    // reads like a notebook that is ready to run.
+    expect(typed).toContain('add "shares" first');
     const runAll = joiner.getByRole("button", { name: "Run all" });
     await expect
       .poll(async () => await runAll.getAttribute("aria-disabled"), { timeout: 20000 })
@@ -1517,49 +1579,58 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       await joiner.locator("[data-run-state] [data-disabled-reason]").innerText()
     ).toContain("does not compile");
 
-    // **The spelling that does compile is worse**, and this is the part that
-    // cannot be found by reading the type rules. `shares` is a *source* —
-    // `input: "none"` — so putting it in a pipeline is legal at every step and
-    // it silently discards whatever was piped into it. The recipe below is the
-    // one the `shares` op's own documentation suggests ("Typical recover:
-    // `shares | blip39 -d | sss.combine`"), it type-checks, and it reads the
-    // paste panel.
-    await writeCell(joiner, 11, "shares | blip39.decode | sss.combine | out $secret");
-    expect(await cellErrors(joiner, 11)).toBe("");
+    // **The spelling the refusal named**, typed as a reader would type it after
+    // reading it. `shares` collects: the mnemonic on the pipe, the one `with=`
+    // names, and — only when the recipe named neither — the paste panel. Both
+    // of these values crossed the room in steps 9 and 10.
+    await writeCell(
+      joiner,
+      12,
+      "$share | shares with=$late | blip39 -d | sss.combine | encode hex | out $secret"
+    );
+    await expect
+      .poll(async () => await cellErrors(joiner, 12), { timeout: 20000 })
+      .toBe("");
     await expect
       .poll(async () => await runAll.getAttribute("aria-disabled"), { timeout: 20000 })
       .toBe(null);
 
-    // **And it cannot be run**, on a machine holding two shares of this very
-    // split, in slots this very notebook wrote three presses ago. The cell's
-    // own Run refuses before anything executes, because `shares` declares
-    // `unresolvedInputs: "shares"` — it is a panel op, and the panel is empty.
-    //
-    // The engine has a fallback for exactly this case, and its wording is in
-    // the op's documentation: "or run a split cell first". It sweeps the
-    // indexed slots for values carrying `meta.shareIndex`. `at 2` stamps that
-    // on the dealer's side; `quorum.recv` stamps `from` and `ts` and does not
-    // stamp that. So the two values that crossed this room are invisible to
-    // the one op in the language that could recombine them, and the sweep
-    // finds nothing.
-    const run11 = cell(joiner, 11).getByRole("button", { name: "Run", exact: true });
+    // **And the cell offers to run**, which is the half of the old finding that
+    // was not about types at all. `shares` declared `unresolvedInputs: "shares"`
+    // unconditionally, so this cell's own Run was disabled pointing at the
+    // Inputs tray — on a machine holding two shares of this very split, in slots
+    // this very notebook wrote. The tray is now a need only when the recipe
+    // named nothing, so a recipe that names its shares is runnable.
+    const run12 = cell(joiner, 12).getByRole("button", { name: "Run", exact: true });
     expect(
-      await run11.getAttribute("aria-disabled"),
-      "a cell reading a panel nobody filled offered to run"
-    ).toBe("true");
-    const why = await joiner.locator("#cell-readiness-11").innerText();
-    expect(why.toLowerCase()).toContain("share");
-    // The remedy is the other half of the finding, and it is the rule `47e7ffa`
-    // landed: a refusal's remedy has to be performable on the value it refused.
-    // Neither branch of this one is. There is nothing to paste that the holder
-    // did not already receive over the wire, and the split cell it suggests
-    // running is cell 5 — the dealer's, declined here, and it would mint a
-    // different secret if it ran.
-    expect(await ceremonySlots(joiner)).not.toContain("secret");
-    // The two shares are still there, and still exactly what crossed. The
-    // holder is not missing a value; they are holding two and cannot spend
-    // either.
-    expect(await ceremonySlots(joiner)).toEqual(expect.arrayContaining(["share", "late"]));
+      await run12.getAttribute("aria-disabled"),
+      "the holder is still being sent to a paste panel for shares they are holding"
+    ).toBe(null);
+
+    await run12.click();
+    await runSettled(joiner);
+    expect(await runLine(joiner)).toMatch(/^Done\b/);
+    expect(await cellStatus(joiner, 12)).toBe("ok");
+    expect(await ceremonySlots(joiner)).toContain("secret");
+
+    // **And it is the dealer's secret**, uncovered by a press on this screen and
+    // compared with the one uncovered by a press on the other. Thirty-two bytes
+    // drawn on a machine this browser has never run a `random` on, split there,
+    // carried here as two mnemonics by two separate sends, and put back
+    // together here out of the slots they landed in.
+    const recovered = await reveal(joiner, 12, "secret");
+    expect(recovered, "the holder recombined their shares into the wrong secret").toBe(
+      dealtSecret
+    );
+    // Neither half alone is enough: a cell that produced nothing would fail the
+    // equality, and a value that had simply been copied across the wire would
+    // pass it without proving anything about recombination. The shares are what
+    // crossed, and they are still what crossed.
+    expect(recovered).not.toBe(held.early);
+    expect(recovered).not.toBe(held.late);
+    expect(await ceremonySlots(joiner)).toEqual(
+      expect.arrayContaining(["share", "late", "secret"])
+    );
   });
 
   /* ── what the journey cost, and what it did not ─────────────────────────── */

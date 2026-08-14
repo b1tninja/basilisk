@@ -81,8 +81,21 @@ describe("split → recover, same session, nothing pasted", () => {
     const kernel = createKernel();
     const chains = presetChains("recover-shares");
     // Nothing ran before this cell and nothing is pasted: the op must say so.
+    //
+    // The remedy it names is asserted along with the refusal, because the
+    // sentence this replaced named one that could not always be performed: it
+    // ended "or run a split cell first", and on the machine that *received* the
+    // shares that cell belongs to somebody else and would mint a different
+    // secret if it ran. Both of these can be done by whoever is reading it.
     await expect(kernel.runCell(0, chains[0], {})).rejects.toThrow(
-      /paste shares|run a split cell/i
+      /nothing to collect/i
+    );
+    await expect(kernel.runCell(0, chains[0], {})).rejects.toThrow(
+      /paste them into Inputs/i
+    );
+    await expect(kernel.runCell(0, chains[0], {})).rejects.toThrow(/with=\$late/);
+    await expect(kernel.runCell(0, chains[0], {})).rejects.not.toThrow(
+      /run a split cell/i
     );
     kernel.destroy();
   });

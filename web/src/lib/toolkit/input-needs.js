@@ -105,10 +105,32 @@ function whenHolds(when, step) {
 }
 
 /**
+ * Does a `whenInput:` guard hold for the value arriving through the pipe?
+ *
+ * The other half of `whenHolds`, and the half that could not be asked before:
+ * a step that folds a piped value into its output has nothing left to ask a
+ * person for, so its tray stops being a need the moment the pipe supplies one.
+ *
+ * `undefined` — nobody said what is arriving — counts as armed. The bare-op
+ * case (`specInputNeeds`, the tool card in the drawer) has no pipeline around
+ * it at all, and a card that hid the shares tray because a pipeline *might*
+ * fill it would be advertising the op as needing nothing.
+ * @param {import("./registry.js").IoType[]|undefined} whenInput
+ * @param {{ base?: string }|string|null|undefined} incoming
+ */
+function inputHolds(whenInput, incoming) {
+  if (!whenInput) return true;
+  if (incoming == null) return true;
+  const base = typeof incoming === "string" ? incoming : String(incoming.base || "none");
+  return whenInput.includes(/** @type {import("./registry.js").IoType} */ (base));
+}
+
+/**
  * `unresolvedInputs` accepts a bare panel name, a guarded entry, or a list of
  * either. Normalizing here keeps every reader from re-deciding.
  * @param {import("./registry.js").StepSpec["unresolvedInputs"]} decl
- * @returns {{ panel: InputPanel, when?: Record<string, string|string[]> }[]}
+ * @returns {{ panel: InputPanel, when?: Record<string, string|string[]>,
+ *   whenInput?: import("./registry.js").IoType[] }[]}
  */
 export function stepInputDeclarations(decl) {
   if (!decl) return [];
@@ -138,15 +160,18 @@ export function stepInputDeclarations(decl) {
  * only ask about ops that already exist cannot demonstrate it.
  * @param {{ name: string, params?: Record<string, *> }} step
  * @param {import("./registry.js").StepSpec} [spec]
+ * @param {{ base?: string }|string|null} [incoming]  the pipeline type reaching
+ *   this step, when the caller is walking a pipeline and knows it
  * @returns {InputRequirement[]}
  */
-export function stepInputRequirements(step, spec = getStep(step?.name)) {
+export function stepInputRequirements(step, spec = getStep(step?.name), incoming = null) {
   if (!spec) return [];
   /** @type {InputRequirement[]} */
   const out = [];
 
   for (const decl of stepInputDeclarations(spec.unresolvedInputs)) {
     if (!whenHolds(decl.when, step)) continue;
+    if (!inputHolds(decl.whenInput, incoming)) continue;
     out.push({ step: spec.name, param: null, of: [], bound: false, panel: decl.panel });
   }
 
@@ -171,12 +196,13 @@ export function stepInputRequirements(step, spec = getStep(step?.name)) {
  * The panels one step still needs, in declaration order.
  * @param {{ name: string, params?: Record<string, *> }} step
  * @param {import("./registry.js").StepSpec} [spec]
+ * @param {{ base?: string }|string|null} [incoming]
  * @returns {InputPanel[]}
  */
-export function stepInputNeeds(step, spec) {
+export function stepInputNeeds(step, spec, incoming = null) {
   /** @type {InputPanel[]} */
   const needs = [];
-  for (const r of stepInputRequirements(step, spec ?? getStep(step?.name))) {
+  for (const r of stepInputRequirements(step, spec ?? getStep(step?.name), incoming)) {
     if (r.panel && !needs.includes(r.panel)) needs.push(r.panel);
   }
   return needs;

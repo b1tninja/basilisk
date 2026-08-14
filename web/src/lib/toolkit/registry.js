@@ -82,10 +82,16 @@ import {
 /** @typedef {import("./types.js").RefinedType} RefinedType */
 /** @typedef {import("./input-needs.js").InputPanel} InputPanel */
 /**
- * A panel need gated on how the step is configured.
+ * A panel need gated on how the step is configured, and on what reaches it.
  * @typedef {object} RuntimeInput
  * @property {InputPanel} panel
- * @property {Record<string, string|string[]>} when  sibling param settings that arm it
+ * @property {Record<string, string|string[]>} [when]  sibling param settings that arm it
+ * @property {IoType[]} [whenInput]  incoming pipeline bases that arm it. A step
+ *   collecting a piped value has nothing left to ask a person for, so the tray
+ *   is only a need when the pipe handed it `none`. Unknown at the point of
+ *   asking (a bare op in the drawer, with no pipeline around it) counts as
+ *   armed: advertising a tray that turns out to be unnecessary is a smaller
+ *   error than hiding one a run will stop for.
  */
 
 /**
@@ -197,6 +203,15 @@ import {
  * @property {string} [glyph]  key into generated glyphs.js (overrides shelf/toolbox)
  * @property {string} doc
  * @property {IoType} input
+ * @property {IoType[]} [collects]  sources only — the pipeline types this step
+ *   *folds into* its output instead of discarding. A source declares `input:
+ *   "none"` and so type-checks nothing arriving through the pipe, which is
+ *   correct for the corpus idiom of re-rooting a chain (`genkey | out $a |
+ *   genkey | out $b`) and wrong for a source whose job is to assemble a value
+ *   out of what the author already has. Listing the accepted bases turns the
+ *   discard into a refusal for everything else, and the output type is
+ *   unchanged by what arrives — `inferSourceType` still answers it, so it stays
+ *   knowable before the run.
  * @property {IoType} output
  * @property {EntropyKind} [entropy]  the kind of randomness this step draws.
  *   Read through `stepEntropy`, never directly: **absent means `keying`**, so a
@@ -211,7 +226,8 @@ import {
  * @property {InputPanel|RuntimeInput|(InputPanel|RuntimeInput)[]} [unresolvedInputs]  the panel(s)
  *   this step's *pipeline value* comes from — the input that arrives through the pipe and so
  *   has no param to be bound to (`input`, `shares`, `keypair`, `gpg.decrypt`). A `when:` guard
- *   names the param settings that arm it. Panels for a step's *params* are not declared here:
+ *   names the param settings that arm it, and a `whenInput:` guard the incoming pipeline bases
+ *   that do — a step that collects a piped value needs no tray when one arrived. Panels for a step's *params* are not declared here:
  *   they are derived from `ParamSpec.unresolvedInput`, which is what lets binding `key=$slot`
  *   retire the panel without a second list saying so.
  * @property {IoType} [instantiates]  §31a — a type constructor: this source *is* how you write that type down
@@ -755,12 +771,33 @@ export const STEPS = [
     kind: "source",
     toolbox: "sss",
     shelf: "split",
-    doc: "Bind BLIP39 share mnemonics at run time (never stored in the recipe). Typical recover: `shares | blip39 -d | sss.combine | …`. Map each share with `foreach` / `- out $share`. For free-form text use `input`.",
+    doc: "Collect BLIP39 share mnemonics into one set. Gathers what is piped in (one mnemonic, or a bundle from `quorum.recv count=`), what `with=$slot` names, and — when the recipe names nothing — what the Inputs tray holds (never stored in the recipe). Recover from the tray: `shares | blip39 -d | sss.combine | …`. Recover from shares a room delivered: `$share | shares with=$late | blip39 -d | sss.combine | …`, or `quorum.recv count=2 | shares | blip39 -d | sss.combine | …`. Map each share with `foreach` / `- out $share`. For free-form text use `input`.",
     input: "none",
+    // What the pipe may hand this source instead of being thrown away. Every
+    // other source re-roots — `genkey | out $a | genkey | out $b` is the corpus
+    // idiom and discarding is what makes it work — so this is declared per step
+    // rather than made a rule about sources. It is declared *here* because a
+    // share is the one value where a discard costs somebody the thing they were
+    // sent, and because this step's job is assembling a set out of what you
+    // have: the pipe is one of the places you have it.
+    collects: ["text", "bundle"],
     output: "shares",
     entropy: "none",
-    unresolvedInputs: "shares",
-    params: [],
+    // Only when the recipe named nothing. `with=` puts the shares in the text,
+    // and a cell whose values are named must not be held back waiting for a
+    // tray nobody needs to open; `whenInput` says the same of a piped value.
+    unresolvedInputs: [{ panel: "shares", when: { with: "" }, whenInput: ["none"] }],
+    params: [
+      {
+        name: "with",
+        type: "string",
+        slot: "required",
+        slotOf: ["text", "bundle"],
+        default: "",
+        emptyMeans: "collect only what the pipe and the Inputs tray hold",
+        doc: "One more slot to fold into the set — a received mnemonic (`with=$late`) or a bundle from `quorum.recv count=`",
+      },
+    ],
   },
   {
     name: "input",
@@ -4710,7 +4747,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "quorum",
     shelf: "channel",
-    doc: "Read from the exchange's data channels, decrypting under each peer's session key. `count=1` (default) waits for one message and emits it as text (`meta.from` = sender fingerprint); `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. Example: `quorum.recv | gpg.verify`, or `quorum.recv count=all | foreach\\n  - gpg.verify`.",
+    doc: "Read from the exchange's data channels, decrypting under each peer's session key. `count=1` (default) waits for one message and emits it as text (`meta.from` = sender fingerprint); `count=3` or `count=all` collects several and emits a bundle for `foreach`. Pauses the run until enough arrive or `wait` expires. **Messages are matched by arrival order and `from=` alone** — two reads of one sender take whatever landed first, so what a read emits is the next message from that peer, not a particular one. Where that matters, use values that say what they are: `shares` reads each mnemonic's own share index, so a recovery recombines whichever order they arrived in. Example: `quorum.recv | gpg.verify`, or `quorum.recv count=2 | shares | blip39 -d | sss.combine`.",
     input: "none",
     output: "text",
     entropy: "none",

@@ -33,6 +33,7 @@ import {
 import { signOpenPgp, verifyOpenPgp } from "../pgp/sign.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
 import {
+  decodeMnemonic,
   decodeShareSet,
   encodeShareSet,
   validateShareMnemonic,
@@ -756,6 +757,95 @@ function attribute(err, key, value) {
 }
 
 /**
+ * Every mnemonic one value can contribute to a share set, tagged with where it
+ * came from so a refusal can point at the slot rather than at a position.
+ *
+ * A BLIP39 mnemonic *is* text, and several of them are a bundle — which is the
+ * shape `quorum.recv count=` already hands back, so the room's own output is
+ * the shape a set is assembled from and no new collection type is needed.
+ * Anything else throws rather than being flattened or ignored: a value that is
+ * not a mnemonic arriving here means the recipe says something other than what
+ * its author meant, and the one thing this step must never do is carry on
+ * without it.
+ *
+ * @param {PipelineValue|null|undefined} value
+ * @param {string} where  how a refusal should name this source
+ * @returns {{ mnemonic: string, where: string }[]}
+ */
+function mnemonicsFromValue(value, where) {
+  if (!value) return [];
+  if (value.type === "text") {
+    const text = String(value.data ?? "").trim();
+    return text ? [{ mnemonic: text, where }] : [];
+  }
+  if (value.type === "bundle") {
+    const parts = Array.isArray(value.data?.parts) ? value.data.parts : [];
+    /** @type {{ mnemonic: string, where: string }[]} */
+    const out = [];
+    parts.forEach((part, i) => {
+      if (part?.type !== "text") {
+        throw new Error(
+          `shares: ${where} carries a ${part?.type || "nothing"} at position ${i + 1}, and a share mnemonic is text`
+        );
+      }
+      const text = String(part.data ?? "").trim();
+      if (text) out.push({ mnemonic: text, where: `${where} (${i + 1} of ${parts.length})` });
+    });
+    return out;
+  }
+  throw new Error(
+    `shares: ${where} is ${value.type}, and a share mnemonic is text (or a bundle of them, from quorum.recv count=)`
+  );
+}
+
+/**
+ * Refuse a set that names the same point on the polynomial twice.
+ *
+ * The check exists because the value is self-describing and nothing else reads
+ * what it says. A BLIP39 mnemonic carries its own share index and set id in its
+ * header, so two shares that arrived by different roads — one pasted, one
+ * across a room, in whatever order the channel delivered them — can be told
+ * apart here without anybody having labelled them. That is the whole reason
+ * arrival order is survivable: `quorum.recv` binds messages to cells by the
+ * order they land in, and if two reads of one dealer swap their messages the
+ * recovery below still recombines correctly, because a share knows which share
+ * it is.
+ *
+ * What it cannot survive is the same share twice, and that is what this names.
+ * Left to run, `interpolate` divides by `xi ^ xj` — zero for equal indices —
+ * and the person is handed "GF division by zero" from three steps downstream,
+ * a sentence about finite fields for a mistake about which slot held what.
+ *
+ * Undecodable mnemonics are skipped rather than reported: a bad checksum is
+ * `decodeShareSet`'s finding and it says so in words about checksums, and
+ * raising it here would move an existing message to a worse place.
+ *
+ * @param {{ mnemonic: string, where: string }[]} collected
+ */
+function assertDistinctShares(collected) {
+  /** @type {Map<string, string>} */
+  const seen = new Map();
+  for (const { mnemonic, where } of collected) {
+    let header;
+    try {
+      header = decodeMnemonic(mnemonic);
+    } catch (_) {
+      continue;
+    }
+    const key = `${header.id}/${header.index}`;
+    const first = seen.get(key);
+    if (first) {
+      throw new Error(
+        `shares: ${first} and ${where} are the same share — number ${header.index} of ` +
+          `set ${header.id}. Shamir needs distinct shares, and two copies of one point ` +
+          `recover nothing. Collect ${header.threshold} different shares of this split.`
+      );
+    }
+    seen.set(key, where);
+  }
+}
+
+/**
  * @param {import("./recipe.js").RecipeStep} step
  * @param {PipelineValue|null} value
  * @param {RuntimeBindings} bindings
@@ -944,22 +1034,59 @@ async function execStepBody(step, value, bindings, artifacts) {
     }
     case "shares": {
       const inp = bindings.inputs?.shares;
-      let mnemonics = (inp?.mnemonics || []).map((m) => String(m).trim()).filter(Boolean);
-      if (!mnemonics.length) {
+      // **What the recipe names beats what a tray holds.** `shares` used to be
+      // a source that read one place and discarded the pipeline value in
+      // silence, which is how a holder could stand on a machine holding two
+      // shares of a split and be told to type some in. It now gathers from the
+      // pipe and from `with=` — both of which are in the text the two ends
+      // digest — and only falls back to the tray and the indexed sweep when
+      // the recipe named nothing. A recipe that says which shares it means must
+      // not quietly pick up others.
+      const withRef = String(step.params?.with || "").trim();
+      /** @type {{ mnemonic: string, where: string }[]} */
+      const named = mnemonicsFromValue(value, "the value piped into `shares`");
+      if (withRef) {
+        const resolve = bindings?.resolveSlot;
+        if (typeof resolve !== "function") {
+          throw new Error("shares with=: runtime slot resolver missing");
+        }
+        named.push(...mnemonicsFromValue(resolve(withRef), `shares with=${withRef}`));
+      }
+      /** @type {{ mnemonic: string, where: string }[]} */
+      let collected = named;
+      if (!collected.length) {
+        collected = (inp?.mnemonics || [])
+          .map((m) => ({ mnemonic: String(m).trim(), where: "the Inputs tray" }))
+          .filter((m) => m.mnemonic);
+      }
+      if (!collected.length) {
         // Wired fallback: a split cell that ran earlier this session left its
         // shares as indexed slots (foreach `out` values carry shareIndex).
-        // Pasting always wins — the fallback only fires on an empty panel.
         const indexed = bindings.listIndexedSlots?.() || [];
-        mnemonics = indexed
+        collected = indexed
           .filter((v) => v?.type === "text" && v.meta?.shareIndex)
-          .map((v) => String(v.data).trim())
-          .filter(Boolean);
+          .map((v) => ({
+            mnemonic: String(v.data).trim(),
+            where: `the split that ran earlier this session (share ${v.meta.shareIndex})`,
+          }))
+          .filter((m) => m.mnemonic);
       }
-      if (!mnemonics.length) {
+      if (!collected.length) {
+        // Two remedies, and both are performable *here* — which is the whole of
+        // `47e7ffa`'s rule and what the old sentence broke. It ended "or run a
+        // split cell first", which on the machine that received the shares
+        // names somebody else's cell, and a cell that would mint a different
+        // secret if it ran. Naming a slot is something the reader can do to the
+        // values they are actually holding.
         throw new Error(
-          "No BLIP39 share mnemonics provided — paste shares (or run a split cell first) before running."
+          "shares: nothing to collect — no value was piped in, with= names no slot, " +
+            "and the Inputs tray holds no share rows. If the shares are already in " +
+            "slots on this machine, name them: `$share | shares with=$late`. " +
+            "Otherwise paste them into Inputs → shares."
         );
       }
+      assertDistinctShares(collected);
+      const mnemonics = collected.map((m) => m.mnemonic);
       /** @type {Uint8Array|null} */
       let envelope = null;
       if (inp?.envelopeB64) {

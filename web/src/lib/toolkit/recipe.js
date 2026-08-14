@@ -230,11 +230,16 @@ function pushExportWhichPolicy(step, current, ctx) {
  * `stream.open` sat in that gap. The answer now comes from the declarations, so
  * an op that grows an `unresolvedInput` param grows a panel without any list
  * being touched.
+ * The incoming type goes in because a need can be answered by the pipe. `shares`
+ * collects a mnemonic piped into it, so the tray it would otherwise open is not
+ * a need at all in that spelling — and a cell held back for a panel nobody has
+ * to fill is a cell that cannot be run for a reason that is not true.
  * @param {RecipeStep} step
  * @param {import("./input-needs.js").InputPanel[]} inputNeeds
+ * @param {import("./types.js").RefinedType|null} [incoming]
  */
-function collectInputNeeds(step, inputNeeds) {
-  for (const need of stepInputNeeds(step)) {
+function collectInputNeeds(step, inputNeeds, incoming = null) {
+  for (const need of stepInputNeeds(step, undefined, incoming)) {
     if (!inputNeeds.includes(need)) inputNeeds.push(need);
   }
 }
@@ -310,6 +315,9 @@ function supplyNoun(want) {
   const key = [...want].sort().join(",");
   if (key === "bytes,text") return "text/bytes";
   if (key === "openpgp-key,recipients,text") return "recipients";
+  // A mnemonic is text and several of them are a bundle, so the accepted set
+  // reads as two unrelated types unless it is named for what it carries.
+  if (key === "bundle,text") return "share mnemonics";
   return "a key";
 }
 
@@ -1332,7 +1340,7 @@ function validateBodySteps(body, startType, ctx) {
         ctx.stepIndex
       );
     }
-    collectInputNeeds(step, inputNeeds);
+    collectInputNeeds(step, inputNeeds, current);
     if (ctx.warnings) {
       // Body steps carry their stem's index, exactly as body *errors* do —
       // the chip that can be clicked is the `foreach`/`tee`, not a nested step
@@ -1685,7 +1693,7 @@ export function validateRecipe(ast) {
     // Every panel this step needs, read off its declarations — the step's own
     // `unresolvedInputs` for the value that arrives through the pipe, and its
     // `unresolvedInput` params for the ones a `$slot` could have supplied.
-    collectInputNeeds(step, inputNeeds);
+    collectInputNeeds(step, inputNeeds, current);
 
     if (step.name === "in") {
       const ref = String(step.params?.ref || "");
@@ -2082,13 +2090,19 @@ export function unresolvedInputs(ast) {
 
 /**
  * Registry completeness check for tests.
+ *
+ * `steps` is a parameter for `stepInputRequirements`' reason: a check that can
+ * only be asked about ops the registry already contains cannot demonstrate that
+ * it would catch a *new* one, which is the whole property it exists for. The
+ * shipped call passes nothing and gets the real registry.
+ * @param {import("./registry.js").StepSpec[]} [steps]
  * @returns {string[]}
  */
-export function registryIssues() {
+export function registryIssues(steps = listSteps()) {
   /** @type {string[]} */
   const issues = [];
   const paramTypes = new Set(["enum", "int", "string", "bytes", "bool", "flag"]);
-  for (const s of listSteps()) {
+  for (const s of steps) {
     if (!s.name) issues.push("step missing name");
     if (!s.kind) issues.push(`${s.name}: missing kind`);
     if (!s.toolbox) issues.push(`${s.name}: missing toolbox`);
@@ -2126,6 +2140,23 @@ export function registryIssues() {
           `read as "keying" and the step is refused by any mirrored run.`
       );
     }
+    // `collects` is a claim about a source's *pipeline* input, so a transform
+    // declaring it would be saying something the field cannot mean — a
+    // transform's accepted input is `input`/`overloads` and is already checked.
+    if (s.collects) {
+      if (s.kind !== "source") {
+        issues.push(
+          `${s.name}: collects is for sources — a ${s.kind} declares its pipeline input with input/overloads`
+        );
+      }
+      if (!Array.isArray(s.collects) || !s.collects.length) {
+        issues.push(`${s.name}: collects must be a non-empty list of io types`);
+      } else if (s.collects.includes(/** @type {*} */ ("none"))) {
+        // `none` is what "nothing was piped in" already is, and it is always
+        // allowed — listing it would read as a fourth accepted value.
+        issues.push(`${s.name}: collects must not list "none" — an empty pipe is always accepted`);
+      }
+    }
     for (const d of stepInputDeclarations(s.unresolvedInputs)) {
       if (!INPUT_PANELS.includes(d.panel)) {
         issues.push(
@@ -2136,6 +2167,13 @@ export function registryIssues() {
         if (!(s.params || []).some((p) => p.name === name)) {
           issues.push(`${s.name}: unresolvedInputs when.${name} names no param`);
         }
+      }
+      // A guard on a type the step never sees can never lift the panel, which
+      // is the silent half of a wrong declaration: the tray simply stays.
+      if (d.whenInput && !d.whenInput.includes(/** @type {*} */ ("none"))) {
+        issues.push(
+          `${s.name}: unresolvedInputs whenInput must include "none" — a step with nothing piped in has only the tray left`
+        );
       }
     }
     for (const p of s.params || []) {

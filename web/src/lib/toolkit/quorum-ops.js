@@ -68,6 +68,7 @@ const IDLE_STATE = Object.freeze({
  *   session: NotebookSession,
  *   state: QuorumExchangeState,
  *   inbox: { from: string, text: string, ts: number }[],
+ *   delivered: number,
  *   recvWaiters: ((msg: { from: string, text: string, ts: number } | null) => void)[],
  *   cancelled: boolean,
  *   ownKeyElsewhere: boolean,
@@ -713,6 +714,14 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
           /* a broken tap must not swallow ordinary chat */
         }
       }
+      // Counted before it is handed anywhere, because the count answers a
+      // question the inbox cannot: a message that has already been read by an
+      // earlier cell is gone from `ex.inbox`, so a timeout looking only at the
+      // queue cannot tell "this room has never carried anything" from "this
+      // room has carried three and none since you started waiting". Those are
+      // different rooms to a reader, and the first is the one that means
+      // something is wrong.
+      ex.delivered += 1;
       const waiter = ex.recvWaiters.shift();
       if (waiter) waiter(msg);
       else ex.inbox.push(msg);
@@ -817,6 +826,8 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     },
     inbox: [],
     recvWaiters: [],
+    /** Ordinary chat messages this exchange has carried — see `onChat`. */
+    delivered: 0,
     handoffs: [],
     /**
      * The notebook a peer last proposed — one slot, see `getProposedNotebook`.
@@ -943,6 +954,106 @@ export async function execQuorumSend(value, params) {
   return value;
 }
 
+/**
+ * What a holder is told when the wait runs out.
+ *
+ * The old sentence was `no message within 120s` and nothing else, and it is the
+ * refusal `quorum.offer`'s own timeout three hundred lines above already knew
+ * how to write: name the state, then the routes out of it, then ask the
+ * question only the other end can answer. The clock is the *least* of what this
+ * step knows at this moment. It knows which peer it was told to listen for, it
+ * knows whether anybody is connected right now, and it knows whether this
+ * exchange has ever carried a message at all — and those three separate a room
+ * that is simply early from a `from=` that matches nobody from a link that is
+ * down. A reader given only the stopwatch spends it on the transport, which in
+ * the ordinary case is the one thing that is working.
+ *
+ * "Nobody has sent yet" is deliberately stated as *normal*. It is reachable on
+ * the recommended ordering — the holder listens first, and the dealer is
+ * reading a recipe and checking a fingerprint — so a message that treated it as
+ * a fault would be wrong most of the times it is read.
+ *
+ * Every remedy here is performable by the person holding this screen: press Run
+ * again, widen or drop `from=`, raise `wait=`. None of them asks them to do
+ * something on a machine they are not sitting at, which is `47e7ffa`'s rule.
+ *
+ * @param {NonNullable<typeof current>} ex
+ * @param {{ wait: number, fromFilter: string }} at
+ * @returns {string}
+ */
+function recvTimeoutMessage(ex, { wait, fromFilter }) {
+  const seconds = Math.round(wait / 1000);
+  const peers = ex.state.peers || [];
+  // The same two facts the Connections tray draws its verdict from
+  // (`authenticated` is what `data-verified` renders), so the sentence and the
+  // panel a reader checks it against cannot disagree.
+  const verified = peers.filter((p) => p.state === "connected" && p.authenticated);
+  // Whole fingerprints, never a prefix of one — `from=` may itself have been
+  // typed as a prefix, and the answer to "which peer is that" is the roster's
+  // and is complete. When it matches nobody the filter is echoed as written,
+  // because then the author's own text is the thing that needs looking at.
+  const matched = fromFilter
+    ? verified
+        .map((p) => String(p.fingerprint || "").toUpperCase())
+        .filter((f) => f.startsWith(fromFilter))
+    : [];
+  // "matches nobody" is only said when there is somebody it could have matched.
+  // With an empty roster the next sentence already says the room is down, and
+  // adding "no connected peer matches this" would invite a reader to go and
+  // correct a `from=` that was never the problem.
+  const listeningFor = !fromFilter
+    ? "any verified peer in this room"
+    : matched.length === 1
+      ? matched[0]
+      : matched.length > 1
+        ? `${matched.length} peers whose fingerprints start ${fromFilter}`
+        : verified.length
+          ? `${fromFilter}, which no connected peer in this room matches`
+          : fromFilter;
+
+  /** @type {string[]} */
+  const parts = [];
+  // No "n of m collected" clause, because there is never one to report: the
+  // loop breaks on a partial collection one line above the throw and returns
+  // it. A count printed here would always be zero.
+  parts.push(
+    `quorum.recv: no message within ${seconds}s. It was listening for ${listeningFor}.`
+  );
+
+  if (!verified.length) {
+    parts.push(
+      "No peer is connected and key-confirmed on this exchange right now, so nothing " +
+        "could have reached it however long it waited. The Connections tray says which " +
+        "links died."
+    );
+  } else if (fromFilter && !matched.length) {
+    // The one case where the recipe, not the room, is what is wrong — and the
+    // only one where a reader should be looking at their own text.
+    parts.push(
+      `${verified.length} peer${verified.length === 1 ? " is" : "s are"} connected and ` +
+        "key-confirmed, and none of them is that one. Check from= against the " +
+        "Connections tray, or drop it to accept from any of them."
+    );
+  } else {
+    parts.push(
+      `${verified.length} peer${verified.length === 1 ? " is" : "s are"} connected and ` +
+        `key-confirmed, and this exchange has carried ${
+          ex.delivered === 0
+            ? "no message at all yet"
+            : ex.delivered === 1
+              ? "one message so far"
+              : `${ex.delivered} messages so far`
+        }. Nobody having sent yet is an ordinary state of a healthy room: the side ` +
+        "that listens first waits for the side that sends."
+    );
+    parts.push(
+      "Has the other side run its quorum.send cell? Press Run on this cell again once " +
+        `it has, or give it a longer wait= than ${seconds}s.`
+    );
+  }
+  return parts.join(" ");
+}
+
 /** @param {Record<string, unknown>} params */
 export async function execQuorumRecv(params) {
   const ex = requireExchange("quorum.recv");
@@ -986,7 +1097,7 @@ export async function execQuorumRecv(params) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       if (got.length) break; // partial collection is still a result
-      throw new Error(`quorum.recv: no message within ${Math.round(wait / 1000)}s`);
+      throw new Error(recvTimeoutMessage(ex, { wait, fromFilter }));
     }
     /** @type {{ from: string, text: string, ts: number } | null} */
     const msg = await new Promise((resolve) => {

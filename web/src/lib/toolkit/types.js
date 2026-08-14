@@ -1233,9 +1233,14 @@ export function inferParamDrivenType(name, current, params = {}) {
 
   if (name === "sss.combine") {
     if (current.base !== "shares") {
+      const collectable = current.base === "text" || current.base === "bundle";
       return {
         ok: false,
-        error: `"sss.combine" expects shares, got ${formatType(current)}`,
+        error:
+          `"sss.combine" expects shares, got ${formatType(current)}` +
+          (collectable
+            ? '. Collect the mnemonics into a set and decode them first — add "shares" then "blip39 -d".'
+            : ""),
       };
     }
     if (current.kind === "mnemonic") {
@@ -1254,9 +1259,20 @@ export function inferParamDrivenType(name, current, params = {}) {
 
   if (name === "blip39") {
     if (current.base !== "shares") {
+      // Text and a bundle of text get the route out named, because they are
+      // what a share *is* on the way here: `quorum.recv` hands back a mnemonic
+      // as `text` and several as a `bundle`, and the reader holding one is
+      // exactly the person who cannot see what to write next. Everything else
+      // is a genuine mistake with no obvious fix, and gets the bare mismatch —
+      // a remedy suggested for a keypair would be one that cannot be performed.
+      const collectable = current.base === "text" || current.base === "bundle";
       return {
         ok: false,
-        error: `"blip39" expects shares, got ${formatType(current)}`,
+        error:
+          `"blip39" expects shares, got ${formatType(current)}` +
+          (collectable
+            ? '. A mnemonic is text until something collects it into a set — add "shares" first (`$share | shares with=$late | blip39 -d`).'
+            : ""),
       };
     }
     const decode = !!params.decode;
@@ -1601,7 +1617,7 @@ export function inferParamDrivenType(name, current, params = {}) {
 
 /**
  * Resolve the refined output type of a step given the current pipeline type.
- * @param {{ name: string, overloads?: StepOverload[], input?: IoType, output?: IoType, kind?: string }} spec
+ * @param {{ name: string, overloads?: StepOverload[], input?: IoType, output?: IoType, kind?: string, collects?: IoType[] }} spec
  * @param {RefinedType} current
  * @param {Record<string, *>} [params]
  * @returns {{ ok: true, output: RefinedType, overload?: StepOverload } | { ok: false, error: string }}
@@ -1610,6 +1626,24 @@ export function resolveStepType(spec, current, params = {}) {
   const name = spec.name;
 
   if (spec.kind === "source") {
+    // A source declaring `collects` folds the pipeline value in rather than
+    // dropping it, so what arrives has to be a thing it can fold. Without the
+    // declaration nothing is checked and nothing ever was: `input: "none"` is
+    // read as "accepts anything", which is what lets `genkey | out $a | genkey`
+    // re-root a chain, and is also what let `random 32 | shares` compile and
+    // then throw the 32 bytes away without a word.
+    //
+    // The output is still `inferSourceType`'s answer — it does not vary with
+    // what arrived — so a collecting source's type stays knowable before the
+    // run, which is the rule this had to be weighed against.
+    if (spec.collects?.length && current && current.base !== "none") {
+      if (!spec.collects.includes(current.base)) {
+        return {
+          ok: false,
+          error: `"${name}" collects ${spec.collects.join(" or ")}, got ${formatType(current)} — it would be thrown away.`,
+        };
+      }
+    }
     return { ok: true, output: inferSourceType(name, params) };
   }
 
@@ -1690,7 +1724,7 @@ export function resolveStepType(spec, current, params = {}) {
 
 /**
  * Whether a step can accept the current refined type (for builder suggestions).
- * @param {{ name: string, overloads?: StepOverload[], input?: IoType, kind?: string, params?: * }} spec
+ * @param {{ name: string, overloads?: StepOverload[], input?: IoType, kind?: string, params?: *, collects?: IoType[] }} spec
  * @param {RefinedType|IoType|null|undefined} from
  * @returns {boolean}
  */
@@ -1703,6 +1737,11 @@ export function stepAcceptsRefined(spec, from) {
   if (!current || current.base === "none") {
     return spec.kind === "source" || spec.input === "none";
   }
+
+  // A collecting source is the one kind of source worth suggesting *after* a
+  // value: `quorum.recv count=2 | shares` is a real next step, and the tail of
+  // this function would answer `false` for it because `input` is `none`.
+  if (spec.collects?.length) return spec.collects.includes(current.base);
 
   if (POLYMORPHIC_STEPS.has(spec.name)) return true;
   if (spec.name === "foreach") return current.base === "shares" || current.base === "bundle";

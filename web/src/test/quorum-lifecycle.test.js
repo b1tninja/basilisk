@@ -523,12 +523,18 @@ describe("the roster and the state agree", () => {
     // legal and stable and still not an identity — it named a place in the
     // sorted audience, so it moved whenever the room changed size, which is
     // precisely the hazard the test below used to pin and can no longer state.
+    //
+    // `attested` is always present and empty here: a peer who has signed
+    // nothing and a peer the projection forgot to ask about must not be two
+    // shapes, or every reader of a row gets to invent what an absent field
+    // means.
     expect(state.peers).toEqual([
       {
         id: FPR_B,
         fingerprint: FPR_B,
         state: "failed",
         authenticated: false,
+        attested: [],
       },
     ]);
   });
@@ -780,6 +786,97 @@ describe("quorum.recv", () => {
     setTimeout(() => q.closeQuorumExchange("closed"), 10);
     await expect(pending).rejects.toThrow(/exchange closed while waiting/);
     expect(session.stopped).toBe(1);
+  });
+
+  it("names the state that is true when the wait runs out", async () => {
+    // What the sentence used to be, whole: `quorum.recv: no message within
+    // 120s`. It named a stopwatch and nothing else — not the peer `from=` gave
+    // it, not whether the room was up, not whether anything had ever been sent
+    // — while the Connections tray beside it read verified. A reader with only
+    // a clock spends it on the transport, which in the ordinary case is the one
+    // part that is working.
+    const { session } = await open();
+    session.connect(FPR_B);
+    await expect(q.execQuorumRecv({ from: FPR_B, wait: 1000 })).rejects.toThrow(
+      /no message within 1s/
+    );
+
+    let said = "";
+    try {
+      await q.execQuorumRecv({ from: FPR_B, wait: 1000 });
+    } catch (err) {
+      said = String(err.message);
+    }
+    // The peer it was listening for, whole — never a prefix, even though
+    // `from=` may itself have been typed as one.
+    expect(said).toContain(FPR_B);
+    expect(said).not.toContain("…");
+    // The link, in the words the Connections tray draws its own verdict from.
+    expect(said).toContain("connected and key-confirmed");
+    // Whether anything has ever crossed this exchange — the fact the inbox
+    // cannot answer, because an earlier cell's read empties it.
+    expect(said).toContain("no message at all yet");
+    // And that waiting is normal here, which is the whole reason this is
+    // reachable on the recommended ordering.
+    expect(said).toContain("ordinary state of a healthy room");
+    expect(said).toContain("quorum.send");
+    // Every remedy performable by whoever is reading it — press Run again,
+    // raise wait=. Nothing that asks them to act on a machine they are not at.
+    expect(said).toContain("Press Run on this cell again");
+    expect(said).toContain("longer wait=");
+  });
+
+  it("counts what the room has carried, not what is left in the inbox", async () => {
+    const { session } = await open();
+    session.chat(FPR_B, "one");
+    session.chat(FPR_B, "two");
+    // Both read, so `ex.inbox` is empty again — and the exchange has still
+    // carried two. A timeout that looked at the queue would say the room had
+    // never carried anything, which is the state that means something is wrong.
+    expect((await q.execQuorumRecv({ count: 2, wait: 1000 })).data.count).toBe(2);
+    let said = "";
+    try {
+      await q.execQuorumRecv({ wait: 1000 });
+    } catch (err) {
+      said = String(err.message);
+    }
+    expect(said).toContain("2 messages so far");
+    expect(said).not.toContain("no message at all yet");
+  });
+
+  it("says the from= matches nobody when that is what is wrong", async () => {
+    // The one case where the recipe rather than the room is at fault, and the
+    // only one where a reader should be looking at their own text. The old
+    // message was identical to the healthy-room one, so a mistyped fingerprint
+    // read as a peer who had not got round to sending.
+    await open();
+    let said = "";
+    try {
+      await q.execQuorumRecv({ from: FPR_C, wait: 1000 });
+    } catch (err) {
+      said = String(err.message);
+    }
+    expect(said).toContain("which no connected peer in this room matches");
+    expect(said).toContain("Check from=");
+    expect(said).toContain("drop it to accept from any of them");
+    // And it must not tell them to wait longer for a peer that is not there.
+    expect(said).not.toContain("longer wait=");
+  });
+
+  it("says the link is down when no peer is confirmed", async () => {
+    const { session } = await open();
+    session.drop(FPR_B);
+    let said = "";
+    try {
+      await q.execQuorumRecv({ wait: 1000 });
+    } catch (err) {
+      said = String(err.message);
+    }
+    expect(said).toContain("No peer is connected and key-confirmed");
+    expect(said).toContain("Connections tray");
+    // Not the healthy-room sentence: nothing could have arrived, so "nobody has
+    // sent yet" would be a guess about a room that is not there.
+    expect(said).not.toContain("ordinary state of a healthy room");
   });
 
   it("keeps protocol chatter out of a user's inbox", async () => {
