@@ -199,11 +199,15 @@ describe("slot sigil", () => {
   });
 
   it("does not treat a `$` inside a value as a slot", () => {
-    const { ast, errors } = parseRecipe(
-      'input | gpg.symencrypt mode=passphrase passphrase=my$ecret'
-    );
+    // The vehicle used to be `gpg.symencrypt passphrase=my$ecret`, and moved
+    // when every passphrase param became `$ref`-only: a secret written as a
+    // literal is refused now, whatever characters are in it. The grammar
+    // property is unchanged and still needs a `slot: true` param to be about
+    // anything — on those, a `$` that does not open the value is just a
+    // character.
+    const { ast, errors } = parseRecipe("file.read | age.encrypt to=my$ecret");
     expect(errors).toEqual([]);
-    expect(ast.steps[1].params.passphrase).toBe("my$ecret");
+    expect(ast.steps[1].params.to).toBe("my$ecret");
     // Same rule for the sigil `@` has always followed: an address stays an
     // address, and now it needs no positional tie-break to say so.
     const to = parseRecipe("input | gpg.encrypt to=alice@example.org");

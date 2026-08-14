@@ -251,7 +251,26 @@ describe("a notebook proposal", () => {
       ...buildNotebookProposal({ title: TITLE, source: HANDED }),
       source: armored,
     });
-    expect(() => parseNotebookProposal(forged)).toThrow(/private key material/);
+    // Phrasing, not property: the arriving refusal now names passphrases too,
+    // since a literal `passphrase=` is material this predicate catches. What is
+    // pinned is that a proposal carrying private armor is refused on the way in
+    // as well as on the way out.
+    expect(() => parseNotebookProposal(forged)).toThrow(/secret material/);
+  });
+
+  it("refuses a passphrase written into a step, which is not armor and travels the same way", () => {
+    // The class the armor checks could not see. `sss.split passphrase=hunter2`
+    // does not parse — a `secret` param takes a `$ref` — but nothing on this
+    // path parses, so until the predicate learned the form, a notebook nobody
+    // could run still carried the mask for shares somebody could.
+    const literal = `random 32 | sss.split threshold=2 shares=3 passphrase=hunter2 | out $s`;
+    expect(() => buildNotebookProposal({ title: TITLE, source: literal })).toThrow(
+      /looks like it holds secret material/
+    );
+    // The same notebook, spelled the way the language asks for: the mask is
+    // named, and the name is all that travels.
+    const named = `input | out $pw\n\nrandom 32 | sss.split threshold=2 shares=3 passphrase=$pw | out $s`;
+    expect(() => buildNotebookProposal({ title: TITLE, source: named })).not.toThrow();
   });
 
   it("proposes a placed notebook, fingerprints and all", () => {

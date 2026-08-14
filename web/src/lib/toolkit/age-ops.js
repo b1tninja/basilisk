@@ -73,23 +73,43 @@ function paramText(params, name, bindings) {
 }
 
 /**
- * `passphrase=` may be a literal or an `$slot`, like every other declared
- * `slot: true` param. Unlike a recipient it is never trimmed — leading and
- * trailing space are part of a passphrase — so the literal branch is kept
- * verbatim rather than routed through `paramText`.
+ * `passphrase=` is an `$slot` ref or nothing — `slot: "required"`, so the
+ * parser refuses a literal and this never sees one.
  *
  * Until the param declared `slot`, this resolution did not happen at all:
  * `secret: true` had the UI binding a slot and serialize dropping literals,
  * while `execAgeEncrypt` read `params.passphrase` straight, so a slot-bound
  * passphrase encrypted the file under the string `$pw`.
+ *
+ * **Not `paramText`, and not trimmed.** A recipient is a bech32 word and
+ * arrives with whatever whitespace a file had around it; a passphrase's leading
+ * and trailing spaces are part of the passphrase, and trimming them here would
+ * decrypt nothing anyone could explain. The bytes-or-text decode is the only
+ * part the two have in common.
  * @param {Record<string, unknown>} params
  * @param {{ resolveSlot?: (ref: string) => { data?: unknown } | null }} bindings
  * @returns {string}
  */
 function passphraseText(params, bindings) {
-  const raw = String(params?.passphrase ?? "");
-  if (!raw.trim().startsWith(SLOT_SIGIL)) return raw;
-  return paramText(params, "passphrase", bindings);
+  const ref = String(params?.passphrase ?? "").trim();
+  if (!ref) return "";
+  if (!ref.startsWith(SLOT_SIGIL)) {
+    // Unreachable through the parser, and stated rather than assumed: an AST
+    // assembled by something else must not encrypt a file under the literal
+    // characters somebody typed as a password.
+    throw new Error(
+      "age passphrase= takes an $slot (bind one from Inputs) — a literal passphrase would travel in the recipe text"
+    );
+  }
+  const resolve = bindings?.resolveSlot;
+  if (typeof resolve !== "function") {
+    throw new Error("age: runtime slot resolver missing for passphrase=");
+  }
+  const slot = resolve(ref);
+  if (!slot) throw new Error(`age: unknown slot ${ref}`);
+  const data = slot.data;
+  if (data instanceof Uint8Array) return new TextDecoder().decode(data);
+  return String(data ?? "");
 }
 
 /**

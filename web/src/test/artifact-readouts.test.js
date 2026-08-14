@@ -38,8 +38,10 @@ const run = async (src) => {
 
 describe("packetSummary — the framing, never the contents", () => {
   it("maps a real OpenPGP symmetric ciphertext into its packets", async () => {
+    // The passphrase is bound through a slot — a literal `passphrase=` is a
+    // parse error now that the param takes a `$ref` only.
     const arts = await run(
-      '"secret data" | utf8 | gpg.symencrypt mode=passphrase passphrase="hunter2"'
+      '"hunter2" | out $pw\n\n"secret data" | utf8 | gpg.symencrypt mode=passphrase passphrase=$pw'
     );
     // `role: "ciphertext"`, which is what this artifact has always been: it
     // stamped `envelope` on both modes until the ceremony word was given back

@@ -178,9 +178,23 @@ import {
  *   Never on a param that carries the secret being protected. If you are
  *   reaching for this on a `key`, `passphrase` or `master`, the answer is that
  *   a pooled value cannot go there.
- * @property {boolean} [secret]  UI-only: locked to a bound `$slot` ref, never free text; the
- *   literal value is still whatever the AST carries (recipe text, Publish share links, and
- *   plain copy/export must redact it to the `$slotRef` string — see design v2 §22a)
+ * @property {boolean} [secret]  this param carries key material, or the passphrase
+ *   standing between key material and whoever holds the artifact. The field is
+ *   locked to a bound `$slot` ref and never renders free text (design v2 §22a).
+ *
+ *   **Always with `slot: "required"`, and the pairing is the whole rule.** This
+ *   flag on its own is a *serialization* rule: `serializeStep` drops any value
+ *   here that is not a `$ref`, so a literal typed in Source view vanishes from
+ *   the text. Vanishing is the wrong fix for a value that decides what the run
+ *   produces — the recipe would then describe a split, a `gpg -c` message or a
+ *   protected key it no longer performs, and `handoffContext` would digest two
+ *   texts that mean different things into manifests claiming to be the same run.
+ *   `slot: "required"` refuses the literal one layer earlier, at the parser,
+ *   where the author is still present to be told; the `$ref` then survives every
+ *   serialization intact, so the recipe names its secret without carrying it.
+ *
+ *   `serializeStep`'s drop stays as a second line, for an AST assembled by
+ *   something other than the parser. It should never have anything to do.
  */
 
 /**
@@ -2055,12 +2069,58 @@ export const STEPS = [
         serialize: "always",
         doc: "Total shares to produce (N)",
       },
+      /**
+       * ## The mask is not written down beside the shares
+       *
+       * A literal here used to serialize verbatim. `sss.split threshold=2
+       * shares=3 passphrase=hunter2` is the text that goes into a `#r=` link,
+       * into the workspace saved in `localStorage`, and into `recipeSource` in
+       * the run manifest both ends digest — so the one value that makes a
+       * stolen share useless travelled in the three places a recipe most
+       * reliably travels, beside the recipe that made the shares, to the same
+       * custodians the shares go to.
+       *
+       * **Hiding it on serialize was the wrong fix, and is why this is a slot
+       * rather than only a `secret`.** `secret: true` by itself drops a literal
+       * at serialization, which leaves the recipe describing a split it no
+       * longer performs: a peer who adopts the notebook masks with nothing, so
+       * the shares they make are not the shares that were made, and
+       * `handoffContext` digests the two texts into manifests that mean
+       * different things while agreeing they are the same run. `c33bc16`
+       * settled the principle for this exact class of parameter — a value that
+       * changes what a recipe *means* stays visible in the text — and a
+       * redacted passphrase is precisely that value made invisible.
+       *
+       * So the recipe names the secret and never carries it. A literal is a
+       * parse error, where the author is still there to be told; `$pw` survives
+       * every serialization intact. Whoever holds the slot reproduces the split
+       * exactly, and whoever holds only the link holds a recipe that names a
+       * value they do not have — which is the true state of affairs rather than
+       * a quieter false one.
+       *
+       * The shape is `ssh.encode passphrase=`'s, for its reason: a passphrase
+       * that decides *what the artifact is* — masked shares or bare ones — must
+       * be named in the recipe, so it can never come from a panel behind the
+       * author's back, and must not be spellable as a literal, so it can never
+       * ride out in the text. `sss.combine` takes the tray fallback for the
+       * same reason `ssh.decode` does; splitting does not.
+       *
+       * **What this does not close.** Nothing stops `"hunter2" | out $pw` in a
+       * cell above: a literal in a `lit` step is indistinguishable from any
+       * other text this language can hold, and no rule about parameters can see
+       * it. What is closed is the parameter that *invited* one — the field
+       * binds from the Inputs tray, and Inputs is the one place this product
+       * neither persists nor shares.
+       */
       {
         name: "passphrase",
         type: "string",
+        slot: "required",
+        slotOf: ["bytes", "text"],
+        secret: true,
         default: "",
         emptyMeans: "no mask — the shares are unmasked",
-        doc: "Optional share passphrase mask (Basilisk-specific)",
+        doc: "Optional share passphrase mask (Basilisk-specific) — `$slot` only, never a literal: bind it from Inputs (`input | out $pw`, then `passphrase=$pw`) so the mask is named in the recipe without travelling in it.",
       },
     ],
     overloads: [
@@ -2147,10 +2207,32 @@ export const STEPS = [
     entropy: "none",
     params: [
       {
+        /**
+         * The conjugate of `sss.split passphrase=`, and a slot for the same
+         * mechanical reason: a recovery recipe is shared at least as widely as
+         * the split that made it — it is what a custodian is handed along with
+         * their share — so a literal mask here is the mask arriving with the
+         * thing it masks.
+         *
+         * The *design* reason differs from split's, exactly as `ssh.decode`'s
+         * differs from `ssh.encode`'s. On the way out the passphrase decides
+         * what the shares are, so nothing may supply it but the text. Here it
+         * only decides whether recovery succeeds, so the Shares panel may
+         * answer — and it does: the `shares` source carries
+         * `inputs.shares.passphrase` (headless, `--passphrase-env`) on the
+         * value's meta, and the engine falls back to it when the recipe named
+         * nothing. That fallback is what
+         * `emptyMeans` is naming, and what keeps `input-needs.js` from
+         * reporting a binding nobody owes.
+         */
         name: "passphrase",
         type: "string",
+        slot: "required",
+        slotOf: ["bytes", "text"],
+        secret: true,
         default: "",
-        doc: "Optional share passphrase used at split time",
+        emptyMeans: "the mask from the Shares panel, or none",
+        doc: "The share passphrase used at split time — `$slot` only, never a literal (`input | out $pw`, then `passphrase=$pw`). Left empty, the Shares panel's passphrase is used.",
       },
     ],
     overloads: [
@@ -2189,12 +2271,32 @@ export const STEPS = [
         doc: "Envelope / ciphertext artifact filename stem",
       },
       {
+        /**
+         * `gpg -c`'s password, and the whole of what stands between the
+         * ciphertext and whoever holds it. `slot: true` let it be written as a
+         * literal, and a literal serialized verbatim — into the `#r=` link, the
+         * saved workspace and the run manifest — which is the same disclosure
+         * `sss.split passphrase=` carried and the same fix, argued at length
+         * there. The ciphertext and the notebook that made it travel the same
+         * way in this product (`#decrypt&ct=` beside `#r=`), so "the password
+         * is in the other document" was never much of a separation.
+         *
+         * `MESSAGING_STARTERS.symencrypt` has always spelled it the new way,
+         * and generates the passphrase into `$pw` rather than asking anyone to
+         * type one into the text.
+         */
         name: "passphrase",
         type: "string",
-        slot: true,
+        slot: "required",
         slotOf: ["bytes", "text"],
+        secret: true,
         default: "",
-        doc: "User passphrase (UTF-8) or `$slot` of text — required with mode=passphrase; forbidden with mode=master",
+        // Blank is the whole of `mode=master`, which is the default and most of
+        // the corpus: the SSS path mints its own master and forbids a
+        // passphrase outright. Only `mode=passphrase` owes one, and owing it is
+        // said by `gpgSymModeTypeError` in a sentence, before the run.
+        emptyMeans: "mode=master — the envelope's own master, no passphrase",
+        doc: "User passphrase as a `$slot` of text (`input | out $pw`, then `passphrase=$pw`) — required with mode=passphrase, forbidden with mode=master. Never a literal: the recipe text is shared, saved and digested.",
       },
       ...CRYPTO_PROFILE_PARAMS,
     ],
@@ -2226,12 +2328,18 @@ export const STEPS = [
         doc: "master = SSS recover path (envelope panel); passphrase = tip is armored ciphertext",
       },
       {
+        // The conjugate of `gpg.symencrypt passphrase=`, ref-only for the same
+        // reason: a recipe that decrypts is shared beside the ciphertext it
+        // decrypts, and a literal here would be the password arriving with the
+        // message.
         name: "passphrase",
         type: "string",
-        slot: true,
+        slot: "required",
         slotOf: ["bytes", "text"],
+        secret: true,
         default: "",
-        doc: "User passphrase (UTF-8) or `$slot` — required with mode=passphrase; forbidden with mode=master",
+        emptyMeans: "mode=master — the envelope panel's master, no passphrase",
+        doc: "User passphrase as a `$slot` of text (`input | out $pw`, then `passphrase=$pw`) — required with mode=passphrase, forbidden with mode=master. Never a literal.",
       },
     ],
     effectiveIo(params) {
@@ -2434,10 +2542,20 @@ export const STEPS = [
         doc: "User ID display name (defaults to email)",
       },
       {
+        // The S2K passphrase is the only thing between the armor this step
+        // emits and the private key inside it, so a literal would be the key's
+        // protection written into the text that made the key — shared, saved
+        // and digested alongside it. Ref-only for `sss.split passphrase=`'s
+        // reason, and like `ssh.encode`'s it also decides *what the artifact
+        // is*: protected armor or bare armor, which no panel may choose.
         name: "passphrase",
         type: "string",
+        slot: "required",
+        slotOf: ["bytes", "text"],
+        secret: true,
         default: "",
-        doc: "Optional S2K passphrase protecting the private key",
+        emptyMeans: "the private key armor is written unprotected",
+        doc: "S2K passphrase protecting the private key — `$slot` only, never a literal (`input | out $pw`, then `passphrase=$pw`).",
       },
       {
         name: "expiry",
@@ -3666,13 +3784,22 @@ export const STEPS = [
         // drops any literal — and until `slot` existed, nothing said the
         // runtime had to *resolve* one. It did not: `passphrase=$pw` encrypted
         // under the four characters `$pw`. Declaring it is what found that.
+        //
+        // `"required"`, not `true`, since the sweep that fixed `sss.split`: a
+        // literal here was legal, ran, and then *disappeared* on serialize, so
+        // the recipe a peer opened said `age.encrypt` with no mode at all and
+        // failed at the run with nothing in the text explaining what had been
+        // taken out of it. Dropping a value the recipe's meaning depends on is
+        // the option that fix rejected; refusing it at the parser is the one it
+        // took, and this param is the reason the drop existed.
         name: "passphrase",
         type: "string",
-        slot: true,
+        slot: "required",
         slotOf: ["bytes", "text"],
         default: "",
         secret: true,
-        doc: "Passphrase (scrypt) mode instead of recipients — `age -p`",
+        emptyMeans: "encrypt to the `to=` recipients instead — one of the two is required",
+        doc: "Passphrase (scrypt) mode instead of recipients — `age -p`. `$slot` only, never a literal (`input | out $pw`, then `passphrase=$pw`).",
       },
       {
         name: "armor",
@@ -3718,13 +3845,15 @@ export const STEPS = [
         doc: "Slot holding an `AGE-SECRET-KEY-1…` identity (never write the identity inline — recipe text is shareable)",
       },
       {
+        // Ref-only for `age.encrypt passphrase=`'s reason — see there.
         name: "passphrase",
         type: "string",
-        slot: true,
+        slot: "required",
         slotOf: ["bytes", "text"],
         default: "",
         secret: true,
-        doc: "Passphrase, for a file encrypted with `age -p`",
+        emptyMeans: "decrypt with key= instead — one of the two is required",
+        doc: "Passphrase for a file encrypted with `age -p` — `$slot` only, never a literal (`input | out $pw`, then `passphrase=$pw`).",
       },
     ],
   },

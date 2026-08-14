@@ -2356,7 +2356,7 @@ function useDemoSplit(threshold = 2, shares = 3) {
  * ones a real run stamps, checked by printing them off the engine first.
  */
 
-/** `"…" | utf8 | gpg.symencrypt mode=passphrase passphrase="hunter2"` */
+/** `"hunter2" | out $pw` then `"…" | utf8 | gpg.symencrypt mode=passphrase passphrase=$pw` */
 const DEMO_ARMOR = `-----BEGIN PGP MESSAGE-----
 
 w1gGJgkCFATbgLG36Fi6JP04xyre+pV/AwQQSjtkirG2GKp49PAFfX2yw2w1

@@ -270,10 +270,19 @@ describe("toolkit recover / shares", () => {
   }, 30_000);
 
   it("passphrase path: wrong passphrase fails to recover secret", async () => {
+    // The mask is *named* in the recipe and supplied through the slot — a
+    // literal `passphrase=correct-horse`, which this test used to write, is a
+    // parse error now that the param takes a `$ref` only: that text goes into
+    // share links, workspace saves and the run manifest, next to the recipe
+    // that made the shares. The property under test is unchanged and is the
+    // point of the mask: the shares only come back for the right one.
     const split = compileRecipe(
-      "random 32 | sss.split threshold=2 shares=3 passphrase=correct-horse | blip39 | foreach\n  - out $share"
+      "input | out $pw\n\nrandom 32 | sss.split threshold=2 shares=3 passphrase=$pw | blip39 | foreach\n  - out $share"
     );
-    const arts = await runRecipe(split.ast);
+    expect(split.validation.errors).toEqual([]);
+    const arts = await runRecipe(split.ast, {
+      inputs: { text: { value: "correct-horse" } },
+    });
     const mnemonics = arts.filter((a) => a.shareIndex).map((a) => a.content);
 
     const wrong = compileRecipe("shares | blip39 -d | sss.combine | encode hex");

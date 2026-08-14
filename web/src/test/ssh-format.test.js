@@ -633,9 +633,17 @@ genkey ed25519 | ssh.encode format=private passphrase=$pw | out $k`;
     const { validation } = compileRecipe(
       `genkey ed25519 | ssh.encode format=private passphrase="hunter2" | out $k`
     );
-    expect(validation.errors.map((e) => e.message).join("\n")).toMatch(
-      /ssh\.encode passphrase=.*require \$/i
-    );
+    const said = validation.errors.map((e) => e.message).join("\n");
+    // Pinned as a property rather than as the old phrasing. It used to read
+    // "Slot labels require $ (use $hunter2, not hunter2)" — `normalizeSlotRef`'s
+    // generic answer, which on a secret quotes the secret back and names a
+    // remedy nobody should perform: `$hunter2` would put the passphrase in the
+    // text as a *label*. What has to be true is that the literal is refused,
+    // that the refusal says what to do instead, and that it does not repeat the
+    // value it is refusing.
+    expect(said).toMatch(/ssh\.encode passphrase=/);
+    expect(said).toMatch(/\$slot/);
+    expect(said).not.toMatch(/hunter2/);
   });
 
   it("round-trips end to end through the engine", async () => {

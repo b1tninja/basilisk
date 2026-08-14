@@ -176,7 +176,7 @@ export function saveWorkspace(
     return {
       ok: false,
       reason:
-        "Recipe looks like it contains secret material — keep private keys in Inputs / the vault, not the library.",
+        "Recipe looks like it contains secret material — keep private keys and passphrases in Inputs / the vault, not the library.",
     };
   }
   const title = String(input?.title || "").trim() || "Untitled notebook";
@@ -286,7 +286,7 @@ export function parseWorkspaceFile(text, opts = {}) {
     return {
       ok: false,
       reason:
-        "File looks like it contains secret material — keep private keys out of recipe files.",
+        "File looks like it contains secret material — keep private keys and passphrases out of recipe files.",
     };
   }
 

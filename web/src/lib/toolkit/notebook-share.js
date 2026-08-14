@@ -170,7 +170,8 @@ export function buildNotebookProposal(spec) {
   if (recipeLooksSecret(source)) {
     throw new Error(
       "notebook proposal: this notebook looks like it holds secret material — " +
-        "private key armor, or a JWK with a private component. It is refused " +
+        "private key armor, a JWK with a private component, or a passphrase " +
+        "written where the recipe should only name one. It is refused " +
         "whole rather than redacted: a recipe carries a secret because " +
         "somebody typed it into a " +
         "cell, and the fix is to move it into Inputs, where it stays on this " +
@@ -285,7 +286,8 @@ export function parseNotebookProposal(text) {
   if (recipeLooksSecret(source)) {
     throw new Error(
       "notebook proposal: the recipe text in this proposal looks like it holds " +
-        "private key material. Refused rather than adopted — a notebook is text " +
+        "secret material — private key armor, or a passphrase written as a " +
+        "literal. Refused rather than adopted — a notebook is text " +
         "this machine is about to put in front of a person and digest into every " +
         "later document, and a peer's private key belongs in neither."
     );

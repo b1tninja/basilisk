@@ -472,8 +472,10 @@ $id | age.recipient | out $pub
 file.read | age.encrypt to=$pub | file.save
 file.read | age.decrypt key=$id | file.save
 
-# scrypt passphrase mode, and the armored text form
-file.read | age.encrypt passphrase="correct horse" armor=true | out $armored
+# scrypt passphrase mode, and the armored text form — the passphrase is bound
+# from Inputs and named, never written into the recipe (see `secret` params)
+input | out $pw
+file.read | age.encrypt passphrase=$pw armor=true | out $armored
 ```
 
 | | `stream.seal` | `age.encrypt` |
@@ -494,7 +496,7 @@ you would otherwise have to invent an age identity to hold it.
 | `age-keygen` | `age.keygen` |
 | `age -r age1… -o doc.age doc` | `file.read \| age.encrypt to=age1… \| file.save` |
 | `age -a -r age1… …` | `… \| age.encrypt to=age1… armor=true` |
-| `age -p -o doc.age doc` | `… \| age.encrypt passphrase=…` |
+| `age -p -o doc.age doc` | `… \| age.encrypt passphrase=$pw` |
 | `age -d -i key.txt doc.age` | `file.read \| age.decrypt key=$id \| file.save` |
 
 ### Pipeline types: `recipients` / `openpgp-key`

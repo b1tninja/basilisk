@@ -2012,9 +2012,13 @@ in $id | ssh.fingerprint | out $fp2`,
     },
     {
       id: "age.armor.passphrase",
-      recipe: `"armored" | utf8 | age.encrypt passphrase="correct horse" armor=true | out $armored
+      // The passphrase is named, never written into the op: `passphrase=` takes
+      // a `$ref` only, so both ends of the round trip read the same slot.
+      recipe: `"correct horse" | out $agepw
 
-in $armored | age.decrypt passphrase="correct horse" | utf8 | out $plain`,
+"armored" | utf8 | age.encrypt passphrase=$agepw armor=true | out $armored
+
+in $armored | age.decrypt passphrase=$agepw | utf8 | out $plain`,
       mode: "run",
       timeoutMs: 20000,
       assert(arts) {

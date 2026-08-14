@@ -19,8 +19,9 @@
  * else can appear — after `out`/`in`, and after `param=` — and normalized to
  * `$label` in the AST, so the very next serialize writes the new spelling. Both
  * sigils are start-anchored: they mark a slot only as the first character of a
- * reference token, which is what keeps `to=alice@example.com` and
- * `passphrase=my$ecret` literal.
+ * reference token, which is what keeps `to=alice@example.com` literal — and
+ * what makes `passphrase=my$ecret` a literal the parser then refuses, because a
+ * `secret` param takes a ref and nothing else.
  *
  * Chain header. A chain (a notebook cell) may open with `@peer`,
  * `@peer publish` or `@peer publish=$a,$b`, before its first step: `@` is who,
@@ -41,6 +42,17 @@ import {
  * @typedef {import("./recipe.js").RecipeError} RecipeError
  * @typedef {import("./recipe.js").TeeBranch} TeeBranch
  */
+
+/**
+ * The clause a `secret` param's refusal opens with, and the one thing
+ * `recipe-secrets.js` can ask this module about a text it must not copy.
+ *
+ * A `RecipeError` carries a message and a span, no kind, and giving it one
+ * means editing a typedef three modules over for a single flag. So the sentence
+ * itself is the contract: written once, matched once, and both ends fail
+ * together if it is reworded.
+ */
+export const SECRET_LITERAL_REFUSAL = "a secret takes an $slot, never a literal";
 
 /** @typedef {{ type: string, value: string, start: number, end: number }} Tok */
 
@@ -2029,7 +2041,19 @@ class Parser {
       if (!norm.ok) {
         if (optional) continue;
         this.errors.push({
-          message: `${canon} ${p.name}=: ${norm.error}`,
+          // A secret gets its own sentence, and the generic one is why.
+          // `normalizeSlotRef` answers a question about labels — "use $hunter2,
+          // not hunter2" — which on a passphrase names a remedy nobody should
+          // perform (the secret would become the slot's *label*, still in the
+          // text) and quotes the secret back into an error string that is
+          // rendered, copied and pasted into bug reports. `47e7ffa` is the
+          // commit about refusals that name a remedy that cannot be performed;
+          // this one names the state that is true and a remedy that can be.
+          message: p.secret
+            ? `${canon} ${p.name}=: ${SECRET_LITERAL_REFUSAL} — ` +
+              `recipe text travels (share link, saved workspace, run manifest). ` +
+              `Put the value in Inputs and name it: \`input | out $pw\`, then \`${p.name}=$pw\`.`
+            : `${canon} ${p.name}=: ${norm.error}`,
           start,
           end: this.pos,
         });

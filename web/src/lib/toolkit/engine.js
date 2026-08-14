@@ -988,7 +988,13 @@ async function execStepBody(step, value, bindings, artifacts) {
         throw new Error("gpg.genkey requires email=… (OpenPGP user ID)");
       }
       const name = String(step.params.name || "").trim();
-      const passphrase = String(step.params.passphrase || "");
+      // A `$slot` ref or nothing — resolved, not read. See the param.
+      const passphrase =
+        (await resolvePassphraseParam(
+          bindings,
+          step.params?.passphrase,
+          "gpg.genkey passphrase"
+        )) || "";
       const expiry = Number(step.params.expiry) || 0;
       /** @type {Parameters<typeof openpgpGenerateKey>[0]} */
       const genOpts = {
@@ -1856,10 +1862,22 @@ async function execStepBody(step, value, bindings, artifacts) {
             `For EC keys use "export scalar"; for PEM/arbitrary data use "gpg.symencrypt" first.`
         );
       }
+      // `passphrase=` is a `$slot` ref or nothing (registry: `slot:
+      // "required"`), so it is *resolved* here rather than read. Reading it
+      // straight is the defect `age.encrypt` shipped — a slot-bound passphrase
+      // masking the shares under the four characters `$pw` — and there it was
+      // silent, because a mask is only wrong when somebody tries to recover.
+      // No panel fallback: what masks the shares is what the text says, or
+      // nothing.
       const result = await splitRawShares(bytes, {
         threshold: Number(step.params.threshold) || 2,
         shares: Number(step.params.shares) || 3,
-        passphrase: String(step.params.passphrase || ""),
+        passphrase:
+          (await resolvePassphraseParam(
+            bindings,
+            step.params?.passphrase,
+            "sss.split passphrase"
+          )) || "",
       });
       return {
         type: "shares",
@@ -1914,8 +1932,17 @@ async function execStepBody(step, value, bindings, artifacts) {
           'sss.combine expects raw SSS shares — add "blip39 -d" before sss.combine'
         );
       }
+      // Named beats supplied, and named is a `$slot` ref: the tray's passphrase
+      // (`inputs.shares.passphrase`, headless `--passphrase-env`) rides on the
+      // value's meta and answers only when the recipe named nothing. Unlike
+      // `sss.split`, a fallback is legitimate here — this passphrase decides
+      // whether recovery succeeds, not what the shares are.
       const passphrase =
-        String(step.params.passphrase || "") ||
+        (await resolvePassphraseParam(
+          bindings,
+          step.params?.passphrase,
+          "sss.combine passphrase"
+        )) ||
         String(value.meta?.passphrase || "") ||
         "";
       const envelope = value.data.envelope || value.meta?.envelope || null;

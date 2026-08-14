@@ -83,10 +83,13 @@ describe("wire format", () => {
   });
 
   it("writes an scrypt stanza in passphrase mode, as `age -p` does", async () => {
+    // `passphrase=` is a `$slot` ref and nothing else — see the param. The
+    // passphrase itself lives in the slot map, which is where a bound Inputs
+    // value lives at run time.
     const ct = await execAgeEncrypt(
       bytesValue(utf8("pw")),
-      { passphrase: "correct horse battery staple" },
-      {}
+      { passphrase: "$pw" },
+      slots({ $pw: "correct horse battery staple" })
     );
     expect(text(ct.data).split("\n")[1]).toMatch(/^-> scrypt [A-Za-z0-9+/]+ \d+$/);
   });
@@ -133,9 +136,34 @@ describe("round trips", () => {
   });
 
   it("passphrase mode", async () => {
-    const ct = await execAgeEncrypt(bytesValue(utf8("pw")), { passphrase: "hunter2" }, {});
-    const out = await execAgeDecrypt(ct, { passphrase: "hunter2" }, {});
+    const bound = slots({ $pw: "hunter2" });
+    const ct = await execAgeEncrypt(bytesValue(utf8("pw")), { passphrase: "$pw" }, bound);
+    const out = await execAgeDecrypt(ct, { passphrase: "$pw" }, bound);
     expect(text(out.data)).toBe("pw");
+  });
+
+  it("keeps the whitespace a passphrase was bound with", async () => {
+    // `paramText` trims, because a recipient read off a file arrives with a
+    // newline on it. A passphrase's spaces are the passphrase, so it resolves
+    // through its own path — a trim here would encrypt under a value nobody
+    // typed and refuse the one they did.
+    const spaced = slots({ $pw: "  two spaces  " });
+    const ct = await execAgeEncrypt(bytesValue(utf8("ws")), { passphrase: "$pw" }, spaced);
+    expect(
+      text((await execAgeDecrypt(ct, { passphrase: "$pw" }, spaced)).data)
+    ).toBe("ws");
+    await expect(
+      execAgeDecrypt(ct, { passphrase: "$pw" }, slots({ $pw: "two spaces" }))
+    ).rejects.toThrow();
+  });
+
+  it("refuses a literal rather than encrypting under the characters typed", async () => {
+    // Unreachable through the parser (`slot: "required"`), and refused here
+    // anyway: an AST assembled by anything else must not treat a password as
+    // the value when the whole design is that it names one.
+    await expect(
+      execAgeEncrypt(bytesValue(utf8("x")), { passphrase: "hunter2" }, {})
+    ).rejects.toThrow(/takes an \$slot/);
   });
 
   it("armored, whether it comes back as text or as bytes read off disk", async () => {
@@ -192,7 +220,11 @@ describe("refusals", () => {
   it("refuses to mix recipients and a passphrase, which age cannot express", async () => {
     const { recipient } = await identityPair();
     await expect(
-      execAgeEncrypt(bytesValue(utf8("x")), { to: recipient, passphrase: "p" }, {})
+      execAgeEncrypt(
+        bytesValue(utf8("x")),
+        { to: recipient, passphrase: "$pw" },
+        slots({ $pw: "p" })
+      )
     ).rejects.toThrow(/not both/);
   });
 

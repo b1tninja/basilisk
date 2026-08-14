@@ -675,8 +675,10 @@ describe("real engine artifacts resolve to the right kind", () => {
     expect(env.find((r) => r.role === "envelope").kind).toBe("envelope");
     expect(env.find((r) => r.role === "envelope").label).toMatch(/not a share/);
 
+    // `passphrase=` binds a slot; a literal is a parse error, because recipe
+    // text is shared, saved and digested.
     const sym = await kindsFor(
-      '"secret data" | utf8 | gpg.symencrypt mode=passphrase passphrase="hunter2"'
+      '"hunter2" | out $pw\n\n"secret data" | utf8 | gpg.symencrypt mode=passphrase passphrase=$pw'
     );
     const symTile = sym.find((r) => r.label === "OpenPGP symmetric ciphertext");
     expect(symTile.role).toBe("ciphertext");
