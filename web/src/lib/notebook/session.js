@@ -38,22 +38,38 @@
  * `readyState` — because the frames on it are this layer's own, sealed under a key
  * this layer holds and the transport cannot read.
  *
- * **The session is a courier, not a signer.** Five more payload kinds ride the
- * `session` frame beside `kc` and `chat` — a signed run manifest, a signed
- * manifest attestation, a signed notebook proposal, a cell handoff offer and a
- * signed cell result. The four signed ones arrive already signed and leave
- * already signed: `publishManifest`, `shareNotebook` and `sendResult` refuse
- * anything that is not a cleartext-signed document, and there is no path from a
- * payload to `this.privateKey`. The private key is here to seal signalling
- * envelopes for a room this session is already in, and a commitment about what a
- * notebook will do is not that. `approval-gate.js` puts it as *"Grants are
- * minted only by a human clicking, never by a param."*
+ * **The session is a courier, not a signer.** Four more payload kinds ride the
+ * `session` frame beside `kc` and `chat` — a signed manifest attestation, a
+ * signed notebook proposal, a cell handoff offer and a signed cell result. The
+ * three signed ones arrive already signed and leave already signed:
+ * `publishAttestation`, `shareNotebook` and `sendResult` refuse anything that is
+ * not a cleartext-signed document, and there is no path from a payload to
+ * `this.privateKey`. The private key is here to seal signalling envelopes for a
+ * room this session is already in, and a commitment about what a notebook will
+ * do is not that. `approval-gate.js` puts it as *"Grants are minted only by a
+ * human clicking, never by a param."*
  *
- * The mirror of that rule is that **an arriving manifest runs nothing and
- * attests to nothing**. It is verified, parsed and handed to `onManifest` as an
- * object a person can look at — the same discipline as an `#r=` link, which
- * `useNotebook.loadFromHash` loads without running. Answering a manifest is a
- * recipe somebody types.
+ * **The run manifest is not among them, and a fifth kind that carried it was
+ * removed rather than left unused.** `handoffContext` *derives* the manifest
+ * from `{source, title, roster}` and `buildRunManifest` is deterministic — no
+ * timestamp, no nonce — so two peers holding the same notebook already hold the
+ * same manifest, digest for digest, with nothing carried between them;
+ * `notebook-share.js` makes that argument at length, for the proposal that is
+ * what actually makes the two sources agree. What a peer cannot derive is
+ * *somebody else's signature over that digest*, and that is precisely what an
+ * attestation is: four fields, no recipe text, and nothing on this machine from
+ * which it could be reconstructed. So the attestation is the whole of what has
+ * to cross. `publishManifest` was the other half of a document already here —
+ * and a second path for the notebook's entire recipe source onto the wire beside
+ * `shareNotebook`, which `recipeLooksSecret` guards precisely because that text
+ * can hold a private key somebody typed into a cell. One carrier for the text,
+ * gated; one carrier for the signature, four fields wide.
+ *
+ * The mirror of the courier rule is that **an arriving attestation attests to
+ * nothing here**. It is verified, parsed, and recorded against the peer that
+ * signed it — the same discipline as an `#r=` link, which
+ * `useNotebook.loadFromHash` loads without running. Answering somebody's
+ * attestation with one of your own is a press, one layer up.
  *
  * **A notebook proposal is the one document that arrives before there is
  * anything to check it against, and it is signed for exactly that reason.**
@@ -138,7 +154,6 @@ import {
   looksCleartextSigned,
   readHandoffOffer,
   readSignedAttestation,
-  readSignedManifest,
   readSignedNotebook,
   readSignedResult,
 } from "./documents.js";
@@ -179,15 +194,17 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  * @property {boolean} polite      perfect negotiation: lower fingerprint yields on glare
  * @property {boolean} makingOffer
  * @property {boolean} ignoreOffer
- * @property {Set<string>} attested
- *   Manifest digests this peer has attested to, each established by a signature
- *   this session checked against this peer's own key. Bounded — see
- *   `ATTESTED_PER_PEER_CAP`.
- * @property {string|null} publishedManifest
- *   Digest of the last manifest this peer put in front of the room, or null.
- *   One slot rather than a list: a peer's commitment is whatever they last
- *   stood behind, and the documents themselves reach the application through
- *   `onManifest`.
+ * @property {Map<string, import("../toolkit/attest.js").ManifestAttestation>} attested
+ *   Attestations this peer has signed, keyed by the manifest digest each one
+ *   names, every one established by a signature this session checked against
+ *   this peer's own key.
+ *
+ *   **The document is kept, not just the digest**, because the coverage check
+ *   this feeds — `manifestAttestedBy`, through the roster — reads `kind`, `v`
+ *   and `manifest` off the bytes a peer actually signed. Keeping only the digest
+ *   would mean the reader synthesising the other three fields and then checking
+ *   them, which is this machine answering its own question and calling the
+ *   answer corroboration. Bounded — see `ATTESTED_PER_PEER_CAP`.
  * @property {Set<string>} offered
  *   Cell handoff offers this peer has held out, as `manifest:cell`. A record
  *   that an offer arrived, never that it was taken — nothing in this class can
@@ -211,18 +228,14 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   Omitted (or null) takes the built-in STUN defaults; `[]` is a deliberate
  *   *no third party* and is honoured as written — host candidates only.
  * @property {(peers: Map<string, NotebookPeerState>) => void} [onRoster]
+ *   Peer state changed — including the attestations recorded on it. There is
+ *   deliberately no `onAttestation` beside this. An attestation says one thing,
+ *   *this peer has seen this digest*, which is a fact about a peer and not an
+ *   event with a life of its own, and a second delivery path for it would let
+ *   the panel counting coverage and the record coverage is counted from drift
+ *   apart. `_onDocument` records first and emits after, so a roster arriving
+ *   here already carries the attestation that caused it.
  * @property {(msg: { from: string, text: string, ts: number }) => void} [onChat]
- * @property {(doc: {
- *   from: string, digest: string, signed: string, ts: number,
- *   manifest: import("../toolkit/manifest.js").RunManifest,
- * }) => void} [onManifest]
- *   A manifest that arrived, was checked against the sender's key, and parsed.
- *   Nothing has been run and nothing has been attested — this is a document
- *   somebody can now look at.
- * @property {(doc: {
- *   from: string, digest: string, signed: string, ts: number,
- *   attestation: import("../toolkit/attest.js").ManifestAttestation,
- * }) => void} [onAttestation]
  * @property {(doc: {
  *   from: string, signed: string, ts: number,
  *   proposal: import("../toolkit/notebook-share.js").NotebookProposal,
@@ -281,14 +294,13 @@ const ATTESTED_PER_PEER_CAP = 64;
 /**
  * What each broadcast document is called in a sentence a person reads.
  *
- * Two of the three are called what the wire calls them. `notebook` is not: the
- * wire kind names the *thing* being carried and the sentence has to name the
+ * One of the two is called what the wire calls it. `notebook` is not: the wire
+ * kind names the *thing* being carried and the sentence has to name the
  * *document* carrying it, or a refusal reads as though a notebook were the file
  * that failed rather than the proposal about one.
  * @type {Record<string, string>}
  */
 const DOCUMENT_NOUN = Object.freeze({
-  manifest: "manifest",
   attestation: "attestation",
   notebook: "notebook proposal",
 });
@@ -310,8 +322,6 @@ export class NotebookSession {
     this.iceServers = iceServersOrDefault(opts.iceServers);
     this.onRoster = opts.onRoster;
     this.onChat = opts.onChat;
-    this.onManifest = opts.onManifest;
-    this.onAttestation = opts.onAttestation;
     this.onNotebook = opts.onNotebook;
     this.onOffer = opts.onOffer;
     this.onResult = opts.onResult;
@@ -868,23 +878,19 @@ export class NotebookSession {
   }
 
   /**
-   * Put a signed run manifest in front of the room.
-   *
-   * Takes the **signed document**, not a manifest object, and that is the whole
-   * design: the bytes are whatever `run.manifest | gpg.sign key=$me` produced,
-   * chosen by someone who read the recipe. A `publishManifest(manifest)` that
-   * reached for `this.privateKey` would be one line shorter and would mint a
-   * commitment nobody made.
-   *
-   * @param {string} signed  armored cleartext-signed manifest
-   * @returns {Promise<number>} peers written to
-   */
-  async publishManifest(signed) {
-    return this._publishDocument("manifest", signed);
-  }
-
-  /**
    * Put a signed attestation in front of the room.
+   *
+   * Takes the **signed document**, not an attestation object, and that is the
+   * whole design: the bytes are whatever `input | run.attest | gpg.sign key=$me`
+   * produced, or what the Attest press signed after showing a person the digest.
+   * A `publishAttestation(attestation)` that reached for `this.privateKey` would
+   * be one line shorter and would swear this machine had seen a manifest nobody
+   * here looked at.
+   *
+   * Returns a count, not a promise: only confirmed peers are written to, so a
+   * room mid-handshake is a room this returns a smaller number for, and coverage
+   * is answered by the roster rather than by this number.
+   *
    * @param {string} signed  armored cleartext-signed attestation
    * @returns {Promise<number>} peers written to
    */
@@ -903,7 +909,7 @@ export class NotebookSession {
    * shell's own comparison, not this layer's.
    *
    * **Takes the signed document, not a proposal object**, exactly as
-   * `publishManifest` does and for a sharper version of the same reason: a
+   * `publishAttestation` does and for a sharper version of the same reason: a
    * `shareNotebook(proposal)` that reached for `this.privateKey` would put this
    * session's name on text nobody read, and the receiving end's whole decision
    * about whether to adopt is a decision about *whose* text it is.
@@ -988,7 +994,7 @@ export class NotebookSession {
    * **Takes the signed document, not a result object.** The bytes are whatever
    * the author put through `gpg.sign`, and a `sendResult(result)` that reached
    * for `this.privateKey` would have this layer swear to work it never saw —
-   * `publishManifest` refuses exactly that, and a result is the document where
+   * `publishAttestation` refuses exactly that, and a result is the document where
    * the temptation is strongest, because the signature is the *only* thing
    * standing behind a claim nobody can check.
    *
@@ -1043,28 +1049,6 @@ export class NotebookSession {
   }
 
   /**
-   * Which peers have attested to a manifest digest.
-   *
-   * Fingerprints, because that is the session's vocabulary — it never learns
-   * the peer *labels* a manifest is written in, and `attest.js` is explicit
-   * that the label a signature resolves to is the caller's to supply. Turning
-   * one into the other is the job of whoever holds the label→fingerprint
-   * binding `peersSha` commits to, and it is not this layer.
-   *
-   * @param {string} digest
-   * @returns {string[]} fingerprints, sorted
-   */
-  attestersOf(digest) {
-    const want = String(digest || "").trim().toLowerCase();
-    if (!want) return [];
-    const out = [];
-    for (const [fpr, peer] of this.peers) {
-      if (peer.attested.has(want)) out.push(fpr);
-    }
-    return out.sort();
-  }
-
-  /**
    * Broadcast one already-signed document, encrypted once per peer.
    *
    * **Per peer, not per room.** `chat` is broadcast the same way and for the
@@ -1076,17 +1060,17 @@ export class NotebookSession {
    *
    * Only confirmed peers are written to, so a room mid-handshake is a room this
    * returns a smaller number for. It is a count and not a promise — a caller
-   * that needs everyone to have seen a manifest must compare it against the
+   * that needs everyone to have seen a document must compare it against the
    * roster, because nothing here can make an unmeshed peer appear.
    *
-   * @param {"manifest"|"attestation"|"notebook"} kind
+   * @param {"attestation"|"notebook"} kind
    * @param {string} signed
    * @returns {Promise<number>}
    */
   async _publishDocument(kind, signed) {
     const doc = String(signed ?? "");
     // The kind is the wire's word for the document; this is the reader's. They
-    // differ for exactly one of the three, and letting the wire's word into a
+    // differ for exactly one of the two, and letting the wire's word into a
     // sentence would produce "notebook: notebook must arrive already signed",
     // which names the module twice and the document never.
     const noun = DOCUMENT_NOUN[kind] || kind;
@@ -1497,10 +1481,10 @@ export class NotebookSession {
    *
    * The split is `_applyRotation`'s and it is the same rule: a session key says
    * which transport is live, a signature says what somebody put their name to,
-   * and losing the first does not un-sign the second. So `attested`, `offered`,
-   * `returned` and `publishedManifest` stay — they are records of documents this
-   * session checked against this peer's own key, and an unauthenticated frame
-   * must never be able to erase one.
+   * and losing the first does not un-sign the second. So `attested`, `offered`
+   * and `returned` stay — they are records of documents this session checked
+   * against this peer's own key, and an unauthenticated frame must never be able
+   * to erase one.
    *
    * @param {string} peerFpr
    * @param {NotebookPeerState} peer
@@ -1584,8 +1568,7 @@ export class NotebookSession {
       polite: this.myFpr < fpr,
       makingOffer: false,
       ignoreOffer: false,
-      attested: new Set(),
-      publishedManifest: null,
+      attested: new Map(),
       offered: new Set(),
       returned: new Set(),
     };
@@ -1778,11 +1761,7 @@ export class NotebookSession {
         });
         return;
       }
-      if (
-        msg.kind === "manifest" ||
-        msg.kind === "attestation" ||
-        msg.kind === "notebook"
-      ) {
+      if (msg.kind === "attestation" || msg.kind === "notebook") {
         await this._onDocument(peerFpr, peer, msg);
         return;
       }
@@ -1821,20 +1800,20 @@ export class NotebookSession {
    * a field the sender chose is a second thing that can be wrong. The sender is
    * the peer whose pairwise key opened the frame, and the signature is checked
    * against that peer's key and no other — which is also why a peer cannot pass
-   * on somebody else's signed manifest as if it were traffic: it verifies
+   * on somebody else's signed attestation as if it were traffic: it verifies
    * against the original signer's key, not the forwarder's, and is refused.
    *
-   * The third kind arrived here rather than beside it because that paragraph is
+   * The second kind arrived here rather than beside it because that paragraph is
    * the whole argument for signing a notebook proposal, sharpened: a proposal is
    * the one carried document the recipient holds nothing to check against, since
    * it is what they will check everything else against. **Nothing is adopted
    * here.** The parsed proposal goes up through `onNotebook` and the notebook on
-   * the machine is untouched, which is the same shape as a manifest arriving and
-   * running nothing.
+   * the machine is untouched, which is the same shape as an attestation arriving
+   * and obliging nobody.
    *
    * Every failure here is reported and swallowed. A malformed document, a
-   * signature from the wrong key, a manifest three versions old: each is one
-   * peer's frame going nowhere, and none of them is a reason for a session
+   * signature from the wrong key, an attestation a version out of date: each is
+   * one peer's frame going nowhere, and none of them is a reason for a session
    * carrying four other peers to fall over.
    *
    * @param {string} peerFpr
@@ -1855,28 +1834,16 @@ export class NotebookSession {
         this.onNotebook?.({ from: peerFpr, proposal, signed: doc, ts });
         return;
       }
-      if (kind === "manifest") {
-        const { manifest, digest } = await readSignedManifest(doc, {
-          key,
-          fpr: peerFpr,
-        });
-        peer.publishedManifest = digest;
-        this._emitRoster();
-        // Parsed, and that is all. Nothing here runs a cell, pins a clock or
-        // answers with an attestation; those are recipes a person types.
-        this.onManifest?.({ from: peerFpr, digest, manifest, signed: doc, ts });
-        return;
-      }
       const { attestation, digest } = await readSignedAttestation(doc, {
         key,
         fpr: peerFpr,
       });
-      this._rememberAttestation(peer, digest);
-      // The roster is the one notification path for peer state, so who has
-      // attested travels with everything else the roster says about a peer
-      // rather than beside it.
+      this._rememberAttestation(peer, digest, attestation);
+      // Recorded first, emitted second, and the roster is the *only* path: who
+      // has attested travels with everything else the roster says about a peer
+      // rather than beside it, so the panel that counts coverage counts it off
+      // the same record the next roster will carry.
       this._emitRoster();
-      this.onAttestation?.({ from: peerFpr, digest, attestation, signed: doc, ts });
     } catch (err) {
       this.onError?.(
         new Error(
@@ -2016,24 +1983,32 @@ export class NotebookSession {
   }
 
   /**
-   * Record that a peer attested to a digest.
+   * Record the attestation a peer signed, under the digest it names.
    *
    * Survives rotation and a dropped channel, unlike everything in
    * `_applyRotation`'s reset: a session key says which transport is live, and a
    * signature says what somebody put their name to. Rotating a room does not
    * un-sign a document.
    *
+   * **First one wins for a given digest.** A peer re-attesting to the same
+   * manifest is saying nothing new, and letting the second document replace the
+   * first would let a peer walk their own `claimedAt` forward at will over a
+   * digest a reader has already been shown — which the caveat in `attest.js`
+   * says is worth nobody's trust in either direction, and is worth less when it
+   * moves.
+   *
    * @param {NotebookPeerState} peer
    * @param {string} digest
+   * @param {import("../toolkit/attest.js").ManifestAttestation} attestation
    */
-  _rememberAttestation(peer, digest) {
+  _rememberAttestation(peer, digest, attestation) {
     const sha = String(digest || "").toLowerCase();
     if (!sha || peer.attested.has(sha)) return;
-    peer.attested.add(sha);
+    peer.attested.set(sha, attestation);
     while (peer.attested.size > ATTESTED_PER_PEER_CAP) {
-      // Sets iterate in insertion order — evict the oldest, as `createSeenSet`
+      // Maps iterate in insertion order — evict the oldest, as `createSeenSet`
       // does for envelopes.
-      const oldest = peer.attested.values().next().value;
+      const oldest = peer.attested.keys().next().value;
       peer.attested.delete(oldest);
     }
   }

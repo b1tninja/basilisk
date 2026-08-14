@@ -316,9 +316,17 @@ export function getPendingHandoffs() {
  * be answered one at a time, while a notebook proposal is a peer saying *this is
  * the notebook now*. A queue of them would let a person adopt the second-to-last
  * text somebody sent, which is a state neither end asked for. The latest
- * proposal replaces the one before it, exactly as `peer.publishedManifest` keeps
- * one digest rather than a list, and for the same reason: what a peer is
- * standing behind is whatever they last stood behind.
+ * proposal replaces the one before it: what a peer is standing behind is
+ * whatever they last stood behind.
+ *
+ * This used to cite `peer.publishedManifest` as the same rule one layer down.
+ * That field is gone — a manifest is derived from the notebook rather than
+ * carried, so there was never anything for a peer to publish. Note the rule
+ * inverts for the thing that *did* survive: `peer.attested` is first-write-wins
+ * per digest, because an attestation is a signature over a fixed digest and
+ * letting a later one replace it would let a peer walk their own `claimedAt`
+ * forward. A proposal is a claim about the present, an attestation a claim
+ * about a moment.
  *
  * A copy, so a caller cannot edit the exchange's own record of what arrived.
  */

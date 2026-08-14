@@ -774,6 +774,15 @@ export function ToolkitShell() {
    * on screen together, since the second is the answer to the first.
    */
   const [notebookShareNote, setNotebookShareNote] = useState<string | null>(null);
+  /**
+   * What the last Attest press did, in the words of whichever layer refused it.
+   *
+   * Its own slot for `notebookShareNote`'s reason, one step further: sharing a
+   * notebook and attesting to one are the two halves of getting a room onto the
+   * same run, and "nobody has a confirmed channel yet" answered about one of
+   * them is the wrong answer about the other.
+   */
+  const [attestNote, setAttestNote] = useState<string | null>(null);
   /** Gap click sets pending insert; next shelf append / drop uses it. */
   const [pendingInsert, setPendingInsert] = useState<ChipPath | null>(null);
   /**
@@ -4402,6 +4411,27 @@ export function ToolkitShell() {
                   },
                   inviteUrl,
                   onCopyInvite: () => void copyText(inviteUrl || ""),
+                  attestation: nb.attestation,
+                  // Refused on the live count, never on the last press's
+                  // outcome: a reason derived from what happened once is a
+                  // reason that stays true after the state it describes has
+                  // gone, and this button would then be dead for the rest of
+                  // the session with a sentence about a room that has since
+                  // meshed.
+                  attestRefusal: nb.quorumState.connected
+                    ? undefined
+                    : "Nobody in this room has a confirmed channel yet, so an attestation would reach nobody. Nothing here re-sends one later — wait for a peer to confirm, then attest.",
+                  onAttest: () => {
+                    setAttestNote(null);
+                    void nb.attestManifest().then((r) => {
+                      setAttestNote(
+                        r.ok
+                          ? `Signed and sent to ${r.sent} peer${r.sent === 1 ? "" : "s"}. It says you saw this digest — not when, and not that you will run it.`
+                          : r.why || "That manifest could not be attested to."
+                      );
+                    });
+                  },
+                  attestNote,
                   onRestartIce: () => void restartLiveIce(),
                   onClose: () => nb.cancelQuorum(),
                   onRemove: (fingerprint: string) =>

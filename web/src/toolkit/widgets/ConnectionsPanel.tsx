@@ -43,6 +43,14 @@ export type ConnectionPeer = {
   state: "new" | "connecting" | "connected" | "disconnected" | "failed" | "closed";
   /** Verified against a published key, per the signed-transcript design. */
   authenticated?: boolean;
+  /**
+   * Attestations this key has signed over a run manifest, as the session
+   * checked them. A different claim from `authenticated` and carried separately
+   * for that reason: confirmed says the channel is theirs, attested says they
+   * put their name to a notebook. Absent for a `peer.*` link, which has no
+   * identity to have signed with.
+   */
+  attested?: { manifest?: string }[];
   /** Transport actually selected by ICE, when known. */
   via?: string;
 };

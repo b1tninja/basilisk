@@ -2,27 +2,35 @@
  * The documents a notebook session carries between peers, and the checks that
  * must pass before any of them is believed.
  *
- * Four are signed — a run manifest, a manifest attestation, a cell result and a
- * notebook proposal — and everything below about "signed by *this* peer" is
- * about them. The fifth, a cell handoff offer, is not signed and says why at
+ * Three are signed — a manifest attestation, a cell result and a notebook
+ * proposal — and everything below about "signed by *this* peer" is about them.
+ * The fourth, a cell handoff offer, is not signed and says why at
  * `readHandoffOffer`; the result travelling the other way is signed, and says
  * why at `readSignedResult`. The proposal is the newest and the one with the
  * least excuse for going unsigned — see `readSignedNotebook`: it is the only
  * carried document the recipient has nothing of their own to check against,
  * because it is what they will check everything else against afterwards.
  *
- * **The session is a courier, not a signer.** A run manifest and a manifest
- * attestation are produced by recipes the user read before pressing Run —
- * `run.manifest | gpg.sign key=$me` and `input | run.attest | gpg.sign key=$me`.
- * Nothing in this module signs, and nothing in it can: no private key reaches
- * it and none is asked for. `approval-gate.js` states the rule this follows —
- * *"Grants are minted only by a human clicking, never by a param."* A manifest
- * minted by a transport is a commitment nobody made.
+ * **The run manifest is not carried at all, and `readSignedManifest` went with
+ * the wire kind that fed it.** Both ends *derive* the manifest from the notebook
+ * text, the title and the roster, deterministically, so a delivered one is a
+ * document the receiver could already compute — see `session.js`'s header for
+ * the whole argument. The signature over its digest is the part nobody can
+ * derive, and that document is the attestation below.
  *
- * Symmetrically, nothing here *runs* anything. A verified manifest is a parsed
- * object handed back to the caller, the same way `useNotebook.loadFromHash`
- * loads an `#r=` recipe without running it. Deciding what a promise means is
- * the reader's; this module only decides whether it is worth reading.
+ * **The session is a courier, not a signer.** A manifest attestation is produced
+ * by a recipe the user read before pressing Run — `input | run.attest |
+ * gpg.sign key=$me` — or by a press that showed them the digest first. Nothing
+ * in this module signs, and nothing in it can: no private key reaches it and
+ * none is asked for. `approval-gate.js` states the rule this follows — *"Grants
+ * are minted only by a human clicking, never by a param."* An attestation minted
+ * by a transport is a claim nobody made.
+ *
+ * Symmetrically, nothing here *runs* anything. A verified attestation is a
+ * parsed object handed back to the caller, the same way
+ * `useNotebook.loadFromHash` loads an `#r=` recipe without running it. Deciding
+ * what a claim means is the reader's; this module only decides whether it is
+ * worth reading.
  *
  * ## "Signed by this peer", which is not "signed by some key"
  *
@@ -30,7 +38,7 @@
  * against a **key**. Conflating the two is the whole attack: `verify()` handed
  * every key in the room returns "valid" for a document any member signed, and a
  * caller that reads that as "the sender signed it" will accept peer B replaying
- * peer A's signed manifest as B's own commitment.
+ * peer A's signed attestation as B's own.
  *
  * The bridge is drawn so that it cannot be misread:
  *
@@ -64,8 +72,8 @@
  *
  * ## Size
  *
- * A manifest is unbounded in principle: it carries the notebook's whole recipe
- * source and every cell's text. The wire is not. See `MAX_DOCUMENT_BYTES`.
+ * A notebook proposal is unbounded in principle: it carries the whole recipe
+ * source a person typed. The wire is not. See `MAX_DOCUMENT_BYTES`.
  *
  * @module lib/notebook/documents
  */
@@ -76,7 +84,6 @@ import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 import { formatFingerprint } from "../utils.js";
 import { parseAttestation } from "../toolkit/attest.js";
 import { parseCellResult, parseHandoffOffer } from "../toolkit/handoff.js";
-import { manifestDigest, parseManifest } from "../toolkit/manifest.js";
 import { parseNotebookProposal } from "../toolkit/notebook-share.js";
 
 /**
@@ -96,14 +103,14 @@ import { parseNotebookProposal } from "../toolkit/notebook-share.js";
  * **What happens at the boundary is refusal, never truncation.** A document is
  * one signed object; half of one is not a smaller commitment, it is a
  * signature over bytes that no longer exist. The sender is told before anything
- * is encrypted, so an oversized manifest fails in the author's hands rather
+ * is encrypted, so an oversized proposal fails in the author's hands rather
  * than in the room. The receiver drops the frame and reports it, before
  * OpenPGP is asked to parse an attacker-sized blob.
  *
- * **What to do with a notebook too big to commit to.** Nothing here chunks it,
+ * **What to do with a notebook too big to share.** Nothing here chunks it,
  * because a chunked document is a reassembly buffer an unconfirmed peer can
- * fill. Split the notebook, or carry the manifest out of band and exchange only
- * attestations — which are four fields and never approach this.
+ * fill. Split the notebook, or carry the text out of band and let the room
+ * exchange only attestations — which are four fields and never approach this.
  */
 export const MAX_DOCUMENT_BYTES = 32768;
 
@@ -142,7 +149,7 @@ const CLEARTEXT_HEAD = /^-----BEGIN PGP SIGNED MESSAGE-----/;
  *
  * Cheap and structural, for the send path: it separates "the user piped
  * something through `gpg.sign`" from "the user piped raw JSON", and it is the
- * check that keeps `publishManifest` from becoming a place where an unsigned
+ * check that keeps `publishAttestation` from becoming a place where an unsigned
  * document quietly acquires the room's trust on the strength of the channel it
  * arrived on.
  * @param {string} text
@@ -224,7 +231,7 @@ export async function verifySignedBy(signed, { key, fpr, what = "document" }) {
   }
 
   // The same clock the signalling envelopes are verified against, and for the
-  // same reason: a manifest is signed by a peer and sent in the same breath, so
+  // same reason: a document is signed by a peer and sent in the same breath, so
   // "created after my clock" here is that peer's clock, not a forged date.
   const { signatures } = await verify({
     message: clear,
@@ -259,32 +266,11 @@ export async function verifySignedBy(signed, { key, fpr, what = "document" }) {
 }
 
 /**
- * A verified run manifest, and the digest every attestation will name.
- *
- * The digest is `manifestDigest`'s — over the manifest's *canonical* JSON, not
- * over the bytes that arrived. That is deliberate and is what makes the two
- * documents join up: an attestation names a canonical digest, so two peers who
- * serialised the same manifest with different key order or indentation still
- * attest to the same thing, and any change to a field changes the digest.
- *
- * @param {string} signed
- * @param {{ key: import("openpgp").Key|undefined, fpr: string }} opts
- * @returns {Promise<{ manifest: import("../toolkit/manifest.js").RunManifest,
- *   digest: string, text: string }>}
- */
-export async function readSignedManifest(signed, { key, fpr }) {
-  assertDocumentFits(signed, "manifest");
-  const text = await verifySignedBy(signed, { key, fpr, what: "manifest" });
-  const manifest = parseManifest(text);
-  return { manifest, digest: await manifestDigest(manifest), text };
-}
-
-/**
  * A cell handoff offer, checked for size and shape and nothing else.
  *
- * **The one carried thing that is not signed, deliberately.** A manifest and an
- * attestation are commitments, and a signature is what lets one be shown to
- * somebody who was not in the room. An offer is a delivery: it carries public
+ * **The one carried thing that is not signed, deliberately.** An attestation is
+ * a claim, and a signature is what lets one be shown to somebody who was not in
+ * the room. An offer is a delivery: it carries public
  * values for a cell, and it asserts nothing the recipient takes on trust — every
  * field of it is checked by `acceptHandoffOffer` against the recipient's own
  * plan, their own notebook and a manifest they already hold, and the values

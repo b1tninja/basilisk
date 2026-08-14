@@ -68,9 +68,24 @@
  * signer, so there is nothing a name field could add except a leak.
  *
  * The consequence is that *who attested* is not in the document. It is
- * established by verifying the signature — `gpg.verify`'s job — and handed to
- * `manifestAttestedBy` by the caller as `by`. An entry with no `by` is counted
- * for nothing beyond naming a digest, and the result says so.
+ * established by verifying the signature — `gpg.verify`'s job, or
+ * `documents.js`'s on the wire — and handed to `manifestAttestedBy` by the
+ * caller as `by`. An entry with no `by` is counted for nothing beyond naming a
+ * digest, and the result says so.
+ *
+ * ## Who reads all this
+ *
+ * Two callers, and they are different acts. `run.attest` builds one into a slot
+ * for a recipe to sign and do what it likes with. The live session's panel
+ * builds one from a press, signs it with the session key and puts it in front of
+ * the room (`useNotebook.attestManifest`); the ones that arrive land on the peer
+ * record, travel out on the roster, and come back through `manifestAttestedBy`
+ * and `summarizeAttestation` as the coverage line under "Who is here".
+ *
+ * The manifest they are about does not travel between peers — both ends derive
+ * it — so an attestation is the only part of a shared run's commitment that has
+ * to cross the wire at all. That is what makes this the small document: a
+ * signature over a digest, and nothing that could be recomputed.
  *
  * @module lib/toolkit/attest
  */

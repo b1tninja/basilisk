@@ -64,10 +64,18 @@
  * `{ peer: fingerprint }` — the same shape `peersDigest` hashes, so the thing
  * planned against and the thing committed to are one object — and it is now
  * identity-mapped, which is what makes `peersSha` agree between two browsers
- * *by construction*. `labelForFingerprint` and `attesterLabels` are the
- * crossing and are the only crossing; they are trivial now and are kept because
- * a session speaks fingerprints and a plan speaks peers, and one call at one
- * layer is what stops a second, cleverer crossing appearing somewhere else.
+ * *by construction*. `labelForFingerprint` is the crossing and is the only
+ * crossing; it is trivial now and is kept because a session speaks fingerprints
+ * and a plan speaks peers, and one call at one layer is what stops a second,
+ * cleverer crossing appearing somewhere else.
+ *
+ * `attesterLabels` stood beside it and is gone. It crossed a whole *set* of
+ * fingerprints at once, and the only input its own comment named was
+ * `NotebookSession.attestersOf()`, which is gone too: attestation coverage is
+ * counted per attestation now, from the documents the roster carries, and that
+ * wants the one-at-a-time crossing. Its `unknown` half could not fire either —
+ * a roster is the room's own audience and a session's peers are that audience
+ * minus self, so there was never a fingerprint here for it to fail to name.
  *
  * A recipe naming a peer the roster does not have is **refused**, and that is
  * the case a notebook written before this change lands in: `@peer1` still
@@ -335,36 +343,6 @@ export function normalizeRoster(roster) {
 export function labelForFingerprint(roster, fingerprint) {
   const { byFpr } = normalizeRoster(roster);
   return byFpr.get(normalizeFingerprintInput(String(fingerprint ?? ""))) || "";
-}
-
-/**
- * Turn `NotebookSession.attestersOf()` into the peer labels `manifestAttestedBy`
- * wants for `by`.
- *
- * The whole of the binding, in one call, at the one layer entitled to make it.
- * `unknown` is returned rather than dropped: an attestation from a fingerprint
- * the roster cannot name is a signature that was checked and a signer that was
- * not identified, and a coverage report that silently discarded it would be
- * reporting less than it knows.
- *
- * @param {Record<string, string>|null|undefined} roster
- * @param {string[]} fingerprints
- * @returns {{ labels: string[], unknown: string[] }}
- */
-export function attesterLabels(roster, fingerprints) {
-  const { byFpr } = normalizeRoster(roster);
-  /** @type {Set<string>} */
-  const labels = new Set();
-  /** @type {Set<string>} */
-  const unknown = new Set();
-  for (const raw of fingerprints || []) {
-    const fpr = normalizeFingerprintInput(String(raw ?? ""));
-    if (!fpr) continue;
-    const label = byFpr.get(fpr);
-    if (label) labels.add(label);
-    else unknown.add(fpr);
-  }
-  return { labels: [...labels].sort(), unknown: [...unknown].sort() };
 }
 
 /**

@@ -42,8 +42,11 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  * @property {NotebookSession} session
  * @property {Error[]} errors
  * @property {{ from: string, text: string, ts: number }[]} chats
- * @property {any[]} manifests      manifests that arrived, verified and parsed
- * @property {any[]} attestations   attestations that arrived, verified and parsed
+ * @property {any[]} rosters        every peer map `onRoster` emitted, in order.
+ *   This is where an arriving *attestation* shows up: the session has no
+ *   `onAttestation` and deliberately none, because who has attested is a fact
+ *   about a peer and the roster is the one path peer facts take out. A test
+ *   watching for a document therefore watches the same thing the product does.
  * @property {any[]} notebooks      notebook proposals that arrived, were checked
  *   against the sender's key and parsed — pending, exactly as the rest are:
  *   nothing in the session adopts one, and this side has no notebook to adopt
@@ -199,8 +202,7 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
       privateKey,
       errors: [],
       chats: [],
-      manifests: [],
-      attestations: [],
+      rosters: [],
       notebooks: [],
       offers: [],
       results: [],
@@ -215,8 +217,7 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
       myFingerprint: fpr,
       role,
       onChat: (/** @type {any} */ m) => side.chats.push(m),
-      onManifest: (/** @type {any} */ d) => side.manifests.push(d),
-      onAttestation: (/** @type {any} */ d) => side.attestations.push(d),
+      onRoster: (/** @type {any} */ peers) => side.rosters.push(peers),
       onNotebook: (/** @type {any} */ d) => side.notebooks.push(d),
       onOffer: (/** @type {any} */ d) => side.offers.push(d),
       onResult: (/** @type {any} */ d) => side.results.push(d),

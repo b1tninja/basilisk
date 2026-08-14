@@ -80,6 +80,49 @@ describe("projectRosterPeers", () => {
     expect("display" in row).toBe(false);
   });
 
+  it("carries the attestations a peer signed, as documents", () => {
+    // The projection used to drop these on the floor, which made `_onDocument`'s
+    // own comment — "who has attested travels with everything else the roster
+    // says about a peer" — true of the emitter and false of the product: every
+    // path out of the session runs through here, so a fact discarded here can
+    // never reach a screen.
+    const a = { v: 1, kind: "basilisk.manifest-attestation", manifest: "a".repeat(64), claimedAt: "x" };
+    const b = { v: 1, kind: "basilisk.manifest-attestation", manifest: "b".repeat(64), claimedAt: "y" };
+    const rows = projectRosterPeers(
+      new Map([
+        [FPR_A, { ...peer({ status: "connected" }), attested: new Map([[a.manifest, a], [b.manifest, b]]) }],
+        [FPR_B, peer({ status: "connected" })],
+      ])
+    );
+    // Insertion order, which is the order they arrived in.
+    expect(rows[0].attested).toEqual([a, b]);
+    // Whole documents, not digests: `manifestAttestedBy` reads `kind` and `v`
+    // off the bytes the peer signed, and a digest alone would make the reader
+    // synthesise the fields it then checks.
+    expect(rows[0].attested[0].kind).toBe("basilisk.manifest-attestation");
+    // Always an array. A peer with no `attested` at all and a peer who has
+    // signed nothing are the same state on screen and must be one shape here.
+    expect(rows[1].attested).toEqual([]);
+  });
+
+  it("builds a fresh list each time, so no row is a live view of the session", () => {
+    // A row is something a component holds across renders. If two projections
+    // handed back the same array — a cache on the peer record, say — a widget
+    // that sorted or spliced its copy would be editing what the *next* coverage
+    // count reads, and the count would move for a reason nothing signed.
+    const a = { v: 1, kind: "basilisk.manifest-attestation", manifest: "a".repeat(64), claimedAt: "x" };
+    const peers = new Map([
+      [FPR_A, { ...peer({ status: "connected" }), attested: new Map([[a.manifest, a]]) }],
+    ]);
+    const first = projectRosterPeers(peers)[0].attested;
+    const second = projectRosterPeers(peers)[0].attested;
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+    // The documents themselves are the session's, and are not copied — a
+    // signature is not something this projection is entitled to rewrite.
+    expect(first[0]).toBe(a);
+  });
+
   it("attaches via only for peers whose ICE lookup has resolved", () => {
     const rows = projectRosterPeers(
       new Map([

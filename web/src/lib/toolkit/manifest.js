@@ -245,7 +245,11 @@ const AUDIENCE_DOMAIN = "basilisk.run-manifest/audience/v1\n";
  * @property {string} recipeSource   full notebook recipe text, as it will be run
  * @property {string} recipeDigest
  * @property {ManifestCell[]} cells
- * @property {string[]} peers        labels, sorted — never fingerprints
+ * @property {string[]} peers        the room's members, sorted. Whole
+ *   fingerprints since `3d69090`: a peer *is* the key, so the roster is
+ *   identity-mapped and `peersSha` agrees between two ends by construction.
+ *   This read "labels, sorted — never fingerprints" while that was true, and
+ *   went on saying it afterwards.
  * @property {string} peersSha       digest of the label→fingerprint binding
  * @property {string} audienceSha    digest of the audience, never the audience
  * @property {{ ops: string, receipt: number }} toolchain

@@ -11,6 +11,12 @@
  * `notebook-session-documents.test.js` runs the same refusals over two live
  * meshed sessions. This file is the unit underneath them, so a failure says
  * whether the check is wrong or the wiring is.
+ *
+ * A run manifest is signed here as *text*, because `verifySignedBy` takes text
+ * and a manifest is a real document this product produces. It is no longer a
+ * document this channel carries — see `documents.js`'s header — so there is no
+ * `readSignedManifest` to test, and the parses below are the two documents that
+ * do travel.
  */
 import { generateKey } from "openpgp";
 import { describe, expect, it } from "vitest";
@@ -20,7 +26,6 @@ import {
   documentByteLength,
   looksCleartextSigned,
   readSignedAttestation,
-  readSignedManifest,
   verifySignedBy,
 } from "../lib/notebook/documents.js";
 import { signOpenPgp } from "../lib/pgp/sign.js";
@@ -142,26 +147,20 @@ describe("a document is checked against the sender's key and no other", () => {
 /* ──────────────────────────── parse after verify ────────────────────────── */
 
 describe("a verified document is then read as the document it claims to be", () => {
-  it("parses a manifest and digests its canonical form", async () => {
-    const signed = await cleartext(manifestToJson(MANIFEST), ALICE.privateKey);
-    const { manifest, digest } = await readSignedManifest(signed, {
+  it("names the same digest whichever way the manifest behind it was serialised", async () => {
+    // The digest is over canonical JSON, which is what makes an attestation
+    // over "the manifest" mean something when two peers pretty-printed theirs
+    // differently — and it is the whole reason the manifest itself does not
+    // have to travel for the two ends to be talking about one document.
+    const pretty = JSON.parse(JSON.stringify(MANIFEST, null, 2));
+    const signed = await cleartext(
+      attestationToJson(await buildAttestation({ manifest: pretty })),
+      ALICE.privateKey
+    );
+    const { digest } = await readSignedAttestation(signed, {
       key: ALICE.key,
       fpr: ALICE.fpr,
     });
-    expect(manifest.title).toBe("Thursday key ceremony");
-    expect(digest).toBe(MANIFEST_SHA);
-  });
-
-  it("gives the same digest for the same manifest serialised differently", async () => {
-    // The digest is over canonical JSON, which is what makes an attestation
-    // over "the manifest" mean something when two peers pretty-printed it
-    // differently.
-    const pretty = JSON.stringify(MANIFEST, null, 2);
-    expect(pretty).not.toBe(manifestToJson(MANIFEST));
-    const { digest } = await readSignedManifest(
-      await cleartext(pretty, ALICE.privateKey),
-      { key: ALICE.key, fpr: ALICE.fpr }
-    );
     expect(digest).toBe(MANIFEST_SHA);
   });
 
@@ -196,18 +195,20 @@ describe("a verified document is then read as the document it claims to be", () 
   });
 
   it("refuses a signed document of the wrong kind", async () => {
-    const attestation = await buildAttestation({ manifestSha: MANIFEST_SHA });
-    const signed = await cleartext(attestationToJson(attestation), ALICE.privateKey);
+    // A run manifest, signed by the right peer, arriving where an attestation
+    // is expected. The `kind` discriminator is what stops one being read as the
+    // other, and it matters more now that only one of the two travels.
+    const signed = await cleartext(manifestToJson(MANIFEST), ALICE.privateKey);
     await expect(
-      readSignedManifest(signed, { key: ALICE.key, fpr: ALICE.fpr })
-    ).rejects.toThrow(/not a Basilisk run manifest/);
+      readSignedAttestation(signed, { key: ALICE.key, fpr: ALICE.fpr })
+    ).rejects.toThrow(/not a Basilisk manifest attestation/);
   });
 
   it("refuses signed nonsense without throwing anything but an Error", async () => {
     const signed = await cleartext("not json at all", ALICE.privateKey);
     await expect(
-      readSignedManifest(signed, { key: ALICE.key, fpr: ALICE.fpr })
-    ).rejects.toThrow(/manifest: not JSON/);
+      readSignedAttestation(signed, { key: ALICE.key, fpr: ALICE.fpr })
+    ).rejects.toThrow(/attestation: not JSON/);
   });
 });
 
@@ -230,16 +231,17 @@ describe("an oversized document is refused, never truncated", () => {
     );
   });
 
-  it("refuses an oversized manifest before OpenPGP is asked to parse it", async () => {
-    const huge = await buildRunManifest({
-      title: "x".repeat(MAX_DOCUMENT_BYTES + 1),
-      recipeSource: "out $a",
-      cells: [],
-    });
-    // Deliberately *not* signed: the size check has to come first, or an
-    // attacker's ceiling is however much armor OpenPGP will chew through.
+  it("refuses an oversized arrival before OpenPGP is asked to parse it", async () => {
+    // Deliberately *not* signed, and deliberately not a legal document either:
+    // the size check has to come first, or an attacker's ceiling is however
+    // much armor OpenPGP will chew through. An honest attestation is four
+    // fields and can never reach this, which is exactly why the sender's
+    // ceiling cannot be the only one.
     await expect(
-      readSignedManifest(manifestToJson(huge), { key: ALICE.key, fpr: ALICE.fpr })
+      readSignedAttestation("a".repeat(MAX_DOCUMENT_BYTES + 1), {
+        key: ALICE.key,
+        fpr: ALICE.fpr,
+      })
     ).rejects.toThrow(new RegExp(`ceiling for a document on this channel is ${MAX_DOCUMENT_BYTES}`));
   });
 
@@ -248,7 +250,7 @@ describe("an oversized document is refused, never truncated", () => {
     // armor → JSON escape → AES-GCM → base64 → frame, against the message size
     // RFC 8831 requires every stack to accept.
     const body = JSON.stringify({
-      kind: "manifest",
+      kind: "notebook",
       doc: "a".repeat(MAX_DOCUMENT_BYTES),
       ts: Date.now(),
     });

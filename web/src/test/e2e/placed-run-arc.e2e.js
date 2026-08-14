@@ -286,7 +286,7 @@ const LOAD = `(async () => {
   // what this suite actually needs off the prototype.
   const WANTED = [
     "start", "stop", "sendChat", "sendChatTo",
-    "sendOffer", "sendResult", "publishManifest", "publishAttestation",
+    "sendOffer", "sendResult", "publishAttestation", "shareNotebook",
     "_onRelayEnvelope", "_handleSignal", "_maybeDeriveSession", "_maybeSendKeyConfirm",
   ];
   const found = [];
@@ -476,10 +476,16 @@ const INSTALL = `(() => {
     return { manifest, digest: await arc.manifestDigest(manifest) };
   };
 
-  /** Adopt a manifest that arrived over the wire, verified by the session. */
-  window.__adoptManifest = async (manifest) => {
-    S.manifest = manifest;
-    return arc.manifestDigest(manifest);
+  /** Sign *I saw this manifest* over the digest this peer derived itself. */
+  window.__attest = async (armoredPrivate) => {
+    const key = await window.__pgp.readPrivateKey({ armoredKey: armoredPrivate });
+    const attestation = await arc.buildAttestation({ manifest: S.manifest });
+    const { armored } = await window.__arc.signOpenPgp(
+      arc.attestationToJson(attestation),
+      [key],
+      "cleartext"
+    );
+    return window.__session.publishAttestation(armored);
   };
 
   /**
@@ -638,7 +644,6 @@ const INSTALL = `(() => {
     window.__statuses = [];
     window.__offers = [];
     window.__results = [];
-    window.__manifests = [];
     const session = new window.__Session({
       roomId: cfg.roomId,
       audienceFprs: cfg.audience,
@@ -648,7 +653,6 @@ const INSTALL = `(() => {
       // No third party. Two contexts of one browser reach each other over host
       // candidates on the loopback interface, and an empty list is honoured.
       iceServers: [],
-      onManifest: (m) => window.__manifests.push(m),
       onOffer: (o) => window.__offers.push(o),
       onResult: (r) => window.__results.push(r),
       onStatus: (s) => window.__statuses.push(s),
@@ -671,6 +675,10 @@ const INSTALL = `(() => {
         connectionState: p.link && p.link.pc ? p.link.pc.connectionState : null,
         offered: [...p.offered],
         returned: [...p.returned],
+        // The digests this peer has signed over, read off the peer record —
+        // which is the only place the session puts them, and the same record
+        // the roster projection reads.
+        attested: [...p.attested.keys()],
       });
     }
     return {
@@ -678,7 +686,6 @@ const INSTALL = `(() => {
       errors: window.__errors.slice(),
       offers: window.__offers.map((o) => ({ from: o.from, cell: o.cell, manifest: o.manifest })),
       results: window.__results.map((r) => ({ from: r.from, cell: r.cell, manifest: r.manifest })),
-      manifests: window.__manifests.map((m) => ({ from: m.from, digest: m.digest })),
       statuses: window.__statuses.slice(),
     };
   };
@@ -849,29 +856,29 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
       shippedPlanExpr({ src: NOTEBOOK, me: out.whoA.me, roster: out.whoA.roster })
     );
 
-    /* ── 1. mara commits to the run and publishes what she committed to ── */
+    /* ── 1. both derive the manifest, and mara attests to hers ── */
 
-    const built = await A.page.evaluate(() => window.__manifest());
-    out.manifestDigest = built.digest;
-    const signedManifest = await A.page.evaluate(
-      async ([manifest, armored]) => {
-        const key = await window.__pgp.readPrivateKey({ armoredKey: armored });
-        const json = JSON.stringify(manifest);
-        const { armored: signed } = await window.__arc.signOpenPgp(json, [key], "cleartext");
-        return signed;
-      },
-      [built.manifest, mara.armoredPrivate]
+    // **Nothing carries the manifest between these two browsers.** Each builds
+    // its own from the notebook text, the title and the roster, and the digests
+    // have to meet for every check downstream to mean anything — that is the
+    // claim `notebook-share.js` makes and the reason the wire kind that used to
+    // deliver one was removed. Asserted below, on two `manifestDigest` calls in
+    // two realms that have shared nothing but a room.
+    out.manifestDigestA = (await A.page.evaluate(() => window.__manifest())).digest;
+    out.manifestDigestB = (await B.page.evaluate(() => window.__manifest())).digest;
+    out.manifestDigest = out.manifestDigestA;
+
+    // What *cannot* be derived is mara's signature over that digest, so that is
+    // what crosses. okafor learns it the way the product does: off his own peer
+    // record, which the roster projection reads and nothing else touches.
+    out.attestSent = await A.page.evaluate(
+      (armored) => window.__attest(armored),
+      mara.armoredPrivate
     );
-    out.manifestSent = await A.page.evaluate((s) => window.__session.publishManifest(s), signedManifest);
     await until(
       () => B.page.evaluate(() => window.__mesh()),
-      (v) => v.manifests.length > 0,
-      { timeout: 20000, interval: 100, what: "the manifest reaching okafor" }
-    );
-    // okafor adopts the manifest the *session verified*, not one he rebuilt.
-    // Everything he checks the offer against is then a document that arrived.
-    out.adoptedByB = await B.page.evaluate(
-      () => window.__adoptManifest(window.__manifests[0].manifest)
+      (v) => v.peers.some((p) => p.attested.length > 0),
+      { timeout: 20000, interval: 100, what: "mara's attestation reaching okafor" }
     );
 
     /* ── 2. mara runs, and the gate stops her ── */
@@ -1282,13 +1289,22 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     expect(out.offer.summary).toContain("nothing runs until somebody says so");
   });
 
-  it("carries the manifest and the offer across two realms, and the session says so", () => {
-    // The manifest okafor checked the offer against is the one the session
-    // verified against mara's directory key, not one he rebuilt from a string
-    // the test handed him.
-    expect(out.manifestSent).toBe(1);
-    expect(out.adoptedByB).toBe(out.manifestDigest);
-    expect(out.meshB.manifests).toEqual([{ from: mara.fpr, digest: out.manifestDigest }]);
+  it("derives one manifest in two realms and carries only the signature over it", () => {
+    // The two browsers share a room and no JavaScript. Neither was handed the
+    // other's manifest — this suite no longer has a way to hand one over — and
+    // they digest to the same 64 characters, which is the property that makes
+    // every `unknown-manifest` check downstream a real gate rather than a wall.
+    expect(out.manifestDigestA).toMatch(/^[0-9a-f]{64}$/);
+    expect(out.manifestDigestB).toBe(out.manifestDigestA);
+
+    // And the one thing neither could derive did travel: mara's signature over
+    // that digest, checked against the key okafor fetched from the directory
+    // and recorded on his own peer row.
+    expect(out.attestSent).toBe(1);
+    expect(out.meshB.peers[0].attested).toEqual([out.manifestDigest]);
+    // The other direction is empty. Receiving an attestation is not making one,
+    // and nothing in the session reaches for okafor's key to answer it.
+    expect(out.meshA.peers[0].attested).toEqual([]);
 
     expect(out.offerSent).toBe(1);
     expect(out.meshB.offers).toEqual([

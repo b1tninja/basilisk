@@ -46,9 +46,20 @@
  *    this module never asks for one — it reports that confirmation happened, or
  *    says plainly that it has not.
  *
+ * 4. **Confirmation and attestation are different claims about the same peer.**
+ *    Confirmed means *this channel belongs to that key*, decided by the
+ *    transport, automatically, about the present moment. Attested means *that
+ *    key signed a document naming the manifest this notebook derives*, decided
+ *    by a person pressing, about a notebook. A room can be fully confirmed and
+ *    attested by nobody, and the two verdicts sit on one row precisely so that
+ *    reading is available — `attestationVerdict` and `confirmationReadout` are
+ *    deliberately separate functions returning separate badges, because a single
+ *    "trusted" chip would merge two proofs that fail for different reasons.
+ *
  * @module lib/toolkit/session-flow
  */
 
+import { summarizeAttestation } from "./attest.js";
 import { canonicalAudience } from "../notebook/room.js";
 import { roomRoster } from "../notebook/roster.js";
 import { findFingerprints, findShortKeyIds } from "../pgp/verify-fpr.js";
@@ -278,6 +289,114 @@ export function confirmationReadout(peer) {
     tone: "warn",
     verdict: "unconfirmed",
     why: "The channel is open and nothing has bound it to their key. No cell will be placed here and nothing they send is believed.",
+  };
+}
+
+/**
+ * Has this peer signed an attestation over the manifest *this* machine derives?
+ *
+ * `null` where there is nothing to compare against — no notebook, or a notebook
+ * that does not compile, so no digest. That is not the same state as "they have
+ * not attested" and must not be drawn as one: nobody has been asked yet, and a
+ * row saying otherwise would report a refusal that never happened.
+ *
+ * The comparison is against the digest and nothing else. A peer who attested to
+ * a different digest has attested to a different notebook, which is exactly the
+ * drift this is worth showing — and it reads here as *not this one*, because
+ * that is what it is.
+ *
+ * @param {{ attested?: { manifest?: string }[] }} peer  a roster row
+ * @param {string} digest  the manifest digest this browser derived
+ * @returns {{ tone: "brand"|"warn", verdict: string, why: string }|null}
+ */
+export function attestationVerdict(peer, digest) {
+  const want = String(digest || "").trim().toLowerCase();
+  if (!want) return null;
+  const rows = Array.isArray(peer?.attested) ? peer.attested : [];
+  const mine = rows.some((a) => String(a?.manifest || "").toLowerCase() === want);
+  if (mine) {
+    return {
+      tone: "brand",
+      verdict: "attested",
+      why: "They signed a document naming this run's manifest digest, and this browser checked that signature against their key. It says they saw this notebook — not when, and not that they will run it.",
+    };
+  }
+  const other = rows.length;
+  return {
+    tone: "warn",
+    verdict: "not attested",
+    why: other
+      ? `They have attested to ${other} manifest${other === 1 ? "" : "s"}, none of them this one — so the notebook they saw is not the notebook here.`
+      : "Nothing signed by them names this manifest. They may not have been asked, and attesting is theirs to press.",
+  };
+}
+
+/**
+ * @typedef {object} AttestationReadout
+ * @property {"brand"|"warn"|"muted"} tone
+ * @property {string} headline
+ * @property {string} why
+ * @property {string[]} attested peers with an attestation over this manifest
+ * @property {string[]} missing  peers the manifest names with nothing over it
+ * @property {number} total      how many the manifest expects; 0 means no
+ *   fraction is drawable and coverage says nothing about who agreed
+ */
+
+/**
+ * Attestation coverage for this run, in two sentences.
+ *
+ * The headline is `summarizeAttestation`'s, not a second one written here, for
+ * `keyPowerReadout`'s reason: the check that decides coverage and the line that
+ * reports it must not be able to disagree. What this adds is the reading —
+ * `manifestAttestedBy` answers *is this covered* in the vocabulary of mismatched
+ * fields, and a person is asking *who still has not*.
+ *
+ * **The caveats are not optional and are not a footnote.** `attest.js` is
+ * explicit that an attestation is evidence its signer saw a digest and never
+ * evidence of *when*, and that the ordering it supports holds among the people
+ * in the room rather than for anybody shown the bundle afterwards. A coverage
+ * badge with that sentence removed is the badge overclaiming, so they are
+ * carried out of the result rather than re-typed here.
+ *
+ * **All of them, not the first.** The list is not decoration in a fixed order:
+ * the second entry is either "the manifest lists no peers, so coverage is
+ * vacuous" or "N attestations arrived with no attester", and both are the
+ * report contradicting the number beside it. Printing `caveats[0]` and dropping
+ * the rest is how a vacuous `true` reads as agreement.
+ *
+ * `total` is what the count on screen may divide by, and it is zero exactly when
+ * the manifest expects nobody — in which case there is no fraction to draw and
+ * the caveat is the whole of what this has to say.
+ *
+ * @param {Awaited<ReturnType<
+ *   import("./attest.js").manifestAttestedBy>>|null|undefined} coverage
+ * @returns {AttestationReadout|null}  null when there is nothing to report on
+ */
+export function attestationReadout(coverage) {
+  if (!coverage?.digest) return null;
+  const missing = [...(coverage.missing || [])];
+  const attested = [...(coverage.attested || [])];
+  const total = attested.length + missing.length;
+  const caveats = (coverage.caveats || []).join(" ");
+  if (coverage.ok) {
+    return {
+      tone: "brand",
+      headline: summarizeAttestation(coverage),
+      why: `Everyone this notebook names has signed over this manifest. ${caveats}`,
+      attested,
+      missing,
+      total,
+    };
+  }
+  return {
+    tone: missing.length === total ? "muted" : "warn",
+    headline: summarizeAttestation(coverage),
+    why: missing.length
+      ? `${missing.length} of ${total} in this notebook have signed nothing over this manifest. ${caveats}`
+      : `The attestations held here are not all over this manifest. ${caveats}`,
+    attested,
+    missing,
+    total,
   };
 }
 

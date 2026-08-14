@@ -19,6 +19,11 @@ import {
   decideProposal,
   proposalToJson,
 } from "../lib/toolkit/notebook-share.js";
+import {
+  attestationToJson,
+  buildAttestation,
+  manifestAttestedBy,
+} from "../lib/toolkit/attest.js";
 import { sessionRecipe } from "../lib/toolkit/session-flow.js";
 import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
 import { labelForFingerprint, planRun } from "../lib/toolkit/plan.js";
@@ -80,12 +85,24 @@ import type {
   VaultKeyRow,
 } from "./notebook-types";
 
+/** A manifest attestation as `lib/toolkit/attest.js` defines one. */
+export type ManifestAttestation = import("../lib/toolkit/attest.js").ManifestAttestation;
+
+/** What `manifestAttestedBy` answers about one manifest. */
+export type AttestationCoverage = Awaited<ReturnType<typeof manifestAttestedBy>>;
+
 /** One roster row — mirror of lib/notebook/roster's ConnectionPeerRow. */
 export type QuorumPeerRow = {
   id: string;
   fingerprint: string;
   state: "new" | "connecting" | "connected" | "disconnected" | "failed" | "closed";
   authenticated: boolean;
+  /**
+   * Every attestation this peer signed and the session checked against their
+   * key — the documents, not their digests, because the coverage check reads
+   * `kind` and `v` off the bytes a peer actually signed.
+   */
+  attested: ManifestAttestation[];
   via?: string;
 };
 
@@ -2604,6 +2621,155 @@ export function useNotebook() {
   }, [source, title]);
 
   /**
+   * The attestation this browser signed over its own run manifest, or null.
+   *
+   * Kept because **the session's roster is the audience minus self** — it can
+   * never say anything about this browser — while the manifest's `peers` names
+   * everybody including this browser. Without this record, coverage would list
+   * the reader as the one person who had not attested a second after they
+   * pressed Attest, which is the sort of report that teaches people to stop
+   * reading reports.
+   *
+   * Set whether or not the send reached anybody: it records that a person on
+   * this machine looked at a digest and signed it, which is true even in an
+   * empty room.
+   *
+   * **Not persisted, and not cleared when the notebook changes.** It names one
+   * digest, and `manifestAttestedBy` compares that digest against the manifest
+   * now derived — so editing a cell after attesting reports *you signed over a
+   * different notebook* rather than quietly forgetting that you signed at all.
+   * Clearing it would be this hook deciding, on the reader's behalf, that a
+   * signature they made no longer counts.
+   */
+  const [ownAttestation, setOwnAttestation] = useState<ManifestAttestation | null>(null);
+
+  /**
+   * Who in this room has signed over the manifest this notebook derives.
+   *
+   * `manifestAttestedBy`'s own answer, not a count assembled here, and null when
+   * there is nothing to answer about — no room, or a notebook that does not
+   * compile and therefore has no manifest to be attested to.
+   */
+  const [attestation, setAttestation] = useState<AttestationCoverage | null>(null);
+
+  /**
+   * Sign *I saw this manifest* and put it in front of the room.
+   *
+   * **A press, and it has to be.** `attest.js` refuses to hold a signing
+   * function for the reason `receipt.js` does — "the recipe is the thing the
+   * user reads before pressing Run, and a signer buried in a module signs
+   * without anyone having read a recipe" — and an attestation minted whenever a
+   * run produced a manifest would be exactly that module, one layer out: this
+   * browser swearing it saw a notebook nobody looked at. `a4f9399` allows an
+   * automatic send where the run itself is the bound, and it is the right rule
+   * for an *offer*, which restates a placement decision the reader already made
+   * by pressing Run. Nothing about pressing Run says the reader read the
+   * manifest.
+   *
+   * It is also not a duplicate of `run.attest`. That op puts an attestation in a
+   * slot, which is where a recipe can pipe it, store it or hand it to
+   * `gpg.sign`; this puts one on the wire. Both mint a signature only from a
+   * human act, which is the property `approval-gate.js` protects.
+   *
+   * The manifest is `handoffContext`'s — the same derivation every offer and
+   * every accept is checked against — so the digest signed here is the digest a
+   * peer's own machine computes, and a mismatch is the notebooks differing
+   * rather than the two ends disagreeing about how to digest one.
+   */
+  const attestManifest = useCallback(async () => {
+    const session = getLiveSession();
+    if (!session) return { ok: false, why: "No live session to put an attestation on." };
+    let signed: string;
+    let mine: ManifestAttestation;
+    try {
+      const { roster, me } = handoffWho();
+      const ctx = await handoffContext({ source, me, roster, title });
+      mine = await buildAttestation({ manifest: ctx.manifest });
+      signed = await signSessionDocument(attestationToJson(mine));
+    } catch (err) {
+      return { ok: false, why: err instanceof Error ? err.message : String(err) };
+    }
+    let sent = 0;
+    try {
+      sent = await session.publishAttestation(signed);
+    } catch (err) {
+      return { ok: false, why: err instanceof Error ? err.message : String(err) };
+    }
+    // Recorded before the count is judged. The signature exists on this machine
+    // whether or not a peer was meshed to hear about it, and a record that
+    // waited for delivery would make this browser's own coverage a fact about
+    // the network.
+    setOwnAttestation(mine);
+    if (!sent) {
+      return {
+        ok: false,
+        why:
+          "You have attested to this manifest, and nobody in this room has a " +
+          "confirmed channel yet, so nobody was told. Attest again once a peer " +
+          "is confirmed.",
+      };
+    }
+    return { ok: true, sent, digest: mine.manifest };
+  }, [handoffWho, source, title]);
+
+  /**
+   * Recount coverage whenever the roster or the notebook moves.
+   *
+   * Both halves matter and they move independently: an attestation arrives with
+   * the notebook perfectly still, and editing a cell changes the digest every
+   * held attestation is measured against — so a badge that only followed the
+   * roster would go on saying "attested" about a manifest the reader has just
+   * edited out of existence.
+   *
+   * The entries are the documents the peers signed, attributed by
+   * `labelForFingerprint` — the one crossing from the session's fingerprints to
+   * the peers a plan speaks in. An attestation the roster cannot name is passed
+   * on with no `by`, which `manifestAttestedBy` counts toward nothing and says
+   * so in its caveats; dropping it would be reporting less than is known.
+   */
+  useEffect(() => {
+    // A room needs at least two fingerprints to exist, and with none there is no
+    // manifest anybody could be expected to have seen. Reporting vacuous
+    // coverage for a notebook nobody is sharing is a badge that means nothing.
+    if ((quorumState.audience || []).length < 2) {
+      setAttestation((prev) => (prev === null ? prev : null));
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { roster, me } = handoffWho();
+        const ctx = await handoffContext({ source, me, roster, title });
+        const entries: { by?: string; attestation: ManifestAttestation }[] = [];
+        for (const row of quorumState.peers || []) {
+          const by = labelForFingerprint(roster, String(row.fingerprint || ""));
+          for (const a of row.attested || []) {
+            entries.push(by ? { by, attestation: a } : { attestation: a });
+          }
+        }
+        if (ownAttestation && me) entries.push({ by: me, attestation: ownAttestation });
+        const coverage = await manifestAttestedBy(ctx.manifest, entries);
+        if (cancelled) return;
+        // Replaced only when it says something different. A roster is emitted on
+        // every ICE tick, and a fresh object each time would re-render the panel
+        // — and re-announce the live region under it — for a count that has not
+        // moved.
+        setAttestation((prev) =>
+          prev && JSON.stringify(prev) === JSON.stringify(coverage) ? prev : coverage
+        );
+      } catch {
+        // A notebook that does not compile has no manifest, so there is nothing
+        // for anybody to have attested to. That is not a failed signature and
+        // must not be drawn as one.
+        if (!cancelled) setAttestation((prev) => (prev === null ? prev : null));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [handoffWho, ownAttestation, quorumState.audience, quorumState.peers, source, title]);
+
+  /**
    * Hand a skipped cell to the peer it belongs to.
    *
    * The offer carries the values that cell reads and nothing else —
@@ -3083,6 +3249,8 @@ export function useNotebook() {
     sendCellResult,
     acceptHandoff,
     shareNotebook,
+    attestManifest,
+    attestation,
     proposedNotebook,
     adoptProposedNotebook,
     dismissProposedNotebook,

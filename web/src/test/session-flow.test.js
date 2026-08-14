@@ -23,6 +23,8 @@ import { describe, expect, it } from "vitest";
 import {
   INVITE_CARRIES,
   INVITE_OMITS,
+  attestationReadout,
+  attestationVerdict,
   confirmationReadout,
   parseInviteAudience,
   pasteReadout,
@@ -33,6 +35,8 @@ import {
   startIssues,
   sessionKeyChoices,
 } from "../lib/toolkit/session-flow.js";
+import { buildAttestation, manifestAttestedBy } from "../lib/toolkit/attest.js";
+import { buildRunManifest } from "../lib/toolkit/manifest.js";
 /**
  * `keyOwesPassphrase` moved to `key-power.js` — it is the fact that separates
  * `loaded` from `ready`, so it belongs to the vocabulary rather than to the
@@ -878,6 +882,170 @@ describe("the handoff arc finally has a surface", () => {
       /const skipped = skippedRef\.current\.find\(\(sk\) => sk\.cell === cell\);/
     );
     expect(HOOK).not.toMatch(/skippedRef\.current\s*=\s*skippedRef\.current\.filter/);
+  });
+});
+
+/* ─────────────────────── attestation, end to end ────────────────────────── */
+
+const ATTEST_ROSTER = { [ADA]: ADA, [GRACE]: GRACE };
+
+/** The manifest two peers of this room would each derive for themselves. */
+async function aManifest(source = "bytes deadbeef | out $a") {
+  return buildRunManifest({
+    title: "notebook",
+    recipeSource: source,
+    cells: [{ index: 0, recipe: source }],
+    peers: ATTEST_ROSTER,
+  });
+}
+
+describe("attested is a second verdict, and not confirmation", () => {
+  it("says nothing at all while there is no manifest to have been seen", () => {
+    // "Nobody has been asked" is not "they declined", and a chip that could not
+    // tell them apart would report a refusal that never happened.
+    expect(attestationVerdict({ attested: [] }, "")).toBe(null);
+    expect(attestationReadout(null)).toBe(null);
+    expect(attestationReadout({ digest: "" })).toBe(null);
+  });
+
+  it("marks a peer against this browser's digest and no other", async () => {
+    const manifest = await aManifest();
+    const mine = await buildAttestation({ manifest });
+    const theirs = await buildAttestation({ manifestSha: "b".repeat(64) });
+
+    const yes = attestationVerdict({ attested: [mine] }, mine.manifest);
+    expect(yes.verdict).toBe("attested");
+    expect(yes.tone).toBe("brand");
+    // The claim is bounded in the badge's own sentence: seen, not timed, and
+    // not agreed to.
+    expect(yes.why).toMatch(/not when, and not that they will run it/);
+
+    // A peer who signed over a *different* notebook reads as not this one,
+    // because that is what it is — this is the drift the badge exists to show.
+    const drift = attestationVerdict({ attested: [theirs] }, mine.manifest);
+    expect(drift.verdict).toBe("not attested");
+    expect(drift.why).toMatch(/the notebook they saw is not the notebook here/);
+
+    const never = attestationVerdict({ attested: [] }, mine.manifest);
+    expect(never.why).toMatch(/attesting is theirs to press/);
+  });
+
+  it("reports coverage in manifestAttestedBy's own words, caveat included", async () => {
+    const manifest = await aManifest();
+    const attestation = await buildAttestation({ manifest });
+
+    const short = attestationReadout(
+      await manifestAttestedBy(manifest, [{ by: ADA, attestation }])
+    );
+    expect(short.headline).toMatch(/manifest not attested/);
+    expect(short.missing).toEqual([GRACE]);
+    expect(short.total).toBe(2);
+    expect(short.why).toMatch(/1 of 2 in this notebook have signed nothing/);
+
+    const whole = attestationReadout(
+      await manifestAttestedBy(manifest, [
+        { by: ADA, attestation },
+        { by: GRACE, attestation },
+      ])
+    );
+    expect(whole.headline).toMatch(/manifest attested — 2 attesters/);
+    expect(whole.missing).toEqual([]);
+    expect(whole.tone).toBe("brand");
+    // The caveat is carried out of the result rather than retyped, and it is
+    // not optional: a coverage badge without it is the badge overclaiming.
+    for (const r of [short, whole]) {
+      expect(r.why).toMatch(/never evidence of when/);
+      expect(r.why).toMatch(/mutual among the participants/);
+    }
+  });
+
+  it("says coverage is vacuous rather than drawing a fraction of nobody", async () => {
+    // A manifest that names no peers expects nobody, so `ok` can be true with
+    // nothing established. `manifestAttestedBy` says so in its second caveat,
+    // and a readout that printed only the first would let a vacuous true reach
+    // the screen as agreement — with "0/0 attested" beside it.
+    const manifest = await buildRunManifest({
+      recipeSource: "bytes deadbeef | out $a",
+      cells: [{ index: 0, recipe: "bytes deadbeef | out $a" }],
+      peers: {},
+    });
+    const r = attestationReadout(await manifestAttestedBy(manifest, []));
+    expect(r.total).toBe(0);
+    expect(r.why).toMatch(/coverage is vacuous/);
+    // And the widget draws no fraction when there is nothing to divide by.
+    expect(LIVE).toMatch(/\{attested\.total \? \(/);
+  });
+
+  it("carries an unattributed attestation into the sentence, not just the log", async () => {
+    const manifest = await aManifest();
+    const attestation = await buildAttestation({ manifest });
+    const r = attestationReadout(
+      await manifestAttestedBy(manifest, [{ by: ADA, attestation }, { attestation }])
+    );
+    expect(r.why).toMatch(/1 attestation arrived with no attester/);
+  });
+
+  it("goes stale when the notebook moves, rather than staying green", async () => {
+    // The digest covers the recipe source, so editing a cell after everyone
+    // attested is a room that has attested to a notebook nobody is running.
+    const before = await aManifest();
+    const attestation = await buildAttestation({ manifest: before });
+    const after = await aManifest("bytes deadbeef | encode hex | out $a");
+    const r = attestationReadout(
+      await manifestAttestedBy(after, [
+        { by: ADA, attestation },
+        { by: GRACE, attestation },
+      ])
+    );
+    expect(r.headline).toMatch(/manifest not attested/);
+    expect(r.missing).toEqual([ADA, GRACE].sort());
+  });
+});
+
+describe("attestation reaches a person, by the only path there is", () => {
+  it("carries it out of the session on the roster and nowhere else", () => {
+    // Point 3 of the finding this change answers: `_onDocument` recorded the
+    // attestation and emitted the roster, and the projection threw it away. The
+    // row carries it now, and there is no second delivery path to disagree with
+    // — the session has no `onAttestation` and no `attestersOf`.
+    const SESSION = read("../lib/notebook/session.js");
+    const ROSTER = read("../lib/notebook/roster.js");
+    expect(ROSTER).toMatch(/attested: \[\.\.\.\(peer\?\.attested\?\.values\?\.\(\) \|\| \[\]\)\]/);
+    expect(SESSION).not.toMatch(/this\.onAttestation/);
+    expect(SESSION).not.toMatch(/attestersOf\(/);
+  });
+
+  it("reads it in the hook and renders it in the panel", () => {
+    // The chain, asserted at each joint, because this whole area was four
+    // layers each assuming the next one was listening.
+    expect(HOOK).toMatch(/manifestAttestedBy\(ctx\.manifest, entries\)/);
+    expect(HOOK).toMatch(/labelForFingerprint\(roster, String\(row\.fingerprint/);
+    expect(SHELL).toMatch(/attestation: nb\.attestation/);
+    expect(LIVE).toMatch(/attestationReadout\(attestation\)/);
+    expect(LIVE).toMatch(/attestationVerdict\(p, digest\)/);
+    expect(LIVE).toContain("data-session-attestation");
+  });
+
+  it("sends only from a press, and refuses with a sentence rather than a boolean", () => {
+    // `attest.js` refuses to hold a signer for the reason `receipt.js` does, so
+    // an attestation minted by a run would be that module one layer out. The
+    // press is the whole consent boundary.
+    expect(HOOK).toMatch(/session\.publishAttestation\(signed\)/);
+    expect(HOOK).toMatch(/signSessionDocument\(attestationToJson\(mine\)\)/);
+    expect(SHELL).toMatch(/onAttest: \(\) => \{/);
+    expect(SHELL).toMatch(/attestRefusal: nb\.quorumState\.connected/);
+    // `disabledReason`, never `disabled` — the refusal and the reason are one
+    // value, per `components/ui/refusal.tsx`.
+    expect(LIVE).toMatch(/disabledReason=\{attestRefusal\}/);
+    expect(LIVE).not.toMatch(/\bdisabled=/);
+  });
+
+  it("prints the digest whole, the way a fingerprint is printed whole", () => {
+    // There is no press here to reveal the rest, and the digest is what the
+    // signature is over — an elision would be a value a reader compares and
+    // cannot check.
+    expect(LIVE).toMatch(/\{digest\}/);
+    expect(LIVE).not.toMatch(/digest\.slice|digest\.substring|…\{/);
   });
 });
 

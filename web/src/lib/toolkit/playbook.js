@@ -224,7 +224,7 @@ export function playbookToJson(playbook) {
  * SHA-256 of a playbook's canonical JSON.
  *
  * Over the canonical form rather than the bytes that arrived, for
- * `readSignedManifest`'s reason: two people who serialised the same playbook
+ * `readSignedAttestation`'s reason: two people who serialised the same playbook
  * with different key order still name the same digest, and any change to a
  * field changes it.
  * @param {RecipePlaybook} playbook

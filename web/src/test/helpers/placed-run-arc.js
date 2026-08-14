@@ -164,6 +164,7 @@ export {
 export { placementGate, withheldSlotMessage } from "./src/lib/toolkit/placement.js";
 export { runRecipe } from "./src/lib/toolkit/engine.js";
 export { buildRunManifest, manifestDigest, parseManifest } from "./src/lib/toolkit/manifest.js";
+export { attestationToJson, buildAttestation } from "./src/lib/toolkit/attest.js";
 export { createSlotRegistry } from "./src/lib/toolkit/slot-registry.js";
 export { canonicalAudience, deriveRoomId } from "./src/lib/notebook/room.js";
 export { roomRoster } from "./src/lib/notebook/roster.js";

@@ -31,6 +31,11 @@ import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
  * @property {string} fingerprint   the whole fingerprint
  * @property {"new"|"connecting"|"connected"|"disconnected"|"failed"|"closed"} state
  * @property {boolean} authenticated
+ * @property {import("../toolkit/attest.js").ManifestAttestation[]} attested
+ *   Every attestation this peer has signed and this session checked against
+ *   their key, oldest first. Always an array, empty for a peer who has attested
+ *   to nothing — an absent field and "attested to nothing" are the same state on
+ *   screen and must not be two shapes here.
  * @property {string} [via]         ICE candidate type actually selected
  */
 
@@ -137,10 +142,25 @@ export function roomRoster(audienceFprs, presentFprs = [], selfFpr = "") {
  * both proofs: the PGP-signed signalling envelope (who they claim to be) and
  * the transcript-bound key confirmation (that this channel is theirs).
  *
+ * **`attested` is carried, and used not to be.** `_onDocument` records each
+ * checked attestation on the peer and emits the roster saying, in its own
+ * comment, that "who has attested travels with everything else the roster says
+ * about a peer" — and it travelled exactly this far and was dropped here, so the
+ * sentence was true of the emitter and false of the product. Every path out of
+ * the session runs through this function, so a fact this projection discards is
+ * a fact no screen can ever show. The documents themselves, not their digests:
+ * `manifestAttestedBy` reads `kind`, `v` and `manifest` off what the peer signed
+ * (see `NotebookPeerState.attested`).
+ *
+ * A copy of the list rather than the session's own array, for `getPendingHandoffs`'
+ * reason: a row is something a component holds across renders, and handing out
+ * the live record would let a widget mutate what the next coverage count reads.
+ *
  * @param {Iterable<[string, {
  *   status: string,
  *   pgpVerified: boolean,
  *   kcVerified: boolean,
+ *   attested?: Map<string, import("../toolkit/attest.js").ManifestAttestation>,
  * }]>} peersByFpr
  * @param {Map<string, string>} [viaByFpr] cached ICE candidate types, filled
  *   asynchronously as stats resolve — absent entries simply omit `via`
@@ -156,6 +176,7 @@ export function projectRosterPeers(peersByFpr, viaByFpr) {
       fingerprint: fpr,
       state: STATE_BY_STATUS[peer?.status] || "new",
       authenticated: !!(peer?.pgpVerified && peer?.kcVerified),
+      attested: [...(peer?.attested?.values?.() || [])],
       ...(via ? { via } : {}),
     });
   }

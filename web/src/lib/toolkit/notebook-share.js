@@ -62,10 +62,16 @@
  * `roomRoster` over the audience, which is fixed for the session and identical
  * in every browser. So `source` and `title` are the whole of what differs
  * between two peers of one room, and once they agree, the manifest digests agree
- * by construction rather than by delivery. `session.publishManifest` still
- * exists and still has its own use — putting a *signed* commitment in front of
- * the room, which a derived object is not — but the handoff arc's first gate is
- * opened by this document, not by that one.
+ * by construction rather than by delivery.
+ *
+ * **`session.publishManifest` is gone, and this paragraph is why.** It used to
+ * end by saying that publishing a *signed* commitment was a use a derived object
+ * could not serve — which is true of the signature and not of the manifest. The
+ * signature over the digest is the whole of what cannot be derived, and that
+ * document already existed: `publishAttestation` carries four fields where the
+ * manifest carried the notebook's entire recipe source, past the
+ * `recipeLooksSecret` gate this module holds precisely because that text can
+ * contain a private key. One carrier for the text, gated; one for the signature.
  *
  * ## It refuses to carry secret material
  *

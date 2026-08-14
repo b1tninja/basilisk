@@ -29,14 +29,19 @@
  * The second theme is the *binding*. `session.js` deals in fingerprints and
  * says in its own doc comment that turning one into a peer label belongs to
  * whoever holds the roster; `attest.js` says the label a signature resolves to
- * is the caller's to supply. This module is the caller, and the round trip
- * `attestersOf()` → `attesterLabels()` → `manifestAttestedBy()` is asserted
- * end to end here, including the case that matters most: a fingerprint the
- * roster cannot name is *returned*, never silently dropped.
+ * is the caller's to supply. This module is the caller, and the trip a roster
+ * row now takes — `labelForFingerprint()` per attestation, then
+ * `manifestAttestedBy()` over the documents — is asserted end to end here,
+ * including the case that matters most: an attestation whose signer the roster
+ * cannot name is *carried through unattributed*, never silently dropped.
+ *
+ * `attesterLabels` used to sit in the middle of that trip and is gone with
+ * `attestersOf`, the set-at-a-time input it was written for. Coverage is
+ * counted per attestation now, because `manifestAttestedBy` wants a `by`
+ * beside each document rather than a list of everyone who signed something.
  */
 import { describe, expect, it } from "vitest";
 import {
-  attesterLabels,
   labelForFingerprint,
   normalizeRoster,
   planRun,
@@ -605,7 +610,25 @@ describe("the roster is the binding, and it is checked like one", () => {
 });
 
 describe("the binding session.js deliberately does not make", () => {
-  it("turns attester fingerprints into the labels manifestAttestedBy wants", async () => {
+  /**
+   * Roster rows as `projectRosterPeers` hands them over, turned into the
+   * entries `manifestAttestedBy` takes — which is exactly what `useNotebook`'s
+   * coverage effect does, and the only crossing it is allowed to make.
+   *
+   * @param {{ fingerprint: string, attested: any[] }[]} rows
+   */
+  function entriesFrom(rows) {
+    const out = [];
+    for (const row of rows) {
+      const by = labelForFingerprint(ROSTER, row.fingerprint);
+      for (const attestation of row.attested) {
+        out.push(by ? { by, attestation } : { attestation });
+      }
+    }
+    return out;
+  }
+
+  it("turns attesting roster rows into the entries manifestAttestedBy wants", async () => {
     const manifest = await buildRunManifest({
       recipeSource: "bytes deadbeef | out $a",
       cells: [{ index: 0, recipe: "bytes deadbeef | out $a" }],
@@ -613,29 +636,39 @@ describe("the binding session.js deliberately does not make", () => {
     });
     const attestation = await buildAttestation({ manifest });
 
-    // This is what `NotebookSession.attestersOf(digest)` returns: fingerprints,
-    // sorted, and no labels — it never learns them, and says so.
-    const attesters = [FPR_A, FPR_B].sort();
-    const { labels, unknown } = attesterLabels(ROSTER, attesters);
-    expect(labels).toEqual(["mara", "okafor"]);
-    expect(unknown).toEqual([]);
-
     const result = await manifestAttestedBy(
       manifest,
-      labels.map((by) => ({ by, attestation }))
+      entriesFrom([
+        { fingerprint: FPR_A, attested: [attestation] },
+        { fingerprint: FPR_B, attested: [attestation] },
+      ])
     );
     expect(result.ok).toBe(true);
     expect(result.attested).toEqual(["mara", "okafor"]);
     expect(result.missing).toEqual([]);
   });
 
-  it("returns a fingerprint it cannot name rather than dropping it", () => {
-    const { labels, unknown } = attesterLabels(ROSTER, [FPR_A, FPR_C]);
-    expect(labels).toEqual(["mara"]);
-    // A signature that was checked and a signer that was not identified is a
-    // fact worth reporting. Dropping it would report less than is known, and
-    // coverage would silently read as short by one.
-    expect(unknown).toEqual([FPR_C]);
+  it("carries an attestation it cannot name rather than dropping it", async () => {
+    const manifest = await buildRunManifest({
+      recipeSource: "bytes deadbeef | out $a",
+      cells: [{ index: 0, recipe: "bytes deadbeef | out $a" }],
+      peers: ROSTER,
+    });
+    const attestation = await buildAttestation({ manifest });
+    const entries = entriesFrom([
+      { fingerprint: FPR_A, attested: [attestation] },
+      { fingerprint: FPR_C, attested: [attestation] },
+    ]);
+    // A signature that was checked and a signer this roster cannot name is a
+    // fact worth reporting. It goes on with no `by`, which is what makes the
+    // caveat below sayable at all — dropping it would report less than is
+    // known, and coverage would silently read as short by one.
+    expect(entries.map((e) => e.by)).toEqual(["mara", undefined]);
+
+    const result = await manifestAttestedBy(manifest, entries);
+    expect(result.ok).toBe(false);
+    expect(result.missing).toEqual(["okafor"]);
+    expect(result.caveats.join(" ")).toMatch(/1 attestation arrived with no attester/);
   });
 
   it("leaves the coverage gap visible when the roster is short", async () => {
@@ -645,10 +678,9 @@ describe("the binding session.js deliberately does not make", () => {
       peers: ROSTER,
     });
     const attestation = await buildAttestation({ manifest });
-    const { labels } = attesterLabels(ROSTER, [FPR_A, FPR_C]);
     const result = await manifestAttestedBy(
       manifest,
-      labels.map((by) => ({ by, attestation }))
+      entriesFrom([{ fingerprint: FPR_A, attested: [attestation] }])
     );
     expect(result.ok).toBe(false);
     expect(result.missing).toEqual(["okafor"]);
