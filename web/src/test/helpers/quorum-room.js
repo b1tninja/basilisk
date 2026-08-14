@@ -7,8 +7,23 @@
  * HTTP mailbox (`/api/v1/quorum/room/…/messages`) and a keyserver
  * (`/pks/lookup`). That is the whole reason key confirmation had never been
  * shown between two real browsers: the transport was reachable and the protocol
- * was not. This module supplies both, in memory, for exactly the two identities
- * the test itself generated.
+ * was not. This module supplies both, in memory, for exactly the identities the
+ * test itself generated.
+ *
+ * ## Why the room counts its members rather than destructuring them
+ *
+ * It minted `[a, b]` and named the two of them in a dozen places, which was
+ * honest while every caller wanted a pair. A three-party ceremony wants three,
+ * and almost nothing had to change to get it: the audience, the key maps and
+ * the members array were already collections, so only the *minting* and the
+ * decryption key were written as two. `count` is now a parameter and the
+ * identities are an array.
+ *
+ * `members[0]` opens every envelope, which is what `a` did and is not a
+ * shortcut: a signalling envelope is sealed to the whole audience, so any one
+ * member's key opens any of them. Holding all the private keys is a property of
+ * a fixture that minted them, not a claim about the protocol — each browser
+ * still holds exactly one and learns the rest from `/pks/lookup`.
  *
  * ## Why the mailbox opens every envelope
  *
@@ -95,51 +110,49 @@ export const ROOM_SCOPE = "127.0.0.1";
  */
 
 /**
- * Two fresh identities, a room derived from them, and the HTTP surface a
+ * `count` fresh identities, a room derived from them, and the HTTP surface a
  * session bootstraps through.
  *
  * @param {object} [opts]
+ * @param {number} [opts.count]  how many identities to mint; two by default,
+ *   which is every caller that predates the three-party ceremony.
  * @param {(payload: any, signerFpr: string) => any} [opts.tamper]
  *   Called on every opened payload before it is re-sealed. Mutate and return it
  *   to deliver something other than what was posted; return it untouched for an
  *   honest relay.
  * @returns {Promise<QuorumRoom>}
  */
-export async function createQuorumRoom({ tamper } = {}) {
-  const [a, b] = await Promise.all([
-    generateKey({
-      type: "ecc",
-      curve: "curve25519Legacy",
-      userIDs: [{ email: "a@quorum.test" }],
-      format: "object",
-    }),
-    generateKey({
-      type: "ecc",
-      curve: "curve25519Legacy",
-      userIDs: [{ email: "b@quorum.test" }],
-      format: "object",
-    }),
-  ]);
+export async function createQuorumRoom({ count = 2, tamper } = {}) {
+  const size = Math.max(2, Math.trunc(count));
+  const keys = await Promise.all(
+    Array.from({ length: size }, (_, i) =>
+      generateKey({
+        type: "ecc",
+        curve: "curve25519Legacy",
+        // `a@`, `b@`, `c@` — the letters the two-party fixture used, continued,
+        // so a fingerprint printed in a failure is still traceable to a person
+        // by eye.
+        userIDs: [{ email: `${String.fromCharCode(97 + i)}@quorum.test` }],
+        format: "object",
+      })
+    )
+  );
 
-  const aFpr = a.publicKey.getFingerprint().toUpperCase();
-  const bFpr = b.publicKey.getFingerprint().toUpperCase();
-  const audience = [aFpr, bFpr].sort();
+  const fprs = keys.map((k) => k.publicKey.getFingerprint().toUpperCase());
+  const audience = [...fprs].sort();
   const roomId = await deriveRoomId(audience, { relyingPartyId: ROOM_SCOPE });
 
   /** @type {Map<string, import("openpgp").Key>} */
-  const keyByFpr = new Map([
-    [aFpr, a.publicKey],
-    [bFpr, b.publicKey],
-  ]);
+  const keyByFpr = new Map(fprs.map((f, i) => [f, keys[i].publicKey]));
   /** @type {Map<string, import("openpgp").PrivateKey>} */
-  const privateByFpr = new Map([
-    [aFpr, a.privateKey],
-    [bFpr, b.privateKey],
-  ]);
-  const armoredByFpr = new Map([
-    [aFpr, a.publicKey.armor()],
-    [bFpr, b.publicKey.armor()],
-  ]);
+  const privateByFpr = new Map(fprs.map((f, i) => [f, keys[i].privateKey]));
+  const armoredByFpr = new Map(fprs.map((f, i) => [f, keys[i].publicKey.armor()]));
+  // Whoever sorted first. Named rather than indexed into `keys` at the call
+  // site so the reason — any audience member can open any envelope — is stated
+  // once, where it is relied on.
+  const reader = /** @type {import("openpgp").PrivateKey} */ (
+    privateByFpr.get(audience[0])
+  );
 
   /** @type {{ seq: number, payload: string }[]} */
   const log = [];
@@ -172,7 +185,7 @@ export async function createQuorumRoom({ tamper } = {}) {
     try {
       opened = await openSignalingEnvelope({
         armored,
-        decryptionKey: a.privateKey,
+        decryptionKey: reader,
         audienceKeyByFpr: keyByFpr,
         audienceFprs: audience,
         expectedRoomId: roomId,

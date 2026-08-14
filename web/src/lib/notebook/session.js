@@ -365,6 +365,22 @@ export class NotebookSession {
      */
     this._invited = new Set();
     /**
+     * Members whose knock this session has already answered with a transport
+     * reset.
+     *
+     * Separate from `_invited` because the two answers have different sets of
+     * givers: only the creator re-publishes an invite, but *every* member has to
+     * start a stale, unconfirmed transport over when the peer it was aimed at
+     * turns out to have only just arrived. Sharing one set would have meant
+     * either a joiner recording an invite it never sent, or the reset staying
+     * where it was — behind a guard no joiner passes, which is the shape of the
+     * defect a third browser found.
+     *
+     * Non-empty for a joiner, unlike `_invited`, and that is the whole point.
+     * @type {Set<string>}
+     */
+    this._knocked = new Set();
+    /**
      * Whether `stop()` has run. Read only by `_sealAndSend`, which explains
      * there why a torn-down session's late signalling is dropped in silence
      * while `_publish`'s refusal keeps its voice.
@@ -777,6 +793,7 @@ export class NotebookSession {
     this._inviteEcdh = null;
     this.inviteNonce = "";
     this._invited.clear();
+    this._knocked.clear();
     for (const fpr of this.peers.keys()) {
       // Out of the shared inventory before the transports go: the session owns
       // these connections and is tearing them down itself, so `deregisterLink`
@@ -1425,17 +1442,42 @@ export class NotebookSession {
    * nonce is the one that was minted at `start`, and what it would cost to mint
    * another.
    *
+   * ## Two answers, and only one of them is the invite
+   *
+   * A knock asks for two different things from two different sets of members,
+   * and this method used to give both of them only to the creator.
+   *
+   * The **invite** is the creator's alone. The **transport reset** below is
+   * every member's, and the comment on it has always said so — "(when this end
+   * is the offerer) an offer and its candidates" describes a joiner exactly as
+   * well as a creator, because `_beginMeshing` makes whoever sorts lower the
+   * offerer and that is frequently not the creator. It sat under a guard that
+   * only a creator passes, so for two years it was a sentence about a case it
+   * could not reach.
+   *
+   * With two people the gap was invisible: the only member who can receive a
+   * knock is the creator, so the guard cost nothing. With three it is total.
+   * The second joiner knocks; the first joiner drops the knock on the guard and
+   * keeps the half-negotiated link it aimed at an empty room minutes ago;
+   * `_ensurePeerConnection` will not rebuild a link that already exists, so the
+   * newcomer's `hello` earns no offer and the two joiners never mesh. Neither
+   * of them is doing anything wrong and nothing anywhere says what happened.
+   *
    * **Three things bound this, and none of them is a timer.**
    *
    * *Who may answer.* Only a session holding invite material, which is only the
    * session that published one. A joiner that has verified an invite is meshing
-   * and reaches this line, and leaves on the first check — so a room of one
-   * creator and four joiners has exactly one answerer however many knocks fly.
+   * and reaches the invite half, and leaves on the first check — so a room of
+   * one creator and four joiners has exactly one answerer however many knocks
+   * fly. The reset half is deliberately outside that check.
    *
    * *Who has been served.* `_invited` is a set of fingerprints, not a count and
    * not a clock. A member is answered once per session; knocking again gets
    * silence, so a peer stuck in a reconnect loop cannot pull an invite out of
-   * this room on every pass.
+   * this room on every pass. `_knocked` is the same bound on the reset half and
+   * it is why the reset could be lifted out of the invite's guard without
+   * loosening anything: one reset per member per session, so a peer flapping on
+   * the relay still cannot tear another member's transport down twice.
    *
    * *Who is a member at all.* A knock from outside the audience never arrives
    * here to be refused: `openSignalingEnvelope` cannot name a signer it holds no
@@ -1449,11 +1491,6 @@ export class NotebookSession {
    * @param {string} peerFpr
    */
   async _onKnock(peerFpr) {
-    // Not our introduction to give. Said before the served-set is touched, so a
-    // joiner never records having answered something it cannot answer.
-    if (!this._inviteEcdh || !this.inviteNonce) return;
-    if (this._invited.has(peerFpr)) return;
-    this._invited.add(peerFpr);
     // Everything already sent to this peer went into a room they were not in —
     // the invite, the `hello`, and (when this end is the offerer) an offer and
     // its candidates. The offer is the one that does not heal on its own:
@@ -1462,15 +1499,31 @@ export class NotebookSession {
     // connection aimed at nobody and make no second offer. A knock says nothing
     // this session sent has arrived, so the transport for that peer starts over.
     //
+    // **This is every member's to do, not the creator's**, and it is above the
+    // invite guard for that reason — see the note on this method for what it
+    // cost while it was below one.
+    //
     // Never for a confirmed peer. Their link carries traffic under a key both
     // ends proved, and a knock is not proof of anything but presence — dropping
     // a working channel on it would let one audience member reset another's.
-    const peer = this.peers.get(peerFpr);
-    if (peer && !peer.kcVerified) this._resetPeerTransport(peerFpr, peer);
+    // And once per member per session, for the reason `_invited` is a set: a
+    // peer flapping on the relay must not be able to reset a transport on every
+    // pass.
+    if (!this._knocked.has(peerFpr)) {
+      this._knocked.add(peerFpr);
+      const peer = this.peers.get(peerFpr);
+      if (peer && !peer.kcVerified) this._resetPeerTransport(peerFpr, peer);
+    }
     // The prelude above set `pgpVerified` from the one fact a knock carries —
     // an audience member's signature over this room id — and the roster is the
     // only path that fact travels on.
     this._emitRoster();
+
+    // Not our introduction to give. Said before the served-set is touched, so a
+    // joiner never records having answered something it cannot answer.
+    if (!this._inviteEcdh || !this.inviteNonce) return;
+    if (this._invited.has(peerFpr)) return;
+    this._invited.add(peerFpr);
     this.onStatus?.("Re-publishing signed invite for a late arrival…");
     await this._publishInvite(peerFpr);
   }
@@ -2201,19 +2254,54 @@ export class NotebookSession {
       signingKey: this.privateKey,
       audienceKeys,
     });
-    // Channel-first: once links exist, signaling rides them and the relay
-    // becomes the bootstrap-only path — a renegotiation survives the relay
-    // dying, and a newcomer's introduction reaches peers it cannot signal
-    // directly. The envelope is sealed end to end either way; the wire
-    // carries nothing a relay can read or alter.
-    if (this._sendEnvelopeViaChannel(toFpr, armored)) return;
+    // Channel-first, and **only the direct link is first**.
+    //
+    // Once a link to this peer exists, signaling rides it: the envelope is
+    // sealed end to end either way, the wire carries nothing a relay can read
+    // or alter, and a renegotiation between two meshed peers then survives the
+    // relay dying. That half is unchanged.
+    //
+    // What changed is the *other* half, and it is the defect a third browser
+    // found. When there is no direct link, `_sendEnvelopeViaChannel` hands the
+    // frame to every other key-confirmed member and hopes one of them can carry
+    // it — and returning true for that suppressed the relay publish entirely.
+    // `_publishInvite` already says, in prose, exactly why that cannot work for
+    // a newcomer: the forwarder "has no link to the newcomer either". It
+    // protected itself by going through `_broadcast`, and nothing protected
+    // `hello`, `offer`, `answer` or `ice`, which are the four envelopes that
+    // actually build the link.
+    //
+    // The failure was total and silent. A third member joining a room whose
+    // first two are already meshed verifies the invite (relayed, so it arrives),
+    // sends its `hello`s (relayed, so they arrive), and is then never offered
+    // to: each already-meshed peer hands its offer to the other already-meshed
+    // peer, which finds no channel to the newcomer, floods it to nobody, and
+    // drops it. `_onChannelEnvelope`'s forward is a `send` with no
+    // acknowledgement, so the sender counts a dead end as delivery. Both ends
+    // sit on "waiting", and the relay — which every one of them is still
+    // connected to and which would have carried the offer in one hop — is never
+    // asked.
+    //
+    // So an indirect hop is now a *supplement* rather than a substitute: it
+    // still goes, because it is the path that survives a dead relay, and the
+    // relay publish goes too unless there is no relay to publish on. The cost
+    // is one extra envelope per introduction on a meshed room; `_envSeen` drops
+    // the duplicate at every receiver, which is the machinery that made the
+    // gossip flood safe in the first place.
+    const wire = this._sendEnvelopeViaChannel(toFpr, armored);
+    if (wire === "direct") return;
+    // An indirect hop with no relay is the case the flood exists for: it has
+    // been sent as well as it can be, and `_publish` would throw a refusal
+    // naming a state ("this session has no signalling") that is true but is not
+    // this send's problem.
+    if (wire === "indirect" && !this._relay) return;
     await this._publish(armored);
   }
 
   /**
    * @param {string} toFpr
    * @param {string} armored
-   * @returns {boolean} whether any channel accepted it
+   * @returns {"direct"|"indirect"|""} which wire took it, if any
    */
   _sendEnvelopeViaChannel(toFpr, armored) {
     // Never re-handle our own frame if a copy gossips back.
@@ -2228,13 +2316,18 @@ export class NotebookSession {
     if (direct?.channel?.readyState === "open" && direct.link?.isLive()) {
       try {
         direct.channel.send(frame);
-        return true;
+        return "direct";
       } catch (_) {
         /* fall through to relay / mailbox */
       }
     }
     // Relay: only over authenticated links (relayed introductions must ride
     // links whose far end is proven, DESIGN §7 step 4).
+    //
+    // "Sent" here means a frame left this machine, and that is all it has ever
+    // meant — nothing acknowledges a forward, and the forwarder may have no
+    // link to the addressee. The caller is what changed: it no longer reads
+    // this as delivery and skip the relay on it.
     let sent = false;
     for (const [fpr, p] of this.peers) {
       if (fpr === toFpr) continue;
@@ -2247,7 +2340,7 @@ export class NotebookSession {
         }
       }
     }
-    return sent;
+    return sent ? "indirect" : "";
   }
 
   _emitRoster() {
