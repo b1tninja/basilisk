@@ -193,3 +193,73 @@ describe("time is shown to the second", () => {
     expect(formatActivityTime(at)).toBe("14:07:22");
   });
 });
+
+describe("a receipt is the only record that an action changed something", () => {
+  // `recordActivity` stored `receipt` and nothing read it — not the Activity
+  // panel, not `activityAsText`. Seven of the eight receipts say what the
+  // label already implies, which is why the omission never looked wrong. The
+  // eighth is why it was: adding a key returns "Added to My Keys" or
+  // "Already in My Keys" from the same label, artifact, digest and detail, so
+  // dropping the receipt drops the whole difference between the two.
+  //
+  // Pinned on both readers rather than on the storage. The field was always
+  // stored correctly; what was missing was anybody looking at it, so a test
+  // that asserted `recordActivity` keeps it would have passed throughout.
+  const added = {
+    action: "save-key",
+    label: "Add to My Keys",
+    artifact: "ada@example.test",
+    tier: "vault",
+    detail: "ada@example.test",
+  };
+
+  it("tells an addition from a no-op in the exported minutes", async () => {
+    clearActivity();
+    await recordActivity({ ...added, receipt: "Added to My Keys" });
+    const first = activityAsText();
+
+    clearActivity();
+    await recordActivity({ ...added, receipt: "Already in My Keys" });
+    const second = activityAsText();
+
+    expect(first).toContain("Added to My Keys");
+    expect(second).toContain("Already in My Keys");
+    // The point of the pair: everything else about these two entries is the
+    // same, so a transcript missing the receipt cannot tell them apart.
+    expect(first).not.toBe(second);
+    expect(first.replace(/Added to My Keys/g, "")).toBe(
+      second.replace(/Already in My Keys/g, "")
+    );
+  });
+
+  it("puts the outcome above the thing it acted on", async () => {
+    clearActivity();
+    await recordActivity({ ...added, receipt: "Added to My Keys" });
+    const text = activityAsText();
+    expect(text.indexOf("Added to My Keys")).toBeLessThan(text.indexOf("→"));
+  });
+
+  it("omits the line rather than printing an empty one", async () => {
+    clearActivity();
+    await recordActivity({ action: "c", label: "Copy", artifact: "x", tier: "inert" });
+    expect(activityAsText().split("\n")).toHaveLength(1);
+  });
+
+  it("is drawn by the panel, which is the reader that was missing", () => {
+    // The source assertion is the one that fails if the panel stops rendering
+    // it — the same shape `session-flow.test.js` uses for consumers, and the
+    // reason this defect survived: every layer below the panel was correct.
+    const SHELL = readFileSync(
+      fileURLToPath(new URL("../toolkit/ToolkitShell.tsx", import.meta.url)),
+      "utf8"
+    );
+    expect(SHELL).toMatch(/e\.receipt \?/);
+    expect(SHELL).toMatch(/className="activity-receipt"/);
+    // Declared in the stylesheet, never inline.
+    const CSS = readFileSync(
+      fileURLToPath(new URL("../css/toolkit.css", import.meta.url)),
+      "utf8"
+    );
+    expect(CSS).toContain(".activity-receipt");
+  });
+});

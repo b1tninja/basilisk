@@ -88,6 +88,14 @@ export function activityCount() {
  * un-happen it, and surfacing that as a failure would be a lie in the other
  * direction.
  *
+ * `receipt` is the action's own sentence about its outcome, and `detail` is
+ * the thing it acted on. Both are drawn — the panel and `activityAsText`
+ * carry each — which is worth stating because the receipt was stored here and
+ * read by nothing for as long as it has existed. Most of them say what the
+ * label already implies; the one that does not is `Added to My Keys` against
+ * `Already in My Keys`, where every other field of the entry is identical and
+ * the receipt is the only record that the action changed something.
+ *
  * @param {{ action: string, label: string, artifact: string,
  *           tier: string, content?: string, detail?: string, receipt?: string }} evt
  */
@@ -133,6 +141,13 @@ export function formatActivityTime(at) {
  * Oldest first here, deliberately, though the UI shows newest first: a
  * transcript someone reads start to finish wants chronological order, while a
  * panel someone glances at wants the most recent thing at the top.
+ *
+ * The receipt goes above the detail, and this is the export where it earns its
+ * place most plainly. Minutes are read to settle what happened, and one
+ * receipt records a fact no other field in an entry holds: adding a key
+ * reports "Added to My Keys" or "Already in My Keys" off the same label, the
+ * same artifact, the same digest and the same detail. Without it a transcript
+ * cannot say whether an action changed anything.
  */
 export function activityAsText() {
   if (!entries.length) return "";
@@ -141,7 +156,10 @@ export function activityAsText() {
       const head = `${formatActivityTime(e.at)}  ${e.label}  ${e.artifact}${
         e.digest ? `  sha256 ${e.digest}…` : ""
       }`;
-      return e.detail ? `${head}\n          → ${e.detail}` : head;
+      const lines = [head];
+      if (e.receipt) lines.push(`          ${e.receipt}`);
+      if (e.detail) lines.push(`          → ${e.detail}`);
+      return lines.join("\n");
     })
     .join("\n");
 }

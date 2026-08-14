@@ -4036,6 +4036,26 @@ export function ToolkitShell() {
                               sha256 {e.digest}…
                             </code>
                           ) : null}
+                          {/* The action's own account of what it did, above
+                              the object it did it to. Seven of the eight
+                              receipts say what the label already implies —
+                              "Copy" then "Copied" — and the eighth is the
+                              reason this is drawn at all: adding a key reports
+                              "Added to My Keys" or "Already in My Keys", and
+                              nothing else in an entry distinguishes an action
+                              that changed something from one that found the
+                              work already done. Same label, same artifact,
+                              same digest, same detail.
+
+                              Drawn always rather than only when it surprises,
+                              because a log that records the interesting cases
+                              cannot be trusted to have recorded the
+                              interesting case — which is this module's own
+                              argument for logging every action rather than the
+                              dramatic ones. */}
+                          {e.receipt ? (
+                            <span className="activity-receipt">{e.receipt}</span>
+                          ) : null}
                           {e.detail ? (
                             <code className="artifact-meta block break-all font-mono text-[var(--brand)]">
                               → {e.detail}

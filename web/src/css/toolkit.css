@@ -2630,3 +2630,18 @@ input[type="file"][data-basilisk-file-picker] {
   padding-left: 8px;
   color: var(--foreground);
 }
+
+/*
+ * The Activity log's receipt line — the action's own account of what it did.
+ *
+ * Quieter than `--brand`, which `→ detail` uses: a receipt is the outcome and
+ * the detail is the thing acted on, and the thing is what a reader scans for.
+ * Not `artifact-meta`, because that is monospace for values and a receipt is a
+ * sentence.
+ */
+.activity-receipt {
+  display: block;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
