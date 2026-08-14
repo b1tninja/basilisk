@@ -596,13 +596,20 @@ function checkCarried(list, say) {
  * cell's own peer's (they will have it), or this peer's (it has to travel), or a
  * third peer's (nobody here can hand it over).
  *
+ * Exported for `run-offers.js`, which asks the prior question — *is there any
+ * reason to send this offer at all* — and must not answer it with a second
+ * reading of the plan. "Would this offer carry anything" and "what does this
+ * offer carry" are the same question asked a moment apart, and two functions
+ * answering it could differ by one row; the row they differed on would be a
+ * value a peer is waiting for and nothing sent.
+ *
  * @param {import("./plan.js").RunPlan} plan
  * @param {number} cell
  * @param {string} runner  peer label the cell runs on, "" for everyone
  * @returns {{ label: string, from: number, peer: string, private: boolean,
  *   type: string }[]}
  */
-function slotsFromElsewhere(plan, cell, runner) {
+export function slotsFromElsewhere(plan, cell, runner) {
   const planned = plan.cells[cell];
   /** @type {ReturnType<typeof slotsFromElsewhere>} */
   const out = [];

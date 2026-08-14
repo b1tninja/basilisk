@@ -23,11 +23,17 @@ export type PlacedAway = {
   /**
    * What the run itself already did about it.
    *
-   * `none` is not "not yet" — the run offers as it ends, so by the time this
+   * `none` is not "not yet" — the run decides as it ends, so by the time this
    * list is on screen the attempt has happened or been ruled out. It means the
    * run was stopped by hand, or the session went away before the run did.
+   *
+   * `aside` is the run having decided *not* to send: the cell needs nothing this
+   * machine produced and writes nothing this notebook goes on to read, so an
+   * offer would carry nothing and answer nothing. It is a different sentence
+   * from `none` because it points at a different remedy — none at all, unless
+   * the peer asks.
    */
-  offered: "sent" | "refused" | "none";
+  offered: "sent" | "refused" | "aside" | "none";
   /** The handoff layer's own sentence, when `offered` is `refused`. */
   why?: string;
 };
@@ -81,9 +87,10 @@ const peer = (label: string) => `${PEER_SIGIL}${label}`;
  * **Three lists, because there are three different waits**, and a single
  * "pending" would hide which of them is on you:
  *
- * - *You are waiting on them* — a cell the run declined. **The run hands it
- *   over as it ends**; the button is the retry, for a peer who was not in the
- *   room at the time. Nothing happens on their machine until they accept it.
+ * - *You are waiting on them* — a cell the run declined. **The run hands over
+ *   the ones this machine is an end of, as it ends**; the button is the retry,
+ *   for a peer who was not in the room at the time, and the override for a cell
+ *   the run set aside. Nothing happens on their machine until they accept it.
  * - *They are waiting on you* — an offer or a result that arrived. It is
  *   **pending and nothing more**: the session parses it, checks the signature
  *   on a result against that one peer's key, and registers nothing. Accepting
@@ -110,6 +117,17 @@ const peer = (label: string) => `${PEER_SIGIL}${label}`;
  * — for reasons that have nothing to do with the peer waiting — and nothing
  * anywhere records *why* a cell ran. An automatic send back could not tell the
  * two apart, so the result stays a press, and this list is what asks for it.
+ *
+ * ## Why some rows in the first list have not been sent either
+ *
+ * "The gate declined it" is a weaker fact than the sentence above needs. It
+ * means the cell is not this machine's to *perform*, and the run only sends the
+ * ones this machine is an end of: a cell that reads a value made here, or writes
+ * one this notebook goes on to read. The rest are drawn as `aside`, which is not
+ * a failure and not a wait — the creator's own session cells, replayed on a
+ * joiner's machine, and a holder's `quorum.recv` seen from the dealer's. They
+ * keep the button because the plan can be wrong about a person's intent and this
+ * panel should not be the place that decides they may not send it.
  */
 export function HandoffQueue({
   live,
@@ -136,7 +154,7 @@ export function HandoffQueue({
         <>
           <p className="text-[10.5px] leading-snug text-[var(--muted-foreground)]">
             {live
-              ? "Nothing is waiting on anybody. Give a cell an @peer header and run — the cells that are not yours are declined here, and handed to whoever owns them as the run ends. Nothing runs on their machine until they accept, and what they send back waits here for you."
+              ? "Nothing is waiting on anybody. Give a cell an @peer header and run — the cells that are not yours are declined here, and the ones this machine is an end of are handed to whoever owns them as the run ends: a cell that needs a value made here, or writes one this notebook goes on to read. A declined cell that is neither is listed and left alone, because an offer for it would carry nothing and answer nothing. Nothing runs on their machine until they accept, and what they send back waits here for you."
               : "No session, so nothing can cross. A cell with an @peer header is still planned and still declined at run time; it just has nowhere to go."}
           </p>
           {/* The third list is shell state built when a person presses accept,
@@ -183,7 +201,9 @@ export function HandoffQueue({
                   ? `Handed to ${peer(c.peer)} when the run finished, carrying the values that cell reads and nothing else. Nothing runs there until they accept it. Send it again only if they say it never arrived.`
                   : c.offered === "refused"
                     ? `The run tried to hand this over and could not. ${c.why || "The handoff was refused and gave no reason."}`
-                    : "Nothing has gone out for this cell. Handing it over sends the values that cell reads and nothing else, and nothing runs until they accept it."}
+                    : c.offered === "aside"
+                      ? `Left alone, and nothing here is waiting on it: this cell reads no value made on this machine, and nothing in this notebook reads what it writes. It is ${peer(c.peer)}'s to run on their own copy. Hand it over anyway if they ask — it would carry nothing, and nothing would run until they accept it.`
+                      : "Nothing has gone out for this cell. Handing it over sends the values that cell reads and nothing else, and nothing runs until they accept it."}
               </span>
               <div className="flex flex-wrap gap-1.5">
                 <Button
@@ -193,7 +213,7 @@ export function HandoffQueue({
                   onClick={() => onOffer(c.cell)}
                 >
                   Hand cell {c.cell} to {peer(c.peer)}
-                  {c.offered === "none" ? "" : " again"}
+                  {c.offered === "sent" || c.offered === "refused" ? " again" : ""}
                 </Button>
               </div>
             </li>

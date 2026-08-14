@@ -1,29 +1,42 @@
 /**
- * A run that finishes hands over what it declined, and says what happened.
+ * A run that finishes hands over what it owes, and says what happened.
  *
- * The defect this pins: `HandoffQueue`'s empty state told the reader that cells
- * placed on other people "are declined here and offered to whoever owns them",
- * and `offerCell` had exactly one caller in the entire product — the per-row
- * **Offer** button's own click handler. A placed run was Run, followed by one
- * press for every cell somebody else owns, and the copy described a product
- * that did not exist.
+ * The first defect this pins: `HandoffQueue`'s empty state told the reader that
+ * cells placed on other people "are declined here and offered to whoever owns
+ * them", and `offerCell` had exactly one caller in the entire product — the
+ * per-row **Offer** button's own click handler. A placed run was Run, followed
+ * by one press for every cell somebody else owns, and the copy described a
+ * product that did not exist.
  *
- * Two halves, and they are different kinds of proof on purpose. `run-offers.js`
- * is a pure module and is exercised as one: real inputs, real answers, no
- * browser. The wiring around it lives in a React hook that this suite runs in
- * node and cannot render, so it is pinned by reading the source for the
- * properties that make the automation safe — where it is called from, when the
- * bound is written, and what does *not* happen after Stop. That is the same
- * shape `session-flow.test.js` uses on the same file, for the same reason.
+ * The second is the overshoot of the first. `handOffPlaced` then offered *every*
+ * cell the gate declined, and "the gate declined it" is a narrower fact than an
+ * offer claims: a joiner who adopts a creator's notebook adopts the creator's
+ * own session cells with it, so the joiner's run offered them back to the
+ * creator who had already run them, and a dealer's run offered a holder their
+ * own `quorum.recv` — a second, wrong story about how the share arrives. Both
+ * are notebooks, so both are reproduced here as notebooks: compiled, planned and
+ * gated, with the same `placementGate` the product runs.
+ *
+ * Three kinds of proof, on purpose. The rule is a pure function over a real plan
+ * and is exercised as one. The wiring around it lives in a React hook that this
+ * suite runs in node and cannot render, so it is pinned by reading the source
+ * for the properties that make the automation safe — where it is called from,
+ * when the bound is written, and what does *not* happen after Stop. That is the
+ * same shape `session-flow.test.js` uses on the same file, for the same reason.
+ * And the copy is read for the sentences the behaviour makes true.
  */
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { planRun } from "../lib/toolkit/plan.js";
+import { placementGate } from "../lib/toolkit/placement.js";
+import { sessionRecipe } from "../lib/toolkit/session-flow.js";
 import {
   narrateNoSession,
   narrateOffers,
-  pendingOffers,
+  offersOwed,
 } from "../lib/toolkit/run-offers.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -31,55 +44,235 @@ const HOOK = read("../toolkit/useNotebook.ts");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
 const QUEUE = read("../toolkit/widgets/HandoffQueue.tsx");
 
-/** The gate's own report shape, as `placement.js` writes it into `onSkip`. */
-const skip = (cell, waitingOn, produces = []) => ({
-  cell,
-  waitingOn,
-  runsOn: [waitingOn],
-  why: "not-mine",
-  produces,
-});
+/**
+ * Three peers, spelled the way `3d69090` made a peer: the whole fingerprint.
+ *
+ * Repeated characters rather than realistic hex so a failure message says which
+ * peer at a glance — `plan.js` only ever compares these for equality.
+ */
+const ADA = "A".repeat(40);
+const BEA = "B".repeat(40);
+const CAI = "C".repeat(40);
+const room = (...fprs) => Object.fromEntries(fprs.map((f) => [f, f]));
 
-describe("what a finished run still owes the room", () => {
-  it("names every declined cell and the label that owns it, in cell order", () => {
-    const out = pendingOffers([skip(3, "peer2", ["b64"]), skip(1, "peer3")], new Set());
-    expect(out).toEqual([
-      { cell: 3, peer: "peer2", key: "3@peer2" },
-      { cell: 1, peer: "peer3", key: "1@peer3" },
-    ]);
+/**
+ * Run one peer's gate over a notebook and hand back both halves of the answer.
+ *
+ * The plan *and* the report, because the whole question this module now answers
+ * needs both, and building the report by hand would let the test agree with a
+ * rule the product's own gate does not produce.
+ *
+ * `from` is the cell the run starts at, because pressing a cell's own Run is not
+ * the same run as Run all and the two decline different cells — the journey's
+ * joiner presses the first, and that is what makes their skipped list the three
+ * cells `a4f9399`'s report named. `holds` is what an accepted offer already put
+ * in the registry, which is the only reason such a run gets past its first cell.
+ *
+ * The walk stops where the product's does. `admit` throws when a cell that runs
+ * here reads a slot a declined cell writes, `runFrom` lets it out as `Failed`,
+ * and the `finally` hands over what was declined *up to that point* — so a
+ * helper that walked past the throw would be building a skipped list no run can
+ * produce.
+ *
+ * @param {string} source @param {string} me @param {string[]} members
+ * @param {{ from?: number, holds?: string[] }} [pressed]
+ */
+function declined(source, me, members, pressed = {}) {
+  const { from = 0, holds = [] } = pressed;
+  const compiled = compileRecipe(source);
+  expect(compiled.validation?.errors ?? [], source).toEqual([]);
+  const plan = planRun(compiled, { me, roster: room(...members) });
+  expect(plan.ok, JSON.stringify(plan.refusals)).toBe(true);
+  const skipped = [];
+  const gate = placementGate(
+    { plan, onSkip: (sk) => skipped.push(sk) },
+    { cells: plan.cells.length, first: from, count: plan.cells.length - from }
+  );
+  const have = new Set(holds);
+  for (let i = from; i < plan.cells.length; i++) {
+    let admitted;
+    try {
+      admitted = gate.admit(i, (label) => have.has(label));
+    } catch (_) {
+      break;
+    }
+    if (admitted) for (const label of plan.cells[i].produces) have.add(label);
+  }
+  return { plan, skipped };
+}
+
+/**
+ * `placed-journey`'s notebook, plus the two cells Start appends to it.
+ *
+ * The headers are the ones the journey's assignment menu writes, `publish` and
+ * all: without it `$b64` is a private value and `plan.js` forces the cell that
+ * reads it onto its owner, which is a different notebook from the one two
+ * browsers are known to run.
+ *
+ * `sessionRecipe` is called rather than transcribed, because the defect is
+ * precisely that those two cells travel inside the proposal placed on whoever
+ * opened the room — a copy of their text here would stop reproducing it the
+ * moment `session-flow.js` changed its mind.
+ */
+const JOURNEY = [
+  `@${ADA} publish\nbytes deadbeef | encode hex | out $seed`,
+  `@${BEA} publish\nin $seed | decode hex | encode base64 | out $b64`,
+  `@${ADA}\nin $b64 | out $done`,
+  sessionRecipe({ audience: [ADA, BEA], keyFingerprint: ADA }),
+].join("\n\n");
+
+/**
+ * `docs/LANGUAGE.md`'s ceremony in the verbs this build has: `scatter` is one
+ * `quorum.send` per holder, and `gather` is the holder's own `quorum.recv`.
+ */
+const CEREMONY = [
+  `@${ADA}\nrandom 32 | sss.split threshold=2 shares=3 | blip39 | out $shares`,
+  `@${ADA}\nin $shares | at 1 | quorum.send to=${BEA}`,
+  `@${BEA}\nquorum.recv | out $mine`,
+  `@${ADA}\nin $shares | at 2 | quorum.send to=${CAI}`,
+  `@${CAI}\nquorum.recv | out $theirs`,
+].join("\n\n");
+
+describe("which declined cells a finished run owes the room", () => {
+  it("owes the cell whose answer this notebook goes on to read", () => {
+    // The creator's own run, and the arc `placed-journey` walks.
+    const { plan, skipped } = declined(JOURNEY, ADA, [ADA, BEA]);
+    expect(skipped.map((s) => s.cell)).toEqual([1]);
+    const { owed, aside } = offersOwed(skipped, new Set(), plan);
+    expect(owed).toEqual([{ cell: 1, peer: BEA, key: `1@${BEA}` }]);
+    expect(aside).toEqual([]);
   });
 
-  it("drops a cell the run already handed over", () => {
+  it("sets aside the creator's session cells, replayed on a joiner", () => {
+    // The first of the two observed defects, and `a4f9399`'s own report of it:
+    // "Handed cell 2 to @peer1, cell 3 to @peer1, cell 4 to @peer1", where only
+    // cell 2 is the point. The joiner adopted the whole notebook, including
+    // `agent.unlock` and `quorum.offer` under the creator's header, and pressed
+    // the accepted cell's own Run — so the run starts at cell 1 and declines the
+    // three below it.
+    //
+    // Cell 2 is owed: it reads the `$b64` this machine just wrote, and nothing
+    // else can carry it. Cells 3 and 4 are the creator's session cells, which
+    // the creator ran to open the room this offer would travel over.
+    const { plan, skipped } = declined(JOURNEY, BEA, [ADA, BEA], {
+      from: 1,
+      holds: ["seed"],
+    });
+    expect(skipped.map((s) => s.cell)).toEqual([2, 3, 4]);
+    const { owed, aside } = offersOwed(skipped, new Set(), plan);
+    expect(owed).toEqual([{ cell: 2, peer: ADA, key: `2@${ADA}` }]);
+    expect(aside.map((o) => o.cell)).toEqual([3, 4]);
+  });
+
+  it("owes the creator's first cell to a joiner who has not been handed anything", () => {
+    // Run all on a fresh joiner, and the difference from the press above is the
+    // point. Cell 0 is the creator's and produces the `$seed` this machine's own
+    // cell reads, so the gate declines cell 0 and then stops the run at cell 1 —
+    // and the offer is this machine saying it cannot get past it. That the
+    // creator ran cell 0 long ago does not make the value present here.
+    const { plan, skipped } = declined(JOURNEY, BEA, [ADA, BEA]);
+    expect(skipped.map((s) => s.cell)).toEqual([0]);
+    const { owed, aside } = offersOwed(skipped, new Set(), plan);
+    expect(owed).toEqual([{ cell: 0, peer: ADA, key: `0@${ADA}` }]);
+    expect(aside).toEqual([]);
+  });
+
+  it("sets aside a holder's own quorum.recv, seen from the dealer", () => {
+    // The second, and the worse of the two: an offer to run the cell whose
+    // entire job is to receive what the dealer is sending by another path.
+    const { plan, skipped } = declined(CEREMONY, ADA, [ADA, BEA, CAI]);
+    expect(skipped.map((s) => s.cell)).toEqual([2, 4]);
+    const { owed, aside } = offersOwed(skipped, new Set(), plan);
+    expect(owed).toEqual([]);
+    expect(aside.map((o) => o.cell)).toEqual([2, 4]);
+  });
+
+  it("owes a cell that reads a value only this machine holds", () => {
+    // The other half of the rule, and the one the ceremony does not exercise:
+    // nothing here reads what `$mixed` is, but the cell cannot run at all until
+    // Ada's `$salt` reaches Bea. Withholding this offer would strand Bea with a
+    // cell that stops the moment it reads that slot.
+    const source = [
+      `@${ADA} publish\nrandom 32 | encode hex | out $salt`,
+      `@${BEA}\nin $salt | decode hex | encode base64 | out $mixed`,
+    ].join("\n\n");
+    const { plan, skipped } = declined(source, ADA, [ADA, BEA]);
+    const { owed, aside } = offersOwed(skipped, new Set(), plan);
+    expect(owed).toEqual([{ cell: 1, peer: BEA, key: `1@${BEA}` }]);
+    expect(aside).toEqual([]);
+  });
+
+  it("sets aside a cell whose input is a third peer's to send", () => {
+    // Cai's cell reads Bea's value. `buildOfferFor` refuses exactly this as
+    // `incomplete` — "the offer @bea makes is theirs to make" — so an offer Ada
+    // sent could carry nothing and would come back a refusal naming somebody
+    // else's job. Nothing is withheld that could have been delivered.
+    const source = [
+      `@${ADA} publish\nrandom 32 | encode hex | out $salt`,
+      `@${BEA} publish\nrandom 32 | encode hex | out $pepper`,
+      `@${CAI}\nin $pepper | decode hex | encode base64 | out $mixed`,
+    ].join("\n\n");
+    const { plan, skipped } = declined(source, ADA, [ADA, BEA, CAI]);
+    expect(skipped.map((s) => s.cell)).toEqual([1, 2]);
+    const { owed, aside } = offersOwed(skipped, new Set(), plan);
+    expect(owed).toEqual([]);
+    expect(aside.map((o) => o.cell)).toEqual([1, 2]);
+  });
+
+  it("drops a cell the run already handed over, and keeps saying which are aside", () => {
     // The property that makes an automatic offer safe to re-enter. `offerCell`
     // deliberately does not consume the skipped cell — that is what makes
     // recovery after a reload possible and `HandoffQueue` promises it in
     // writing — so nothing downstream would stop a second pass from sending the
     // same document twice.
-    const skipped = [skip(1, "peer2"), skip(2, "peer3")];
-    const sent = new Set(pendingOffers(skipped, new Set()).map((o) => o.key));
-    expect(sent.size).toBe(2);
-    expect(pendingOffers(skipped, sent)).toEqual([]);
+    //
+    // `aside` is not bounded that way and must not be: it is a reading of the
+    // notebook rather than a record of an act, and the row that says a cell was
+    // left alone has to survive the second pass that finds the sends claimed.
+    const { plan, skipped } = declined(JOURNEY, ADA, [ADA, BEA]);
+    const first = offersOwed(skipped, new Set(), plan);
+    const sent = new Set(first.owed.map((o) => o.key));
+    expect(sent.size).toBe(1);
+    const again = offersOwed(skipped, sent, plan);
+    expect(again.owed).toEqual([]);
+    expect(again.aside).toEqual(first.aside);
   });
 
   it("keys on the cell and the peer together, so a moved placement is still sent", () => {
     // A notebook edited between two runs can move a cell onto somebody else.
     // Bounded by the cell alone, "cell 1 has gone out" would suppress an offer
     // to a person who has never been sent anything.
-    const sent = new Set(pendingOffers([skip(1, "peer2")], new Set()).map((o) => o.key));
-    expect(pendingOffers([skip(1, "peer3")], sent)).toEqual([
-      { cell: 1, peer: "peer3", key: "1@peer3" },
+    const moved = JOURNEY.replace(`@${BEA} publish\nin $seed`, `@${CAI} publish\nin $seed`);
+    expect(moved, "the placement this test moves is not where it was").not.toBe(JOURNEY);
+    const { plan, skipped } = declined(JOURNEY, ADA, [ADA, BEA]);
+    const sent = new Set(offersOwed(skipped, new Set(), plan).owed.map((o) => o.key));
+    const next = declined(moved, ADA, [ADA, BEA, CAI]);
+    expect(offersOwed(next.skipped, sent, next.plan).owed).toEqual([
+      { cell: 1, peer: CAI, key: `1@${CAI}` },
     ]);
   });
 
   it("says nothing about a cell the gate declined for nobody", () => {
     // `offerCell` would answer "that cell was not left to anybody", which is
     // true and is not news to a reader looking at a cell with no header.
-    expect(pendingOffers([skip(4, ""), { cell: 5 }], new Set())).toEqual([]);
+    const { plan } = declined(JOURNEY, ADA, [ADA, BEA]);
+    const out = offersOwed([{ cell: 1, waitingOn: "" }, { cell: 2 }], new Set(), plan);
+    expect(out).toEqual({ owed: [], aside: [] });
   });
 
   it("counts one declined cell as one document even if the gate reports it twice", () => {
-    const out = pendingOffers([skip(1, "peer2"), skip(1, "peer2")], new Set());
-    expect(out).toHaveLength(1);
+    const { plan, skipped } = declined(JOURNEY, ADA, [ADA, BEA]);
+    const { owed } = offersOwed([...skipped, ...skipped], new Set(), plan);
+    expect(owed).toHaveLength(1);
+  });
+
+  it("refuses to guess when the plan and the gate's report came apart", () => {
+    // `placementGate`'s rule one layer along: the two answers a default could
+    // pick — offer everything, offer nothing — are the noise this rule removes
+    // and a value somebody is waiting on, and neither may be chosen silently.
+    const { skipped } = declined(JOURNEY, BEA, [ADA, BEA]);
+    expect(() => offersOwed(skipped, new Set(), null)).toThrow(/does not describe it/);
+    expect(() => offersOwed(skipped, new Set(), { cells: [] })).toThrow(/one run's answer/);
   });
 });
 
@@ -235,24 +428,73 @@ describe("the result coming back is still a press, and the panel says why", () =
 });
 
 describe("the copy describes what the code does", () => {
-  it("promises the automatic hand-over, and only what it does", () => {
-    expect(QUEUE).toMatch(/handed to whoever owns them as the run ends/);
+  it("promises the automatic hand-over, and only for the cells that get one", () => {
+    expect(QUEUE).toMatch(/the ones this machine is an end of are handed to whoever owns them/);
     expect(QUEUE).toMatch(/Nothing runs on their machine until they accept/);
     // The old sentence claimed an offer nothing made.
     expect(QUEUE).not.toMatch(/declined here and offered to whoever owns them/);
+    // And its replacement claimed one for every declined cell, which is the
+    // sentence the creator's session cells made false.
+    expect(QUEUE).not.toMatch(/the cells that are not yours are declined here, and handed to/);
+    // The reader is told which cells those are, in the terms the rule uses.
+    expect(QUEUE).toMatch(/needs a value made here, or writes one this notebook goes on to read/);
   });
 
-  it("draws a row that has already gone differently from one that has not", () => {
+  it("draws all four states of a row apart", () => {
     expect(QUEUE).toContain("data-offer-state");
     expect(QUEUE).toMatch(/Handed to \$\{peer\(c\.peer\)\} when the run finished/);
     expect(QUEUE).toMatch(/The run tried to hand this over and could not/);
     expect(QUEUE).toMatch(/Nothing has gone out for this cell/);
-    // And the button stops offering to do a thing that is done.
-    expect(QUEUE).toMatch(/c\.offered === "none" \? "" : " again"/);
+    // The fourth is a decision rather than an outcome, and says so: it names
+    // both halves of the rule and points at no remedy, because there is none to
+    // point at unless the peer asks for one.
+    // The condition, not only the sentence: a branch nothing can reach is the
+    // shape of defect this repo keeps finding, and a string search finds the
+    // words either way.
+    expect(QUEUE).toMatch(/: c\.offered === "aside"\s*\r?\n\s*\? `Left alone, and nothing here is waiting on it/);
+    expect(QUEUE).toMatch(/reads no value made on this machine, and nothing in this notebook reads what it writes/);
+    // And the button says "again" only where something was actually tried — a
+    // cell the run set aside has had nothing sent for it.
+    expect(QUEUE).toMatch(/c\.offered === "sent" \|\| c\.offered === "refused" \? " again" : ""/);
   });
 
-  it("joins the run's own report to the rows it is about", () => {
+  it("joins the run's own verdicts to the rows they are about", () => {
     expect(SHELL).toMatch(/new Map\(nb\.autoOffered\.map\(/);
     expect(SHELL).toMatch(/\[nb\.busy, nb\.skippedCells, nb\.autoOffered\]/);
+    expect(SHELL).toMatch(/offered: noted \? noted\.state : \("none" as const\)/);
+  });
+
+  it("records the aside verdict whether or not there is a room to send in", () => {
+    // The row for a holder's `quorum.recv` must not read "nothing has gone out"
+    // as though the session were the reason — it would not have gone out in a
+    // full room either. So the verdict is folded in above the session check.
+    const body = HOOK.slice(
+      HOOK.indexOf("const handOffPlaced = useCallback"),
+      HOOK.indexOf("const sendCellResult = useCallback")
+    );
+    expect(body).toMatch(/noteOffers\(\s*aside\.map[\s\S]*?\)\);[\s\S]*?if \(!getLiveSession\(\)\)/);
+    // Folded in, never replacing: the effect can re-fire, and the second pass
+    // knows only about the aside half.
+    expect(HOOK).toMatch(/const by = new Map\(prev\.map\(\(o\) => \[o\.cell, o\]\)\);/);
+    expect(HOOK).not.toMatch(/setAutoOffered\(outcomes\)/);
+  });
+
+  it("keeps the plan beside the report of what it declined", () => {
+    // The rule needs `consumes[].from`, `produces` and `mine`, and none of them
+    // is in the gate's report. A plan from a different run answering about this
+    // run's declines is the failure this pins.
+    expect(HOOK).toMatch(/skippedRef\.current = \[\];[\s\S]{0,600}runPlanRef\.current = null;/);
+    expect(HOOK).toMatch(/runPlanRef\.current = plan;\s*\r?\n\s*placement = \{ plan, onSkip:/);
+    // The sentence a Stop leaves behind names what this run *would* have sent,
+    // not every cell the gate declined — otherwise it invites the reader to
+    // press Hand over on the very documents the rule exists to stop.
+    expect(HOOK).toMatch(/const \{ owed: waiting \} = offersOwed\(/);
+    // And no call site decides without the plan. Both of them — the run's own
+    // send and that sentence — name the same ref.
+    const calls = [...HOOK.matchAll(/offersOwed\(/g)];
+    expect(calls).toHaveLength(2);
+    for (const at of calls) {
+      expect(HOOK.slice(at.index, at.index + 200)).toContain("runPlanRef.current");
+    }
   });
 });

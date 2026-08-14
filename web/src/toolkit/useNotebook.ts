@@ -27,7 +27,7 @@ import { departedPeers, unassignDeparted } from "../lib/toolkit/peer-relabel.js"
 import {
   narrateNoSession,
   narrateOffers,
-  pendingOffers,
+  offersOwed,
 } from "../lib/toolkit/run-offers.js";
 import { offerForSkipped, resultForCell } from "../lib/toolkit/handoff-shell.js";
 import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
@@ -1719,6 +1719,11 @@ export function useNotebook() {
        * insists is a different thing from a gate that admits everything.
        */
       skippedRef.current = [];
+      // Cleared on the same breath, and set again below on the same breath: the
+      // plan is what says whether a declined cell is owed an offer, and a plan
+      // from one run beside another run's declines would answer that question
+      // about a notebook that is not the one on screen.
+      runPlanRef.current = null;
       // A run of its own, with its own record of what it has handed out. Both
       // are reset here rather than after the loop, so a run that throws still
       // leaves the next one a clean bound — and the throwing run is the *usual*
@@ -1735,6 +1740,7 @@ export function useNotebook() {
         try {
           const plan = planRun(compileRecipe(source), { me, roster });
           if (plan.ok && plan.play === "placed") {
+            runPlanRef.current = plan;
             placement = { plan, onSkip: (sk: any) => skippedRef.current.push(sk) };
           }
         } catch {
@@ -1806,8 +1812,18 @@ export function useNotebook() {
         // sent on the strength of a press they withdrew would be the one act
         // here nobody asked for. Their cells stay in the queue with the press
         // still on them, and `runStatus` says so rather than going quiet.
+        //
+        // What it names is what this run *would* have sent — `owed`, not every
+        // cell the gate declined. A Stop takes back the press; it does not make
+        // the creator's own session cells this machine's to hand over, and a
+        // sentence promising to hand them over "in one press" would be inviting
+        // the reader to send the very documents the rule above exists to stop.
         if (stopRunRef.current) {
-          const waiting = pendingOffers(skippedRef.current, offersSentRef.current.sent);
+          const { owed: waiting } = offersOwed(
+            skippedRef.current,
+            offersSentRef.current.sent,
+            runPlanRef.current
+          );
           if (waiting.length) {
             setRunStatus(
               `Stopped — nothing was handed over. ${waiting.length === 1 ? "Cell" : "Cells"} ` +
@@ -2296,6 +2312,23 @@ export function useNotebook() {
   const skippedCells = useCallback(() => skippedRef.current.slice(), []);
 
   /**
+   * The plan that gate was built from, kept for as long as its report is.
+   *
+   * "Declined" is not "owed an offer" — `run-offers.js` argues which declined
+   * cells this machine is on an end of, and every fact that answers it
+   * (`consumes[].from`, `produces`, `mine`) is in the plan and nowhere else.
+   * `skippedCells` is deliberately not widened to carry them: the gate copies
+   * plan fields into its report and a report that carried the dependency graph
+   * would be `placement.js` deciding placement a second time.
+   *
+   * Written and cleared on the lines beside `skippedRef`'s, because
+   * `placement.onSkip` is a field of the object this plan is handed to — a
+   * declined cell cannot exist without the plan that declined it, and the two
+   * must not be able to come from different runs.
+   */
+  const runPlanRef = useRef<any>(null);
+
+  /**
    * Runs, counted, so an offer can be bounded by the one that caused it.
    *
    * Not a timestamp and not a flag. The question an automatic offer has to
@@ -2335,16 +2368,42 @@ export function useNotebook() {
   const [finishedRun, setFinishedRun] = useState<number | null>(null);
 
   /**
-   * What the last run's automatic offers did, for the queue to draw beside the
-   * cells they were about.
+   * What the last run decided about each cell it declined, for the queue to
+   * draw beside the cell it was about.
    *
    * The narration goes to `runStatus`, which is the line always on screen; this
    * is the same facts per cell, so the row offering to hand cell 3 over can say
    * whether cell 3 has already gone and stop reading as though nothing had.
+   *
+   * `aside` is a verdict, not an outcome, and it is here for the same reason the
+   * other two are: without it the row for a cell the run deliberately left alone
+   * is indistinguishable from the row for a cell a Stop cut short, and those ask
+   * the reader for opposite things.
    */
   const [autoOffered, setAutoOffered] = useState<
-    { cell: number; peer: string; ok: boolean; why?: string }[]
+    { cell: number; peer: string; state: "sent" | "refused" | "aside"; why?: string }[]
   >([]);
+
+  /**
+   * Fold a pass's verdicts into the run's record, latest per cell winning.
+   *
+   * A merge rather than a replace because `handOffPlaced` writes twice — the
+   * cells it is leaving alone before the sends, the outcomes after — and because
+   * the effect that calls it can re-fire on a re-render, where the second pass
+   * finds every send already claimed and knows only about the `aside` half. A
+   * replace there would erase this run's record of what went out.
+   */
+  const noteOffers = useCallback(
+    (rows: { cell: number; peer: string; state: "sent" | "refused" | "aside"; why?: string }[]) => {
+      if (!rows.length) return;
+      setAutoOffered((prev) => {
+        const by = new Map(prev.map((o) => [o.cell, o]));
+        for (const row of rows) by.set(row.cell, row);
+        return [...by.values()].sort((a, b) => a.cell - b.cell);
+      });
+    },
+    []
+  );
 
   /**
    * The notebook as it stands right now, for the arrival path to read.
@@ -2584,14 +2643,23 @@ export function useNotebook() {
   );
 
   /**
-   * Hand over everything this run left on somebody else, without being asked
-   * twice.
+   * Hand over what this run left on somebody else *and this machine is an end
+   * of*, without being asked twice.
    *
    * This is the last mile of the placed run, and until it existed the product
    * described it and did not do it: the queue's empty state promised that
    * declined cells "are offered to whoever owns them", while `offerCell`'s only
    * caller in the whole application was a per-row button. A placed run was Run,
    * and then one press per cell.
+   *
+   * **Which of them, though, is `offersOwed`'s question and not this one's.**
+   * The first version of this sent every cell the gate declined, and the gate
+   * declines a cell for a narrower reason than an offer claims — a joiner's run
+   * declines the creator's own session cells and was offering them back to the
+   * creator who had already run them. The rule and its argument are in
+   * `run-offers.js`; what belongs here is that the cells it sets aside are still
+   * in the queue with the press still on them, and the row says which state it
+   * is in rather than reading like a send that has not happened yet.
    *
    * **Nothing runs anywhere because of this.** An offer is a document; the peer
    * that receives it holds it pending until they press accept, and accepting is
@@ -2626,7 +2694,13 @@ export function useNotebook() {
       // Sending now would be offering the previous run's answers under the
       // current run's numbering.
       if (bound.run !== run) return;
-      const waiting = pendingOffers(skippedRef.current, bound.sent);
+      const { owed: waiting, aside } = offersOwed(skippedRef.current, bound.sent, runPlanRef.current);
+      // Recorded before the sends and whether or not there is a session, because
+      // it is a reading of the notebook rather than a thing that happened: the
+      // holder's `quorum.recv` is not this dealer's to hand over in an empty
+      // room either, and the row must not say "nothing has gone out" as though
+      // the room were the reason.
+      noteOffers(aside.map((o) => ({ cell: o.cell, peer: o.peer, state: "aside" as const })));
       if (!waiting.length) return;
       if (!getLiveSession()) {
         setRunStatus((prev) => `${prev} ${narrateNoSession(waiting)}`.trim());
@@ -2642,10 +2716,17 @@ export function useNotebook() {
         const r = await offerCell(o.cell);
         outcomes.push({ cell: o.cell, peer: o.peer, ok: !!r.ok, why: r.ok ? undefined : r.why });
       }
-      setAutoOffered(outcomes);
+      noteOffers(
+        outcomes.map((o) => ({
+          cell: o.cell,
+          peer: o.peer,
+          state: o.ok ? ("sent" as const) : ("refused" as const),
+          why: o.ok ? undefined : o.why,
+        }))
+      );
       setRunStatus((prev) => `${prev} ${narrateOffers(outcomes)}`.trim());
     },
-    [offerCell]
+    [noteOffers, offerCell]
   );
 
   useEffect(() => {

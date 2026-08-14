@@ -1488,19 +1488,24 @@ export function ToolkitShell() {
    * press Hand over on a cell the peer is holding. It lands after `busy` drops
    * (the send is an effect, one render later), which is why it is a dependency
    * of its own rather than something the `busy` flip could have carried.
+   *
+   * It also carries the run's verdict on cells it deliberately did *not* send —
+   * `aside`, for a cell this machine is neither waiting on nor holding up. A
+   * cell with no verdict at all is the remaining case and it means what it
+   * always meant: no run got as far as deciding, because Stop ended it.
    */
   const placedAway = useMemo(() => {
     void nb.busy;
     const done = new Map(nb.autoOffered.map((o) => [o.cell, o]));
     return (nb.skippedCells() as { cell: number; waitingOn?: string; produces?: string[] }[]).map(
       (s) => {
-        const sent = done.get(s.cell);
+        const noted = done.get(s.cell);
         return {
           cell: s.cell,
           peer: String(s.waitingOn || ""),
           produces: [...(s.produces || [])],
-          offered: sent ? (sent.ok ? ("sent" as const) : ("refused" as const)) : ("none" as const),
-          why: sent && !sent.ok ? sent.why : undefined,
+          offered: noted ? noted.state : ("none" as const),
+          why: noted?.state === "refused" ? noted.why : undefined,
         };
       }
     );
