@@ -1074,9 +1074,17 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out $priv2`,
       },
       timeoutMs: 60_000,
     },
+    /**
+     * No `out $ct` on the `mode=separate` cases, and that is the mode telling
+     * the truth rather than a fixture being tidied. Separate writes one message
+     * per recipient, so there is no single value for a slot to hold — `out`
+     * after it used to register a slot containing `null`, which is the trap
+     * `gpgEncryptOutput` closes. `mode=combined` below keeps its `out`, because
+     * there it names a real value.
+     */
     {
       id: "gpg.encrypt.separate",
-      recipe: "input | utf8 | gpg.encrypt mode=separate policy=ask | out $ct",
+      recipe: "input | utf8 | gpg.encrypt mode=separate policy=ask",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
@@ -1090,7 +1098,7 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out $priv2`,
     },
     {
       id: "gpg.encrypt.sign",
-      recipe: "input | utf8 | gpg.encrypt -s policy=all | out $ct",
+      recipe: "input | utf8 | gpg.encrypt -s policy=all",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
@@ -1098,7 +1106,7 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out $priv2`,
     {
       id: "gpg.encrypt.profile-custom",
       recipe:
-        "input | utf8 | gpg.encrypt policy=one profile=custom cipher=aes128 aead=off s2k=iterated compression=zlib | out $ct",
+        "input | utf8 | gpg.encrypt policy=one profile=custom cipher=aes128 aead=off s2k=iterated compression=zlib",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
@@ -1106,14 +1114,14 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out $priv2`,
     {
       id: "gpg.encrypt.profile-modern",
       recipe:
-        "input | utf8 | gpg.encrypt policy=one profile=modern cipher=aes192 aead=gcm compression=zip | out $ct",
+        "input | utf8 | gpg.encrypt policy=one profile=modern cipher=aes192 aead=gcm compression=zip",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,
     },
     {
       id: "gpg.encrypt.profile-compatible",
-      recipe: "input | utf8 | gpg.encrypt policy=one profile=compatible aead=eax | out $ct",
+      recipe: "input | utf8 | gpg.encrypt policy=one profile=compatible aead=eax",
       mode: "run",
       bindings: gpgBindings,
       timeoutMs: 60_000,

@@ -131,6 +131,57 @@ export function isObserveOnlyType(base) {
 }
 
 /**
+ * `artifact` is not a value — it is the mark a step leaves when it has written
+ * its result to the run's artifact list and left the pipe empty.
+ *
+ * Two steps produce it, `gpg.encrypt` in its fan-out mode and `qr`, and both
+ * return `{ type: "artifact", data: null }` at run time. The engine reads that
+ * `null` correctly: `valueToArtifacts` returns `[]` for it and the dangling-tip
+ * emitter skips it outright, both keyed on the base — which is the proof that
+ * "the pipe is empty" is what the base has always meant.
+ *
+ * Nothing else read it that way. `out $sealed` after `gpg.encrypt` registered a
+ * slot whose runtime value was `null`, typed it `{base:"artifact"}`, and
+ * `publishability` projected that through `artifactMetaFromType`'s final
+ * fallthrough to role `text` and answered **publishable: true**. So a `publish`
+ * on it passed the plan, and the only thing that stopped a null crossing the
+ * wire was `handoff.js`'s `CARRIABLE` set — refusing it with a sentence about
+ * key material, which is not what an OpenPGP armor is and not why it could not
+ * travel.
+ *
+ * So the rule is stated once, here, and enforced where a value is *named*: an
+ * empty pipe cannot be put in a slot, copied, saved, teed or published. The
+ * refusal is a compile error on text, before a ceremony runs.
+ * @param {RefinedType|null|undefined} t
+ */
+export function isEmptyPipe(t) {
+  return !!t && t.base === "artifact";
+}
+
+/**
+ * What to say to a step that was handed an empty pipe.
+ *
+ * Names the state that is true — the step before it kept its result — and the
+ * two things a reader can actually do about it. `mode=combined` is offered only
+ * where it exists, so the sentence never recommends a param to a step that has
+ * none.
+ *
+ * @param {string} name  the step that cannot act
+ * @returns {string}
+ */
+export function emptyPipeError(name) {
+  return (
+    `"${name}" needs a pipeline value, and the step before it left none — ` +
+    "its result went to the run's artifacts, where it is on a tile with Copy " +
+    "and Download, and the pipe is empty from there on. `gpg.encrypt` in its " +
+    "default `mode=separate` writes one message per recipient and so has no " +
+    "single value to carry; `mode=combined` writes exactly one and pipes it " +
+    `on as text. Either write \`mode=combined\` before "${name}", or drop ` +
+    `"${name}" and take the artifact off its tile.`
+  );
+}
+
+/**
  * Fixed-length private scalar / seed size for direct SSS (when applicable).
  * @param {string} alg
  * @returns {number|null}
@@ -658,7 +709,52 @@ export function hasKeyHalves(t) {
   return Boolean(t) && t.base === "keypair";
 }
 
+/**
+ * What `gpg.encrypt` leaves in the pipe, decided by `mode=` alone.
+ *
+ * The two modes differ in **how many messages exist afterwards**, and that is
+ * the whole of it:
+ *
+ * - `separate` — one armored message per recipient. How many that is depends on
+ *   a `to=$slot` resolved at run time, or on who is ticked in the Run binder, so
+ *   the count is not a fact the recipe text carries. A pipe holds one value, so
+ *   there is nothing honest to put in it: the messages go to the artifact list
+ *   and the pipe is left empty (`artifact` — see `isEmptyPipe`).
+ * - `combined` — one message with one PKESK per recipient. **Always exactly
+ *   one**, whoever the recipients turn out to be. That one message is a value,
+ *   and it is text: OpenPGP armor.
+ *
+ * So the output type is a function of a literal in the recipe, which is the
+ * determinism rule met rather than bent — the same shape as `age.encrypt
+ * armor=` and `quorum.recv count=`. Nothing here reads the recipient list, and
+ * nothing needs to.
+ *
+ * `text/armored` with `encoding: "openpgp"` is not a new spelling: it is the one
+ * `gpg.symencrypt mode=passphrase` already produces, for the same object — an
+ * armored OpenPGP message travelling as a pipeline value. Two names for one
+ * fact is the defect this module's neighbours keep finding, so the second
+ * producer of armor uses the first producer's word. It projects to role `text`,
+ * which is publishable, and that is the answer that was wanted: ciphertext
+ * addressed to somebody may leave the machine that made it.
+ *
+ * @param {Record<string, *>} params
+ * @returns {RefinedType}
+ */
+export function gpgEncryptOutput(params) {
+  return String(params?.mode || "separate").toLowerCase() === "combined"
+    ? typeOf("text", { kind: "armored", encoding: "openpgp" })
+    : typeOf("artifact");
+}
+
 export function inferParamDrivenType(name, current, params = {}) {
+  if (name === "gpg.encrypt") {
+    // Only the accepting cases; a wrong input type falls through to the coarse
+    // check below so its message stays the one it always was.
+    if (current?.base === "text" || current?.base === "bytes") {
+      return { ok: true, output: gpgEncryptOutput(params) };
+    }
+    return null;
+  }
   if (name === "ssh.decode") {
     // Types nothing — the overload table still does that, keyed on `format=`.
     // This exists only for the case the compiler *can* see: text that came
@@ -1416,6 +1512,13 @@ export function inferParamDrivenType(name, current, params = {}) {
         error: `"${name}" needs a pipeline value`,
       };
     }
+    // An empty pipe is not "some value of a type nobody consumes" — it is no
+    // value, and every one of these six exists to *name* or *move* one. See
+    // `isEmptyPipe`: this is the check that stops `out $sealed` registering a
+    // slot that holds `null` and types as publishable.
+    if (isEmptyPipe(current)) {
+      return { ok: false, error: emptyPipeError(name) };
+    }
     return { ok: true, output: { ...current } };
   }
 
@@ -1705,9 +1808,6 @@ export function resolveStepType(spec, current, params = {}) {
   // Coarse fallback: base IoType only
   const want = spec.input || "none";
   if (want !== "none" && current.base !== want) {
-    if (name === "gpg.encrypt" && (current.base === "text" || current.base === "bytes")) {
-      return { ok: true, output: typeOf("artifact") };
-    }
     if (name === "qr" && current.base === "text") {
       return { ok: true, output: typeOf("artifact") };
     }

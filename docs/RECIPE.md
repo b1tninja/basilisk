@@ -551,6 +551,24 @@ Do **not** overload WebCrypto `key` / `keypair`. Recipients and vault keys are u
 
 When `to=` is set, the Run recipient binder is skipped. Recipe text holds emails / fingerprints / `$slots` only — never armor.
 
+**`mode=` decides what is left in the pipe, and it is the only thing that does.**
+`separate` writes one message per recipient — a count no recipe text carries — so
+there is no single value to hand on: the messages go to the artifact list and the
+pipe is left empty (`artifact`). `combined` writes exactly **one** message however
+many recipients it has, so it pipes that message on as `text/armored/openpgp`, the
+same type `gpg.symencrypt mode=passphrase` produces.
+
+An empty pipe cannot be named or moved: `out`, `publish`, `tee`, `peek`,
+`clipboard.write` and `file.save` all refuse it at compile time. `… | gpg.encrypt
+| out $sealed` used to register a slot whose runtime value was `null` while typing
+as publishable — a `publish` on it passed the plan and handed the room nothing.
+To seal a value and then do something with it, write `mode=combined`:
+
+```text
+in $share | gpg.encrypt mode=combined to=fpr:AABB… | out $sealed | publish
+in $sealed | agent.decrypt | shares | blip39 -d | sss.combine | out $secret
+```
+
 ```text
 input | utf8 | gpg.sign | out $signed
 in $signed | gpg.verify | out $ok

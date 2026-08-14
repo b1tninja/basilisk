@@ -14,6 +14,7 @@ import { BASE_ENCODINGS, CIPHER_DISPATCH_TARGETS } from "./step-names.js";
 import {
   POLYMORPHIC_STEPS,
   genkeyOutputBase,
+  gpgEncryptOutput,
   stepAcceptsRefined,
   typeOf,
 } from "./types.js";
@@ -2594,8 +2595,11 @@ export const STEPS = [
     conjugate: "gpg.decrypt",
     pairCaption: "Encrypt / decrypt",
     unresolvedRecipients: true,
-    doc: "OpenPGP-encrypt the current value. Prefer `to=$alices` (recipients slot) or `to=email` + lookup; else Run binder. `mode=separate|combined`. `-s` / `key=$me` for sign-then-encrypt.",
+    doc: "OpenPGP-encrypt the current value. Prefer `to=$alices` (recipients slot) or `to=email` + lookup; else Run binder. `mode=separate` writes one message per recipient and leaves the pipe empty; `mode=combined` writes exactly one and pipes it on as text, so it is the mode that can be named by `out`, published, or decrypted back. `-s` / `key=$me` for sign-then-encrypt.",
     input: "text",
+    // The default mode's answer. `mode=combined` overrides it to `text` — see
+    // `gpgEncryptOutput`, which both the type walk and `effectiveIo` read, so
+    // the caret and the compiler cannot come to different conclusions.
     output: "artifact",
     entropy: "keying",
     params: [
@@ -2641,6 +2645,9 @@ export const STEPS = [
       },
       ...CRYPTO_PROFILE_PARAMS,
     ],
+    effectiveIo(params) {
+      return { input: "text", output: gpgEncryptOutput(params).base };
+    },
   },
   {
     name: "gpg.sign",

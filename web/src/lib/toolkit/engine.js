@@ -103,6 +103,8 @@ import {
   algTokenForKey,
   artifactMetaFromType,
   genkeyOutputBase,
+  gpgEncryptOutput,
+  isTerminalSink,
   resolveStepType,
   typeOf,
 } from "./types.js";
@@ -609,7 +611,15 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
     const before = artifacts.length;
     value = await execStep(node.step, value, bindings, artifacts, 0);
     stampNew(before, node.step);
-    lastStepEmitted = node.step.name === "out" || node.step.name === "text";
+    // `isTerminalSink` is the list this had hand-written half of. It names the
+    // four steps that show their own result — `out`, `text`, `gpg.encrypt`,
+    // `qr` — and its whole docstring is "no auto-emitted dangling tile", which
+    // is the question being asked here. The two spellings agreed only because
+    // the missing pair returned `artifact`, and the tip emitter skipped that on
+    // the *type*; the moment `gpg.encrypt mode=combined` handed its armor on as
+    // text, the shorter list emitted a second tile of bytes already on screen.
+    // Assigned rather than accumulated, so a later transform still clears it.
+    lastStepEmitted = isTerminalSink(node.step.name);
     if (node.step.name === "out" && value) {
       registerSlot(String(node.step.params?.name || DEFAULT_OUT_SLOT), value, preexisting);
     }
@@ -2322,6 +2332,16 @@ async function execStepBody(step, value, bindings, artifacts) {
         fps = [fps[i] || ""];
       }
       const wantSign = !!step.params.sign;
+      const combined = mode === "combined";
+      /**
+       * The one message `mode=combined` makes, kept so it can be piped on.
+       *
+       * `mode=separate` has no such thing — one message per recipient, a count
+       * only the run knows — so it stays a sink and leaves the pipe empty.
+       * `gpgEncryptOutput` is the compile-time half of this same sentence.
+       * @type {string}
+       */
+      let sealed = "";
       /** @type {import("openpgp").PrivateKey|null} */
       let signingKey = null;
       try {
@@ -2345,6 +2365,7 @@ async function execStepBody(step, value, bindings, artifacts) {
           });
           for (const a of arts) {
             const cryptoSummary = await summarizeEncryption(a.armored);
+            sealed = a.armored;
             const isShare = !!value.meta?.shareIndex;
             const short =
               batch.fpr && batch.fpr.length >= 8
@@ -2384,7 +2405,52 @@ async function execStepBody(step, value, bindings, artifacts) {
             });
           }
         }
-        return { type: "artifact", data: null, meta: value.meta };
+        if (!combined) return { type: "artifact", data: null, meta: value.meta };
+        // `gpg.symencrypt`'s guard, for the same reason: a slot holding an
+        // empty string is the trap above wearing a different type, and the one
+        // thing worse than no envelope is a nameable one with nothing in it.
+        if (!sealed) throw new Error("gpg.encrypt mode=combined produced no ciphertext");
+        /**
+         * The envelope, as a value — and deliberately **not** wearing the
+         * plaintext's clothes.
+         *
+         * `sensitive` goes false because armor is not a secret; it is what a
+         * secret looks like once it is safe to write down, and the tile beside
+         * it has said `sensitive: false` since the day it was written.
+         *
+         * `shareIndex`, `shareCount` and `threshold` are **dropped**, and that
+         * is a disclosure decision rather than housekeeping. They describe the
+         * mnemonic *inside* the envelope, which already carries all three in
+         * its own BLIP39 header (`encodeMnemonic` writes threshold, share count,
+         * index and set id before a word of data) — so the holder who opens it
+         * reads them from the plaintext, and nobody else reads them at all.
+         * Left on the value they would ride outward on a published slot and
+         * tell the whole room which share went to whom, which is the one fact a
+         * K-of-N split is keeping.
+         *
+         * The dealer does not lose them: the tile pushed above is built from
+         * the *input* value's meta and keeps `traits.shareOf`, so `Share 2 ·
+         * encrypted share` still reads correctly on the machine that made it.
+         *
+         * There is a second, mechanical consequence and it points the same way:
+         * `slotRegistry.register` diverts any value carrying `shareIndex` into
+         * the indexed table and returns before it names anything, so a sealed
+         * value that kept the field could not be put in `$sealed` at all.
+         */
+        return {
+          type: "text",
+          data: sealed,
+          meta: {
+            ...value.meta,
+            kind: "armored",
+            encoding: "openpgp",
+            sensitive: false,
+            shareIndex: undefined,
+            shareCount: undefined,
+            threshold: undefined,
+            type: gpgEncryptOutput(step.params || {}),
+          },
+        };
       } finally {
         zeroKeyMaterial(signingKey);
       }
